@@ -1,6 +1,7 @@
 using System.Text;
 using MCAROC_Analysis.Data;
 using MCAROC_Analysis.Services;
+using MCAROC_Analysis.Services.Analysis;
 using MCAROC_Analysis.Services.Excel;
 using Microsoft.EntityFrameworkCore;
 
@@ -17,6 +18,19 @@ builder.Services.AddDbContext<AppDbContext>(options =>
 builder.Services.AddScoped<IExcelSheetReader, ExcelSheetReader>();
 builder.Services.AddScoped<FileValidationService>();
 builder.Services.AddScoped<IngestionOrchestrator>();
+
+// Rule engine + AI cross-section analysis pipeline
+builder.Services.AddSingleton<AnalysisQueue>();
+builder.Services.AddSingleton(sp =>
+{
+    var config = sp.GetRequiredService<IConfiguration>();
+    var projectId = config["GoogleCloud:ProjectId"] ?? throw new InvalidOperationException("GoogleCloud:ProjectId is not configured.");
+    var location = config["GoogleCloud:Location"] ?? "us-central1";
+    var credentialsPath = config["GoogleCloud:CredentialsPath"] ?? throw new InvalidOperationException("GoogleCloud:CredentialsPath is not configured.");
+    return new AiCrossSectionAnalysisService(projectId, location, credentialsPath, sp.GetRequiredService<ILogger<AiCrossSectionAnalysisService>>());
+});
+builder.Services.AddScoped<AnalysisOrchestrator>();
+builder.Services.AddHostedService<AnalysisWorker>();
 
 var app = builder.Build();
 

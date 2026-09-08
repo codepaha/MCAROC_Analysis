@@ -3,6 +3,7 @@ using MCAROC_Analysis.Data;
 using MCAROC_Analysis.Data.Entities;
 using MCAROC_Analysis.Models;
 using MCAROC_Analysis.Services;
+using MCAROC_Analysis.Services.Analysis;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 
@@ -12,6 +13,7 @@ public class RequestsController(
     AppDbContext db,
     IngestionOrchestrator orchestrator,
     FileValidationService fileValidation,
+    AnalysisQueue analysisQueue,
     IWebHostEnvironment env) : Controller
 {
     [HttpGet]
@@ -91,6 +93,13 @@ public class RequestsController(
 
         await orchestrator.RunAsync(request.RequestId, rocDocument.DocumentId, chargeDocumentId);
 
+        // Auto-trigger analysis only when ingestion completed cleanly enough to trust — IsManualReviewRequired
+        // is set only by IngestionOrchestrator's identity-mismatch checks (form-vs-ROC, ROC-vs-charge), never
+        // by an optional missing sheet, so this one check is exactly the block/don't-block line: a missing
+        // GST/EPFO/Litigation sheet still reaches DataExtracted normally and should still be analyzed.
+        if (request.RequestStatus == RequestStatus.DataExtracted && !request.IsManualReviewRequired)
+            analysisQueue.Enqueue(request.RequestId);
+
         return RedirectToAction(nameof(Details), new { id = request.RequestId });
     }
 
@@ -124,6 +133,26 @@ public class RequestsController(
             vm.AuditorObservations = await db.AuditorObservations.Where(x => x.IngestionRunId == runId)
                 .OrderByDescending(x => x.FinancialYear).ToListAsync();
             vm.Litigations = await db.Litigations.Where(x => x.IngestionRunId == runId).ToListAsync();
+        }
+
+        vm.LatestAnalysisRun = await db.AnalysisRuns
+            .Where(a => a.RequestId == id)
+            .OrderByDescending(a => a.RunNumber)
+            .FirstOrDefaultAsync();
+        if (vm.LatestAnalysisRun is not null)
+        {
+            // Severity/TemporalStatus are stored as strings (HasConversion<string>), so ordering by them
+            // in SQL would sort alphabetically, not by enum severity — fetch then sort in memory instead.
+            var findings = await db.AnalysisFindings.Where(f => f.AnalysisRunId == vm.LatestAnalysisRun.AnalysisRunId).ToListAsync();
+            vm.AnalysisFindings = findings
+                .OrderByDescending(f => f.Severity).ThenByDescending(f => f.DisplayPriority).ThenByDescending(f => f.ObservationDate)
+                .ToList();
+
+            if (vm.LatestAnalysisRun.ExecutiveSummaryJson is { } summaryJson)
+            {
+                try { vm.ExecutiveSummary = System.Text.Json.JsonSerializer.Deserialize<ExecutiveSummary>(summaryJson); }
+                catch (System.Text.Json.JsonException) { /* leave null — view shows findings without a summary */ }
+            }
         }
 
         return View(vm);
