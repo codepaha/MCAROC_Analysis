@@ -23,6 +23,7 @@ public enum DocumentType
     McaRocReport,
     ChargeReport,
     FinancialReport,
+    McaFilingsArchive,
     Other
 }
 

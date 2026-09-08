@@ -20,4 +20,20 @@ public class RequestDetailsViewModel
     public List<EpfoContribution> EpfoContributions { get; set; } = [];
     public List<AuditorObservation> AuditorObservations { get; set; } = [];
     public List<Litigation> Litigations { get; set; } = [];
+
+    // MCA Filings (PDF) pipeline
+    public McaFilingBatch? FilingBatch { get; set; }
+    public List<FilingSummaryViewModel> FilingSummaries { get; set; } = [];
+    public Dictionary<FilingCategory, int> FilingCategoryCounts { get; set; } = [];
+    public Dictionary<TextExtractionMethod, int> TextExtractionMethodCounts { get; set; } = [];
+    public int AiSuccessCount { get; set; }
+    public int AiFailedCount { get; set; }
+    public int ManualReviewFilingCount { get; set; }
+}
+
+public class FilingSummaryViewModel
+{
+    public required McaFiling Filing { get; set; }
+    public FilingCategory DominantCategory { get; set; }
+    public McaFilingExtraction? Extraction { get; set; }
 }

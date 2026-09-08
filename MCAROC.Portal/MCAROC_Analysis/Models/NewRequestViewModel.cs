@@ -29,5 +29,8 @@ public class NewRequestViewModel
     [Display(Name = "Detailed Charge Report")]
     public IFormFile? ChargeFile { get; set; }
 
+    [Display(Name = "MCA Filings Archive (.zip)")]
+    public IFormFile? McaFilingsFile { get; set; }
+
     public string? ErrorMessage { get; set; }
 }

@@ -4,6 +4,7 @@ using MCAROC_Analysis.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 #nullable disable
@@ -11,9 +12,11 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace MCAROC_Analysis.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260908154732_AddMcaFilingsIngestion")]
+    partial class AddMcaFilingsIngestion
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -61,7 +64,7 @@ namespace MCAROC_Analysis.Migrations
 
                     b.HasIndex("RequestId", "IngestionRunId");
 
-                    b.ToTable("AuditorObservations", (string)null);
+                    b.ToTable("AuditorObservations");
                 });
 
             modelBuilder.Entity("MCAROC_Analysis.Data.Entities.Client", b =>
@@ -100,7 +103,7 @@ namespace MCAROC_Analysis.Migrations
                     b.HasIndex("ClientCode")
                         .IsUnique();
 
-                    b.ToTable("Clients", (string)null);
+                    b.ToTable("Clients");
 
                     b.HasData(
                         new
@@ -203,7 +206,7 @@ namespace MCAROC_Analysis.Migrations
 
                     b.HasIndex("RequestId", "IngestionRunId");
 
-                    b.ToTable("CompanyProfiles", (string)null);
+                    b.ToTable("CompanyProfiles");
                 });
 
             modelBuilder.Entity("MCAROC_Analysis.Data.Entities.Director", b =>
@@ -260,7 +263,7 @@ namespace MCAROC_Analysis.Migrations
 
                     b.HasIndex("RequestId", "IngestionRunId");
 
-                    b.ToTable("Directors", (string)null);
+                    b.ToTable("Directors");
                 });
 
             modelBuilder.Entity("MCAROC_Analysis.Data.Entities.DirectorAssociation", b =>
@@ -335,7 +338,7 @@ namespace MCAROC_Analysis.Migrations
 
                     b.HasIndex("RequestId", "IngestionRunId");
 
-                    b.ToTable("DirectorAssociations", (string)null);
+                    b.ToTable("DirectorAssociations");
                 });
 
             modelBuilder.Entity("MCAROC_Analysis.Data.Entities.EpfoContribution", b =>
@@ -395,7 +398,7 @@ namespace MCAROC_Analysis.Migrations
 
                     b.HasIndex("RequestId", "IngestionRunId");
 
-                    b.ToTable("EpfoContributions", (string)null);
+                    b.ToTable("EpfoContributions");
                 });
 
             modelBuilder.Entity("MCAROC_Analysis.Data.Entities.FinancialYearData", b =>
@@ -512,7 +515,7 @@ namespace MCAROC_Analysis.Migrations
 
                     b.HasIndex("RequestId", "IngestionRunId", "FinancialYear");
 
-                    b.ToTable("FinancialYearData", (string)null);
+                    b.ToTable("FinancialYearData");
                 });
 
             modelBuilder.Entity("MCAROC_Analysis.Data.Entities.GstFiling", b =>
@@ -573,7 +576,7 @@ namespace MCAROC_Analysis.Migrations
 
                     b.HasIndex("RequestId", "IngestionRunId");
 
-                    b.ToTable("GstFilings", (string)null);
+                    b.ToTable("GstFilings");
                 });
 
             modelBuilder.Entity("MCAROC_Analysis.Data.Entities.GstRegistration", b =>
@@ -631,7 +634,7 @@ namespace MCAROC_Analysis.Migrations
 
                     b.HasIndex("RequestId", "IngestionRunId", "Gstin");
 
-                    b.ToTable("GstRegistrations", (string)null);
+                    b.ToTable("GstRegistrations");
                 });
 
             modelBuilder.Entity("MCAROC_Analysis.Data.Entities.IngestionIssue", b =>
@@ -681,7 +684,7 @@ namespace MCAROC_Analysis.Migrations
 
                     b.HasIndex("IngestionRunId");
 
-                    b.ToTable("IngestionIssues", (string)null);
+                    b.ToTable("IngestionIssues");
                 });
 
             modelBuilder.Entity("MCAROC_Analysis.Data.Entities.IngestionRun", b =>
@@ -736,7 +739,7 @@ namespace MCAROC_Analysis.Migrations
                     b.HasIndex("RequestId", "RunNumber")
                         .IsUnique();
 
-                    b.ToTable("IngestionRuns", (string)null);
+                    b.ToTable("IngestionRuns");
                 });
 
             modelBuilder.Entity("MCAROC_Analysis.Data.Entities.Litigation", b =>
@@ -792,7 +795,7 @@ namespace MCAROC_Analysis.Migrations
 
                     b.HasIndex("RequestId", "IngestionRunId");
 
-                    b.ToTable("Litigations", (string)null);
+                    b.ToTable("Litigations");
                 });
 
             modelBuilder.Entity("MCAROC_Analysis.Data.Entities.McaFiling", b =>
@@ -840,7 +843,7 @@ namespace MCAROC_Analysis.Migrations
 
                     b.HasIndex("BatchId", "Srn");
 
-                    b.ToTable("McaFilings", (string)null);
+                    b.ToTable("McaFilings");
                 });
 
             modelBuilder.Entity("MCAROC_Analysis.Data.Entities.McaFilingBatch", b =>
@@ -875,7 +878,7 @@ namespace MCAROC_Analysis.Migrations
 
                     b.HasIndex("RequestId");
 
-                    b.ToTable("McaFilingBatches", (string)null);
+                    b.ToTable("McaFilingBatches");
                 });
 
             modelBuilder.Entity("MCAROC_Analysis.Data.Entities.McaFilingDocument", b =>
@@ -992,7 +995,7 @@ namespace MCAROC_Analysis.Migrations
 
                     b.HasIndex("BatchId", "FileHash");
 
-                    b.ToTable("McaFilingDocuments", (string)null);
+                    b.ToTable("McaFilingDocuments");
                 });
 
             modelBuilder.Entity("MCAROC_Analysis.Data.Entities.McaFilingExtraction", b =>
@@ -1056,7 +1059,7 @@ namespace MCAROC_Analysis.Migrations
 
                     b.HasIndex("FilingId");
 
-                    b.ToTable("McaFilingExtractions", (string)null);
+                    b.ToTable("McaFilingExtractions");
                 });
 
             modelBuilder.Entity("MCAROC_Analysis.Data.Entities.McaRequest", b =>
@@ -1137,7 +1140,7 @@ namespace MCAROC_Analysis.Migrations
                     b.HasIndex("RequestNumber")
                         .IsUnique();
 
-                    b.ToTable("Requests", (string)null);
+                    b.ToTable("Requests");
                 });
 
             modelBuilder.Entity("MCAROC_Analysis.Data.Entities.MsmePayment", b =>
@@ -1182,7 +1185,7 @@ namespace MCAROC_Analysis.Migrations
 
                     b.HasIndex("RequestId", "IngestionRunId");
 
-                    b.ToTable("MsmePayments", (string)null);
+                    b.ToTable("MsmePayments");
                 });
 
             modelBuilder.Entity("MCAROC_Analysis.Data.Entities.RequestDocument", b =>
@@ -1238,7 +1241,7 @@ namespace MCAROC_Analysis.Migrations
 
                     b.HasIndex("RequestId");
 
-                    b.ToTable("RequestDocuments", (string)null);
+                    b.ToTable("RequestDocuments");
                 });
 
             modelBuilder.Entity("MCAROC_Analysis.Data.Entities.RocCharge", b =>
@@ -1300,7 +1303,7 @@ namespace MCAROC_Analysis.Migrations
 
                     b.HasIndex("RequestId", "IngestionRunId", "RocChargeNumber");
 
-                    b.ToTable("RocCharges", (string)null);
+                    b.ToTable("RocCharges");
                 });
 
             modelBuilder.Entity("MCAROC_Analysis.Data.Entities.RocChargeEvent", b =>
@@ -1406,7 +1409,7 @@ namespace MCAROC_Analysis.Migrations
 
                     b.HasIndex("RequestId", "IngestionRunId");
 
-                    b.ToTable("RocChargeEvents", (string)null);
+                    b.ToTable("RocChargeEvents");
                 });
 
             modelBuilder.Entity("MCAROC_Analysis.Data.Entities.Shareholding", b =>
@@ -1465,7 +1468,7 @@ namespace MCAROC_Analysis.Migrations
 
                     b.HasIndex("RequestId", "IngestionRunId");
 
-                    b.ToTable("Shareholdings", (string)null);
+                    b.ToTable("Shareholdings");
                 });
 
             modelBuilder.Entity("MCAROC_Analysis.Data.Entities.GstFiling", b =>
