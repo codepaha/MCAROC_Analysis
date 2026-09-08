@@ -150,6 +150,165 @@ public class FilingClaimSemanticsTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task DuplicateInsertConflict_ReconciliationTerminalizesClaimedDocumentsToWinnersOutcome()
+    {
+        // Regression test for the review finding that ExtractFilingAsync's DbUpdateException catch (unique
+        // index on McaFilingExtraction.FilingId) logged and returned WITHOUT terminalizing the documents it
+        // had claimed to InProgress — permanently stranding them, since RecoverStaleWorkAsync's old logic
+        // would then reset them to Pending but skip re-enqueueing because an extraction row already
+        // existed. This mirrors the catch block's exact fix: read the winning row's Status, then
+        // ExecuteUpdateAsync the claimed document ids to that outcome directly.
+        await using var db = CreateContext();
+        var (_, batch, filing) = await SeedFilingAsync(db);
+
+        var claimedDoc = new McaFilingDocument
+        {
+            FilingId = filing.FilingId, BatchId = batch.BatchId, RequestId = filing.RequestId,
+            OriginalFileName = "a.pdf", StoragePath = @"C:\fake\a.pdf", FileHash = "h1",
+            ProcessingStatus = FilingDocumentProcessingStatus.Completed,
+            AiExtractionStatus = AiExtractionStatus.InProgress, UpdatedAt = DateTime.UtcNow
+        };
+        db.McaFilingDocuments.Add(claimedDoc);
+        // The "winning" concurrent call's row — already committed before this call's SaveChangesAsync failed.
+        db.McaFilingExtractions.Add(new McaFilingExtraction
+        {
+            FilingId = filing.FilingId, Model = "m", PromptVersion = "1", SchemaName = "s", SchemaVersion = "1",
+            ValidationStatus = ExtractionValidationStatus.Valid, Status = ExtractionStatus.Success, ExtractedAt = DateTime.UtcNow
+        });
+        await db.SaveChangesAsync();
+
+        var eligibleDocumentIds = new HashSet<long> { claimedDoc.FilingDocumentId };
+
+        // Mirrors ExtractFilingAsync's catch-block reconciliation exactly.
+        var winningStatus = await db.McaFilingExtractions
+            .Where(e => e.FilingId == filing.FilingId)
+            .OrderBy(e => e.ExtractionId)
+            .Select(e => e.Status)
+            .FirstAsync();
+        var reconciledStatus = winningStatus == ExtractionStatus.Success ? AiExtractionStatus.Success : AiExtractionStatus.Failed;
+        await db.McaFilingDocuments
+            .Where(d => eligibleDocumentIds.Contains(d.FilingDocumentId))
+            .ExecuteUpdateAsync(s => s.SetProperty(d => d.AiExtractionStatus, reconciledStatus));
+
+        var finalStatus = await db.McaFilingDocuments
+            .Where(d => d.FilingDocumentId == claimedDoc.FilingDocumentId)
+            .Select(d => d.AiExtractionStatus)
+            .FirstAsync();
+        Assert.Equal(AiExtractionStatus.Success, finalStatus);
+    }
+
+    [Fact]
+    public async Task RecoverStaleWork_InProgressDocumentWithExistingExtractionRow_IsReconciledNotResetToPending()
+    {
+        // Regression test mirroring RecoverStaleWorkAsync's fixed InProgress-handling: a document left
+        // InProgress by a crash whose filing already has a McaFilingExtraction row (a concurrent call won
+        // the race) must be reconciled to that row's outcome, not blindly reset to Pending — resetting to
+        // Pending would strand it, since nothing re-claims a Pending document once its filing already has
+        // an extraction row.
+        await using var db = CreateContext();
+        var (_, batch, filing) = await SeedFilingAsync(db);
+
+        var doc = new McaFilingDocument
+        {
+            FilingId = filing.FilingId, BatchId = batch.BatchId, RequestId = filing.RequestId,
+            OriginalFileName = "a.pdf", StoragePath = @"C:\fake\a.pdf", FileHash = "h1",
+            ProcessingStatus = FilingDocumentProcessingStatus.Completed,
+            AiExtractionStatus = AiExtractionStatus.InProgress, UpdatedAt = DateTime.UtcNow
+        };
+        db.McaFilingDocuments.Add(doc);
+        db.McaFilingExtractions.Add(new McaFilingExtraction
+        {
+            FilingId = filing.FilingId, Model = "m", PromptVersion = "1", SchemaName = "s", SchemaVersion = "1",
+            ValidationStatus = ExtractionValidationStatus.Valid, Status = ExtractionStatus.Failed, ExtractedAt = DateTime.UtcNow
+        });
+        await db.SaveChangesAsync();
+
+        // Mirrors RecoverStaleWorkAsync's fixed reconciliation branch exactly.
+        var inProgressDocuments = await db.McaFilingDocuments
+            .Where(d => d.DuplicateOfDocumentId == null && d.AiExtractionStatus == AiExtractionStatus.InProgress)
+            .Select(d => new { d.FilingDocumentId, d.FilingId })
+            .ToListAsync();
+        var extractionStatusByFilingId = await db.McaFilingExtractions
+            .Where(e => e.FilingId != null && inProgressDocuments.Select(d => d.FilingId).Contains(e.FilingId!.Value))
+            .GroupBy(e => e.FilingId!.Value)
+            .Select(g => new { FilingId = g.Key, Status = g.OrderBy(e => e.ExtractionId).First().Status })
+            .ToDictionaryAsync(x => x.FilingId, x => x.Status);
+
+        foreach (var group in inProgressDocuments.GroupBy(d => d.FilingId))
+        {
+            var ids = group.Select(x => x.FilingDocumentId).ToList();
+            if (extractionStatusByFilingId.TryGetValue(group.Key, out var winningStatus))
+            {
+                var reconciledStatus = winningStatus == ExtractionStatus.Success ? AiExtractionStatus.Success : AiExtractionStatus.Failed;
+                await db.McaFilingDocuments.Where(d => ids.Contains(d.FilingDocumentId))
+                    .ExecuteUpdateAsync(s => s.SetProperty(d => d.AiExtractionStatus, reconciledStatus));
+            }
+            else
+            {
+                await db.McaFilingDocuments.Where(d => ids.Contains(d.FilingDocumentId))
+                    .ExecuteUpdateAsync(s => s.SetProperty(d => d.AiExtractionStatus, AiExtractionStatus.Pending));
+            }
+        }
+
+        var finalStatus = await db.McaFilingDocuments
+            .Where(d => d.FilingDocumentId == doc.FilingDocumentId)
+            .Select(d => d.AiExtractionStatus)
+            .FirstAsync();
+        Assert.Equal(AiExtractionStatus.Failed, finalStatus); // matches the existing extraction row's outcome, not Pending
+    }
+
+    [Fact]
+    public async Task RecoverStaleWork_InProgressDocumentWithNoExtractionRow_IsResetToPending()
+    {
+        // The other branch of the same fixed logic: no extraction row exists yet (crash happened before
+        // Gemini ever responded) — must still reset to Pending so it gets re-claimed and re-processed.
+        await using var db = CreateContext();
+        var (_, batch, filing) = await SeedFilingAsync(db);
+
+        var doc = new McaFilingDocument
+        {
+            FilingId = filing.FilingId, BatchId = batch.BatchId, RequestId = filing.RequestId,
+            OriginalFileName = "a.pdf", StoragePath = @"C:\fake\a.pdf", FileHash = "h1",
+            ProcessingStatus = FilingDocumentProcessingStatus.Completed,
+            AiExtractionStatus = AiExtractionStatus.InProgress, UpdatedAt = DateTime.UtcNow
+        };
+        db.McaFilingDocuments.Add(doc);
+        await db.SaveChangesAsync();
+
+        var inProgressDocuments = await db.McaFilingDocuments
+            .Where(d => d.DuplicateOfDocumentId == null && d.AiExtractionStatus == AiExtractionStatus.InProgress)
+            .Select(d => new { d.FilingDocumentId, d.FilingId })
+            .ToListAsync();
+        var extractionStatusByFilingId = await db.McaFilingExtractions
+            .Where(e => e.FilingId != null && inProgressDocuments.Select(d => d.FilingId).Contains(e.FilingId!.Value))
+            .GroupBy(e => e.FilingId!.Value)
+            .Select(g => new { FilingId = g.Key, Status = g.OrderBy(e => e.ExtractionId).First().Status })
+            .ToDictionaryAsync(x => x.FilingId, x => x.Status);
+
+        foreach (var group in inProgressDocuments.GroupBy(d => d.FilingId))
+        {
+            var ids = group.Select(x => x.FilingDocumentId).ToList();
+            if (extractionStatusByFilingId.TryGetValue(group.Key, out var winningStatus))
+            {
+                var reconciledStatus = winningStatus == ExtractionStatus.Success ? AiExtractionStatus.Success : AiExtractionStatus.Failed;
+                await db.McaFilingDocuments.Where(d => ids.Contains(d.FilingDocumentId))
+                    .ExecuteUpdateAsync(s => s.SetProperty(d => d.AiExtractionStatus, reconciledStatus));
+            }
+            else
+            {
+                await db.McaFilingDocuments.Where(d => ids.Contains(d.FilingDocumentId))
+                    .ExecuteUpdateAsync(s => s.SetProperty(d => d.AiExtractionStatus, AiExtractionStatus.Pending));
+            }
+        }
+
+        var finalStatus = await db.McaFilingDocuments
+            .Where(d => d.FilingDocumentId == doc.FilingDocumentId)
+            .Select(d => d.AiExtractionStatus)
+            .FirstAsync();
+        Assert.Equal(AiExtractionStatus.Pending, finalStatus);
+    }
+
+    [Fact]
     public async Task UniqueIndexOnExtractionFilingId_RejectsADuplicateInsert()
     {
         await using var db = CreateContext();

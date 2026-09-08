@@ -21,16 +21,14 @@ public record ArchiveSafetyLimits(
 /// of them alone exceeds the limit. Not thread-safe by design: batch unpacking processes nested zips
 /// sequentially (see FilingBatchProcessor.UnpackBatchAsync), so no locking is needed here.
 ///
-/// Known residual gap: on a resumed run after a crash (RecoverStaleWorkAsync re-enqueues an
-/// Unpacking/Indexing-stuck batch), a fresh tracker starts at zero rather than accounting for nested zips
-/// already unpacked before the crash — so the cumulative cap is under-enforced across a crash+resume
-/// sequence. Closing that fully would mean persisting running totals per batch (or re-deriving them from
-/// already-extracted files on disk) rather than just in memory; not done here since it requires an
-/// attacker to also trigger a crash mid-unpack to exploit, not a normal-path gap.</summary>
-public class CumulativeArchiveStats
+/// Seed with a batch's persisted CumulativeUncompressedBytes/CumulativePdfCount (McaFilingBatch) on a
+/// resumed run after a crash, rather than the parameterless zero-start — FilingBatchProcessor persists
+/// those totals after every nested zip it indexes, specifically so a crash-then-resume can't silently
+/// bypass the cumulative cap by forgetting what was already unpacked before the crash.</summary>
+public class CumulativeArchiveStats(long initialUncompressedBytes = 0, int initialPdfCount = 0)
 {
-    public long UncompressedBytes { get; private set; }
-    public int PdfCount { get; private set; }
+    public long UncompressedBytes { get; private set; } = initialUncompressedBytes;
+    public int PdfCount { get; private set; } = initialPdfCount;
 
     public void Add(long uncompressedBytes, bool isPdf)
     {

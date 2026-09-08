@@ -149,6 +149,31 @@ public class ArchiveSafetyValidatorTests : IDisposable
     }
 
     [Fact]
+    public void CumulativeArchiveStats_SeededFromPersistedTotals_CarriesThemForward()
+    {
+        // Regression test for the crash-then-resume gap: FilingBatchProcessor.UnpackBatchAsync now seeds
+        // CumulativeArchiveStats from McaFilingBatch's persisted CumulativeUncompressedBytes/
+        // CumulativePdfCount instead of always starting at zero, so a resumed run after a crash mid-unpack
+        // still counts bytes/PDFs from nested zips indexed before the crash (which IndexNestedZipAsync's
+        // idempotency check would otherwise skip re-validating, and so never re-add to a fresh tracker).
+        var limits = ArchiveSafetyLimits.Default with { MaxUncompressedSizeBytes = 1500 };
+        // Simulate: 1000 bytes already accounted for (persisted from before a crash).
+        var stats = new CumulativeArchiveStats(initialUncompressedBytes: 1000, initialPdfCount: 0);
+
+        var zip = CreateZip("resumed.zip", archive =>
+        {
+            var entry = archive.CreateEntry("a.pdf", CompressionLevel.NoCompression);
+            using var stream = entry.Open();
+            stream.Write(new byte[600]); // 1000 (seeded) + 600 > 1500 limit
+        });
+
+        var result = ArchiveSafetyValidator.ValidateNestedArchive(zip, limits, currentDepth: 2, stats);
+
+        Assert.False(result.IsValid);
+        Assert.Contains("cumulative uncompressed size", result.Error);
+    }
+
+    [Fact]
     public void RejectsNestingBeyondMaxDepth()
     {
         var path = CreateZip("nested.zip", archive =>
