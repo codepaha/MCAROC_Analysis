@@ -20,7 +20,6 @@ public class FilingBatchProcessor(
 {
     private static readonly ArchiveSafetyLimits Limits = ArchiveSafetyLimits.Default;
     private const int MaxRetryCount = 3;
-    private static readonly TimeSpan StalenessTimeout = TimeSpan.FromMinutes(10);
     private static readonly FilingCategory[] AiEligibleCategories =
         [FilingCategory.Charge, FilingCategory.Compliance, FilingCategory.Constitutional];
 
@@ -56,8 +55,12 @@ public class FilingBatchProcessor(
 
             try { Directory.Delete(tempDir, recursive: true); } catch { /* best effort */ }
 
+            // Only Discovered (not yet started) — on a retry after a crash mid-unpack, documents from
+            // nested zips indexed before the crash may already be past this stage; re-enqueueing those
+            // too would just waste OCR/CPU time re-doing finished work, not cause incorrect data.
             var documentIds = await db.McaFilingDocuments
-                .Where(d => d.BatchId == batchId && d.DuplicateOfDocumentId == null)
+                .Where(d => d.BatchId == batchId && d.DuplicateOfDocumentId == null
+                    && d.ProcessingStatus == FilingDocumentProcessingStatus.Discovered)
                 .Select(d => d.FilingDocumentId)
                 .ToListAsync(ct);
             foreach (var id in documentIds)
@@ -77,6 +80,13 @@ public class FilingBatchProcessor(
     {
         var nestedZipFileName = Path.GetFileName(nestedEntry.FullName);
         var outerCategoryFolder = Path.GetFileName(Path.GetDirectoryName(nestedEntry.FullName.Replace('\\', '/'))) ?? "";
+
+        // Idempotency: a re-run of UnpackBatchAsync (after a crash mid-unpack, via RecoverStaleWorkAsync)
+        // must not re-index a nested zip it already processed, or every retry would duplicate that filing.
+        var alreadyIndexed = await db.McaFilings.AnyAsync(
+            f => f.BatchId == batch.BatchId && f.NestedZipName == nestedZipFileName, ct);
+        if (alreadyIndexed)
+            return;
 
         var tempNestedZipPath = Path.Combine(batchTempDir, $"nested-{Guid.NewGuid():N}.zip");
         await using (var entryStream = nestedEntry.Open())
@@ -392,12 +402,20 @@ public class FilingBatchProcessor(
     }
 
     /// <summary>Recovers work left in a non-terminal state by a crash/restart: anything whose heartbeat
-    /// (UpdatedAt) is older than the staleness timeout gets re-enqueued.</summary>
+    /// (UpdatedAt) is older than the staleness timeout gets re-enqueued.
+    ///
+    /// IMPORTANT: this runs once at process startup, where the staleness timeout does NOT apply — a fresh
+    /// process guarantees nothing from a prior run is still executing, so every non-terminal row here is
+    /// orphaned by definition regardless of how recently it was touched. (Confirmed by a real crash during
+    /// development: killing the app mid-batch left documents in TextExtracting that were only ~5 minutes
+    /// old, well inside what was then a startup-time staleness filter — they were silently never resumed
+    /// until this was fixed.) The staleness timeout is reserved for a hypothetical future periodic sweep
+    /// that runs *while the process is alive*, to catch a hung worker without disturbing genuinely
+    /// in-flight work — this method doesn't do that (yet), so it recovers unconditionally.</summary>
     public async Task<int> RecoverStaleWorkAsync(CancellationToken ct)
     {
-        var cutoff = DateTime.UtcNow - StalenessTimeout;
         var staleDocuments = await db.McaFilingDocuments
-            .Where(d => d.DuplicateOfDocumentId == null && d.UpdatedAt < cutoff &&
+            .Where(d => d.DuplicateOfDocumentId == null &&
                 (d.ProcessingStatus == FilingDocumentProcessingStatus.Discovered
                     || d.ProcessingStatus == FilingDocumentProcessingStatus.Classified
                     || d.ProcessingStatus == FilingDocumentProcessingStatus.TextExtracting))
@@ -407,8 +425,13 @@ public class FilingBatchProcessor(
         foreach (var id in staleDocuments)
             queue.Enqueue(new ProcessDocumentWorkItem(id));
 
+        // Also covers a crash mid-unpack (Unpacking/Indexing), not just before it ever started (Uploaded).
+        // IndexNestedZipAsync is idempotent (skips a nested zip it already indexed), so re-running
+        // UnpackBatchAsync from the top is safe rather than producing duplicate McaFiling rows.
         var stuckBatches = await db.McaFilingBatches
-            .Where(b => b.Status == FilingBatchStatus.Uploaded)
+            .Where(b => b.Status == FilingBatchStatus.Uploaded
+                || b.Status == FilingBatchStatus.Unpacking
+                || b.Status == FilingBatchStatus.Indexing)
             .Select(b => b.BatchId)
             .ToListAsync(ct);
         foreach (var id in stuckBatches)
