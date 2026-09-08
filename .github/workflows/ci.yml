@@ -15,10 +15,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Setup .NET
-        uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: '10.0.x'
+      # No actions/setup-dotnet step: this runner is non-admin and can't write to
+      # C:\Program Files\dotnet, which that action requires even to verify an existing install.
+      # The .NET 10 SDK is already installed on this machine and on PATH.
+      - name: Verify .NET SDK
+        run: dotnet --version
 
       - name: Restore
         run: dotnet restore MCAROC.Portal/MCAROC.Portal.slnx
