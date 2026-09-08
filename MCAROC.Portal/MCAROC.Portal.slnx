@@ -1,3 +1,7 @@
 <Solution>
+  <Folder Name="/Tools/">
+    <Project Path="Tools/IngestionValidationRunner/IngestionValidationRunner.csproj" />
+  </Folder>
+  <Project Path="MCAROC_Analysis.Tests/MCAROC_Analysis.Tests.csproj" />
   <Project Path="MCAROC_Analysis/MCAROC_Analysis.csproj" />
 </Solution>
