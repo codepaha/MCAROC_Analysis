@@ -127,4 +127,70 @@ public class IngestionOrchestratorIntegrationTests : IAsyncLifetime
         var orphanedDirectors = await verifyDb.Directors.Where(d => d.RequestId == request.RequestId).ToListAsync();
         Assert.Empty(orphanedDirectors);
     }
+
+    private static SheetData OpenChargesSequenceSheet() => Sheet("Open Charges Sequence",
+        Row("SERIAL NUMBER", "CHARGE ID", "STATUS", "DATE", "FILING DATE", "HOLDER NAME", "CHARGE AMOUNT (Rs. Crore)", "PROPERTY TYPE", "NUMBER OF HOLDERS"),
+        Row(1.1, 100000001.0, "Creation", "10 Mar, 2026", "6 Apr, 2026", "SOME BANK LIMITED", 5.0, "-", 1.0));
+
+    [Fact]
+    public async Task ChargeReportWithMatchingCinButMismatchedNameOrPan_IsQuarantinedNotUsedForEnrichment()
+    {
+        // Regression test for a real gap: checking CIN alone let a charge workbook belonging to a
+        // different company (matching/blank CIN, but a different Legal Name or PAN) through unchallenged.
+        await using var db = CreateContext();
+        var client = new Client { ClientCode = $"TST{Guid.NewGuid():N}"[..10], ClientName = "Test Client", CreatedDate = DateTime.UtcNow };
+        db.Clients.Add(client);
+        var request = new McaRequest
+        {
+            Client = client, EntityType = EntityType.Company, CompanyName = "Test Company",
+            RequestNumber = $"TEST-{Guid.NewGuid():N}",
+            Cin = "U00000TEST0000000001", RequestStatus = RequestStatus.DocumentsUploaded, CreatedDate = DateTime.UtcNow
+        };
+        db.Requests.Add(request);
+        var rocDoc = new RequestDocument
+        {
+            Request = request, DocumentType = DocumentType.McaRocReport, OriginalFileName = "roc.xls",
+            StoredFileName = "1.xls", StoragePath = @"C:\fake\roc-mismatch.xls", FileHash = "abc", UploadedDate = DateTime.UtcNow
+        };
+        var chargeDoc = new RequestDocument
+        {
+            Request = request, DocumentType = DocumentType.ChargeReport, OriginalFileName = "charge.xls",
+            StoredFileName = "2.xls", StoragePath = @"C:\fake\charge-mismatch.xls", FileHash = "def", UploadedDate = DateTime.UtcNow
+        };
+        db.RequestDocuments.AddRange(rocDoc, chargeDoc);
+        await db.SaveChangesAsync();
+
+        // Same CIN as the ROC report, but a different Legal Name and PAN — must be caught by name/PAN
+        // comparison since CIN alone matches.
+        var mismatchedChargeCompanySheet = Sheet("About the Company",
+            Row("Legal Name", "A COMPLETELY DIFFERENT COMPANY PRIVATE LIMITED"),
+            Row("CIN", "U00000TEST0000000001"),
+            Row("PAN", "ZZZZZ9999Z"));
+
+        var sheetReader = new FakeExcelSheetReader(new Dictionary<string, IReadOnlyList<SheetData>>
+        {
+            [rocDoc.StoragePath] = [CompanyProfileSheet(request.Cin!), OpenChargesSequenceSheet()],
+            [chargeDoc.StoragePath] = [mismatchedChargeCompanySheet]
+        });
+        var orchestrator = new IngestionOrchestrator(db, sheetReader, NullLogger<IngestionOrchestrator>.Instance);
+
+        var run = await orchestrator.RunAsync(request.RequestId, rocDoc.DocumentId, chargeDoc.DocumentId);
+
+        Assert.NotEqual(IngestionRunStatus.Failed, run.Status);
+
+        await using var verifyDb = CreateContext();
+        var reloadedCharge = await verifyDb.RequestDocuments.FirstAsync(d => d.DocumentId == chargeDoc.DocumentId);
+        Assert.Equal(DocumentUploadStatus.Quarantined, reloadedCharge.UploadStatus);
+        Assert.Contains("company name", reloadedCharge.QuarantineReason, StringComparison.OrdinalIgnoreCase);
+
+        var reloadedRequest = await verifyDb.Requests.FirstAsync(r => r.RequestId == request.RequestId);
+        Assert.True(reloadedRequest.IsManualReviewRequired);
+
+        // The ROC report's own charge sequence data still ingests — only enrichment from the mismatched
+        // charge workbook is skipped, per ChargesParser's design (see plan doc).
+        var charges = await verifyDb.RocCharges.Where(c => c.IngestionRunId == run.IngestionRunId).ToListAsync();
+        var chargeEvent = Assert.Single(await verifyDb.RocChargeEvents.Where(e => e.IngestionRunId == run.IngestionRunId).ToListAsync());
+        Assert.Equal(ChargeEventMatchConfidence.Unmatched, chargeEvent.MatchConfidence); // never enriched from the quarantined workbook
+        Assert.Single(charges);
+    }
 }

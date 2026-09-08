@@ -127,8 +127,10 @@ public class IngestionOrchestrator(AppDbContext db, IExcelSheetReader sheetReade
     }
 
     /// <summary>Returns false (and quarantines the charge document) if the charge report's own company
-    /// identity conflicts with the ROC report's — in that case charge data must NOT be used for enrichment,
-    /// to avoid attributing another company's charges to this one.</summary>
+    /// identity conflicts with the ROC report's on company name, CIN, or PAN — in that case charge data
+    /// must NOT be used for enrichment, to avoid attributing another company's charges to this one.
+    /// Checking CIN alone isn't sufficient: a charge workbook with a matching or blank CIN but a
+    /// mismatched name or PAN would otherwise be accepted and used to enrich the ROC charge data.</summary>
     private static bool ValidateRocVsCharge(
         IReadOnlyList<SheetData> rocWorkbook, IReadOnlyList<SheetData> chargeWorkbook,
         RequestDocument chargeDocument, McaRequest request)
@@ -137,23 +139,40 @@ public class IngestionOrchestrator(AppDbContext db, IExcelSheetReader sheetReade
         var chargeCompanySheet = SheetAliases.Find(chargeWorkbook, SheetAliases.CompanyProfile);
         if (rocCompanySheet is null || chargeCompanySheet is null) return true;
 
-        var rocCin = ExtractCin(rocCompanySheet);
-        var chargeCin = ExtractCin(chargeCompanySheet);
-        if (string.IsNullOrEmpty(rocCin) || string.IsNullOrEmpty(chargeCin)) return true;
-        if (string.Equals(rocCin, chargeCin, StringComparison.OrdinalIgnoreCase)) return true;
+        var mismatches = new List<string>();
+        CompareField(rocCompanySheet, chargeCompanySheet, "Legal Name", "company name", mismatches, normalize: true);
+        CompareField(rocCompanySheet, chargeCompanySheet, "CIN", "CIN", mismatches, normalize: false);
+        CompareField(rocCompanySheet, chargeCompanySheet, "PAN", "PAN", mismatches, normalize: false);
+
+        if (mismatches.Count == 0) return true;
 
         chargeDocument.UploadStatus = DocumentUploadStatus.Quarantined;
-        chargeDocument.QuarantineReason = $"Charge report CIN '{chargeCin}' does not match ROC report CIN '{rocCin}'.";
+        chargeDocument.QuarantineReason = string.Join(" ", mismatches);
         request.IsManualReviewRequired = true;
         request.ManualReviewReason = (request.ManualReviewReason is null ? "" : request.ManualReviewReason + " ")
             + "Charge report identity does not match the ROC report; charge enrichment was skipped.";
         return false;
     }
 
-    private static string? ExtractCin(SheetData companySheet)
+    private static void CompareField(
+        SheetData rocSheet, SheetData chargeSheet, string label, string displayName, List<string> mismatches, bool normalize)
+    {
+        var rocValue = ExtractField(rocSheet, label);
+        var chargeValue = ExtractField(chargeSheet, label);
+        if (string.IsNullOrEmpty(rocValue) || string.IsNullOrEmpty(chargeValue)) return;
+
+        var equal = normalize
+            ? string.Equals(NameNormalizer.Normalize(rocValue), NameNormalizer.Normalize(chargeValue), StringComparison.Ordinal)
+            : string.Equals(rocValue, chargeValue, StringComparison.OrdinalIgnoreCase);
+
+        if (!equal)
+            mismatches.Add($"Charge report {displayName} '{chargeValue}' does not match ROC report {displayName} '{rocValue}'.");
+    }
+
+    private static string? ExtractField(SheetData companySheet, string label)
     {
         foreach (var row in companySheet.Rows)
-            if (row.Count > 1 && row[0]?.ToString()?.Trim() == "CIN")
+            if (row.Count > 1 && row[0]?.ToString()?.Trim() == label)
                 return row[1]?.ToString()?.Trim();
         return null;
     }
