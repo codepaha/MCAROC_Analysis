@@ -40,13 +40,18 @@ public class FilingBatchProcessor(
             var tempDir = FilingStoragePaths.BatchTempDir(contentRootPath, batch.RequestId, batchId);
             Directory.CreateDirectory(tempDir);
 
+            // One tracker shared across every nested zip in this batch, so the uncompressed-size and
+            // PDF-count limits are enforced cumulatively — many individually-small nested zips could
+            // otherwise combine to exhaust disk without any single one tripping a per-archive check.
+            var cumulativeStats = new CumulativeArchiveStats();
+
             using (var outerArchive = ZipFile.OpenRead(outerZipDoc.StoragePath))
             {
                 var nestedZipEntries = outerArchive.Entries.Where(e => e.FullName.EndsWith(".zip", StringComparison.OrdinalIgnoreCase)).ToList();
                 foreach (var nestedEntry in nestedZipEntries)
                 {
                     ct.ThrowIfCancellationRequested();
-                    await IndexNestedZipAsync(batch, nestedEntry, tempDir, ct);
+                    await IndexNestedZipAsync(batch, nestedEntry, tempDir, cumulativeStats, ct);
                 }
             }
 
@@ -76,7 +81,7 @@ public class FilingBatchProcessor(
         }
     }
 
-    private async Task IndexNestedZipAsync(McaFilingBatch batch, ZipArchiveEntry nestedEntry, string batchTempDir, CancellationToken ct)
+    private async Task IndexNestedZipAsync(McaFilingBatch batch, ZipArchiveEntry nestedEntry, string batchTempDir, CumulativeArchiveStats cumulativeStats, CancellationToken ct)
     {
         var nestedZipFileName = Path.GetFileName(nestedEntry.FullName);
         var outerCategoryFolder = Path.GetFileName(Path.GetDirectoryName(nestedEntry.FullName.Replace('\\', '/'))) ?? "";
@@ -97,7 +102,7 @@ public class FilingBatchProcessor(
 
         try
         {
-            var nestedSafety = ArchiveSafetyValidator.ValidateNestedArchive(tempNestedZipPath, Limits, currentDepth: 2);
+            var nestedSafety = ArchiveSafetyValidator.ValidateNestedArchive(tempNestedZipPath, Limits, currentDepth: 2, cumulativeStats);
 
             var identity = FilingIdentityParser.Parse(Path.GetFileNameWithoutExtension(nestedZipFileName));
             var identityMatchesRequest = identity.Cin is null || batch.Request!.Cin is null
@@ -203,11 +208,21 @@ public class FilingBatchProcessor(
 
     public async Task ProcessDocumentAsync(long filingDocumentId, CancellationToken ct)
     {
+        // Atomic claim: a single UPDATE ... WHERE ProcessingStatus = 'Discovered' is what actually
+        // prevents two overlapping enqueues of the same document (recovery + a retry, or two near-
+        // simultaneous triggers) from both doing the work. SQL Server serializes concurrent UPDATEs
+        // against the same row via row locking and re-evaluates the WHERE predicate on the blocked
+        // transaction once the first commits, so only one caller ever sees rowsClaimed > 0.
+        var rowsClaimed = await db.McaFilingDocuments
+            .Where(d => d.FilingDocumentId == filingDocumentId && d.ProcessingStatus == FilingDocumentProcessingStatus.Discovered)
+            .ExecuteUpdateAsync(s => s
+                .SetProperty(d => d.ProcessingStatus, FilingDocumentProcessingStatus.TextExtracting)
+                .SetProperty(d => d.ProcessingStartedAt, DateTime.UtcNow)
+                .SetProperty(d => d.UpdatedAt, DateTime.UtcNow), ct);
+        if (rowsClaimed == 0)
+            return; // another worker already claimed (or already finished) this document
+
         var document = await db.McaFilingDocuments.Include(d => d.Filing).FirstAsync(d => d.FilingDocumentId == filingDocumentId, ct);
-        document.ProcessingStatus = FilingDocumentProcessingStatus.TextExtracting;
-        document.ProcessingStartedAt = DateTime.UtcNow;
-        document.UpdatedAt = DateTime.UtcNow;
-        await db.SaveChangesAsync(ct);
 
         try
         {
@@ -294,15 +309,39 @@ public class FilingBatchProcessor(
             queue.Enqueue(new ExtractFilingWorkItem(filingId));
     }
 
+    /// <summary>Resets any AiExtractionStatus=Pending document in a filing back to NotApplicable, and
+    /// re-checks batch completion if that changed anything. Used wherever ExtractFilingAsync decides — for
+    /// a filing-level reason, not a per-document one — that this filing will never actually get a Gemini
+    /// call (quarantined identity, or a non-AI-eligible dominant category): a document's own Pending flag
+    /// was set purely from its individual category by ProcessDocumentAsync, with no visibility into that
+    /// filing-level decision, so without this it stays Pending forever and the batch can never complete.</summary>
+    private async Task ClearStrayPendingAiStatusAsync(long filingId, CancellationToken ct)
+    {
+        var filing = await db.McaFilings.FirstAsync(f => f.FilingId == filingId, ct);
+        var cleared = await db.McaFilingDocuments
+            .Where(d => d.FilingId == filingId && d.AiExtractionStatus == AiExtractionStatus.Pending)
+            .ExecuteUpdateAsync(s => s.SetProperty(d => d.AiExtractionStatus, AiExtractionStatus.NotApplicable), ct);
+        if (cleared > 0)
+            await MaybeCompleteBatchAsync(filing.BatchId, ct);
+    }
+
     public async Task ExtractFilingAsync(long filingId, CancellationToken ct)
     {
         var filing = await db.McaFilings.FirstAsync(f => f.FilingId == filingId, ct);
         if (!filing.IdentityMatchesRequest)
-            return; // quarantined at indexing time — never send to Gemini
+        {
+            // Quarantined at indexing time — never send to Gemini. Same reset as the not-eligible branch
+            // below and for the same reason: ProcessDocumentAsync marks a document AiExtractionStatus =
+            // Pending purely from its own category, with no knowledge of the filing's identity-match
+            // status, so a quarantined filing's individually-eligible documents need the same cleanup or
+            // they're stuck Pending forever too.
+            await ClearStrayPendingAiStatusAsync(filingId, ct);
+            return;
+        }
 
         var alreadyExtracted = await db.McaFilingExtractions.AnyAsync(e => e.FilingId == filingId, ct);
         if (alreadyExtracted)
-            return; // idempotent guard against duplicate enqueue from near-simultaneous document completions
+            return; // cheap early-out; the real guarantee against a duplicate paid call is the claim below
 
         var documents = await db.McaFilingDocuments
             .Where(d => d.FilingId == filingId && d.ProcessingStatus == FilingDocumentProcessingStatus.Completed)
@@ -321,7 +360,45 @@ public class FilingBatchProcessor(
             dominantCategory = FilingCategory.Unclassified;
 
         if (!AiEligibleCategories.Contains(dominantCategory))
-            return; // Financial/Unclassified — stored and text-extracted, no Gemini extraction
+        {
+            // Financial/Unclassified-dominant — stored and text-extracted, no Gemini extraction. But a
+            // stray document that was INDIVIDUALLY classified as AI-eligible (e.g. one Charge or
+            // Compliance document inside an otherwise Financial-dominant filing) was already marked
+            // AiExtractionStatus=Pending by ProcessDocumentAsync. The filing-level decision overrides
+            // that — it doesn't get its own separate extraction — so it must be reset here, or it stays
+            // Pending forever and MaybeCompleteBatchAsync can never see the batch as done. Found live: a
+            // 29-document filing (18 Financial, 10 Compliance, 1 Charge) left the whole batch stuck in
+            // Processing indefinitely until this reset was added.
+            await ClearStrayPendingAiStatusAsync(filingId, ct);
+            return;
+        }
+
+        // Which documents this call is actually claiming — checked against the in-memory (pre-claim) state,
+        // which is exactly the set the claim UPDATE below targets. Captured before the UPDATE so we can
+        // apply the outcome to precisely these documents afterward without relying on EF's change tracker
+        // to notice a bulk update it wasn't part of (ExecuteUpdateAsync bypasses the tracker entirely).
+        var eligibleDocumentIds = documents
+            .Where(d => d.AiExtractionStatus == AiExtractionStatus.Pending)
+            .Select(d => d.FilingDocumentId)
+            .ToHashSet();
+
+        // Atomic claim, taken only now that we know this filing is actually going to call Gemini — flips
+        // every individually-eligible document from Pending to InProgress in one UPDATE statement. Two
+        // overlapping calls for the same filing (recovery + a near-simultaneous document-completion
+        // trigger, say) have SQL Server serialize their UPDATEs via row locking: only the first to commit
+        // sees rows affected; the second, once unblocked, re-evaluates its WHERE clause against the
+        // now-InProgress rows and claims zero. That's what actually prevents a duplicate paid Gemini call,
+        // not the AnyAsync check above (a plain read-then-act race on its own). Scoped to
+        // AiExtractionStatus = Pending specifically (not all "Completed" documents in the filing) so a
+        // stray misclassified document — e.g. one Financial-category doc mixed into an otherwise
+        // Charge-dominant filing, which was individually marked NotApplicable — is never claimed or left
+        // stuck in InProgress; its text still flows into the Gemini context below regardless.
+        var claimed = await db.McaFilingDocuments
+            .Where(d => d.FilingId == filingId && d.ProcessingStatus == FilingDocumentProcessingStatus.Completed
+                && d.AiExtractionStatus == AiExtractionStatus.Pending)
+            .ExecuteUpdateAsync(s => s.SetProperty(d => d.AiExtractionStatus, AiExtractionStatus.InProgress), ct);
+        if (claimed == 0)
+            return; // already claimed by another call (or nothing individually eligible after all)
 
         var dominantFormType = documents
             .Where(d => d.Category == dominantCategory && d.FormType != null)
@@ -338,9 +415,6 @@ public class FilingBatchProcessor(
             var text = await File.ReadAllTextAsync(effectiveTextPath, ct);
             contexts.Add(new FilingDocumentContext(d.OriginalFileName, d.FormType, text));
         }
-
-        foreach (var d in documents) d.AiExtractionStatus = AiExtractionStatus.Pending;
-        await db.SaveChangesAsync(ct);
 
         var outcome = await vertexAiService.ExtractAsync(filing.Srn, dominantCategory, dominantFormType, contexts, ct);
 
@@ -360,17 +434,36 @@ public class FilingBatchProcessor(
             ExtractedAt = DateTime.UtcNow
         });
 
+        // Only the documents this call actually claimed — a stray NotApplicable document that happened to
+        // share this filing (e.g. one Financial-category attachment in an otherwise Charge-dominant
+        // filing) was never claimed and must not be overwritten with an AI outcome it was never part of.
         var finalStatus = outcome.Status == ExtractionStatus.Success ? AiExtractionStatus.Success : AiExtractionStatus.Failed;
-        foreach (var d in documents) d.AiExtractionStatus = finalStatus;
+        foreach (var d in documents.Where(d => eligibleDocumentIds.Contains(d.FilingDocumentId)))
+            d.AiExtractionStatus = finalStatus;
         if (outcome.Status != ExtractionStatus.Success)
         {
             filing.ManualReviewRequired = true;
             filing.ManualReviewReason = (filing.ManualReviewReason is null ? "" : filing.ManualReviewReason + " ") + $"AI extraction failed: {outcome.FailureReason}";
         }
 
-        await db.SaveChangesAsync(ct);
+        try
+        {
+            await db.SaveChangesAsync(ct);
+        }
+        catch (DbUpdateException ex) when (IsUniqueConstraintViolation(ex))
+        {
+            // The atomic claim above should make this unreachable in practice, but the unique index is
+            // the actual guarantee, not the claim — if it ever fires, a paid Gemini call was wasted (a
+            // known, accepted cost of at-least-once semantics), but no duplicate row lands in the table.
+            logger.LogWarning(ex, "Duplicate McaFilingExtraction insert rejected by the unique index for filing {FilingId} — a concurrent call already recorded one.", filingId);
+            return;
+        }
+
         await MaybeCompleteBatchAsync(filing.BatchId, ct);
     }
+
+    private static bool IsUniqueConstraintViolation(DbUpdateException ex) =>
+        ex.InnerException is Microsoft.Data.SqlClient.SqlException sqlEx && (sqlEx.Number is 2601 or 2627);
 
     /// <summary>Status is a terminal flag, not an incremented counter — safe to set redundantly if called
     /// from multiple near-simultaneous completions, unlike a shared count that would need synchronization.</summary>
@@ -386,11 +479,18 @@ public class FilingBatchProcessor(
         if (nonTerminalDocs > 0) return;
 
         var pendingAiFilings = await db.McaFilingDocuments.CountAsync(d =>
-            d.BatchId == batchId && d.AiExtractionStatus == AiExtractionStatus.Pending, ct);
+            d.BatchId == batchId &&
+            (d.AiExtractionStatus == AiExtractionStatus.Pending || d.AiExtractionStatus == AiExtractionStatus.InProgress), ct);
         if (pendingAiFilings > 0) return;
 
+        // Both layers of failure: a document that failed text extraction/OCR outright, and a document
+        // whose text extracted fine but whose (filing-level) Gemini call failed — found live in the
+        // corpus run, where a filing's extraction timed out but the batch still showed plain "Completed"
+        // because this only checked ProcessingStatus, never AiExtractionStatus.
         var hasFailures = await db.McaFilingDocuments.AnyAsync(d =>
-            d.BatchId == batchId && d.ProcessingStatus == FilingDocumentProcessingStatus.Failed, ct);
+            d.BatchId == batchId &&
+            (d.ProcessingStatus == FilingDocumentProcessingStatus.Failed
+                || d.AiExtractionStatus == AiExtractionStatus.Failed), ct);
 
         var batch = await db.McaFilingBatches.FirstAsync(b => b.BatchId == batchId, ct);
         if (batch.Status is FilingBatchStatus.Completed or FilingBatchStatus.CompletedWithErrors or FilingBatchStatus.Failed)
@@ -414,29 +514,57 @@ public class FilingBatchProcessor(
     /// in-flight work — this method doesn't do that (yet), so it recovers unconditionally.</summary>
     public async Task<int> RecoverStaleWorkAsync(CancellationToken ct)
     {
-        var staleDocuments = await db.McaFilingDocuments
-            .Where(d => d.DuplicateOfDocumentId == null &&
-                (d.ProcessingStatus == FilingDocumentProcessingStatus.Discovered
-                    || d.ProcessingStatus == FilingDocumentProcessingStatus.Classified
-                    || d.ProcessingStatus == FilingDocumentProcessingStatus.TextExtracting))
-            .Select(d => d.FilingDocumentId)
-            .ToListAsync(ct);
-
-        foreach (var id in staleDocuments)
-            queue.Enqueue(new ProcessDocumentWorkItem(id));
-
         // Also covers a crash mid-unpack (Unpacking/Indexing), not just before it ever started (Uploaded).
-        // IndexNestedZipAsync is idempotent (skips a nested zip it already indexed), so re-running
-        // UnpackBatchAsync from the top is safe rather than producing duplicate McaFiling rows.
+        // IndexNestedZipAsync is idempotent (skips a nested zip it already indexed), and UnpackBatchAsync's
+        // own post-unpack enqueue only targets still-Discovered documents, so re-running it from the top
+        // is safe rather than producing duplicate McaFiling rows or duplicate ProcessDocumentWorkItems.
         var stuckBatches = await db.McaFilingBatches
             .Where(b => b.Status == FilingBatchStatus.Uploaded
                 || b.Status == FilingBatchStatus.Unpacking
                 || b.Status == FilingBatchStatus.Indexing)
             .Select(b => b.BatchId)
-            .ToListAsync(ct);
+            .ToHashSetAsync(ct);
         foreach (var id in stuckBatches)
             queue.Enqueue(new UnpackBatchWorkItem(id));
 
-        return staleDocuments.Count + stuckBatches.Count;
+        // Excludes documents belonging to a stuck batch above — UnpackBatchAsync's own re-run already
+        // re-enqueues its still-Discovered documents at the end, so including them here too would just be
+        // a second, redundant enqueue of the same FilingDocumentIds (harmless now that ProcessDocumentAsync
+        // claims atomically, but wasteful).
+        var staleDocuments = await db.McaFilingDocuments
+            .Where(d => d.DuplicateOfDocumentId == null && !stuckBatches.Contains(d.BatchId) &&
+                (d.ProcessingStatus == FilingDocumentProcessingStatus.Discovered
+                    || d.ProcessingStatus == FilingDocumentProcessingStatus.Classified
+                    || d.ProcessingStatus == FilingDocumentProcessingStatus.TextExtracting))
+            .Select(d => d.FilingDocumentId)
+            .ToListAsync(ct);
+        foreach (var id in staleDocuments)
+            queue.Enqueue(new ProcessDocumentWorkItem(id));
+
+        // The gap that actually bit in review: a document reaching ProcessingStatus=Completed with
+        // AiExtractionStatus=Pending (queued for AI) or InProgress (claimed, Gemini call was in flight)
+        // leaves no Discovered/TextExtracting document and no stuck batch — Status is already Processing —
+        // so without this, RecoverStaleWorkAsync finds nothing and the batch stays stuck forever. Any
+        // InProgress row here is, by the same startup-means-orphaned logic as above, from a crashed call
+        // that never got a McaFilingExtraction row written — reset to Pending so ExtractFilingAsync's claim
+        // predicate (WHERE AiExtractionStatus = Pending) can pick it up again.
+        await db.McaFilingDocuments
+            .Where(d => d.DuplicateOfDocumentId == null && d.AiExtractionStatus == AiExtractionStatus.InProgress)
+            .ExecuteUpdateAsync(s => s.SetProperty(d => d.AiExtractionStatus, AiExtractionStatus.Pending), ct);
+
+        var filingsNeedingExtraction = await db.McaFilingDocuments
+            .Where(d => d.DuplicateOfDocumentId == null && d.AiExtractionStatus == AiExtractionStatus.Pending)
+            .Select(d => d.FilingId)
+            .Distinct()
+            .ToListAsync(ct);
+        var alreadyExtractedFilingIds = await db.McaFilingExtractions
+            .Where(e => e.FilingId != null && filingsNeedingExtraction.Contains(e.FilingId.Value))
+            .Select(e => e.FilingId!.Value)
+            .ToListAsync(ct);
+        var filingIdsToEnqueue = filingsNeedingExtraction.Except(alreadyExtractedFilingIds).ToList();
+        foreach (var id in filingIdsToEnqueue)
+            queue.Enqueue(new ExtractFilingWorkItem(id));
+
+        return staleDocuments.Count + stuckBatches.Count + filingIdsToEnqueue.Count;
     }
 }

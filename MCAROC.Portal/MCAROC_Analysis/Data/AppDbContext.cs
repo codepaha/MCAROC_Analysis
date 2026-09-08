@@ -199,6 +199,11 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             e.HasOne(x => x.FilingDocument).WithMany().HasForeignKey(x => x.FilingDocumentId).OnDelete(DeleteBehavior.Restrict);
             e.Property(x => x.ValidationStatus).HasConversion<string>().HasMaxLength(20);
             e.Property(x => x.Status).HasConversion<string>().HasMaxLength(10);
+            // Defense-in-depth against a duplicate paid Gemini call slipping past the atomic claim in
+            // ExtractFilingAsync (e.g. under a weaker isolation level than assumed): the DB itself refuses
+            // a second extraction row for the same filing outright, rather than relying solely on
+            // application-level locking to prevent one.
+            e.HasIndex(x => x.FilingId).IsUnique().HasFilter("[FilingId] IS NOT NULL");
         });
 
         modelBuilder.Entity<Client>().HasData(

@@ -695,3 +695,4 @@ The strongest implementation is **hybrid SQL + document RAG**:
 > analytical questions → both
 
 That will give much more accurate answers than simply embedding 814 PDFs and sending the top five chunks to Gemini.
+`
