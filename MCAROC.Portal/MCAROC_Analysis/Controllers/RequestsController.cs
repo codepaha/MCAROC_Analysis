@@ -276,7 +276,7 @@ public class RequestsController(
         var request = await db.Requests.FirstOrDefaultAsync(r => r.RequestId == id);
         if (request is null) return NotFound();
 
-        var vm = new DocumentsPageViewModel { RequestId = id, Category = category, Page = Math.Max(1, page), PageSize = pageSize };
+        var vm = new DocumentsPageViewModel { RequestId = id, Category = category, PageSize = pageSize };
 
         var batch = await db.McaFilingBatches.Where(b => b.RequestId == id)
             .OrderByDescending(b => b.StartedDate).FirstOrDefaultAsync();
@@ -285,46 +285,57 @@ public class RequestsController(
 
         vm.HasBatch = true;
 
-        var filings = await db.McaFilings.Include(f => f.Documents)
-            .Where(f => f.BatchId == batch.BatchId).ToListAsync();
+        // Dominant category per filing — derived from a lightweight (filing, category, count) grouping in
+        // the database, not by loading every McaFilingDocument entity into memory.
+        var catGroups = await db.McaFilingDocuments
+            .Where(d => d.BatchId == batch.BatchId && d.DuplicateOfDocumentId == null && d.Category != FilingCategory.Unclassified)
+            .GroupBy(d => new { d.FilingId, d.Category })
+            .Select(g => new { g.Key.FilingId, g.Key.Category, Count = g.Count() })
+            .ToListAsync();
+        var dominantByFiling = catGroups
+            .GroupBy(x => x.FilingId)
+            .ToDictionary(g => g.Key, g => g.OrderByDescending(x => x.Count).First().Category);
 
-        var withCategory = filings
-            .Select(f => (Filing: f, Dominant: DominantCategory(f)))
+        var allFilings = await db.McaFilings.Where(f => f.BatchId == batch.BatchId)
+            .Select(f => new { f.FilingId, f.Srn }).ToListAsync();
+
+        FilingCategory DominantFor(long filingId) =>
+            dominantByFiling.TryGetValue(filingId, out var c) ? c : FilingCategory.Unclassified;
+
+        foreach (var f in allFilings)
+            vm.CategoryCounts[DominantFor(f.FilingId)] = vm.CategoryCounts.GetValueOrDefault(DominantFor(f.FilingId)) + 1;
+
+        FilingCategory? filterCat = !string.IsNullOrWhiteSpace(category)
+            && Enum.TryParse<FilingCategory>(category, ignoreCase: true, out var parsed) ? parsed : null;
+
+        var ordered = allFilings
+            .Where(f => filterCat is null || DominantFor(f.FilingId) == filterCat)
+            .OrderBy(f => DominantFor(f.FilingId))
+            .ThenBy(f => f.Srn, StringComparer.Ordinal)
+            .Select(f => f.FilingId)
             .ToList();
 
-        foreach (var (_, dominant) in withCategory)
-            vm.CategoryCounts[dominant] = vm.CategoryCounts.GetValueOrDefault(dominant) + 1;
+        vm.TotalFilings = ordered.Count;
+        // Clamp the requested page into [1, TotalPages] *before* any arithmetic — an unbounded ?page=
+        // (e.g. int.MaxValue) would otherwise overflow (vm.Page - 1) * pageSize.
+        vm.Page = Math.Clamp(page, 1, Math.Max(1, vm.TotalPages));
 
-        var filtered = withCategory;
-        if (!string.IsNullOrWhiteSpace(category) && Enum.TryParse<FilingCategory>(category, ignoreCase: true, out var cat))
-            filtered = withCategory.Where(x => x.Dominant == cat).ToList();
+        var pageIds = ordered.Skip((vm.Page - 1) * pageSize).Take(pageSize).ToList();
 
-        filtered = filtered.OrderBy(x => x.Dominant).ThenBy(x => x.Filing.Srn, StringComparer.Ordinal).ToList();
-        vm.TotalFilings = filtered.Count;
+        var pageFilings = await db.McaFilings.Include(f => f.Documents)
+            .Where(f => pageIds.Contains(f.FilingId)).ToListAsync();
+        var extractionByFiling = (await db.McaFilingExtractions
+                .Where(e => e.FilingId != null && pageIds.Contains(e.FilingId!.Value)).ToListAsync())
+            .Where(e => e.FilingId.HasValue)
+            .ToDictionary(e => e.FilingId!.Value);
 
-        var pageItems = filtered.Skip((vm.Page - 1) * pageSize).Take(pageSize).ToList();
-        var pageFilingIds = pageItems.Select(x => x.Filing.FilingId).ToList();
-        var extractions = await db.McaFilingExtractions
-            .Where(e => e.FilingId != null && pageFilingIds.Contains(e.FilingId!.Value))
-            .ToListAsync();
-        var extractionByFiling = extractions.Where(e => e.FilingId.HasValue).ToDictionary(e => e.FilingId!.Value);
-
-        vm.Filings = pageItems
-            .Select(x => new DocumentsPageViewModel.FilingRow(
-                x.Filing, x.Dominant, extractionByFiling.GetValueOrDefault(x.Filing.FilingId)))
+        vm.Filings = pageIds // preserve the (category, SRN) page order
+            .Select(fid => pageFilings.First(f => f.FilingId == fid))
+            .Select(f => new DocumentsPageViewModel.FilingRow(f, DominantFor(f.FilingId), extractionByFiling.GetValueOrDefault(f.FilingId)))
             .ToList();
 
         return PartialView("Details/_DocumentsList", vm);
     }
-
-    /// <summary>A filing's dominant document category — the most common non-Unclassified category among its
-    /// non-duplicate documents, or Unclassified when it has none. Mirrors the grouping used on Details.</summary>
-    private static FilingCategory DominantCategory(McaFiling filing) => filing.Documents
-        .Where(d => d.DuplicateOfDocumentId == null && d.Category != FilingCategory.Unclassified)
-        .GroupBy(d => d.Category)
-        .OrderByDescending(g => g.Count())
-        .Select(g => (FilingCategory?)g.Key)
-        .FirstOrDefault() ?? FilingCategory.Unclassified;
 
     private async Task<RequestDocument> SaveDocumentAsync(long requestId, IFormFile file, DocumentType documentType, bool validateAsExcel = true)
     {

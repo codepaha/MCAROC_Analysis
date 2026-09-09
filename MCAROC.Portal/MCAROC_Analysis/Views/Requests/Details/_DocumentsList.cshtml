@@ -70,9 +70,12 @@ else
 
                     @if (row.Extraction is { Status: ExtractionStatus.Success } ex && !string.IsNullOrEmpty(ex.ExtractedJson))
                     {
+                        // Deserialize<JsonElement> returns a detached clone and disposes the transient
+                        // JsonDocument — a bare JsonDocument.Parse per row would leak a pooled buffer.
+                        var extractedRoot = System.Text.Json.JsonSerializer.Deserialize<System.Text.Json.JsonElement>(ex.ExtractedJson);
                         <p class="mb-1"><b>Extracted fields</b></p>
                         <ul class="mb-1">
-                            @foreach (var prop in System.Text.Json.JsonDocument.Parse(ex.ExtractedJson).RootElement.EnumerateObject())
+                            @foreach (var prop in extractedRoot.EnumerateObject())
                             {
                                 var isObject = prop.Value.ValueKind == System.Text.Json.JsonValueKind.Object;
                                 var valueEl = isObject && prop.Value.TryGetProperty("value", out var v) ? v : default;

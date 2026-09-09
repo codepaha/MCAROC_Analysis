@@ -108,9 +108,10 @@ public static class ChargeSecurityClassifier
             _ => securityText.Contains("exclusive") ? ChargeArrangement.Sole : ChargeArrangement.Unknown
         };
 
-        // Security components — split the NARRATIVE (not PropertyType) into clauses so "pari passu over
-        // current assets and first charge over movable assets" produces two rows with different rankings.
-        var clauses = narrative.Split([" and ", ";", ". "], StringSplitOptions.RemoveEmptyEntries);
+        // Security components — split the NARRATIVE (not PropertyType) into ranking-clauses so "pari passu
+        // over current assets and first charge over movable assets" produces two rows with different
+        // rankings — while keeping asset phrases like "land and building" / "plant and machinery" whole.
+        var clauses = SplitRankingClauses(narrative);
         var narrativeDominantRank = FirstMatch(RankingRules, narrative);
         var isPrimaryOverall = allText.Contains("primary security") ? true
             : allText.Contains("collateral security") || allText.Contains("additional security") ? (bool?)false
@@ -137,6 +138,11 @@ public static class ChargeSecurityClassifier
                 AddComponent(secType, clauseRank, Trim(clause), isPrimary);
         }
 
+        // Safety net — any security type named anywhere in the narrative that clause-splitting didn't
+        // surface (e.g. a phrase that straddled a split boundary) is added at the dominant ranking.
+        foreach (var secType in MatchSecurityTypes(narrative))
+            AddComponent(secType, narrativeDominantRank ?? ChargeRanking.Unknown, null, isPrimaryOverall);
+
         // PropertyType is a bare type list — add any type it names that the narrative didn't, at the
         // narrative's dominant ranking (or Unknown).
         foreach (var secType in MatchSecurityTypes(propertyTypeText))
@@ -154,6 +160,32 @@ public static class ChargeSecurityClassifier
         foreach (var (kw, rank) in rules)
             if (text.Contains(kw)) return rank;
         return null;
+    }
+
+    /// <summary>Cues that mark a segment as the start of its own ranking-clause rather than a continuation
+    /// of the previous asset phrase.</summary>
+    private static readonly string[] ClauseCues =
+        ["charge", "pari passu", "pari-passu", "paripassu", "first ", "second ", "1st ", "2nd ",
+         "exclusive", "subservient", "subordinate", "hypotheca", "mortgage", "pledge", "lien"];
+
+    /// <summary>Splits a security narrative into ranking-clauses. A " and " / ";" / ". " boundary only
+    /// begins a new clause when the following segment carries a ranking cue — so "first charge over land
+    /// and building" stays one clause (→ ImmovableProperty), while "pari passu over book debts and first
+    /// charge over immovable property" splits into two with distinct rankings.</summary>
+    private static List<string> SplitRankingClauses(string narrative)
+    {
+        var pieces = narrative.Split([" and ", ";", ". "], StringSplitOptions.RemoveEmptyEntries);
+        var clauses = new List<string>();
+        foreach (var raw in pieces)
+        {
+            var piece = raw.Trim();
+            if (piece.Length == 0) continue;
+            if (clauses.Count > 0 && !ClauseCues.Any(piece.Contains))
+                clauses[^1] = clauses[^1] + " and " + piece;
+            else
+                clauses.Add(piece);
+        }
+        return clauses.Count > 0 ? clauses : [narrative];
     }
 
     /// <summary>Security types named in a piece of text. "immovable property" contains the substring

@@ -38,6 +38,16 @@ public class ChargeSecurityClassifierTests
         Assert.Contains(c.SecurityComponents, x => x.SecurityType == SecurityType.ImmovableProperty && x.Ranking == ChargeRanking.FirstCharge);
     }
 
+    [Theory]
+    [InlineData("First charge over land and building", SecurityType.ImmovableProperty, ChargeRanking.FirstCharge)]
+    [InlineData("Exclusive charge over plant and machinery", SecurityType.MovableFixedAssets, ChargeRanking.Exclusive)]
+    public void MultiWordAssetPhraseWithAnd_IsNotTornApart(string narrative, SecurityType expectedType, ChargeRanking expectedRank)
+    {
+        // "land and building" / "plant and machinery" must survive the ranking-clause split intact.
+        var c = Classify("-", narrative);
+        Assert.Contains(c.SecurityComponents, x => x.SecurityType == expectedType && x.Ranking == expectedRank);
+    }
+
     [Fact]
     public void PrimaryVsCollateral_OnlyFromExplicitWording()
     {
