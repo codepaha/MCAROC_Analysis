@@ -37,7 +37,14 @@ public class EmbeddingService
                 .ToList();
             var config = new EmbedContentConfig { TaskType = "RETRIEVAL_DOCUMENT", OutputDimensionality = Dimensions };
             var response = await _client.Models.EmbedContentAsync(ModelId, batch, config, ct);
-            foreach (var embedding in response.Embeddings ?? [])
+            var batchEmbeddings = response.Embeddings ?? [];
+            // The caller (DocumentChunkingOrchestrator) pairs results[i] with chunk[i] positionally, so the
+            // batch API must return exactly one vector per input, in input order. A short/null response
+            // would otherwise silently truncate or misalign a document's index — fail loudly instead.
+            if (batchEmbeddings.Count != batch.Count)
+                throw new InvalidOperationException(
+                    $"Embedding batch returned {batchEmbeddings.Count} vectors for {batch.Count} inputs.");
+            foreach (var embedding in batchEmbeddings)
                 results.Add(Normalize(embedding.Values ?? []));
         }
         return results;

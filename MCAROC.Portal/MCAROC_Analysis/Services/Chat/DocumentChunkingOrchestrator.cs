@@ -44,6 +44,12 @@ public class DocumentChunkingOrchestrator(AppDbContext db, EmbeddingService embe
             var embeddings = textChunks.Count > 0
                 ? await embeddingService.EmbedDocumentsAsync(textChunks.Select(c => c.Text).ToList(), ct)
                 : [];
+            // Chunks are paired with embeddings positionally below; a mismatch means the embedding call
+            // dropped/duplicated a vector — fail this document (retry, then Failed) rather than persist a
+            // misaligned or truncated index.
+            if (embeddings.Count != textChunks.Count)
+                throw new InvalidOperationException(
+                    $"Embedding count {embeddings.Count} does not match chunk count {textChunks.Count} for document {filingDocumentId}.");
 
             // Duplicates (same file hash) never went through their own text extraction — Phase 2 marks
             // them Skipped at discovery and reuses the canonical copy's results — so they get their own
