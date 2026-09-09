@@ -46,6 +46,13 @@ public class IngestionOrchestrator(AppDbContext db, IExcelSheetReader sheetReade
                 ? sheetReader.ReadWorkbook(chargeDocument.StoragePath)
                 : null;
 
+            // Layer 0 — record every non-blank row of every sheet of the ROC workbook verbatim before
+            // any typed parsing. The charge workbook's rows are recorded later, only if its company
+            // identity matches (a mismatched charge workbook is another company's data).
+            var extractedAt = DateTime.UtcNow;
+            db.SourceRows.AddRange(SourceRowRecorder.Record(
+                rocWorkbook, "RocReport", requestId, run.IngestionRunId, rocDocumentId, extractedAt));
+
             var companySheet = SheetAliases.Find(rocWorkbook, SheetAliases.CompanyProfile)
                 ?? throw new IngestionFailedException("Required sheet 'About the Company' was not found in the ROC report.");
 
@@ -61,7 +68,13 @@ public class IngestionOrchestrator(AppDbContext db, IExcelSheetReader sheetReade
 
             var chargeIdentityMatches = true;
             if (chargeWorkbook is not null)
+            {
                 chargeIdentityMatches = ValidateRocVsCharge(rocWorkbook, chargeWorkbook, chargeDocument!, request);
+                if (chargeIdentityMatches)
+                    db.SourceRows.AddRange(SourceRowRecorder.Record(
+                        chargeWorkbook, "ChargeReport", requestId, run.IngestionRunId,
+                        chargeDocumentId!.Value, extractedAt));
+            }
 
             RunSectionParsers(rocWorkbook, chargeWorkbook, chargeIdentityMatches, requestId, run.IngestionRunId,
                 rocDocumentId, chargeDocumentId, issues, ref itemCount);
