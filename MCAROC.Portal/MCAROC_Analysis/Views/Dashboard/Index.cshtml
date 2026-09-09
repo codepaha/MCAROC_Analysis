@@ -2,176 +2,146 @@
 @using MCAROC_Analysis.Services.Dashboard
 @{
     ViewData["Title"] = "Dashboard";
+    string PriorityPill(ReviewPriority p) => p switch
+    {
+        ReviewPriority.High => "pi-status-failed",
+        ReviewPriority.Medium => "pi-status-processing",
+        _ => "pi-status-completed"
+    };
 }
 
-<h1>Dashboard</h1>
+<div class="pi-page-head">
+    <div>
+        <div class="pi-kicker">Operations &amp; Risk Intelligence</div>
+        <h1>Dashboard</h1>
+        <p>Showing @Model.Window.From.ToString("d MMM yyyy") &ndash; @Model.Window.To.ToString("d MMM yyyy"). Every figure links through to the matching requests.</p>
+    </div>
+</div>
 
-<form method="get" asp-action="Index" class="row g-2 mb-3 align-items-end">
-    <div class="col-auto">
-        <label class="form-label small mb-0">Date From</label>
-        <input type="date" name="DateFrom" value="@Model.Filters.DateFrom?.ToString("yyyy-MM-dd")" class="form-control form-control-sm" />
-    </div>
-    <div class="col-auto">
-        <label class="form-label small mb-0">Date To</label>
-        <input type="date" name="DateTo" value="@Model.Filters.DateTo?.ToString("yyyy-MM-dd")" class="form-control form-control-sm" />
-    </div>
-    <div class="col-auto">
-        <label class="form-label small mb-0">Client</label>
-        <select name="ClientId" class="form-select form-select-sm">
-            <option value="">All Clients</option>
-            @foreach (var c in Model.Clients)
-            {
-                <option value="@c.ClientId" selected="@(Model.Filters.ClientId == c.ClientId)">@c.ClientName@(c.IsActive ? "" : " (inactive)")</option>
-            }
-        </select>
-    </div>
-    <div class="col-auto">
-        <label class="form-label small mb-0">Analysis Status</label>
-        <select name="Status" class="form-select form-select-sm">
-            <option value="">All</option>
-            @foreach (var s in Enum.GetValues<RequestStatus>())
-            {
-                <option value="@s" selected="@(Model.Filters.Status == s)">@s</option>
-            }
-        </select>
-    </div>
-    <div class="col-auto">
-        <label class="form-label small mb-0">Review Priority</label>
-        <select name="Priority" class="form-select form-select-sm">
-            <option value="">All</option>
-            @foreach (var p in Enum.GetValues<ReviewPriority>())
-            {
-                <option value="@p" selected="@(Model.Filters.Priority == p)">@p</option>
-            }
-        </select>
-    </div>
-    <div class="col-auto">
-        <label class="form-label small mb-0">Entity Type</label>
-        <select name="EntityType" class="form-select form-select-sm">
-            <option value="">All</option>
-            @foreach (var e in Enum.GetValues<EntityType>())
-            {
-                <option value="@e" selected="@(Model.Filters.EntityType == e)">@e</option>
-            }
-        </select>
-    </div>
-    <div class="col-auto">
-        <button type="submit" class="btn btn-primary btn-sm">Apply</button>
-    </div>
-    <div class="col-auto">
-        <a class="btn btn-sm btn-outline-secondary" asp-controller="Dashboard" asp-action="Index">Clear All Filters</a>
-    </div>
-</form>
-
-<p class="text-muted small">Showing @Model.Window.From.ToString("d MMM yyyy") &ndash; @Model.Window.To.ToString("d MMM yyyy").</p>
-
-<div class="row row-cols-1 row-cols-md-4 g-3 mb-1">
-    <div class="col">
-        <div class="card h-100">
-            <div class="card-body">
-                <h6 class="card-subtitle text-muted">Total Requests</h6>
-                <a class="h3 text-decoration-none" asp-controller="Requests" asp-action="Index" asp-all-route-data="@(Model.Filters.ToRouteValues())">@Model.TotalRequests</a>
-                @if (Model.TotalRequestsTrendPercent is { } trend)
+<div class="pi-panel mb-4" style="padding:18px 20px;">
+    <form method="get" asp-action="Index" class="mca-filter-form">
+        <div>
+            <label class="form-label">Date From</label>
+            <input type="date" name="DateFrom" value="@Model.Filters.DateFrom?.ToString("yyyy-MM-dd")" class="form-control" />
+        </div>
+        <div>
+            <label class="form-label">Date To</label>
+            <input type="date" name="DateTo" value="@Model.Filters.DateTo?.ToString("yyyy-MM-dd")" class="form-control" />
+        </div>
+        <div>
+            <label class="form-label">Client</label>
+            <select name="ClientId" class="form-select">
+                <option value="">All Clients</option>
+                @foreach (var c in Model.Clients)
                 {
-                    <div class="small @(trend >= 0 ? "text-success" : "text-danger")">@(trend >= 0 ? "▲" : "▼") @Math.Abs(trend)% vs prior period</div>
+                    <option value="@c.ClientId" selected="@(Model.Filters.ClientId == c.ClientId)">@c.ClientName@(c.IsActive ? "" : " (inactive)")</option>
                 }
-            </div>
+            </select>
         </div>
-    </div>
-    <div class="col">
-        <div class="card h-100">
-            <div class="card-body">
-                <h6 class="card-subtitle text-muted">Processing</h6>
-                <a class="h3 text-decoration-none" asp-controller="Requests" asp-action="Index" asp-all-route-data="@(Model.Filters.ToRouteValues())">@Model.ProcessingCount</a>
-                <div class="small text-muted">
-                    @foreach (var stage in RequestRiskDefinitions.ProcessingStatuses)
-                    {
-                        if (Model.ProcessingByRequestStatus.TryGetValue(stage, out var count) && count > 0)
-                        {
-                            <div>@stage: @count</div>
-                        }
-                    }
-                    @foreach (var stage in RequestRiskDefinitions.FilingBatchActiveStatuses)
-                    {
-                        if (Model.ProcessingByFilingBatchStatus.TryGetValue(stage, out var count) && count > 0)
-                        {
-                            <div>MCA Documents (@stage): @count</div>
-                        }
-                    }
-                </div>
-            </div>
+        <div>
+            <label class="form-label">Analysis Status</label>
+            <select name="Status" class="form-select">
+                <option value="">All</option>
+                @foreach (var s in Enum.GetValues<RequestStatus>())
+                {
+                    <option value="@s" selected="@(Model.Filters.Status == s)">@s</option>
+                }
+            </select>
         </div>
-    </div>
-    <div class="col">
-        <div class="card h-100">
-            <div class="card-body">
-                <h6 class="card-subtitle text-muted">Analysis Completed</h6>
-                <a class="h3 text-decoration-none" asp-controller="Requests" asp-action="Index" asp-all-route-data="@(Model.Filters.ToRouteValues(new() { ["Status"] = "AnalysisCompleted" }))">@Model.AnalysisCompletedCount</a>
-                <div class="small text-muted">@Model.AnalysisCompletionRatePercent.ToString("0.#")% Analysis Completion Rate</div>
-            </div>
+        <div>
+            <label class="form-label">Review Priority</label>
+            <select name="Priority" class="form-select">
+                <option value="">All</option>
+                @foreach (var p in Enum.GetValues<ReviewPriority>())
+                {
+                    <option value="@p" selected="@(Model.Filters.Priority == p)">@p</option>
+                }
+            </select>
         </div>
-    </div>
-    <div class="col">
-        <div class="card h-100">
-            <div class="card-body">
-                <h6 class="card-subtitle text-muted">Attention Required</h6>
-                <a class="h3 text-decoration-none" asp-controller="Requests" asp-action="Index" asp-all-route-data="@(Model.Filters.ToRouteValues(new() { ["AttentionRequired"] = "true" }))">@Model.AttentionRequiredCount</a>
-            </div>
+        <div>
+            <label class="form-label">Entity Type</label>
+            <select name="EntityType" class="form-select">
+                <option value="">All</option>
+                @foreach (var e in Enum.GetValues<EntityType>())
+                {
+                    <option value="@e" selected="@(Model.Filters.EntityType == e)">@e</option>
+                }
+            </select>
         </div>
-    </div>
+        <div>
+            <button type="submit" class="btn btn-primary">Apply</button>
+        </div>
+        <div>
+            <a class="btn btn-outline-secondary" asp-controller="Dashboard" asp-action="Index">Clear</a>
+        </div>
+    </form>
 </div>
-<p class="text-muted small mb-3"><em>Cards can overlap &mdash; a request can be analysis-complete while document processing or manual review is still outstanding.</em></p>
 
-<div class="row row-cols-1 row-cols-md-4 g-3 mb-4">
-    <div class="col">
-        <div class="card h-100">
-            <div class="card-body">
-                <h6 class="card-subtitle text-muted">High Priority Requests</h6>
-                <a class="h3 text-decoration-none" asp-controller="Requests" asp-action="Index" asp-all-route-data="@(Model.Filters.ToRouteValues(new() { ["Priority"] = "High" }))">@Model.HighPriorityRequestCount</a>
-            </div>
-        </div>
+<div class="pi-metric-grid">
+    <div class="pi-metric">
+        <span>Total Requests</span>
+        <strong><a asp-controller="Requests" asp-action="Index" asp-all-route-data="@(Model.Filters.ToRouteValues())">@Model.TotalRequests</a></strong>
+        @if (Model.TotalRequestsTrendPercent is { } trend)
+        {
+            <small class="@(trend >= 0 ? "text-success" : "text-danger")">@(trend >= 0 ? "▲" : "▼") @Math.Abs(trend)% vs prior period</small>
+        }
     </div>
-    <div class="col">
-        <div class="card h-100">
-            <div class="card-body">
-                <h6 class="card-subtitle text-muted">Critical Findings</h6>
-                <div class="h3">@Model.CriticalFindingsCount</div>
-                <div class="small text-muted">@Model.CriticalFindingsCompanyCount compan@(Model.CriticalFindingsCompanyCount == 1 ? "y" : "ies") affected</div>
-            </div>
-        </div>
+    <div class="pi-metric">
+        <span>Processing</span>
+        <strong><a asp-controller="Requests" asp-action="Index" asp-all-route-data="@(Model.Filters.ToRouteValues())">@Model.ProcessingCount</a></strong>
+        <small>
+            @foreach (var stage in RequestRiskDefinitions.ProcessingStatuses)
+            {
+                if (Model.ProcessingByRequestStatus.TryGetValue(stage, out var count) && count > 0) { <text>@stage: @count &nbsp;</text> }
+            }
+            @foreach (var stage in RequestRiskDefinitions.FilingBatchActiveStatuses)
+            {
+                if (Model.ProcessingByFilingBatchStatus.TryGetValue(stage, out var count) && count > 0) { <text>MCA Docs (@stage): @count &nbsp;</text> }
+            }
+        </small>
     </div>
-    <div class="col">
-        <div class="card h-100">
-            <div class="card-body">
-                <h6 class="card-subtitle text-muted">Review Findings</h6>
-                <div class="h3">@Model.ReviewFindingsCount</div>
-                <div class="small text-muted">@Model.ReviewFindingsCompanyCount compan@(Model.ReviewFindingsCompanyCount == 1 ? "y" : "ies") affected</div>
-            </div>
-        </div>
+    <div class="pi-metric">
+        <span>Analysis Completed</span>
+        <strong><a asp-controller="Requests" asp-action="Index" asp-all-route-data="@(Model.Filters.ToRouteValues(new() { ["Status"] = "AnalysisCompleted" }))">@Model.AnalysisCompletedCount</a></strong>
+        <small>@Model.AnalysisCompletionRatePercent.ToString("0.#")% completion rate</small>
     </div>
-    <div class="col">
-        <div class="card h-100">
-            <div class="card-body">
-                <h6 class="card-subtitle text-muted">Positive / Stable</h6>
-                <div class="h3">@Model.PositiveFindingsCount</div>
-            </div>
-        </div>
+    <div class="pi-metric">
+        <span>Attention Required</span>
+        <strong><a asp-controller="Requests" asp-action="Index" asp-all-route-data="@(Model.Filters.ToRouteValues(new() { ["AttentionRequired"] = "true" }))">@Model.AttentionRequiredCount</a></strong>
+        <small>manual review or processing errors</small>
     </div>
 </div>
+
+<div class="pi-metric-grid">
+    <div class="pi-metric">
+        <span>High Priority Requests</span>
+        <strong><a asp-controller="Requests" asp-action="Index" asp-all-route-data="@(Model.Filters.ToRouteValues(new() { ["Priority"] = "High" }))">@Model.HighPriorityRequestCount</a></strong>
+    </div>
+    <div class="pi-metric">
+        <span>Critical Findings</span>
+        <strong>@Model.CriticalFindingsCount</strong>
+        <small>@Model.CriticalFindingsCompanyCount compan@(Model.CriticalFindingsCompanyCount == 1 ? "y" : "ies") affected</small>
+    </div>
+    <div class="pi-metric">
+        <span>Review Findings</span>
+        <strong>@Model.ReviewFindingsCount</strong>
+        <small>@Model.ReviewFindingsCompanyCount compan@(Model.ReviewFindingsCompanyCount == 1 ? "y" : "ies") affected</small>
+    </div>
+    <div class="pi-metric">
+        <span>Positive / Stable</span>
+        <strong>@Model.PositiveFindingsCount</strong>
+    </div>
+</div>
+
+<p class="text-muted mb-4"><em>Cards can overlap — a request can be analysis-complete while document processing or manual review is still outstanding.</em></p>
 
 <div class="row g-3 mb-4">
     <div class="col-md-7">
         <div class="card h-100">
             <div class="card-header">Requests Created</div>
             <div class="card-body">
-                @if (Model.RequestTrend.All(t => t.Created == 0))
-                {
-                    <p class="text-muted mb-0">No data for the selected filters.</p>
-                }
-                else
-                {
-                    <canvas id="requestTrendChart" height="90"></canvas>
-                }
+                @if (Model.RequestTrend.All(t => t.Created == 0)) { <p class="text-muted mb-0">No data for the selected filters.</p> }
+                else { <canvas id="requestTrendChart" height="90"></canvas> }
             </div>
         </div>
     </div>
@@ -179,14 +149,8 @@
         <div class="card h-100">
             <div class="card-header">Review Priority Distribution</div>
             <div class="card-body">
-                @if (Model.PriorityDistribution.Count == 0)
-                {
-                    <p class="text-muted mb-0">No data for the selected filters.</p>
-                }
-                else
-                {
-                    <canvas id="priorityDistributionChart" height="90"></canvas>
-                }
+                @if (Model.PriorityDistribution.Count == 0) { <p class="text-muted mb-0">No data for the selected filters.</p> }
+                else { <canvas id="priorityDistributionChart" height="90"></canvas> }
             </div>
         </div>
     </div>
@@ -197,28 +161,19 @@
         <div class="card h-100">
             <div class="card-header">Findings by Risk Category</div>
             <div class="card-body">
-                @if (Model.FindingsBySection.Count == 0)
-                {
-                    <p class="text-muted mb-0">No data for the selected filters.</p>
-                }
-                else
-                {
-                    <canvas id="findingsBySectionChart" height="120"></canvas>
-                }
+                @if (Model.FindingsBySection.Count == 0) { <p class="text-muted mb-0">No data for the selected filters.</p> }
+                else { <canvas id="findingsBySectionChart" height="120"></canvas> }
             </div>
         </div>
     </div>
     <div class="col-md-5">
         <div class="card h-100">
             <div class="card-header">Top Risk Indicators</div>
-            <div class="card-body">
-                @if (Model.TopRiskIndicators.Count == 0)
-                {
-                    <p class="text-muted mb-0">No data for the selected filters.</p>
-                }
+            <div class="card-body p-0">
+                @if (Model.TopRiskIndicators.Count == 0) { <p class="text-muted m-3 mb-0">No data for the selected filters.</p> }
                 else
                 {
-                    <table class="table table-sm mb-0">
+                    <table class="pi-results-table">
                         <thead><tr><th>Finding</th><th class="text-end">Companies</th><th class="text-end">Findings</th></tr></thead>
                         <tbody>
                         @foreach (var indicator in Model.TopRiskIndicators)
@@ -239,14 +194,11 @@
 
 <div class="card mb-4">
     <div class="card-header">Priority Requests</div>
-    <div class="card-body">
-        @if (Model.PriorityRequests.Count == 0)
-        {
-            <p class="text-muted mb-0">No data for the selected filters.</p>
-        }
+    <div class="card-body p-0">
+        @if (Model.PriorityRequests.Count == 0) { <p class="text-muted m-3 mb-0">No data for the selected filters.</p> }
         else
         {
-            <table class="table table-sm mb-0">
+            <table class="pi-results-table">
                 <thead>
                     <tr><th>Company</th><th>Client</th><th>Review Priority</th><th>Attention</th><th>Key Finding</th><th>Status</th><th>Updated</th><th></th></tr>
                 </thead>
@@ -257,25 +209,15 @@
                         <td>@row.Request.CompanyName</td>
                         <td>@row.Request.Client?.ClientName</td>
                         <td>
-                            @if (row.Priority is { } p)
-                            {
-                                var badgeClass = p switch { ReviewPriority.High => "bg-danger", ReviewPriority.Medium => "bg-warning text-dark", _ => "bg-success" };
-                                <span class="badge @badgeClass">@p</span>
-                            }
-                            else
-                            {
-                                <span class="text-muted">&mdash;</span>
-                            }
+                            @if (row.Priority is { } p) { <span class="pi-status-pill @PriorityPill(p)">@p</span> }
+                            else { <span class="text-muted">—</span> }
                         </td>
                         <td>
-                            @foreach (var reason in row.AttentionReasons)
-                            {
-                                <span class="badge bg-warning text-dark me-1">@reason</span>
-                            }
+                            @foreach (var reason in row.AttentionReasons) { <span class="pi-status-pill pi-status-processing me-1">@reason</span> }
                         </td>
                         <td>@row.KeyFindingTitle</td>
                         <td>@row.Request.RequestStatus</td>
-                        <td>@row.Request.UpdatedDate?.ToString("d MMM yyyy") ?? row.Request.CreatedDate.ToString("d MMM yyyy")</td>
+                        <td>@(row.Request.UpdatedDate?.ToString("d MMM yyyy") ?? row.Request.CreatedDate.ToString("d MMM yyyy"))</td>
                         <td><a asp-controller="Requests" asp-action="Details" asp-route-id="@row.Request.RequestId" class="btn btn-sm btn-outline-primary">View</a></td>
                     </tr>
                 }
@@ -299,16 +241,16 @@
         const priorityCounts = @Html.Raw(System.Text.Json.JsonSerializer.Serialize(Model.PriorityDistribution.ToDictionary(kv => kv.Key.ToString(), kv => kv.Value)));
         const priorityLabels = priorityOrder.filter(p => priorityCounts[p]);
         const priorityValues = priorityLabels.map(p => priorityCounts[p]);
-        const priorityColors = priorityLabels.map(p => p === 'High' ? '#dc3545' : p === 'Medium' ? '#ffc107' : '#198754');
+        const priorityColors = priorityLabels.map(p => p === 'High' ? MCAROC_CHART.danger : p === 'Medium' ? MCAROC_CHART.warning : MCAROC_CHART.success);
         if (priorityLabels.length > 0) {
             renderPriorityDistributionChart('priorityDistributionChart', priorityLabels, priorityValues, priorityColors);
         }
 
         const sectionOrder = ['CompanyProfile', 'Directors', 'DirectorNetwork', 'Ownership', 'Financial', 'Charges', 'Msme', 'Gst', 'Epfo', 'Auditor', 'Litigation', 'CrossSection'];
         const severityOrder = [
-            { key: 'Critical', color: '#dc3545' },
-            { key: 'Review', color: '#ffc107' },
-            { key: 'Watch', color: '#6c757d' }
+            { key: 'Critical', color: MCAROC_CHART.danger },
+            { key: 'Review', color: MCAROC_CHART.warning },
+            { key: 'Watch', color: MCAROC_CHART.muted }
         ];
         const findingsBySection = @Html.Raw(System.Text.Json.JsonSerializer.Serialize(
             Model.FindingsBySection.GroupBy(f => f.Section.ToString()).ToDictionary(

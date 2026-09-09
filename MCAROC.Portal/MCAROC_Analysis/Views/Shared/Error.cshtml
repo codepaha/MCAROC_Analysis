@@ -3,14 +3,17 @@
     ViewData["Title"] = "Error";
 }
 
-<h1 class="text-danger">Error.</h1>
-<h2 class="text-danger">An error occurred while processing your request.</h2>
+<div class="pi-page-head">
+    <div>
+        <div class="pi-kicker">Error</div>
+        <h1>Something went wrong</h1>
+        <p>An error occurred while processing your request.</p>
+    </div>
+</div>
 
 @if (Model.ShowRequestId)
 {
-    <p>
-        <strong>Request ID:</strong> <code>@Model.RequestId</code>
-    </p>
+    <p><strong>Request ID:</strong> <code>@Model.RequestId</code></p>
 }
 
 <h3>Development Mode</h3>

@@ -37,6 +37,47 @@ public class RequestDetailsViewModel
     public int AiSuccessCount { get; set; }
     public int AiFailedCount { get; set; }
     public int ManualReviewFilingCount { get; set; }
+
+    // ---------------------------------------------------------------------
+    // Highlights — computed from the lists already loaded above (no extra DB work).
+    // Used by the "Highlights" tab on Details.cshtml.
+    // ---------------------------------------------------------------------
+
+    /// <summary>Charges not yet satisfied (no satisfaction date and status isn't "Satisfied").</summary>
+    private IEnumerable<RocCharge> OpenCharges => Charges.Where(c =>
+        c.SatisfactionDate is null &&
+        !string.Equals(c.ChargeStatus, "Satisfied", StringComparison.OrdinalIgnoreCase));
+
+    public int OpenChargeCount => OpenCharges.Count();
+    public int TotalChargeCount => Charges.Count;
+    public decimal? LargestChargeAmount => Charges.Max(c => c.CurrentAmount);
+    public decimal TotalOpenChargeAmount => OpenCharges.Sum(c => c.CurrentAmount ?? 0m);
+
+    private List<FinancialYearData> FinancialYearsAsc => FinancialYears.OrderBy(f => f.FinancialYear).ToList();
+    public FinancialYearData? LatestFinancials => FinancialYearsAsc.LastOrDefault();
+    private FinancialYearData? PriorFinancials =>
+        FinancialYearsAsc.Count >= 2 ? FinancialYearsAsc[^2] : null;
+
+    public int? LatestFinancialYear => LatestFinancials?.FinancialYear;
+    public decimal? LatestRevenue => LatestFinancials?.Revenue;
+    public decimal? LatestNetWorth => LatestFinancials?.NetWorth;
+    public decimal? LatestPat => LatestFinancials?.Pat;
+    public decimal? LatestTotalDebt => LatestFinancials?.TotalDebt;
+
+    /// <summary>Year-on-year revenue change, percent — null unless both years have a non-zero revenue.</summary>
+    public decimal? RevenueYoYPercent
+    {
+        get
+        {
+            var current = LatestFinancials?.Revenue;
+            var prior = PriorFinancials?.Revenue;
+            if (current is null || prior is null || prior.Value == 0m) return null;
+            return Math.Round((current.Value - prior.Value) / Math.Abs(prior.Value) * 100m, 1);
+        }
+    }
+
+    public int ActiveDirectorCount => Directors.Count(d => d.CessationDate is null);
+    public int LitigationCount => Litigations.Count;
 }
 
 public class FilingSummaryViewModel

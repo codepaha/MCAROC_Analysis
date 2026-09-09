@@ -1,0 +1,335 @@
+/* =====================================================================
+   MCAROC — app-specific components, built on the app.css token system.
+   ===================================================================== */
+
+:root {
+    --mca-topbar-h: 64px;
+}
+
+/* ---------------------------------------------------------------------
+   Company detail — sticky header + tab strip
+   --------------------------------------------------------------------- */
+.mca-detail-head {
+    position: sticky;
+    top: var(--mca-topbar-h);
+    z-index: 14;
+    margin: -28px -32px 22px;   /* cancel .pi-shell padding so the bar is full-bleed */
+    padding: 16px 32px 0;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    box-shadow: var(--shadow-xs);
+}
+@media (max-width: 900px) {
+    .mca-detail-head { margin: -20px -16px 20px; padding: 14px 16px 0; }
+}
+@media (max-width: 560px) {
+    .mca-detail-head { margin: -18px -12px 18px; padding: 12px 12px 0; }
+}
+
+.mca-company-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 20px;
+    flex-wrap: wrap;
+    padding-bottom: 12px;
+}
+
+.mca-company-id { min-width: 0; }
+.mca-company-id h1 {
+    margin: 0;
+    color: var(--text);
+    font-size: 23px;
+    font-weight: 750;
+    line-height: 1.2;
+    letter-spacing: -0.02em;
+}
+.mca-company-id .mca-ids {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 18px;
+    margin-top: 6px;
+    color: var(--muted);
+    font-family: var(--mono);
+    font-size: 12.5px;
+}
+.mca-company-id .mca-ids b { color: var(--text-2); font-weight: 600; }
+
+.mca-company-meta {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 6px;
+    text-align: right;
+}
+.mca-company-meta .mca-pills { display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; }
+.mca-company-meta small { color: var(--muted); font-size: 12px; }
+.mca-company-meta small b { color: var(--text-2); font-weight: 600; }
+
+/* Underline tab strip (ported from Property Intelligence .cd-tabs) */
+.mca-tabs {
+    border-bottom: 2px solid var(--border);
+    overflow-x: auto;
+    white-space: nowrap;
+    scrollbar-width: none;
+}
+.mca-tabs::-webkit-scrollbar { display: none; }
+.mca-tabs .nav { flex-wrap: nowrap; border: none; gap: 0; }
+.mca-tabs .nav-link {
+    padding: 10px 15px;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--muted);
+    background: transparent;
+    border: none;
+    border-bottom: 2px solid transparent;
+    border-radius: 0;
+    margin-bottom: -2px;
+    white-space: nowrap;
+    cursor: pointer;
+}
+.mca-tabs .nav-link:hover:not(.active) {
+    color: var(--text-2);
+    background: var(--surface-2);
+    border-bottom-color: var(--border-strong);
+}
+.mca-tabs .nav-link.active {
+    color: var(--brand);
+    border-bottom-color: var(--brand);
+    font-weight: 600;
+}
+.mca-tabs .nav-link .badge {
+    margin-left: 5px;
+    padding: 2px 6px;
+    border-radius: var(--r-pill);
+    background: var(--surface-3);
+    color: var(--muted);
+    font-size: 10.5px;
+    font-weight: 700;
+    vertical-align: middle;
+}
+.mca-tabs .nav-link.active .badge { background: var(--brand-soft); color: var(--brand-strong); }
+
+/* Secondary (section) switcher inside a tab */
+.mca-subtabs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin-bottom: 18px;
+    padding: 4px;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: var(--r-md);
+}
+.mca-subtabs .nav-link {
+    padding: 7px 14px;
+    border: none;
+    border-radius: var(--r-sm);
+    background: transparent;
+    color: var(--text-2);
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+}
+.mca-subtabs .nav-link:hover:not(.active) { color: var(--text); }
+.mca-subtabs .nav-link.active { background: var(--surface); color: var(--brand); box-shadow: var(--shadow-xs); }
+.mca-subtabs .nav-link .badge {
+    margin-left: 5px;
+    padding: 1px 6px;
+    border-radius: var(--r-pill);
+    background: var(--surface-3);
+    color: var(--muted);
+    font-size: 10px;
+    font-weight: 700;
+}
+
+/* ---------------------------------------------------------------------
+   Section blocks inside a tab pane
+   --------------------------------------------------------------------- */
+.mca-section { margin-bottom: 26px; }
+.mca-section:last-child { margin-bottom: 0; }
+.mca-section > h3 {
+    margin: 0 0 12px;
+    color: var(--text);
+    font-size: 15px;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+}
+.mca-section > h3 .mca-count { margin-left: 6px; color: var(--muted); font-weight: 500; font-size: 13px; }
+
+/* Key/value grid (About the Corporate) */
+.mca-kv {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 1px;
+    overflow: hidden;
+    background: var(--border);
+    border: 1px solid var(--border);
+    border-radius: var(--r-md);
+}
+.mca-kv > div { padding: 13px 16px; background: var(--surface); }
+.mca-kv dt {
+    margin: 0 0 4px;
+    color: var(--muted);
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+}
+.mca-kv dd { margin: 0; color: var(--text); font-size: 14px; overflow-wrap: anywhere; }
+.mca-kv .mca-kv-wide { grid-column: 1 / -1; }
+@media (max-width: 640px) { .mca-kv { grid-template-columns: 1fr; } }
+
+/* Finding card */
+.mca-finding {
+    position: relative;
+    padding: 14px 16px 14px 18px;
+    margin-bottom: 10px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--border-strong);
+    border-radius: var(--r-md);
+    box-shadow: var(--shadow-xs);
+}
+.mca-finding:last-child { margin-bottom: 0; }
+.mca-finding.sev-critical { border-left-color: var(--danger); }
+.mca-finding.sev-review   { border-left-color: var(--warning); }
+.mca-finding.sev-watch    { border-left-color: var(--muted); }
+.mca-finding.sev-positive { border-left-color: var(--success); }
+.mca-finding h4 {
+    margin: 0 0 4px;
+    color: var(--text);
+    font-size: 14px;
+    font-weight: 700;
+}
+.mca-finding h4 .mca-finding-meta { margin-left: 6px; color: var(--muted); font-weight: 500; font-size: 12px; }
+.mca-finding p { margin: 4px 0 0; color: var(--text-2); font-size: 13.5px; line-height: 1.55; }
+.mca-finding .mca-finding-label { color: var(--text); font-weight: 700; }
+.mca-finding .mca-related { margin-top: 6px; color: var(--muted); font-size: 12px; font-family: var(--mono); }
+
+.mca-sev-dot {
+    display: inline-block;
+    width: 8px; height: 8px;
+    margin-right: 7px;
+    border-radius: 50%;
+    vertical-align: middle;
+    background: var(--border-strong);
+}
+.sev-critical .mca-sev-dot { background: var(--danger); }
+.sev-review   .mca-sev-dot { background: var(--warning); }
+.sev-watch    .mca-sev-dot { background: var(--muted); }
+.sev-positive .mca-sev-dot { background: var(--success); }
+
+/* Priority / severity count pills row */
+.mca-pill-row { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 18px; }
+
+/* ---------------------------------------------------------------------
+   Empty state
+   --------------------------------------------------------------------- */
+.mca-empty {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    padding: 48px 24px;
+    color: var(--muted);
+    text-align: center;
+    background: var(--surface-2);
+    border: 1px dashed var(--border-strong);
+    border-radius: var(--r-md);
+}
+.mca-empty .bi { font-size: 2.2rem; opacity: 0.35; }
+.mca-empty p { margin: 0; font-size: 14px; max-width: 460px; }
+
+/* ---------------------------------------------------------------------
+   Highlights metric grid (uses .pi-metric)
+   --------------------------------------------------------------------- */
+.mca-highlight-grid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 16px;
+}
+@media (max-width: 1100px) { .mca-highlight-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 640px) { .mca-highlight-grid { grid-template-columns: 1fr; } }
+
+/* ---------------------------------------------------------------------
+   Upload dropzone (New Search) — retinted to tokens
+   --------------------------------------------------------------------- */
+.mca-dropzone {
+    position: relative;
+    padding: 26px;
+    text-align: center;
+    background: var(--surface-2);
+    border: 2px dashed var(--border-strong);
+    border-radius: var(--r-md);
+    cursor: pointer;
+    transition: border-color .15s ease, background-color .15s ease;
+}
+.mca-dropzone:hover,
+.mca-dropzone.mca-dropzone-active { border-color: var(--brand); background: var(--brand-soft); }
+.mca-dropzone-input {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    opacity: 0;
+    cursor: pointer;
+}
+.mca-dropzone-prompt { color: var(--muted); font-size: 13.5px; pointer-events: none; }
+.mca-dropzone-filename { margin-top: 8px; font-weight: 600; color: var(--text); pointer-events: none; }
+
+/* ---------------------------------------------------------------------
+   Raw-JSON disclosure (Reference Documents)
+   --------------------------------------------------------------------- */
+.mca-json {
+    margin-top: 8px;
+    padding: 12px 14px;
+    max-height: 320px;
+    overflow: auto;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: var(--r-sm);
+    font-family: var(--mono);
+    font-size: 12px;
+    line-height: 1.55;
+    color: var(--text-2);
+    white-space: pre-wrap;
+}
+details > summary.mca-json-toggle {
+    cursor: pointer;
+    color: var(--brand);
+    font-size: 12.5px;
+    font-weight: 600;
+}
+
+/* ---------------------------------------------------------------------
+   Filter chips (Search History active filters)
+   --------------------------------------------------------------------- */
+.mca-chip-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 18px; }
+.mca-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    padding: 4px 12px;
+    border-radius: var(--r-pill);
+    background: var(--surface-3);
+    border: 1px solid var(--border);
+    color: var(--text-2);
+    font-size: 12.5px;
+    font-weight: 600;
+    text-decoration: none;
+}
+.mca-chip:hover { border-color: var(--brand); color: var(--brand-strong); }
+.mca-chip .bi { font-size: 12px; opacity: 0.7; }
+
+/* Filter form laid out on the panel */
+.mca-filter-form {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    gap: 12px;
+}
+.mca-filter-form > div { display: flex; flex-direction: column; }
+.mca-filter-form .form-control,
+.mca-filter-form .form-select { min-height: 40px; font-size: 13.5px; }
