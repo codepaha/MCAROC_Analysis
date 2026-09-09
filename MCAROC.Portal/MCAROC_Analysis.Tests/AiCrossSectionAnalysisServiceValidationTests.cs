@@ -228,6 +228,104 @@ public class AiCrossSectionAnalysisServiceValidationTests
     }
 
     [Fact]
+    public void ExecutiveSummary_UnsupportedAmount_RsPrefix_IsBlanked()
+    {
+        // Regression test: the amount regex originally recognized only "₹..." — "Rs. 999 crore" matched
+        // nothing and would have persisted in the summary unchecked.
+        var findings = new List<AnalysisFinding>
+        {
+            Finding("FIN_REVENUE_DECLINE_1Y", FindingSeverity.Review, metricsJson: """{"latestRevenue":36.46,"changePercent":-25.0}""")
+        };
+        var response = """
+            {
+              "executiveSummary": {
+                "businessPerformance": "The company reported an unprecedented Rs. 999 crore in losses this year.",
+                "financialPosition": "x", "borrowingSecurity": "x", "governanceCompliance": "x", "keyReviewItems": []
+              },
+              "findingNarratives": [],
+              "crossSectionFindings": []
+            }
+            """;
+
+        var outcome = AiCrossSectionAnalysisService.Validate(response, findings);
+
+        Assert.Equal("", outcome.ExecutiveSummary!.BusinessPerformance);
+    }
+
+    [Fact]
+    public void ExecutiveSummary_UnsupportedAmount_InrPrefix_IsBlanked()
+    {
+        var findings = new List<AnalysisFinding>
+        {
+            Finding("FIN_REVENUE_DECLINE_1Y", FindingSeverity.Review, metricsJson: """{"latestRevenue":36.46,"changePercent":-25.0}""")
+        };
+        var response = """
+            {
+              "executiveSummary": {
+                "businessPerformance": "The company reported an unprecedented INR 999 crore in losses this year.",
+                "financialPosition": "x", "borrowingSecurity": "x", "governanceCompliance": "x", "keyReviewItems": []
+              },
+              "findingNarratives": [],
+              "crossSectionFindings": []
+            }
+            """;
+
+        var outcome = AiCrossSectionAnalysisService.Validate(response, findings);
+
+        Assert.Equal("", outcome.ExecutiveSummary!.BusinessPerformance);
+    }
+
+    [Fact]
+    public void ExecutiveSummary_UnsupportedAmount_BareCroreSuffix_IsBlanked()
+    {
+        // "999 crore" with no currency marker at all — "crore"/"lakh" are themselves financial-scale
+        // words, so a bare magnitude-suffixed number must still be treated as a material numeric claim.
+        var findings = new List<AnalysisFinding>
+        {
+            Finding("FIN_REVENUE_DECLINE_1Y", FindingSeverity.Review, metricsJson: """{"latestRevenue":36.46,"changePercent":-25.0}""")
+        };
+        var response = """
+            {
+              "executiveSummary": {
+                "businessPerformance": "The company reported an unprecedented 999 crore in losses this year.",
+                "financialPosition": "x", "borrowingSecurity": "x", "governanceCompliance": "x", "keyReviewItems": []
+              },
+              "findingNarratives": [],
+              "crossSectionFindings": []
+            }
+            """;
+
+        var outcome = AiCrossSectionAnalysisService.Validate(response, findings);
+
+        Assert.Equal("", outcome.ExecutiveSummary!.BusinessPerformance);
+    }
+
+    [Fact]
+    public void ExecutiveSummary_SupportedAmount_RsPrefix_IsPreserved()
+    {
+        // A supported amount phrased with "Rs." must not be blanked just because it now matches the
+        // widened regex — only unsupported figures should be dropped.
+        var findings = new List<AnalysisFinding>
+        {
+            Finding("FIN_REVENUE_DECLINE_1Y", FindingSeverity.Review, metricsJson: """{"latestRevenue":36.46}""")
+        };
+        var response = """
+            {
+              "executiveSummary": {
+                "businessPerformance": "Revenue stood at Rs. 36.46 crore this year.",
+                "financialPosition": "x", "borrowingSecurity": "x", "governanceCompliance": "x", "keyReviewItems": []
+              },
+              "findingNarratives": [],
+              "crossSectionFindings": []
+            }
+            """;
+
+        var outcome = AiCrossSectionAnalysisService.Validate(response, findings);
+
+        Assert.Equal("Revenue stood at Rs. 36.46 crore this year.", outcome.ExecutiveSummary!.BusinessPerformance);
+    }
+
+    [Fact]
     public void ExecutiveSummary_KeyReviewItems_FilteredIndividually()
     {
         var findings = new List<AnalysisFinding>

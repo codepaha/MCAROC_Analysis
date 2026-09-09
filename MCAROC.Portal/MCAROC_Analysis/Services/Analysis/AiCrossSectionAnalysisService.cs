@@ -279,7 +279,17 @@ public partial class AiCrossSectionAnalysisService
         return false;
     }
 
-    [GeneratedRegex(@"₹\s?[\d,]+(\.\d+)?|[\d.]+\s?%|[\d.]+x\b|FY\s?\d{4}|\b(19|20)\d{2}\b")]
+    // Amounts are recognized under ₹, "Rs."/"Rs", and "INR" prefixes, each optionally followed by a
+    // crore/lakh magnitude suffix, plus bare magnitude-suffixed amounts with no currency marker at all
+    // (e.g. "999 crore") — "crore"/"lakh" are themselves financial-scale words, unlike plain counting
+    // language ("over two years"), so a bare magnitude-suffixed number is still a material numeric claim
+    // that must be validated against the allowed set.
+    [GeneratedRegex(
+        @"₹\s?[\d,]+(\.\d+)?(\s?(?:crore|cr\.?|lakh))?" +
+        @"|\b(?:Rs\.?|INR)\s?[\d,]+(\.\d+)?(\s?(?:crore|cr\.?|lakh))?" +
+        @"|\b[\d,]+(\.\d+)?\s?(?:crore|lakh)\b" +
+        @"|[\d.]+\s?%|[\d.]+x\b|FY\s?\d{4}|\b(19|20)\d{2}\b",
+        RegexOptions.IgnoreCase)]
     private static partial Regex FinancialNumberRegex();
 
     [GeneratedRegex(@"(19|20)\d{2}")]
