@@ -40,14 +40,14 @@ public sealed record GoldenMasterSnapshot(
         TotalOpenChargeAmount: vm.TotalOpenChargeAmount,
         LargestChargeAmount: vm.LargestChargeAmount,
         LenderConcentrationHolders: vm.LenderConcentration.Select(r => r.Holder).ToArray(),
-        SecurityTypeLabelsByCharge: vm.Charges.ToDictionary(
+        SecurityTypeLabelsByCharge: vm.Charges.OrderBy(c => c.RocChargeNumber).ToDictionary(
             c => c.RocChargeNumber,
             c => RequestDetailsViewModel.SecurityTypeLabels(c).ToArray()),
         LitigationFiledAgainstCount: vm.LitigationFiledAgainstCount,
         LitigationFiledByCount: vm.LitigationFiledByCount,
         LitigationRoleNotDeterminedCount: vm.LitigationRoleNotDeterminedCount,
         LitigationRoleByCaseNumber: vm.Litigations
-            .Where(l => l.CaseNumber is not null)
+            .Where(l => l.CaseNumber is not null).OrderBy(l => l.CaseNumber)
             .ToDictionary(l => l.CaseNumber!, l => vm.RoleFor(l).ToString()),
         StandaloneFyCount: vm.FinancialYears.Count,
         ConsolidatedFyCount: vm.ConsolidatedFinancialYears.Count,
@@ -67,13 +67,13 @@ public sealed record GoldenMasterSnapshot(
         TotalOpenChargeAmount: m.Charges.TotalOpenAmount,
         LargestChargeAmount: m.Charges.LargestAmount,
         LenderConcentrationHolders: m.Charges.LenderConcentration.Select(r => r.Holder).ToArray(),
-        SecurityTypeLabelsByCharge: m.Charges.All.ToDictionary(
+        SecurityTypeLabelsByCharge: m.Charges.All.OrderBy(c => c.RocChargeNumber).ToDictionary(
             c => c.RocChargeNumber, c => m.Charges.SecurityTypeLabels(c).ToArray()),
         LitigationFiledAgainstCount: m.Litigation.FiledAgainstCount,
         LitigationFiledByCount: m.Litigation.FiledByCount,
         LitigationRoleNotDeterminedCount: m.Litigation.NotDeterminedCount,
         LitigationRoleByCaseNumber: m.Litigation.All
-            .Where(l => l.CaseNumber is not null)
+            .Where(l => l.CaseNumber is not null).OrderBy(l => l.CaseNumber)
             .ToDictionary(l => l.CaseNumber!, l => m.Litigation.RoleFor(l).ToString()),
         StandaloneFyCount: m.Financials.Standalone.Count,
         ConsolidatedFyCount: m.Financials.Consolidated.Count,

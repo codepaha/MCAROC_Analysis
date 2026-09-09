@@ -127,7 +127,14 @@ else
                     </td>
                     <td>@row.Request.RequestStatus</td>
                     <td>@row.Request.CreatedDate.ToString("d MMM yyyy")</td>
-                    <td><a asp-controller="Requests" asp-action="Details" asp-route-id="@row.Request.RequestId" class="btn btn-sm btn-outline-primary">View</a></td>
+                    <td class="text-nowrap">
+                        <a asp-controller="Requests" asp-action="Details" asp-route-id="@row.Request.RequestId" class="btn btn-sm btn-outline-primary">View</a>
+                        @if (row.Request.RequestStatus == RequestStatus.AnalysisCompleted)
+                        {
+                            <a href="/Requests/@row.Request.RequestId/dossier?variant=executive" class="btn btn-sm btn-outline-secondary ms-1" title="Executive dossier (PDF)">Exec PDF</a>
+                            <a href="/Requests/@row.Request.RequestId/dossier?variant=full" class="btn btn-sm btn-outline-secondary ms-1" title="Full-source dossier (PDF)">Full PDF</a>
+                        }
+                    </td>
                 </tr>
             }
             </tbody>
