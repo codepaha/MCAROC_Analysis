@@ -59,6 +59,18 @@ public class ChargeSecurityClassifierTests
     }
 
     [Fact]
+    public void CurrentAndFixedAssets_MapsCurrentAssets_LeavesFixedAmbiguous()
+    {
+        // Real workbook phrase: "Others (Subservient charge on current and fixed assets)".
+        var c = Classify("Others", "Subservient charge on current and fixed assets");
+
+        var comp = Assert.Single(c.SecurityComponents);
+        Assert.Equal(SecurityType.CurrentAssets, comp.SecurityType);
+        Assert.Equal(ChargeRanking.Subservient, comp.Ranking);
+        Assert.NotEqual(ChargeClassificationConfidence.None, c.OverallConfidence);
+    }
+
+    [Fact]
     public void UnrecognisedNarrative_ReturnsNone_NeverGuessed()
     {
         var c = ChargeSecurityClassifier.Classify("-", "-", "-", "-", "-", null, null);

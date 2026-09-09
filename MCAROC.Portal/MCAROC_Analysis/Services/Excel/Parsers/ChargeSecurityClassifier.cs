@@ -44,6 +44,9 @@ public static class ChargeSecurityClassifier
 
     private static readonly (string Kw, SecurityType Type)[] SecurityRules =
     [
+        // "current and fixed assets" names a clear current-assets component; the "fixed assets" half is
+        // genuinely ambiguous (movable P&M vs immovable) so it is left to the raw wording.
+        ("current and fixed asset", SecurityType.CurrentAssets),
         ("current assets", SecurityType.CurrentAssets), ("current asset", SecurityType.CurrentAssets),
         ("stock", SecurityType.CurrentAssets), ("inventory", SecurityType.CurrentAssets),
         ("book debt", SecurityType.BookDebts), ("receivable", SecurityType.BookDebts),
