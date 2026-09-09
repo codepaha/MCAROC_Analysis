@@ -47,6 +47,23 @@ public class TextChunkerTests
     }
 
     [Fact]
+    public void NoChunkExceedsMaxChars_EvenWhenOverlapPlusNextParagraphWouldOverflow()
+    {
+        // paragraph2 nearly fills a chunk on its own; before the fix, seeding the overlap from
+        // paragraph1's tail and then appending paragraph2 produced a ~ChunkMaxChars + ChunkOverlapChars
+        // chunk (57 > 50 with these options).
+        var paragraph1 = new string('a', 45);
+        var paragraph2 = new string('b', 45);
+        var text = $"--- Page 1 (native) ---\n{paragraph1}\n\n{paragraph2}";
+
+        var chunks = TextChunker.Chunk(text, Options);
+
+        Assert.All(chunks, c => Assert.True(
+            c.Text.Length <= Options.ChunkMaxChars,
+            $"chunk of {c.Text.Length} chars exceeds ChunkMaxChars={Options.ChunkMaxChars}"));
+    }
+
+    [Fact]
     public void NoPageMarkers_FallsBackToWholeTextAsOnePage()
     {
         var text = "Just some plain text with no page markers at all, long enough to pass the min length.";
