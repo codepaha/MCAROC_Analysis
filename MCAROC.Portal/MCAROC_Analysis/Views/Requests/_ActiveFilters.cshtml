@@ -1,0 +1,29 @@
+@model RequestListFilterCriteria
+@{
+    var badges = new List<(string Label, Dictionary<string, string> Overrides)>();
+    if (Model.DateFrom is { } dateFrom) badges.Add(($"From: {dateFrom:d MMM yyyy}", new() { ["DateFrom"] = "" }));
+    if (Model.DateTo is { } dateTo) badges.Add(($"To: {dateTo:d MMM yyyy}", new() { ["DateTo"] = "" }));
+    if (Model.ClientId is { } clientId)
+    {
+        var clientName = ViewBag.Clients is List<Client> clients ? clients.FirstOrDefault(c => c.ClientId == clientId)?.ClientName : null;
+        badges.Add(($"Client: {clientName ?? clientId.ToString()}", new() { ["ClientId"] = "" }));
+    }
+    if (Model.Status is { } status) badges.Add(($"Analysis Status: {status}", new() { ["Status"] = "" }));
+    if (Model.Priority is { } priority) badges.Add(($"Priority: {priority}", new() { ["Priority"] = "" }));
+    if (Model.EntityType is { } entityType) badges.Add(($"Entity: {entityType}", new() { ["EntityType"] = "" }));
+    if (Model.AttentionRequired == true) badges.Add(("Attention Required", new() { ["AttentionRequired"] = "" }));
+    if (Model.Section is { } section) badges.Add(($"Section: {section}", new() { ["Section"] = "" }));
+    if (Model.Code is not null) badges.Add(($"Finding: {Model.Code}", new() { ["Code"] = "" }));
+    if (!string.IsNullOrWhiteSpace(Model.SearchText)) badges.Add(($"Search: \"{Model.SearchText}\"", new() { ["SearchText"] = "" }));
+}
+@if (badges.Count > 0)
+{
+    <div class="mca-chip-row">
+        @foreach (var (label, overrides) in badges)
+        {
+            <a class="mca-chip" asp-controller="Requests" asp-action="Index"
+               asp-all-route-data="@(Model.ToRouteValues(overrides))">@label <i class="bi bi-x-lg"></i></a>
+        }
+        <a class="btn btn-sm btn-outline-secondary" asp-controller="Requests" asp-action="Index">Clear All Filters</a>
+    </div>
+}

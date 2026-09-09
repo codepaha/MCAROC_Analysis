@@ -28,6 +28,18 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<AuditorObservation> AuditorObservations => Set<AuditorObservation>();
     public DbSet<Litigation> Litigations => Set<Litigation>();
 
+    public DbSet<AnalysisRun> AnalysisRuns => Set<AnalysisRun>();
+    public DbSet<AnalysisFinding> AnalysisFindings => Set<AnalysisFinding>();
+
+    public DbSet<McaFilingBatch> McaFilingBatches => Set<McaFilingBatch>();
+    public DbSet<McaFiling> McaFilings => Set<McaFiling>();
+    public DbSet<McaFilingDocument> McaFilingDocuments => Set<McaFilingDocument>();
+    public DbSet<McaFilingExtraction> McaFilingExtractions => Set<McaFilingExtraction>();
+
+    public DbSet<DocumentChunk> DocumentChunks => Set<DocumentChunk>();
+    public DbSet<ChatSession> ChatSessions => Set<ChatSession>();
+    public DbSet<ChatMessage> ChatMessages => Set<ChatMessage>();
+
     protected override void ConfigureConventions(ModelConfigurationBuilder configurationBuilder)
     {
         // Default precision for monetary/count decimals (mostly Rs. Crore values); percentages override below.
@@ -157,6 +169,102 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             e.HasKey(x => x.LitigationId);
             e.HasIndex(x => new { x.RequestId, x.IngestionRunId });
             e.Property(x => x.MatchStatus).HasConversion<string>().HasMaxLength(20);
+        });
+
+        modelBuilder.Entity<AnalysisRun>(e =>
+        {
+            e.HasKey(x => x.AnalysisRunId);
+            e.HasOne(x => x.Request).WithMany().HasForeignKey(x => x.RequestId).OnDelete(DeleteBehavior.Cascade);
+            e.HasIndex(x => new { x.RequestId, x.RunNumber }).IsUnique();
+            e.Property(x => x.Status).HasConversion<string>().HasMaxLength(30);
+            e.Property(x => x.OverallReviewPriority).HasConversion<string>().HasMaxLength(10);
+        });
+
+        modelBuilder.Entity<AnalysisFinding>(e =>
+        {
+            e.HasKey(x => x.FindingId);
+            e.HasOne<AnalysisRun>().WithMany(r => r.Findings).HasForeignKey(x => x.AnalysisRunId).OnDelete(DeleteBehavior.Cascade);
+            e.HasIndex(x => new { x.AnalysisRunId, x.Section });
+            e.HasIndex(x => new { x.RequestId, x.Code });
+            e.Property(x => x.Section).HasConversion<string>().HasMaxLength(20);
+            e.Property(x => x.Severity).HasConversion<string>().HasMaxLength(10);
+            e.Property(x => x.TemporalStatus).HasConversion<string>().HasMaxLength(10);
+            e.Property(x => x.Code).HasMaxLength(80);
+        });
+
+        modelBuilder.Entity<McaFilingBatch>(e =>
+        {
+            e.HasKey(x => x.BatchId);
+            e.HasOne(x => x.Request).WithMany().HasForeignKey(x => x.RequestId).OnDelete(DeleteBehavior.Cascade);
+            e.Property(x => x.Status).HasConversion<string>().HasMaxLength(30);
+        });
+
+        modelBuilder.Entity<McaFiling>(e =>
+        {
+            e.HasKey(x => x.FilingId);
+            e.HasOne(x => x.Batch).WithMany(b => b.Filings).HasForeignKey(x => x.BatchId).OnDelete(DeleteBehavior.Cascade);
+            e.HasIndex(x => new { x.BatchId, x.Srn });
+        });
+
+        modelBuilder.Entity<McaFilingDocument>(e =>
+        {
+            e.HasKey(x => x.FilingDocumentId);
+            e.HasOne(x => x.Filing).WithMany(f => f.Documents).HasForeignKey(x => x.FilingId).OnDelete(DeleteBehavior.Cascade);
+            e.HasOne<McaFilingDocument>().WithMany().HasForeignKey(x => x.DuplicateOfDocumentId).OnDelete(DeleteBehavior.Restrict);
+            e.HasIndex(x => new { x.BatchId, x.FileHash });
+            e.HasIndex(x => x.ProcessingStatus);
+            e.Property(x => x.Category).HasConversion<string>().HasMaxLength(20);
+            e.Property(x => x.ClassificationConfidence).HasConversion<string>().HasMaxLength(10);
+            e.Property(x => x.ProcessingStatus).HasConversion<string>().HasMaxLength(30);
+            e.Property(x => x.TextExtractionMethod).HasConversion<string>().HasMaxLength(10);
+            e.Property(x => x.AiExtractionStatus).HasConversion<string>().HasMaxLength(20);
+            e.Property(x => x.ChunkingStatus).HasConversion<string>().HasMaxLength(20);
+        });
+
+        modelBuilder.Entity<McaFilingExtraction>(e =>
+        {
+            e.HasKey(x => x.ExtractionId);
+            e.HasOne(x => x.Filing).WithMany().HasForeignKey(x => x.FilingId).OnDelete(DeleteBehavior.Restrict);
+            e.HasOne(x => x.FilingDocument).WithMany().HasForeignKey(x => x.FilingDocumentId).OnDelete(DeleteBehavior.Restrict);
+            e.Property(x => x.ValidationStatus).HasConversion<string>().HasMaxLength(20);
+            e.Property(x => x.Status).HasConversion<string>().HasMaxLength(10);
+            // Defense-in-depth against a duplicate paid Gemini call slipping past the atomic claim in
+            // ExtractFilingAsync (e.g. under a weaker isolation level than assumed): the DB itself refuses
+            // a second extraction row for the same filing outright, rather than relying solely on
+            // application-level locking to prevent one.
+            e.HasIndex(x => x.FilingId).IsUnique().HasFilter("[FilingId] IS NOT NULL");
+        });
+
+        modelBuilder.Entity<DocumentChunk>(e =>
+        {
+            e.HasKey(x => x.ChunkId);
+            e.HasIndex(x => x.RequestId);
+            e.HasIndex(x => x.FilingDocumentId);
+            e.HasIndex(x => x.FilingId);
+            e.HasIndex(x => new { x.RequestId, x.Category });
+            e.HasIndex(x => new { x.RequestId, x.FormType });
+            e.HasIndex(x => new { x.RequestId, x.Srn });
+            e.Property(x => x.Category).HasConversion<string>().HasMaxLength(20);
+            // 768-dim vector chosen for gemini-embedding-001's recommended truncation size (see
+            // EmbeddingService) — every chunk in the table must use this same dimensionality since
+            // VECTOR_DISTANCE requires both operands to match.
+            e.Property(x => x.Embedding).HasColumnType("vector(768)");
+        });
+
+        modelBuilder.Entity<ChatSession>(e =>
+        {
+            e.HasKey(x => x.ChatSessionId);
+            e.HasOne<McaRequest>().WithMany().HasForeignKey(x => x.RequestId).OnDelete(DeleteBehavior.Cascade);
+            e.HasIndex(x => x.RequestId);
+        });
+
+        modelBuilder.Entity<ChatMessage>(e =>
+        {
+            e.HasKey(x => x.ChatMessageId);
+            e.HasOne<ChatSession>().WithMany(s => s.Messages).HasForeignKey(x => x.ChatSessionId).OnDelete(DeleteBehavior.Cascade);
+            e.HasIndex(x => x.ChatSessionId);
+            e.Property(x => x.Role).HasConversion<string>().HasMaxLength(10);
+            e.Property(x => x.Status).HasConversion<string>().HasMaxLength(10);
         });
 
         modelBuilder.Entity<Client>().HasData(

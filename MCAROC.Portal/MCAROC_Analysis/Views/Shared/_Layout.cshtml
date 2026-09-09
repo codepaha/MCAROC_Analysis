@@ -1,53 +1,131 @@
-﻿<!DOCTYPE html>
+@{
+    var controller = (ViewContext.RouteData.Values["controller"]?.ToString() ?? "").ToLowerInvariant();
+    var action = (ViewContext.RouteData.Values["action"]?.ToString() ?? "").ToLowerInvariant();
+    string Active(string ctrl, string? act = null) =>
+        controller == ctrl.ToLowerInvariant() && (act is null || action == act.ToLowerInvariant()) ? "active" : "";
+}
+<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>@ViewData["Title"] - MCAROC_Analysis</title>
+    <title>@ViewData["Title"] - MCA ROC Analysis</title>
     <script type="importmap"></script>
+    @* Set theme before paint to avoid a flash of the wrong theme *@
+    <script>(function(){try{var t=localStorage.getItem('mcaroc-theme');if(t)document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
     <link rel="stylesheet" href="~/lib/bootstrap/dist/css/bootstrap.min.css" />
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@@1.11.3/font/bootstrap-icons.min.css" />
+    <link rel="stylesheet" href="~/css/app.css" asp-append-version="true" />
+    <link rel="stylesheet" href="~/css/mcaroc.css" asp-append-version="true" />
     <link rel="stylesheet" href="~/css/site.css" asp-append-version="true" />
     <link rel="stylesheet" href="~/MCAROC_Analysis.styles.css" asp-append-version="true" />
+    @await RenderSectionAsync("Styles", required: false)
 </head>
 <body>
-    <header>
-        <nav class="navbar navbar-expand-sm navbar-toggleable-sm navbar-light bg-white border-bottom box-shadow mb-3">
-            <div class="container-fluid">
-                <a class="navbar-brand" asp-area="" asp-controller="Home" asp-action="Index">MCAROC_Analysis</a>
-                <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target=".navbar-collapse" aria-controls="navbarSupportedContent"
-                        aria-expanded="false" aria-label="Toggle navigation">
-                    <span class="navbar-toggler-icon"></span>
-                </button>
-                <div class="navbar-collapse collapse d-sm-inline-flex justify-content-between">
-                    <ul class="navbar-nav flex-grow-1">
-                        <li class="nav-item">
-                            <a class="nav-link text-dark" asp-area="" asp-controller="Home" asp-action="Index">Home</a>
-                        </li>
-                        <li class="nav-item">
-                            <a class="nav-link text-dark" asp-area="" asp-controller="Requests" asp-action="New">New Search</a>
-                        </li>
-                        <li class="nav-item">
-                            <a class="nav-link text-dark" asp-area="" asp-controller="Home" asp-action="Privacy">Privacy</a>
-                        </li>
-                    </ul>
-                </div>
+    <div class="pi-app-shell">
+        <aside class="pi-sidebar" id="piSidebar">
+            <a class="pi-side-brand" asp-controller="Dashboard" asp-action="Index">
+                <span class="pi-brand-mark">MR</span>
+                <span>
+                    <strong>MCA ROC Analysis</strong>
+                    <small>Credit Risk Intelligence</small>
+                </span>
+            </a>
+
+            <nav class="pi-side-nav" aria-label="Main modules">
+                <a class="pi-side-link @Active("Dashboard")" asp-controller="Dashboard" asp-action="Index">
+                    <span class="pi-side-icon"><i class="bi bi-grid-1x2"></i></span>
+                    <span>Dashboard</span>
+                </a>
+                <a class="pi-side-link @Active("Requests", "New")" asp-controller="Requests" asp-action="New">
+                    <span class="pi-side-icon"><i class="bi bi-plus-circle"></i></span>
+                    <span>New Search</span>
+                </a>
+                <a class="pi-side-link @(controller == "requests" && action != "new" ? "active" : "")" asp-controller="Requests" asp-action="Index">
+                    <span class="pi-side-icon"><i class="bi bi-clock-history"></i></span>
+                    <span>Search History</span>
+                </a>
+            </nav>
+
+            <div class="pi-side-footer">
+                <span>MCA ROC Analysis</span>
+                <strong>Credit Risk Intelligence</strong>
             </div>
-        </nav>
-    </header>
-    <div class="container">
-        <main role="main" class="pb-3">
-            @RenderBody()
-        </main>
+        </aside>
+
+        <button type="button" class="pi-sidebar-scrim" id="piSidebarScrim" aria-label="Close navigation"></button>
+
+        <div class="pi-main">
+            <header class="pi-topbar">
+                <button type="button" class="pi-mobile-nav-toggle" id="piMobileNavToggle" aria-controls="piSidebar" aria-expanded="false" aria-label="Open navigation">
+                    <i class="bi bi-list"></i>
+                </button>
+                <div class="pi-topbar-titles">
+                    <span>MCA ROC operations</span>
+                </div>
+
+                <div class="pi-topbar-actions">
+                    <button type="button" class="pi-icon-btn" id="piThemeToggle" title="Toggle theme" aria-label="Toggle dark mode">
+                        <i class="bi bi-moon-stars"></i>
+                    </button>
+                    <a class="btn btn-sm btn-primary" asp-controller="Requests" asp-action="New">
+                        <i class="bi bi-plus-lg me-1"></i>New Search
+                    </a>
+                </div>
+            </header>
+
+            <nav class="pi-breadcrumb" aria-label="Breadcrumb">
+                <a asp-controller="Dashboard" asp-action="Index"><i class="bi bi-house-door"></i> Dashboard</a>
+                <span class="sep">/</span>
+                <span class="current">@(ViewData["Title"] ?? "Dashboard")</span>
+            </nav>
+
+            <main role="main" class="pi-shell">
+                @RenderBody()
+            </main>
+        </div>
     </div>
 
-    <footer class="border-top footer text-muted">
-        <div class="container">
-            &copy; 2026 - MCAROC_Analysis - <a asp-area="" asp-controller="Home" asp-action="Privacy">Privacy</a>
-        </div>
-    </footer>
     <script src="~/lib/jquery/dist/jquery.min.js"></script>
     <script src="~/lib/bootstrap/dist/js/bootstrap.bundle.min.js"></script>
     <script src="~/js/site.js" asp-append-version="true"></script>
     @await RenderSectionAsync("Scripts", required: false)
+    <script>
+        // Compact off-canvas navigation for tablets and phones.
+        (function () {
+            var toggle = document.getElementById('piMobileNavToggle');
+            var scrim = document.getElementById('piSidebarScrim');
+            var sidebar = document.getElementById('piSidebar');
+            if (!toggle || !sidebar) return;
+            function setOpen(open) {
+                document.body.classList.toggle('pi-nav-open', open);
+                toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+                toggle.setAttribute('aria-label', open ? 'Close navigation' : 'Open navigation');
+                toggle.querySelector('i').className = open ? 'bi bi-x-lg' : 'bi bi-list';
+            }
+            toggle.addEventListener('click', function () { setOpen(!document.body.classList.contains('pi-nav-open')); });
+            if (scrim) scrim.addEventListener('click', function () { setOpen(false); });
+            sidebar.querySelectorAll('a').forEach(function (link) { link.addEventListener('click', function () { setOpen(false); }); });
+            document.addEventListener('keydown', function (event) { if (event.key === 'Escape') setOpen(false); });
+            window.addEventListener('resize', function () { if (window.innerWidth > 900) setOpen(false); });
+        })();
+
+        // Dark / light theme toggle.
+        (function () {
+            var root = document.documentElement;
+            var btn = document.getElementById('piThemeToggle');
+            function sync() {
+                var dark = root.getAttribute('data-theme') === 'dark';
+                if (btn) btn.querySelector('i').className = dark ? 'bi bi-sun' : 'bi bi-moon-stars';
+            }
+            sync();
+            if (btn) btn.addEventListener('click', function () {
+                var dark = root.getAttribute('data-theme') === 'dark';
+                if (dark) { root.removeAttribute('data-theme'); try { localStorage.setItem('mcaroc-theme', 'light'); } catch (e) {} }
+                else { root.setAttribute('data-theme', 'dark'); try { localStorage.setItem('mcaroc-theme', 'dark'); } catch (e) {} }
+                sync();
+            });
+        })();
+    </script>
 </body>
 </html>
