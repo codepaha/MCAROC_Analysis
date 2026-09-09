@@ -64,7 +64,11 @@ public static partial class TextChunker
                 var currentText = current.ToString();
                 var overlapText = currentText.Length > overlapChars ? currentText[^overlapChars..] : currentText;
                 current.Clear();
-                current.Append(overlapText);
+                // Only carry the overlap into the next chunk if the following paragraph still leaves it
+                // under maxChars — otherwise start clean so overlap + separator + paragraph can't push a
+                // chunk past the bound (was: up to maxChars + overlapChars + 2).
+                if (overlapText.Length + para.Length + 2 <= maxChars)
+                    current.Append(overlapText);
             }
 
             if (para.Length > maxChars)
