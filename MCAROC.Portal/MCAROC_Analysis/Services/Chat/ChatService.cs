@@ -17,9 +17,12 @@ public class ChatService(
 {
     private static readonly ChatRetrievalOptions Options = ChatRetrievalOptions.Default;
 
+    public Task<bool> RequestExistsAsync(long requestId, CancellationToken ct) =>
+        db.Requests.AnyAsync(r => r.RequestId == requestId, ct);
+
     /// <summary>Returns the persisted assistant message, or <c>null</c> if <paramref name="requestId"/>
-    /// matches no request (the controller maps that to 404). The existence check runs before any write,
-    /// so a bad id never creates an orphan session.</summary>
+    /// matches no request. The existence check runs before any write, so a bad id never creates an
+    /// orphan session (the controller also guards up front, unconditionally).</summary>
     public async Task<ChatMessage?> AskAsync(long requestId, string question, CancellationToken ct)
     {
         var request = await db.Requests.FirstOrDefaultAsync(r => r.RequestId == requestId, ct);
