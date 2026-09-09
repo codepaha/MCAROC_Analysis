@@ -67,6 +67,8 @@ public class ChargeRulesTests
         var outcome = result[2];
         Assert.Equal(RuleEvaluationStatus.Triggered, outcome.Status);
         Assert.Equal(FindingSeverity.Review, outcome.Finding!.Severity);
+        // Evidence link so the Charges & Security drawer can show this finding under the exact charge.
+        Assert.Contains("\"entityType\":\"RocCharge\"", outcome.Finding!.SourceReferenceJson);
     }
 
     [Fact]

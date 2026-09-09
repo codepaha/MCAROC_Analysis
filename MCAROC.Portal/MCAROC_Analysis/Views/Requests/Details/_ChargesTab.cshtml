@@ -1,0 +1,148 @@
+@model RequestDetailsViewModel
+@{
+    var extracted = Model.LatestRun is not null;
+    var open = Model.OpenChargesOrdered;
+    var satisfied = Model.SatisfiedChargesOrdered;
+
+    var sections = new (string Label, string Id, int? Count)[]
+    {
+        ("Summary", "summary", null),
+        ("Open Charges", "open", open.Count),
+        ("Satisfied Charges", "satisfied", satisfied.Count),
+    };
+
+    void SecurityBadges(RocCharge c)
+    {
+        foreach (var t in RequestDetailsViewModel.SecurityTypeLabels(c))
+        {
+            <span class="mca-badge">@System.Text.RegularExpressions.Regex.Replace(t, "(\\B[A-Z])", " $1")</span>
+        }
+    }
+}
+
+<ul class="nav mca-subtabs" data-mca-sections="charges" role="tablist">
+    @for (var i = 0; i < sections.Length; i++)
+    {
+        var s = sections[i];
+        <li class="nav-item" role="presentation">
+            <button class="nav-link @(i == 0 ? "active" : "")" data-bs-toggle="tab" data-bs-target="#sec-charges-@s.Id" type="button" role="tab">
+                @s.Label @if (s.Count is { } c) { <span class="badge">@c</span> }
+            </button>
+        </li>
+    }
+</ul>
+
+<div class="tab-content">
+
+    @* ── Summary ── *@
+    <div class="tab-pane fade show active mca-subtab-panel" id="sec-charges-summary" role="tabpanel">
+        @if (!extracted)
+        {
+            <div class="mca-empty"><i class="bi bi-hourglass"></i><p>No completed extraction yet.</p></div>
+        }
+        else if (Model.TotalChargeCount == 0)
+        {
+            <div class="mca-empty"><i class="bi bi-file-earmark-lock"></i><p>No registered charges found.</p></div>
+        }
+        else
+        {
+            <div class="mca-highlight-grid">
+                <div class="pi-metric"><span>Open Charges</span><strong>@Model.OpenChargeCount</strong><small>of @Model.TotalChargeCount registered</small></div>
+                <div class="pi-metric"><span>Satisfied Charges</span><strong>@Model.SatisfiedChargeCount</strong><small>historical</small></div>
+                <div class="pi-metric"><span>Registered Open Amount</span><strong>@Model.TotalOpenChargeAmount.ToString("N1")</strong><small>₹ Crore · largest @Money(Model.LargestChargeAmount)</small></div>
+                <div class="pi-metric"><span>Charge Holders</span><strong>@Model.ChargeHolderCount</strong><small>distinct lenders</small></div>
+                <div class="pi-metric"><span>Modified Charges</span><strong>@Model.ModifiedChargeCount</strong><small>more than one lifecycle event</small></div>
+                <div class="pi-metric"><span>Material Enhancements</span><strong>@Model.MaterialEnhancementFindingCount</strong><small>Phase 3 findings</small></div>
+            </div>
+            <p class="text-muted mt-2">"Registered Charge Amount" is the amount on the charge register — not the current loan outstanding.</p>
+
+            <div class="mca-section" style="margin-top:22px;">
+                <h3>Lender Concentration <span class="mca-count">open charges</span></h3>
+                @if (Model.LenderConcentration.Count > 0)
+                {
+                    <div class="pi-table-wrap"><table class="pi-results-table">
+                        <thead><tr><th>Charge Holder</th><th class="text-end">Open Charges</th><th class="text-end">Registered Amount (Cr)</th><th class="text-end">% of Open Registered</th></tr></thead>
+                        <tbody>
+                        @foreach (var row in Model.LenderConcentration)
+                        {
+                            <tr>
+                                <td>@row.Holder</td>
+                                <td class="text-end">@row.OpenCount</td>
+                                <td class="text-end">@row.RegisteredAmount.ToString("N2")</td>
+                                <td class="text-end">@(row.PctOfOpenAmount is { } p ? $"{p:0.#}%" : "—")</td>
+                            </tr>
+                        }
+                        </tbody>
+                    </table></div>
+                }
+                else { <p class="text-muted mb-0">No open charges to analyse.</p> }
+            </div>
+        }
+    </div>
+
+    @* ── Open Charges ── *@
+    <div class="tab-pane fade mca-subtab-panel" id="sec-charges-open" role="tabpanel">
+        @if (open.Count > 0)
+        {
+            <div class="pi-table-wrap"><table class="pi-results-table">
+                <thead><tr><th>Charge ID</th><th>Holder</th><th>Created</th><th class="text-end">Registered Amount</th><th>Last Event</th><th>Facility</th><th>Security</th><th></th></tr></thead>
+                <tbody>
+                @foreach (var c in open)
+                {
+                    var facility = c.LatestPrimaryFacilityType?.ToString();
+                    var secCount = RequestDetailsViewModel.SecurityTypeLabels(c).Count;
+                    <tr>
+                        <td class="report-id">@c.RocChargeNumber</td>
+                        <td>@c.LatestChargeHolderRaw</td>
+                        <td>@D(c.CreationDate)</td>
+                        <td class="text-end">@Money(c.CurrentAmount)</td>
+                        <td>@D(c.LatestModificationDate ?? c.CreationDate)</td>
+                        <td>@(facility ?? "—")</td>
+                        <td>@if (secCount > 0) { SecurityBadges(c); } else { <text>—</text> }</td>
+                        <td><a class="mca-chip" data-bs-toggle="collapse" href="#charge-@c.ChargeId" role="button">Details</a></td>
+                    </tr>
+                    <tr class="collapse" id="charge-@c.ChargeId">
+                        <td colspan="8">@await Html.PartialAsync("Details/_ChargeDrawer", ChargeDrawerViewModel.For(c, Model.AnalysisFindings))</td>
+                    </tr>
+                }
+                </tbody>
+            </table></div>
+        }
+        else if (extracted) { <div class="mca-empty"><i class="bi bi-unlock"></i><p>No open (unsatisfied) charges.</p></div> }
+        else { <div class="mca-empty"><i class="bi bi-hourglass"></i><p>No completed extraction yet.</p></div> }
+    </div>
+
+    @* ── Satisfied Charges ── *@
+    <div class="tab-pane fade mca-subtab-panel" id="sec-charges-satisfied" role="tabpanel">
+        @if (satisfied.Count > 0)
+        {
+            <p class="text-muted">Historical / satisfied — satisfaction on the register is not the same as confirmed clean repayment.</p>
+            <div class="pi-table-wrap"><table class="pi-results-table">
+                <thead><tr><th>Charge ID</th><th>Holder</th><th class="text-end">Registered Amount</th><th>Created</th><th>Satisfied</th><th>Duration</th><th></th></tr></thead>
+                <tbody>
+                @foreach (var c in satisfied)
+                {
+                    var dur = (c.CreationDate is { } cr && c.SatisfactionDate is { } sat)
+                        ? $"{(sat.ToDateTime(TimeOnly.MinValue) - cr.ToDateTime(TimeOnly.MinValue)).Days / 365.0:0.#} yr"
+                        : "—";
+                    <tr>
+                        <td class="report-id">@c.RocChargeNumber</td>
+                        <td>@c.LatestChargeHolderRaw</td>
+                        <td class="text-end">@Money(c.CurrentAmount)</td>
+                        <td>@D(c.CreationDate)</td>
+                        <td>@D(c.SatisfactionDate)</td>
+                        <td>@dur</td>
+                        <td><a class="mca-chip" data-bs-toggle="collapse" href="#charge-@c.ChargeId" role="button">Details</a></td>
+                    </tr>
+                    <tr class="collapse" id="charge-@c.ChargeId">
+                        <td colspan="7">@await Html.PartialAsync("Details/_ChargeDrawer", ChargeDrawerViewModel.For(c, Model.AnalysisFindings))</td>
+                    </tr>
+                }
+                </tbody>
+            </table></div>
+        }
+        else if (extracted) { <div class="mca-empty"><i class="bi bi-lock"></i><p>No satisfied charges on record.</p></div> }
+        else { <div class="mca-empty"><i class="bi bi-hourglass"></i><p>No completed extraction yet.</p></div> }
+    </div>
+
+</div>

@@ -132,13 +132,13 @@ public class RequestsController(
     }
 
     [HttpGet("/Requests/{id:long}")]
-    public async Task<IActionResult> Details(long id)
+    public async Task<IActionResult> Details(long id, [FromQuery] long? charge)
     {
         var request = await db.Requests.Include(r => r.Client).FirstOrDefaultAsync(r => r.RequestId == id);
         if (request is null) return NotFound();
 
         var documents = await db.RequestDocuments.Where(d => d.RequestId == id).ToListAsync();
-        var vm = new RequestDetailsViewModel { Request = request, Documents = documents };
+        var vm = new RequestDetailsViewModel { Request = request, Documents = documents, FocusChargeId = charge };
 
         if (request.LatestCompletedIngestionRunId is { } runId)
         {
@@ -150,9 +150,15 @@ public class RequestsController(
             vm.DirectorAssociations = await db.DirectorAssociations.Where(x => x.IngestionRunId == runId).ToListAsync();
             vm.Shareholdings = await db.Shareholdings.Where(x => x.IngestionRunId == runId)
                 .OrderByDescending(x => x.FinancialYear).ToListAsync();
-            vm.FinancialYears = await db.FinancialYearData.Where(x => x.IngestionRunId == runId)
+            vm.FinancialYears = await db.FinancialYearData
+                .Where(x => x.IngestionRunId == runId && x.Basis == FinancialBasis.Standalone)
                 .OrderBy(x => x.FinancialYear).ToListAsync();
-            vm.Charges = await db.RocCharges.Include(c => c.Events).Where(x => x.IngestionRunId == runId).ToListAsync();
+            vm.ConsolidatedFinancialYears = await db.FinancialYearData
+                .Where(x => x.IngestionRunId == runId && x.Basis == FinancialBasis.Consolidated)
+                .OrderBy(x => x.FinancialYear).ToListAsync();
+            vm.Charges = await db.RocCharges
+                .Include(c => c.Events).ThenInclude(e => e.SecurityComponents)
+                .Where(x => x.IngestionRunId == runId).ToListAsync();
             vm.MsmePayments = await db.MsmePayments.Where(x => x.IngestionRunId == runId).ToListAsync();
             vm.GstRegistrations = await db.GstRegistrations.Include(g => g.Filings)
                 .Where(x => x.IngestionRunId == runId).ToListAsync();
@@ -161,6 +167,23 @@ public class RequestsController(
             vm.AuditorObservations = await db.AuditorObservations.Where(x => x.IngestionRunId == runId)
                 .OrderByDescending(x => x.FinancialYear).ToListAsync();
             vm.Litigations = await db.Litigations.Where(x => x.IngestionRunId == runId).ToListAsync();
+
+            // Phase 6 — the 12 additional workbook sheets.
+            vm.Structure = await db.CompanyStructures.FirstOrDefaultAsync(x => x.IngestionRunId == runId);
+            vm.RelatedCorporates = await db.RelatedCorporates.Where(x => x.IngestionRunId == runId)
+                .OrderBy(x => x.RelationshipType).ThenBy(x => x.EntityNameNormalized).ToListAsync();
+            vm.ComplianceRecords = await db.ComplianceRecords.Where(x => x.IngestionRunId == runId)
+                .OrderBy(x => x.RecordType).ThenByDescending(x => x.RecordDate).ToListAsync();
+            vm.FinancialParameters = await db.FinancialParameters.Where(x => x.IngestionRunId == runId)
+                .OrderBy(x => x.ParameterName).ThenByDescending(x => x.FinancialYear).ToListAsync();
+            vm.SecurityAllotments = await db.SecurityAllotments.Where(x => x.IngestionRunId == runId)
+                .OrderByDescending(x => x.AllotmentDate).ToListAsync();
+            vm.ProprietorshipAssociations = await db.ProprietorshipAssociations.Where(x => x.IngestionRunId == runId)
+                .OrderBy(x => x.DirectorNameRaw).ToListAsync();
+            vm.DirectorAssignmentHistories = await db.DirectorAssignmentHistories.Where(x => x.IngestionRunId == runId)
+                .OrderBy(x => x.DirectorNameRaw).ThenByDescending(x => x.AppointmentDate).ToListAsync();
+            vm.PeerComparisonMetrics = await db.PeerComparisonMetrics.Where(x => x.IngestionRunId == runId)
+                .OrderBy(x => x.MetricName).ThenByDescending(x => x.FinancialYear).ToListAsync();
         }
 
         vm.LatestAnalysisRun = await db.AnalysisRuns
@@ -240,6 +263,78 @@ public class RequestsController(
         }
 
         return View(vm);
+    }
+
+    /// <summary>Paged filing/document list for the Documents tab — returns a server-rendered partial so the
+    /// tab body itself stays lightweight (counts only) on the main Details load. <c>category</c> + <c>page</c>
+    /// round-trip in the query string, so a given page is bookmarkable / shareable.</summary>
+    [HttpGet("/Requests/{id:long}/Documents")]
+    public async Task<IActionResult> Documents(long id, [FromQuery] string? category, [FromQuery] int page = 1)
+    {
+        const int pageSize = 25;
+
+        var request = await db.Requests.FirstOrDefaultAsync(r => r.RequestId == id);
+        if (request is null) return NotFound();
+
+        var vm = new DocumentsPageViewModel { RequestId = id, Category = category, PageSize = pageSize };
+
+        var batch = await db.McaFilingBatches.Where(b => b.RequestId == id)
+            .OrderByDescending(b => b.StartedDate).FirstOrDefaultAsync();
+        if (batch is null)
+            return PartialView("Details/_DocumentsList", vm);
+
+        vm.HasBatch = true;
+
+        // Dominant category per filing — derived from a lightweight (filing, category, count) grouping in
+        // the database, not by loading every McaFilingDocument entity into memory.
+        var catGroups = await db.McaFilingDocuments
+            .Where(d => d.BatchId == batch.BatchId && d.DuplicateOfDocumentId == null && d.Category != FilingCategory.Unclassified)
+            .GroupBy(d => new { d.FilingId, d.Category })
+            .Select(g => new { g.Key.FilingId, g.Key.Category, Count = g.Count() })
+            .ToListAsync();
+        var dominantByFiling = catGroups
+            .GroupBy(x => x.FilingId)
+            .ToDictionary(g => g.Key, g => g.OrderByDescending(x => x.Count).First().Category);
+
+        var allFilings = await db.McaFilings.Where(f => f.BatchId == batch.BatchId)
+            .Select(f => new { f.FilingId, f.Srn }).ToListAsync();
+
+        FilingCategory DominantFor(long filingId) =>
+            dominantByFiling.TryGetValue(filingId, out var c) ? c : FilingCategory.Unclassified;
+
+        foreach (var f in allFilings)
+            vm.CategoryCounts[DominantFor(f.FilingId)] = vm.CategoryCounts.GetValueOrDefault(DominantFor(f.FilingId)) + 1;
+
+        FilingCategory? filterCat = !string.IsNullOrWhiteSpace(category)
+            && Enum.TryParse<FilingCategory>(category, ignoreCase: true, out var parsed) ? parsed : null;
+
+        var ordered = allFilings
+            .Where(f => filterCat is null || DominantFor(f.FilingId) == filterCat)
+            .OrderBy(f => DominantFor(f.FilingId))
+            .ThenBy(f => f.Srn, StringComparer.Ordinal)
+            .Select(f => f.FilingId)
+            .ToList();
+
+        vm.TotalFilings = ordered.Count;
+        // Clamp the requested page into [1, TotalPages] *before* any arithmetic — an unbounded ?page=
+        // (e.g. int.MaxValue) would otherwise overflow (vm.Page - 1) * pageSize.
+        vm.Page = Math.Clamp(page, 1, Math.Max(1, vm.TotalPages));
+
+        var pageIds = ordered.Skip((vm.Page - 1) * pageSize).Take(pageSize).ToList();
+
+        var pageFilings = await db.McaFilings.Include(f => f.Documents)
+            .Where(f => pageIds.Contains(f.FilingId)).ToListAsync();
+        var extractionByFiling = (await db.McaFilingExtractions
+                .Where(e => e.FilingId != null && pageIds.Contains(e.FilingId!.Value)).ToListAsync())
+            .Where(e => e.FilingId.HasValue)
+            .ToDictionary(e => e.FilingId!.Value);
+
+        vm.Filings = pageIds // preserve the (category, SRN) page order
+            .Select(fid => pageFilings.First(f => f.FilingId == fid))
+            .Select(f => new DocumentsPageViewModel.FilingRow(f, DominantFor(f.FilingId), extractionByFiling.GetValueOrDefault(f.FilingId)))
+            .ToList();
+
+        return PartialView("Details/_DocumentsList", vm);
     }
 
     private async Task<RequestDocument> SaveDocumentAsync(long requestId, IFormFile file, DocumentType documentType, bool validateAsExcel = true)

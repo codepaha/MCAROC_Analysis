@@ -117,6 +117,14 @@ public static class ChargeRules
                 chargeNumber = top.Charge.RocChargeNumber, originalAmount = top.OriginalAmount,
                 latestAmount = top.LatestAmount, enhancementPercent = top.EnhancementPercent,
                 additionalChargesEnhanced = evaluable.Count - 1
+            }),
+            // Evidence link to the exact charge — the Charges & Security drawer shows this finding under
+            // "Related findings" for that one charge only.
+            SourceReferenceJson: JsonSerializer.Serialize(new
+            {
+                entityType = nameof(RocCharge),
+                entityIds = new[] { top.Charge.ChargeId },
+                chargeNumber = top.Charge.RocChargeNumber
             })));
     }
 }

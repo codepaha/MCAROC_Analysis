@@ -1,0 +1,131 @@
+@using MCAROC_Analysis.Services.Analysis
+@model RequestDetailsViewModel
+@{
+    var run = Model.LatestAnalysisRun;
+    var std = Model.FinancialYears;
+    var con = Model.ConsolidatedFinancialYears;
+
+    FinancialStatementViewModel Statement(string key, string title, params (string Label, Func<FinancialYearData, decimal?> V)[] lines) =>
+        new(key, title, lines.Select(l => new FinancialStatementRow(l.Label, l.V)).ToList(), std, con);
+
+    var pl = Statement("pl", "Profit & Loss",
+        ("Revenue", f => f.Revenue), ("Other Income", f => f.OtherIncome), ("EBITDA", f => f.Ebitda),
+        ("EBIT", f => f.Ebit), ("PBT", f => f.Pbt), ("PAT", f => f.Pat), ("Finance Cost", f => f.FinanceCost));
+
+    var bs = Statement("bs", "Balance Sheet",
+        ("Net Worth", f => f.NetWorth), ("Share Capital", f => f.ShareCapital),
+        ("Current Assets", f => f.CurrentAssets), ("Current Liabilities", f => f.CurrentLiabilities),
+        ("Inventory", f => f.Inventory), ("Trade Receivables", f => f.TradeReceivables),
+        ("Cash & Bank", f => f.CashAndBank), ("Trade Payables", f => f.TradePayables),
+        ("Long-term Borrowings", f => f.LongTermBorrowings), ("Short-term Borrowings", f => f.ShortTermBorrowings),
+        ("Total Debt", f => f.TotalDebt));
+
+    var cf = Statement("cf", "Cash Flow",
+        ("Cash Flow from Operations", f => f.Cfo), ("Cash Flow from Investing", f => f.Cfi), ("Cash Flow from Financing", f => f.Cff));
+
+    var paramsByName = Model.FinancialParameters.GroupBy(p => p.ParameterName).ToList();
+
+    var sections = new (string Label, string Id, int? Count)[]
+    {
+        ("Summary", "summary", null),
+        ("P&L", "pl", std.Count),
+        ("Balance Sheet", "bs", null),
+        ("Cash Flow", "cf", null),
+        ("Additional Indicators", "indicators", paramsByName.Count),
+        ("Peer Comparison", "peers", Model.PeerComparisonMetrics.Count),
+    };
+}
+
+<ul class="nav mca-subtabs" data-mca-sections="financials" role="tablist">
+    @for (var i = 0; i < sections.Length; i++)
+    {
+        var s = sections[i];
+        <li class="nav-item" role="presentation">
+            <button class="nav-link @(i == 0 ? "active" : "")" data-bs-toggle="tab" data-bs-target="#sec-financials-@s.Id" type="button" role="tab">
+                @s.Label @if (s.Count is { } c) { <span class="badge">@c</span> }
+            </button>
+        </li>
+    }
+</ul>
+
+<div class="tab-content">
+
+    <div class="tab-pane fade show active mca-subtab-panel" id="sec-financials-summary" role="tabpanel">
+        @if (std.Count > 0 || run is not null)
+        {
+            <div class="mca-highlight-grid">
+                <div class="pi-metric"><span>Latest Revenue</span><strong>@(Model.LatestRevenue?.ToString("N1") ?? "—")</strong><small>@(Model.LatestFinancialYear is { } fy ? $"FY{fy}" : "no financials")@(Model.RevenueYoYPercent is { } yoy ? $" · {(yoy >= 0 ? "▲" : "▼")} {Math.Abs(yoy)}% YoY" : "")</small></div>
+                <div class="pi-metric"><span>Net Worth</span><strong>@(Model.LatestNetWorth?.ToString("N1") ?? "—")</strong><small>₹ Crore@(Model.LatestFinancialYear is { } fy2 ? $" · FY{fy2}" : "")</small></div>
+                <div class="pi-metric"><span>PAT</span><strong>@(Model.LatestPat?.ToString("N1") ?? "—")</strong><small>₹ Crore@(Model.LatestFinancialYear is { } fy3 ? $" · FY{fy3}" : "")</small></div>
+                <div class="pi-metric"><span>Total Debt</span><strong>@(Model.LatestTotalDebt?.ToString("N1") ?? "—")</strong><small>₹ Crore@(Model.LatestFinancialYear is { } fy4 ? $" · FY{fy4}" : "")</small></div>
+                <div class="pi-metric"><span>Reporting Bases</span><strong>@(con.Count > 0 ? "S + C" : "S")</strong><small>@std.Count standalone · @con.Count consolidated year(s)</small></div>
+            </div>
+            <p class="text-muted mt-3 mb-0">Standalone is the primary basis (rule engine + default answers). Use the toggle on each statement to view consolidated where available.</p>
+        }
+        else { <div class="mca-empty"><i class="bi bi-cash-stack"></i><p>Financial highlights become available once extraction completes.</p></div> }
+    </div>
+
+    <div class="tab-pane fade mca-subtab-panel" id="sec-financials-pl" role="tabpanel">@await Html.PartialAsync("Details/_FinancialStatement", pl)</div>
+    <div class="tab-pane fade mca-subtab-panel" id="sec-financials-bs" role="tabpanel">@await Html.PartialAsync("Details/_FinancialStatement", bs)</div>
+    <div class="tab-pane fade mca-subtab-panel" id="sec-financials-cf" role="tabpanel">@await Html.PartialAsync("Details/_FinancialStatement", cf)</div>
+
+    <div class="tab-pane fade mca-subtab-panel" id="sec-financials-indicators" role="tabpanel">
+        @if (paramsByName.Count > 0)
+        {
+            var years = Model.FinancialParameters.Where(p => p.FinancialYear is not null)
+                .Select(p => p.FinancialYear!.Value).Distinct().OrderByDescending(y => y).ToList();
+            <div class="pi-table-wrap"><table class="pi-results-table">
+                <thead><tr><th>Indicator</th><th>Unit</th>@foreach (var y in years) { <th class="text-end">FY@(y)</th> }<th class="text-end">Latest</th></tr></thead>
+                <tbody>
+                @foreach (var grp in paramsByName)
+                {
+                    var byYear = grp.Where(p => p.FinancialYear is not null).ToDictionary(p => p.FinancialYear!.Value);
+                    var noYear = grp.FirstOrDefault(p => p.FinancialYear is null);
+                    <tr>
+                        <td>@grp.Key</td>
+                        <td>@Or(grp.Select(p => p.Unit).FirstOrDefault(u => !string.IsNullOrWhiteSpace(u)))</td>
+                        @foreach (var y in years)
+                        {
+                            <td class="text-end">@(byYear.TryGetValue(y, out var p) ? (p.NumericValue?.ToString("N2") ?? p.RawValue) : "—")</td>
+                        }
+                        <td class="text-end">@(noYear is not null ? (noYear.NumericValue?.ToString("N2") ?? noYear.RawValue) : "—")</td>
+                    </tr>
+                }
+                </tbody>
+            </table></div>
+            <p class="text-muted mt-2 mb-0">Raw workbook values are shown as-is; "No" / "Not Applicable" / "-" is never read as 0.</p>
+        }
+        else { <div class="mca-empty"><i class="bi bi-list-columns"></i><p>No additional financial indicators (Highlights / Annexure) reported in this workbook.</p></div> }
+    </div>
+
+    <div class="tab-pane fade mca-subtab-panel" id="sec-financials-peers" role="tabpanel">
+        @if (Model.PeerComparisonMetrics.Count > 0)
+        {
+            var meta = Model.PeerComparisonMetrics.First();
+            <p class="text-muted">
+                @Or(meta.Industry)@(string.IsNullOrWhiteSpace(meta.Segment) ? "" : $" · {meta.Segment}").
+                Position is a mathematical comparison against the peer median (±@(PeerComparisonDisplayRules.InLineTolerance * 100)% = "in line"); the colour shows whether that position is favourable for the metric.
+            </p>
+            <div class="pi-table-wrap"><table class="pi-results-table">
+                <thead><tr><th>Metric</th><th>FY</th><th class="text-end">Company</th><th class="text-end">Peer Median</th><th class="text-end">Peers</th><th>Position</th></tr></thead>
+                <tbody>
+                @foreach (var m in Model.PeerComparisonMetrics.OrderBy(m => m.MetricName).ThenByDescending(m => m.FinancialYear))
+                {
+                    var sentiment = PeerComparisonDisplayRules.Sentiment(m.MetricName, m.Position);
+                    var cls = sentiment switch { "favourable" => "sev-positive", "adverse" => "sev-critical", "neutral" => "sev-watch", _ => "" };
+                    <tr>
+                        <td>@m.MetricName</td>
+                        <td>FY@(m.FinancialYear)</td>
+                        <td class="text-end">@Num(m.CompanyValue)</td>
+                        <td class="text-end">@Num(m.PeerMedianValue)</td>
+                        <td class="text-end">@(m.PeerCount?.ToString() ?? "—")</td>
+                        <td><span class="mca-badge @cls">@m.Position</span></td>
+                    </tr>
+                }
+                </tbody>
+            </table></div>
+        }
+        else { <div class="mca-empty"><i class="bi bi-bezier2"></i><p>No peer comparison data reported in this workbook.</p></div> }
+    </div>
+
+</div>

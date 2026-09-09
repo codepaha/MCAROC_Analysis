@@ -210,7 +210,15 @@ public class IngestionOrchestrator(AppDbContext db, IExcelSheetReader sheetReade
         var financialSheet = SheetAliases.Find(rocWorkbook, SheetAliases.StandaloneFinancialData);
         if (financialSheet is not null)
         {
-            var r = StandaloneFinancialDataParser.Parse(financialSheet, requestId, runId, rocDocumentId);
+            var r = StandaloneFinancialDataParser.Parse(financialSheet, requestId, runId, rocDocumentId, FinancialBasis.Standalone);
+            db.FinancialYearData.AddRange(r.Items);
+            Collect(r, issues, ref itemCount);
+        }
+
+        var consolidatedSheet = SheetAliases.Find(rocWorkbook, SheetAliases.ConsolidatedFinancialData);
+        if (consolidatedSheet is not null)
+        {
+            var r = StandaloneFinancialDataParser.Parse(consolidatedSheet, requestId, runId, rocDocumentId, FinancialBasis.Consolidated);
             db.FinancialYearData.AddRange(r.Items);
             Collect(r, issues, ref itemCount);
         }
@@ -250,7 +258,15 @@ public class IngestionOrchestrator(AppDbContext db, IExcelSheetReader sheetReade
         var auditorsSheet = SheetAliases.Find(rocWorkbook, SheetAliases.Auditors);
         if (auditorsSheet is not null)
         {
-            var r = AuditorsParser.Parse(auditorsSheet, requestId, runId, rocDocumentId);
+            var r = AuditorsParser.Parse(auditorsSheet, requestId, runId, rocDocumentId, FinancialBasis.Standalone);
+            db.AuditorObservations.AddRange(r.Items);
+            Collect(r, issues, ref itemCount);
+        }
+
+        var auditorsConsolidatedSheet = SheetAliases.Find(rocWorkbook, SheetAliases.AuditorsConsolidated);
+        if (auditorsConsolidatedSheet is not null)
+        {
+            var r = AuditorsParser.Parse(auditorsConsolidatedSheet, requestId, runId, rocDocumentId, FinancialBasis.Consolidated);
             db.AuditorObservations.AddRange(r.Items);
             Collect(r, issues, ref itemCount);
         }
@@ -260,6 +276,72 @@ public class IngestionOrchestrator(AppDbContext db, IExcelSheetReader sheetReade
         {
             var r = LegalHistoryParser.Parse(legalSheet, requestId, runId, rocDocumentId);
             db.Litigations.AddRange(r.Items);
+            Collect(r, issues, ref itemCount);
+        }
+
+        // ── Phase 6 domain sheets ──
+        var structureSheet = SheetAliases.Find(rocWorkbook, SheetAliases.Structure);
+        if (structureSheet is not null)
+        {
+            var r = StructureParser.Parse(structureSheet, requestId, runId, rocDocumentId);
+            db.CompanyStructures.AddRange(r.Items);
+            Collect(r, issues, ref itemCount);
+        }
+
+        var relatedSheet = SheetAliases.Find(rocWorkbook, SheetAliases.RelatedCorporates);
+        if (relatedSheet is not null)
+        {
+            var r = RelatedCorporatesParser.Parse(relatedSheet, requestId, runId, rocDocumentId);
+            db.RelatedCorporates.AddRange(r.Items);
+            Collect(r, issues, ref itemCount);
+        }
+
+        var complianceSheet = SheetAliases.Find(rocWorkbook, SheetAliases.Compliance);
+        if (complianceSheet is not null)
+        {
+            var r = ComplianceParser.Parse(complianceSheet, requestId, runId, rocDocumentId);
+            db.ComplianceRecords.AddRange(r.Items);
+            Collect(r, issues, ref itemCount);
+        }
+
+        var allotmentSheet = SheetAliases.Find(rocWorkbook, SheetAliases.SecuritiesAllotment);
+        if (allotmentSheet is not null)
+        {
+            var r = SecuritiesAllotmentParser.Parse(allotmentSheet, requestId, runId, rocDocumentId);
+            db.SecurityAllotments.AddRange(r.Items);
+            Collect(r, issues, ref itemCount);
+        }
+
+        var proprietorshipSheet = SheetAliases.Find(rocWorkbook, SheetAliases.Proprietorship);
+        if (proprietorshipSheet is not null)
+        {
+            var r = ProprietorshipParser.Parse(proprietorshipSheet, requestId, runId, rocDocumentId);
+            db.ProprietorshipAssociations.AddRange(r.Items);
+            Collect(r, issues, ref itemCount);
+        }
+
+        var dirHistorySheet = SheetAliases.Find(rocWorkbook, SheetAliases.DirectorAssociationHistory);
+        if (dirHistorySheet is not null)
+        {
+            var r = DirectorAssociationHistoryParser.Parse(dirHistorySheet, requestId, runId, rocDocumentId);
+            db.DirectorAssignmentHistories.AddRange(r.Items);
+            Collect(r, issues, ref itemCount);
+        }
+
+        var peerSheet = SheetAliases.Find(rocWorkbook, SheetAliases.PeerComparison);
+        if (peerSheet is not null)
+        {
+            var r = PeerComparisonParser.Parse(peerSheet, requestId, runId, rocDocumentId);
+            db.PeerComparisonMetrics.AddRange(r.Items);
+            Collect(r, issues, ref itemCount);
+        }
+
+        var highlightsSheet = SheetAliases.Find(rocWorkbook, SheetAliases.Highlights);
+        var financialParamsSheet = SheetAliases.Find(rocWorkbook, SheetAliases.FinancialParametersAnnexure);
+        if (highlightsSheet is not null || financialParamsSheet is not null)
+        {
+            var r = FinancialParametersParser.Parse(highlightsSheet, financialParamsSheet, requestId, runId, rocDocumentId);
+            db.FinancialParameters.AddRange(r.Items);
             Collect(r, issues, ref itemCount);
         }
     }

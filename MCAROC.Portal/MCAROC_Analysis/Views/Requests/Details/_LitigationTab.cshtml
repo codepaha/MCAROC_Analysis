@@ -1,0 +1,95 @@
+@model RequestDetailsViewModel
+@{
+    var cats = Model.Litigations
+        .GroupBy(l => string.IsNullOrWhiteSpace(l.CaseCategory) ? "Other" : l.CaseCategory!)
+        .OrderByDescending(g => g.Count()).ToList();
+
+    string RoleBadge(LitigationRole role) => role switch
+    {
+        LitigationRole.FiledAgainst => "sev-critical",
+        LitigationRole.FiledBy => "sev-positive",
+        _ => "sev-watch"
+    };
+}
+
+<ul class="nav mca-subtabs" data-mca-sections="litigation" role="tablist">
+    <li class="nav-item" role="presentation">
+        <button class="nav-link active" data-bs-toggle="tab" data-bs-target="#sec-litigation-summary" type="button" role="tab">Summary</button>
+    </li>
+    <li class="nav-item" role="presentation">
+        <button class="nav-link" data-bs-toggle="tab" data-bs-target="#sec-litigation-cases" type="button" role="tab">Cases <span class="badge">@Model.LitigationCount</span></button>
+    </li>
+</ul>
+
+<div class="tab-content">
+
+    <div class="tab-pane fade show active mca-subtab-panel" id="sec-litigation-summary" role="tabpanel">
+        @if (Model.LitigationCount == 0)
+        {
+            <div class="mca-empty"><i class="bi bi-bank"></i><p>No litigation matched to this entity.</p></div>
+        }
+        else
+        {
+            <div class="mca-highlight-grid">
+                <div class="pi-metric"><span>Total Cases</span><strong>@Model.LitigationCount</strong><small>@Model.LitigationPendingCount pending · @Model.LitigationDisposedCount disposed</small></div>
+                <div class="pi-metric"><span>Filed Against Company</span><strong>@Model.LitigationFiledAgainstCount</strong><small>from Phase 3 rule attribution</small></div>
+                <div class="pi-metric"><span>Filed By Company</span><strong>@Model.LitigationFiledByCount</strong><small>company as petitioner</small></div>
+                <div class="pi-metric"><span>Role Not Determined</span><strong>@Model.LitigationRoleNotDeterminedCount</strong><small>needs manual verification</small></div>
+            </div>
+
+            <div class="mca-section" style="margin-top:22px;">
+                <h3>By Category</h3>
+                <div class="pi-table-wrap"><table class="pi-results-table">
+                    <thead><tr><th>Category</th><th class="text-end">Cases</th><th class="text-end">Pending</th></tr></thead>
+                    <tbody>
+                    @foreach (var g in cats)
+                    {
+                        <tr><td>@g.Key</td><td class="text-end">@g.Count()</td><td class="text-end">@g.Count(IsPendingRow)</td></tr>
+                    }
+                    </tbody>
+                </table></div>
+            </div>
+            <p class="text-muted mb-0">Role is only assigned when a Phase 3 finding maps to that exact case; a company filing suit is not treated the same as a suit filed against it.</p>
+        }
+    </div>
+
+    <div class="tab-pane fade mca-subtab-panel" id="sec-litigation-cases" role="tabpanel">
+        @if (Model.LitigationCount == 0)
+        {
+            <div class="mca-empty"><i class="bi bi-bank"></i><p>No litigation matched to this entity.</p></div>
+        }
+        else
+        {
+            <div class="pi-table-wrap"><table class="pi-results-table">
+                <thead><tr><th>Role</th><th>Status</th><th>Category</th><th>Type</th><th>Court</th><th>Parties</th><th>Case No.</th><th>Last Hearing</th><th>Source</th></tr></thead>
+                <tbody>
+                @foreach (var l in Model.Litigations.OrderByDescending(l => l.LastHearingDate))
+                {
+                    var role = Model.RoleFor(l);
+                    <tr>
+                        <td><span class="mca-badge @RoleBadge(role)">@RoleLabel(role)</span></td>
+                        <td>@Or(l.CaseStatus)</td>
+                        <td>@Or(l.CaseCategory)</td>
+                        <td>@Or(l.CaseType)</td>
+                        <td>@Or(l.Court)</td>
+                        <td>@Or(l.Litigants)</td>
+                        <td class="report-id">@Or(l.CaseNumber)</td>
+                        <td>@D(l.LastHearingDate)</td>
+                        <td>@(l.Source == LitigationSource.DataLake ? "Data Lake" : "ROC Report")</td>
+                    </tr>
+                }
+                </tbody>
+            </table></div>
+        }
+    </div>
+
+</div>
+
+@functions {
+    static bool IsPendingRow(Litigation l)
+    {
+        if (string.IsNullOrWhiteSpace(l.CaseStatus)) return false;
+        var t = l.CaseStatus.ToLowerInvariant();
+        return !new[] { "dispos", "clos", "resolv", "dismiss", "withdraw", "settl" }.Any(k => t.Contains(k));
+    }
+}

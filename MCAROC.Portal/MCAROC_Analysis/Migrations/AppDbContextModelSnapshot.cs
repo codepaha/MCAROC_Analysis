@@ -178,6 +178,11 @@ namespace MCAROC_Analysis.Migrations
                     b.Property<string>("AuditorName")
                         .HasColumnType("nvarchar(max)");
 
+                    b.Property<string>("Basis")
+                        .IsRequired()
+                        .HasMaxLength(15)
+                        .HasColumnType("nvarchar(15)");
+
                     b.Property<int>("FinancialYear")
                         .HasColumnType("int");
 
@@ -204,9 +209,59 @@ namespace MCAROC_Analysis.Migrations
 
                     b.HasKey("ObservationId");
 
-                    b.HasIndex("RequestId", "IngestionRunId");
+                    b.HasIndex("RequestId", "IngestionRunId", "Basis");
 
                     b.ToTable("AuditorObservations");
+                });
+
+            modelBuilder.Entity("MCAROC_Analysis.Data.Entities.ChargeSecurityComponent", b =>
+                {
+                    b.Property<long>("ChargeSecurityComponentId")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("ChargeSecurityComponentId"));
+
+                    b.Property<string>("AssetDescriptionRaw")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("Confidence")
+                        .IsRequired()
+                        .HasMaxLength(10)
+                        .HasColumnType("nvarchar(10)");
+
+                    b.Property<long>("IngestionRunId")
+                        .HasColumnType("bigint");
+
+                    b.Property<bool?>("IsPrimarySecurity")
+                        .HasColumnType("bit");
+
+                    b.Property<string>("MatchedRule")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("Ranking")
+                        .IsRequired()
+                        .HasMaxLength(15)
+                        .HasColumnType("nvarchar(15)");
+
+                    b.Property<long>("RequestId")
+                        .HasColumnType("bigint");
+
+                    b.Property<long>("RocChargeEventId")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("SecurityType")
+                        .IsRequired()
+                        .HasMaxLength(25)
+                        .HasColumnType("nvarchar(25)");
+
+                    b.HasKey("ChargeSecurityComponentId");
+
+                    b.HasIndex("RocChargeEventId");
+
+                    b.HasIndex("RequestId", "IngestionRunId");
+
+                    b.ToTable("ChargeSecurityComponents");
                 });
 
             modelBuilder.Entity("MCAROC_Analysis.Data.Entities.ChatMessage", b =>
@@ -428,6 +483,116 @@ namespace MCAROC_Analysis.Migrations
                     b.ToTable("CompanyProfiles");
                 });
 
+            modelBuilder.Entity("MCAROC_Analysis.Data.Entities.CompanyStructure", b =>
+                {
+                    b.Property<long>("CompanyStructureId")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("CompanyStructureId"));
+
+                    b.Property<long>("IngestionRunId")
+                        .HasColumnType("bigint");
+
+                    b.Property<decimal?>("PromoterHoldingPercent")
+                        .HasPrecision(18, 4)
+                        .HasColumnType("decimal(18,4)");
+
+                    b.Property<int?>("PromoterShareholders")
+                        .HasColumnType("int");
+
+                    b.Property<decimal?>("PublicHoldingPercent")
+                        .HasPrecision(18, 4)
+                        .HasColumnType("decimal(18,4)");
+
+                    b.Property<long>("RequestId")
+                        .HasColumnType("bigint");
+
+                    b.Property<long?>("SourceDocumentId")
+                        .HasColumnType("bigint");
+
+                    b.Property<int?>("SourceRowNumber")
+                        .HasColumnType("int");
+
+                    b.Property<string>("SourceSheetName")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<long?>("TotalEquityShares")
+                        .HasColumnType("bigint");
+
+                    b.Property<long?>("TotalPreferenceShares")
+                        .HasColumnType("bigint");
+
+                    b.Property<int?>("TotalShareholders")
+                        .HasColumnType("int");
+
+                    b.HasKey("CompanyStructureId");
+
+                    b.HasIndex("RequestId", "IngestionRunId");
+
+                    b.ToTable("CompanyStructures");
+                });
+
+            modelBuilder.Entity("MCAROC_Analysis.Data.Entities.ComplianceRecord", b =>
+                {
+                    b.Property<long>("ComplianceRecordId")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("ComplianceRecordId"));
+
+                    b.Property<decimal?>("AmountCrore")
+                        .HasPrecision(18, 4)
+                        .HasColumnType("decimal(18,4)");
+
+                    b.Property<string>("Bank")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("DefaulterType")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("Description")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<long>("IngestionRunId")
+                        .HasColumnType("bigint");
+
+                    b.Property<DateOnly?>("RecordDate")
+                        .HasColumnType("date");
+
+                    b.Property<string>("RecordType")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("nvarchar(20)");
+
+                    b.Property<long>("RequestId")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("Source")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<long?>("SourceDocumentId")
+                        .HasColumnType("bigint");
+
+                    b.Property<int?>("SourceRowNumber")
+                        .HasColumnType("int");
+
+                    b.Property<string>("SourceSheetName")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("SourceText")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("Status")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.HasKey("ComplianceRecordId");
+
+                    b.HasIndex("RequestId", "IngestionRunId");
+
+                    b.ToTable("ComplianceRecords");
+                });
+
             modelBuilder.Entity("MCAROC_Analysis.Data.Entities.Director", b =>
                 {
                     b.Property<long>("DirectorId")
@@ -483,6 +648,53 @@ namespace MCAROC_Analysis.Migrations
                     b.HasIndex("RequestId", "IngestionRunId");
 
                     b.ToTable("Directors");
+                });
+
+            modelBuilder.Entity("MCAROC_Analysis.Data.Entities.DirectorAssignmentHistory", b =>
+                {
+                    b.Property<long>("DirectorAssignmentHistoryId")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("DirectorAssignmentHistoryId"));
+
+                    b.Property<DateOnly?>("AppointmentDate")
+                        .HasColumnType("date");
+
+                    b.Property<DateOnly?>("CessationDate")
+                        .HasColumnType("date");
+
+                    b.Property<string>("Designation")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("DirectorDin")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("DirectorNameRaw")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<long>("IngestionRunId")
+                        .HasColumnType("bigint");
+
+                    b.Property<long>("RequestId")
+                        .HasColumnType("bigint");
+
+                    b.Property<long?>("SourceDocumentId")
+                        .HasColumnType("bigint");
+
+                    b.Property<int?>("SourceRowNumber")
+                        .HasColumnType("int");
+
+                    b.Property<string>("SourceSheetName")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.HasKey("DirectorAssignmentHistoryId");
+
+                    b.HasIndex("RequestId", "IngestionRunId");
+
+                    b.ToTable("DirectorAssignmentHistories");
                 });
 
             modelBuilder.Entity("MCAROC_Analysis.Data.Entities.DirectorAssociation", b =>
@@ -700,6 +912,57 @@ namespace MCAROC_Analysis.Migrations
                     b.ToTable("EpfoContributions");
                 });
 
+            modelBuilder.Entity("MCAROC_Analysis.Data.Entities.FinancialParameter", b =>
+                {
+                    b.Property<long>("FinancialParameterId")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("FinancialParameterId"));
+
+                    b.Property<int?>("FinancialYear")
+                        .HasColumnType("int");
+
+                    b.Property<long>("IngestionRunId")
+                        .HasColumnType("bigint");
+
+                    b.Property<decimal?>("NumericValue")
+                        .HasPrecision(18, 4)
+                        .HasColumnType("decimal(18,4)");
+
+                    b.Property<string>("ParameterName")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("RawValue")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<long>("RequestId")
+                        .HasColumnType("bigint");
+
+                    b.Property<long?>("SourceDocumentId")
+                        .HasColumnType("bigint");
+
+                    b.Property<int?>("SourceRowNumber")
+                        .HasColumnType("int");
+
+                    b.Property<string>("SourceSheetName")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("TextValue")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("Unit")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.HasKey("FinancialParameterId");
+
+                    b.HasIndex("RequestId", "IngestionRunId");
+
+                    b.ToTable("FinancialParameters");
+                });
+
             modelBuilder.Entity("MCAROC_Analysis.Data.Entities.FinancialYearData", b =>
                 {
                     b.Property<long>("FinancialId")
@@ -707,6 +970,11 @@ namespace MCAROC_Analysis.Migrations
                         .HasColumnType("bigint");
 
                     SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("FinancialId"));
+
+                    b.Property<string>("Basis")
+                        .IsRequired()
+                        .HasMaxLength(15)
+                        .HasColumnType("nvarchar(15)");
 
                     b.Property<decimal?>("CashAndBank")
                         .HasPrecision(18, 4)
@@ -812,7 +1080,7 @@ namespace MCAROC_Analysis.Migrations
 
                     b.HasKey("FinancialId");
 
-                    b.HasIndex("RequestId", "IngestionRunId", "FinancialYear");
+                    b.HasIndex("RequestId", "IngestionRunId", "FinancialYear", "Basis");
 
                     b.ToTable("FinancialYearData");
                 });
@@ -1080,6 +1348,13 @@ namespace MCAROC_Analysis.Migrations
 
                     b.Property<long>("RequestId")
                         .HasColumnType("bigint");
+
+                    b.Property<string>("Source")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(20)
+                        .HasColumnType("nvarchar(20)")
+                        .HasDefaultValue("RocReport");
 
                     b.Property<long?>("SourceDocumentId")
                         .HasColumnType("bigint");
@@ -1503,6 +1778,191 @@ namespace MCAROC_Analysis.Migrations
                     b.ToTable("MsmePayments");
                 });
 
+            modelBuilder.Entity("MCAROC_Analysis.Data.Entities.PeerComparisonMetric", b =>
+                {
+                    b.Property<long>("PeerComparisonMetricId")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("PeerComparisonMetricId"));
+
+                    b.Property<decimal?>("CompanyValue")
+                        .HasPrecision(18, 4)
+                        .HasColumnType("decimal(18,4)");
+
+                    b.Property<int>("FinancialYear")
+                        .HasColumnType("int");
+
+                    b.Property<string>("Industry")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<long>("IngestionRunId")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("MetricName")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<int?>("PeerCount")
+                        .HasColumnType("int");
+
+                    b.Property<decimal?>("PeerMedianValue")
+                        .HasPrecision(18, 4)
+                        .HasColumnType("decimal(18,4)");
+
+                    b.Property<string>("Position")
+                        .IsRequired()
+                        .HasMaxLength(15)
+                        .HasColumnType("nvarchar(15)");
+
+                    b.Property<long>("RequestId")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("Segment")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<long?>("SourceDocumentId")
+                        .HasColumnType("bigint");
+
+                    b.Property<int?>("SourceRowNumber")
+                        .HasColumnType("int");
+
+                    b.Property<string>("SourceSheetName")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.HasKey("PeerComparisonMetricId");
+
+                    b.HasIndex("RequestId", "IngestionRunId");
+
+                    b.ToTable("PeerComparisonMetrics");
+                });
+
+            modelBuilder.Entity("MCAROC_Analysis.Data.Entities.ProprietorshipAssociation", b =>
+                {
+                    b.Property<long>("ProprietorshipAssociationId")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("ProprietorshipAssociationId"));
+
+                    b.Property<string>("BusinessNames")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("DirectorDin")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("DirectorNameRaw")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<long>("IngestionRunId")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("LegalName")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("Pan")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<long>("RequestId")
+                        .HasColumnType("bigint");
+
+                    b.Property<long?>("SourceDocumentId")
+                        .HasColumnType("bigint");
+
+                    b.Property<int?>("SourceRowNumber")
+                        .HasColumnType("int");
+
+                    b.Property<string>("SourceSheetName")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("Status")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.HasKey("ProprietorshipAssociationId");
+
+                    b.HasIndex("RequestId", "IngestionRunId");
+
+                    b.ToTable("ProprietorshipAssociations");
+                });
+
+            modelBuilder.Entity("MCAROC_Analysis.Data.Entities.RelatedCorporate", b =>
+                {
+                    b.Property<long>("RelatedCorporateId")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("RelatedCorporateId"));
+
+                    b.Property<string>("Cin")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("CompanyStatus")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("CorporateType")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<DateOnly?>("DateOfIncorporation")
+                        .HasColumnType("date");
+
+                    b.Property<string>("EntityNameNormalized")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("EntityNameRaw")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<DateOnly?>("FinancialYearEnding")
+                        .HasColumnType("date");
+
+                    b.Property<decimal?>("HoldingPercent")
+                        .HasPrecision(18, 4)
+                        .HasColumnType("decimal(18,4)");
+
+                    b.Property<long>("IngestionRunId")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("Location")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<decimal?>("PaidUpCapitalCrore")
+                        .HasPrecision(18, 4)
+                        .HasColumnType("decimal(18,4)");
+
+                    b.Property<string>("RelationshipRaw")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("RelationshipType")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("nvarchar(20)");
+
+                    b.Property<long>("RequestId")
+                        .HasColumnType("bigint");
+
+                    b.Property<long?>("SourceDocumentId")
+                        .HasColumnType("bigint");
+
+                    b.Property<int?>("SourceRowNumber")
+                        .HasColumnType("int");
+
+                    b.Property<string>("SourceSheetName")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<decimal?>("SumOfChargesCrore")
+                        .HasPrecision(18, 4)
+                        .HasColumnType("decimal(18,4)");
+
+                    b.HasKey("RelatedCorporateId");
+
+                    b.HasIndex("RequestId", "IngestionRunId");
+
+                    b.ToTable("RelatedCorporates");
+                });
+
             modelBuilder.Entity("MCAROC_Analysis.Data.Entities.RequestDocument", b =>
                 {
                     b.Property<long>("DocumentId")
@@ -1584,6 +2044,10 @@ namespace MCAROC_Analysis.Migrations
                     b.Property<long>("IngestionRunId")
                         .HasColumnType("bigint");
 
+                    b.Property<string>("LatestArrangement")
+                        .HasMaxLength(20)
+                        .HasColumnType("nvarchar(20)");
+
                     b.Property<string>("LatestChargeHolderNormalized")
                         .IsRequired()
                         .HasColumnType("nvarchar(max)");
@@ -1594,6 +2058,17 @@ namespace MCAROC_Analysis.Migrations
 
                     b.Property<DateOnly?>("LatestModificationDate")
                         .HasColumnType("date");
+
+                    b.Property<string>("LatestPrimaryFacilityType")
+                        .HasMaxLength(20)
+                        .HasColumnType("nvarchar(20)");
+
+                    b.Property<string>("LatestSecurityConfidence")
+                        .HasMaxLength(10)
+                        .HasColumnType("nvarchar(10)");
+
+                    b.Property<string>("LatestSecurityTypesJson")
+                        .HasColumnType("nvarchar(max)");
 
                     b.Property<long>("RequestId")
                         .HasColumnType("bigint");
@@ -1629,6 +2104,10 @@ namespace MCAROC_Analysis.Migrations
 
                     SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("ChargeEventId"));
 
+                    b.Property<string>("Arrangement")
+                        .HasMaxLength(20)
+                        .HasColumnType("nvarchar(20)");
+
                     b.Property<decimal?>("ChargeAmount")
                         .HasPrecision(18, 4)
                         .HasColumnType("decimal(18,4)");
@@ -1648,6 +2127,9 @@ namespace MCAROC_Analysis.Migrations
                         .HasColumnType("nvarchar(20)");
 
                     b.Property<string>("ExtentAndOperation")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("FacilityTypesJson")
                         .HasColumnType("nvarchar(max)");
 
                     b.Property<DateOnly?>("FilingDate")
@@ -1687,6 +2169,10 @@ namespace MCAROC_Analysis.Migrations
                     b.Property<string>("OtherTerms")
                         .HasColumnType("nvarchar(max)");
 
+                    b.Property<string>("PrimaryFacilityType")
+                        .HasMaxLength(20)
+                        .HasColumnType("nvarchar(20)");
+
                     b.Property<string>("PropertyParticulars")
                         .HasColumnType("nvarchar(max)");
 
@@ -1701,6 +2187,13 @@ namespace MCAROC_Analysis.Migrations
 
                     b.Property<long>("RocChargeId")
                         .HasColumnType("bigint");
+
+                    b.Property<string>("SecurityClassificationConfidence")
+                        .HasMaxLength(10)
+                        .HasColumnType("nvarchar(10)");
+
+                    b.Property<string>("SecurityMatchedRulesJson")
+                        .HasColumnType("nvarchar(max)");
 
                     b.Property<string>("SerialNumber")
                         .IsRequired()
@@ -1725,6 +2218,60 @@ namespace MCAROC_Analysis.Migrations
                     b.HasIndex("RequestId", "IngestionRunId");
 
                     b.ToTable("RocChargeEvents");
+                });
+
+            modelBuilder.Entity("MCAROC_Analysis.Data.Entities.SecurityAllotment", b =>
+                {
+                    b.Property<long>("SecurityAllotmentId")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("SecurityAllotmentId"));
+
+                    b.Property<DateOnly?>("AllotmentDate")
+                        .HasColumnType("date");
+
+                    b.Property<string>("AllotmentType")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<decimal?>("AmountCrore")
+                        .HasPrecision(18, 4)
+                        .HasColumnType("decimal(18,4)");
+
+                    b.Property<long>("IngestionRunId")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("InstrumentType")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<decimal?>("NominalValuePerShare")
+                        .HasPrecision(18, 4)
+                        .HasColumnType("decimal(18,4)");
+
+                    b.Property<long?>("NumberOfSecurities")
+                        .HasColumnType("bigint");
+
+                    b.Property<decimal?>("PremiumValuePerShare")
+                        .HasPrecision(18, 4)
+                        .HasColumnType("decimal(18,4)");
+
+                    b.Property<long>("RequestId")
+                        .HasColumnType("bigint");
+
+                    b.Property<long?>("SourceDocumentId")
+                        .HasColumnType("bigint");
+
+                    b.Property<int?>("SourceRowNumber")
+                        .HasColumnType("int");
+
+                    b.Property<string>("SourceSheetName")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.HasKey("SecurityAllotmentId");
+
+                    b.HasIndex("RequestId", "IngestionRunId");
+
+                    b.ToTable("SecurityAllotments");
                 });
 
             modelBuilder.Entity("MCAROC_Analysis.Data.Entities.Shareholding", b =>
@@ -1804,6 +2351,17 @@ namespace MCAROC_Analysis.Migrations
                         .IsRequired();
 
                     b.Navigation("Request");
+                });
+
+            modelBuilder.Entity("MCAROC_Analysis.Data.Entities.ChargeSecurityComponent", b =>
+                {
+                    b.HasOne("MCAROC_Analysis.Data.Entities.RocChargeEvent", "RocChargeEvent")
+                        .WithMany("SecurityComponents")
+                        .HasForeignKey("RocChargeEventId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("RocChargeEvent");
                 });
 
             modelBuilder.Entity("MCAROC_Analysis.Data.Entities.ChatMessage", b =>
@@ -1983,6 +2541,11 @@ namespace MCAROC_Analysis.Migrations
             modelBuilder.Entity("MCAROC_Analysis.Data.Entities.RocCharge", b =>
                 {
                     b.Navigation("Events");
+                });
+
+            modelBuilder.Entity("MCAROC_Analysis.Data.Entities.RocChargeEvent", b =>
+                {
+                    b.Navigation("SecurityComponents");
                 });
 #pragma warning restore 612, 618
         }

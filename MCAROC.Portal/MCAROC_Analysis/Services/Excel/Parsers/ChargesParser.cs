@@ -65,6 +65,9 @@ public static class ChargesParser
         foreach (var pe in parsedEvents)
             MatchAndEnrich(pe.ChargeId, pe.Event, detailRows);
 
+        foreach (var pe in parsedEvents)
+            ClassifySecurity(pe.Event, requestId, ingestionRunId);
+
         var charges = parsedEvents
             .GroupBy(pe => pe.ChargeId)
             .Select(g => BuildChargeHeader(g.Key, g.Select(pe => pe.Event).ToList(), requestId, ingestionRunId, rocSourceDocumentId))
@@ -190,6 +193,37 @@ public static class ChargesParser
         ev.MatchMethod = method;
     }
 
+    /// <summary>Runs the deterministic security classifier over one event's enrichment narrative and
+    /// attaches the normalized facility/security/ranking/arrangement + component rows. Raw text stays put.</summary>
+    private static void ClassifySecurity(RocChargeEvent ev, long requestId, long ingestionRunId)
+    {
+        var c = ChargeSecurityClassifier.Classify(
+            ev.InstrumentDescription, ev.PropertyType, ev.PropertyParticulars,
+            ev.ExtentAndOperation, ev.OtherTerms, ev.JointHolding, ev.ConsortiumHolding);
+
+        if (c.OverallConfidence == ChargeClassificationConfidence.None) return;
+
+        ev.FacilityTypesJson = c.FacilityTypes.Count > 0
+            ? System.Text.Json.JsonSerializer.Serialize(c.FacilityTypes.Select(f => f.ToString())) : null;
+        ev.PrimaryFacilityType = c.PrimaryFacilityType;
+        ev.Arrangement = c.Arrangement == ChargeArrangement.Unknown ? null : c.Arrangement;
+        ev.SecurityClassificationConfidence = c.OverallConfidence;
+        ev.SecurityMatchedRulesJson = c.MatchedRulesJson;
+
+        foreach (var d in c.SecurityComponents)
+            ev.SecurityComponents.Add(new ChargeSecurityComponent
+            {
+                RequestId = requestId,
+                IngestionRunId = ingestionRunId,
+                SecurityType = d.SecurityType,
+                Ranking = d.Ranking,
+                AssetDescriptionRaw = d.AssetPhrase,
+                IsPrimarySecurity = d.IsPrimary,
+                Confidence = d.Confidence,
+                MatchedRule = d.MatchedRule
+            });
+    }
+
     private static RocCharge BuildChargeHeader(
         string chargeId, List<RocChargeEvent> chargeEvents, long requestId, long ingestionRunId, long? sourceDocumentId)
     {
@@ -198,6 +232,13 @@ public static class ChargesParser
         var satisfaction = chargeEvents.FirstOrDefault(e => e.EventType == ChargeEventType.Satisfaction);
         var lastModification = chargeEvents.Where(e => e.EventType == ChargeEventType.Modification)
             .OrderByDescending(e => e.EventDate).FirstOrDefault();
+
+        // Rollup from the latest *classification-bearing* event — a Satisfaction event with no security
+        // narrative must not null out a prior Modification's classification.
+        var rollupEvent = chargeEvents
+            .Where(e => e.SecurityClassificationConfidence is not null and not ChargeClassificationConfidence.None)
+            .OrderByDescending(e => e.EventDate)
+            .FirstOrDefault();
 
         return new RocCharge
         {
@@ -213,6 +254,12 @@ public static class ChargesParser
             ChargeStatus = satisfaction is not null ? "Satisfied" : "Open",
             LatestModificationDate = lastModification?.EventDate,
             SatisfactionDate = satisfaction?.EventDate,
+            LatestPrimaryFacilityType = rollupEvent?.PrimaryFacilityType,
+            LatestArrangement = rollupEvent?.Arrangement,
+            LatestSecurityTypesJson = rollupEvent is null || rollupEvent.SecurityComponents.Count == 0
+                ? null
+                : System.Text.Json.JsonSerializer.Serialize(rollupEvent.SecurityComponents.Select(c => c.SecurityType.ToString()).Distinct()),
+            LatestSecurityConfidence = rollupEvent?.SecurityClassificationConfidence,
             Events = chargeEvents
         };
     }

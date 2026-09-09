@@ -20,5 +20,13 @@ public class RocCharge : ExtractedEntityBase
     public DateOnly? LatestModificationDate { get; set; }
     public DateOnly? SatisfactionDate { get; set; }
 
+    // Phase 6 — rollup from the latest *classification-bearing* event (not the latest chronological
+    // event: a Satisfaction event with no security narrative must not null these out). Lets the Open
+    // Charges grid render without re-classifying on read.
+    public FacilityType? LatestPrimaryFacilityType { get; set; }
+    public ChargeArrangement? LatestArrangement { get; set; }
+    public string? LatestSecurityTypesJson { get; set; }
+    public ChargeClassificationConfidence? LatestSecurityConfidence { get; set; }
+
     public List<RocChargeEvent> Events { get; set; } = [];
 }

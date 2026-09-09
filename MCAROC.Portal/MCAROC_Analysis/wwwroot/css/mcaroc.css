@@ -333,3 +333,104 @@ details > summary.mca-json-toggle {
 .mca-filter-form > div { display: flex; flex-direction: column; }
 .mca-filter-form .form-control,
 .mca-filter-form .form-select { min-height: 40px; font-size: 13.5px; }
+
+/* ---------------------------------------------------------------------
+   App footer (brand + copyright)
+   --------------------------------------------------------------------- */
+.pi-app-footer {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    padding: 14px 32px;
+    border-top: 1px solid var(--border);
+    color: var(--muted);
+    font-size: 12px;
+}
+.pi-app-footer img { width: 16px; height: 16px; object-fit: contain; opacity: 0.85; }
+@media (max-width: 720px) { .pi-app-footer { padding: 12px 16px; } }
+
+/* ---------------------------------------------------------------------
+   Phase 6 — company-page domain tabs, sections & the Charges workspace
+   --------------------------------------------------------------------- */
+.mca-subtab-panel { padding-top: 18px; }
+
+/* Segmented Standalone / Consolidated (and similar) toggle */
+.mca-toggle {
+    display: inline-flex;
+    padding: 3px;
+    margin-bottom: 14px;
+    border-radius: var(--r-pill);
+    background: var(--surface-3);
+    border: 1px solid var(--border);
+}
+.mca-toggle button {
+    border: 0;
+    background: transparent;
+    padding: 5px 16px;
+    border-radius: var(--r-pill);
+    font-size: 12.5px;
+    font-weight: 600;
+    color: var(--text-2);
+    cursor: pointer;
+}
+.mca-toggle button.active { background: var(--surface); color: var(--brand-strong); box-shadow: var(--shadow-xs); }
+
+/* Structured classification badge */
+.mca-badge {
+    display: inline-block;
+    padding: 2px 9px;
+    margin: 0 4px 4px 0;
+    border-radius: var(--r-pill);
+    background: var(--brand-soft);
+    color: var(--brand-strong);
+    border: 1px solid transparent;
+    font-size: 11.5px;
+    font-weight: 600;
+    white-space: nowrap;
+}
+.mca-badge.sev-positive { background: rgba(22, 163, 74, 0.12); color: #15803d; }
+.mca-badge.sev-critical { background: rgba(220, 38, 38, 0.12); color: #b91c1c; }
+.mca-badge.sev-watch { background: rgba(217, 119, 6, 0.14); color: #b45309; }
+
+/* Filter chips + pager (Documents tab, paged list) */
+.mca-filter-chips { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 6px; }
+.mca-filter-chips .mca-chip.active { background: var(--brand); border-color: var(--brand); color: #fff; }
+.mca-filter-chips .mca-chip.disabled { opacity: 0.45; pointer-events: none; }
+.mca-chip .badge {
+    background: rgba(0, 0, 0, 0.12);
+    color: inherit;
+    font-size: 10.5px;
+    font-weight: 700;
+    padding: 1px 6px;
+    border-radius: var(--r-pill);
+}
+.mca-pager { display: flex; align-items: center; gap: 14px; margin-top: 16px; }
+.mca-loading { opacity: 0.5; pointer-events: none; }
+
+/* Charge drawer + lifecycle timeline */
+.mca-charge-drawer {
+    padding: 16px;
+    background: var(--surface-2, var(--surface-3));
+    border-radius: var(--r-md, 10px);
+}
+.mca-timeline { list-style: none; margin: 8px 0 0; padding: 0 0 0 18px; border-left: 2px solid var(--border); }
+.mca-timeline > li { position: relative; padding: 0 0 16px 14px; }
+.mca-timeline > li:last-child { padding-bottom: 0; }
+.mca-timeline > li::before {
+    content: "";
+    position: absolute;
+    left: -25px;
+    top: 4px;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: var(--brand);
+    box-shadow: 0 0 0 3px var(--surface);
+}
+.mca-timeline-head { font-size: 13px; }
+.mca-timeline-head span { color: var(--muted); }
+
+/* Modification comparison table */
+.mca-compare td.mca-compare-change { font-weight: 600; }
+.mca-compare td.mca-compare-up { color: #b91c1c; }
+.mca-compare td.mca-compare-down { color: #15803d; }

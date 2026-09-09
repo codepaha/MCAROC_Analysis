@@ -183,12 +183,15 @@ public class AnalysisOrchestrator(AppDbContext db, AiCrossSectionAnalysisService
         var directors = await db.Directors.Where(x => x.IngestionRunId == ingestionRunId).ToListAsync(ct);
         var directorAssociations = await db.DirectorAssociations.Where(x => x.IngestionRunId == ingestionRunId).ToListAsync(ct);
         var shareholdings = await db.Shareholdings.Where(x => x.IngestionRunId == ingestionRunId).ToListAsync(ct);
-        var financialYears = await db.FinancialYearData.Where(x => x.IngestionRunId == ingestionRunId).ToListAsync(ct);
+        // The rule engine is standalone-only (Phase 6 added Consolidated rows to the same table).
+        var financialYears = await db.FinancialYearData
+            .Where(x => x.IngestionRunId == ingestionRunId && x.Basis == FinancialBasis.Standalone).ToListAsync(ct);
         var charges = await db.RocCharges.Include(c => c.Events).Where(x => x.IngestionRunId == ingestionRunId).ToListAsync(ct);
         var msmePayments = await db.MsmePayments.Where(x => x.IngestionRunId == ingestionRunId).ToListAsync(ct);
         var gstRegistrations = await db.GstRegistrations.Include(g => g.Filings).Where(x => x.IngestionRunId == ingestionRunId).ToListAsync(ct);
         var epfoContributions = await db.EpfoContributions.Where(x => x.IngestionRunId == ingestionRunId).ToListAsync(ct);
-        var auditorObservations = await db.AuditorObservations.Where(x => x.IngestionRunId == ingestionRunId).ToListAsync(ct);
+        var auditorObservations = await db.AuditorObservations
+            .Where(x => x.IngestionRunId == ingestionRunId && x.Basis == FinancialBasis.Standalone).ToListAsync(ct);
         var litigations = await db.Litigations.Where(x => x.IngestionRunId == ingestionRunId).ToListAsync(ct);
 
         return AnalysisContext.Build(

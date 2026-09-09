@@ -52,7 +52,8 @@ public static partial class LitigationRules
                     FindingSection.Litigation, FindingSeverity.Review, TemporalStatus.Current,
                     PendingAgainstCompanyCode, "Pending Litigation Against Company",
                     $"{againstCompany.Count} pending confirmed case(s) appear to be filed against the company.",
-                    MetricsJson: JsonSerializer.Serialize(new { count = againstCompany.Count, caseNumbers = againstCompany.Select(l => l.CaseNumber) })))
+                    MetricsJson: JsonSerializer.Serialize(new { count = againstCompany.Count, caseNumbers = againstCompany.Select(l => l.CaseNumber) }),
+                    SourceReferenceJson: LitigationRef(againstCompany)))
                 : RuleEvaluationOutcome.NotTriggered(),
 
             roleUncertain.Count > 0
@@ -60,12 +61,22 @@ public static partial class LitigationRules
                     FindingSection.Litigation, FindingSeverity.Watch, TemporalStatus.Current,
                     RoleUncertainCode, "Potential Litigation Requiring Role Verification",
                     $"{roleUncertain.Count} pending case(s) could not be confidently classified as filed by or against the company from available text, or are probable/uncertain matches.",
-                    MetricsJson: JsonSerializer.Serialize(new { count = roleUncertain.Count, caseNumbers = roleUncertain.Select(l => l.CaseNumber) })))
+                    MetricsJson: JsonSerializer.Serialize(new { count = roleUncertain.Count, caseNumbers = roleUncertain.Select(l => l.CaseNumber) }),
+                    SourceReferenceJson: LitigationRef(roleUncertain)))
                 : RuleEvaluationOutcome.NotTriggered()
         };
 
         return outcomes;
     }
+
+    /// <summary>Evidence link back to the exact Litigation rows a finding is about — the Litigation tab
+    /// reads this to attribute a per-case role ("Filed Against" / "Role not determined"); a case named by
+    /// no finding shows "Role not determined". Shape matches AnalysisFinding.SourceReferenceJson.</summary>
+    private static string LitigationRef(IEnumerable<Litigation> cases) => JsonSerializer.Serialize(new
+    {
+        entityType = nameof(Litigation),
+        entityIds = cases.Select(l => l.LitigationId).OrderBy(id => id).ToArray()
+    });
 
     private static bool IsPending(string? caseStatus)
     {

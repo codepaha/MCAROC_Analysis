@@ -41,6 +41,9 @@ public class LitigationRulesTests
         Assert.Equal(RuleEvaluationStatus.Triggered, outcome.Status);
         Assert.Equal(FindingSeverity.Review, outcome.Finding!.Severity);
         Assert.Equal(RuleEvaluationStatus.NotTriggered, result[1].Status);
+        // Evidence link names the exact Litigation row so the Litigation tab can attribute a per-case role.
+        Assert.Contains("\"entityType\":\"Litigation\"", outcome.Finding!.SourceReferenceJson);
+        Assert.Contains("\"entityIds\":[", outcome.Finding!.SourceReferenceJson);
     }
 
     [Fact]

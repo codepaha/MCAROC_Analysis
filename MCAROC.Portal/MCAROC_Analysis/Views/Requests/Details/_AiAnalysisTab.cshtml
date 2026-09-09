@@ -1,0 +1,114 @@
+@model RequestDetailsViewModel
+@{
+    var r = Model.Request;
+    var run = Model.LatestAnalysisRun;
+
+    // Finding groups mapped onto the 7 domains (+ a Cross-Section group).
+    var groups = new (string Label, string Id, FindingSection[] Sections)[]
+    {
+        ("Corporate",   "corporate",  new[] { FindingSection.CompanyProfile, FindingSection.Directors, FindingSection.DirectorNetwork, FindingSection.Ownership }),
+        ("Financial",   "financial",  new[] { FindingSection.Financial }),
+        ("Charges & Security", "charges", new[] { FindingSection.Charges }),
+        ("Compliance",  "compliance", new[] { FindingSection.Msme, FindingSection.Gst, FindingSection.Epfo, FindingSection.Auditor }),
+        ("Litigation",  "litigation", new[] { FindingSection.Litigation }),
+        ("Cross-Section", "xsec",     new[] { FindingSection.CrossSection }),
+    };
+}
+
+@if (run is null)
+{
+    <div class="mca-empty">
+        <i class="bi bi-robot"></i>
+        <p>@(r.RequestStatus == RequestStatus.AiAnalysisInProgress ? "Analysis in progress — reload to check for results." : "Analysis has not started for this request yet.")</p>
+    </div>
+}
+else if (run.Status == AnalysisRunStatus.Running)
+{
+    <div class="mca-empty"><i class="bi bi-hourglass-split"></i><p>Analysis in progress… (run #@run.RunNumber). Reload to check for results.</p></div>
+}
+else if (run.Status == AnalysisRunStatus.Failed)
+{
+    <div class="alert alert-danger">Analysis failed: @run.FailureReason</div>
+}
+else
+{
+    <div class="mca-pill-row">
+        @if (run.OverallReviewPriority is { } aiPr)
+        {
+            <span class="pi-status-pill @PriorityPill(aiPr)">Review Priority: @aiPr</span>
+        }
+        <span class="pi-status-pill pi-status-failed">Critical @run.CriticalFindingsCount</span>
+        <span class="pi-status-pill pi-status-processing">Review @run.ReviewFindingsCount</span>
+        <span class="pi-status-pill pi-status-pending">Watch @run.WatchFindingsCount</span>
+        <span class="pi-status-pill pi-status-completed">Positive @run.PositiveFindingsCount</span>
+        @if (run.Status == AnalysisRunStatus.CompletedWithErrors)
+        {
+            <span class="pi-status-pill pi-status-pending" title="@run.FailureReason">AI narrative unavailable</span>
+        }
+    </div>
+
+    @if (Model.ExecutiveSummary is { } es)
+    {
+        <div class="pi-ai-summary">
+            <div class="pi-ai-summary-head"><i class="bi bi-stars"></i><strong>Executive Summary</strong></div>
+            @if (!string.IsNullOrEmpty(es.BusinessPerformance)) { <p><b>Business Performance:</b> @es.BusinessPerformance</p> }
+            @if (!string.IsNullOrEmpty(es.FinancialPosition)) { <p><b>Financial Position:</b> @es.FinancialPosition</p> }
+            @if (!string.IsNullOrEmpty(es.BorrowingSecurity)) { <p><b>Borrowing &amp; Security:</b> @es.BorrowingSecurity</p> }
+            @if (!string.IsNullOrEmpty(es.GovernanceCompliance)) { <p><b>Governance &amp; Compliance:</b> @es.GovernanceCompliance</p> }
+            @if (es.KeyReviewItems.Count > 0)
+            {
+                <p><b>Key Review Items</b></p>
+                <ul class="mb-0">@foreach (var item in es.KeyReviewItems) { <li>@item</li> }</ul>
+            }
+        </div>
+    }
+
+    <ul class="nav mca-subtabs" data-mca-sections="ai" role="tablist">
+        @for (var i = 0; i < groups.Length; i++)
+        {
+            var g = groups[i];
+            var count = Model.AnalysisFindings.Count(f => g.Sections.Contains(f.Section));
+            <li class="nav-item" role="presentation">
+                <button class="nav-link @(i == 0 ? "active" : "")" data-bs-toggle="tab" data-bs-target="#sec-ai-@g.Id" type="button" role="tab">
+                    @g.Label <span class="badge">@count</span>
+                </button>
+            </li>
+        }
+    </ul>
+    <div class="tab-content">
+        @for (var i = 0; i < groups.Length; i++)
+        {
+            var g = groups[i];
+            var sectionFindings = Model.AnalysisFindings.Where(f => g.Sections.Contains(f.Section)).ToList();
+            var display = sectionFindings.Where(f => f.Severity is FindingSeverity.Critical or FindingSeverity.Review)
+                .Concat(sectionFindings.Where(f => f.Severity == FindingSeverity.Watch).Take(5))
+                .Concat(sectionFindings.Where(f => f.Severity == FindingSeverity.Positive).Take(5))
+                .ToList();
+            <div class="tab-pane fade @(i == 0 ? "show active" : "") mca-subtab-panel" id="sec-ai-@g.Id" role="tabpanel">
+                @if (display.Count == 0)
+                {
+                    <p class="text-muted mb-0">No findings in this section.</p>
+                }
+                else
+                {
+                    foreach (var f in display)
+                    {
+                        var related = string.IsNullOrEmpty(f.SupportingSignalsJson)
+                            ? new List<string>()
+                            : (System.Text.Json.JsonSerializer.Deserialize<List<string>>(f.SupportingSignalsJson) ?? new List<string>());
+                        <div class="mca-finding @SevClass(f.Severity)">
+                            <h4>
+                                <span class="mca-sev-dot"></span>@f.Title
+                                <span class="mca-finding-meta">@f.TemporalStatus@(f.PeriodLabel is not null ? $" · {f.PeriodLabel}" : "")</span>
+                            </h4>
+                            <p>@f.SummaryText</p>
+                            @if (!string.IsNullOrEmpty(f.WhyThisMatters)) { <p><span class="mca-finding-label">Why this matters:</span> @f.WhyThisMatters</p> }
+                            @if (!string.IsNullOrEmpty(f.RecommendedReview)) { <p><span class="mca-finding-label">Recommended review:</span> @f.RecommendedReview</p> }
+                            @if (related.Count > 0) { <div class="mca-related">Related: @string.Join(", ", related)</div> }
+                        </div>
+                    }
+                }
+            </div>
+        }
+    </div>
+}

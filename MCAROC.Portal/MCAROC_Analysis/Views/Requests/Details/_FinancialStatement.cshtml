@@ -1,0 +1,49 @@
+@model FinancialStatementViewModel
+@{
+    void RenderTable(List<FinancialYearData> rows)
+    {
+        var years = rows.OrderByDescending(f => f.FinancialYear).ToList();
+        <div class="pi-table-wrap"><table class="pi-results-table">
+            <thead><tr><th>Line item</th>@foreach (var y in years) { <th class="text-end">FY@(y.FinancialYear)</th> }</tr></thead>
+            <tbody>
+            @foreach (var line in Model.Rows)
+            {
+                <tr>
+                    <td>@line.Label</td>
+                    @foreach (var y in years)
+                    {
+                        <td class="text-end">@Num(line.Value(y))</td>
+                    }
+                </tr>
+            }
+            </tbody>
+        </table></div>
+    }
+}
+
+@if (Model.Standalone.Count == 0 && Model.Consolidated.Count == 0)
+{
+    <div class="mca-empty"><i class="bi bi-cash-stack"></i><p>No @Model.Title.ToLowerInvariant() data extracted.</p></div>
+}
+else
+{
+    var groupId = "basis-" + Model.Key;
+    if (Model.HasConsolidated)
+    {
+        <div class="mca-toggle" data-basis-group="@groupId" role="group" aria-label="Reporting basis">
+            <button type="button" class="active" data-basis="Standalone">Standalone</button>
+            <button type="button" data-basis="Consolidated">Consolidated</button>
+        </div>
+    }
+
+    <div data-basis-panel="@groupId" data-basis="Standalone">
+        @{ RenderTable(Model.Standalone); }
+    </div>
+    @if (Model.HasConsolidated)
+    {
+        <div data-basis-panel="@groupId" data-basis="Consolidated" hidden>
+            @{ RenderTable(Model.Consolidated); }
+        </div>
+    }
+    <p class="text-muted mt-2 mb-0">All figures in ₹ Crore. @(Model.HasConsolidated ? "" : "Standalone basis.")</p>
+}

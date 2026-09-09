@@ -40,6 +40,17 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<ChatSession> ChatSessions => Set<ChatSession>();
     public DbSet<ChatMessage> ChatMessages => Set<ChatMessage>();
 
+    // Phase 6
+    public DbSet<CompanyStructure> CompanyStructures => Set<CompanyStructure>();
+    public DbSet<RelatedCorporate> RelatedCorporates => Set<RelatedCorporate>();
+    public DbSet<ComplianceRecord> ComplianceRecords => Set<ComplianceRecord>();
+    public DbSet<FinancialParameter> FinancialParameters => Set<FinancialParameter>();
+    public DbSet<SecurityAllotment> SecurityAllotments => Set<SecurityAllotment>();
+    public DbSet<ProprietorshipAssociation> ProprietorshipAssociations => Set<ProprietorshipAssociation>();
+    public DbSet<DirectorAssignmentHistory> DirectorAssignmentHistories => Set<DirectorAssignmentHistory>();
+    public DbSet<PeerComparisonMetric> PeerComparisonMetrics => Set<PeerComparisonMetric>();
+    public DbSet<ChargeSecurityComponent> ChargeSecurityComponents => Set<ChargeSecurityComponent>();
+
     protected override void ConfigureConventions(ModelConfigurationBuilder configurationBuilder)
     {
         // Default precision for monetary/count decimals (mostly Rs. Crore values); percentages override below.
@@ -115,13 +126,17 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
         modelBuilder.Entity<FinancialYearData>(e =>
         {
             e.HasKey(x => x.FinancialId);
-            e.HasIndex(x => new { x.RequestId, x.IngestionRunId, x.FinancialYear });
+            e.HasIndex(x => new { x.RequestId, x.IngestionRunId, x.FinancialYear, x.Basis });
+            e.Property(x => x.Basis).HasConversion<string>().HasMaxLength(15);
         });
 
         modelBuilder.Entity<RocCharge>(e =>
         {
             e.HasKey(x => x.ChargeId);
             e.HasIndex(x => new { x.RequestId, x.IngestionRunId, x.RocChargeNumber });
+            e.Property(x => x.LatestPrimaryFacilityType).HasConversion<string>().HasMaxLength(20);
+            e.Property(x => x.LatestArrangement).HasConversion<string>().HasMaxLength(20);
+            e.Property(x => x.LatestSecurityConfidence).HasConversion<string>().HasMaxLength(10);
         });
 
         modelBuilder.Entity<RocChargeEvent>(e =>
@@ -131,6 +146,19 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             e.HasIndex(x => new { x.RequestId, x.IngestionRunId });
             e.Property(x => x.EventType).HasConversion<string>().HasMaxLength(20);
             e.Property(x => x.MatchConfidence).HasConversion<string>().HasMaxLength(20);
+            e.Property(x => x.PrimaryFacilityType).HasConversion<string>().HasMaxLength(20);
+            e.Property(x => x.Arrangement).HasConversion<string>().HasMaxLength(20);
+            e.Property(x => x.SecurityClassificationConfidence).HasConversion<string>().HasMaxLength(10);
+        });
+
+        modelBuilder.Entity<ChargeSecurityComponent>(e =>
+        {
+            e.HasKey(x => x.ChargeSecurityComponentId);
+            e.HasOne(x => x.RocChargeEvent).WithMany(ev => ev.SecurityComponents).HasForeignKey(x => x.RocChargeEventId).OnDelete(DeleteBehavior.Cascade);
+            e.HasIndex(x => new { x.RequestId, x.IngestionRunId });
+            e.Property(x => x.SecurityType).HasConversion<string>().HasMaxLength(25);
+            e.Property(x => x.Ranking).HasConversion<string>().HasMaxLength(15);
+            e.Property(x => x.Confidence).HasConversion<string>().HasMaxLength(10);
         });
 
         modelBuilder.Entity<MsmePayment>(e =>
@@ -161,7 +189,8 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
         modelBuilder.Entity<AuditorObservation>(e =>
         {
             e.HasKey(x => x.ObservationId);
-            e.HasIndex(x => new { x.RequestId, x.IngestionRunId });
+            e.HasIndex(x => new { x.RequestId, x.IngestionRunId, x.Basis });
+            e.Property(x => x.Basis).HasConversion<string>().HasMaxLength(15);
         });
 
         modelBuilder.Entity<Litigation>(e =>
@@ -169,6 +198,59 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             e.HasKey(x => x.LitigationId);
             e.HasIndex(x => new { x.RequestId, x.IngestionRunId });
             e.Property(x => x.MatchStatus).HasConversion<string>().HasMaxLength(20);
+            e.Property(x => x.Source).HasConversion<string>().HasMaxLength(20).HasDefaultValue(LitigationSource.RocReport);
+        });
+
+        // ── Phase 6 domain data ──
+        modelBuilder.Entity<CompanyStructure>(e =>
+        {
+            e.HasKey(x => x.CompanyStructureId);
+            e.HasIndex(x => new { x.RequestId, x.IngestionRunId });
+        });
+
+        modelBuilder.Entity<RelatedCorporate>(e =>
+        {
+            e.HasKey(x => x.RelatedCorporateId);
+            e.HasIndex(x => new { x.RequestId, x.IngestionRunId });
+            e.Property(x => x.RelationshipType).HasConversion<string>().HasMaxLength(20);
+        });
+
+        modelBuilder.Entity<ComplianceRecord>(e =>
+        {
+            e.HasKey(x => x.ComplianceRecordId);
+            e.HasIndex(x => new { x.RequestId, x.IngestionRunId });
+            e.Property(x => x.RecordType).HasConversion<string>().HasMaxLength(20);
+        });
+
+        modelBuilder.Entity<FinancialParameter>(e =>
+        {
+            e.HasKey(x => x.FinancialParameterId);
+            e.HasIndex(x => new { x.RequestId, x.IngestionRunId });
+        });
+
+        modelBuilder.Entity<SecurityAllotment>(e =>
+        {
+            e.HasKey(x => x.SecurityAllotmentId);
+            e.HasIndex(x => new { x.RequestId, x.IngestionRunId });
+        });
+
+        modelBuilder.Entity<ProprietorshipAssociation>(e =>
+        {
+            e.HasKey(x => x.ProprietorshipAssociationId);
+            e.HasIndex(x => new { x.RequestId, x.IngestionRunId });
+        });
+
+        modelBuilder.Entity<DirectorAssignmentHistory>(e =>
+        {
+            e.HasKey(x => x.DirectorAssignmentHistoryId);
+            e.HasIndex(x => new { x.RequestId, x.IngestionRunId });
+        });
+
+        modelBuilder.Entity<PeerComparisonMetric>(e =>
+        {
+            e.HasKey(x => x.PeerComparisonMetricId);
+            e.HasIndex(x => new { x.RequestId, x.IngestionRunId });
+            e.Property(x => x.Position).HasConversion<string>().HasMaxLength(15);
         });
 
         modelBuilder.Entity<AnalysisRun>(e =>
