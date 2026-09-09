@@ -198,8 +198,10 @@ public class IngestionOrchestrator(AppDbContext db, IExcelSheetReader sheetReade
         var directorsSheet = SheetAliases.Find(rocWorkbook, SheetAliases.Directors);
         if (directorsSheet is not null)
         {
-            var r = DirectorsParser.Parse(directorsSheet, requestId, runId, rocDocumentId);
+            var r = DirectorsParser.Parse(directorsSheet, requestId, runId, rocDocumentId, out var officers);
             db.Directors.AddRange(r.Items);
+            db.CompanyOfficers.AddRange(officers);
+            itemCount += officers.Count;
             Collect(r, issues, ref itemCount);
         }
 

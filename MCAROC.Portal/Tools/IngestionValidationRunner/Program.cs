@@ -52,7 +52,7 @@ foreach (var dir in companyDirs)
         Tally(companyResult);
 
         var directorsSheet = SheetAliases.Find(rocWorkbook, SheetAliases.Directors);
-        var directorsResult = directorsSheet is not null ? DirectorsParser.Parse(directorsSheet, 0, 0, null) : new ParseResult<MCAROC_Analysis.Data.Entities.Director>();
+        var directorsResult = directorsSheet is not null ? DirectorsParser.Parse(directorsSheet, 0, 0, null, out _) : new ParseResult<MCAROC_Analysis.Data.Entities.Director>();
         Tally(directorsResult);
 
         var otherDirSheet = SheetAliases.Find(rocWorkbook, SheetAliases.OtherDirectorships);

@@ -51,9 +51,10 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<PeerComparisonMetric> PeerComparisonMetrics => Set<PeerComparisonMetric>();
     public DbSet<ChargeSecurityComponent> ChargeSecurityComponents => Set<ChargeSecurityComponent>();
 
-    // Phase 7.0 — raw source-row staging (Layer 0) + unmapped-financials catch-all
+    // Phase 7.0 — raw source-row staging (Layer 0) + completeness of the typed layer
     public DbSet<SourceRow> SourceRows => Set<SourceRow>();
     public DbSet<FinancialFact> FinancialFacts => Set<FinancialFact>();
+    public DbSet<CompanyOfficer> CompanyOfficers => Set<CompanyOfficer>();
 
     protected override void ConfigureConventions(ModelConfigurationBuilder configurationBuilder)
     {
@@ -273,6 +274,12 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             e.Property(x => x.Basis).HasConversion<string>().HasMaxLength(15);
             e.Property(x => x.Section).HasConversion<string>().HasMaxLength(15);
             e.Property(x => x.Label).HasMaxLength(300);
+        });
+
+        modelBuilder.Entity<CompanyOfficer>(e =>
+        {
+            e.HasKey(x => x.CompanyOfficerId);
+            e.HasIndex(x => new { x.RequestId, x.IngestionRunId });
         });
 
         modelBuilder.Entity<AnalysisRun>(e =>
