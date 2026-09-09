@@ -49,4 +49,9 @@ public class McaFilingDocument
     // Review
     public bool ManualReviewRequired { get; set; }
     public string? ManualReviewReason { get; set; }
+
+    // Phase 4 (Ask Documents) chunking/embedding — separate from ProcessingStatus since chunking runs as
+    // its own later stage, triggered once the whole batch reaches a terminal status, not per-document.
+    public ChunkingStatus ChunkingStatus { get; set; } = ChunkingStatus.Pending;
+    public int ChunkRetryCount { get; set; }
 }

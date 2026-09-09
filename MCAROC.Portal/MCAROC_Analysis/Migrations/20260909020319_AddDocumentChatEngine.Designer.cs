@@ -5,6 +5,7 @@ using Microsoft.Data.SqlTypes;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 #nullable disable
@@ -12,9 +13,11 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace MCAROC_Analysis.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260909020319_AddDocumentChatEngine")]
+    partial class AddDocumentChatEngine
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -22,150 +25,6 @@ namespace MCAROC_Analysis.Migrations
                 .HasAnnotation("Relational:MaxIdentifierLength", 128);
 
             SqlServerModelBuilderExtensions.UseIdentityColumns(modelBuilder);
-
-            modelBuilder.Entity("MCAROC_Analysis.Data.Entities.AnalysisFinding", b =>
-                {
-                    b.Property<long>("FindingId")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("bigint");
-
-                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("FindingId"));
-
-                    b.Property<long>("AnalysisRunId")
-                        .HasColumnType("bigint");
-
-                    b.Property<string>("Code")
-                        .IsRequired()
-                        .HasMaxLength(80)
-                        .HasColumnType("nvarchar(80)");
-
-                    b.Property<int>("DisplayPriority")
-                        .HasColumnType("int");
-
-                    b.Property<string>("MetricsJson")
-                        .HasColumnType("nvarchar(max)");
-
-                    b.Property<DateOnly?>("ObservationDate")
-                        .HasColumnType("date");
-
-                    b.Property<string>("PeriodLabel")
-                        .HasColumnType("nvarchar(max)");
-
-                    b.Property<string>("RecommendedReview")
-                        .HasColumnType("nvarchar(max)");
-
-                    b.Property<long>("RequestId")
-                        .HasColumnType("bigint");
-
-                    b.Property<string>("Section")
-                        .IsRequired()
-                        .HasMaxLength(20)
-                        .HasColumnType("nvarchar(20)");
-
-                    b.Property<string>("Severity")
-                        .IsRequired()
-                        .HasMaxLength(10)
-                        .HasColumnType("nvarchar(10)");
-
-                    b.Property<string>("SourceReferenceJson")
-                        .HasColumnType("nvarchar(max)");
-
-                    b.Property<string>("SummaryText")
-                        .IsRequired()
-                        .HasColumnType("nvarchar(max)");
-
-                    b.Property<string>("SupportingSignalsJson")
-                        .HasColumnType("nvarchar(max)");
-
-                    b.Property<string>("TemporalStatus")
-                        .IsRequired()
-                        .HasMaxLength(10)
-                        .HasColumnType("nvarchar(10)");
-
-                    b.Property<string>("Title")
-                        .IsRequired()
-                        .HasColumnType("nvarchar(max)");
-
-                    b.Property<string>("WhyThisMatters")
-                        .HasColumnType("nvarchar(max)");
-
-                    b.HasKey("FindingId");
-
-                    b.HasIndex("AnalysisRunId", "Section");
-
-                    b.HasIndex("RequestId", "Code");
-
-                    b.ToTable("AnalysisFindings");
-                });
-
-            modelBuilder.Entity("MCAROC_Analysis.Data.Entities.AnalysisRun", b =>
-                {
-                    b.Property<long>("AnalysisRunId")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("bigint");
-
-                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("AnalysisRunId"));
-
-                    b.Property<DateTime?>("CompletedDate")
-                        .HasColumnType("datetime2");
-
-                    b.Property<int>("CriticalFindingsCount")
-                        .HasColumnType("int");
-
-                    b.Property<string>("DataSufficiencyNotesJson")
-                        .HasColumnType("nvarchar(max)");
-
-                    b.Property<string>("ExecutiveSummaryJson")
-                        .HasColumnType("nvarchar(max)");
-
-                    b.Property<string>("FailureReason")
-                        .HasColumnType("nvarchar(max)");
-
-                    b.Property<long>("IngestionRunId")
-                        .HasColumnType("bigint");
-
-                    b.Property<string>("OverallReviewPriority")
-                        .HasMaxLength(10)
-                        .HasColumnType("nvarchar(10)");
-
-                    b.Property<int>("PositiveFindingsCount")
-                        .HasColumnType("int");
-
-                    b.Property<string>("PromptVersion")
-                        .IsRequired()
-                        .HasColumnType("nvarchar(max)");
-
-                    b.Property<long>("RequestId")
-                        .HasColumnType("bigint");
-
-                    b.Property<int>("ReviewFindingsCount")
-                        .HasColumnType("int");
-
-                    b.Property<string>("RuleEngineVersion")
-                        .IsRequired()
-                        .HasColumnType("nvarchar(max)");
-
-                    b.Property<int>("RunNumber")
-                        .HasColumnType("int");
-
-                    b.Property<DateTime>("StartedDate")
-                        .HasColumnType("datetime2");
-
-                    b.Property<string>("Status")
-                        .IsRequired()
-                        .HasMaxLength(30)
-                        .HasColumnType("nvarchar(30)");
-
-                    b.Property<int>("WatchFindingsCount")
-                        .HasColumnType("int");
-
-                    b.HasKey("AnalysisRunId");
-
-                    b.HasIndex("RequestId", "RunNumber")
-                        .IsUnique();
-
-                    b.ToTable("AnalysisRuns");
-                });
 
             modelBuilder.Entity("MCAROC_Analysis.Data.Entities.AuditorObservation", b =>
                 {
@@ -1785,26 +1644,6 @@ namespace MCAROC_Analysis.Migrations
                     b.ToTable("Shareholdings");
                 });
 
-            modelBuilder.Entity("MCAROC_Analysis.Data.Entities.AnalysisFinding", b =>
-                {
-                    b.HasOne("MCAROC_Analysis.Data.Entities.AnalysisRun", null)
-                        .WithMany("Findings")
-                        .HasForeignKey("AnalysisRunId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-                });
-
-            modelBuilder.Entity("MCAROC_Analysis.Data.Entities.AnalysisRun", b =>
-                {
-                    b.HasOne("MCAROC_Analysis.Data.Entities.McaRequest", "Request")
-                        .WithMany()
-                        .HasForeignKey("RequestId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("Request");
-                });
-
             modelBuilder.Entity("MCAROC_Analysis.Data.Entities.ChatMessage", b =>
                 {
                     b.HasOne("MCAROC_Analysis.Data.Entities.ChatSession", null)
@@ -1940,11 +1779,6 @@ namespace MCAROC_Analysis.Migrations
                         .IsRequired();
 
                     b.Navigation("RocCharge");
-                });
-
-            modelBuilder.Entity("MCAROC_Analysis.Data.Entities.AnalysisRun", b =>
-                {
-                    b.Navigation("Findings");
                 });
 
             modelBuilder.Entity("MCAROC_Analysis.Data.Entities.ChatSession", b =>

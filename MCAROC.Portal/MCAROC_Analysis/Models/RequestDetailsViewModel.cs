@@ -38,6 +38,11 @@ public class RequestDetailsViewModel
     public int AiFailedCount { get; set; }
     public int ManualReviewFilingCount { get; set; }
 
+    // Phase 4: Ask Documents
+    public List<ChatMessage> ChatMessages { get; set; } = [];
+    public int ChunkableDocumentCount { get; set; }
+    public int ChunkedDocumentCount { get; set; }
+
     // ---------------------------------------------------------------------
     // Highlights — computed from the lists already loaded above (no extra DB work).
     // Used by the "Highlights" tab on Details.cshtml.

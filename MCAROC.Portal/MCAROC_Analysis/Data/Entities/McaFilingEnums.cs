@@ -76,3 +76,13 @@ public enum ExtractionStatus
     Success,
     Failed
 }
+
+/// <summary>Mirrors ProcessingStatus/AiExtractionStatus's claim-friendly shape: Pending -> InProgress
+/// (atomic claim) -> Chunked or Failed (retry-then-terminal, see McaFilingDocument.ChunkRetryCount).</summary>
+public enum ChunkingStatus
+{
+    Pending,
+    InProgress,
+    Chunked,
+    Failed
+}

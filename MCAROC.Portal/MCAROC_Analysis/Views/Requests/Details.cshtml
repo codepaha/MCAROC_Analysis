@@ -109,6 +109,9 @@
                 Reference Documents <span class="badge">@Model.Documents.Count</span>
             </button>
         </li>
+        <li class="nav-item" role="presentation">
+            <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-ask" type="button" role="tab">Ask Documents</button>
+        </li>
     </ul>
 </div>
 
@@ -757,6 +760,87 @@
                 }
             </div>
         }
+    </div>
+
+    @* ─────────────  12. Ask Documents  ───────────── *@
+    <div class="tab-pane fade" id="tab-ask" role="tabpanel">
+        <p class="text-muted">Answers are grounded only in the documents and structured data uploaded for <strong>@r.CompanyName</strong>.</p>
+
+        @if (Model.FilingBatch is not null)
+        {
+            if (Model.ChunkableDocumentCount == 0)
+            {
+                <div class="alert alert-info">Document indexing has not started yet — questions can still be answered from structured data.</div>
+            }
+            else if (Model.ChunkedDocumentCount < Model.ChunkableDocumentCount)
+            {
+                <div class="alert alert-info">
+                    Document search is still indexing (@Model.ChunkedDocumentCount / @Model.ChunkableDocumentCount documents) —
+                    answers may not yet cover all uploaded filings.
+                </div>
+            }
+        }
+
+        <p class="mb-1"><small class="text-muted">Try asking:</small></p>
+        <div class="mb-3 d-flex flex-wrap gap-1">
+            @{
+                var chatSuggestions = new[]
+                {
+                    "Who are the current directors?",
+                    "Which directors have resigned?",
+                    "List all open charges.",
+                    "Are there any delayed EPFO payments?",
+                    "What is the company's main object per the MoA?"
+                };
+            }
+            @foreach (var suggestion in chatSuggestions)
+            {
+                <button type="button" class="btn btn-sm btn-outline-secondary"
+                        onclick="var q=document.getElementById('chat-question');q.value=this.textContent.trim();q.focus();">
+                    @suggestion
+                </button>
+            }
+        </div>
+
+        <div class="mb-3">
+            @if (Model.ChatMessages.Count == 0)
+            {
+                <div class="mca-empty"><i class="bi bi-chat-dots"></i><p>No questions yet — ask something about this company's records below.</p></div>
+            }
+            @foreach (var m in Model.ChatMessages)
+            {
+                var isUser = m.Role == ChatRole.User;
+                <div class="mca-finding @(isUser ? "sev-watch" : "sev-positive")">
+                    <h4>
+                        <span class="mca-sev-dot"></span>@(isUser ? "You" : "Assistant")
+                        @if (m.Status == ChatMessageStatus.Failed) { <span class="pi-status-pill pi-status-failed">Error</span> }
+                    </h4>
+                    <p>@m.MessageText</p>
+                    @if (!isUser && !string.IsNullOrEmpty(m.CitedSourcesJson))
+                    {
+                        var citations = System.Text.Json.JsonDocument.Parse(m.CitedSourcesJson).RootElement;
+                        if (citations.ValueKind == System.Text.Json.JsonValueKind.Array && citations.GetArrayLength() > 0)
+                        {
+                            <div class="mca-related">
+                                Sources:
+                                @foreach (var c in citations.EnumerateArray())
+                                {
+                                    var label = c.TryGetProperty("Label", out var l) ? l.GetString() : null;
+                                    <span>&nbsp;@label</span>
+                                }
+                            </div>
+                        }
+                    }
+                </div>
+            }
+        </div>
+
+        <form asp-controller="Chat" asp-action="Ask" method="post" class="d-flex gap-2">
+            @Html.AntiForgeryToken()
+            <input type="hidden" name="requestId" value="@r.RequestId" />
+            <input type="text" id="chat-question" name="question" class="form-control" placeholder="Ask a question about this company's records…" required />
+            <button type="submit" class="btn btn-primary">Ask</button>
+        </form>
     </div>
 
 </div>
