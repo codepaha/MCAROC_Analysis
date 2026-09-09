@@ -100,6 +100,54 @@ public partial class DossierPdfComposer(DossierModel model, DossierVariant varia
     private void Lead(IContainer c, string text) => c.PaddingBottom(14).Text(text)
         .FontSize(DossierTheme.Body).FontColor(DossierTheme.InkSoft).LineHeight(1.5f);
 
+    private void SubHead(IContainer c, string text) => c.PaddingTop(18).PaddingBottom(6)
+        .Text(text).FontFamily(DossierTheme.Display).FontSize(DossierTheme.Heading).FontColor(DossierTheme.Ink);
+
+    internal static string Money(decimal? v) => v is null ? "—" : $"₹{v.Value:N2} Cr";
+    internal static string D(DateOnly? d) => d?.ToString("dd MMM, yyyy") ?? "-";
+
+    private static string SevColour(Data.Entities.FindingSeverity s) => s switch
+    {
+        Data.Entities.FindingSeverity.Critical => DossierTheme.Maroon,
+        Data.Entities.FindingSeverity.Review => DossierTheme.Amber,
+        Data.Entities.FindingSeverity.Watch => DossierTheme.InkSoft,
+        _ => DossierTheme.Sage
+    };
+
+    private static string SevWash(Data.Entities.FindingSeverity s) => s switch
+    {
+        Data.Entities.FindingSeverity.Critical => DossierTheme.MaroonWash,
+        Data.Entities.FindingSeverity.Review => DossierTheme.AmberWash,
+        _ => DossierTheme.PaperRaised
+    };
+
+    /// <summary>A stat tile — kicker label above a large serif value.</summary>
+    private void StatTile(IContainer c, string label, string value, bool accent = false) =>
+        c.Border(0.75f).BorderColor(DossierTheme.Line).BorderTop(2f)
+            .BorderColor(accent ? DossierTheme.Maroon : DossierTheme.Line)
+            .Padding(11).Column(col =>
+        {
+            col.Item().Text(value).FontFamily(DossierTheme.Display).FontSize(19)
+                .FontColor(accent ? DossierTheme.MaroonDeep : DossierTheme.Ink);
+            col.Item().PaddingTop(3).Text(label.ToUpperInvariant())
+                .FontSize(DossierTheme.Kicker).FontColor(DossierTheme.InkFaint).LetterSpacing(0.05f);
+        });
+
+    /// <summary>A dark-header key/value mini-table.</summary>
+    private void KvBlock(IContainer c, string title, IEnumerable<(string Key, string Value)> rows) =>
+        c.Border(0.75f).BorderColor(DossierTheme.Line).Column(col =>
+        {
+            col.Item().Background(DossierTheme.Ink).PaddingVertical(6).PaddingHorizontal(11)
+                .Text(title).FontFamily(DossierTheme.Display).FontSize(11.5f).FontColor("#FFFFFF");
+            foreach (var (k, v) in rows)
+                col.Item().BorderBottom(0.5f).BorderColor(DossierTheme.LineSoft)
+                    .PaddingVertical(5).PaddingHorizontal(11).Row(r =>
+                {
+                    r.RelativeItem().Text(k).FontSize(DossierTheme.Small).FontColor(DossierTheme.InkSoft);
+                    r.ConstantItem(130).AlignRight().Text(v).FontSize(DossierTheme.Small).SemiBold();
+                });
+        });
+
     // ── Cover ──────────────────────────────────────────────────────────────
 
     private void ComposeCover(IContainer container)
