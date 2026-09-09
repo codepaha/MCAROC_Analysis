@@ -1,0 +1,121 @@
+@model DocumentsPageViewModel
+@{
+    // Rendered both as a full partial response (fetch-swap / direct link) and inline from the Documents tab.
+    string CatLabel(FilingCategory c) => c == FilingCategory.Unclassified ? "Other" : c.ToString();
+    string PageUrl(string? cat, int page) =>
+        Url.Action("Documents", "Requests", new { id = Model.RequestId, category = cat, page })!;
+}
+
+@if (!Model.HasBatch)
+{
+    <div class="mca-empty"><i class="bi bi-folder2-open"></i><p>No MCA filing archive was uploaded for this request.</p></div>
+}
+else
+{
+    var total = Model.CategoryCounts.Values.Sum();
+    <div class="mca-filter-chips" role="tablist" aria-label="Filing category">
+        <a class="mca-chip @(string.IsNullOrEmpty(Model.Category) ? "active" : "")" href="@PageUrl(null, 1)">All <span class="badge">@total</span></a>
+        @foreach (var c in new[] { FilingCategory.Charge, FilingCategory.Compliance, FilingCategory.Constitutional, FilingCategory.Financial, FilingCategory.Unclassified })
+        {
+            var count = Model.CategoryCounts.GetValueOrDefault(c);
+            var isActive = string.Equals(Model.Category, c.ToString(), StringComparison.OrdinalIgnoreCase);
+            <a class="mca-chip @(isActive ? "active" : "") @(count == 0 ? "disabled" : "")"
+               href="@PageUrl(count == 0 ? Model.Category : c.ToString(), 1)">@CatLabel(c) <span class="badge">@count</span></a>
+        }
+    </div>
+
+    if (Model.Filings.Count == 0)
+    {
+        <div class="mca-empty"><i class="bi bi-funnel"></i><p>No filings in this category.</p></div>
+    }
+    else
+    {
+        <p class="text-muted mt-2 mb-2">
+            Showing @((Model.Page - 1) * Model.PageSize + 1)&ndash;@Math.Min(Model.Page * Model.PageSize, Model.TotalFilings)
+            of @Model.TotalFilings filing(s)@(string.IsNullOrEmpty(Model.Category) ? "" : $" in {Model.Category}").
+        </p>
+
+        foreach (var row in Model.Filings)
+        {
+            var f = row.Filing;
+            var dupes = f.Documents.Where(d => d.DuplicateOfDocumentId != null).ToList();
+            <div class="card mb-2">
+                <div class="card-header">
+                    <span class="mca-badge">@CatLabel(row.DominantCategory)</span>
+                    SRN <span class="report-id">@f.Srn</span>
+                    @if (!string.IsNullOrEmpty(f.ParsedCompanyName)) { <span>&mdash; @f.ParsedCompanyName</span> }
+                    @if (f.ManualReviewRequired) { <span class="pi-status-pill pi-status-processing ms-2">Manual Review: @f.ManualReviewReason</span> }
+                </div>
+                <div class="card-body">
+                    <div class="pi-table-wrap mb-2"><table class="pi-results-table">
+                        <thead><tr><th>File</th><th>Form Type</th><th>Category</th><th>Confidence</th><th>Status</th><th>Pages (native/OCR)</th></tr></thead>
+                        <tbody>
+                        @foreach (var d in f.Documents.Where(d => d.DuplicateOfDocumentId == null).OrderBy(d => d.OriginalFileName))
+                        {
+                            <tr>
+                                <td>@d.OriginalFileName</td>
+                                <td>@(d.FormType ?? "—")</td>
+                                <td>@CatLabel(d.Category)</td>
+                                <td>@d.ClassificationConfidence <span class="text-muted">(@d.ClassificationMethod)</span></td>
+                                <td>@d.ProcessingStatus</td>
+                                <td>@d.NativePageCount / @d.OcrPageCount</td>
+                            </tr>
+                        }
+                        @if (dupes.Count > 0)
+                        {
+                            <tr><td colspan="6" class="text-muted">+ @dupes.Count duplicate attachment(s) — provenance retained, text/AI reused from the canonical copy.</td></tr>
+                        }
+                        </tbody>
+                    </table></div>
+
+                    @if (row.Extraction is { Status: ExtractionStatus.Success } ex && !string.IsNullOrEmpty(ex.ExtractedJson))
+                    {
+                        <p class="mb-1"><b>Extracted fields</b></p>
+                        <ul class="mb-1">
+                            @foreach (var prop in System.Text.Json.JsonDocument.Parse(ex.ExtractedJson).RootElement.EnumerateObject())
+                            {
+                                var isObject = prop.Value.ValueKind == System.Text.Json.JsonValueKind.Object;
+                                var valueEl = isObject && prop.Value.TryGetProperty("value", out var v) ? v : default;
+                                if (valueEl.ValueKind is System.Text.Json.JsonValueKind.Null or System.Text.Json.JsonValueKind.Undefined) { continue; }
+                                var pagesEl = isObject && prop.Value.TryGetProperty("pages", out var p) ? p.ToString() : "";
+                                <li><b>@prop.Name:</b> @valueEl.ToString() <span class="text-muted">(pages: @pagesEl)</span></li>
+                            }
+                        </ul>
+                        <details><summary class="mca-json-toggle">View raw JSON</summary><pre class="mca-json">@ex.ExtractedJson</pre></details>
+                    }
+                    else if (row.Extraction is { } failed)
+                    {
+                        <span class="text-danger">AI extraction failed: @failed.FailureReason</span>
+                        @if (!string.IsNullOrEmpty(failed.RawModelResponse))
+                        {
+                            <details><summary class="mca-json-toggle">Raw model response</summary><pre class="mca-json">@failed.RawModelResponse</pre></details>
+                        }
+                    }
+                    else if (row.DominantCategory is FilingCategory.Financial or FilingCategory.Unclassified)
+                    {
+                        <span class="text-muted">Stored and text-extracted, not sent for AI extraction.</span>
+                    }
+                    else
+                    {
+                        <span class="text-muted">AI extraction pending.</span>
+                    }
+                </div>
+            </div>
+        }
+
+        if (Model.TotalPages > 1)
+        {
+            <nav class="mca-pager" aria-label="Document pages">
+                @if (Model.Page > 1)
+                {
+                    <a class="mca-chip" href="@PageUrl(Model.Category, Model.Page - 1)">&larr; Previous</a>
+                }
+                <span class="text-muted">Page @Model.Page of @Model.TotalPages</span>
+                @if (Model.Page < Model.TotalPages)
+                {
+                    <a class="mca-chip" href="@PageUrl(Model.Category, Model.Page + 1)">Next &rarr;</a>
+                }
+            </nav>
+        }
+    }
+}
