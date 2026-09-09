@@ -1,10 +1,16 @@
-@model RocCharge
+@model ChargeDrawerViewModel
 @{
-    var c = Model;
+    var c = Model.Charge;
     var events = c.Events.OrderBy(e => e.EventDate ?? DateOnly.MinValue).ThenBy(e => e.ChargeEventId).ToList();
     var creation = events.FirstOrDefault(e => e.EventType == ChargeEventType.Creation);
     var latestClassified = events.LastOrDefault(e => e.SecurityClassificationConfidence is not null
         and not ChargeClassificationConfidence.None);
+    var isSatisfied = c.SatisfactionDate is not null;
+
+    // Modification comparison baseline/target (§2d-G).
+    RocChargeEvent? compareTarget = isSatisfied
+        ? events.LastOrDefault(e => e.EventType == ChargeEventType.Modification)
+        : events.LastOrDefault(e => e.EventType != ChargeEventType.Creation);
 
     // Any event carrying raw security / instrument narrative (for the "source wording" fallback).
     var narrativeEvent = events.LastOrDefault(e =>
@@ -147,6 +153,56 @@
         {
             <p class="text-muted mb-0">No charge-report detail sheet was matched to this charge — only ROC-sequence data is available.</p>
         }
+    </div>
+
+    @* ── G. Modification comparison ── *@
+    @if (creation is not null && compareTarget is not null && compareTarget != creation)
+    {
+        var baseFacs = Facilities(creation);
+        var targFacs = Facilities(compareTarget);
+        <div class="mca-section">
+            <h3>@(isSatisfied ? "Creation vs last modification" : "Creation vs latest event")</h3>
+            <div class="pi-table-wrap"><table class="pi-results-table mca-compare">
+                <thead><tr><th>Field</th><th>@creation.EventType @(creation.EventDate is { } cd ? $"({cd:d MMM yyyy})" : "")</th><th>@compareTarget.EventType @(compareTarget.EventDate is { } td ? $"({td:d MMM yyyy})" : "")</th><th>Change</th></tr></thead>
+                <tbody>
+                <tr>
+                    <td>Registered amount</td>
+                    <td>@(creation.ChargeAmount is { } a1 ? Money(a1) : "not available")</td>
+                    <td>@(compareTarget.ChargeAmount is { } a2 ? Money(a2) : "not available")</td>
+                    <td class="mca-compare-change @(creation.ChargeAmount is { } b1 && compareTarget.ChargeAmount is { } b2 ? (b2 > b1 ? "mca-compare-up" : b2 < b1 ? "mca-compare-down" : "") : "")">
+                        @(creation.ChargeAmount is { } d1 && compareTarget.ChargeAmount is { } d2 ? Money(d2 - d1) : "Not available")
+                    </td>
+                </tr>
+                <tr>
+                    <td>Facility</td>
+                    <td>@(baseFacs.Count > 0 ? string.Join(", ", baseFacs.Select(SpaceCamel)) : "—")</td>
+                    <td>@(targFacs.Count > 0 ? string.Join(", ", targFacs.Select(SpaceCamel)) : "—")</td>
+                    <td class="mca-compare-change">@(baseFacs.SequenceEqual(targFacs) ? "unchanged" : "changed")</td>
+                </tr>
+                </tbody>
+            </table></div>
+        </div>
+    }
+
+    @* ── H. Related findings ── *@
+    @if (Model.RelatedFindings.Count > 0)
+    {
+        <div class="mca-section">
+            <h3>Related findings <span class="mca-count">@Model.RelatedFindings.Count</span></h3>
+            @foreach (var f in Model.RelatedFindings)
+            {
+                <div class="mca-finding @SevClass(f.Severity)">
+                    <h4><span class="mca-sev-dot"></span>@f.Title <span class="mca-finding-meta">@f.TemporalStatus</span></h4>
+                    <p>@f.SummaryText</p>
+                </div>
+            }
+        </div>
+    }
+
+    @* ── I. Related filings ── *@
+    <div class="mca-section">
+        <h3>Related filings</h3>
+        <p class="text-muted mb-0">No directly linked filing identified — charge events in this workbook carry no SRN cross-reference to match against.</p>
     </div>
 
 </div>
