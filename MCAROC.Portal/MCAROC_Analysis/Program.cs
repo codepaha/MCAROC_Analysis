@@ -2,6 +2,7 @@ using System.Text;
 using MCAROC_Analysis.Data;
 using MCAROC_Analysis.Services;
 using MCAROC_Analysis.Services.Analysis;
+using MCAROC_Analysis.Services.Dashboard;
 using MCAROC_Analysis.Services.Excel;
 using MCAROC_Analysis.Services.McaFilings;
 using Microsoft.AspNetCore.Http.Features;
@@ -71,6 +72,10 @@ builder.Services.AddSingleton(sp =>
 builder.Services.AddScoped<AnalysisOrchestrator>();
 builder.Services.AddHostedService<AnalysisWorker>();
 
+// Phase 5: operations & risk intelligence dashboard + Search History
+builder.Services.AddScoped<DashboardQueryService>();
+builder.Services.AddScoped<RequestListQueryService>();
+
 var app = builder.Build();
 
 // Configure the HTTP request pipeline.
@@ -90,7 +95,7 @@ app.MapStaticAssets();
 
 app.MapControllerRoute(
     name: "default",
-    pattern: "{controller=Home}/{action=Index}/{id?}")
+    pattern: "{controller=Dashboard}/{action=Index}/{id?}")
     .WithStaticAssets();
 
 

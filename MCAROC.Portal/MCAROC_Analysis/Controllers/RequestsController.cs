@@ -4,6 +4,7 @@ using MCAROC_Analysis.Data.Entities;
 using MCAROC_Analysis.Models;
 using MCAROC_Analysis.Services;
 using MCAROC_Analysis.Services.Analysis;
+using MCAROC_Analysis.Services.Dashboard;
 using MCAROC_Analysis.Services.McaFilings;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -16,8 +17,16 @@ public class RequestsController(
     FileValidationService fileValidation,
     AnalysisQueue analysisQueue,
     FilingProcessingQueue filingQueue,
+    RequestListQueryService requestListQueryService,
     IWebHostEnvironment env) : Controller
 {
+    [HttpGet("/Requests")]
+    public async Task<IActionResult> Index([FromQuery] RequestListFilterCriteria filters)
+    {
+        var vm = await requestListQueryService.SearchAsync(filters);
+        return View(vm);
+    }
+
     [HttpGet]
     public async Task<IActionResult> New()
     {
