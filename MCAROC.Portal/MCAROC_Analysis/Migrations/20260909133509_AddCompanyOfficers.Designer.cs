@@ -5,6 +5,7 @@ using Microsoft.Data.SqlTypes;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 #nullable disable
@@ -12,9 +13,11 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace MCAROC_Analysis.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260909133509_AddCompanyOfficers")]
+    partial class AddCompanyOfficers
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -1094,9 +1097,6 @@ namespace MCAROC_Analysis.Migrations
                     b.Property<decimal?>("CashAndBank")
                         .HasPrecision(18, 4)
                         .HasColumnType("decimal(18,4)");
-
-                    b.Property<bool>("CashFlowYearInferred")
-                        .HasColumnType("bit");
 
                     b.Property<decimal?>("Cff")
                         .HasPrecision(18, 4)
@@ -2498,9 +2498,6 @@ namespace MCAROC_Analysis.Migrations
                         .HasColumnType("nvarchar(20)");
 
                     b.HasKey("SourceRowId");
-
-                    b.HasIndex("IngestionRunId", "WorkbookRole", "SheetIndex", "RowNumber")
-                        .IsUnique();
 
                     b.HasIndex("RequestId", "IngestionRunId", "WorkbookRole", "SheetName");
 

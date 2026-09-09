@@ -153,6 +153,19 @@ public class FinancialRulesTests
     }
 
     [Fact]
+    public void CashFlow_InferredYearAlignment_IsNotEvaluated()
+    {
+        // CFO is very negative but the year alignment is inferred — no automated conclusion is drawn.
+        var ctx = BuildContext(financialYears: [Fy(2025, pat: 10m, cfo: -50m, cashFlowYearInferred: true)]);
+
+        var result = FinancialRules.Evaluate(ctx, RuleThresholds.Default);
+
+        Assert.Equal(RuleEvaluationStatus.NotEvaluated, result[11].Status); // CfoNegative
+        Assert.Equal(RuleEvaluationStatus.NotEvaluated, result[12].Status); // PatCfoDivergence
+        Assert.Equal(RuleEvaluationStatus.NotEvaluated, result[13].Status); // CfoHealthy
+    }
+
+    [Fact]
     public void CashFlow_PatPositiveCfoNegative_TriggersDivergence()
     {
         var ctx = BuildContext(financialYears: [Fy(2025, pat: 10m, cfo: -2m)]);

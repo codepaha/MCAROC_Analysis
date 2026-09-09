@@ -27,6 +27,12 @@ jobs:
         run: dotnet build MCAROC.Portal/MCAROC.Portal.slnx --no-restore --configuration Release
 
       - name: Test
+        # MCAROC_RECON_FIXTURES points SourceReconciliationTests at the two real .xls workbooks
+        # (U45203OR1995PLC003982{,-charge}.xls) on this runner, so the BFSI reconciliation actually
+        # runs in CI without the real company data ever being committed. Override with the repo
+        # variable RECON_FIXTURES_DIR; if the files aren't there the test skips (it never fails CI).
+        env:
+          MCAROC_RECON_FIXTURES: ${{ vars.RECON_FIXTURES_DIR || 'E:\Downloads' }}
         run: dotnet test MCAROC.Portal/MCAROC_Analysis.Tests/MCAROC_Analysis.Tests.csproj --no-build --configuration Release --logger "trx;LogFileName=test-results.trx"
 
       - name: Publish test results
