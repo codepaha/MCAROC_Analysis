@@ -18,8 +18,18 @@ public class ChatService(
 {
     private static readonly ChatRetrievalOptions Options = ChatRetrievalOptions.Default;
 
-    public async Task<ChatMessage> AskAsync(long requestId, string question, CancellationToken ct)
+    public virtual Task<bool> RequestExistsAsync(long requestId, CancellationToken ct) =>
+        db.Requests.AnyAsync(r => r.RequestId == requestId, ct);
+
+    /// <summary>Returns the persisted assistant message, or <c>null</c> if <paramref name="requestId"/>
+    /// matches no request. The existence check runs before any write, so a bad id never creates an
+    /// orphan session (the controller also guards up front, unconditionally).</summary>
+    public virtual async Task<ChatMessage?> AskAsync(long requestId, string question, CancellationToken ct)
     {
+        var request = await db.Requests.FirstOrDefaultAsync(r => r.RequestId == requestId, ct);
+        if (request is null)
+            return null;
+
         var session = await GetOrCreateSessionAsync(requestId, ct);
 
         db.ChatMessages.Add(new ChatMessage
@@ -39,8 +49,6 @@ public class ChatService(
             .Take(Options.ChatHistoryTurnLimit)
             .ToListAsync(ct);
         priorHistory.Reverse();
-
-        var request = await db.Requests.FirstAsync(r => r.RequestId == requestId, ct);
 
         ChatMessage assistantMessage;
         try
