@@ -205,3 +205,116 @@ else
 {
     <p class="text-muted">No completed extraction yet.</p>
 }
+
+@if (Model.FilingBatch is { } fb)
+{
+    <hr />
+    <h4>MCA Filings</h4>
+    <p class="text-muted">
+        Batch status: <span class="badge bg-secondary">@fb.Status</span>
+        @if (fb.FailureReason is not null)
+        {
+            <span class="text-danger">&mdash; @fb.FailureReason</span>
+        }
+    </p>
+
+    <h5>Extraction Summary</h5>
+    <table class="table table-sm w-auto">
+        <tbody>
+            @foreach (var kv in Model.FilingCategoryCounts)
+            {
+                <tr><td>@kv.Key</td><td>@kv.Value document(s)</td></tr>
+            }
+            <tr><td colspan="2"><hr class="my-1" /></td></tr>
+            @foreach (var kv in Model.TextExtractionMethodCounts)
+            {
+                <tr><td>Text extraction: @kv.Key</td><td>@kv.Value document(s)</td></tr>
+            }
+            <tr><td colspan="2"><hr class="my-1" /></td></tr>
+            <tr><td>AI extraction succeeded</td><td>@Model.AiSuccessCount filing(s)</td></tr>
+            <tr><td>AI extraction failed</td><td>@Model.AiFailedCount filing(s)</td></tr>
+            <tr><td><strong>Manual review required</strong></td><td><strong>@Model.ManualReviewFilingCount document(s)</strong></td></tr>
+        </tbody>
+    </table>
+
+    @foreach (var categoryGroup in Model.FilingSummaries.GroupBy(f => f.DominantCategory))
+    {
+        <h5>@categoryGroup.Key</h5>
+        @foreach (var fs in categoryGroup)
+        {
+            var f = fs.Filing;
+            <div class="card mb-2">
+                <div class="card-header">
+                    SRN @f.Srn
+                    @if (!string.IsNullOrEmpty(f.ParsedCompanyName))
+                    {
+                        <span>&mdash; @f.ParsedCompanyName</span>
+                    }
+                    @if (f.ManualReviewRequired)
+                    {
+                        <span class="badge bg-warning text-dark">Manual Review: @f.ManualReviewReason</span>
+                    }
+                </div>
+                <div class="card-body">
+                    <table class="table table-sm mb-2">
+                        <thead><tr><th>File</th><th>Form Type</th><th>Confidence</th><th>Status</th><th>Pages (native/OCR)</th></tr></thead>
+                        <tbody>
+                        @foreach (var d in f.Documents.Where(d => d.DuplicateOfDocumentId == null))
+                        {
+                            <tr>
+                                <td>@d.OriginalFileName</td>
+                                <td>@d.FormType</td>
+                                <td>@d.ClassificationConfidence (@d.ClassificationMethod)</td>
+                                <td>@d.ProcessingStatus</td>
+                                <td>@d.NativePageCount / @d.OcrPageCount</td>
+                            </tr>
+                        }
+                        </tbody>
+                    </table>
+
+                    @if (fs.Extraction is { } ex)
+                    {
+                        @if (ex.Status == ExtractionStatus.Success && !string.IsNullOrEmpty(ex.ExtractedJson))
+                        {
+                            <strong>Extracted:</strong>
+                            <ul>
+                                @foreach (var prop in System.Text.Json.JsonDocument.Parse(ex.ExtractedJson).RootElement.EnumerateObject())
+                                {
+                                    // JsonElement.TryGetProperty throws (rather than returning false) when
+                                    // called on an element that isn't a JSON object at all — guard on
+                                    // ValueKind first, since a field can legitimately come back as a bare
+                                    // null/string/number instead of the usual {"value":...,"pages":...} shape.
+                                    var isObject = prop.Value.ValueKind == System.Text.Json.JsonValueKind.Object;
+                                    var valueEl = isObject && prop.Value.TryGetProperty("value", out var v) ? v : default;
+                                    if (valueEl.ValueKind is System.Text.Json.JsonValueKind.Null or System.Text.Json.JsonValueKind.Undefined) { continue; }
+                                    var pagesEl = isObject && prop.Value.TryGetProperty("pages", out var p) ? p.ToString() : "";
+                                    <li><strong>@prop.Name:</strong> @valueEl.ToString() <span class="text-muted">(pages: @pagesEl)</span></li>
+                                }
+                            </ul>
+                            <details>
+                                <summary class="text-muted" style="cursor:pointer;">View Raw JSON</summary>
+                                <pre class="small">@ex.ExtractedJson</pre>
+                            </details>
+                        }
+                        else
+                        {
+                            <span class="text-danger">AI extraction failed: @ex.FailureReason</span>
+                            @if (!string.IsNullOrEmpty(ex.RawModelResponse))
+                            {
+                                <details><summary class="text-muted" style="cursor:pointer;">Raw model response</summary><pre class="small">@ex.RawModelResponse</pre></details>
+                            }
+                        }
+                    }
+                    else if (categoryGroup.Key is FilingCategory.Financial or FilingCategory.Unclassified)
+                    {
+                        <span class="text-muted">Stored, not yet analysed.</span>
+                    }
+                    else
+                    {
+                        <span class="text-muted">AI extraction pending.</span>
+                    }
+                </div>
+            </div>
+        }
+    }
+}

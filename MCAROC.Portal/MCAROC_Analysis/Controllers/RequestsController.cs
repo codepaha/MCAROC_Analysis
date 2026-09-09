@@ -3,6 +3,7 @@ using MCAROC_Analysis.Data;
 using MCAROC_Analysis.Data.Entities;
 using MCAROC_Analysis.Models;
 using MCAROC_Analysis.Services;
+using MCAROC_Analysis.Services.McaFilings;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 
@@ -12,6 +13,7 @@ public class RequestsController(
     AppDbContext db,
     IngestionOrchestrator orchestrator,
     FileValidationService fileValidation,
+    FilingProcessingQueue filingQueue,
     IWebHostEnvironment env) : Controller
 {
     [HttpGet]
@@ -23,6 +25,8 @@ public class RequestsController(
 
     [HttpPost]
     [ValidateAntiForgeryToken]
+    [RequestSizeLimit(2_000_000_000)] // MCA Filings archives run up to ~700MB in the real sample corpus
+    [RequestFormLimits(MultipartBodyLengthLimit = 2_000_000_000)]
     public async Task<IActionResult> New(NewRequestViewModel model)
     {
         model.Clients = await db.Clients.Where(c => c.IsActive).OrderBy(c => c.ClientName).ToListAsync();
@@ -91,6 +95,21 @@ public class RequestsController(
 
         await orchestrator.RunAsync(request.RequestId, rocDocument.DocumentId, chargeDocumentId);
 
+        if (model.McaFilingsFile is { Length: > 0 } && Path.GetExtension(model.McaFilingsFile.FileName).Equals(".zip", StringComparison.OrdinalIgnoreCase))
+        {
+            var filingsDocument = await SaveDocumentAsync(request.RequestId, model.McaFilingsFile, DocumentType.McaFilingsArchive, validateAsExcel: false);
+            var batch = new McaFilingBatch
+            {
+                RequestId = request.RequestId,
+                SourceDocumentId = filingsDocument.DocumentId,
+                Status = FilingBatchStatus.Uploaded,
+                StartedDate = DateTime.UtcNow
+            };
+            db.McaFilingBatches.Add(batch);
+            await db.SaveChangesAsync();
+            filingQueue.Enqueue(new UnpackBatchWorkItem(batch.BatchId));
+        }
+
         return RedirectToAction(nameof(Details), new { id = request.RequestId });
     }
 
@@ -126,10 +145,49 @@ public class RequestsController(
             vm.Litigations = await db.Litigations.Where(x => x.IngestionRunId == runId).ToListAsync();
         }
 
+        vm.FilingBatch = await db.McaFilingBatches.Where(b => b.RequestId == id)
+            .OrderByDescending(b => b.StartedDate).FirstOrDefaultAsync();
+        if (vm.FilingBatch is { } batch)
+        {
+            var filings = await db.McaFilings.Include(f => f.Documents)
+                .Where(f => f.BatchId == batch.BatchId).ToListAsync();
+            var extractions = await db.McaFilingExtractions
+                .Where(e => e.FilingId != null && filings.Select(f => f.FilingId).Contains(e.FilingId!.Value))
+                .ToListAsync();
+            var extractionsByFiling = extractions.Where(e => e.FilingId.HasValue).ToDictionary(e => e.FilingId!.Value);
+
+            foreach (var filing in filings)
+            {
+                var dominant = filing.Documents
+                    .Where(d => d.Category != FilingCategory.Unclassified)
+                    .GroupBy(d => d.Category)
+                    .OrderByDescending(g => g.Count())
+                    .Select(g => g.Key)
+                    .FirstOrDefault();
+
+                vm.FilingSummaries.Add(new FilingSummaryViewModel
+                {
+                    Filing = filing,
+                    DominantCategory = dominant,
+                    Extraction = extractionsByFiling.GetValueOrDefault(filing.FilingId)
+                });
+
+                foreach (var doc in filing.Documents.Where(d => d.DuplicateOfDocumentId == null))
+                {
+                    vm.FilingCategoryCounts[doc.Category] = vm.FilingCategoryCounts.GetValueOrDefault(doc.Category) + 1;
+                    vm.TextExtractionMethodCounts[doc.TextExtractionMethod] = vm.TextExtractionMethodCounts.GetValueOrDefault(doc.TextExtractionMethod) + 1;
+                    if (doc.ManualReviewRequired) vm.ManualReviewFilingCount++;
+                }
+            }
+
+            vm.AiSuccessCount = extractions.Count(e => e.Status == ExtractionStatus.Success);
+            vm.AiFailedCount = extractions.Count(e => e.Status == ExtractionStatus.Failed);
+        }
+
         return View(vm);
     }
 
-    private async Task<RequestDocument> SaveDocumentAsync(long requestId, IFormFile file, DocumentType documentType)
+    private async Task<RequestDocument> SaveDocumentAsync(long requestId, IFormFile file, DocumentType documentType, bool validateAsExcel = true)
     {
         var document = new RequestDocument
         {
@@ -161,13 +219,16 @@ public class RequestsController(
             document.FileHash = Convert.ToHexString(hashBytes);
         }
 
-        var openCheck = fileValidation.ValidateOpens(fullPath);
         document.StoredFileName = storedFileName;
         document.StoragePath = fullPath;
-        if (!openCheck.IsValid)
+        if (validateAsExcel)
         {
-            document.UploadStatus = DocumentUploadStatus.ValidationFailed;
-            document.QuarantineReason = openCheck.Error;
+            var openCheck = fileValidation.ValidateOpens(fullPath);
+            if (!openCheck.IsValid)
+            {
+                document.UploadStatus = DocumentUploadStatus.ValidationFailed;
+                document.QuarantineReason = openCheck.Error;
+            }
         }
 
         await db.SaveChangesAsync();
