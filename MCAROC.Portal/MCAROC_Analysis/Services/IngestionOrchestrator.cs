@@ -46,6 +46,13 @@ public class IngestionOrchestrator(AppDbContext db, IExcelSheetReader sheetReade
                 ? sheetReader.ReadWorkbook(chargeDocument.StoragePath)
                 : null;
 
+            // Layer 0 — record every non-blank row of every sheet of the ROC workbook verbatim before
+            // any typed parsing. The charge workbook's rows are recorded later, only if its company
+            // identity matches (a mismatched charge workbook is another company's data).
+            var extractedAt = DateTime.UtcNow;
+            db.SourceRows.AddRange(SourceRowRecorder.Record(
+                rocWorkbook, "RocReport", requestId, run.IngestionRunId, rocDocumentId, extractedAt));
+
             var companySheet = SheetAliases.Find(rocWorkbook, SheetAliases.CompanyProfile)
                 ?? throw new IngestionFailedException("Required sheet 'About the Company' was not found in the ROC report.");
 
@@ -61,7 +68,13 @@ public class IngestionOrchestrator(AppDbContext db, IExcelSheetReader sheetReade
 
             var chargeIdentityMatches = true;
             if (chargeWorkbook is not null)
+            {
                 chargeIdentityMatches = ValidateRocVsCharge(rocWorkbook, chargeWorkbook, chargeDocument!, request);
+                if (chargeIdentityMatches)
+                    db.SourceRows.AddRange(SourceRowRecorder.Record(
+                        chargeWorkbook, "ChargeReport", requestId, run.IngestionRunId,
+                        chargeDocumentId!.Value, extractedAt));
+            }
 
             RunSectionParsers(rocWorkbook, chargeWorkbook, chargeIdentityMatches, requestId, run.IngestionRunId,
                 rocDocumentId, chargeDocumentId, issues, ref itemCount);
@@ -185,8 +198,10 @@ public class IngestionOrchestrator(AppDbContext db, IExcelSheetReader sheetReade
         var directorsSheet = SheetAliases.Find(rocWorkbook, SheetAliases.Directors);
         if (directorsSheet is not null)
         {
-            var r = DirectorsParser.Parse(directorsSheet, requestId, runId, rocDocumentId);
+            var r = DirectorsParser.Parse(directorsSheet, requestId, runId, rocDocumentId, out var officers);
             db.Directors.AddRange(r.Items);
+            db.CompanyOfficers.AddRange(officers);
+            itemCount += officers.Count;
             Collect(r, issues, ref itemCount);
         }
 
@@ -210,16 +225,20 @@ public class IngestionOrchestrator(AppDbContext db, IExcelSheetReader sheetReade
         var financialSheet = SheetAliases.Find(rocWorkbook, SheetAliases.StandaloneFinancialData);
         if (financialSheet is not null)
         {
-            var r = StandaloneFinancialDataParser.Parse(financialSheet, requestId, runId, rocDocumentId, FinancialBasis.Standalone);
+            var r = StandaloneFinancialDataParser.Parse(financialSheet, requestId, runId, rocDocumentId, out var facts, FinancialBasis.Standalone);
             db.FinancialYearData.AddRange(r.Items);
+            db.FinancialFacts.AddRange(facts);
+            itemCount += facts.Count;
             Collect(r, issues, ref itemCount);
         }
 
         var consolidatedSheet = SheetAliases.Find(rocWorkbook, SheetAliases.ConsolidatedFinancialData);
         if (consolidatedSheet is not null)
         {
-            var r = StandaloneFinancialDataParser.Parse(consolidatedSheet, requestId, runId, rocDocumentId, FinancialBasis.Consolidated);
+            var r = StandaloneFinancialDataParser.Parse(consolidatedSheet, requestId, runId, rocDocumentId, out var facts, FinancialBasis.Consolidated);
             db.FinancialYearData.AddRange(r.Items);
+            db.FinancialFacts.AddRange(facts);
+            itemCount += facts.Count;
             Collect(r, issues, ref itemCount);
         }
 

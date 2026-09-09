@@ -24,7 +24,22 @@ public static class GstParser
             {
                 var row = gstSheet.Rows[r];
                 var gstin = row.Count > 0 ? row[0]?.ToString()?.Trim() : null;
-                if (string.IsNullOrEmpty(gstin) || byGstin.ContainsKey(gstin)) continue;
+                if (string.IsNullOrEmpty(gstin)) continue;
+
+                if (byGstin.ContainsKey(gstin))
+                {
+                    // The GST sheet carries one row per (GSTIN, return type) — the same GSTIN can appear
+                    // several times with different return-type / tax-period / latest-filing columns.
+                    // Registration identity is per-GSTIN, so we keep one GstRegistration, but the extra
+                    // row is not dropped silently: it is flagged here and captured verbatim in SourceRows.
+                    // The authoritative per-period filing history is the "Annexure - GST" sheet.
+                    regResult.AddWarning(new ParseIssue(IssueSeverity.Warning, nameof(GstParser), "Gstin", gstin,
+                        "GST_ADDITIONAL_REGISTRATION_ROW",
+                        $"GSTIN '{gstin}' has an additional GST-sheet row (return type '{Cell(row, 3)}', " +
+                        $"tax period '{Cell(row, 6)}') beyond the one kept as the registration — see the raw " +
+                        "source row and the GST filing annexure.", r + 1));
+                    continue;
+                }
 
                 var reg = new GstRegistration
                 {

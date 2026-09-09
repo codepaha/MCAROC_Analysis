@@ -335,6 +335,17 @@ public static class FinancialRules
                     RuleEvaluationOutcome.NotEvaluated(CfoHealthyCode, reason)];
         }
 
+        // The source cash-flow section carries no year header — CFO/CFI/CFF were aligned to years by
+        // column position and flagged for manual review. Don't draw an automated conclusion from them.
+        if (latest.CashFlowYearInferred || (prior?.CashFlowYearInferred ?? false))
+        {
+            var reason = "Cash-flow figures are excluded from automated analysis: the source has no year " +
+                         "header for the cash-flow section, so year alignment is inferred and needs manual verification.";
+            return [RuleEvaluationOutcome.NotEvaluated(CfoNegativeCode, reason),
+                    RuleEvaluationOutcome.NotEvaluated(PatCfoDivergenceCode, reason),
+                    RuleEvaluationOutcome.NotEvaluated(CfoHealthyCode, reason)];
+        }
+
         if (cfo < 0)
         {
             var twoConsecutive = prior?.Cfo is { } priorCfo && priorCfo < 0;

@@ -41,5 +41,10 @@ public class FinancialYearData : ExtractedEntityBase
     public decimal? Cfi { get; set; }
     public decimal? Cff { get; set; }
 
+    /// <summary>True when CFO/CFI/CFF were assigned to this year by column position because the source
+    /// cash-flow section carries no year header of its own. Such values are shown with a "year inferred —
+    /// verify" caveat and are excluded from automated rule-engine conclusions.</summary>
+    public bool CashFlowYearInferred { get; set; }
+
     public decimal? ShareCapital { get; set; }
 }

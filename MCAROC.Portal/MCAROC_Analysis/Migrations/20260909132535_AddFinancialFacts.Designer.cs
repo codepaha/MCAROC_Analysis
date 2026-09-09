@@ -5,6 +5,7 @@ using Microsoft.Data.SqlTypes;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 #nullable disable
@@ -12,9 +13,11 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace MCAROC_Analysis.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260909132535_AddFinancialFacts")]
+    partial class AddFinancialFacts
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -412,62 +415,6 @@ namespace MCAROC_Analysis.Migrations
                             CreatedDate = new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified),
                             IsActive = true
                         });
-                });
-
-            modelBuilder.Entity("MCAROC_Analysis.Data.Entities.CompanyOfficer", b =>
-                {
-                    b.Property<long>("CompanyOfficerId")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("bigint");
-
-                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("CompanyOfficerId"));
-
-                    b.Property<DateOnly?>("CessationDate")
-                        .HasColumnType("date");
-
-                    b.Property<string>("Designation")
-                        .HasColumnType("nvarchar(max)");
-
-                    b.Property<DateOnly?>("DesignationAppointmentDate")
-                        .HasColumnType("date");
-
-                    b.Property<string>("DinCellRaw")
-                        .HasColumnType("nvarchar(max)");
-
-                    b.Property<string>("Flags")
-                        .HasColumnType("nvarchar(max)");
-
-                    b.Property<long>("IngestionRunId")
-                        .HasColumnType("bigint");
-
-                    b.Property<string>("NameNormalized")
-                        .IsRequired()
-                        .HasColumnType("nvarchar(max)");
-
-                    b.Property<string>("NameRaw")
-                        .IsRequired()
-                        .HasColumnType("nvarchar(max)");
-
-                    b.Property<DateOnly?>("OriginalAppointmentDate")
-                        .HasColumnType("date");
-
-                    b.Property<long>("RequestId")
-                        .HasColumnType("bigint");
-
-                    b.Property<long?>("SourceDocumentId")
-                        .HasColumnType("bigint");
-
-                    b.Property<int?>("SourceRowNumber")
-                        .HasColumnType("int");
-
-                    b.Property<string>("SourceSheetName")
-                        .HasColumnType("nvarchar(max)");
-
-                    b.HasKey("CompanyOfficerId");
-
-                    b.HasIndex("RequestId", "IngestionRunId");
-
-                    b.ToTable("CompanyOfficers");
                 });
 
             modelBuilder.Entity("MCAROC_Analysis.Data.Entities.CompanyProfile", b =>
@@ -1094,9 +1041,6 @@ namespace MCAROC_Analysis.Migrations
                     b.Property<decimal?>("CashAndBank")
                         .HasPrecision(18, 4)
                         .HasColumnType("decimal(18,4)");
-
-                    b.Property<bool>("CashFlowYearInferred")
-                        .HasColumnType("bit");
 
                     b.Property<decimal?>("Cff")
                         .HasPrecision(18, 4)

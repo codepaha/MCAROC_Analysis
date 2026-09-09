@@ -52,7 +52,7 @@ foreach (var dir in companyDirs)
         Tally(companyResult);
 
         var directorsSheet = SheetAliases.Find(rocWorkbook, SheetAliases.Directors);
-        var directorsResult = directorsSheet is not null ? DirectorsParser.Parse(directorsSheet, 0, 0, null) : new ParseResult<MCAROC_Analysis.Data.Entities.Director>();
+        var directorsResult = directorsSheet is not null ? DirectorsParser.Parse(directorsSheet, 0, 0, null, out _) : new ParseResult<MCAROC_Analysis.Data.Entities.Director>();
         Tally(directorsResult);
 
         var otherDirSheet = SheetAliases.Find(rocWorkbook, SheetAliases.OtherDirectorships);
@@ -65,7 +65,7 @@ foreach (var dir in companyDirs)
         Tally(shResult);
 
         var finSheet = SheetAliases.Find(rocWorkbook, SheetAliases.StandaloneFinancialData);
-        var finResult = finSheet is not null ? StandaloneFinancialDataParser.Parse(finSheet, 0, 0, null) : new ParseResult<MCAROC_Analysis.Data.Entities.FinancialYearData>();
+        var finResult = finSheet is not null ? StandaloneFinancialDataParser.Parse(finSheet, 0, 0, null, out _) : new ParseResult<MCAROC_Analysis.Data.Entities.FinancialYearData>();
         Tally(finResult);
 
         var chargesResult = ChargesParser.Parse(rocWorkbook, chargeWorkbook, chargeWorkbook is not null, 0, 0, null, null);

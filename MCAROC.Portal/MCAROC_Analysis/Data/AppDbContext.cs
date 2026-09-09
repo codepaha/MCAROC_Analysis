@@ -51,6 +51,11 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<PeerComparisonMetric> PeerComparisonMetrics => Set<PeerComparisonMetric>();
     public DbSet<ChargeSecurityComponent> ChargeSecurityComponents => Set<ChargeSecurityComponent>();
 
+    // Phase 7.0 — raw source-row staging (Layer 0) + completeness of the typed layer
+    public DbSet<SourceRow> SourceRows => Set<SourceRow>();
+    public DbSet<FinancialFact> FinancialFacts => Set<FinancialFact>();
+    public DbSet<CompanyOfficer> CompanyOfficers => Set<CompanyOfficer>();
+
     protected override void ConfigureConventions(ModelConfigurationBuilder configurationBuilder)
     {
         // Default precision for monetary/count decimals (mostly Rs. Crore values); percentages override below.
@@ -251,6 +256,30 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             e.HasKey(x => x.PeerComparisonMetricId);
             e.HasIndex(x => new { x.RequestId, x.IngestionRunId });
             e.Property(x => x.Position).HasConversion<string>().HasMaxLength(15);
+        });
+
+        modelBuilder.Entity<SourceRow>(e =>
+        {
+            e.HasKey(x => x.SourceRowId);
+            e.HasIndex(x => new { x.RequestId, x.IngestionRunId, x.WorkbookRole, x.SheetName });
+            e.Property(x => x.WorkbookRole).HasMaxLength(20);
+            e.Property(x => x.SheetName).HasMaxLength(255);
+            e.Property(x => x.RowHash).HasMaxLength(64).IsFixedLength();
+        });
+
+        modelBuilder.Entity<FinancialFact>(e =>
+        {
+            e.HasKey(x => x.FinancialFactId);
+            e.HasIndex(x => new { x.RequestId, x.IngestionRunId, x.Basis });
+            e.Property(x => x.Basis).HasConversion<string>().HasMaxLength(15);
+            e.Property(x => x.Section).HasConversion<string>().HasMaxLength(15);
+            e.Property(x => x.Label).HasMaxLength(300);
+        });
+
+        modelBuilder.Entity<CompanyOfficer>(e =>
+        {
+            e.HasKey(x => x.CompanyOfficerId);
+            e.HasIndex(x => new { x.RequestId, x.IngestionRunId });
         });
 
         modelBuilder.Entity<AnalysisRun>(e =>

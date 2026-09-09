@@ -96,6 +96,26 @@ public class ComplianceParserTests
         Assert.DoesNotContain(r.Items, x => x.RecordType == ComplianceRecordType.NameRemoval);
         Assert.DoesNotContain(r.Items, x => x.RecordType == ComplianceRecordType.Bifr);
     }
+
+    [Fact]
+    public void KeepsEverySuitFiledQuarter_NoLongerCollapsesToLatest()
+    {
+        // CIBIL re-reports the same default every quarter — all reported quarters are kept now.
+        var sheet = Sheet("Compliance",
+            Row("SUIT FILED CASES"),
+            Row("Source", "Bank", "Date", "Amount (Rs. Crore)", "Defaulter Type"),
+            Row("CIBIL", "IDBI BANK", "31 Mar, 2014", 12.0, "Defaulter - Suit Filed"),
+            Row("CIBIL", "IDBI BANK", "30 Jun, 2014", 12.0, "Defaulter - Suit Filed"),
+            Row("CIBIL", "IDBI BANK", "30 Sep, 2014", 12.0, "Defaulter - Suit Filed"));
+
+        var r = ComplianceParser.Parse(sheet, 1, 1, 10);
+
+        var suits = r.Items.Where(x => x.RecordType == ComplianceRecordType.SuitFiled).ToList();
+        Assert.Equal(3, suits.Count);
+        Assert.Equal(
+            [new DateOnly(2014, 3, 31), new DateOnly(2014, 6, 30), new DateOnly(2014, 9, 30)],
+            suits.Select(s => s.RecordDate).ToArray());
+    }
 }
 
 public class FinancialParametersParserTests
