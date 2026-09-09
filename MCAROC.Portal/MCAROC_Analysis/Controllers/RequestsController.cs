@@ -182,6 +182,23 @@ public class RequestsController(
 
             vm.AiSuccessCount = extractions.Count(e => e.Status == ExtractionStatus.Success);
             vm.AiFailedCount = extractions.Count(e => e.Status == ExtractionStatus.Failed);
+
+            vm.ChunkableDocumentCount = await db.McaFilingDocuments.CountAsync(d =>
+                d.BatchId == batch.BatchId && d.DuplicateOfDocumentId == null
+                && d.ProcessingStatus == FilingDocumentProcessingStatus.Completed);
+            vm.ChunkedDocumentCount = await db.McaFilingDocuments.CountAsync(d =>
+                d.BatchId == batch.BatchId && d.DuplicateOfDocumentId == null
+                && d.ProcessingStatus == FilingDocumentProcessingStatus.Completed
+                && d.ChunkingStatus == ChunkingStatus.Chunked);
+        }
+
+        var chatSession = await db.ChatSessions.FirstOrDefaultAsync(s => s.RequestId == id);
+        if (chatSession is not null)
+        {
+            vm.ChatMessages = await db.ChatMessages
+                .Where(m => m.ChatSessionId == chatSession.ChatSessionId)
+                .OrderBy(m => m.CreatedDate)
+                .ToListAsync();
         }
 
         return View(vm);

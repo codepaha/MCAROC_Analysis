@@ -313,3 +313,83 @@ else
         }
     }
 }
+
+<hr />
+<h3>Ask Documents</h3>
+<p class="text-muted">
+    Answers are based only on documents and structured data uploaded for <strong>@r.CompanyName</strong>.
+</p>
+
+@if (Model.FilingBatch is not null)
+{
+    if (Model.ChunkableDocumentCount == 0)
+    {
+        <p class="text-muted"><em>Document indexing has not started yet — questions can still be answered from structured data.</em></p>
+    }
+    else if (Model.ChunkedDocumentCount < Model.ChunkableDocumentCount)
+    {
+        <div class="alert alert-info">
+            Document search is still indexing (@Model.ChunkedDocumentCount / @Model.ChunkableDocumentCount documents) —
+            answers may not yet cover all uploaded filings.
+        </div>
+    }
+}
+
+<p class="mb-1"><small class="text-muted">Try asking:</small></p>
+<div class="mb-3">
+    @{
+        var suggestions = new[]
+        {
+            "Who are the current directors?",
+            "Which directors have resigned?",
+            "List all open charges.",
+            "Are there any delayed EPFO payments?",
+            "What is the company's main object per the MoA?"
+        };
+    }
+    @foreach (var suggestion in suggestions)
+    {
+        <button type="button" class="btn btn-sm btn-outline-secondary me-1 mb-1"
+                onclick="document.getElementById('chat-question').value = this.textContent; document.getElementById('chat-question').focus();">
+            @suggestion
+        </button>
+    }
+</div>
+
+<div class="mb-3">
+    @foreach (var m in Model.ChatMessages)
+    {
+        var isUser = m.Role == ChatRole.User;
+        <div class="card mb-2 @(isUser ? "border-primary" : "border-secondary")">
+            <div class="card-body py-2">
+                <strong>@(isUser ? "You" : "Assistant")</strong>
+                @if (m.Status == ChatMessageStatus.Failed)
+                {
+                    <span class="badge bg-danger">Error</span>
+                }
+                <p class="mb-1">@m.MessageText</p>
+                @if (!isUser && !string.IsNullOrEmpty(m.CitedSourcesJson))
+                {
+                    var citations = System.Text.Json.JsonDocument.Parse(m.CitedSourcesJson).RootElement;
+                    if (citations.GetArrayLength() > 0)
+                    {
+                        <p class="mb-0"><small class="text-muted">Sources:
+                        @foreach (var c in citations.EnumerateArray())
+                        {
+                            var label = c.TryGetProperty("Label", out var l) ? l.GetString() : null;
+                            <span class="badge bg-light text-dark border me-1">@label</span>
+                        }
+                        </small></p>
+                    }
+                }
+            </div>
+        </div>
+    }
+</div>
+
+<form asp-controller="Chat" asp-action="Ask" method="post" class="d-flex gap-2">
+    @Html.AntiForgeryToken()
+    <input type="hidden" name="requestId" value="@r.RequestId" />
+    <input type="text" id="chat-question" name="question" class="form-control" placeholder="Ask a question about this company's records..." required />
+    <button type="submit" class="btn btn-primary">Ask</button>
+</form>

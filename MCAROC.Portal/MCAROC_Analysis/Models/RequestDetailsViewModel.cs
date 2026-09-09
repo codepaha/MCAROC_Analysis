@@ -29,6 +29,11 @@ public class RequestDetailsViewModel
     public int AiSuccessCount { get; set; }
     public int AiFailedCount { get; set; }
     public int ManualReviewFilingCount { get; set; }
+
+    // Phase 4: Ask Documents
+    public List<ChatMessage> ChatMessages { get; set; } = [];
+    public int ChunkableDocumentCount { get; set; }
+    public int ChunkedDocumentCount { get; set; }
 }
 
 public class FilingSummaryViewModel

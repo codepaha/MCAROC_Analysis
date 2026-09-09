@@ -2,6 +2,7 @@ using System.IO.Compression;
 using System.Security.Cryptography;
 using MCAROC_Analysis.Data;
 using MCAROC_Analysis.Data.Entities;
+using MCAROC_Analysis.Services.Chat;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 
@@ -16,6 +17,7 @@ public class FilingBatchProcessor(
     PdfTextExtractor pdfTextExtractor,
     VertexAiExtractionService vertexAiService,
     FilingProcessingQueue queue,
+    DocumentChunkingQueue documentChunkingQueue,
     ILogger<FilingBatchProcessor> logger)
 {
     private static readonly ArchiveSafetyLimits Limits = ArchiveSafetyLimits.Default;
@@ -534,6 +536,11 @@ public class FilingBatchProcessor(
         batch.Status = hasFailures ? FilingBatchStatus.CompletedWithErrors : FilingBatchStatus.Completed;
         batch.CompletedDate = DateTime.UtcNow;
         await db.SaveChangesAsync(ct);
+
+        // Phase 4 (Ask Documents): once every document in the batch has reached a terminal ProcessingStatus,
+        // the extracted text is stable and ready to chunk/embed — trigger that pipeline here rather than
+        // per-document, since chunking wants the whole batch's text available together.
+        documentChunkingQueue.Enqueue(batchId);
     }
 
     /// <summary>Recovers work left in a non-terminal state by a crash/restart: anything whose heartbeat

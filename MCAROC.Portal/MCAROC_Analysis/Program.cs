@@ -1,6 +1,7 @@
 using System.Text;
 using MCAROC_Analysis.Data;
 using MCAROC_Analysis.Services;
+using MCAROC_Analysis.Services.Chat;
 using MCAROC_Analysis.Services.Excel;
 using MCAROC_Analysis.Services.McaFilings;
 using Microsoft.AspNetCore.Http.Features;
@@ -54,8 +55,34 @@ builder.Services.AddScoped(sp => new FilingBatchProcessor(
     sp.GetRequiredService<PdfTextExtractor>(),
     sp.GetRequiredService<VertexAiExtractionService>(),
     sp.GetRequiredService<FilingProcessingQueue>(),
+    sp.GetRequiredService<DocumentChunkingQueue>(),
     sp.GetRequiredService<ILogger<FilingBatchProcessor>>()));
 builder.Services.AddHostedService<FilingProcessingWorker>();
+
+// Phase 4: document chunking/embedding + "Ask Documents" chat
+builder.Services.AddSingleton<DocumentChunkingQueue>();
+builder.Services.AddSingleton(sp =>
+{
+    var config = sp.GetRequiredService<IConfiguration>();
+    var projectId = config["GoogleCloud:ProjectId"] ?? throw new InvalidOperationException("GoogleCloud:ProjectId is not configured.");
+    var location = config["GoogleCloud:Location"] ?? "us-central1";
+    var credentialsPath = config["GoogleCloud:CredentialsPath"] ?? throw new InvalidOperationException("GoogleCloud:CredentialsPath is not configured.");
+    return new EmbeddingService(projectId, location, credentialsPath, sp.GetRequiredService<ILogger<EmbeddingService>>());
+});
+builder.Services.AddSingleton(sp =>
+{
+    var config = sp.GetRequiredService<IConfiguration>();
+    var projectId = config["GoogleCloud:ProjectId"] ?? throw new InvalidOperationException("GoogleCloud:ProjectId is not configured.");
+    var location = config["GoogleCloud:Location"] ?? "us-central1";
+    var credentialsPath = config["GoogleCloud:CredentialsPath"] ?? throw new InvalidOperationException("GoogleCloud:CredentialsPath is not configured.");
+    return new ChatCompletionService(projectId, location, credentialsPath, sp.GetRequiredService<ILogger<ChatCompletionService>>());
+});
+builder.Services.AddScoped<DocumentChunkingOrchestrator>();
+builder.Services.AddHostedService<DocumentChunkingWorker>();
+builder.Services.AddScoped<StructuredFactsProvider>();
+builder.Services.AddScoped(sp => new DocumentRetriever(sp.GetRequiredService<AppDbContext>(), ChatRetrievalOptions.Default));
+builder.Services.AddScoped<RetrievalContextBuilder>();
+builder.Services.AddScoped<ChatService>();
 
 var app = builder.Build();
 
