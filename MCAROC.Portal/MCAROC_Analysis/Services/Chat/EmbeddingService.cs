@@ -17,8 +17,8 @@ public class EmbeddingService
     public const int Dimensions = 768;
     private const int MaxBatchSize = 32;
 
-    private readonly GenAiClient _client;
-    private readonly ILogger<EmbeddingService> _logger;
+    private readonly GenAiClient? _client;
+    private readonly ILogger<EmbeddingService>? _logger;
 
     public EmbeddingService(string projectId, string location, string credentialsPath, ILogger<EmbeddingService> logger)
     {
@@ -27,7 +27,10 @@ public class EmbeddingService
         _client = new GenAiClient(vertexAI: true, project: projectId, location: location, credential: credential);
     }
 
-    public async Task<List<float[]>> EmbedDocumentsAsync(IReadOnlyList<string> texts, CancellationToken ct)
+    /// <summary>For test doubles that override the Embed* methods — the real ctor eagerly loads GCP creds.</summary>
+    protected EmbeddingService() { }
+
+    public virtual async Task<List<float[]>> EmbedDocumentsAsync(IReadOnlyList<string> texts, CancellationToken ct)
     {
         var results = new List<float[]>(texts.Count);
         for (var offset = 0; offset < texts.Count; offset += MaxBatchSize)
@@ -36,24 +39,31 @@ public class EmbeddingService
                 .Select(t => new Content { Parts = [Part.FromText(t)] })
                 .ToList();
             var config = new EmbedContentConfig { TaskType = "RETRIEVAL_DOCUMENT", OutputDimensionality = Dimensions };
-            var response = await _client.Models.EmbedContentAsync(ModelId, batch, config, ct);
+            var response = await _client!.Models.EmbedContentAsync(ModelId, batch, config, ct);
             var batchEmbeddings = response.Embeddings ?? [];
             // The caller (DocumentChunkingOrchestrator) pairs results[i] with chunk[i] positionally, so the
-            // batch API must return exactly one vector per input, in input order. A short/null response
-            // would otherwise silently truncate or misalign a document's index — fail loudly instead.
-            if (batchEmbeddings.Count != batch.Count)
-                throw new InvalidOperationException(
-                    $"Embedding batch returned {batchEmbeddings.Count} vectors for {batch.Count} inputs.");
+            // batch API must return exactly one vector per input, in input order. A short/surplus/null
+            // response would otherwise silently truncate or misalign a document's index — fail loudly.
+            EnsureBatchComplete(batchEmbeddings.Count, batch.Count);
             foreach (var embedding in batchEmbeddings)
                 results.Add(Normalize(embedding.Values ?? []));
         }
         return results;
     }
 
+    /// <summary>Guards the positional pairing in EmbedDocumentsAsync — a batch embed call must return
+    /// exactly one vector per input (a null/empty response counts as 0).</summary>
+    internal static void EnsureBatchComplete(int returnedCount, int inputCount)
+    {
+        if (returnedCount != inputCount)
+            throw new InvalidOperationException(
+                $"Embedding batch returned {returnedCount} vectors for {inputCount} inputs.");
+    }
+
     public async Task<float[]> EmbedQueryAsync(string text, CancellationToken ct)
     {
         var config = new EmbedContentConfig { TaskType = "RETRIEVAL_QUERY", OutputDimensionality = Dimensions };
-        var response = await _client.Models.EmbedContentAsync(ModelId, text, config, ct);
+        var response = await _client!.Models.EmbedContentAsync(ModelId, text, config, ct);
         var values = response.Embeddings?.FirstOrDefault()?.Values
             ?? throw new InvalidOperationException("Embedding response contained no values.");
         return Normalize(values);
