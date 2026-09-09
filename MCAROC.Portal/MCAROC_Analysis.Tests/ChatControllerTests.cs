@@ -62,6 +62,25 @@ public class ChatControllerTests : IAsyncLifetime
         Assert.IsType<NotFoundResult>(result);
     }
 
+    /// <summary>RequestExistsAsync passes (request existed at the guard) but AskAsync returns null
+    /// (it was deleted before the second check) — mirrors the delete-in-the-gap race.</summary>
+    private sealed class DeletedInTheGapChatService()
+        : ChatService(null!, null!, null!, NullLogger<ChatService>.Instance)
+    {
+        public override Task<bool> RequestExistsAsync(long requestId, CancellationToken ct) => Task.FromResult(true);
+        public override Task<ChatMessage?> AskAsync(long requestId, string question, CancellationToken ct) => Task.FromResult<ChatMessage?>(null);
+    }
+
+    [Fact]
+    public async Task Request_deleted_between_the_guard_and_AskAsync_returns_NotFound()
+    {
+        var controller = new ChatController(new DeletedInTheGapChatService());
+
+        var result = await controller.Ask(123, "Who are the directors?", CancellationToken.None);
+
+        Assert.IsType<NotFoundResult>(result);
+    }
+
     [Fact]
     public async Task Known_request_with_a_blank_question_redirects_to_the_ask_tab_and_persists_nothing()
     {

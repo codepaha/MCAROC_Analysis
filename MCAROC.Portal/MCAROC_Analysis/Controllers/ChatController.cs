@@ -16,8 +16,13 @@ public class ChatController(ChatService chatService) : Controller
         if (!await chatService.RequestExistsAsync(requestId, ct))
             return NotFound();
 
-        if (!string.IsNullOrWhiteSpace(question))
-            await chatService.AskAsync(requestId, question.Trim(), ct);
+        // AskAsync re-checks and returns null if the request was deleted in the gap between the guard
+        // above and here — honour that too.
+        if (!string.IsNullOrWhiteSpace(question)
+            && await chatService.AskAsync(requestId, question.Trim(), ct) is null)
+        {
+            return NotFound();
+        }
 
         // Land back on the "Ask Documents" tab (Details.cshtml deep-links #tab-... hashes).
         return new RedirectToActionResult("Details", "Requests", new { id = requestId }, permanent: false, fragment: "tab-ask");
