@@ -50,15 +50,126 @@
 
     <div class="mb-3">
         <label asp-for="RocFile" class="form-label"></label>
-        <input asp-for="RocFile" type="file" class="form-control" accept=".xls,.xlsx" />
+        <div class="dropzone" data-input-id="RocFile">
+            <input asp-for="RocFile" type="file" class="dropzone-input" accept=".xls,.xlsx" />
+            <div class="dropzone-prompt">
+                <span>Drag &amp; drop the MCA / ROC Report here, or click to browse</span>
+            </div>
+            <div class="dropzone-filename"></div>
+        </div>
     </div>
 
     <div class="mb-3">
         <label asp-for="ChargeFile" class="form-label"></label>
-        <input asp-for="ChargeFile" type="file" class="form-control" accept=".xls,.xlsx" />
+        <div class="dropzone" data-input-id="ChargeFile">
+            <input asp-for="ChargeFile" type="file" class="dropzone-input" accept=".xls,.xlsx" />
+            <div class="dropzone-prompt">
+                <span>Drag &amp; drop the Detailed Charge Report here, or click to browse</span>
+            </div>
+            <div class="dropzone-filename"></div>
+        </div>
         <div class="form-text">Optional. If provided, it must belong to the same company as the ROC report.</div>
+    </div>
+
+    <div class="mb-3">
+        <label asp-for="McaFilingsFile" class="form-label"></label>
+        <div class="dropzone" data-input-id="McaFilingsFile">
+            <input asp-for="McaFilingsFile" type="file" class="dropzone-input" accept=".zip" />
+            <div class="dropzone-prompt">
+                <span>Drag &amp; drop the MCA Filings archive (.zip) here, or click to browse</span>
+            </div>
+            <div class="dropzone-filename"></div>
+        </div>
+        <div class="form-text">Optional. Processed in the background — large archives can take a while; check the Details page for progress.</div>
     </div>
 
     <button type="submit" class="btn btn-primary">Create &amp; Analyse</button>
     <a asp-controller="Home" asp-action="Index" class="btn btn-outline-secondary">Cancel</a>
 </form>
+
+<style>
+    .dropzone {
+        position: relative;
+        border: 2px dashed #adb5bd;
+        border-radius: 0.375rem;
+        padding: 1.5rem;
+        text-align: center;
+        background-color: #f8f9fa;
+        cursor: pointer;
+        transition: border-color 0.15s ease-in-out, background-color 0.15s ease-in-out;
+    }
+
+    .dropzone:hover,
+    .dropzone.dropzone-active {
+        border-color: #0d6efd;
+        background-color: #eaf2ff;
+    }
+
+    .dropzone-input {
+        position: absolute;
+        inset: 0;
+        opacity: 0;
+        width: 100%;
+        height: 100%;
+        cursor: pointer;
+    }
+
+    .dropzone-prompt {
+        color: #6c757d;
+        pointer-events: none;
+    }
+
+    .dropzone-filename {
+        margin-top: 0.5rem;
+        font-weight: 600;
+        pointer-events: none;
+    }
+</style>
+
+@section Scripts {
+    <script>
+        document.querySelectorAll('.dropzone').forEach(function (zone) {
+            var input = zone.querySelector('.dropzone-input');
+            var filenameEl = zone.querySelector('.dropzone-filename');
+            var promptEl = zone.querySelector('.dropzone-prompt');
+
+            function showFile(file) {
+                if (file) {
+                    filenameEl.textContent = file.name;
+                    promptEl.style.display = 'none';
+                } else {
+                    filenameEl.textContent = '';
+                    promptEl.style.display = '';
+                }
+            }
+
+            input.addEventListener('change', function () {
+                showFile(input.files && input.files[0]);
+            });
+
+            ['dragenter', 'dragover'].forEach(function (evt) {
+                zone.addEventListener(evt, function (e) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    zone.classList.add('dropzone-active');
+                });
+            });
+
+            ['dragleave', 'drop'].forEach(function (evt) {
+                zone.addEventListener(evt, function (e) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    zone.classList.remove('dropzone-active');
+                });
+            });
+
+            zone.addEventListener('drop', function (e) {
+                var files = e.dataTransfer.files;
+                if (files && files.length > 0) {
+                    input.files = files;
+                    showFile(files[0]);
+                }
+            });
+        });
+    </script>
+}

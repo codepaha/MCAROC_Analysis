@@ -28,4 +28,20 @@ public class RequestDetailsViewModel
     public AnalysisRun? LatestAnalysisRun { get; set; }
     public List<AnalysisFinding> AnalysisFindings { get; set; } = [];
     public ExecutiveSummary? ExecutiveSummary { get; set; }
+
+    // MCA Filings (PDF) pipeline
+    public McaFilingBatch? FilingBatch { get; set; }
+    public List<FilingSummaryViewModel> FilingSummaries { get; set; } = [];
+    public Dictionary<FilingCategory, int> FilingCategoryCounts { get; set; } = [];
+    public Dictionary<TextExtractionMethod, int> TextExtractionMethodCounts { get; set; } = [];
+    public int AiSuccessCount { get; set; }
+    public int AiFailedCount { get; set; }
+    public int ManualReviewFilingCount { get; set; }
+}
+
+public class FilingSummaryViewModel
+{
+    public required McaFiling Filing { get; set; }
+    public FilingCategory DominantCategory { get; set; }
+    public McaFilingExtraction? Extraction { get; set; }
 }
