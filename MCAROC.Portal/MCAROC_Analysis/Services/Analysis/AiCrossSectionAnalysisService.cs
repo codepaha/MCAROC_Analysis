@@ -175,13 +175,33 @@ public partial class AiCrossSectionAnalysisService
             crossSection.Add(new AiCrossSectionFinding(c.Title, clampedSeverity, c.Narrative, relatedCodes));
         }
 
+        // The executive summary is a synthesis across the whole analysis, not one specific finding, so it's
+        // checked against the union of every finding's own allowed numbers (round-2-review fix — this path
+        // previously persisted the summary fields with no numeric validation at all, unlike
+        // findingNarratives/crossSectionFindings above, so Gemini could introduce an unsupported amount,
+        // percentage, ratio, or year straight into the headline summary a user reads first).
+        var allowedAcrossAllFindings = findings.SelectMany(BuildAllowedNumbers).ToHashSet();
         ExecutiveSummary? summary = dto.ExecutiveSummary is { } es
-            ? new ExecutiveSummary(
-                es.BusinessPerformance ?? "", es.FinancialPosition ?? "", es.BorrowingSecurity ?? "",
-                es.GovernanceCompliance ?? "", es.KeyReviewItems ?? [])
+            ? BuildValidatedExecutiveSummary(es, allowedAcrossAllFindings)
             : null;
 
         return new AiSynthesisOutcome(true, summary, narratives, crossSection, null);
+    }
+
+    /// <summary>Sanitizes each executive-summary field independently — a field containing an unsupported
+    /// number is blanked to "", not treated as a reason to discard the whole summary, matching this file's
+    /// "drop the specific offending piece, not the whole run" discipline elsewhere.</summary>
+    private static ExecutiveSummary BuildValidatedExecutiveSummary(ExecutiveSummaryDto es, HashSet<string> allowed)
+    {
+        string Sanitize(string? text) =>
+            string.IsNullOrWhiteSpace(text) || ContainsUnsupportedFinancialNumber(text, allowed) ? "" : text;
+
+        return new ExecutiveSummary(
+            Sanitize(es.BusinessPerformance),
+            Sanitize(es.FinancialPosition),
+            Sanitize(es.BorrowingSecurity),
+            Sanitize(es.GovernanceCompliance),
+            (es.KeyReviewItems ?? []).Where(item => !ContainsUnsupportedFinancialNumber(item, allowed)).ToList());
     }
 
     private static HashSet<string> ParseSupportingCodes(string? supportingSignalsJson)

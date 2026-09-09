@@ -174,4 +174,80 @@ public class AiCrossSectionAnalysisServiceValidationTests
 
         Assert.False(outcome.Success);
     }
+
+    [Fact]
+    public void ExecutiveSummary_UnsupportedAmount_IsBlankedNotPersistedVerbatim()
+    {
+        // Regression test for the review finding: the executive summary previously bypassed numeric
+        // validation entirely — findingNarratives/crossSectionFindings were checked, but a fabricated
+        // "₹999 crore" claim in the headline summary was persisted as-is. Fields are validated against the
+        // union of every finding's own allowed numbers, since the summary synthesizes across the whole run.
+        var findings = new List<AnalysisFinding>
+        {
+            Finding("FIN_REVENUE_DECLINE_1Y", FindingSeverity.Review, metricsJson: """{"latestRevenue":36.46,"changePercent":-25.0}""")
+        };
+        var response = """
+            {
+              "executiveSummary": {
+                "businessPerformance": "The company reported an unprecedented ₹999 crore in losses this year.",
+                "financialPosition": "x", "borrowingSecurity": "x", "governanceCompliance": "x", "keyReviewItems": []
+              },
+              "findingNarratives": [],
+              "crossSectionFindings": []
+            }
+            """;
+
+        var outcome = AiCrossSectionAnalysisService.Validate(response, findings);
+
+        Assert.True(outcome.Success);
+        Assert.NotNull(outcome.ExecutiveSummary);
+        Assert.Equal("", outcome.ExecutiveSummary!.BusinessPerformance); // blanked, not the fabricated figure
+    }
+
+    [Fact]
+    public void ExecutiveSummary_SupportedNumberFromMetrics_IsPreserved()
+    {
+        var findings = new List<AnalysisFinding>
+        {
+            Finding("FIN_REVENUE_DECLINE_1Y", FindingSeverity.Review, metricsJson: """{"latestRevenue":36.46,"changePercent":-25.0}""")
+        };
+        var response = """
+            {
+              "executiveSummary": {
+                "businessPerformance": "Revenue declined by 25% this year.",
+                "financialPosition": "x", "borrowingSecurity": "x", "governanceCompliance": "x", "keyReviewItems": []
+              },
+              "findingNarratives": [],
+              "crossSectionFindings": []
+            }
+            """;
+
+        var outcome = AiCrossSectionAnalysisService.Validate(response, findings);
+
+        Assert.Equal("Revenue declined by 25% this year.", outcome.ExecutiveSummary!.BusinessPerformance);
+    }
+
+    [Fact]
+    public void ExecutiveSummary_KeyReviewItems_FilteredIndividually()
+    {
+        var findings = new List<AnalysisFinding>
+        {
+            Finding("FIN_REVENUE_DECLINE_1Y", FindingSeverity.Review, metricsJson: """{"changePercent":-25.0}""")
+        };
+        var response = """
+            {
+              "executiveSummary": {
+                "businessPerformance": "x", "financialPosition": "x", "borrowingSecurity": "x", "governanceCompliance": "x",
+                "keyReviewItems": ["Revenue declined 25%", "Fabricated ₹500 Cr contingent liability"]
+              },
+              "findingNarratives": [],
+              "crossSectionFindings": []
+            }
+            """;
+
+        var outcome = AiCrossSectionAnalysisService.Validate(response, findings);
+
+        var item = Assert.Single(outcome.ExecutiveSummary!.KeyReviewItems);
+        Assert.Equal("Revenue declined 25%", item);
+    }
 }
