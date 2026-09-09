@@ -31,6 +31,10 @@ public class RequestDetailsViewModel
     public List<AuditorObservation> AuditorObservations { get; set; } = [];
     public List<Litigation> Litigations { get; set; } = [];
 
+    // Phase 7.0 — completeness layer
+    public List<CompanyOfficer> CompanyOfficers { get; set; } = [];
+    public List<FinancialFact> FinancialFacts { get; set; } = [];
+
     // Phase 6 — the 12 additional workbook sheets.
     public CompanyStructure? Structure { get; set; }
     public List<RelatedCorporate> RelatedCorporates { get; set; } = [];

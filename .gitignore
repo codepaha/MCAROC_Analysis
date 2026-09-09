@@ -48,3 +48,6 @@ bld/
 
 # User scratch docs (not part of the codebase)
 /Senior QA Prompt for MCA ROC Portal.md
+
+# Phase 7.0 reconciliation fixtures — real company workbooks, never committed
+MCAROC.Portal/MCAROC_Analysis.Tests/Fixtures/workbooks/
