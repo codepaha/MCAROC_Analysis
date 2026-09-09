@@ -92,7 +92,7 @@ public class ChatControllerTests : IAsyncLifetime
         var redirect = Assert.IsType<RedirectToActionResult>(result);
         Assert.Equal("Details", redirect.ActionName);
         Assert.Equal("Requests", redirect.ControllerName);
-        Assert.Equal("tab-ask", redirect.Fragment);
+        Assert.Equal("tab-documents/ask", redirect.Fragment);
         Assert.NotNull(redirect.RouteValues);
         Assert.True(redirect.RouteValues.TryGetValue("id", out var idValue));
         Assert.Equal(requestId, idValue);

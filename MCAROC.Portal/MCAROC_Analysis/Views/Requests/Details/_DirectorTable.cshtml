@@ -1,0 +1,16 @@
+@model List<Director>
+<div class="pi-table-wrap"><table class="pi-results-table">
+    <thead><tr><th>Name</th><th>DIN</th><th>Designation</th><th>Appointed</th><th>Ceased</th></tr></thead>
+    <tbody>
+    @foreach (var d in Model.OrderBy(d => d.NameRaw))
+    {
+        <tr>
+            <td>@d.NameRaw</td>
+            <td class="report-id">@Or(d.Din)</td>
+            <td>@Or(d.Designation)</td>
+            <td>@D(d.OriginalAppointmentDate)</td>
+            <td>@D(d.CessationDate)</td>
+        </tr>
+    }
+    </tbody>
+</table></div>

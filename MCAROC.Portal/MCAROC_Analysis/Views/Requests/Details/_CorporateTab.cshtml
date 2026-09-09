@@ -1,0 +1,273 @@
+@model RequestDetailsViewModel
+@{
+    var r = Model.Request;
+    var cp = Model.CompanyProfile;
+    var currentDirectors = Model.Directors.Where(d => d.CessationDate is null).ToList();
+    var formerDirectors = Model.Directors.Where(d => d.CessationDate is not null).ToList();
+    var relByType = Model.RelatedCorporates.GroupBy(x => x.RelationshipType).ToList();
+
+    var sections = new (string Label, string Id, int? Count)[]
+    {
+        ("Overview", "overview", null),
+        ("Management", "management", Model.Directors.Count),
+        ("Director Network", "network", Model.DirectorAssociations.Count + Model.ProprietorshipAssociations.Count),
+        ("Ownership", "ownership", Model.Shareholdings.Count),
+        ("Group Entities", "group", Model.RelatedCorporates.Count),
+        ("Capital", "capital", Model.SecurityAllotments.Count),
+    };
+}
+
+<ul class="nav mca-subtabs" data-mca-sections="corporate" role="tablist">
+    @for (var i = 0; i < sections.Length; i++)
+    {
+        var s = sections[i];
+        <li class="nav-item" role="presentation">
+            <button class="nav-link @(i == 0 ? "active" : "")" data-bs-toggle="tab" data-bs-target="#sec-corporate-@s.Id" type="button" role="tab">
+                @s.Label @if (s.Count is { } c) { <span class="badge">@c</span> }
+            </button>
+        </li>
+    }
+</ul>
+
+<div class="tab-content">
+
+    @* ── Overview ── *@
+    <div class="tab-pane fade show active mca-subtab-panel" id="sec-corporate-overview" role="tabpanel">
+        @if (cp is not null)
+        {
+            <div class="mca-kv">
+                <div><dt>Company Name</dt><dd>@cp.CompanyName</dd></div>
+                <div><dt>Status</dt><dd>@Or(cp.CompanyStatus)</dd></div>
+                <div><dt>CIN</dt><dd>@(cp.Cin ?? r.Cin ?? r.Llpin ?? "—")</dd></div>
+                <div><dt>PAN</dt><dd>@(cp.Pan ?? r.Pan ?? "—")</dd></div>
+                <div><dt>Compliance Status</dt><dd>@Or(cp.ComplianceStatus)</dd></div>
+                <div><dt>Incorporated</dt><dd>@D(cp.IncorporationDate)</dd></div>
+                <div><dt>Authorised Capital</dt><dd>@Money(cp.AuthorisedCapital)</dd></div>
+                <div><dt>Paid-up Capital</dt><dd>@Money(cp.PaidUpCapital)</dd></div>
+                <div><dt>Industry</dt><dd>@Or(cp.Industry)</dd></div>
+                <div><dt>Business Activity</dt><dd>@Or(cp.BusinessActivity)</dd></div>
+                <div class="mca-kv-wide"><dt>Registered Address</dt><dd>@Or(cp.RegisteredAddress)</dd></div>
+            </div>
+        }
+        else
+        {
+            <div class="mca-empty"><i class="bi bi-building"></i><p>No company profile was extracted for this request.</p></div>
+        }
+
+        @if (Model.LatestRun is { } lrun)
+        {
+            <div class="mca-section" style="margin-top:22px;">
+                <h3>Data Freshness</h3>
+                <p class="text-muted mb-0">
+                    Extraction run #@lrun.RunNumber — @lrun.Status
+                    @if (lrun.CompletedDate is { } cd) { <text>, completed @cd.ToString("d MMM yyyy HH:mm")</text> }.
+                    @if (Model.LatestFinancialYear is { } fy) { <text> Latest financial year on record: FY@(fy).</text> }
+                </p>
+            </div>
+        }
+    </div>
+
+    @* ── Management ── *@
+    <div class="tab-pane fade mca-subtab-panel" id="sec-corporate-management" role="tabpanel">
+        <div class="mca-section">
+            <h3>Current Directors <span class="mca-count">@currentDirectors.Count</span></h3>
+            @if (currentDirectors.Count > 0)
+            {
+                @await Html.PartialAsync("Details/_DirectorTable", currentDirectors)
+            }
+            else { <p class="text-muted mb-0">No current directors on record.</p> }
+        </div>
+
+        @if (formerDirectors.Count > 0)
+        {
+            <div class="mca-section">
+                <h3>Former Directors <span class="mca-count">@formerDirectors.Count</span></h3>
+                @await Html.PartialAsync("Details/_DirectorTable", formerDirectors)
+            </div>
+        }
+
+        @if (Model.DirectorAssignmentHistories.Count > 0)
+        {
+            <div class="mca-section">
+                <h3>Designation History <span class="mca-count">@Model.DirectorAssignmentHistories.Count</span></h3>
+                <p class="text-muted">Each row is one designation stint held at this company.</p>
+                <div class="pi-table-wrap"><table class="pi-results-table">
+                    <thead><tr><th>Director</th><th>DIN</th><th>Designation</th><th>Appointed</th><th>Ceased</th></tr></thead>
+                    <tbody>
+                    @foreach (var h in Model.DirectorAssignmentHistories)
+                    {
+                        <tr>
+                            <td>@h.DirectorNameRaw</td>
+                            <td class="report-id">@Or(h.DirectorDin)</td>
+                            <td>@Or(h.Designation)</td>
+                            <td>@D(h.AppointmentDate)</td>
+                            <td>@D(h.CessationDate)</td>
+                        </tr>
+                    }
+                    </tbody>
+                </table></div>
+            </div>
+        }
+    </div>
+
+    @* ── Director Network ── *@
+    <div class="tab-pane fade mca-subtab-panel" id="sec-corporate-network" role="tabpanel">
+        <div class="mca-section">
+            <h3>Other Directorships <span class="mca-count">@Model.DirectorAssociations.Count</span></h3>
+            @if (Model.DirectorAssociations.Count > 0)
+            {
+                <div class="pi-table-wrap"><table class="pi-results-table">
+                    <thead><tr><th>Director</th><th>Connected Company</th><th>CIN</th><th>Type</th><th class="text-end">Paid-up (Cr)</th><th class="text-end">Charges (Cr)</th><th>Status</th><th>Appointed</th><th>Ceased</th></tr></thead>
+                    <tbody>
+                    @foreach (var a in Model.DirectorAssociations.OrderBy(a => a.ConnectedCompanyRaw))
+                    {
+                        <tr>
+                            <td>@a.DirectorNameRaw</td>
+                            <td>@a.ConnectedCompanyRaw</td>
+                            <td class="report-id">@Or(a.ConnectedCin)</td>
+                            <td>@Or(a.CorporateType)</td>
+                            <td class="text-end">@Num(a.PaidUpCapitalCrore)</td>
+                            <td class="text-end">@Num(a.SumOfChargesCrore)</td>
+                            <td>@Or(a.CompanyStatus)</td>
+                            <td>@D(a.AppointmentDate)</td>
+                            <td>@D(a.CessationDate)</td>
+                        </tr>
+                    }
+                    </tbody>
+                </table></div>
+            }
+            else { <p class="text-muted mb-0">No connected directorships extracted.</p> }
+        </div>
+
+        <div class="mca-section">
+            <h3>Proprietorship Associations <span class="mca-count">@Model.ProprietorshipAssociations.Count</span></h3>
+            @if (Model.ProprietorshipAssociations.Count > 0)
+            {
+                <div class="pi-table-wrap"><table class="pi-results-table">
+                    <thead><tr><th>Director</th><th>DIN</th><th>Legal Name</th><th>Business Name(s)</th><th>PAN</th><th>Status</th></tr></thead>
+                    <tbody>
+                    @foreach (var p in Model.ProprietorshipAssociations)
+                    {
+                        <tr>
+                            <td>@p.DirectorNameRaw</td>
+                            <td class="report-id">@Or(p.DirectorDin)</td>
+                            <td>@Or(p.LegalName)</td>
+                            <td>@Or(p.BusinessNames)</td>
+                            <td class="report-id">@Or(p.Pan)</td>
+                            <td>@Or(p.Status)</td>
+                        </tr>
+                    }
+                    </tbody>
+                </table></div>
+            }
+            else { <p class="text-muted mb-0">No proprietorship associations reported in this workbook.</p> }
+        </div>
+    </div>
+
+    @* ── Ownership ── *@
+    <div class="tab-pane fade mca-subtab-panel" id="sec-corporate-ownership" role="tabpanel">
+        @if (Model.Structure is { } st)
+        {
+            <div class="mca-highlight-grid" style="margin-bottom:22px;">
+                <div class="pi-metric"><span>Promoter Holding</span><strong>@Pct(st.PromoterHoldingPercent)</strong><small>@(st.PromoterShareholders?.ToString() ?? "—") promoter shareholder(s)</small></div>
+                <div class="pi-metric"><span>Public Holding</span><strong>@Pct(st.PublicHoldingPercent)</strong><small>&nbsp;</small></div>
+                <div class="pi-metric"><span>Total Shareholders</span><strong>@(st.TotalShareholders?.ToString("N0") ?? "—")</strong><small>&nbsp;</small></div>
+                <div class="pi-metric"><span>Equity Shares</span><strong>@(st.TotalEquityShares?.ToString("N0") ?? "—")</strong><small>@(st.TotalPreferenceShares is { } pref ? $"{pref:N0} preference" : "no preference shares")</small></div>
+            </div>
+        }
+        else
+        {
+            <p class="text-muted">No shareholding summary (promoter/public split) was reported in this workbook.</p>
+        }
+
+        <div class="mca-section">
+            <h3>Shareholders <span class="mca-count">@Model.Shareholdings.Count</span></h3>
+            @if (Model.Shareholdings.Count > 0)
+            {
+                <div class="pi-table-wrap"><table class="pi-results-table">
+                    <thead><tr><th>Year</th><th>Shareholder</th><th>Type</th><th>Promoter</th><th class="text-end">% Held</th><th class="text-end">Shares</th><th>Source</th></tr></thead>
+                    <tbody>
+                    @foreach (var s in Model.Shareholdings)
+                    {
+                        <tr>
+                            <td>FY@(s.FinancialYear)</td>
+                            <td>@s.ShareholderNameRaw</td>
+                            <td>@Or(s.ShareholderType)</td>
+                            <td>@(s.IsPromoter ? "Yes" : "—")</td>
+                            <td class="text-end">@Num(s.HoldingPercentage)%</td>
+                            <td class="text-end">@(s.SharesHeld?.ToString("N0") ?? "—")</td>
+                            <td>@s.SourceType</td>
+                        </tr>
+                    }
+                    </tbody>
+                </table></div>
+            }
+            else { <div class="mca-empty"><i class="bi bi-diagram-3"></i><p>No shareholding data extracted.</p></div> }
+        </div>
+    </div>
+
+    @* ── Group Entities ── *@
+    <div class="tab-pane fade mca-subtab-panel" id="sec-corporate-group" role="tabpanel">
+        @if (Model.RelatedCorporates.Count > 0)
+        {
+            <p class="text-muted">Relationship is normalized from the workbook's explicit "Relationship" heading — never inferred from holding %.</p>
+            @foreach (var grp in relByType.OrderBy(g => g.Key))
+            {
+                <div class="mca-section">
+                    <h3>@grp.Key <span class="mca-count">@grp.Count()</span></h3>
+                    <div class="pi-table-wrap"><table class="pi-results-table">
+                        <thead><tr><th>Entity</th><th>CIN</th><th>Type</th><th class="text-end">Holding %</th><th class="text-end">Paid-up (Cr)</th><th class="text-end">Charges (Cr)</th><th>Status</th><th>Location</th></tr></thead>
+                        <tbody>
+                        @foreach (var rc in grp.OrderBy(x => x.EntityNameNormalized))
+                        {
+                            <tr>
+                                <td>@rc.EntityNameRaw</td>
+                                <td class="report-id">@Or(rc.Cin)</td>
+                                <td>@Or(rc.CorporateType)</td>
+                                <td class="text-end">@Num(rc.HoldingPercent)</td>
+                                <td class="text-end">@Num(rc.PaidUpCapitalCrore)</td>
+                                <td class="text-end">@Num(rc.SumOfChargesCrore)</td>
+                                <td>@Or(rc.CompanyStatus)</td>
+                                <td>@Or(rc.Location)</td>
+                            </tr>
+                        }
+                        </tbody>
+                    </table></div>
+                </div>
+            }
+        }
+        else
+        {
+            <div class="mca-empty"><i class="bi bi-diagram-2"></i><p>No related corporates (subsidiaries / associates / JVs) reported in this workbook.</p></div>
+        }
+    </div>
+
+    @* ── Capital ── *@
+    <div class="tab-pane fade mca-subtab-panel" id="sec-corporate-capital" role="tabpanel">
+        <div class="mca-section">
+            <h3>Securities Allotment <span class="mca-count">@Model.SecurityAllotments.Count</span></h3>
+            @if (Model.SecurityAllotments.Count > 0)
+            {
+                <div class="pi-table-wrap"><table class="pi-results-table">
+                    <thead><tr><th>Date</th><th>Type</th><th>Instrument</th><th class="text-end">Amount (Cr)</th><th class="text-end">Count</th><th class="text-end">Nominal / Share</th><th class="text-end">Premium / Share</th></tr></thead>
+                    <tbody>
+                    @foreach (var a in Model.SecurityAllotments)
+                    {
+                        <tr>
+                            <td>@D(a.AllotmentDate)</td>
+                            <td>@Or(a.AllotmentType)</td>
+                            <td>@Or(a.InstrumentType)</td>
+                            <td class="text-end">@Num(a.AmountCrore)</td>
+                            <td class="text-end">@(a.NumberOfSecurities?.ToString("N0") ?? "—")</td>
+                            <td class="text-end">@Num(a.NominalValuePerShare)</td>
+                            <td class="text-end">@Num(a.PremiumValuePerShare)</td>
+                        </tr>
+                    }
+                    </tbody>
+                </table></div>
+            }
+            else { <div class="mca-empty"><i class="bi bi-cash-coin"></i><p>No securities-allotment history reported in this workbook.</p></div> }
+        </div>
+    </div>
+
+</div>

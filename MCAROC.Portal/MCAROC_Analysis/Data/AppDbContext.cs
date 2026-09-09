@@ -198,6 +198,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             e.HasKey(x => x.LitigationId);
             e.HasIndex(x => new { x.RequestId, x.IngestionRunId });
             e.Property(x => x.MatchStatus).HasConversion<string>().HasMaxLength(20);
+            e.Property(x => x.Source).HasConversion<string>().HasMaxLength(20).HasDefaultValue(LitigationSource.RocReport);
         });
 
         // ── Phase 6 domain data ──

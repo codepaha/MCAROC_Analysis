@@ -1,0 +1,203 @@
+@model RequestDetailsViewModel
+@{
+    var std = Model.AuditorObservations.Where(a => a.Basis == FinancialBasis.Standalone).ToList();
+    var con = Model.AuditorObservations.Where(a => a.Basis == FinancialBasis.Consolidated).ToList();
+    var gstFilings = Model.GstRegistrations.SelectMany(g => g.Filings).ToList();
+
+    var sections = new (string Label, string Id, int? Count)[]
+    {
+        ("MCA / Regulatory", "mca", Model.ComplianceRecords.Count),
+        ("GST", "gst", Model.GstRegistrations.Count),
+        ("EPFO", "epfo", Model.EpfoContributions.Count),
+        ("MSME", "msme", Model.MsmePayments.Count),
+        ("Auditor", "auditor", Model.AuditorObservations.Count),
+    };
+
+    void AuditorTable(List<AuditorObservation> rows)
+    {
+        <div class="pi-table-wrap"><table class="pi-results-table">
+            <thead><tr><th>Year</th><th>Auditor</th><th>Qualified / Adverse</th><th>Observation</th></tr></thead>
+            <tbody>
+            @foreach (var a in rows.OrderByDescending(a => a.FinancialYear))
+            {
+                <tr>
+                    <td>FY@(a.FinancialYear)</td>
+                    <td>@Or(a.AuditorName)</td>
+                    <td>@(a.HasQualificationOrAdverseRemark ? "Yes" : "No")</td>
+                    <td>
+                        @if (!string.IsNullOrWhiteSpace(a.ObservationText) && a.ObservationText.Length > 240)
+                        {
+                            <details><summary class="mca-json-toggle">@a.ObservationText[..240]…</summary><div>@a.ObservationText</div></details>
+                        }
+                        else { @Or(a.ObservationText) }
+                    </td>
+                </tr>
+            }
+            </tbody>
+        </table></div>
+    }
+}
+
+<ul class="nav mca-subtabs" data-mca-sections="compliance" role="tablist">
+    @for (var i = 0; i < sections.Length; i++)
+    {
+        var s = sections[i];
+        <li class="nav-item" role="presentation">
+            <button class="nav-link @(i == 0 ? "active" : "")" data-bs-toggle="tab" data-bs-target="#sec-compliance-@s.Id" type="button" role="tab">
+                @s.Label @if (s.Count is { } c) { <span class="badge">@c</span> }
+            </button>
+        </li>
+    }
+</ul>
+
+<div class="tab-content">
+
+    @* ── MCA / Regulatory ── *@
+    <div class="tab-pane fade show active mca-subtab-panel" id="sec-compliance-mca" role="tabpanel">
+        @if (Model.CompanyProfile?.ComplianceStatus is { } cs)
+        {
+            <p class="mb-3"><span class="mca-finding-label">MCA compliance status (source):</span> @cs</p>
+        }
+        @if (Model.ComplianceRecords.Count > 0)
+        {
+            <div class="pi-table-wrap"><table class="pi-results-table">
+                <thead><tr><th>Type</th><th>Date</th><th>Description</th><th>Bank / Source</th><th class="text-end">Amount (Cr)</th><th>Defaulter Type</th><th>Status</th></tr></thead>
+                <tbody>
+                @foreach (var c in Model.ComplianceRecords)
+                {
+                    <tr>
+                        <td><span class="mca-badge">@c.RecordType</span></td>
+                        <td>@D(c.RecordDate)</td>
+                        <td>@Or(c.Description ?? c.SourceText)</td>
+                        <td>@Or(c.Bank ?? c.Source)</td>
+                        <td class="text-end">@Num(c.AmountCrore)</td>
+                        <td>@Or(c.DefaulterType)</td>
+                        <td>@Or(c.Status)</td>
+                    </tr>
+                }
+                </tbody>
+            </table></div>
+            <p class="text-muted mt-2 mb-0">Includes MCA name removal/restoration, BIFR, CDR (corporate debt restructuring), and CIBIL suit-filed / wilful-defaulter records.</p>
+        }
+        else { <div class="mca-empty"><i class="bi bi-shield-check"></i><p>No MCA / regulatory compliance events (name removal, BIFR, CDR, suit-filed) reported in this workbook.</p></div> }
+    </div>
+
+    @* ── GST ── *@
+    <div class="tab-pane fade mca-subtab-panel" id="sec-compliance-gst" role="tabpanel">
+        <div class="mca-section">
+            <h3>Registrations <span class="mca-count">@Model.GstRegistrations.Count</span></h3>
+            @if (Model.GstRegistrations.Count > 0)
+            {
+                <div class="pi-table-wrap"><table class="pi-results-table">
+                    <thead><tr><th>GSTIN</th><th>State</th><th>Status</th><th>Registered</th><th>Cancelled</th><th class="text-end">Returns on file</th></tr></thead>
+                    <tbody>
+                    @foreach (var g in Model.GstRegistrations)
+                    {
+                        <tr><td class="report-id">@g.Gstin</td><td>@Or(g.State)</td><td>@Or(g.Status)</td><td>@D(g.RegistrationDate)</td><td>@D(g.CancellationDate)</td><td class="text-end">@g.Filings.Count</td></tr>
+                    }
+                    </tbody>
+                </table></div>
+            }
+            else { <p class="text-muted mb-0">No GST registrations extracted.</p> }
+        </div>
+
+        @if (gstFilings.Count > 0)
+        {
+            var onTime = gstFilings.Count(f => f.DelayDays is <= 0 or null && string.Equals(f.FilingStatus, "Filed", StringComparison.OrdinalIgnoreCase));
+            var late = gstFilings.Count(f => f.DelayDays is > 0);
+            var notFiled = gstFilings.Count(f => !string.Equals(f.FilingStatus, "Filed", StringComparison.OrdinalIgnoreCase));
+            <div class="mca-section">
+                <h3>Filing Behaviour <span class="mca-count">@gstFilings.Count returns</span></h3>
+                <div class="mca-highlight-grid" style="margin-bottom:16px;">
+                    <div class="pi-metric"><span>On time</span><strong>@onTime</strong><small>filed on or before due date</small></div>
+                    <div class="pi-metric"><span>Late</span><strong>@late</strong><small>filed after due date</small></div>
+                    <div class="pi-metric"><span>Not filed</span><strong>@notFiled</strong><small>no filing recorded</small></div>
+                </div>
+                <div class="pi-table-wrap"><table class="pi-results-table">
+                    <thead><tr><th>GSTIN</th><th>Return</th><th>Period</th><th>Due</th><th>Filed</th><th class="text-end">Delay (days)</th><th>Status</th></tr></thead>
+                    <tbody>
+                    @foreach (var f in gstFilings.OrderByDescending(f => f.DueDate).Take(60))
+                    {
+                        <tr>
+                            <td class="report-id">@f.Gstin</td>
+                            <td>@f.ReturnType</td>
+                            <td>@Or(f.TaxPeriod ?? f.FinancialYear)</td>
+                            <td>@D(f.DueDate)</td>
+                            <td>@D(f.FilingDate)</td>
+                            <td class="text-end">@(f.DelayDays?.ToString() ?? "—")</td>
+                            <td>@Or(f.FilingStatus)</td>
+                        </tr>
+                    }
+                    </tbody>
+                </table></div>
+                @if (gstFilings.Count > 60) { <p class="text-muted mt-2 mb-0">Showing the 60 most recent of @gstFilings.Count returns.</p> }
+            </div>
+        }
+    </div>
+
+    @* ── EPFO ── *@
+    <div class="tab-pane fade mca-subtab-panel" id="sec-compliance-epfo" role="tabpanel">
+        @if (Model.EpfoContributions.Count > 0)
+        {
+            var establishments = Model.EpfoContributions.Select(e => e.EstablishmentName).Distinct().Count();
+            var latest = Model.EpfoContributions.OrderByDescending(e => e.WageMonth).FirstOrDefault();
+            <div class="mca-highlight-grid" style="margin-bottom:16px;">
+                <div class="pi-metric"><span>Establishments</span><strong>@establishments</strong><small>on record</small></div>
+                <div class="pi-metric"><span>Latest Employees</span><strong>@(latest?.EmployeeCount?.ToString() ?? "—")</strong><small>@(latest is not null ? latest.WageMonth : "—")</small></div>
+                <div class="pi-metric"><span>Months on record</span><strong>@Model.EpfoContributions.Count</strong><small>employee & payment-delay history below</small></div>
+            </div>
+            <div class="pi-table-wrap"><table class="pi-results-table">
+                <thead><tr><th>Establishment</th><th>Wage Month</th><th class="text-end">Employees</th><th class="text-end">Amount (Cr)</th><th>Status</th></tr></thead>
+                <tbody>
+                @foreach (var e in Model.EpfoContributions)
+                {
+                    <tr><td>@e.EstablishmentName</td><td>@e.WageMonth</td><td class="text-end">@(e.EmployeeCount?.ToString() ?? "—")</td><td class="text-end">@Num(e.ContributionAmountCrore)</td><td>@Or(e.PaymentStatus)</td></tr>
+                }
+                </tbody>
+            </table></div>
+        }
+        else { <div class="mca-empty"><i class="bi bi-people"></i><p>No EPFO contribution data extracted.</p></div> }
+    </div>
+
+    @* ── MSME ── *@
+    <div class="tab-pane fade mca-subtab-panel" id="sec-compliance-msme" role="tabpanel">
+        @if (Model.MsmePayments.Count > 0)
+        {
+            var total = Model.MsmePayments.Sum(m => m.AmountDueCrore ?? 0m);
+            <div class="pi-table-wrap"><table class="pi-results-table">
+                <thead><tr><th>Supplier</th><th>PAN</th><th class="text-end">Amount Due (Cr)</th><th>Period</th></tr></thead>
+                <tbody>
+                @foreach (var m in Model.MsmePayments)
+                {
+                    <tr><td>@m.SupplierNameRaw</td><td class="report-id">@Or(m.SupplierPan)</td><td class="text-end">@Num(m.AmountDueCrore)</td><td>@m.ReportingPeriod</td></tr>
+                }
+                </tbody>
+                <tfoot><tr><td colspan="2"><b>Total outstanding to MSME suppliers</b></td><td class="text-end"><b>@Num(total)</b></td><td></td></tr></tfoot>
+            </table></div>
+            <p class="text-muted mt-2 mb-0">MSME dues feed the Phase 3 supplier-payment-pressure logic — surfaced separately, not buried under general compliance.</p>
+        }
+        else { <div class="mca-empty"><i class="bi bi-truck"></i><p>No outstanding MSME supplier dues reported.</p></div> }
+    </div>
+
+    @* ── Auditor ── *@
+    <div class="tab-pane fade mca-subtab-panel" id="sec-compliance-auditor" role="tabpanel">
+        @if (Model.AuditorObservations.Count > 0)
+        {
+            if (con.Count > 0)
+            {
+                <div class="mca-toggle" data-basis-group="basis-auditor" role="group" aria-label="Reporting basis">
+                    <button type="button" class="active" data-basis="Standalone">Standalone</button>
+                    <button type="button" data-basis="Consolidated">Consolidated</button>
+                </div>
+                <div data-basis-panel="basis-auditor" data-basis="Standalone">@{ AuditorTable(std); }</div>
+                <div data-basis-panel="basis-auditor" data-basis="Consolidated" hidden>@{ AuditorTable(con); }</div>
+            }
+            else
+            {
+                AuditorTable(std.Count > 0 ? std : Model.AuditorObservations);
+            }
+        }
+        else { <div class="mca-empty"><i class="bi bi-clipboard-check"></i><p>No auditor observations extracted.</p></div> }
+    </div>
+
+</div>

@@ -24,7 +24,7 @@ public class ChatController(ChatService chatService) : Controller
             return NotFound();
         }
 
-        // Land back on the "Ask Documents" tab (Details.cshtml deep-links #tab-... hashes).
-        return new RedirectToActionResult("Details", "Requests", new { id = requestId }, permanent: false, fragment: "tab-ask");
+        // Land back on the Documents tab, Ask Documents section (Details.cshtml deep-links #tab-<id>/<section>).
+        return new RedirectToActionResult("Details", "Requests", new { id = requestId }, permanent: false, fragment: "tab-documents/ask");
     }
 }

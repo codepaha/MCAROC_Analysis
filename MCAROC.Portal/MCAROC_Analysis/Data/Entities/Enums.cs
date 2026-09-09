@@ -240,3 +240,12 @@ public enum LitigationRoleSource
     Unknown,
     RuleEngine
 }
+
+/// <summary>Where a Litigation row came from. Today every row is <see cref="RocReport"/> (the MCA/ROC
+/// workbook's Legal History sheet); a future manual "pull from lake" action adds <see cref="DataLake"/>
+/// rows from the internal 1.5-billion-record litigation data lake without disturbing the existing set.</summary>
+public enum LitigationSource
+{
+    RocReport,
+    DataLake
+}
