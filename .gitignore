@@ -42,3 +42,6 @@ bld/
 
 # Others
 *.cache
+
+# Uploaded documents and extracted/generated artifacts (client-provided company data, never committed)
+**/App_Data/

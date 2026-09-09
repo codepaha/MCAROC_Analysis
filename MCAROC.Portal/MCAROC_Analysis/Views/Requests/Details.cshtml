@@ -1,0 +1,207 @@
+@model RequestDetailsViewModel
+@{
+    ViewData["Title"] = Model.Request.RequestNumber;
+    var r = Model.Request;
+}
+
+<h1>@r.CompanyName</h1>
+<p class="text-muted">
+    Request: <strong>@r.RequestNumber</strong> &middot;
+    Client: @(r.Client?.ClientName) &middot;
+    CIN/PAN: @(r.Cin ?? r.Llpin) / @r.Pan &middot;
+    Status: <span class="badge bg-secondary">@r.RequestStatus</span>
+    @if (r.IsManualReviewRequired)
+    {
+        <span class="badge bg-warning text-dark">Manual Review Required</span>
+    }
+</p>
+
+@if (r.IsManualReviewRequired && !string.IsNullOrEmpty(r.ManualReviewReason))
+{
+    <div class="alert alert-warning">@r.ManualReviewReason</div>
+}
+
+@if (r.RequestStatus == RequestStatus.ExtractionFailed)
+{
+    <div class="alert alert-danger">Extraction failed: @r.FailureReason</div>
+}
+
+<h5>Uploaded Documents</h5>
+<table class="table table-sm">
+    <thead><tr><th>File</th><th>Type</th><th>Status</th><th>Uploaded</th></tr></thead>
+    <tbody>
+    @foreach (var doc in Model.Documents)
+    {
+        <tr>
+            <td>@doc.OriginalFileName</td>
+            <td>@doc.DocumentType</td>
+            <td>
+                @doc.UploadStatus
+                @if (doc.UploadStatus == DocumentUploadStatus.Quarantined)
+                {
+                    <span class="text-danger">&mdash; @doc.QuarantineReason</span>
+                }
+            </td>
+            <td>@doc.UploadedDate.ToString("dd MMM yyyy HH:mm")</td>
+        </tr>
+    }
+    </tbody>
+</table>
+
+@if (Model.LatestRun is { } run)
+{
+    <h5>Extraction Summary <small class="text-muted">(run #@run.RunNumber, @run.Status)</small></h5>
+    <table class="table table-sm w-auto">
+        <tbody>
+            <tr><td>Company Profile</td><td>@(Model.CompanyProfile is not null ? "✓ 1" : "Not available")</td></tr>
+            <tr><td>Directors</td><td>✓ @Model.Directors.Count</td></tr>
+            <tr><td>Director Associations</td><td>✓ @Model.DirectorAssociations.Count</td></tr>
+            <tr><td>Shareholders</td><td>✓ @Model.Shareholdings.Count</td></tr>
+            <tr><td>Financial Years</td><td>✓ @Model.FinancialYears.Count</td></tr>
+            <tr><td>Charges</td><td>✓ @Model.Charges.Count (@Model.Charges.Sum(c => c.Events.Count) events)</td></tr>
+            <tr><td>MSME</td><td>✓ @Model.MsmePayments.Count</td></tr>
+            <tr><td>GST Registrations</td><td>✓ @Model.GstRegistrations.Count (@Model.GstRegistrations.Sum(g => g.Filings.Count) filings)</td></tr>
+            <tr><td>EPFO Contributions</td><td>✓ @Model.EpfoContributions.Count</td></tr>
+            <tr><td>Auditor Observations</td><td>✓ @Model.AuditorObservations.Count</td></tr>
+            <tr><td>Litigation</td><td>✓ @Model.Litigations.Count</td></tr>
+            <tr><td><strong>Warnings</strong></td><td><strong>@Model.Issues.Count(i => i.Severity == IssueSeverity.Warning)</strong></td></tr>
+        </tbody>
+    </table>
+
+    if (Model.CompanyProfile is { } cp)
+    {
+        <h5>Company Profile</h5>
+        <table class="table table-sm w-auto">
+            <tr><td>Name</td><td>@cp.CompanyName</td></tr>
+            <tr><td>CIN</td><td>@cp.Cin</td></tr>
+            <tr><td>PAN</td><td>@cp.Pan</td></tr>
+            <tr><td>Status</td><td>@cp.CompanyStatus / @cp.ComplianceStatus</td></tr>
+            <tr><td>Incorporated</td><td>@cp.IncorporationDate</td></tr>
+            <tr><td>Capital (Authorised / Paid Up, Cr)</td><td>@cp.AuthorisedCapital / @cp.PaidUpCapital</td></tr>
+            <tr><td>Industry</td><td>@cp.Industry</td></tr>
+            <tr><td>Registered Address</td><td>@cp.RegisteredAddress</td></tr>
+        </table>
+    }
+
+    <h5>Directors</h5>
+    <table class="table table-sm">
+        <thead><tr><th>Name</th><th>DIN</th><th>Designation</th><th>Appointed</th><th>Ceased</th></tr></thead>
+        <tbody>
+        @foreach (var d in Model.Directors)
+        {
+            <tr><td>@d.NameRaw</td><td>@d.Din</td><td>@d.Designation</td><td>@d.OriginalAppointmentDate</td><td>@d.CessationDate</td></tr>
+        }
+        </tbody>
+    </table>
+
+    <h5>Shareholding</h5>
+    <table class="table table-sm">
+        <thead><tr><th>Year</th><th>Shareholder</th><th>Type</th><th>% Held</th><th>Shares</th><th>Source</th></tr></thead>
+        <tbody>
+        @foreach (var s in Model.Shareholdings)
+        {
+            <tr><td>@s.FinancialYear</td><td>@s.ShareholderNameRaw</td><td>@s.ShareholderType</td><td>@s.HoldingPercentage%</td><td>@s.SharesHeld</td><td>@s.SourceType</td></tr>
+        }
+        </tbody>
+    </table>
+
+    <h5>Financial Years (Rs. Crore)</h5>
+    <div class="table-responsive">
+    <table class="table table-sm">
+        <thead><tr><th>Year</th><th>Revenue</th><th>EBITDA</th><th>PBT</th><th>PAT</th><th>Net Worth</th><th>Total Debt</th><th>CFO</th></tr></thead>
+        <tbody>
+        @foreach (var f in Model.FinancialYears)
+        {
+            <tr><td>FY@(f.FinancialYear)</td><td>@f.Revenue</td><td>@f.Ebitda</td><td>@f.Pbt</td><td>@f.Pat</td><td>@f.NetWorth</td><td>@f.TotalDebt</td><td>@f.Cfo</td></tr>
+        }
+        </tbody>
+    </table>
+    </div>
+
+    <h5>Charges</h5>
+    @foreach (var c in Model.Charges)
+    {
+        <div class="card mb-2">
+            <div class="card-header">
+                Charge @c.RocChargeNumber &mdash; @c.ChargeStatus &mdash; @c.LatestChargeHolderRaw &mdash; Rs. @c.CurrentAmount Cr
+            </div>
+            <table class="table table-sm mb-0">
+                <thead><tr><th>Event</th><th>Date</th><th>Amount (Cr)</th><th>Holder</th><th>Match</th></tr></thead>
+                <tbody>
+                @foreach (var ev in c.Events.OrderBy(e => e.EventDate))
+                {
+                    <tr><td>@ev.EventType</td><td>@ev.EventDate</td><td>@ev.ChargeAmount</td><td>@ev.HolderNameRaw</td><td>@ev.MatchConfidence</td></tr>
+                }
+                </tbody>
+            </table>
+        </div>
+    }
+
+    <h5>MSME</h5>
+    <table class="table table-sm">
+        <thead><tr><th>Supplier</th><th>PAN</th><th>Amount Due (Cr)</th><th>Period</th></tr></thead>
+        <tbody>
+        @foreach (var m in Model.MsmePayments)
+        {
+            <tr><td>@m.SupplierNameRaw</td><td>@m.SupplierPan</td><td>@m.AmountDueCrore</td><td>@m.ReportingPeriod</td></tr>
+        }
+        </tbody>
+    </table>
+
+    <h5>GST</h5>
+    @foreach (var g in Model.GstRegistrations)
+    {
+        <p class="mb-1"><strong>@g.Gstin</strong> (@g.State) &mdash; @g.Status &mdash; @g.Filings.Count filing(s)</p>
+    }
+
+    <h5>EPFO</h5>
+    <table class="table table-sm">
+        <thead><tr><th>Establishment</th><th>Wage Month</th><th>Employees</th><th>Amount (Cr)</th><th>Status</th></tr></thead>
+        <tbody>
+        @foreach (var e in Model.EpfoContributions)
+        {
+            <tr><td>@e.EstablishmentName</td><td>@e.WageMonth</td><td>@e.EmployeeCount</td><td>@e.ContributionAmountCrore</td><td>@e.PaymentStatus</td></tr>
+        }
+        </tbody>
+    </table>
+
+    <h5>Auditor Observations</h5>
+    <table class="table table-sm">
+        <thead><tr><th>Year</th><th>Qualified/Adverse?</th><th>Comments</th></tr></thead>
+        <tbody>
+        @foreach (var a in Model.AuditorObservations)
+        {
+            <tr><td>@a.FinancialYear</td><td>@(a.HasQualificationOrAdverseRemark ? "Yes" : "No")</td><td>@a.ObservationText</td></tr>
+        }
+        </tbody>
+    </table>
+
+    <h5>Litigation</h5>
+    <table class="table table-sm">
+        <thead><tr><th>Type</th><th>Status</th><th>Court</th><th>Litigants</th><th>Case No.</th><th>Match</th></tr></thead>
+        <tbody>
+        @foreach (var l in Model.Litigations)
+        {
+            <tr><td>@l.CaseType</td><td>@l.CaseStatus</td><td>@l.Court</td><td>@l.Litigants</td><td>@l.CaseNumber</td><td>@l.MatchStatus</td></tr>
+        }
+        </tbody>
+    </table>
+
+    @if (Model.Issues.Count > 0)
+    {
+        <h5>Extraction Warnings</h5>
+        <table class="table table-sm">
+            <thead><tr><th>Parser</th><th>Field</th><th>Row</th><th>Message</th></tr></thead>
+            <tbody>
+            @foreach (var i in Model.Issues)
+            {
+                <tr><td>@i.ParserName</td><td>@i.FieldName</td><td>@i.RowNumber</td><td>@i.Message</td></tr>
+            }
+            </tbody>
+        </table>
+    }
+}
+else
+{
+    <p class="text-muted">No completed extraction yet.</p>
+}

@@ -1,0 +1,64 @@
+@model NewRequestViewModel
+@{
+    ViewData["Title"] = "New MCA ROC Search";
+}
+
+<h1>New MCA ROC Search</h1>
+
+@if (!string.IsNullOrEmpty(Model.ErrorMessage))
+{
+    <div class="alert alert-danger">@Model.ErrorMessage</div>
+}
+
+<form asp-action="New" method="post" enctype="multipart/form-data" class="mt-3" style="max-width: 640px;">
+    <div class="mb-3">
+        <label asp-for="ClientId" class="form-label"></label>
+        <select asp-for="ClientId" class="form-select" asp-items="@(new SelectList(Model.Clients, nameof(Client.ClientId), nameof(Client.ClientName)))">
+            <option value="">Select Client</option>
+        </select>
+    </div>
+
+    <div class="mb-3">
+        <label class="form-label d-block">Entity Type</label>
+        <div class="form-check form-check-inline">
+            <input class="form-check-input" type="radio" asp-for="EntityType" value="Company" id="entityCompany" checked />
+            <label class="form-check-label" for="entityCompany">Company</label>
+        </div>
+        <div class="form-check form-check-inline">
+            <input class="form-check-input" type="radio" asp-for="EntityType" value="LLP" id="entityLlp" />
+            <label class="form-check-label" for="entityLlp">LLP</label>
+        </div>
+    </div>
+
+    <div class="mb-3">
+        <label asp-for="CompanyName" class="form-label"></label>
+        <input asp-for="CompanyName" class="form-control" placeholder="Vedic Cosmeceuticals Private Limited" />
+    </div>
+
+    <div class="mb-3">
+        <label asp-for="Cin" class="form-label"></label>
+        <input asp-for="Cin" class="form-control" placeholder="U24246DL2003PTC118255" />
+    </div>
+
+    <div class="mb-3">
+        <label asp-for="Pan" class="form-label"></label>
+        <input asp-for="Pan" class="form-control" placeholder="AABCV6369H" />
+    </div>
+
+    <hr />
+    <h5>Document Upload</h5>
+
+    <div class="mb-3">
+        <label asp-for="RocFile" class="form-label"></label>
+        <input asp-for="RocFile" type="file" class="form-control" accept=".xls,.xlsx" />
+    </div>
+
+    <div class="mb-3">
+        <label asp-for="ChargeFile" class="form-label"></label>
+        <input asp-for="ChargeFile" type="file" class="form-control" accept=".xls,.xlsx" />
+        <div class="form-text">Optional. If provided, it must belong to the same company as the ROC report.</div>
+    </div>
+
+    <button type="submit" class="btn btn-primary">Create &amp; Analyse</button>
+    <a asp-controller="Home" asp-action="Index" class="btn btn-outline-secondary">Cancel</a>
+</form>

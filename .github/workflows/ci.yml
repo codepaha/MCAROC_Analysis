@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+jobs:
+  build-and-test:
+    # Self-hosted: this app depends on SQL Server Express and Tesseract OCR being installed locally
+    # (the integration tests hit .\SQLEXPRESS directly), which a GitHub-hosted runner doesn't have.
+    runs-on: [self-hosted, windows, mcaroc]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # No actions/setup-dotnet step: this runner is non-admin and can't write to
+      # C:\Program Files\dotnet, which that action requires even to verify an existing install.
+      # The .NET 10 SDK is already installed on this machine and on PATH.
+      - name: Verify .NET SDK
+        run: dotnet --version
+
+      - name: Restore
+        run: dotnet restore MCAROC.Portal/MCAROC.Portal.slnx
+
+      - name: Build
+        run: dotnet build MCAROC.Portal/MCAROC.Portal.slnx --no-restore --configuration Release
+
+      - name: Test
+        run: dotnet test MCAROC.Portal/MCAROC_Analysis.Tests/MCAROC_Analysis.Tests.csproj --no-build --configuration Release --logger "trx;LogFileName=test-results.trx"
+
+      - name: Publish test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-results
+          path: MCAROC.Portal/MCAROC_Analysis.Tests/TestResults/test-results.trx
