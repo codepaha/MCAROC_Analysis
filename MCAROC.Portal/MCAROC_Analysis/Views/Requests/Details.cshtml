@@ -818,7 +818,9 @@
                     <p>@m.MessageText</p>
                     @if (!isUser && !string.IsNullOrEmpty(m.CitedSourcesJson))
                     {
-                        var citations = System.Text.Json.JsonDocument.Parse(m.CitedSourcesJson).RootElement;
+                        // Deserialize<JsonElement> returns a detached clone and disposes the transient
+                        // JsonDocument — a bare JsonDocument.Parse per message would leak a pooled buffer.
+                        var citations = System.Text.Json.JsonSerializer.Deserialize<System.Text.Json.JsonElement>(m.CitedSourcesJson);
                         if (citations.ValueKind == System.Text.Json.JsonValueKind.Array && citations.GetArrayLength() > 0)
                         {
                             <div class="mca-related">
