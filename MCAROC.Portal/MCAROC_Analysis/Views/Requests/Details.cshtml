@@ -280,9 +280,14 @@ else
                             <ul>
                                 @foreach (var prop in System.Text.Json.JsonDocument.Parse(ex.ExtractedJson).RootElement.EnumerateObject())
                                 {
-                                    var valueEl = prop.Value.TryGetProperty("value", out var v) ? v : default;
+                                    // JsonElement.TryGetProperty throws (rather than returning false) when
+                                    // called on an element that isn't a JSON object at all — guard on
+                                    // ValueKind first, since a field can legitimately come back as a bare
+                                    // null/string/number instead of the usual {"value":...,"pages":...} shape.
+                                    var isObject = prop.Value.ValueKind == System.Text.Json.JsonValueKind.Object;
+                                    var valueEl = isObject && prop.Value.TryGetProperty("value", out var v) ? v : default;
                                     if (valueEl.ValueKind is System.Text.Json.JsonValueKind.Null or System.Text.Json.JsonValueKind.Undefined) { continue; }
-                                    var pagesEl = prop.Value.TryGetProperty("pages", out var p) ? p.ToString() : "";
+                                    var pagesEl = isObject && prop.Value.TryGetProperty("pages", out var p) ? p.ToString() : "";
                                     <li><strong>@prop.Name:</strong> @valueEl.ToString() <span class="text-muted">(pages: @pagesEl)</span></li>
                                 }
                             </ul>
