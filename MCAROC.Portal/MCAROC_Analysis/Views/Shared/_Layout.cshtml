@@ -10,6 +10,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>@ViewData["Title"] - MCA ROC Analysis</title>
+    <link rel="icon" type="image/png" href="~/images/favicon.png" />
     <script type="importmap"></script>
     @* Set theme before paint to avoid a flash of the wrong theme *@
     <script>(function(){try{var t=localStorage.getItem('mcaroc-theme');if(t)document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
@@ -25,7 +26,7 @@
     <div class="pi-app-shell">
         <aside class="pi-sidebar" id="piSidebar">
             <a class="pi-side-brand" asp-controller="Dashboard" asp-action="Index">
-                <span class="pi-brand-mark">MR</span>
+                <span class="pi-brand-mark"><img src="~/images/favicon.png" alt="Cubictree" /></span>
                 <span>
                     <strong>MCA ROC Analysis</strong>
                     <small>Credit Risk Intelligence</small>
@@ -83,6 +84,11 @@
             <main role="main" class="pi-shell">
                 @RenderBody()
             </main>
+
+            <footer class="pi-app-footer">
+                <img src="~/images/favicon.png" alt="" />
+                <span>&copy; 2026 Cubictree (A Gaba Projects Private Limited Company)</span>
+            </footer>
         </div>
     </div>
 
