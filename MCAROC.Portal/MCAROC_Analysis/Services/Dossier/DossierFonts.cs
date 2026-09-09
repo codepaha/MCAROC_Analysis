@@ -1,4 +1,5 @@
 using QuestPDF.Drawing;
+using QuestPDF.Infrastructure;
 
 namespace MCAROC_Analysis.Services.Dossier;
 
@@ -16,6 +17,10 @@ public static class DossierFonts
         lock (Gate)
         {
             if (_registered) return;
+
+            // QuestPDF Community licence — Cubictree's gross revenue is under the US$1M threshold.
+            QuestPDF.Settings.License = LicenseType.Community;
+
             var dir = Path.Combine(webRootPath, "fonts");
             if (Directory.Exists(dir))
             {
