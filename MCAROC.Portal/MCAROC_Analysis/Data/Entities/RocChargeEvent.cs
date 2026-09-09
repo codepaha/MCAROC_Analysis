@@ -40,4 +40,15 @@ public class RocChargeEvent : ExtractedEntityBase
 
     public ChargeEventMatchConfidence MatchConfidence { get; set; } = ChargeEventMatchConfidence.Unmatched;
     public string? MatchMethod { get; set; }
+
+    // Phase 6 — ChargeSecurityClassifier output for this event's narrative (raw text above is always kept).
+    /// <summary>JSON array of FacilityType — an event can name several (BG + LC + Buyer's Credit).</summary>
+    public string? FacilityTypesJson { get; set; }
+    public FacilityType? PrimaryFacilityType { get; set; }
+    public ChargeArrangement? Arrangement { get; set; }
+    public ChargeClassificationConfidence? SecurityClassificationConfidence { get; set; }
+    /// <summary>JSON array of {attribute,value,matchedText,rule} — diagnostics only, not shown to analysts.</summary>
+    public string? SecurityMatchedRulesJson { get; set; }
+
+    public List<ChargeSecurityComponent> SecurityComponents { get; set; } = [];
 }

@@ -128,3 +128,115 @@ public enum TemporalStatus
     Historical,
     Trend
 }
+
+// ── Phase 6 ─────────────────────────────────────────────────────────────────────
+
+/// <summary>Standalone vs Consolidated financial statements. Consolidated rows live in the same
+/// FinancialYearData / AuditorObservation tables; the rule engine and default RAG facts read Standalone only.</summary>
+public enum FinancialBasis
+{
+    Standalone,
+    Consolidated
+}
+
+/// <summary>Normalized from the "Related Corporates" sheet's explicit Relationship text — never inferred
+/// from holding %.</summary>
+public enum RelationshipType
+{
+    Subsidiary,
+    Associate,
+    JointVenture,
+    Holding,
+    Other
+}
+
+public enum ComplianceRecordType
+{
+    NameRemoval,
+    NameRestoration,
+    Bifr,
+    Cdr,
+    SuitFiled,
+    Other
+}
+
+/// <summary>Mathematical position of the company value vs the peer median for a metric — NOT a
+/// good/bad judgement (see PeerComparisonDisplayRules for desirability per metric).</summary>
+public enum PeerPosition
+{
+    NotComparable,
+    Below,
+    InLine,
+    Above
+}
+
+public enum PeerMetricDirection
+{
+    Unknown,
+    Neutral,
+    HigherIsBetter,
+    LowerIsBetter
+}
+
+// ── Phase 6: charge security classification ─────────────────────────────────────
+
+public enum FacilityType
+{
+    CashCredit,
+    BankGuarantee,
+    LetterOfCredit,
+    BuyersCredit,
+    TermLoan,
+    WorkingCapital,
+    Other
+}
+
+public enum SecurityType
+{
+    CurrentAssets,
+    MovableFixedAssets,
+    ImmovableProperty,
+    BookDebts,
+    FixedDeposit,
+    Vehicle,
+    Other
+}
+
+/// <summary>Priority/sharing rank of a charge over an asset. Kept separate from ChargeArrangement —
+/// a charge can be PariPassu ranked AND a Consortium arrangement.</summary>
+public enum ChargeRanking
+{
+    Unknown,
+    Exclusive,
+    FirstCharge,
+    SecondCharge,
+    PariPassu,
+    Subservient
+}
+
+public enum ChargeArrangement
+{
+    Unknown,
+    Sole,
+    Consortium,
+    JointCharge,
+    MultipleLenders
+}
+
+/// <summary>Overall confidence of ChargeSecurityClassifier for one event. None = nothing matched
+/// (the UI then shows raw source wording only, never an inferred badge).</summary>
+public enum ChargeClassificationConfidence
+{
+    None,
+    Low,
+    Medium,
+    High
+}
+
+/// <summary>Provenance of a litigation case's filed-by/filed-against role. Room for a structured
+/// CompanyRole in a later phase.</summary>
+public enum LitigationRoleSource
+{
+    Unknown,
+    RuleEngine
+}

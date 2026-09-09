@@ -1,12 +1,16 @@
 namespace MCAROC_Analysis.Data.Entities;
 
-/// <summary>One row per financial year, normalized from "Standalone Financial Data"'s wide year-column layout.
-/// All figures confirmed as Rs. Crore from direct inspection of the source sheets.</summary>
+/// <summary>One row per (financial year, basis), normalized from the "Standalone Financial Data" and
+/// "Consolidated Financial Data" wide year-column layouts. All figures confirmed as Rs. Crore from
+/// direct inspection of the source sheets. The rule engine and default RAG facts read Basis=Standalone
+/// only; the Financials tab offers a Standalone/Consolidated toggle.</summary>
 public class FinancialYearData : ExtractedEntityBase
 {
     public long FinancialId { get; set; }
 
     public int FinancialYear { get; set; }
+
+    public FinancialBasis Basis { get; set; } = FinancialBasis.Standalone;
 
     public decimal? Revenue { get; set; }
     public decimal? OtherIncome { get; set; }
