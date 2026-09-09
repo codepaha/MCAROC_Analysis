@@ -2,466 +2,786 @@
 @{
     ViewData["Title"] = Model.Request.RequestNumber;
     var r = Model.Request;
+    var run = Model.LatestAnalysisRun;
+
+    string StatusPill(RequestStatus s) => s switch
+    {
+        RequestStatus.AnalysisCompleted => "pi-status-completed",
+        RequestStatus.ExtractionFailed or RequestStatus.AiAnalysisFailed or RequestStatus.ValidationFailed or RequestStatus.Cancelled => "pi-status-failed",
+        RequestStatus.AiAnalysisInProgress or RequestStatus.ExtractionInProgress or RequestStatus.Validating => "pi-status-processing",
+        _ => "pi-status-pending"
+    };
+    string PriorityPill(ReviewPriority p) => p switch
+    {
+        ReviewPriority.High => "pi-status-failed",
+        ReviewPriority.Medium => "pi-status-processing",
+        _ => "pi-status-completed"
+    };
+    string SevClass(FindingSeverity s) => s switch
+    {
+        FindingSeverity.Critical => "sev-critical",
+        FindingSeverity.Review => "sev-review",
+        FindingSeverity.Watch => "sev-watch",
+        _ => "sev-positive"
+    };
+    string Money(decimal? v) => v is null ? "—" : $"₹{v.Value:N2} Cr";
+    string D(DateOnly? d) => d?.ToString("d MMM yyyy") ?? "—";
+
+    var extracted = Model.LatestRun is not null;
+
+    var sectionTabs = new (string Label, string Id, FindingSection[] Sections)[]
+    {
+        ("Corporate", "corp", new[] { FindingSection.CompanyProfile, FindingSection.Directors, FindingSection.DirectorNetwork, FindingSection.Ownership }),
+        ("Financial", "fin", new[] { FindingSection.Financial }),
+        ("Charges & Security", "chg", new[] { FindingSection.Charges }),
+        ("Compliance", "cmp", new[] { FindingSection.Msme, FindingSection.Gst, FindingSection.Epfo, FindingSection.Auditor }),
+        ("Litigation", "lit", new[] { FindingSection.Litigation }),
+        ("AI Findings", "xsec", new[] { FindingSection.CrossSection })
+    };
 }
 
-<h1>@r.CompanyName</h1>
-<p class="text-muted">
-    Request: <strong>@r.RequestNumber</strong> &middot;
-    Client: @(r.Client?.ClientName) &middot;
-    CIN/PAN: @(r.Cin ?? r.Llpin) / @r.Pan &middot;
-    Status: <span class="badge bg-secondary">@r.RequestStatus</span>
-    @if (r.IsManualReviewRequired)
-    {
-        <span class="badge bg-warning text-dark">Manual Review Required</span>
-    }
-</p>
+@* ─────────────────────────  Fixed company header + tabs  ───────────────────────── *@
+<div class="mca-detail-head">
+    <div class="mca-company-head">
+        <div class="mca-company-id">
+            <h1>@r.CompanyName</h1>
+            <div class="mca-ids">
+                <span><b>CIN:</b> @(r.Cin ?? r.Llpin ?? "—")</span>
+                <span><b>PAN:</b> @(r.Pan ?? "—")</span>
+            </div>
+        </div>
+        <div class="mca-company-meta">
+            <div class="mca-pills">
+                <span class="pi-status-pill @StatusPill(r.RequestStatus)">@r.RequestStatus</span>
+                @if (run?.OverallReviewPriority is { } hdrPr)
+                {
+                    <span class="pi-status-pill @PriorityPill(hdrPr)">@hdrPr Priority</span>
+                }
+                @if (r.IsManualReviewRequired)
+                {
+                    <span class="pi-status-pill pi-status-processing">Manual Review Required</span>
+                }
+            </div>
+            <small><b>@r.RequestNumber</b> &middot; @(r.Client?.ClientName)</small>
+            <small>Updated @((r.UpdatedDate ?? r.CreatedDate).ToString("d MMM yyyy HH:mm"))</small>
+        </div>
+    </div>
+
+    <ul class="nav mca-tabs" id="mcaTabs" role="tablist">
+        <li class="nav-item" role="presentation">
+            <button class="nav-link active" data-bs-toggle="tab" data-bs-target="#tab-ai" type="button" role="tab">AI Analysis</button>
+        </li>
+        <li class="nav-item" role="presentation">
+            <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-about" type="button" role="tab">About the Corporate</button>
+        </li>
+        <li class="nav-item" role="presentation">
+            <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-directors" type="button" role="tab">
+                Director <span class="badge">@Model.Directors.Count</span>
+            </button>
+        </li>
+        <li class="nav-item" role="presentation">
+            <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-charges" type="button" role="tab">
+                Open Charges <span class="badge">@Model.OpenChargeCount</span>
+            </button>
+        </li>
+        <li class="nav-item" role="presentation">
+            <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-structure" type="button" role="tab">Structure</button>
+        </li>
+        <li class="nav-item" role="presentation">
+            <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-highlights" type="button" role="tab">Highlights</button>
+        </li>
+        <li class="nav-item" role="presentation">
+            <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-financials" type="button" role="tab">
+                Financial Data <span class="badge">@Model.FinancialYears.Count</span>
+            </button>
+        </li>
+        <li class="nav-item" role="presentation">
+            <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-peers" type="button" role="tab">Peer Comparison</button>
+        </li>
+        <li class="nav-item" role="presentation">
+            <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-chargedetails" type="button" role="tab">Charge Details</button>
+        </li>
+        <li class="nav-item" role="presentation">
+            <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-compliance" type="button" role="tab">Compliance Checks</button>
+        </li>
+        <li class="nav-item" role="presentation">
+            <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-refdocs" type="button" role="tab">
+                Reference Documents <span class="badge">@Model.Documents.Count</span>
+            </button>
+        </li>
+    </ul>
+</div>
 
 @if (r.IsManualReviewRequired && !string.IsNullOrEmpty(r.ManualReviewReason))
 {
-    <div class="alert alert-warning">@r.ManualReviewReason</div>
+    <div class="alert alert-danger">@r.ManualReviewReason</div>
 }
-
-@if (r.RequestStatus == RequestStatus.ExtractionFailed)
+@if (r.RequestStatus == RequestStatus.ExtractionFailed && !string.IsNullOrEmpty(r.FailureReason))
 {
     <div class="alert alert-danger">Extraction failed: @r.FailureReason</div>
 }
 
-<h5>Uploaded Documents</h5>
-<table class="table table-sm">
-    <thead><tr><th>File</th><th>Type</th><th>Status</th><th>Uploaded</th></tr></thead>
-    <tbody>
-    @foreach (var doc in Model.Documents)
-    {
-        <tr>
-            <td>@doc.OriginalFileName</td>
-            <td>@doc.DocumentType</td>
-            <td>
-                @doc.UploadStatus
-                @if (doc.UploadStatus == DocumentUploadStatus.Quarantined)
-                {
-                    <span class="text-danger">&mdash; @doc.QuarantineReason</span>
-                }
-            </td>
-            <td>@doc.UploadedDate.ToString("dd MMM yyyy HH:mm")</td>
-        </tr>
-    }
-    </tbody>
-</table>
+<div class="tab-content">
 
-@if (Model.LatestRun is { } run)
-{
-    <h5>Extraction Summary <small class="text-muted">(run #@run.RunNumber, @run.Status)</small></h5>
-    <table class="table table-sm w-auto">
-        <tbody>
-            <tr><td>Company Profile</td><td>@(Model.CompanyProfile is not null ? "✓ 1" : "Not available")</td></tr>
-            <tr><td>Directors</td><td>✓ @Model.Directors.Count</td></tr>
-            <tr><td>Director Associations</td><td>✓ @Model.DirectorAssociations.Count</td></tr>
-            <tr><td>Shareholders</td><td>✓ @Model.Shareholdings.Count</td></tr>
-            <tr><td>Financial Years</td><td>✓ @Model.FinancialYears.Count</td></tr>
-            <tr><td>Charges</td><td>✓ @Model.Charges.Count (@Model.Charges.Sum(c => c.Events.Count) events)</td></tr>
-            <tr><td>MSME</td><td>✓ @Model.MsmePayments.Count</td></tr>
-            <tr><td>GST Registrations</td><td>✓ @Model.GstRegistrations.Count (@Model.GstRegistrations.Sum(g => g.Filings.Count) filings)</td></tr>
-            <tr><td>EPFO Contributions</td><td>✓ @Model.EpfoContributions.Count</td></tr>
-            <tr><td>Auditor Observations</td><td>✓ @Model.AuditorObservations.Count</td></tr>
-            <tr><td>Litigation</td><td>✓ @Model.Litigations.Count</td></tr>
-            <tr><td><strong>Warnings</strong></td><td><strong>@Model.Issues.Count(i => i.Severity == IssueSeverity.Warning)</strong></td></tr>
-        </tbody>
-    </table>
-
-    if (Model.CompanyProfile is { } cp)
-    {
-        <h5>Company Profile</h5>
-        <table class="table table-sm w-auto">
-            <tr><td>Name</td><td>@cp.CompanyName</td></tr>
-            <tr><td>CIN</td><td>@cp.Cin</td></tr>
-            <tr><td>PAN</td><td>@cp.Pan</td></tr>
-            <tr><td>Status</td><td>@cp.CompanyStatus / @cp.ComplianceStatus</td></tr>
-            <tr><td>Incorporated</td><td>@cp.IncorporationDate</td></tr>
-            <tr><td>Capital (Authorised / Paid Up, Cr)</td><td>@cp.AuthorisedCapital / @cp.PaidUpCapital</td></tr>
-            <tr><td>Industry</td><td>@cp.Industry</td></tr>
-            <tr><td>Registered Address</td><td>@cp.RegisteredAddress</td></tr>
-        </table>
-    }
-
-    <h5>Directors</h5>
-    <table class="table table-sm">
-        <thead><tr><th>Name</th><th>DIN</th><th>Designation</th><th>Appointed</th><th>Ceased</th></tr></thead>
-        <tbody>
-        @foreach (var d in Model.Directors)
+    @* ─────────────  1. AI Analysis  ───────────── *@
+    <div class="tab-pane fade show active" id="tab-ai" role="tabpanel">
+        @if (run is null)
         {
-            <tr><td>@d.NameRaw</td><td>@d.Din</td><td>@d.Designation</td><td>@d.OriginalAppointmentDate</td><td>@d.CessationDate</td></tr>
-        }
-        </tbody>
-    </table>
-
-    <h5>Shareholding</h5>
-    <table class="table table-sm">
-        <thead><tr><th>Year</th><th>Shareholder</th><th>Type</th><th>% Held</th><th>Shares</th><th>Source</th></tr></thead>
-        <tbody>
-        @foreach (var s in Model.Shareholdings)
-        {
-            <tr><td>@s.FinancialYear</td><td>@s.ShareholderNameRaw</td><td>@s.ShareholderType</td><td>@s.HoldingPercentage%</td><td>@s.SharesHeld</td><td>@s.SourceType</td></tr>
-        }
-        </tbody>
-    </table>
-
-    <h5>Financial Years (Rs. Crore)</h5>
-    <div class="table-responsive">
-    <table class="table table-sm">
-        <thead><tr><th>Year</th><th>Revenue</th><th>EBITDA</th><th>PBT</th><th>PAT</th><th>Net Worth</th><th>Total Debt</th><th>CFO</th></tr></thead>
-        <tbody>
-        @foreach (var f in Model.FinancialYears)
-        {
-            <tr><td>FY@(f.FinancialYear)</td><td>@f.Revenue</td><td>@f.Ebitda</td><td>@f.Pbt</td><td>@f.Pat</td><td>@f.NetWorth</td><td>@f.TotalDebt</td><td>@f.Cfo</td></tr>
-        }
-        </tbody>
-    </table>
-    </div>
-
-    <h5>Charges</h5>
-    @foreach (var c in Model.Charges)
-    {
-        <div class="card mb-2">
-            <div class="card-header">
-                Charge @c.RocChargeNumber &mdash; @c.ChargeStatus &mdash; @c.LatestChargeHolderRaw &mdash; Rs. @c.CurrentAmount Cr
+            <div class="mca-empty">
+                <i class="bi bi-robot"></i>
+                <p>@(r.RequestStatus == RequestStatus.AiAnalysisInProgress ? "Analysis in progress — reload to check for results." : "Analysis has not started for this request yet.")</p>
             </div>
-            <table class="table table-sm mb-0">
-                <thead><tr><th>Event</th><th>Date</th><th>Amount (Cr)</th><th>Holder</th><th>Match</th></tr></thead>
-                <tbody>
-                @foreach (var ev in c.Events.OrderBy(e => e.EventDate))
+        }
+        else if (run.Status == AnalysisRunStatus.Running)
+        {
+            <div class="mca-empty"><i class="bi bi-hourglass-split"></i><p>Analysis in progress… (run #@run.RunNumber). Reload to check for results.</p></div>
+        }
+        else if (run.Status == AnalysisRunStatus.Failed)
+        {
+            <div class="alert alert-danger">Analysis failed: @run.FailureReason</div>
+        }
+        else
+        {
+            <div class="mca-pill-row">
+                @if (run.OverallReviewPriority is { } aiPr)
                 {
-                    <tr><td>@ev.EventType</td><td>@ev.EventDate</td><td>@ev.ChargeAmount</td><td>@ev.HolderNameRaw</td><td>@ev.MatchConfidence</td></tr>
+                    <span class="pi-status-pill @PriorityPill(aiPr)">Review Priority: @aiPr</span>
                 }
-                </tbody>
-            </table>
-        </div>
-    }
+                <span class="pi-status-pill pi-status-failed">Critical @run.CriticalFindingsCount</span>
+                <span class="pi-status-pill pi-status-processing">Review @run.ReviewFindingsCount</span>
+                <span class="pi-status-pill pi-status-pending">Watch @run.WatchFindingsCount</span>
+                <span class="pi-status-pill pi-status-completed">Positive @run.PositiveFindingsCount</span>
+                @if (run.Status == AnalysisRunStatus.CompletedWithErrors)
+                {
+                    <span class="pi-status-pill pi-status-pending" title="@run.FailureReason">AI narrative unavailable</span>
+                }
+            </div>
 
-    <h5>MSME</h5>
-    <table class="table table-sm">
-        <thead><tr><th>Supplier</th><th>PAN</th><th>Amount Due (Cr)</th><th>Period</th></tr></thead>
-        <tbody>
-        @foreach (var m in Model.MsmePayments)
-        {
-            <tr><td>@m.SupplierNameRaw</td><td>@m.SupplierPan</td><td>@m.AmountDueCrore</td><td>@m.ReportingPeriod</td></tr>
-        }
-        </tbody>
-    </table>
-
-    <h5>GST</h5>
-    @foreach (var g in Model.GstRegistrations)
-    {
-        <p class="mb-1"><strong>@g.Gstin</strong> (@g.State) &mdash; @g.Status &mdash; @g.Filings.Count filing(s)</p>
-    }
-
-    <h5>EPFO</h5>
-    <table class="table table-sm">
-        <thead><tr><th>Establishment</th><th>Wage Month</th><th>Employees</th><th>Amount (Cr)</th><th>Status</th></tr></thead>
-        <tbody>
-        @foreach (var e in Model.EpfoContributions)
-        {
-            <tr><td>@e.EstablishmentName</td><td>@e.WageMonth</td><td>@e.EmployeeCount</td><td>@e.ContributionAmountCrore</td><td>@e.PaymentStatus</td></tr>
-        }
-        </tbody>
-    </table>
-
-    <h5>Auditor Observations</h5>
-    <table class="table table-sm">
-        <thead><tr><th>Year</th><th>Qualified/Adverse?</th><th>Comments</th></tr></thead>
-        <tbody>
-        @foreach (var a in Model.AuditorObservations)
-        {
-            <tr><td>@a.FinancialYear</td><td>@(a.HasQualificationOrAdverseRemark ? "Yes" : "No")</td><td>@a.ObservationText</td></tr>
-        }
-        </tbody>
-    </table>
-
-    <h5>Litigation</h5>
-    <table class="table table-sm">
-        <thead><tr><th>Type</th><th>Status</th><th>Court</th><th>Litigants</th><th>Case No.</th><th>Match</th></tr></thead>
-        <tbody>
-        @foreach (var l in Model.Litigations)
-        {
-            <tr><td>@l.CaseType</td><td>@l.CaseStatus</td><td>@l.Court</td><td>@l.Litigants</td><td>@l.CaseNumber</td><td>@l.MatchStatus</td></tr>
-        }
-        </tbody>
-    </table>
-
-    @if (Model.Issues.Count > 0)
-    {
-        <h5>Extraction Warnings</h5>
-        <table class="table table-sm">
-            <thead><tr><th>Parser</th><th>Field</th><th>Row</th><th>Message</th></tr></thead>
-            <tbody>
-            @foreach (var i in Model.Issues)
+            @if (Model.ExecutiveSummary is { } es)
             {
-                <tr><td>@i.ParserName</td><td>@i.FieldName</td><td>@i.RowNumber</td><td>@i.Message</td></tr>
-            }
-            </tbody>
-        </table>
-    }
-}
-else
-{
-    <p class="text-muted">No completed extraction yet.</p>
-}
-
-<hr />
-<h3>AI Analysis</h3>
-
-@if (Model.LatestAnalysisRun is null)
-{
-    <p class="text-muted">
-        @(r.RequestStatus == RequestStatus.AiAnalysisInProgress ? "Analysis in progress…" : "Analysis has not started for this request yet.")
-    </p>
-}
-else
-{
-    var analysisRun = Model.LatestAnalysisRun;
-    if (analysisRun.Status == AnalysisRunStatus.Running)
-    {
-        <p class="text-muted">Analysis in progress… (run #@analysisRun.RunNumber)</p>
-    }
-    else if (analysisRun.Status == AnalysisRunStatus.Failed)
-    {
-        <div class="alert alert-danger">Analysis failed: @analysisRun.FailureReason</div>
-    }
-    else
-    {
-        var priorityBadgeClass = analysisRun.OverallReviewPriority switch
-        {
-            ReviewPriority.High => "bg-danger",
-            ReviewPriority.Medium => "bg-warning text-dark",
-            _ => "bg-success"
-        };
-        <p>
-            Review Priority: <span class="badge @priorityBadgeClass">@analysisRun.OverallReviewPriority</span>
-            <span class="badge bg-danger">Critical @analysisRun.CriticalFindingsCount</span>
-            <span class="badge bg-warning text-dark">Review @analysisRun.ReviewFindingsCount</span>
-            <span class="badge bg-secondary">Watch @analysisRun.WatchFindingsCount</span>
-            <span class="badge bg-success">Positive @analysisRun.PositiveFindingsCount</span>
-            @if (analysisRun.Status == AnalysisRunStatus.CompletedWithErrors)
-            {
-                <span class="badge bg-info text-dark" title="@analysisRun.FailureReason">AI narrative unavailable</span>
-            }
-        </p>
-
-        @if (Model.ExecutiveSummary is { } es)
-        {
-            <div class="card mb-3">
-                <div class="card-header">Executive Summary</div>
-                <div class="card-body">
-                    @if (!string.IsNullOrEmpty(es.BusinessPerformance)) { <p><strong>Business Performance:</strong> @es.BusinessPerformance</p> }
-                    @if (!string.IsNullOrEmpty(es.FinancialPosition)) { <p><strong>Financial Position:</strong> @es.FinancialPosition</p> }
-                    @if (!string.IsNullOrEmpty(es.BorrowingSecurity)) { <p><strong>Borrowing &amp; Security:</strong> @es.BorrowingSecurity</p> }
-                    @if (!string.IsNullOrEmpty(es.GovernanceCompliance)) { <p><strong>Governance &amp; Compliance:</strong> @es.GovernanceCompliance</p> }
+                <div class="pi-ai-summary">
+                    <div class="pi-ai-summary-head"><i class="bi bi-stars"></i><strong>Executive Summary</strong></div>
+                    @if (!string.IsNullOrEmpty(es.BusinessPerformance)) { <p><b>Business Performance:</b> @es.BusinessPerformance</p> }
+                    @if (!string.IsNullOrEmpty(es.FinancialPosition)) { <p><b>Financial Position:</b> @es.FinancialPosition</p> }
+                    @if (!string.IsNullOrEmpty(es.BorrowingSecurity)) { <p><b>Borrowing &amp; Security:</b> @es.BorrowingSecurity</p> }
+                    @if (!string.IsNullOrEmpty(es.GovernanceCompliance)) { <p><b>Governance &amp; Compliance:</b> @es.GovernanceCompliance</p> }
                     @if (es.KeyReviewItems.Count > 0)
                     {
-                        <strong>Key Review Items</strong>
-                        <ul class="mb-0">
-                            @foreach (var item in es.KeyReviewItems)
-                            {
-                                <li>@item</li>
-                            }
-                        </ul>
-                    }
-                </div>
-            </div>
-        }
-
-        var tabs = new (string Label, FindingSection[] Sections)[]
-        {
-            ("Corporate", [FindingSection.CompanyProfile, FindingSection.Directors, FindingSection.DirectorNetwork, FindingSection.Ownership]),
-            ("Financial", [FindingSection.Financial]),
-            ("Charges & Security", [FindingSection.Charges]),
-            ("Compliance", [FindingSection.Msme, FindingSection.Gst, FindingSection.Epfo, FindingSection.Auditor]),
-            ("Litigation", [FindingSection.Litigation]),
-            ("AI Findings", [FindingSection.CrossSection])
-        };
-
-        <ul class="nav nav-tabs" role="tablist">
-            @for (var i = 0; i < tabs.Length; i++)
-            {
-                var tab = tabs[i];
-                var count = Model.AnalysisFindings.Count(f => tab.Sections.Contains(f.Section));
-                <li class="nav-item" role="presentation">
-                    <button class="nav-link @(i == 0 ? "active" : "")" data-bs-toggle="tab" data-bs-target="#analysis-tab-@i" type="button" role="tab">
-                        @tab.Label <span class="badge bg-light text-dark">@count</span>
-                    </button>
-                </li>
-            }
-        </ul>
-        <div class="tab-content border border-top-0 p-3 mb-3">
-            @for (var i = 0; i < tabs.Length; i++)
-            {
-                var tab = tabs[i];
-                var sectionFindings = Model.AnalysisFindings.Where(f => tab.Sections.Contains(f.Section)).ToList();
-                // Critical/Review always show in full; Watch/Positive are capped to keep Financial (the
-                // largest domain) from dominating the page — the full rule-hit set is still persisted,
-                // just not all rendered. AnalysisFindings is already sorted by Severity/DisplayPriority/
-                // ObservationDate in the controller, so Take(5) here respects that ordering.
-                var displayFindings = sectionFindings.Where(f => f.Severity is FindingSeverity.Critical or FindingSeverity.Review)
-                    .Concat(sectionFindings.Where(f => f.Severity == FindingSeverity.Watch).Take(5))
-                    .Concat(sectionFindings.Where(f => f.Severity == FindingSeverity.Positive).Take(5))
-                    .ToList();
-
-                <div class="tab-pane fade @(i == 0 ? "show active" : "")" id="analysis-tab-@i" role="tabpanel">
-                    @if (displayFindings.Count == 0)
-                    {
-                        <p class="text-muted mb-0">No findings in this section.</p>
-                    }
-                    else
-                    {
-                        @foreach (var f in displayFindings)
-                        {
-                            var (icon, cardClass) = f.Severity switch
-                            {
-                                FindingSeverity.Critical => ("🔴", "border-danger"),
-                                FindingSeverity.Review => ("🟠", "border-warning"),
-                                FindingSeverity.Watch => ("🟡", "border-secondary"),
-                                _ => ("🟢", "border-success")
-                            };
-                            var relatedCodes = string.IsNullOrEmpty(f.SupportingSignalsJson)
-                                ? new List<string>()
-                                : (System.Text.Json.JsonSerializer.Deserialize<List<string>>(f.SupportingSignalsJson) ?? new List<string>());
-                            <div class="card mb-2 @cardClass" id="finding-@f.Code">
-                                <div class="card-body">
-                                    <h6 class="card-title">
-                                        @icon @f.Title
-                                        <small class="text-muted">(@f.TemporalStatus@(f.PeriodLabel is not null ? $" · {f.PeriodLabel}" : ""))</small>
-                                    </h6>
-                                    <p class="card-text">@f.SummaryText</p>
-                                    @if (!string.IsNullOrEmpty(f.WhyThisMatters))
-                                    {
-                                        <p class="mb-1"><strong>Why this matters:</strong> @f.WhyThisMatters</p>
-                                    }
-                                    @if (!string.IsNullOrEmpty(f.RecommendedReview))
-                                    {
-                                        <p class="mb-1"><strong>Recommended Review:</strong> @f.RecommendedReview</p>
-                                    }
-                                    @if (relatedCodes.Count > 0)
-                                    {
-                                        <p class="mb-0"><small class="text-muted">Related: @string.Join(", ", relatedCodes)</small></p>
-                                    }
-                                </div>
-                            </div>
-                        }
+                        <p><b>Key Review Items</b></p>
+                        <ul class="mb-0">@foreach (var item in es.KeyReviewItems) { <li>@item</li> }</ul>
                     }
                 </div>
             }
-        </div>
-    }
-}
 
-@if (Model.FilingBatch is { } fb)
-{
-    <hr />
-    <h4>MCA Filings</h4>
-    <p class="text-muted">
-        Batch status: <span class="badge bg-secondary">@fb.Status</span>
-        @if (fb.FailureReason is not null)
-        {
-            <span class="text-danger">&mdash; @fb.FailureReason</span>
-        }
-    </p>
-
-    <h5>Extraction Summary</h5>
-    <table class="table table-sm w-auto">
-        <tbody>
-            @foreach (var kv in Model.FilingCategoryCounts)
-            {
-                <tr><td>@kv.Key</td><td>@kv.Value document(s)</td></tr>
-            }
-            <tr><td colspan="2"><hr class="my-1" /></td></tr>
-            @foreach (var kv in Model.TextExtractionMethodCounts)
-            {
-                <tr><td>Text extraction: @kv.Key</td><td>@kv.Value document(s)</td></tr>
-            }
-            <tr><td colspan="2"><hr class="my-1" /></td></tr>
-            <tr><td>AI extraction succeeded</td><td>@Model.AiSuccessCount filing(s)</td></tr>
-            <tr><td>AI extraction failed</td><td>@Model.AiFailedCount filing(s)</td></tr>
-            <tr><td><strong>Manual review required</strong></td><td><strong>@Model.ManualReviewFilingCount document(s)</strong></td></tr>
-        </tbody>
-    </table>
-
-    @foreach (var categoryGroup in Model.FilingSummaries.GroupBy(f => f.DominantCategory))
-    {
-        <h5>@categoryGroup.Key</h5>
-        @foreach (var fs in categoryGroup)
-        {
-            var f = fs.Filing;
-            <div class="card mb-2">
-                <div class="card-header">
-                    SRN @f.Srn
-                    @if (!string.IsNullOrEmpty(f.ParsedCompanyName))
-                    {
-                        <span>&mdash; @f.ParsedCompanyName</span>
-                    }
-                    @if (f.ManualReviewRequired)
-                    {
-                        <span class="badge bg-warning text-dark">Manual Review: @f.ManualReviewReason</span>
-                    }
-                </div>
-                <div class="card-body">
-                    <table class="table table-sm mb-2">
-                        <thead><tr><th>File</th><th>Form Type</th><th>Confidence</th><th>Status</th><th>Pages (native/OCR)</th></tr></thead>
-                        <tbody>
-                        @foreach (var d in f.Documents.Where(d => d.DuplicateOfDocumentId == null))
+            <ul class="nav mca-subtabs" id="mcaAiSubtabs" role="tablist">
+                @for (var i = 0; i < sectionTabs.Length; i++)
+                {
+                    var t = sectionTabs[i];
+                    var count = Model.AnalysisFindings.Count(f => t.Sections.Contains(f.Section));
+                    <li class="nav-item" role="presentation">
+                        <button class="nav-link @(i == 0 ? "active" : "")" data-bs-toggle="tab" data-bs-target="#ai-@t.Id" type="button" role="tab">
+                            @t.Label <span class="badge">@count</span>
+                        </button>
+                    </li>
+                }
+            </ul>
+            <div class="tab-content">
+                @for (var i = 0; i < sectionTabs.Length; i++)
+                {
+                    var t = sectionTabs[i];
+                    var sectionFindings = Model.AnalysisFindings.Where(f => t.Sections.Contains(f.Section)).ToList();
+                    // Critical/Review always shown in full; Watch/Positive capped to top 5 (list is already
+                    // sorted by Severity/DisplayPriority/ObservationDate in the controller).
+                    var display = sectionFindings.Where(f => f.Severity is FindingSeverity.Critical or FindingSeverity.Review)
+                        .Concat(sectionFindings.Where(f => f.Severity == FindingSeverity.Watch).Take(5))
+                        .Concat(sectionFindings.Where(f => f.Severity == FindingSeverity.Positive).Take(5))
+                        .ToList();
+                    <div class="tab-pane fade @(i == 0 ? "show active" : "")" id="ai-@t.Id" role="tabpanel">
+                        @if (display.Count == 0)
                         {
-                            <tr>
-                                <td>@d.OriginalFileName</td>
-                                <td>@d.FormType</td>
-                                <td>@d.ClassificationConfidence (@d.ClassificationMethod)</td>
-                                <td>@d.ProcessingStatus</td>
-                                <td>@d.NativePageCount / @d.OcrPageCount</td>
-                            </tr>
-                        }
-                        </tbody>
-                    </table>
-
-                    @if (fs.Extraction is { } ex)
-                    {
-                        @if (ex.Status == ExtractionStatus.Success && !string.IsNullOrEmpty(ex.ExtractedJson))
-                        {
-                            <strong>Extracted:</strong>
-                            <ul>
-                                @foreach (var prop in System.Text.Json.JsonDocument.Parse(ex.ExtractedJson).RootElement.EnumerateObject())
-                                {
-                                    // JsonElement.TryGetProperty throws (rather than returning false) when
-                                    // called on an element that isn't a JSON object at all — guard on
-                                    // ValueKind first, since a field can legitimately come back as a bare
-                                    // null/string/number instead of the usual {"value":...,"pages":...} shape.
-                                    var isObject = prop.Value.ValueKind == System.Text.Json.JsonValueKind.Object;
-                                    var valueEl = isObject && prop.Value.TryGetProperty("value", out var v) ? v : default;
-                                    if (valueEl.ValueKind is System.Text.Json.JsonValueKind.Null or System.Text.Json.JsonValueKind.Undefined) { continue; }
-                                    var pagesEl = isObject && prop.Value.TryGetProperty("pages", out var p) ? p.ToString() : "";
-                                    <li><strong>@prop.Name:</strong> @valueEl.ToString() <span class="text-muted">(pages: @pagesEl)</span></li>
-                                }
-                            </ul>
-                            <details>
-                                <summary class="text-muted" style="cursor:pointer;">View Raw JSON</summary>
-                                <pre class="small">@ex.ExtractedJson</pre>
-                            </details>
+                            <p class="text-muted mb-0">No findings in this section.</p>
                         }
                         else
                         {
-                            <span class="text-danger">AI extraction failed: @ex.FailureReason</span>
-                            @if (!string.IsNullOrEmpty(ex.RawModelResponse))
+                            foreach (var f in display)
                             {
-                                <details><summary class="text-muted" style="cursor:pointer;">Raw model response</summary><pre class="small">@ex.RawModelResponse</pre></details>
+                                var related = string.IsNullOrEmpty(f.SupportingSignalsJson)
+                                    ? new List<string>()
+                                    : (System.Text.Json.JsonSerializer.Deserialize<List<string>>(f.SupportingSignalsJson) ?? new List<string>());
+                                <div class="mca-finding @SevClass(f.Severity)">
+                                    <h4>
+                                        <span class="mca-sev-dot"></span>@f.Title
+                                        <span class="mca-finding-meta">@f.TemporalStatus@(f.PeriodLabel is not null ? $" · {f.PeriodLabel}" : "")</span>
+                                    </h4>
+                                    <p>@f.SummaryText</p>
+                                    @if (!string.IsNullOrEmpty(f.WhyThisMatters)) { <p><span class="mca-finding-label">Why this matters:</span> @f.WhyThisMatters</p> }
+                                    @if (!string.IsNullOrEmpty(f.RecommendedReview)) { <p><span class="mca-finding-label">Recommended review:</span> @f.RecommendedReview</p> }
+                                    @if (related.Count > 0) { <div class="mca-related">Related: @string.Join(", ", related)</div> }
+                                </div>
                             }
                         }
-                    }
-                    else if (categoryGroup.Key is FilingCategory.Financial or FilingCategory.Unclassified)
-                    {
-                        <span class="text-muted">Stored, not yet analysed.</span>
-                    }
-                    else
-                    {
-                        <span class="text-muted">AI extraction pending.</span>
-                    }
-                </div>
+                    </div>
+                }
             </div>
         }
-    }
+    </div>
+
+    @* ─────────────  2. About the Corporate  ───────────── *@
+    <div class="tab-pane fade" id="tab-about" role="tabpanel">
+        @if (Model.CompanyProfile is { } cp)
+        {
+            <div class="mca-kv">
+                <div><dt>Company Name</dt><dd>@cp.CompanyName</dd></div>
+                <div><dt>Status</dt><dd>@(cp.CompanyStatus ?? "—")</dd></div>
+                <div><dt>CIN</dt><dd>@(cp.Cin ?? r.Cin ?? r.Llpin ?? "—")</dd></div>
+                <div><dt>PAN</dt><dd>@(cp.Pan ?? r.Pan ?? "—")</dd></div>
+                <div><dt>Compliance Status</dt><dd>@(cp.ComplianceStatus ?? "—")</dd></div>
+                <div><dt>Incorporated</dt><dd>@D(cp.IncorporationDate)</dd></div>
+                <div><dt>Authorised Capital</dt><dd>@Money(cp.AuthorisedCapital)</dd></div>
+                <div><dt>Paid-up Capital</dt><dd>@Money(cp.PaidUpCapital)</dd></div>
+                <div><dt>Industry</dt><dd>@(cp.Industry ?? "—")</dd></div>
+                <div><dt>Business Activity</dt><dd>@(cp.BusinessActivity ?? "—")</dd></div>
+                <div class="mca-kv-wide"><dt>Registered Address</dt><dd>@(cp.RegisteredAddress ?? "—")</dd></div>
+            </div>
+        }
+        else
+        {
+            <div class="mca-empty"><i class="bi bi-building"></i><p>No company profile was extracted for this request.</p></div>
+        }
+    </div>
+
+    @* ─────────────  3. Director  ───────────── *@
+    <div class="tab-pane fade" id="tab-directors" role="tabpanel">
+        <div class="mca-section">
+            <h3>Directors <span class="mca-count">@Model.Directors.Count</span></h3>
+            @if (Model.Directors.Count > 0)
+            {
+                <div class="pi-table-wrap"><table class="pi-results-table">
+                    <thead><tr><th>Name</th><th>DIN</th><th>Designation</th><th>Appointed</th><th>Ceased</th></tr></thead>
+                    <tbody>
+                    @foreach (var d in Model.Directors)
+                    {
+                        <tr>
+                            <td>@d.NameRaw</td>
+                            <td class="report-id">@d.Din</td>
+                            <td>@(d.Designation ?? "—")</td>
+                            <td>@D(d.OriginalAppointmentDate)</td>
+                            <td>@D(d.CessationDate)</td>
+                        </tr>
+                    }
+                    </tbody>
+                </table></div>
+            }
+            else { <div class="mca-empty"><i class="bi bi-people"></i><p>No directors extracted.</p></div> }
+        </div>
+
+        <div class="mca-section">
+            <h3>Other Directorships <span class="mca-count">@Model.DirectorAssociations.Count</span></h3>
+            @if (Model.DirectorAssociations.Count > 0)
+            {
+                <div class="pi-table-wrap"><table class="pi-results-table">
+                    <thead><tr><th>Director</th><th>Connected Company</th><th>CIN</th><th>Type</th><th>Paid-up (Cr)</th><th>Charges (Cr)</th><th>Status</th><th>Appointed</th><th>Ceased</th></tr></thead>
+                    <tbody>
+                    @foreach (var a in Model.DirectorAssociations)
+                    {
+                        <tr>
+                            <td>@a.DirectorNameRaw</td>
+                            <td>@a.ConnectedCompanyRaw</td>
+                            <td class="report-id">@(a.ConnectedCin ?? "—")</td>
+                            <td>@(a.CorporateType ?? "—")</td>
+                            <td>@(a.PaidUpCapitalCrore?.ToString("N2") ?? "—")</td>
+                            <td>@(a.SumOfChargesCrore?.ToString("N2") ?? "—")</td>
+                            <td>@(a.CompanyStatus ?? "—")</td>
+                            <td>@D(a.AppointmentDate)</td>
+                            <td>@D(a.CessationDate)</td>
+                        </tr>
+                    }
+                    </tbody>
+                </table></div>
+            }
+            else { <p class="text-muted mb-0">No connected directorships extracted.</p> }
+        </div>
+    </div>
+
+    @* ─────────────  4. Open Charges  ───────────── *@
+    <div class="tab-pane fade" id="tab-charges" role="tabpanel">
+        @if (Model.Charges.Count > 0)
+        {
+            <div class="pi-table-wrap"><table class="pi-results-table">
+                <thead><tr><th>Charge ID</th><th>Charge Holder</th><th>Status</th><th class="text-end">Current Amount</th><th>Created</th><th>Last Modified</th><th>Satisfied</th></tr></thead>
+                <tbody>
+                @foreach (var c in Model.Charges.OrderByDescending(c => c.CurrentAmount ?? 0m))
+                {
+                    <tr>
+                        <td class="report-id">@c.RocChargeNumber</td>
+                        <td>@c.LatestChargeHolderRaw</td>
+                        <td>@c.ChargeStatus</td>
+                        <td class="text-end">@Money(c.CurrentAmount)</td>
+                        <td>@D(c.CreationDate)</td>
+                        <td>@D(c.LatestModificationDate)</td>
+                        <td>@D(c.SatisfactionDate)</td>
+                    </tr>
+                }
+                </tbody>
+            </table></div>
+            <p class="text-muted mt-2 mb-0">
+                @Model.OpenChargeCount open of @Model.TotalChargeCount total &middot;
+                open exposure @Money(Model.TotalOpenChargeAmount) &middot;
+                largest @Money(Model.LargestChargeAmount)
+            </p>
+        }
+        else if (extracted) { <div class="mca-empty"><i class="bi bi-file-earmark-lock"></i><p>No registered charges found.</p></div> }
+        else { <div class="mca-empty"><i class="bi bi-hourglass"></i><p>No completed extraction yet.</p></div> }
+    </div>
+
+    @* ─────────────  5. Structure  ───────────── *@
+    <div class="tab-pane fade" id="tab-structure" role="tabpanel">
+        <div class="mca-section">
+            <h3>Shareholding <span class="mca-count">@Model.Shareholdings.Count</span></h3>
+            @if (Model.Shareholdings.Count > 0)
+            {
+                <div class="pi-table-wrap"><table class="pi-results-table">
+                    <thead><tr><th>Year</th><th>Shareholder</th><th>Type</th><th>Promoter</th><th class="text-end">% Held</th><th class="text-end">Shares</th><th>Source</th></tr></thead>
+                    <tbody>
+                    @foreach (var s in Model.Shareholdings)
+                    {
+                        <tr>
+                            <td>FY@(s.FinancialYear)</td>
+                            <td>@s.ShareholderNameRaw</td>
+                            <td>@(s.ShareholderType ?? "—")</td>
+                            <td>@(s.IsPromoter ? "Yes" : "—")</td>
+                            <td class="text-end">@(s.HoldingPercentage?.ToString("N2") ?? "—")%</td>
+                            <td class="text-end">@(s.SharesHeld?.ToString("N0") ?? "—")</td>
+                            <td>@s.SourceType</td>
+                        </tr>
+                    }
+                    </tbody>
+                </table></div>
+            }
+            else { <div class="mca-empty"><i class="bi bi-diagram-3"></i><p>No shareholding data extracted.</p></div> }
+        </div>
+
+        <div class="mca-section">
+            <h3>Connected Companies <span class="mca-count">@Model.DirectorAssociations.Count</span></h3>
+            @if (Model.DirectorAssociations.Count > 0)
+            {
+                <p class="text-muted">Companies linked to this entity through shared directors (no formal parent/subsidiary register is available in the source).</p>
+                <div class="pi-table-wrap"><table class="pi-results-table">
+                    <thead><tr><th>Company</th><th>CIN</th><th>Type</th><th>Status</th><th>Via Director</th></tr></thead>
+                    <tbody>
+                    @foreach (var a in Model.DirectorAssociations.OrderBy(a => a.ConnectedCompanyRaw))
+                    {
+                        <tr>
+                            <td>@a.ConnectedCompanyRaw</td>
+                            <td class="report-id">@(a.ConnectedCin ?? "—")</td>
+                            <td>@(a.CorporateType ?? "—")</td>
+                            <td>@(a.CompanyStatus ?? "—")</td>
+                            <td>@a.DirectorNameRaw</td>
+                        </tr>
+                    }
+                    </tbody>
+                </table></div>
+            }
+            else { <p class="text-muted mb-0">No connected companies extracted.</p> }
+        </div>
+    </div>
+
+    @* ─────────────  6. Highlights  ───────────── *@
+    <div class="tab-pane fade" id="tab-highlights" role="tabpanel">
+        @if (extracted || run is not null)
+        {
+            <div class="mca-highlight-grid">
+                <div class="pi-metric"><span>Open Charges</span><strong>@Model.OpenChargeCount</strong><small>of @Model.TotalChargeCount total registered</small></div>
+                <div class="pi-metric"><span>Open Charge Exposure</span><strong>@(Model.TotalOpenChargeAmount.ToString("N1"))</strong><small>₹ Crore &middot; largest @Money(Model.LargestChargeAmount)</small></div>
+                <div class="pi-metric"><span>Latest Revenue</span><strong>@(Model.LatestRevenue?.ToString("N1") ?? "—")</strong><small>@(Model.LatestFinancialYear is { } fy ? $"FY{fy}" : "no financials")@(Model.RevenueYoYPercent is { } yoy ? $" · {(yoy >= 0 ? "▲" : "▼")} {Math.Abs(yoy)}% YoY" : "")</small></div>
+                <div class="pi-metric"><span>Net Worth</span><strong>@(Model.LatestNetWorth?.ToString("N1") ?? "—")</strong><small>₹ Crore@(Model.LatestFinancialYear is { } fy2 ? $" · FY{fy2}" : "")</small></div>
+                <div class="pi-metric"><span>PAT</span><strong>@(Model.LatestPat?.ToString("N1") ?? "—")</strong><small>₹ Crore@(Model.LatestFinancialYear is { } fy3 ? $" · FY{fy3}" : "")</small></div>
+                <div class="pi-metric"><span>Total Debt</span><strong>@(Model.LatestTotalDebt?.ToString("N1") ?? "—")</strong><small>₹ Crore@(Model.LatestFinancialYear is { } fy4 ? $" · FY{fy4}" : "")</small></div>
+                <div class="pi-metric"><span>Active Directors</span><strong>@Model.ActiveDirectorCount</strong><small>of @Model.Directors.Count on record</small></div>
+                <div class="pi-metric"><span>Litigation Cases</span><strong>@Model.LitigationCount</strong><small>matched to this entity</small></div>
+                @if (run is not null)
+                {
+                    <div class="pi-metric"><span>Review Priority</span><strong>@(run.OverallReviewPriority?.ToString() ?? "—")</strong><small>from analysis run #@run.RunNumber</small></div>
+                    <div class="pi-metric"><span>Critical Findings</span><strong>@run.CriticalFindingsCount</strong><small>@run.ReviewFindingsCount review · @run.WatchFindingsCount watch</small></div>
+                }
+            </div>
+        }
+        else { <div class="mca-empty"><i class="bi bi-bar-chart"></i><p>Highlights become available once extraction completes.</p></div> }
+    </div>
+
+    @* ─────────────  7. Financial Data  ───────────── *@
+    <div class="tab-pane fade" id="tab-financials" role="tabpanel">
+        @if (Model.FinancialYears.Count > 0)
+        {
+            <div class="pi-table-wrap"><table class="pi-results-table">
+                <thead><tr>
+                    <th>Year</th><th class="text-end">Revenue</th><th class="text-end">Other Income</th><th class="text-end">EBITDA</th><th class="text-end">EBIT</th>
+                    <th class="text-end">PBT</th><th class="text-end">PAT</th><th class="text-end">Net Worth</th><th class="text-end">Curr. Assets</th><th class="text-end">Curr. Liab.</th>
+                    <th class="text-end">Inventory</th><th class="text-end">Receivables</th><th class="text-end">Cash &amp; Bank</th><th class="text-end">Payables</th>
+                    <th class="text-end">LT Borrow.</th><th class="text-end">ST Borrow.</th><th class="text-end">Total Debt</th><th class="text-end">Finance Cost</th>
+                    <th class="text-end">CFO</th><th class="text-end">CFI</th><th class="text-end">CFF</th><th class="text-end">Share Capital</th>
+                </tr></thead>
+                <tbody>
+                @foreach (var f in Model.FinancialYears.OrderByDescending(f => f.FinancialYear))
+                {
+                    <tr>
+                        <td>FY@(f.FinancialYear)</td>
+                        <td class="text-end">@(f.Revenue?.ToString("N2") ?? "—")</td>
+                        <td class="text-end">@(f.OtherIncome?.ToString("N2") ?? "—")</td>
+                        <td class="text-end">@(f.Ebitda?.ToString("N2") ?? "—")</td>
+                        <td class="text-end">@(f.Ebit?.ToString("N2") ?? "—")</td>
+                        <td class="text-end">@(f.Pbt?.ToString("N2") ?? "—")</td>
+                        <td class="text-end">@(f.Pat?.ToString("N2") ?? "—")</td>
+                        <td class="text-end">@(f.NetWorth?.ToString("N2") ?? "—")</td>
+                        <td class="text-end">@(f.CurrentAssets?.ToString("N2") ?? "—")</td>
+                        <td class="text-end">@(f.CurrentLiabilities?.ToString("N2") ?? "—")</td>
+                        <td class="text-end">@(f.Inventory?.ToString("N2") ?? "—")</td>
+                        <td class="text-end">@(f.TradeReceivables?.ToString("N2") ?? "—")</td>
+                        <td class="text-end">@(f.CashAndBank?.ToString("N2") ?? "—")</td>
+                        <td class="text-end">@(f.TradePayables?.ToString("N2") ?? "—")</td>
+                        <td class="text-end">@(f.LongTermBorrowings?.ToString("N2") ?? "—")</td>
+                        <td class="text-end">@(f.ShortTermBorrowings?.ToString("N2") ?? "—")</td>
+                        <td class="text-end">@(f.TotalDebt?.ToString("N2") ?? "—")</td>
+                        <td class="text-end">@(f.FinanceCost?.ToString("N2") ?? "—")</td>
+                        <td class="text-end">@(f.Cfo?.ToString("N2") ?? "—")</td>
+                        <td class="text-end">@(f.Cfi?.ToString("N2") ?? "—")</td>
+                        <td class="text-end">@(f.Cff?.ToString("N2") ?? "—")</td>
+                        <td class="text-end">@(f.ShareCapital?.ToString("N2") ?? "—")</td>
+                    </tr>
+                }
+                </tbody>
+            </table></div>
+            <p class="text-muted mt-2 mb-0">All figures in ₹ Crore.</p>
+        }
+        else if (extracted) { <div class="mca-empty"><i class="bi bi-cash-stack"></i><p>No financial year data extracted.</p></div> }
+        else { <div class="mca-empty"><i class="bi bi-hourglass"></i><p>No completed extraction yet.</p></div> }
+    </div>
+
+    @* ─────────────  8. Peer Comparison  ───────────── *@
+    <div class="tab-pane fade" id="tab-peers" role="tabpanel">
+        <div class="mca-empty">
+            <i class="bi bi-bezier2"></i>
+            <p>Peer comparison is not yet available. This tab will benchmark revenue growth, EBITDA margin, leverage and interest coverage against an industry peer set once peer data is ingested.</p>
+        </div>
+    </div>
+
+    @* ─────────────  9. Charge Details  ───────────── *@
+    <div class="tab-pane fade" id="tab-chargedetails" role="tabpanel">
+        @if (Model.Charges.Count > 0)
+        {
+            foreach (var c in Model.Charges.OrderByDescending(c => c.CurrentAmount ?? 0m))
+            {
+                <div class="card mb-3">
+                    <div class="card-header">
+                        Charge @c.RocChargeNumber &middot; @c.ChargeStatus &middot; @c.LatestChargeHolderRaw &middot; @Money(c.CurrentAmount)
+                    </div>
+                    <div class="card-body">
+                        @{
+                            var enr = c.Events.FirstOrDefault(e =>
+                                e.InstrumentDescription is not null || e.RateOfInterest is not null || e.TermsOfPayment is not null ||
+                                e.PropertyParticulars is not null || e.ExtentAndOperation is not null || e.ModificationParticulars is not null);
+                        }
+                        @if (enr is not null)
+                        {
+                            <div class="mca-kv mb-3">
+                                @if (enr.InstrumentDescription is not null) { <div class="mca-kv-wide"><dt>Instrument</dt><dd>@enr.InstrumentDescription</dd></div> }
+                                @if (enr.RateOfInterest is not null) { <div><dt>Rate of Interest</dt><dd>@enr.RateOfInterest</dd></div> }
+                                @if (enr.TermsOfPayment is not null) { <div><dt>Terms of Payment</dt><dd>@enr.TermsOfPayment</dd></div> }
+                                @if (enr.PropertyParticulars is not null) { <div class="mca-kv-wide"><dt>Property Particulars</dt><dd>@enr.PropertyParticulars</dd></div> }
+                                @if (enr.ExtentAndOperation is not null) { <div class="mca-kv-wide"><dt>Extent &amp; Operation</dt><dd>@enr.ExtentAndOperation</dd></div> }
+                                @if (enr.ModificationParticulars is not null) { <div class="mca-kv-wide"><dt>Modification Particulars</dt><dd>@enr.ModificationParticulars</dd></div> }
+                                @if (enr.OtherTerms is not null) { <div class="mca-kv-wide"><dt>Other Terms</dt><dd>@enr.OtherTerms</dd></div> }
+                                @if (enr.JointHolding == true || enr.ConsortiumHolding == true) { <div><dt>Holding</dt><dd>@(enr.JointHolding == true ? "Joint " : "")@(enr.ConsortiumHolding == true ? "Consortium" : "")</dd></div> }
+                            </div>
+                        }
+                        <div class="pi-table-wrap"><table class="pi-results-table">
+                            <thead><tr><th>Event</th><th>Date</th><th class="text-end">Amount</th><th>Holder</th><th>Match</th></tr></thead>
+                            <tbody>
+                            @foreach (var ev in c.Events.OrderBy(e => e.EventDate))
+                            {
+                                <tr>
+                                    <td>@ev.EventType</td>
+                                    <td>@D(ev.EventDate)</td>
+                                    <td class="text-end">@Money(ev.ChargeAmount)</td>
+                                    <td>@ev.HolderNameRaw</td>
+                                    <td>@ev.MatchConfidence</td>
+                                </tr>
+                            }
+                            </tbody>
+                        </table></div>
+                    </div>
+                </div>
+            }
+        }
+        else if (extracted) { <div class="mca-empty"><i class="bi bi-file-earmark-lock"></i><p>No charge detail available.</p></div> }
+        else { <div class="mca-empty"><i class="bi bi-hourglass"></i><p>No completed extraction yet.</p></div> }
+    </div>
+
+    @* ─────────────  10. Compliance Checks  ───────────── *@
+    <div class="tab-pane fade" id="tab-compliance" role="tabpanel">
+        @if (Model.CompanyProfile?.ComplianceStatus is { } compStatus)
+        {
+            <p class="mb-3"><span class="mca-finding-label">Compliance status (source):</span> @compStatus</p>
+        }
+
+        <div class="mca-section">
+            <h3>MSME Dues <span class="mca-count">@Model.MsmePayments.Count</span></h3>
+            @if (Model.MsmePayments.Count > 0)
+            {
+                <div class="pi-table-wrap"><table class="pi-results-table">
+                    <thead><tr><th>Supplier</th><th>PAN</th><th class="text-end">Amount Due (Cr)</th><th>Period</th></tr></thead>
+                    <tbody>
+                    @foreach (var m in Model.MsmePayments)
+                    {
+                        <tr><td>@m.SupplierNameRaw</td><td class="report-id">@(m.SupplierPan ?? "—")</td><td class="text-end">@(m.AmountDueCrore?.ToString("N2") ?? "—")</td><td>@m.ReportingPeriod</td></tr>
+                    }
+                    </tbody>
+                </table></div>
+            }
+            else { <p class="text-muted mb-0">No MSME dues reported.</p> }
+        </div>
+
+        <div class="mca-section">
+            <h3>GST Registrations <span class="mca-count">@Model.GstRegistrations.Count</span></h3>
+            @if (Model.GstRegistrations.Count > 0)
+            {
+                <div class="pi-table-wrap"><table class="pi-results-table">
+                    <thead><tr><th>GSTIN</th><th>State</th><th>Status</th><th>Registered</th><th>Cancelled</th><th class="text-end">Filings</th></tr></thead>
+                    <tbody>
+                    @foreach (var g in Model.GstRegistrations)
+                    {
+                        <tr><td class="report-id">@g.Gstin</td><td>@(g.State ?? "—")</td><td>@(g.Status ?? "—")</td><td>@D(g.RegistrationDate)</td><td>@D(g.CancellationDate)</td><td class="text-end">@g.Filings.Count</td></tr>
+                    }
+                    </tbody>
+                </table></div>
+            }
+            else { <p class="text-muted mb-0">No GST registrations extracted.</p> }
+        </div>
+
+        <div class="mca-section">
+            <h3>EPFO Contributions <span class="mca-count">@Model.EpfoContributions.Count</span></h3>
+            @if (Model.EpfoContributions.Count > 0)
+            {
+                <div class="pi-table-wrap"><table class="pi-results-table">
+                    <thead><tr><th>Establishment</th><th>Wage Month</th><th class="text-end">Employees</th><th class="text-end">Amount (Cr)</th><th>Status</th></tr></thead>
+                    <tbody>
+                    @foreach (var e in Model.EpfoContributions)
+                    {
+                        <tr><td>@e.EstablishmentName</td><td>@e.WageMonth</td><td class="text-end">@(e.EmployeeCount?.ToString() ?? "—")</td><td class="text-end">@(e.ContributionAmountCrore?.ToString("N2") ?? "—")</td><td>@e.PaymentStatus</td></tr>
+                    }
+                    </tbody>
+                </table></div>
+            }
+            else { <p class="text-muted mb-0">No EPFO contribution data extracted.</p> }
+        </div>
+
+        <div class="mca-section">
+            <h3>Auditor Observations <span class="mca-count">@Model.AuditorObservations.Count</span></h3>
+            @if (Model.AuditorObservations.Count > 0)
+            {
+                <div class="pi-table-wrap"><table class="pi-results-table">
+                    <thead><tr><th>Year</th><th>Qualified / Adverse</th><th>Observation</th></tr></thead>
+                    <tbody>
+                    @foreach (var a in Model.AuditorObservations)
+                    {
+                        <tr><td>FY@(a.FinancialYear)</td><td>@(a.HasQualificationOrAdverseRemark ? "Yes" : "No")</td><td>@a.ObservationText</td></tr>
+                    }
+                    </tbody>
+                </table></div>
+            }
+            else { <p class="text-muted mb-0">No auditor observations extracted.</p> }
+        </div>
+
+        <div class="mca-section">
+            <h3>Litigation <span class="mca-count">@Model.Litigations.Count</span></h3>
+            @if (Model.Litigations.Count > 0)
+            {
+                <div class="pi-table-wrap"><table class="pi-results-table">
+                    <thead><tr><th>Type</th><th>Status</th><th>Court</th><th>Litigants</th><th>Case No.</th><th>Match</th></tr></thead>
+                    <tbody>
+                    @foreach (var l in Model.Litigations)
+                    {
+                        <tr><td>@l.CaseType</td><td>@l.CaseStatus</td><td>@l.Court</td><td>@l.Litigants</td><td class="report-id">@l.CaseNumber</td><td>@l.MatchStatus</td></tr>
+                    }
+                    </tbody>
+                </table></div>
+            }
+            else { <p class="text-muted mb-0">No litigation matched to this entity.</p> }
+        </div>
+
+        @if (Model.Issues.Count > 0)
+        {
+            <div class="mca-section">
+                <h3>Extraction Warnings <span class="mca-count">@Model.Issues.Count</span></h3>
+                <div class="pi-table-wrap"><table class="pi-results-table">
+                    <thead><tr><th>Parser</th><th>Field</th><th>Row</th><th>Message</th></tr></thead>
+                    <tbody>
+                    @foreach (var i in Model.Issues)
+                    {
+                        <tr><td>@i.ParserName</td><td>@i.FieldName</td><td>@i.RowNumber</td><td>@i.Message</td></tr>
+                    }
+                    </tbody>
+                </table></div>
+            </div>
+        }
+    </div>
+
+    @* ─────────────  11. Reference Documents  ───────────── *@
+    <div class="tab-pane fade" id="tab-refdocs" role="tabpanel">
+        <div class="mca-section">
+            <h3>Uploaded Documents <span class="mca-count">@Model.Documents.Count</span></h3>
+            <div class="pi-table-wrap"><table class="pi-results-table">
+                <thead><tr><th>File</th><th>Type</th><th>Status</th><th>Uploaded</th></tr></thead>
+                <tbody>
+                @foreach (var doc in Model.Documents)
+                {
+                    <tr>
+                        <td>@doc.OriginalFileName</td>
+                        <td>@doc.DocumentType</td>
+                        <td>
+                            @doc.UploadStatus
+                            @if (doc.UploadStatus == DocumentUploadStatus.Quarantined) { <span class="text-danger">— @doc.QuarantineReason</span> }
+                        </td>
+                        <td>@doc.UploadedDate.ToString("d MMM yyyy HH:mm")</td>
+                    </tr>
+                }
+                </tbody>
+            </table></div>
+        </div>
+
+        @if (Model.LatestRun is { } lrun)
+        {
+            <div class="mca-section">
+                <h3>Extraction Summary <span class="mca-count">run #@lrun.RunNumber · @lrun.Status</span></h3>
+                <div class="pi-table-wrap"><table class="pi-results-table">
+                    <tbody>
+                        <tr><td>Company Profile</td><td>@(Model.CompanyProfile is not null ? "1" : "—")</td></tr>
+                        <tr><td>Directors</td><td>@Model.Directors.Count</td></tr>
+                        <tr><td>Director Associations</td><td>@Model.DirectorAssociations.Count</td></tr>
+                        <tr><td>Shareholders</td><td>@Model.Shareholdings.Count</td></tr>
+                        <tr><td>Financial Years</td><td>@Model.FinancialYears.Count</td></tr>
+                        <tr><td>Charges</td><td>@Model.Charges.Count (@Model.Charges.Sum(c => c.Events.Count) events)</td></tr>
+                        <tr><td>MSME</td><td>@Model.MsmePayments.Count</td></tr>
+                        <tr><td>GST Registrations</td><td>@Model.GstRegistrations.Count</td></tr>
+                        <tr><td>EPFO Contributions</td><td>@Model.EpfoContributions.Count</td></tr>
+                        <tr><td>Auditor Observations</td><td>@Model.AuditorObservations.Count</td></tr>
+                        <tr><td>Litigation</td><td>@Model.Litigations.Count</td></tr>
+                        <tr><td>Warnings</td><td>@Model.Issues.Count(i => i.Severity == IssueSeverity.Warning)</td></tr>
+                    </tbody>
+                </table></div>
+            </div>
+        }
+
+        @if (Model.FilingBatch is { } fb)
+        {
+            <div class="mca-section">
+                <h3>MCA Filings <span class="mca-count">batch @fb.Status</span></h3>
+                @if (fb.FailureReason is not null) { <div class="alert alert-danger">@fb.FailureReason</div> }
+
+                <div class="pi-table-wrap mb-3"><table class="pi-results-table">
+                    <tbody>
+                        @foreach (var kv in Model.FilingCategoryCounts) { <tr><td>@kv.Key</td><td>@kv.Value document(s)</td></tr> }
+                        @foreach (var kv in Model.TextExtractionMethodCounts) { <tr><td>Text extraction: @kv.Key</td><td>@kv.Value document(s)</td></tr> }
+                        <tr><td>AI extraction succeeded</td><td>@Model.AiSuccessCount filing(s)</td></tr>
+                        <tr><td>AI extraction failed</td><td>@Model.AiFailedCount filing(s)</td></tr>
+                        <tr><td>Manual review required</td><td>@Model.ManualReviewFilingCount document(s)</td></tr>
+                    </tbody>
+                </table></div>
+
+                @foreach (var categoryGroup in Model.FilingSummaries.GroupBy(f => f.DominantCategory))
+                {
+                    <h4 class="mt-3 mb-2" style="font-size:14px;font-weight:700;">@categoryGroup.Key</h4>
+                    @foreach (var fs in categoryGroup)
+                    {
+                        var f = fs.Filing;
+                        <div class="card mb-2">
+                            <div class="card-header">
+                                SRN @f.Srn
+                                @if (!string.IsNullOrEmpty(f.ParsedCompanyName)) { <span>&mdash; @f.ParsedCompanyName</span> }
+                                @if (f.ManualReviewRequired) { <span class="pi-status-pill pi-status-processing ms-2">Manual Review: @f.ManualReviewReason</span> }
+                            </div>
+                            <div class="card-body">
+                                <div class="pi-table-wrap mb-2"><table class="pi-results-table">
+                                    <thead><tr><th>File</th><th>Form Type</th><th>Confidence</th><th>Status</th><th>Pages (native/OCR)</th></tr></thead>
+                                    <tbody>
+                                    @foreach (var d in f.Documents.Where(d => d.DuplicateOfDocumentId == null))
+                                    {
+                                        <tr>
+                                            <td>@d.OriginalFileName</td>
+                                            <td>@d.FormType</td>
+                                            <td>@d.ClassificationConfidence (@d.ClassificationMethod)</td>
+                                            <td>@d.ProcessingStatus</td>
+                                            <td>@d.NativePageCount / @d.OcrPageCount</td>
+                                        </tr>
+                                    }
+                                    </tbody>
+                                </table></div>
+
+                                @if (fs.Extraction is { } ex)
+                                {
+                                    if (ex.Status == ExtractionStatus.Success && !string.IsNullOrEmpty(ex.ExtractedJson))
+                                    {
+                                        <p class="mb-1"><b>Extracted</b></p>
+                                        <ul>
+                                            @foreach (var prop in System.Text.Json.JsonDocument.Parse(ex.ExtractedJson).RootElement.EnumerateObject())
+                                            {
+                                                var isObject = prop.Value.ValueKind == System.Text.Json.JsonValueKind.Object;
+                                                var valueEl = isObject && prop.Value.TryGetProperty("value", out var v) ? v : default;
+                                                if (valueEl.ValueKind is System.Text.Json.JsonValueKind.Null or System.Text.Json.JsonValueKind.Undefined) { continue; }
+                                                var pagesEl = isObject && prop.Value.TryGetProperty("pages", out var p) ? p.ToString() : "";
+                                                <li><b>@prop.Name:</b> @valueEl.ToString() <span class="text-muted">(pages: @pagesEl)</span></li>
+                                            }
+                                        </ul>
+                                        <details><summary class="mca-json-toggle">View raw JSON</summary><pre class="mca-json">@ex.ExtractedJson</pre></details>
+                                    }
+                                    else
+                                    {
+                                        <span class="text-danger">AI extraction failed: @ex.FailureReason</span>
+                                        @if (!string.IsNullOrEmpty(ex.RawModelResponse))
+                                        {
+                                            <details><summary class="mca-json-toggle">Raw model response</summary><pre class="mca-json">@ex.RawModelResponse</pre></details>
+                                        }
+                                    }
+                                }
+                                else if (categoryGroup.Key is FilingCategory.Financial or FilingCategory.Unclassified)
+                                {
+                                    <span class="text-muted">Stored, not yet analysed.</span>
+                                }
+                                else
+                                {
+                                    <span class="text-muted">AI extraction pending.</span>
+                                }
+                            </div>
+                        </div>
+                    }
+                }
+            </div>
+        }
+    </div>
+
+</div>
+
+@section Scripts {
+    <script>
+        // Persist the selected top-level tab across reloads (per request).
+        (function () {
+            var key = 'mca-@(r.RequestId)-tab';
+            var tabs = document.querySelectorAll('#mcaTabs button[data-bs-toggle="tab"]');
+            // A #tab-... hash deep-links a tab; otherwise fall back to the last-used tab for this request.
+            var target = (location.hash && location.hash.indexOf('#tab-') === 0) ? location.hash : null;
+            // Drop the hash before activating so the browser has no anchor to jump to (it would land
+            // under the sticky header). The tab is still selected from the captured value.
+            if (target) { try { history.replaceState(null, '', location.pathname + location.search); } catch (e) {} }
+            try { if (!target) target = sessionStorage.getItem(key); } catch (e) {}
+            if (target) {
+                var btn = document.querySelector('#mcaTabs button[data-bs-target="' + target + '"]');
+                if (btn) new bootstrap.Tab(btn).show();
+            }
+            tabs.forEach(function (b) {
+                b.addEventListener('shown.bs.tab', function (e) {
+                    try { sessionStorage.setItem(key, e.target.getAttribute('data-bs-target')); } catch (err) {}
+                });
+            });
+        })();
+    </script>
 }

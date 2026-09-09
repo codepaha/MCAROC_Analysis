@@ -18,12 +18,12 @@
 }
 @if (badges.Count > 0)
 {
-    <div class="mb-3">
+    <div class="mca-chip-row">
         @foreach (var (label, overrides) in badges)
         {
-            <a class="badge bg-secondary text-decoration-none me-1" asp-controller="Requests" asp-action="Index"
-               asp-all-route-data="@(Model.ToRouteValues(overrides))">@label &times;</a>
+            <a class="mca-chip" asp-controller="Requests" asp-action="Index"
+               asp-all-route-data="@(Model.ToRouteValues(overrides))">@label <i class="bi bi-x-lg"></i></a>
         }
-        <a class="btn btn-sm btn-outline-secondary ms-2" asp-controller="Requests" asp-action="Index">Clear All Filters</a>
+        <a class="btn btn-sm btn-outline-secondary" asp-controller="Requests" asp-action="Index">Clear All Filters</a>
     </div>
 }

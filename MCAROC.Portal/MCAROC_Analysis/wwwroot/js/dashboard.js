@@ -1,12 +1,22 @@
 // Small, reusable Chart.js construction helpers for the Dashboard view. The view itself only builds the
 // JSON payload and calls into these — keeps the Razor view from turning into a JS file.
 
+// Palette aligned with the app.css design-system tokens (steel-blue brand + muted semantics).
+const MCAROC_CHART = {
+    brand: '#2f7df6',
+    brandFill: 'rgba(47,125,246,0.12)',
+    success: '#3f9374',
+    warning: '#c98a3c',
+    danger: '#cf6063',
+    muted: '#667085'
+};
+
 function renderRequestTrendChart(canvasId, labels, created) {
     return new Chart(document.getElementById(canvasId), {
         type: 'line',
         data: {
             labels: labels,
-            datasets: [{ label: 'Requests Created', data: created, borderColor: '#0d6efd', backgroundColor: 'rgba(13,110,253,0.1)', fill: true, tension: 0.2 }]
+            datasets: [{ label: 'Requests Created', data: created, borderColor: MCAROC_CHART.brand, backgroundColor: MCAROC_CHART.brandFill, fill: true, tension: 0.2 }]
         },
         options: {
             responsive: true,

@@ -3,172 +3,117 @@
     ViewData["Title"] = "New MCA ROC Search";
 }
 
-<h1>New MCA ROC Search</h1>
+<div class="pi-page-head">
+    <div>
+        <div class="pi-kicker">New Request</div>
+        <h1>New MCA ROC Search</h1>
+        <p>Register a company and upload its MCA / ROC report. Analysis starts automatically once extraction completes cleanly.</p>
+    </div>
+</div>
 
 @if (!string.IsNullOrEmpty(Model.ErrorMessage))
 {
     <div class="alert alert-danger">@Model.ErrorMessage</div>
 }
 
-<form asp-action="New" method="post" enctype="multipart/form-data" class="mt-3" style="max-width: 640px;">
-    <div class="mb-3">
-        <label asp-for="ClientId" class="form-label"></label>
-        <select asp-for="ClientId" class="form-select" asp-items="@(new SelectList(Model.Clients, nameof(Client.ClientId), nameof(Client.ClientName)))">
-            <option value="">Select Client</option>
-        </select>
-    </div>
-
-    <div class="mb-3">
-        <label class="form-label d-block">Entity Type</label>
-        <div class="form-check form-check-inline">
-            <input class="form-check-input" type="radio" asp-for="EntityType" value="Company" id="entityCompany" checked />
-            <label class="form-check-label" for="entityCompany">Company</label>
+<div class="pi-panel" style="padding:24px; max-width:680px;">
+    <form asp-action="New" method="post" enctype="multipart/form-data">
+        <div class="mb-3">
+            <label asp-for="ClientId" class="form-label"></label>
+            <select asp-for="ClientId" class="form-select" asp-items="@(new SelectList(Model.Clients, nameof(Client.ClientId), nameof(Client.ClientName)))">
+                <option value="">Select Client</option>
+            </select>
         </div>
-        <div class="form-check form-check-inline">
-            <input class="form-check-input" type="radio" asp-for="EntityType" value="LLP" id="entityLlp" />
-            <label class="form-check-label" for="entityLlp">LLP</label>
-        </div>
-    </div>
 
-    <div class="mb-3">
-        <label asp-for="CompanyName" class="form-label"></label>
-        <input asp-for="CompanyName" class="form-control" placeholder="Vedic Cosmeceuticals Private Limited" />
-    </div>
-
-    <div class="mb-3">
-        <label asp-for="Cin" class="form-label"></label>
-        <input asp-for="Cin" class="form-control" placeholder="U24246DL2003PTC118255" />
-    </div>
-
-    <div class="mb-3">
-        <label asp-for="Pan" class="form-label"></label>
-        <input asp-for="Pan" class="form-control" placeholder="AABCV6369H" />
-    </div>
-
-    <hr />
-    <h5>Document Upload</h5>
-
-    <div class="mb-3">
-        <label asp-for="RocFile" class="form-label"></label>
-        <div class="dropzone" data-input-id="RocFile">
-            <input asp-for="RocFile" type="file" class="dropzone-input" accept=".xls,.xlsx" />
-            <div class="dropzone-prompt">
-                <span>Drag &amp; drop the MCA / ROC Report here, or click to browse</span>
+        <div class="mb-3">
+            <label class="form-label d-block">Entity Type</label>
+            <div class="form-check form-check-inline">
+                <input class="form-check-input" type="radio" asp-for="EntityType" value="Company" id="entityCompany" checked />
+                <label class="form-check-label" for="entityCompany">Company</label>
             </div>
-            <div class="dropzone-filename"></div>
-        </div>
-    </div>
-
-    <div class="mb-3">
-        <label asp-for="ChargeFile" class="form-label"></label>
-        <div class="dropzone" data-input-id="ChargeFile">
-            <input asp-for="ChargeFile" type="file" class="dropzone-input" accept=".xls,.xlsx" />
-            <div class="dropzone-prompt">
-                <span>Drag &amp; drop the Detailed Charge Report here, or click to browse</span>
+            <div class="form-check form-check-inline">
+                <input class="form-check-input" type="radio" asp-for="EntityType" value="LLP" id="entityLlp" />
+                <label class="form-check-label" for="entityLlp">LLP</label>
             </div>
-            <div class="dropzone-filename"></div>
         </div>
-        <div class="form-text">Optional. If provided, it must belong to the same company as the ROC report.</div>
-    </div>
 
-    <div class="mb-3">
-        <label asp-for="McaFilingsFile" class="form-label"></label>
-        <div class="dropzone" data-input-id="McaFilingsFile">
-            <input asp-for="McaFilingsFile" type="file" class="dropzone-input" accept=".zip" />
-            <div class="dropzone-prompt">
-                <span>Drag &amp; drop the MCA Filings archive (.zip) here, or click to browse</span>
+        <div class="mb-3">
+            <label asp-for="CompanyName" class="form-label"></label>
+            <input asp-for="CompanyName" class="form-control" placeholder="Vedic Cosmeceuticals Private Limited" />
+        </div>
+
+        <div class="mb-3">
+            <label asp-for="Cin" class="form-label"></label>
+            <input asp-for="Cin" class="form-control" placeholder="U24246DL2003PTC118255" />
+        </div>
+
+        <div class="mb-3">
+            <label asp-for="Pan" class="form-label"></label>
+            <input asp-for="Pan" class="form-control" placeholder="AABCV6369H" />
+        </div>
+
+        <hr />
+        <h3 style="font-size:15px;font-weight:700;margin-bottom:14px;">Document Upload</h3>
+
+        <div class="mb-3">
+            <label asp-for="RocFile" class="form-label"></label>
+            <div class="mca-dropzone" data-input-id="RocFile">
+                <input asp-for="RocFile" type="file" class="mca-dropzone-input" accept=".xls,.xlsx" />
+                <div class="mca-dropzone-prompt"><span>Drag &amp; drop the MCA / ROC Report here, or click to browse</span></div>
+                <div class="mca-dropzone-filename"></div>
             </div>
-            <div class="dropzone-filename"></div>
         </div>
-        <div class="form-text">Optional. Processed in the background — large archives can take a while; check the Details page for progress.</div>
-    </div>
 
-    <button type="submit" class="btn btn-primary">Create &amp; Analyse</button>
-    <a asp-controller="Home" asp-action="Index" class="btn btn-outline-secondary">Cancel</a>
-</form>
+        <div class="mb-3">
+            <label asp-for="ChargeFile" class="form-label"></label>
+            <div class="mca-dropzone" data-input-id="ChargeFile">
+                <input asp-for="ChargeFile" type="file" class="mca-dropzone-input" accept=".xls,.xlsx" />
+                <div class="mca-dropzone-prompt"><span>Drag &amp; drop the Detailed Charge Report here, or click to browse</span></div>
+                <div class="mca-dropzone-filename"></div>
+            </div>
+            <div class="form-text">Optional. If provided, it must belong to the same company as the ROC report.</div>
+        </div>
 
-<style>
-    .dropzone {
-        position: relative;
-        border: 2px dashed #adb5bd;
-        border-radius: 0.375rem;
-        padding: 1.5rem;
-        text-align: center;
-        background-color: #f8f9fa;
-        cursor: pointer;
-        transition: border-color 0.15s ease-in-out, background-color 0.15s ease-in-out;
-    }
+        <div class="mb-3">
+            <label asp-for="McaFilingsFile" class="form-label"></label>
+            <div class="mca-dropzone" data-input-id="McaFilingsFile">
+                <input asp-for="McaFilingsFile" type="file" class="mca-dropzone-input" accept=".zip" />
+                <div class="mca-dropzone-prompt"><span>Drag &amp; drop the MCA Filings archive (.zip) here, or click to browse</span></div>
+                <div class="mca-dropzone-filename"></div>
+            </div>
+            <div class="form-text">Optional. Processed in the background — large archives can take a while; check the Details page for progress.</div>
+        </div>
 
-    .dropzone:hover,
-    .dropzone.dropzone-active {
-        border-color: #0d6efd;
-        background-color: #eaf2ff;
-    }
-
-    .dropzone-input {
-        position: absolute;
-        inset: 0;
-        opacity: 0;
-        width: 100%;
-        height: 100%;
-        cursor: pointer;
-    }
-
-    .dropzone-prompt {
-        color: #6c757d;
-        pointer-events: none;
-    }
-
-    .dropzone-filename {
-        margin-top: 0.5rem;
-        font-weight: 600;
-        pointer-events: none;
-    }
-</style>
+        <div class="d-flex gap-2 mt-4">
+            <button type="submit" class="btn btn-primary">Create &amp; Analyse</button>
+            <a asp-controller="Dashboard" asp-action="Index" class="btn btn-outline-secondary">Cancel</a>
+        </div>
+    </form>
+</div>
 
 @section Scripts {
     <script>
-        document.querySelectorAll('.dropzone').forEach(function (zone) {
-            var input = zone.querySelector('.dropzone-input');
-            var filenameEl = zone.querySelector('.dropzone-filename');
-            var promptEl = zone.querySelector('.dropzone-prompt');
+        document.querySelectorAll('.mca-dropzone').forEach(function (zone) {
+            var input = zone.querySelector('.mca-dropzone-input');
+            var filenameEl = zone.querySelector('.mca-dropzone-filename');
+            var promptEl = zone.querySelector('.mca-dropzone-prompt');
 
             function showFile(file) {
-                if (file) {
-                    filenameEl.textContent = file.name;
-                    promptEl.style.display = 'none';
-                } else {
-                    filenameEl.textContent = '';
-                    promptEl.style.display = '';
-                }
+                if (file) { filenameEl.textContent = file.name; promptEl.style.display = 'none'; }
+                else { filenameEl.textContent = ''; promptEl.style.display = ''; }
             }
 
-            input.addEventListener('change', function () {
-                showFile(input.files && input.files[0]);
-            });
+            input.addEventListener('change', function () { showFile(input.files && input.files[0]); });
 
             ['dragenter', 'dragover'].forEach(function (evt) {
-                zone.addEventListener(evt, function (e) {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    zone.classList.add('dropzone-active');
-                });
+                zone.addEventListener(evt, function (e) { e.preventDefault(); e.stopPropagation(); zone.classList.add('mca-dropzone-active'); });
             });
-
             ['dragleave', 'drop'].forEach(function (evt) {
-                zone.addEventListener(evt, function (e) {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    zone.classList.remove('dropzone-active');
-                });
+                zone.addEventListener(evt, function (e) { e.preventDefault(); e.stopPropagation(); zone.classList.remove('mca-dropzone-active'); });
             });
-
             zone.addEventListener('drop', function (e) {
                 var files = e.dataTransfer.files;
-                if (files && files.length > 0) {
-                    input.files = files;
-                    showFile(files[0]);
-                }
+                if (files && files.length > 0) { input.files = files; showFile(files[0]); }
             });
         });
     </script>

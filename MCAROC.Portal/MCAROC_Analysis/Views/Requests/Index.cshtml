@@ -2,135 +2,141 @@
 @{
     ViewData["Title"] = "Search History";
     ViewBag.Clients = Model.Clients;
+    string PriorityPill(ReviewPriority p) => p switch
+    {
+        ReviewPriority.High => "pi-status-failed",
+        ReviewPriority.Medium => "pi-status-processing",
+        _ => "pi-status-completed"
+    };
 }
 
-<h1>Search History</h1>
+<div class="pi-page-head">
+    <div>
+        <div class="pi-kicker">Requests</div>
+        <h1>Search History</h1>
+        <p>Every MCA / ROC request created in the portal. Search by request number, company, CIN/LLPIN or PAN.</p>
+    </div>
+</div>
 
-<form method="get" asp-action="Index" class="row g-2 mb-3 align-items-end">
-    <div class="col-auto">
-        <label class="form-label small mb-0">Search</label>
-        <input type="text" name="SearchText" value="@Model.Filters.SearchText" class="form-control form-control-sm" placeholder="Request #, Company, CIN/LLPIN, PAN" />
-    </div>
-    <div class="col-auto">
-        <label class="form-label small mb-0">Date From</label>
-        <input type="date" name="DateFrom" value="@Model.Filters.DateFrom?.ToString("yyyy-MM-dd")" class="form-control form-control-sm" />
-    </div>
-    <div class="col-auto">
-        <label class="form-label small mb-0">Date To</label>
-        <input type="date" name="DateTo" value="@Model.Filters.DateTo?.ToString("yyyy-MM-dd")" class="form-control form-control-sm" />
-    </div>
-    <div class="col-auto">
-        <label class="form-label small mb-0">Client</label>
-        <select name="ClientId" class="form-select form-select-sm">
-            <option value="">All Clients</option>
-            @foreach (var c in Model.Clients)
-            {
-                <option value="@c.ClientId" selected="@(Model.Filters.ClientId == c.ClientId)">@c.ClientName@(c.IsActive ? "" : " (inactive)")</option>
-            }
-        </select>
-    </div>
-    <div class="col-auto">
-        <label class="form-label small mb-0">Analysis Status</label>
-        <select name="Status" class="form-select form-select-sm">
-            <option value="">All</option>
-            @foreach (var s in Enum.GetValues<RequestStatus>())
-            {
-                <option value="@s" selected="@(Model.Filters.Status == s)">@s</option>
-            }
-        </select>
-    </div>
-    <div class="col-auto">
-        <label class="form-label small mb-0">Review Priority</label>
-        <select name="Priority" class="form-select form-select-sm">
-            <option value="">All</option>
-            @foreach (var p in Enum.GetValues<ReviewPriority>())
-            {
-                <option value="@p" selected="@(Model.Filters.Priority == p)">@p</option>
-            }
-        </select>
-    </div>
-    <div class="col-auto">
-        <label class="form-label small mb-0">Entity Type</label>
-        <select name="EntityType" class="form-select form-select-sm">
-            <option value="">All</option>
-            @foreach (var e in Enum.GetValues<EntityType>())
-            {
-                <option value="@e" selected="@(Model.Filters.EntityType == e)">@e</option>
-            }
-        </select>
-    </div>
-    <div class="col-auto">
-        <label class="form-label small mb-0">Sort</label>
-        <select name="Sort" class="form-select form-select-sm">
-            <option value="@RequestListSort.CreatedDateDesc" selected="@(Model.Filters.Sort == RequestListSort.CreatedDateDesc)">Newest</option>
-            <option value="@RequestListSort.CreatedDateAsc" selected="@(Model.Filters.Sort == RequestListSort.CreatedDateAsc)">Oldest</option>
-            <option value="@RequestListSort.PriorityDesc" selected="@(Model.Filters.Sort == RequestListSort.PriorityDesc)">Priority</option>
-            <option value="@RequestListSort.CompanyNameAsc" selected="@(Model.Filters.Sort == RequestListSort.CompanyNameAsc)">Company</option>
-        </select>
-    </div>
-    <div class="col-auto">
-        <button type="submit" class="btn btn-primary btn-sm">Apply</button>
-    </div>
-</form>
+<div class="pi-panel mb-3" style="padding:18px 20px;">
+    <form method="get" asp-action="Index" class="mca-filter-form">
+        <div>
+            <label class="form-label">Search</label>
+            <input type="text" name="SearchText" value="@Model.Filters.SearchText" class="form-control" placeholder="Request #, Company, CIN/LLPIN, PAN" style="min-width:240px;" />
+        </div>
+        <div>
+            <label class="form-label">Date From</label>
+            <input type="date" name="DateFrom" value="@Model.Filters.DateFrom?.ToString("yyyy-MM-dd")" class="form-control" />
+        </div>
+        <div>
+            <label class="form-label">Date To</label>
+            <input type="date" name="DateTo" value="@Model.Filters.DateTo?.ToString("yyyy-MM-dd")" class="form-control" />
+        </div>
+        <div>
+            <label class="form-label">Client</label>
+            <select name="ClientId" class="form-select">
+                <option value="">All Clients</option>
+                @foreach (var c in Model.Clients)
+                {
+                    <option value="@c.ClientId" selected="@(Model.Filters.ClientId == c.ClientId)">@c.ClientName@(c.IsActive ? "" : " (inactive)")</option>
+                }
+            </select>
+        </div>
+        <div>
+            <label class="form-label">Analysis Status</label>
+            <select name="Status" class="form-select">
+                <option value="">All</option>
+                @foreach (var s in Enum.GetValues<RequestStatus>())
+                {
+                    <option value="@s" selected="@(Model.Filters.Status == s)">@s</option>
+                }
+            </select>
+        </div>
+        <div>
+            <label class="form-label">Review Priority</label>
+            <select name="Priority" class="form-select">
+                <option value="">All</option>
+                @foreach (var p in Enum.GetValues<ReviewPriority>())
+                {
+                    <option value="@p" selected="@(Model.Filters.Priority == p)">@p</option>
+                }
+            </select>
+        </div>
+        <div>
+            <label class="form-label">Entity Type</label>
+            <select name="EntityType" class="form-select">
+                <option value="">All</option>
+                @foreach (var e in Enum.GetValues<EntityType>())
+                {
+                    <option value="@e" selected="@(Model.Filters.EntityType == e)">@e</option>
+                }
+            </select>
+        </div>
+        <div>
+            <label class="form-label">Sort</label>
+            <select name="Sort" class="form-select">
+                <option value="@RequestListSort.CreatedDateDesc" selected="@(Model.Filters.Sort == RequestListSort.CreatedDateDesc)">Newest</option>
+                <option value="@RequestListSort.CreatedDateAsc" selected="@(Model.Filters.Sort == RequestListSort.CreatedDateAsc)">Oldest</option>
+                <option value="@RequestListSort.PriorityDesc" selected="@(Model.Filters.Sort == RequestListSort.PriorityDesc)">Priority</option>
+                <option value="@RequestListSort.CompanyNameAsc" selected="@(Model.Filters.Sort == RequestListSort.CompanyNameAsc)">Company</option>
+            </select>
+        </div>
+        <div>
+            <button type="submit" class="btn btn-primary">Apply</button>
+        </div>
+    </form>
+</div>
 
 <partial name="_ActiveFilters" model="Model.Filters" />
 
 @if (Model.Rows.Count == 0)
 {
-    <p class="text-muted">No data for the selected filters.</p>
+    <div class="mca-empty"><i class="bi bi-clock-history"></i><p>No requests match the selected filters.</p></div>
 }
 else
 {
-    <table class="table table-sm">
-        <thead>
-            <tr>
-                <th>Request Number</th>
-                <th>Client</th>
-                <th>Company</th>
-                <th>CIN/LLPIN/PAN</th>
-                <th>Review Priority</th>
-                <th>Attention</th>
-                <th>Status</th>
-                <th>Created</th>
-                <th></th>
-            </tr>
-        </thead>
-        <tbody>
-        @foreach (var row in Model.Rows)
-        {
-            <tr>
-                <td>@row.Request.RequestNumber</td>
-                <td>@row.Request.Client?.ClientName</td>
-                <td>@row.Request.CompanyName</td>
-                <td>@(row.Request.Cin ?? row.Request.Llpin ?? row.Request.Pan)</td>
-                <td>
-                    @if (row.Priority is { } p)
-                    {
-                        var badgeClass = p switch { ReviewPriority.High => "bg-danger", ReviewPriority.Medium => "bg-warning text-dark", _ => "bg-success" };
-                        <span class="badge @badgeClass">@p</span>
-                    }
-                    else
-                    {
-                        <span class="text-muted">&mdash;</span>
-                    }
-                </td>
-                <td>
-                    @foreach (var reason in row.AttentionReasons)
-                    {
-                        <span class="badge bg-warning text-dark me-1">@reason</span>
-                    }
-                </td>
-                <td>@row.Request.RequestStatus</td>
-                <td>@row.Request.CreatedDate.ToString("d MMM yyyy")</td>
-                <td><a asp-controller="Requests" asp-action="Details" asp-route-id="@row.Request.RequestId" class="btn btn-sm btn-outline-primary">View</a></td>
-            </tr>
-        }
-        </tbody>
-    </table>
+    <div class="pi-table-wrap">
+        <table class="pi-results-table">
+            <thead>
+                <tr>
+                    <th>Request Number</th>
+                    <th>Client</th>
+                    <th>Company</th>
+                    <th>CIN / LLPIN / PAN</th>
+                    <th>Review Priority</th>
+                    <th>Attention</th>
+                    <th>Status</th>
+                    <th>Created</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+            @foreach (var row in Model.Rows)
+            {
+                <tr>
+                    <td class="report-id">@row.Request.RequestNumber</td>
+                    <td>@row.Request.Client?.ClientName</td>
+                    <td>@row.Request.CompanyName</td>
+                    <td class="report-id">@(row.Request.Cin ?? row.Request.Llpin ?? row.Request.Pan)</td>
+                    <td>
+                        @if (row.Priority is { } p) { <span class="pi-status-pill @PriorityPill(p)">@p</span> }
+                        else { <span class="text-muted">—</span> }
+                    </td>
+                    <td>
+                        @foreach (var reason in row.AttentionReasons) { <span class="pi-status-pill pi-status-processing me-1">@reason</span> }
+                    </td>
+                    <td>@row.Request.RequestStatus</td>
+                    <td>@row.Request.CreatedDate.ToString("d MMM yyyy")</td>
+                    <td><a asp-controller="Requests" asp-action="Details" asp-route-id="@row.Request.RequestId" class="btn btn-sm btn-outline-primary">View</a></td>
+                </tr>
+            }
+            </tbody>
+        </table>
+    </div>
 
     @if (Model.TotalPages > 1)
     {
-        <nav>
+        <nav class="mt-3">
             <ul class="pagination pagination-sm">
                 @for (var p = 1; p <= Model.TotalPages; p++)
                 {
