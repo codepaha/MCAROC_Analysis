@@ -11,8 +11,6 @@ namespace MCAROC_Analysis.Services.Excel;
 /// non-blank cell; fully-empty rows (trailing padding from the reader) are not "source rows".</summary>
 public static class SourceRowRecorder
 {
-    private const string CellSeparator = ""; // ASCII unit separator — cannot occur in workbook text
-
     public static List<SourceRow> Record(
         IReadOnlyList<SheetData> workbook, string workbookRole, long requestId, long ingestionRunId,
         long sourceDocumentId, DateTime extractedAt)
@@ -26,6 +24,7 @@ public static class SourceRowRecorder
                 var cells = sheet.Rows[r].Select(Stringify).ToArray();
                 if (cells.All(string.IsNullOrWhiteSpace)) continue; // reader padding, not a source row
 
+                var cellsJson = JsonSerializer.Serialize(cells);
                 rows.Add(new SourceRow
                 {
                     RequestId = requestId,
@@ -35,8 +34,8 @@ public static class SourceRowRecorder
                     SheetName = sheet.Name,
                     SheetIndex = s,
                     RowNumber = r + 1,
-                    CellsJson = JsonSerializer.Serialize(cells),
-                    RowHash = Hash(cells),
+                    CellsJson = cellsJson,
+                    RowHash = Hash(cellsJson),
                     ExtractedAt = extractedAt
                 });
             }
@@ -53,9 +52,8 @@ public static class SourceRowRecorder
         _ => cell.ToString()
     };
 
-    private static string Hash(IEnumerable<string?> cells)
-    {
-        var joined = string.Join(CellSeparator, cells.Select(c => c?.Trim() ?? string.Empty));
-        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(joined)));
-    }
+    /// <summary>SHA-256 of the exact serialized ordered cell array — no trimming, no null/empty
+    /// coalescing — so two rows collapse only when their raw cell content is truly identical.</summary>
+    private static string Hash(string cellsJson) =>
+        Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(cellsJson)));
 }

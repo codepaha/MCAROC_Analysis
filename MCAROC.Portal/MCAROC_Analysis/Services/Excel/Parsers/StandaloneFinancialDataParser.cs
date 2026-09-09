@@ -56,6 +56,8 @@ public static class StandaloneFinancialDataParser
         void CaptureFacts(IReadOnlyList<object?> row, string label, IReadOnlyList<int?> factYears,
             FinancialStatementSection section, int rowNumber, int columnOffset, bool yearInferred)
         {
+            if (IsStructuralRow(label, row, columnOffset)) return; // a repeated "Year" header inside a section, not a fact
+
             var captured = new List<FinancialFact>();
             for (var i = 0; i < factYears.Count; i++)
             {
@@ -237,6 +239,26 @@ public static class StandaloneFinancialDataParser
             var entity = getOrCreate(year.Value);
             typeof(FinancialYearData).GetProperty(property)!.SetValue(entity, value);
         }
+    }
+
+    private static readonly string[] StructuralLabels = ["year", "financial year", "fy", "particulars", "period", "period ended", "as at"];
+
+    /// <summary>A sub-header row that repeats inside a stacked section (e.g. a "Year 2017 2016 2015" row
+    /// in the RATIOS block) — its values are the column years, not financial figures.</summary>
+    private static bool IsStructuralRow(string label, IReadOnlyList<object?> row, int columnOffset)
+    {
+        var l = label.Trim().ToLowerInvariant();
+        if (StructuralLabels.Contains(l)) return true;
+
+        var vals = new List<int>();
+        for (var c = columnOffset; c < row.Count; c++)
+        {
+            var raw = row[c]?.ToString()?.Trim();
+            if (string.IsNullOrEmpty(raw) || raw == "-") continue;
+            if (int.TryParse(raw, out var y) && y is >= 1990 and <= 2100) vals.Add(y);
+            else return false; // a real value in the row → it's a data row, not a year header
+        }
+        return vals.Count >= 2; // every value is a 4-digit year → a year header
     }
 
     private static string? Label(IReadOnlyList<object?> row) => row.Count > 0 ? row[0]?.ToString()?.Trim() : null;

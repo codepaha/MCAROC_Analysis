@@ -262,6 +262,9 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
         {
             e.HasKey(x => x.SourceRowId);
             e.HasIndex(x => new { x.RequestId, x.IngestionRunId, x.WorkbookRole, x.SheetName });
+            // Layer 0 is immutable and append-only: exactly one record per physical (run, workbook,
+            // sheet, row). A retry or bug that tried to re-insert a raw row is rejected by the DB.
+            e.HasIndex(x => new { x.IngestionRunId, x.WorkbookRole, x.SheetIndex, x.RowNumber }).IsUnique();
             e.Property(x => x.WorkbookRole).HasMaxLength(20);
             e.Property(x => x.SheetName).HasMaxLength(255);
             e.Property(x => x.RowHash).HasMaxLength(64).IsFixedLength();

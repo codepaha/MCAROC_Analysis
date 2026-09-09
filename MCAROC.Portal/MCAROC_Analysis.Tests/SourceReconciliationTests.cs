@@ -37,10 +37,21 @@ public class SourceReconciliationTests : IAsyncLifetime
 
     private static (string Roc, string Charge)? Fixtures()
     {
+        // 1. git-ignored Fixtures/workbooks/{roc,charge}.xls (local dev).
         var dir = Path.Combine(RepoRoot(), "MCAROC.Portal", "MCAROC_Analysis.Tests", "Fixtures", "workbooks");
         var roc = Path.Combine(dir, "roc.xls");
         var charge = Path.Combine(dir, "charge.xls");
-        return File.Exists(roc) && File.Exists(charge) ? (roc, charge) : null;
+        if (File.Exists(roc) && File.Exists(charge)) return (roc, charge);
+
+        // 2. a secured directory on the self-hosted runner, by original filename (CI sets this env var).
+        var env = Environment.GetEnvironmentVariable("MCAROC_RECON_FIXTURES");
+        if (!string.IsNullOrWhiteSpace(env))
+        {
+            var r = Path.Combine(env, "U45203OR1995PLC003982.xls");
+            var c = Path.Combine(env, "U45203OR1995PLC003982-charge.xls");
+            if (File.Exists(r) && File.Exists(c)) return (r, c);
+        }
+        return null;
     }
 
     /// <summary>How SourceRowRecorder counts a "source row": a sheet row with at least one non-blank cell.</summary>
@@ -118,7 +129,63 @@ public class SourceReconciliationTests : IAsyncLifetime
             x.IngestionRunId == run.IngestionRunId && x.RecordType == ComplianceRecordType.SuitFiled);
         Assert.True(suitFiled > 500, $"suit-filed history should be kept in full, got {suitFiled}");
 
-        var facts = await db.FinancialFacts.CountAsync(x => x.IngestionRunId == run.IngestionRunId);
-        Assert.True(facts > 50, $"unmapped financial line items should be captured, got {facts}");
+        var facts = await db.FinancialFacts.Where(x => x.IngestionRunId == run.IngestionRunId).ToListAsync();
+        Assert.True(facts.Count > 50, $"unmapped financial line items should be captured, got {facts.Count}");
+
+        // ── exact content, not just totals ──
+
+        // A known row is captured verbatim on its own sheet at its own row number, and the hash is
+        // exactly SHA-256(CellsJson).
+        var cinRow = sourceRows.First(s => s.WorkbookRole == "RocReport"
+            && s.CellsJson.Contains("U45203OR1995PLC003982"));
+        var cells = System.Text.Json.JsonSerializer.Deserialize<string?[]>(cinRow.CellsJson)!;
+        Assert.Contains(cells, v => v == "U45203OR1995PLC003982");
+        var expectedHash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
+            System.Text.Encoding.UTF8.GetBytes(cinRow.CellsJson)));
+        Assert.Equal(expectedHash, cinRow.RowHash);
+
+        // Re-recording the same workbook is deterministic — same (sheet, row) → same CellsJson + hash.
+        var reRecorded = SourceRowRecorder.Record(reader.ReadWorkbook(fx.Roc), "RocReport", 1, 1, 1, DateTime.UtcNow);
+        var same = reRecorded.First(s => s.SheetName == cinRow.SheetName && s.RowNumber == cinRow.RowNumber);
+        Assert.Equal(cinRow.CellsJson, same.CellsJson);
+        Assert.Equal(cinRow.RowHash, same.RowHash);
+
+        // Representative financial retention: at least one ratio and one balance-sheet reserves line
+        // survived into FinancialFacts with a parsed number.
+        Assert.Contains(facts, x => x.Section == FinancialStatementSection.Ratios && x.NumericValue is not null);
+        Assert.Contains(facts, x => x.Label.Contains("Reserves", StringComparison.OrdinalIgnoreCase) && x.NumericValue is not null);
+
+        // No structural year-header row leaked in as a fact.
+        Assert.DoesNotContain(facts, x => x.Label.Trim().Equals("Year", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public async Task Duplicate_raw_row_insertion_is_rejected_by_the_database()
+    {
+        await using var db = CreateContext();
+        var client = new Client { ClientCode = $"DUP{Guid.NewGuid():N}"[..10], ClientName = "Dup", CreatedDate = DateTime.UtcNow };
+        db.Clients.Add(client);
+        var request = new McaRequest
+        {
+            Client = client, EntityType = EntityType.Company, CompanyName = "Dup Co",
+            RequestNumber = $"DUP-{Guid.NewGuid():N}", RequestStatus = RequestStatus.DataExtracted, CreatedDate = DateTime.UtcNow
+        };
+        db.Requests.Add(request);
+        await db.SaveChangesAsync();
+        var run = new IngestionRun { RequestId = request.RequestId, RunNumber = 1, StartedDate = DateTime.UtcNow, Status = IngestionRunStatus.Running };
+        db.IngestionRuns.Add(run);
+        await db.SaveChangesAsync();
+
+        SourceRow Make() => new()
+        {
+            RequestId = request.RequestId, IngestionRunId = run.IngestionRunId, SourceDocumentId = 1,
+            WorkbookRole = "RocReport", SheetName = "Directors", SheetIndex = 2, RowNumber = 5,
+            CellsJson = "[\"x\"]", RowHash = new string('0', 64), ExtractedAt = DateTime.UtcNow
+        };
+        db.SourceRows.Add(Make());
+        await db.SaveChangesAsync();
+
+        db.SourceRows.Add(Make());
+        await Assert.ThrowsAnyAsync<DbUpdateException>(() => db.SaveChangesAsync());
     }
 }
