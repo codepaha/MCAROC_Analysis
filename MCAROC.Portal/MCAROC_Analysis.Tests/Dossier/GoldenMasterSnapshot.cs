@@ -1,4 +1,5 @@
 using MCAROC_Analysis.Models;
+using MCAROC_Analysis.Models.Dossier;
 
 namespace MCAROC_Analysis.Tests.Dossier;
 
@@ -55,4 +56,30 @@ public sealed record GoldenMasterSnapshot(
         RevenueYoYPercent: vm.RevenueYoYPercent,
         ActiveDirectorCount: vm.ActiveDirectorCount,
         FindingCodesInDisplayOrder: vm.AnalysisFindings.Select(f => f.Code).ToArray());
+
+    public static GoldenMasterSnapshot From(DossierModel m) => new(
+        OpenChargeCount: m.Charges.OpenCount,
+        SatisfiedChargeCount: m.Charges.SatisfiedCount,
+        TotalChargeCount: m.Charges.TotalCount,
+        ChargeHolderCount: m.Charges.HolderCount,
+        ModifiedChargeCount: m.Charges.ModifiedCount,
+        MaterialEnhancementFindingCount: m.Charges.MaterialEnhancementFindingCount,
+        TotalOpenChargeAmount: m.Charges.TotalOpenAmount,
+        LargestChargeAmount: m.Charges.LargestAmount,
+        LenderConcentrationHolders: m.Charges.LenderConcentration.Select(r => r.Holder).ToArray(),
+        SecurityTypeLabelsByCharge: m.Charges.All.ToDictionary(
+            c => c.RocChargeNumber, c => m.Charges.SecurityTypeLabels(c).ToArray()),
+        LitigationFiledAgainstCount: m.Litigation.FiledAgainstCount,
+        LitigationFiledByCount: m.Litigation.FiledByCount,
+        LitigationRoleNotDeterminedCount: m.Litigation.NotDeterminedCount,
+        LitigationRoleByCaseNumber: m.Litigation.All
+            .Where(l => l.CaseNumber is not null)
+            .ToDictionary(l => l.CaseNumber!, l => m.Litigation.RoleFor(l).ToString()),
+        StandaloneFyCount: m.Financials.Standalone.Count,
+        ConsolidatedFyCount: m.Financials.Consolidated.Count,
+        LatestFinancialYear: m.Financials.LatestYear,
+        LatestRevenue: m.Financials.LatestRevenue,
+        RevenueYoYPercent: m.Financials.RevenueYoYPercent,
+        ActiveDirectorCount: m.Corporate.ActiveDirectorCount,
+        FindingCodesInDisplayOrder: m.ExecSummary.FindingsInDisplayOrder.Select(f => f.Code).ToArray());
 }

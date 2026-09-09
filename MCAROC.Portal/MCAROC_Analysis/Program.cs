@@ -108,6 +108,11 @@ builder.Services.AddScoped(sp => new DocumentRetriever(sp.GetRequiredService<App
 builder.Services.AddScoped<RetrievalContextBuilder>();
 builder.Services.AddScoped<ChatService>();
 
+// Phase 7 — client "Due Diligence Dossier" (assembled model shared by the PDF and the portal).
+builder.Services.AddMemoryCache(o => o.SizeLimit = 256);
+builder.Services.AddScoped<DossierAssembler>();
+builder.Services.AddScoped<DossierCache>();
+
 var app = builder.Build();
 
 // Register the bundled Fraunces / IBM Plex fonts with QuestPDF so the dossier renders identically

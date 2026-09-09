@@ -1,0 +1,94 @@
+using MCAROC_Analysis.Data.Entities;
+using MCAROC_Analysis.Services.Analysis;
+using MCAROC_Analysis.Services.Dossier;
+
+namespace MCAROC_Analysis.Models.Dossier;
+
+/// <summary>The assembled, de-duplicated view of one analyzed request — the single source both the
+/// client PDF (QuestPDF composer) and the restyled company page render from. Built by
+/// <c>DossierAssembler</c>, cached by <c>DossierCache</c> keyed on the ingestion + analysis run ids.</summary>
+public sealed record DossierModel(
+    long RequestId,
+    long IngestionRunId,
+    long? AnalysisRunId,
+    DossierCover Cover,
+    DossierCorporate Corporate,
+    DossierFinancials Financials,
+    DossierCharges Charges,
+    DossierCompliance Compliance,
+    DossierLitigation Litigation,
+    DossierExecSummary ExecSummary);
+
+public sealed record DossierCover(
+    string CompanyName, string? Cin, string? Pan, DateOnly? IncorporationDate, string? Status,
+    string ClientName, DateTime ReportDate, DateTime? McaDataAsOf);
+
+public sealed record DossierCorporate(
+    IReadOnlyList<Director> Directors,
+    IReadOnlyList<CompanyOfficer> Officers,
+    IReadOnlyList<Shareholding> Shareholders,
+    IReadOnlyList<RelatedCorporate> RelatedCorporates,
+    IReadOnlyList<SecurityAllotment> SecurityAllotments,
+    IReadOnlyList<DirectorAssignmentHistory> DesignationHistory,
+    IReadOnlyList<DirectorAssociation> OtherDirectorships,
+    CompanyStructure? Structure)
+{
+    public int ActiveDirectorCount => Directors.Count(d => d.CessationDate is null);
+}
+
+public sealed record DossierFinancials(
+    IReadOnlyList<FinancialYearData> Standalone,
+    IReadOnlyList<FinancialYearData> Consolidated,
+    IReadOnlyList<FinancialFact> Facts,
+    IReadOnlyList<FinancialParameter> Parameters,
+    IReadOnlyList<AuditorObservation> AuditorObservations,
+    IReadOnlyList<PeerComparisonMetric> PeerComparison)
+{
+    public FinancialYearData? Latest => Standalone.OrderBy(f => f.FinancialYear).LastOrDefault();
+    public int? LatestYear => Latest?.FinancialYear;
+    public decimal? LatestRevenue => Latest?.Revenue;
+    public decimal? RevenueYoYPercent => DossierComputations.RevenueYoYPercent(Standalone);
+}
+
+public sealed record DossierCharges(
+    IReadOnlyList<RocCharge> All,
+    IReadOnlyList<RocCharge> Open,
+    IReadOnlyList<RocCharge> Satisfied,
+    IReadOnlyList<LenderConcentrationRow> LenderConcentration,
+    int MaterialEnhancementFindingCount)
+{
+    public int OpenCount => Open.Count;
+    public int SatisfiedCount => Satisfied.Count;
+    public int TotalCount => All.Count;
+    public int HolderCount => DossierComputations.ChargeHolderCount(All);
+    public int ModifiedCount => DossierComputations.ModifiedChargeCount(All);
+    public decimal TotalOpenAmount => Open.Sum(c => c.CurrentAmount ?? 0m);
+    public decimal? LargestAmount => All.Count == 0 ? null : All.Max(c => c.CurrentAmount);
+    public IReadOnlyList<string> SecurityTypeLabels(RocCharge c) => DossierComputations.SecurityTypeLabels(c);
+}
+
+public sealed record DossierCompliance(
+    IReadOnlyList<ComplianceRecord> Records,
+    IReadOnlyList<MsmePayment> Msme,
+    IReadOnlyList<GstRegistration> Gst,
+    IReadOnlyList<EpfoContribution> Epfo,
+    IReadOnlyList<(string Bank, string? DefaulterType, decimal? Amount, int Quarters, DateOnly? Latest)> SuitFiledSummary);
+
+public sealed record DossierLitigation(
+    IReadOnlyList<Litigation> All,
+    IReadOnlyList<LitigationThread> Threads,
+    IReadOnlyDictionary<long, LitigationRole> RoleById)
+{
+    public LitigationRole RoleFor(Litigation l) => RoleById.GetValueOrDefault(l.LitigationId, LitigationRole.NotDetermined);
+    public int FiledAgainstCount => RoleById.Values.Count(v => v == LitigationRole.FiledAgainst);
+    public int FiledByCount => RoleById.Values.Count(v => v == LitigationRole.FiledBy);
+    public int NotDeterminedCount => RoleById.Values.Count(v => v == LitigationRole.NotDetermined);
+    public int PendingCount => All.Count(DossierComputations.IsPendingLitigation);
+    public int DisposedCount => All.Count - PendingCount;
+}
+
+public sealed record DossierExecSummary(
+    ReviewPriority? ReviewPriority,
+    int CriticalCount, int ReviewCount, int WatchCount, int PositiveCount,
+    IReadOnlyList<AnalysisFinding> FindingsInDisplayOrder,
+    ExecutiveSummary? Structured);
