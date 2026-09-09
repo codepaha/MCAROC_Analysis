@@ -65,7 +65,7 @@ foreach (var dir in companyDirs)
         Tally(shResult);
 
         var finSheet = SheetAliases.Find(rocWorkbook, SheetAliases.StandaloneFinancialData);
-        var finResult = finSheet is not null ? StandaloneFinancialDataParser.Parse(finSheet, 0, 0, null) : new ParseResult<MCAROC_Analysis.Data.Entities.FinancialYearData>();
+        var finResult = finSheet is not null ? StandaloneFinancialDataParser.Parse(finSheet, 0, 0, null, out _) : new ParseResult<MCAROC_Analysis.Data.Entities.FinancialYearData>();
         Tally(finResult);
 
         var chargesResult = ChargesParser.Parse(rocWorkbook, chargeWorkbook, chargeWorkbook is not null, 0, 0, null, null);

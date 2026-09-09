@@ -223,16 +223,20 @@ public class IngestionOrchestrator(AppDbContext db, IExcelSheetReader sheetReade
         var financialSheet = SheetAliases.Find(rocWorkbook, SheetAliases.StandaloneFinancialData);
         if (financialSheet is not null)
         {
-            var r = StandaloneFinancialDataParser.Parse(financialSheet, requestId, runId, rocDocumentId, FinancialBasis.Standalone);
+            var r = StandaloneFinancialDataParser.Parse(financialSheet, requestId, runId, rocDocumentId, out var facts, FinancialBasis.Standalone);
             db.FinancialYearData.AddRange(r.Items);
+            db.FinancialFacts.AddRange(facts);
+            itemCount += facts.Count;
             Collect(r, issues, ref itemCount);
         }
 
         var consolidatedSheet = SheetAliases.Find(rocWorkbook, SheetAliases.ConsolidatedFinancialData);
         if (consolidatedSheet is not null)
         {
-            var r = StandaloneFinancialDataParser.Parse(consolidatedSheet, requestId, runId, rocDocumentId, FinancialBasis.Consolidated);
+            var r = StandaloneFinancialDataParser.Parse(consolidatedSheet, requestId, runId, rocDocumentId, out var facts, FinancialBasis.Consolidated);
             db.FinancialYearData.AddRange(r.Items);
+            db.FinancialFacts.AddRange(facts);
+            itemCount += facts.Count;
             Collect(r, issues, ref itemCount);
         }
 

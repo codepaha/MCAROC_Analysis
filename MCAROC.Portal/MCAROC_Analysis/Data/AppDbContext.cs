@@ -51,8 +51,9 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<PeerComparisonMetric> PeerComparisonMetrics => Set<PeerComparisonMetric>();
     public DbSet<ChargeSecurityComponent> ChargeSecurityComponents => Set<ChargeSecurityComponent>();
 
-    // Phase 7.0 — raw source-row staging (Layer 0)
+    // Phase 7.0 — raw source-row staging (Layer 0) + unmapped-financials catch-all
     public DbSet<SourceRow> SourceRows => Set<SourceRow>();
+    public DbSet<FinancialFact> FinancialFacts => Set<FinancialFact>();
 
     protected override void ConfigureConventions(ModelConfigurationBuilder configurationBuilder)
     {
@@ -263,6 +264,15 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             e.Property(x => x.WorkbookRole).HasMaxLength(20);
             e.Property(x => x.SheetName).HasMaxLength(255);
             e.Property(x => x.RowHash).HasMaxLength(64).IsFixedLength();
+        });
+
+        modelBuilder.Entity<FinancialFact>(e =>
+        {
+            e.HasKey(x => x.FinancialFactId);
+            e.HasIndex(x => new { x.RequestId, x.IngestionRunId, x.Basis });
+            e.Property(x => x.Basis).HasConversion<string>().HasMaxLength(15);
+            e.Property(x => x.Section).HasConversion<string>().HasMaxLength(15);
+            e.Property(x => x.Label).HasMaxLength(300);
         });
 
         modelBuilder.Entity<AnalysisRun>(e =>

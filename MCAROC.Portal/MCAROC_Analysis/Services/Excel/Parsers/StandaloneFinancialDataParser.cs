@@ -42,12 +42,47 @@ public static class StandaloneFinancialDataParser
     };
 
     /// <summary>Also parses the identically-structured "Consolidated Financial Data" sheet — pass
-    /// <paramref name="basis"/> = Consolidated. Every produced row is stamped with that basis.</summary>
+    /// <paramref name="basis"/> = Consolidated. Every produced row is stamped with that basis.
+    /// <paramref name="facts"/> receives every value-bearing label × year on the sheet that is NOT
+    /// mapped to a typed <see cref="FinancialYearData"/> column, so nothing is silently dropped.</summary>
     public static ParseResult<FinancialYearData> Parse(
         SheetData sheet, long requestId, long ingestionRunId, long? sourceDocumentId,
-        FinancialBasis basis = FinancialBasis.Standalone)
+        out List<FinancialFact> facts, FinancialBasis basis = FinancialBasis.Standalone)
     {
         var result = new ParseResult<FinancialYearData>();
+        facts = [];
+        var factSink = facts;
+
+        void CaptureFacts(IReadOnlyList<object?> row, string label, IReadOnlyList<int?> factYears,
+            FinancialStatementSection section, int rowNumber, int columnOffset, bool yearInferred)
+        {
+            var captured = new List<FinancialFact>();
+            for (var i = 0; i < factYears.Count; i++)
+            {
+                var col = columnOffset + i;
+                if (col >= row.Count) continue;
+                var raw = row[col]?.ToString()?.Trim();
+                if (string.IsNullOrEmpty(raw) || raw == "-") continue;
+
+                AmountNormalizer.TryParse(row[col], out var value, out _);
+                captured.Add(new FinancialFact
+                {
+                    RequestId = requestId,
+                    IngestionRunId = ingestionRunId,
+                    SourceDocumentId = sourceDocumentId,
+                    SourceSheetName = sheet.Name,
+                    SourceRowNumber = rowNumber + 1,
+                    Basis = basis,
+                    Section = section,
+                    Label = label,
+                    FinancialYear = factYears[i],
+                    RawValue = raw,
+                    NumericValue = value,
+                    YearInferred = yearInferred
+                });
+            }
+            if (captured.Count > 0) factSink.AddRange(captured); // skip header/sub-total-only rows
+        }
 
         var headerRowIndex = FindRowIndex(sheet, r => Label(r)?.StartsWith("BALANCE SHEET", StringComparison.OrdinalIgnoreCase) == true);
         if (headerRowIndex is null)
@@ -82,6 +117,7 @@ public static class StandaloneFinancialDataParser
         }
 
         // Balance Sheet + P&L: aligned to the master year header.
+        var section = FinancialStatementSection.BalanceSheet;
         for (var r = headerRowIndex.Value + 1; r < sheet.Rows.Count; r++)
         {
             var label = Label(sheet.Rows[r]);
@@ -90,9 +126,18 @@ public static class StandaloneFinancialDataParser
             if (label.Equals("CASH FLOW - AOC-4 (Rs. Crore)", StringComparison.OrdinalIgnoreCase))
                 break; // switch to the cash-flow handling loop below
 
-            if (!BalanceSheetAndPnlRowToProperty.TryGetValue(label, out var property)) continue;
+            if (label.Contains("PROFIT & LOSS", StringComparison.OrdinalIgnoreCase)
+                || label.Contains("PROFIT AND LOSS", StringComparison.OrdinalIgnoreCase)
+                || label.Contains("STATEMENT OF PROFIT", StringComparison.OrdinalIgnoreCase))
+            {
+                section = FinancialStatementSection.ProfitAndLoss; // section sub-header, not a line item
+                continue;
+            }
 
-            ApplyRow(sheet.Rows[r], years, byYear, property, GetOrCreate, result, r);
+            if (BalanceSheetAndPnlRowToProperty.TryGetValue(label, out var property))
+                ApplyRow(sheet.Rows[r], years, byYear, property, GetOrCreate, result, r);
+            else
+                CaptureFacts(sheet.Rows[r], label, years, section, r, columnOffset: 2, yearInferred: false);
         }
 
         // Cash Flow: locate the section and its own (possibly shorter) populated column range.
@@ -119,6 +164,7 @@ public static class StandaloneFinancialDataParser
                         cashFlowHeaderIndex.Value + 1));
                 }
 
+                var cashFlowInferred = populatedCount > 0 && populatedCount < years.Count;
                 var cashFlowYears = populatedCount > 0
                     ? years.Skip(Math.Max(0, years.Count - populatedCount)).ToList()
                     : years;
@@ -130,10 +176,26 @@ public static class StandaloneFinancialDataParser
                     if (label.StartsWith("RATIOS", StringComparison.OrdinalIgnoreCase) || label.StartsWith("AUDITOR", StringComparison.OrdinalIgnoreCase))
                         break;
 
-                    if (!CashFlowRowToProperty.TryGetValue(label, out var property)) continue;
-
-                    ApplyRow(sheet.Rows[r], cashFlowYears, byYear, property, GetOrCreate, result, r, columnOffset: 2);
+                    if (CashFlowRowToProperty.TryGetValue(label, out var property))
+                        ApplyRow(sheet.Rows[r], cashFlowYears, byYear, property, GetOrCreate, result, r, columnOffset: 2);
+                    else
+                        CaptureFacts(sheet.Rows[r], label, cashFlowYears, FinancialStatementSection.CashFlow, r,
+                            columnOffset: 2, yearInferred: cashFlowInferred);
                 }
+            }
+        }
+
+        // Ratios section — never mapped to a typed column; capture it whole so leverage / liquidity /
+        // margin ratios reach the dossier.
+        var ratiosHeaderIndex = FindRowIndex(sheet, r => Label(r)?.StartsWith("RATIOS", StringComparison.OrdinalIgnoreCase) == true);
+        if (ratiosHeaderIndex is not null)
+        {
+            for (var r = ratiosHeaderIndex.Value + 1; r < sheet.Rows.Count; r++)
+            {
+                var label = Label(sheet.Rows[r]);
+                if (label is null) continue;
+                if (label.StartsWith("AUDITOR", StringComparison.OrdinalIgnoreCase)) break;
+                CaptureFacts(sheet.Rows[r], label, years, FinancialStatementSection.Ratios, r, columnOffset: 2, yearInferred: false);
             }
         }
 
