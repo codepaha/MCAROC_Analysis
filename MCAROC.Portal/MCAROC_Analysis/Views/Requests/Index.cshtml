@@ -1,0 +1,144 @@
+@model RequestListViewModel
+@{
+    ViewData["Title"] = "Search History";
+    ViewBag.Clients = Model.Clients;
+}
+
+<h1>Search History</h1>
+
+<form method="get" asp-action="Index" class="row g-2 mb-3 align-items-end">
+    <div class="col-auto">
+        <label class="form-label small mb-0">Search</label>
+        <input type="text" name="SearchText" value="@Model.Filters.SearchText" class="form-control form-control-sm" placeholder="Request #, Company, CIN/LLPIN, PAN" />
+    </div>
+    <div class="col-auto">
+        <label class="form-label small mb-0">Date From</label>
+        <input type="date" name="DateFrom" value="@Model.Filters.DateFrom?.ToString("yyyy-MM-dd")" class="form-control form-control-sm" />
+    </div>
+    <div class="col-auto">
+        <label class="form-label small mb-0">Date To</label>
+        <input type="date" name="DateTo" value="@Model.Filters.DateTo?.ToString("yyyy-MM-dd")" class="form-control form-control-sm" />
+    </div>
+    <div class="col-auto">
+        <label class="form-label small mb-0">Client</label>
+        <select name="ClientId" class="form-select form-select-sm">
+            <option value="">All Clients</option>
+            @foreach (var c in Model.Clients)
+            {
+                <option value="@c.ClientId" selected="@(Model.Filters.ClientId == c.ClientId)">@c.ClientName@(c.IsActive ? "" : " (inactive)")</option>
+            }
+        </select>
+    </div>
+    <div class="col-auto">
+        <label class="form-label small mb-0">Analysis Status</label>
+        <select name="Status" class="form-select form-select-sm">
+            <option value="">All</option>
+            @foreach (var s in Enum.GetValues<RequestStatus>())
+            {
+                <option value="@s" selected="@(Model.Filters.Status == s)">@s</option>
+            }
+        </select>
+    </div>
+    <div class="col-auto">
+        <label class="form-label small mb-0">Review Priority</label>
+        <select name="Priority" class="form-select form-select-sm">
+            <option value="">All</option>
+            @foreach (var p in Enum.GetValues<ReviewPriority>())
+            {
+                <option value="@p" selected="@(Model.Filters.Priority == p)">@p</option>
+            }
+        </select>
+    </div>
+    <div class="col-auto">
+        <label class="form-label small mb-0">Entity Type</label>
+        <select name="EntityType" class="form-select form-select-sm">
+            <option value="">All</option>
+            @foreach (var e in Enum.GetValues<EntityType>())
+            {
+                <option value="@e" selected="@(Model.Filters.EntityType == e)">@e</option>
+            }
+        </select>
+    </div>
+    <div class="col-auto">
+        <label class="form-label small mb-0">Sort</label>
+        <select name="Sort" class="form-select form-select-sm">
+            <option value="@RequestListSort.CreatedDateDesc" selected="@(Model.Filters.Sort == RequestListSort.CreatedDateDesc)">Newest</option>
+            <option value="@RequestListSort.CreatedDateAsc" selected="@(Model.Filters.Sort == RequestListSort.CreatedDateAsc)">Oldest</option>
+            <option value="@RequestListSort.PriorityDesc" selected="@(Model.Filters.Sort == RequestListSort.PriorityDesc)">Priority</option>
+            <option value="@RequestListSort.CompanyNameAsc" selected="@(Model.Filters.Sort == RequestListSort.CompanyNameAsc)">Company</option>
+        </select>
+    </div>
+    <div class="col-auto">
+        <button type="submit" class="btn btn-primary btn-sm">Apply</button>
+    </div>
+</form>
+
+<partial name="_ActiveFilters" model="Model.Filters" />
+
+@if (Model.Rows.Count == 0)
+{
+    <p class="text-muted">No data for the selected filters.</p>
+}
+else
+{
+    <table class="table table-sm">
+        <thead>
+            <tr>
+                <th>Request Number</th>
+                <th>Client</th>
+                <th>Company</th>
+                <th>CIN/LLPIN/PAN</th>
+                <th>Review Priority</th>
+                <th>Attention</th>
+                <th>Status</th>
+                <th>Created</th>
+                <th></th>
+            </tr>
+        </thead>
+        <tbody>
+        @foreach (var row in Model.Rows)
+        {
+            <tr>
+                <td>@row.Request.RequestNumber</td>
+                <td>@row.Request.Client?.ClientName</td>
+                <td>@row.Request.CompanyName</td>
+                <td>@(row.Request.Cin ?? row.Request.Llpin ?? row.Request.Pan)</td>
+                <td>
+                    @if (row.Priority is { } p)
+                    {
+                        var badgeClass = p switch { ReviewPriority.High => "bg-danger", ReviewPriority.Medium => "bg-warning text-dark", _ => "bg-success" };
+                        <span class="badge @badgeClass">@p</span>
+                    }
+                    else
+                    {
+                        <span class="text-muted">&mdash;</span>
+                    }
+                </td>
+                <td>
+                    @foreach (var reason in row.AttentionReasons)
+                    {
+                        <span class="badge bg-warning text-dark me-1">@reason</span>
+                    }
+                </td>
+                <td>@row.Request.RequestStatus</td>
+                <td>@row.Request.CreatedDate.ToString("d MMM yyyy")</td>
+                <td><a asp-controller="Requests" asp-action="Details" asp-route-id="@row.Request.RequestId" class="btn btn-sm btn-outline-primary">View</a></td>
+            </tr>
+        }
+        </tbody>
+    </table>
+
+    @if (Model.TotalPages > 1)
+    {
+        <nav>
+            <ul class="pagination pagination-sm">
+                @for (var p = 1; p <= Model.TotalPages; p++)
+                {
+                    <li class="page-item @(p == Model.Filters.Page ? "active" : "")">
+                        <a class="page-link" asp-controller="Requests" asp-action="Index" asp-all-route-data="@(Model.Filters.ToRouteValues(new() { ["Page"] = p.ToString() }))">@p</a>
+                    </li>
+                }
+            </ul>
+        </nav>
+    }
+}
