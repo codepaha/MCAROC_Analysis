@@ -12,7 +12,11 @@ public class ChatController(ChatService chatService) : Controller
     public async Task<IActionResult> Ask(long requestId, string question, CancellationToken ct)
     {
         if (!string.IsNullOrWhiteSpace(question))
-            await chatService.AskAsync(requestId, question.Trim(), ct);
+        {
+            var answer = await chatService.AskAsync(requestId, question.Trim(), ct);
+            if (answer is null)
+                return NotFound();
+        }
 
         // Land back on the "Ask Documents" tab (Details.cshtml deep-links #tab-... hashes).
         return Redirect(Url.Action("Details", "Requests", new { id = requestId, area = "" }) + "#tab-ask");
