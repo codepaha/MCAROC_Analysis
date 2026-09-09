@@ -91,7 +91,17 @@ public class ChatService(
 
         var session = new ChatSession { RequestId = requestId, CreatedDate = DateTime.UtcNow, LastActivityDate = DateTime.UtcNow };
         db.ChatSessions.Add(session);
-        await db.SaveChangesAsync(ct);
-        return session;
+        try
+        {
+            await db.SaveChangesAsync(ct);
+            return session;
+        }
+        catch (DbUpdateException)
+        {
+            // A concurrent request created the session first (unique index on RequestId). Drop our
+            // pending insert and use theirs so both turns land in the same conversation.
+            db.Entry(session).State = EntityState.Detached;
+            return await db.ChatSessions.FirstAsync(s => s.RequestId == requestId, ct);
+        }
     }
 }
