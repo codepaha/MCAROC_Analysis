@@ -300,28 +300,4 @@ public partial class DossierPdfComposer
         _ => "contents"
     };
 
-    // ── Annexures (stubs until A7/A8) ──────────────────────────────────────
-
-    private void ComposeAnnexures(IContainer container) => container.Column(col =>
-    {
-        foreach (var (key, kicker, title) in new[]
-        {
-            ("annexure-a", "Annexure A", "Corporate"),
-            ("annexure-b", "Annexure B", "Financials"),
-            ("annexure-c", "Annexure C", "Charges & Security"),
-            ("annexure-d", "Annexure D", "Compliance"),
-            ("annexure-e", "Annexure E", "Litigation"),
-        })
-        {
-            col.Item().Section(key).Element(c => Stub(c, kicker, title));
-            if (key != "annexure-e") col.Item().PageBreak();
-        }
-    });
-
-    private void Stub(IContainer container, string kicker, string title) => container.Column(col =>
-    {
-        col.Item().Element(c => Kicker(c, kicker));
-        col.Item().Element(c => SectionTitle(c, title));
-        col.Item().PaddingTop(6).Text("Full source record — follows in the next commit.").FontColor(DossierTheme.InkFaint);
-    });
 }
