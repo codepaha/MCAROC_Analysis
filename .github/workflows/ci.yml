@@ -31,7 +31,11 @@ jobs:
 
       - name: Publish test results
         uses: actions/upload-artifact@v4
-        if: always()
+        # Archiving the .trx is a convenience, not a gate: only bother when a test failed, and never let
+        # the upload itself turn the run red (e.g. the account's Actions storage quota is exhausted).
+        if: failure()
+        continue-on-error: true
         with:
           name: test-results
           path: MCAROC.Portal/MCAROC_Analysis.Tests/TestResults/test-results.trx
+          retention-days: 7
