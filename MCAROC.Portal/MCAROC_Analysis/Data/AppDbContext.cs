@@ -28,6 +28,9 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<AuditorObservation> AuditorObservations => Set<AuditorObservation>();
     public DbSet<Litigation> Litigations => Set<Litigation>();
 
+    public DbSet<AnalysisRun> AnalysisRuns => Set<AnalysisRun>();
+    public DbSet<AnalysisFinding> AnalysisFindings => Set<AnalysisFinding>();
+
     public DbSet<McaFilingBatch> McaFilingBatches => Set<McaFilingBatch>();
     public DbSet<McaFiling> McaFilings => Set<McaFiling>();
     public DbSet<McaFilingDocument> McaFilingDocuments => Set<McaFilingDocument>();
@@ -162,6 +165,27 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             e.HasKey(x => x.LitigationId);
             e.HasIndex(x => new { x.RequestId, x.IngestionRunId });
             e.Property(x => x.MatchStatus).HasConversion<string>().HasMaxLength(20);
+        });
+
+        modelBuilder.Entity<AnalysisRun>(e =>
+        {
+            e.HasKey(x => x.AnalysisRunId);
+            e.HasOne(x => x.Request).WithMany().HasForeignKey(x => x.RequestId).OnDelete(DeleteBehavior.Cascade);
+            e.HasIndex(x => new { x.RequestId, x.RunNumber }).IsUnique();
+            e.Property(x => x.Status).HasConversion<string>().HasMaxLength(30);
+            e.Property(x => x.OverallReviewPriority).HasConversion<string>().HasMaxLength(10);
+        });
+
+        modelBuilder.Entity<AnalysisFinding>(e =>
+        {
+            e.HasKey(x => x.FindingId);
+            e.HasOne<AnalysisRun>().WithMany(r => r.Findings).HasForeignKey(x => x.AnalysisRunId).OnDelete(DeleteBehavior.Cascade);
+            e.HasIndex(x => new { x.AnalysisRunId, x.Section });
+            e.HasIndex(x => new { x.RequestId, x.Code });
+            e.Property(x => x.Section).HasConversion<string>().HasMaxLength(20);
+            e.Property(x => x.Severity).HasConversion<string>().HasMaxLength(10);
+            e.Property(x => x.TemporalStatus).HasConversion<string>().HasMaxLength(10);
+            e.Property(x => x.Code).HasMaxLength(80);
         });
 
         modelBuilder.Entity<McaFilingBatch>(e =>

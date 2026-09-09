@@ -4,6 +4,7 @@ using MCAROC_Analysis.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 #nullable disable
@@ -11,9 +12,11 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace MCAROC_Analysis.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260908183537_AddAnalysisEngine")]
+    partial class AddAnalysisEngine
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -939,278 +942,6 @@ namespace MCAROC_Analysis.Migrations
                     b.ToTable("Litigations");
                 });
 
-            modelBuilder.Entity("MCAROC_Analysis.Data.Entities.McaFiling", b =>
-                {
-                    b.Property<long>("FilingId")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("bigint");
-
-                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("FilingId"));
-
-                    b.Property<long>("BatchId")
-                        .HasColumnType("bigint");
-
-                    b.Property<bool>("IdentityMatchesRequest")
-                        .HasColumnType("bit");
-
-                    b.Property<string>("ManualReviewReason")
-                        .HasColumnType("nvarchar(max)");
-
-                    b.Property<bool>("ManualReviewRequired")
-                        .HasColumnType("bit");
-
-                    b.Property<string>("NestedZipName")
-                        .IsRequired()
-                        .HasColumnType("nvarchar(max)");
-
-                    b.Property<string>("OuterCategoryFolder")
-                        .IsRequired()
-                        .HasColumnType("nvarchar(max)");
-
-                    b.Property<string>("ParsedCin")
-                        .HasColumnType("nvarchar(max)");
-
-                    b.Property<string>("ParsedCompanyName")
-                        .HasColumnType("nvarchar(max)");
-
-                    b.Property<long>("RequestId")
-                        .HasColumnType("bigint");
-
-                    b.Property<string>("Srn")
-                        .IsRequired()
-                        .HasColumnType("nvarchar(450)");
-
-                    b.HasKey("FilingId");
-
-                    b.HasIndex("BatchId", "Srn");
-
-                    b.ToTable("McaFilings");
-                });
-
-            modelBuilder.Entity("MCAROC_Analysis.Data.Entities.McaFilingBatch", b =>
-                {
-                    b.Property<long>("BatchId")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("bigint");
-
-                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("BatchId"));
-
-                    b.Property<DateTime?>("CompletedDate")
-                        .HasColumnType("datetime2");
-
-                    b.Property<int>("CumulativePdfCount")
-                        .HasColumnType("int");
-
-                    b.Property<long>("CumulativeUncompressedBytes")
-                        .HasColumnType("bigint");
-
-                    b.Property<string>("FailureReason")
-                        .HasColumnType("nvarchar(max)");
-
-                    b.Property<long>("RequestId")
-                        .HasColumnType("bigint");
-
-                    b.Property<long>("SourceDocumentId")
-                        .HasColumnType("bigint");
-
-                    b.Property<DateTime>("StartedDate")
-                        .HasColumnType("datetime2");
-
-                    b.Property<string>("Status")
-                        .IsRequired()
-                        .HasMaxLength(30)
-                        .HasColumnType("nvarchar(30)");
-
-                    b.HasKey("BatchId");
-
-                    b.HasIndex("RequestId");
-
-                    b.ToTable("McaFilingBatches");
-                });
-
-            modelBuilder.Entity("MCAROC_Analysis.Data.Entities.McaFilingDocument", b =>
-                {
-                    b.Property<long>("FilingDocumentId")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("bigint");
-
-                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("FilingDocumentId"));
-
-                    b.Property<string>("AiExtractionStatus")
-                        .IsRequired()
-                        .HasMaxLength(20)
-                        .HasColumnType("nvarchar(20)");
-
-                    b.Property<long>("BatchId")
-                        .HasColumnType("bigint");
-
-                    b.Property<string>("Category")
-                        .IsRequired()
-                        .HasMaxLength(20)
-                        .HasColumnType("nvarchar(20)");
-
-                    b.Property<string>("ClassificationConfidence")
-                        .IsRequired()
-                        .HasMaxLength(10)
-                        .HasColumnType("nvarchar(10)");
-
-                    b.Property<string>("ClassificationMethod")
-                        .IsRequired()
-                        .HasColumnType("nvarchar(max)");
-
-                    b.Property<long?>("DuplicateOfDocumentId")
-                        .HasColumnType("bigint");
-
-                    b.Property<int>("ExtractedCharCount")
-                        .HasColumnType("int");
-
-                    b.Property<string>("ExtractedTextPath")
-                        .HasColumnType("nvarchar(max)");
-
-                    b.Property<string>("FileHash")
-                        .IsRequired()
-                        .HasColumnType("nvarchar(450)");
-
-                    b.Property<long>("FilingId")
-                        .HasColumnType("bigint");
-
-                    b.Property<string>("FormType")
-                        .HasColumnType("nvarchar(max)");
-
-                    b.Property<string>("LastError")
-                        .HasColumnType("nvarchar(max)");
-
-                    b.Property<string>("ManualReviewReason")
-                        .HasColumnType("nvarchar(max)");
-
-                    b.Property<bool>("ManualReviewRequired")
-                        .HasColumnType("bit");
-
-                    b.Property<string>("MatchedRule")
-                        .HasColumnType("nvarchar(max)");
-
-                    b.Property<int>("NativePageCount")
-                        .HasColumnType("int");
-
-                    b.Property<int>("OcrPageCount")
-                        .HasColumnType("int");
-
-                    b.Property<string>("OriginalFileName")
-                        .IsRequired()
-                        .HasColumnType("nvarchar(max)");
-
-                    b.Property<int>("PageCount")
-                        .HasColumnType("int");
-
-                    b.Property<DateTime?>("ProcessingStartedAt")
-                        .HasColumnType("datetime2");
-
-                    b.Property<string>("ProcessingStatus")
-                        .IsRequired()
-                        .HasMaxLength(30)
-                        .HasColumnType("nvarchar(30)");
-
-                    b.Property<long>("RequestId")
-                        .HasColumnType("bigint");
-
-                    b.Property<int>("RetryCount")
-                        .HasColumnType("int");
-
-                    b.Property<string>("SourceFolder")
-                        .IsRequired()
-                        .HasColumnType("nvarchar(max)");
-
-                    b.Property<string>("StoragePath")
-                        .IsRequired()
-                        .HasColumnType("nvarchar(max)");
-
-                    b.Property<string>("TextExtractionMethod")
-                        .IsRequired()
-                        .HasMaxLength(10)
-                        .HasColumnType("nvarchar(10)");
-
-                    b.Property<DateTime>("UpdatedAt")
-                        .HasColumnType("datetime2");
-
-                    b.HasKey("FilingDocumentId");
-
-                    b.HasIndex("DuplicateOfDocumentId");
-
-                    b.HasIndex("FilingId");
-
-                    b.HasIndex("ProcessingStatus");
-
-                    b.HasIndex("BatchId", "FileHash");
-
-                    b.ToTable("McaFilingDocuments");
-                });
-
-            modelBuilder.Entity("MCAROC_Analysis.Data.Entities.McaFilingExtraction", b =>
-                {
-                    b.Property<long>("ExtractionId")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("bigint");
-
-                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("ExtractionId"));
-
-                    b.Property<DateTime>("ExtractedAt")
-                        .HasColumnType("datetime2");
-
-                    b.Property<string>("ExtractedJson")
-                        .HasColumnType("nvarchar(max)");
-
-                    b.Property<string>("FailureReason")
-                        .HasColumnType("nvarchar(max)");
-
-                    b.Property<long?>("FilingDocumentId")
-                        .HasColumnType("bigint");
-
-                    b.Property<long?>("FilingId")
-                        .HasColumnType("bigint");
-
-                    b.Property<string>("Model")
-                        .IsRequired()
-                        .HasColumnType("nvarchar(max)");
-
-                    b.Property<string>("PromptVersion")
-                        .IsRequired()
-                        .HasColumnType("nvarchar(max)");
-
-                    b.Property<string>("RawModelResponse")
-                        .HasColumnType("nvarchar(max)");
-
-                    b.Property<string>("SchemaName")
-                        .IsRequired()
-                        .HasColumnType("nvarchar(max)");
-
-                    b.Property<string>("SchemaVersion")
-                        .IsRequired()
-                        .HasColumnType("nvarchar(max)");
-
-                    b.Property<string>("Status")
-                        .IsRequired()
-                        .HasMaxLength(10)
-                        .HasColumnType("nvarchar(10)");
-
-                    b.Property<string>("ValidationErrors")
-                        .HasColumnType("nvarchar(max)");
-
-                    b.Property<string>("ValidationStatus")
-                        .IsRequired()
-                        .HasMaxLength(20)
-                        .HasColumnType("nvarchar(20)");
-
-                    b.HasKey("ExtractionId");
-
-                    b.HasIndex("FilingDocumentId");
-
-                    b.HasIndex("FilingId")
-                        .IsUnique()
-                        .HasFilter("[FilingId] IS NOT NULL");
-
-                    b.ToTable("McaFilingExtractions");
-                });
-
             modelBuilder.Entity("MCAROC_Analysis.Data.Entities.McaRequest", b =>
                 {
                     b.Property<long>("RequestId")
@@ -1671,61 +1402,6 @@ namespace MCAROC_Analysis.Migrations
                     b.Navigation("Request");
                 });
 
-            modelBuilder.Entity("MCAROC_Analysis.Data.Entities.McaFiling", b =>
-                {
-                    b.HasOne("MCAROC_Analysis.Data.Entities.McaFilingBatch", "Batch")
-                        .WithMany("Filings")
-                        .HasForeignKey("BatchId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("Batch");
-                });
-
-            modelBuilder.Entity("MCAROC_Analysis.Data.Entities.McaFilingBatch", b =>
-                {
-                    b.HasOne("MCAROC_Analysis.Data.Entities.McaRequest", "Request")
-                        .WithMany()
-                        .HasForeignKey("RequestId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("Request");
-                });
-
-            modelBuilder.Entity("MCAROC_Analysis.Data.Entities.McaFilingDocument", b =>
-                {
-                    b.HasOne("MCAROC_Analysis.Data.Entities.McaFilingDocument", null)
-                        .WithMany()
-                        .HasForeignKey("DuplicateOfDocumentId")
-                        .OnDelete(DeleteBehavior.Restrict);
-
-                    b.HasOne("MCAROC_Analysis.Data.Entities.McaFiling", "Filing")
-                        .WithMany("Documents")
-                        .HasForeignKey("FilingId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("Filing");
-                });
-
-            modelBuilder.Entity("MCAROC_Analysis.Data.Entities.McaFilingExtraction", b =>
-                {
-                    b.HasOne("MCAROC_Analysis.Data.Entities.McaFilingDocument", "FilingDocument")
-                        .WithMany()
-                        .HasForeignKey("FilingDocumentId")
-                        .OnDelete(DeleteBehavior.Restrict);
-
-                    b.HasOne("MCAROC_Analysis.Data.Entities.McaFiling", "Filing")
-                        .WithMany()
-                        .HasForeignKey("FilingId")
-                        .OnDelete(DeleteBehavior.Restrict);
-
-                    b.Navigation("Filing");
-
-                    b.Navigation("FilingDocument");
-                });
-
             modelBuilder.Entity("MCAROC_Analysis.Data.Entities.McaRequest", b =>
                 {
                     b.HasOne("MCAROC_Analysis.Data.Entities.Client", "Client")
@@ -1772,16 +1448,6 @@ namespace MCAROC_Analysis.Migrations
             modelBuilder.Entity("MCAROC_Analysis.Data.Entities.IngestionRun", b =>
                 {
                     b.Navigation("Issues");
-                });
-
-            modelBuilder.Entity("MCAROC_Analysis.Data.Entities.McaFiling", b =>
-                {
-                    b.Navigation("Documents");
-                });
-
-            modelBuilder.Entity("MCAROC_Analysis.Data.Entities.McaFilingBatch", b =>
-                {
-                    b.Navigation("Filings");
                 });
 
             modelBuilder.Entity("MCAROC_Analysis.Data.Entities.McaRequest", b =>

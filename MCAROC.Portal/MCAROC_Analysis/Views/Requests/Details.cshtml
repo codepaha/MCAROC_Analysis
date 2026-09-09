@@ -206,6 +206,153 @@ else
     <p class="text-muted">No completed extraction yet.</p>
 }
 
+<hr />
+<h3>AI Analysis</h3>
+
+@if (Model.LatestAnalysisRun is null)
+{
+    <p class="text-muted">
+        @(r.RequestStatus == RequestStatus.AiAnalysisInProgress ? "Analysis in progress…" : "Analysis has not started for this request yet.")
+    </p>
+}
+else
+{
+    var analysisRun = Model.LatestAnalysisRun;
+    if (analysisRun.Status == AnalysisRunStatus.Running)
+    {
+        <p class="text-muted">Analysis in progress… (run #@analysisRun.RunNumber)</p>
+    }
+    else if (analysisRun.Status == AnalysisRunStatus.Failed)
+    {
+        <div class="alert alert-danger">Analysis failed: @analysisRun.FailureReason</div>
+    }
+    else
+    {
+        var priorityBadgeClass = analysisRun.OverallReviewPriority switch
+        {
+            ReviewPriority.High => "bg-danger",
+            ReviewPriority.Medium => "bg-warning text-dark",
+            _ => "bg-success"
+        };
+        <p>
+            Review Priority: <span class="badge @priorityBadgeClass">@analysisRun.OverallReviewPriority</span>
+            <span class="badge bg-danger">Critical @analysisRun.CriticalFindingsCount</span>
+            <span class="badge bg-warning text-dark">Review @analysisRun.ReviewFindingsCount</span>
+            <span class="badge bg-secondary">Watch @analysisRun.WatchFindingsCount</span>
+            <span class="badge bg-success">Positive @analysisRun.PositiveFindingsCount</span>
+            @if (analysisRun.Status == AnalysisRunStatus.CompletedWithErrors)
+            {
+                <span class="badge bg-info text-dark" title="@analysisRun.FailureReason">AI narrative unavailable</span>
+            }
+        </p>
+
+        @if (Model.ExecutiveSummary is { } es)
+        {
+            <div class="card mb-3">
+                <div class="card-header">Executive Summary</div>
+                <div class="card-body">
+                    @if (!string.IsNullOrEmpty(es.BusinessPerformance)) { <p><strong>Business Performance:</strong> @es.BusinessPerformance</p> }
+                    @if (!string.IsNullOrEmpty(es.FinancialPosition)) { <p><strong>Financial Position:</strong> @es.FinancialPosition</p> }
+                    @if (!string.IsNullOrEmpty(es.BorrowingSecurity)) { <p><strong>Borrowing &amp; Security:</strong> @es.BorrowingSecurity</p> }
+                    @if (!string.IsNullOrEmpty(es.GovernanceCompliance)) { <p><strong>Governance &amp; Compliance:</strong> @es.GovernanceCompliance</p> }
+                    @if (es.KeyReviewItems.Count > 0)
+                    {
+                        <strong>Key Review Items</strong>
+                        <ul class="mb-0">
+                            @foreach (var item in es.KeyReviewItems)
+                            {
+                                <li>@item</li>
+                            }
+                        </ul>
+                    }
+                </div>
+            </div>
+        }
+
+        var tabs = new (string Label, FindingSection[] Sections)[]
+        {
+            ("Corporate", [FindingSection.CompanyProfile, FindingSection.Directors, FindingSection.DirectorNetwork, FindingSection.Ownership]),
+            ("Financial", [FindingSection.Financial]),
+            ("Charges & Security", [FindingSection.Charges]),
+            ("Compliance", [FindingSection.Msme, FindingSection.Gst, FindingSection.Epfo, FindingSection.Auditor]),
+            ("Litigation", [FindingSection.Litigation]),
+            ("AI Findings", [FindingSection.CrossSection])
+        };
+
+        <ul class="nav nav-tabs" role="tablist">
+            @for (var i = 0; i < tabs.Length; i++)
+            {
+                var tab = tabs[i];
+                var count = Model.AnalysisFindings.Count(f => tab.Sections.Contains(f.Section));
+                <li class="nav-item" role="presentation">
+                    <button class="nav-link @(i == 0 ? "active" : "")" data-bs-toggle="tab" data-bs-target="#analysis-tab-@i" type="button" role="tab">
+                        @tab.Label <span class="badge bg-light text-dark">@count</span>
+                    </button>
+                </li>
+            }
+        </ul>
+        <div class="tab-content border border-top-0 p-3 mb-3">
+            @for (var i = 0; i < tabs.Length; i++)
+            {
+                var tab = tabs[i];
+                var sectionFindings = Model.AnalysisFindings.Where(f => tab.Sections.Contains(f.Section)).ToList();
+                // Critical/Review always show in full; Watch/Positive are capped to keep Financial (the
+                // largest domain) from dominating the page — the full rule-hit set is still persisted,
+                // just not all rendered. AnalysisFindings is already sorted by Severity/DisplayPriority/
+                // ObservationDate in the controller, so Take(5) here respects that ordering.
+                var displayFindings = sectionFindings.Where(f => f.Severity is FindingSeverity.Critical or FindingSeverity.Review)
+                    .Concat(sectionFindings.Where(f => f.Severity == FindingSeverity.Watch).Take(5))
+                    .Concat(sectionFindings.Where(f => f.Severity == FindingSeverity.Positive).Take(5))
+                    .ToList();
+
+                <div class="tab-pane fade @(i == 0 ? "show active" : "")" id="analysis-tab-@i" role="tabpanel">
+                    @if (displayFindings.Count == 0)
+                    {
+                        <p class="text-muted mb-0">No findings in this section.</p>
+                    }
+                    else
+                    {
+                        @foreach (var f in displayFindings)
+                        {
+                            var (icon, cardClass) = f.Severity switch
+                            {
+                                FindingSeverity.Critical => ("🔴", "border-danger"),
+                                FindingSeverity.Review => ("🟠", "border-warning"),
+                                FindingSeverity.Watch => ("🟡", "border-secondary"),
+                                _ => ("🟢", "border-success")
+                            };
+                            var relatedCodes = string.IsNullOrEmpty(f.SupportingSignalsJson)
+                                ? new List<string>()
+                                : (System.Text.Json.JsonSerializer.Deserialize<List<string>>(f.SupportingSignalsJson) ?? new List<string>());
+                            <div class="card mb-2 @cardClass" id="finding-@f.Code">
+                                <div class="card-body">
+                                    <h6 class="card-title">
+                                        @icon @f.Title
+                                        <small class="text-muted">(@f.TemporalStatus@(f.PeriodLabel is not null ? $" · {f.PeriodLabel}" : ""))</small>
+                                    </h6>
+                                    <p class="card-text">@f.SummaryText</p>
+                                    @if (!string.IsNullOrEmpty(f.WhyThisMatters))
+                                    {
+                                        <p class="mb-1"><strong>Why this matters:</strong> @f.WhyThisMatters</p>
+                                    }
+                                    @if (!string.IsNullOrEmpty(f.RecommendedReview))
+                                    {
+                                        <p class="mb-1"><strong>Recommended Review:</strong> @f.RecommendedReview</p>
+                                    }
+                                    @if (relatedCodes.Count > 0)
+                                    {
+                                        <p class="mb-0"><small class="text-muted">Related: @string.Join(", ", relatedCodes)</small></p>
+                                    }
+                                </div>
+                            </div>
+                        }
+                    }
+                </div>
+            }
+        </div>
+    }
+}
+
 @if (Model.FilingBatch is { } fb)
 {
     <hr />

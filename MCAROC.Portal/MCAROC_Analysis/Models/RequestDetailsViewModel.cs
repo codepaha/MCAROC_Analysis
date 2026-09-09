@@ -1,4 +1,5 @@
 using MCAROC_Analysis.Data.Entities;
+using MCAROC_Analysis.Services.Analysis;
 
 namespace MCAROC_Analysis.Models;
 
@@ -20,6 +21,13 @@ public class RequestDetailsViewModel
     public List<EpfoContribution> EpfoContributions { get; set; } = [];
     public List<AuditorObservation> AuditorObservations { get; set; } = [];
     public List<Litigation> Litigations { get; set; } = [];
+
+    /// <summary>The latest AnalysisRun (any Status) for this request, if one has ever started — the AI
+    /// Analysis tab renders an in-progress/failed state until this reaches a terminal Completed/
+    /// CompletedWithErrors status.</summary>
+    public AnalysisRun? LatestAnalysisRun { get; set; }
+    public List<AnalysisFinding> AnalysisFindings { get; set; } = [];
+    public ExecutiveSummary? ExecutiveSummary { get; set; }
 
     // MCA Filings (PDF) pipeline
     public McaFilingBatch? FilingBatch { get; set; }
