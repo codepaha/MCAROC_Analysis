@@ -49,23 +49,35 @@ public class StructuredFactsProvider(AppDbContext db)
             }
         }
 
-        var financials = await db.FinancialYearData.Where(x => x.IngestionRunId == ingestionRunId)
+        // Standalone is the default basis. Every financial fact is tagged with its basis so a question
+        // about "consolidated revenue" resolves to the consolidated figure and an untagged question to
+        // standalone.
+        var standalone = await db.FinancialYearData
+            .Where(x => x.IngestionRunId == ingestionRunId && x.Basis == FinancialBasis.Standalone)
             .OrderByDescending(x => x.FinancialYear).Take(5).ToListAsync(ct);
-        if (financials.Count > 0)
+        if (standalone.Count > 0)
         {
             if (detailed.Contains("Financial"))
-                foreach (var f in financials)
+                foreach (var f in standalone)
                     facts.Add(new StructuredFact("Financial",
-                        $"FY{f.FinancialYear}: Revenue ₹{f.Revenue} Cr, EBITDA ₹{f.Ebitda} Cr, PAT ₹{f.Pat} Cr, Net Worth ₹{f.NetWorth} Cr, Total Debt ₹{f.TotalDebt} Cr",
+                        $"FY{f.FinancialYear} (Standalone): Revenue ₹{f.Revenue} Cr, EBITDA ₹{f.Ebitda} Cr, PAT ₹{f.Pat} Cr, Net Worth ₹{f.NetWorth} Cr, Total Debt ₹{f.TotalDebt} Cr",
                         "FinancialYearData", f.FinancialId));
             else
             {
-                var latest = financials[0];
+                var latest = standalone[0];
                 facts.Add(new StructuredFact("Financial",
-                    $"Latest financials: FY{latest.FinancialYear} revenue ₹{latest.Revenue} Cr, PAT ₹{latest.Pat} Cr. ({financials.Count} year(s) of data on record.)",
+                    $"Latest standalone financials: FY{latest.FinancialYear} revenue ₹{latest.Revenue} Cr, PAT ₹{latest.Pat} Cr. ({standalone.Count} year(s) of data on record.)",
                     "FinancialYearData", latest.FinancialId));
             }
         }
+
+        var consolidated = await db.FinancialYearData
+            .Where(x => x.IngestionRunId == ingestionRunId && x.Basis == FinancialBasis.Consolidated)
+            .OrderByDescending(x => x.FinancialYear).Take(5).ToListAsync(ct);
+        foreach (var f in consolidated)
+            facts.Add(new StructuredFact("Financial",
+                $"FY{f.FinancialYear} (Consolidated): Revenue ₹{f.Revenue} Cr, EBITDA ₹{f.Ebitda} Cr, PAT ₹{f.Pat} Cr, Net Worth ₹{f.NetWorth} Cr, Total Debt ₹{f.TotalDebt} Cr",
+                "FinancialYearData", f.FinancialId));
 
         var charges = await db.RocCharges.Where(x => x.IngestionRunId == ingestionRunId).ToListAsync(ct);
         if (charges.Count > 0)

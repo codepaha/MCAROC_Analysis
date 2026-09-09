@@ -150,7 +150,11 @@ public class RequestsController(
             vm.DirectorAssociations = await db.DirectorAssociations.Where(x => x.IngestionRunId == runId).ToListAsync();
             vm.Shareholdings = await db.Shareholdings.Where(x => x.IngestionRunId == runId)
                 .OrderByDescending(x => x.FinancialYear).ToListAsync();
-            vm.FinancialYears = await db.FinancialYearData.Where(x => x.IngestionRunId == runId)
+            vm.FinancialYears = await db.FinancialYearData
+                .Where(x => x.IngestionRunId == runId && x.Basis == FinancialBasis.Standalone)
+                .OrderBy(x => x.FinancialYear).ToListAsync();
+            vm.ConsolidatedFinancialYears = await db.FinancialYearData
+                .Where(x => x.IngestionRunId == runId && x.Basis == FinancialBasis.Consolidated)
                 .OrderBy(x => x.FinancialYear).ToListAsync();
             vm.Charges = await db.RocCharges.Include(c => c.Events).Where(x => x.IngestionRunId == runId).ToListAsync();
             vm.MsmePayments = await db.MsmePayments.Where(x => x.IngestionRunId == runId).ToListAsync();

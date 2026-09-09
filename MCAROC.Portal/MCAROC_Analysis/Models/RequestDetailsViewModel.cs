@@ -14,7 +14,9 @@ public class RequestDetailsViewModel
     public List<Director> Directors { get; set; } = [];
     public List<DirectorAssociation> DirectorAssociations { get; set; } = [];
     public List<Shareholding> Shareholdings { get; set; } = [];
+    /// <summary>Standalone basis only — the Highlights props and Phase 3 both treat this as the primary set.</summary>
     public List<FinancialYearData> FinancialYears { get; set; } = [];
+    public List<FinancialYearData> ConsolidatedFinancialYears { get; set; } = [];
     public List<RocCharge> Charges { get; set; } = [];
     public List<MsmePayment> MsmePayments { get; set; } = [];
     public List<GstRegistration> GstRegistrations { get; set; } = [];

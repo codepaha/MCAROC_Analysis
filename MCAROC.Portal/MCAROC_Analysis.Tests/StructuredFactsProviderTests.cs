@@ -104,4 +104,22 @@ public class StructuredFactsProviderTests : IAsyncLifetime
 
         Assert.Contains(facts, f => f.DomainKey == "Charges" && f.EntityType == "RocCharge");
     }
+
+    [Fact]
+    public async Task Financial_facts_are_tagged_by_basis_when_both_standalone_and_consolidated_exist()
+    {
+        await using var db = CreateContext();
+        var (requestId, runId) = await SeedRequestAsync(db);
+
+        db.FinancialYearData.AddRange(
+            new FinancialYearData { RequestId = requestId, IngestionRunId = runId, FinancialYear = 2017, Basis = FinancialBasis.Standalone, Revenue = 1284.2m, Pat = 2.41m },
+            new FinancialYearData { RequestId = requestId, IngestionRunId = runId, FinancialYear = 2017, Basis = FinancialBasis.Consolidated, Revenue = 1500.0m, Pat = -50.0m });
+        await db.SaveChangesAsync();
+
+        var provider = new StructuredFactsProvider(db);
+        var facts = await provider.BuildDigestAsync(requestId, new QuestionHints(FilingCategory.Financial, null, null, null, null), CancellationToken.None);
+
+        Assert.Contains(facts, f => f.DomainKey == "Financial" && f.Text.Contains("(Standalone)") && f.Text.Contains("1284.2"));
+        Assert.Contains(facts, f => f.DomainKey == "Financial" && f.Text.Contains("(Consolidated)") && f.Text.Contains("1500.0"));
+    }
 }
