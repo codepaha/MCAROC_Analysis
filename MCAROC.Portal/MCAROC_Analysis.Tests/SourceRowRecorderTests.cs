@@ -61,6 +61,30 @@ public class SourceRowRecorderTests
     }
 
     [Fact]
+    public void Row_hash_is_over_the_exact_cell_content_no_trimming_or_null_empty_coalescing()
+    {
+        var wb = new[]
+        {
+            Sheet("S",
+                Row("bank", "amt"),
+                Row("XYZ Bank", "10"),
+                Row(" XYZ Bank ", "10"),        // whitespace differs
+                Row("XYZ Bank", null),          // null cell
+                Row("XYZ Bank", ""),            // empty-string cell
+                Row("A|B", "x")),               // contains the historical separator char
+        };
+
+        var rows = SourceRowRecorder.Record(wb, "RocReport", 1, 1, 1, At);
+
+        Assert.NotEqual(rows[1].RowHash, rows[2].RowHash); // " XYZ Bank " ≠ "XYZ Bank"
+        Assert.NotEqual(rows[3].RowHash, rows[4].RowHash); // null ≠ ""
+        // Hash is exactly SHA-256(CellsJson).
+        var expected = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
+            System.Text.Encoding.UTF8.GetBytes(rows[5].CellsJson)));
+        Assert.Equal(expected, rows[5].RowHash);
+    }
+
+    [Fact]
     public void Sheet_index_tracks_position_across_a_multi_sheet_workbook()
     {
         var wb = new[]

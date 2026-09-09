@@ -55,6 +55,24 @@ public class StandaloneFinancialDataParserTests
     }
 
     [Fact]
+    public void StructuralYearHeaderRowsInTheRatiosBlockAreNotCapturedAsFacts()
+    {
+        var sheet = Sheet("Standalone Financial Data",
+            Row("BALANCE SHEET - AOC-4 (Rs. Crore)", "", "31 Mar, 2024", "31 Mar, 2025"),
+            Row("Share Capital", "", 2.13, 2.11),
+            Row("RATIOS - AOC-4", "", "31 Mar, 2024", "31 Mar, 2025"),
+            Row("Year", "", 2024, 2025),                 // repeated year sub-header — NOT a fact
+            Row("Financial Year", "", 2024, 2025),        // same
+            Row("Debt / Equity Ratio", "", 2.05, 3.44),  // a real ratio — IS a fact
+            Row("AUDITOR", ""));
+
+        StandaloneFinancialDataParser.Parse(sheet, 1, 1, 10, out var facts);
+
+        Assert.DoesNotContain(facts, f => f.Label is "Year" or "Financial Year");
+        Assert.Contains(facts, f => f.Label == "Debt / Equity Ratio" && f.NumericValue == 3.44m);
+    }
+
+    [Fact]
     public void WarnsAndMapsCashFlowToMostRecentYearsWhenItReportsFewerColumns()
     {
         var sheet = Sheet("Standalone Financial Data",
