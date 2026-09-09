@@ -255,7 +255,9 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
         {
             e.HasKey(x => x.ChatSessionId);
             e.HasOne<McaRequest>().WithMany().HasForeignKey(x => x.RequestId).OnDelete(DeleteBehavior.Cascade);
-            e.HasIndex(x => x.RequestId);
+            // One session per request (Phase 4 v1 — see ChatSession doc comment). Unique so a
+            // concurrent/double-submitted first question can't create two sessions and split the thread.
+            e.HasIndex(x => x.RequestId).IsUnique();
         });
 
         modelBuilder.Entity<ChatMessage>(e =>

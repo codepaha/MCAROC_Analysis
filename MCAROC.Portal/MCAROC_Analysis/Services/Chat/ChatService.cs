@@ -1,6 +1,7 @@
 using System.Text.Json;
 using MCAROC_Analysis.Data;
 using MCAROC_Analysis.Data.Entities;
+using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 
@@ -83,15 +84,38 @@ public class ChatService(
         return assistantMessage;
     }
 
-    private async Task<ChatSession> GetOrCreateSessionAsync(long requestId, CancellationToken ct)
+    // 2601 = duplicate key in a unique index; 2627 = unique/primary-key constraint violation.
+    private const int SqlUniqueIndexViolation = 2601;
+    private const int SqlUniqueConstraintViolation = 2627;
+
+    /// <summary>Test seam: runs in GetOrCreateSessionAsync between the "does a session exist?" read and
+    /// the insert, so a test can hold two callers there until both have passed the read and force the
+    /// insert race. No-op in production.</summary>
+    internal virtual Task AfterSessionExistenceCheckAsync(CancellationToken ct) => Task.CompletedTask;
+
+    internal async Task<ChatSession> GetOrCreateSessionAsync(long requestId, CancellationToken ct)
     {
         var existing = await db.ChatSessions.FirstOrDefaultAsync(s => s.RequestId == requestId, ct);
         if (existing is not null)
             return existing;
 
+        await AfterSessionExistenceCheckAsync(ct);
+
         var session = new ChatSession { RequestId = requestId, CreatedDate = DateTime.UtcNow, LastActivityDate = DateTime.UtcNow };
         db.ChatSessions.Add(session);
-        await db.SaveChangesAsync(ct);
-        return session;
+        try
+        {
+            await db.SaveChangesAsync(ct);
+            return session;
+        }
+        catch (DbUpdateException ex) when (ex.InnerException is SqlException
+                   { Number: SqlUniqueIndexViolation or SqlUniqueConstraintViolation })
+        {
+            // A concurrent request won the race to create the one-per-request session (unique index on
+            // RequestId). Drop our losing insert and use theirs so both turns land in one conversation.
+            // Any other DbUpdateException (deadlock, timeout, FK failure, ...) propagates.
+            db.Entry(session).State = EntityState.Detached;
+            return await db.ChatSessions.FirstAsync(s => s.RequestId == requestId, ct);
+        }
     }
 }
