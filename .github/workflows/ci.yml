@@ -35,3 +35,4 @@ jobs:
         with:
           name: test-results
           path: MCAROC.Portal/MCAROC_Analysis.Tests/TestResults/test-results.trx
+          retention-days: 7
