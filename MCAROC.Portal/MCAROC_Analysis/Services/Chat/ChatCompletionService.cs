@@ -115,8 +115,11 @@ public class ChatCompletionService
         if (!dto.InsufficientEvidence && validTags.Count == 0)
             return new ChatCompletionResult(InsufficientAnswer, true, []);
 
+        // Always the fixed message and no citations here, never dto.Answer verbatim — the model flagging
+        // insufficientEvidence=true doesn't stop it from also writing an uncited, unvalidated answer
+        // string alongside that flag, and displaying that text would show an arbitrary uncited claim.
         if (dto.InsufficientEvidence)
-            return new ChatCompletionResult(dto.Answer ?? InsufficientAnswer, true, []);
+            return new ChatCompletionResult(InsufficientAnswer, true, []);
 
         var citations = validTags.Select(tag =>
         {

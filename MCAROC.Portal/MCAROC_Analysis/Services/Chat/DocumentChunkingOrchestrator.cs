@@ -109,23 +109,40 @@ public class DocumentChunkingOrchestrator(AppDbContext db, EmbeddingService embe
 
     /// <summary>Startup recovery: any document left InProgress by a crash is, by the same "fresh process =
     /// orphaned" logic already proven twice in this codebase (Phase 2/3), reset to Pending and its batch
-    /// re-enqueued unconditionally — no staleness timeout at startup.</summary>
+    /// re-enqueued unconditionally — no staleness timeout at startup. Separately, every batch with at least
+    /// one eligible Pending document is also re-enqueued, not just batches recovered from InProgress here:
+    /// a document can reach ChunkingStatus.Pending without its batch ever having been enqueued — the
+    /// migration backfills every pre-existing Completed document to Pending, but
+    /// FilingBatchProcessor.MaybeCompleteBatchAsync only enqueues a batch at the moment it *newly* reaches
+    /// Completed/CompletedWithErrors, which a batch that completed before Phase 4 existed never does again.
+    /// Sweeping for eligible Pending batches unconditionally on every startup closes that gap regardless of
+    /// how a document ended up Pending with nothing watching its batch.</summary>
     public async Task<int> RecoverStaleWorkAsync(CancellationToken ct)
     {
         var staleDocuments = await db.McaFilingDocuments
             .Where(d => d.DuplicateOfDocumentId == null && d.ChunkingStatus == ChunkingStatus.InProgress)
             .Select(d => new { d.FilingDocumentId, d.BatchId })
             .ToListAsync(ct);
-        if (staleDocuments.Count == 0)
-            return 0;
 
-        await db.McaFilingDocuments
-            .Where(d => d.DuplicateOfDocumentId == null && d.ChunkingStatus == ChunkingStatus.InProgress)
-            .ExecuteUpdateAsync(s => s.SetProperty(d => d.ChunkingStatus, ChunkingStatus.Pending), ct);
+        if (staleDocuments.Count > 0)
+        {
+            await db.McaFilingDocuments
+                .Where(d => d.DuplicateOfDocumentId == null && d.ChunkingStatus == ChunkingStatus.InProgress)
+                .ExecuteUpdateAsync(s => s.SetProperty(d => d.ChunkingStatus, ChunkingStatus.Pending), ct);
+        }
 
-        foreach (var batchId in staleDocuments.Select(d => d.BatchId).Distinct())
+        var pendingBatchIds = await db.McaFilingDocuments
+            .Where(d => d.DuplicateOfDocumentId == null
+                && d.ProcessingStatus == FilingDocumentProcessingStatus.Completed
+                && d.ChunkingStatus == ChunkingStatus.Pending)
+            .Select(d => d.BatchId)
+            .Distinct()
+            .ToListAsync(ct);
+
+        var batchIdsToEnqueue = staleDocuments.Select(d => d.BatchId).Concat(pendingBatchIds).Distinct().ToList();
+        foreach (var batchId in batchIdsToEnqueue)
             queue.Enqueue(batchId);
 
-        return staleDocuments.Count;
+        return batchIdsToEnqueue.Count;
     }
 }

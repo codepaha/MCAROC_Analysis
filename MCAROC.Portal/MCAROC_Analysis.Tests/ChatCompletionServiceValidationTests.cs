@@ -63,6 +63,21 @@ public class ChatCompletionServiceValidationTests
     }
 
     [Fact]
+    public void InsufficientEvidence_ArbitraryAnswerTextIsReplacedWithFixedMessage_NotShownVerbatim()
+    {
+        // Regression test for the review finding: insufficientEvidence=true previously preserved
+        // dto.Answer verbatim. The model setting the flag doesn't stop it from also writing an uncited,
+        // unvalidated answer string (even with a citedTag attached) — that text must never be shown.
+        var response = """{ "answer": "The company's revenue was ₹500 Cr, though I am not fully certain.", "citedTags": ["F1"], "insufficientEvidence": true }""";
+
+        var result = ChatCompletionService.Validate(response, [FactSource, ChunkSource]);
+
+        Assert.True(result.InsufficientEvidence);
+        Assert.Empty(result.CitedSources);
+        Assert.Equal("I could not verify this from the uploaded records.", result.Answer);
+    }
+
+    [Fact]
     public void MultipleValidCitations_AllResolved()
     {
         var response = """{ "answer": "Combined answer.", "citedTags": ["F1", "D1"], "insufficientEvidence": false }""";

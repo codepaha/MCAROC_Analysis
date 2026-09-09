@@ -27,7 +27,7 @@ public class DocumentChunkingWorker(
             var orchestrator = scope.ServiceProvider.GetRequiredService<DocumentChunkingOrchestrator>();
             var recovered = await orchestrator.RecoverStaleWorkAsync(ct);
             if (recovered > 0)
-                logger.LogInformation("Recovered {Count} stale document-chunking work item(s) on startup", recovered);
+                logger.LogInformation("Enqueued {Count} batch(es) for document chunking on startup (stale recovery + pending backlog)", recovered);
         }
         catch (Exception ex)
         {
