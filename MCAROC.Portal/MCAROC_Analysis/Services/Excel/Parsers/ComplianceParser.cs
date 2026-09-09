@@ -17,9 +17,6 @@ public static class ComplianceParser
     {
         var result = new ParseResult<ComplianceRecord>();
         var section = Section.None;
-        // CIBIL re-reports the same suit-filed default every quarter — collapse to one row per
-        // (bank, defaulter type, amount), keeping the most recent reporting date.
-        var suitFiled = new Dictionary<string, ComplianceRecord>();
 
         ComplianceRecord New(int rowNumber) => new()
         {
@@ -95,15 +92,16 @@ public static class ComplianceParser
                     rec.Description = rec.Bank;
                     rec.SourceText = JoinRow(row);
 
-                    var key = $"{rec.Bank}|{rec.DefaulterType}|{rec.AmountCrore}";
-                    if (!suitFiled.TryGetValue(key, out var existing) || rec.RecordDate > existing.RecordDate)
-                        suitFiled[key] = rec;
+                    // Keep EVERY reported quarter. CIBIL re-reports the same suit-filed default every
+                    // quarter, but that quarter-by-quarter history is itself material to a lender — the
+                    // dossier's summary view collapses by (bank, defaulter type, amount) for display; the
+                    // record set stays complete.
+                    result.Items.Add(rec);
                     break;
                 }
             }
         }
 
-        result.Items.AddRange(suitFiled.Values);
         return result;
     }
 

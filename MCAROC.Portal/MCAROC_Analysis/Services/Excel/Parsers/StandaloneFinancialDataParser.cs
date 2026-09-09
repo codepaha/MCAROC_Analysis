@@ -182,6 +182,10 @@ public static class StandaloneFinancialDataParser
                         CaptureFacts(sheet.Rows[r], label, cashFlowYears, FinancialStatementSection.CashFlow, r,
                             columnOffset: 2, yearInferred: cashFlowInferred);
                 }
+
+                if (cashFlowInferred)
+                    foreach (var e in byYear.Values.Where(e => e.Cfo is not null || e.Cfi is not null || e.Cff is not null))
+                        e.CashFlowYearInferred = true;
             }
         }
 

@@ -34,10 +34,11 @@ public static class AnalysisTestHelpers
         int year, decimal? revenue = null, decimal? ebitda = null, decimal? ebit = null, decimal? pat = null,
         decimal? netWorth = null, decimal? currentAssets = null, decimal? currentLiabilities = null,
         decimal? tradeReceivables = null, decimal? tradePayables = null, decimal? totalDebt = null,
-        decimal? financeCost = null, decimal? cfo = null) => new()
+        decimal? financeCost = null, decimal? cfo = null, bool cashFlowYearInferred = false) => new()
     {
         FinancialYear = year, Revenue = revenue, Ebitda = ebitda, Ebit = ebit, Pat = pat, NetWorth = netWorth,
         CurrentAssets = currentAssets, CurrentLiabilities = currentLiabilities, TradeReceivables = tradeReceivables,
-        TradePayables = tradePayables, TotalDebt = totalDebt, FinanceCost = financeCost, Cfo = cfo
+        TradePayables = tradePayables, TotalDebt = totalDebt, FinanceCost = financeCost, Cfo = cfo,
+        CashFlowYearInferred = cashFlowYearInferred
     };
 }

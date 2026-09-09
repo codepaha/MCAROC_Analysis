@@ -74,5 +74,10 @@ public class StandaloneFinancialDataParserTests
         Assert.Equal(-5.0m, fy2024.Cfo);
         Assert.Equal(-6.0m, fy2025.Cfo);
         Assert.DoesNotContain(result.Items, f => f.FinancialYear == 2023 && f.Cfo != null);
+
+        // Both cash-flow-bearing years are flagged so the rule engine excludes them.
+        Assert.True(fy2024.CashFlowYearInferred);
+        Assert.True(fy2025.CashFlowYearInferred);
+        Assert.False(result.Items.Single(f => f.FinancialYear == 2023).CashFlowYearInferred);
     }
 }
