@@ -6,9 +6,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 
 namespace MCAROC_Analysis.Tests;
 
-/// <summary>The one-session-per-request race (real .\SQLEXPRESS test DB). AskAsync is run with null
-/// retrieval/completion collaborators: the try/catch turns the resulting failure into a persisted
-/// "Failed" assistant turn, which is all these tests need — they assert on session/turn bookkeeping.</summary>
+/// <summary>The one-session-per-request race (real .\SQLEXPRESS test DB).</summary>
 public class ChatSessionRaceTests : IAsyncLifetime
 {
     private const string ConnectionString = @"Server=.\SQLEXPRESS;Database=MCAROC_Analysis_Test;Trusted_Connection=True;TrustServerCertificate=True;";
@@ -41,25 +39,39 @@ public class ChatSessionRaceTests : IAsyncLifetime
         return request.RequestId;
     }
 
+    /// <summary>Holds every caller at the point between the "session exists?" read and the insert until
+    /// all <c>parties</c> have arrived, so the insert race is forced rather than left to timing.</summary>
+    private sealed class BarrieredChatService(AppDbContext db, Barrier barrier)
+        : ChatService(db, null!, null!, NullLogger<ChatService>.Instance)
+    {
+        internal override Task AfterSessionExistenceCheckAsync(CancellationToken ct)
+        {
+            barrier.SignalAndWait(TimeSpan.FromSeconds(15));
+            return Task.CompletedTask;
+        }
+    }
+
     [Fact]
-    public async Task Concurrent_AskAsync_for_one_request_share_a_single_session_and_persist_every_turn()
+    public async Task Two_callers_that_both_pass_the_existence_check_still_converge_on_one_session()
     {
         var requestId = await SeedRequestAsync();
+        using var barrier = new Barrier(2);
 
-        async Task Ask(string question)
+        async Task<long> CreateSession()
         {
             await using var db = CreateContext();
-            var service = new ChatService(db, null!, null!, NullLogger<ChatService>.Instance);
-            await service.AskAsync(requestId, question, CancellationToken.None);
+            var service = new BarrieredChatService(db, barrier);
+            var session = await service.GetOrCreateSessionAsync(requestId, CancellationToken.None);
+            return session.ChatSessionId;
         }
 
-        await Task.WhenAll(Ask("First question?"), Ask("Second question?"));
+        var ids = await Task.WhenAll(Task.Run(CreateSession), Task.Run(CreateSession));
 
+        // Same session for both, and exactly one row. Against the pre-fix implementation (non-unique
+        // index, no re-query) the forced race inserts two rows and these both fail.
+        Assert.Equal(ids[0], ids[1]);
         await using var verify = CreateContext();
-        var session = Assert.Single(await verify.ChatSessions.Where(s => s.RequestId == requestId).ToListAsync());
-        var messages = await verify.ChatMessages.Where(m => m.ChatSessionId == session.ChatSessionId).ToListAsync();
-        Assert.Equal(2, messages.Count(m => m.Role == ChatRole.User));
-        Assert.Equal(2, messages.Count(m => m.Role == ChatRole.Assistant));
+        Assert.Single(await verify.ChatSessions.Where(s => s.RequestId == requestId).ToListAsync());
     }
 
     [Fact]

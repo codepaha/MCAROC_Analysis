@@ -88,11 +88,18 @@ public class ChatService(
     private const int SqlUniqueIndexViolation = 2601;
     private const int SqlUniqueConstraintViolation = 2627;
 
+    /// <summary>Test seam: runs in GetOrCreateSessionAsync between the "does a session exist?" read and
+    /// the insert, so a test can hold two callers there until both have passed the read and force the
+    /// insert race. No-op in production.</summary>
+    internal virtual Task AfterSessionExistenceCheckAsync(CancellationToken ct) => Task.CompletedTask;
+
     internal async Task<ChatSession> GetOrCreateSessionAsync(long requestId, CancellationToken ct)
     {
         var existing = await db.ChatSessions.FirstOrDefaultAsync(s => s.RequestId == requestId, ct);
         if (existing is not null)
             return existing;
+
+        await AfterSessionExistenceCheckAsync(ct);
 
         var session = new ChatSession { RequestId = requestId, CreatedDate = DateTime.UtcNow, LastActivityDate = DateTime.UtcNow };
         db.ChatSessions.Add(session);
