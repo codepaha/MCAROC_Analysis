@@ -72,7 +72,10 @@ public class StructuredFactsProvider(AppDbContext db)
         {
             var recentCutoff = DateOnly.FromDateTime(DateTime.UtcNow.AddYears(-2));
             var relevant = charges.Where(c => c.SatisfactionDate is null || c.SatisfactionDate >= recentCutoff).ToList();
-            if (detailed.Contains("Charges"))
+            // Detailed per-row only when there's at least one open/recent charge to show; otherwise fall
+            // through to the headline so the Charges domain is never dropped from the digest entirely
+            // (e.g. a charge-specific question on a company whose charges were all satisfied >2y ago).
+            if (detailed.Contains("Charges") && relevant.Count > 0)
                 foreach (var c in relevant)
                     facts.Add(new StructuredFact("Charges",
                         $"Charge {c.RocChargeNumber}: Holder {c.LatestChargeHolderRaw}, Amount ₹{c.CurrentAmount} Cr, Status {c.ChargeStatus}"
