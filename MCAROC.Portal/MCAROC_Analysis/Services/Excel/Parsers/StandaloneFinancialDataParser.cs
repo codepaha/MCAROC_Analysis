@@ -41,7 +41,11 @@ public static class StandaloneFinancialDataParser
         ["Net Cash Flows from / ( Used in ) Financing Activities"] = nameof(FinancialYearData.Cff),
     };
 
-    public static ParseResult<FinancialYearData> Parse(SheetData sheet, long requestId, long ingestionRunId, long? sourceDocumentId)
+    /// <summary>Also parses the identically-structured "Consolidated Financial Data" sheet — pass
+    /// <paramref name="basis"/> = Consolidated. Every produced row is stamped with that basis.</summary>
+    public static ParseResult<FinancialYearData> Parse(
+        SheetData sheet, long requestId, long ingestionRunId, long? sourceDocumentId,
+        FinancialBasis basis = FinancialBasis.Standalone)
     {
         var result = new ParseResult<FinancialYearData>();
 
@@ -69,7 +73,8 @@ public static class StandaloneFinancialDataParser
                     IngestionRunId = ingestionRunId,
                     SourceDocumentId = sourceDocumentId,
                     SourceSheetName = sheet.Name,
-                    FinancialYear = year
+                    FinancialYear = year,
+                    Basis = basis
                 };
                 byYear[year] = entity;
             }

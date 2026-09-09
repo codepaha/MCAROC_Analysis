@@ -15,7 +15,11 @@ namespace MCAROC_Analysis.Services.Excel.Parsers;
 /// serial number — this parser stops at the blank row and switches column mapping for table 2.</summary>
 public static class AuditorsParser
 {
-    public static ParseResult<AuditorObservation> Parse(SheetData sheet, long requestId, long ingestionRunId, long? sourceDocumentId)
+    /// <summary>Also parses the identically-structured "Auditors' Comments-Consolidated" sheet — pass
+    /// <paramref name="basis"/> = Consolidated.</summary>
+    public static ParseResult<AuditorObservation> Parse(
+        SheetData sheet, long requestId, long ingestionRunId, long? sourceDocumentId,
+        FinancialBasis basis = FinancialBasis.Standalone)
     {
         var result = new ParseResult<AuditorObservation>();
 
@@ -37,6 +41,7 @@ public static class AuditorsParser
                 SourceSheetName = sheet.Name,
                 SourceRowNumber = r + 1,
                 FinancialYear = (int)yearValue.Value,
+                Basis = basis,
                 HasQualificationOrAdverseRemark = qualified?.Equals("Yes", StringComparison.OrdinalIgnoreCase) == true,
                 AuditorName = commentsBy,
                 ObservationText = commentsBy
@@ -70,6 +75,7 @@ public static class AuditorsParser
                 SourceSheetName = sheet.Name,
                 SourceRowNumber = r + 1,
                 FinancialYear = (int)yearValue.Value,
+                Basis = basis,
                 ObservationText = text
             });
         }

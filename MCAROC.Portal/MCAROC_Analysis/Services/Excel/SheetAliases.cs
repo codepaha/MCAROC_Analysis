@@ -20,7 +20,21 @@ public static class SheetAliases
     public static readonly string[] Epfo = ["EPFO Establishments"];
     public static readonly string[] EpfoAnnexure = ["Annexure - EPFO Establishments"];
     public static readonly string[] Auditors = ["Auditors' Comments-Standalone", "Auditors Comments-Standalone"];
+    public static readonly string[] AuditorsConsolidated = ["Auditors' Comments-Consolidated", "Auditors Comments-Consolidated"];
     public static readonly string[] LegalHistory = ["Legal History"];
+
+    // Phase 6
+    public static readonly string[] Structure = ["Structure"];
+    public static readonly string[] RelatedCorporates = ["Related Corporates"];
+    public static readonly string[] Compliance = ["Compliance"];
+    public static readonly string[] Highlights = ["Highlights"];
+    public static readonly string[] FinancialParametersAnnexure = ["Annexure - Financial Parameters"];
+    public static readonly string[] SecuritiesAllotment = ["Securities Allotment"];
+    public static readonly string[] Proprietorship = ["Proprietorship"];
+    public static readonly string[] DirectorAssociationHistory = ["Director - Association History"];
+    public static readonly string[] ConsolidatedFinancialData = ["Consolidated Financial Data"];
+    public static readonly string[] LatestEventOnOpenCharges = ["Latest Event on Open Charges"];
+    public static readonly string[] PeerComparison = ["Peer Comparison"];
 
     public static string Normalize(string sheetName) =>
         string.Join(' ', sheetName.Trim().TrimEnd('-', ' ').Split(' ', StringSplitOptions.RemoveEmptyEntries))
