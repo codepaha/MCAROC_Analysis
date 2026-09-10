@@ -228,9 +228,9 @@ public partial class DossierPdfComposer(DossierModel model, DossierVariant varia
             col.Item().Element(c => Kicker(c, "Quick View"));
             col.Item().Element(c => SectionTitle(c, "Contents"));
             col.Item().Element(c => Lead(c, sourceOnly
-                ? "This dossier pairs a one-page factual Snapshot — headline figures and the deterministic " +
-                  "rule-engine Review Priority — with the complete source record: every non-blank row of every " +
-                  "worksheet of both MCA workbooks, reproduced exactly as extracted. It carries no synthesised narrative."
+                ? "This dossier pairs a one-page factual Snapshot — deterministic figures, totals, counts and " +
+                  "selections plus the rule-engine Review Priority — with the complete verbatim system of record: " +
+                  "every non-blank row of every worksheet of both MCA workbooks. It carries no synthesised narrative."
                 : raw
                     ? "This dossier pairs a one-page Snapshot and a synthesised Executive Summary with the complete " +
                       "verbatim source record — every non-blank row of every worksheet of both MCA workbooks."
@@ -264,10 +264,11 @@ public partial class DossierPdfComposer(DossierModel model, DossierVariant varia
                 t.DefaultTextStyle(x => x.FontSize(DossierTheme.Small).FontColor(DossierTheme.InkSoft).LineHeight(1.5f));
                 t.Span("How to read this dossier: ").Bold();
                 if (sourceOnly)
-                    t.Span("Snapshot is a 10-second scan of the headline numbers — each a direct pull from the record " +
-                        "that follows — plus the Review Priority, which is a deterministic rule-engine classification, " +
-                        "not a synthesised opinion. This variant omits the Section 1 narrative. The Source Records " +
-                        "annexure is the complete system of record: every row of every worksheet, exactly as extracted.");
+                    t.Span("Snapshot is a 10-second scan — a factual, deterministic view of the source records " +
+                        "(figures, totals, counts, selections) plus the rule-engine Review Priority classification, " +
+                        "with no narrative synthesis. This variant omits the Section 1 narrative entirely. The Source " +
+                        "Records annexure that follows is the complete verbatim system of record: every non-blank row " +
+                        "of every worksheet, exactly as extracted.");
                 else if (raw)
                     t.Span("Snapshot is a 10-second scan of the numbers that matter. Section 1 is a synthesised " +
                         "view — it draws conclusions across the source record and is not itself a source record. " +

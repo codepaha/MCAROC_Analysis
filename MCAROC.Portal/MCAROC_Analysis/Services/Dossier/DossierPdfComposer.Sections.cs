@@ -16,8 +16,8 @@ public partial class DossierPdfComposer
         col.Item().Element(c => Kicker(c, "Quick View"));
         col.Item().Element(c => SectionTitle(c, "Snapshot"));
         col.Item().Element(c => Lead(c,
-            "Apart from the Review Priority — a deterministic rule-engine classification — every figure on this page " +
-            "is a direct pull from a source record, with no synthesis or interpretation." +
+            "A factual, deterministic snapshot drawn from the indexed source records — direct figures, totals, " +
+            "counts and selections, plus the rule-engine Review Priority classification. No narrative synthesis." +
             (variant == DossierVariant.SourceRecord ? "" : " For the reasoning across the annexures, see Section 1.")));
 
         var f = model.Financials;
