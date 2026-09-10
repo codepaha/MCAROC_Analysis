@@ -248,6 +248,8 @@ public class RequestsController(
                 .Where(x => x.IngestionRunId == runId).ToListAsync();
             vm.EpfoContributions = await db.EpfoContributions.Where(x => x.IngestionRunId == runId)
                 .OrderByDescending(x => x.WageMonth).ToListAsync();
+            vm.EpfoEstablishments = await db.EpfoEstablishments.Where(x => x.IngestionRunId == runId)
+                .OrderBy(x => x.Name).ToListAsync();
             vm.AuditorObservations = await db.AuditorObservations.Where(x => x.IngestionRunId == runId)
                 .OrderByDescending(x => x.FinancialYear).ToListAsync();
             vm.Litigations = await db.Litigations.Where(x => x.IngestionRunId == runId).ToListAsync();

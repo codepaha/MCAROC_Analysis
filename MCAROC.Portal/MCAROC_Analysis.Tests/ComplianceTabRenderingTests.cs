@@ -275,4 +275,58 @@ public class ComplianceTabRenderingTests
         Assert.Contains("incomplete coverage (*unstated filings)", html);
         Assert.Contains("*coverage incomplete (unstated amounts)", html);
     }
+
+    // ── A5 / #36 — EPFO establishment metadata + TRRN ──
+
+    [Fact]
+    public async Task Epfo_establishment_metadata_renders_even_with_no_monthly_annexure()
+    {
+        var vm = CreateViewModel();
+        vm.EpfoEstablishments =
+        [
+            new EpfoEstablishment
+            {
+                EstablishmentId = "ORBBS0006003000",
+                Name = "COASTAL PROJECTS LTD.",
+                City = "BHUBANESWAR",
+                DateOfSetup = new DateOnly(1995, 5, 5),
+                PrincipalBusinessActivities = "BUILDING AND CONSTRUCTION INDUSTRY",
+                ExemptionStatus = "PF: UNEXEMPTED",
+                WorkingStatus = "LIVE ESTABLISHMENT",
+            }
+        ];
+        // No EpfoContributions — the "EPFO Establishments" summary sheet was present, the annexure was not.
+
+        var html = await RenderComplianceTabAsync(vm);
+
+        Assert.Contains("Establishment Profiles", html);
+        Assert.Contains("BHUBANESWAR", html);
+        Assert.Contains("BUILDING AND CONSTRUCTION INDUSTRY", html);
+        Assert.Contains("ORBBS0006003000", html);
+        Assert.Contains("No monthly contribution history for this establishment in this upload.", html);
+    }
+
+    [Fact]
+    public async Task Epfo_contribution_history_shows_the_trrn_column()
+    {
+        var vm = CreateViewModel();
+        vm.EpfoContributions =
+        [
+            new EpfoContribution
+            {
+                EstablishmentId = "ORBBS0006003000",
+                EstablishmentName = "COASTAL PROJECTS LTD.",
+                WageMonth = "May, 2026",
+                Trrn = "2606360162374",
+                EmployeeCount = 5,
+                ContributionAmountCrore = 0.12m,
+                PaymentStatus = "Paid on Time"
+            }
+        ];
+
+        var html = await RenderComplianceTabAsync(vm);
+
+        Assert.Contains("<th>TRRN</th>", html);
+        Assert.Contains("2606360162374", html);
+    }
 }

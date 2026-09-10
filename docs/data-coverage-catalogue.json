@@ -233,12 +233,12 @@
       ]
     },
     {
-      "workbook": "RocReport", "sheet": "EPFO Establishments", "shape": "flat table, 14 cols, one row per establishment (latest month + establishment metadata)",
-      "parser": "EpfoParser (annexure sheet)", "entity": "EpfoContribution",
+      "workbook": "RocReport", "sheet": "EPFO Establishments", "shape": "flat table, one row per establishment (latest month + establishment metadata)",
+      "parser": "EpfoParser.ParseEstablishments", "entity": "EpfoEstablishment",
       "portal_tab": "Compliance", "dossier": "Annexure D",
       "fields": [
-        {"source": "WORKING STATUS / ESTABLISHMENT ID / ESTABLISHMENT NAME / LATEST WAGE MONTH / LATEST DATE OF CREDIT / NO. OF EMPLOYEES / AMOUNT", "entityField": "WorkingStatus / EstablishmentId / EstablishmentName / WageMonth / PaymentDate / EmployeeCount / ContributionAmountCrore", "status": "live"},
-        {"source": "CITY / DATE OF SETUP / PRINCIPAL BUSINESS ACTIVITIES / ADDRESS / EXEMPTION STATUS / FLAGS", "entityField": null, "status": "not-parsed", "gap": "G7", "note": "establishment header block (the benchmark tool shows a per-establishment card)"}
+        {"source": "WORKING STATUS / ESTABLISHMENT ID / ESTABLISHMENT NAME / CITY / LATEST WAGE MONTH", "entityField": "WorkingStatus / EstablishmentId / Name / City / LatestWageMonth", "status": "live", "note": "A5/#36 — the latest-month figures stay in EpfoContribution (the annexure is authoritative)"},
+        {"source": "DATE OF SETUP / PRINCIPAL BUSINESS ACTIVITIES / ADDRESS / EXEMPTION STATUS / FLAGS", "entityField": "DateOfSetup / PrincipalBusinessActivities / Address / ExemptionStatus / Flags", "status": "live", "gap": "G7", "note": "A5/#36 — trailing metadata columns are unlabelled in the export, read positionally; rendered as per-establishment profile cards on the Compliance tab"}
       ]
     },
     {
@@ -262,7 +262,7 @@
       "portal_tab": "Compliance (paged)", "dossier": "Annexure D",
       "fields": [
         {"source": "WORKING STATUS / ESTABLISHMENT ID / ESTABLISHMENT NAME / WAGE MONTH / NO. OF EMPLOYEES / AMOUNT / DATE OF CREDIT / PAYMENT DUE DATE / STATUS", "entityField": "WorkingStatus / EstablishmentId / EstablishmentName / WageMonth / EmployeeCount / ContributionAmountCrore / PaymentDate / PaymentDueDate / PaymentStatus", "status": "live"},
-        {"source": "TRRN (transaction reference number)", "entityField": null, "status": "not-parsed", "gap": "G13"}
+        {"source": "TRRN (transaction reference number)", "entityField": "Trrn", "status": "live", "gap": "G13", "note": "A5/#36"}
       ]
     },
     {
@@ -342,10 +342,10 @@
      "detail": "Peer Comparison sheet's closest-peers list (legal name, CIN, city, revenue) was dropped.",
      "fix": "New PeerCompany entity (LegalName / Cin / City / RevenueCrore / Rank / FinancialYear + Industry/Segment); PeerComparisonParser gains a second out-param; migration AddPeerCompanies; rendered as a 'Closest Peers by Revenue' table on the Financials tab (self row highlighted). Bar-chart viz is Wave 3.",
      "issue": "#35"},
-    {"id": "G7", "title": "EPFO establishment metadata dropped", "severity": "medium",
+    {"id": "G7", "title": "EPFO establishment metadata dropped", "severity": "medium", "status": "DONE (A5 / #36)",
      "detail": "EPFO Establishments sheet drops per-establishment City, Date of Setup, Principal Business Activities, Address, Exemption Status, Flags — only monthly contributions are kept.",
-     "fix": "New EpfoEstablishment entity (establishmentId, name, city, dateOfSetup, principalBusinessActivities, address, exemptionStatus, workingStatus, flags) + parse; establishment header card on Compliance tab.",
-     "issue": null},
+     "fix": "New EpfoEstablishment entity (establishmentId, name, city, dateOfSetup, principalBusinessActivities, address, exemptionStatus, workingStatus, flags, latestWageMonth) + EpfoParser.ParseEstablishments; migration AddEpfoEstablishment; per-establishment profile fields on the Compliance-tab establishment cards + a Snapshot count in the dossier.",
+     "issue": "#36"},
     {"id": "G8", "title": "Parsed-but-not-(fully)-shown: FinancialFacts, FinancialParameters, CompanyOfficers, CashFlowYearInferred", "severity": "high",
      "detail": "462 FinancialFacts, 23 FinancialParameters, 3 CompanyOfficers and the CashFlowYearInferred flag are ingested but the portal tabs may not render them fully. Audit each tab and wire the missing renders.",
      "fix": "Per-tab render audit (Corporate: officers; Financials: full statement incl. facts + ratios + parameters + inferred-year caption).",
@@ -366,7 +366,7 @@
      "detail": "PR #29 routes 'Unverified Court Records' rows to MatchStatus=Uncertain, but the Litigation tab shows them under category 'Other' with no 'unverified — verify against source' banner. the benchmark tool gives Probable + Unverified their own sections with a plain-English disclaimer.",
      "fix": "Litigation tab (Track B): split Confirmed / Probable / Unverified into separate sub-sections, each with a disclaimer.",
      "issue": null},
-    {"id": "G13", "title": "EPFO TRRN dropped", "severity": "low", "detail": "Transaction reference number on the monthly EPFO annexure not stored.", "fix": "Add EpfoContribution.Trrn.", "issue": null},
+    {"id": "G13", "title": "EPFO TRRN dropped", "severity": "low", "status": "DONE (A5 / #36)", "detail": "Transaction reference number on the monthly EPFO annexure not stored.", "fix": "Added EpfoContribution.Trrn (migration AddEpfoEstablishment).", "issue": "#36"},
     {"id": "G14", "title": "Related Party Transactions sheet not parsed", "severity": "medium",
      "detail": "Transaction-level RPT disclosure (party x transaction type x FY, with amount) — 25/41 companies in the wider portfolio set. Distinct from Related Corporates.",
      "fix": "New RelatedPartyTransaction entity + parser (flat 6-col table, header row 1) + Corporate-tab render.",

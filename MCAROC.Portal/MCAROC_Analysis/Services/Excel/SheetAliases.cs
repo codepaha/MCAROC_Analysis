@@ -42,16 +42,13 @@ public static class SheetAliases
     /// counted in "M" without being checked). The first entry of each alias array is the canonical name
     /// written to <c>IngestionRun.AbsentOptionalSheetsJson</c> and shown to the reviewer; the count
     /// here is the "M" in "N of M optional sheets present".
-    /// <para>Deliberately excluded: the charge sheets (a missing charge workbook is its own flag,
-    /// <c>IngestionRun.ChargeReportMissing</c>) and the latest-only <see cref="Epfo"/> summary sheet
-    /// ("EPFO Establishments") — no parser consumes it (<see cref="EpfoAnnexure"/> carries the same
-    /// fields per wage-month), so tracking it would inflate "M" and always report it absent. It joins
-    /// this list only if #36 gives it a parser.</para></summary>
+    /// <para>Deliberately excluded: the charge sheets — a missing charge workbook is its own flag
+    /// (<c>IngestionRun.ChargeReportMissing</c>).</para></summary>
     public static readonly IReadOnlyList<string[]> TrackedOptionalSheets =
     [
         Directors, OtherDirectorships, DirectorShareholding, MajorShareholding,
         StandaloneFinancialData, ConsolidatedFinancialData, Msme, Gst, GstAnnexure,
-        EpfoAnnexure, Auditors, AuditorsConsolidated, LegalHistory, Structure,
+        Epfo, EpfoAnnexure, Auditors, AuditorsConsolidated, LegalHistory, Structure,
         RelatedCorporates, Compliance, SecuritiesAllotment, Proprietorship,
         DirectorAssociationHistory, PeerComparison, Highlights, FinancialParametersAnnexure,
     ];
