@@ -51,14 +51,17 @@
                 <div class="pi-metric"><span>Satisfied Charges</span><strong>@Model.SatisfiedChargeCount</strong><small>historical</small></div>
                 <div class="pi-metric">
                     <span>Registered Open Amount</span>
-                    <strong>@Model.TotalOpenChargeAmount.ToString("N1")</strong>
-                    @{
-                        var openList = Model.Charges.Where(DossierComputations.IsOpenCharge).ToList();
-                        var missingAmts = openList.Any(c => c.CurrentAmount is null);
+                    @if (Model.TotalOpenChargeAmount is { } openAmount)
+                    {
+                        <strong>@openAmount.ToString("N1")</strong>
+                    }
+                    else
+                    {
+                        <strong class="text-muted" style="font-size:0.875rem;">Not reported / reconciliation incomplete</strong>
                     }
                     @if (Model.CompanyProfile?.McaSumOfChargesCrore is { } mca)
                     {
-                        if (missingAmts)
+                        if (Model.AnyOpenChargeMissingAmount)
                         {
                             <small>₹ Crore · MCA stated: @Money(mca) <span class="text-warning" title="One or more open charges have unstated amounts; reconciliation incomplete">(recon incomplete)</span></small>
                         }
