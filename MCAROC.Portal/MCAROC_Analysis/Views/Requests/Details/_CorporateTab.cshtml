@@ -9,7 +9,7 @@
     var sections = new (string Label, string Id, int? Count)[]
     {
         ("Overview", "overview", null),
-        ("Management", "management", Model.Directors.Count),
+        ("Management", "management", Model.Directors.Count + Model.CompanyOfficers.Count),
         ("Director Network", "network", Model.DirectorAssociations.Count + Model.ProprietorshipAssociations.Count),
         ("Ownership", "ownership", Model.Shareholdings.Count),
         ("Group Entities", "group", Model.RelatedCorporates.Count),
@@ -149,6 +149,43 @@
             }
             else { <p class="text-muted mb-0">No current directors on record.</p> }
         </div>
+
+        @if (Model.CompanyOfficers.Count > 0)
+        {
+            <div class="mca-section">
+                <h3>Key Managerial Personnel / Officers (Non-DIN) <span class="mca-count">@Model.CompanyOfficers.Count</span></h3>
+                <p class="text-muted">Key officers and managerial personnel on record without a Director Identification Number (e.g. Company Secretary, CFO, Manager).</p>
+                <div class="pi-table-wrap"><table class="pi-results-table">
+                    <thead><tr><th>Officer Name</th><th>Designation</th><th>Appointed</th><th>Designation Date</th><th>Ceased</th><th>Status / Flags</th></tr></thead>
+                    <tbody>
+                    @foreach (var o in Model.CompanyOfficers)
+                    {
+                        <tr>
+                            <td><strong>@o.NameRaw</strong></td>
+                            <td>@Or(o.Designation)</td>
+                            <td>@D(o.OriginalAppointmentDate)</td>
+                            <td>@D(o.DesignationAppointmentDate)</td>
+                            <td>@D(o.CessationDate)</td>
+                            <td>
+                                @if (o.CessationDate is not null)
+                                {
+                                    <span class="mca-badge">Ceased</span>
+                                }
+                                else
+                                {
+                                    <span class="mca-badge" style="background:#e6f4ea; color:#137333;">Active</span>
+                                }
+                                @if (!string.IsNullOrWhiteSpace(o.Flags))
+                                {
+                                    <span class="badge bg-light text-dark ms-1">@o.Flags</span>
+                                }
+                            </td>
+                        </tr>
+                    }
+                    </tbody>
+                </table></div>
+            </div>
+        }
 
         @if (formerDirectors.Count > 0)
         {
