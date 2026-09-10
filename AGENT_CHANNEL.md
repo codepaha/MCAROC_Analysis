@@ -50,32 +50,49 @@ addresses Codex findings and re-requests review. The Owner merges once green + a
 
 ## Status board  <!-- Integrator keeps this current -->
 
-**Current focus:** OWNER TO MERGE #27 / #28 / #29 (all approved + green), then start Phase 8 Wave 1.
+**Current focus:** Phase 8 Wave 1 in progress. #27–#30 + #45 merged. A1/#48 merged. A2/#49 open for review.
 
 | PR | Branch | Head | Codex | Hosted CI | Owner action |
 |---|---|---|---|---|---|
-| #27 dossier PDF | `feature/phase7-dossier-pdf` | `1107223` | ✅ **approved** | ✅ green | **MERGE** (2nd) |
-| #28 dev re-ingest | `feature/dev-reingest` | `5288b30` | ✅ **approved** | ✅ green | **MERGE** (3rd — update branch after #27) |
-| #29 legal-history parser | `fix/legal-history-unverified-layout` | `f7b91b4` | ✅ **approved** | ✅ green | **MERGE** (1st — isolated, lowest risk) |
-| #30 parity plan + catalogue + channel | `docs/portal-parity-plan` | latest | not requested | ✅ green | merge (docs only) — makes this channel + catalogue live |
+| #49 A2 shareholding-pattern grid | `feature/a2-shareholding-grid` | `8328624` | ⏳ review requested | ✅ green | merge once Codex approves |
 
-**Suggested merge order:** #29 (isolated parser) → #27 (flagship, the demo needs it) → #28 (rebase
-on the new main, re-run CI — it touches `RequestsController` which #27 does not, so no conflict, but
-merge-main-in + green before merging). Then #30. Then rebuild the local `demo-coastal` branch from
-the merged main + start Phase 8 Wave 1 (#32–#38).
+**Merged since last board:** #27 #28 #29 #30 (Phase 7 + planning), #45 (pre-login reports),
+**#48 A1** (`aab8871` — company identity + contact block, `CompanyEmail` with source-row lineage,
+source-export timestamps dropped by design).
 
-**Phase 8:** EPIC #31. Wave 1 (#32–#38) and Wave 2 (#39–#44) open, **not started** — start after
-#27/#28/#29 merge (they touch the same parsers/entities). Wave 3 (restyle) + Wave 4 (dossier) not
-yet split into issues.
+**Phase 8:** EPIC #31. Wave 1 = #32–#38 (A1–A7): **A1/#32 done**, **A2/#33 in review (#49)**,
+A3–A7 open. Wave 2 = #39–#44 (render audit), open. Wave 3 (restyle) + Wave 4 (dossier) not yet
+split into issues. The catalogue (`docs/data-coverage-catalogue.json`) is the contract — G1 & G3
+now marked DONE.
 
-**Infra note (2026-09-10):** the self-hosted runner `mcaroc-local-runner` (this dev machine, NOT
-installed as a service — runs via `C:\actions-runner\MCAROC_Analysis\run.cmd`) was **offline** for
-~1h, so every `build-and-test` sat `queued` with nothing validating it. Restarted; 5 superseded runs
-cancelled; the 4 current-head runs are churning. If CI is "queued" again, check the runner is up.
+**Owner TODO (still open):** apply two migrations locally before running the portal —
+`AddPreLoginReportJobs` (#45) and `AddCompanyIdentityAndContact` (#48); `AddShareholdingPattern`
+(#49) once that merges. Rebuild the local `demo-coastal` (now: merged `main` + a re-ingest).
+
+**Infra note (2026-09-10):** self-hosted runner `mcaroc-local-runner` moved to
+**`D:\actions-runner\MCAROC_Analysis`** (C: was low on disk → flaky empty build-step failures).
+Still not a service — if CI sits `queued`, the runner (`run.cmd`) is down. Re-run a run that fails
+with an empty build step.
 
 ---
 
 ## Log  <!-- newest first. Prefix: NEEDS / BLOCKED / DONE / DECISION / FYI -->
+
+### 2026-09-10 — Claude session (Phase 8 Wave 1)
+- **DONE A1 / #32** — merged as **#48** (`aab8871`). `CompanyProfile` gained the identity + contact
+  fields; new `CompanyEmail` entity with per-email `SourceRowNumber` lineage (Codex blocker →
+  fixed, re-approved at `7c3ee96`). The four source-**export** timestamp rows are **dropped by
+  design** (owner call — they describe the upstream file, not the company). Catalogue G1 → DONE.
+- **DONE A2 / #33 → PR #49** (`8328624`, CI green, review requested from **@codex**). New
+  `ShareholdingPatternRow` entity + `StructureParser` walks both SEBI-category grids (PROMOTERS /
+  PUBLIC). COASTAL → 28 rows (14 + 14; categories 1 & 2 split into (i)/(ii)/(iii)). Rendered on the
+  Corporate → Ownership section. Catalogue G3 → DONE. **Issue #33's "20 rows" estimate corrected to
+  28 in the issue + PR** (sub-rows kept, lossless).
+- **FYI** vendor name scrubbed from Wave-1/2 issue bodies (#31 #33 #35 #41) + #32/#44 reconciled
+  with the "no source-export timestamps" decision.
+- **@owner** two migrations need applying locally: `AddCompanyIdentityAndContact` (#48) +
+  `AddShareholdingPattern` (#49 when merged). See the board.
+- Next: A3 / #34 (name history + PBA) after #49 merges (A3 also touches the Highlights parser).
 
 ### 2026-09-10 — Codex (re-review 2, transcribed by Claude session)
 - **All 3 PRs APPROVED at their exact heads.** #27 `1107223`: source contract correct, CI green.
