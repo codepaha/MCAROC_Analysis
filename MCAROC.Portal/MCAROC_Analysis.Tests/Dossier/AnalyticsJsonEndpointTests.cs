@@ -44,7 +44,8 @@ public class AnalyticsJsonEndpointTests : IAsyncLifetime
         Assert.Equal(requestId, t.GetProperty("requestId")!.GetValue(v));
         Assert.Equal(ingestionRunId, t.GetProperty("ingestionRunId")!.GetValue(v));
         var groups = Assert.IsAssignableFrom<IReadOnlyList<MetricGroup>>(t.GetProperty("metricGroups")!.GetValue(v));
-        // No metrics yet (D1..D11) — the point is the endpoint + the shared path, not the content.
-        Assert.Empty(groups);
+        // With D1 landed, the Charge register metric group is present on the analyzed request.
+        Assert.NotEmpty(groups);
+        Assert.Contains(groups, g => g.Title == "Charge register");
     }
 }
