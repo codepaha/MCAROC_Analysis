@@ -8,7 +8,7 @@ namespace MCAROC_Analysis.Tests;
 /// <summary>AskAsync must reject an unknown requestId before it writes anything (real .\SQLEXPRESS test DB).</summary>
 public class ChatServiceRequestGuardTests : IAsyncLifetime
 {
-    private const string ConnectionString = @"Server=.\SQLEXPRESS;Database=MCAROC_Analysis_Test;Trusted_Connection=True;TrustServerCertificate=True;";
+    private static readonly string ConnectionString = TestDatabase.ConnectionString;
 
     private static AppDbContext CreateContext() =>
         new(new DbContextOptionsBuilder<AppDbContext>().UseSqlServer(ConnectionString).Options);

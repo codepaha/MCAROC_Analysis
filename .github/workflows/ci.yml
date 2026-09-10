@@ -5,19 +5,19 @@ on:
   push:
     branches: [main]
 
-# Only the latest commit per branch/PR needs to run — cancel superseded runs so the
-# self-hosted runner is never busy validating a commit that's already been replaced.
+# Only the latest commit per branch/PR needs to run — cancel superseded runs.
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  # Fast compile check on a GitHub-hosted runner (free for this public repo). Fails in ~2-3 min
-  # on a real code break and — just as important — tells a genuine failure apart from a
-  # self-hosted-runner hiccup. Runs in PARALLEL with `test` below (no `needs:`), so a PR gets the
-  # compile verdict fast while the self-hosted runner works through the full suite.
-  build:
-    runs-on: windows-latest
+  # The full suite on a GitHub-hosted runner — free and parallel across PRs now the repo is public.
+  # It stands up SQL Server LocalDB for the integration tests. The real-workbook reconciliation
+  # tests skip here (their fixtures are never committed); they run on `reconciliation` below.
+  build-and-test:
+    runs-on: windows-2022
+    env:
+      MCAROC_TEST_CONNECTION: "Server=(localdb)\\MSSQLLocalDB;Database=MCAROC_Analysis_Test;Trusted_Connection=True;TrustServerCertificate=True;"
     steps:
       - uses: actions/checkout@v4
 
@@ -25,23 +25,38 @@ jobs:
         with:
           dotnet-version: '10.0.x'
 
+      - name: Start SQL Server LocalDB
+        shell: pwsh
+        run: |
+          sqllocaldb start MSSQLLocalDB
+          sqllocaldb info MSSQLLocalDB
+
       - name: Restore
         run: dotnet restore MCAROC.Portal/MCAROC.Portal.slnx
 
       - name: Build (Release)
         run: dotnet build MCAROC.Portal/MCAROC.Portal.slnx --no-restore --configuration Release
 
-  # Full suite on the self-hosted runner: it has SQL Server Express (the integration tests hit
-  # .\SQLEXPRESS directly), Tesseract OCR, and the two real reconciliation workbooks that are
-  # never committed. Runs concurrently with `build`; its own Build step (below) fails fast on a
-  # compile error anyway, so gating on `build` would only add latency.
-  test:
+      - name: Test
+        run: dotnet test MCAROC.Portal/MCAROC_Analysis.Tests/MCAROC_Analysis.Tests.csproj --no-build --configuration Release --logger "trx;LogFileName=test-results.trx"
+
+      - name: Publish test results
+        uses: actions/upload-artifact@v4
+        if: failure()
+        continue-on-error: true
+        with:
+          name: test-results
+          path: MCAROC.Portal/MCAROC_Analysis.Tests/TestResults/test-results.trx
+          retention-days: 7
+
+  # Self-hosted only: the two real COASTAL .xls workbooks live on this machine and are never
+  # committed. Runs just the fixture-dependent reconciliation tests, in parallel with the job above.
+  reconciliation:
     runs-on: [self-hosted, windows, mcaroc]
     steps:
       - uses: actions/checkout@v4
 
       # No actions/setup-dotnet: this runner is non-admin and can't write to C:\Program Files\dotnet.
-      # The .NET 10 SDK is already installed and on PATH.
       - name: Verify .NET SDK
         run: dotnet --version
 
@@ -51,22 +66,10 @@ jobs:
       - name: Build
         run: dotnet build MCAROC.Portal/MCAROC.Portal.slnx --no-restore --configuration Release
 
-      - name: Test
-        # MCAROC_RECON_FIXTURES points SourceReconciliationTests at the two real .xls workbooks
-        # (U45203OR1995PLC003982{,-charge}.xls) on this runner, so the BFSI reconciliation actually
-        # runs in CI without the real company data ever being committed. Override with the repo
-        # variable RECON_FIXTURES_DIR; if the files aren't there the test skips (it never fails CI).
+      - name: Reconciliation tests (real workbooks)
+        # MCAROC_RECON_FIXTURES points SourceReconciliationTests at the two real .xls workbooks on
+        # this runner. Override the location with the repo variable RECON_FIXTURES_DIR; the tests
+        # skip (never fail) if the files are absent.
         env:
           MCAROC_RECON_FIXTURES: ${{ vars.RECON_FIXTURES_DIR || 'E:\Downloads' }}
-        run: dotnet test MCAROC.Portal/MCAROC_Analysis.Tests/MCAROC_Analysis.Tests.csproj --no-build --configuration Release --logger "trx;LogFileName=test-results.trx"
-
-      - name: Publish test results
-        uses: actions/upload-artifact@v4
-        # Archiving the .trx is a convenience, not a gate: only bother when a test failed, and never let
-        # the upload itself turn the run red (e.g. the account's Actions storage quota is exhausted).
-        if: failure()
-        continue-on-error: true
-        with:
-          name: test-results
-          path: MCAROC.Portal/MCAROC_Analysis.Tests/TestResults/test-results.trx
-          retention-days: 7
+        run: dotnet test MCAROC.Portal/MCAROC_Analysis.Tests/MCAROC_Analysis.Tests.csproj --no-build --configuration Release --filter "FullyQualifiedName~SourceReconciliation"

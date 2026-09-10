@@ -15,7 +15,7 @@ namespace MCAROC_Analysis.Tests;
 /// reachable locally — skip this class if that's not available in your environment.</summary>
 public class IngestionOrchestratorIntegrationTests : IAsyncLifetime
 {
-    private const string ConnectionString = @"Server=.\SQLEXPRESS;Database=MCAROC_Analysis_Test;Trusted_Connection=True;TrustServerCertificate=True;";
+    private static readonly string ConnectionString = TestDatabase.ConnectionString;
 
     private AppDbContext CreateContext()
     {
