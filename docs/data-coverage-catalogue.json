@@ -218,7 +218,7 @@
       "portal_tab": "Litigation", "dossier": "Annexure E",
       "fields": [
         {"source": "Case Type / Case Status / Case Category / Court / Litigant(s) / Case No. / Date of Last Hearing-Judgement", "entityField": "CaseType / CaseStatus / CaseCategory / Court / Litigants / CaseNumber / LastHearingDate", "status": "live", "note": "PR #29 fixed the 3-layout parse; MatchStatus = Confirmed / Probable / Uncertain"},
-        {"source": "UNVERIFIED layout (Court / Petitioner / Respondent / Case No. / Date of Last Activity)", "entityField": "Court / Litigants(joined) / CaseNumber / LastHearingDate, MatchStatus=Uncertain", "status": "live", "note": "portal shows these under 'Other' category with no 'unverified' cue yet", "gap": "G12"}
+        {"source": "UNVERIFIED layout (Court / Petitioner / Respondent / Case No. / Date of Last Activity)", "entityField": "Court / Litigants(joined) / CaseNumber / LastHearingDate, MatchStatus=Uncertain", "status": "live", "note": "B3/#41 — rendered in dedicated Unverified sub-tab with provisional data disclaimer banner"}
       ]
     },
     {
