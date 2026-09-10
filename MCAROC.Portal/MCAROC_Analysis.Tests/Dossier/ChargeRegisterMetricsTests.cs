@@ -86,6 +86,7 @@ public class ChargeRegisterMetricsTests
             Litigation: new DossierLitigation([], [], new Dictionary<long, LitigationRole>()),
             ExecSummary: new DossierExecSummary(null, 0, 0, 0, 0, [], null, []),
             SourceSheets: [],
+            SourceCoverage: SheetCoverage.Empty,
             Metrics: []);
 
         var group = DossierComputations.ChargeRegisterMetrics(dossierModel);
@@ -203,6 +204,7 @@ public class ChargeRegisterMetricsTests
             Litigation: new DossierLitigation([], [], new Dictionary<long, LitigationRole>()),
             ExecSummary: new DossierExecSummary(null, 0, 0, 0, 0, [], null, []),
             SourceSheets: [],
+            SourceCoverage: SheetCoverage.Empty,
             Metrics: []);
 
         var group = DossierComputations.ChargeRegisterMetrics(emptyModel);
@@ -238,6 +240,7 @@ public class ChargeRegisterMetricsTests
             Litigation: new DossierLitigation([], [], new Dictionary<long, LitigationRole>()),
             ExecSummary: new DossierExecSummary(null, 0, 0, 0, 0, [], null, []),
             SourceSheets: [],
+            SourceCoverage: SheetCoverage.Empty,
             Metrics: []);
     }
 
