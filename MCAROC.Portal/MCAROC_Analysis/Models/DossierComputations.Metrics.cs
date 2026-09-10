@@ -195,65 +195,86 @@ public static partial class DossierComputations
             list.Add(MetricResult.Insufficient("Charges created in last 12 months", MetricUnit.Count,
                 "No charge records on file", "RocChargeEvent.EventDate"));
             list.Add(MetricResult.Insufficient("Amount created in last 12 months", MetricUnit.Crore,
-                "No charge records on file", "RocChargeEvent.EventDate", "RocChargeEvent.ChargeAmount"));
+                "No charge records on file", "RocChargeEvent.EventDate", "RocCharge.CurrentAmount"));
             list.Add(MetricResult.Insufficient("Charges created in last 24 months", MetricUnit.Count,
                 "No charge records on file", "RocChargeEvent.EventDate"));
             list.Add(MetricResult.Insufficient("Amount created in last 24 months", MetricUnit.Crore,
-                "No charge records on file", "RocChargeEvent.EventDate", "RocChargeEvent.ChargeAmount"));
+                "No charge records on file", "RocChargeEvent.EventDate", "RocCharge.CurrentAmount"));
         }
         else
         {
-            var creationEvents = all.SelectMany(c => c.Events)
-                .Where(e => e.EventType == ChargeEventType.Creation && e.EventDate is not null)
-                .ToList();
             var cutoff12 = asOfDate.AddYears(-1);
             var cutoff24 = asOfDate.AddYears(-2);
 
-            var c12 = creationEvents.Where(e => e.EventDate!.Value >= cutoff12 && e.EventDate!.Value <= asOfDate).ToList();
-            var c24 = creationEvents.Where(e => e.EventDate!.Value >= cutoff24 && e.EventDate!.Value <= asOfDate).ToList();
+            static DateOnly? GetCreationDate(RocCharge c) =>
+                c.CreationDate ?? c.Events.FirstOrDefault(e => e.EventType == ChargeEventType.Creation && e.EventDate is not null)?.EventDate;
 
-            list.Add(MetricResult.Ok("Charges created in last 12 months", c12.Count,
-                MetricUnit.Count, $"trailing 12 months to {asOfDate:d MMM yyyy}", "RocChargeEvent.EventDate"));
+            var c12 = all.Where(c =>
+            {
+                var d = GetCreationDate(c);
+                return d is not null && d.Value >= cutoff12 && d.Value <= asOfDate;
+            }).ToList();
+
+            var c24 = all.Where(c =>
+            {
+                var d = GetCreationDate(c);
+                return d is not null && d.Value >= cutoff24 && d.Value <= asOfDate;
+            }).ToList();
 
             if (c12.Count == 0)
             {
+                var periodNote = $"trailing 12 months to {asOfDate:d MMM yyyy} (0 dated creation events)";
+                list.Add(MetricResult.Ok("Charges created in last 12 months", 0m,
+                    MetricUnit.Count, periodNote, "RocChargeEvent.EventDate"));
                 list.Add(MetricResult.Ok("Amount created in last 12 months", 0m,
-                    MetricUnit.Crore, $"trailing 12 months to {asOfDate:d MMM yyyy}", "RocChargeEvent.EventDate", "RocChargeEvent.ChargeAmount"));
-            }
-            else if (c12.Any(e => e.ChargeAmount is null))
-            {
-                var missingCount = c12.Count(e => e.ChargeAmount is null);
-                list.Add(MetricResult.Insufficient("Amount created in last 12 months", MetricUnit.Crore,
-                    $"Reconciliation incomplete: {missingCount} of {c12.Count} creation events missing ChargeAmount",
-                    "RocChargeEvent.EventDate", "RocChargeEvent.ChargeAmount"));
+                    MetricUnit.Crore, periodNote, "RocChargeEvent.EventDate", "RocCharge.CurrentAmount"));
             }
             else
             {
-                var amt12 = c12.Sum(e => e.ChargeAmount!.Value);
-                list.Add(MetricResult.Ok("Amount created in last 12 months", amt12,
-                    MetricUnit.Crore, $"trailing 12 months to {asOfDate:d MMM yyyy}", "RocChargeEvent.EventDate", "RocChargeEvent.ChargeAmount"));
-            }
+                list.Add(MetricResult.Ok("Charges created in last 12 months", c12.Count,
+                    MetricUnit.Count, $"trailing 12 months to {asOfDate:d MMM yyyy}", "RocChargeEvent.EventDate"));
 
-            list.Add(MetricResult.Ok("Charges created in last 24 months", c24.Count,
-                MetricUnit.Count, $"trailing 24 months to {asOfDate:d MMM yyyy}", "RocChargeEvent.EventDate"));
+                if (c12.Any(c => c.CurrentAmount is null))
+                {
+                    var missingCount = c12.Count(c => c.CurrentAmount is null);
+                    list.Add(MetricResult.Insufficient("Amount created in last 12 months", MetricUnit.Crore,
+                        $"Reconciliation incomplete: {missingCount} of {c12.Count} created charges missing CurrentAmount",
+                        "RocChargeEvent.EventDate", "RocCharge.CurrentAmount"));
+                }
+                else
+                {
+                    var amt12 = c12.Sum(c => c.CurrentAmount!.Value);
+                    list.Add(MetricResult.Ok("Amount created in last 12 months", amt12,
+                        MetricUnit.Crore, $"trailing 12 months to {asOfDate:d MMM yyyy}", "RocChargeEvent.EventDate", "RocCharge.CurrentAmount"));
+                }
+            }
 
             if (c24.Count == 0)
             {
+                var periodNote = $"trailing 24 months to {asOfDate:d MMM yyyy} (0 dated creation events)";
+                list.Add(MetricResult.Ok("Charges created in last 24 months", 0m,
+                    MetricUnit.Count, periodNote, "RocChargeEvent.EventDate"));
                 list.Add(MetricResult.Ok("Amount created in last 24 months", 0m,
-                    MetricUnit.Crore, $"trailing 24 months to {asOfDate:d MMM yyyy}", "RocChargeEvent.EventDate", "RocChargeEvent.ChargeAmount"));
-            }
-            else if (c24.Any(e => e.ChargeAmount is null))
-            {
-                var missingCount = c24.Count(e => e.ChargeAmount is null);
-                list.Add(MetricResult.Insufficient("Amount created in last 24 months", MetricUnit.Crore,
-                    $"Reconciliation incomplete: {missingCount} of {c24.Count} creation events missing ChargeAmount",
-                    "RocChargeEvent.EventDate", "RocChargeEvent.ChargeAmount"));
+                    MetricUnit.Crore, periodNote, "RocChargeEvent.EventDate", "RocCharge.CurrentAmount"));
             }
             else
             {
-                var amt24 = c24.Sum(e => e.ChargeAmount!.Value);
-                list.Add(MetricResult.Ok("Amount created in last 24 months", amt24,
-                    MetricUnit.Crore, $"trailing 24 months to {asOfDate:d MMM yyyy}", "RocChargeEvent.EventDate", "RocChargeEvent.ChargeAmount"));
+                list.Add(MetricResult.Ok("Charges created in last 24 months", c24.Count,
+                    MetricUnit.Count, $"trailing 24 months to {asOfDate:d MMM yyyy}", "RocChargeEvent.EventDate"));
+
+                if (c24.Any(c => c.CurrentAmount is null))
+                {
+                    var missingCount = c24.Count(c => c.CurrentAmount is null);
+                    list.Add(MetricResult.Insufficient("Amount created in last 24 months", MetricUnit.Crore,
+                        $"Reconciliation incomplete: {missingCount} of {c24.Count} created charges missing CurrentAmount",
+                        "RocChargeEvent.EventDate", "RocCharge.CurrentAmount"));
+                }
+                else
+                {
+                    var amt24 = c24.Sum(c => c.CurrentAmount!.Value);
+                    list.Add(MetricResult.Ok("Amount created in last 24 months", amt24,
+                        MetricUnit.Crore, $"trailing 24 months to {asOfDate:d MMM yyyy}", "RocChargeEvent.EventDate", "RocCharge.CurrentAmount"));
+                }
             }
         }
 
@@ -348,9 +369,11 @@ public static partial class DossierComputations
         }
         else
         {
-            // Note: for an even count, takes the upper-middle element nonNegLags[Count / 2] as a descriptive days metric.
-            var median = nonNegLags[nonNegLags.Count / 2];
-            list.Add(MetricResult.Ok("Median charge filing lag", (decimal)median,
+            // Median: middle element for odd counts, average of the two middle elements for even counts.
+            decimal median = nonNegLags.Count % 2 == 1
+                ? nonNegLags[nonNegLags.Count / 2]
+                : (nonNegLags[nonNegLags.Count / 2 - 1] + nonNegLags[nonNegLags.Count / 2]) / 2m;
+            list.Add(MetricResult.Ok("Median charge filing lag", median,
                 MetricUnit.Days, asOfStr, "RocChargeEvent.EventDate", "RocChargeEvent.FilingDate"));
 
             var b0_7 = nonNegLags.Count(d => d <= 7);

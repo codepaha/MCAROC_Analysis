@@ -303,7 +303,39 @@ public class ChargeRegisterMetricsTests
         var b7Amt12 = Assert.Single(group.Metrics, m => m.Label == "Amount created in last 12 months");
         Assert.False(b7Amt12.HasValue);
         Assert.NotNull(b7Amt12.InsufficiencyReason);
-        Assert.Contains("1 of 2 creation events missing ChargeAmount", b7Amt12.InsufficiencyReason);
+        Assert.Contains("missing CurrentAmount", b7Amt12.InsufficiencyReason);
+    }
+
+    [Fact]
+    public void B7_zero_creation_events_includes_coverage_note()
+    {
+        var asOf = new DateTime(2023, 6, 30, 0, 0, 0, DateTimeKind.Utc);
+        var oldDate = new DateOnly(2015, 1, 1);
+
+        // Charge created 8 years ago — outside trailing 12 and 24 months
+        var c1 = new RocCharge { ChargeId = 1, ChargeStatus = "Open", CurrentAmount = 50m, CreationDate = oldDate };
+        var model = CreateMinimalDossierWithCharges([c1], asOf: asOf);
+        var group = DossierComputations.ChargeRegisterMetrics(model);
+
+        var b7Count12 = Assert.Single(group.Metrics, m => m.Label == "Charges created in last 12 months");
+        Assert.True(b7Count12.HasValue);
+        Assert.Equal(0m, b7Count12.Value);
+        Assert.Contains("(0 dated creation events)", b7Count12.Period);
+
+        var b7Amt12 = Assert.Single(group.Metrics, m => m.Label == "Amount created in last 12 months");
+        Assert.True(b7Amt12.HasValue);
+        Assert.Equal(0m, b7Amt12.Value);
+        Assert.Contains("(0 dated creation events)", b7Amt12.Period);
+
+        var b7Count24 = Assert.Single(group.Metrics, m => m.Label == "Charges created in last 24 months");
+        Assert.True(b7Count24.HasValue);
+        Assert.Equal(0m, b7Count24.Value);
+        Assert.Contains("(0 dated creation events)", b7Count24.Period);
+
+        var b7Amt24 = Assert.Single(group.Metrics, m => m.Label == "Amount created in last 24 months");
+        Assert.True(b7Amt24.HasValue);
+        Assert.Equal(0m, b7Amt24.Value);
+        Assert.Contains("(0 dated creation events)", b7Amt24.Period);
     }
 
     [Fact]
@@ -331,9 +363,10 @@ public class ChargeRegisterMetricsTests
         var model = CreateMinimalDossierWithCharges(charges, asOf: asOf);
         var group = DossierComputations.ChargeRegisterMetrics(model);
 
+        // Sorted lags: [5, 20, 50, 100]; even count 4 -> median is average of middle two (20 + 50) / 2 = 35
         var median = Assert.Single(group.Metrics, m => m.Label == "Median charge filing lag");
         Assert.True(median.HasValue);
-        Assert.Equal(50m, median.Value);
+        Assert.Equal(35m, median.Value);
 
         var b0_7 = Assert.Single(group.Metrics, m => m.Label == "Charge filing lag 0-7 days");
         Assert.True(b0_7.HasValue);
