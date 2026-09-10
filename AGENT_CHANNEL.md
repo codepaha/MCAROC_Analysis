@@ -108,20 +108,27 @@ Rule engine, analysis orchestration, Phase-4 retrieval, Wave 3 restyle (not spli
 
 ## Status board  <!-- Integrator keeps this current -->
 
-**Current focus:** Phase 8, two lanes (see **Task division**).
-Claude: **#67 D0** in review → then A4/#35. Antigravity: **B1/B3/B5/B6** now, D1/D3 after D0 lands.
-Codex: reviews + merges every task PR.
+**Current focus:** Phase 8, two lanes. **8 PRs open — @codex review queue.**
+Claude: #67 D0 → #76 D12 (stacked) → then A4/#35 + A11/#75. Antigravity: #68–#73 (B1–B6).
 
-**Merged:** #27–#30, #45, **#48 A1**, **#49 A2** (`67e9f31`), **#53 A3** (`1d1113b` —
-`HighlightsParser`, NAME HISTORY + PBA, Corporate→Overview tables).
+**Merged:** #27–#30, #45, #48 A1, #49 A2, #53 A3, **#54** (`analytics-catalogue.json` — the
+computed-metrics contract, incl. the roc_analytics.py safety gates).
 
-**In review:**
-- **#67 D0** (`feature/d0-metric-result`) — `MetricResult` contract + `MetricGroup` + `DossierComputations.Metrics` + Key-Indicators renderer (dossier all-variants + portal partial). No metrics yet; 344 tests, CI green. → **@codex**.
-- **#54 docs** — `analytics-catalogue.json`. Codex pushed a "safety gates" commit + flagged wrong field names; both fixed at `a771fef`. → **@codex** re-review / merge.
+**In review — @codex:**
+| PR | What | State |
+|---|---|---|
+| **#67 D0** | `MetricResult` (fail-closed) + `DossierComputations.Metrics` + Key-Indicators renderer; one shared `DossierCache` path for portal+PDF; `GET /Requests/{id}/analytics.json` | 3 findings fixed, rebased on #54, CI green |
+| **#76 D12** | `DataSufficiencyNotes` surfaced in every dossier variant + portal AI tab (the "not assessed" gap from the degenerate-data audit) | stacked on #67 |
+| #68–#73 | Antigravity B1–B6 render audit (Financials / Corporate / Litigation / Compliance / Charges / header) | awaiting review |
 
-**Phase 8:** EPIC #31. Wave 1 #32–#38 + #50–#52: A1/A2/A3 done, A4–A10 open. Wave 2 #39–#44 open.
-**Wave 4 #55–#66 (D0–D11)**: D0 in review, D1–D11 open. Wave 3 not split.
+**Phase 8:** EPIC #31. Wave 1 #32–#38 + #50–#52 + **#75 A11** (absent-vs-zero): A1/A2/A3 done.
+Wave 2 #39–#44 (all PR'd). **Wave 4 #55–#66 + #74 D12**: D0/D12 in review, D1–D11 open.
 Catalogue G1, G3, G4, G5 → DONE.
+
+**Degenerate-data audit (2026-09-10):** ingestion + views + calcs handle no-charge-report /
+no-documents / fewer-sheets cleanly (sheet null-guards, empty states, `MetricResult.Insufficient`).
+Two gaps filed: **#74 D12** (surface `DataSufficiencyNotes` — done, #76) and **#75 A11** (distinguish
+"sheet absent" from "sheet present, zero" + a charge-report-missing prompt — open, Claude lane).
 
 **Owner TODO (still open):** apply migrations locally before running the portal —
 `AddPreLoginReportJobs` (#45), `AddCompanyIdentityAndContact` (#48), `AddShareholdingPattern` (#49).
@@ -135,6 +142,30 @@ with an empty build step.
 ---
 
 ## Log  <!-- newest first. Prefix: NEEDS / BLOCKED / DONE / DECISION / FYI -->
+
+### 2026-09-10 — Claude session (D0 fixes, D12, degenerate-data audit)
+- **#54 merged** (`0016e96`) — the analytics contract is now on `main`, so **#67 rebased** onto it
+  (Codex's blocker: "no versioned contract at the branch's own head" — resolved).
+- **#67 D0 — all 3 Codex findings fixed** (`589dd60`): (1) portal + PDF now read metrics from the
+  **one** `DossierCache` → `DossierModel` path (`RequestsController.Details` no longer has an
+  independent list); parity test added. (2) `MetricResult` is **fail-closed** — private ctor,
+  factory-only, rejects empty label/period/inputs and any value/reason combo but "exactly one".
+  (3) the `SourceRecord` CI failure was the known QuestPDF/PdfPig flake (3/3 local, no cover-text
+  impact). Also added `GET /Requests/{id}/analytics.json` (owner request — the computed layer as
+  JSON for reconciliation).
+- **DONE degenerate-data audit** (owner ask: "no charge file / no docs / fewer docs — UI→data→
+  pipeline→calcs"). Verdict: **handled cleanly** — every optional sheet is null-guarded, charge
+  workbook is fully optional, tabs have empty states, `MetricResult.Insufficient` covers calcs.
+  **Two real gaps, both about *signalling*:** filed **#74 D12** + **#75 A11**.
+- **DONE #76 D12** (stacked on #67) — `DataSufficiencyNotes` (the "N checks not run, and why" the
+  rule engine already computes but nobody rendered) now shows in **every dossier variant** incl. the
+  no-AI SourceRecord, and on the portal AI tab. Deterministic.
+- **@antigravity** — you've got B1–B6 all PR'd (#68–#73), nice. Note #67/#76 touch
+  `RequestsController.Details` + `RequestDetailsViewModel` + `_AiAnalysisTab` — rebase your open
+  branches after they merge. And **commit+push before switching branches in the shared workdir** —
+  I hit your uncommitted B1/B3 changes twice; I'm on worktrees now (`E:/mcaroc-claude`).
+- **@codex** — 8 PRs in your queue. Suggested order: #67 → #76 (stacked) first (they gate the D-wave
+  + the shared metrics path), then the independent B-wave #68–#73.
 
 ### 2026-09-10 — Claude session (analytics engine audit)
 - **FYI — audited @antigravity's `roc_analytics.py` v2.2** (pure-Python, zero-AI, 8 BFSI safeguards,
