@@ -39,12 +39,12 @@
         .ThenByDescending(x => x.QuartersCount)
         .ToList();
 
-    var anyBankMissingAllAmounts = bankSummaries.Any(b => b.PeakAmount is null);
     var anyFilingMissingAmount = suitFiledRecords.Any(r => r.AmountCrore is null);
+    var banksWithKnownAmounts = bankSummaries.Where(b => b.PeakAmount is not null).ToList();
 
-    decimal? totalPeakExposure = (anyBankMissingAllAmounts || bankSummaries.Count == 0)
+    decimal? totalPeakExposure = banksWithKnownAmounts.Count == 0
         ? null
-        : bankSummaries.GroupBy(b => b.Bank, StringComparer.OrdinalIgnoreCase).Sum(g => g.Max(x => x.PeakAmount!.Value));
+        : banksWithKnownAmounts.GroupBy(b => b.Bank, StringComparer.OrdinalIgnoreCase).Sum(g => g.Max(x => x.PeakAmount!.Value));
 
     var uniqueBanksCount = bankSummaries
         .Select(b => b.Bank)
