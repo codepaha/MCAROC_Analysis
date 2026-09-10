@@ -108,21 +108,19 @@ Rule engine, analysis orchestration, Phase-4 retrieval, Wave 3 restyle (not spli
 
 ## Status board  <!-- Integrator keeps this current -->
 
-**Current focus:** Phase 8, two lanes running in parallel (see **Task division**).
-Claude: **#55 D0** then the A-wave. Antigravity: **B1/B3/B5/B6** now, D1/D3 after D0.
-Codex: reviews + merges every task PR. #27–#30 #45 #48 #49 merged; #53 #54 in review.
+**Current focus:** Phase 8, two lanes (see **Task division**).
+Claude: **#67 D0** in review → then A4/#35. Antigravity: **B1/B3/B5/B6** now, D1/D3 after D0 lands.
+Codex: reviews + merges every task PR.
 
-**Merged:** #27 #28 #29 #30 (Phase 7 + planning), #45 (pre-login reports),
-**#48 A1** (`aab8871` — company identity + contact block), **#49 A2** (`67e9f31` —
-`ShareholdingPatternRow`, both SEBI grids).
+**Merged:** #27–#30, #45, **#48 A1**, **#49 A2** (`67e9f31`), **#53 A3** (`1d1113b` —
+`HighlightsParser`, NAME HISTORY + PBA, Corporate→Overview tables).
 
 **In review:**
-- **#53 A3** — `HighlightsParser` (NAME HISTORY + PBA); regression test added at `3b05a04` per Codex; 338 tests, CI green. → **@codex** re-review.
-- **#54 docs** — `analytics-catalogue.json` (the computed-metrics contract). Docs only.
+- **#67 D0** (`feature/d0-metric-result`) — `MetricResult` contract + `MetricGroup` + `DossierComputations.Metrics` + Key-Indicators renderer (dossier all-variants + portal partial). No metrics yet; 344 tests, CI green. → **@codex**.
+- **#54 docs** — `analytics-catalogue.json`. Codex pushed a "safety gates" commit + flagged wrong field names; both fixed at `a771fef`. → **@codex** re-review / merge.
 
-**Phase 8:** EPIC #31. Wave 1 = #32–#38 (A1–A7) + **#50–#52** (A8–A10, new sheets): A1/A2 done,
-A3 in review, A4–A10 open. Wave 2 = #39–#44, open. **Wave 4 = #55–#66 (D0–D11, computed metrics)**,
-open, D0 first. Wave 3 not yet split.
+**Phase 8:** EPIC #31. Wave 1 #32–#38 + #50–#52: A1/A2/A3 done, A4–A10 open. Wave 2 #39–#44 open.
+**Wave 4 #55–#66 (D0–D11)**: D0 in review, D1–D11 open. Wave 3 not split.
 Catalogue G1, G3, G4, G5 → DONE.
 
 **Owner TODO (still open):** apply migrations locally before running the portal —
@@ -137,6 +135,22 @@ with an empty build step.
 ---
 
 ## Log  <!-- newest first. Prefix: NEEDS / BLOCKED / DONE / DECISION / FYI -->
+
+### 2026-09-10 — Claude session (A3 merged, D0 up)
+- **DONE A3 / #34** — merged **#53 / `1d1113b`**. `HighlightsParser` + `CompanyNameHistory` +
+  `PrincipalBusinessActivity`; Corporate→Overview tables. Catalogue G4, G5 → DONE.
+- **DONE D0 → PR #67** (`feature/d0-metric-result`, CI green, 344 tests). `MetricResult` record
+  (Label · Value? · Unit · Period · Inputs[] · InsufficiencyReason) + `MetricGroup` +
+  `DossierComputations.Metrics.BuildMetricGroups()` (returns [] until D1..D11) + the Snapshot
+  "Key Indicators" block (all variants) + `_KeyIndicators.cshtml` + golden-master `MetricGroupTitles`.
+  **D1/D3/D5/D6 (@antigravity) unblock the moment this merges.**
+- **#54** — @codex pushed a "BFSI analytics safety gates" commit onto the branch (good — kept) and
+  flagged 8 wrong `entity.field` names in the GST/EPFO sections. Both resolved at `a771fef`
+  (rebased); every `inputs` entry now names a real field, `GstFiling.DelayDays` surfaced as the
+  authoritative on-time signal.
+- **FYI** a stray `.work-pr54` git worktree (Codex's #54 review checkout) got briefly committed to
+  the D0 branch and removed; added `.work-pr*/` to `.gitignore`.
+- **Next (Claude):** A4 / #35 once #67 merges (rebasing conflicts otherwise).
 
 ### 2026-09-10 — Claude session (task division)
 - **DECISION (owner):** split Phase 8 into two parallel build lanes + give **Codex review AND merge
