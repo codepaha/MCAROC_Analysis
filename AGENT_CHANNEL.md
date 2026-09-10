@@ -161,7 +161,7 @@ Linux subset fonts break PdfPig's ToUnicode → those are `[SkippableFact]`, ski
 ## Log  <!-- newest first. Prefix: NEEDS / BLOCKED / DONE / DECISION / FYI -->
 
 ### 2026-09-10 — Claude session (A11)
-- **CLAIMED + PR #NN — A11 / #75** — `feature/a11-absent-sheets`. Records which optional workbook
+- **CLAIMED + PR #83 — A11 / #75** — `feature/a11-absent-sheets`. Records which optional workbook
   sheets an upload was missing (`IngestionRun.AbsentOptionalSheetsJson` + `ChargeReportMissing`,
   migration `AddAbsentSheetTracking`). New `SheetCoverage` model → conditional empty-states across all
   7 tabs ("did not include a <Sheet>" vs "present, reported no records"), a "Data coverage" header
