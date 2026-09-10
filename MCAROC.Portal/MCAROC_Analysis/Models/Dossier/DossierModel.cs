@@ -93,7 +93,14 @@ public sealed record DossierExecSummary(
     ReviewPriority? ReviewPriority,
     int CriticalCount, int ReviewCount, int WatchCount, int PositiveCount,
     IReadOnlyList<AnalysisFinding> FindingsInDisplayOrder,
-    ExecutiveSummary? Structured);
+    ExecutiveSummary? Structured,
+    IReadOnlyList<DataSufficiencyNote> NotAssessed);
+
+/// <summary>A deterministic rule the engine could not run, and why ("no charge has both a Creation and
+/// a later Modification amount", "financials are FY2017 — distress rules gated"). The engine records
+/// these as it evaluates; they render in <em>every</em> dossier variant so a "verified clean" result
+/// is distinguishable from "not checked". AI-independent.</summary>
+public sealed record DataSufficiencyNote(string Code, string Reason);
 
 /// <summary>One worksheet's verbatim Layer-0 rows (<see cref="MCAROC_Analysis.Data.Entities.SourceRow"/>),
 /// in workbook / sheet / row order — the "Full source" and "Source record" annexures render straight

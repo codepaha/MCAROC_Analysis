@@ -29,7 +29,8 @@ public sealed record GoldenMasterSnapshot(
     decimal? RevenueYoYPercent,
     int ActiveDirectorCount,
     string[] FindingCodesInDisplayOrder,
-    string[] MetricGroupTitles)
+    string[] MetricGroupTitles,
+    string[] DataSufficiencyNoteCodes)
 {
     public static GoldenMasterSnapshot From(RequestDetailsViewModel vm) => new(
         OpenChargeCount: vm.OpenChargeCount,
@@ -57,7 +58,8 @@ public sealed record GoldenMasterSnapshot(
         RevenueYoYPercent: vm.RevenueYoYPercent,
         ActiveDirectorCount: vm.ActiveDirectorCount,
         FindingCodesInDisplayOrder: vm.AnalysisFindings.Select(f => f.Code).ToArray(),
-        MetricGroupTitles: vm.KeyMetrics.Select(g => g.Title).ToArray());
+        MetricGroupTitles: vm.KeyMetrics.Select(g => g.Title).ToArray(),
+        DataSufficiencyNoteCodes: vm.DataSufficiencyNotes.Select(n => n.Code).OrderBy(c => c).ToArray());
 
     public static GoldenMasterSnapshot From(DossierModel m) => new(
         OpenChargeCount: m.Charges.OpenCount,
@@ -84,5 +86,6 @@ public sealed record GoldenMasterSnapshot(
         RevenueYoYPercent: m.Financials.RevenueYoYPercent,
         ActiveDirectorCount: m.Corporate.ActiveDirectorCount,
         FindingCodesInDisplayOrder: m.ExecSummary.FindingsInDisplayOrder.Select(f => f.Code).ToArray(),
-        MetricGroupTitles: m.Metrics.Select(g => g.Title).ToArray());
+        MetricGroupTitles: m.Metrics.Select(g => g.Title).ToArray(),
+        DataSufficiencyNoteCodes: m.ExecSummary.NotAssessed.Select(n => n.Code).OrderBy(c => c).ToArray());
 }

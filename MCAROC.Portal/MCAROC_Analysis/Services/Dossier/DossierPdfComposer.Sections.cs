@@ -102,7 +102,37 @@ public partial class DossierPdfComposer
         });
 
         ComposeKeyIndicators(col);
+        ComposeNotAssessed(col);
     });
+
+    /// <summary>The deterministic checks the rule engine could NOT run, and why — so a "verified
+    /// clean" result is never mistaken for "not checked". Renders in every variant (AI-independent);
+    /// a no-op when the engine ran everything.</summary>
+    private void ComposeNotAssessed(ColumnDescriptor col)
+    {
+        var notes = model.ExecSummary.NotAssessed;
+        if (notes.Count == 0) return;
+
+        col.Item().PaddingTop(16).Element(c => Kicker(c, "Coverage"));
+        col.Item().Element(c => SubHead(c, "Not assessed"));
+        col.Item().PaddingBottom(8).Text(
+            $"{notes.Count} deterministic check{(notes.Count == 1 ? "" : "s")} could not be run against " +
+            "this data set. Absence of a flag below is not a clean result — the check simply had no basis " +
+            "to evaluate.")
+            .FontSize(DossierTheme.Small).FontColor(DossierTheme.InkSoft).LineHeight(1.5f);
+
+        col.Item().Border(0.75f).BorderColor(DossierTheme.Line).BorderLeft(2.5f).BorderColor(DossierTheme.Amber)
+            .Background(DossierTheme.PaperRaised).Padding(11).Column(inner =>
+        {
+            foreach (var note in notes)
+                inner.Item().PaddingBottom(4).Row(r =>
+                {
+                    r.ConstantItem(14).Text("•").FontColor(DossierTheme.Amber);
+                    r.RelativeItem().Text(note.Reason).FontSize(DossierTheme.Small)
+                        .FontColor(DossierTheme.InkSoft).LineHeight(1.4f);
+                });
+        });
+    }
 
     /// <summary>The derived-metrics block. Renders in every variant (Executive, FullSource,
     /// SourceRecord) — it is deterministic and AI-independent. Empty until the Wave-4 D-issues add

@@ -360,6 +360,7 @@ public class RequestsController(
         // Null (no completed analysis for the latest ingestion) ⇒ no metrics yet; the panel hides.
         var dossier = await dossierCache.GetAsync(id);
         vm.KeyMetrics = dossier?.Metrics.ToList() ?? [];
+        vm.DataSufficiencyNotes = dossier?.ExecSummary.NotAssessed.ToList() ?? [];
 
         var chatSession = await db.ChatSessions.FirstOrDefaultAsync(s => s.RequestId == id);
         if (chatSession is not null)
@@ -395,6 +396,7 @@ public class RequestsController(
             ingestionRunId = dossier.IngestionRunId,
             analysisRunId = dossier.AnalysisRunId,
             metricGroups = dossier.Metrics,
+            notAssessed = dossier.ExecSummary.NotAssessed,
         });
     }
 

@@ -38,5 +38,9 @@
     "CHARGE_MATERIAL_ENHANCEMENT",
     "LITIGATION_ROLE_UNCERTAIN"
   ],
-  "MetricGroupTitles": []
+  "MetricGroupTitles": [],
+  "DataSufficiencyNoteCodes": [
+    "FIN_LEVERAGE_TREND",
+    "GST_FILING_COMPLIANCE"
+  ]
 }
