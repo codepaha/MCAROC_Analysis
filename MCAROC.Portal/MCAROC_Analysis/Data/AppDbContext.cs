@@ -52,6 +52,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<ProprietorshipAssociation> ProprietorshipAssociations => Set<ProprietorshipAssociation>();
     public DbSet<DirectorAssignmentHistory> DirectorAssignmentHistories => Set<DirectorAssignmentHistory>();
     public DbSet<PeerComparisonMetric> PeerComparisonMetrics => Set<PeerComparisonMetric>();
+    public DbSet<PeerCompany> PeerCompanies => Set<PeerCompany>();
     public DbSet<ChargeSecurityComponent> ChargeSecurityComponents => Set<ChargeSecurityComponent>();
 
     // Phase 7.0 — raw source-row staging (Layer 0) + completeness of the typed layer
@@ -305,6 +306,15 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             e.HasKey(x => x.PeerComparisonMetricId);
             e.HasIndex(x => new { x.RequestId, x.IngestionRunId });
             e.Property(x => x.Position).HasConversion<string>().HasMaxLength(15);
+        });
+
+        modelBuilder.Entity<PeerCompany>(e =>
+        {
+            e.HasKey(x => x.PeerCompanyId);
+            e.HasIndex(x => new { x.RequestId, x.IngestionRunId });
+            e.Property(x => x.LegalName).HasMaxLength(300);
+            e.Property(x => x.Cin).HasMaxLength(25);
+            e.Property(x => x.City).HasMaxLength(120);
         });
 
         modelBuilder.Entity<SourceRow>(e =>

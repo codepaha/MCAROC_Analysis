@@ -354,8 +354,10 @@ public class IngestionOrchestrator(AppDbContext db, IExcelSheetReader sheetReade
         var peerSheet = SheetAliases.Find(rocWorkbook, SheetAliases.PeerComparison);
         if (peerSheet is not null)
         {
-            var r = PeerComparisonParser.Parse(peerSheet, requestId, runId, rocDocumentId);
+            var r = PeerComparisonParser.Parse(peerSheet, requestId, runId, rocDocumentId, out var peerCompanies);
             db.PeerComparisonMetrics.AddRange(r.Items);
+            db.PeerCompanies.AddRange(peerCompanies);
+            itemCount += peerCompanies.Count;
             Collect(r, issues, ref itemCount);
         }
 

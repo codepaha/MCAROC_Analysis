@@ -363,4 +363,94 @@ public class PeerComparisonParserTests
         Assert.Equal(PeerPosition.Above, debtors2017.Position);
         Assert.DoesNotContain(r.Items, x => x.MetricName.StartsWith("5 Closest"));
     }
+
+    [Fact]
+    public void ReadsTheFiveClosestPeersBlock_RankedWithTheReferenceFinancialYear()
+    {
+        var sheet = Sheet("Peer Comparison",
+            Row("COMPARATIVE METRICS 1"),
+            Row("Industry", "Infrastructure"),
+            Row("Segment", "Other Construction Services"),
+            Row("Financial Year", 2017.0),
+            Row(),
+            Row("Metrics", "FY 2017", ""),
+            Row("", "Actual Value", "Median"),
+            Row("Revenue (Rs. Crore)", 1284.2, 1150.74),
+            Row(),
+            Row("5 Closest Peers by Revenue"),
+            Row("Legal Name", "CIN", "City", "Revenue (Rs. Crore)"),
+            Row("KOYA AND COMPANY CONSTRUCTION LIMITED", "U27109TG2002PLC038726", "HYDERABAD", 1344.37),
+            Row("SELF CORP LIMITED", "U45203OR1995PLC003982", "KHORDHA", 1284.2),
+            Row("RANJIT BUILDCON LIMITED", "U45206GJ2006PLC049570", "AHMEDABAD", 1265.88));
+
+        PeerComparisonParser.Parse(sheet, 1, 1, 10, out var peers);
+
+        Assert.Equal(3, peers.Count);
+        Assert.Equal(new[] { 1, 2, 3 }, peers.Select(p => p.Rank).ToArray());
+        Assert.All(peers, p => Assert.Equal<int?>(2017, p.FinancialYear));
+        Assert.All(peers, p => Assert.Equal("Infrastructure", p.Industry));
+
+        var first = peers[0];
+        Assert.Equal("KOYA AND COMPANY CONSTRUCTION LIMITED", first.LegalName);
+        Assert.Equal("U27109TG2002PLC038726", first.Cin);
+        Assert.Equal("HYDERABAD", first.City);
+        Assert.Equal(1344.37m, first.RevenueCrore);
+
+        // The block always lists the company itself; the parser doesn't guess — a caller matches the CIN.
+        Assert.Equal("U45203OR1995PLC003982", peers[1].Cin);
+    }
+
+    [Fact]
+    public void FiveClosestPeers_MissingFinancialYearRow_FallsBackToTheLatestMetricsYear()
+    {
+        var sheet = Sheet("Peer Comparison",
+            Row("Metrics", "FY 2016", "", "FY 2018", ""),
+            Row("", "Actual Value", "Median", "Actual Value", "Median"),
+            Row("Revenue (Rs. Crore)", 100.0, 90.0, 120.0, 110.0),
+            Row("5 Closest Peers by Revenue"),
+            Row("Legal Name", "CIN", "City", "Revenue (Rs. Crore)"),
+            Row("PEER ONE LIMITED", "U00000XX0000PLC000001", "PUNE", 121.0));
+
+        PeerComparisonParser.Parse(sheet, 1, 1, 10, out var peers);
+
+        var only = Assert.Single(peers);
+        Assert.Equal<int?>(2018, only.FinancialYear);
+    }
+
+    [Fact]
+    public void FiveClosestPeers_NoYearAnywhere_LeavesFinancialYearNull_AndWarns()
+    {
+        // No "Financial Year" row, no "Metrics" year headers.
+        var sheet = Sheet("Peer Comparison",
+            Row("5 Closest Peers by Revenue"),
+            Row("Legal Name", "CIN", "City", "Revenue (Rs. Crore)"),
+            Row("PEER ONE LIMITED", "U00000XX0000PLC000001", "PUNE", 121.0),
+            Row("PEER TWO LIMITED", "U00000XX0000PLC000002", "SURAT", 119.0));
+
+        var r = PeerComparisonParser.Parse(sheet, 1, 1, 10, out var peers);
+
+        Assert.Equal(2, peers.Count);
+        Assert.All(peers, p => Assert.Null(p.FinancialYear));   // null, never 0
+        Assert.Contains(r.Warnings, w => w.IssueCode == "PEER_BLOCK_NO_YEAR");
+    }
+
+    [Fact]
+    public void FiveClosestPeers_IsCappedAtFive_AndWarnsOnASixthStructuredRow()
+    {
+        var rows = new List<IReadOnlyList<object?>>
+        {
+            Row("Financial Year", 2020.0),
+            Row("5 Closest Peers by Revenue"),
+            Row("Legal Name", "CIN", "City", "Revenue (Rs. Crore)"),
+        };
+        for (var i = 1; i <= 7; i++)   // a footer / following section bled in: 7 structured rows
+            rows.Add(Row($"PEER {i} LIMITED", $"U0000{i:D2}XX0000PLC0000{i:D2}", "CITY", 100.0 - i));
+
+        var r = PeerComparisonParser.Parse(Sheet("Peer Comparison", rows.ToArray()), 1, 1, 10, out var peers);
+
+        Assert.Equal(5, peers.Count);
+        Assert.Equal(new[] { 1, 2, 3, 4, 5 }, peers.Select(p => p.Rank).ToArray());
+        Assert.Equal("PEER 5 LIMITED", peers[4].LegalName);
+        Assert.Contains(r.Warnings, w => w.IssueCode == "PEER_BLOCK_OVERFLOW" && w.RawValue == "PEER 6 LIMITED");
+    }
 }
