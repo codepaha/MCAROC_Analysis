@@ -16,7 +16,7 @@ namespace MCAROC_Analysis.Migrations
                 {
                     PeerCompanyId = table.Column<long>(type: "bigint", nullable: false)
                         .Annotation("SqlServer:Identity", "1, 1"),
-                    FinancialYear = table.Column<int>(type: "int", nullable: false),
+                    FinancialYear = table.Column<int>(type: "int", nullable: true),
                     Rank = table.Column<int>(type: "int", nullable: false),
                     LegalName = table.Column<string>(type: "nvarchar(300)", maxLength: 300, nullable: false),
                     Cin = table.Column<string>(type: "nvarchar(25)", maxLength: 25, nullable: true),

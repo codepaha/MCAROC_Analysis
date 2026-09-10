@@ -2037,7 +2037,7 @@ namespace MCAROC_Analysis.Migrations
                         .HasMaxLength(120)
                         .HasColumnType("nvarchar(120)");
 
-                    b.Property<int>("FinancialYear")
+                    b.Property<int?>("FinancialYear")
                         .HasColumnType("int");
 
                     b.Property<string>("Industry")

@@ -13,7 +13,7 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace MCAROC_Analysis.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    [Migration("20260910125302_AddPeerCompanies")]
+    [Migration("20260910131954_AddPeerCompanies")]
     partial class AddPeerCompanies
     {
         /// <inheritdoc />
@@ -2040,7 +2040,7 @@ namespace MCAROC_Analysis.Migrations
                         .HasMaxLength(120)
                         .HasColumnType("nvarchar(120)");
 
-                    b.Property<int>("FinancialYear")
+                    b.Property<int?>("FinancialYear")
                         .HasColumnType("int");
 
                     b.Property<string>("Industry")

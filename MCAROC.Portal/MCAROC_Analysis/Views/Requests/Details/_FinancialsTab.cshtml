@@ -130,10 +130,10 @@
         @if (Model.PeerCompanies.Count > 0)
         {
             var selfCin = Model.Request.Cin ?? Model.CompanyProfile?.Cin;
-            var peerFy = Model.PeerCompanies.Select(p => p.FinancialYear).FirstOrDefault(y => y > 0);
+            var peerFy = Model.PeerCompanies.Select(p => p.FinancialYear).FirstOrDefault(y => y is > 0);
             <div class="mca-section" style="margin-top:22px;">
                 <h3>Closest Peers by Revenue <span class="mca-count">@Model.PeerCompanies.Count</span></h3>
-                <p class="text-muted">Named companies with revenue closest to this one@(peerFy > 0 ? $", FY{peerFy}" : "") — the list includes the company itself.</p>
+                <p class="text-muted">Named companies with revenue closest to this one@(peerFy is { } fy ? $", FY{fy}" : "") — the list includes the company itself.</p>
                 <div class="pi-table-wrap"><table class="pi-results-table">
                     <thead><tr><th>#</th><th>Legal name</th><th>CIN</th><th>City</th><th class="text-end">Revenue (₹ Cr)</th></tr></thead>
                     <tbody>

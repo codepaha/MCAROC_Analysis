@@ -302,11 +302,12 @@ public class SourceReconciliationTests : IAsyncLifetime
             "Reconciliation workbooks not present — see MCAROC_Analysis.Tests/Fixtures/README.md");
 
         var peerSheet = new ExcelSheetReader().ReadWorkbook(Fixtures()!.Value.Roc).Single(s => s.Name == "Peer Comparison");
-        PeerComparisonParser.Parse(peerSheet, requestId: 1, ingestionRunId: 1, sourceDocumentId: 1, out var peers);
+        var r = PeerComparisonParser.Parse(peerSheet, requestId: 1, ingestionRunId: 1, sourceDocumentId: 1, out var peers);
 
         Assert.Equal(5, peers.Count);
+        Assert.DoesNotContain(r.Warnings, w => w.IssueCode is "PEER_BLOCK_OVERFLOW" or "PEER_BLOCK_NO_YEAR");
         Assert.Equal(new[] { 1, 2, 3, 4, 5 }, peers.Select(p => p.Rank).ToArray());
-        Assert.All(peers, p => Assert.Equal(2017, p.FinancialYear));
+        Assert.All(peers, p => Assert.Equal<int?>(2017, p.FinancialYear));
         Assert.All(peers, p => Assert.Equal("Peer Comparison", p.SourceSheetName));
         Assert.Equal("Infrastructure", peers[0].Industry);
         Assert.Equal("Other Construction Services", peers[0].Segment);

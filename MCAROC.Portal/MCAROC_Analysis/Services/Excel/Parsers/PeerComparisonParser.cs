@@ -41,7 +41,7 @@ public static class PeerComparisonParser
         {
             result.AddWarning(new ParseIssue(IssueSeverity.Warning, ParserName, null, null,
                 "PEER_METRICS_HEADER_NOT_FOUND", "Could not locate the 'Metrics' header row."));
-            ParsePeerBlock(sheet, requestId, ingestionRunId, sourceDocumentId, referenceYear, industry, segment, peers);
+            ParsePeerBlock(sheet, requestId, ingestionRunId, sourceDocumentId, referenceYear, industry, segment, peers, result);
             return result;
         }
 
@@ -100,16 +100,21 @@ public static class PeerComparisonParser
             }
         }
 
-        ParsePeerBlock(sheet, requestId, ingestionRunId, sourceDocumentId, referenceYear, industry, segment, peers);
+        ParsePeerBlock(sheet, requestId, ingestionRunId, sourceDocumentId, referenceYear, industry, segment, peers, result);
         return result;
     }
 
     /// <summary>Reads the "5 Closest Peers by Revenue" block: a banner, a "Legal Name / CIN / City /
     /// Revenue (Rs. Crore)" column header, then one row per peer (the list includes the company
-    /// itself — a caller flags that by matching <see cref="PeerCompany.Cin"/>).</summary>
+    /// itself — a caller flags that by matching <see cref="PeerCompany.Cin"/>). The block is capped at
+    /// five rows: a sixth structured row means a footer / following section bled in, so it warns and
+    /// stops.</summary>
+    private const int MaxClosestPeers = 5;
+
     private static void ParsePeerBlock(
         SheetData sheet, long requestId, long ingestionRunId, long? sourceDocumentId,
-        int? referenceYear, string? industry, string? segment, List<PeerCompany> peers)
+        int? referenceYear, string? industry, string? segment,
+        List<PeerCompany> peers, ParseResult<PeerComparisonMetric> result)
     {
         var bannerRow = -1;
         for (var r = 0; r < sheet.Rows.Count; r++)
@@ -127,6 +132,15 @@ public static class PeerComparisonParser
             if (name is null) break;   // block ends at the first blank row
             if (name.StartsWith("Legal Name", StringComparison.OrdinalIgnoreCase)) continue;   // column header
 
+            if (rank >= MaxClosestPeers)
+            {
+                result.AddWarning(new ParseIssue(IssueSeverity.Warning, ParserName, null, name,
+                    "PEER_BLOCK_OVERFLOW",
+                    $"'5 Closest Peers by Revenue' has more than {MaxClosestPeers} structured rows — stopping at row {r + 1} " +
+                    $"('{name}'); a footer or a following section may have bled into the block.", r + 1));
+                break;
+            }
+
             peers.Add(new PeerCompany
             {
                 RequestId = requestId,
@@ -134,7 +148,7 @@ public static class PeerComparisonParser
                 SourceDocumentId = sourceDocumentId,
                 SourceSheetName = sheet.Name,
                 SourceRowNumber = r + 1,
-                FinancialYear = referenceYear ?? 0,
+                FinancialYear = referenceYear,   // null (not 0) when the sheet carries no year — incomplete, not "year zero"
                 Rank = ++rank,
                 LegalName = name,
                 Cin = Cell(sheet.Rows[r], 1),
@@ -144,6 +158,12 @@ public static class PeerComparisonParser
                 Segment = segment
             });
         }
+
+        if (peers.Count > 0 && referenceYear is null)
+            result.AddWarning(new ParseIssue(IssueSeverity.Warning, ParserName,
+                nameof(PeerCompany.FinancialYear), null, "PEER_BLOCK_NO_YEAR",
+                "Captured the closest-peers block but the sheet carries no 'Financial Year' row and no " +
+                "metric-year headers — the peer rows have no reference year.", bannerRow + 1));
     }
 
     private static int? ExtractYear(object? cell)

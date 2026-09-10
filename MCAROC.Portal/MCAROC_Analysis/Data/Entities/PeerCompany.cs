@@ -8,8 +8,10 @@ public sealed class PeerCompany : ExtractedEntityBase
 {
     public long PeerCompanyId { get; set; }
 
-    /// <summary>The comparison's reference financial year (from the sheet's "Financial Year" row).</summary>
-    public int FinancialYear { get; set; }
+    /// <summary>The comparison's reference financial year (the sheet's "Financial Year" row, or the
+    /// latest metrics-grid year). Null when the sheet carries neither — an incomplete peer block, not
+    /// a "year zero".</summary>
+    public int? FinancialYear { get; set; }
 
     /// <summary>1-based position in the list as the sheet orders it (by revenue, descending).</summary>
     public int Rank { get; set; }
