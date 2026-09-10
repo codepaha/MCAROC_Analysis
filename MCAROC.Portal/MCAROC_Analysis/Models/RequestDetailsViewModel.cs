@@ -41,6 +41,10 @@ public class RequestDetailsViewModel
     public List<CompanyNameHistory> NameHistory { get; set; } = [];
     public List<PrincipalBusinessActivity> PrincipalBusinessActivities { get; set; } = [];
 
+    // Phase 8 Wave 4 — computed metrics (docs/analytics-catalogue.json). Populated per-tab by the
+    // D-wave issues; the _KeyIndicators partial renders whichever groups a tab passes it.
+    public List<MCAROC_Analysis.Models.Dossier.MetricGroup> KeyMetrics { get; set; } = [];
+
     // Phase 6 — the 12 additional workbook sheets.
     public CompanyStructure? Structure { get; set; }
     public List<RelatedCorporate> RelatedCorporates { get; set; } = [];

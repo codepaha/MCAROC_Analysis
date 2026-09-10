@@ -184,6 +184,30 @@ public partial class DossierPdfComposer(DossierModel model, DossierVariant varia
                 });
         });
 
+    /// <summary>A metric mini-table: value on the right, a small "period · inputs" caption under each
+    /// label, an "insufficient data" reason rendered in place of a number.</summary>
+    private void MetricBlock(IContainer c, Models.Dossier.MetricGroup group) =>
+        c.Border(0.75f).BorderColor(DossierTheme.Line).Column(col =>
+        {
+            col.Item().Background(DossierTheme.Ink).PaddingVertical(6).PaddingHorizontal(11)
+                .Text(group.Title).FontFamily(DossierTheme.Display).FontSize(11.5f).FontColor("#FFFFFF");
+            foreach (var m in group.Metrics)
+                col.Item().BorderBottom(0.5f).BorderColor(DossierTheme.LineSoft)
+                    .PaddingVertical(5).PaddingHorizontal(11).Row(r =>
+                {
+                    r.RelativeItem().Column(lc =>
+                    {
+                        lc.Item().Text(m.Label).FontSize(DossierTheme.Small).FontColor(DossierTheme.InkSoft);
+                        lc.Item().Text($"{m.Period} · {string.Join(", ", m.Inputs)}")
+                            .FontSize(DossierTheme.Small - 1.5f).FontColor(DossierTheme.InkFaint);
+                    });
+                    r.ConstantItem(130).AlignRight().Text(m.DisplayValue())
+                        .FontSize(DossierTheme.Small)
+                        .FontColor(m.HasValue ? DossierTheme.Ink : DossierTheme.InkFaint)
+                        .SemiBold();
+                });
+        });
+
     // ── Cover ──────────────────────────────────────────────────────────────
 
     private void ComposeCover(IContainer container)

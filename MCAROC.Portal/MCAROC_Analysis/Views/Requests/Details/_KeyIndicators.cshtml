@@ -1,0 +1,45 @@
+@model IReadOnlyList<MCAROC_Analysis.Models.Dossier.MetricGroup>
+@*
+    Computed-metrics block — docs/analytics-catalogue.json. Renders whichever MetricGroups the calling
+    tab passes it; renders nothing when the list is empty. Dependency-free (no JS). Each metric shows
+    its value, the period it covers and the fields it is built from; an "insufficient data" metric
+    shows the reason in place of a number.
+*@
+@if (Model is { Count: > 0 })
+{
+    <div class="mca-section mca-key-indicators">
+        <h3>Key Indicators</h3>
+        <p class="text-muted">Figures the system derives from the source records — each shows its period and the fields it is built from.</p>
+        <div class="mca-metric-groups">
+            @foreach (var group in Model)
+            {
+                <div class="mca-metric-group">
+                    <h4 class="mca-subhead">@group.Title</h4>
+                    <div class="pi-table-wrap"><table class="pi-results-table">
+                        <thead><tr><th>Metric</th><th class="text-end">Value</th><th>Period</th><th>Inputs</th></tr></thead>
+                        <tbody>
+                        @foreach (var m in group.Metrics)
+                        {
+                            <tr class="@(m.HasValue ? "" : "mca-metric-insufficient")">
+                                <td>@m.Label</td>
+                                <td class="text-end">
+                                    @if (m.HasValue)
+                                    {
+                                        <strong>@m.DisplayValue()</strong>
+                                    }
+                                    else
+                                    {
+                                        <span class="text-muted" title="insufficient data">@m.DisplayValue()</span>
+                                    }
+                                </td>
+                                <td>@(m.HasValue ? m.Period : "—")</td>
+                                <td class="text-muted"><small>@string.Join(", ", m.Inputs)</small></td>
+                            </tr>
+                        }
+                        </tbody>
+                    </table></div>
+                </div>
+            }
+        </div>
+    </div>
+}

@@ -8,7 +8,7 @@ namespace MCAROC_Analysis.Models;
 /// (<see cref="RequestDetailsViewModel"/>) and the client dossier (<c>DossierAssembler</c>) — charge
 /// portfolio maths, lender concentration, litigation role attribution, revenue trend. Pure functions
 /// over already-loaded collections. Guarded by the golden-master parity test.</summary>
-public static class DossierComputations
+public static partial class DossierComputations
 {
     // ── Charges ─────────────────────────────────────────────────────────────
     public static bool IsOpenCharge(RocCharge c) =>

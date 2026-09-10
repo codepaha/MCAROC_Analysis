@@ -100,7 +100,36 @@ public partial class DossierPdfComposer
                 ("Role not determined", lit.NotDeterminedCount.ToString()),
             }));
         });
+
+        ComposeKeyIndicators(col);
     });
+
+    /// <summary>The derived-metrics block. Renders in every variant (Executive, FullSource,
+    /// SourceRecord) — it is deterministic and AI-independent. Empty until the Wave-4 D-issues add
+    /// metric groups, so this is a no-op today.</summary>
+    private void ComposeKeyIndicators(ColumnDescriptor col)
+    {
+        if (model.Metrics.Count == 0) return;
+
+        col.Item().PaddingTop(8).Element(c => Kicker(c, "Computed"));
+        col.Item().Element(c => SubHead(c, "Key Indicators"));
+        col.Item().PaddingBottom(10).Text(
+            "Figures the system derives from the source records — each shows the period it covers and " +
+            "the fields it is built from. Where the data is insufficient the reason is stated in place " +
+            "of a number.")
+            .FontSize(DossierTheme.Small).FontColor(DossierTheme.InkSoft).LineHeight(1.5f);
+
+        foreach (var pair in model.Metrics.Chunk(2))
+        {
+            col.Item().PaddingTop(10).Row(row =>
+            {
+                row.RelativeItem().Element(c => MetricBlock(c, pair[0]));
+                row.ConstantItem(12);
+                if (pair.Length > 1) row.RelativeItem().Element(c => MetricBlock(c, pair[1]));
+                else row.RelativeItem();
+            });
+        }
+    }
 
     private static string NumOrDash(decimal? v) => v is null ? "—" : $"₹{v.Value:N1} Cr";
 

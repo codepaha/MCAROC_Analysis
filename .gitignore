@@ -51,3 +51,4 @@ bld/
 
 # Phase 7.0 reconciliation fixtures — real company workbooks, never committed
 MCAROC.Portal/MCAROC_Analysis.Tests/Fixtures/workbooks/
+.work-pr*/
