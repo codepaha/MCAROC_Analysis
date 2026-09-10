@@ -23,21 +23,22 @@
       "portal_tab": "Corporate (fixed header + About section)", "dossier": "Cover + Snapshot",
       "fields": [
         {"source": "Legal Name / CIN / PAN", "entityField": "CompanyName / Cin / Pan", "status": "live"},
-        {"source": "Printed at / Probed at / MCA Master Data updated at / Documents collected from MCA at", "entityField": null, "status": "not-parsed", "gap": "G1"},
+        {"source": "the source-export header timestamp rows (report generated / data refreshed / MCA master data updated / documents collected)", "entityField": null, "status": "dropped-by-design", "note": "A1/#32 — source-EXPORT metadata (when the upstream aggregator generated the file), not company data; deliberately not retained or surfaced. The dossier's 'as of' line derives from the ingestion run + latest filing dates instead."},
         {"source": "Authorised Capital / Paid Up Capital", "entityField": "AuthorisedCapital / PaidUpCapital", "status": "live"},
-        {"source": "Sum of Charges (Crore)", "entityField": null, "status": "not-parsed", "note": "portal computes from RocCharges; store the MCA figure too for reconciliation", "gap": "G1"},
+        {"source": "Sum of Charges (Crore)", "entityField": "CompanyProfile.McaSumOfChargesCrore", "status": "live", "note": "A1/#32; kept alongside our computed open-charge total"},
         {"source": "Company Status / Active Compliance", "entityField": "CompanyStatus / ComplianceStatus", "status": "live"},
-        {"source": "Registered Address (line1,line2,city,state,pin)", "entityField": "RegisteredAddress (single string)", "status": "shown-partial", "gap": "G1", "note": "structured components collapsed to one string"},
-        {"source": "Business Address (line1,line2,city,state,pin)", "entityField": null, "status": "not-parsed", "gap": "G1"},
-        {"source": "Website", "entityField": null, "status": "not-parsed", "gap": "G1"},
-        {"source": "Email (x3, with '* unreachable' marker)", "entityField": null, "status": "not-parsed", "gap": "G1"},
-        {"source": "Phone", "entityField": null, "status": "not-parsed", "gap": "G1"},
-        {"source": "About the Company (narrative paragraph)", "entityField": null, "status": "not-parsed", "gap": "G1", "note": "Probe42 shows this prominently"},
-        {"source": "Type of Entity / Listing Status", "entityField": null, "status": "not-parsed", "gap": "G1"},
+        {"source": "Registered Address (line1,line2,city,state,pin)", "entityField": "RegisteredAddress (joined) + RegisteredAddressCity / State / PinCode", "status": "live", "note": "A1/#32; line1/line2 remain folded into the joined string"},
+        {"source": "Business Address (line1,line2,city,state,pin)", "entityField": "CompanyProfile.BusinessAddress (joined)", "status": "live", "note": "A1/#32"},
+        {"source": "Website", "entityField": "CompanyProfile.Website", "status": "live", "note": "A1/#32"},
+        {"source": "Email (x3, with '* unreachable' marker)", "entityField": "CompanyEmail (EmailAddress, IsReachable)", "status": "live", "note": "A1/#32; new entity, one row per address"},
+        {"source": "Phone", "entityField": "CompanyProfile.Phone", "status": "live", "note": "A1/#32"},
+        {"source": "About the Company (narrative paragraph)", "entityField": "CompanyProfile.NarrativeDescription", "status": "live", "note": "A1/#32"},
+        {"source": "Type of Entity / Listing Status", "entityField": "CompanyProfile.EntityType / ListingStatus", "status": "live", "note": "A1/#32; previously mis-stored in BusinessActivity"},
         {"source": "Date of Incorporation", "entityField": "IncorporationDate", "status": "live"},
-        {"source": "Date of Last AGM", "entityField": null, "status": "not-parsed", "gap": "G1"},
-        {"source": "LEI (+ status)", "entityField": null, "status": "not-parsed", "gap": "G1"},
-        {"source": "Broad Industry Category / Industry / Segment(s)", "entityField": "Industry / BusinessActivity", "status": "shown-partial", "gap": "G5"}
+        {"source": "Date of Last AGM", "entityField": "CompanyProfile.LastAgmDate", "status": "live", "note": "A1/#32"},
+        {"source": "LEI (+ status)", "entityField": "CompanyProfile.Lei / LeiStatus", "status": "live", "note": "A1/#32"},
+        {"source": "Broad Industry Category / Industry", "entityField": "CompanyProfile.Industry", "status": "live"},
+        {"source": "Segment(s)", "entityField": "CompanyProfile.Segment", "status": "live", "note": "A1/#32; previously dropped"}
       ]
     },
     {
@@ -237,7 +238,7 @@
       "portal_tab": "Compliance", "dossier": "Annexure D",
       "fields": [
         {"source": "WORKING STATUS / ESTABLISHMENT ID / ESTABLISHMENT NAME / LATEST WAGE MONTH / LATEST DATE OF CREDIT / NO. OF EMPLOYEES / AMOUNT", "entityField": "WorkingStatus / EstablishmentId / EstablishmentName / WageMonth / PaymentDate / EmployeeCount / ContributionAmountCrore", "status": "live"},
-        {"source": "CITY / DATE OF SETUP / PRINCIPAL BUSINESS ACTIVITIES / ADDRESS / EXEMPTION STATUS / FLAGS", "entityField": null, "status": "not-parsed", "gap": "G7", "note": "establishment header block (Probe shows a per-establishment card)"}
+        {"source": "CITY / DATE OF SETUP / PRINCIPAL BUSINESS ACTIVITIES / ADDRESS / EXEMPTION STATUS / FLAGS", "entityField": null, "status": "not-parsed", "gap": "G7", "note": "establishment header block (the benchmark tool shows a per-establishment card)"}
       ]
     },
     {
@@ -295,10 +296,11 @@
   ],
 
   "gaps": [
-    {"id": "G1", "title": "Company identity & contact block + provenance timestamps not captured", "severity": "high",
-     "detail": "About-the-Company drops: business address, website, 3 emails (+ reachability marker), phone, the narrative paragraph, type of entity, listing status, date of last AGM, LEI + status, and the 4 'as of' timestamps (Printed / Probed / MCA Master Data updated / Documents collected). First screen a user sees.",
-     "fix": "Extend CompanyProfile (or a new CompanyContact / CompanyProvenance entity) + CompanyProfileParser; render on the Corporate tab header/About section and feed the dossier P0 provenance block.",
-     "issue": null},
+    {"id": "G1", "title": "Company identity & contact block not captured", "severity": "high",
+     "status": "DONE (A1 / #32)",
+     "detail": "About-the-Company dropped: business address, website, 3 emails (+ reachability marker), phone, the narrative paragraph, type of entity, listing status, date of last AGM, LEI + status, segment, MCA 'Sum of Charges'. (The source-export timestamp rows are dropped by design — see the sheet entry.)",
+     "fix": "CompanyProfile gained EntityType / ListingStatus / Website / Phone / NarrativeDescription / Lei / LeiStatus / Segment / BusinessAddress / RegisteredAddress{City,State,PinCode} / LastAgmDate / McaSumOfChargesCrore; new CompanyEmail entity (with IsReachable). CompanyProfileParser rewritten; migration AddCompanyIdentityAndContact; rendered on the Corporate tab overview.",
+     "issue": "#32"},
     {"id": "G3", "title": "Full shareholding-pattern category grid dropped", "severity": "high",
      "detail": "Structure sheet's PROMOTERS and PUBLIC grids (10 SEBI categories x {equity shares, equity %, preference shares, preference %}) are not parsed — only the 6-field summary is kept.",
      "fix": "New ShareholdingPatternRow entity (holderClass Promoter|Public, category, equityShares, equityPercent, preferenceShares, preferencePercent, financialYear) + parser; render as a table on the Corporate tab and a dossier Annexure-A item.",
@@ -312,7 +314,7 @@
      "fix": "New PrincipalBusinessActivity entity + parser; table on Corporate tab.",
      "issue": null},
     {"id": "G6", "title": "5 Closest Peers by Revenue not captured", "severity": "medium",
-     "detail": "Peer Comparison sheet's closest-peers list (legal name, CIN, city, revenue) is dropped; needed for the peer bar chart Probe42 shows.",
+     "detail": "Peer Comparison sheet's closest-peers list (legal name, CIN, city, revenue) is dropped; needed for the peer bar chart the benchmark tool shows.",
      "fix": "New PeerCompany entity (legalName, cin, city, revenue, financialYear) + extend PeerComparisonParser; bar chart on Financials tab + dossier Annexure B.",
      "issue": null},
     {"id": "G7", "title": "EPFO establishment metadata dropped", "severity": "medium",
@@ -336,17 +338,17 @@
      "fix": "Split into AuditorName / MembershipNumber / FirmName / FirmRegistrationNumber.",
      "issue": null},
     {"id": "G12", "title": "Litigation Uncertain (Unverified Court Records) has no UI cue", "severity": "medium",
-     "detail": "PR #29 routes 'Unverified Court Records' rows to MatchStatus=Uncertain, but the Litigation tab shows them under category 'Other' with no 'unverified — verify against source' banner. Probe42 gives Probable + Unverified their own sections with a plain-English disclaimer.",
+     "detail": "PR #29 routes 'Unverified Court Records' rows to MatchStatus=Uncertain, but the Litigation tab shows them under category 'Other' with no 'unverified — verify against source' banner. the benchmark tool gives Probable + Unverified their own sections with a plain-English disclaimer.",
      "fix": "Litigation tab (Track B): split Confirmed / Probable / Unverified into separate sub-sections, each with a disclaimer.",
      "issue": null},
     {"id": "G13", "title": "EPFO TRRN dropped", "severity": "low", "detail": "Transaction reference number on the monthly EPFO annexure not stored.", "fix": "Add EpfoContribution.Trrn.", "issue": null}
   ],
 
-  "probe42_take_leave": {
+  "benchmark_take_leave": {
     "take": [
       "Per-tab CONTENTS jump-nav on the long/mega tabs",
       "'Reference Document(s)' provenance rows — link each data block to the exact MCA form + underlying PDFs (we have DocumentChunk/RequestDocument)",
-      "Explicit degenerate-state text — when Review Priority gates off (CORP_FINANCIAL_DATA_STALE etc.) name the reason, like Probe's 'score not available because 1..5'",
+      "Explicit degenerate-state text — when Review Priority gates off (CORP_FINANCIAL_DATA_STALE etc.) name the reason, like the benchmark tool's 'score not available because 1..5'",
       "Colour as a data signal — green (satisfied/valid/active), red (ceased/invalid/attention), amber (modification)",
       "Inline annotations — 'OLD BANK (now NEW BANK)', 'UNKNOWN CHARGE HOLDER', invalid email in red",
       "Charge Details as a grouped table with inline [+] expand (alternative/complement to the existing drawer)",
@@ -356,11 +358,11 @@
       "Multi-select -> 'Request a Zip' on the documents list",
       "Consistent 'As per our records, X has no Y' empty states",
       "The 4 provenance timestamps in the fixed company header ('Unlocked on' / 'Last updated N days ago')",
-      "Full shareholding-pattern category grid (G3) — Probe shows it, we drop it"
+      "Full shareholding-pattern category grid (G3) — the benchmark tool shows it, we drop it"
     ],
     "leave": [
-      "0-100 / 1-5 numeric score or gauge — keep the deterministic Review Priority + flag strip. Probe's own score is null for a distressed company anyway.",
-      "No synthesis at all — our AI Analysis tab / Section 1 / 5-slot summary is the product; Probe has none",
+      "0-100 / 1-5 numeric score or gauge — keep the deterministic Review Priority + flag strip. the benchmark tool's own score is null for a distressed company anyway.",
+      "No synthesis at all — our AI Analysis tab / Section 1 / 5-slot summary is the product; the benchmark tool has none",
       "Download-only documents with no in-app viewer — we build the split-screen PDF reader (real differentiator)",
       "Disclaimer paragraph on every page — once is enough",
       "The 200-page undifferentiated data-dump feel of their PDF export",

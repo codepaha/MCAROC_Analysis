@@ -56,13 +56,15 @@ public class IngestionOrchestrator(AppDbContext db, IExcelSheetReader sheetReade
             var companySheet = SheetAliases.Find(rocWorkbook, SheetAliases.CompanyProfile)
                 ?? throw new IngestionFailedException("Required sheet 'About the Company' was not found in the ROC report.");
 
-            var companyResult = CompanyProfileParser.Parse(companySheet, requestId, run.IngestionRunId, rocDocumentId);
+            var companyResult = CompanyProfileParser.Parse(companySheet, requestId, run.IngestionRunId, rocDocumentId, out var companyEmails);
             Collect(companyResult, issues, ref itemCount);
             if (companyResult.Errors.Count > 0)
                 throw new IngestionFailedException(companyResult.Errors[0].Message);
 
             var companyProfile = companyResult.Items[0];
             db.CompanyProfiles.Add(companyProfile);
+            db.CompanyEmails.AddRange(companyEmails);
+            itemCount += companyEmails.Count;
 
             ValidateFormVsRoc(request, companyProfile);
 

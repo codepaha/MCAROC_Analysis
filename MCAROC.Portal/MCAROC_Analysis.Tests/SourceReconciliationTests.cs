@@ -160,6 +160,53 @@ public class SourceReconciliationTests : IAsyncLifetime
         Assert.DoesNotContain(facts, x => x.Label.Trim().Equals("Year", StringComparison.OrdinalIgnoreCase));
     }
 
+    /// <summary>Phase 8 A1 — the "About the Company" sheet is captured in full: contact block,
+    /// business address, narrative, entity type / listing status, LEI + status, the MCA "Sum of
+    /// Charges" figure, and all three emails (one flagged unreachable) — each traceable to its exact
+    /// source row (30, 31, 32) for BFSI lineage. The source-export metadata rows are deliberately
+    /// not retained.</summary>
+    [SkippableFact]
+    public void About_the_company_sheet_captures_identity_and_contact()
+    {
+        Skip.If(Fixtures() is null,
+            "Reconciliation workbooks not present — see MCAROC_Analysis.Tests/Fixtures/README.md");
+
+        var about = new ExcelSheetReader().ReadWorkbook(Fixtures()!.Value.Roc).Single(s => s.Name == "About the Company");
+        var result = CompanyProfileParser.Parse(about, requestId: 1, ingestionRunId: 1, sourceDocumentId: 1, out var emails);
+        var profile = Assert.Single(result.Items);
+
+        Assert.Empty(result.Errors);
+        Assert.Equal("COASTAL PROJECTS LIMITED", profile.CompanyName);
+        Assert.Equal("U45203OR1995PLC003982", profile.Cin);
+
+        Assert.Equal("Public Limited Indian Non-Government Company", profile.EntityType);
+        Assert.Equal("Unlisted", profile.ListingStatus);
+        Assert.Equal("335800S8JDNSIUXUSS97", profile.Lei);
+        Assert.Equal("ISSUED", profile.LeiStatus);
+        Assert.Equal(new DateOnly(2016, 12, 30), profile.LastAgmDate);
+        Assert.Equal(12556.86m, profile.McaSumOfChargesCrore);
+        Assert.Equal("http://coastalprojects.co/", profile.Website);
+        Assert.Contains("40-23317444", profile.Phone);
+        Assert.Contains("civil construction", profile.NarrativeDescription, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("Bhubaneswar", profile.RegisteredAddress!, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal("Orissa", profile.RegisteredAddressState);
+        Assert.Equal("751012", profile.RegisteredAddressPinCode);
+        Assert.Contains("Nayapalli", profile.BusinessAddress!, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal("Other Construction Services", profile.Segment);
+
+        Assert.Equal(3, emails.Count);
+        Assert.Contains(emails, e => e.EmailAddress == "cpl.ho@coastalprojects.co.in");
+        Assert.Contains(emails, e => e.EmailAddress == "coastalprojectslimited1995@gmail.com");
+        var flagged = Assert.Single(emails, e => e.EmailAddress == "cs@coastalprojects.co.in");
+        Assert.False(flagged.IsReachable);
+        Assert.DoesNotContain(emails, e => e.EmailAddress.Contains('*') || e.EmailAddress.Contains("not successful"));
+
+        // Every email record carries the exact workbook row it came from (rows 30–32; the "*"
+        // reachability footnote sits on row 33 and is not itself a record).
+        Assert.Equal(new int?[] { 30, 31, 32 }, emails.Select(e => e.SourceRowNumber).OrderBy(n => n).ToArray());
+        Assert.All(emails, e => Assert.Equal("About the Company", e.SourceSheetName));
+    }
+
     /// <summary>Control totals for the real COASTAL <c>Legal History</c> sheet (960 rows): the parser
     /// must extract exactly 592 Confirmed + 68 Probable + 292 Uncertain = 952, and no more — the 8
     /// structural rows (section titles, per-section headers, the blank separator) must not become

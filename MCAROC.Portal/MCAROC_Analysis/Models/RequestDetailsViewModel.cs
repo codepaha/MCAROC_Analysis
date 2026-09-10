@@ -35,6 +35,9 @@ public class RequestDetailsViewModel
     public List<CompanyOfficer> CompanyOfficers { get; set; } = [];
     public List<FinancialFact> FinancialFacts { get; set; } = [];
 
+    // Phase 8 — data-parity layer
+    public List<CompanyEmail> CompanyEmails { get; set; } = [];
+
     // Phase 6 — the 12 additional workbook sheets.
     public CompanyStructure? Structure { get; set; }
     public List<RelatedCorporate> RelatedCorporates { get; set; } = [];

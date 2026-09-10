@@ -55,6 +55,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<SourceRow> SourceRows => Set<SourceRow>();
     public DbSet<FinancialFact> FinancialFacts => Set<FinancialFact>();
     public DbSet<CompanyOfficer> CompanyOfficers => Set<CompanyOfficer>();
+    public DbSet<CompanyEmail> CompanyEmails => Set<CompanyEmail>();
     public DbSet<PreLoginReportJob> PreLoginReportJobs => Set<PreLoginReportJob>();
 
     protected override void ConfigureConventions(ModelConfigurationBuilder configurationBuilder)
@@ -117,6 +118,13 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
         {
             e.HasKey(x => x.CompanyProfileId);
             e.HasIndex(x => new { x.RequestId, x.IngestionRunId });
+        });
+
+        modelBuilder.Entity<CompanyEmail>(e =>
+        {
+            e.HasKey(x => x.CompanyEmailId);
+            e.HasIndex(x => new { x.RequestId, x.IngestionRunId });
+            e.Property(x => x.EmailAddress).HasMaxLength(320);
         });
 
         modelBuilder.Entity<Director>(e =>

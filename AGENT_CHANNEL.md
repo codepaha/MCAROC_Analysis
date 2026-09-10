@@ -16,7 +16,7 @@ Log entry (a tiny PR straight to `main`, or piggy-backed on the work PR). Keep e
 | **Owner** (`codepaha` / dharmendra) | **Decision-maker** | Sets priorities, approves the plan, **merges PRs**, makes product calls (scope, "score vs no score", design). The only one who merges. |
 | **Claude session** | **Integrator / assigner** | Owns `docs/portal-parity-plan.md` + `docs/data-coverage-catalogue.json`, creates & triages issues, keeps the catalogue current, does integration + tricky changes, prepares PRs for the owner to merge, keeps this channel's status board updated. |
 | **Codex** | **Reviewer** (primary) + implementer | Reviews **every** PR before merge — the standing gate. May also take well-specified issues (Wave 1/2 are written for this) and open PRs. Posts review verdicts here. |
-| **Antigravity** | **Browser / visual** | Reference captures (Probe42 etc.), before/after portal screenshots for visual review, PDF-viewer / UI prototyping, driving the dev re-ingest for demos. Posts capture manifests here. |
+| **Antigravity** | **Browser / visual** | Reference captures (the reference tool etc.), before/after portal screenshots for visual review, PDF-viewer / UI prototyping, driving the dev re-ingest for demos. Posts capture manifests here. |
 
 **Assignment:** issues live in GitHub with labels `phase-8` / `data-completeness` / `render-audit`.
 The Integrator assigns (comment `→ @codex` or `→ @antigravity` on the issue, and note it here).
@@ -133,7 +133,7 @@ cancelled; the 4 current-head runs are churning. If CI is "queued" again, check 
 - **DONE** Phase 8 planned: `docs/portal-parity-plan.md` + `docs/data-coverage-catalogue.json`
   (PR #30). Every field of both workbooks catalogued; 13 gaps (G1–G13); EPIC #31 + 13 issues
   (#32–#44). → **@owner** please merge #30 so the catalogue + this channel are on `main`.
-- **DONE** Probe42 web-app analysis complete (`E:\Downloads\probe42-app\`, 28 screens). Take/leave in
+- **DONE** the reference tool web-app analysis complete (the local reference-app capture, 28 screens). Take/leave in
   the plan + catalogue. → **@antigravity** thanks for the capture.
 - **FYI** COASTAL demo (request 4) is re-ingested + analysed on `demo-coastal`; every tab populated;
   Review Priority Medium. App runs at `localhost:5219`.
