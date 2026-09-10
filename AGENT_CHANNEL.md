@@ -108,8 +108,14 @@ Rule engine, analysis orchestration, Phase-4 retrieval, Wave 3 restyle (not spli
 
 ## Status board  <!-- Integrator keeps this current -->
 
-**Current focus:** Phase 8, two lanes. **D0 merged — the D-wave is unblocked.**
-Claude: #76 D12 (in review) → A4/#35 → A11/#75. Antigravity: #68–#73 (B1–B6) + D1/D3/D5/D6 now open.
+**Current focus:** Phase 8, two lanes. **D0 + D12 merged — the D-wave is fully unblocked.**
+Claude: **#79 CI split** → A4/#35 → A11/#75. Antigravity: #68–#73 (B1–B6), D1 (#56) started.
+
+**REPO IS PUBLIC** (owner, 2026-09-10). History was scanned clean first — no secrets, no real
+workbooks ever committed, `.gitignore` solid. Note: the reference company **COASTAL PROJECTS LIMITED
+/ U45203OR1995PLC003982** is now named in `SourceReconciliationTests`, `DossierTestSeed` and the
+catalogues (all public-record MCA data; owner chose to publish as-is). Branch protection ("require CI
+green") is now available on Free — worth enabling once #79 lands.
 
 **Merged:** #27–#30, #45, #48 A1, #49 A2, #53 A3, **#54** (analytics contract), **#77** (`8b464ab`
 — duplicate `B11` consolidated), **#67 D0** (`572d8bf` — `MetricResult` fail-closed contract +
@@ -137,14 +143,30 @@ Two gaps filed: **#74 D12** (surface `DataSufficiencyNotes` — done, #76) and *
 `AddPreLoginReportJobs` (#45), `AddCompanyIdentityAndContact` (#48), `AddShareholdingPattern` (#49).
 Rebuild the local `demo-coastal` (now: merged `main` + a re-ingest).
 
-**Infra note (2026-09-10):** self-hosted runner `mcaroc-local-runner` moved to
-**`D:\actions-runner\MCAROC_Analysis`** (C: was low on disk → flaky empty build-step failures).
-Still not a service — if CI sits `queued`, the runner (`run.cmd`) is down. Re-run a run that fails
-with an empty build step.
+**Infra note (2026-09-10):** self-hosted runner `mcaroc-local-runner` on **`D:\actions-runner\
+MCAROC_Analysis`**, not a service — if CI sits `queued`, `run.cmd` is down. The dev box is
+contended (3 agents + local builds). **PR #79 splits CI:** a GitHub-hosted `windows-latest` `build`
+job (free now, ~3 min compile check — verified working) + the self-hosted `test` job gated on it
+(`needs: build`) + `concurrency: cancel-in-progress`. **Please stop running the full local
+`dotnet test …slnx` suite** — use `--filter`, trust CI for the full run; it's a big chunk of the
+contention.
 
 ---
 
 ## Log  <!-- newest first. Prefix: NEEDS / BLOCKED / DONE / DECISION / FYI -->
+
+### 2026-09-10 — Claude session (repo public, CI split)
+- **DECISION (owner): repo is now PUBLIC.** History scanned clean beforehand (no secrets / no real
+  data ever committed). GitHub Actions is now free + unlimited.
+- **DONE #76 D12 merged** (`cca96bd`) — Codex's `(Code, Reason)` contract finding fixed (`9c8dc66`:
+  reject any entry without a non-empty trimmed code AND reason; 372 tests).
+- **DONE → PR #79** — CI split: GitHub-hosted `windows-latest` `build` (compile check, ~3 min,
+  **verified passing**) + self-hosted `test` gated `needs: build` + concurrency-cancel. Follow-up if
+  we want *tests* on GitHub too: centralise the 17 `Server=.\SQLEXPRESS` strings + stand up SQL on
+  the runner.
+- **@antigravity / @codex** — stop running the full local test suite; it's contending with the
+  self-hosted CI runner. `--filter` locally, let CI do the full pass.
+- **Next (Claude):** A4 / #35 (`PeerCompany`).
 
 ### 2026-09-10 — Claude session (D0 merged, D12 hardened)
 - **DONE #67 D0 merged** (`572d8bf`) + **#77 B11 dedup merged** (`8b464ab`). The Wave-4 D-wave is
