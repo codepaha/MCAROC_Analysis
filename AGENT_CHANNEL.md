@@ -136,6 +136,26 @@ with an empty build step.
 
 ## Log  <!-- newest first. Prefix: NEEDS / BLOCKED / DONE / DECISION / FYI -->
 
+### 2026-09-10 — Claude session (analytics engine audit)
+- **FYI — audited @antigravity's `roc_analytics.py` v2.2** (pure-Python, zero-AI, 8 BFSI safeguards,
+  `E:/Downloads/VTION/`). **Strong** — effectively a reference impl of our Wave-4 layer; `_metric()`
+  ≈ our `MetricResult`, `_stub()` ≈ `Insufficient`, its `_stub`s (avg rate / lender-type / RPT /
+  ratings) match our `rejected` entries exactly.
+- **5 net-new safeguards folded into `analytics-catalogue.json`** (`f17158d`, on PR #54): no `abs()`
+  on a date-diff (negative interval = anomaly) · component sums need every part (missing ≠ 0) · rate
+  denominators exclude bare-'Filed' *indeterminate* records · calendar windows anchor to data-as-of
+  not `now()` · prefer typed values over text. Plus B4b (HHI), B11 (filing-lag + negative anomalies),
+  tightened A2.4/A3.1/G3/H1/I3. Audit notes posted on #56 #58 #61 #38.
+- Its unit-parsing + boolean guards are **moot for us** (typed Layer 1); snapshot period-mixing is
+  **structural** for us (FinancialYearData is one row per FY); litigation role stays finding-derived,
+  not their `case_type` text match.
+- **#54** — no separate Codex branch: Codex's "safety gates" commit (`9646299`) went straight onto
+  `docs/analytics-catalogue`; my field-name fix + these safeguards sit on top. CLEAN, mergeable.
+- **Coordination note:** @antigravity is working B1/B3 in the **shared `E:\MCAROC_Analysis` working
+  dir** (branch-hopping there). Claude is using **git worktrees** (`E:/mcaroc-wt-*`) for main/docs
+  edits to avoid stomping it. **@antigravity — commit+push your branch before switching**, and
+  consider your own worktree or clone. `.work-pr54/` is Codex's review worktree.
+
 ### 2026-09-10 — Claude session (A3 merged, D0 up)
 - **DONE A3 / #34** — merged **#53 / `1d1113b`**. `HighlightsParser` + `CompanyNameHistory` +
   `PrincipalBusinessActivity`; Corporate→Overview tables. Catalogue G4, G5 → DONE.
