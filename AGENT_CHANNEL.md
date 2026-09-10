@@ -50,24 +50,21 @@ addresses Codex findings and re-requests review. The Owner merges once green + a
 
 ## Status board  <!-- Integrator keeps this current -->
 
-**Current focus:** Phase 8 Wave 1 in progress. #27–#30 + #45 merged. A1/#48 merged. A2/#49 open for review.
+**Current focus:** Phase 8 Wave 1 in progress. #27–#30 + #45 + #48 + #49 merged. Next: A3 / #34.
 
-| PR | Branch | Head | Codex | Hosted CI | Owner action |
-|---|---|---|---|---|---|
-| #49 A2 shareholding-pattern grid | `feature/a2-shareholding-grid` | `8328624` | ⏳ review requested | ✅ green | merge once Codex approves |
-
-**Merged since last board:** #27 #28 #29 #30 (Phase 7 + planning), #45 (pre-login reports),
+**Merged:** #27 #28 #29 #30 (Phase 7 + planning), #45 (pre-login reports),
 **#48 A1** (`aab8871` — company identity + contact block, `CompanyEmail` with source-row lineage,
-source-export timestamps dropped by design).
+timestamps dropped by design), **#49 A2** (`67e9f31` — `ShareholdingPatternRow`, both SEBI-category
+grids, Corporate → Ownership tables).
 
-**Phase 8:** EPIC #31. Wave 1 = #32–#38 (A1–A7): **A1/#32 done**, **A2/#33 in review (#49)**,
-A3–A7 open. Wave 2 = #39–#44 (render audit), open. Wave 3 (restyle) + Wave 4 (dossier) not yet
+**Phase 8:** EPIC #31. Wave 1 = #32–#38 (A1–A7) + **#50–#52** (A8–A10, new sheets): A1/A2 done,
+A3–A10 open. Wave 2 = #39–#44 (render audit), open. Wave 3 (restyle) + Wave 4 (dossier) not yet
 split into issues. The catalogue (`docs/data-coverage-catalogue.json`) is the contract — G1 & G3
 now marked DONE.
 
-**Owner TODO (still open):** apply two migrations locally before running the portal —
-`AddPreLoginReportJobs` (#45) and `AddCompanyIdentityAndContact` (#48); `AddShareholdingPattern`
-(#49) once that merges. Rebuild the local `demo-coastal` (now: merged `main` + a re-ingest).
+**Owner TODO (still open):** apply migrations locally before running the portal —
+`AddPreLoginReportJobs` (#45), `AddCompanyIdentityAndContact` (#48), `AddShareholdingPattern` (#49).
+Rebuild the local `demo-coastal` (now: merged `main` + a re-ingest).
 
 **Infra note (2026-09-10):** self-hosted runner `mcaroc-local-runner` moved to
 **`D:\actions-runner\MCAROC_Analysis`** (C: was low on disk → flaky empty build-step failures).
@@ -77,6 +74,30 @@ with an empty build step.
 ---
 
 ## Log  <!-- newest first. Prefix: NEEDS / BLOCKED / DONE / DECISION / FYI -->
+
+### 2026-09-10 — Claude session (Antigravity ROC parser audit + Wave 1 progress)
+- **DONE A2 / #33 merged** as **#49 / `67e9f31`** — Codex verified against the real COASTAL Structure
+  sheet (14 promoter + 14 public records, date/values/parent-grouping/source-row lineage all correct;
+  headers + totals excluded).
+- **FYI — audited @antigravity's `roc_parser.py` + `reconcile_audit.py`** (`E:\Downloads\VTION\`).
+  Solid reference work; the "100% strict coverage / 0 omissions" claim is **overstated** — the
+  reconciler proves *"the parser's loop touched this coordinate"*, not *"the value reached the right
+  field"*. For every sheet routed through `_parse_generic_table` it records **every** non-blank cell,
+  so coverage there is tautological; `normalize_header` collapses punctuation so two same-named
+  columns silently overwrite in the output and the audit can't see it; some CHARGE-workbook coverage
+  is parse-and-discard calls that only populate the manifest. Real bugs: native Excel date serials
+  not converted; `clean_int` rounds; `*` unreachable-email marker not captured (our A1 is richer).
+  **It does validate our 3-tier Legal History (PR #29) and Structure leaf logic (PR #49) — identical
+  column maps.**
+- **DECISION (owner):** we WILL port its coverage into our C# ingestion (not adopt the Python).
+  Approach = keep the incremental Wave-1 issue flow, using `roc_parser.py` as the column-layout spec
+  per issue. Harvest targets folded into the catalogue + issues.
+- **DONE — 3 new Wave-1 issues** for sheets the single COASTAL fixture never had (found across a
+  41-company portfolio set): **#50** Related Party Transactions (25/41), **#51** Credit Ratings +
+  Unaccepted Ratings (9/41, 2/41), **#52** Legal Cases - Financial Dispute (12/41). Catalogue stubs
+  added. Also noted: `Annexure - Contact Details` (14/41), simplified `Open Charges` (4/41) — smaller
+  follow-ups, not yet issues.
+- **Next:** A3 / #34 (name history + principal business activities).
 
 ### 2026-09-10 — Claude session (Phase 8 Wave 1)
 - **DONE A1 / #32** — merged as **#48** (`aab8871`). `CompanyProfile` gained the identity + contact

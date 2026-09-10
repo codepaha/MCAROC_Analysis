@@ -292,6 +292,30 @@
       "fields": [
         {"source": "all 18 cols incl. INSTRUMENT/RATE/TERMS/PARTICULARS/EXTENT/OTHER/MODIFICATION/JOINT/CONSORTIUM — for satisfied charges too", "entityField": "RocChargeEvent.*", "status": "live", "note": "satisfied-charge detail exists here (RocReport only carries it for open charges) — confirm the drawer/annexure show satisfied-charge prose"}
       ]
+    },
+    {
+      "workbook": "RocReport", "sheet": "Related Party Transactions", "shape": "banner + flat table, 6 cols, multi-year (25/41 companies in the wider portfolio set; absent from the COASTAL fixture)",
+      "parser": "(none yet — A8/#50)", "entity": "(none yet)",
+      "portal_tab": "Corporate", "dossier": "Annexure A",
+      "fields": [
+        {"source": "Financial Year Ending On / Entity Type / Entity Name / Relationship / Transaction Type / Amount (Rs. Crore)", "entityField": null, "status": "not-parsed", "gap": "G14"}
+      ]
+    },
+    {
+      "workbook": "RocReport", "sheet": "Credit Ratings + Unaccepted Ratings", "shape": "flat table, 9 cols (Credit Ratings) / 7 cols (Unaccepted); header row 0, trailing-space header 'AGENCY ' (9/41 and 2/41 companies; absent from the COASTAL fixture)",
+      "parser": "(none yet — A9/#51)", "entity": "(none yet)",
+      "portal_tab": "Compliance", "dossier": "Annexure D",
+      "fields": [
+        {"source": "AGENCY / DATE / INSTRUMENT / AMOUNT / CURRENCY / RATING / ACTION / OUTLOOK / REMARKS (+ DATE OF NON-ACCEPTANCE for unaccepted)", "entityField": null, "status": "not-parsed", "gap": "G15"}
+      ]
+    },
+    {
+      "workbook": "RocReport", "sheet": "Legal Cases - Financial Dispute", "shape": "flat table, 10 cols, header row 0 (12/41 companies; absent from the COASTAL fixture)",
+      "parser": "(none yet — A10/#52)", "entity": "(none yet)",
+      "portal_tab": "Litigation", "dossier": "Annexure E",
+      "fields": [
+        {"source": "Amount Payable/Receivable / Type Of Financial Dispute / Currency / Amount Under Default / Verdict / Court / Litigant(s) / Case No. / Date Of Default / Date Of Judgement", "entityField": null, "status": "not-parsed", "gap": "G16"}
+      ]
     }
   ],
 
@@ -342,7 +366,19 @@
      "detail": "PR #29 routes 'Unverified Court Records' rows to MatchStatus=Uncertain, but the Litigation tab shows them under category 'Other' with no 'unverified — verify against source' banner. the benchmark tool gives Probable + Unverified their own sections with a plain-English disclaimer.",
      "fix": "Litigation tab (Track B): split Confirmed / Probable / Unverified into separate sub-sections, each with a disclaimer.",
      "issue": null},
-    {"id": "G13", "title": "EPFO TRRN dropped", "severity": "low", "detail": "Transaction reference number on the monthly EPFO annexure not stored.", "fix": "Add EpfoContribution.Trrn.", "issue": null}
+    {"id": "G13", "title": "EPFO TRRN dropped", "severity": "low", "detail": "Transaction reference number on the monthly EPFO annexure not stored.", "fix": "Add EpfoContribution.Trrn.", "issue": null},
+    {"id": "G14", "title": "Related Party Transactions sheet not parsed", "severity": "medium",
+     "detail": "Transaction-level RPT disclosure (party x transaction type x FY, with amount) — 25/41 companies in the wider portfolio set. Distinct from Related Corporates.",
+     "fix": "New RelatedPartyTransaction entity + parser (flat 6-col table, header row 1) + Corporate-tab render.",
+     "issue": "#50"},
+    {"id": "G15", "title": "Credit Ratings + Unaccepted Ratings sheets not parsed", "severity": "medium",
+     "detail": "Credit-rating history (agency, instrument, amount, rating, action, outlook) and non-accepted ratings — 9/41 and 2/41 companies. Material to a BFSI view.",
+     "fix": "New CreditRating entity (IsAccepted flag) + dynamic header-driven parser + Compliance-tab render.",
+     "issue": "#51"},
+    {"id": "G16", "title": "Legal Cases - Financial Dispute sheet not parsed", "severity": "medium",
+     "detail": "Money-claim disputes with amount-under-default + verdict — 12/41 companies. Separate register from Legal History; directly material to a lender.",
+     "fix": "New FinancialDisputeCase entity + parser (flat 10-col table) + Litigation-tab section.",
+     "issue": "#52"}
   ],
 
   "benchmark_take_leave": {
