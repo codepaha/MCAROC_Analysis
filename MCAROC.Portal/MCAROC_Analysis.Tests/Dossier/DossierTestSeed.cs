@@ -128,7 +128,14 @@ public static class DossierTestSeed
             RequestId = R, IngestionRunId = I, RunNumber = 1, Status = AnalysisRunStatus.Completed,
             StartedDate = request.CreatedDate.AddMinutes(3), CompletedDate = request.CreatedDate.AddMinutes(5),
             OverallReviewPriority = ReviewPriority.High,
-            CriticalFindingsCount = 1, ReviewFindingsCount = 2, WatchFindingsCount = 1, PositiveFindingsCount = 0
+            CriticalFindingsCount = 1, ReviewFindingsCount = 2, WatchFindingsCount = 1, PositiveFindingsCount = 0,
+            // Two deterministic checks the engine could not run — D12 surfaces these in every dossier
+            // variant and on the portal so "no flag" is never mistaken for "verified clean".
+            DataSufficiencyNotesJson = JsonSerializer.Serialize(new[]
+            {
+                new { code = "GST_FILING_COMPLIANCE", reason = "No GST filing history was present — filing-compliance checks were not run." },
+                new { code = "FIN_LEVERAGE_TREND", reason = "Only one financial year is on record — leverage-trend checks were not run." },
+            })
         };
         db.AnalysisRuns.Add(an);
         await db.SaveChangesAsync();

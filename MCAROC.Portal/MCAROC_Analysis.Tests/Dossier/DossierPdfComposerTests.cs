@@ -55,6 +55,11 @@ public class DossierPdfComposerTests : IAsyncLifetime
         Assert.Contains("Contents", text);
         Assert.Contains("Snapshot", text);
 
+        // D12 — the "Not assessed" coverage block is deterministic and renders in EVERY variant,
+        // including the no-AI SourceRecord, so "no flag" is never mistaken for "verified clean".
+        Assert.Contains("Not assessed", text);
+        Assert.Contains("leverage-trend checks were not run", text);
+
         // New attribution line (cover footer + "Prepared by").
         Assert.Contains("Gaba Projects Private Limited", text);
 

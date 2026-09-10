@@ -89,6 +89,8 @@ public class DossierAssembler(AppDbContext db)
             catch (JsonException) { }
         }
 
+        var notAssessed = DeserializeSufficiencyNotes(analysis.DataSufficiencyNotesJson);
+
         var roles = DossierComputations.LitigationRoles(litigations, findings);
 
         var model = new DossierModel(
@@ -111,12 +113,46 @@ public class DossierAssembler(AppDbContext db)
                 analysis.OverallReviewPriority,
                 analysis.CriticalFindingsCount, analysis.ReviewFindingsCount,
                 analysis.WatchFindingsCount, analysis.PositiveFindingsCount,
-                findings, execSummary),
+                findings, execSummary, notAssessed),
             sourceSheets,
             Metrics: []);
 
         // Metrics are derived from the fully-assembled model, then folded back in.
         return model with { Metrics = DossierComputations.BuildMetricGroups(model) };
+    }
+
+    /// <summary>Reads <see cref="AnalysisRun.DataSufficiencyNotesJson"/> — a <c>[{code, reason}]</c>
+    /// array the rule engine writes for every check it could not run. Never throws, and only ever
+    /// returns notes that honour the <c>(Code, Reason)</c> contract: unparseable JSON, a non-array
+    /// root, non-object entries, non-string fields, and any entry missing a non-empty trimmed
+    /// <c>code</c> OR <c>reason</c> are all skipped. A code-less note would render as "()" with no
+    /// rule identity and is unauditable, so it is dropped.</summary>
+    internal static IReadOnlyList<DataSufficiencyNote> DeserializeSufficiencyNotes(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json)) return [];
+
+        static string StringProp(JsonElement obj, string name) =>
+            obj.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() ?? "" : "";
+
+        JsonDocument doc;
+        try { doc = JsonDocument.Parse(json); }
+        catch (JsonException) { return []; }
+
+        using (doc)
+        {
+            if (doc.RootElement.ValueKind != JsonValueKind.Array) return [];
+
+            var notes = new List<DataSufficiencyNote>();
+            foreach (var entry in doc.RootElement.EnumerateArray())
+            {
+                if (entry.ValueKind != JsonValueKind.Object) continue;          // "a string", 42, null, [] → skip
+                var code = StringProp(entry, "code").Trim();
+                var reason = StringProp(entry, "reason").Trim();
+                if (code.Length == 0 || reason.Length == 0) continue;           // both are required by contract
+                notes.Add(new DataSufficiencyNote(code, reason));
+            }
+            return notes;
+        }
     }
 
     /// <summary>Groups the raw <see cref="SourceRow"/> set into per-worksheet blocks, in workbook →

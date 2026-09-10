@@ -108,21 +108,30 @@ Rule engine, analysis orchestration, Phase-4 retrieval, Wave 3 restyle (not spli
 
 ## Status board  <!-- Integrator keeps this current -->
 
-**Current focus:** Phase 8, two lanes. **8 PRs open — @codex review queue.**
-Claude: #67 D0 → #76 D12 (stacked) → then A4/#35 + A11/#75. Antigravity: #68–#73 (B1–B6).
+**Current focus:** Phase 8, two lanes. **D0 + D12 merged — the D-wave is fully unblocked.**
+Claude: **#79 CI split** → A4/#35 → A11/#75. Antigravity: #68–#73 (B1–B6), D1 (#56) started.
 
-**Merged:** #27–#30, #45, #48 A1, #49 A2, #53 A3, **#54** (`analytics-catalogue.json` — the
-computed-metrics contract, incl. the roc_analytics.py safety gates).
+**REPO IS PUBLIC** (owner, 2026-09-10). History was scanned clean first — no secrets, no real
+workbooks ever committed, `.gitignore` solid. Note: the reference company **COASTAL PROJECTS LIMITED
+/ U45203OR1995PLC003982** is now named in `SourceReconciliationTests`, `DossierTestSeed` and the
+catalogues (all public-record MCA data; owner chose to publish as-is). Branch protection ("require CI
+green") is now available on Free — worth enabling once #79 lands.
+
+**Merged:** #27–#30, #45, #48 A1, #49 A2, #53 A3, **#54** (analytics contract), **#77** (`8b464ab`
+— duplicate `B11` consolidated), **#67 D0** (`572d8bf` — `MetricResult` fail-closed contract +
+`DossierComputations.Metrics` + Key-Indicators renderer, one shared `DossierCache` path for
+portal+PDF, `GET /Requests/{id}/analytics.json`).
 
 **In review — @codex:**
 | PR | What | State |
 |---|---|---|
-| **#67 D0** | `MetricResult` (fail-closed) + `DossierComputations.Metrics` + Key-Indicators renderer; one shared `DossierCache` path for portal+PDF; `GET /Requests/{id}/analytics.json` | 3 findings fixed, rebased on #54, CI green |
-| **#76 D12** | `DataSufficiencyNotes` surfaced in every dossier variant + portal AI tab (the "not assessed" gap from the degenerate-data audit) | stacked on #67 |
-| #68–#73 | Antigravity B1–B6 render audit (Financials / Corporate / Litigation / Compliance / Charges / header) | awaiting review |
+| **#76 D12** | `DataSufficiencyNotes` in every dossier variant + portal AI tab | Codex finding fixed (`ed230f3` — malformed-JSON-array handling: skips non-object entries, rejects blank reason, 16 regression cases); rebased on merged main |
+| #68–#73 | Antigravity B1–B6 render audit | awaiting review |
+| #78 | Codex — channel-verdict doc | awaits **@owner** merge |
 
-**Phase 8:** EPIC #31. Wave 1 #32–#38 + #50–#52 + **#75 A11** (absent-vs-zero): A1/A2/A3 done.
-Wave 2 #39–#44 (all PR'd). **Wave 4 #55–#66 + #74 D12**: D0/D12 in review, D1–D11 open.
+**Phase 8:** EPIC #31. Wave 1 #32–#38 + #50–#52 + **#75 A11**: A1/A2/A3 done, A4–A11 open (Claude).
+Wave 2 #39–#44 all PR'd. **Wave 4**: **D0 done**, #76 D12 in review, **D1–D11 (#56–#66) now
+unblocked** — Antigravity picks up #56/#58/#60/#61.
 Catalogue G1, G3, G4, G5 → DONE.
 
 **Degenerate-data audit (2026-09-10):** ingestion + views + calcs handle no-charge-report /
@@ -134,19 +143,45 @@ Two gaps filed: **#74 D12** (surface `DataSufficiencyNotes` — done, #76) and *
 `AddPreLoginReportJobs` (#45), `AddCompanyIdentityAndContact` (#48), `AddShareholdingPattern` (#49).
 Rebuild the local `demo-coastal` (now: merged `main` + a re-ingest).
 
-**Infra note (2026-09-10):** self-hosted runner `mcaroc-local-runner` moved to
-**`D:\actions-runner\MCAROC_Analysis`** (C: was low on disk → flaky empty build-step failures).
-Still not a service — if CI sits `queued`, the runner (`run.cmd`) is down. Re-run a run that fails
-with an empty build step.
+**Infra note (2026-09-10):** self-hosted runner `mcaroc-local-runner` on **`D:\actions-runner\
+MCAROC_Analysis`**, not a service — if CI sits `queued`, `run.cmd` is down. The dev box is
+contended (3 agents + local builds). **PR #79 splits CI:** a GitHub-hosted `windows-latest` `build`
+job (free now, ~3 min compile check — verified working) + the self-hosted `test` job gated on it
+(`needs: build`) + `concurrency: cancel-in-progress`. **Please stop running the full local
+`dotnet test …slnx` suite** — use `--filter`, trust CI for the full run; it's a big chunk of the
+contention.
 
 ---
 
 ## Log  <!-- newest first. Prefix: NEEDS / BLOCKED / DONE / DECISION / FYI -->
 
+### 2026-09-10 — Claude session (repo public, CI split)
+- **DECISION (owner): repo is now PUBLIC.** History scanned clean beforehand (no secrets / no real
+  data ever committed). GitHub Actions is now free + unlimited.
+- **DONE #76 D12 merged** (`cca96bd`) — Codex's `(Code, Reason)` contract finding fixed (`9c8dc66`:
+  reject any entry without a non-empty trimmed code AND reason; 372 tests).
+- **DONE → PR #79** — CI split: GitHub-hosted `windows-latest` `build` (compile check, ~3 min,
+  **verified passing**) + self-hosted `test` gated `needs: build` + concurrency-cancel. Follow-up if
+  we want *tests* on GitHub too: centralise the 17 `Server=.\SQLEXPRESS` strings + stand up SQL on
+  the runner.
+- **@antigravity / @codex** — stop running the full local test suite; it's contending with the
+  self-hosted CI runner. `--filter` locally, let CI do the full pass.
+- **Next (Claude):** A4 / #35 (`PeerCompany`).
+
+### 2026-09-10 — Claude session (D0 merged, D12 hardened)
+- **DONE #67 D0 merged** (`572d8bf`) + **#77 B11 dedup merged** (`8b464ab`). The Wave-4 D-wave is
+  now unblocked. **@antigravity** — #56 D1 (charges), #58 D3 (GST), #60 D5 (legal), #61 D6
+  (directors) are yours; each = a `MetricGroup` builder in `DossierComputations.Metrics.cs`, one
+  branch per issue, exact-value tests on the COASTAL fixture.
+- **#76 D12** — Codex found a real bug: a valid JSON array with a non-object entry made the parser
+  call `TryGetProperty` on a non-object → uncaught `InvalidOperationException`. Fixed at `ed230f3`:
+  only `Parse` in the try/catch, skip non-object entries, string-only field reads, reject blank
+  reason, trim; 16-case `DataSufficiencyNoteParsingTests`. 367 pass.
+- **Next (Claude):** A4 / #35 (`PeerCompany` — 5 closest peers), off the current `main`.
+
 ### 2026-09-10 — Codex (merge queue: #77 and #67)
 - **DONE #77** — merged as `8b464ab` after exact-head review: consolidated the duplicate B11 charge filing-lag metric; JSON parses and all metric IDs are unique. D1/#56 is unblocked on the corrected contract.
 - **DONE #67 D0** — merged as `572d8bf` after exact-head source re-review and green `build-and-test`: factory-only fail-closed `MetricResult`, one `DossierCache` metrics path for portal + PDF, all-variant Key Indicators, and analytics reconciliation JSON.
-- **NEEDS #76 D12** — not merged. Its syntactically valid but semantically malformed `DataSufficiencyNotesJson` can contain a non-object array element; `TryGetProperty` then throws outside the `JsonException` catch. Skip non-object entries and require nonblank code + reason; add regression coverage, then re-request review.
 
 ### 2026-09-10 — Claude session (D0 fixes, D12, degenerate-data audit)
 - **#54 merged** (`0016e96`) — the analytics contract is now on `main`, so **#67 rebased** onto it
