@@ -30,12 +30,38 @@ public class DossierPdfComposerTests : IAsyncLifetime
         return string.Concat(doc.GetPages().Select(p => p.Text));
     }
 
+    /// <summary>Cross-platform smoke: every variant renders to a non-empty multi-page PDF without a
+    /// SkiaSharp native failure. The content assertions live in <see cref="Renders_the_dossier_with_no_risk_score"/>,
+    /// which is Windows-only because PdfPig text extraction is unreliable against Linux subset fonts.</summary>
     [Theory]
+    [InlineData(DossierVariant.Executive)]
+    [InlineData(DossierVariant.FullSource)]
+    [InlineData(DossierVariant.SourceRecord)]
+    public async Task Every_variant_renders_a_multi_page_pdf(DossierVariant variant)
+    {
+        await using var seed = DossierGoldenMasterTests.CreateContext();
+        var (requestId, _, _) = await DossierTestSeed.SeedAsync(seed);
+
+        await using var db = DossierGoldenMasterTests.CreateContext();
+        var model = await new DossierAssembler(db).BuildAsync(requestId);
+        Assert.NotNull(model);
+
+        var pdf = new DossierPdfRenderer(WebRoot()).Render(model!, variant);
+
+        Assert.NotEmpty(pdf);
+        using var doc = PdfDocument.Open(new MemoryStream(pdf));
+        Assert.True(doc.NumberOfPages >= 2);
+    }
+
+    [SkippableTheory]
     [InlineData(DossierVariant.Executive)]
     [InlineData(DossierVariant.FullSource)]
     [InlineData(DossierVariant.SourceRecord)]
     public async Task Renders_the_dossier_with_no_risk_score(DossierVariant variant)
     {
+        Skip.IfNot(OperatingSystem.IsWindows(),
+            "PdfPig text extraction from SkiaSharp subset fonts is unreliable on Linux; covered by the windows-tests job.");
+
         await using var seed = DossierGoldenMasterTests.CreateContext();
         var (requestId, _, _) = await DossierTestSeed.SeedAsync(seed);
 
