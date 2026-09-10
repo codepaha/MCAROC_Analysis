@@ -229,6 +229,25 @@ public class HighlightsParserTests
         var r = HighlightsParser.ParseNameHistory(sheet, 1, 1, 10);
         Assert.Empty(r.Items);
     }
+
+    [Fact]
+    public void NameHistory_InvalidTillDate_IsRetainedRawWithOneBadDateWarning()
+    {
+        var sheet = Sheet("Highlights",
+            Row("NAME HISTORY"),
+            Row("Name", "Till Date"),
+            Row("FORMER CO PRIVATE LIMITED", "on or about mid-2011"));
+
+        var r = HighlightsParser.ParseNameHistory(sheet, 1, 1, 10);
+
+        var item = Assert.Single(r.Items);
+        Assert.Equal("FORMER CO PRIVATE LIMITED", item.PreviousName);
+        Assert.Null(item.TillDate);                           // malformed date is not silently dropped
+        Assert.Equal("on or about mid-2011", item.TillDateRaw);
+        var warning = Assert.Single(r.Warnings);
+        Assert.Equal("BAD_DATE", warning.IssueCode);
+        Assert.Equal(3, warning.RowNumber);                   // 1-based sheet row of the offending cell
+    }
 }
 
 public class FinancialParametersParserTests
