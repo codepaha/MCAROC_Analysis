@@ -99,25 +99,55 @@ public static partial class DossierComputations
 
         var assessedCount = onTimeCount + lateCount;
 
-        // G3: GST filing on-time rate
-        if (assessedCount == 0)
+        // G3: GST filing on-time rate — broken down by ReturnType per catalogue §G
         {
-            list.Add(MetricResult.Insufficient("GST filing on-time rate", MetricUnit.Percent,
-                "No GST filings with deterministic filing and due dates",
-                "GstFiling.DelayDays", "GstFiling.FilingDate", "GstFiling.DueDate", "GstFiling.FilingStatus", "GstFiling.ReturnType"));
-        }
-        else
-        {
-            var rate = Math.Round((decimal)onTimeCount / assessedCount * 100m, 1);
-            var periodStr = indeterminateCount > 0
-                ? $"{assessedCount} assessed ({indeterminateCount} indeterminate)"
-                : $"{assessedCount} assessed";
-            list.Add(MetricResult.Ok("GST filing on-time rate", rate, MetricUnit.Percent,
-                periodStr,
-                "GstFiling.DelayDays", "GstFiling.FilingDate", "GstFiling.DueDate", "GstFiling.FilingStatus", "GstFiling.ReturnType"));
+            // Bucket each assessed filing by its normalised ReturnType
+            var byType = new Dictionary<string, (int OnTime, int Late, int Indet)>(StringComparer.OrdinalIgnoreCase);
+            foreach (var f in filings)
+            {
+                var rt = string.IsNullOrWhiteSpace(f.ReturnType) ? "UNKNOWN" : f.ReturnType.Trim().ToUpperInvariant();
+                byType.TryGetValue(rt, out var counts);
+                if (f.DelayDays is { } d)
+                {
+                    if (d <= 0) byType[rt] = (counts.OnTime + 1, counts.Late, counts.Indet);
+                    else        byType[rt] = (counts.OnTime, counts.Late + 1, counts.Indet);
+                }
+                else if (f.FilingDate is { } filed2 && f.DueDate is { } due2)
+                {
+                    var calcDelay = filed2.DayNumber - due2.DayNumber;
+                    if (calcDelay <= 0) byType[rt] = (counts.OnTime + 1, counts.Late, counts.Indet);
+                    else                byType[rt] = (counts.OnTime, counts.Late + 1, counts.Indet);
+                }
+                else
+                {
+                    byType[rt] = (counts.OnTime, counts.Late, counts.Indet + 1);
+                }
+            }
+
+            if (byType.Count == 0 || byType.Values.All(c => c.OnTime + c.Late == 0))
+            {
+                list.Add(MetricResult.Insufficient("GST filing on-time rate", MetricUnit.Percent,
+                    "No GST filings with deterministic filing and due dates",
+                    "GstFiling.DelayDays", "GstFiling.FilingDate", "GstFiling.DueDate", "GstFiling.FilingStatus", "GstFiling.ReturnType"));
+            }
+            else
+            {
+                foreach (var (rt, c) in byType.OrderBy(kv => kv.Key))
+                {
+                    var typeAssessed = c.OnTime + c.Late;
+                    if (typeAssessed == 0) continue; // all indeterminate for this type — skip
+                    var rate = Math.Round((decimal)c.OnTime / typeAssessed * 100m, 1);
+                    var periodStr = c.Indet > 0
+                        ? $"{typeAssessed} assessed ({c.Indet} indeterminate)"
+                        : $"{typeAssessed} assessed";
+                    list.Add(MetricResult.Ok($"GST filing on-time rate ({rt})", rate, MetricUnit.Percent,
+                        periodStr,
+                        "GstFiling.DelayDays", "GstFiling.FilingDate", "GstFiling.DueDate", "GstFiling.FilingStatus", "GstFiling.ReturnType"));
+                }
+            }
         }
 
-        // G4: Late filing count + periods
+        // G4: Late filing count + evidence — catalogue requires listing late (TaxPeriod, ReturnType) pairs
         if (assessedCount == 0)
         {
             list.Add(MetricResult.Insufficient("Late filing count", MetricUnit.Count,
@@ -126,7 +156,26 @@ public static partial class DossierComputations
         }
         else
         {
-            var periodStr = $"{lateCount} late of {assessedCount} assessed";
+            // Collect late evidence: (TaxPeriod, ReturnType) for every late filing, ordered for reproducibility
+            var lateFilings = filings.Where(f =>
+            {
+                if (f.DelayDays is { } d) return d > 0;
+                if (f.FilingDate is { } fd && f.DueDate is { } dd) return fd.DayNumber - dd.DayNumber > 0;
+                return false;
+            })
+            .OrderBy(f => f.TaxPeriod, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(f => f.ReturnType, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+            const int maxEvidence = 20;
+            var evidencePairs = lateFilings
+                .Take(maxEvidence)
+                .Select(f => $"{f.TaxPeriod}/{f.ReturnType?.Trim()}");
+            var evidenceStr = string.Join(", ", evidencePairs);
+            if (lateFilings.Count > maxEvidence)
+                evidenceStr += $" … +{lateFilings.Count - maxEvidence} more";
+
+            var periodStr = $"{lateCount} late of {assessedCount} assessed — periods: {evidenceStr}";
             list.Add(MetricResult.Ok("Late filing count", lateCount, MetricUnit.Count,
                 periodStr,
                 "GstFiling.DelayDays", "GstFiling.FilingDate", "GstFiling.DueDate", "GstFiling.TaxPeriod", "GstFiling.ReturnType"));
@@ -134,13 +183,15 @@ public static partial class DossierComputations
 
         // G5: GSTR-1 vs GSTR-3B filing lag
         // Mean absolute day difference between GSTR-3B and GSTR-1 filings for the same tax period and GSTIN.
+        // When multiple GSTR-1 rows share the same (Gstin, TaxPeriod) key we pick the one with the latest
+        // FilingDate so the result is deterministic regardless of source workbook row ordering.
         static string NormReturn(string r) => r.Replace("-", "").Trim().ToUpperInvariant();
         var gstr1 = filings.Where(f => NormReturn(f.ReturnType) == "GSTR1" && f.FilingDate is not null && !string.IsNullOrWhiteSpace(f.TaxPeriod)).ToList();
         var gstr3b = filings.Where(f => NormReturn(f.ReturnType) == "GSTR3B" && f.FilingDate is not null && !string.IsNullOrWhiteSpace(f.TaxPeriod)).ToList();
 
         var gstr1Lookup = gstr1
             .GroupBy(f => (f.Gstin, f.TaxPeriod!.Trim().ToUpperInvariant()))
-            .ToDictionary(g => g.Key, g => g.First());
+            .ToDictionary(g => g.Key, g => g.OrderByDescending(f => f.FilingDate!.Value).First());
 
         var lags = new List<int>();
         foreach (var f3 in gstr3b)

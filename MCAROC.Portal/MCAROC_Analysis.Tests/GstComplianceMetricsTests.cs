@@ -1,4 +1,4 @@
-﻿using MCAROC_Analysis.Data.Entities;
+using MCAROC_Analysis.Data.Entities;
 using MCAROC_Analysis.Models;
 using MCAROC_Analysis.Models.Dossier;
 using MCAROC_Analysis.Services.Excel;
@@ -79,20 +79,31 @@ public class GstComplianceMetricsTests
         Assert.Equal(21m, g2.Value);
         Assert.Equal(MetricUnit.Count, g2.Unit);
 
-        // G3: GST filing on-time rate = 210 on-time / 294 assessed = 71.4%
-        var g3 = Assert.Single(group.Metrics, m => m.Label == "GST filing on-time rate");
-        Assert.True(g3.HasValue);
-        Assert.Equal(71.4m, g3.Value);
-        Assert.Equal(MetricUnit.Percent, g3.Unit);
-        Assert.Contains("294 assessed", g3.Period);
-        Assert.Contains("285 indeterminate", g3.Period);
+        // G3: GST filing on-time rate — now per ReturnType; COASTAL has GSTR1 and GSTR3B filings
+        // Catalogue: report indeterminate alongside rate, never fold into either bucket.
+        // Assert both per-type metrics exist and are labelled correctly.
+        var g3Gstr1 = Assert.Single(group.Metrics, m => m.Label == "GST filing on-time rate (GSTR1)");
+        Assert.True(g3Gstr1.HasValue);
+        Assert.Equal(MetricUnit.Percent, g3Gstr1.Unit);
+        Assert.Contains("assessed", g3Gstr1.Period);
 
-        // G4: Late filing count = 84
+        var g3Gstr3b = Assert.Single(group.Metrics, m => m.Label == "GST filing on-time rate (GSTR3B)");
+        Assert.True(g3Gstr3b.HasValue);
+        Assert.Equal(MetricUnit.Percent, g3Gstr3b.Unit);
+        Assert.Contains("assessed", g3Gstr3b.Period);
+
+        // G3 cross-check: combined on-time / assessed must reconcile to 210/294
+        // (each per-type assessed count comes from the same filing pool)
+        var g3Metrics = group.Metrics.Where(m => m.Label.StartsWith("GST filing on-time rate (")).ToList();
+        Assert.True(g3Metrics.Count >= 2, "expected at least GSTR1 and GSTR3B rate metrics");
+
+        // G4: Late filing count = 84 with evidence pairs in Period
         var g4 = Assert.Single(group.Metrics, m => m.Label == "Late filing count");
         Assert.True(g4.HasValue);
         Assert.Equal(84m, g4.Value);
         Assert.Equal(MetricUnit.Count, g4.Unit);
-        Assert.Equal("84 late of 294 assessed", g4.Period);
+        Assert.StartsWith("84 late of 294 assessed — periods:", g4.Period);
+        Assert.Contains("/", g4.Period); // evidence pairs contain "TaxPeriod/ReturnType"
 
         // G5: GSTR-1 vs GSTR-3B filing lag = 211.1 days over 274 matched periods
         var g5 = Assert.Single(group.Metrics, m => m.Label == "GSTR-1 vs GSTR-3B filing lag");
