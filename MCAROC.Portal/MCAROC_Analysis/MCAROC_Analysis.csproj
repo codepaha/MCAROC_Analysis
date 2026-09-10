@@ -21,4 +21,10 @@
     <PackageReference Include="PDFtoImage" Version="5.4.0" />
   </ItemGroup>
 
+  <ItemGroup>
+    <Content Update="ReportTemplates\**\*">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
+
 </Project>

@@ -6,6 +6,7 @@ using MCAROC_Analysis.Services.Chat;
 using MCAROC_Analysis.Services.Dashboard;
 using MCAROC_Analysis.Services.Excel;
 using MCAROC_Analysis.Services.McaFilings;
+using MCAROC_Analysis.Services.PreLoginReports;
 using Microsoft.AspNetCore.Http.Features;
 using Microsoft.EntityFrameworkCore;
 
@@ -26,6 +27,13 @@ builder.Services.Configure<FormOptions>(options =>
 
 // Add services to the container.
 builder.Services.AddControllersWithViews();
+builder.Services.AddMemoryCache();
+builder.Services.AddHttpClient<InstaFinancialsClient>(client => client.Timeout = TimeSpan.FromMinutes(10));
+builder.Services.Configure<InstaFinancialsOptions>(builder.Configuration.GetSection(InstaFinancialsOptions.SectionName));
+builder.Services.AddScoped<PreLoginReportService>();
+builder.Services.AddSingleton<PreLoginReportQueue>();
+builder.Services.AddScoped<PreLoginReportJobService>();
+builder.Services.AddHostedService<PreLoginReportWorker>();
 
 builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseSqlServer(builder.Configuration.GetConnectionString("Default")));
