@@ -51,11 +51,34 @@
                     <dt>MCA Sum of Charges</dt>
                     <dd>
                         @Money(cp.McaSumOfChargesCrore)
-                        @if (cp.McaSumOfChargesCrore is { } mcaCr && Model.TotalOpenChargeAmount is { } compCr && Math.Abs(mcaCr - compCr) > 0.05m)
+                        @{
+                            var openCharges = Model.Charges.Where(DossierComputations.IsOpenCharge).ToList();
+                            var anyMissingAmounts = openCharges.Any(c => c.CurrentAmount is null);
+                        }
+                        @if (cp.McaSumOfChargesCrore is { } mcaCr)
                         {
-                            <span class="mca-badge sev-watch ms-1" title="MCA stated sum of charges (@Money(mcaCr)) differs from computed open charges total (@Money(compCr))">
-                                (Computed Open: @Money(compCr))
-                            </span>
+                            @if (openCharges.Count == 0 && Model.TotalChargeCount == 0)
+                            {
+                                <span class="mca-badge sev-watch ms-1" title="Reconciliation incomplete: charge register not present in this workbook">
+                                    register not present
+                                </span>
+                            }
+                            else if (anyMissingAmounts)
+                            {
+                                <span class="mca-badge sev-watch ms-1" title="Reconciliation incomplete: @openCharges.Count(c => c.CurrentAmount is null) open charge(s) have unstated amounts">
+                                    reconciliation incomplete
+                                </span>
+                            }
+                            else
+                            {
+                                var compCr = openCharges.Sum(c => c.CurrentAmount!.Value);
+                                if (Math.Abs(mcaCr - compCr) > 0.05m)
+                                {
+                                    <span class="mca-badge sev-watch ms-1" title="MCA stated sum of charges (@Money(mcaCr)) differs from computed open charges total (@Money(compCr))">
+                                        Divergence (Computed Open: @Money(compCr))
+                                    </span>
+                                }
+                            }
                         }
                     </dd>
                 </div>

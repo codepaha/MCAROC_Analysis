@@ -52,7 +52,25 @@
                 <div class="pi-metric">
                     <span>Registered Open Amount</span>
                     <strong>@Model.TotalOpenChargeAmount.ToString("N1")</strong>
-                    <small>₹ Crore · MCA stated: @(Model.CompanyProfile?.McaSumOfChargesCrore is { } mca ? Money(mca) : "—")</small>
+                    @{
+                        var openList = Model.Charges.Where(DossierComputations.IsOpenCharge).ToList();
+                        var missingAmts = openList.Any(c => c.CurrentAmount is null);
+                    }
+                    @if (Model.CompanyProfile?.McaSumOfChargesCrore is { } mca)
+                    {
+                        if (missingAmts)
+                        {
+                            <small>₹ Crore · MCA stated: @Money(mca) <span class="text-warning" title="One or more open charges have unstated amounts; reconciliation incomplete">(recon incomplete)</span></small>
+                        }
+                        else
+                        {
+                            <small>₹ Crore · MCA stated: @Money(mca)</small>
+                        }
+                    }
+                    else
+                    {
+                        <small>₹ Crore · MCA stated: —</small>
+                    }
                 </div>
                 <div class="pi-metric"><span>Charge Holders</span><strong>@Model.ChargeHolderCount</strong><small>distinct lenders</small></div>
                 <div class="pi-metric"><span>Modified Charges</span><strong>@Model.ModifiedChargeCount</strong><small>more than one lifecycle event</small></div>
