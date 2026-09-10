@@ -41,18 +41,18 @@
   },
 
   "wave4_issues": {
-    "D0": "MetricResult contract + DossierComputations.Metrics partial + golden-master coverage + the Snapshot 'Key Indicators' renderer (all variants) + portal 'Key Indicators' partial. Guardrail — ships first, no metrics yet.",
-    "D1": "Section B — Charge register analytics (unblocked)",
-    "D2": "Section A2/A3 — Financial trend & leverage analytics (unblocked)",
-    "D3": "Section G — GST compliance analytics (unblocked)",
-    "D4": "Section C — Shareholding analytics (unblocked; richer after #49)",
-    "D5": "Section D — Legal history analytics (unblocked)",
-    "D6": "Section I — Directors analytics (unblocked)",
-    "D7": "Section H — EPFO analytics (partly blocked on #36)",
-    "D8": "Section J — Peer comparison analytics (blocked on #35 for the closest-peers list)",
-    "D9": "Section A4/A5 — Cost structure & forex analytics (needs a FinancialFact label map)",
-    "D10": "Section E — Related-party-transaction analytics (blocked on #50)",
-    "D11": "Section F — Credit rating analytics (blocked on #51)"
+    "D0": "#55 — MetricResult contract + DossierComputations.Metrics partial + golden-master coverage + the Snapshot 'Key Indicators' renderer (all variants) + portal 'Key Indicators' partial. Guardrail — ships first, no metrics yet.",
+    "D1": "#56 — Section B, Charge register analytics (unblocked)",
+    "D2": "#57 — Section A2/A3, Financial trend & leverage analytics (unblocked)",
+    "D3": "#58 — Section G, GST compliance analytics (unblocked)",
+    "D4": "#59 — Section C, Shareholding analytics (unblocked; richer after #49)",
+    "D5": "#60 — Section D, Legal history analytics (unblocked)",
+    "D6": "#61 — Section I, Directors analytics (unblocked)",
+    "D7": "#62 — Section H, EPFO analytics (H7 blocked on #36)",
+    "D8": "#63 — Section J, Peer comparison analytics (J2 blocked on #35)",
+    "D9": "#64 — Section A4/A5, Cost structure & forex analytics (needs a FinancialFact label map)",
+    "D10": "#65 — Section E, Related-party-transaction analytics (blocked on #50)",
+    "D11": "#66 — Section F, Credit rating analytics (blocked on #51)"
   },
 
   "sections": [
