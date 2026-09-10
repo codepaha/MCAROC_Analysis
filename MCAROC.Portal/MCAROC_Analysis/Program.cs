@@ -4,6 +4,7 @@ using MCAROC_Analysis.Services;
 using MCAROC_Analysis.Services.Analysis;
 using MCAROC_Analysis.Services.Chat;
 using MCAROC_Analysis.Services.Dashboard;
+using MCAROC_Analysis.Services.Dossier;
 using MCAROC_Analysis.Services.Excel;
 using MCAROC_Analysis.Services.McaFilings;
 using MCAROC_Analysis.Services.PreLoginReports;
@@ -11,6 +12,10 @@ using Microsoft.AspNetCore.Http.Features;
 using Microsoft.EntityFrameworkCore;
 
 Encoding.RegisterProvider(CodePagesEncodingProvider.Instance); // legacy .xls encodings
+
+// QuestPDF Community licence — valid for the client "Due Diligence Dossier" PDF: Cubictree's annual
+// gross revenue is well under the US$1M Community threshold (confirmed with the owner, 2026-09).
+QuestPDF.Settings.License = QuestPDF.Infrastructure.LicenseType.Community;
 
 const long MaxUploadBytes = 2_000_000_000; // matches ArchiveSafetyLimits.MaxArchiveSizeBytes — the real sample corpus is ~700MB
 
@@ -111,7 +116,17 @@ builder.Services.AddScoped(sp => new DocumentRetriever(sp.GetRequiredService<App
 builder.Services.AddScoped<RetrievalContextBuilder>();
 builder.Services.AddScoped<ChatService>();
 
+// Phase 7 — client "Due Diligence Dossier" (assembled model shared by the PDF and the portal).
+builder.Services.AddMemoryCache(o => o.SizeLimit = 256);
+builder.Services.AddScoped<DossierAssembler>();
+builder.Services.AddScoped<DossierCache>();
+builder.Services.AddSingleton<DossierPdfRenderer>();
+
 var app = builder.Build();
+
+// Register the bundled Fraunces / IBM Plex fonts with QuestPDF so the dossier renders identically
+// regardless of what fonts the host machine has installed.
+DossierFonts.Register(app.Environment.WebRootPath);
 
 // Configure the HTTP request pipeline.
 if (!app.Environment.IsDevelopment())

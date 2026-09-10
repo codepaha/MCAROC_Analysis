@@ -1,0 +1,25 @@
+/* =====================================================================
+   Dossier editorial palette — the ONE source of truth for the colours
+   shared by the client PDF (Services/Dossier/DossierTheme.cs) and the
+   portal restyle (app.css, Phase 7 Track B).
+
+   DossierThemeSyncTests parses this file and DossierTheme.cs and fails
+   CI if any shared token drifts between the two. When a colour changes,
+   change it here and in DossierTheme.cs together.
+   ===================================================================== */
+:root {
+    --paper: #F6F3EC;         /* app / page ground */
+    --paper-raised: #FCFAF5;  /* cards, panels, table surfaces */
+    --ink: #1B2430;           /* sidebar / identity bands / primary text */
+    --ink-soft: #5B6472;      /* secondary text */
+    --ink-faint: #8B93A0;     /* captions, table headers, meta */
+    --maroon: #7A2331;        /* primary accent — links, active tab, primary button */
+    --maroon-deep: #5C1A23;   /* accent hover / pressed */
+    --maroon-wash: #F4E6E8;   /* accent-tinted surface / flash */
+    --sage: #3F6B52;          /* ok / positive */
+    --sage-wash: #E7EFE9;
+    --amber: #A66A1E;         /* watch / warning */
+    --amber-wash: #F5E9D8;
+    --line: #C4C0B4;          /* hairline rules (opaque equivalent of rgba(27,36,48,.13) on paper) */
+    --line-soft: #E4E1D6;     /* faint rules */
+}

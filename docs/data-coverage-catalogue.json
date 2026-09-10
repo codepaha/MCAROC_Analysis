@@ -1,0 +1,370 @@
+{
+  "$schema": "internal",
+  "title": "MCAROC data coverage catalogue",
+  "purpose": "Every data element of the two MCA/ROC workbooks, mapped to: the parser + entity that ingests it, whether it is parsed today, and where it surfaces on the portal and in the client dossier. The contract for 'no Excel data is missed'. Codex/Antigravity work against this file; a field with status != 'live' is a task.",
+  "reference_company": "COASTAL PROJECTS LIMITED / U45203OR1995PLC003982",
+  "reference_files": [
+    "E:/Downloads/U45203OR1995PLC003982.xls (RocReport, 26 sheets)",
+    "E:/Downloads/U45203OR1995PLC003982-charge.xls (ChargeReport, 5 sheets)"
+  ],
+  "status_legend": {
+    "live": "parsed into an entity AND rendered on the portal",
+    "parsed-not-shown": "parsed into an entity but not (or barely) rendered on the portal",
+    "shown-partial": "some columns of this block reach the portal, others are dropped",
+    "not-parsed": "no parser reads this; data is only in Layer-0 SourceRow",
+    "dropped-by-design": "intentionally not surfaced (documented reason)"
+  },
+  "generated": "2026-09-10",
+
+  "sheets": [
+    {
+      "workbook": "RocReport", "sheet": "About the Company", "shape": "key-value, 45 rows",
+      "parser": "CompanyProfileParser", "entity": "CompanyProfile",
+      "portal_tab": "Corporate (fixed header + About section)", "dossier": "Cover + Snapshot",
+      "fields": [
+        {"source": "Legal Name / CIN / PAN", "entityField": "CompanyName / Cin / Pan", "status": "live"},
+        {"source": "Printed at / Probed at / MCA Master Data updated at / Documents collected from MCA at", "entityField": null, "status": "not-parsed", "gap": "G1"},
+        {"source": "Authorised Capital / Paid Up Capital", "entityField": "AuthorisedCapital / PaidUpCapital", "status": "live"},
+        {"source": "Sum of Charges (Crore)", "entityField": null, "status": "not-parsed", "note": "portal computes from RocCharges; store the MCA figure too for reconciliation", "gap": "G1"},
+        {"source": "Company Status / Active Compliance", "entityField": "CompanyStatus / ComplianceStatus", "status": "live"},
+        {"source": "Registered Address (line1,line2,city,state,pin)", "entityField": "RegisteredAddress (single string)", "status": "shown-partial", "gap": "G1", "note": "structured components collapsed to one string"},
+        {"source": "Business Address (line1,line2,city,state,pin)", "entityField": null, "status": "not-parsed", "gap": "G1"},
+        {"source": "Website", "entityField": null, "status": "not-parsed", "gap": "G1"},
+        {"source": "Email (x3, with '* unreachable' marker)", "entityField": null, "status": "not-parsed", "gap": "G1"},
+        {"source": "Phone", "entityField": null, "status": "not-parsed", "gap": "G1"},
+        {"source": "About the Company (narrative paragraph)", "entityField": null, "status": "not-parsed", "gap": "G1", "note": "Probe42 shows this prominently"},
+        {"source": "Type of Entity / Listing Status", "entityField": null, "status": "not-parsed", "gap": "G1"},
+        {"source": "Date of Incorporation", "entityField": "IncorporationDate", "status": "live"},
+        {"source": "Date of Last AGM", "entityField": null, "status": "not-parsed", "gap": "G1"},
+        {"source": "LEI (+ status)", "entityField": null, "status": "not-parsed", "gap": "G1"},
+        {"source": "Broad Industry Category / Industry / Segment(s)", "entityField": "Industry / BusinessActivity", "status": "shown-partial", "gap": "G5"}
+      ]
+    },
+    {
+      "workbook": "RocReport", "sheet": "Directors", "shape": "flat table, 7 cols",
+      "parser": "DirectorsParser", "entity": "Director (+ CompanyOfficer for non-DIN rows)",
+      "portal_tab": "Corporate", "dossier": "Annexure A",
+      "fields": [
+        {"source": "NAME / DIN / PRESENT DESIGNATION / PDAD / OAD / DATE OF CESSATION / FLAGS", "entityField": "NameRaw / Din / Designation / DesignationAppointmentDate / OriginalAppointmentDate / CessationDate / Flags", "status": "live"},
+        {"source": "rows with DIN = '-' (Company Secretary etc.)", "entityField": "CompanyOfficer.*", "status": "parsed-not-shown", "gap": "G8", "note": "3 officers for COASTAL; confirm _CorporateTab renders them"}
+      ]
+    },
+    {
+      "workbook": "RocReport", "sheet": "Director - Association History", "shape": "flat table, 4 cols",
+      "parser": "DirectorAssociationHistoryParser", "entity": "DirectorAssignmentHistory",
+      "portal_tab": "Corporate", "dossier": "Annexure A",
+      "fields": [
+        {"source": "DIRECTOR NAME (embeds 'DIN : x') / DESIGNATION / APPOINTMENT DATE / CESSATION DATE", "entityField": "DirectorNameRaw + DirectorDin / Designation / AppointmentDate / CessationDate", "status": "live"}
+      ]
+    },
+    {
+      "workbook": "RocReport", "sheet": "Other Directorships", "shape": "flat table, 11 cols",
+      "parser": "OtherDirectorshipsParser", "entity": "DirectorAssociation",
+      "portal_tab": "Corporate (director drawer)", "dossier": "Annexure A",
+      "fields": [
+        {"source": "DIRECTOR NAME / CORPORATE NAME / CIN-LLPIN / CORPORATE TYPE / PUC-or-OBLIGATION / SUM OF CHARGES / DATE OF INCORP / COMPANY-LLP STATUS / ACTIVE COMPLIANCE / APPOINTMENT DATE / CESSATION DATE", "entityField": "DirectorNameRaw / ConnectedCompanyRaw / ConnectedCin / CorporateType / PaidUpCapitalCrore / SumOfChargesCrore / DateOfIncorporation / CompanyStatus / ActiveCompliance / AppointmentDate / CessationDate", "status": "live"}
+      ]
+    },
+    {
+      "workbook": "RocReport", "sheet": "Proprietorship", "shape": "flat table, 5 cols",
+      "parser": "ProprietorshipParser", "entity": "ProprietorshipAssociation",
+      "portal_tab": "Corporate", "dossier": "Annexure A",
+      "fields": [
+        {"source": "DIRECTOR NAME / LEGAL NAME / BUSINESS NAMES / PAN / STATUS", "entityField": "DirectorNameRaw / LegalName / BusinessNames / Pan / Status", "status": "live"}
+      ]
+    },
+    {
+      "workbook": "RocReport", "sheet": "Structure", "shape": "multi-section: summary (rows 0-6) + PROMOTERS grid + PUBLIC grid",
+      "parser": "StructureParser", "entity": "CompanyStructure",
+      "portal_tab": "Corporate", "dossier": "Annexure A",
+      "fields": [
+        {"source": "Promoter % / Public % / No. of Shareholders / No. of Promoter Shareholders / Total Equity Shares / Total Preference Shares", "entityField": "PromoterHoldingPercent / PublicHoldingPercent / TotalShareholders / PromoterShareholders / TotalEquityShares / TotalPreferenceShares", "status": "live"},
+        {"source": "PROMOTERS grid — 10 SEBI categories x {equity shares, equity %, preference shares, preference %}", "entityField": null, "status": "not-parsed", "gap": "G3"},
+        {"source": "PUBLIC / OTHER THAN PROMOTERS grid — same 10x4", "entityField": null, "status": "not-parsed", "gap": "G3"}
+      ]
+    },
+    {
+      "workbook": "RocReport", "sheet": "Highlights", "shape": "multi-section: FINANCIAL PARAMETERS + PRINCIPAL BUSINESS ACTIVITIES + NAME HISTORY",
+      "parser": "FinancialParametersParser (params only)", "entity": "FinancialParameter",
+      "portal_tab": "Financials", "dossier": "Annexure B",
+      "fields": [
+        {"source": "FINANCIAL PARAMETERS — 11 params x year (Income/Expense in foreign currency, Employee benefit expense, Number of employees, Gross value of RPT per AS-18, Gross fixed assets, Trade receivables > 6 months, Proposed dividend, Prescribed CSR, Total CSR spent)", "entityField": "FinancialParameter.*", "status": "parsed-not-shown", "gap": "G8", "note": "confirm _FinancialsTab renders parameters; only latest-year column is on this sheet, older years on 'Annexure - Financial Parameters'"},
+        {"source": "PRINCIPAL BUSINESS ACTIVITIES — Main Activity Group Code / Description / Business Activity Code / Description / % of Turnover", "entityField": null, "status": "not-parsed", "gap": "G5"},
+        {"source": "NAME HISTORY — Name / Till Date", "entityField": null, "status": "not-parsed", "gap": "G4"}
+      ]
+    },
+    {
+      "workbook": "RocReport", "sheet": "Director Shareholding", "shape": "flat table, 5 cols",
+      "parser": "ShareholdingParser", "entity": "Shareholding (SourceType=DirectorShareholding)",
+      "portal_tab": "Corporate", "dossier": "Annexure A",
+      "fields": [
+        {"source": "Name / Designation / Shareholding (%) / Number of Shares / Cessation Date", "entityField": "ShareholderNameRaw / (Designation dropped) / HoldingPercentage / SharesHeld / (Cessation dropped)", "status": "shown-partial", "gap": "G9", "note": "Designation + Cessation Date columns dropped"}
+      ]
+    },
+    {
+      "workbook": "RocReport", "sheet": "Shareholding More Than 5%", "shape": "flat table, 12 cols, multi-year",
+      "parser": "ShareholdingParser", "entity": "Shareholding (SourceType=MajorShareholding)",
+      "portal_tab": "Corporate", "dossier": "Annexure A",
+      "fields": [
+        {"source": "Financial Year Ending On / Entity Name / Shareholding (%)", "entityField": "FinancialYear / ShareholderNameRaw / HoldingPercentage", "status": "live"},
+        {"source": "Relationship / Entity Type", "entityField": "(Relationship dropped) / ShareholderType", "status": "shown-partial", "gap": "G9"},
+        {"source": "Country/City / Paid Up Capital-or-Obligation / Sum Of Charges / Date Of Incorporation / Company-LLP Status / Active Compliance / Remarks", "entityField": null, "status": "not-parsed", "gap": "G9"}
+      ]
+    },
+    {
+      "workbook": "RocReport", "sheet": "Securities Allotment", "shape": "flat table, 7 cols",
+      "parser": "SecuritiesAllotmentParser", "entity": "SecurityAllotment",
+      "portal_tab": "Corporate", "dossier": "Annexure A",
+      "fields": [
+        {"source": "ALLOTMENT DATE / ALLOTMENT TYPE / INSTRUMENT / AMOUNT / NO. OF SECURITIES ALLOTTED / NOMINAL VALUE / PREMIUM VALUE", "entityField": "AllotmentDate / AllotmentType / InstrumentType / AmountCrore / NumberOfSecurities / NominalValuePerShare / PremiumValuePerShare", "status": "live"}
+      ]
+    },
+    {
+      "workbook": "RocReport", "sheet": "Related Corporates", "shape": "flat table, 12 cols, multi-year",
+      "parser": "RelatedCorporatesParser", "entity": "RelatedCorporate",
+      "portal_tab": "Corporate", "dossier": "Annexure A",
+      "fields": [
+        {"source": "FY Ending / Corporate Name / Relationship / Corporate Type / Shareholding % / Country-City / PUC-or-Obligation / Sum Of Charges / Date Of Incorporation / Company-LLP Status", "entityField": "FinancialYearEnding / EntityNameRaw / RelationshipRaw+RelationshipType / CorporateType / HoldingPercent / Location / PaidUpCapitalCrore / SumOfChargesCrore / DateOfIncorporation / CompanyStatus", "status": "live"},
+        {"source": "Active Compliance / Remarks", "entityField": null, "status": "not-parsed", "gap": "G10"},
+        {"source": "CIN (in parentheses under Corporate Name in the PDF; own column here?)", "entityField": "Cin", "status": "live"}
+      ]
+    },
+    {
+      "workbook": "RocReport", "sheet": "Standalone Financial Data", "shape": "matrix: ~55 line-items x 4 FY columns, 5 sub-sections (BS / P&L / P&L Key Schedule / Cash Flow / Ratios) + trailing AUDITOR(s) block",
+      "parser": "StandaloneFinancialDataParser (basis=Standalone)", "entity": "FinancialYearData (typed subset) + FinancialFact (everything else)",
+      "portal_tab": "Financials", "dossier": "Annexure B",
+      "fields": [
+        {"source": "~25 mapped line-items (Share Capital, Net Worth, borrowings, revenue, EBITDA, PBT, PAT, CFO/CFI/CFF, ...)", "entityField": "FinancialYearData.*", "status": "live"},
+        {"source": "~30 unmapped line-items (Reserves & Surplus, Other Equity, deferred tax, provisions, tangible/intangible assets, CWIP, investments, adjustments, key-schedule items)", "entityField": "FinancialFact (Section=BalanceSheet/ProfitAndLoss/CashFlow)", "status": "parsed-not-shown", "gap": "G8", "note": "462 FinancialFacts for COASTAL — confirm _FinancialStatement renders the full statement, not just the typed columns"},
+        {"source": "RATIOS sub-section — 16 ratios x FY", "entityField": "FinancialFact (Section=Ratios)", "status": "parsed-not-shown", "gap": "G8"},
+        {"source": "Cash-flow year alignment inferred (no year header on CF columns)", "entityField": "FinancialYearData.CashFlowYearInferred", "status": "parsed-not-shown", "gap": "G8", "note": "must show a 'year inferred' caption where true"},
+        {"source": "trailing AUDITOR(s) block (Year rows 116-120)", "entityField": "(handled by AuditorsParser on separate sheet)", "status": "live"}
+      ]
+    },
+    {
+      "workbook": "RocReport", "sheet": "Consolidated Financial Data", "shape": "same as Standalone, 3 FY",
+      "parser": "StandaloneFinancialDataParser (basis=Consolidated)", "entity": "FinancialYearData + FinancialFact",
+      "portal_tab": "Financials (S/C toggle)", "dossier": "Annexure B",
+      "fields": [
+        {"source": "all line-items x FY, consolidated basis", "entityField": "FinancialYearData(Basis=Consolidated) + FinancialFact(Basis=Consolidated)", "status": "live", "note": "confirm the S/C toggle on _FinancialsTab exposes consolidated"}
+      ]
+    },
+    {
+      "workbook": "RocReport", "sheet": "Open Charges Sequence", "shape": "flat table, 9 cols, one row per charge event, grouped by CHARGE ID via 'SERIAL NUMBER' stem",
+      "parser": "ChargesParser (charge workbook preferred if present)", "entity": "RocCharge + RocChargeEvent",
+      "portal_tab": "Charges & Security", "dossier": "Annexure C",
+      "fields": [
+        {"source": "SERIAL NUMBER / CHARGE ID / STATUS / DATE / FILING DATE / HOLDER NAME (with '(now X)') / CHARGE AMOUNT / PROPERTY TYPE / NUMBER OF HOLDERS", "entityField": "RocChargeEvent.SerialNumber / RocCharge.RocChargeNumber / EventType / EventDate / FilingDate / HolderNameRaw / ChargeAmount / PropertyType / NumberOfHolders", "status": "live"}
+      ]
+    },
+    {
+      "workbook": "RocReport", "sheet": "Satisfied Charges Sequence", "shape": "same, satisfied charges",
+      "parser": "ChargesParser", "entity": "RocCharge(status=Satisfied) + RocChargeEvent",
+      "portal_tab": "Charges & Security", "dossier": "Annexure C", "fields": [
+        {"source": "same 9 cols", "entityField": "RocCharge/RocChargeEvent (SatisfactionDate set)", "status": "live"}
+      ]
+    },
+    {
+      "workbook": "RocReport", "sheet": "Latest Event on Open Charges", "shape": "flat table, 18 cols, latest event per open charge with full CHG-1 prose",
+      "parser": "ChargesParser", "entity": "RocChargeEvent (all 18 fields)",
+      "portal_tab": "Charges & Security (_ChargeDrawer)", "dossier": "Annexure C (charge cards)",
+      "fields": [
+        {"source": "INSTRUMENT DESCRIPTION / RATE OF INTEREST / TERMS OF PAYMENT / PROPERTY PARTICULARS / EXTENT AND OPERATION / OTHER TERMS / MODIFICATION PARTICULARS / JOINT HOLDING / CONSORTIUM HOLDING", "entityField": "RocChargeEvent.InstrumentDescription / RateOfInterest / TermsOfPayment / PropertyParticulars / ExtentAndOperation / OtherTerms / ModificationParticulars / JointHolding / ConsortiumHolding", "status": "live", "note": "entity is complete; confirm _ChargeDrawer + dossier ChargeCard render every field verbatim (no clip in the annexure)"}
+      ]
+    },
+    {
+      "workbook": "RocReport", "sheet": "Peer Comparison", "shape": "multi-section: header + COMPARATIVE METRICS matrix (18 metrics x [actual|median] x 4 FY) + 5 CLOSEST PEERS list",
+      "parser": "PeerComparisonParser", "entity": "PeerComparisonMetric",
+      "portal_tab": "Financials (peer bars)", "dossier": "Annexure B",
+      "fields": [
+        {"source": "Industry / Segment / Financial Year", "entityField": "PeerComparisonMetric.Industry / Segment / FinancialYear", "status": "live"},
+        {"source": "18 metrics x actual x FY", "entityField": "PeerComparisonMetric.CompanyValue", "status": "live"},
+        {"source": "18 metrics x median x FY", "entityField": "PeerComparisonMetric.PeerMedianValue", "status": "live"},
+        {"source": "# of Peers in Sample x FY", "entityField": "PeerComparisonMetric.PeerCount", "status": "live"},
+        {"source": "5 CLOSEST PEERS BY REVENUE — Legal Name / CIN / City / Revenue", "entityField": null, "status": "not-parsed", "gap": "G6"}
+      ]
+    },
+    {
+      "workbook": "RocReport", "sheet": "Auditors' Comments-Standalone", "shape": "multi-section: summary (FY / Qualified? / Comments Given By) + 'Comments under Disclosures' sub-blocks per year",
+      "parser": "AuditorsParser (basis=Standalone)", "entity": "AuditorObservation",
+      "portal_tab": "Compliance", "dossier": "Annexure B",
+      "fields": [
+        {"source": "Financial Year / Whether Qualified-Reservation-Adverse / Comments Given By (auditor name + membership no + firm + firm reg no)", "entityField": "FinancialYear / HasQualificationOrAdverseRemark / AuditorName", "status": "shown-partial", "gap": "G11", "note": "structured firm identity (membership no, firm reg no) folded into a string"},
+        {"source": "Comments under Disclosures - Auditors' Report / Directors' Report (CARO-style clause text)", "entityField": "ObservationText", "status": "live"}
+      ]
+    },
+    {
+      "workbook": "RocReport", "sheet": "Auditors' Comments-Consolidated", "shape": "same, consolidated",
+      "parser": "AuditorsParser (basis=Consolidated)", "entity": "AuditorObservation(Basis=Consolidated)",
+      "portal_tab": "Compliance", "dossier": "Annexure B", "fields": [
+        {"source": "same", "entityField": "AuditorObservation(Basis=Consolidated)", "status": "shown-partial", "gap": "G11"}
+      ]
+    },
+    {
+      "workbook": "RocReport", "sheet": "GST", "shape": "flat table, 16 cols (one row per GSTIN x return-type/latest-filing)",
+      "parser": "GstParser", "entity": "GstRegistration",
+      "portal_tab": "Compliance", "dossier": "Annexure D",
+      "fields": [
+        {"source": "GSTIN / GSTIN STATUS / STATE / DATE OF REGISTRATION / TAXPAYER TYPE / TRADE NAME / NATURE OF BUSINESS ACTIVITIES / FLAGS", "entityField": "Gstin / Status / State / RegistrationDate / TaxpayerType / TradeName / NatureOfBusinessActivities / Flags", "status": "live"},
+        {"source": "RETURN TYPE / LATEST FILING(S) / FINANCIAL YEAR / TAX PERIOD (latest-filing summary)", "entityField": "(via GstFiling)", "status": "live"},
+        {"source": "CENTRE JURISDICTION / STATE JURISDICTION / LEGAL NAME OF BUSINESS", "entityField": null, "status": "not-parsed", "gap": "G10"},
+        {"source": "CancellationDate (for Inactive GSTINs)", "entityField": "CancellationDate", "status": "live"}
+      ]
+    },
+    {
+      "workbook": "RocReport", "sheet": "Legal History", "shape": "5 stacked sub-tables (Confirmed / Filed-By / Consolidation / PROBABLE / UNVERIFIED), 3 column layouts",
+      "parser": "LegalHistoryParser", "entity": "Litigation",
+      "portal_tab": "Litigation", "dossier": "Annexure E",
+      "fields": [
+        {"source": "Case Type / Case Status / Case Category / Court / Litigant(s) / Case No. / Date of Last Hearing-Judgement", "entityField": "CaseType / CaseStatus / CaseCategory / Court / Litigants / CaseNumber / LastHearingDate", "status": "live", "note": "PR #29 fixed the 3-layout parse; MatchStatus = Confirmed / Probable / Uncertain"},
+        {"source": "UNVERIFIED layout (Court / Petitioner / Respondent / Case No. / Date of Last Activity)", "entityField": "Court / Litigants(joined) / CaseNumber / LastHearingDate, MatchStatus=Uncertain", "status": "live", "note": "portal shows these under 'Other' category with no 'unverified' cue yet", "gap": "G12"}
+      ]
+    },
+    {
+      "workbook": "RocReport", "sheet": "Compliance", "shape": "4 stacked sub-tables (NAME REMOVAL / BIFR / CDR / SUIT FILED CASES)",
+      "parser": "ComplianceParser", "entity": "ComplianceRecord",
+      "portal_tab": "Compliance", "dossier": "Annexure D",
+      "fields": [
+        {"source": "INCIDENTS OF NAME REMOVAL U/S 248(5) — Struck Off Status / Restored Status", "entityField": "ComplianceRecord(RecordType=NameRemoval).Status", "status": "live"},
+        {"source": "BIFR — Case No. / Status / Date of Last Order", "entityField": "ComplianceRecord(RecordType=Bifr)", "status": "live"},
+        {"source": "CDR — Description / Date", "entityField": "ComplianceRecord(RecordType=Cdr).Description / RecordDate", "status": "live"},
+        {"source": "SUIT FILED CASES — Source / Bank / Date / Amount / Defaulter Type (1277 quarterly rows)", "entityField": "ComplianceRecord(RecordType=SuitFiled).Source / Bank / RecordDate / AmountCrore / DefaulterType", "status": "live", "note": "dedup removed in Phase 7.0 — every quarter kept; portal must summarise (peak per bank) not dump 1277 rows"}
+      ]
+    },
+    {
+      "workbook": "RocReport", "sheet": "EPFO Establishments", "shape": "flat table, 14 cols, one row per establishment (latest month + establishment metadata)",
+      "parser": "EpfoParser (annexure sheet)", "entity": "EpfoContribution",
+      "portal_tab": "Compliance", "dossier": "Annexure D",
+      "fields": [
+        {"source": "WORKING STATUS / ESTABLISHMENT ID / ESTABLISHMENT NAME / LATEST WAGE MONTH / LATEST DATE OF CREDIT / NO. OF EMPLOYEES / AMOUNT", "entityField": "WorkingStatus / EstablishmentId / EstablishmentName / WageMonth / PaymentDate / EmployeeCount / ContributionAmountCrore", "status": "live"},
+        {"source": "CITY / DATE OF SETUP / PRINCIPAL BUSINESS ACTIVITIES / ADDRESS / EXEMPTION STATUS / FLAGS", "entityField": null, "status": "not-parsed", "gap": "G7", "note": "establishment header block (Probe shows a per-establishment card)"}
+      ]
+    },
+    {
+      "workbook": "RocReport", "sheet": "Annexure - Financial Parameters", "shape": "matrix, 11 params x 3 FY",
+      "parser": "FinancialParametersParser", "entity": "FinancialParameter",
+      "portal_tab": "Financials", "dossier": "Annexure B", "fields": [
+        {"source": "11 params x older FY columns", "entityField": "FinancialParameter (multiple FinancialYear)", "status": "parsed-not-shown", "gap": "G8"}
+      ]
+    },
+    {
+      "workbook": "RocReport", "sheet": "Annexure - GST", "shape": "flat table, 7 cols, full filing history per GSTIN (580 rows)",
+      "parser": "GstParser", "entity": "GstFiling",
+      "portal_tab": "Compliance (paged)", "dossier": "Annexure D",
+      "fields": [
+        {"source": "GSTIN / RETURN TYPE / FINANCIAL YEAR / TAX PERIOD / FILING DUE DATE / DATE OF FILING / STATUS", "entityField": "Gstin / ReturnType / FinancialYear / TaxPeriod / DueDate / FilingDate / FilingStatus (+ derived DelayDays)", "status": "live"}
+      ]
+    },
+    {
+      "workbook": "RocReport", "sheet": "Annexure - EPFO Establishments", "shape": "flat table, 10 cols, monthly contributions with TRRN (78 rows)",
+      "parser": "EpfoParser", "entity": "EpfoContribution",
+      "portal_tab": "Compliance (paged)", "dossier": "Annexure D",
+      "fields": [
+        {"source": "WORKING STATUS / ESTABLISHMENT ID / ESTABLISHMENT NAME / WAGE MONTH / NO. OF EMPLOYEES / AMOUNT / DATE OF CREDIT / PAYMENT DUE DATE / STATUS", "entityField": "WorkingStatus / EstablishmentId / EstablishmentName / WageMonth / EmployeeCount / ContributionAmountCrore / PaymentDate / PaymentDueDate / PaymentStatus", "status": "live"},
+        {"source": "TRRN (transaction reference number)", "entityField": null, "status": "not-parsed", "gap": "G13"}
+      ]
+    },
+    {
+      "workbook": "RocReport", "sheet": "MSME Supplier Payment Delays", "shape": "flat table (absent from this fixture; present in older exports)",
+      "parser": "MsmeParser", "entity": "MsmePayment",
+      "portal_tab": "Compliance", "dossier": "Annexure D",
+      "fields": [
+        {"source": "Reporting Period / Supplier Name / Supplier PAN / Amount Due", "entityField": "ReportingPeriod / SupplierNameRaw / SupplierPan / AmountDueCrore", "status": "live", "note": "0 rows for COASTAL — sheet not in current MCA export (correct)"}
+      ]
+    },
+    {
+      "workbook": "ChargeReport", "sheet": "About the Company", "shape": "key-value, identity-check only",
+      "parser": "IngestionOrchestrator.ValidateRocVsCharge", "entity": "(none)",
+      "portal_tab": null, "dossier": null,
+      "fields": [{"source": "Legal Name / CIN / PAN", "entityField": null, "status": "dropped-by-design", "note": "used only to confirm the charge workbook belongs to the same company"}]
+    },
+    {
+      "workbook": "ChargeReport", "sheet": "Open Charges Sequence / Satisfied Charges Sequence", "shape": "same 9 cols as RocReport",
+      "parser": "ChargesParser", "entity": "RocCharge + RocChargeEvent",
+      "portal_tab": "Charges & Security", "dossier": "Annexure C",
+      "fields": [{"source": "9 cols", "entityField": "RocCharge/RocChargeEvent", "status": "live", "note": "charge workbook is the authoritative source when present"}]
+    },
+    {
+      "workbook": "ChargeReport", "sheet": "Open Charges in Details / Satisfied Charges in Details", "shape": "18 cols, full CHG-1 prose for BOTH open and satisfied",
+      "parser": "ChargesParser", "entity": "RocChargeEvent (18 fields)",
+      "portal_tab": "Charges & Security (_ChargeDrawer)", "dossier": "Annexure C",
+      "fields": [
+        {"source": "all 18 cols incl. INSTRUMENT/RATE/TERMS/PARTICULARS/EXTENT/OTHER/MODIFICATION/JOINT/CONSORTIUM — for satisfied charges too", "entityField": "RocChargeEvent.*", "status": "live", "note": "satisfied-charge detail exists here (RocReport only carries it for open charges) — confirm the drawer/annexure show satisfied-charge prose"}
+      ]
+    }
+  ],
+
+  "gaps": [
+    {"id": "G1", "title": "Company identity & contact block + provenance timestamps not captured", "severity": "high",
+     "detail": "About-the-Company drops: business address, website, 3 emails (+ reachability marker), phone, the narrative paragraph, type of entity, listing status, date of last AGM, LEI + status, and the 4 'as of' timestamps (Printed / Probed / MCA Master Data updated / Documents collected). First screen a user sees.",
+     "fix": "Extend CompanyProfile (or a new CompanyContact / CompanyProvenance entity) + CompanyProfileParser; render on the Corporate tab header/About section and feed the dossier P0 provenance block.",
+     "issue": null},
+    {"id": "G3", "title": "Full shareholding-pattern category grid dropped", "severity": "high",
+     "detail": "Structure sheet's PROMOTERS and PUBLIC grids (10 SEBI categories x {equity shares, equity %, preference shares, preference %}) are not parsed — only the 6-field summary is kept.",
+     "fix": "New ShareholdingPatternRow entity (holderClass Promoter|Public, category, equityShares, equityPercent, preferenceShares, preferencePercent, financialYear) + parser; render as a table on the Corporate tab and a dossier Annexure-A item.",
+     "issue": null},
+    {"id": "G4", "title": "Name history not captured", "severity": "medium",
+     "detail": "Highlights sheet 'NAME HISTORY' (former name + till-date) is dropped.",
+     "fix": "New CompanyNameHistory entity (name, tillDate) + parse in FinancialParametersParser or CompanyProfileParser; small table on Corporate tab + dossier Annexure A.",
+     "issue": null},
+    {"id": "G5", "title": "Principal Business Activities structured table dropped", "severity": "medium",
+     "detail": "Highlights 'PRINCIPAL BUSINESS ACTIVITIES' (main activity group code + desc, business activity code + desc, % of turnover) collapses to CompanyProfile.BusinessActivity string.",
+     "fix": "New PrincipalBusinessActivity entity + parser; table on Corporate tab.",
+     "issue": null},
+    {"id": "G6", "title": "5 Closest Peers by Revenue not captured", "severity": "medium",
+     "detail": "Peer Comparison sheet's closest-peers list (legal name, CIN, city, revenue) is dropped; needed for the peer bar chart Probe42 shows.",
+     "fix": "New PeerCompany entity (legalName, cin, city, revenue, financialYear) + extend PeerComparisonParser; bar chart on Financials tab + dossier Annexure B.",
+     "issue": null},
+    {"id": "G7", "title": "EPFO establishment metadata dropped", "severity": "medium",
+     "detail": "EPFO Establishments sheet drops per-establishment City, Date of Setup, Principal Business Activities, Address, Exemption Status, Flags — only monthly contributions are kept.",
+     "fix": "New EpfoEstablishment entity (establishmentId, name, city, dateOfSetup, principalBusinessActivities, address, exemptionStatus, workingStatus, flags) + parse; establishment header card on Compliance tab.",
+     "issue": null},
+    {"id": "G8", "title": "Parsed-but-not-(fully)-shown: FinancialFacts, FinancialParameters, CompanyOfficers, CashFlowYearInferred", "severity": "high",
+     "detail": "462 FinancialFacts, 23 FinancialParameters, 3 CompanyOfficers and the CashFlowYearInferred flag are ingested but the portal tabs may not render them fully. Audit each tab and wire the missing renders.",
+     "fix": "Per-tab render audit (Corporate: officers; Financials: full statement incl. facts + ratios + parameters + inferred-year caption).",
+     "issue": null},
+    {"id": "G9", "title": "Shareholding entity drops columns", "severity": "medium",
+     "detail": "Director Shareholding drops Designation + Cessation Date; Shareholding >5% drops Relationship, Country/City, PUC/Obligation, Sum of Charges, Date of Incorp, Status, Active Compliance, Remarks.",
+     "fix": "Extend Shareholding entity + parser to carry the full column set.",
+     "issue": null},
+    {"id": "G10", "title": "Minor column drops (RelatedCorporate, GstRegistration)", "severity": "low",
+     "detail": "RelatedCorporate: Active Compliance, Remarks. GstRegistration: Centre Jurisdiction, State Jurisdiction, Legal Name of Business.",
+     "fix": "Add the fields to the entities + parsers.",
+     "issue": null},
+    {"id": "G11", "title": "Auditor firm identity not structured", "severity": "low",
+     "detail": "'Comments Given By' (auditor name, membership number, firm name, firm registration number) folded into AuditorObservation.AuditorName string.",
+     "fix": "Split into AuditorName / MembershipNumber / FirmName / FirmRegistrationNumber.",
+     "issue": null},
+    {"id": "G12", "title": "Litigation Uncertain (Unverified Court Records) has no UI cue", "severity": "medium",
+     "detail": "PR #29 routes 'Unverified Court Records' rows to MatchStatus=Uncertain, but the Litigation tab shows them under category 'Other' with no 'unverified — verify against source' banner. Probe42 gives Probable + Unverified their own sections with a plain-English disclaimer.",
+     "fix": "Litigation tab (Track B): split Confirmed / Probable / Unverified into separate sub-sections, each with a disclaimer.",
+     "issue": null},
+    {"id": "G13", "title": "EPFO TRRN dropped", "severity": "low", "detail": "Transaction reference number on the monthly EPFO annexure not stored.", "fix": "Add EpfoContribution.Trrn.", "issue": null}
+  ],
+
+  "probe42_take_leave": {
+    "take": [
+      "Per-tab CONTENTS jump-nav on the long/mega tabs",
+      "'Reference Document(s)' provenance rows — link each data block to the exact MCA form + underlying PDFs (we have DocumentChunk/RequestDocument)",
+      "Explicit degenerate-state text — when Review Priority gates off (CORP_FINANCIAL_DATA_STALE etc.) name the reason, like Probe's 'score not available because 1..5'",
+      "Colour as a data signal — green (satisfied/valid/active), red (ceased/invalid/attention), amber (modification)",
+      "Inline annotations — 'OLD BANK (now NEW BANK)', 'UNKNOWN CHARGE HOLDER', invalid email in red",
+      "Charge Details as a grouped table with inline [+] expand (alternative/complement to the existing drawer)",
+      "Peer Comparison actual(black) vs median(orange) paired columns + 5-closest-peers horizontal bar",
+      "Split Pending / Disposed as sub-sections rather than a status column",
+      "Per-section unit scaler: Crore / Lakh / INR (NOT Million)",
+      "Multi-select -> 'Request a Zip' on the documents list",
+      "Consistent 'As per our records, X has no Y' empty states",
+      "The 4 provenance timestamps in the fixed company header ('Unlocked on' / 'Last updated N days ago')",
+      "Full shareholding-pattern category grid (G3) — Probe shows it, we drop it"
+    ],
+    "leave": [
+      "0-100 / 1-5 numeric score or gauge — keep the deterministic Review Priority + flag strip. Probe's own score is null for a distressed company anyway.",
+      "No synthesis at all — our AI Analysis tab / Section 1 / 5-slot summary is the product; Probe has none",
+      "Download-only documents with no in-app viewer — we build the split-screen PDF reader (real differentiator)",
+      "Disclaimer paragraph on every page — once is enough",
+      "The 200-page undifferentiated data-dump feel of their PDF export",
+      "Data sourced beyond the MCA/ROC Excel (RBI publishing lists, SMTP email validation, phone-carrier lookup, website scraping) — out of scope now; note for later"
+    ]
+  }
+}

@@ -41,6 +41,14 @@
             </div>
             <small><b>@r.RequestNumber</b> &middot; @(r.Client?.ClientName)</small>
             <small>Updated @((r.UpdatedDate ?? r.CreatedDate).ToString("d MMM yyyy HH:mm"))</small>
+            @if (r.RequestStatus == RequestStatus.AnalysisCompleted)
+            {
+                <div class="mt-1">
+                    <a href="/Requests/@r.RequestId/dossier?variant=executive" class="btn btn-sm btn-outline-primary">Download dossier — Executive</a>
+                    <a href="/Requests/@r.RequestId/dossier?variant=full" class="btn btn-sm btn-outline-secondary ms-1" title="Section 1 plus the verbatim source record">Full source</a>
+                    <a href="/Requests/@r.RequestId/dossier?variant=source" class="btn btn-sm btn-outline-secondary ms-1" title="Verbatim source record only — no synthesised analysis">Source record</a>
+                </div>
+            }
         </div>
     </div>
 
