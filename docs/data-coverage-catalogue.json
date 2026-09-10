@@ -170,7 +170,7 @@
       "parser": "ChargesParser", "entity": "RocChargeEvent (all 18 fields)",
       "portal_tab": "Charges & Security (_ChargeDrawer)", "dossier": "Annexure C (charge cards)",
       "fields": [
-        {"source": "INSTRUMENT DESCRIPTION / RATE OF INTEREST / TERMS OF PAYMENT / PROPERTY PARTICULARS / EXTENT AND OPERATION / OTHER TERMS / MODIFICATION PARTICULARS / JOINT HOLDING / CONSORTIUM HOLDING", "entityField": "RocChargeEvent.InstrumentDescription / RateOfInterest / TermsOfPayment / PropertyParticulars / ExtentAndOperation / OtherTerms / ModificationParticulars / JointHolding / ConsortiumHolding", "status": "live", "note": "entity is complete; confirm _ChargeDrawer + dossier ChargeCard render every field verbatim (no clip in the annexure)"}
+        {"source": "INSTRUMENT DESCRIPTION / RATE OF INTEREST / TERMS OF PAYMENT / PROPERTY PARTICULARS / EXTENT AND OPERATION / OTHER TERMS / MODIFICATION PARTICULARS / JOINT HOLDING / CONSORTIUM HOLDING", "entityField": "RocChargeEvent.InstrumentDescription / RateOfInterest / TermsOfPayment / PropertyParticulars / ExtentAndOperation / OtherTerms / ModificationParticulars / JointHolding / ConsortiumHolding", "status": "live", "note": "B5/#43 — verified _ChargeDrawer and dossier ChargeCard render every field verbatim without clip"}
       ]
     },
     {
@@ -290,7 +290,7 @@
       "parser": "ChargesParser", "entity": "RocChargeEvent (18 fields)",
       "portal_tab": "Charges & Security (_ChargeDrawer)", "dossier": "Annexure C",
       "fields": [
-        {"source": "all 18 cols incl. INSTRUMENT/RATE/TERMS/PARTICULARS/EXTENT/OTHER/MODIFICATION/JOINT/CONSORTIUM — for satisfied charges too", "entityField": "RocChargeEvent.*", "status": "live", "note": "satisfied-charge detail exists here (RocReport only carries it for open charges) — confirm the drawer/annexure show satisfied-charge prose"}
+        {"source": "all 18 cols incl. INSTRUMENT/RATE/TERMS/PARTICULARS/EXTENT/OTHER/MODIFICATION/JOINT/CONSORTIUM — for satisfied charges too", "entityField": "RocChargeEvent.*", "status": "live", "note": "B5/#43 — verified drawer and annexure render full satisfied-charge prose without truncation"}
       ]
     },
     {
