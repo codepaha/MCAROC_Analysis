@@ -50,14 +50,19 @@ addresses Codex findings and re-requests review. The Owner merges once green + a
 
 ## Status board  <!-- Integrator keeps this current -->
 
-**Current focus:** land the 3 open review PRs, then start Phase 8 Wave 1.
+**Current focus:** OWNER TO MERGE #27 / #28 / #29 (all approved + green), then start Phase 8 Wave 1.
 
 | PR | Branch | Head | Codex | Hosted CI | Owner action |
 |---|---|---|---|---|---|
-| #27 dossier PDF | `feature/phase7-dossier-pdf` | `1107223` | ✅ source-approved | ✅ green (303 tests) | **ready to merge** |
-| #28 dev re-ingest | `feature/dev-reingest` | `5288b30` | 🔄 re-review needed (fix pushed) | ✅ green (after 1 transient build fail + rerun) | hold for Codex |
-| #29 legal-history parser | `fix/legal-history-unverified-layout` | `f7b91b4` | 🔄 re-review needed (control-total test pushed) | ✅ green | hold for Codex |
-| #30 parity plan + catalogue + channel | `docs/portal-parity-plan` | `0a68bbc` | not requested | in progress | merge (docs only) — makes this channel + catalogue live |
+| #27 dossier PDF | `feature/phase7-dossier-pdf` | `1107223` | ✅ **approved** | ✅ green | **MERGE** (2nd) |
+| #28 dev re-ingest | `feature/dev-reingest` | `5288b30` | ✅ **approved** | ✅ green | **MERGE** (3rd — update branch after #27) |
+| #29 legal-history parser | `fix/legal-history-unverified-layout` | `f7b91b4` | ✅ **approved** | ✅ green | **MERGE** (1st — isolated, lowest risk) |
+| #30 parity plan + catalogue + channel | `docs/portal-parity-plan` | latest | not requested | ✅ green | merge (docs only) — makes this channel + catalogue live |
+
+**Suggested merge order:** #29 (isolated parser) → #27 (flagship, the demo needs it) → #28 (rebase
+on the new main, re-run CI — it touches `RequestsController` which #27 does not, so no conflict, but
+merge-main-in + green before merging). Then #30. Then rebuild the local `demo-coastal` branch from
+the merged main + start Phase 8 Wave 1 (#32–#38).
 
 **Phase 8:** EPIC #31. Wave 1 (#32–#38) and Wave 2 (#39–#44) open, **not started** — start after
 #27/#28/#29 merge (they touch the same parsers/entities). Wave 3 (restyle) + Wave 4 (dossier) not
@@ -71,6 +76,22 @@ cancelled; the 4 current-head runs are churning. If CI is "queued" again, check 
 ---
 
 ## Log  <!-- newest first. Prefix: NEEDS / BLOCKED / DONE / DECISION / FYI -->
+
+### 2026-09-10 — Codex (re-review 2, transcribed by Claude session)
+- **All 3 PRs APPROVED at their exact heads.** #27 `1107223`: source contract correct, CI green.
+  #28 `5288b30`: Details now pairs analysis to the displayed ingestion run + the I1/A1→I2→A2
+  regression test, CI green on the rerun (the initial build failure was not reproduced). #29
+  `f7b91b4`: real-workbook control-total test passes locally — 592 + 68 + 292 = 952, CI green.
+  No source blocker. **No merge or GitHub approval submitted — owner merges.**
+
+### 2026-09-10 — Claude session (runner moved)
+- **DONE:** moved the self-hosted runner `C:\actions-runner\MCAROC_Analysis` → `D:\actions-runner\
+  MCAROC_Analysis` (C: was down to 14 GB; D: has 108 GB). Config is path-relative (`workFolder:
+  "_work"`, `run.cmd` uses `%~dp0`) so nothing to edit. Stopped the C: process, robocopy `/MOVE`
+  (2.2 GB), started from D:. Brief `TaskAgentSessionConflict` (force-kill didn't send session
+  goodbye) — self-cleared in ~1 min. Runner **online from D:**, idle. `run.cmd` still not a service —
+  install from D: if you want reboot-survival: `cd D:\actions-runner\MCAROC_Analysis && .\svc.cmd
+  install && .\svc.cmd start`.
 
 ### 2026-09-10 — Claude session
 - **FYI:** the self-hosted runner is **intermittently failing the build step** — 2 failures today
