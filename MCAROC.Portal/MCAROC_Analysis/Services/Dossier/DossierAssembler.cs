@@ -122,22 +122,35 @@ public class DossierAssembler(AppDbContext db)
     }
 
     /// <summary>Reads <see cref="AnalysisRun.DataSufficiencyNotesJson"/> — a <c>[{code, reason}]</c>
-    /// array the rule engine writes for every check it could not run. Bad JSON ⇒ empty (never throws).</summary>
-    private static IReadOnlyList<DataSufficiencyNote> DeserializeSufficiencyNotes(string? json)
+    /// array the rule engine writes for every check it could not run. Never throws: unparseable JSON,
+    /// a non-array root, non-object array entries, non-string / missing fields, and blank-reason
+    /// entries are all skipped, so a partially-malformed payload still yields whatever valid notes it
+    /// contains.</summary>
+    internal static IReadOnlyList<DataSufficiencyNote> DeserializeSufficiencyNotes(string? json)
     {
         if (string.IsNullOrWhiteSpace(json)) return [];
-        try
-        {
-            using var doc = JsonDocument.Parse(json);
-            if (doc.RootElement.ValueKind != JsonValueKind.Array) return [];
-            return doc.RootElement.EnumerateArray()
-                .Select(e => new DataSufficiencyNote(
-                    e.TryGetProperty("code", out var c) ? c.GetString() ?? "" : "",
-                    e.TryGetProperty("reason", out var r) ? r.GetString() ?? "" : ""))
-                .Where(n => n.Reason.Length > 0)
-                .ToList();
-        }
+
+        static string StringProp(JsonElement obj, string name) =>
+            obj.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() ?? "" : "";
+
+        JsonDocument doc;
+        try { doc = JsonDocument.Parse(json); }
         catch (JsonException) { return []; }
+
+        using (doc)
+        {
+            if (doc.RootElement.ValueKind != JsonValueKind.Array) return [];
+
+            var notes = new List<DataSufficiencyNote>();
+            foreach (var entry in doc.RootElement.EnumerateArray())
+            {
+                if (entry.ValueKind != JsonValueKind.Object) continue;         // "a string", 42, null, [] → skip
+                var reason = StringProp(entry, "reason");
+                if (string.IsNullOrWhiteSpace(reason)) continue;               // a note with no reason is useless
+                notes.Add(new DataSufficiencyNote(StringProp(entry, "code").Trim(), reason.Trim()));
+            }
+            return notes;
+        }
     }
 
     /// <summary>Groups the raw <see cref="SourceRow"/> set into per-worksheet blocks, in workbook →
