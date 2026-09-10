@@ -7,25 +7,25 @@ namespace MCAROC_Analysis.Models;
 /// accounting statement order, with subtotals highlighted and year-inferred flags surfaced.</summary>
 public static class FinancialStatementBuilder
 {
-    private record TemplateRow(string Label, Func<FinancialYearData, decimal?>? TypedGetter, bool IsSubtotal, bool IsHeader);
+    private record TemplateRow(string Label, Func<FinancialYearData, decimal?>? TypedGetter, bool IsSubtotal, bool IsHeader, string[]? Aliases = null);
 
     private static readonly TemplateRow[] BalanceSheetTemplate =
     [
-        new("Share Capital", f => f.ShareCapital, false, false),
+        new("Share Capital", f => f.ShareCapital, false, false, ["Paid up Equity Capital", "Paid-up Capital"]),
         new("Reserves and Surplus", null, false, false),
         new("Money Received Against Share Warrants", null, false, false),
-        new("Total Equity", f => f.NetWorth, true, false),
+        new("Total Equity", f => f.NetWorth, true, false, ["Net Worth", "Total Net Worth", "Shareholders' Funds"]),
         new("Share Application Money Pending Allotment", null, false, false),
-        new("Long Term Borrowings", f => f.LongTermBorrowings, false, false),
+        new("Long Term Borrowings", f => f.LongTermBorrowings, false, false, ["Long-Term Borrowings", "Non-Current Borrowings"]),
         new("Deferred Tax Liabilities (Net)", null, false, false),
         new("Other Long Term Liabilities", null, false, false),
         new("Long Term Provisions", null, false, false),
         new("Total Non-Current Liabilities", null, true, false),
-        new("Short Term Borrowings", f => f.ShortTermBorrowings, false, false),
-        new("Trade Payables", f => f.TradePayables, false, false),
+        new("Short Term Borrowings", f => f.ShortTermBorrowings, false, false, ["Short-Term Borrowings", "Current Borrowings"]),
+        new("Trade Payables", f => f.TradePayables, false, false, ["Sundry Creditors"]),
         new("Other Current Liabilities", null, false, false),
         new("Short Term Provisions", null, false, false),
-        new("Total Current Liabilities", f => f.CurrentLiabilities, true, false),
+        new("Total Current Liabilities", f => f.CurrentLiabilities, true, false, ["Current Liabilities"]),
         new("Total Liabilities", null, true, false),
         new("Total Equity and Liabilities", null, true, false),
         new("Gross Fixed Assets", null, false, false),
@@ -38,49 +38,46 @@ public static class FinancialStatementBuilder
         new("Other Non-Current Assets", null, false, false),
         new("Total Non-Current Assets", null, true, false),
         new("Current Investments", null, false, false),
-        new("Inventories", f => f.Inventory, false, false),
-        new("Trade Receivables", f => f.TradeReceivables, false, false),
-        new("Cash and Bank Balances", f => f.CashAndBank, false, false),
+        new("Inventories", f => f.Inventory, false, false, ["Inventory"]),
+        new("Trade Receivables", f => f.TradeReceivables, false, false, ["Sundry Debtors"]),
+        new("Cash and Bank Balances", f => f.CashAndBank, false, false, ["Cash and Cash Equivalents", "Cash and Bank"]),
         new("Short-Term Loans and Advances", null, false, false),
         new("Other Current Assets", null, false, false),
-        new("Total Current Assets", f => f.CurrentAssets, true, false),
+        new("Total Current Assets", f => f.CurrentAssets, true, false, ["Current Assets"]),
         new("Total Assets", null, true, false),
     ];
 
     private static readonly TemplateRow[] PnlTemplate =
     [
-        new("Net Revenue", f => f.Revenue, false, false),
-        new("Revenue from Operations", f => f.Revenue, false, false),
-        new("Other Income", f => f.OtherIncome, false, false),
-        new("Total Revenue", null, true, false),
+        new("Revenue from Operations", f => f.Revenue, false, false, ["Net Revenue", "Revenue", "Total Revenue from Operations"]),
+        new("Other Income", f => f.OtherIncome, false, false, ["Other Operating Income"]),
+        new("Total Revenue", null, true, false, ["Total Income"]),
         new("Cost of Materials Consumed", null, false, false),
         new("Purchases of Stock-in-Trade", null, false, false),
         new("Changes in Inventories of Finished Goods, Work-in-Progress and Stock-in-Trade", null, false, false),
-        new("Employee Benefit Expense", null, false, false),
-        new("Employee Benefits Expense", null, false, false),
-        new("Finance Costs", f => f.FinanceCost, false, false),
-        new("Depreciation and Amortization Expense", null, false, false),
+        new("Employee Benefit Expense", null, false, false, ["Employee Benefits Expense", "Employee Cost"]),
+        new("Finance Costs", f => f.FinanceCost, false, false, ["Finance Cost", "Interest and Finance Charges"]),
+        new("Depreciation and Amortization Expense", null, false, false, ["Depreciation & Amortization Expense", "Depreciation and Amortisation Expense"]),
         new("Other Expenses", null, false, false),
         new("Total Expenses", null, true, false),
-        new("Operating Profit ( EBITDA )", f => f.Ebitda, true, false),
-        new("Profit Before Interest and Tax", f => f.Ebit, true, false),
+        new("Operating Profit ( EBITDA )", f => f.Ebitda, true, false, ["Operating Profit (EBITDA)", "EBITDA"]),
+        new("Profit Before Interest and Tax", f => f.Ebit, true, false, ["EBIT", "PBIT"]),
         new("Profit Before Exceptional and Extraordinary Items and Tax", null, true, false),
         new("Exceptional Items", null, false, false),
-        new("Profit Before Tax", f => f.Pbt, true, false),
+        new("Profit Before Tax", f => f.Pbt, true, false, ["PBT"]),
         new("Tax Expense", null, false, false),
         new("Current Tax", null, false, false),
         new("Deferred Tax", null, false, false),
-        new("Profit for the Period", f => f.Pat, true, false),
-        new("Profit After Tax (PAT)", f => f.Pat, true, false),
+        new("Profit for the Period", f => f.Pat, true, false, ["Profit After Tax (PAT)", "Profit After Tax", "PAT"]),
         new("Other Comprehensive Income", null, false, false),
         new("Total Comprehensive Income", null, true, false),
     ];
 
     private static readonly TemplateRow[] CashFlowTemplate =
     [
-        new("Net Cash Flows from / ( Used in ) Operating Activities", f => f.Cfo, true, false),
-        new("Net Cash Flows from / ( Used in ) Investing Activities", f => f.Cfi, true, false),
-        new("Net Cash Flows from / ( Used in ) Financing Activities", f => f.Cff, true, false),
+        new("Net Cash Flows from / ( Used in ) Operating Activities", f => f.Cfo, true, false, ["Net Cash Flow from Operating Activities", "Operating Cash Flow", "CFO"]),
+        new("Net Cash Flows from / ( Used in ) Investing Activities", f => f.Cfi, true, false, ["Net Cash Flow from Investing Activities", "Investing Cash Flow", "CFI"]),
+        new("Net Cash Flows from / ( Used in ) Financing Activities", f => f.Cff, true, false, ["Net Cash Flow from Financing Activities", "Financing Cash Flow", "CFF"]),
         new("Net Increase / (Decrease) in Cash and Cash Equivalents", null, true, false),
         new("Cash and Cash Equivalents at Beginning of the Year", null, false, false),
         new("Cash and Cash Equivalents at End of the Year", null, true, false),
@@ -156,7 +153,27 @@ public static class FinancialStatementBuilder
         // 1. Process template rows in order
         foreach (var t in template)
         {
-            var matchingFacts = factsByLabel.TryGetValue(t.Label, out var fList) ? fList : null;
+            string effectiveLabel = t.Label;
+            List<FinancialFact>? matchingFacts = null;
+
+            if (factsByLabel.TryGetValue(t.Label, out var directFacts))
+            {
+                matchingFacts = directFacts;
+                effectiveLabel = t.Label;
+            }
+            else if (t.Aliases is not null)
+            {
+                foreach (var alias in t.Aliases)
+                {
+                    if (factsByLabel.TryGetValue(alias, out var aliasFacts))
+                    {
+                        matchingFacts = aliasFacts;
+                        effectiveLabel = alias;
+                        break;
+                    }
+                }
+            }
+
             var valuesByYear = new Dictionary<int, (decimal? Numeric, string? Raw, bool YearInferred)>();
             var hasAnyValue = false;
             int? minRow = null;
@@ -178,14 +195,14 @@ public static class FinancialStatementBuilder
                     }
                 }
 
-                if (numVal is null && matchingFacts is not null)
+                if (matchingFacts is not null)
                 {
                     var fact = matchingFacts.FirstOrDefault(f => f.FinancialYear == y);
                     if (fact is not null)
                     {
-                        numVal = fact.NumericValue;
+                        numVal = fact.NumericValue ?? numVal;
                         rawVal = fact.RawValue;
-                        inferred = fact.YearInferred;
+                        inferred = fact.YearInferred || inferred;
                         hasAnyValue = true;
                         if (fact.SourceRowNumber.HasValue && (minRow is null || fact.SourceRowNumber.Value < minRow.Value))
                             minRow = fact.SourceRowNumber;
@@ -199,13 +216,18 @@ public static class FinancialStatementBuilder
             {
                 rows.Add(new FinancialStatementRow
                 {
-                    Label = t.Label,
+                    Label = effectiveLabel,
                     IsSubtotal = t.IsSubtotal,
                     IsHeader = t.IsHeader,
                     SourceRowNumber = minRow,
                     ValuesByYear = valuesByYear
                 });
                 consumedLabels.Add(t.Label);
+                if (t.Aliases is not null)
+                {
+                    foreach (var alias in t.Aliases)
+                        consumedLabels.Add(alias);
+                }
             }
         }
 

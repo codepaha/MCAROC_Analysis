@@ -115,12 +115,38 @@ public class FinancialStatementBuilderTests
             stdYears, [], facts, "₹ Crore");
 
         Assert.Single(vm.Standalone.Years);
-        Assert.Contains(vm.Standalone.Rows, r => r.Label == "Net Revenue" && r.GetValue(2025).Numeric == 500m);
+        Assert.Contains(vm.Standalone.Rows, r => r.Label == "Revenue from Operations" && r.GetValue(2025).Numeric == 500m);
+        Assert.DoesNotContain(vm.Standalone.Rows, r => r.Label == "Net Revenue");
         Assert.Contains(vm.Standalone.Rows, r => r.Label == "Employee Benefit Expense" && r.GetValue(2025).Numeric == 120m);
         Assert.Contains(vm.Standalone.Rows, r => r.Label == "Finance Costs" && r.GetValue(2025).Numeric == 15m);
         Assert.Contains(vm.Standalone.Rows, r => r.Label == "Profit Before Tax" && r.IsSubtotal && r.GetValue(2025).Numeric == 45m);
         Assert.Contains(vm.Standalone.Rows, r => r.Label == "Current Tax" && r.GetValue(2025).Numeric == 15m);
         Assert.Contains(vm.Standalone.Rows, r => r.Label == "Profit for the Period" && r.IsSubtotal && r.GetValue(2025).Numeric == 30m);
+        Assert.DoesNotContain(vm.Standalone.Rows, r => r.Label == "Profit After Tax (PAT)");
+    }
+
+    [Fact]
+    public void PnlDoesNotDuplicateAliasesWhenSourceFactsAreAbsent()
+    {
+        var stdYears = new List<FinancialYearData>
+        {
+            new() { FinancialYear = 2025, Basis = FinancialBasis.Standalone, Revenue = 100m, Pat = 10m }
+        };
+
+        var vm = FinancialStatementBuilder.Build(
+            "pl", "Profit & Loss", FinancialStatementSection.ProfitAndLoss,
+            stdYears, [], [], "₹ Crore");
+
+        // Assert exactly one revenue line and one PAT line exists
+        var revRows = vm.Standalone.Rows.Where(r => r.Label is "Revenue from Operations" or "Net Revenue").ToList();
+        Assert.Single(revRows);
+        Assert.Equal("Revenue from Operations", revRows[0].Label);
+        Assert.Equal(100m, revRows[0].GetValue(2025).Numeric);
+
+        var patRows = vm.Standalone.Rows.Where(r => r.Label is "Profit for the Period" or "Profit After Tax (PAT)").ToList();
+        Assert.Single(patRows);
+        Assert.Equal("Profit for the Period", patRows[0].Label);
+        Assert.Equal(10m, patRows[0].GetValue(2025).Numeric);
     }
 
     [Fact]
