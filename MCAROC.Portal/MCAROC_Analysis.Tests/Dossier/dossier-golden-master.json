@@ -1,0 +1,41 @@
+{
+  "OpenChargeCount": 2,
+  "SatisfiedChargeCount": 1,
+  "TotalChargeCount": 3,
+  "ChargeHolderCount": 3,
+  "ModifiedChargeCount": 2,
+  "MaterialEnhancementFindingCount": 1,
+  "TotalOpenChargeAmount": 1010.0000,
+  "LargestChargeAmount": 610.0000,
+  "LenderConcentrationHolders": [
+    "STATE BANK OF INDIA",
+    "HDFC BANK LIMITED"
+  ],
+  "SecurityTypeLabelsByCharge": {
+    "C1": [
+      "CurrentAssets",
+      "BookDebts"
+    ],
+    "C2": [],
+    "C3": []
+  },
+  "LitigationFiledAgainstCount": 1,
+  "LitigationFiledByCount": 0,
+  "LitigationRoleNotDeterminedCount": 1,
+  "LitigationRoleByCaseNumber": {
+    "CP(IB) 214/2019": "FiledAgainst",
+    "OS 77/2021": "NotDetermined"
+  },
+  "StandaloneFyCount": 3,
+  "ConsolidatedFyCount": 2,
+  "LatestFinancialYear": 2025,
+  "LatestRevenue": 300.0000,
+  "RevenueYoYPercent": -16.7,
+  "ActiveDirectorCount": 2,
+  "FindingCodesInDisplayOrder": [
+    "FIN_NET_WORTH_NEGATIVE",
+    "LITIGATION_PENDING_AGAINST_COMPANY",
+    "CHARGE_MATERIAL_ENHANCEMENT",
+    "LITIGATION_ROLE_UNCERTAIN"
+  ]
+}
