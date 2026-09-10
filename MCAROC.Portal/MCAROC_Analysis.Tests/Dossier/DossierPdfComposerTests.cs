@@ -75,11 +75,18 @@ public class DossierPdfComposerTests : IAsyncLifetime
             Assert.DoesNotContain("Directors register", text); // the typed Annexure-A table is Executive-only
         }
 
-        // Source-record variant drops Section 1 (the synthesised analysis) entirely.
+        // Source-record variant drops the synthesised Section 1 narrative entirely. It still opens with
+        // the Snapshot (headline figures + the deterministic Review Priority) — that is the variant's
+        // contract: "source record plus a factual cover page", not a zero-derivation dump.
         if (variant == DossierVariant.SourceRecord)
+        {
             Assert.DoesNotContain("Executive Summary", text);
+            Assert.Contains("Review priority", text, StringComparison.OrdinalIgnoreCase); // Snapshot tile retained
+        }
         else
+        {
             Assert.Contains("Executive Summary", text);
+        }
 
         // The hard rule: no score, no gauge, no document index.
         var lower = text.ToLowerInvariant();
