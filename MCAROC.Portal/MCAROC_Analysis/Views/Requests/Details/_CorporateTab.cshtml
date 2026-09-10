@@ -44,9 +44,35 @@
                 <div><dt>Incorporated</dt><dd>@D(cp.IncorporationDate)</dd></div>
                 <div><dt>Authorised Capital</dt><dd>@Money(cp.AuthorisedCapital)</dd></div>
                 <div><dt>Paid-up Capital</dt><dd>@Money(cp.PaidUpCapital)</dd></div>
-                <div><dt>Industry</dt><dd>@Or(cp.Industry)</dd></div>
-                <div><dt>Business Activity</dt><dd>@Or(cp.BusinessActivity)</dd></div>
+                <div><dt>Type of Entity</dt><dd>@Or(cp.EntityType)</dd></div>
+                <div><dt>Listing Status</dt><dd>@Or(cp.ListingStatus)</dd></div>
+                <div><dt>Industry / Segment</dt><dd>@Or(cp.Industry)@(string.IsNullOrEmpty(cp.Segment) ? "" : $" · {cp.Segment}")</dd></div>
+                <div><dt>Date of Last AGM</dt><dd>@D(cp.LastAgmDate)</dd></div>
+                <div><dt>MCA Sum of Charges</dt><dd>@Money(cp.McaSumOfChargesCrore)</dd></div>
+                <div><dt>LEI</dt><dd>@Or(cp.Lei)@(string.IsNullOrEmpty(cp.LeiStatus) ? "" : $" ({cp.LeiStatus})")</dd></div>
+                <div><dt>Website</dt><dd>@(string.IsNullOrEmpty(cp.Website) ? "—" : Html.Raw($"<a href=\"{System.Net.WebUtility.HtmlEncode(cp.Website)}\" target=\"_blank\" rel=\"noopener\">{System.Net.WebUtility.HtmlEncode(cp.Website)}</a>"))</dd></div>
+                <div><dt>Phone</dt><dd>@Or(cp.Phone)</dd></div>
+                <div class="mca-kv-wide">
+                    <dt>Email(s)</dt>
+                    <dd>
+                        @if (Model.CompanyEmails.Count == 0) { <text>—</text> }
+                        else
+                        {
+                            @foreach (var em in Model.CompanyEmails)
+                            {
+                                <span>@em.EmailAddress</span>
+                                @if (em.IsReachable == false) { <span class="pi-status-pill pi-status-failed" title="The data source could not reach this address">unreachable</span> }
+                                <br />
+                            }
+                        }
+                    </dd>
+                </div>
                 <div class="mca-kv-wide"><dt>Registered Address</dt><dd>@Or(cp.RegisteredAddress)</dd></div>
+                <div class="mca-kv-wide"><dt>Business Address</dt><dd>@Or(cp.BusinessAddress)</dd></div>
+                @if (!string.IsNullOrEmpty(cp.NarrativeDescription))
+                {
+                    <div class="mca-kv-wide"><dt>About</dt><dd>@cp.NarrativeDescription</dd></div>
+                }
             </div>
         }
         else

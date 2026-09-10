@@ -226,6 +226,7 @@ public class RequestsController(
             vm.Issues = await db.IngestionIssues.Where(i => i.IngestionRunId == runId).ToListAsync();
 
             vm.CompanyProfile = await db.CompanyProfiles.FirstOrDefaultAsync(x => x.IngestionRunId == runId);
+            vm.CompanyEmails = await db.CompanyEmails.Where(x => x.IngestionRunId == runId).ToListAsync();
             vm.Directors = await db.Directors.Where(x => x.IngestionRunId == runId).OrderBy(x => x.NameRaw).ToListAsync();
             vm.DirectorAssociations = await db.DirectorAssociations.Where(x => x.IngestionRunId == runId).ToListAsync();
             vm.Shareholdings = await db.Shareholdings.Where(x => x.IngestionRunId == runId)
