@@ -207,6 +207,61 @@ public class SourceReconciliationTests : IAsyncLifetime
         Assert.All(emails, e => Assert.Equal("About the Company", e.SourceSheetName));
     }
 
+    /// <summary>Phase 8 A2 — the "Structure" sheet's two SEBI-category grids (<c>PROMOTERS</c> and
+    /// <c>PUBLIC / OTHER THAN PROMOTERS</c>) are captured in full: for COASTAL each grid is 14 data rows
+    /// (categories 1 and 2 split into (i)/(ii)/(iii), plus categories 3–10), with the parent group name
+    /// retained on the sub-rows, the "as on" date from the header, and no "CATEGORY"/"Total" structural
+    /// row leaking in.</summary>
+    [SkippableFact]
+    public void Structure_sheet_captures_both_shareholding_pattern_grids()
+    {
+        Skip.If(Fixtures() is null,
+            "Reconciliation workbooks not present — see MCAROC_Analysis.Tests/Fixtures/README.md");
+
+        var structure = new ExcelSheetReader().ReadWorkbook(Fixtures()!.Value.Roc).Single(s => s.Name == "Structure");
+        StructureParser.Parse(structure, requestId: 1, ingestionRunId: 1, sourceDocumentId: 1, out var pattern);
+
+        Assert.Equal(28, pattern.Count);
+        Assert.Equal(14, pattern.Count(x => x.HolderClass == ShareholderClass.Promoter));
+        Assert.Equal(14, pattern.Count(x => x.HolderClass == ShareholderClass.Public));
+
+        // Every row is dated from its grid header and traceable to a sheet row.
+        Assert.All(pattern, x => Assert.Equal(new DateOnly(2017, 3, 31), x.AsOnDate));
+        Assert.All(pattern, x => Assert.True(x.SourceRowNumber is > 10 and <= 50));
+        Assert.All(pattern, x => Assert.Equal("Structure", x.SourceSheetName));
+
+        // Structural rows must not become records.
+        Assert.DoesNotContain(pattern, x => x.Category.Contains("Total", StringComparison.OrdinalIgnoreCase)
+            || x.Category.Equals("CATEGORY", StringComparison.OrdinalIgnoreCase));
+
+        // DisplayOrder is 1..14 within each class.
+        foreach (var cls in pattern.GroupBy(x => x.HolderClass))
+            Assert.Equal(Enumerable.Range(1, 14), cls.OrderBy(x => x.DisplayOrder).Select(x => x.DisplayOrder));
+
+        var promoterIndian = Assert.Single(pattern, x =>
+            x.HolderClass == ShareholderClass.Promoter && x.Category == "(i) Indian");
+        Assert.Equal(37845760L, promoterIndian.EquityShares);
+        Assert.Equal(11.44m, promoterIndian.EquityPercent);
+        Assert.Equal("1. Individual / Hindu Undivided Family", promoterIndian.CategoryGroup);
+        Assert.Equal(14, promoterIndian.SourceRowNumber);
+
+        var publicBank = Assert.Single(pattern, x =>
+            x.HolderClass == ShareholderClass.Public && x.Category == "4. Bank");
+        Assert.Equal(174983550L, publicBank.EquityShares);
+        Assert.Equal(52.88m, publicBank.EquityPercent);
+        Assert.Null(publicBank.CategoryGroup);
+
+        var publicBodyCorporate = Assert.Single(pattern, x =>
+            x.HolderClass == ShareholderClass.Public && x.Category.StartsWith("9. Body corporate"));
+        Assert.Equal(117691409L, publicBodyCorporate.EquityShares);
+        Assert.Equal(35.56m, publicBodyCorporate.EquityPercent);
+
+        // The class totals in the grid reconcile with the summary block.
+        var summary = StructureParser.Parse(structure, 1, 1, 1).Items.Single();
+        Assert.Equal(summary.PromoterHoldingPercent,
+            pattern.Where(x => x.HolderClass == ShareholderClass.Promoter).Sum(x => x.EquityPercent ?? 0));
+    }
+
     /// <summary>Control totals for the real COASTAL <c>Legal History</c> sheet (960 rows): the parser
     /// must extract exactly 592 Confirmed + 68 Probable + 292 Uncertain = 952, and no more — the 8
     /// structural rows (section titles, per-section headers, the blank separator) must not become

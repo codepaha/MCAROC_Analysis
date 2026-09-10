@@ -304,8 +304,10 @@ public class IngestionOrchestrator(AppDbContext db, IExcelSheetReader sheetReade
         var structureSheet = SheetAliases.Find(rocWorkbook, SheetAliases.Structure);
         if (structureSheet is not null)
         {
-            var r = StructureParser.Parse(structureSheet, requestId, runId, rocDocumentId);
+            var r = StructureParser.Parse(structureSheet, requestId, runId, rocDocumentId, out var patternRows);
             db.CompanyStructures.AddRange(r.Items);
+            db.ShareholdingPatternRows.AddRange(patternRows);
+            itemCount += patternRows.Count;
             Collect(r, issues, ref itemCount);
         }
 

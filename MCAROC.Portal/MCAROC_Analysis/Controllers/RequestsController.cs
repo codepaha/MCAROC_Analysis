@@ -251,6 +251,8 @@ public class RequestsController(
 
             // Phase 6 — the 12 additional workbook sheets.
             vm.Structure = await db.CompanyStructures.FirstOrDefaultAsync(x => x.IngestionRunId == runId);
+            vm.ShareholdingPattern = await db.ShareholdingPatternRows.Where(x => x.IngestionRunId == runId)
+                .OrderBy(x => x.HolderClass).ThenBy(x => x.DisplayOrder).ToListAsync();
             vm.RelatedCorporates = await db.RelatedCorporates.Where(x => x.IngestionRunId == runId)
                 .OrderBy(x => x.RelationshipType).ThenBy(x => x.EntityNameNormalized).ToListAsync();
             vm.ComplianceRecords = await db.ComplianceRecords.Where(x => x.IngestionRunId == runId)

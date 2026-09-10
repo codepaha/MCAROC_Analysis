@@ -76,12 +76,12 @@
     },
     {
       "workbook": "RocReport", "sheet": "Structure", "shape": "multi-section: summary (rows 0-6) + PROMOTERS grid + PUBLIC grid",
-      "parser": "StructureParser", "entity": "CompanyStructure",
+      "parser": "StructureParser", "entity": "CompanyStructure + ShareholdingPatternRow",
       "portal_tab": "Corporate", "dossier": "Annexure A",
       "fields": [
         {"source": "Promoter % / Public % / No. of Shareholders / No. of Promoter Shareholders / Total Equity Shares / Total Preference Shares", "entityField": "PromoterHoldingPercent / PublicHoldingPercent / TotalShareholders / PromoterShareholders / TotalEquityShares / TotalPreferenceShares", "status": "live"},
-        {"source": "PROMOTERS grid — 10 SEBI categories x {equity shares, equity %, preference shares, preference %}", "entityField": null, "status": "not-parsed", "gap": "G3"},
-        {"source": "PUBLIC / OTHER THAN PROMOTERS grid — same 10x4", "entityField": null, "status": "not-parsed", "gap": "G3"}
+        {"source": "PROMOTERS grid — SEBI categories x {equity shares, equity %, preference shares, preference %}", "entityField": "ShareholdingPatternRow (HolderClass=Promoter; Category/CategoryGroup/AsOnDate/DisplayOrder/EquityShares/EquityPercent/PreferenceShares/PreferencePercent)", "status": "live", "note": "A2/#33 — one row per data-bearing category (sub-rows (i)/(ii)/(iii) kept, parent-only header + Total line skipped)"},
+        {"source": "PUBLIC / OTHER THAN PROMOTERS grid — same layout", "entityField": "ShareholdingPatternRow (HolderClass=Public)", "status": "live", "note": "A2/#33"}
       ]
     },
     {
@@ -302,9 +302,10 @@
      "fix": "CompanyProfile gained EntityType / ListingStatus / Website / Phone / NarrativeDescription / Lei / LeiStatus / Segment / BusinessAddress / RegisteredAddress{City,State,PinCode} / LastAgmDate / McaSumOfChargesCrore; new CompanyEmail entity (with IsReachable). CompanyProfileParser rewritten; migration AddCompanyIdentityAndContact; rendered on the Corporate tab overview.",
      "issue": "#32"},
     {"id": "G3", "title": "Full shareholding-pattern category grid dropped", "severity": "high",
-     "detail": "Structure sheet's PROMOTERS and PUBLIC grids (10 SEBI categories x {equity shares, equity %, preference shares, preference %}) are not parsed — only the 6-field summary is kept.",
-     "fix": "New ShareholdingPatternRow entity (holderClass Promoter|Public, category, equityShares, equityPercent, preferenceShares, preferencePercent, financialYear) + parser; render as a table on the Corporate tab and a dossier Annexure-A item.",
-     "issue": null},
+     "status": "DONE (A2 / #33)",
+     "detail": "Structure sheet's PROMOTERS and PUBLIC grids (SEBI categories x {equity shares, equity %, preference shares, preference %}) were not parsed — only the 6-field summary was kept.",
+     "fix": "New ShareholdingPatternRow entity (HolderClass Promoter|Public, Category, CategoryGroup, AsOnDate, DisplayOrder, EquityShares, EquityPercent, PreferenceShares, PreferencePercent); StructureParser extended with a second out-param; migration AddShareholdingPattern; rendered as per-class tables on the Corporate tab Ownership section. Dossier Annexure-A item still pending (Wave 4).",
+     "issue": "#33"},
     {"id": "G4", "title": "Name history not captured", "severity": "medium",
      "detail": "Highlights sheet 'NAME HISTORY' (former name + till-date) is dropped.",
      "fix": "New CompanyNameHistory entity (name, tillDate) + parse in FinancialParametersParser or CompanyProfileParser; small table on Corporate tab + dossier Annexure A.",
