@@ -33,7 +33,8 @@ public sealed record DossierCorporate(
     IReadOnlyList<SecurityAllotment> SecurityAllotments,
     IReadOnlyList<DirectorAssignmentHistory> DesignationHistory,
     IReadOnlyList<DirectorAssociation> OtherDirectorships,
-    CompanyStructure? Structure)
+    CompanyStructure? Structure,
+    decimal? PaidUpCapital = null)
 {
     public int ActiveDirectorCount => Directors.Count(d => d.CessationDate is null);
 }

@@ -81,6 +81,8 @@
             </div>
             <p class="text-muted mt-2">"Registered Charge Amount" is the amount on the charge register — not the current loan outstanding.</p>
 
+            @await Html.PartialAsync("Details/_KeyIndicators", Model.KeyMetrics.Where(g => g.Title == "Charge register").ToList())
+
             <div class="mca-section" style="margin-top:22px;">
                 <h3>Lender Concentration <span class="mca-count">open charges</span></h3>
                 @if (Model.LenderConcentration.Count > 0)
