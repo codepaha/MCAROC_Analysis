@@ -124,7 +124,7 @@ public static partial class DossierComputations
                 }
             }
 
-            if (byType.Count == 0 || byType.Values.All(c => c.OnTime + c.Late == 0))
+            if (byType.Count == 0)
             {
                 list.Add(MetricResult.Insufficient("GST filing on-time rate", MetricUnit.Percent,
                     "No GST filings with deterministic filing and due dates",
@@ -135,14 +135,22 @@ public static partial class DossierComputations
                 foreach (var (rt, c) in byType.OrderBy(kv => kv.Key))
                 {
                     var typeAssessed = c.OnTime + c.Late;
-                    if (typeAssessed == 0) continue; // all indeterminate for this type — skip
-                    var rate = Math.Round((decimal)c.OnTime / typeAssessed * 100m, 1);
-                    var periodStr = c.Indet > 0
-                        ? $"{typeAssessed} assessed ({c.Indet} indeterminate)"
-                        : $"{typeAssessed} assessed";
-                    list.Add(MetricResult.Ok($"GST filing on-time rate ({rt})", rate, MetricUnit.Percent,
-                        periodStr,
-                        "GstFiling.DelayDays", "GstFiling.FilingDate", "GstFiling.DueDate", "GstFiling.FilingStatus", "GstFiling.ReturnType"));
+                    if (typeAssessed > 0)
+                    {
+                        var rate = Math.Round((decimal)c.OnTime / typeAssessed * 100m, 1);
+                        var periodStr = c.Indet > 0
+                            ? $"{typeAssessed} assessed ({c.Indet} indeterminate)"
+                            : $"{typeAssessed} assessed";
+                        list.Add(MetricResult.Ok($"GST filing on-time rate ({rt})", rate, MetricUnit.Percent,
+                            periodStr,
+                            "GstFiling.DelayDays", "GstFiling.FilingDate", "GstFiling.DueDate", "GstFiling.FilingStatus", "GstFiling.ReturnType"));
+                    }
+                    else
+                    {
+                        list.Add(MetricResult.Insufficient($"GST filing on-time rate ({rt})", MetricUnit.Percent,
+                            $"All {c.Indet} filings indeterminate (missing filing or due dates)",
+                            "GstFiling.DelayDays", "GstFiling.FilingDate", "GstFiling.DueDate", "GstFiling.FilingStatus", "GstFiling.ReturnType"));
+                    }
                 }
             }
         }
@@ -187,9 +195,14 @@ public static partial class DossierComputations
         var gstr1 = filings.Where(f => NormReturn(f.ReturnType) == "GSTR1" && f.FilingDate is not null && !string.IsNullOrWhiteSpace(f.TaxPeriod)).ToList();
         var gstr3b = filings.Where(f => NormReturn(f.ReturnType) == "GSTR3B" && f.FilingDate is not null && !string.IsNullOrWhiteSpace(f.TaxPeriod)).ToList();
 
-        var gstr1Lookup = gstr1
+        var gstr1Groups = gstr1
             .GroupBy(f => (f.Gstin, f.TaxPeriod!.Trim().ToUpperInvariant()))
+            .ToList();
+        var gstr1Lookup = gstr1Groups
             .ToDictionary(g => g.Key, g => g.OrderByDescending(f => f.FilingDate!.Value).First());
+
+        var duplicateGstr1GroupsCount = gstr1Groups.Count(g => g.Count() > 1);
+        var duplicateGstr1RowsCount = gstr1.Count - gstr1Groups.Count;
 
         var nonNegLags = new List<int>();
         var negLagCount = 0;
@@ -219,8 +232,12 @@ public static partial class DossierComputations
         else
         {
             var meanLag = Math.Round((decimal)nonNegLags.Average(), 1);
+            var dupeDisclosure = duplicateGstr1GroupsCount > 0
+                ? $" ({duplicateGstr1GroupsCount} duplicate GSTR-1 {(duplicateGstr1GroupsCount == 1 ? "group" : "groups")}, {duplicateGstr1RowsCount} duplicate {(duplicateGstr1RowsCount == 1 ? "row" : "rows")}; selected latest FilingDate)"
+                : " (0 duplicate GSTR-1 groups; selected latest FilingDate)";
+            var periodStr = $"{nonNegLags.Count} matched periods{dupeDisclosure}";
             list.Add(MetricResult.Ok("GSTR-1 vs GSTR-3B filing lag", meanLag, MetricUnit.Days,
-                $"{nonNegLags.Count} matched periods",
+                periodStr,
                 "GstFiling.ReturnType", "GstFiling.TaxPeriod", "GstFiling.FilingDate"));
         }
 

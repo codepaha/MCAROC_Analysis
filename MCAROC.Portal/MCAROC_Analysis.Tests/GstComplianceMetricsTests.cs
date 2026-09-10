@@ -172,9 +172,9 @@ public class GstComplianceMetricsTests
         Assert.True(g1.HasValue);
         Assert.Equal(1m, g1.Value);
 
-        var g3 = Assert.Single(group.Metrics, m => m.Label == "GST filing on-time rate");
+        var g3 = Assert.Single(group.Metrics, m => m.Label == "GST filing on-time rate (GSTR3B)");
         Assert.False(g3.HasValue);
-        Assert.Contains("No GST filings with deterministic filing and due dates", g3.InsufficiencyReason!);
+        Assert.Contains("All 1 filings indeterminate (missing filing or due dates)", g3.InsufficiencyReason!);
 
         var g4 = Assert.Single(group.Metrics, m => m.Label == "Late filing count");
         Assert.False(g4.HasValue);
@@ -189,6 +189,64 @@ public class GstComplianceMetricsTests
         var g6 = Assert.Single(group.Metrics, m => m.Label == "GST registration flags present");
         Assert.True(g6.HasValue);
         Assert.Equal(0m, g6.Value);
+    }
+
+    [Fact]
+    public void Mixed_return_types_one_assessed_one_all_indeterminate_emits_both_metrics()
+    {
+        var reg = new GstRegistration
+        {
+            Gstin = "29AAAAA0000A1Z5",
+            State = "Karnataka",
+            Status = "Active"
+        };
+        // GSTR-1: 1 on-time, 1 late -> 50.0%
+        var f1_onTime = new GstFiling
+        {
+            Gstin = reg.Gstin,
+            ReturnType = "GSTR1",
+            TaxPeriod = "2023-01",
+            FilingDate = new DateOnly(2023, 2, 10),
+            DueDate = new DateOnly(2023, 2, 11)
+        };
+        var f1_late = new GstFiling
+        {
+            Gstin = reg.Gstin,
+            ReturnType = "GSTR1",
+            TaxPeriod = "2023-02",
+            FilingDate = new DateOnly(2023, 3, 20),
+            DueDate = new DateOnly(2023, 3, 11)
+        };
+        // GSTR-3B: 2 filings, both entirely indeterminate (no dates, no delay days)
+        var f3b_indet1 = new GstFiling
+        {
+            Gstin = reg.Gstin,
+            ReturnType = "GSTR3B",
+            TaxPeriod = "2023-01",
+            FilingStatus = "Filed"
+        };
+        var f3b_indet2 = new GstFiling
+        {
+            Gstin = reg.Gstin,
+            ReturnType = "GSTR3B",
+            TaxPeriod = "2023-02",
+            FilingStatus = "Filed"
+        };
+
+        reg.Filings = [f1_onTime, f1_late, f3b_indet1, f3b_indet2];
+        var model = CreateMinimalDossier([reg]);
+        var group = DossierComputations.GstComplianceMetrics(model);
+
+        // Assessed type GSTR1
+        var g3Gstr1 = Assert.Single(group.Metrics, m => m.Label == "GST filing on-time rate (GSTR1)");
+        Assert.True(g3Gstr1.HasValue);
+        Assert.Equal(50.0m, g3Gstr1.Value);
+        Assert.Equal("2 assessed", g3Gstr1.Period);
+
+        // All-indeterminate type GSTR3B
+        var g3Gstr3b = Assert.Single(group.Metrics, m => m.Label == "GST filing on-time rate (GSTR3B)");
+        Assert.False(g3Gstr3b.HasValue);
+        Assert.Contains("All 2 filings indeterminate (missing filing or due dates)", g3Gstr3b.InsufficiencyReason!);
     }
 
     [Fact]
@@ -238,6 +296,7 @@ public class GstComplianceMetricsTests
         var g5_1 = Assert.Single(group1.Metrics, m => m.Label == "GSTR-1 vs GSTR-3B filing lag");
         Assert.True(g5_1.HasValue);
         Assert.Equal(64m, g5_1.Value); // Deterministically picks 2023-03-12
+        Assert.Contains("1 duplicate GSTR-1 group, 1 duplicate row; selected latest FilingDate", g5_1.Period);
 
         // Test with later first, then earlier
         reg.Filings = [f3b, f1Later, f1Earlier];
@@ -246,6 +305,7 @@ public class GstComplianceMetricsTests
         var g5_2 = Assert.Single(group2.Metrics, m => m.Label == "GSTR-1 vs GSTR-3B filing lag");
         Assert.True(g5_2.HasValue);
         Assert.Equal(64m, g5_2.Value); // Same result regardless of row ordering
+        Assert.Equal(g5_1.Period, g5_2.Period);
     }
 
     [Fact]
@@ -272,7 +332,8 @@ public class GstComplianceMetricsTests
         var g5 = Assert.Single(group.Metrics, m => m.Label == "GSTR-1 vs GSTR-3B filing lag");
         Assert.True(g5.HasValue);
         Assert.Equal(30m, g5.Value); // Only Period 1 is averaged; negative lag is excluded
-        Assert.Equal("1 matched periods", g5.Period);
+        Assert.StartsWith("1 matched periods", g5.Period);
+        Assert.Contains("0 duplicate GSTR-1 groups; selected latest FilingDate", g5.Period);
 
         var g5Anomalies = Assert.Single(group.Metrics, m => m.Label == "GSTR-3B filed before GSTR-1 anomalies");
         Assert.True(g5Anomalies.HasValue);
