@@ -167,13 +167,9 @@ public static partial class DossierComputations
             .ThenBy(f => f.ReturnType, StringComparer.OrdinalIgnoreCase)
             .ToList();
 
-            const int maxEvidence = 20;
             var evidencePairs = lateFilings
-                .Take(maxEvidence)
                 .Select(f => $"{f.TaxPeriod}/{f.ReturnType?.Trim()}");
             var evidenceStr = string.Join(", ", evidencePairs);
-            if (lateFilings.Count > maxEvidence)
-                evidenceStr += $" … +{lateFilings.Count - maxEvidence} more";
 
             var periodStr = $"{lateCount} late of {assessedCount} assessed — periods: {evidenceStr}";
             list.Add(MetricResult.Ok("Late filing count", lateCount, MetricUnit.Count,
@@ -182,7 +178,9 @@ public static partial class DossierComputations
         }
 
         // G5: GSTR-1 vs GSTR-3B filing lag
-        // Mean absolute day difference between GSTR-3B and GSTR-1 filings for the same tax period and GSTIN.
+        // Mean day difference (FilingDate(GSTR3B) - FilingDate(GSTR1)) over non-negative lags.
+        // Safety gate: A date-difference metric is never abs()-ed; negative lags (GSTR-3B filed before GSTR-1)
+        // are isolated as data-quality anomalies and reported separately.
         // When multiple GSTR-1 rows share the same (Gstin, TaxPeriod) key we pick the one with the latest
         // FilingDate so the result is deterministic regardless of source workbook row ordering.
         static string NormReturn(string r) => r.Replace("-", "").Trim().ToUpperInvariant();
@@ -193,27 +191,49 @@ public static partial class DossierComputations
             .GroupBy(f => (f.Gstin, f.TaxPeriod!.Trim().ToUpperInvariant()))
             .ToDictionary(g => g.Key, g => g.OrderByDescending(f => f.FilingDate!.Value).First());
 
-        var lags = new List<int>();
+        var nonNegLags = new List<int>();
+        var negLagCount = 0;
         foreach (var f3 in gstr3b)
         {
             var key = (f3.Gstin, f3.TaxPeriod!.Trim().ToUpperInvariant());
             if (gstr1Lookup.TryGetValue(key, out var f1))
             {
-                lags.Add(Math.Abs(f3.FilingDate!.Value.DayNumber - f1.FilingDate!.Value.DayNumber));
+                var lag = f3.FilingDate!.Value.DayNumber - f1.FilingDate!.Value.DayNumber;
+                if (lag >= 0)
+                {
+                    nonNegLags.Add(lag);
+                }
+                else
+                {
+                    negLagCount++;
+                }
             }
         }
 
-        if (lags.Count == 0)
+        if (nonNegLags.Count == 0)
         {
             list.Add(MetricResult.Insufficient("GSTR-1 vs GSTR-3B filing lag", MetricUnit.Days,
-                "GSTR-1 and GSTR-3B do not co-occur with filing dates for any tax period",
+                "No non-negative filing lags between GSTR-1 and GSTR-3B for any matched tax period",
                 "GstFiling.ReturnType", "GstFiling.TaxPeriod", "GstFiling.FilingDate"));
         }
         else
         {
-            var meanLag = Math.Round((decimal)lags.Average(), 1);
+            var meanLag = Math.Round((decimal)nonNegLags.Average(), 1);
             list.Add(MetricResult.Ok("GSTR-1 vs GSTR-3B filing lag", meanLag, MetricUnit.Days,
-                $"{lags.Count} matched periods",
+                $"{nonNegLags.Count} matched periods",
+                "GstFiling.ReturnType", "GstFiling.TaxPeriod", "GstFiling.FilingDate"));
+        }
+
+        if (gstRegs.Count == 0)
+        {
+            list.Add(MetricResult.Insufficient("GSTR-3B filed before GSTR-1 anomalies", MetricUnit.Count,
+                "No GST registration records on file",
+                "GstFiling.ReturnType", "GstFiling.TaxPeriod", "GstFiling.FilingDate"));
+        }
+        else
+        {
+            list.Add(MetricResult.Ok("GSTR-3B filed before GSTR-1 anomalies", negLagCount, MetricUnit.Count,
+                asOfStr,
                 "GstFiling.ReturnType", "GstFiling.TaxPeriod", "GstFiling.FilingDate"));
         }
 

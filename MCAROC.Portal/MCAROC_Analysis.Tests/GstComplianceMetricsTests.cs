@@ -105,12 +105,15 @@ public class GstComplianceMetricsTests
         Assert.StartsWith("84 late of 294 assessed — periods:", g4.Period);
         Assert.Contains("/", g4.Period); // evidence pairs contain "TaxPeriod/ReturnType"
 
-        // G5: GSTR-1 vs GSTR-3B filing lag = 211.1 days over 274 matched periods
+        // G5: GSTR-1 vs GSTR-3B filing lag = 38.3 days over non-negative matched periods
         var g5 = Assert.Single(group.Metrics, m => m.Label == "GSTR-1 vs GSTR-3B filing lag");
         Assert.True(g5.HasValue);
-        Assert.Equal(211.1m, g5.Value);
+        Assert.Equal(38.3m, g5.Value);
         Assert.Equal(MetricUnit.Days, g5.Unit);
-        Assert.Equal("274 matched periods", g5.Period);
+
+        var g5Anomalies = Assert.Single(group.Metrics, m => m.Label == "GSTR-3B filed before GSTR-1 anomalies");
+        Assert.True(g5Anomalies.HasValue);
+        Assert.Equal(MetricUnit.Count, g5Anomalies.Unit);
 
         // G6: GST registration flags present = 1 (9 flagged registrations in COASTAL)
         var g6 = Assert.Single(group.Metrics, m => m.Label == "GST registration flags present");
@@ -137,6 +140,7 @@ public class GstComplianceMetricsTests
         Assert.Contains(group.Metrics, m => m.Label == "GST filing on-time rate");
         Assert.Contains(group.Metrics, m => m.Label == "Late filing count");
         Assert.Contains(group.Metrics, m => m.Label == "GSTR-1 vs GSTR-3B filing lag");
+        Assert.Contains(group.Metrics, m => m.Label == "GSTR-3B filed before GSTR-1 anomalies");
         Assert.Contains(group.Metrics, m => m.Label == "GST registration flags present");
     }
 
@@ -178,8 +182,100 @@ public class GstComplianceMetricsTests
         var g5 = Assert.Single(group.Metrics, m => m.Label == "GSTR-1 vs GSTR-3B filing lag");
         Assert.False(g5.HasValue);
 
+        var g5Anomalies = Assert.Single(group.Metrics, m => m.Label == "GSTR-3B filed before GSTR-1 anomalies");
+        Assert.True(g5Anomalies.HasValue);
+        Assert.Equal(0m, g5Anomalies.Value);
+
         var g6 = Assert.Single(group.Metrics, m => m.Label == "GST registration flags present");
         Assert.True(g6.HasValue);
         Assert.Equal(0m, g6.Value);
+    }
+
+    [Fact]
+    public void G5_duplicate_gstr1_rows_picks_latest_filing_date_and_is_order_independent()
+    {
+        var reg = new GstRegistration
+        {
+            Gstin = "29AAAAA0000A1Z5",
+            State = "Karnataka",
+            Status = "Active"
+        };
+        // GSTR-3B filed on 2023-05-15
+        var f3b = new GstFiling
+        {
+            Gstin = reg.Gstin,
+            ReturnType = "GSTR3B",
+            TaxPeriod = "2023-01",
+            FilingStatus = "Filed",
+            FilingDate = new DateOnly(2023, 5, 15),
+            DueDate = new DateOnly(2023, 2, 20)
+        };
+        // Earlier GSTR-1 filed on 2023-02-10 (lag to 3B = 94 days)
+        var f1Earlier = new GstFiling
+        {
+            Gstin = reg.Gstin,
+            ReturnType = "GSTR1",
+            TaxPeriod = "2023-01",
+            FilingStatus = "Filed",
+            FilingDate = new DateOnly(2023, 2, 10),
+            DueDate = new DateOnly(2023, 2, 11)
+        };
+        // Later GSTR-1 filed on 2023-03-12 (lag to 3B = 64 days)
+        var f1Later = new GstFiling
+        {
+            Gstin = reg.Gstin,
+            ReturnType = "GSTR1",
+            TaxPeriod = "2023-01",
+            FilingStatus = "Filed",
+            FilingDate = new DateOnly(2023, 3, 12),
+            DueDate = new DateOnly(2023, 2, 11)
+        };
+
+        // Test with earlier first, then later
+        reg.Filings = [f3b, f1Earlier, f1Later];
+        var model1 = CreateMinimalDossier([reg]);
+        var group1 = DossierComputations.GstComplianceMetrics(model1);
+        var g5_1 = Assert.Single(group1.Metrics, m => m.Label == "GSTR-1 vs GSTR-3B filing lag");
+        Assert.True(g5_1.HasValue);
+        Assert.Equal(64m, g5_1.Value); // Deterministically picks 2023-03-12
+
+        // Test with later first, then earlier
+        reg.Filings = [f3b, f1Later, f1Earlier];
+        var model2 = CreateMinimalDossier([reg]);
+        var group2 = DossierComputations.GstComplianceMetrics(model2);
+        var g5_2 = Assert.Single(group2.Metrics, m => m.Label == "GSTR-1 vs GSTR-3B filing lag");
+        Assert.True(g5_2.HasValue);
+        Assert.Equal(64m, g5_2.Value); // Same result regardless of row ordering
+    }
+
+    [Fact]
+    public void G5_negative_lags_are_isolated_as_anomalies_and_excluded_from_mean()
+    {
+        var reg = new GstRegistration
+        {
+            Gstin = "29AAAAA0000A1Z5",
+            State = "Karnataka",
+            Status = "Active"
+        };
+        // Period 1: GSTR-3B filed 30 days AFTER GSTR-1 (valid positive lag: 2023-03-15 - 2023-02-13 = 30 days)
+        var f3b_p1 = new GstFiling { Gstin = reg.Gstin, ReturnType = "GSTR3B", TaxPeriod = "2023-01", FilingDate = new DateOnly(2023, 3, 15) };
+        var f1_p1  = new GstFiling { Gstin = reg.Gstin, ReturnType = "GSTR1",  TaxPeriod = "2023-01", FilingDate = new DateOnly(2023, 2, 13) };
+
+        // Period 2: GSTR-3B filed BEFORE GSTR-1 (negative lag anomaly: 3B filed 2023-02-15, 1 filed 2023-04-10)
+        var f3b_p2 = new GstFiling { Gstin = reg.Gstin, ReturnType = "GSTR3B", TaxPeriod = "2023-02", FilingDate = new DateOnly(2023, 2, 15) };
+        var f1_p2  = new GstFiling { Gstin = reg.Gstin, ReturnType = "GSTR1",  TaxPeriod = "2023-02", FilingDate = new DateOnly(2023, 4, 10) };
+
+        reg.Filings = [f3b_p1, f1_p1, f3b_p2, f1_p2];
+        var model = CreateMinimalDossier([reg]);
+        var group = DossierComputations.GstComplianceMetrics(model);
+
+        var g5 = Assert.Single(group.Metrics, m => m.Label == "GSTR-1 vs GSTR-3B filing lag");
+        Assert.True(g5.HasValue);
+        Assert.Equal(30m, g5.Value); // Only Period 1 is averaged; negative lag is excluded
+        Assert.Equal("1 matched periods", g5.Period);
+
+        var g5Anomalies = Assert.Single(group.Metrics, m => m.Label == "GSTR-3B filed before GSTR-1 anomalies");
+        Assert.True(g5Anomalies.HasValue);
+        Assert.Equal(1m, g5Anomalies.Value); // Period 2 counted as anomaly
     }
 }
