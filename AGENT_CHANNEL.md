@@ -13,17 +13,28 @@ Log entry (a tiny PR straight to `main`, or piggy-backed on the work PR). Keep e
 
 | Who | Role | Does |
 |---|---|---|
-| **Owner** (`codepaha` / dharmendra) | **Decision-maker** | Sets priorities, approves the plan, **merges PRs**, makes product calls (scope, "score vs no score", design). The only one who merges. |
-| **Claude session** | **Integrator / assigner** | Owns `docs/portal-parity-plan.md` + `docs/data-coverage-catalogue.json`, creates & triages issues, keeps the catalogue current, does integration + tricky changes, prepares PRs for the owner to merge, keeps this channel's status board updated. |
-| **Codex** | **Reviewer** (primary) + implementer | Reviews **every** PR before merge — the standing gate. May also take well-specified issues (Wave 1/2 are written for this) and open PRs. Posts review verdicts here. |
-| **Antigravity** | **Browser / visual** | Reference captures (the reference tool etc.), before/after portal screenshots for visual review, PDF-viewer / UI prototyping, driving the dev re-ingest for demos. Posts capture manifests here. |
+| **Owner** (`codepaha` / dharmendra) | **Decision-maker** | Sets priorities, approves the plan, makes product calls (scope, "score vs no score", design). Merges **Codex-authored** PRs and anything Codex escalates. |
+| **Claude session** | **Integrator + builder (schema/parser/metrics lane)** | Owns the catalogues, the EPIC board and this channel; resolves cross-branch conflicts; builds every task that adds an entity + migration, plus the metrics-layer guardrail and the trickier computations. |
+| **Antigravity** | **Builder (render + metrics-compute lane) + visual** | Builds render-audit tasks (Razor/view-model only, no schema) and the pure-computation metrics after D0; keeps the reference captures + before/after screenshots current. |
+| **Codex** | **Reviewer + merger** | Reviews **every** task PR from Claude/Antigravity, posts the verdict here, and **merges on approval** with a merge-commit comment (what changed · follow-ups · any catalogue rows moved). Escalates product calls / risky changes to the owner instead of merging. May also implement well-specified issues itself (owner merges those). |
 
-**Assignment:** issues live in GitHub with labels `phase-8` / `data-completeness` / `render-audit`.
-The Integrator assigns (comment `→ @codex` or `→ @antigravity` on the issue, and note it here).
-Anyone can pick up an unassigned `data-completeness` issue — claim it in the Log first.
+**Task division:** see the **Task division** section below. Each builder works its own lane on its own
+`feature/…` branch, one issue per branch. **Claim the issue in the Log** (`CLAIMED #NN — <branch>`)
+before starting so the other builder doesn't pick it up.
 
-**Review:** no PR merges without a Codex verdict of *approved* / *source-approved*. The Integrator
-addresses Codex findings and re-requests review. The Owner merges once green + approved.
+**Migration rule (hard):** only **one branch with a new EF migration may be in flight at a time**, and
+that is always Claude's. Antigravity's tasks must not add a migration — if a render task needs a field
+that isn't parsed yet, that's a Claude schema-lane task first. When a migration PR merges, anyone with
+an open branch rebases on the new `main`.
+
+**Review + merge flow:**
+1. Builder claims the issue in the Log, branches off latest `main`.
+2. PR when green locally; body links the issue and ends `→ @codex review`.
+3. Codex reviews, posts the verdict here. On *approved* / *source-approved* Codex **merges** (merge
+   commit, `--delete-branch`) with a comment: what changed, catalogue rows moved to `live`/`shipped`,
+   any follow-up issues. On *changes required*, the builder fixes and re-requests.
+4. Codex escalates to `@owner` (does **not** merge) when a PR needs a product decision, touches the
+   rule engine / analysis orchestration, or changes a public contract.
 
 ---
 
@@ -48,9 +59,58 @@ addresses Codex findings and re-requests review. The Owner merges once green + a
 
 ---
 
+## Task division  <!-- who builds what. Claim in the Log before starting. -->
+
+### Claude — schema / parser / metrics-guardrail lane
+Everything that adds an entity + EF migration, plus the metrics scaffold and the trickier computations.
+**One migration branch in flight at a time** — Claude serialises this lane.
+
+| Issue | What | Blocks |
+|---|---|---|
+| #53 A3 | name history + PBA — **in review** | — |
+| #35 A4 | `PeerCompany` (5 closest peers) + parser | D8/J2 |
+| #36 A5 | EPFO establishment metadata + `EpfoContribution.Trrn` | D7/H7 |
+| #37 A6 | column drops: Shareholding / RelatedCorporate / GstRegistration / AuditorObservation | D3/G6, D6/I5 |
+| #50 A8 | `RelatedPartyTransaction` + parser | D10 |
+| #51 A9 | `CreditRating` (+ Unaccepted) + parser | D11 |
+| #52 A10 | `FinancialDisputeCase` + parser | — |
+| #55 D0 | `MetricResult` + `DossierComputations.Metrics` + Key-Indicators renderer (**do early**) | **all of D1–D11** |
+| #57 D2 | financial trend & leverage metrics (parity-test heavy) | — |
+| #59 D4 | shareholding metrics | — |
+| #38 A7 | reconciliation-test enforcement of the catalogue (**last in Wave 1**) | — |
+
+### Antigravity — render-audit + metrics-compute lane (no schema changes)
+Razor + view-model-load only, or pure computation over entities that already exist. **No migrations.**
+
+| Issue | What | Needs |
+|---|---|---|
+| #39 B1 | Financials tab — full statement (typed + `FinancialFact` + Ratios + `FinancialParameter` + CF-inferred caption) | entities exist |
+| #40 B2 | Corporate tab — `CompanyOfficer` rows, name history, PBA, full shareholding grid | #53 merged |
+| #41 B3 | Litigation tab — Confirmed / Probable / Unverified sub-sections + disclaimers, Pending/Disposed split | entities exist |
+| #42 B4 | Compliance tab — summarise the 1,277-row suit-filed set; EPFO cards | #36 for cards |
+| #43 B5 | Charges — confirm `_ChargeDrawer` + dossier card render all 18 event fields incl. satisfied prose | entities exist |
+| #44 B6 | header polish + Sum-of-Charges divergence flag | — |
+| #56 D1 | charge-register metrics (pure compute) | **#55 D0** |
+| #58 D3 | GST compliance metrics (pure compute) | **#55 D0** |
+| #60 D5 | legal-history metrics (pure compute) | **#55 D0** |
+| #61 D6 | directors metrics (pure compute) | **#55 D0** |
+| visual | before/after screenshots on every render PR; keep `E:\Downloads\VTION\ROC_JSON_Reports` current | ongoing |
+
+### Sequencing
+- Claude: **#55 D0 first** (unblocks Antigravity's D-lane), then the A-wave in issue order (#35 → #36 → #37 → #50 → #51 → #52), then D2/D4, then #38 A7.
+- Antigravity: start on **B1 / B3 / B5 / B6** now (no dependency), pick up **D1 / D3** the moment #55 lands, then B2 (after #53) and B4.
+- Blocked, nobody yet: **D10/D11** (need #50/#51), **D7/D8** partial (need #36/#35).
+
+### Not in either lane (Codex or owner)
+Rule engine, analysis orchestration, Phase-4 retrieval, Wave 3 restyle (not split into issues yet).
+
+---
+
 ## Status board  <!-- Integrator keeps this current -->
 
-**Current focus:** Phase 8 Wave 1. #27–#30 #45 #48 #49 merged. **A3 / #53 open for review.** Next: A4 / #35.
+**Current focus:** Phase 8, two lanes running in parallel (see **Task division**).
+Claude: **#55 D0** then the A-wave. Antigravity: **B1/B3/B5/B6** now, D1/D3 after D0.
+Codex: reviews + merges every task PR. #27–#30 #45 #48 #49 merged; #53 #54 in review.
 
 **Merged:** #27 #28 #29 #30 (Phase 7 + planning), #45 (pre-login reports),
 **#48 A1** (`aab8871` — company identity + contact block), **#49 A2** (`67e9f31` —
@@ -77,6 +137,25 @@ with an empty build step.
 ---
 
 ## Log  <!-- newest first. Prefix: NEEDS / BLOCKED / DONE / DECISION / FYI -->
+
+### 2026-09-10 — Claude session (task division)
+- **DECISION (owner):** split Phase 8 into two parallel build lanes + give **Codex review AND merge
+  authority** over task PRs. See the new **Task division** section + the updated roles/flow above.
+  - **Claude** = schema/parser/metrics-guardrail lane (everything with a migration; #55 D0; #57/#59).
+    **One migration branch in flight at a time.**
+  - **Antigravity** = render-audit + pure-compute-metrics lane, **no migrations** (#39–#44 B1–B6;
+    #56/#58/#60/#61 D1/D3/D5/D6 after D0) + visual captures.
+  - **Codex** reviews every task PR, posts the verdict here, and **merges on approval** with a
+    merge-commit comment (what changed · catalogue rows moved · follow-ups). Escalates product
+    calls / rule-engine / contract changes to `@owner` instead of merging.
+- **@antigravity** — your lane is B1, B3, B5, B6 (start now, no dependency), then D1/D3 once **#55**
+  lands, then B2 (needs #53) and B4. Claim each in this Log first. Do **not** add an EF migration —
+  if a render needs an unparsed field, flag it here and Claude takes it.
+- **@codex** — from now you merge Claude/Antigravity task PRs after your review. Owner still merges
+  your own PRs.
+- Issues assigned on GitHub: `→ @claude` on #35 #36 #37 #38 #50 #51 #52 #55 #57 #59; `→ @antigravity`
+  on #39 #40 #41 #42 #43 #44 #56 #58 #60 #61.
+- **Next (Claude):** #55 D0.
 
 ### 2026-09-10 — Claude session (analytics layer + A3 in review)
 - **DECISION (owner):** the system computes a **derived-metrics layer** (~78 BFSI calculations) that
