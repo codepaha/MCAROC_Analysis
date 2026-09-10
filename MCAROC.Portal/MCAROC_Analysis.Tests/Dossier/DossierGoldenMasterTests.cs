@@ -15,7 +15,7 @@ namespace MCAROC_Analysis.Tests.Dossier;
 /// assembler to the same fixture.</summary>
 public class DossierGoldenMasterTests : IAsyncLifetime
 {
-    private const string ConnectionString = @"Server=.\SQLEXPRESS;Database=MCAROC_Analysis_Test;Trusted_Connection=True;TrustServerCertificate=True;";
+    private static readonly string ConnectionString = TestDatabase.ConnectionString;
 
     internal static AppDbContext CreateContext() =>
         new(new DbContextOptionsBuilder<AppDbContext>().UseSqlServer(ConnectionString).Options);

@@ -14,7 +14,7 @@ namespace MCAROC_Analysis.Tests;
 /// database, the same style FilingClaimSemanticsTests uses for Phase 2's claim predicates.</summary>
 public class DocumentChunkingRecoveryTests : IAsyncLifetime
 {
-    private const string ConnectionString = @"Server=.\SQLEXPRESS;Database=MCAROC_Analysis_Test;Trusted_Connection=True;TrustServerCertificate=True;";
+    private static readonly string ConnectionString = TestDatabase.ConnectionString;
 
     private static AppDbContext CreateContext() =>
         new(new DbContextOptionsBuilder<AppDbContext>().UseSqlServer(ConnectionString).Options);

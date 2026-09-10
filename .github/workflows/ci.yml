@@ -5,18 +5,75 @@ on:
   push:
     branches: [main]
 
-jobs:
-  build-and-test:
-    # Self-hosted: this app depends on SQL Server Express and Tesseract OCR being installed locally
-    # (the integration tests hit .\SQLEXPRESS directly), which a GitHub-hosted runner doesn't have.
-    runs-on: [self-hosted, windows, mcaroc]
+# Only the latest commit per branch/PR needs to run — cancel superseded runs.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
+jobs:
+  # The full suite on a GitHub-hosted runner — free and parallel across PRs now the repo is public.
+  # The app stores embeddings in a SQL Server 2025 `vector(768)` column, so CI runs against a real
+  # SQL Server 2025 container (LocalDB / SQL 2019 on the hosted images does not have the vector type).
+  # The .NET app is cross-platform; only QuestPDF needs a native font lib on Linux.
+  # The real-workbook reconciliation tests and the dossier PDF text-extraction assertions skip here
+  # (no committed fixtures; PdfPig can't read Linux subset fonts) — see the `windows-tests` job.
+  build-and-test:
+    runs-on: ubuntu-latest
+    services:
+      sql:
+        image: mcr.microsoft.com/mssql/server:2025-latest
+        env:
+          ACCEPT_EULA: "Y"
+          MSSQL_SA_PASSWORD: "Ci_Local_Pass1"
+        ports:
+          - 1433:1433
+        options: >-
+          --health-cmd "/opt/mssql-tools18/bin/sqlcmd -C -S localhost -U sa -P 'Ci_Local_Pass1' -Q 'SELECT 1' -b -o /dev/null"
+          --health-start-period 15s
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      MCAROC_TEST_CONNECTION: "Server=localhost,1433;Database=MCAROC_Analysis_Test;User Id=sa;Password=Ci_Local_Pass1;TrustServerCertificate=True;"
     steps:
       - uses: actions/checkout@v4
 
-      # No actions/setup-dotnet step: this runner is non-admin and can't write to
-      # C:\Program Files\dotnet, which that action requires even to verify an existing install.
-      # The .NET 10 SDK is already installed on this machine and on PATH.
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: QuestPDF native dependency
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libfontconfig1
+
+      - name: Restore
+        run: dotnet restore MCAROC.Portal/MCAROC.Portal.slnx
+
+      - name: Build (Release)
+        run: dotnet build MCAROC.Portal/MCAROC.Portal.slnx --no-restore --configuration Release
+
+      - name: Test
+        run: dotnet test MCAROC.Portal/MCAROC_Analysis.Tests/MCAROC_Analysis.Tests.csproj --no-build --configuration Release --logger "trx;LogFileName=test-results.trx"
+
+      - name: Publish test results
+        uses: actions/upload-artifact@v4
+        if: failure()
+        continue-on-error: true
+        with:
+          name: test-results
+          path: MCAROC.Portal/MCAROC_Analysis.Tests/TestResults/test-results.trx
+          retention-days: 7
+
+  # Self-hosted Windows: the parts the Linux job above cannot cover, run in parallel with it.
+  #  * The two real COASTAL .xls workbooks live on this machine and are never committed —
+  #    SourceReconciliationTests need them.
+  #  * The dossier PDF text-extraction assertions: SkiaSharp's font subsetting on Linux drops the
+  #    ToUnicode data PdfPig needs, so those assertions only run truthfully on Windows.
+  windows-tests:
+    runs-on: [self-hosted, windows, mcaroc]
+    steps:
+      - uses: actions/checkout@v4
+
+      # No actions/setup-dotnet: this runner is non-admin and can't write to C:\Program Files\dotnet.
       - name: Verify .NET SDK
         run: dotnet --version
 
@@ -26,22 +83,10 @@ jobs:
       - name: Build
         run: dotnet build MCAROC.Portal/MCAROC.Portal.slnx --no-restore --configuration Release
 
-      - name: Test
-        # MCAROC_RECON_FIXTURES points SourceReconciliationTests at the two real .xls workbooks
-        # (U45203OR1995PLC003982{,-charge}.xls) on this runner, so the BFSI reconciliation actually
-        # runs in CI without the real company data ever being committed. Override with the repo
-        # variable RECON_FIXTURES_DIR; if the files aren't there the test skips (it never fails CI).
+      - name: Reconciliation + PDF text-extraction tests
+        # MCAROC_RECON_FIXTURES points SourceReconciliationTests at the two real .xls workbooks on
+        # this runner. Override the location with the repo variable RECON_FIXTURES_DIR; the tests
+        # skip (never fail) if the files are absent.
         env:
           MCAROC_RECON_FIXTURES: ${{ vars.RECON_FIXTURES_DIR || 'E:\Downloads' }}
-        run: dotnet test MCAROC.Portal/MCAROC_Analysis.Tests/MCAROC_Analysis.Tests.csproj --no-build --configuration Release --logger "trx;LogFileName=test-results.trx"
-
-      - name: Publish test results
-        uses: actions/upload-artifact@v4
-        # Archiving the .trx is a convenience, not a gate: only bother when a test failed, and never let
-        # the upload itself turn the run red (e.g. the account's Actions storage quota is exhausted).
-        if: failure()
-        continue-on-error: true
-        with:
-          name: test-results
-          path: MCAROC.Portal/MCAROC_Analysis.Tests/TestResults/test-results.trx
-          retention-days: 7
+        run: dotnet test MCAROC.Portal/MCAROC_Analysis.Tests/MCAROC_Analysis.Tests.csproj --no-build --configuration Release --filter "FullyQualifiedName~SourceReconciliation|FullyQualifiedName~DossierFontsTests|FullyQualifiedName~DossierPdfComposerTests"

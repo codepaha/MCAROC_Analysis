@@ -25,7 +25,7 @@ public class EmbeddingBatchCompleteGuardTests
 /// would be misaligned. Real .\SQLEXPRESS test DB; a stub EmbeddingService supplies the bad count.</summary>
 public class DocumentChunkingEmbeddingMismatchTests : IAsyncLifetime
 {
-    private const string ConnectionString = @"Server=.\SQLEXPRESS;Database=MCAROC_Analysis_Test;Trusted_Connection=True;TrustServerCertificate=True;";
+    private static readonly string ConnectionString = TestDatabase.ConnectionString;
     private readonly List<string> _tempFiles = [];
 
     private static AppDbContext CreateContext() =>

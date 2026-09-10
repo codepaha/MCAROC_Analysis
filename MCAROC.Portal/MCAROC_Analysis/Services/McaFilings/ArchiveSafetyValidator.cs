@@ -109,6 +109,13 @@ public static class ArchiveSafetyValidator
         if (Path.IsPathRooted(entryFullName)) return false;
 
         var normalized = entryFullName.Replace('\\', '/');
+
+        // Cross-platform root guard: Path.IsPathRooted only recognises the *host* OS's roots, so a zip
+        // authored on Windows ("C:\...", "\\server\share") would slip past this check when the archive
+        // is unpacked on Linux. Reject drive-letter and leading-slash forms explicitly, on any host.
+        if (normalized.StartsWith('/')) return false;
+        if (normalized.Length >= 2 && char.IsAsciiLetter(normalized[0]) && normalized[1] == ':') return false;
+
         var segments = normalized.Split('/', StringSplitOptions.RemoveEmptyEntries);
         return segments.All(s => s != "..");
     }

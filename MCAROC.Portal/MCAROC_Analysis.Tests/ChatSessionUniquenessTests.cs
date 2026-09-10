@@ -7,7 +7,7 @@ namespace MCAROC_Analysis.Tests;
 /// <summary>Integration test for the unique index on ChatSession.RequestId (real .\SQLEXPRESS test DB).</summary>
 public class ChatSessionUniquenessTests : IAsyncLifetime
 {
-    private const string ConnectionString = @"Server=.\SQLEXPRESS;Database=MCAROC_Analysis_Test;Trusted_Connection=True;TrustServerCertificate=True;";
+    private static readonly string ConnectionString = TestDatabase.ConnectionString;
 
     private static AppDbContext CreateContext() =>
         new(new DbContextOptionsBuilder<AppDbContext>().UseSqlServer(ConnectionString).Options);

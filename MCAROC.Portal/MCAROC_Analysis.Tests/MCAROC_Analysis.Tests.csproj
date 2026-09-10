@@ -20,6 +20,14 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- Every integration test shares one SQL Server Express DB (MCAROC_Analysis_Test). Running test
+         collections in parallel means ~17 classes hammering that instance at once — under any load
+         that produces "Execution Timeout Expired". Serial is a few minutes slower but deterministic;
+         the GitHub-hosted `build` job carries the fast-feedback signal. -->
+    <None Update="xunit.runner.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\MCAROC_Analysis\MCAROC_Analysis.csproj" />
   </ItemGroup>
 
