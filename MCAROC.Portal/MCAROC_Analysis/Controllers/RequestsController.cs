@@ -273,6 +273,8 @@ public class RequestsController(
                 .OrderBy(x => x.DirectorNameRaw).ThenByDescending(x => x.AppointmentDate).ToListAsync();
             vm.PeerComparisonMetrics = await db.PeerComparisonMetrics.Where(x => x.IngestionRunId == runId)
                 .OrderBy(x => x.MetricName).ThenByDescending(x => x.FinancialYear).ToListAsync();
+            vm.PeerCompanies = await db.PeerCompanies.Where(x => x.IngestionRunId == runId)
+                .OrderBy(x => x.Rank).ToListAsync();
 
             // Phase 7.0 completeness layer
             vm.CompanyOfficers = await db.CompanyOfficers.Where(x => x.IngestionRunId == runId)

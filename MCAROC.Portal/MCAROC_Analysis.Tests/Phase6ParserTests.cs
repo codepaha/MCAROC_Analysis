@@ -363,4 +363,57 @@ public class PeerComparisonParserTests
         Assert.Equal(PeerPosition.Above, debtors2017.Position);
         Assert.DoesNotContain(r.Items, x => x.MetricName.StartsWith("5 Closest"));
     }
+
+    [Fact]
+    public void ReadsTheFiveClosestPeersBlock_RankedWithTheReferenceFinancialYear()
+    {
+        var sheet = Sheet("Peer Comparison",
+            Row("COMPARATIVE METRICS 1"),
+            Row("Industry", "Infrastructure"),
+            Row("Segment", "Other Construction Services"),
+            Row("Financial Year", 2017.0),
+            Row(),
+            Row("Metrics", "FY 2017", ""),
+            Row("", "Actual Value", "Median"),
+            Row("Revenue (Rs. Crore)", 1284.2, 1150.74),
+            Row(),
+            Row("5 Closest Peers by Revenue"),
+            Row("Legal Name", "CIN", "City", "Revenue (Rs. Crore)"),
+            Row("KOYA AND COMPANY CONSTRUCTION LIMITED", "U27109TG2002PLC038726", "HYDERABAD", 1344.37),
+            Row("SELF CORP LIMITED", "U45203OR1995PLC003982", "KHORDHA", 1284.2),
+            Row("RANJIT BUILDCON LIMITED", "U45206GJ2006PLC049570", "AHMEDABAD", 1265.88));
+
+        PeerComparisonParser.Parse(sheet, 1, 1, 10, out var peers);
+
+        Assert.Equal(3, peers.Count);
+        Assert.Equal(new[] { 1, 2, 3 }, peers.Select(p => p.Rank).ToArray());
+        Assert.All(peers, p => Assert.Equal(2017, p.FinancialYear));
+        Assert.All(peers, p => Assert.Equal("Infrastructure", p.Industry));
+
+        var first = peers[0];
+        Assert.Equal("KOYA AND COMPANY CONSTRUCTION LIMITED", first.LegalName);
+        Assert.Equal("U27109TG2002PLC038726", first.Cin);
+        Assert.Equal("HYDERABAD", first.City);
+        Assert.Equal(1344.37m, first.RevenueCrore);
+
+        // The block always lists the company itself; the parser doesn't guess — a caller matches the CIN.
+        Assert.Equal("U45203OR1995PLC003982", peers[1].Cin);
+    }
+
+    [Fact]
+    public void FiveClosestPeers_MissingFinancialYearRow_FallsBackToTheLatestMetricsYear()
+    {
+        var sheet = Sheet("Peer Comparison",
+            Row("Metrics", "FY 2016", "", "FY 2018", ""),
+            Row("", "Actual Value", "Median", "Actual Value", "Median"),
+            Row("Revenue (Rs. Crore)", 100.0, 90.0, 120.0, 110.0),
+            Row("5 Closest Peers by Revenue"),
+            Row("Legal Name", "CIN", "City", "Revenue (Rs. Crore)"),
+            Row("PEER ONE LIMITED", "U00000XX0000PLC000001", "PUNE", 121.0));
+
+        PeerComparisonParser.Parse(sheet, 1, 1, 10, out var peers);
+
+        var only = Assert.Single(peers);
+        Assert.Equal(2018, only.FinancialYear);
+    }
 }

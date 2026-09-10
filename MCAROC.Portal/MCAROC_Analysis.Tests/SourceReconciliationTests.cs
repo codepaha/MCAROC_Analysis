@@ -292,6 +292,41 @@ public class SourceReconciliationTests : IAsyncLifetime
         Assert.All(names, n => Assert.Equal("Highlights", n.SourceSheetName));
     }
 
+    /// <summary>Phase 8 A4 — the "Peer Comparison" sheet's "5 Closest Peers by Revenue" block is
+    /// captured: 5 named companies (including COASTAL itself, rank 3), each with CIN / city / revenue,
+    /// stamped with the comparison's reference financial year (2017).</summary>
+    [SkippableFact]
+    public void Peer_comparison_sheet_captures_the_five_closest_peers()
+    {
+        Skip.If(Fixtures() is null,
+            "Reconciliation workbooks not present — see MCAROC_Analysis.Tests/Fixtures/README.md");
+
+        var peerSheet = new ExcelSheetReader().ReadWorkbook(Fixtures()!.Value.Roc).Single(s => s.Name == "Peer Comparison");
+        PeerComparisonParser.Parse(peerSheet, requestId: 1, ingestionRunId: 1, sourceDocumentId: 1, out var peers);
+
+        Assert.Equal(5, peers.Count);
+        Assert.Equal(new[] { 1, 2, 3, 4, 5 }, peers.Select(p => p.Rank).ToArray());
+        Assert.All(peers, p => Assert.Equal(2017, p.FinancialYear));
+        Assert.All(peers, p => Assert.Equal("Peer Comparison", p.SourceSheetName));
+        Assert.Equal("Infrastructure", peers[0].Industry);
+        Assert.Equal("Other Construction Services", peers[0].Segment);
+
+        Assert.Equal("KOYA AND COMPANY CONSTRUCTION LIMITED", peers[0].LegalName);
+        Assert.Equal("U27109TG2002PLC038726", peers[0].Cin);
+        Assert.Equal("HYDERABAD", peers[0].City);
+        Assert.Equal(1344.37m, peers[0].RevenueCrore);
+
+        var self = Assert.Single(peers, p => p.Cin == "U45203OR1995PLC003982");
+        Assert.Equal("COASTAL PROJECTS LIMITED", self.LegalName);
+        Assert.Equal(3, self.Rank);
+        Assert.Equal(1284.2m, self.RevenueCrore);
+
+        Assert.Equal("KMC CONSTRUCTIONS LIMITED", peers[4].LegalName);
+        Assert.Equal(1240.01m, peers[4].RevenueCrore);
+        // The metrics grid still parses alongside the peer block.
+        Assert.NotEmpty(PeerComparisonParser.Parse(peerSheet, 1, 1, 1).Items);
+    }
+
     /// <summary>Control totals for the real COASTAL <c>Legal History</c> sheet (960 rows): the parser
     /// must extract exactly 592 Confirmed + 68 Probable + 292 Uncertain = 952, and no more — the 8
     /// structural rows (section titles, per-section headers, the blank separator) must not become

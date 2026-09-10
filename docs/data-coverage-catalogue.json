@@ -175,14 +175,14 @@
     },
     {
       "workbook": "RocReport", "sheet": "Peer Comparison", "shape": "multi-section: header + COMPARATIVE METRICS matrix (18 metrics x [actual|median] x 4 FY) + 5 CLOSEST PEERS list",
-      "parser": "PeerComparisonParser", "entity": "PeerComparisonMetric",
-      "portal_tab": "Financials (peer bars)", "dossier": "Annexure B",
+      "parser": "PeerComparisonParser", "entity": "PeerComparisonMetric + PeerCompany",
+      "portal_tab": "Financials (peer bars + closest-peers table)", "dossier": "Annexure B",
       "fields": [
         {"source": "Industry / Segment / Financial Year", "entityField": "PeerComparisonMetric.Industry / Segment / FinancialYear", "status": "live"},
         {"source": "18 metrics x actual x FY", "entityField": "PeerComparisonMetric.CompanyValue", "status": "live"},
         {"source": "18 metrics x median x FY", "entityField": "PeerComparisonMetric.PeerMedianValue", "status": "live"},
         {"source": "# of Peers in Sample x FY", "entityField": "PeerComparisonMetric.PeerCount", "status": "live"},
-        {"source": "5 CLOSEST PEERS BY REVENUE — Legal Name / CIN / City / Revenue", "entityField": null, "status": "not-parsed", "gap": "G6"}
+        {"source": "5 CLOSEST PEERS BY REVENUE — Legal Name / CIN / City / Revenue", "entityField": "PeerCompany.* (LegalName / Cin / City / RevenueCrore / Rank / FinancialYear)", "status": "live", "note": "A4/#35 — list includes the company itself (matched on CIN, not guessed); FY from the sheet's 'Financial Year' row (fallback: latest metrics year)"}
       ]
     },
     {
@@ -338,10 +338,10 @@
      "detail": "Highlights 'PRINCIPAL BUSINESS ACTIVITIES' (main activity group code + desc, business activity code + desc, % of turnover) collapsed to a string.",
      "fix": "New PrincipalBusinessActivity entity + HighlightsParser.ParsePrincipalBusinessActivities (multi-row); table on the Corporate tab Overview.",
      "issue": "#34"},
-    {"id": "G6", "title": "5 Closest Peers by Revenue not captured", "severity": "medium",
-     "detail": "Peer Comparison sheet's closest-peers list (legal name, CIN, city, revenue) is dropped; needed for the peer bar chart the benchmark tool shows.",
-     "fix": "New PeerCompany entity (legalName, cin, city, revenue, financialYear) + extend PeerComparisonParser; bar chart on Financials tab + dossier Annexure B.",
-     "issue": null},
+    {"id": "G6", "title": "5 Closest Peers by Revenue not captured", "severity": "medium", "status": "DONE (A4 / #35)",
+     "detail": "Peer Comparison sheet's closest-peers list (legal name, CIN, city, revenue) was dropped.",
+     "fix": "New PeerCompany entity (LegalName / Cin / City / RevenueCrore / Rank / FinancialYear + Industry/Segment); PeerComparisonParser gains a second out-param; migration AddPeerCompanies; rendered as a 'Closest Peers by Revenue' table on the Financials tab (self row highlighted). Bar-chart viz is Wave 3.",
+     "issue": "#35"},
     {"id": "G7", "title": "EPFO establishment metadata dropped", "severity": "medium",
      "detail": "EPFO Establishments sheet drops per-establishment City, Date of Setup, Principal Business Activities, Address, Exemption Status, Flags — only monthly contributions are kept.",
      "fix": "New EpfoEstablishment entity (establishmentId, name, city, dateOfSetup, principalBusinessActivities, address, exemptionStatus, workingStatus, flags) + parse; establishment header card on Compliance tab.",

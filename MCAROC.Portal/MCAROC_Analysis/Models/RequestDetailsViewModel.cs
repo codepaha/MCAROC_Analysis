@@ -59,6 +59,7 @@ public class RequestDetailsViewModel
     public List<ProprietorshipAssociation> ProprietorshipAssociations { get; set; } = [];
     public List<DirectorAssignmentHistory> DirectorAssignmentHistories { get; set; } = [];
     public List<PeerComparisonMetric> PeerComparisonMetrics { get; set; } = [];
+    public List<PeerCompany> PeerCompanies { get; set; } = [];
 
     /// <summary>From <c>?charge=&lt;id&gt;</c> — the Charges &amp; Security tab expands this charge's drawer
     /// and scrolls it into view on load. Null when the query string carries no charge.</summary>
