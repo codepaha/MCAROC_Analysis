@@ -33,6 +33,7 @@ public class DossierPdfComposerTests : IAsyncLifetime
     [Theory]
     [InlineData(DossierVariant.Executive)]
     [InlineData(DossierVariant.FullSource)]
+    [InlineData(DossierVariant.SourceRecord)]
     public async Task Renders_the_dossier_with_no_risk_score(DossierVariant variant)
     {
         await using var seed = DossierGoldenMasterTests.CreateContext();
@@ -52,8 +53,33 @@ public class DossierPdfComposerTests : IAsyncLifetime
         Assert.Contains("DUE DILIGENCE DOSSIER", text);
         Assert.Contains("Golden Master Ltd", text);
         Assert.Contains("Contents", text);
-        Assert.Contains("Annexure A", text);
-        Assert.Contains("Annexure E", text);
+        Assert.Contains("Snapshot", text);
+
+        // New attribution line (cover footer + "Prepared by").
+        Assert.Contains("Gaba Projects Private Limited", text);
+
+        if (variant == DossierVariant.Executive)
+        {
+            Assert.Contains("Annexure A", text);
+            Assert.Contains("Annexure E", text);
+            Assert.Contains("Executive Summary", text);
+            Assert.DoesNotContain("Source Records", text);
+        }
+        else
+        {
+            // Full source / Source record render the verbatim Layer-0 rows, not the typed annexures.
+            Assert.Contains("Source Records", text);
+            Assert.Contains("Company master report", text);   // workbook label
+            Assert.Contains("Secretary", text);               // a raw Directors-sheet cell value
+            Assert.Contains("passu", text);                   // deep inside the long charge cell — rendered unclipped
+            Assert.DoesNotContain("Directors register", text); // the typed Annexure-A table is Executive-only
+        }
+
+        // Source-record variant drops Section 1 (the synthesised analysis) entirely.
+        if (variant == DossierVariant.SourceRecord)
+            Assert.DoesNotContain("Executive Summary", text);
+        else
+            Assert.Contains("Executive Summary", text);
 
         // The hard rule: no score, no gauge, no document index.
         var lower = text.ToLowerInvariant();

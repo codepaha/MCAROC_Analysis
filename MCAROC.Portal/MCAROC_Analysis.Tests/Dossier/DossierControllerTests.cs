@@ -49,6 +49,7 @@ public class DossierControllerTests : IAsyncLifetime
     [Theory]
     [InlineData("executive", "Executive")]
     [InlineData("full", "Full source")]
+    [InlineData("source", "Source records")]
     public async Task Returns_a_pdf_with_a_client_filename(string variant, string label)
     {
         await using var seedDb = DossierGoldenMasterTests.CreateContext();
@@ -85,6 +86,29 @@ public class DossierControllerTests : IAsyncLifetime
         await db.SaveChangesAsync();
 
         var result = await NewController(db).Download(request.RequestId, "executive", CancellationToken.None);
+        Assert.Equal(StatusCodes.Status409Conflict, Assert.IsType<ObjectResult>(result).StatusCode);
+    }
+
+    [Fact]
+    public async Task Re_ingested_request_whose_analysis_was_not_re_run_is_409()
+    {
+        await using var seedDb = DossierGoldenMasterTests.CreateContext();
+        var (requestId, _, _) = await DossierTestSeed.SeedAsync(seedDb);
+
+        // Simulate a fresh re-ingest: a newer completed ingestion run with no analysis run of its own.
+        await using var mutate = DossierGoldenMasterTests.CreateContext();
+        var reIngest = new IngestionRun
+        {
+            RequestId = requestId, RunNumber = 2, StartedDate = DateTime.UtcNow,
+            CompletedDate = DateTime.UtcNow, Status = IngestionRunStatus.CompletedClean
+        };
+        mutate.IngestionRuns.Add(reIngest);
+        await mutate.SaveChangesAsync();
+        await mutate.Requests.Where(r => r.RequestId == requestId)
+            .ExecuteUpdateAsync(s => s.SetProperty(r => r.LatestCompletedIngestionRunId, reIngest.IngestionRunId));
+
+        await using var db = DossierGoldenMasterTests.CreateContext();
+        var result = await NewController(db).Download(requestId, "full", CancellationToken.None);
         Assert.Equal(StatusCodes.Status409Conflict, Assert.IsType<ObjectResult>(result).StatusCode);
     }
 

@@ -21,8 +21,16 @@ public class DossierAssembler(AppDbContext db)
         if (request?.LatestCompletedIngestionRunId is not { } runId) return null;
 
         var run = await db.IngestionRuns.FirstOrDefaultAsync(x => x.IngestionRunId == runId, ct);
-        var analysis = await db.AnalysisRuns.Where(a => a.RequestId == requestId)
-            .OrderByDescending(a => a.RunNumber).FirstOrDefaultAsync(ct);
+
+        // The analysis MUST belong to the ingestion run we are about to render — otherwise a fresh
+        // re-ingest paired with a not-yet-re-run analysis would present stale findings over new data.
+        // No terminal analysis for this exact ingestion run ⇒ the dossier is not ready (controller → 409).
+        var analysis = await db.AnalysisRuns
+            .Where(a => a.RequestId == requestId && a.IngestionRunId == runId
+                && (a.Status == AnalysisRunStatus.Completed || a.Status == AnalysisRunStatus.CompletedWithErrors))
+            .OrderByDescending(a => a.RunNumber)
+            .FirstOrDefaultAsync(ct);
+        if (analysis is null) return null;
 
         // ── Corporate ──
         var directors = await db.Directors.Where(x => x.IngestionRunId == runId).OrderBy(x => x.NameRaw).ToListAsync(ct);
@@ -65,26 +73,26 @@ public class DossierAssembler(AppDbContext db)
         // ── Litigation ──
         var litigations = await db.Litigations.Where(x => x.IngestionRunId == runId).ToListAsync(ct);
 
+        // ── Source records (Layer 0) — the verbatim staging rows the "Full source" annexure renders from ──
+        var sourceRows = await db.SourceRows.Where(x => x.IngestionRunId == runId).ToListAsync(ct);
+        var sourceSheets = BuildSourceSheets(sourceRows);
+
         // ── Findings ──
-        var findings = new List<AnalysisFinding>();
         ExecutiveSummary? execSummary = null;
-        if (analysis is not null)
+        var raw = await db.AnalysisFindings.Where(f => f.AnalysisRunId == analysis.AnalysisRunId).ToListAsync(ct);
+        var findings = raw
+            .OrderByDescending(f => f.Severity).ThenByDescending(f => f.DisplayPriority).ThenByDescending(f => f.ObservationDate)
+            .ToList();
+        if (analysis.ExecutiveSummaryJson is { } sj)
         {
-            var raw = await db.AnalysisFindings.Where(f => f.AnalysisRunId == analysis.AnalysisRunId).ToListAsync(ct);
-            findings = raw
-                .OrderByDescending(f => f.Severity).ThenByDescending(f => f.DisplayPriority).ThenByDescending(f => f.ObservationDate)
-                .ToList();
-            if (analysis.ExecutiveSummaryJson is { } sj)
-            {
-                try { execSummary = JsonSerializer.Deserialize<ExecutiveSummary>(sj); }
-                catch (JsonException) { }
-            }
+            try { execSummary = JsonSerializer.Deserialize<ExecutiveSummary>(sj); }
+            catch (JsonException) { }
         }
 
         var roles = DossierComputations.LitigationRoles(litigations, findings);
 
         return new DossierModel(
-            requestId, runId, analysis?.AnalysisRunId,
+            requestId, runId, analysis.AnalysisRunId,
             new DossierCover(
                 request.CompanyName, request.Cin ?? profile?.Cin, request.Pan ?? profile?.Pan,
                 profile?.IncorporationDate, profile?.CompanyStatus,
@@ -100,9 +108,59 @@ public class DossierAssembler(AppDbContext db)
             new DossierCompliance(compliance, msme, gst, epfo, DossierDeduplicator.SummariseSuitFiled(compliance)),
             new DossierLitigation(litigations, DossierDeduplicator.ThreadLitigation(litigations), roles),
             new DossierExecSummary(
-                analysis?.OverallReviewPriority,
-                analysis?.CriticalFindingsCount ?? 0, analysis?.ReviewFindingsCount ?? 0,
-                analysis?.WatchFindingsCount ?? 0, analysis?.PositiveFindingsCount ?? 0,
-                findings, execSummary));
+                analysis.OverallReviewPriority,
+                analysis.CriticalFindingsCount, analysis.ReviewFindingsCount,
+                analysis.WatchFindingsCount, analysis.PositiveFindingsCount,
+                findings, execSummary),
+            sourceSheets);
+    }
+
+    /// <summary>Groups the raw <see cref="SourceRow"/> set into per-worksheet blocks, in workbook →
+    /// sheet → row order, deserializing each row's cell array verbatim. No de-duplication, no clipping —
+    /// this is the system of record.</summary>
+    private static IReadOnlyList<DossierSourceSheet> BuildSourceSheets(IReadOnlyList<SourceRow> rows)
+    {
+        static int WorkbookRank(string role) => role switch
+        {
+            "RocReport" => 0,
+            "ChargeReport" => 1,
+            _ => 2
+        };
+
+        static string WorkbookLabel(string role) => role switch
+        {
+            "RocReport" => "Company master report (ROC)",
+            "ChargeReport" => "Index of charges report",
+            _ => role
+        };
+
+        return rows
+            .GroupBy(r => (r.WorkbookRole, r.SheetIndex, r.SheetName))
+            .Select(g => new DossierSourceSheet(
+                g.Key.WorkbookRole,
+                WorkbookLabel(g.Key.WorkbookRole),
+                g.Key.SheetIndex,
+                g.Key.SheetName,
+                g.OrderBy(r => r.RowNumber)
+                    .Select(r => new DossierSourceRow(
+                        r.RowNumber,
+                        DeserializeCells(r.CellsJson)))
+                    .ToList()))
+            .OrderBy(s => WorkbookRank(s.WorkbookRole))
+            .ThenBy(s => s.WorkbookRole, StringComparer.Ordinal)
+            .ThenBy(s => s.SheetIndex)
+            .ToList();
+    }
+
+    private static IReadOnlyList<string?> DeserializeCells(string cellsJson)
+    {
+        try
+        {
+            return JsonSerializer.Deserialize<List<string?>>(cellsJson) ?? [];
+        }
+        catch (JsonException)
+        {
+            return [cellsJson];
+        }
     }
 }

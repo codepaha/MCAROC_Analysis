@@ -17,7 +17,8 @@ public sealed record DossierModel(
     DossierCharges Charges,
     DossierCompliance Compliance,
     DossierLitigation Litigation,
-    DossierExecSummary ExecSummary);
+    DossierExecSummary ExecSummary,
+    IReadOnlyList<DossierSourceSheet> SourceSheets);
 
 public sealed record DossierCover(
     string CompanyName, string? Cin, string? Pan, DateOnly? IncorporationDate, string? Status,
@@ -92,3 +93,21 @@ public sealed record DossierExecSummary(
     int CriticalCount, int ReviewCount, int WatchCount, int PositiveCount,
     IReadOnlyList<AnalysisFinding> FindingsInDisplayOrder,
     ExecutiveSummary? Structured);
+
+/// <summary>One worksheet's verbatim Layer-0 rows (<see cref="MCAROC_Analysis.Data.Entities.SourceRow"/>),
+/// in workbook / sheet / row order — the "Full source" and "Source record" annexures render straight
+/// from these with no typing, de-duplication or clipping.</summary>
+public sealed record DossierSourceSheet(
+    string WorkbookRole,
+    string WorkbookLabel,
+    int SheetIndex,
+    string SheetName,
+    IReadOnlyList<DossierSourceRow> Rows)
+{
+    /// <summary>The widest row's cell count — the raw table renders this many value columns.</summary>
+    public int ColumnCount => Rows.Count == 0 ? 0 : Rows.Max(r => r.Cells.Count);
+}
+
+/// <summary>One raw row: the Excel row number the person would see, and the ordered cell values
+/// exactly as extracted (a null/blank cell stays null).</summary>
+public sealed record DossierSourceRow(int RowNumber, IReadOnlyList<string?> Cells);

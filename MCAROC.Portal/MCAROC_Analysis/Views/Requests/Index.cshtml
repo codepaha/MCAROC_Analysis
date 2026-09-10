@@ -132,7 +132,8 @@ else
                         @if (row.Request.RequestStatus == RequestStatus.AnalysisCompleted)
                         {
                             <a href="/Requests/@row.Request.RequestId/dossier?variant=executive" class="btn btn-sm btn-outline-secondary ms-1" title="Executive dossier (PDF)">Exec PDF</a>
-                            <a href="/Requests/@row.Request.RequestId/dossier?variant=full" class="btn btn-sm btn-outline-secondary ms-1" title="Full-source dossier (PDF)">Full PDF</a>
+                            <a href="/Requests/@row.Request.RequestId/dossier?variant=full" class="btn btn-sm btn-outline-secondary ms-1" title="Full-source dossier — Section 1 plus the verbatim source record (PDF)">Full PDF</a>
+                            <a href="/Requests/@row.Request.RequestId/dossier?variant=source" class="btn btn-sm btn-outline-secondary ms-1" title="Source-record dossier — verbatim source rows, no synthesised analysis (PDF)">Source PDF</a>
                         }
                     </td>
                 </tr>

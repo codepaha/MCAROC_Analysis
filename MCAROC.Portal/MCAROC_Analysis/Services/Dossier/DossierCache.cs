@@ -1,4 +1,5 @@
 using MCAROC_Analysis.Data;
+using MCAROC_Analysis.Data.Entities;
 using MCAROC_Analysis.Models.Dossier;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Memory;
@@ -18,15 +19,22 @@ public class DossierCache(AppDbContext db, DossierAssembler assembler, IMemoryCa
             .Select(r => new
             {
                 r.LatestCompletedIngestionRunId,
-                AnalysisRunId = db.AnalysisRuns.Where(a => a.RequestId == requestId)
+                // Only a terminal analysis run computed FROM the latest completed ingestion run —
+                // never a newer analysis of older data, never an older analysis of newer data.
+                AnalysisRunId = db.AnalysisRuns
+                    .Where(a => a.RequestId == requestId
+                        && a.IngestionRunId == r.LatestCompletedIngestionRunId
+                        && (a.Status == AnalysisRunStatus.Completed || a.Status == AnalysisRunStatus.CompletedWithErrors))
                     .OrderByDescending(a => a.RunNumber).Select(a => (long?)a.AnalysisRunId).FirstOrDefault()
             })
             .FirstOrDefaultAsync(ct);
 
         if (keyParts?.LatestCompletedIngestionRunId is not { } ingestionRunId)
             return null;
+        if (keyParts.AnalysisRunId is not { } analysisRunId)
+            return null; // completed ingestion but no matching completed analysis ⇒ dossier not ready
 
-        var key = $"dossier:{requestId}:{ingestionRunId}:{keyParts.AnalysisRunId?.ToString() ?? "-"}";
+        var key = $"dossier:{requestId}:{ingestionRunId}:{analysisRunId}";
         if (cache.TryGetValue(key, out DossierModel? cached) && cached is not null)
             return cached;
 

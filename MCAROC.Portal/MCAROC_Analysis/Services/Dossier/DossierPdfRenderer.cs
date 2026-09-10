@@ -15,6 +15,21 @@ public class DossierPdfRenderer
     public byte[] Render(DossierModel model, DossierVariant variant)
     {
         DossierFonts.Register(_webRootPath);
-        return new DossierPdfComposer(model, variant).GeneratePdf();
+        return new DossierPdfComposer(model, variant, TryLoadLogo()).GeneratePdf();
+    }
+
+    /// <summary>The Cubictree mark for the cover, from <c>wwwroot/images/favicon.png</c>. A missing file
+    /// is not fatal — the composer falls back to the maroon "CT" text badge.</summary>
+    private byte[]? TryLoadLogo()
+    {
+        try
+        {
+            var path = Path.Combine(_webRootPath, "images", "favicon.png");
+            return File.Exists(path) ? File.ReadAllBytes(path) : null;
+        }
+        catch (IOException)
+        {
+            return null;
+        }
     }
 }

@@ -107,6 +107,19 @@ public static class DossierTestSeed
             Tag(new ComplianceRecord { RecordType = ComplianceRecordType.SuitFiled, Bank = "IDBI BANK", AmountCrore = 12m, DefaulterType = "Defaulter - Suit Filed", RecordDate = new DateOnly(2014, 3, 31) }),
             Tag(new ComplianceRecord { RecordType = ComplianceRecordType.SuitFiled, Bank = "IDBI BANK", AmountCrore = 12m, DefaulterType = "Defaulter - Suit Filed", RecordDate = new DateOnly(2014, 6, 30) }));
 
+        // Layer-0 source rows — two workbooks / a few sheets, incl. a wide row with a long unclipped cell.
+        db.SourceRows.AddRange(
+            SR(R, I, "RocReport", "Company Information", 0, 1, "Field", "Value"),
+            SR(R, I, "RocReport", "Company Information", 0, 2, "CIN", "U12345KA2000PLC000001"),
+            SR(R, I, "RocReport", "Company Information", 0, 3, "Company Name", "Golden Master Ltd"),
+            SR(R, I, "RocReport", "Directors", 1, 1, "Name", "DIN", "Designation"),
+            SR(R, I, "RocReport", "Directors", 1, 2, "ALICE RAO", "00000001", "Managing Director"),
+            SR(R, I, "RocReport", "Directors", 1, 3, "DEV MENON", "-", "Company Secretary"),
+            SR(R, I, "ChargeReport", "Charges", 0, 1, "Charge ID", "Holder", "Amount", "Property particulars"),
+            SR(R, I, "ChargeReport", "Charges", 0, 2, "C1", "STATE BANK OF INDIA", "610",
+                "First pari passu charge on the entire current assets and movable fixed assets of the company " +
+                "both present and future, along with the other working-capital consortium bankers, ranking pari passu inter se."));
+
         await db.SaveChangesAsync();
 
         // Analysis run + findings (with SourceReferenceJson for the per-case / per-charge attribution).
@@ -131,6 +144,20 @@ public static class DossierTestSeed
         await db.SaveChangesAsync();
 
         return (R, I, an.AnalysisRunId);
+    }
+
+    private static SourceRow SR(long requestId, long ingestionRunId, string workbookRole, string sheetName,
+        int sheetIndex, int rowNumber, params string?[] cells)
+    {
+        var json = JsonSerializer.Serialize(cells);
+        return new SourceRow
+        {
+            RequestId = requestId, IngestionRunId = ingestionRunId, SourceDocumentId = 0,
+            WorkbookRole = workbookRole, SheetName = sheetName, SheetIndex = sheetIndex, RowNumber = rowNumber,
+            CellsJson = json,
+            RowHash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(json))),
+            ExtractedAt = new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc)
+        };
     }
 
     private static AnalysisFinding F(AnalysisRun run, long requestId, FindingSection section, FindingSeverity sev,
