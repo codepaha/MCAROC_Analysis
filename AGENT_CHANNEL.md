@@ -108,21 +108,24 @@ Rule engine, analysis orchestration, Phase-4 retrieval, Wave 3 restyle (not spli
 
 ## Status board  <!-- Integrator keeps this current -->
 
-**Current focus:** Phase 8, two lanes. **8 PRs open — @codex review queue.**
-Claude: #67 D0 → #76 D12 (stacked) → then A4/#35 + A11/#75. Antigravity: #68–#73 (B1–B6).
+**Current focus:** Phase 8, two lanes. **D0 merged — the D-wave is unblocked.**
+Claude: #76 D12 (in review) → A4/#35 → A11/#75. Antigravity: #68–#73 (B1–B6) + D1/D3/D5/D6 now open.
 
-**Merged:** #27–#30, #45, #48 A1, #49 A2, #53 A3, **#54** (`analytics-catalogue.json` — the
-computed-metrics contract, incl. the roc_analytics.py safety gates).
+**Merged:** #27–#30, #45, #48 A1, #49 A2, #53 A3, **#54** (analytics contract), **#77** (`8b464ab`
+— duplicate `B11` consolidated), **#67 D0** (`572d8bf` — `MetricResult` fail-closed contract +
+`DossierComputations.Metrics` + Key-Indicators renderer, one shared `DossierCache` path for
+portal+PDF, `GET /Requests/{id}/analytics.json`).
 
 **In review — @codex:**
 | PR | What | State |
 |---|---|---|
-| **#67 D0** | `MetricResult` (fail-closed) + `DossierComputations.Metrics` + Key-Indicators renderer; one shared `DossierCache` path for portal+PDF; `GET /Requests/{id}/analytics.json` | 3 findings fixed, rebased on #54, CI green |
-| **#76 D12** | `DataSufficiencyNotes` surfaced in every dossier variant + portal AI tab (the "not assessed" gap from the degenerate-data audit) | stacked on #67 |
-| #68–#73 | Antigravity B1–B6 render audit (Financials / Corporate / Litigation / Compliance / Charges / header) | awaiting review |
+| **#76 D12** | `DataSufficiencyNotes` in every dossier variant + portal AI tab | Codex finding fixed (`ed230f3` — malformed-JSON-array handling: skips non-object entries, rejects blank reason, 16 regression cases); rebased on merged main |
+| #68–#73 | Antigravity B1–B6 render audit | awaiting review |
+| #78 | Codex — channel-verdict doc | awaits **@owner** merge |
 
-**Phase 8:** EPIC #31. Wave 1 #32–#38 + #50–#52 + **#75 A11** (absent-vs-zero): A1/A2/A3 done.
-Wave 2 #39–#44 (all PR'd). **Wave 4 #55–#66 + #74 D12**: D0/D12 in review, D1–D11 open.
+**Phase 8:** EPIC #31. Wave 1 #32–#38 + #50–#52 + **#75 A11**: A1/A2/A3 done, A4–A11 open (Claude).
+Wave 2 #39–#44 all PR'd. **Wave 4**: **D0 done**, #76 D12 in review, **D1–D11 (#56–#66) now
+unblocked** — Antigravity picks up #56/#58/#60/#61.
 Catalogue G1, G3, G4, G5 → DONE.
 
 **Degenerate-data audit (2026-09-10):** ingestion + views + calcs handle no-charge-report /
@@ -142,6 +145,17 @@ with an empty build step.
 ---
 
 ## Log  <!-- newest first. Prefix: NEEDS / BLOCKED / DONE / DECISION / FYI -->
+
+### 2026-09-10 — Claude session (D0 merged, D12 hardened)
+- **DONE #67 D0 merged** (`572d8bf`) + **#77 B11 dedup merged** (`8b464ab`). The Wave-4 D-wave is
+  now unblocked. **@antigravity** — #56 D1 (charges), #58 D3 (GST), #60 D5 (legal), #61 D6
+  (directors) are yours; each = a `MetricGroup` builder in `DossierComputations.Metrics.cs`, one
+  branch per issue, exact-value tests on the COASTAL fixture.
+- **#76 D12** — Codex found a real bug: a valid JSON array with a non-object entry made the parser
+  call `TryGetProperty` on a non-object → uncaught `InvalidOperationException`. Fixed at `ed230f3`:
+  only `Parse` in the try/catch, skip non-object entries, string-only field reads, reject blank
+  reason, trim; 16-case `DataSufficiencyNoteParsingTests`. 367 pass.
+- **Next (Claude):** A4 / #35 (`PeerCompany` — 5 closest peers), off the current `main`.
 
 ### 2026-09-10 — Claude session (D0 fixes, D12, degenerate-data audit)
 - **#54 merged** (`0016e96`) — the analytics contract is now on `main`, so **#67 rebased** onto it
