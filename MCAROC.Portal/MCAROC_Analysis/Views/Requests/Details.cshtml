@@ -27,6 +27,18 @@
             <div class="mca-ids">
                 <span><b>CIN:</b> @(r.Cin ?? r.Llpin ?? "—")</span>
                 <span><b>PAN:</b> @(r.Pan ?? "—")</span>
+                @if (!string.IsNullOrEmpty(Model.CompanyProfile?.CompanyStatus))
+                {
+                    <span><b>Status:</b> @Model.CompanyProfile.CompanyStatus</span>
+                }
+                @if (!string.IsNullOrEmpty(Model.CompanyProfile?.ComplianceStatus))
+                {
+                    <span><b>Compliance:</b> @Model.CompanyProfile.ComplianceStatus</span>
+                }
+                @if (!string.IsNullOrEmpty(Model.CompanyProfile?.Lei))
+                {
+                    <span><b>LEI:</b> @Model.CompanyProfile.Lei</span>
+                }
             </div>
         </div>
         <div class="mca-company-meta">

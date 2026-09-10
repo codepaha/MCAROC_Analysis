@@ -14,7 +14,7 @@ public sealed record GoldenMasterSnapshot(
     int ChargeHolderCount,
     int ModifiedChargeCount,
     int MaterialEnhancementFindingCount,
-    decimal TotalOpenChargeAmount,
+    decimal? TotalOpenChargeAmount,
     decimal? LargestChargeAmount,
     string[] LenderConcentrationHolders,
     Dictionary<string, string[]> SecurityTypeLabelsByCharge,

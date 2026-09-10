@@ -47,9 +47,41 @@
                 <div><dt>Type of Entity</dt><dd>@Or(cp.EntityType)</dd></div>
                 <div><dt>Listing Status</dt><dd>@Or(cp.ListingStatus)</dd></div>
                 <div><dt>Industry / Segment</dt><dd>@Or(cp.Industry)@(string.IsNullOrEmpty(cp.Segment) ? "" : $" · {cp.Segment}")</dd></div>
-                <div><dt>Date of Last AGM</dt><dd>@D(cp.LastAgmDate)</dd></div>
-                <div><dt>MCA Sum of Charges</dt><dd>@Money(cp.McaSumOfChargesCrore)</dd></div>
-                <div><dt>LEI</dt><dd>@Or(cp.Lei)@(string.IsNullOrEmpty(cp.LeiStatus) ? "" : $" ({cp.LeiStatus})")</dd></div>
+                <div>
+                    <dt>MCA Sum of Charges</dt>
+                    <dd>
+                        @Money(cp.McaSumOfChargesCrore)
+                        @{
+                            var openCharges = Model.Charges.Where(DossierComputations.IsOpenCharge).ToList();
+                            var anyMissingAmounts = openCharges.Any(c => c.CurrentAmount is null);
+                        }
+                        @if (cp.McaSumOfChargesCrore is { } mcaCr)
+                        {
+                            @if (openCharges.Count == 0 && Model.TotalChargeCount == 0)
+                            {
+                                <span class="mca-badge sev-watch ms-1" title="Reconciliation incomplete: charge register not present in this workbook">
+                                    register not present
+                                </span>
+                            }
+                            else if (anyMissingAmounts)
+                            {
+                                <span class="mca-badge sev-watch ms-1" title="Reconciliation incomplete: @openCharges.Count(c => c.CurrentAmount is null) open charge(s) have unstated amounts">
+                                    reconciliation incomplete
+                                </span>
+                            }
+                            else
+                            {
+                                var compCr = openCharges.Sum(c => c.CurrentAmount!.Value);
+                                if (Math.Abs(mcaCr - compCr) > 0.05m)
+                                {
+                                    <span class="mca-badge sev-watch ms-1" title="MCA stated sum of charges (@Money(mcaCr)) differs from computed open charges total (@Money(compCr))">
+                                        Divergence (Computed Open: @Money(compCr))
+                                    </span>
+                                }
+                            }
+                        }
+                    </dd>
+                </div>
                 <div><dt>Website</dt><dd>@(string.IsNullOrEmpty(cp.Website) ? "—" : Html.Raw($"<a href=\"{System.Net.WebUtility.HtmlEncode(cp.Website)}\" target=\"_blank\" rel=\"noopener\">{System.Net.WebUtility.HtmlEncode(cp.Website)}</a>"))</dd></div>
                 <div><dt>Phone</dt><dd>@Or(cp.Phone)</dd></div>
                 <div class="mca-kv-wide">

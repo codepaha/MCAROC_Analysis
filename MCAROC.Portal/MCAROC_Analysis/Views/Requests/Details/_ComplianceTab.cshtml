@@ -4,6 +4,84 @@
     var con = Model.AuditorObservations.Where(a => a.Basis == FinancialBasis.Consolidated).ToList();
     var gstFilings = Model.GstRegistrations.SelectMany(g => g.Filings).ToList();
 
+    var regulatoryRecords = Model.ComplianceRecords
+        .Where(c => c.RecordType != ComplianceRecordType.SuitFiled)
+        .ToList();
+
+    var suitFiledRecords = Model.ComplianceRecords
+        .Where(c => c.RecordType == ComplianceRecordType.SuitFiled)
+        .ToList();
+
+    // Bank-level peak summary
+    var bankSummaries = suitFiledRecords
+        .GroupBy(r => (Bank: string.IsNullOrWhiteSpace(r.Bank) ? "Unknown / Unspecified" : r.Bank.Trim(),
+                       DefaulterType: string.IsNullOrWhiteSpace(r.DefaulterType) ? "Suit Filed" : r.DefaulterType.Trim()))
+        .Select(g =>
+        {
+            var amounts = g.Select(x => x.AmountCrore).ToList();
+            var hasMissingAmounts = amounts.Any(a => a is null);
+            var nonNullAmounts = amounts.Where(a => a.HasValue).Select(a => a!.Value).ToList();
+            decimal? peak = nonNullAmounts.Count > 0 ? nonNullAmounts.Max() : null;
+
+            return new
+            {
+                Bank = g.Key.Bank,
+                DefaulterType = g.Key.DefaulterType,
+                PeakAmount = peak,
+                HasMissingAmounts = hasMissingAmounts,
+                LatestDate = g.Max(x => x.RecordDate),
+                EarliestDate = g.Min(x => x.RecordDate),
+                QuartersCount = g.Count(),
+                Source = g.Select(x => x.Source).FirstOrDefault(s => !string.IsNullOrWhiteSpace(s)) ?? "CIBIL"
+            };
+        })
+        .OrderByDescending(x => x.PeakAmount ?? -1m)
+        .ThenByDescending(x => x.QuartersCount)
+        .ToList();
+
+    var anyFilingMissingAmount = suitFiledRecords.Any(r => r.AmountCrore is null);
+    var banksWithKnownAmounts = bankSummaries.Where(b => b.PeakAmount is not null).ToList();
+
+    decimal? totalPeakExposure = banksWithKnownAmounts.Count == 0
+        ? null
+        : banksWithKnownAmounts.GroupBy(b => b.Bank, StringComparer.OrdinalIgnoreCase).Sum(g => g.Max(x => x.PeakAmount!.Value));
+
+    var uniqueBanksCount = bankSummaries
+        .Select(b => b.Bank)
+        .Distinct(StringComparer.OrdinalIgnoreCase)
+        .Count();
+
+    var latestSuitDate = suitFiledRecords
+        .Select(x => x.RecordDate)
+        .Where(d => d.HasValue)
+        .OrderByDescending(d => d)
+        .FirstOrDefault();
+
+    // EPFO Establishments grouping
+    var epfoEstablishments = Model.EpfoContributions
+        .GroupBy(e => string.IsNullOrWhiteSpace(e.EstablishmentId) ? (e.EstablishmentName ?? "Unknown") : e.EstablishmentId)
+        .Select(g =>
+        {
+            var contribs = g.Select(x => x.ContributionAmountCrore).ToList();
+            var hasMissingContribs = contribs.Any(c => c is null);
+            var nonNullContribs = contribs.Where(c => c.HasValue).Select(c => c!.Value).ToList();
+            decimal? totalContrib = hasMissingContribs ? null : nonNullContribs.Sum();
+
+            return new
+            {
+                EstablishmentId = g.Key,
+                Name = g.Select(x => x.EstablishmentName).FirstOrDefault(n => !string.IsNullOrWhiteSpace(n)) ?? g.Key,
+                WorkingStatus = g.Select(x => x.WorkingStatus).FirstOrDefault(s => !string.IsNullOrWhiteSpace(s)) ?? "Active",
+                LatestMonth = g.OrderByDescending(x => x.WageMonth).FirstOrDefault()?.WageMonth,
+                LatestEmployees = g.OrderByDescending(x => x.WageMonth).FirstOrDefault()?.EmployeeCount,
+                TotalMonths = g.Count(),
+                TotalContributions = totalContrib,
+                HasMissingContributions = hasMissingContribs,
+                Contributions = g.OrderByDescending(x => x.WageMonth).ToList()
+            };
+        })
+        .ToList();
+
     var sections = new (string Label, string Id, int? Count)[]
     {
         ("MCA / Regulatory", "mca", Model.ComplianceRecords.Count),
@@ -52,34 +130,176 @@
 
 <div class="tab-content">
 
-    @* ── MCA / Regulatory ── *@
+    @* ── MCA / Regulatory & CIBIL Suit-Filed ── *@
     <div class="tab-pane fade show active mca-subtab-panel" id="sec-compliance-mca" role="tabpanel">
         @if (Model.CompanyProfile?.ComplianceStatus is { } cs)
         {
             <p class="mb-3"><span class="mca-finding-label">MCA compliance status (source):</span> @cs</p>
         }
-        @if (Model.ComplianceRecords.Count > 0)
+
+        @* Statutory / MCA Events (BIFR / CDR / Name Removal / Restoration) *@
+        @if (regulatoryRecords.Count > 0)
         {
-            <div class="pi-table-wrap"><table class="pi-results-table">
-                <thead><tr><th>Type</th><th>Date</th><th>Description</th><th>Bank / Source</th><th class="text-end">Amount (Cr)</th><th>Defaulter Type</th><th>Status</th></tr></thead>
-                <tbody>
-                @foreach (var c in Model.ComplianceRecords)
-                {
-                    <tr>
-                        <td><span class="mca-badge">@c.RecordType</span></td>
-                        <td>@D(c.RecordDate)</td>
-                        <td>@Or(c.Description ?? c.SourceText)</td>
-                        <td>@Or(c.Bank ?? c.Source)</td>
-                        <td class="text-end">@Num(c.AmountCrore)</td>
-                        <td>@Or(c.DefaulterType)</td>
-                        <td>@Or(c.Status)</td>
-                    </tr>
-                }
-                </tbody>
-            </table></div>
-            <p class="text-muted mt-2 mb-0">Includes MCA name removal/restoration, BIFR, CDR (corporate debt restructuring), and CIBIL suit-filed / wilful-defaulter records.</p>
+            <div class="mca-section mb-4">
+                <h3>Statutory & Regulatory Events <span class="mca-count">@regulatoryRecords.Count</span></h3>
+                <div class="pi-table-wrap"><table class="pi-results-table">
+                    <thead><tr><th>Event Type</th><th>Date</th><th>Description / Case No.</th><th>Status</th><th>Source Line</th></tr></thead>
+                    <tbody>
+                    @foreach (var c in regulatoryRecords)
+                    {
+                        <tr>
+                            <td><span class="mca-badge">@c.RecordType</span></td>
+                            <td>@D(c.RecordDate)</td>
+                            <td>@Or(c.Description)</td>
+                            <td>@Or(c.Status)</td>
+                            <td class="text-muted small">@Or(c.SourceText)</td>
+                        </tr>
+                    }
+                    </tbody>
+                </table></div>
+            </div>
         }
-        else { <div class="mca-empty"><i class="bi bi-shield-check"></i><p>@Model.SheetCoverage.EmptyState("No MCA / regulatory compliance events (name removal, BIFR, CDR, suit-filed) were reported in this workbook.", SheetAliases.Compliance)</p></div> }
+
+        @* CIBIL Suit-Filed & Wilful Defaulter Summary *@
+        @if (suitFiledRecords.Count > 0)
+        {
+            <div class="mca-section">
+                <div class="d-flex align-items-center justify-content-between mb-2">
+                    <h3 class="mb-0">CIBIL Suit-Filed & Wilful Defaulter Register <span class="mca-count">@suitFiledRecords.Count quarterly filings across @uniqueBanksCount institutions</span></h3>
+                </div>
+
+                <div class="mca-highlight-grid mb-3">
+                    <div class="pi-metric">
+                        <span>Total Peak Exposure</span>
+                        @if (totalPeakExposure is { } exp && !anyFilingMissingAmount)
+                        {
+                            <strong>₹@Num(exp) Cr</strong>
+                            <small>sum of peak amounts across @uniqueBanksCount institutions</small>
+                        }
+                        else if (totalPeakExposure is { } partialExp)
+                        {
+                            <strong>₹@Num(partialExp) Cr*</strong>
+                            <small class="text-warning">incomplete coverage (*unstated filings)</small>
+                        }
+                        else
+                        {
+                            <strong class="text-muted">Not reported</strong>
+                            <small class="text-muted">unstated amounts across institutions</small>
+                        }
+                    </div>
+                    <div class="pi-metric">
+                        <span>Lending Institutions</span>
+                        <strong>@uniqueBanksCount</strong>
+                        <small>banks / institutions reporting</small>
+                    </div>
+                    <div class="pi-metric">
+                        <span>Quarterly Filings</span>
+                        <strong>@suitFiledRecords.Count</strong>
+                        <small>full multi-year historical filings</small>
+                    </div>
+                    <div class="pi-metric">
+                        <span>Latest Reported Quarter</span>
+                        <strong>@(latestSuitDate.HasValue ? D(latestSuitDate) : "—")</strong>
+                        <small>most recent CIBIL report date</small>
+                    </div>
+                </div>
+
+                <h4 class="h6 mb-2">Institutional Exposure Summary (Peak per Bank)</h4>
+                <div class="pi-table-wrap mb-3"><table class="pi-results-table">
+                    <thead>
+                        <tr>
+                            <th>Bank / Financial Institution</th>
+                            <th>Defaulter Classification</th>
+                            <th class="text-end">Peak Exposure (₹ Cr)</th>
+                            <th>Latest Filing</th>
+                            <th class="text-end">Quarters on File</th>
+                            <th>Reporting Period</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                    @foreach (var b in bankSummaries)
+                    {
+                        <tr>
+                            <td><strong>@b.Bank</strong></td>
+                            <td><span class="mca-badge">@b.DefaulterType</span></td>
+                            <td class="text-end">
+                                @if (b.PeakAmount is { } pa)
+                                {
+                                    <strong>@Num(pa)</strong>
+                                    @if (b.HasMissingAmounts)
+                                    {
+                                        <span class="text-warning small" title="One or more reported quarters have unstated amounts">*</span>
+                                    }
+                                }
+                                else
+                                {
+                                    <span class="text-muted">Not reported</span>
+                                }
+                            </td>
+                            <td>@D(b.LatestDate)</td>
+                            <td class="text-end">@b.QuartersCount</td>
+                            <td class="text-muted small">@(b.EarliestDate.HasValue ? D(b.EarliestDate) : "—") – @(b.LatestDate.HasValue ? D(b.LatestDate) : "—")</td>
+                        </tr>
+                    }
+                    </tbody>
+                    <tfoot>
+                        <tr>
+                            <td><strong>Total Institutional Peak Exposure</strong></td>
+                            <td></td>
+                            <td class="text-end">
+                                @if (totalPeakExposure is { } tot && !anyFilingMissingAmount)
+                                {
+                                    <strong>₹@Num(tot) Cr</strong>
+                                }
+                                else if (totalPeakExposure is { } pTot)
+                                {
+                                    <strong>₹@Num(pTot) Cr*</strong>
+                                    <div class="text-muted" style="font-size:0.75rem;">*coverage incomplete (unstated amounts)</div>
+                                }
+                                else
+                                {
+                                    <span class="text-muted">Not reported / incomplete</span>
+                                }
+                            </td>
+                            <td></td>
+                            <td class="text-end"><strong>@suitFiledRecords.Count</strong></td>
+                            <td></td>
+                        </tr>
+                    </tfoot>
+                </table></div>
+
+                <details class="mca-disclosure mt-3">
+                    <summary class="mca-json-toggle">
+                        <strong>View Complete Quarterly Filings Register (@suitFiledRecords.Count records)</strong> — click to expand/collapse full quarterly records
+                    </summary>
+                    <div class="pt-3">
+                        <div class="pi-table-wrap"><table class="pi-results-table">
+                            <thead><tr><th>#</th><th>Bank / Institution</th><th>Report Date</th><th class="text-end">Amount (Cr)</th><th>Defaulter Classification</th><th>Source</th></tr></thead>
+                            <tbody>
+                            @{ var rowIdx = 1; }
+                            @foreach (var c in suitFiledRecords.OrderByDescending(x => x.RecordDate).ThenByDescending(x => x.AmountCrore))
+                            {
+                                <tr>
+                                    <td class="text-muted small">@(rowIdx++)</td>
+                                    <td><strong>@Or(c.Bank)</strong></td>
+                                    <td>@D(c.RecordDate)</td>
+                                    <td class="text-end">@Num(c.AmountCrore)</td>
+                                    <td><span class="mca-badge">@Or(c.DefaulterType)</span></td>
+                                    <td class="text-muted small">@Or(c.Source)</td>
+                                </tr>
+                            }
+                            </tbody>
+                        </table></div>
+                    </div>
+                </details>
+
+                <p class="text-muted mt-2 mb-0">Source: CIBIL Suit-Filed and Wilful Defaulter quarterly registries. Institutional peak summary isolates cumulative exposure per lender while retaining the full quarterly audit trail.</p>
+            </div>
+        }
+        else if (regulatoryRecords.Count == 0)
+        {
+            <div class="mca-empty"><i class="bi bi-shield-check"></i><p>@Model.SheetCoverage.EmptyState("No MCA / regulatory compliance events (name removal, BIFR, CDR, suit-filed) were reported in this workbook.", SheetAliases.Compliance)</p></div>
+        }
     </div>
 
     @* ── GST ── *@
@@ -139,22 +359,74 @@
     <div class="tab-pane fade mca-subtab-panel" id="sec-compliance-epfo" role="tabpanel">
         @if (Model.EpfoContributions.Count > 0)
         {
-            var establishments = Model.EpfoContributions.Select(e => e.EstablishmentName).Distinct().Count();
+            var establishmentsCount = epfoEstablishments.Count;
             var latest = Model.EpfoContributions.OrderByDescending(e => e.WageMonth).FirstOrDefault();
             <div class="mca-highlight-grid" style="margin-bottom:16px;">
-                <div class="pi-metric"><span>Establishments</span><strong>@establishments</strong><small>on record</small></div>
+                <div class="pi-metric"><span>Establishments</span><strong>@establishmentsCount</strong><small>registered units on record</small></div>
                 <div class="pi-metric"><span>Latest Employees</span><strong>@(latest?.EmployeeCount?.ToString() ?? "—")</strong><small>@(latest is not null ? latest.WageMonth : "—")</small></div>
                 <div class="pi-metric"><span>Months on record</span><strong>@Model.EpfoContributions.Count</strong><small>employee & payment-delay history below</small></div>
             </div>
-            <div class="pi-table-wrap"><table class="pi-results-table">
-                <thead><tr><th>Establishment</th><th>Wage Month</th><th class="text-end">Employees</th><th class="text-end">Amount (Cr)</th><th>Status</th></tr></thead>
-                <tbody>
-                @foreach (var e in Model.EpfoContributions)
-                {
-                    <tr><td>@e.EstablishmentName</td><td>@e.WageMonth</td><td class="text-end">@(e.EmployeeCount?.ToString() ?? "—")</td><td class="text-end">@Num(e.ContributionAmountCrore)</td><td>@Or(e.PaymentStatus)</td></tr>
-                }
-                </tbody>
-            </table></div>
+
+            @if (epfoEstablishments.Count > 0)
+            {
+                <div class="mca-section mb-4">
+                    <h3>Establishment Profiles <span class="mca-count">@epfoEstablishments.Count</span></h3>
+                    <div class="row g-3">
+                        @foreach (var est in epfoEstablishments)
+                        {
+                            <div class="col-md-6">
+                                <div class="card h-100 shadow-sm border">
+                                    <div class="card-body">
+                                        <div class="d-flex justify-content-between align-items-start mb-2">
+                                            <h5 class="card-title mb-0">@est.Name</h5>
+                                            <span class="badge @(string.Equals(est.WorkingStatus, "Working", StringComparison.OrdinalIgnoreCase) || string.Equals(est.WorkingStatus, "Active", StringComparison.OrdinalIgnoreCase) ? "bg-success" : "bg-secondary")">@est.WorkingStatus</span>
+                                        </div>
+                                        <p class="text-muted small mb-3">Establishment ID: <code>@est.EstablishmentId</code></p>
+                                        <div class="row text-center g-2 pt-2 border-top">
+                                            <div class="col-4">
+                                                <div class="text-muted small">Latest Headcount</div>
+                                                <strong>@(est.LatestEmployees?.ToString() ?? "—")</strong>
+                                                <div class="text-muted" style="font-size:0.75rem;">@est.LatestMonth</div>
+                                            </div>
+                                            <div class="col-4">
+                                                <div class="text-muted small">Total Months</div>
+                                                <strong>@est.TotalMonths</strong>
+                                                <div class="text-muted" style="font-size:0.75rem;">on file</div>
+                                            </div>
+                                            <div class="col-4">
+                                                <div class="text-muted small">Total Paid</div>
+                                                @if (est.TotalContributions is { } tc)
+                                                {
+                                                    <strong>₹@Num(tc) Cr</strong>
+                                                    <div class="text-muted" style="font-size:0.75rem;">aggregate</div>
+                                                }
+                                                else
+                                                {
+                                                    <strong class="text-muted">Not reported</strong>
+                                                    <div class="text-muted" style="font-size:0.75rem;">incomplete coverage</div>
+                                                }
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        }
+                    </div>
+                </div>
+            }
+
+            <div class="mca-section">
+                <h3>Contribution & Headcount History <span class="mca-count">@Model.EpfoContributions.Count records</span></h3>
+                <div class="pi-table-wrap"><table class="pi-results-table">
+                    <thead><tr><th>Establishment</th><th>Wage Month</th><th class="text-end">Employees</th><th class="text-end">Amount (Cr)</th><th>Status</th></tr></thead>
+                    <tbody>
+                    @foreach (var e in Model.EpfoContributions)
+                    {
+                        <tr><td>@e.EstablishmentName</td><td>@e.WageMonth</td><td class="text-end">@(e.EmployeeCount?.ToString() ?? "—")</td><td class="text-end">@(e.ContributionAmountCrore is { } ca ? Num(ca) : "—")</td><td>@Or(e.PaymentStatus)</td></tr>
+                    }
+                    </tbody>
+                </table></div>
+            </div>
         }
         else { <div class="mca-empty"><i class="bi bi-people"></i><p>@Model.SheetCoverage.EmptyState("No EPFO contribution data was extracted.", SheetAliases.EpfoAnnexure)</p></div> }
     </div>
