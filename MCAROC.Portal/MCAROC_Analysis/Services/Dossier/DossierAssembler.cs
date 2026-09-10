@@ -89,6 +89,8 @@ public class DossierAssembler(AppDbContext db)
             catch (JsonException) { }
         }
 
+        var notAssessed = DeserializeSufficiencyNotes(analysis.DataSufficiencyNotesJson);
+
         var roles = DossierComputations.LitigationRoles(litigations, findings);
 
         var model = new DossierModel(
@@ -111,12 +113,31 @@ public class DossierAssembler(AppDbContext db)
                 analysis.OverallReviewPriority,
                 analysis.CriticalFindingsCount, analysis.ReviewFindingsCount,
                 analysis.WatchFindingsCount, analysis.PositiveFindingsCount,
-                findings, execSummary),
+                findings, execSummary, notAssessed),
             sourceSheets,
             Metrics: []);
 
         // Metrics are derived from the fully-assembled model, then folded back in.
         return model with { Metrics = DossierComputations.BuildMetricGroups(model) };
+    }
+
+    /// <summary>Reads <see cref="AnalysisRun.DataSufficiencyNotesJson"/> — a <c>[{code, reason}]</c>
+    /// array the rule engine writes for every check it could not run. Bad JSON ⇒ empty (never throws).</summary>
+    private static IReadOnlyList<DataSufficiencyNote> DeserializeSufficiencyNotes(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json)) return [];
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            if (doc.RootElement.ValueKind != JsonValueKind.Array) return [];
+            return doc.RootElement.EnumerateArray()
+                .Select(e => new DataSufficiencyNote(
+                    e.TryGetProperty("code", out var c) ? c.GetString() ?? "" : "",
+                    e.TryGetProperty("reason", out var r) ? r.GetString() ?? "" : ""))
+                .Where(n => n.Reason.Length > 0)
+                .ToList();
+        }
+        catch (JsonException) { return []; }
     }
 
     /// <summary>Groups the raw <see cref="SourceRow"/> set into per-worksheet blocks, in workbook →

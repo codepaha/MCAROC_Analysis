@@ -45,6 +45,11 @@ public class RequestDetailsViewModel
     // D-wave issues; the _KeyIndicators partial renders whichever groups a tab passes it.
     public List<MCAROC_Analysis.Models.Dossier.MetricGroup> KeyMetrics { get; set; } = [];
 
+    /// <summary>Deterministic checks the rule engine could not run, and why — same source
+    /// (<c>DossierModel.ExecSummary.NotAssessed</c>) the dossier renders, so a "verified clean" result
+    /// is never mistaken for "not checked". AI-independent.</summary>
+    public List<MCAROC_Analysis.Models.Dossier.DataSufficiencyNote> DataSufficiencyNotes { get; set; } = [];
+
     // Phase 6 — the 12 additional workbook sheets.
     public CompanyStructure? Structure { get; set; }
     public List<RelatedCorporate> RelatedCorporates { get; set; } = [];
