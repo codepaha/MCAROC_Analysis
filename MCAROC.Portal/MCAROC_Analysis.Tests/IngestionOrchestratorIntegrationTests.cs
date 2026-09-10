@@ -221,6 +221,9 @@ public class IngestionOrchestratorIntegrationTests : IAsyncLifetime
         var directorsCanonical = SheetAliases.CanonicalName(SheetAliases.Directors);
 
         // Directors WAS present → not in the absent list; every other tracked optional sheet IS.
+        // This exact-count assertion is also the structural guard that every entry in
+        // TrackedOptionalSheets is resolved through the SheetPresence tracker: a tracked sheet the
+        // orchestrator never looks up would never be added to _absent, so the count would fall short.
         Assert.DoesNotContain(directorsCanonical, absent);
         Assert.Equal(SheetAliases.TrackedOptionalSheets.Count - 1, absent.Count);
         Assert.Contains(SheetAliases.CanonicalName(SheetAliases.LegalHistory), absent);
@@ -233,6 +236,41 @@ public class IngestionOrchestratorIntegrationTests : IAsyncLifetime
         Assert.Equal(1, coverage.PresentOptionalSheets);
         Assert.True(coverage.WasAbsent(SheetAliases.LegalHistory));
         Assert.False(coverage.WasAbsent(SheetAliases.Directors));
+    }
+
+    [Fact]
+    public async Task RunAsync_DoesNotRecordEpfoAnnexureAbsent_WhenTheUploadContainsIt()
+    {
+        // Regression (#75 review): the EPFO section is built from "Annexure - EPFO Establishments"
+        // (SheetAliases.EpfoAnnexure) — the one the parser consumes and the one tracked. The separate
+        // latest-only "EPFO Establishments" summary sheet (SheetAliases.Epfo) is intentionally NOT
+        // parsed or tracked until #36. An upload carrying both must not show EPFO as missing.
+        await using var db = CreateContext();
+        var (request, rocDoc) = await SeedRequestWithRoc(db, @"C:\fake\roc-with-epfo.xls");
+
+        var epfoSummary = Sheet("EPFO Establishments",
+            Row("WORKING STATUS", "ESTABLISHMENT ID", "ESTABLISHMENT NAME", "WAGE MONTH", "TRRN", "NO. OF EMPLOYEES", "AMOUNT (Rs. Crore)"),
+            Row("Working", "ORXXX0012345000", "COASTAL HEAD OFFICE", "Jan-2023", "-", 100.0, 1.25));
+        var epfoAnnexure = Sheet("Annexure - EPFO Establishments",
+            Row("WORKING STATUS", "ESTABLISHMENT ID", "ESTABLISHMENT NAME", "WAGE MONTH", "TRRN", "NO. OF EMPLOYEES", "AMOUNT (Rs. Crore)", "DATE OF CREDIT", "PAYMENT DUE DATE", "STATUS"),
+            Row("Working", "ORXXX0012345000", "COASTAL HEAD OFFICE", "Jan-2023", "TRRN123", 100.0, 1.25, "15 Feb, 2023", "20 Feb, 2023", "Paid"));
+
+        var sheetReader = new FakeExcelSheetReader(new Dictionary<string, IReadOnlyList<SheetData>>
+        {
+            [rocDoc.StoragePath] = [CompanyProfileSheet(request.Cin!), epfoSummary, epfoAnnexure]
+        });
+        var run = await new IngestionOrchestrator(db, sheetReader, NullLogger<IngestionOrchestrator>.Instance)
+            .RunAsync(request.RequestId, rocDoc.DocumentId, chargeDocumentId: null);
+
+        Assert.NotEqual(IngestionRunStatus.Failed, run.Status);
+
+        await using var verifyDb = CreateContext();
+        var reloaded = await verifyDb.IngestionRuns.FirstAsync(x => x.IngestionRunId == run.IngestionRunId);
+        var absent = System.Text.Json.JsonSerializer.Deserialize<List<string>>(reloaded.AbsentOptionalSheetsJson)!;
+
+        Assert.DoesNotContain(SheetAliases.CanonicalName(SheetAliases.EpfoAnnexure), absent);
+        Assert.False(MCAROC_Analysis.Models.SheetCoverage.From(reloaded).WasAbsent(SheetAliases.EpfoAnnexure));
+        Assert.True(await verifyDb.EpfoContributions.AnyAsync(x => x.IngestionRunId == run.IngestionRunId));
     }
 
     [Fact]

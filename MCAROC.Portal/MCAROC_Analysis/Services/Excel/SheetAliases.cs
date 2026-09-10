@@ -36,10 +36,17 @@ public static class SheetAliases
     public static readonly string[] LatestEventOnOpenCharges = ["Latest Event on Open Charges"];
     public static readonly string[] PeerComparison = ["Peer Comparison"];
 
-    /// <summary>The optional sheets whose presence the orchestrator records per ingestion run. The first
-    /// entry of each alias array is the canonical name written to <c>IngestionRun.AbsentOptionalSheetsJson</c>
-    /// and shown to the reviewer; the count here is the "M" in "N of M optional sheets present". Charge
-    /// sheets are excluded — a missing charge workbook is its own flag (<c>IngestionRun.ChargeReportMissing</c>).</summary>
+    /// <summary>The optional sheets whose presence the orchestrator records per ingestion run — exactly
+    /// the sheets a section parser reads in <c>IngestionOrchestrator.RunSectionParsers</c>, so every
+    /// entry here is resolved through the run's <see cref="SheetPresence"/> tracker (no entry is
+    /// counted in "M" without being checked). The first entry of each alias array is the canonical name
+    /// written to <c>IngestionRun.AbsentOptionalSheetsJson</c> and shown to the reviewer; the count
+    /// here is the "M" in "N of M optional sheets present".
+    /// <para>Deliberately excluded: the charge sheets (a missing charge workbook is its own flag,
+    /// <c>IngestionRun.ChargeReportMissing</c>) and the latest-only <see cref="Epfo"/> summary sheet
+    /// ("EPFO Establishments") — no parser consumes it (<see cref="EpfoAnnexure"/> carries the same
+    /// fields per wage-month), so tracking it would inflate "M" and always report it absent. It joins
+    /// this list only if #36 gives it a parser.</para></summary>
     public static readonly IReadOnlyList<string[]> TrackedOptionalSheets =
     [
         Directors, OtherDirectorships, DirectorShareholding, MajorShareholding,
