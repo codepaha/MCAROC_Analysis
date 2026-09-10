@@ -354,7 +354,7 @@
             </div>
         }
 
-        @await Html.PartialAsync("Details/_KeyIndicators", Model.KeyMetrics.Where(g => g.Title == "GST compliance").ToList())
+        @await Html.PartialAsync("~/Views/Requests/Details/_KeyIndicators.cshtml", Model.KeyMetrics.Where(g => g.Title == "GST compliance").ToList())
     </div>
 
     @* ── EPFO ── *@
