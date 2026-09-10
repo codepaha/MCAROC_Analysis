@@ -1,0 +1,36 @@
+@model McaRequest
+@{
+    ViewData["Title"] = "Re-ingest (dev)";
+}
+
+<div class="pi-page-head">
+    <div>
+        <div class="pi-kicker">Maintenance · Development only</div>
+        <h1>Re-ingest request #@Model.RequestId</h1>
+        <p>
+            @Model.CompanyName — @(Model.Cin ?? Model.Pan). Uploads a fresh ROC (and optional charge) workbook and
+            re-runs ingestion against the current parsers as a new ingestion run. The existing MCA-filings archive,
+            documents and embeddings are untouched. Analysis is queued automatically if extraction completes cleanly.
+        </p>
+    </div>
+</div>
+
+@if (TempData["ReingestError"] is string err)
+{
+    <div class="alert alert-danger">@err</div>
+}
+
+<div class="pi-panel" style="padding:24px; max-width:680px;">
+    <form asp-action="Reingest" asp-route-id="@Model.RequestId" method="post" enctype="multipart/form-data">
+        <div class="mb-3">
+            <label class="form-label">MCA / ROC Report (.xls / .xlsx)</label>
+            <input type="file" name="rocFile" class="form-control" accept=".xls,.xlsx" required />
+        </div>
+        <div class="mb-3">
+            <label class="form-label">Detailed Charge Report (.xls / .xlsx) — optional</label>
+            <input type="file" name="chargeFile" class="form-control" accept=".xls,.xlsx" />
+        </div>
+        <button type="submit" class="btn btn-primary">Re-ingest &amp; queue analysis</button>
+        <a asp-action="Details" asp-route-id="@Model.RequestId" class="btn btn-outline-secondary ms-1">Cancel</a>
+    </form>
+</div>
