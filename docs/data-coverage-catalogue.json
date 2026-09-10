@@ -89,7 +89,7 @@
       "parser": "FinancialParametersParser (params) + HighlightsParser (PBA + name history)", "entity": "FinancialParameter + PrincipalBusinessActivity + CompanyNameHistory",
       "portal_tab": "Financials + Corporate", "dossier": "Annexure B + A",
       "fields": [
-        {"source": "FINANCIAL PARAMETERS — 11 params x year (Income/Expense in foreign currency, Employee benefit expense, Number of employees, Gross value of RPT per AS-18, Gross fixed assets, Trade receivables > 6 months, Proposed dividend, Prescribed CSR, Total CSR spent)", "entityField": "FinancialParameter.*", "status": "parsed-not-shown", "gap": "G8", "note": "confirm _FinancialsTab renders parameters; only latest-year column is on this sheet, older years on 'Annexure - Financial Parameters'"},
+        {"source": "FINANCIAL PARAMETERS — 11 params x year (Income/Expense in foreign currency, Employee benefit expense, Number of employees, Gross value of RPT per AS-18, Gross fixed assets, Trade receivables > 6 months, Proposed dividend, Prescribed CSR, Total CSR spent)", "entityField": "FinancialParameter.*", "status": "live", "note": "B1/#39 — rendered in Additional Indicators tab across all years"},
         {"source": "PRINCIPAL BUSINESS ACTIVITIES — Main Activity Group Code / Description / Business Activity Code / Description / % of Turnover (+ as-on date from the banner)", "entityField": "PrincipalBusinessActivity.* (AsOnDate/MainActivityGroupCode/MainActivityGroupDescription/BusinessActivityCode/BusinessActivityDescription/TurnoverPercent/DisplayOrder)", "status": "live", "note": "A3/#34 — multi-row supported; codes cleaned of '.0' float artifact"},
         {"source": "NAME HISTORY — Name / Till Date", "entityField": "CompanyNameHistory.* (PreviousName/TillDate/TillDateRaw/DisplayOrder)", "status": "live", "note": "A3/#34 — sheet order kept; 'no name change' note → 0 rows"}
       ]
@@ -136,9 +136,9 @@
       "portal_tab": "Financials", "dossier": "Annexure B",
       "fields": [
         {"source": "~25 mapped line-items (Share Capital, Net Worth, borrowings, revenue, EBITDA, PBT, PAT, CFO/CFI/CFF, ...)", "entityField": "FinancialYearData.*", "status": "live"},
-        {"source": "~30 unmapped line-items (Reserves & Surplus, Other Equity, deferred tax, provisions, tangible/intangible assets, CWIP, investments, adjustments, key-schedule items)", "entityField": "FinancialFact (Section=BalanceSheet/ProfitAndLoss/CashFlow)", "status": "parsed-not-shown", "gap": "G8", "note": "462 FinancialFacts for COASTAL — confirm _FinancialStatement renders the full statement, not just the typed columns"},
-        {"source": "RATIOS sub-section — 16 ratios x FY", "entityField": "FinancialFact (Section=Ratios)", "status": "parsed-not-shown", "gap": "G8"},
-        {"source": "Cash-flow year alignment inferred (no year header on CF columns)", "entityField": "FinancialYearData.CashFlowYearInferred", "status": "parsed-not-shown", "gap": "G8", "note": "must show a 'year inferred' caption where true"},
+        {"source": "~30 unmapped line-items (Reserves & Surplus, Other Equity, deferred tax, provisions, tangible/intangible assets, CWIP, investments, adjustments, key-schedule items)", "entityField": "FinancialFact (Section=BalanceSheet/ProfitAndLoss/CashFlow)", "status": "live", "note": "B1/#39 — rendered in full multi-year statement in statement order with subtotals"},
+        {"source": "RATIOS sub-section — 16 ratios x FY", "entityField": "FinancialFact (Section=Ratios)", "status": "live", "note": "B1/#39 — rendered in dedicated Ratios sub-tab"},
+        {"source": "Cash-flow year alignment inferred (no year header on CF columns)", "entityField": "FinancialYearData.CashFlowYearInferred", "status": "live", "note": "B1/#39 — year-inferred alert banner and asterisk badges rendered"},
         {"source": "trailing AUDITOR(s) block (Year rows 116-120)", "entityField": "(handled by AuditorsParser on separate sheet)", "status": "live"}
       ]
     },
@@ -245,7 +245,7 @@
       "workbook": "RocReport", "sheet": "Annexure - Financial Parameters", "shape": "matrix, 11 params x 3 FY",
       "parser": "FinancialParametersParser", "entity": "FinancialParameter",
       "portal_tab": "Financials", "dossier": "Annexure B", "fields": [
-        {"source": "11 params x older FY columns", "entityField": "FinancialParameter (multiple FinancialYear)", "status": "parsed-not-shown", "gap": "G8"}
+        {"source": "11 params x older FY columns", "entityField": "FinancialParameter (multiple FinancialYear)", "status": "live", "note": "B1/#39 — rendered in Additional Indicators table across all years"}
       ]
     },
     {
