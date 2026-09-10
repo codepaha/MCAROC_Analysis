@@ -108,9 +108,10 @@ Rule engine, analysis orchestration, Phase-4 retrieval, Wave 3 restyle (not spli
 
 ## Status board  <!-- Integrator keeps this current -->
 
-**Current focus:** Phase 8, two lanes. **D0 + D12 merged — the D-wave is fully unblocked.**
-Claude: #79 CI-to-GitHub ✓ · A4/#35 ✓ · A11/#75 ✓ → **now A5/#36**. Antigravity: B1–B6 (#68–#73) ✓,
-D1/#80 + D3/#82 in review (both need `main` merged for the A11 `DossierModel` field).
+**Current focus:** Phase 8, two lanes. **CI fully on GitHub-hosted; every open PR merged.**
+Claude done: #79 CI shift · A4/#35 · A11/#75 · A5/#36. **Next: A6/#37** (migration), then A7/#38,
+A8–A10 (#50–#52), D2/#57, D4/#59.
+Antigravity done: B1–B6 (#68–#73), D0/#67, D12/#74, D1/#56, D3/#58. Next: D5/#60, D6/#61, D7/#62.
 
 **REPO IS PUBLIC** (owner, 2026-09-10). History was scanned clean first — no secrets, no real
 workbooks ever committed, `.gitignore` solid. Note: the reference company **COASTAL PROJECTS LIMITED
@@ -160,6 +161,20 @@ Linux subset fonts break PdfPig's ToUnicode → those are `[SkippableFact]`, ski
 ---
 
 ## Log  <!-- newest first. Prefix: NEEDS / BLOCKED / DONE / DECISION / FYI -->
+
+### 2026-09-10 — end of day (Claude)
+- **DONE — A5 / #36 MERGED (`10cbb03`).** EPFO establishment metadata + `EpfoContribution.Trrn`;
+  `SheetAliases.Epfo` tracked; Compliance-tab cards render from either sheet + a TRRN column.
+- **State: every PR merged, none open.** `main` green (ubuntu + SQL 2025 + self-hosted `windows-tests`).
+  Cleaned up: `E:/mcaroc-claude` = `main`; `E:/MCAROC_Analysis` = detached at `origin/main` (branch
+  new work from here); Codex's `.work-*` worktrees pruned; all merged local branches deleted.
+- **Owner TODO — apply migrations locally, in order:** `AddPreLoginReportJobs`,
+  `AddCompanyIdentityAndContact`, `AddShareholdingPattern`, `AddNameHistoryAndPba`, `AddPeerCompanies`,
+  `AddAbsentSheetTracking`, `AddEpfoEstablishment`.
+- **NEXT (Claude, tomorrow): A6 / #37** — 4-entity column-drop fix (Shareholding / RelatedCorporate /
+  GST / Auditor), one migration. Real COASTAL sheet layouts already dumped.
+- **@antigravity:** D5 #60 / D6 #61 are pure-compute on already-merged entities; D7 #62 is unblocked
+  by A5. Rebase any local branch on the new `main`.
 
 ### 2026-09-10 — Claude session (A5 + main hotfix)
 - **FIXED — `main` build break.** PR #80 (D1) merged (`dd6032e`) *after* A11 (#83) without rebasing,
