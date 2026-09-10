@@ -1,0 +1,51 @@
+@model PreLoginReportViewModel
+@{
+    ViewData["Title"] = "Pre-login Reports";
+}
+
+<div class="pi-page-head">
+    <div>
+        <div class="pi-kicker">Public report generation</div>
+        <h1>Pre-login MCA Reports</h1>
+        <p>Enter a company CIN, choose SBI or PRR, and download the generated Word report.</p>
+    </div>
+</div>
+
+<div class="pi-panel mt-3" style="padding:24px;max-width:680px;">
+    <h2 class="h5">Batch processing</h2><p class="text-muted">Up to 25 CINs. Batch reports use API data as returned and are saved to report history; use the individual flow above when you need to edit fields first.</p>
+    <form asp-action="Batch" method="post"><label asp-for="Format" class="form-label">Report format</label><select asp-for="Format" class="form-select mb-3"><option value="Sbi">SBI</option><option value="Prr">PRR</option></select>
+        <label asp-for="Cins" class="form-label">One CIN per line</label><textarea asp-for="Cins" class="form-control" rows="5" placeholder="U74899DL1991PTC043274"></textarea>
+        <button type="submit" class="btn btn-outline-primary mt-3">Queue batch</button> <a asp-action="History" class="btn btn-link mt-3">View report history</a>
+    </form>
+</div>
+
+<div class="pi-panel" style="padding:24px;max-width:680px;">
+    <form asp-action="Fetch" method="post">
+        <div asp-validation-summary="ModelOnly" class="text-danger mb-3"></div>
+        <div class="mb-3">
+            <label asp-for="Cin" class="form-label"></label>
+            <input asp-for="Cin" class="form-control" autocomplete="off" placeholder="U74899DL1991PTC043274" />
+            <div class="form-text">Only company CINs are currently supported by the InstaFinancials CompanyCIN endpoint.</div>
+            <span asp-validation-for="Cin" class="text-danger"></span>
+        </div>
+        <div class="mb-3">
+            <label asp-for="CompanyName" class="form-label"></label>
+            <input asp-for="CompanyName" class="form-control" autocomplete="organization" placeholder="Used only if the API does not return a name" />
+            <span asp-validation-for="CompanyName" class="text-danger"></span>
+        </div>
+        <fieldset class="mb-4">
+            <legend class="form-label">Report format</legend>
+            <div class="form-check mb-2">
+                <input class="form-check-input" type="radio" asp-for="Format" value="Sbi" id="formatSbi" />
+                <label class="form-check-label" for="formatSbi"><strong>SBI</strong> - company profile, legal-case summary, MCA-ROC charges and disclaimer.</label>
+            </div>
+            <div class="form-check">
+                <input class="form-check-input" type="radio" asp-for="Format" value="Prr" id="formatPrr" />
+                <label class="form-check-label" for="formatPrr"><strong>PRR</strong> - company profile, MCA-ROC charges and directors/signatories.</label>
+            </div>
+        </fieldset>
+        <button type="submit" class="btn btn-primary"><i class="bi bi-arrow-right-circle me-1"></i>Fetch &amp; review data</button>
+    </form>
+</div>
+
+@section Scripts { <partial name="_ValidationScriptsPartial" /> }

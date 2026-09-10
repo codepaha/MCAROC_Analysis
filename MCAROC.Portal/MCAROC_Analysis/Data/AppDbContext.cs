@@ -55,6 +55,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<SourceRow> SourceRows => Set<SourceRow>();
     public DbSet<FinancialFact> FinancialFacts => Set<FinancialFact>();
     public DbSet<CompanyOfficer> CompanyOfficers => Set<CompanyOfficer>();
+    public DbSet<PreLoginReportJob> PreLoginReportJobs => Set<PreLoginReportJob>();
 
     protected override void ConfigureConventions(ModelConfigurationBuilder configurationBuilder)
     {
@@ -68,6 +69,16 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
         {
             e.HasKey(x => x.ClientId);
             e.HasIndex(x => x.ClientCode).IsUnique();
+        });
+
+        modelBuilder.Entity<PreLoginReportJob>(e =>
+        {
+            e.HasKey(x => x.PreLoginReportJobId);
+            e.HasIndex(x => new { x.BatchId, x.CreatedUtc });
+            e.HasIndex(x => new { x.Status, x.NextAttemptUtc });
+            e.Property(x => x.Format).HasMaxLength(10);
+            e.Property(x => x.Status).HasConversion<string>().HasMaxLength(30);
+            e.Property(x => x.Cin).HasMaxLength(30);
         });
 
         modelBuilder.Entity<McaRequest>(e =>

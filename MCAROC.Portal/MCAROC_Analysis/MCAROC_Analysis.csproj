@@ -22,4 +22,10 @@
     <PackageReference Include="QuestPDF" Version="2025.7.0" />
   </ItemGroup>
 
+  <ItemGroup>
+    <Content Update="ReportTemplates\**\*">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
+
 </Project>
