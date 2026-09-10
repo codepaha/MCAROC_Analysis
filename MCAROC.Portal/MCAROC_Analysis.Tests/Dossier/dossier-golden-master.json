@@ -39,7 +39,8 @@
     "LITIGATION_ROLE_UNCERTAIN"
   ],
   "MetricGroupTitles": [
-    "Charge register"
+    "Charge register",
+    "GST compliance"
   ],
   "DataSufficiencyNoteCodes": [
     "FIN_LEVERAGE_TREND",

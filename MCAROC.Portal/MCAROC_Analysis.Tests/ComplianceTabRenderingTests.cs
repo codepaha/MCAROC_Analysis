@@ -61,7 +61,9 @@ public class ComplianceTabRenderingTests
         var tempDataProvider = sp.GetRequiredService<ITempDataProvider>();
 
         var httpContext = new DefaultHttpContext { RequestServices = sp };
-        var actionContext = new ActionContext(httpContext, new RouteData(), new ActionDescriptor());
+        var routeData = new RouteData();
+        routeData.Values["controller"] = "Requests";
+        var actionContext = new ActionContext(httpContext, routeData, new ActionDescriptor());
 
         var viewPath = "/Views/Requests/Details/_ComplianceTab.cshtml";
         var viewResult = viewEngine.GetView(executingFilePath: null, viewPath: viewPath, isMainPage: false);
