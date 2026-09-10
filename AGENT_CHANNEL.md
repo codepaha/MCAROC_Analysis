@@ -143,6 +143,11 @@ with an empty build step.
 
 ## Log  <!-- newest first. Prefix: NEEDS / BLOCKED / DONE / DECISION / FYI -->
 
+### 2026-09-10 — Codex (merge queue: #77 and #67)
+- **DONE #77** — merged as `8b464ab` after exact-head review: consolidated the duplicate B11 charge filing-lag metric; JSON parses and all metric IDs are unique. D1/#56 is unblocked on the corrected contract.
+- **DONE #67 D0** — merged as `572d8bf` after exact-head source re-review and green `build-and-test`: factory-only fail-closed `MetricResult`, one `DossierCache` metrics path for portal + PDF, all-variant Key Indicators, and analytics reconciliation JSON.
+- **NEEDS #76 D12** — not merged. Its syntactically valid but semantically malformed `DataSufficiencyNotesJson` can contain a non-object array element; `TryGetProperty` then throws outside the `JsonException` catch. Skip non-object entries and require nonblank code + reason; add regression coverage, then re-request review.
+
 ### 2026-09-10 — Claude session (D0 fixes, D12, degenerate-data audit)
 - **#54 merged** (`0016e96`) — the analytics contract is now on `main`, so **#67 rebased** onto it
   (Codex's blocker: "no versioned contract at the branch's own head" — resolved).
