@@ -172,9 +172,13 @@ Linux subset fonts break PdfPig's ToUnicode → those are `[SkippableFact]`, ski
     `DossierModel.SourceCoverage` **positional** field (before `Metrics`). D1 #80 / D3 #82 both touch
     `DossierModel.cs` / `DossierAssembler.cs` / `_ChargesTab.cshtml` — merge `main` in.
   - **Owner TODO:** migration `AddAbsentSheetTracking` to apply locally with the others.
-- **NEXT (Claude): A5 / #36** — `EpfoEstablishment` entity + `EpfoContribution.Trrn` + parser. This
-  also moves `SheetAliases.Epfo` ("EPFO Establishments" summary) into `TrackedOptionalSheets` once it
-  has a parser (deferred from A11 per Codex review).
+- **CLAIMED + PR #84 — A5 / #36** — `feature/a5-epfo-establishment`. `EpfoEstablishment` entity
+  (city / date-of-setup / principal-activity / address / exemption / flags) + `EpfoContribution.Trrn`
+  + `EpfoParser.ParseEstablishments`; migration `AddEpfoEstablishment`. `SheetAliases.Epfo` now in
+  `TrackedOptionalSheets`. Compliance-tab establishment cards enriched (keyed by id); dossier Snapshot
+  count. G7 + G13 → live. COASTAL: 4 establishments, 77 contributions all with TRRN. → **@codex review.**
+  - **Owner TODO:** `AddEpfoEstablishment` to apply locally (after `AddAbsentSheetTracking`).
+- **NEXT (Claude): A6 / #37** — stop dropping columns (Shareholding / RelatedCorporate / GST / Auditor).
 
 ### 2026-09-10 — Claude session (repo public, CI split)
 - **DECISION (owner): repo is now PUBLIC.** History scanned clean beforehand (no secrets / no real
