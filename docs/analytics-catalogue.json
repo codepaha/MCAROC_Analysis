@@ -1,0 +1,229 @@
+{
+  "$schema": "internal",
+  "title": "MCAROC analytics catalogue",
+  "purpose": "Every DERIVED metric the system computes from already-parsed data (as distinct from data-coverage-catalogue.json, which tracks raw field capture). Each metric names its exact inputs, its formula, its 'insufficient data' behaviour, where it is surfaced, and the Wave-4 issue that ships it. This is the contract for 'every calculation is auditable and no calculation is fabricated'.",
+  "reference_company": "COASTAL PROJECTS LIMITED / U45203OR1995PLC003982",
+  "generated": "2026-09-10",
+
+  "principles": [
+    "NOT A SCORE. Individual computed facts only. Never roll metrics into a composite index or 0-100 number (that is the '72/100' we deliberately dropped in Phase 7).",
+    "Every metric is a pure function in Models/DossierComputations.cs, guarded by the golden-master parity test, shared by the portal and the dossier PDF.",
+    "Every metric returns a MetricResult, never a bare number: { Value, Unit, Period, Inputs[], InsufficiencyReason }. A metric with InsufficiencyReason set renders as an explicit 'insufficient data' state, never as 0 or a blank.",
+    "Never richer than the source. A metric built on free-text (charge interest rate), an inferred value (CashFlowYearInferred cash-flow rows), or a partial population (only >5% shareholders) is either rejected or carries a visible caveat naming the limitation.",
+    "Deterministic and AI-independent. The whole metrics layer renders in ALL dossier variants — Executive, FullSource AND SourceRecord (the no-AI variant) — inside the Snapshot 'Key Indicators' block. AI narrative, when present, may REFERENCE a metric but never changes its value.",
+    "Rule-engine metrics stay in the rule engine. A metric that gates a finding (e.g. Net Debt / EBITDA over a threshold) is computed once here and consumed by the rule; the rule does not re-derive it."
+  ],
+
+  "metric_result_contract": {
+    "type": "record MetricResult(decimal? Value, string Unit, string Period, IReadOnlyList<string> Inputs, string? InsufficiencyReason)",
+    "unit_examples": ["percent", "ratio", "x (times)", "days", "INR Crore", "count", "years"],
+    "period_examples": ["FY2017", "FY2015-FY2017 (3Y)", "as at 10 Sep 2026", "trailing 12 months to 31 Mar 2017"],
+    "insufficiency_examples": [
+      "Only 1 financial year on record",
+      "Prior-year revenue is zero",
+      "Cash-flow year is inferred (CashFlowYearInferred) — excluded from derived metrics",
+      "No open charges",
+      "Charge holder name could not be normalised"
+    ]
+  },
+
+  "status_legend": {
+    "planned": "specified here, not built — a Wave-4 issue",
+    "blocked": "needs a Wave-1 sheet not parsed yet (depends_on_issue)",
+    "shipped": "built, tested, rendered",
+    "rejected": "deliberately not built (reason given) — do not implement"
+  },
+
+  "surfaced_in_legend": {
+    "dossier:KeyIndicators": "Snapshot 'Key Indicators' block — renders in Executive, FullSource AND SourceRecord",
+    "dossier:Section1": "Section 1 (Executive Summary) — Executive + FullSource only, NOT SourceRecord",
+    "portal:tab": "the named company-page tab, in a 'Key Indicators' panel above the raw tables"
+  },
+
+  "wave4_issues": {
+    "D0": "MetricResult contract + DossierComputations.Metrics partial + golden-master coverage + the Snapshot 'Key Indicators' renderer (all variants) + portal 'Key Indicators' partial. Guardrail — ships first, no metrics yet.",
+    "D1": "Section B — Charge register analytics (unblocked)",
+    "D2": "Section A2/A3 — Financial trend & leverage analytics (unblocked)",
+    "D3": "Section G — GST compliance analytics (unblocked)",
+    "D4": "Section C — Shareholding analytics (unblocked; richer after #49)",
+    "D5": "Section D — Legal history analytics (unblocked)",
+    "D6": "Section I — Directors analytics (unblocked)",
+    "D7": "Section H — EPFO analytics (partly blocked on #36)",
+    "D8": "Section J — Peer comparison analytics (blocked on #35 for the closest-peers list)",
+    "D9": "Section A4/A5 — Cost structure & forex analytics (needs a FinancialFact label map)",
+    "D10": "Section E — Related-party-transaction analytics (blocked on #50)",
+    "D11": "Section F — Credit rating analytics (blocked on #51)"
+  },
+
+  "sections": [
+    {
+      "id": "A", "title": "Financial trend & leverage analytics",
+      "source_entities": ["FinancialYearData (Basis=Standalone)", "FinancialFact", "FinancialParameter"],
+      "issue": "D2 (+ D9 for cost/forex)",
+      "notes": "Report already ships 16 pre-computed ratios in the source Ratios section (captured as FinancialFact Section=Ratios). We DO NOT recompute those — we surface them and add trend/leverage derivations the source does not carry. Any metric touching CFO/CFI/CFF must skip rows where CashFlowYearInferred is true.",
+      "metrics": [
+        {"id": "A2.1", "name": "Revenue CAGR", "unit": "percent", "formula": "(Rev[t] / Rev[t-n])^(1/n) - 1, n = min(3, yearsAvailable-1)", "inputs": ["FinancialYearData.Revenue"], "degenerate": "null if < 2 FY with non-zero revenue; Period names the actual span used", "status": "planned", "surfaced_in": ["dossier:KeyIndicators", "portal:Financials"]},
+        {"id": "A2.2", "name": "PAT CAGR", "unit": "percent", "formula": "same as A2.1 on PAT", "inputs": ["FinancialYearData.Pat"], "degenerate": "null if < 2 FY or a negative base year (CAGR undefined) — fall back to total % change with a caveat", "status": "planned", "surfaced_in": ["dossier:KeyIndicators"]},
+        {"id": "A2.3", "name": "EBITDA CAGR", "unit": "percent", "formula": "same on EBITDA", "inputs": ["FinancialYearData.Ebitda"], "degenerate": "as A2.2", "status": "planned", "surfaced_in": ["dossier:KeyIndicators"]},
+        {"id": "A2.4", "name": "Total debt growth (YoY)", "unit": "percent", "formula": "(Debt[t] - Debt[t-1]) / |Debt[t-1]|", "inputs": ["FinancialYearData.TotalDebt (or LongTermBorrowings + ShortTermBorrowings when TotalDebt null)"], "degenerate": "null if prior debt is zero/null", "status": "planned", "surfaced_in": ["dossier:KeyIndicators", "portal:Financials"]},
+        {"id": "A2.5", "name": "Net worth growth (YoY)", "unit": "percent", "formula": "(NetWorth[t] - NetWorth[t-1]) / |NetWorth[t-1]|", "inputs": ["FinancialYearData.NetWorth"], "degenerate": "null if prior net worth is zero/null; flag if net worth is negative", "status": "planned", "surfaced_in": ["dossier:KeyIndicators"]},
+        {"id": "A2.6", "name": "Operating leverage", "unit": "ratio", "formula": "EBITDA growth % / Revenue growth %", "inputs": ["FinancialYearData.Ebitda", "FinancialYearData.Revenue"], "degenerate": "null if revenue growth ~ 0 (division unstable) — show 'n/m'", "status": "planned", "surfaced_in": ["dossier:Section1"]},
+        {"id": "A3.1", "name": "Net debt", "unit": "INR Crore", "formula": "LongTermBorrowings + ShortTermBorrowings - CashAndBank", "inputs": ["FinancialYearData.LongTermBorrowings", "FinancialYearData.ShortTermBorrowings", "FinancialYearData.CashAndBank"], "degenerate": "null if all borrowing fields null; negative net debt is valid (net cash)", "status": "planned", "surfaced_in": ["dossier:KeyIndicators", "portal:Financials"]},
+        {"id": "A3.2", "name": "Net debt / EBITDA", "unit": "x (times)", "formula": "NetDebt[t] / EBITDA[t]", "inputs": ["A3.1", "FinancialYearData.Ebitda"], "degenerate": "null if EBITDA <= 0 (ratio meaningless) — say so", "status": "planned", "surfaced_in": ["dossier:KeyIndicators", "portal:Financials"], "feeds_rule": "FinancialRules leverage gate"},
+        {"id": "A3.3", "name": "Free cash flow (proxy)", "unit": "INR Crore", "formula": "CFO + CFI  (labelled 'CFO less net investing' — true capex not separately typed)", "inputs": ["FinancialYearData.Cfo", "FinancialYearData.Cfi"], "degenerate": "null if CashFlowYearInferred on that FY, or CFO null", "status": "planned", "surfaced_in": ["dossier:KeyIndicators"], "caveat": "Proxy — CFI includes non-capex flows; named explicitly, not called 'FCF' unqualified"},
+        {"id": "A3.4", "name": "CFO / PAT (cash conversion of earnings)", "unit": "ratio", "formula": "CFO[t] / PAT[t]", "inputs": ["FinancialYearData.Cfo", "FinancialYearData.Pat"], "degenerate": "null if CashFlowYearInferred, PAT <= 0, or either null", "status": "planned", "surfaced_in": ["dossier:Section1"]},
+        {"id": "A3.5", "name": "Debt-funded-growth flag", "unit": "count", "formula": "boolean: debt growth % > revenue growth % over the same span AND debt growth > 20%", "inputs": ["A2.1", "A2.4"], "degenerate": "not asserted if either input insufficient", "status": "planned", "surfaced_in": ["dossier:Section1"], "feeds_rule": "candidate CrossSectionRules signal"},
+        {"id": "A4.1", "name": "Employee cost % of revenue", "unit": "percent", "formula": "EmployeeBenefitsExpense / Revenue", "inputs": ["FinancialParameter['Employee benefits expense']", "FinancialYearData.Revenue"], "degenerate": "null if parameter not reported for the FY", "status": "planned", "surfaced_in": ["portal:Financials"], "issue": "D9"},
+        {"id": "A4.2", "name": "Material cost % of revenue", "unit": "percent", "formula": "CostOfMaterialsConsumed / Revenue", "inputs": ["FinancialFact['Cost of materials consumed'] (label map)", "FinancialYearData.Revenue"], "degenerate": "null if the fact label is absent", "status": "planned", "surfaced_in": ["portal:Financials"], "issue": "D9", "caveat": "Depends on a curated FinancialFact label map — labels vary slightly across exports"},
+        {"id": "A4.3", "name": "Other expenses % of revenue", "unit": "percent", "formula": "OtherExpenses / Revenue", "inputs": ["FinancialFact['Other expenses']", "FinancialYearData.Revenue"], "degenerate": "null if absent", "status": "planned", "surfaced_in": ["portal:Financials"], "issue": "D9"},
+        {"id": "A4.4", "name": "Auditor fee % of revenue", "unit": "percent", "formula": "PaymentToAuditors / Revenue", "inputs": ["FinancialFact['Payment to auditors' / key schedule]", "FinancialYearData.Revenue"], "degenerate": "null if absent", "status": "planned", "surfaced_in": ["portal:Financials"], "issue": "D9"},
+        {"id": "A5.1", "name": "Export income % of revenue", "unit": "percent", "formula": "IncomeInForeignCurrency / Revenue", "inputs": ["FinancialParameter['Income in foreign currency']", "FinancialYearData.Revenue"], "degenerate": "null if '-' for the FY (COASTAL reports '-')", "status": "planned", "surfaced_in": ["portal:Financials"], "issue": "D9"},
+        {"id": "A5.2", "name": "Net forex exposure", "unit": "INR Crore", "formula": "IncomeInForeignCurrency - ExpenseInForeignCurrency", "inputs": ["FinancialParameter['Income in foreign currency']", "FinancialParameter['Expense in foreign currency']"], "degenerate": "null if either is '-'", "status": "planned", "surfaced_in": ["portal:Financials"], "issue": "D9"},
+        {"id": "A1.x", "name": "Source-reported ratios (16)", "unit": "various", "formula": "NONE — surfaced verbatim from the source Ratios section", "inputs": ["FinancialFact where Section = Ratios"], "degenerate": "row absent for a FY", "status": "planned", "surfaced_in": ["portal:Financials", "dossier:Section1"], "note": "Render as-is with a multi-year sparkline; do not recompute."}
+      ]
+    },
+
+    {
+      "id": "B", "title": "Charge register analytics",
+      "source_entities": ["RocCharge", "RocChargeEvent"],
+      "issue": "D1",
+      "notes": "DossierComputations already has OpenChargesByAmount, LenderConcentration, ChargeHolderCount, ModifiedChargeCount. This section formalises the rest. 'Registered amount' is RocCharge.CurrentAmount (Phase 6 term). Security classification stays gated on SecurityClassificationConfidence.",
+      "metrics": [
+        {"id": "B1", "name": "Total open charge amount", "unit": "INR Crore", "formula": "Σ CurrentAmount where IsOpenCharge", "inputs": ["RocCharge.CurrentAmount"], "degenerate": "0 with note when no open charges (distinct from 'not reported')", "status": "planned", "surfaced_in": ["dossier:KeyIndicators", "portal:Charges & Security"]},
+        {"id": "B2", "name": "Total satisfied charge amount", "unit": "INR Crore", "formula": "Σ CurrentAmount where NOT IsOpenCharge", "inputs": ["RocCharge.CurrentAmount"], "degenerate": "0 with note", "status": "planned", "surfaced_in": ["portal:Charges & Security"]},
+        {"id": "B3", "name": "Charge satisfaction rate", "unit": "percent", "formula": "satisfiedCount / (openCount + satisfiedCount)", "inputs": ["RocCharge (IsOpenCharge partition)"], "degenerate": "null if zero charges of any kind", "status": "planned", "surfaced_in": ["dossier:KeyIndicators", "portal:Charges & Security"]},
+        {"id": "B4", "name": "Top-3 lender concentration", "unit": "percent", "formula": "Σ (top 3 holders' open registered amount) / total open registered amount", "inputs": ["DossierComputations.LenderConcentration"], "degenerate": "null if total open amount is 0; if < 3 holders, uses all and says so", "status": "planned", "surfaced_in": ["dossier:KeyIndicators", "portal:Charges & Security"], "feeds_rule": "ChargeRules concentration"},
+        {"id": "B5", "name": "Asset-type breakdown of open charges", "unit": "INR Crore by bucket", "formula": "group open charges by normalised SecurityType label, Σ amount + count per bucket", "inputs": ["DossierComputations.SecurityTypeLabels", "RocCharge.CurrentAmount"], "degenerate": "charges with no confident classification go to an 'unclassified' bucket, not dropped", "status": "planned", "surfaced_in": ["portal:Charges & Security"]},
+        {"id": "B6", "name": "Oldest open charge age", "unit": "days", "formula": "asOfDate - min(creation date) over open charges", "inputs": ["RocChargeEvent (Creation event date)"], "degenerate": "null if no dated creation event", "status": "planned", "surfaced_in": ["portal:Charges & Security"]},
+        {"id": "B7", "name": "Charges created in last 12 / 24 months", "unit": "count + INR Crore", "formula": "count + Σ amount where creation/filing date within window of asOfDate", "inputs": ["RocChargeEvent date", "RocCharge.CurrentAmount"], "degenerate": "0 with note if no dated events", "status": "planned", "surfaced_in": ["dossier:KeyIndicators", "portal:Charges & Security"], "feeds_rule": "candidate 'recent borrowing activity' signal"},
+        {"id": "B8", "name": "Joint / consortium charge count", "unit": "count", "formula": "count of open charges flagged joint or consortium", "inputs": ["RocChargeEvent joint/consortium fields (Wave 2 #43 to confirm all 18 cols land)"], "degenerate": "0 if the fields are not populated in this export", "status": "planned", "surfaced_in": ["portal:Charges & Security"], "depends_on_issue": "#43"},
+        {"id": "B9", "name": "Charge-to-paid-up-capital ratio", "unit": "x (times)", "formula": "total open charge amount / PaidUpCapital", "inputs": ["B1", "CompanyProfile.PaidUpCapital"], "degenerate": "null if paid-up capital is 0/null", "status": "planned", "surfaced_in": ["dossier:KeyIndicators"]},
+        {"id": "B10", "name": "Open charges vs balance-sheet borrowings", "unit": "x (times)", "formula": "total open charge amount / (LongTermBorrowings + ShortTermBorrowings) [latest FY]", "inputs": ["B1", "FinancialYearData.LongTermBorrowings", "FinancialYearData.ShortTermBorrowings"], "degenerate": "null if BS borrowings 0/null; a ratio >> 1 or << 1 is a data-consistency flag, not a conclusion", "status": "planned", "surfaced_in": ["dossier:Section1"], "feeds_rule": "CrossSectionRules charge-vs-debt reconciliation"},
+        {"id": "B.rej", "name": "Average interest rate on charges", "status": "rejected", "reason": "rate_of_interest is free text ('10.5% p.a. floating', 'As per sanction'); an average would be fabricated precision. Show the raw per-charge values in the charge drawer instead."}
+      ]
+    },
+
+    {
+      "id": "C", "title": "Shareholding analytics",
+      "source_entities": ["CompanyStructure", "ShareholdingPatternRow (#49)", "Shareholding"],
+      "issue": "D4",
+      "metrics": [
+        {"id": "C1", "name": "Promoter / public holding split", "unit": "percent", "formula": "verbatim from CompanyStructure", "inputs": ["CompanyStructure.PromoterHoldingPercent", "CompanyStructure.PublicHoldingPercent"], "degenerate": "null if the summary block was absent", "status": "planned", "surfaced_in": ["dossier:KeyIndicators", "portal:Corporate"]},
+        {"id": "C2", "name": "Shareholder count / concentration", "unit": "count", "formula": "CompanyStructure.TotalShareholders; flag if <= 7 (single-digit shareholder base)", "inputs": ["CompanyStructure.TotalShareholders", "CompanyStructure.PromoterShareholders"], "degenerate": "null if not reported", "status": "planned", "surfaced_in": ["portal:Corporate"]},
+        {"id": "C3", "name": "Top-5 >5%-shareholder concentration", "unit": "percent", "formula": "Σ top 5 HoldingPercentage from Shareholding (latest FY)", "inputs": ["Shareholding.HoldingPercentage", "Shareholding.FinancialYear"], "degenerate": "null if 0 rows; caveat: only holders above the 5% disclosure threshold are in the data", "status": "planned", "surfaced_in": ["dossier:KeyIndicators", "portal:Corporate"], "caveat": "Names the >5% threshold limitation on the card"},
+        {"id": "C4", "name": "Corporate vs individual >5%-shareholder split", "unit": "percent", "formula": "group Shareholding by ShareholderType, Σ HoldingPercentage", "inputs": ["Shareholding.ShareholderType", "Shareholding.HoldingPercentage"], "degenerate": "null if ShareholderType is blank for all rows", "status": "planned", "surfaced_in": ["portal:Corporate"]},
+        {"id": "C5", "name": "Multi-year promoter-holding trend", "unit": "percent per FY", "formula": "CompanyStructure.PromoterHoldingPercent is single-year; use ShareholdingPatternRow promoter total per AsOnDate where multiple years exist", "inputs": ["ShareholdingPatternRow (HolderClass=Promoter, EquityPercent, AsOnDate)"], "degenerate": "single point => show the point, no trend line", "status": "planned", "surfaced_in": ["portal:Corporate"], "depends_on_issue": "#49 (shipped)"},
+        {"id": "C6", "name": "SEBI-category grid rollup", "unit": "percent", "formula": "group ShareholdingPatternRow by top-level numbered category, Σ EquityPercent per class", "inputs": ["ShareholdingPatternRow.*"], "degenerate": "empty if the grids were absent", "status": "planned", "surfaced_in": ["dossier:Section1", "portal:Corporate"]},
+        {"id": "C.rej", "name": "FII vs DII institutional split", "status": "rejected", "reason": "Only >5% shareholders are disclosed and there is no institutional-category field. A 'foreign holder' filter on Shareholding.ShareholderType is allowed but must be labelled 'from disclosed >5% holders', never presented as a total FII %."}
+      ]
+    },
+
+    {
+      "id": "D", "title": "Legal history analytics",
+      "source_entities": ["Litigation", "AnalysisFinding (for role attribution)"],
+      "issue": "D5",
+      "notes": "3-tier MatchStatus (Confirmed / Probable / Uncertain) from PR #29. Role attribution ONLY from DossierComputations.LitigationRoles — never inferred at metric time. Category/court breakdowns computed from Confirmed + Probable only (Uncertain has no category).",
+      "metrics": [
+        {"id": "D1", "name": "Confirmed pending case count", "unit": "count", "formula": "count Confirmed where IsPendingLitigation", "inputs": ["Litigation.MatchStatus", "Litigation.CaseStatus"], "degenerate": "0 with note", "status": "planned", "surfaced_in": ["dossier:KeyIndicators", "portal:Litigation"]},
+        {"id": "D2", "name": "Cases filed against vs by the company", "unit": "count", "formula": "count by LitigationRole", "inputs": ["DossierComputations.LitigationRoles"], "degenerate": "role 'not determined' bucket shown explicitly", "status": "planned", "surfaced_in": ["dossier:KeyIndicators", "portal:Litigation"]},
+        {"id": "D3", "name": "Cases by category", "unit": "count by bucket", "formula": "group Confirmed+Probable by CaseCategory", "inputs": ["Litigation.CaseCategory", "Litigation.MatchStatus"], "degenerate": "blank category => 'uncategorised' bucket", "status": "planned", "surfaced_in": ["portal:Litigation"]},
+        {"id": "D4", "name": "Cases by court type", "unit": "count by bucket", "formula": "group by normalised court (NCLT / High Court / District / DRT / Consumer / Other)", "inputs": ["Litigation.Court"], "degenerate": "unmatched => 'Other'", "status": "planned", "surfaced_in": ["portal:Litigation"]},
+        {"id": "D5", "name": "NCLT / insolvency case count", "unit": "count", "formula": "count where CaseCategory ~ 'Insolvency' OR court ~ NCLT", "inputs": ["Litigation.CaseCategory", "Litigation.Court"], "degenerate": "0 with note", "status": "planned", "surfaced_in": ["dossier:KeyIndicators", "portal:Litigation"], "feeds_rule": "LitigationRules insolvency signal"},
+        {"id": "D6", "name": "DRT case count", "unit": "count", "formula": "count where court ~ 'DEBT RECOVERY TRIBUNAL'", "inputs": ["Litigation.Court"], "degenerate": "0 with note", "status": "planned", "surfaced_in": ["portal:Litigation"]},
+        {"id": "D7", "name": "Pending vs disposed ratio", "unit": "percent", "formula": "pending / (pending + disposed) over Confirmed", "inputs": ["Litigation.CaseStatus"], "degenerate": "null if 0 Confirmed cases", "status": "planned", "surfaced_in": ["portal:Litigation"]},
+        {"id": "D8", "name": "Probable + Uncertain exposure count", "unit": "count", "formula": "count probable + count uncertain, shown separately with the standard disclaimers", "inputs": ["Litigation.MatchStatus"], "degenerate": "0", "status": "planned", "surfaced_in": ["portal:Litigation"], "caveat": "Always rendered next to the 'name-match only / court not reached' disclaimers"}
+      ]
+    },
+
+    {
+      "id": "E", "title": "Related-party-transaction analytics",
+      "source_entities": ["RelatedPartyTransaction (#50 — not parsed yet)"],
+      "issue": "D10", "status": "blocked", "depends_on_issue": "#50",
+      "metrics": [
+        {"id": "E1", "name": "Total RPT value per FY", "unit": "INR Crore", "formula": "Σ AmountCrore by FinancialYearEnding", "status": "blocked", "depends_on_issue": "#50"},
+        {"id": "E2", "name": "RPT as % of revenue", "unit": "percent", "formula": "totalRPT[FY] / Revenue[FY]", "inputs": ["RelatedPartyTransaction.AmountCrore", "FinancialYearData.Revenue"], "status": "blocked", "depends_on_issue": "#50"},
+        {"id": "E3", "name": "RPT by transaction type", "unit": "INR Crore by bucket", "formula": "group by TransactionType", "status": "blocked", "depends_on_issue": "#50"},
+        {"id": "E4", "name": "RPT to subsidiaries", "unit": "INR Crore", "formula": "Σ where Relationship ~ 'Subsidiary'", "status": "blocked", "depends_on_issue": "#50"},
+        {"id": "E5", "name": "Distinct related entities transacted per FY", "unit": "count", "formula": "count distinct EntityName by FY", "status": "blocked", "depends_on_issue": "#50"},
+        {"id": "E6", "name": "RPT growing faster than revenue", "unit": "flag", "formula": "RPT CAGR vs Revenue CAGR", "inputs": ["E1", "A2.1"], "status": "blocked", "depends_on_issue": "#50"}
+      ]
+    },
+
+    {
+      "id": "F", "title": "Credit rating analytics",
+      "source_entities": ["CreditRating (#51 — not parsed yet)"],
+      "issue": "D11", "status": "blocked", "depends_on_issue": "#51",
+      "metrics": [
+        {"id": "F1", "name": "Latest rating per instrument", "unit": "text", "formula": "most recent RatingDate per Instrument", "status": "blocked", "depends_on_issue": "#51"},
+        {"id": "F2", "name": "Rating action summary", "unit": "count by action", "formula": "group by Action (Assigned/Reaffirmed/Upgraded/Downgraded/Withdrawn)", "status": "blocked", "depends_on_issue": "#51"},
+        {"id": "F3", "name": "Total rated amount", "unit": "INR Crore", "formula": "Σ Amount over accepted ratings (latest per instrument)", "status": "blocked", "depends_on_issue": "#51"},
+        {"id": "F4", "name": "Rated amount vs open charge coverage", "unit": "x (times)", "formula": "ratedAmount / totalOpenChargeAmount (B1)", "inputs": ["F3", "B1"], "status": "blocked", "depends_on_issue": "#51"},
+        {"id": "F5", "name": "Accepted vs unaccepted rating gap", "unit": "flag", "formula": "unaccepted rating exists AND differs from the accepted one for the same instrument", "status": "blocked", "depends_on_issue": "#51", "feeds_rule": "candidate lender flag"},
+        {"id": "F.rej", "name": "Historical rating timeline", "status": "rejected", "reason": "Only the latest event per instrument is reliably captured; a timeline needs history depth the export does not guarantee."}
+      ]
+    },
+
+    {
+      "id": "G", "title": "GST compliance analytics",
+      "source_entities": ["GstRegistration", "GstFiling"],
+      "issue": "D3",
+      "metrics": [
+        {"id": "G1", "name": "Active GSTIN count", "unit": "count", "formula": "count GstRegistration where status ~ Active", "inputs": ["GstRegistration.RegistrationStatus"], "degenerate": "0 with note", "status": "planned", "surfaced_in": ["dossier:KeyIndicators", "portal:Compliance"]},
+        {"id": "G2", "name": "States of operation", "unit": "count", "formula": "distinct state over registrations", "inputs": ["GstRegistration (state)"], "degenerate": "0", "status": "planned", "surfaced_in": ["portal:Compliance"]},
+        {"id": "G3", "name": "GST filing on-time rate", "unit": "percent", "formula": "count(DateOfFiling <= FilingDueDate) / count(filings with both dates)", "inputs": ["GstFiling.DateOfFiling", "GstFiling.FilingDueDate", "GstFiling.Status"], "degenerate": "null if no filing has both dates", "status": "planned", "surfaced_in": ["dossier:KeyIndicators", "portal:Compliance"], "feeds_rule": "GstRules compliance"},
+        {"id": "G4", "name": "Late filing count + periods", "unit": "count + list", "formula": "filings where DateOfFiling > FilingDueDate; list the tax periods", "inputs": ["GstFiling.*"], "degenerate": "0", "status": "planned", "surfaced_in": ["portal:Compliance"]},
+        {"id": "G5", "name": "GSTR-1 vs GSTR-3B filing lag", "unit": "days", "formula": "mean(|DateOfFiling(GSTR3B) - DateOfFiling(GSTR1)|) for the same tax period", "inputs": ["GstFiling.ReturnType", "GstFiling.TaxPeriod", "GstFiling.DateOfFiling"], "degenerate": "null if the two return types don't co-occur for any period", "status": "planned", "surfaced_in": ["portal:Compliance"]},
+        {"id": "G6", "name": "GST registration flags present", "unit": "flag", "formula": "any non-null flag field on a registration", "inputs": ["GstRegistration flags (Wave 2 #37/#42 to confirm the column lands)"], "degenerate": "false if the column is absent", "status": "planned", "surfaced_in": ["portal:Compliance"], "depends_on_issue": "#37"}
+      ]
+    },
+
+    {
+      "id": "H", "title": "EPFO / labour analytics",
+      "source_entities": ["EpfoContribution", "EPFO establishment metadata (#36 — partial)"],
+      "issue": "D7",
+      "metrics": [
+        {"id": "H1", "name": "PF remittance on-time rate", "unit": "percent", "formula": "count(DateOfCredit <= PaymentDueDate) / count(months with both dates)", "inputs": ["EpfoContribution.CreditDate", "EpfoContribution.DueDate", "EpfoContribution.Status"], "degenerate": "null if no month has both dates", "status": "planned", "surfaced_in": ["dossier:KeyIndicators", "portal:Compliance"], "feeds_rule": "EpfoRules"},
+        {"id": "H2", "name": "PF late-payment count", "unit": "count", "formula": "months where CreditDate > DueDate", "inputs": ["EpfoContribution.*"], "degenerate": "0", "status": "planned", "surfaced_in": ["portal:Compliance"]},
+        {"id": "H3", "name": "Latest-month PF contribution", "unit": "INR Crore", "formula": "amount for max(WageMonth)", "inputs": ["EpfoContribution.AmountCrore", "EpfoContribution.WageMonth"], "degenerate": "null if 0 rows", "status": "planned", "surfaced_in": ["portal:Compliance"]},
+        {"id": "H4", "name": "Employee count (EPFO) + trend", "unit": "count", "formula": "EmployeeCount at latest month; delta vs 12 months prior", "inputs": ["EpfoContribution.EmployeeCount", "EpfoContribution.WageMonth"], "degenerate": "single point => no trend", "status": "planned", "surfaced_in": ["dossier:KeyIndicators", "portal:Compliance"]},
+        {"id": "H5", "name": "Average PF per employee (latest month)", "unit": "INR", "formula": "latest-month amount / latest-month employee count", "inputs": ["H3", "H4"], "degenerate": "null if employee count 0", "status": "planned", "surfaced_in": ["portal:Compliance"]},
+        {"id": "H6", "name": "Revenue per EPFO employee", "unit": "INR Crore", "formula": "Revenue[latest FY] / EPFO employee count", "inputs": ["FinancialYearData.Revenue", "H4"], "degenerate": "null if either missing", "status": "planned", "surfaced_in": ["portal:Financials"], "caveat": "EPFO headcount != total headcount; labelled"},
+        {"id": "H7", "name": "Establishment count + locations + flags", "unit": "count", "formula": "count LIVE establishments; distinct cities; any establishment flags", "inputs": ["EPFO establishment metadata"], "status": "blocked", "depends_on_issue": "#36"}
+      ]
+    },
+
+    {
+      "id": "I", "title": "Directors analytics",
+      "source_entities": ["Director", "CompanyOfficer"],
+      "issue": "D6",
+      "notes": "Our Director dates are typed DateOnly (not strings) — cleaner than the reference JSON.",
+      "metrics": [
+        {"id": "I1", "name": "Active director count", "unit": "count", "formula": "count where CessationDate is null", "inputs": ["Director.CessationDate"], "degenerate": "0 with note", "status": "planned", "surfaced_in": ["dossier:KeyIndicators", "portal:Corporate"]},
+        {"id": "I2", "name": "Average board tenure", "unit": "years", "formula": "mean(asOfDate - OriginalAppointmentDate) over active directors", "inputs": ["Director.OriginalAppointmentDate"], "degenerate": "null if no active director has an appointment date", "status": "planned", "surfaced_in": ["portal:Corporate"]},
+        {"id": "I3", "name": "Directors ceased in last 3 years", "unit": "count", "formula": "count where CessationDate within 3Y of asOfDate", "inputs": ["Director.CessationDate"], "degenerate": "0", "status": "planned", "surfaced_in": ["dossier:KeyIndicators", "portal:Corporate"], "feeds_rule": "candidate DirectorRules churn signal"},
+        {"id": "I4", "name": "Board composition by designation", "unit": "count by bucket", "formula": "group active directors by normalised Designation", "inputs": ["Director.Designation"], "degenerate": "unmatched => 'Other'", "status": "planned", "surfaced_in": ["portal:Corporate"]},
+        {"id": "I5", "name": "Flagged director count", "unit": "count", "formula": "count where Flags is non-empty / non-'-'", "inputs": ["Director.Flags (confirm the column lands — Wave 2)"], "degenerate": "0 if the column is absent", "status": "planned", "surfaced_in": ["portal:Corporate"], "depends_on_issue": "#37"},
+        {"id": "I6", "name": "Longest-serving director", "unit": "years", "formula": "max tenure over active directors", "inputs": ["Director.OriginalAppointmentDate"], "degenerate": "null if no dates", "status": "planned", "surfaced_in": ["portal:Corporate"]}
+      ]
+    },
+
+    {
+      "id": "J", "title": "Peer comparison analytics",
+      "source_entities": ["PeerComparisonMetric", "closest-peers list (#35 — not parsed yet)"],
+      "issue": "D8",
+      "notes": "PeerComparisonDisplayRules already governs what's safe to show. Metrics vs peer MEDIAN only (never a fabricated rank when only a median is given).",
+      "metrics": [
+        {"id": "J1", "name": "Metric vs peer median (per metric, per FY)", "unit": "delta / percentile band", "formula": "company actual - peer median, per PeerComparisonMetric row", "inputs": ["PeerComparisonMetric.ActualValue", "PeerComparisonMetric.MedianValue"], "degenerate": "null if median not given for that metric/FY", "status": "planned", "surfaced_in": ["dossier:Section1", "portal:Financials"]},
+        {"id": "J2", "name": "Revenue rank among closest peers", "unit": "rank", "formula": "company revenue position within the closest-peers-by-revenue list", "inputs": ["closest-peers list revenue", "FinancialYearData.Revenue"], "status": "blocked", "depends_on_issue": "#35"},
+        {"id": "J3", "name": "Count of peers in sample", "unit": "count", "formula": "PeerComparisonMetric '# of peers in sample' metadata", "inputs": ["PeerComparison metadata"], "degenerate": "null if absent", "status": "planned", "surfaced_in": ["portal:Financials"]}
+      ]
+    }
+  ],
+
+  "rejected_global": [
+    {"name": "Composite risk score / index", "reason": "Product decision (Phase 7): Review Priority label + flag counts only, no 0-100."},
+    {"name": "Pledged shares %", "reason": "Not in the source data."},
+    {"name": "DSCR", "reason": "Principal repayment schedule not in the data."},
+    {"name": "Asset-wise encumbrance detail", "reason": "charge property_particulars is free text."}
+  ]
+}

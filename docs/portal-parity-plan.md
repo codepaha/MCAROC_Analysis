@@ -121,6 +121,23 @@ P6 empty-states. Also feed A1 provenance + A2/A3/A4/A6 new data into the annexur
 **P5 viz** = QuestPDF native (`.Background()` rows for the peer bars, `.Table` for the ratio grid) —
 same shared viz view-model as C6, drawn with QuestPDF primitives. No image embedding.
 
+### D-analytics — computed metrics layer  (`docs/analytics-catalogue.json`)
+
+Beyond raw-field parity, the system computes ~60 derived BFSI metrics (financial trends & leverage,
+charge-register analytics, GST/EPFO compliance rates, shareholding & litigation breakdowns, peer
+deltas). The contract is **`docs/analytics-catalogue.json`** — every metric names its inputs
+(`entity.field`), formula, period, "insufficient data" behaviour, and where it surfaces.
+
+Rules: **not a score** (no composite index); every metric is a pure function in
+`DossierComputations.cs` returning a `MetricResult` (value + inputs + period + insufficiency reason);
+the whole layer renders in the Snapshot "Key Indicators" block of **all** dossier variants including
+**SourceRecord (no-AI)** — AI narrative may reference a metric but never change it.
+
+Wave-4 issues **D0–D11**: D0 = the `MetricResult` guardrail + renderer; D1/D2/D3 (charges /
+financial trends / GST) are unblocked and ship first; D10/D11 (RPT / credit ratings) wait on
+#50/#51. Metrics that would fabricate precision (average charge interest rate, FII/DII split,
+rating timeline) are marked `rejected` in the catalogue — do not build them.
+
 ---
 
 ## 3. Sequencing
