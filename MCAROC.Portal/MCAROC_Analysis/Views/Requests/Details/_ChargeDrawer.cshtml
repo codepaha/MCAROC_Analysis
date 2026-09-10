@@ -15,7 +15,8 @@
     // Any event carrying raw security / instrument narrative (for the "source wording" fallback).
     var narrativeEvent = events.LastOrDefault(e =>
         e.PropertyParticulars is not null || e.ExtentAndOperation is not null ||
-        e.InstrumentDescription is not null || e.OtherTerms is not null);
+        e.InstrumentDescription is not null || e.OtherTerms is not null ||
+        e.RateOfInterest is not null || e.TermsOfPayment is not null);
 
     string SpaceCamel(string s) => System.Text.RegularExpressions.Regex.Replace(s, "(\\B[A-Z])", " $1");
 
@@ -36,7 +37,31 @@
     <div class="mca-kv">
         <div><dt>Charge ID</dt><dd class="report-id">@c.RocChargeNumber</dd></div>
         <div><dt>Charge Holder</dt><dd>@c.LatestChargeHolderRaw</dd></div>
-        <div><dt>Status</dt><dd>@Or(c.ChargeStatus) @(c.SatisfactionDate is null ? "(Current)" : "(Historical)")</dd></div>
+        <div><dt>Status</dt><dd>@Or(c.ChargeStatus) @(c.SatisfactionDate is null ? "(Current / Open)" : "(Historical / Satisfied)")</dd></div>
+        <div><dt>Property Type</dt><dd>@Or(narrativeEvent?.PropertyType ?? creation?.PropertyType)</dd></div>
+        <div><dt>No. of Holders</dt><dd>@(narrativeEvent?.NumberOfHolders?.ToString() ?? creation?.NumberOfHolders?.ToString() ?? "not available")</dd></div>
+        <div>
+            <dt>Holding Arrangement</dt>
+            <dd>
+                @if (narrativeEvent?.ConsortiumHolding == true || creation?.ConsortiumHolding == true)
+                {
+                    <span class="mca-badge">Consortium Holding</span>
+                }
+                else if (narrativeEvent?.JointHolding == true || creation?.JointHolding == true)
+                {
+                    <span class="mca-badge">Joint Holding</span>
+                }
+                else if ((narrativeEvent?.ConsortiumHolding == false && narrativeEvent?.JointHolding == false) ||
+                         (creation?.ConsortiumHolding == false && creation?.JointHolding == false))
+                {
+                    <text>Sole / Direct</text>
+                }
+                else
+                {
+                    <span class="text-muted">not available</span>
+                }
+            </dd>
+        </div>
         <div><dt>Created</dt><dd>@D(c.CreationDate)</dd></div>
         <div><dt>Latest Modification</dt><dd>@D(c.LatestModificationDate)</dd></div>
         <div><dt>Satisfied</dt><dd>@D(c.SatisfactionDate)</dd></div>
@@ -52,13 +77,18 @@
         {
             <li>
                 <div class="mca-timeline-head">
-                    <b>@e.EventType</b> &middot; @D(e.EventDate)
+                    <b>@e.EventType</b> &middot; Event: @D(e.EventDate)
+                    @if (e.FilingDate is not null) { <span class="text-muted">&middot; Filing: @D(e.FilingDate)</span> }
                     @if (e.ChargeAmount is { } amt) { <span>&middot; @Money(amt)</span> }
                     @if (!string.IsNullOrWhiteSpace(e.SerialNumber)) { <span class="text-muted">&middot; SRN-ref @e.SerialNumber</span> }
+                    @if (!string.IsNullOrWhiteSpace(e.HolderNameRaw) && e.HolderNameRaw != c.LatestChargeHolderRaw)
+                    {
+                        <span class="text-muted">&middot; @e.HolderNameRaw</span>
+                    }
                 </div>
                 @if (!string.IsNullOrWhiteSpace(e.ModificationParticulars))
                 {
-                    <div class="text-muted">@e.ModificationParticulars</div>
+                    <div class="text-muted mt-1"><b>Modification Particulars:</b> @e.ModificationParticulars</div>
                 }
             </li>
         }
@@ -93,10 +123,10 @@
         </div>
         @if (!string.IsNullOrWhiteSpace(narrativeEvent?.InstrumentDescription) || !string.IsNullOrWhiteSpace(narrativeEvent?.OtherTerms))
         {
-            <details><summary class="mca-json-toggle">Source wording</summary>
-                <div>
-                    @if (!string.IsNullOrWhiteSpace(narrativeEvent?.InstrumentDescription)) { <p><b>Instrument:</b> @narrativeEvent!.InstrumentDescription</p> }
-                    @if (!string.IsNullOrWhiteSpace(narrativeEvent?.OtherTerms)) { <p><b>Other terms:</b> @narrativeEvent!.OtherTerms</p> }
+            <details open="open"><summary class="mca-json-toggle">Source wording</summary>
+                <div class="mt-2">
+                    @if (!string.IsNullOrWhiteSpace(narrativeEvent?.InstrumentDescription)) { <p><b>Instrument Description:</b> @narrativeEvent!.InstrumentDescription</p> }
+                    @if (!string.IsNullOrWhiteSpace(narrativeEvent?.OtherTerms)) { <p><b>Other Terms:</b> @narrativeEvent!.OtherTerms</p> }
                 </div>
             </details>
         }
@@ -141,11 +171,11 @@
 
         @if (!string.IsNullOrWhiteSpace(narrativeEvent?.PropertyParticulars) || !string.IsNullOrWhiteSpace(narrativeEvent?.ExtentAndOperation))
         {
-            <details open="@((showStructured && components.Count > 0) ? null : "open")">
+            <details open="open">
                 <summary class="mca-json-toggle">Property particulars (source wording)</summary>
-                <div>
-                    @if (!string.IsNullOrWhiteSpace(narrativeEvent?.PropertyParticulars)) { <p>@narrativeEvent!.PropertyParticulars</p> }
-                    @if (!string.IsNullOrWhiteSpace(narrativeEvent?.ExtentAndOperation)) { <p>@narrativeEvent!.ExtentAndOperation</p> }
+                <div class="mt-2">
+                    @if (!string.IsNullOrWhiteSpace(narrativeEvent?.PropertyParticulars)) { <p><b>Particulars of Property Charged:</b> @narrativeEvent!.PropertyParticulars</p> }
+                    @if (!string.IsNullOrWhiteSpace(narrativeEvent?.ExtentAndOperation)) { <p><b>Extent and Operation of Charge:</b> @narrativeEvent!.ExtentAndOperation</p> }
                 </div>
             </details>
         }

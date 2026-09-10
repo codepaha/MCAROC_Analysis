@@ -269,7 +269,7 @@ public partial class DossierPdfComposer
                 + (charge.LatestArrangement is { } arr and not ChargeArrangement.Unknown ? $"  ·  {arr}" : ""))
                 .FontSize(DossierTheme.Small).FontColor(DossierTheme.Ink);
         else if (narrativeEv is not null)
-            col.Item().PaddingTop(5).Text("Security (source wording): " + Clip(narrativeEv.PropertyParticulars ?? narrativeEv.InstrumentDescription, 220))
+            col.Item().PaddingTop(5).Text("Security (source wording): " + (narrativeEv.PropertyParticulars ?? narrativeEv.InstrumentDescription))
                 .FontSize(DossierTheme.Small).FontColor(DossierTheme.InkSoft);
     });
 
