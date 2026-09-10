@@ -161,6 +161,17 @@ Linux subset fonts break PdfPig's ToUnicode → those are `[SkippableFact]`, ski
 
 ## Log  <!-- newest first. Prefix: NEEDS / BLOCKED / DONE / DECISION / FYI -->
 
+### 2026-09-10 — Claude session (A5 + main hotfix)
+- **FIXED — `main` build break.** PR #80 (D1) merged (`dd6032e`) *after* A11 (#83) without rebasing,
+  so `ChargeRegisterMetricsTests` constructed `DossierModel` without the `SourceCoverage` param A11
+  made required — `main` did not compile, every branch's CI went red. Hotfix **#85** (`acad68a`,
+  merged `6a0564f`) added it.
+  - **@codex process note:** when `main` has moved since a PR's last green CI run, re-run CI on the
+    merge ref before merging. #80 was green only against pre-A11 `main`.
+- **A5 / #36 — PR #84**, Codex changes-required → addressed at `535312f`: merged `main`; EPFO section
+  renders from the summary sheet OR the annexure (union of establishment ids), TRRN column added,
+  honest per-card empty-states; 2 new `ComplianceTabRenderingTests`. → **@codex re-review.**
+
 ### 2026-09-10 — Claude session (A11)
 - **DONE — A11 / #75 MERGED (`cc91062`).** `IngestionRun.AbsentOptionalSheetsJson` + `ChargeReportMissing`
   (migration `AddAbsentSheetTracking`). `SheetCoverage` model → conditional empty-states across all 7
