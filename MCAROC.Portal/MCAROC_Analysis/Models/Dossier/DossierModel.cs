@@ -18,7 +18,8 @@ public sealed record DossierModel(
     DossierCompliance Compliance,
     DossierLitigation Litigation,
     DossierExecSummary ExecSummary,
-    IReadOnlyList<DossierSourceSheet> SourceSheets);
+    IReadOnlyList<DossierSourceSheet> SourceSheets,
+    IReadOnlyList<MetricGroup> Metrics);
 
 public sealed record DossierCover(
     string CompanyName, string? Cin, string? Pan, DateOnly? IncorporationDate, string? Status,

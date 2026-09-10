@@ -124,6 +124,8 @@
             </div>
         }
 
+        @await Html.PartialAsync("Details/_KeyIndicators", Model.KeyMetrics)
+
         @if (Model.LatestRun is { } lrun)
         {
             <div class="mca-section" style="margin-top:22px;">

@@ -91,7 +91,7 @@ public class DossierAssembler(AppDbContext db)
 
         var roles = DossierComputations.LitigationRoles(litigations, findings);
 
-        return new DossierModel(
+        var model = new DossierModel(
             requestId, runId, analysis.AnalysisRunId,
             new DossierCover(
                 request.CompanyName, request.Cin ?? profile?.Cin, request.Pan ?? profile?.Pan,
@@ -112,7 +112,11 @@ public class DossierAssembler(AppDbContext db)
                 analysis.CriticalFindingsCount, analysis.ReviewFindingsCount,
                 analysis.WatchFindingsCount, analysis.PositiveFindingsCount,
                 findings, execSummary),
-            sourceSheets);
+            sourceSheets,
+            Metrics: []);
+
+        // Metrics are derived from the fully-assembled model, then folded back in.
+        return model with { Metrics = DossierComputations.BuildMetricGroups(model) };
     }
 
     /// <summary>Groups the raw <see cref="SourceRow"/> set into per-worksheet blocks, in workbook →

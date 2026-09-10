@@ -2,8 +2,10 @@ using System.Text.Json;
 using MCAROC_Analysis.Controllers;
 using MCAROC_Analysis.Data;
 using MCAROC_Analysis.Models;
+using MCAROC_Analysis.Services.Dossier;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Caching.Memory;
 
 namespace MCAROC_Analysis.Tests.Dossier;
 
@@ -17,6 +19,15 @@ public class DossierGoldenMasterTests : IAsyncLifetime
 
     internal static AppDbContext CreateContext() =>
         new(new DbContextOptionsBuilder<AppDbContext>().UseSqlServer(ConnectionString).Options);
+
+    /// <summary>The one shared calculation path — a <see cref="DossierCache"/> over its own context, so
+    /// both the portal controller and the dossier PDF read metrics from the same assembled model.</summary>
+    internal static DossierCache CreateCache()
+    {
+        var cacheDb = CreateContext();
+        return new DossierCache(cacheDb, new DossierAssembler(cacheDb),
+            new MemoryCache(new MemoryCacheOptions { SizeLimit = 256 }));
+    }
 
     public async Task InitializeAsync()
     {
@@ -38,7 +49,7 @@ public class DossierGoldenMasterTests : IAsyncLifetime
 
     internal static async Task<RequestDetailsViewModel> LoadViewModelAsync(AppDbContext db, long requestId)
     {
-        var controller = new RequestsController(db, null!, null!, null!, null!, null!, null!);
+        var controller = new RequestsController(db, null!, null!, null!, null!, null!, CreateCache(), null!);
         var result = await controller.Details(requestId, charge: null);
         return (RequestDetailsViewModel)Assert.IsType<ViewResult>(result).Model!;
     }
