@@ -360,6 +360,8 @@
                 @if (gstFilings.Count > 60) { <p class="text-muted mt-2 mb-0">Showing the 60 most recent of @gstFilings.Count returns.</p> }
             </div>
         }
+
+        @await Html.PartialAsync("~/Views/Requests/Details/_KeyIndicators.cshtml", Model.KeyMetrics.Where(g => g.Title == "GST compliance").ToList())
     </div>
 
     @* ── EPFO ── *@
