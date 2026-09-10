@@ -1,3 +1,4 @@
+using System.Reflection;
 using MCAROC_Analysis.Models.Dossier;
 
 namespace MCAROC_Analysis.Tests.Dossier;
@@ -27,7 +28,48 @@ public class MetricResultTests
         Assert.False(m.HasValue);
         Assert.Null(m.Value);
         Assert.Equal("Only 1 financial year on record", m.DisplayValue());
-        Assert.Equal("—", m.Period);
+        Assert.Equal("n/a", m.Period);
+    }
+
+    // ── fail-closed constructor ────────────────────────────────────────────────
+
+    [Theory]
+    // Value = null, reason = null  → would render as a blank dash. Value set AND reason set → ambiguous.
+    [InlineData(null, null)]
+    [InlineData(5.0, "some reason")]
+    public void The_private_constructor_rejects_an_invalid_value_or_reason_combination(double? value, string? reason)
+    {
+        var ctor = typeof(MetricResult).GetConstructors(BindingFlags.Instance | BindingFlags.NonPublic)
+            .Single(c => c.GetParameters().Length == 6);
+        var ex = Assert.Throws<TargetInvocationException>(() => ctor.Invoke(
+        [
+            "Label", (decimal?)(value is { } v ? (decimal)v : null), MetricUnit.Count, "FY2017",
+            (IReadOnlyList<string>)new[] { "Entity.Field" }, reason
+        ]));
+        Assert.IsType<ArgumentException>(ex.InnerException);
+    }
+
+    [Theory]
+    [InlineData("", "FY2017")]           // empty label
+    [InlineData("Label", "")]            // empty period
+    public void Ok_rejects_an_empty_label_or_period(string label, string period)
+    {
+        Assert.Throws<ArgumentException>(() =>
+            MetricResult.Ok(label, 1m, MetricUnit.Count, period, "Entity.Field"));
+    }
+
+    [Fact]
+    public void Ok_rejects_missing_or_blank_inputs()
+    {
+        Assert.Throws<ArgumentException>(() => MetricResult.Ok("Label", 1m, MetricUnit.Count, "FY2017"));
+        Assert.Throws<ArgumentException>(() => MetricResult.Ok("Label", 1m, MetricUnit.Count, "FY2017", "  "));
+    }
+
+    [Fact]
+    public void Insufficient_rejects_a_blank_reason()
+    {
+        Assert.Throws<ArgumentException>(() =>
+            MetricResult.Insufficient("Label", MetricUnit.Count, "  ", "Entity.Field"));
     }
 
     [Theory]

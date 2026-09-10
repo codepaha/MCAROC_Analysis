@@ -5,6 +5,7 @@ using MCAROC_Analysis.Models;
 using MCAROC_Analysis.Services;
 using MCAROC_Analysis.Services.Analysis;
 using MCAROC_Analysis.Services.Dashboard;
+using MCAROC_Analysis.Services.Dossier;
 using MCAROC_Analysis.Services.McaFilings;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -18,6 +19,7 @@ public class RequestsController(
     AnalysisQueue analysisQueue,
     FilingProcessingQueue filingQueue,
     RequestListQueryService requestListQueryService,
+    DossierCache dossierCache,
     IWebHostEnvironment env) : Controller
 {
     [HttpGet("/Requests")]
@@ -352,6 +354,13 @@ public class RequestsController(
                 && d.ChunkingStatus == ChunkingStatus.Chunked);
         }
 
+        // Computed metrics (Wave 4). The portal and the dossier PDF read the SAME assembled
+        // DossierModel — DossierCache builds it once per (request, ingestion run, analysis run) and
+        // hands it to both surfaces — so a portal Key Indicators panel and the PDF's can never diverge.
+        // Null (no completed analysis for the latest ingestion) ⇒ no metrics yet; the panel hides.
+        var dossier = await dossierCache.GetAsync(id);
+        vm.KeyMetrics = dossier?.Metrics.ToList() ?? [];
+
         var chatSession = await db.ChatSessions.FirstOrDefaultAsync(s => s.RequestId == id);
         if (chatSession is not null)
         {
@@ -362,6 +371,31 @@ public class RequestsController(
         }
 
         return View(vm);
+    }
+
+    /// <summary>The computed-metrics layer as JSON — the same `DossierModel.Metrics` the portal panel
+    /// and the dossier PDF render, so it can be diffed / reconciled against the source data with no
+    /// risk of a missed, added, or mismatched figure. Every metric carries its inputs, period and (when
+    /// it could not be computed) its insufficiency reason. 409 while there is no completed analysis for
+    /// the latest ingestion run (same readiness rule as the dossier).</summary>
+    [HttpGet("/Requests/{id:long}/analytics.json")]
+    public async Task<IActionResult> AnalyticsJson(long id)
+    {
+        var exists = await db.Requests.AnyAsync(r => r.RequestId == id);
+        if (!exists) return NotFound();
+
+        var dossier = await dossierCache.GetAsync(id);
+        if (dossier is null)
+            return StatusCode(StatusCodes.Status409Conflict, new { status = "not_ready",
+                detail = "No completed analysis for the latest ingestion run." });
+
+        return Json(new
+        {
+            requestId = dossier.RequestId,
+            ingestionRunId = dossier.IngestionRunId,
+            analysisRunId = dossier.AnalysisRunId,
+            metricGroups = dossier.Metrics,
+        });
     }
 
     /// <summary>Paged filing/document list for the Documents tab — returns a server-rendered partial so the

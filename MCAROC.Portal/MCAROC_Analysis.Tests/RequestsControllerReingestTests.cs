@@ -20,7 +20,7 @@ public class RequestsControllerReingestTests : IAsyncLifetime
         new(new DbContextOptionsBuilder<AppDbContext>().UseSqlServer(ConnectionString).Options);
 
     private static RequestsController NewController(AppDbContext db, string environment) =>
-        new(db, null!, null!, null!, null!, null!, new FakeEnv(environment));
+        new(db, null!, null!, null!, null!, null!, Dossier.DossierGoldenMasterTests.CreateCache(), new FakeEnv(environment));
 
     public async Task InitializeAsync()
     {
