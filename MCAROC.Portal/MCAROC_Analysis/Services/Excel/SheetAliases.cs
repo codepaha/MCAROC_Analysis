@@ -36,6 +36,22 @@ public static class SheetAliases
     public static readonly string[] LatestEventOnOpenCharges = ["Latest Event on Open Charges"];
     public static readonly string[] PeerComparison = ["Peer Comparison"];
 
+    /// <summary>The optional sheets whose presence the orchestrator records per ingestion run. The first
+    /// entry of each alias array is the canonical name written to <c>IngestionRun.AbsentOptionalSheetsJson</c>
+    /// and shown to the reviewer; the count here is the "M" in "N of M optional sheets present". Charge
+    /// sheets are excluded — a missing charge workbook is its own flag (<c>IngestionRun.ChargeReportMissing</c>).</summary>
+    public static readonly IReadOnlyList<string[]> TrackedOptionalSheets =
+    [
+        Directors, OtherDirectorships, DirectorShareholding, MajorShareholding,
+        StandaloneFinancialData, ConsolidatedFinancialData, Msme, Gst, GstAnnexure,
+        EpfoAnnexure, Auditors, AuditorsConsolidated, LegalHistory, Structure,
+        RelatedCorporates, Compliance, SecuritiesAllotment, Proprietorship,
+        DirectorAssociationHistory, PeerComparison, Highlights, FinancialParametersAnnexure,
+    ];
+
+    /// <summary>The canonical (reviewer-facing) name for an alias set — its first entry.</summary>
+    public static string CanonicalName(IReadOnlyList<string> aliases) => aliases[0];
+
     public static string Normalize(string sheetName) =>
         string.Join(' ', sheetName.Trim().TrimEnd('-', ' ').Split(' ', StringSplitOptions.RemoveEmptyEntries))
             .ToUpperInvariant();

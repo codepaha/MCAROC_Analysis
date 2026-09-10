@@ -158,6 +158,25 @@ public class SourceReconciliationTests : IAsyncLifetime
 
         // No structural year-header row leaked in as a fact.
         Assert.DoesNotContain(facts, x => x.Label.Trim().Equals("Year", StringComparison.OrdinalIgnoreCase));
+
+        // ── A11: sheet-coverage tracking ──
+        var reloadedRun = await db.IngestionRuns.FirstAsync(x => x.IngestionRunId == run.IngestionRunId);
+        var coverage = MCAROC_Analysis.Models.SheetCoverage.From(reloadedRun);
+
+        // The matching charge workbook was supplied and used → the "charge report missing" flag is off.
+        Assert.False(coverage.ChargeReportMissing);
+
+        // COASTAL is a full report — the sheets these sections read from are all present.
+        Assert.False(coverage.WasAbsent(MCAROC_Analysis.Services.Excel.SheetAliases.Directors));
+        Assert.False(coverage.WasAbsent(MCAROC_Analysis.Services.Excel.SheetAliases.LegalHistory));
+        Assert.False(coverage.WasAbsent(MCAROC_Analysis.Services.Excel.SheetAliases.Structure));
+        Assert.False(coverage.WasAbsent(MCAROC_Analysis.Services.Excel.SheetAliases.PeerComparison));
+        Assert.False(coverage.WasAbsent(MCAROC_Analysis.Services.Excel.SheetAliases.Compliance));
+
+        // Every recorded absent name is a tracked optional sheet's canonical name (nothing spurious).
+        var trackedCanonical = MCAROC_Analysis.Services.Excel.SheetAliases.TrackedOptionalSheets
+            .Select(MCAROC_Analysis.Services.Excel.SheetAliases.CanonicalName).ToHashSet();
+        Assert.All(coverage.AbsentSheets, name => Assert.Contains(name, trackedCanonical));
     }
 
     /// <summary>Phase 8 A1 — the "About the Company" sheet is captured in full: contact block,

@@ -225,6 +225,7 @@ public class RequestsController(
         if (request.LatestCompletedIngestionRunId is { } runId)
         {
             vm.LatestRun = await db.IngestionRuns.FirstOrDefaultAsync(r => r.IngestionRunId == runId);
+            vm.SheetCoverage = SheetCoverage.From(vm.LatestRun);
             vm.Issues = await db.IngestionIssues.Where(i => i.IngestionRunId == runId).ToListAsync();
 
             vm.CompanyProfile = await db.CompanyProfiles.FirstOrDefaultAsync(x => x.IngestionRunId == runId);

@@ -109,6 +109,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             e.HasOne(x => x.Request).WithMany(r => r.IngestionRuns).HasForeignKey(x => x.RequestId).OnDelete(DeleteBehavior.Cascade);
             e.HasIndex(x => new { x.RequestId, x.RunNumber }).IsUnique();
             e.Property(x => x.Status).HasConversion<string>().HasMaxLength(30);
+            e.Property(x => x.AbsentOptionalSheetsJson).HasDefaultValue("[]");
         });
 
         modelBuilder.Entity<IngestionIssue>(e =>

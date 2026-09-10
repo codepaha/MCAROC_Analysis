@@ -46,6 +46,16 @@
         }
         else
         {
+            @if (Model.SheetCoverage.ChargeReportMissing)
+            {
+                <div class="alert alert-warning py-2 px-3 mb-3 d-flex align-items-center gap-2 small">
+                    <i class="bi bi-exclamation-triangle-fill text-warning"></i>
+                    <span>
+                        <strong>Detailed Charge Report not provided.</strong> Instrument terms, property particulars and
+                        per-event history below are limited to what the ROC charge sequence carries.
+                    </span>
+                </div>
+            }
             <div class="mca-highlight-grid">
                 <div class="pi-metric"><span>Open Charges</span><strong>@Model.OpenChargeCount</strong><small>of @Model.TotalChargeCount registered</small></div>
                 <div class="pi-metric"><span>Satisfied Charges</span><strong>@Model.SatisfiedChargeCount</strong><small>historical</small></div>

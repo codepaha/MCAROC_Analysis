@@ -79,7 +79,7 @@
             </table></div>
             <p class="text-muted mt-2 mb-0">Includes MCA name removal/restoration, BIFR, CDR (corporate debt restructuring), and CIBIL suit-filed / wilful-defaulter records.</p>
         }
-        else { <div class="mca-empty"><i class="bi bi-shield-check"></i><p>No MCA / regulatory compliance events (name removal, BIFR, CDR, suit-filed) reported in this workbook.</p></div> }
+        else { <div class="mca-empty"><i class="bi bi-shield-check"></i><p>@Model.SheetCoverage.EmptyState("No MCA / regulatory compliance events (name removal, BIFR, CDR, suit-filed) were reported in this workbook.", SheetAliases.Compliance)</p></div> }
     </div>
 
     @* ── GST ── *@
@@ -98,7 +98,7 @@
                     </tbody>
                 </table></div>
             }
-            else { <p class="text-muted mb-0">No GST registrations extracted.</p> }
+            else { <p class="text-muted mb-0">@Model.SheetCoverage.EmptyState("No GST registrations were extracted.", SheetAliases.Gst, SheetAliases.GstAnnexure)</p> }
         </div>
 
         @if (gstFilings.Count > 0)
@@ -156,7 +156,7 @@
                 </tbody>
             </table></div>
         }
-        else { <div class="mca-empty"><i class="bi bi-people"></i><p>No EPFO contribution data extracted.</p></div> }
+        else { <div class="mca-empty"><i class="bi bi-people"></i><p>@Model.SheetCoverage.EmptyState("No EPFO contribution data was extracted.", SheetAliases.EpfoAnnexure)</p></div> }
     </div>
 
     @* ── MSME ── *@
@@ -176,7 +176,7 @@
             </table></div>
             <p class="text-muted mt-2 mb-0">MSME dues feed the Phase 3 supplier-payment-pressure logic — surfaced separately, not buried under general compliance.</p>
         }
-        else { <div class="mca-empty"><i class="bi bi-truck"></i><p>No outstanding MSME supplier dues reported.</p></div> }
+        else { <div class="mca-empty"><i class="bi bi-truck"></i><p>@Model.SheetCoverage.EmptyState("No outstanding MSME supplier dues were reported.", SheetAliases.Msme)</p></div> }
     </div>
 
     @* ── Auditor ── *@
@@ -197,7 +197,7 @@
                 AuditorTable(std.Count > 0 ? std : Model.AuditorObservations);
             }
         }
-        else { <div class="mca-empty"><i class="bi bi-clipboard-check"></i><p>No auditor observations extracted.</p></div> }
+        else { <div class="mca-empty"><i class="bi bi-clipboard-check"></i><p>@Model.SheetCoverage.EmptyState("No auditor observations were extracted.", SheetAliases.Auditors, SheetAliases.AuditorsConsolidated)</p></div> }
     </div>
 
 </div>

@@ -14,6 +14,11 @@
 
     var paramsByName = Model.FinancialParameters.GroupBy(p => p.ParameterName).ToList();
 
+    // Both financial-data sheets missing from the upload → the P&L/BS/CF/Ratios panels have nothing to
+    // show for a reason worth stating, rather than a bare "no data" per statement.
+    var noFinancialSheets = Model.SheetCoverage.AllAbsent(SheetAliases.StandaloneFinancialData, SheetAliases.ConsolidatedFinancialData);
+    var financialsAbsentNote = $"This workbook did not include a “{SheetAliases.CanonicalName(SheetAliases.StandaloneFinancialData)}” or “{SheetAliases.CanonicalName(SheetAliases.ConsolidatedFinancialData)}” sheet.";
+
     var sections = new (string Label, string Id, int? Count)[]
     {
         ("Summary", "summary", null),
@@ -55,10 +60,19 @@
         else { <div class="mca-empty"><i class="bi bi-cash-stack"></i><p>Financial highlights become available once extraction completes.</p></div> }
     </div>
 
-    <div class="tab-pane fade mca-subtab-panel" id="sec-financials-pl" role="tabpanel">@await Html.PartialAsync("Details/_FinancialStatement", pl)</div>
-    <div class="tab-pane fade mca-subtab-panel" id="sec-financials-bs" role="tabpanel">@await Html.PartialAsync("Details/_FinancialStatement", bs)</div>
-    <div class="tab-pane fade mca-subtab-panel" id="sec-financials-cf" role="tabpanel">@await Html.PartialAsync("Details/_FinancialStatement", cf)</div>
-    <div class="tab-pane fade mca-subtab-panel" id="sec-financials-ratios" role="tabpanel">@await Html.PartialAsync("Details/_FinancialStatement", ratios)</div>
+    @foreach (var (secId, stmt) in new[] { ("pl", pl), ("bs", bs), ("cf", cf), ("ratios", ratios) })
+    {
+        <div class="tab-pane fade mca-subtab-panel" id="sec-financials-@secId" role="tabpanel">
+            @if (noFinancialSheets)
+            {
+                <div class="mca-empty"><i class="bi bi-cash-stack"></i><p>@financialsAbsentNote</p></div>
+            }
+            else
+            {
+                @await Html.PartialAsync("Details/_FinancialStatement", stmt)
+            }
+        </div>
+    }
 
     <div class="tab-pane fade mca-subtab-panel" id="sec-financials-indicators" role="tabpanel">
         @if (paramsByName.Count > 0)
@@ -97,7 +111,7 @@
             </table></div>
             <p class="text-muted mt-2 mb-0">Raw workbook values are shown as-is; "No" / "Not Applicable" / "-" is never read as 0.</p>
         }
-        else { <div class="mca-empty"><i class="bi bi-list-columns"></i><p>No additional financial indicators (Highlights / Annexure) reported in this workbook.</p></div> }
+        else { <div class="mca-empty"><i class="bi bi-list-columns"></i><p>@Model.SheetCoverage.EmptyState("No additional financial indicators (Highlights / Annexure) were reported in this workbook.", SheetAliases.Highlights, SheetAliases.FinancialParametersAnnexure)</p></div> }
     </div>
 
     <div class="tab-pane fade mca-subtab-panel" id="sec-financials-peers" role="tabpanel">
@@ -127,7 +141,7 @@
                 </tbody>
             </table></div>
         }
-        else { <div class="mca-empty"><i class="bi bi-bezier2"></i><p>No peer comparison data reported in this workbook.</p></div> }
+        else { <div class="mca-empty"><i class="bi bi-bezier2"></i><p>@Model.SheetCoverage.EmptyState("No peer comparison data was reported in this workbook.", SheetAliases.PeerComparison)</p></div> }
 
         @if (Model.PeerCompanies.Count > 0)
         {

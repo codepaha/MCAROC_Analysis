@@ -192,5 +192,88 @@ public class IngestionOrchestratorIntegrationTests : IAsyncLifetime
         var chargeEvent = Assert.Single(await verifyDb.RocChargeEvents.Where(e => e.IngestionRunId == run.IngestionRunId).ToListAsync());
         Assert.Equal(ChargeEventMatchConfidence.Unmatched, chargeEvent.MatchConfidence); // never enriched from the quarantined workbook
         Assert.Single(charges);
+
+        // A11: charges exist but the charge workbook was unusable (quarantined) → same flag as "not provided".
+        var quarantinedRun = await verifyDb.IngestionRuns.FirstAsync(x => x.IngestionRunId == run.IngestionRunId);
+        Assert.True(quarantinedRun.ChargeReportMissing);
+    }
+
+    [Fact]
+    public async Task RunAsync_RecordsEveryOptionalSheetAbsentFromTheUpload()
+    {
+        await using var db = CreateContext();
+        var (request, rocDoc) = await SeedRequestWithRoc(db, @"C:\fake\roc-sparse.xls");
+
+        // Only the required company sheet + Directors — every other tracked optional sheet is absent.
+        var sheetReader = new FakeExcelSheetReader(new Dictionary<string, IReadOnlyList<SheetData>>
+        {
+            [rocDoc.StoragePath] = [CompanyProfileSheet(request.Cin!), DirectorsSheet()]
+        });
+        var run = await new IngestionOrchestrator(db, sheetReader, NullLogger<IngestionOrchestrator>.Instance)
+            .RunAsync(request.RequestId, rocDoc.DocumentId, chargeDocumentId: null);
+
+        Assert.NotEqual(IngestionRunStatus.Failed, run.Status);
+
+        await using var verifyDb = CreateContext();
+        var reloaded = await verifyDb.IngestionRuns.FirstAsync(x => x.IngestionRunId == run.IngestionRunId);
+
+        var absent = System.Text.Json.JsonSerializer.Deserialize<List<string>>(reloaded.AbsentOptionalSheetsJson)!;
+        var directorsCanonical = SheetAliases.CanonicalName(SheetAliases.Directors);
+
+        // Directors WAS present → not in the absent list; every other tracked optional sheet IS.
+        Assert.DoesNotContain(directorsCanonical, absent);
+        Assert.Equal(SheetAliases.TrackedOptionalSheets.Count - 1, absent.Count);
+        Assert.Contains(SheetAliases.CanonicalName(SheetAliases.LegalHistory), absent);
+        Assert.Contains(SheetAliases.CanonicalName(SheetAliases.PeerComparison), absent);
+
+        // No charges in the ROC report → the "charge report missing" flag stays off.
+        Assert.False(reloaded.ChargeReportMissing);
+
+        var coverage = MCAROC_Analysis.Models.SheetCoverage.From(reloaded);
+        Assert.Equal(1, coverage.PresentOptionalSheets);
+        Assert.True(coverage.WasAbsent(SheetAliases.LegalHistory));
+        Assert.False(coverage.WasAbsent(SheetAliases.Directors));
+    }
+
+    [Fact]
+    public async Task RunAsync_FlagsChargeReportMissing_WhenRocListsChargesButNoChargeWorkbookIsSupplied()
+    {
+        await using var db = CreateContext();
+        var (request, rocDoc) = await SeedRequestWithRoc(db, @"C:\fake\roc-charges-no-workbook.xls");
+
+        var sheetReader = new FakeExcelSheetReader(new Dictionary<string, IReadOnlyList<SheetData>>
+        {
+            [rocDoc.StoragePath] = [CompanyProfileSheet(request.Cin!), OpenChargesSequenceSheet()]
+        });
+        var run = await new IngestionOrchestrator(db, sheetReader, NullLogger<IngestionOrchestrator>.Instance)
+            .RunAsync(request.RequestId, rocDoc.DocumentId, chargeDocumentId: null);
+
+        Assert.NotEqual(IngestionRunStatus.Failed, run.Status);
+
+        await using var verifyDb = CreateContext();
+        var reloaded = await verifyDb.IngestionRuns.FirstAsync(x => x.IngestionRunId == run.IngestionRunId);
+        Assert.True(await verifyDb.RocCharges.AnyAsync(c => c.IngestionRunId == run.IngestionRunId));
+        Assert.True(reloaded.ChargeReportMissing);
+    }
+
+    private static async Task<(McaRequest Request, RequestDocument RocDoc)> SeedRequestWithRoc(AppDbContext db, string rocStoragePath)
+    {
+        var client = new Client { ClientCode = $"TST{Guid.NewGuid():N}"[..10], ClientName = "Test Client", CreatedDate = DateTime.UtcNow };
+        db.Clients.Add(client);
+        var request = new McaRequest
+        {
+            Client = client, EntityType = EntityType.Company, CompanyName = "Test Company",
+            RequestNumber = $"TEST-{Guid.NewGuid():N}",
+            Cin = "U00000TEST0000000001", RequestStatus = RequestStatus.DocumentsUploaded, CreatedDate = DateTime.UtcNow
+        };
+        db.Requests.Add(request);
+        var rocDoc = new RequestDocument
+        {
+            Request = request, DocumentType = DocumentType.McaRocReport, OriginalFileName = "roc.xls",
+            StoredFileName = "1.xls", StoragePath = rocStoragePath, FileHash = "abc", UploadedDate = DateTime.UtcNow
+        };
+        db.RequestDocuments.Add(rocDoc);
+        await db.SaveChangesAsync();
+        return (request, rocDoc);
     }
 }

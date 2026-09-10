@@ -115,6 +115,7 @@ public class DossierAssembler(AppDbContext db)
                 analysis.WatchFindingsCount, analysis.PositiveFindingsCount,
                 findings, execSummary, notAssessed),
             sourceSheets,
+            SheetCoverage.From(run),
             Metrics: []);
 
         // Metrics are derived from the fully-assembled model, then folded back in.

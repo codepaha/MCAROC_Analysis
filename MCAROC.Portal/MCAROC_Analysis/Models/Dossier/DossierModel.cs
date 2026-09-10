@@ -19,6 +19,7 @@ public sealed record DossierModel(
     DossierLitigation Litigation,
     DossierExecSummary ExecSummary,
     IReadOnlyList<DossierSourceSheet> SourceSheets,
+    SheetCoverage SourceCoverage,
     IReadOnlyList<MetricGroup> Metrics);
 
 public sealed record DossierCover(

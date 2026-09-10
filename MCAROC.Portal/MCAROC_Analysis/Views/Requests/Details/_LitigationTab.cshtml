@@ -106,7 +106,7 @@
     <div class="tab-pane fade show active mca-subtab-panel" id="sec-litigation-summary" role="tabpanel">
         @if (Model.LitigationCount == 0)
         {
-            <div class="mca-empty"><i class="bi bi-bank"></i><p>No litigation matched to this entity.</p></div>
+            <div class="mca-empty"><i class="bi bi-bank"></i><p>@Model.SheetCoverage.EmptyState("No litigation was matched to this entity.", SheetAliases.LegalHistory)</p></div>
         }
         else
         {
@@ -183,7 +183,7 @@
         }
         else
         {
-            <div class="mca-empty"><i class="bi bi-bank"></i><p>No confirmed litigation records found.</p></div>
+            <div class="mca-empty"><i class="bi bi-bank"></i><p>@Model.SheetCoverage.EmptyState("No confirmed litigation records were found.", SheetAliases.LegalHistory)</p></div>
         }
     </div>
 
@@ -206,7 +206,7 @@
         }
         else
         {
-            <div class="mca-empty"><i class="bi bi-bank"></i><p>No probable litigation matches found.</p></div>
+            <div class="mca-empty"><i class="bi bi-bank"></i><p>@Model.SheetCoverage.EmptyState("No probable litigation matches were found.", SheetAliases.LegalHistory)</p></div>
         }
     </div>
 
@@ -227,7 +227,7 @@
         }
         else
         {
-            <div class="mca-empty"><i class="bi bi-bank"></i><p>No unverified court records reported.</p></div>
+            <div class="mca-empty"><i class="bi bi-bank"></i><p>@Model.SheetCoverage.EmptyState("No unverified court records were reported.", SheetAliases.LegalHistory)</p></div>
         }
     </div>
 

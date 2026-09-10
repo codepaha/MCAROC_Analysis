@@ -1,8 +1,10 @@
 @model RequestDetailsViewModel
+@inject Microsoft.AspNetCore.Hosting.IWebHostEnvironment HostEnv
 @{
     ViewData["Title"] = Model.Request.RequestNumber;
     var r = Model.Request;
     var run = Model.LatestAnalysisRun;
+    var coverage = Model.SheetCoverage;
 
     // The 7 lender-oriented business domains. AI Analysis is first and default.
     var tabs = new (string Label, string Id, string? Badge)[]
@@ -51,6 +53,33 @@
             }
         </div>
     </div>
+
+    @if (Model.LatestRun is not null)
+    {
+        <div class="mca-coverage-strip">
+            <span class="mca-coverage-item">
+                <i class="bi bi-collection"></i>
+                Data coverage: <b>@coverage.PresentOptionalSheets of @coverage.TotalOptionalSheets</b> optional workbook sheets present
+            </span>
+            @if (coverage.AnySheetAbsent)
+            {
+                <span class="mca-coverage-item text-muted" title="Not in this upload: @string.Join(", ", coverage.AbsentSheets)">
+                    @coverage.AbsentSheets.Count not in this upload
+                </span>
+            }
+            @if (coverage.ChargeReportMissing)
+            {
+                <span class="mca-coverage-item mca-coverage-flag">
+                    <i class="bi bi-exclamation-triangle"></i>
+                    The ROC report lists charges, but the Detailed Charge Report workbook was not provided — charge detail is limited to the ROC sequence.
+                    @if (HostEnv.IsDevelopment())
+                    {
+                        <a href="/Requests/@r.RequestId/reingest">Add the charge report</a>
+                    }
+                </span>
+            }
+        </div>
+    }
 
     <ul class="nav mca-tabs" id="mcaTabs" role="tablist">
         @for (var i = 0; i < tabs.Length; i++)
