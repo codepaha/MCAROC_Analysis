@@ -18,7 +18,10 @@ public sealed class PreLoginReportService(InstaFinancialsClient client, IWebHost
     {
         var data = await FetchDataAsync(request.Cin, request.CompanyName, cancellationToken);
         var draftId = Guid.NewGuid().ToString("N");
-        cache.Set(DraftCachePrefix + draftId, new CachedDraft(request.Cin, request.Format, data), TimeSpan.FromMinutes(15));
+        // The shared IMemoryCache is registered with a SizeLimit (DossierCache), so every entry must
+        // declare a Size — one draft counts as one unit.
+        cache.Set(DraftCachePrefix + draftId, new CachedDraft(request.Cin, request.Format, data),
+            new MemoryCacheEntryOptions { AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(15), Size = 1 });
         return ToDraft(draftId, request.Cin, request.Format, data);
     }
 

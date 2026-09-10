@@ -14,8 +14,18 @@ public sealed class PreLoginReportWorker(IServiceScopeFactory scopes, PreLoginRe
     private async Task RecoverAsync(CancellationToken token)
     {
         using var scope = scopes.CreateScope(); var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-        var ids = await db.PreLoginReportJobs.Where(x => x.Status == PreLoginReportJobStatus.Queued || x.Status == PreLoginReportJobStatus.Fetching || x.Status == PreLoginReportJobStatus.Generating).Select(x => x.PreLoginReportJobId).ToListAsync(token);
-        foreach (var id in ids) queue.Enqueue(id);
+        // A job left mid-run by a restart is reset to Queued before re-enqueue — otherwise a
+        // Fetching/Generating job would be skipped by ProcessAsync's own in-flight guard.
+        var interrupted = await db.PreLoginReportJobs
+            .Where(x => x.Status == PreLoginReportJobStatus.Queued || x.Status == PreLoginReportJobStatus.Fetching || x.Status == PreLoginReportJobStatus.Generating)
+            .ToListAsync(token);
+        foreach (var job in interrupted)
+        {
+            job.Status = PreLoginReportJobStatus.Queued;
+            job.ProgressPercent = 0;
+        }
+        await db.SaveChangesAsync(token);
+        foreach (var job in interrupted) queue.Enqueue(job.PreLoginReportJobId);
     }
     private async Task RunAsync(long jobId, CancellationToken token)
     {
