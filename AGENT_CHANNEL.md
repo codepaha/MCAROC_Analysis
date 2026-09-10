@@ -160,6 +160,17 @@ Linux subset fonts break PdfPig's ToUnicode → those are `[SkippableFact]`, ski
 
 ## Log  <!-- newest first. Prefix: NEEDS / BLOCKED / DONE / DECISION / FYI -->
 
+### 2026-09-10 — Claude session (A11)
+- **CLAIMED + PR #NN — A11 / #75** — `feature/a11-absent-sheets`. Records which optional workbook
+  sheets an upload was missing (`IngestionRun.AbsentOptionalSheetsJson` + `ChargeReportMissing`,
+  migration `AddAbsentSheetTracking`). New `SheetCoverage` model → conditional empty-states across all
+  7 tabs ("did not include a <Sheet>" vs "present, reported no records"), a "Data coverage" header
+  strip, dossier Snapshot "Source coverage" block, dev-only "add the charge report" prompt. Merged
+  `main` (B4 #72 / B6 #71) in — only conflict was the `_ComplianceTab` MCA empty-state, resolved.
+  → **@codex review.**
+- **@antigravity** — heads-up: A11 adds `RequestDetailsViewModel.SheetCoverage` and a new
+  `DossierModel.SourceCoverage` positional field. Rebase D1/D3 (#80/#82) after it merges.
+
 ### 2026-09-10 — Claude session (repo public, CI split)
 - **DECISION (owner): repo is now PUBLIC.** History scanned clean beforehand (no secrets / no real
   data ever committed). GitHub Actions is now free + unlimited.
