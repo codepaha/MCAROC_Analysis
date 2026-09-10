@@ -1,38 +1,28 @@
 @using MCAROC_Analysis.Services.Analysis
+@using MCAROC_Analysis.Data.Entities
 @model RequestDetailsViewModel
 @{
     var run = Model.LatestAnalysisRun;
     var std = Model.FinancialYears;
     var con = Model.ConsolidatedFinancialYears;
+    var facts = Model.FinancialFacts;
 
-    FinancialStatementViewModel Statement(string key, string title, params (string Label, Func<FinancialYearData, decimal?> V)[] lines) =>
-        new(key, title, lines.Select(l => new FinancialStatementRow(l.Label, l.V)).ToList(), std, con);
-
-    var pl = Statement("pl", "Profit & Loss",
-        ("Revenue", f => f.Revenue), ("Other Income", f => f.OtherIncome), ("EBITDA", f => f.Ebitda),
-        ("EBIT", f => f.Ebit), ("PBT", f => f.Pbt), ("PAT", f => f.Pat), ("Finance Cost", f => f.FinanceCost));
-
-    var bs = Statement("bs", "Balance Sheet",
-        ("Net Worth", f => f.NetWorth), ("Share Capital", f => f.ShareCapital),
-        ("Current Assets", f => f.CurrentAssets), ("Current Liabilities", f => f.CurrentLiabilities),
-        ("Inventory", f => f.Inventory), ("Trade Receivables", f => f.TradeReceivables),
-        ("Cash & Bank", f => f.CashAndBank), ("Trade Payables", f => f.TradePayables),
-        ("Long-term Borrowings", f => f.LongTermBorrowings), ("Short-term Borrowings", f => f.ShortTermBorrowings),
-        ("Total Debt", f => f.TotalDebt));
-
-    var cf = Statement("cf", "Cash Flow",
-        ("Cash Flow from Operations", f => f.Cfo), ("Cash Flow from Investing", f => f.Cfi), ("Cash Flow from Financing", f => f.Cff));
+    var pl = FinancialStatementBuilder.Build("pl", "Profit & Loss", FinancialStatementSection.ProfitAndLoss, std, con, facts, "₹ Crore");
+    var bs = FinancialStatementBuilder.Build("bs", "Balance Sheet", FinancialStatementSection.BalanceSheet, std, con, facts, "₹ Crore");
+    var cf = FinancialStatementBuilder.Build("cf", "Cash Flow", FinancialStatementSection.CashFlow, std, con, facts, "₹ Crore");
+    var ratios = FinancialStatementBuilder.BuildRatios("ratios", "Financial Ratios", std, con, facts);
 
     var paramsByName = Model.FinancialParameters.GroupBy(p => p.ParameterName).ToList();
 
     var sections = new (string Label, string Id, int? Count)[]
     {
         ("Summary", "summary", null),
-        ("P&L", "pl", std.Count),
-        ("Balance Sheet", "bs", null),
-        ("Cash Flow", "cf", null),
-        ("Additional Indicators", "indicators", paramsByName.Count),
-        ("Peer Comparison", "peers", Model.PeerComparisonMetrics.Count),
+        ("P&L", "pl", pl.Standalone.Years.Count > 0 ? pl.Standalone.Years.Count : (int?)null),
+        ("Balance Sheet", "bs", bs.Standalone.Years.Count > 0 ? bs.Standalone.Years.Count : (int?)null),
+        ("Cash Flow", "cf", cf.Standalone.Years.Count > 0 ? cf.Standalone.Years.Count : (int?)null),
+        ("Ratios", "ratios", ratios.Standalone.Rows.Count > 0 ? ratios.Standalone.Rows.Count : (ratios.Consolidated.Rows.Count > 0 ? ratios.Consolidated.Rows.Count : (int?)null)),
+        ("Additional Indicators", "indicators", paramsByName.Count > 0 ? paramsByName.Count : (int?)null),
+        ("Peer Comparison", "peers", Model.PeerComparisonMetrics.Count > 0 ? Model.PeerComparisonMetrics.Count : (int?)null),
     };
 }
 
@@ -68,14 +58,23 @@
     <div class="tab-pane fade mca-subtab-panel" id="sec-financials-pl" role="tabpanel">@await Html.PartialAsync("Details/_FinancialStatement", pl)</div>
     <div class="tab-pane fade mca-subtab-panel" id="sec-financials-bs" role="tabpanel">@await Html.PartialAsync("Details/_FinancialStatement", bs)</div>
     <div class="tab-pane fade mca-subtab-panel" id="sec-financials-cf" role="tabpanel">@await Html.PartialAsync("Details/_FinancialStatement", cf)</div>
+    <div class="tab-pane fade mca-subtab-panel" id="sec-financials-ratios" role="tabpanel">@await Html.PartialAsync("Details/_FinancialStatement", ratios)</div>
 
     <div class="tab-pane fade mca-subtab-panel" id="sec-financials-indicators" role="tabpanel">
         @if (paramsByName.Count > 0)
         {
             var years = Model.FinancialParameters.Where(p => p.FinancialYear is not null)
                 .Select(p => p.FinancialYear!.Value).Distinct().OrderByDescending(y => y).ToList();
+            var hasUnspecified = Model.FinancialParameters.Any(p => p.FinancialYear is null);
             <div class="pi-table-wrap"><table class="pi-results-table">
-                <thead><tr><th>Indicator</th><th>Unit</th>@foreach (var y in years) { <th class="text-end">FY@(y)</th> }<th class="text-end">Latest</th></tr></thead>
+                <thead>
+                    <tr>
+                        <th>Indicator</th>
+                        <th>Unit</th>
+                        @foreach (var y in years) { <th class="text-end">FY@(y)</th> }
+                        @if (hasUnspecified) { <th class="text-end">Latest</th> }
+                    </tr>
+                </thead>
                 <tbody>
                 @foreach (var grp in paramsByName)
                 {
@@ -88,7 +87,10 @@
                         {
                             <td class="text-end">@(byYear.TryGetValue(y, out var p) ? (p.NumericValue?.ToString("N2") ?? p.RawValue) : "—")</td>
                         }
-                        <td class="text-end">@(noYear is not null ? (noYear.NumericValue?.ToString("N2") ?? noYear.RawValue) : "—")</td>
+                        @if (hasUnspecified)
+                        {
+                            <td class="text-end">@(noYear is not null ? (noYear.NumericValue?.ToString("N2") ?? noYear.RawValue) : "—")</td>
+                        }
                     </tr>
                 }
                 </tbody>

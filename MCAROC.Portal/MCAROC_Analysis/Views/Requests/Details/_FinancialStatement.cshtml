@@ -1,27 +1,60 @@
 @model FinancialStatementViewModel
 @{
-    void RenderTable(List<FinancialYearData> rows)
+    void RenderTable(FinancialStatementViewData data)
     {
-        var years = rows.OrderByDescending(f => f.FinancialYear).ToList();
-        <div class="pi-table-wrap"><table class="pi-results-table">
-            <thead><tr><th>Line item</th>@foreach (var y in years) { <th class="text-end">FY@(y.FinancialYear)</th> }</tr></thead>
-            <tbody>
-            @foreach (var line in Model.Rows)
-            {
-                <tr>
-                    <td>@line.Label</td>
-                    @foreach (var y in years)
-                    {
-                        <td class="text-end">@Num(line.Value(y))</td>
-                    }
-                </tr>
-            }
-            </tbody>
-        </table></div>
+        var years = data.Years;
+        <div class="pi-table-wrap">
+            <table class="pi-results-table">
+                <thead>
+                    <tr>
+                        <th>Line item</th>
+                        @foreach (var y in years)
+                        {
+                            <th class="text-end">FY@(y)</th>
+                        }
+                    </tr>
+                </thead>
+                <tbody>
+                @foreach (var line in data.Rows)
+                {
+                    var rowClass = line.IsSubtotal ? "fw-bold table-light" : (line.IsHeader ? "fw-semibold text-muted bg-light" : "");
+                    <tr class="@rowClass">
+                        <td class="@(line.IsSubtotal ? "fw-bold" : "")">@line.Label</td>
+                        @foreach (var y in years)
+                        {
+                            var (num, raw, inferred) = line.GetValue(y);
+                            <td class="text-end @(line.IsSubtotal ? "fw-bold" : "")">
+                                @if (num is not null)
+                                {
+                                    @Num(num)
+                                    @if (inferred)
+                                    {
+                                        <span class="badge bg-warning text-dark ms-1" title="Year inferred by column alignment">*</span>
+                                    }
+                                }
+                                else if (!string.IsNullOrWhiteSpace(raw) && raw != "-")
+                                {
+                                    @raw
+                                    @if (inferred)
+                                    {
+                                        <span class="badge bg-warning text-dark ms-1" title="Year inferred by column alignment">*</span>
+                                    }
+                                }
+                                else
+                                {
+                                    <span class="text-muted">—</span>
+                                }
+                            </td>
+                        }
+                    </tr>
+                }
+                </tbody>
+            </table>
+        </div>
     }
 }
 
-@if (Model.Standalone.Count == 0 && Model.Consolidated.Count == 0)
+@if (!Model.HasAnyData)
 {
     <div class="mca-empty"><i class="bi bi-cash-stack"></i><p>No @Model.Title.ToLowerInvariant() data extracted.</p></div>
 }
@@ -30,20 +63,48 @@ else
     var groupId = "basis-" + Model.Key;
     if (Model.HasConsolidated)
     {
-        <div class="mca-toggle" data-basis-group="@groupId" role="group" aria-label="Reporting basis">
+        <div class="mca-toggle mb-3" data-basis-group="@groupId" role="group" aria-label="Reporting basis">
             <button type="button" class="active" data-basis="Standalone">Standalone</button>
             <button type="button" data-basis="Consolidated">Consolidated</button>
         </div>
     }
 
+    @if (Model.HasYearInferred)
+    {
+        <div class="alert alert-info py-2 px-3 mb-3 d-flex align-items-center gap-2 small">
+            <i class="bi bi-info-circle-fill text-info"></i>
+            <span><strong>Cash Flow Year Alignment:</strong> Source filing reports cash flow columns without individual year headers; mapped to the most recent financial years by position. Values marked with <span class="badge bg-warning text-dark">*</span> are inferred.</span>
+        </div>
+    }
+
     <div data-basis-panel="@groupId" data-basis="Standalone">
-        @{ RenderTable(Model.Standalone); }
+        @if (Model.Standalone.HasData)
+        {
+            RenderTable(Model.Standalone);
+        }
+        else
+        {
+            <div class="mca-empty"><i class="bi bi-cash-stack"></i><p>No standalone @Model.Title.ToLowerInvariant() data reported.</p></div>
+        }
     </div>
     @if (Model.HasConsolidated)
     {
         <div data-basis-panel="@groupId" data-basis="Consolidated" hidden>
-            @{ RenderTable(Model.Consolidated); }
+            @if (Model.Consolidated.HasData)
+            {
+                RenderTable(Model.Consolidated);
+            }
+            else
+            {
+                <div class="mca-empty"><i class="bi bi-cash-stack"></i><p>No consolidated @Model.Title.ToLowerInvariant() data reported.</p></div>
+            }
         </div>
     }
-    <p class="text-muted mt-2 mb-0">All figures in ₹ Crore. @(Model.HasConsolidated ? "" : "Standalone basis.")</p>
+    <p class="text-muted mt-2 mb-0">
+        @if (!string.IsNullOrEmpty(Model.Standalone.Unit))
+        {
+            <span>All figures in @Model.Standalone.Unit.</span>
+        }
+        @(Model.HasConsolidated ? "" : "Standalone basis.")
+    </p>
 }

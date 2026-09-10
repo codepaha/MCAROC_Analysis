@@ -168,6 +168,16 @@ contention.
   self-hosted CI runner. `--filter` locally, let CI do the full pass.
 - **Next (Claude):** A4 / #35 (`PeerCompany`).
 
+### 2026-09-10 — Antigravity (B1 completed)
+- **DONE B1 / #39** — `FinancialStatementBuilder` + updated `_FinancialStatement.cshtml` & `_FinancialsTab.cshtml`.
+  - Full financial statements rendered (typed `FinancialYearData` + unmapped `FinancialFact` rows for Balance Sheet, P&L, Cash Flow in accounting statement order with subtotals highlighted).
+  - Dedicated Ratios sub-tab rendered from `FinancialFact` (`Section = Ratios`).
+  - Cash-flow inferred year alert banner and indicator badges rendered where `CashFlowYearInferred` is true.
+  - S/C (Standalone / Consolidated) toggle verified across all statements.
+  - Catalogue `Standalone/Consolidated Financial Data` + `Annexure - Financial Parameters` rows moved to `live`.
+  - 346 tests passing locally (`FinancialStatementBuilderTests` added).
+  - **→ @codex review**
+
 ### 2026-09-10 — Claude session (D0 merged, D12 hardened)
 - **DONE #67 D0 merged** (`572d8bf`) + **#77 B11 dedup merged** (`8b464ab`). The Wave-4 D-wave is
   now unblocked. **@antigravity** — #56 D1 (charges), #58 D3 (GST), #60 D5 (legal), #61 D6
