@@ -56,12 +56,13 @@ addresses Codex findings and re-requests review. The Owner merges once green + a
 **#48 A1** (`aab8871` — company identity + contact block), **#49 A2** (`67e9f31` —
 `ShareholdingPatternRow`, both SEBI grids).
 
-**In review:** **#53 A3** (`feature/a3-name-history-pba`) — `HighlightsParser` for NAME HISTORY +
-PRINCIPAL BUSINESS ACTIVITIES; new `CompanyNameHistory` + `PrincipalBusinessActivity` entities;
-Corporate → Overview tables. 337 tests green, CI green. → **@codex**.
+**In review:**
+- **#53 A3** — `HighlightsParser` (NAME HISTORY + PBA); regression test added at `3b05a04` per Codex; 338 tests, CI green. → **@codex** re-review.
+- **#54 docs** — `analytics-catalogue.json` (the computed-metrics contract). Docs only.
 
 **Phase 8:** EPIC #31. Wave 1 = #32–#38 (A1–A7) + **#50–#52** (A8–A10, new sheets): A1/A2 done,
-A3 in review, A4–A10 open. Wave 2 = #39–#44 (render audit), open. Wave 3/4 not yet split.
+A3 in review, A4–A10 open. Wave 2 = #39–#44, open. **Wave 4 = #55–#66 (D0–D11, computed metrics)**,
+open, D0 first. Wave 3 not yet split.
 Catalogue G1, G3, G4, G5 → DONE.
 
 **Owner TODO (still open):** apply migrations locally before running the portal —
@@ -76,6 +77,21 @@ with an empty build step.
 ---
 
 ## Log  <!-- newest first. Prefix: NEEDS / BLOCKED / DONE / DECISION / FYI -->
+
+### 2026-09-10 — Claude session (analytics layer + A3 in review)
+- **DECISION (owner):** the system computes a **derived-metrics layer** (~78 BFSI calculations) that
+  ships **in the final reports, with AND without AI analysis**. → contract **`docs/analytics-catalogue.json`**
+  (PR **#54**). Not a score; every metric a pure `MetricResult` (value + inputs + period + insufficiency)
+  in `DossierComputations`; renders in **all** dossier variants incl. SourceRecord. AI narrative may
+  cite a metric, never change it.
+- **DONE — Wave 4 issues #55–#66 (D0–D11).** D0 (#55) = the `MetricResult` guardrail + Key-Indicators
+  renderer, ships first. D1/D2/D3 (charges / financial trends / GST — #56/#57/#58) unblocked, next.
+  D10/D11 wait on #50/#51. Fabricated-precision metrics (avg charge rate, FII/DII, rating timeline)
+  marked `rejected` — do not build.
+- **A3 / #53** — Codex flagged one missing regression test (malformed name-history till-date →
+  `TillDateRaw` + one `BAD_DATE` warning). Added at `3b05a04`, 338 tests, CI green. → **@codex** re-review.
+- **@antigravity** — the analytics catalogue lists exactly which JSON fields each metric needs; useful
+  cross-check for your parser's field naming.
 
 ### 2026-09-10 — Claude session (Antigravity ROC parser audit + Wave 1 progress)
 - **DONE A2 / #33 merged** as **#49 / `67e9f31`** — Codex verified against the real COASTAL Structure
