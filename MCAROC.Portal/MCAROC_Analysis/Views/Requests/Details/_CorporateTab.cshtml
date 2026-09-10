@@ -47,9 +47,18 @@
                 <div><dt>Type of Entity</dt><dd>@Or(cp.EntityType)</dd></div>
                 <div><dt>Listing Status</dt><dd>@Or(cp.ListingStatus)</dd></div>
                 <div><dt>Industry / Segment</dt><dd>@Or(cp.Industry)@(string.IsNullOrEmpty(cp.Segment) ? "" : $" · {cp.Segment}")</dd></div>
-                <div><dt>Date of Last AGM</dt><dd>@D(cp.LastAgmDate)</dd></div>
-                <div><dt>MCA Sum of Charges</dt><dd>@Money(cp.McaSumOfChargesCrore)</dd></div>
-                <div><dt>LEI</dt><dd>@Or(cp.Lei)@(string.IsNullOrEmpty(cp.LeiStatus) ? "" : $" ({cp.LeiStatus})")</dd></div>
+                <div>
+                    <dt>MCA Sum of Charges</dt>
+                    <dd>
+                        @Money(cp.McaSumOfChargesCrore)
+                        @if (cp.McaSumOfChargesCrore is { } mcaCr && Model.TotalOpenChargeAmount is { } compCr && Math.Abs(mcaCr - compCr) > 0.05m)
+                        {
+                            <span class="mca-badge sev-watch ms-1" title="MCA stated sum of charges (@Money(mcaCr)) differs from computed open charges total (@Money(compCr))">
+                                (Computed Open: @Money(compCr))
+                            </span>
+                        }
+                    </dd>
+                </div>
                 <div><dt>Website</dt><dd>@(string.IsNullOrEmpty(cp.Website) ? "—" : Html.Raw($"<a href=\"{System.Net.WebUtility.HtmlEncode(cp.Website)}\" target=\"_blank\" rel=\"noopener\">{System.Net.WebUtility.HtmlEncode(cp.Website)}</a>"))</dd></div>
                 <div><dt>Phone</dt><dd>@Or(cp.Phone)</dd></div>
                 <div class="mca-kv-wide">

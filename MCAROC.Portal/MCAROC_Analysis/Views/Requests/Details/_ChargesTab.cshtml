@@ -49,7 +49,11 @@
             <div class="mca-highlight-grid">
                 <div class="pi-metric"><span>Open Charges</span><strong>@Model.OpenChargeCount</strong><small>of @Model.TotalChargeCount registered</small></div>
                 <div class="pi-metric"><span>Satisfied Charges</span><strong>@Model.SatisfiedChargeCount</strong><small>historical</small></div>
-                <div class="pi-metric"><span>Registered Open Amount</span><strong>@Model.TotalOpenChargeAmount.ToString("N1")</strong><small>₹ Crore · largest @Money(Model.LargestChargeAmount)</small></div>
+                <div class="pi-metric">
+                    <span>Registered Open Amount</span>
+                    <strong>@Model.TotalOpenChargeAmount.ToString("N1")</strong>
+                    <small>₹ Crore · MCA stated: @(Model.CompanyProfile?.McaSumOfChargesCrore is { } mca ? Money(mca) : "—")</small>
+                </div>
                 <div class="pi-metric"><span>Charge Holders</span><strong>@Model.ChargeHolderCount</strong><small>distinct lenders</small></div>
                 <div class="pi-metric"><span>Modified Charges</span><strong>@Model.ModifiedChargeCount</strong><small>more than one lifecycle event</small></div>
                 <div class="pi-metric"><span>Material Enhancements</span><strong>@Model.MaterialEnhancementFindingCount</strong><small>Phase 3 findings</small></div>
