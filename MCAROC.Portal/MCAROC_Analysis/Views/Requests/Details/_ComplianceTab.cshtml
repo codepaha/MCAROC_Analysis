@@ -364,56 +364,79 @@
 
     @* ── EPFO ── *@
     <div class="tab-pane fade mca-subtab-panel" id="sec-compliance-epfo" role="tabpanel">
-        @if (Model.EpfoContributions.Count > 0)
+        @{
+            // A card per establishment id present in EITHER the "EPFO Establishments" summary metadata
+            // OR the monthly "Annexure - EPFO Establishments" — an upload with only one of the two sheets
+            // must still surface what it does carry.
+            var epfoAggById = epfoEstablishments
+                .Where(x => !string.IsNullOrWhiteSpace(x.EstablishmentId))
+                .ToDictionary(x => x.EstablishmentId, StringComparer.OrdinalIgnoreCase);
+            var epfoCardIds = Model.EpfoEstablishments.Select(x => x.EstablishmentId)
+                .Concat(epfoAggById.Keys)
+                .Where(id => !string.IsNullOrWhiteSpace(id))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            var epfoLatest = Model.EpfoContributions.OrderByDescending(e => e.WageMonth).FirstOrDefault();
+        }
+        @if (epfoCardIds.Count > 0)
         {
-            var establishmentsCount = epfoEstablishments.Count;
-            var latest = Model.EpfoContributions.OrderByDescending(e => e.WageMonth).FirstOrDefault();
             <div class="mca-highlight-grid" style="margin-bottom:16px;">
-                <div class="pi-metric"><span>Establishments</span><strong>@establishmentsCount</strong><small>registered units on record</small></div>
-                <div class="pi-metric"><span>Latest Employees</span><strong>@(latest?.EmployeeCount?.ToString() ?? "—")</strong><small>@(latest is not null ? latest.WageMonth : "—")</small></div>
-                <div class="pi-metric"><span>Months on record</span><strong>@Model.EpfoContributions.Count</strong><small>employee & payment-delay history below</small></div>
+                <div class="pi-metric"><span>Establishments</span><strong>@epfoCardIds.Count</strong><small>registered units on record</small></div>
+                <div class="pi-metric"><span>Latest Employees</span><strong>@(epfoLatest?.EmployeeCount?.ToString() ?? "—")</strong><small>@(epfoLatest?.WageMonth ?? "—")</small></div>
+                <div class="pi-metric"><span>Months on record</span><strong>@Model.EpfoContributions.Count</strong><small>@(Model.EpfoContributions.Count > 0 ? "employee & payment-delay history below" : "monthly annexure not in this upload")</small></div>
             </div>
 
-            @if (epfoEstablishments.Count > 0)
-            {
-                <div class="mca-section mb-4">
-                    <h3>Establishment Profiles <span class="mca-count">@epfoEstablishments.Count</span></h3>
-                    <div class="row g-3">
-                        @foreach (var est in epfoEstablishments)
-                        {
-                            <div class="col-md-6">
-                                <div class="card h-100 shadow-sm border">
-                                    <div class="card-body">
-                                        <div class="d-flex justify-content-between align-items-start mb-2">
-                                            <h5 class="card-title mb-0">@est.Name</h5>
-                                            <span class="badge @(string.Equals(est.WorkingStatus, "Working", StringComparison.OrdinalIgnoreCase) || string.Equals(est.WorkingStatus, "Active", StringComparison.OrdinalIgnoreCase) ? "bg-success" : "bg-secondary")">@est.WorkingStatus</span>
-                                        </div>
-                                        <p class="text-muted small mb-2">Establishment ID: <code>@est.EstablishmentId</code></p>
-                                        @if (epfoMetaById.TryGetValue(est.EstablishmentId, out var meta))
-                                        {
-                                            <dl class="row small mb-3">
-                                                @if (!string.IsNullOrWhiteSpace(meta.City)) { <dt class="col-5 text-muted fw-normal">City</dt><dd class="col-7 mb-1">@meta.City</dd> }
-                                                @if (meta.DateOfSetup is { } setup) { <dt class="col-5 text-muted fw-normal">Date of setup</dt><dd class="col-7 mb-1">@setup.ToString("d MMM yyyy")</dd> }
-                                                @if (!string.IsNullOrWhiteSpace(meta.PrincipalBusinessActivities)) { <dt class="col-5 text-muted fw-normal">Principal activity</dt><dd class="col-7 mb-1">@meta.PrincipalBusinessActivities</dd> }
-                                                @if (!string.IsNullOrWhiteSpace(meta.ExemptionStatus)) { <dt class="col-5 text-muted fw-normal">Exemption</dt><dd class="col-7 mb-1">@meta.ExemptionStatus</dd> }
-                                                @if (!string.IsNullOrWhiteSpace(meta.Address)) { <dt class="col-5 text-muted fw-normal">Address</dt><dd class="col-7 mb-1">@meta.Address</dd> }
-                                                @if (!string.IsNullOrWhiteSpace(meta.Flags)) { <dt class="col-5 text-muted fw-normal">Flags</dt><dd class="col-7 mb-1">@meta.Flags</dd> }
-                                            </dl>
-                                        }
+            <div class="mca-section mb-4">
+                <h3>Establishment Profiles <span class="mca-count">@epfoCardIds.Count</span></h3>
+                <div class="row g-3">
+                    @foreach (var id in epfoCardIds)
+                    {
+                        var meta = epfoMetaById.GetValueOrDefault(id);
+                        var agg = epfoAggById.GetValueOrDefault(id);
+                        var estName = meta?.Name ?? agg?.Name ?? id;
+                        var estStatus = meta?.WorkingStatus ?? agg?.WorkingStatus ?? "—";
+                        var estOk = estStatus.StartsWith("LIVE", StringComparison.OrdinalIgnoreCase)
+                            || estStatus.Equals("Working", StringComparison.OrdinalIgnoreCase)
+                            || estStatus.Equals("Active", StringComparison.OrdinalIgnoreCase);
+                        <div class="col-md-6">
+                            <div class="card h-100 shadow-sm border">
+                                <div class="card-body">
+                                    <div class="d-flex justify-content-between align-items-start mb-2">
+                                        <h5 class="card-title mb-0">@estName</h5>
+                                        <span class="badge @(estOk ? "bg-success" : "bg-secondary")">@estStatus</span>
+                                    </div>
+                                    <p class="text-muted small mb-2">Establishment ID: <code>@id</code></p>
+                                    @if (meta is not null)
+                                    {
+                                        <dl class="row small mb-3">
+                                            @if (!string.IsNullOrWhiteSpace(meta.City)) { <dt class="col-5 text-muted fw-normal">City</dt><dd class="col-7 mb-1">@meta.City</dd> }
+                                            @if (meta.DateOfSetup is { } setup) { <dt class="col-5 text-muted fw-normal">Date of setup</dt><dd class="col-7 mb-1">@setup.ToString("d MMM yyyy")</dd> }
+                                            @if (!string.IsNullOrWhiteSpace(meta.PrincipalBusinessActivities)) { <dt class="col-5 text-muted fw-normal">Principal activity</dt><dd class="col-7 mb-1">@meta.PrincipalBusinessActivities</dd> }
+                                            @if (!string.IsNullOrWhiteSpace(meta.ExemptionStatus)) { <dt class="col-5 text-muted fw-normal">Exemption</dt><dd class="col-7 mb-1">@meta.ExemptionStatus</dd> }
+                                            @if (!string.IsNullOrWhiteSpace(meta.Address)) { <dt class="col-5 text-muted fw-normal">Address</dt><dd class="col-7 mb-1">@meta.Address</dd> }
+                                            @if (!string.IsNullOrWhiteSpace(meta.Flags)) { <dt class="col-5 text-muted fw-normal">Flags</dt><dd class="col-7 mb-1">@meta.Flags</dd> }
+                                        </dl>
+                                    }
+                                    else
+                                    {
+                                        <p class="text-muted small mb-3">Establishment header (city, setup date, activity) was not in this upload — the "EPFO Establishments" sheet is absent.</p>
+                                    }
+                                    @if (agg is not null)
+                                    {
                                         <div class="row text-center g-2 pt-2 border-top">
                                             <div class="col-4">
                                                 <div class="text-muted small">Latest Headcount</div>
-                                                <strong>@(est.LatestEmployees?.ToString() ?? "—")</strong>
-                                                <div class="text-muted" style="font-size:0.75rem;">@est.LatestMonth</div>
+                                                <strong>@(agg.LatestEmployees?.ToString() ?? "—")</strong>
+                                                <div class="text-muted" style="font-size:0.75rem;">@agg.LatestMonth</div>
                                             </div>
                                             <div class="col-4">
                                                 <div class="text-muted small">Total Months</div>
-                                                <strong>@est.TotalMonths</strong>
+                                                <strong>@agg.TotalMonths</strong>
                                                 <div class="text-muted" style="font-size:0.75rem;">on file</div>
                                             </div>
                                             <div class="col-4">
                                                 <div class="text-muted small">Total Paid</div>
-                                                @if (est.TotalContributions is { } tc)
+                                                @if (agg.TotalContributions is { } tc)
                                                 {
                                                     <strong>₹@Num(tc) Cr</strong>
                                                     <div class="text-muted" style="font-size:0.75rem;">aggregate</div>
@@ -425,28 +448,39 @@
                                                 }
                                             </div>
                                         </div>
-                                    </div>
+                                    }
+                                    else
+                                    {
+                                        <p class="text-muted small mb-0 pt-2 border-top">No monthly contribution history for this establishment in this upload.</p>
+                                    }
                                 </div>
                             </div>
-                        }
-                    </div>
+                        </div>
+                    }
                 </div>
-            }
+            </div>
 
             <div class="mca-section">
-                <h3>Contribution & Headcount History <span class="mca-count">@Model.EpfoContributions.Count records</span></h3>
-                <div class="pi-table-wrap"><table class="pi-results-table">
-                    <thead><tr><th>Establishment</th><th>Wage Month</th><th class="text-end">Employees</th><th class="text-end">Amount (Cr)</th><th>Status</th></tr></thead>
-                    <tbody>
-                    @foreach (var e in Model.EpfoContributions)
-                    {
-                        <tr><td>@e.EstablishmentName</td><td>@e.WageMonth</td><td class="text-end">@(e.EmployeeCount?.ToString() ?? "—")</td><td class="text-end">@(e.ContributionAmountCrore is { } ca ? Num(ca) : "—")</td><td>@Or(e.PaymentStatus)</td></tr>
-                    }
-                    </tbody>
-                </table></div>
+                <h3>Contribution &amp; Headcount History <span class="mca-count">@Model.EpfoContributions.Count records</span></h3>
+                @if (Model.EpfoContributions.Count > 0)
+                {
+                    <div class="pi-table-wrap"><table class="pi-results-table">
+                        <thead><tr><th>Establishment</th><th>Wage Month</th><th>TRRN</th><th class="text-end">Employees</th><th class="text-end">Amount (Cr)</th><th>Status</th></tr></thead>
+                        <tbody>
+                        @foreach (var e in Model.EpfoContributions)
+                        {
+                            <tr><td>@e.EstablishmentName</td><td>@e.WageMonth</td><td class="report-id">@Or(e.Trrn)</td><td class="text-end">@(e.EmployeeCount?.ToString() ?? "—")</td><td class="text-end">@(e.ContributionAmountCrore is { } ca ? Num(ca) : "—")</td><td>@Or(e.PaymentStatus)</td></tr>
+                        }
+                        </tbody>
+                    </table></div>
+                }
+                else
+                {
+                    <p class="text-muted mb-0">@Model.SheetCoverage.EmptyState("The monthly EPFO annexure reported no contribution rows.", SheetAliases.EpfoAnnexure)</p>
+                }
             </div>
         }
-        else { <div class="mca-empty"><i class="bi bi-people"></i><p>@Model.SheetCoverage.EmptyState("No EPFO contribution data was extracted.", SheetAliases.EpfoAnnexure)</p></div> }
+        else { <div class="mca-empty"><i class="bi bi-people"></i><p>@Model.SheetCoverage.EmptyState("No EPFO data was extracted.", SheetAliases.Epfo, SheetAliases.EpfoAnnexure)</p></div> }
     </div>
 
     @* ── MSME ── *@
