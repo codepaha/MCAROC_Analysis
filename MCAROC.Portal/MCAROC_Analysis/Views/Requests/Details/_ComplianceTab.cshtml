@@ -16,23 +16,35 @@
     var bankSummaries = suitFiledRecords
         .GroupBy(r => (Bank: string.IsNullOrWhiteSpace(r.Bank) ? "Unknown / Unspecified" : r.Bank.Trim(),
                        DefaulterType: string.IsNullOrWhiteSpace(r.DefaulterType) ? "Suit Filed" : r.DefaulterType.Trim()))
-        .Select(g => new
+        .Select(g =>
         {
-            Bank = g.Key.Bank,
-            DefaulterType = g.Key.DefaulterType,
-            PeakAmount = g.Max(x => x.AmountCrore ?? 0m),
-            LatestDate = g.Max(x => x.RecordDate),
-            EarliestDate = g.Min(x => x.RecordDate),
-            QuartersCount = g.Count(),
-            Source = g.Select(x => x.Source).FirstOrDefault(s => !string.IsNullOrWhiteSpace(s)) ?? "CIBIL"
+            var amounts = g.Select(x => x.AmountCrore).ToList();
+            var hasMissingAmounts = amounts.Any(a => a is null);
+            var nonNullAmounts = amounts.Where(a => a.HasValue).Select(a => a!.Value).ToList();
+            decimal? peak = nonNullAmounts.Count > 0 ? nonNullAmounts.Max() : null;
+
+            return new
+            {
+                Bank = g.Key.Bank,
+                DefaulterType = g.Key.DefaulterType,
+                PeakAmount = peak,
+                HasMissingAmounts = hasMissingAmounts,
+                LatestDate = g.Max(x => x.RecordDate),
+                EarliestDate = g.Min(x => x.RecordDate),
+                QuartersCount = g.Count(),
+                Source = g.Select(x => x.Source).FirstOrDefault(s => !string.IsNullOrWhiteSpace(s)) ?? "CIBIL"
+            };
         })
-        .OrderByDescending(x => x.PeakAmount)
+        .OrderByDescending(x => x.PeakAmount ?? -1m)
         .ThenByDescending(x => x.QuartersCount)
         .ToList();
 
-    var totalPeakExposure = bankSummaries
-        .GroupBy(b => b.Bank, StringComparer.OrdinalIgnoreCase)
-        .Sum(g => g.Max(x => x.PeakAmount));
+    var anyBankMissingAllAmounts = bankSummaries.Any(b => b.PeakAmount is null);
+    var anyFilingMissingAmount = suitFiledRecords.Any(r => r.AmountCrore is null);
+
+    decimal? totalPeakExposure = (anyBankMissingAllAmounts || bankSummaries.Count == 0)
+        ? null
+        : bankSummaries.GroupBy(b => b.Bank, StringComparer.OrdinalIgnoreCase).Sum(g => g.Max(x => x.PeakAmount!.Value));
 
     var uniqueBanksCount = bankSummaries
         .Select(b => b.Bank)
@@ -48,16 +60,25 @@
     // EPFO Establishments grouping
     var epfoEstablishments = Model.EpfoContributions
         .GroupBy(e => string.IsNullOrWhiteSpace(e.EstablishmentId) ? (e.EstablishmentName ?? "Unknown") : e.EstablishmentId)
-        .Select(g => new
+        .Select(g =>
         {
-            EstablishmentId = g.Key,
-            Name = g.Select(x => x.EstablishmentName).FirstOrDefault(n => !string.IsNullOrWhiteSpace(n)) ?? g.Key,
-            WorkingStatus = g.Select(x => x.WorkingStatus).FirstOrDefault(s => !string.IsNullOrWhiteSpace(s)) ?? "Active",
-            LatestMonth = g.OrderByDescending(x => x.WageMonth).FirstOrDefault()?.WageMonth,
-            LatestEmployees = g.OrderByDescending(x => x.WageMonth).FirstOrDefault()?.EmployeeCount,
-            TotalMonths = g.Count(),
-            TotalContributions = g.Sum(x => x.ContributionAmountCrore ?? 0m),
-            Contributions = g.OrderByDescending(x => x.WageMonth).ToList()
+            var contribs = g.Select(x => x.ContributionAmountCrore).ToList();
+            var hasMissingContribs = contribs.Any(c => c is null);
+            var nonNullContribs = contribs.Where(c => c.HasValue).Select(c => c!.Value).ToList();
+            decimal? totalContrib = hasMissingContribs ? null : nonNullContribs.Sum();
+
+            return new
+            {
+                EstablishmentId = g.Key,
+                Name = g.Select(x => x.EstablishmentName).FirstOrDefault(n => !string.IsNullOrWhiteSpace(n)) ?? g.Key,
+                WorkingStatus = g.Select(x => x.WorkingStatus).FirstOrDefault(s => !string.IsNullOrWhiteSpace(s)) ?? "Active",
+                LatestMonth = g.OrderByDescending(x => x.WageMonth).FirstOrDefault()?.WageMonth,
+                LatestEmployees = g.OrderByDescending(x => x.WageMonth).FirstOrDefault()?.EmployeeCount,
+                TotalMonths = g.Count(),
+                TotalContributions = totalContrib,
+                HasMissingContributions = hasMissingContribs,
+                Contributions = g.OrderByDescending(x => x.WageMonth).ToList()
+            };
         })
         .ToList();
 
@@ -150,8 +171,21 @@
                 <div class="mca-highlight-grid mb-3">
                     <div class="pi-metric">
                         <span>Total Peak Exposure</span>
-                        <strong>₹@Num(totalPeakExposure) Cr</strong>
-                        <small>sum of peak amounts across @uniqueBanksCount institutions</small>
+                        @if (totalPeakExposure is { } exp && !anyFilingMissingAmount)
+                        {
+                            <strong>₹@Num(exp) Cr</strong>
+                            <small>sum of peak amounts across @uniqueBanksCount institutions</small>
+                        }
+                        else if (totalPeakExposure is { } partialExp)
+                        {
+                            <strong>₹@Num(partialExp) Cr*</strong>
+                            <small class="text-warning">incomplete coverage (*unstated filings)</small>
+                        }
+                        else
+                        {
+                            <strong class="text-muted">Not reported</strong>
+                            <small class="text-muted">unstated amounts across institutions</small>
+                        }
                     </div>
                     <div class="pi-metric">
                         <span>Lending Institutions</span>
@@ -188,7 +222,20 @@
                         <tr>
                             <td><strong>@b.Bank</strong></td>
                             <td><span class="mca-badge">@b.DefaulterType</span></td>
-                            <td class="text-end"><strong>@Num(b.PeakAmount)</strong></td>
+                            <td class="text-end">
+                                @if (b.PeakAmount is { } pa)
+                                {
+                                    <strong>@Num(pa)</strong>
+                                    @if (b.HasMissingAmounts)
+                                    {
+                                        <span class="text-warning small" title="One or more reported quarters have unstated amounts">*</span>
+                                    }
+                                }
+                                else
+                                {
+                                    <span class="text-muted">Not reported</span>
+                                }
+                            </td>
                             <td>@D(b.LatestDate)</td>
                             <td class="text-end">@b.QuartersCount</td>
                             <td class="text-muted small">@(b.EarliestDate.HasValue ? D(b.EarliestDate) : "—") – @(b.LatestDate.HasValue ? D(b.LatestDate) : "—")</td>
@@ -199,7 +246,21 @@
                         <tr>
                             <td><strong>Total Institutional Peak Exposure</strong></td>
                             <td></td>
-                            <td class="text-end"><strong>₹@Num(totalPeakExposure) Cr</strong></td>
+                            <td class="text-end">
+                                @if (totalPeakExposure is { } tot && !anyFilingMissingAmount)
+                                {
+                                    <strong>₹@Num(tot) Cr</strong>
+                                }
+                                else if (totalPeakExposure is { } pTot)
+                                {
+                                    <strong>₹@Num(pTot) Cr*</strong>
+                                    <div class="text-muted" style="font-size:0.75rem;">*coverage incomplete (unstated amounts)</div>
+                                }
+                                else
+                                {
+                                    <span class="text-muted">Not reported / incomplete</span>
+                                }
+                            </td>
                             <td></td>
                             <td class="text-end"><strong>@suitFiledRecords.Count</strong></td>
                             <td></td>
@@ -334,8 +395,16 @@
                                             </div>
                                             <div class="col-4">
                                                 <div class="text-muted small">Total Paid</div>
-                                                <strong>₹@Num(est.TotalContributions) Cr</strong>
-                                                <div class="text-muted" style="font-size:0.75rem;">aggregate</div>
+                                                @if (est.TotalContributions is { } tc)
+                                                {
+                                                    <strong>₹@Num(tc) Cr</strong>
+                                                    <div class="text-muted" style="font-size:0.75rem;">aggregate</div>
+                                                }
+                                                else
+                                                {
+                                                    <strong class="text-muted">Not reported</strong>
+                                                    <div class="text-muted" style="font-size:0.75rem;">incomplete coverage</div>
+                                                }
                                             </div>
                                         </div>
                                     </div>
@@ -353,7 +422,7 @@
                     <tbody>
                     @foreach (var e in Model.EpfoContributions)
                     {
-                        <tr><td>@e.EstablishmentName</td><td>@e.WageMonth</td><td class="text-end">@(e.EmployeeCount?.ToString() ?? "—")</td><td class="text-end">@Num(e.ContributionAmountCrore)</td><td>@Or(e.PaymentStatus)</td></tr>
+                        <tr><td>@e.EstablishmentName</td><td>@e.WageMonth</td><td class="text-end">@(e.EmployeeCount?.ToString() ?? "—")</td><td class="text-end">@(e.ContributionAmountCrore is { } ca ? Num(ca) : "—")</td><td>@Or(e.PaymentStatus)</td></tr>
                     }
                     </tbody>
                 </table></div>
