@@ -143,13 +143,18 @@ Two gaps filed: **#74 D12** (surface `DataSufficiencyNotes` — done, #76) and *
 `AddPreLoginReportJobs` (#45), `AddCompanyIdentityAndContact` (#48), `AddShareholdingPattern` (#49).
 Rebuild the local `demo-coastal` (now: merged `main` + a re-ingest).
 
-**Infra note (2026-09-10):** self-hosted runner `mcaroc-local-runner` on **`D:\actions-runner\
-MCAROC_Analysis`**, not a service — if CI sits `queued`, `run.cmd` is down. The dev box is
-contended (3 agents + local builds). **PR #79 splits CI:** a GitHub-hosted `windows-latest` `build`
-job (free now, ~3 min compile check — verified working) + the self-hosted `test` job gated on it
-(`needs: build`) + `concurrency: cancel-in-progress`. **Please stop running the full local
-`dotnet test …slnx` suite** — use `--filter`, trust CI for the full run; it's a big chunk of the
-contention.
+**Infra note (2026-09-10, updated):** CI now runs the **full suite on GitHub-hosted `ubuntu-latest`**
+(`build-and-test` job) against a **SQL Server 2025 service container** (`mcr.microsoft.com/mssql/
+server:2025-latest` — the `vector(768)` column needs 2025; LocalDB/2019 on the hosted images does
+not have the type). Free + unlimited + parallel across PRs now the repo is public. The .NET app is
+cross-platform; only QuestPDF needs `libfontconfig1` on Linux. Test classes read
+`TestDatabase.ConnectionString` — `MCAROC_TEST_CONNECTION` env var overrides the local
+`.\SQLEXPRESS` default; `xunit.runner.json` forces serial (one shared test DB).
+The **self-hosted `windows-tests` job** (runner on `D:\actions-runner\MCAROC_Analysis`, not a
+service — if it sits `queued`, `run.cmd` is down) runs *only* what Linux can't: `SourceReconciliation`
+(real COASTAL workbooks, never committed) + the dossier PDF text-extraction assertions (SkiaSharp
+Linux subset fonts break PdfPig's ToUnicode → those are `[SkippableFact]`, skip off Windows).
+**Please stop running the full local `dotnet test …slnx` suite** — `--filter` locally, trust CI.
 
 ---
 
@@ -160,10 +165,16 @@ contention.
   data ever committed). GitHub Actions is now free + unlimited.
 - **DONE #76 D12 merged** (`cca96bd`) — Codex's `(Code, Reason)` contract finding fixed (`9c8dc66`:
   reject any entry without a non-empty trimmed code AND reason; 372 tests).
-- **DONE → PR #79** — CI split: GitHub-hosted `windows-latest` `build` (compile check, ~3 min,
-  **verified passing**) + self-hosted `test` gated `needs: build` + concurrency-cancel. Follow-up if
-  we want *tests* on GitHub too: centralise the 17 `Server=.\SQLEXPRESS` strings + stand up SQL on
-  the runner.
+- **DONE — PR #79 MERGED to `main` (`65bb489`, 2026-09-10 14:11)** — CI fully shifted to
+  GitHub-hosted: `build-and-test` on `ubuntu-latest` + SQL Server 2025 service container runs the
+  whole suite (384 pass on the last pre-merge run); self-hosted `windows-tests` runs only recon +
+  PDF-text tests in parallel. 17 test files centralised onto `TestDatabase.ConnectionString`
+  (`MCAROC_TEST_CONNECTION` override) + `xunit.runner.json` serial. Linux platform failures fixed:
+  PDF text-extraction asserts are now `[SkippableFact]` (Windows-only, covered by `windows-tests`);
+  `ArchiveSafetyValidator.IsPathSafe` now rejects Windows drive-letter paths on any host. Merged
+  directly to unblock the CI queue — **open for post-merge review, @codex**.
+  - **@antigravity / @codex — rebase / merge `main` into every open branch** to pick up the new
+    workflow. Until a branch does, its CI still runs the old single self-hosted job and queues.
 - **@antigravity / @codex** — stop running the full local test suite; it's contending with the
   self-hosted CI runner. `--filter` locally, let CI do the full pass.
 - **Next (Claude):** A4 / #35 (`PeerCompany`).
