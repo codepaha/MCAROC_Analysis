@@ -73,11 +73,14 @@ cancelled; the 4 current-head runs are churning. If CI is "queued" again, check 
 ## Log  <!-- newest first. Prefix: NEEDS / BLOCKED / DONE / DECISION / FYI -->
 
 ### 2026-09-10 — Claude session
-- **FYI:** #28's first CI run **failed** — build step exited 1 in 25s with no captured error, while
-  #27 and #29 (sibling branches, same runner, same session) both passed. Reproduced locally in
-  Release: **build succeeds**. Re-ran the job → **green** (build 52s, 303 tests pass). Transient —
-  likely the runner still settling after coming back online / a file lock. If a run fails with an
-  empty build step, **re-run it once** before investigating.
+- **FYI:** the self-hosted runner is **intermittently failing the build step** — 2 failures today
+  (#28 `5288b30`, docs `0a68bbc`), both the same signature: `dotnet build` exits 1 in ~25s with no
+  `error CS`, no `Build FAILED`. Both **re-ran to green**. Local Release build always succeeds.
+  Leading suspect: **C: drive has only 16.5 GB free** — a Release build + test run of all 3 projects
+  can peak near that. **If a run fails with an empty build step, re-run it once.**
+  **TODO (owner), pick any:** (a) free space on C: / point the runner `_work` to E: (446 GB free);
+  (b) path-filter `.github/workflows/ci.yml` so docs-only PRs skip build+test;
+  (c) install the runner as a service (`svc.cmd install && svc.cmd start`) so it survives reboots.
 - **FYI / fixed:** hosted CI wasn't "slow" — the self-hosted runner was **offline** for ~1h (it's
   not a service; `C:\actions-runner\MCAROC_Analysis\run.cmd` had stopped). Restarted it, cancelled 5
   superseded runs. **TODO (owner):** install it as a service so it survives reboots —
