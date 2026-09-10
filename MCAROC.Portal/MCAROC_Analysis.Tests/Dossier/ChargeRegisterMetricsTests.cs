@@ -1,4 +1,4 @@
-﻿using System.Text;
+using System.Text;
 using MCAROC_Analysis.Data.Entities;
 using MCAROC_Analysis.Models;
 using MCAROC_Analysis.Models.Dossier;
@@ -168,6 +168,22 @@ public class ChargeRegisterMetricsTests
         Assert.Equal(35m, b11Median.Value);
         Assert.Equal(MetricUnit.Days, b11Median.Unit);
 
+        var b11_0_7 = byLabel["Charge filing lag 0-7 days"];
+        Assert.True(b11_0_7.HasValue);
+        Assert.Equal(MetricUnit.Count, b11_0_7.Unit);
+
+        var b11_8_30 = byLabel["Charge filing lag 8-30 days"];
+        Assert.True(b11_8_30.HasValue);
+        Assert.Equal(MetricUnit.Count, b11_8_30.Unit);
+
+        var b11_31_90 = byLabel["Charge filing lag 31-90 days"];
+        Assert.True(b11_31_90.HasValue);
+        Assert.Equal(MetricUnit.Count, b11_31_90.Unit);
+
+        var b11_gt90 = byLabel["Charge filing lag >90 days"];
+        Assert.True(b11_gt90.HasValue);
+        Assert.Equal(MetricUnit.Count, b11_gt90.Unit);
+
         var b11Anom = byLabel["Negative filing-lag anomalies"];
         Assert.True(b11Anom.HasValue);
         Assert.Equal(0m, b11Anom.Value);
@@ -204,5 +220,135 @@ public class ChargeRegisterMetricsTests
                 Assert.NotNull(m.InsufficiencyReason);
             }
         });
+    }
+
+    private static DossierModel CreateMinimalDossierWithCharges(List<RocCharge> all, List<RocCharge>? open = null, List<RocCharge>? satisfied = null, DateTime? asOf = null, decimal? paidUpCapital = null)
+    {
+        var dt = asOf ?? new DateTime(2023, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+        var openList = open ?? all.Where(DossierComputations.IsOpenCharge).ToList();
+        var satList = satisfied ?? all.Where(c => !DossierComputations.IsOpenCharge(c)).ToList();
+        var concentration = DossierComputations.LenderConcentration(all);
+        return new DossierModel(
+            RequestId: 1, IngestionRunId: 1, AnalysisRunId: 1,
+            Cover: new DossierCover("Test Co", "U12345AB2020PTC123456", "ABCDE1234F", new DateOnly(2020, 1, 1), "Active", "TestClient", dt, dt),
+            Corporate: new DossierCorporate([], [], [], [], [], [], [], null, paidUpCapital),
+            Financials: new DossierFinancials([], [], [], [], [], []),
+            Charges: new DossierCharges(all, openList, satList, concentration, 0),
+            Compliance: new DossierCompliance([], [], [], [], []),
+            Litigation: new DossierLitigation([], [], new Dictionary<long, LitigationRole>()),
+            ExecSummary: new DossierExecSummary(null, 0, 0, 0, 0, [], null, []),
+            SourceSheets: [],
+            Metrics: []);
+    }
+
+    [Fact]
+    public void B2_missing_amount_is_insufficient_not_zero()
+    {
+        var c1 = new RocCharge { ChargeId = 1, ChargeStatus = "Satisfied", SatisfactionDate = new DateOnly(2022, 1, 1), CurrentAmount = 100m };
+        var c2 = new RocCharge { ChargeId = 2, ChargeStatus = "Satisfied", SatisfactionDate = new DateOnly(2022, 2, 1), CurrentAmount = null };
+        var model = CreateMinimalDossierWithCharges([c1, c2]);
+
+        var group = DossierComputations.ChargeRegisterMetrics(model);
+        var b2 = Assert.Single(group.Metrics, m => m.Label == "Total satisfied charge amount");
+
+        Assert.False(b2.HasValue);
+        Assert.NotNull(b2.InsufficiencyReason);
+        Assert.Contains("1 of 2 satisfied charges missing CurrentAmount", b2.InsufficiencyReason);
+        Assert.Equal(b2.InsufficiencyReason, b2.DisplayValue());
+    }
+
+    [Fact]
+    public void B5_unclassified_missing_amount_is_insufficient()
+    {
+        var c1 = new RocCharge { ChargeId = 1, ChargeStatus = "Open", CurrentAmount = null };
+        var model = CreateMinimalDossierWithCharges([c1]);
+
+        var group = DossierComputations.ChargeRegisterMetrics(model);
+        var b5 = Assert.Single(group.Metrics, m => m.Label == "Unclassified open charge amount");
+
+        Assert.False(b5.HasValue);
+        Assert.NotNull(b5.InsufficiencyReason);
+        Assert.Contains("missing CurrentAmount", b5.InsufficiencyReason);
+    }
+
+    [Fact]
+    public void B7_amount_is_insufficient_when_any_creation_event_missing_charge_amount()
+    {
+        var asOf = new DateTime(2023, 6, 30, 0, 0, 0, DateTimeKind.Utc);
+        var asOfDate = DateOnly.FromDateTime(asOf);
+
+        var c1 = new RocCharge { ChargeId = 1, ChargeStatus = "Open", CurrentAmount = 50m };
+        c1.Events.Add(new RocChargeEvent
+        {
+            EventType = ChargeEventType.Creation,
+            EventDate = asOfDate.AddMonths(-3),
+            ChargeAmount = 50m
+        });
+
+        var c2 = new RocCharge { ChargeId = 2, ChargeStatus = "Open", CurrentAmount = null };
+        c2.Events.Add(new RocChargeEvent
+        {
+            EventType = ChargeEventType.Creation,
+            EventDate = asOfDate.AddMonths(-6),
+            ChargeAmount = null
+        });
+
+        var model = CreateMinimalDossierWithCharges([c1, c2], asOf: asOf);
+        var group = DossierComputations.ChargeRegisterMetrics(model);
+
+        var b7Count12 = Assert.Single(group.Metrics, m => m.Label == "Charges created in last 12 months");
+        Assert.True(b7Count12.HasValue);
+        Assert.Equal(2m, b7Count12.Value);
+
+        var b7Amt12 = Assert.Single(group.Metrics, m => m.Label == "Amount created in last 12 months");
+        Assert.False(b7Amt12.HasValue);
+        Assert.NotNull(b7Amt12.InsufficiencyReason);
+        Assert.Contains("1 of 2 creation events missing ChargeAmount", b7Amt12.InsufficiencyReason);
+    }
+
+    [Fact]
+    public void B11_median_is_sorted_and_buckets_are_present()
+    {
+        var asOf = new DateTime(2023, 6, 30, 0, 0, 0, DateTimeKind.Utc);
+        var baseDate = new DateOnly(2023, 1, 1);
+
+        var lags = new[] { 100, 5, 20, 50 };
+        var charges = new List<RocCharge>();
+
+        for (int i = 0; i < lags.Length; i++)
+        {
+            var c = new RocCharge { ChargeId = i + 1, ChargeStatus = "Open", CurrentAmount = 10m };
+            c.Events.Add(new RocChargeEvent
+            {
+                EventType = ChargeEventType.Creation,
+                EventDate = baseDate,
+                FilingDate = baseDate.AddDays(lags[i]),
+                ChargeAmount = 10m
+            });
+            charges.Add(c);
+        }
+
+        var model = CreateMinimalDossierWithCharges(charges, asOf: asOf);
+        var group = DossierComputations.ChargeRegisterMetrics(model);
+
+        var median = Assert.Single(group.Metrics, m => m.Label == "Median charge filing lag");
+        Assert.True(median.HasValue);
+        Assert.Equal(50m, median.Value);
+
+        var b0_7 = Assert.Single(group.Metrics, m => m.Label == "Charge filing lag 0-7 days");
+        Assert.True(b0_7.HasValue);
+        Assert.Equal(1m, b0_7.Value);
+
+        var b8_30 = Assert.Single(group.Metrics, m => m.Label == "Charge filing lag 8-30 days");
+        Assert.True(b8_30.HasValue);
+        Assert.Equal(1m, b8_30.Value);
+
+        var b31_90 = Assert.Single(group.Metrics, m => m.Label == "Charge filing lag 31-90 days");
+        Assert.True(b31_90.HasValue);
+        Assert.Equal(1m, b31_90.Value);
+
+        var bGt90 = Assert.Single(group.Metrics, m => m.Label == "Charge filing lag >90 days");
+        Assert.True(bGt90.HasValue);
+        Assert.Equal(1m, bGt90.Value);
     }
 }

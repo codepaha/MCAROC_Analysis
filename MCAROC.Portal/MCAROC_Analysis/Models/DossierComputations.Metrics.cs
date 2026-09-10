@@ -46,6 +46,8 @@ public static partial class DossierComputations
         var asOfStr = $"as at {asOfDate:d MMM yyyy}";
 
         var list = new List<MetricResult>();
+        var anyOpenMissingAmount = open.Any(c => c.CurrentAmount is null);
+        var totalOpen = anyOpenMissingAmount ? (decimal?)null : charges.TotalOpenAmount;
 
         // B1: Total open charge amount
         if (all.Count == 0)
@@ -53,9 +55,16 @@ public static partial class DossierComputations
             list.Add(MetricResult.Insufficient("Total open charge amount", MetricUnit.Crore,
                 "No charge records on file", "RocCharge.CurrentAmount"));
         }
+        else if (anyOpenMissingAmount)
+        {
+            var missingCount = open.Count(c => c.CurrentAmount is null);
+            list.Add(MetricResult.Insufficient("Total open charge amount", MetricUnit.Crore,
+                $"Reconciliation incomplete: {missingCount} of {open.Count} open charges missing CurrentAmount",
+                "RocCharge.CurrentAmount"));
+        }
         else
         {
-            list.Add(MetricResult.Ok("Total open charge amount", charges.TotalOpenAmount,
+            list.Add(MetricResult.Ok("Total open charge amount", totalOpen!.Value,
                 MetricUnit.Crore, asOfStr, "RocCharge.CurrentAmount"));
         }
 
@@ -65,9 +74,21 @@ public static partial class DossierComputations
             list.Add(MetricResult.Insufficient("Total satisfied charge amount", MetricUnit.Crore,
                 "No charge records on file", "RocCharge.CurrentAmount"));
         }
+        else if (satisfied.Count == 0)
+        {
+            list.Add(MetricResult.Ok("Total satisfied charge amount", 0m,
+                MetricUnit.Crore, $"{asOfStr} (0 satisfied charges)", "RocCharge.CurrentAmount"));
+        }
+        else if (satisfied.Any(c => c.CurrentAmount is null))
+        {
+            var missingCount = satisfied.Count(c => c.CurrentAmount is null);
+            list.Add(MetricResult.Insufficient("Total satisfied charge amount", MetricUnit.Crore,
+                $"Reconciliation incomplete: {missingCount} of {satisfied.Count} satisfied charges missing CurrentAmount",
+                "RocCharge.CurrentAmount"));
+        }
         else
         {
-            var totalSatAmount = satisfied.Sum(c => c.CurrentAmount ?? 0m);
+            var totalSatAmount = satisfied.Sum(c => c.CurrentAmount!.Value);
             list.Add(MetricResult.Ok("Total satisfied charge amount", totalSatAmount,
                 MetricUnit.Crore, asOfStr, "RocCharge.CurrentAmount"));
         }
@@ -86,8 +107,12 @@ public static partial class DossierComputations
         }
 
         // B4: Top-3 lender concentration
-        var totalOpen = charges.TotalOpenAmount;
-        if (totalOpen == 0m)
+        if (anyOpenMissingAmount)
+        {
+            list.Add(MetricResult.Insufficient("Top-3 lender concentration", MetricUnit.Percent,
+                "Open charge amounts incomplete; lender share undefined", "RocCharge.LatestChargeHolderNormalized", "RocCharge.CurrentAmount"));
+        }
+        else if (totalOpen == 0m)
         {
             list.Add(MetricResult.Insufficient("Top-3 lender concentration", MetricUnit.Percent,
                 "Total open charge amount is zero", "RocCharge.LatestChargeHolderNormalized", "RocCharge.CurrentAmount"));
@@ -96,14 +121,19 @@ public static partial class DossierComputations
         {
             var lconc = charges.LenderConcentration;
             var top3Amt = lconc.Take(3).Sum(c => c.RegisteredAmount);
-            var top3Pct = Math.Round(top3Amt / totalOpen * 100m, 1);
+            var top3Pct = Math.Round(top3Amt / totalOpen!.Value * 100m, 1);
             var periodNote = lconc.Count < 3 ? $"{asOfStr} ({lconc.Count} holders)" : asOfStr;
             list.Add(MetricResult.Ok("Top-3 lender concentration", top3Pct,
                 MetricUnit.Percent, periodNote, "RocCharge.LatestChargeHolderNormalized", "RocCharge.CurrentAmount"));
         }
 
         // B4b: Lender concentration (HHI)
-        if (totalOpen == 0m)
+        if (anyOpenMissingAmount)
+        {
+            list.Add(MetricResult.Insufficient("Lender concentration (HHI)", MetricUnit.Ratio,
+                "Open charge amounts incomplete; lender share undefined", "RocCharge.LatestChargeHolderNormalized", "RocCharge.CurrentAmount"));
+        }
+        else if (totalOpen == 0m)
         {
             list.Add(MetricResult.Insufficient("Lender concentration (HHI)", MetricUnit.Ratio,
                 "Total open charge amount is zero", "RocCharge.LatestChargeHolderNormalized", "RocCharge.CurrentAmount"));
@@ -113,7 +143,7 @@ public static partial class DossierComputations
             decimal hhi = 0m;
             foreach (var r in charges.LenderConcentration)
             {
-                var share = r.RegisteredAmount / totalOpen;
+                var share = r.RegisteredAmount / totalOpen!.Value;
                 hhi += share * share;
             }
             list.Add(MetricResult.Ok("Lender concentration (HHI)", Math.Round(hhi, 4),
@@ -128,11 +158,20 @@ public static partial class DossierComputations
         }
         else
         {
-            var unclassifiedAmt = open
-                .Where(c => SecurityTypeLabels(c).Count == 0)
-                .Sum(c => c.CurrentAmount ?? 0m);
-            list.Add(MetricResult.Ok("Unclassified open charge amount", unclassifiedAmt,
-                MetricUnit.Crore, asOfStr, "DossierComputations.SecurityTypeLabels", "RocCharge.CurrentAmount"));
+            var unclassified = open.Where(c => SecurityTypeLabels(c).Count == 0).ToList();
+            if (unclassified.Any(c => c.CurrentAmount is null))
+            {
+                var missingCount = unclassified.Count(c => c.CurrentAmount is null);
+                list.Add(MetricResult.Insufficient("Unclassified open charge amount", MetricUnit.Crore,
+                    $"Reconciliation incomplete: {missingCount} of {unclassified.Count} unclassified open charges missing CurrentAmount",
+                    "DossierComputations.SecurityTypeLabels", "RocCharge.CurrentAmount"));
+            }
+            else
+            {
+                var unclassifiedAmt = unclassified.Sum(c => c.CurrentAmount!.Value);
+                list.Add(MetricResult.Ok("Unclassified open charge amount", unclassifiedAmt,
+                    MetricUnit.Crore, asOfStr, "DossierComputations.SecurityTypeLabels", "RocCharge.CurrentAmount"));
+            }
         }
 
         // B6: Oldest open charge age
@@ -173,18 +212,49 @@ public static partial class DossierComputations
             var c12 = creationEvents.Where(e => e.EventDate!.Value >= cutoff12 && e.EventDate!.Value <= asOfDate).ToList();
             var c24 = creationEvents.Where(e => e.EventDate!.Value >= cutoff24 && e.EventDate!.Value <= asOfDate).ToList();
 
-            var amt12 = c12.Sum(e => e.ChargeAmount ?? 0m);
-            var amt24 = c24.Sum(e => e.ChargeAmount ?? 0m);
-
             list.Add(MetricResult.Ok("Charges created in last 12 months", c12.Count,
                 MetricUnit.Count, $"trailing 12 months to {asOfDate:d MMM yyyy}", "RocChargeEvent.EventDate"));
-            list.Add(MetricResult.Ok("Amount created in last 12 months", amt12,
-                MetricUnit.Crore, $"trailing 12 months to {asOfDate:d MMM yyyy}", "RocChargeEvent.EventDate", "RocChargeEvent.ChargeAmount"));
+
+            if (c12.Count == 0)
+            {
+                list.Add(MetricResult.Ok("Amount created in last 12 months", 0m,
+                    MetricUnit.Crore, $"trailing 12 months to {asOfDate:d MMM yyyy}", "RocChargeEvent.EventDate", "RocChargeEvent.ChargeAmount"));
+            }
+            else if (c12.Any(e => e.ChargeAmount is null))
+            {
+                var missingCount = c12.Count(e => e.ChargeAmount is null);
+                list.Add(MetricResult.Insufficient("Amount created in last 12 months", MetricUnit.Crore,
+                    $"Reconciliation incomplete: {missingCount} of {c12.Count} creation events missing ChargeAmount",
+                    "RocChargeEvent.EventDate", "RocChargeEvent.ChargeAmount"));
+            }
+            else
+            {
+                var amt12 = c12.Sum(e => e.ChargeAmount!.Value);
+                list.Add(MetricResult.Ok("Amount created in last 12 months", amt12,
+                    MetricUnit.Crore, $"trailing 12 months to {asOfDate:d MMM yyyy}", "RocChargeEvent.EventDate", "RocChargeEvent.ChargeAmount"));
+            }
 
             list.Add(MetricResult.Ok("Charges created in last 24 months", c24.Count,
                 MetricUnit.Count, $"trailing 24 months to {asOfDate:d MMM yyyy}", "RocChargeEvent.EventDate"));
-            list.Add(MetricResult.Ok("Amount created in last 24 months", amt24,
-                MetricUnit.Crore, $"trailing 24 months to {asOfDate:d MMM yyyy}", "RocChargeEvent.EventDate", "RocChargeEvent.ChargeAmount"));
+
+            if (c24.Count == 0)
+            {
+                list.Add(MetricResult.Ok("Amount created in last 24 months", 0m,
+                    MetricUnit.Crore, $"trailing 24 months to {asOfDate:d MMM yyyy}", "RocChargeEvent.EventDate", "RocChargeEvent.ChargeAmount"));
+            }
+            else if (c24.Any(e => e.ChargeAmount is null))
+            {
+                var missingCount = c24.Count(e => e.ChargeAmount is null);
+                list.Add(MetricResult.Insufficient("Amount created in last 24 months", MetricUnit.Crore,
+                    $"Reconciliation incomplete: {missingCount} of {c24.Count} creation events missing ChargeAmount",
+                    "RocChargeEvent.EventDate", "RocChargeEvent.ChargeAmount"));
+            }
+            else
+            {
+                var amt24 = c24.Sum(e => e.ChargeAmount!.Value);
+                list.Add(MetricResult.Ok("Amount created in last 24 months", amt24,
+                    MetricUnit.Crore, $"trailing 24 months to {asOfDate:d MMM yyyy}", "RocChargeEvent.EventDate", "RocChargeEvent.ChargeAmount"));
+            }
         }
 
         // B8: Joint / consortium charge count
@@ -193,9 +263,14 @@ public static partial class DossierComputations
             MetricUnit.Count, asOfStr, "RocChargeEvent.JointHolding", "RocChargeEvent.ConsortiumHolding"));
 
         // B9: Charge-to-paid-up-capital ratio
-        if (model.Corporate.PaidUpCapital is { } puc && puc > 0m)
+        if (anyOpenMissingAmount)
         {
-            var ratio = Math.Round(totalOpen / puc, 2);
+            list.Add(MetricResult.Insufficient("Charge-to-paid-up-capital ratio", MetricUnit.Times,
+                "Open charge amounts incomplete; ratio undefined", "RocCharge.CurrentAmount", "CompanyProfile.PaidUpCapital"));
+        }
+        else if (model.Corporate.PaidUpCapital is { } puc && puc > 0m)
+        {
+            var ratio = Math.Round(totalOpen!.Value / puc, 2);
             list.Add(MetricResult.Ok("Charge-to-paid-up-capital ratio", ratio,
                 MetricUnit.Times, asOfStr, "RocCharge.CurrentAmount", "CompanyProfile.PaidUpCapital"));
         }
@@ -206,32 +281,43 @@ public static partial class DossierComputations
         }
 
         // B10: Open charges vs balance-sheet borrowings
-        var latestFy = model.Financials.Latest;
-        if (latestFy is null || latestFy.LongTermBorrowings is null || latestFy.ShortTermBorrowings is null)
+        if (anyOpenMissingAmount)
         {
             list.Add(MetricResult.Insufficient("Open charges vs balance-sheet borrowings", MetricUnit.Times,
-                "Balance-sheet borrowings not available (or missing long/short-term components)",
+                "Open charge amounts incomplete; ratio undefined",
                 "RocCharge.CurrentAmount", "FinancialYearData.LongTermBorrowings", "FinancialYearData.ShortTermBorrowings"));
         }
         else
         {
-            var debt = latestFy.LongTermBorrowings.Value + latestFy.ShortTermBorrowings.Value;
-            if (debt == 0m)
+            var latestFy = model.Financials.Latest;
+            if (latestFy is null || latestFy.LongTermBorrowings is null || latestFy.ShortTermBorrowings is null)
             {
                 list.Add(MetricResult.Insufficient("Open charges vs balance-sheet borrowings", MetricUnit.Times,
-                    "Balance-sheet borrowings is zero; ratio undefined",
+                    "Balance-sheet borrowings not available (or missing long/short-term components)",
                     "RocCharge.CurrentAmount", "FinancialYearData.LongTermBorrowings", "FinancialYearData.ShortTermBorrowings"));
             }
             else
             {
-                var ratio = Math.Round(totalOpen / debt, 2);
-                list.Add(MetricResult.Ok("Open charges vs balance-sheet borrowings", ratio,
-                    MetricUnit.Times, $"FY{latestFy.FinancialYear}",
-                    "RocCharge.CurrentAmount", "FinancialYearData.LongTermBorrowings", "FinancialYearData.ShortTermBorrowings"));
+                var debt = latestFy.LongTermBorrowings.Value + latestFy.ShortTermBorrowings.Value;
+                if (debt == 0m)
+                {
+                    list.Add(MetricResult.Insufficient("Open charges vs balance-sheet borrowings", MetricUnit.Times,
+                        "Balance-sheet borrowings is zero; ratio undefined",
+                        "RocCharge.CurrentAmount", "FinancialYearData.LongTermBorrowings", "FinancialYearData.ShortTermBorrowings"));
+                }
+                else
+                {
+                    var ratio = Math.Round(totalOpen!.Value / debt, 2);
+                    list.Add(MetricResult.Ok("Open charges vs balance-sheet borrowings", ratio,
+                        MetricUnit.Times, $"FY{latestFy.FinancialYear}",
+                        "RocCharge.CurrentAmount", "FinancialYearData.LongTermBorrowings", "FinancialYearData.ShortTermBorrowings"));
+                }
             }
         }
 
-        // B11: Charge filing-lag median + negative-lag anomalies
+        // B11: Charge filing-lag median + buckets + negative-lag anomalies
+        // Catalogue: report count + median + buckets 0-7 / 8-30 / 31-90 / >90 (MCA statutory = 30 days)
+        // A negative lag (filing precedes creation) is isolated as a data-quality anomaly.
         var datedCreations = all.SelectMany(c => c.Events)
             .Where(e => e.EventType == ChargeEventType.Creation && e.EventDate is not null && e.FilingDate is not null)
             .ToList();
@@ -247,12 +333,39 @@ public static partial class DossierComputations
             list.Add(MetricResult.Insufficient("Median charge filing lag", MetricUnit.Days,
                 "No Creation events with valid non-negative filing dates",
                 "RocChargeEvent.EventDate", "RocChargeEvent.FilingDate"));
+            list.Add(MetricResult.Insufficient("Charge filing lag 0-7 days", MetricUnit.Count,
+                "No Creation events with valid non-negative filing dates",
+                "RocChargeEvent.EventDate", "RocChargeEvent.FilingDate"));
+            list.Add(MetricResult.Insufficient("Charge filing lag 8-30 days", MetricUnit.Count,
+                "No Creation events with valid non-negative filing dates",
+                "RocChargeEvent.EventDate", "RocChargeEvent.FilingDate"));
+            list.Add(MetricResult.Insufficient("Charge filing lag 31-90 days", MetricUnit.Count,
+                "No Creation events with valid non-negative filing dates",
+                "RocChargeEvent.EventDate", "RocChargeEvent.FilingDate"));
+            list.Add(MetricResult.Insufficient("Charge filing lag >90 days", MetricUnit.Count,
+                "No Creation events with valid non-negative filing dates",
+                "RocChargeEvent.EventDate", "RocChargeEvent.FilingDate"));
         }
         else
         {
+            // Note: for an even count, takes the upper-middle element nonNegLags[Count / 2] as a descriptive days metric.
             var median = nonNegLags[nonNegLags.Count / 2];
             list.Add(MetricResult.Ok("Median charge filing lag", (decimal)median,
                 MetricUnit.Days, asOfStr, "RocChargeEvent.EventDate", "RocChargeEvent.FilingDate"));
+
+            var b0_7 = nonNegLags.Count(d => d <= 7);
+            var b8_30 = nonNegLags.Count(d => d >= 8 && d <= 30);
+            var b31_90 = nonNegLags.Count(d => d >= 31 && d <= 90);
+            var bGt90 = nonNegLags.Count(d => d > 90);
+
+            list.Add(MetricResult.Ok("Charge filing lag 0-7 days", b0_7,
+                MetricUnit.Count, asOfStr, "RocChargeEvent.EventDate", "RocChargeEvent.FilingDate"));
+            list.Add(MetricResult.Ok("Charge filing lag 8-30 days", b8_30,
+                MetricUnit.Count, asOfStr, "RocChargeEvent.EventDate", "RocChargeEvent.FilingDate"));
+            list.Add(MetricResult.Ok("Charge filing lag 31-90 days", b31_90,
+                MetricUnit.Count, asOfStr, "RocChargeEvent.EventDate", "RocChargeEvent.FilingDate"));
+            list.Add(MetricResult.Ok("Charge filing lag >90 days", bGt90,
+                MetricUnit.Count, asOfStr, "RocChargeEvent.EventDate", "RocChargeEvent.FilingDate"));
         }
 
         list.Add(MetricResult.Ok("Negative filing-lag anomalies", negLagEvents.Count,
