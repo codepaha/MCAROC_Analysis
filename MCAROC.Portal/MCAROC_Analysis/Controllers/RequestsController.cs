@@ -272,10 +272,16 @@ public class RequestsController(
                 .OrderBy(x => x.Section).ThenBy(x => x.Label).ThenByDescending(x => x.FinancialYear).ToListAsync();
         }
 
-        vm.LatestAnalysisRun = await db.AnalysisRuns
-            .Where(a => a.RequestId == id)
-            .OrderByDescending(a => a.RunNumber)
-            .FirstOrDefaultAsync();
+        // Only the analysis computed FROM the ingestion run this page is rendering. After a re-ingest
+        // (see Reingest), an older analysis belongs to the previous ingestion run and must NOT be shown
+        // against the new data — the AI tab falls back to its "analysis in progress / not started"
+        // state until the matching new analysis exists. AnalysisRun.IngestionRunId is the lineage.
+        vm.LatestAnalysisRun = request.LatestCompletedIngestionRunId is { } analysisIngestionRunId
+            ? await db.AnalysisRuns
+                .Where(a => a.RequestId == id && a.IngestionRunId == analysisIngestionRunId)
+                .OrderByDescending(a => a.RunNumber)
+                .FirstOrDefaultAsync()
+            : null;
         if (vm.LatestAnalysisRun is not null)
         {
             // Severity/TemporalStatus are stored as strings (HasConversion<string>), so ordering by them
