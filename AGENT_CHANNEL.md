@@ -54,10 +54,10 @@ addresses Codex findings and re-requests review. The Owner merges once green + a
 
 | PR | Branch | Head | Codex | Hosted CI | Owner action |
 |---|---|---|---|---|---|
-| #27 dossier PDF | `feature/phase7-dossier-pdf` | `1107223` | ✅ source-approved | running (runner back online) | merge when green |
-| #28 dev re-ingest | `feature/dev-reingest` | `5288b30` | 🔄 re-review needed (fix pushed) | queued | hold for Codex + CI |
-| #29 legal-history parser | `fix/legal-history-unverified-layout` | `f7b91b4` | 🔄 re-review needed (control-total test pushed) | queued | hold for Codex + CI |
-| #30 parity plan + catalogue + channel | `docs/portal-parity-plan` | `e9c4314` | not requested | queued | merge (docs only) — makes this channel + catalogue live |
+| #27 dossier PDF | `feature/phase7-dossier-pdf` | `1107223` | ✅ source-approved | ✅ green (303 tests) | **ready to merge** |
+| #28 dev re-ingest | `feature/dev-reingest` | `5288b30` | 🔄 re-review needed (fix pushed) | ✅ green (after 1 transient build fail + rerun) | hold for Codex |
+| #29 legal-history parser | `fix/legal-history-unverified-layout` | `f7b91b4` | 🔄 re-review needed (control-total test pushed) | ✅ green | hold for Codex |
+| #30 parity plan + catalogue + channel | `docs/portal-parity-plan` | `0a68bbc` | not requested | in progress | merge (docs only) — makes this channel + catalogue live |
 
 **Phase 8:** EPIC #31. Wave 1 (#32–#38) and Wave 2 (#39–#44) open, **not started** — start after
 #27/#28/#29 merge (they touch the same parsers/entities). Wave 3 (restyle) + Wave 4 (dossier) not
@@ -73,9 +73,17 @@ cancelled; the 4 current-head runs are churning. If CI is "queued" again, check 
 ## Log  <!-- newest first. Prefix: NEEDS / BLOCKED / DONE / DECISION / FYI -->
 
 ### 2026-09-10 — Claude session
+- **FYI:** #28's first CI run **failed** — build step exited 1 in 25s with no captured error, while
+  #27 and #29 (sibling branches, same runner, same session) both passed. Reproduced locally in
+  Release: **build succeeds**. Re-ran the job → **green** (build 52s, 303 tests pass). Transient —
+  likely the runner still settling after coming back online / a file lock. If a run fails with an
+  empty build step, **re-run it once** before investigating.
 - **FYI / fixed:** hosted CI wasn't "slow" — the self-hosted runner was **offline** for ~1h (it's
   not a service; `C:\actions-runner\MCAROC_Analysis\run.cmd` had stopped). Restarted it, cancelled 5
-  superseded runs; the 4 current-head runs are now processing (one at a time, ~3 min each).
+  superseded runs. **TODO (owner):** install it as a service so it survives reboots —
+  `cd C:\actions-runner\MCAROC_Analysis && .\svc.cmd install && .\svc.cmd start`.
+- **All 3 code PRs now green** (#27 `1107223`, #28 `5288b30`, #29 `f7b91b4`). #27 ready to merge;
+  #28/#29 waiting on **@codex** re-review of the pushed fixes.
 
 ### 2026-09-10 — Owner + Claude session
 - **DECISION (owner):** portal viz goes **dependency-free** (server-rendered inline `<svg>`, no
