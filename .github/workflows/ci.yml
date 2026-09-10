@@ -12,12 +12,28 @@ concurrency:
 
 jobs:
   # The full suite on a GitHub-hosted runner — free and parallel across PRs now the repo is public.
-  # It stands up SQL Server LocalDB for the integration tests. The real-workbook reconciliation
-  # tests skip here (their fixtures are never committed); they run on `reconciliation` below.
+  # The app stores embeddings in a SQL Server 2025 `vector(768)` column, so CI runs against a real
+  # SQL Server 2025 container (LocalDB / SQL 2019 on the hosted images does not have the vector type).
+  # The .NET app is cross-platform; only QuestPDF needs a native font lib on Linux.
+  # The real-workbook reconciliation tests skip here (fixtures never committed) — see `reconciliation`.
   build-and-test:
-    runs-on: windows-2022
+    runs-on: ubuntu-latest
+    services:
+      sql:
+        image: mcr.microsoft.com/mssql/server:2025-latest
+        env:
+          ACCEPT_EULA: "Y"
+          MSSQL_SA_PASSWORD: "Ci_Local_Pass1"
+        ports:
+          - 1433:1433
+        options: >-
+          --health-cmd "/opt/mssql-tools18/bin/sqlcmd -C -S localhost -U sa -P 'Ci_Local_Pass1' -Q 'SELECT 1' -b -o /dev/null"
+          --health-start-period 15s
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 12
     env:
-      MCAROC_TEST_CONNECTION: "Server=(localdb)\\MSSQLLocalDB;Database=MCAROC_Analysis_Test;Trusted_Connection=True;TrustServerCertificate=True;"
+      MCAROC_TEST_CONNECTION: "Server=localhost,1433;Database=MCAROC_Analysis_Test;User Id=sa;Password=Ci_Local_Pass1;TrustServerCertificate=True;"
     steps:
       - uses: actions/checkout@v4
 
@@ -25,11 +41,8 @@ jobs:
         with:
           dotnet-version: '10.0.x'
 
-      - name: Start SQL Server LocalDB
-        shell: pwsh
-        run: |
-          sqllocaldb start MSSQLLocalDB
-          sqllocaldb info MSSQLLocalDB
+      - name: QuestPDF native dependency
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libfontconfig1
 
       - name: Restore
         run: dotnet restore MCAROC.Portal/MCAROC.Portal.slnx
