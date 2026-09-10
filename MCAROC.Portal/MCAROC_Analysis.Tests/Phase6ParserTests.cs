@@ -36,6 +36,57 @@ public class StructureParserTests
         Assert.Empty(r.Items);
         Assert.Single(r.Warnings, w => w.IssueCode == "STRUCTURE_SUMMARY_EMPTY");
     }
+
+    [Fact]
+    public void ParsesBothCategoryGrids_KeepingSubRowsUnderTheirParent_AndSkippingHeaderAndTotalRows()
+    {
+        var sheet = Sheet("Structure",
+            Row("SHARE HOLDING SUMMARY"),
+            Row("Promoter %", 60.0),
+            Row("Public %", 40.0),
+            Row(""),
+            Row("PROMOTERS - 31 Mar, 2020"),
+            Row("CATEGORY", "EQUITY", "", "PREFERENCE", ""),
+            Row("", "Number of Shares", "Percentage", "Number of Shares", "Percentage"),
+            Row("1. Individual / Hindu Undivided Family", "", "", "", ""),
+            Row("(i) Indian", 600.0, 60.0, 0.0, "-"),
+            Row("(ii) Non-resident Indian (others)", 0.0, 0.0, 0.0, "-"),
+            Row("3. Insurance companies", 0.0, 0.0, 0.0, "-"),
+            Row("Total", 600.0, 60.0, 0.0, 0.0),
+            Row(""),
+            Row("PUBLIC / OTHER THAN PROMOTERS - 31 Mar, 2020"),
+            Row("CATEGORY", "EQUITY", "", "PREFERENCE", ""),
+            Row("", "Number of Shares", "Percentage", "Number of Shares", "Percentage"),
+            Row("4. Bank", 400.0, 40.0, 0.0, "-"),
+            Row("Total", 400.0, 40.0, 0.0, 0.0));
+
+        var r = StructureParser.Parse(sheet, 1, 1, 10, out var pattern);
+
+        // Summary block still parses despite the "Promoter %"/"Public %" keys sharing a prefix with the grids.
+        var s = Assert.Single(r.Items);
+        Assert.Equal(60.0m, s.PromoterHoldingPercent);
+        Assert.Equal(40.0m, s.PublicHoldingPercent);
+
+        Assert.Equal(4, pattern.Count);
+        Assert.DoesNotContain(pattern, x => x.Category is "Total" or "CATEGORY");
+
+        var indian = Assert.Single(pattern, x => x.Category == "(i) Indian");
+        Assert.Equal(ShareholderClass.Promoter, indian.HolderClass);
+        Assert.Equal(new DateOnly(2020, 3, 31), indian.AsOnDate);
+        Assert.Equal(600L, indian.EquityShares);
+        Assert.Equal(60.0m, indian.EquityPercent);
+        Assert.Null(indian.PreferencePercent);
+        Assert.Equal("1. Individual / Hindu Undivided Family", indian.CategoryGroup);
+        Assert.Equal(1, indian.DisplayOrder);
+
+        var insurance = Assert.Single(pattern, x => x.Category == "3. Insurance companies");
+        Assert.Null(insurance.CategoryGroup);
+        Assert.Equal(3, insurance.DisplayOrder);
+
+        var bank = Assert.Single(pattern, x => x.Category == "4. Bank");
+        Assert.Equal(ShareholderClass.Public, bank.HolderClass);
+        Assert.Equal(1, bank.DisplayOrder);
+    }
 }
 
 public class RelatedCorporatesParserTests

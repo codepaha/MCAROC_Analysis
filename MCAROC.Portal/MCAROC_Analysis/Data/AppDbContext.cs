@@ -42,6 +42,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
 
     // Phase 6
     public DbSet<CompanyStructure> CompanyStructures => Set<CompanyStructure>();
+    public DbSet<ShareholdingPatternRow> ShareholdingPatternRows => Set<ShareholdingPatternRow>();
     public DbSet<RelatedCorporate> RelatedCorporates => Set<RelatedCorporate>();
     public DbSet<ComplianceRecord> ComplianceRecords => Set<ComplianceRecord>();
     public DbSet<FinancialParameter> FinancialParameters => Set<FinancialParameter>();
@@ -230,6 +231,17 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
         {
             e.HasKey(x => x.CompanyStructureId);
             e.HasIndex(x => new { x.RequestId, x.IngestionRunId });
+        });
+
+        modelBuilder.Entity<ShareholdingPatternRow>(e =>
+        {
+            e.HasKey(x => x.ShareholdingPatternRowId);
+            e.HasIndex(x => new { x.RequestId, x.IngestionRunId });
+            e.Property(x => x.HolderClass).HasConversion<string>().HasMaxLength(15);
+            e.Property(x => x.Category).HasMaxLength(200);
+            e.Property(x => x.CategoryGroup).HasMaxLength(200);
+            e.Property(x => x.EquityPercent).HasPrecision(9, 4);
+            e.Property(x => x.PreferencePercent).HasPrecision(9, 4);
         });
 
         modelBuilder.Entity<RelatedCorporate>(e =>

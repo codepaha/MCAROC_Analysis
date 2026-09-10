@@ -230,6 +230,41 @@
             }
             else { <div class="mca-empty"><i class="bi bi-diagram-3"></i><p>No shareholding data extracted.</p></div> }
         </div>
+
+        @if (Model.ShareholdingPattern.Count > 0)
+        {
+            var patternDate = Model.ShareholdingPattern.Select(x => x.AsOnDate).FirstOrDefault(d => d is not null);
+            <div class="mca-section">
+                <h3>Shareholding Pattern <span class="mca-count">@Model.ShareholdingPattern.Count</span></h3>
+                <p class="text-muted">SEBI-category split from the workbook's <em>Structure</em> sheet@(patternDate is { } pd ? $" — as on {pd:d MMM yyyy}" : "").</p>
+                @foreach (var cls in Model.ShareholdingPattern.GroupBy(x => x.HolderClass).OrderBy(g => g.Key))
+                {
+                    <h4 class="mca-subhead">@(cls.Key == ShareholderClass.Promoter ? "Promoters" : "Public / other than promoters")</h4>
+                    <div class="pi-table-wrap"><table class="pi-results-table">
+                        <thead><tr><th>Category</th><th class="text-end">Equity Shares</th><th class="text-end">Equity %</th><th class="text-end">Pref. Shares</th><th class="text-end">Pref. %</th></tr></thead>
+                        <tbody>
+                        @{ string? shownGroup = null; }
+                        @foreach (var pr in cls.OrderBy(x => x.DisplayOrder))
+                        {
+                            if (pr.CategoryGroup is { } g && g != shownGroup)
+                            {
+                                shownGroup = g;
+                                <tr class="mca-row-group"><td colspan="5">@g</td></tr>
+                            }
+                            if (pr.CategoryGroup is null) { shownGroup = null; }
+                            <tr>
+                                <td>@(pr.CategoryGroup is null ? "" : "— ")@pr.Category</td>
+                                <td class="text-end">@(pr.EquityShares?.ToString("N0") ?? "—")</td>
+                                <td class="text-end">@Num(pr.EquityPercent)</td>
+                                <td class="text-end">@(pr.PreferenceShares?.ToString("N0") ?? "—")</td>
+                                <td class="text-end">@Num(pr.PreferencePercent)</td>
+                            </tr>
+                        }
+                        </tbody>
+                    </table></div>
+                }
+            </div>
+        }
     </div>
 
     @* ── Group Entities ── *@
