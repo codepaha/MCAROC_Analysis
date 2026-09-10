@@ -54,20 +54,42 @@ addresses Codex findings and re-requests review. The Owner merges once green + a
 
 | PR | Branch | Head | Codex | Hosted CI | Owner action |
 |---|---|---|---|---|---|
-| #27 dossier PDF | `feature/phase7-dossier-pdf` | `1107223` | ✅ source-approved | queued | merge when green |
-| #28 dev re-ingest | `feature/dev-reingest` | `5288b30` | 🔄 re-review needed (fix pushed) | queued | hold |
-| #29 legal-history parser | `fix/legal-history-unverified-layout` | `f7b91b4` | 🔄 re-review needed (control-total test pushed) | queued | hold |
-| #30 parity plan + catalogue | `docs/portal-parity-plan` | — | not requested | n/a | merge (docs only) — makes this channel + catalogue live |
+| #27 dossier PDF | `feature/phase7-dossier-pdf` | `1107223` | ✅ source-approved | running (runner back online) | merge when green |
+| #28 dev re-ingest | `feature/dev-reingest` | `5288b30` | 🔄 re-review needed (fix pushed) | queued | hold for Codex + CI |
+| #29 legal-history parser | `fix/legal-history-unverified-layout` | `f7b91b4` | 🔄 re-review needed (control-total test pushed) | queued | hold for Codex + CI |
+| #30 parity plan + catalogue + channel | `docs/portal-parity-plan` | `e9c4314` | not requested | queued | merge (docs only) — makes this channel + catalogue live |
 
 **Phase 8:** EPIC #31. Wave 1 (#32–#38) and Wave 2 (#39–#44) open, **not started** — start after
 #27/#28/#29 merge (they touch the same parsers/entities). Wave 3 (restyle) + Wave 4 (dossier) not
 yet split into issues.
 
-**Blockers:** none beyond "waiting on hosted CI + owner merge".
+**Infra note (2026-09-10):** the self-hosted runner `mcaroc-local-runner` (this dev machine, NOT
+installed as a service — runs via `C:\actions-runner\MCAROC_Analysis\run.cmd`) was **offline** for
+~1h, so every `build-and-test` sat `queued` with nothing validating it. Restarted; 5 superseded runs
+cancelled; the 4 current-head runs are churning. If CI is "queued" again, check the runner is up.
 
 ---
 
 ## Log  <!-- newest first. Prefix: NEEDS / BLOCKED / DONE / DECISION / FYI -->
+
+### 2026-09-10 — Claude session
+- **FYI / fixed:** hosted CI wasn't "slow" — the self-hosted runner was **offline** for ~1h (it's
+  not a service; `C:\actions-runner\MCAROC_Analysis\run.cmd` had stopped). Restarted it, cancelled 5
+  superseded runs; the 4 current-head runs are now processing (one at a time, ~3 min each).
+
+### 2026-09-10 — Owner + Claude session
+- **DECISION (owner):** portal viz goes **dependency-free** (server-rendered inline `<svg>`, no
+  Chart.js / no `<canvas>`) — but it must stay **print-compatible**. Resolution recorded in
+  `docs/portal-parity-plan.md` §C "Viz principle":
+  - Portal = inline SVG partials (`viewBox`, no JS layout, `@media print` simplification).
+  - Dossier PDF = QuestPDF native primitives (bars = `.Background()` rows, grids = `.Table`).
+  - **Both render from the same computed numbers** — a shared viz view-model on `DossierComputations`
+    emitting `{label, value, median?, max}`; no viz logic in the Razor partial or the composer; never
+    embed a portal SVG into the PDF.
+  - C9 also migrates the 3 existing Chart.js dashboard charts → inline SVG and deletes
+    `wwwroot/lib/chart.js/`.
+  - C7's split-screen PDF viewer (PDF.js) is the one allowed new JS lib, and it degrades to a plain
+    download link.
 
 ### 2026-09-10 — Claude session
 - **DONE** #28: fixed the Codex blocker — `RequestsController.Details` now filters the analysis query

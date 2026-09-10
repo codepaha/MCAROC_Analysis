@@ -83,6 +83,22 @@ parser change + reconciliation-test update.
 
 ### C — Editorial restyle + Probe-inspired UX  (the old "Track B" + the "take" list)
 
+> **Viz principle (owner decision, 2026-09-10): dependency-free, print-safe, one data contract.**
+> - **Portal viz = server-rendered inline `<svg>`** partials. No Chart.js, no `<canvas>`. SVG is
+>   vector + part of the DOM, so a browser Print / "Save as PDF" of a portal page renders it crisp
+>   (canvas charts rasterise blurry or come out blank if print fires before JS). No JS dep, no CSP
+>   concern, theme-aware via `currentColor`, deterministic for visual-diff review.
+> - **Dossier PDF viz = QuestPDF native primitives** (`.Background()` rectangle rows for bars,
+>   `.Table` for trend grids, `.Canvas()`/`.Line()` for a sparkline). QuestPDF has no browser — it
+>   already cannot consume Chart.js/SVG; this is the existing constraint, not a regression.
+> - **Compatibility guarantee:** both render from the **same computed numbers** — a shared viz
+>   view-model (extend `DossierComputations`) emits `{label, value, median?, max}` tuples; the Razor
+>   partial and the QuestPDF composer both consume it, no viz logic in either. Never embed a portal
+>   SVG into the PDF as an image — redraw natively from the numbers.
+> - Every SVG partial: explicit `viewBox`, no JS layout, `@media print` simplification (drop hover
+>   affordances, force the light palette). Migrate the 3 existing Chart.js dashboard charts to inline
+>   SVG and delete `wwwroot/lib/chart.js/` (part of C9).
+
 | # | Scope |
 |---|---|
 | **C1** | Design tokens (Fraunces / IBM Plex, maroon, hairlines), `_Layout` shell, footer, `site.js` split. |
@@ -90,17 +106,20 @@ parser change + reconciliation-test update.
 | **C3** | "Reference Document(s)" provenance rows — wire curated blocks to `RequestDocument` / `DocumentChunk` (form name + page). |
 | **C4** | Colour-as-signal + inline annotations (holder rename, unknown holder, invalid email, ceased director). |
 | **C5** | Grouped charge table w/ `[+]` expand; per-section ₹ unit scaler (Crore/Lakh/INR). |
-| **C6** | Peer actual-vs-median layout + 5-closest-peers bar chart (Chart.js — already vendored). |
-| **C7** | **Split-screen in-app PDF viewer** (`GET /Requests/{id}/documents/{docId}.pdf#page=N` + PDF.js) + omni-present docked chat (`_ChatPanel`, `POST /Chat/AskJson`) + `Ctrl+K` + per-tab suggested prompts. Citations (`RetrievedSource` already carries `ChunkId/PageNumber`) open the viewer at the page. |
+| **C6** | Shared viz view-model + **inline-SVG** partials: `_Sparkline` · `_MiniBars` · `_SplitBar` · `_RateBar` · `_PeerCompare` (actual-vs-median) · `_ClosestPeers` (5-bar). Each has a degenerate state + `@media print` rules. |
+| **C7** | **Split-screen in-app PDF viewer** (`GET /Requests/{id}/documents/{docId}.pdf#page=N` + PDF.js — the *only* new JS lib, and it degrades to a plain download link) + omni-present docked chat (`_ChatPanel`, `POST /Chat/AskJson`) + `Ctrl+K` + per-tab suggested prompts. Citations (`RetrievedSource` already carries `ChunkId/PageNumber`) open the viewer at the page. |
 | **C8** | Review-Priority degenerate state — name the gating reason(s) (`CORP_FINANCIAL_DATA_STALE`, …), Probe-style. |
-| **C9** | Dashboard / Search History / New Search restyle + inline-SVG viz partials. |
-| **C10** | Dark mode / responsive / a11y / `prefers-reduced-motion` / focus rings. |
+| **C9** | Dashboard / Search History / New Search restyle; **migrate the 3 Chart.js dashboard charts → inline-SVG partials**, remove `wwwroot/lib/chart.js/` + `dashboard.js` Chart helpers. |
+| **C10** | Dark mode / responsive / a11y / `prefers-reduced-motion` / focus rings / **print stylesheet** (`@media print` for every tab + viz). |
 
 ### D — Dossier PDF polish  (Probe42-plan P0–P6, after #27 merges)
 
 P0 provenance + hierarchical TOC · P1 current-slice/full-history annexures · P2 two-pass charges +
 expanded cards · P3 inline flags · P4 litigation uncertainty buckets · P5 ratios/peer/subtotal ·
 P6 empty-states. Also feed A1 provenance + A2/A3/A4/A6 new data into the annexures.
+
+**P5 viz** = QuestPDF native (`.Background()` rows for the peer bars, `.Table` for the ratio grid) —
+same shared viz view-model as C6, drawn with QuestPDF primitives. No image embedding.
 
 ---
 
