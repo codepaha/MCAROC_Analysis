@@ -66,6 +66,22 @@
 .mca-company-meta small { color: var(--muted); font-size: 12px; }
 .mca-company-meta small b { color: var(--text-2); font-weight: 600; }
 
+/* Data-coverage strip: which optional workbook sheets this upload contained (issue A11) */
+.mca-coverage-strip {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px 16px;
+    padding: 8px 0 12px;
+    font-size: 12px;
+    color: var(--text-2);
+    border-top: 1px solid var(--border);
+}
+.mca-coverage-item { display: inline-flex; align-items: center; gap: 5px; }
+.mca-coverage-item b { color: var(--text); font-weight: 600; }
+.mca-coverage-flag { color: var(--warn-strong, #9a6b00); }
+.mca-coverage-flag a { margin-left: 4px; }
+
 /* Underline tab strip (ported from Property Intelligence .cd-tabs) */
 .mca-tabs {
     border-bottom: 2px solid var(--border);

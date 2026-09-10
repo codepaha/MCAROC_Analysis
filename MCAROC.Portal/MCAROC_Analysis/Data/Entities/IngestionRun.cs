@@ -24,6 +24,18 @@ public class IngestionRun
     public int WarningsCount { get; set; }
     public int ErrorsCount { get; set; }
 
+    /// <summary>JSON array of the canonical names of every optional workbook sheet that was NOT present
+    /// in this upload (<see cref="MCAROC_Analysis.Services.Excel.SheetAliases.TrackedOptionalSheets"/>).
+    /// Lets the portal and dossier say "this workbook did not include a &lt;Sheet&gt;" rather than
+    /// showing the same "no records" empty state whether a section was absent or verified empty.
+    /// <c>"[]"</c> = every tracked optional sheet was present.</summary>
+    public string AbsentOptionalSheetsJson { get; set; } = "[]";
+
+    /// <summary>True when the ROC report lists one or more charges but the Detailed Charge Report
+    /// workbook was not supplied (or was quarantined for an identity mismatch) — the charge annexure
+    /// is then built from ROC-sequence data only. A specific, common gap worth its own flag.</summary>
+    public bool ChargeReportMissing { get; set; }
+
     public string? FailureReason { get; set; }
 
     public List<IngestionIssue> Issues { get; set; } = [];

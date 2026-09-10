@@ -17,6 +17,11 @@ public class RequestDetailsViewModel
     public IngestionRun? LatestRun { get; set; }
     public List<IngestionIssue> Issues { get; set; } = [];
 
+    /// <summary>Which optional workbook sheets this run's upload contained — drives the conditional
+    /// empty-state text ("not in this upload" vs "present, reported no records") and the "N of M
+    /// optional sheets present" coverage line.</summary>
+    public SheetCoverage SheetCoverage { get; set; } = SheetCoverage.Empty;
+
     public CompanyProfile? CompanyProfile { get; set; }
     public List<Director> Directors { get; set; } = [];
     public List<DirectorAssociation> DirectorAssociations { get; set; } = [];

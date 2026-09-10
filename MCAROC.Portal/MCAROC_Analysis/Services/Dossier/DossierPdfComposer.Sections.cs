@@ -102,8 +102,49 @@ public partial class DossierPdfComposer
         });
 
         ComposeKeyIndicators(col);
+        ComposeSourceCoverage(col);
         ComposeNotAssessed(col);
     });
+
+    /// <summary>"Source coverage" — which optional workbook sheets this dossier is and is not built on,
+    /// so an empty annexure section reads as "not in this upload" rather than "verified nil". Renders
+    /// in every variant; a no-op only when every tracked optional sheet was present and a charge report
+    /// (where charges exist) was supplied.</summary>
+    private void ComposeSourceCoverage(ColumnDescriptor col)
+    {
+        var cov = model.SourceCoverage;
+        if (!cov.AnySheetAbsent && !cov.ChargeReportMissing) return;
+
+        col.Item().PaddingTop(16).Element(c => Kicker(c, "Coverage"));
+        col.Item().Element(c => SubHead(c, "Source coverage"));
+        col.Item().PaddingBottom(8).Text(
+            $"This dossier is built on {cov.PresentOptionalSheets} of {cov.TotalOptionalSheets} optional workbook " +
+            "sheets. A section with no records below was either absent from this upload or present and empty — the " +
+            "list distinguishes the two.")
+            .FontSize(DossierTheme.Small).FontColor(DossierTheme.InkSoft).LineHeight(1.5f);
+
+        col.Item().Border(0.75f).BorderColor(DossierTheme.Line).BorderLeft(2.5f).BorderColor(DossierTheme.Amber)
+            .Background(DossierTheme.PaperRaised).Padding(11).Column(inner =>
+        {
+            if (cov.ChargeReportMissing)
+                inner.Item().PaddingBottom(4).Row(r =>
+                {
+                    r.ConstantItem(14).Text("•").FontColor(DossierTheme.Amber);
+                    r.RelativeItem().Text(
+                        "The ROC report lists charges, but the Detailed Charge Report workbook was not provided — " +
+                        "charge detail is limited to the ROC sequence.")
+                        .FontSize(DossierTheme.Small).FontColor(DossierTheme.InkSoft).LineHeight(1.4f);
+                });
+
+            foreach (var sheet in cov.AbsentSheets)
+                inner.Item().PaddingBottom(4).Row(r =>
+                {
+                    r.ConstantItem(14).Text("•").FontColor(DossierTheme.Amber);
+                    r.RelativeItem().Text($"Not in this upload: “{sheet}” sheet.")
+                        .FontSize(DossierTheme.Small).FontColor(DossierTheme.InkSoft).LineHeight(1.4f);
+                });
+        });
+    }
 
     /// <summary>The deterministic checks the rule engine could NOT run, and why — so a "verified
     /// clean" result is never mistaken for "not checked". Renders in every variant (AI-independent);

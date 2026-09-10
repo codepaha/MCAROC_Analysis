@@ -40,6 +40,7 @@ public class GstComplianceMetricsTests
             Litigation: new DossierLitigation([], [], new Dictionary<long, LitigationRole>()),
             ExecSummary: new DossierExecSummary(ReviewPriority.Medium, 0, 0, 0, 0, [], null, []),
             SourceSheets: [],
+            SourceCoverage: SheetCoverage.Empty,
             Metrics: []);
     }
 

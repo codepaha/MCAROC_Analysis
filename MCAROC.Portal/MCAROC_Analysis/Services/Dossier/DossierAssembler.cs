@@ -99,7 +99,7 @@ public class DossierAssembler(AppDbContext db)
                 request.CompanyName, request.Cin ?? profile?.Cin, request.Pan ?? profile?.Pan,
                 profile?.IncorporationDate, profile?.CompanyStatus,
                 request.Client?.ClientName ?? "", DateTime.UtcNow, run?.CompletedDate),
-            new DossierCorporate(directors, officers, shareholders, related, allotments, desigHistory, otherDirectorships, structure),
+            new DossierCorporate(directors, officers, shareholders, related, allotments, desigHistory, otherDirectorships, structure, profile?.PaidUpCapital),
             new DossierFinancials(standalone, consolidated, facts, parameters, auditors, peers),
             new DossierCharges(
                 charges,
@@ -115,6 +115,7 @@ public class DossierAssembler(AppDbContext db)
                 analysis.WatchFindingsCount, analysis.PositiveFindingsCount,
                 findings, execSummary, notAssessed),
             sourceSheets,
+            SheetCoverage.From(run),
             Metrics: []);
 
         // Metrics are derived from the fully-assembled model, then folded back in.

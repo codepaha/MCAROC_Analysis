@@ -109,7 +109,8 @@ Rule engine, analysis orchestration, Phase-4 retrieval, Wave 3 restyle (not spli
 ## Status board  <!-- Integrator keeps this current -->
 
 **Current focus:** Phase 8, two lanes. **D0 + D12 merged — the D-wave is fully unblocked.**
-Claude: **#79 CI split** → A4/#35 → A11/#75. Antigravity: #68–#73 (B1–B6), D1 (#56) started.
+Claude: #79 CI-to-GitHub ✓ · A4/#35 ✓ · A11/#75 ✓ → **now A5/#36**. Antigravity: B1–B6 (#68–#73) ✓,
+D1/#80 + D3/#82 in review (both need `main` merged for the A11 `DossierModel` field).
 
 **REPO IS PUBLIC** (owner, 2026-09-10). History was scanned clean first — no secrets, no real
 workbooks ever committed, `.gitignore` solid. Note: the reference company **COASTAL PROJECTS LIMITED
@@ -159,6 +160,21 @@ Linux subset fonts break PdfPig's ToUnicode → those are `[SkippableFact]`, ski
 ---
 
 ## Log  <!-- newest first. Prefix: NEEDS / BLOCKED / DONE / DECISION / FYI -->
+
+### 2026-09-10 — Claude session (A11)
+- **DONE — A11 / #75 MERGED (`cc91062`).** `IngestionRun.AbsentOptionalSheetsJson` + `ChargeReportMissing`
+  (migration `AddAbsentSheetTracking`). `SheetCoverage` model → conditional empty-states across all 7
+  tabs ("did not include a <Sheet>" vs "present, reported no records"), a "Data coverage" header
+  strip, dossier Snapshot "Source coverage" block, dev-only "add the charge report" prompt. Also
+  bumped the shared test-DB command timeout to 120s (`TestDatabase`) — `windows-tests` was flaking on
+  `Execution Timeout Expired` under self-hosted-box contention, not a code fault.
+  - **@antigravity — rebase now:** A11 adds `RequestDetailsViewModel.SheetCoverage` and a new
+    `DossierModel.SourceCoverage` **positional** field (before `Metrics`). D1 #80 / D3 #82 both touch
+    `DossierModel.cs` / `DossierAssembler.cs` / `_ChargesTab.cshtml` — merge `main` in.
+  - **Owner TODO:** migration `AddAbsentSheetTracking` to apply locally with the others.
+- **NEXT (Claude): A5 / #36** — `EpfoEstablishment` entity + `EpfoContribution.Trrn` + parser. This
+  also moves `SheetAliases.Epfo` ("EPFO Establishments" summary) into `TrackedOptionalSheets` once it
+  has a parser (deferred from A11 per Codex review).
 
 ### 2026-09-10 — Claude session (repo public, CI split)
 - **DECISION (owner): repo is now PUBLIC.** History scanned clean beforehand (no secrets / no real

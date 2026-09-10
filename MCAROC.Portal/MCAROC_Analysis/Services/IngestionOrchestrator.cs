@@ -78,8 +78,15 @@ public class IngestionOrchestrator(AppDbContext db, IExcelSheetReader sheetReade
                         chargeDocumentId!.Value, extractedAt));
             }
 
-            RunSectionParsers(rocWorkbook, chargeWorkbook, chargeIdentityMatches, requestId, run.IngestionRunId,
-                rocDocumentId, chargeDocumentId, issues, ref itemCount);
+            var rocSheets = new SheetPresence(rocWorkbook);
+            RunSectionParsers(rocWorkbook, rocSheets, chargeWorkbook, chargeIdentityMatches, requestId, run.IngestionRunId,
+                rocDocumentId, chargeDocumentId, issues, ref itemCount, out var rocChargeCount);
+
+            run.AbsentOptionalSheetsJson = System.Text.Json.JsonSerializer.Serialize(rocSheets.AbsentCanonicalNames);
+            // A charge workbook that was supplied but quarantined for an identity mismatch is not usable
+            // either — the charge annexure is ROC-sequence-only in both cases, which is what the flag means.
+            var chargeEnrichmentApplied = chargeWorkbook is not null && chargeIdentityMatches;
+            run.ChargeReportMissing = !chargeEnrichmentApplied && rocChargeCount > 0;
 
             foreach (var issue in issues)
                 issue.IngestionRunId = run.IngestionRunId;
@@ -193,11 +200,11 @@ public class IngestionOrchestrator(AppDbContext db, IExcelSheetReader sheetReade
     }
 
     private void RunSectionParsers(
-        IReadOnlyList<SheetData> rocWorkbook, IReadOnlyList<SheetData>? chargeWorkbook, bool chargeIdentityMatches,
+        IReadOnlyList<SheetData> rocWorkbook, SheetPresence rocSheets, IReadOnlyList<SheetData>? chargeWorkbook, bool chargeIdentityMatches,
         long requestId, long runId, long rocDocumentId, long? chargeDocumentId,
-        List<IngestionIssue> issues, ref int itemCount)
+        List<IngestionIssue> issues, ref int itemCount, out int rocChargeCount)
     {
-        var directorsSheet = SheetAliases.Find(rocWorkbook, SheetAliases.Directors);
+        var directorsSheet = rocSheets.Find(SheetAliases.Directors);
         if (directorsSheet is not null)
         {
             var r = DirectorsParser.Parse(directorsSheet, requestId, runId, rocDocumentId, out var officers);
@@ -207,7 +214,7 @@ public class IngestionOrchestrator(AppDbContext db, IExcelSheetReader sheetReade
             Collect(r, issues, ref itemCount);
         }
 
-        var otherDirSheet = SheetAliases.Find(rocWorkbook, SheetAliases.OtherDirectorships);
+        var otherDirSheet = rocSheets.Find(SheetAliases.OtherDirectorships);
         if (otherDirSheet is not null)
         {
             var r = OtherDirectorshipsParser.Parse(otherDirSheet, requestId, runId, rocDocumentId);
@@ -215,8 +222,8 @@ public class IngestionOrchestrator(AppDbContext db, IExcelSheetReader sheetReade
             Collect(r, issues, ref itemCount);
         }
 
-        var directorShSheet = SheetAliases.Find(rocWorkbook, SheetAliases.DirectorShareholding);
-        var majorShSheet = SheetAliases.Find(rocWorkbook, SheetAliases.MajorShareholding);
+        var directorShSheet = rocSheets.Find(SheetAliases.DirectorShareholding);
+        var majorShSheet = rocSheets.Find(SheetAliases.MajorShareholding);
         if (directorShSheet is not null || majorShSheet is not null)
         {
             var r = ShareholdingParser.Parse(directorShSheet, majorShSheet, requestId, runId, rocDocumentId, rocDocumentId);
@@ -224,7 +231,7 @@ public class IngestionOrchestrator(AppDbContext db, IExcelSheetReader sheetReade
             Collect(r, issues, ref itemCount);
         }
 
-        var financialSheet = SheetAliases.Find(rocWorkbook, SheetAliases.StandaloneFinancialData);
+        var financialSheet = rocSheets.Find(SheetAliases.StandaloneFinancialData);
         if (financialSheet is not null)
         {
             var r = StandaloneFinancialDataParser.Parse(financialSheet, requestId, runId, rocDocumentId, out var facts, FinancialBasis.Standalone);
@@ -234,7 +241,7 @@ public class IngestionOrchestrator(AppDbContext db, IExcelSheetReader sheetReade
             Collect(r, issues, ref itemCount);
         }
 
-        var consolidatedSheet = SheetAliases.Find(rocWorkbook, SheetAliases.ConsolidatedFinancialData);
+        var consolidatedSheet = rocSheets.Find(SheetAliases.ConsolidatedFinancialData);
         if (consolidatedSheet is not null)
         {
             var r = StandaloneFinancialDataParser.Parse(consolidatedSheet, requestId, runId, rocDocumentId, out var facts, FinancialBasis.Consolidated);
@@ -249,8 +256,9 @@ public class IngestionOrchestrator(AppDbContext db, IExcelSheetReader sheetReade
         db.RocCharges.AddRange(chargesResult.Items);
         Collect(chargesResult, issues, ref itemCount);
         itemCount += chargesResult.Items.Sum(c => c.Events.Count); // events counted too — RowsExtracted reflects real row volume
+        rocChargeCount = chargesResult.Items.Count;
 
-        var msmeSheet = SheetAliases.Find(rocWorkbook, SheetAliases.Msme);
+        var msmeSheet = rocSheets.Find(SheetAliases.Msme);
         if (msmeSheet is not null)
         {
             var r = MsmeParser.Parse(msmeSheet, requestId, runId, rocDocumentId);
@@ -258,8 +266,8 @@ public class IngestionOrchestrator(AppDbContext db, IExcelSheetReader sheetReade
             Collect(r, issues, ref itemCount);
         }
 
-        var gstSheet = SheetAliases.Find(rocWorkbook, SheetAliases.Gst);
-        var gstAnnexureSheet = SheetAliases.Find(rocWorkbook, SheetAliases.GstAnnexure);
+        var gstSheet = rocSheets.Find(SheetAliases.Gst);
+        var gstAnnexureSheet = rocSheets.Find(SheetAliases.GstAnnexure);
         if (gstSheet is not null || gstAnnexureSheet is not null)
         {
             var gstOutput = GstParser.Parse(gstSheet, gstAnnexureSheet, requestId, runId, rocDocumentId);
@@ -268,7 +276,7 @@ public class IngestionOrchestrator(AppDbContext db, IExcelSheetReader sheetReade
             Collect(gstOutput.Filings, issues, ref itemCount);
         }
 
-        var epfoAnnexureSheet = SheetAliases.Find(rocWorkbook, SheetAliases.EpfoAnnexure);
+        var epfoAnnexureSheet = rocSheets.Find(SheetAliases.EpfoAnnexure);
         if (epfoAnnexureSheet is not null)
         {
             var r = EpfoParser.Parse(epfoAnnexureSheet, requestId, runId, rocDocumentId);
@@ -276,7 +284,7 @@ public class IngestionOrchestrator(AppDbContext db, IExcelSheetReader sheetReade
             Collect(r, issues, ref itemCount);
         }
 
-        var auditorsSheet = SheetAliases.Find(rocWorkbook, SheetAliases.Auditors);
+        var auditorsSheet = rocSheets.Find(SheetAliases.Auditors);
         if (auditorsSheet is not null)
         {
             var r = AuditorsParser.Parse(auditorsSheet, requestId, runId, rocDocumentId, FinancialBasis.Standalone);
@@ -284,7 +292,7 @@ public class IngestionOrchestrator(AppDbContext db, IExcelSheetReader sheetReade
             Collect(r, issues, ref itemCount);
         }
 
-        var auditorsConsolidatedSheet = SheetAliases.Find(rocWorkbook, SheetAliases.AuditorsConsolidated);
+        var auditorsConsolidatedSheet = rocSheets.Find(SheetAliases.AuditorsConsolidated);
         if (auditorsConsolidatedSheet is not null)
         {
             var r = AuditorsParser.Parse(auditorsConsolidatedSheet, requestId, runId, rocDocumentId, FinancialBasis.Consolidated);
@@ -292,7 +300,7 @@ public class IngestionOrchestrator(AppDbContext db, IExcelSheetReader sheetReade
             Collect(r, issues, ref itemCount);
         }
 
-        var legalSheet = SheetAliases.Find(rocWorkbook, SheetAliases.LegalHistory);
+        var legalSheet = rocSheets.Find(SheetAliases.LegalHistory);
         if (legalSheet is not null)
         {
             var r = LegalHistoryParser.Parse(legalSheet, requestId, runId, rocDocumentId);
@@ -301,7 +309,7 @@ public class IngestionOrchestrator(AppDbContext db, IExcelSheetReader sheetReade
         }
 
         // ── Phase 6 domain sheets ──
-        var structureSheet = SheetAliases.Find(rocWorkbook, SheetAliases.Structure);
+        var structureSheet = rocSheets.Find(SheetAliases.Structure);
         if (structureSheet is not null)
         {
             var r = StructureParser.Parse(structureSheet, requestId, runId, rocDocumentId, out var patternRows);
@@ -311,7 +319,7 @@ public class IngestionOrchestrator(AppDbContext db, IExcelSheetReader sheetReade
             Collect(r, issues, ref itemCount);
         }
 
-        var relatedSheet = SheetAliases.Find(rocWorkbook, SheetAliases.RelatedCorporates);
+        var relatedSheet = rocSheets.Find(SheetAliases.RelatedCorporates);
         if (relatedSheet is not null)
         {
             var r = RelatedCorporatesParser.Parse(relatedSheet, requestId, runId, rocDocumentId);
@@ -319,7 +327,7 @@ public class IngestionOrchestrator(AppDbContext db, IExcelSheetReader sheetReade
             Collect(r, issues, ref itemCount);
         }
 
-        var complianceSheet = SheetAliases.Find(rocWorkbook, SheetAliases.Compliance);
+        var complianceSheet = rocSheets.Find(SheetAliases.Compliance);
         if (complianceSheet is not null)
         {
             var r = ComplianceParser.Parse(complianceSheet, requestId, runId, rocDocumentId);
@@ -327,7 +335,7 @@ public class IngestionOrchestrator(AppDbContext db, IExcelSheetReader sheetReade
             Collect(r, issues, ref itemCount);
         }
 
-        var allotmentSheet = SheetAliases.Find(rocWorkbook, SheetAliases.SecuritiesAllotment);
+        var allotmentSheet = rocSheets.Find(SheetAliases.SecuritiesAllotment);
         if (allotmentSheet is not null)
         {
             var r = SecuritiesAllotmentParser.Parse(allotmentSheet, requestId, runId, rocDocumentId);
@@ -335,7 +343,7 @@ public class IngestionOrchestrator(AppDbContext db, IExcelSheetReader sheetReade
             Collect(r, issues, ref itemCount);
         }
 
-        var proprietorshipSheet = SheetAliases.Find(rocWorkbook, SheetAliases.Proprietorship);
+        var proprietorshipSheet = rocSheets.Find(SheetAliases.Proprietorship);
         if (proprietorshipSheet is not null)
         {
             var r = ProprietorshipParser.Parse(proprietorshipSheet, requestId, runId, rocDocumentId);
@@ -343,7 +351,7 @@ public class IngestionOrchestrator(AppDbContext db, IExcelSheetReader sheetReade
             Collect(r, issues, ref itemCount);
         }
 
-        var dirHistorySheet = SheetAliases.Find(rocWorkbook, SheetAliases.DirectorAssociationHistory);
+        var dirHistorySheet = rocSheets.Find(SheetAliases.DirectorAssociationHistory);
         if (dirHistorySheet is not null)
         {
             var r = DirectorAssociationHistoryParser.Parse(dirHistorySheet, requestId, runId, rocDocumentId);
@@ -351,7 +359,7 @@ public class IngestionOrchestrator(AppDbContext db, IExcelSheetReader sheetReade
             Collect(r, issues, ref itemCount);
         }
 
-        var peerSheet = SheetAliases.Find(rocWorkbook, SheetAliases.PeerComparison);
+        var peerSheet = rocSheets.Find(SheetAliases.PeerComparison);
         if (peerSheet is not null)
         {
             var r = PeerComparisonParser.Parse(peerSheet, requestId, runId, rocDocumentId, out var peerCompanies);
@@ -361,8 +369,8 @@ public class IngestionOrchestrator(AppDbContext db, IExcelSheetReader sheetReade
             Collect(r, issues, ref itemCount);
         }
 
-        var highlightsSheet = SheetAliases.Find(rocWorkbook, SheetAliases.Highlights);
-        var financialParamsSheet = SheetAliases.Find(rocWorkbook, SheetAliases.FinancialParametersAnnexure);
+        var highlightsSheet = rocSheets.Find(SheetAliases.Highlights);
+        var financialParamsSheet = rocSheets.Find(SheetAliases.FinancialParametersAnnexure);
         if (highlightsSheet is not null || financialParamsSheet is not null)
         {
             var r = FinancialParametersParser.Parse(highlightsSheet, financialParamsSheet, requestId, runId, rocDocumentId);
