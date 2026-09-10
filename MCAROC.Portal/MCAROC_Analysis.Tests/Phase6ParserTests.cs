@@ -169,6 +169,87 @@ public class ComplianceParserTests
     }
 }
 
+public class HighlightsParserTests
+{
+    private static SheetData Sample() => Sheet("Highlights",
+        Row("FINANCIAL PARAMETERS"),
+        Row("Parameter (Rs. Crore)", "31 Mar, 2017"),
+        Row("Employee benefits expense", 96.22),
+        Row("See Annexure - Financial Parameters for more", ""),
+        Row(""),
+        Row("PRINCIPAL BUSINESS ACTIVITIES - 31 Mar, 2017"),
+        Row("Main Activity Group Code", "Description of Main Activity Group", "Business Activity Code", "Description of Business Activity", "% of Turnover"),
+        Row("C", "Manufacturing", "10.0", "Manufacture of Food products", 44.4),
+        Row("C", "Manufacturing", "32.0", "Other manufacturing", 43.0),
+        Row(""),
+        Row("NAME HISTORY"),
+        Row("Name", "Till Date"),
+        Row("OLD CO PRIVATE LIMITED", "20 Dec, 1992"),
+        Row("MIDDLE CO PVT LTD", "11 Apr, 2008"));
+
+    [Fact]
+    public void ParsesPrincipalBusinessActivities_MultiRow_WithDateAndCleanedCodes()
+    {
+        var r = HighlightsParser.ParsePrincipalBusinessActivities(Sample(), 1, 1, 10);
+
+        Assert.Equal(2, r.Items.Count);
+        var first = r.Items[0];
+        Assert.Equal(new DateOnly(2017, 3, 31), first.AsOnDate);
+        Assert.Equal("C", first.MainActivityGroupCode);
+        Assert.Equal("Manufacturing", first.MainActivityGroupDescription);
+        Assert.Equal("10", first.BusinessActivityCode);        // ".0" stripped
+        Assert.Equal("Manufacture of Food products", first.BusinessActivityDescription);
+        Assert.Equal(44.4m, first.TurnoverPercent);
+        Assert.Equal(1, first.DisplayOrder);
+        Assert.Equal(2, r.Items[1].DisplayOrder);
+        Assert.Equal("32", r.Items[1].BusinessActivityCode);
+    }
+
+    [Fact]
+    public void ParsesNameHistory_InSheetOrder_WithTillDates()
+    {
+        var r = HighlightsParser.ParseNameHistory(Sample(), 1, 1, 10);
+
+        Assert.Equal(2, r.Items.Count);
+        Assert.Equal("OLD CO PRIVATE LIMITED", r.Items[0].PreviousName);
+        Assert.Equal(new DateOnly(1992, 12, 20), r.Items[0].TillDate);
+        Assert.Equal(1, r.Items[0].DisplayOrder);
+        Assert.Equal("MIDDLE CO PVT LTD", r.Items[1].PreviousName);
+        Assert.Equal(new DateOnly(2008, 4, 11), r.Items[1].TillDate);
+    }
+
+    [Fact]
+    public void NameHistory_EmptyStateNote_ProducesNoRows()
+    {
+        var sheet = Sheet("Highlights",
+            Row("NAME HISTORY"),
+            Row("Name", "Till Date"),
+            Row("This corporate has not had any name change since incorporation", ""));
+
+        var r = HighlightsParser.ParseNameHistory(sheet, 1, 1, 10);
+        Assert.Empty(r.Items);
+    }
+
+    [Fact]
+    public void NameHistory_InvalidTillDate_IsRetainedRawWithOneBadDateWarning()
+    {
+        var sheet = Sheet("Highlights",
+            Row("NAME HISTORY"),
+            Row("Name", "Till Date"),
+            Row("FORMER CO PRIVATE LIMITED", "on or about mid-2011"));
+
+        var r = HighlightsParser.ParseNameHistory(sheet, 1, 1, 10);
+
+        var item = Assert.Single(r.Items);
+        Assert.Equal("FORMER CO PRIVATE LIMITED", item.PreviousName);
+        Assert.Null(item.TillDate);                           // malformed date is not silently dropped
+        Assert.Equal("on or about mid-2011", item.TillDateRaw);
+        var warning = Assert.Single(r.Warnings);
+        Assert.Equal("BAD_DATE", warning.IssueCode);
+        Assert.Equal(3, warning.RowNumber);                   // 1-based sheet row of the offending cell
+    }
+}
+
 public class FinancialParametersParserTests
 {
     [Fact]

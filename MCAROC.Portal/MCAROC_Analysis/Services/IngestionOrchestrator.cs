@@ -367,6 +367,17 @@ public class IngestionOrchestrator(AppDbContext db, IExcelSheetReader sheetReade
             db.FinancialParameters.AddRange(r.Items);
             Collect(r, issues, ref itemCount);
         }
+
+        if (highlightsSheet is not null)
+        {
+            var pba = HighlightsParser.ParsePrincipalBusinessActivities(highlightsSheet, requestId, runId, rocDocumentId);
+            db.PrincipalBusinessActivities.AddRange(pba.Items);
+            Collect(pba, issues, ref itemCount);
+
+            var names = HighlightsParser.ParseNameHistory(highlightsSheet, requestId, runId, rocDocumentId);
+            db.CompanyNameHistories.AddRange(names.Items);
+            Collect(names, issues, ref itemCount);
+        }
     }
 
     private static void Collect<T>(ParseResult<T> result, List<IngestionIssue> issues, ref int itemCount)

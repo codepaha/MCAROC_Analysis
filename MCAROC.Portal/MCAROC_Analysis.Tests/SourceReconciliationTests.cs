@@ -262,6 +262,36 @@ public class SourceReconciliationTests : IAsyncLifetime
             pattern.Where(x => x.HolderClass == ShareholderClass.Promoter).Sum(x => x.EquityPercent ?? 0));
     }
 
+    /// <summary>Phase 8 A3 — the "Highlights" sheet's PRINCIPAL BUSINESS ACTIVITIES and NAME HISTORY
+    /// blocks (below FINANCIAL PARAMETERS) are captured. For COASTAL: one PBA row (Construction / F2,
+    /// 100% turnover, as on 31 Mar 2017) and two former names with their "till" dates, in sheet order.</summary>
+    [SkippableFact]
+    public void Highlights_sheet_captures_principal_business_activities_and_name_history()
+    {
+        Skip.If(Fixtures() is null,
+            "Reconciliation workbooks not present — see MCAROC_Analysis.Tests/Fixtures/README.md");
+
+        var highlights = new ExcelSheetReader().ReadWorkbook(Fixtures()!.Value.Roc).Single(s => s.Name == "Highlights");
+
+        var pba = HighlightsParser.ParsePrincipalBusinessActivities(highlights, 1, 1, 1).Items;
+        var activity = Assert.Single(pba);
+        Assert.Equal(new DateOnly(2017, 3, 31), activity.AsOnDate);
+        Assert.Equal("F", activity.MainActivityGroupCode);
+        Assert.Equal("Construction", activity.MainActivityGroupDescription);
+        Assert.Equal("F2", activity.BusinessActivityCode);
+        Assert.Contains("Roads", activity.BusinessActivityDescription!);
+        Assert.Equal(100m, activity.TurnoverPercent);
+
+        var names = HighlightsParser.ParseNameHistory(highlights, 1, 1, 1).Items;
+        Assert.Equal(2, names.Count);
+        Assert.Equal("COASTAL PROJECTS PRIVATE LIMITED", names[0].PreviousName);
+        Assert.Equal(new DateOnly(1995, 5, 1), names[0].TillDate);
+        Assert.Equal(1, names[0].DisplayOrder);
+        Assert.Equal("EAST COAST CARRIERS PVT LTD", names[1].PreviousName);
+        Assert.Equal(new DateOnly(2014, 6, 19), names[1].TillDate);
+        Assert.All(names, n => Assert.Equal("Highlights", n.SourceSheetName));
+    }
+
     /// <summary>Control totals for the real COASTAL <c>Legal History</c> sheet (960 rows): the parser
     /// must extract exactly 592 Confirmed + 68 Probable + 292 Uncertain = 952, and no more — the 8
     /// structural rows (section titles, per-section headers, the blank separator) must not become

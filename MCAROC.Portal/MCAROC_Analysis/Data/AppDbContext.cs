@@ -43,6 +43,8 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     // Phase 6
     public DbSet<CompanyStructure> CompanyStructures => Set<CompanyStructure>();
     public DbSet<ShareholdingPatternRow> ShareholdingPatternRows => Set<ShareholdingPatternRow>();
+    public DbSet<CompanyNameHistory> CompanyNameHistories => Set<CompanyNameHistory>();
+    public DbSet<PrincipalBusinessActivity> PrincipalBusinessActivities => Set<PrincipalBusinessActivity>();
     public DbSet<RelatedCorporate> RelatedCorporates => Set<RelatedCorporate>();
     public DbSet<ComplianceRecord> ComplianceRecords => Set<ComplianceRecord>();
     public DbSet<FinancialParameter> FinancialParameters => Set<FinancialParameter>();
@@ -242,6 +244,22 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             e.Property(x => x.CategoryGroup).HasMaxLength(200);
             e.Property(x => x.EquityPercent).HasPrecision(9, 4);
             e.Property(x => x.PreferencePercent).HasPrecision(9, 4);
+        });
+
+        modelBuilder.Entity<CompanyNameHistory>(e =>
+        {
+            e.HasKey(x => x.CompanyNameHistoryId);
+            e.HasIndex(x => new { x.RequestId, x.IngestionRunId });
+            e.Property(x => x.PreviousName).HasMaxLength(400);
+        });
+
+        modelBuilder.Entity<PrincipalBusinessActivity>(e =>
+        {
+            e.HasKey(x => x.PrincipalBusinessActivityId);
+            e.HasIndex(x => new { x.RequestId, x.IngestionRunId });
+            e.Property(x => x.MainActivityGroupCode).HasMaxLength(20);
+            e.Property(x => x.BusinessActivityCode).HasMaxLength(20);
+            e.Property(x => x.TurnoverPercent).HasPrecision(9, 4);
         });
 
         modelBuilder.Entity<RelatedCorporate>(e =>
