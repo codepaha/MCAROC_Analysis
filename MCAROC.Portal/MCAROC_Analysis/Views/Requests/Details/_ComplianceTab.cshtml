@@ -57,6 +57,13 @@
         .OrderByDescending(d => d)
         .FirstOrDefault();
 
+    // Per-establishment header metadata (City / Date of Setup / Principal Business Activities /
+    // Address / Exemption Status) from the "EPFO Establishments" summary sheet — keyed by id (A5/#36).
+    var epfoMetaById = Model.EpfoEstablishments
+        .Where(x => !string.IsNullOrWhiteSpace(x.EstablishmentId))
+        .GroupBy(x => x.EstablishmentId, StringComparer.OrdinalIgnoreCase)
+        .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
+
     // EPFO Establishments grouping
     var epfoEstablishments = Model.EpfoContributions
         .GroupBy(e => string.IsNullOrWhiteSpace(e.EstablishmentId) ? (e.EstablishmentName ?? "Unknown") : e.EstablishmentId)
@@ -381,7 +388,18 @@
                                             <h5 class="card-title mb-0">@est.Name</h5>
                                             <span class="badge @(string.Equals(est.WorkingStatus, "Working", StringComparison.OrdinalIgnoreCase) || string.Equals(est.WorkingStatus, "Active", StringComparison.OrdinalIgnoreCase) ? "bg-success" : "bg-secondary")">@est.WorkingStatus</span>
                                         </div>
-                                        <p class="text-muted small mb-3">Establishment ID: <code>@est.EstablishmentId</code></p>
+                                        <p class="text-muted small mb-2">Establishment ID: <code>@est.EstablishmentId</code></p>
+                                        @if (epfoMetaById.TryGetValue(est.EstablishmentId, out var meta))
+                                        {
+                                            <dl class="row small mb-3">
+                                                @if (!string.IsNullOrWhiteSpace(meta.City)) { <dt class="col-5 text-muted fw-normal">City</dt><dd class="col-7 mb-1">@meta.City</dd> }
+                                                @if (meta.DateOfSetup is { } setup) { <dt class="col-5 text-muted fw-normal">Date of setup</dt><dd class="col-7 mb-1">@setup.ToString("d MMM yyyy")</dd> }
+                                                @if (!string.IsNullOrWhiteSpace(meta.PrincipalBusinessActivities)) { <dt class="col-5 text-muted fw-normal">Principal activity</dt><dd class="col-7 mb-1">@meta.PrincipalBusinessActivities</dd> }
+                                                @if (!string.IsNullOrWhiteSpace(meta.ExemptionStatus)) { <dt class="col-5 text-muted fw-normal">Exemption</dt><dd class="col-7 mb-1">@meta.ExemptionStatus</dd> }
+                                                @if (!string.IsNullOrWhiteSpace(meta.Address)) { <dt class="col-5 text-muted fw-normal">Address</dt><dd class="col-7 mb-1">@meta.Address</dd> }
+                                                @if (!string.IsNullOrWhiteSpace(meta.Flags)) { <dt class="col-5 text-muted fw-normal">Flags</dt><dd class="col-7 mb-1">@meta.Flags</dd> }
+                                            </dl>
+                                        }
                                         <div class="row text-center g-2 pt-2 border-top">
                                             <div class="col-4">
                                                 <div class="text-muted small">Latest Headcount</div>

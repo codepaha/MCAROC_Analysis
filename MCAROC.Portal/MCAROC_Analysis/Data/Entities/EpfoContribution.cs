@@ -11,6 +11,9 @@ public class EpfoContribution : ExtractedEntityBase
 
     public string WageMonth { get; set; } = string.Empty;
 
+    /// <summary>Transaction reference number for this month's remittance (the annexure's TRRN column).</summary>
+    public string? Trrn { get; set; }
+
     public int? EmployeeCount { get; set; }
     public decimal? ContributionAmountCrore { get; set; }
 

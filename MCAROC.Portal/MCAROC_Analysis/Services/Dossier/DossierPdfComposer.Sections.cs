@@ -87,6 +87,7 @@ public partial class DossierPdfComposer
                 ("MCA / regulatory records", compliance.Records.Count.ToString()),
                 ("Suit-filed groups", compliance.SuitFiledSummary.Count.ToString()),
                 ("GST registrations", compliance.Gst.Count.ToString()),
+                ("EPFO establishments", compliance.EpfoEstablishments.Count.ToString()),
                 ("EPFO months on record", compliance.Epfo.Count.ToString()),
                 ("MSME dues rows", compliance.Msme.Count.ToString()),
             }));

@@ -177,6 +177,30 @@ public class SourceReconciliationTests : IAsyncLifetime
         var trackedCanonical = MCAROC_Analysis.Services.Excel.SheetAliases.TrackedOptionalSheets
             .Select(MCAROC_Analysis.Services.Excel.SheetAliases.CanonicalName).ToHashSet();
         Assert.All(coverage.AbsentSheets, name => Assert.Contains(name, trackedCanonical));
+
+        // ── A5 / #36: EPFO establishment metadata + per-month TRRN ──
+        var establishments = await db.EpfoEstablishments.Where(x => x.IngestionRunId == run.IngestionRunId).ToListAsync();
+        Assert.Equal(4, establishments.Count);
+
+        var epfoContribs = await db.EpfoContributions.Where(x => x.IngestionRunId == run.IngestionRunId).ToListAsync();
+        Assert.Equal(77, epfoContribs.Count);
+        Assert.All(epfoContribs, c => Assert.False(string.IsNullOrWhiteSpace(c.Trrn), $"contribution for {c.EstablishmentId} {c.WageMonth} has no TRRN"));
+
+        var bbs = establishments.Single(x => x.EstablishmentId == "ORBBS0006003000");
+        Assert.Equal("BHUBANESWAR", bbs.City);
+        Assert.Equal(new DateOnly(1995, 5, 5), bbs.DateOfSetup);
+        Assert.Equal("BUILDING AND CONSTRUCTION INDUSTRY", bbs.PrincipalBusinessActivities);
+        Assert.Contains("PF: UNEXEMPTED", bbs.ExemptionStatus); // multi-line exemption block (PF / Pension / EDLI)
+        Assert.Contains("BHUBANESWAR", bbs.Address);
+
+        // A closed establishment still carries its header metadata even with no recent contributions.
+        var joda = establishments.Single(x => x.EstablishmentId == "ORKJR0007806000");
+        Assert.Null(joda.DateOfSetup); // "-" in the source
+        Assert.Equal("ENGINEERS - ENGG. CONTRACTORS", joda.PrincipalBusinessActivities);
+
+        // Lineage resolves to a Layer-0 row on the summary sheet.
+        Assert.All(establishments, e => Assert.Contains(sourceRows,
+            s => s.SheetName == "EPFO Establishments" && s.RowNumber == e.SourceRowNumber));
     }
 
     /// <summary>Phase 8 A1 — the "About the Company" sheet is captured in full: contact block,

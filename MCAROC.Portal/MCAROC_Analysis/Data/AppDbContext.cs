@@ -25,6 +25,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<GstRegistration> GstRegistrations => Set<GstRegistration>();
     public DbSet<GstFiling> GstFilings => Set<GstFiling>();
     public DbSet<EpfoContribution> EpfoContributions => Set<EpfoContribution>();
+    public DbSet<EpfoEstablishment> EpfoEstablishments => Set<EpfoEstablishment>();
     public DbSet<AuditorObservation> AuditorObservations => Set<AuditorObservation>();
     public DbSet<Litigation> Litigations => Set<Litigation>();
 
@@ -213,6 +214,18 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
         {
             e.HasKey(x => x.EpfoId);
             e.HasIndex(x => new { x.RequestId, x.IngestionRunId });
+        });
+
+        modelBuilder.Entity<EpfoEstablishment>(e =>
+        {
+            e.HasKey(x => x.EpfoEstablishmentId);
+            e.HasIndex(x => new { x.RequestId, x.IngestionRunId });
+            e.Property(x => x.EstablishmentId).HasMaxLength(40);
+            e.Property(x => x.Name).HasMaxLength(300);
+            e.Property(x => x.City).HasMaxLength(120);
+            e.Property(x => x.WorkingStatus).HasMaxLength(60);
+            e.Property(x => x.LatestWageMonth).HasMaxLength(30);
+            // ExemptionStatus is a multi-line block (PF / Pension / EDLI), Address + Flags are free text — left nvarchar(max).
         });
 
         modelBuilder.Entity<AuditorObservation>(e =>

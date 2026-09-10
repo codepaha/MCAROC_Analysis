@@ -276,6 +276,14 @@ public class IngestionOrchestrator(AppDbContext db, IExcelSheetReader sheetReade
             Collect(gstOutput.Filings, issues, ref itemCount);
         }
 
+        var epfoSummarySheet = rocSheets.Find(SheetAliases.Epfo);
+        if (epfoSummarySheet is not null)
+        {
+            var r = EpfoParser.ParseEstablishments(epfoSummarySheet, requestId, runId, rocDocumentId);
+            db.EpfoEstablishments.AddRange(r.Items);
+            Collect(r, issues, ref itemCount);
+        }
+
         var epfoAnnexureSheet = rocSheets.Find(SheetAliases.EpfoAnnexure);
         if (epfoAnnexureSheet is not null)
         {

@@ -33,6 +33,7 @@ public class RequestDetailsViewModel
     public List<MsmePayment> MsmePayments { get; set; } = [];
     public List<GstRegistration> GstRegistrations { get; set; } = [];
     public List<EpfoContribution> EpfoContributions { get; set; } = [];
+    public List<EpfoEstablishment> EpfoEstablishments { get; set; } = [];
     public List<AuditorObservation> AuditorObservations { get; set; } = [];
     public List<Litigation> Litigations { get; set; } = [];
 

@@ -75,6 +75,7 @@ public sealed record DossierCompliance(
     IReadOnlyList<MsmePayment> Msme,
     IReadOnlyList<GstRegistration> Gst,
     IReadOnlyList<EpfoContribution> Epfo,
+    IReadOnlyList<EpfoEstablishment> EpfoEstablishments,
     IReadOnlyList<(string Bank, string? DefaulterType, decimal? Amount, int Quarters, DateOnly? Latest)> SuitFiledSummary);
 
 public sealed record DossierLitigation(
