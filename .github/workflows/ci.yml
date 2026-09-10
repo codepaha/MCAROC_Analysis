@@ -14,7 +14,8 @@ concurrency:
 jobs:
   # Fast compile check on a GitHub-hosted runner (free for this public repo). Fails in ~2-3 min
   # on a real code break and — just as important — tells a genuine failure apart from a
-  # self-hosted-runner hiccup. The full test suite still runs below.
+  # self-hosted-runner hiccup. Runs in PARALLEL with `test` below (no `needs:`), so a PR gets the
+  # compile verdict fast while the self-hosted runner works through the full suite.
   build:
     runs-on: windows-latest
     steps:
@@ -32,9 +33,9 @@ jobs:
 
   # Full suite on the self-hosted runner: it has SQL Server Express (the integration tests hit
   # .\SQLEXPRESS directly), Tesseract OCR, and the two real reconciliation workbooks that are
-  # never committed. Gated on `build` so the loaded dev box never runs a suite that can't compile.
+  # never committed. Runs concurrently with `build`; its own Build step (below) fails fast on a
+  # compile error anyway, so gating on `build` would only add latency.
   test:
-    needs: build
     runs-on: [self-hosted, windows, mcaroc]
     steps:
       - uses: actions/checkout@v4
