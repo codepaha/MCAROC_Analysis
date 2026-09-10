@@ -106,11 +106,13 @@ public class GstComplianceMetricsTests
         Assert.StartsWith("84 late of 294 assessed — periods:", g4.Period);
         Assert.Contains("/", g4.Period); // evidence pairs contain "TaxPeriod/ReturnType"
 
-        // G5: GSTR-1 vs GSTR-3B filing lag = 38.3 days over non-negative matched periods
+        // G5: GSTR-1 vs GSTR-3B filing lag = 38.6 days over non-negative matched periods (deduplicating both GSTR-1 and GSTR-3B)
         var g5 = Assert.Single(group.Metrics, m => m.Label == "GSTR-1 vs GSTR-3B filing lag");
         Assert.True(g5.HasValue);
-        Assert.Equal(38.3m, g5.Value);
+        Assert.Equal(38.6m, g5.Value);
         Assert.Equal(MetricUnit.Days, g5.Unit);
+        Assert.StartsWith("128 matched periods", g5.Period);
+        Assert.Contains("selected latest FilingDate", g5.Period);
 
         var g5Anomalies = Assert.Single(group.Metrics, m => m.Label == "GSTR-3B filed before GSTR-1 anomalies");
         Assert.True(g5Anomalies.HasValue);
@@ -297,7 +299,10 @@ public class GstComplianceMetricsTests
         var g5_1 = Assert.Single(group1.Metrics, m => m.Label == "GSTR-1 vs GSTR-3B filing lag");
         Assert.True(g5_1.HasValue);
         Assert.Equal(64m, g5_1.Value); // Deterministically picks 2023-03-12
-        Assert.Contains("1 duplicate GSTR-1 group, 1 duplicate row; selected latest FilingDate", g5_1.Period);
+        Assert.StartsWith("1 matched periods", g5_1.Period);
+        Assert.Contains("1 duplicate GSTR-1 group, 1 duplicate row", g5_1.Period);
+        Assert.Contains("0 duplicate GSTR-3B groups", g5_1.Period);
+        Assert.Contains("selected latest FilingDate", g5_1.Period);
 
         // Test with later first, then earlier
         reg.Filings = [f3b, f1Later, f1Earlier];
@@ -306,6 +311,68 @@ public class GstComplianceMetricsTests
         var g5_2 = Assert.Single(group2.Metrics, m => m.Label == "GSTR-1 vs GSTR-3B filing lag");
         Assert.True(g5_2.HasValue);
         Assert.Equal(64m, g5_2.Value); // Same result regardless of row ordering
+        Assert.Equal(g5_1.Period, g5_2.Period);
+    }
+
+    [Fact]
+    public void G5_duplicate_gstr3b_rows_picks_latest_filing_date_and_is_order_independent()
+    {
+        var reg = new GstRegistration
+        {
+            Gstin = "29AAAAA0000A1Z5",
+            State = "Karnataka",
+            Status = "Active"
+        };
+        // GSTR-1 filed on 2023-02-10
+        var f1 = new GstFiling
+        {
+            Gstin = reg.Gstin,
+            ReturnType = "GSTR1",
+            TaxPeriod = "2023-01",
+            FilingStatus = "Filed",
+            FilingDate = new DateOnly(2023, 2, 10),
+            DueDate = new DateOnly(2023, 2, 11)
+        };
+        // Earlier GSTR-3B filed on 2023-03-12 (lag to 1 = 30 days)
+        var f3bEarlier = new GstFiling
+        {
+            Gstin = reg.Gstin,
+            ReturnType = "GSTR3B",
+            TaxPeriod = "2023-01",
+            FilingStatus = "Filed",
+            FilingDate = new DateOnly(2023, 3, 12),
+            DueDate = new DateOnly(2023, 2, 20)
+        };
+        // Later GSTR-3B filed on 2023-05-15 (lag to 1 = 94 days)
+        var f3bLater = new GstFiling
+        {
+            Gstin = reg.Gstin,
+            ReturnType = "GSTR3B",
+            TaxPeriod = "2023-01",
+            FilingStatus = "Filed",
+            FilingDate = new DateOnly(2023, 5, 15),
+            DueDate = new DateOnly(2023, 2, 20)
+        };
+
+        // Test with earlier first, then later
+        reg.Filings = [f1, f3bEarlier, f3bLater];
+        var model1 = CreateMinimalDossier([reg]);
+        var group1 = DossierComputations.GstComplianceMetrics(model1);
+        var g5_1 = Assert.Single(group1.Metrics, m => m.Label == "GSTR-1 vs GSTR-3B filing lag");
+        Assert.True(g5_1.HasValue);
+        Assert.Equal(94m, g5_1.Value); // Deterministically picks 2023-05-15
+        Assert.StartsWith("1 matched periods", g5_1.Period); // Exactly 1 period matched, not 2
+        Assert.Contains("1 duplicate GSTR-3B group, 1 duplicate row", g5_1.Period);
+        Assert.Contains("0 duplicate GSTR-1 groups", g5_1.Period);
+        Assert.Contains("selected latest FilingDate", g5_1.Period);
+
+        // Test with later first, then earlier
+        reg.Filings = [f1, f3bLater, f3bEarlier];
+        var model2 = CreateMinimalDossier([reg]);
+        var group2 = DossierComputations.GstComplianceMetrics(model2);
+        var g5_2 = Assert.Single(group2.Metrics, m => m.Label == "GSTR-1 vs GSTR-3B filing lag");
+        Assert.True(g5_2.HasValue);
+        Assert.Equal(94m, g5_2.Value); // Same result regardless of row ordering
         Assert.Equal(g5_1.Period, g5_2.Period);
     }
 
@@ -334,7 +401,9 @@ public class GstComplianceMetricsTests
         Assert.True(g5.HasValue);
         Assert.Equal(30m, g5.Value); // Only Period 1 is averaged; negative lag is excluded
         Assert.StartsWith("1 matched periods", g5.Period);
-        Assert.Contains("0 duplicate GSTR-1 groups; selected latest FilingDate", g5.Period);
+        Assert.Contains("0 duplicate GSTR-1 groups", g5.Period);
+        Assert.Contains("0 duplicate GSTR-3B groups", g5.Period);
+        Assert.Contains("selected latest FilingDate", g5.Period);
 
         var g5Anomalies = Assert.Single(group.Metrics, m => m.Label == "GSTR-3B filed before GSTR-1 anomalies");
         Assert.True(g5Anomalies.HasValue);

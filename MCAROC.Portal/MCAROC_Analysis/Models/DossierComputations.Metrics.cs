@@ -557,8 +557,8 @@ public static partial class DossierComputations
         // Mean day difference (FilingDate(GSTR3B) - FilingDate(GSTR1)) over non-negative lags.
         // Safety gate: A date-difference metric is never abs()-ed; negative lags (GSTR-3B filed before GSTR-1)
         // are isolated as data-quality anomalies and reported separately.
-        // When multiple GSTR-1 rows share the same (Gstin, TaxPeriod) key we pick the one with the latest
-        // FilingDate so the result is deterministic regardless of source workbook row ordering.
+        // When multiple rows share the same (Gstin, TaxPeriod) key for either GSTR-1 or GSTR-3B, we pick the one
+        // with the latest FilingDate so the result is deterministic regardless of source workbook row ordering.
         static string NormReturn(string r) => r.Replace("-", "").Trim().ToUpperInvariant();
         var gstr1 = filings.Where(f => NormReturn(f.ReturnType) == "GSTR1" && f.FilingDate is not null && !string.IsNullOrWhiteSpace(f.TaxPeriod)).ToList();
         var gstr3b = filings.Where(f => NormReturn(f.ReturnType) == "GSTR3B" && f.FilingDate is not null && !string.IsNullOrWhiteSpace(f.TaxPeriod)).ToList();
@@ -572,11 +572,19 @@ public static partial class DossierComputations
         var duplicateGstr1GroupsCount = gstr1Groups.Count(g => g.Count() > 1);
         var duplicateGstr1RowsCount = gstr1.Count - gstr1Groups.Count;
 
+        var gstr3bGroups = gstr3b
+            .GroupBy(f => (f.Gstin, f.TaxPeriod!.Trim().ToUpperInvariant()))
+            .ToList();
+        var gstr3bLookup = gstr3bGroups
+            .ToDictionary(g => g.Key, g => g.OrderByDescending(f => f.FilingDate!.Value).First());
+
+        var duplicateGstr3bGroupsCount = gstr3bGroups.Count(g => g.Count() > 1);
+        var duplicateGstr3bRowsCount = gstr3b.Count - gstr3bGroups.Count;
+
         var nonNegLags = new List<int>();
         var negLagCount = 0;
-        foreach (var f3 in gstr3b)
+        foreach (var (key, f3) in gstr3bLookup)
         {
-            var key = (f3.Gstin, f3.TaxPeriod!.Trim().ToUpperInvariant());
             if (gstr1Lookup.TryGetValue(key, out var f1))
             {
                 var lag = f3.FilingDate!.Value.DayNumber - f1.FilingDate!.Value.DayNumber;
@@ -600,9 +608,14 @@ public static partial class DossierComputations
         else
         {
             var meanLag = Math.Round((decimal)nonNegLags.Average(), 1);
-            var dupeDisclosure = duplicateGstr1GroupsCount > 0
-                ? $" ({duplicateGstr1GroupsCount} duplicate GSTR-1 {(duplicateGstr1GroupsCount == 1 ? "group" : "groups")}, {duplicateGstr1RowsCount} duplicate {(duplicateGstr1RowsCount == 1 ? "row" : "rows")}; selected latest FilingDate)"
-                : " (0 duplicate GSTR-1 groups; selected latest FilingDate)";
+            var dupe1Str = duplicateGstr1GroupsCount > 0
+                ? $"{duplicateGstr1GroupsCount} duplicate GSTR-1 {(duplicateGstr1GroupsCount == 1 ? "group" : "groups")}, {duplicateGstr1RowsCount} duplicate {(duplicateGstr1RowsCount == 1 ? "row" : "rows")}"
+                : "0 duplicate GSTR-1 groups";
+            var dupe3bStr = duplicateGstr3bGroupsCount > 0
+                ? $"{duplicateGstr3bGroupsCount} duplicate GSTR-3B {(duplicateGstr3bGroupsCount == 1 ? "group" : "groups")}, {duplicateGstr3bRowsCount} duplicate {(duplicateGstr3bRowsCount == 1 ? "row" : "rows")}"
+                : "0 duplicate GSTR-3B groups";
+
+            var dupeDisclosure = $" ({dupe1Str}, {dupe3bStr}; selected latest FilingDate)";
             var periodStr = $"{nonNegLags.Count} matched periods{dupeDisclosure}";
             list.Add(MetricResult.Ok("GSTR-1 vs GSTR-3B filing lag", meanLag, MetricUnit.Days,
                 periodStr,
