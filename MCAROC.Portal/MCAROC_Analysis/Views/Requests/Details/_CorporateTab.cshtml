@@ -80,6 +80,50 @@
             <div class="mca-empty"><i class="bi bi-building"></i><p>No company profile was extracted for this request.</p></div>
         }
 
+        @if (Model.PrincipalBusinessActivities.Count > 0)
+        {
+            var pbaDate = Model.PrincipalBusinessActivities.Select(x => x.AsOnDate).FirstOrDefault(d => d is not null);
+            <div class="mca-section" style="margin-top:22px;">
+                <h3>Principal Business Activities <span class="mca-count">@Model.PrincipalBusinessActivities.Count</span></h3>
+                <p class="text-muted">MCA activity classification the company declared@(pbaDate is { } pd ? $" — as on {pd:d MMM yyyy}" : "").</p>
+                <div class="pi-table-wrap"><table class="pi-results-table">
+                    <thead><tr><th>Group</th><th>Main activity</th><th>Code</th><th>Business activity</th><th class="text-end">% of turnover</th></tr></thead>
+                    <tbody>
+                    @foreach (var a in Model.PrincipalBusinessActivities)
+                    {
+                        <tr>
+                            <td>@Or(a.MainActivityGroupCode)</td>
+                            <td>@Or(a.MainActivityGroupDescription)</td>
+                            <td>@Or(a.BusinessActivityCode)</td>
+                            <td>@Or(a.BusinessActivityDescription)</td>
+                            <td class="text-end">@Num(a.TurnoverPercent)</td>
+                        </tr>
+                    }
+                    </tbody>
+                </table></div>
+            </div>
+        }
+
+        @if (Model.NameHistory.Count > 0)
+        {
+            <div class="mca-section" style="margin-top:22px;">
+                <h3>Name History <span class="mca-count">@Model.NameHistory.Count</span></h3>
+                <p class="text-muted">Former legal names, oldest first. The current name is not repeated here.</p>
+                <div class="pi-table-wrap"><table class="pi-results-table">
+                    <thead><tr><th>Former name</th><th>In use until</th></tr></thead>
+                    <tbody>
+                    @foreach (var n in Model.NameHistory)
+                    {
+                        <tr>
+                            <td>@n.PreviousName</td>
+                            <td>@(n.TillDate is { } td ? td.ToString("d MMM yyyy") : Or(n.TillDateRaw))</td>
+                        </tr>
+                    }
+                    </tbody>
+                </table></div>
+            </div>
+        }
+
         @if (Model.LatestRun is { } lrun)
         {
             <div class="mca-section" style="margin-top:22px;">
