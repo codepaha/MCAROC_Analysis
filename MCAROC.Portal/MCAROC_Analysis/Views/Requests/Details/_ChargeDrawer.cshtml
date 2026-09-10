@@ -39,7 +39,7 @@
         <div><dt>Charge Holder</dt><dd>@c.LatestChargeHolderRaw</dd></div>
         <div><dt>Status</dt><dd>@Or(c.ChargeStatus) @(c.SatisfactionDate is null ? "(Current / Open)" : "(Historical / Satisfied)")</dd></div>
         <div><dt>Property Type</dt><dd>@Or(narrativeEvent?.PropertyType ?? creation?.PropertyType)</dd></div>
-        <div><dt>No. of Holders</dt><dd>@(narrativeEvent?.NumberOfHolders?.ToString() ?? creation?.NumberOfHolders?.ToString() ?? "1")</dd></div>
+        <div><dt>No. of Holders</dt><dd>@(narrativeEvent?.NumberOfHolders?.ToString() ?? creation?.NumberOfHolders?.ToString() ?? "not available")</dd></div>
         <div>
             <dt>Holding Arrangement</dt>
             <dd>
@@ -51,9 +51,14 @@
                 {
                     <span class="mca-badge">Joint Holding</span>
                 }
-                else
+                else if ((narrativeEvent?.ConsortiumHolding == false && narrativeEvent?.JointHolding == false) ||
+                         (creation?.ConsortiumHolding == false && creation?.JointHolding == false))
                 {
                     <text>Sole / Direct</text>
+                }
+                else
+                {
+                    <span class="text-muted">not available</span>
                 }
             </dd>
         </div>
