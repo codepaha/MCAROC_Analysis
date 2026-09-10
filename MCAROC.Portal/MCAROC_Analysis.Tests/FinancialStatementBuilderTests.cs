@@ -150,6 +150,48 @@ public class FinancialStatementBuilderTests
     }
 
     [Fact]
+    public void PnlPreservesBothSourceLinesOnAliasCollision()
+    {
+        var stdYears = new List<FinancialYearData>
+        {
+            new() { FinancialYear = 2025, Basis = FinancialBasis.Standalone, Revenue = 500m }
+        };
+
+        var facts = new List<FinancialFact>
+        {
+            new()
+            {
+                Basis = FinancialBasis.Standalone,
+                Section = FinancialStatementSection.ProfitAndLoss,
+                Label = "Revenue from Operations",
+                FinancialYear = 2025,
+                NumericValue = 500m,
+                SourceRowNumber = 10
+            },
+            new()
+            {
+                Basis = FinancialBasis.Standalone,
+                Section = FinancialStatementSection.ProfitAndLoss,
+                Label = "Net Revenue",
+                FinancialYear = 2025,
+                NumericValue = 480m,
+                SourceRowNumber = 11
+            }
+        };
+
+        var vm = FinancialStatementBuilder.Build(
+            "pl", "Profit & Loss", FinancialStatementSection.ProfitAndLoss,
+            stdYears, [], facts, "₹ Crore");
+
+        // Both lines must be preserved without dropping either
+        var revFromOps = Assert.Single(vm.Standalone.Rows, r => r.Label == "Revenue from Operations");
+        Assert.Equal(500m, revFromOps.GetValue(2025).Numeric);
+
+        var netRev = Assert.Single(vm.Standalone.Rows, r => r.Label == "Net Revenue");
+        Assert.Equal(480m, netRev.GetValue(2025).Numeric);
+    }
+
+    [Fact]
     public void BuildsCashFlowAndSurfacesInferredYearFlags()
     {
         var stdYears = new List<FinancialYearData>

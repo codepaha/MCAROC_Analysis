@@ -222,12 +222,8 @@ public static class FinancialStatementBuilder
                     SourceRowNumber = minRow,
                     ValuesByYear = valuesByYear
                 });
+                consumedLabels.Add(effectiveLabel);
                 consumedLabels.Add(t.Label);
-                if (t.Aliases is not null)
-                {
-                    foreach (var alias in t.Aliases)
-                        consumedLabels.Add(alias);
-                }
             }
         }
 
