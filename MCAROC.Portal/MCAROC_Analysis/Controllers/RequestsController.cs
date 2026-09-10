@@ -131,6 +131,86 @@ public class RequestsController(
         return RedirectToAction(nameof(Details), new { id = request.RequestId });
     }
 
+    // ── Dev-only re-ingest ────────────────────────────────────────────────────
+    //
+    // The normal flow only creates brand-new requests. When the parsers improve, or a request was
+    // ingested from an incomplete workbook export, there is no way to re-run ingestion against a
+    // fuller/newer file set on the SAME request (keeping its already-processed MCA-filings archive,
+    // documents and embeddings). This pair of actions does exactly that — a new IngestionRun N+1
+    // (IngestionOrchestrator never deletes a prior run) plus an auto-enqueued analysis pass.
+    // Development-only: it is a maintenance aid, not a product surface.
+
+    [HttpGet("/Requests/{id:long}/reingest")]
+    public async Task<IActionResult> Reingest(long id)
+    {
+        if (!env.IsDevelopment()) return NotFound();
+        var request = await db.Requests.FirstOrDefaultAsync(r => r.RequestId == id);
+        if (request is null) return NotFound();
+        return View(request);
+    }
+
+    [HttpPost("/Requests/{id:long}/reingest")]
+    [ValidateAntiForgeryToken]
+    [RequestSizeLimit(2_000_000_000)]
+    [RequestFormLimits(MultipartBodyLengthLimit = 2_000_000_000)]
+    public async Task<IActionResult> Reingest(long id, IFormFile? rocFile, IFormFile? chargeFile)
+    {
+        if (!env.IsDevelopment()) return NotFound();
+
+        var request = await db.Requests.FirstOrDefaultAsync(r => r.RequestId == id);
+        if (request is null) return NotFound();
+
+        if (rocFile is null || rocFile.Length == 0)
+        {
+            TempData["ReingestError"] = "The MCA / ROC Report file is required.";
+            return RedirectToAction(nameof(Reingest), new { id });
+        }
+
+        await using (var rocStream = rocFile.OpenReadStream())
+        {
+            var rocCheck = fileValidation.ValidateUpload(rocFile.FileName, rocFile.Length, rocStream);
+            if (!rocCheck.IsValid)
+            {
+                TempData["ReingestError"] = $"MCA / ROC Report: {rocCheck.Error}";
+                return RedirectToAction(nameof(Reingest), new { id });
+            }
+        }
+
+        if (chargeFile is { Length: > 0 })
+        {
+            await using var chargeStream = chargeFile.OpenReadStream();
+            var chargeCheck = fileValidation.ValidateUpload(chargeFile.FileName, chargeFile.Length, chargeStream);
+            if (!chargeCheck.IsValid)
+            {
+                TempData["ReingestError"] = $"Detailed Charge Report: {chargeCheck.Error}";
+                return RedirectToAction(nameof(Reingest), new { id });
+            }
+        }
+
+        var rocDocument = await SaveDocumentAsync(id, rocFile, DocumentType.McaRocReport);
+        long? chargeDocumentId = chargeFile is { Length: > 0 }
+            ? (await SaveDocumentAsync(id, chargeFile, DocumentType.ChargeReport)).DocumentId
+            : null;
+
+        // Fresh attempt: clear a stale manual-review flag from a prior run so a clean re-ingest can
+        // auto-enqueue analysis (the orchestrator re-sets it if this run's identity checks fail).
+        request.IsManualReviewRequired = false;
+        request.ManualReviewReason = null;
+        request.RequestStatus = RequestStatus.DocumentsUploaded;
+        request.AnalysisStartedDate = DateTime.UtcNow;
+        await db.SaveChangesAsync();
+
+        await orchestrator.RunAsync(id, rocDocument.DocumentId, chargeDocumentId);
+
+        if (request.RequestStatus == RequestStatus.DataExtracted && !request.IsManualReviewRequired)
+            analysisQueue.Enqueue(id);
+
+        TempData["ReingestOk"] = request.RequestStatus == RequestStatus.DataExtracted
+            ? "Re-ingestion complete — analysis has been queued."
+            : $"Re-ingestion finished with status {request.RequestStatus}. {request.FailureReason ?? request.ManualReviewReason}";
+        return RedirectToAction(nameof(Details), new { id });
+    }
+
     [HttpGet("/Requests/{id:long}")]
     public async Task<IActionResult> Details(long id, [FromQuery] long? charge)
     {
