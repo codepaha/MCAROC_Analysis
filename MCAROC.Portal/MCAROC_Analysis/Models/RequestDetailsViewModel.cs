@@ -97,7 +97,8 @@ public class RequestDetailsViewModel
     public int OpenChargeCount => OpenCharges.Count();
     public int TotalChargeCount => Charges.Count;
     public decimal? LargestChargeAmount => Charges.Max(c => c.CurrentAmount);
-    public decimal TotalOpenChargeAmount => OpenCharges.Sum(c => c.CurrentAmount ?? 0m);
+    public bool AnyOpenChargeMissingAmount => OpenCharges.Any(c => c.CurrentAmount is null);
+    public decimal? TotalOpenChargeAmount => AnyOpenChargeMissingAmount ? null : OpenCharges.Sum(c => c.CurrentAmount);
 
     public FinancialYearData? LatestFinancials => FinancialYears.OrderBy(f => f.FinancialYear).LastOrDefault();
 
