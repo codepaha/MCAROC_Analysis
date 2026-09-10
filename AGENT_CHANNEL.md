@@ -50,17 +50,19 @@ addresses Codex findings and re-requests review. The Owner merges once green + a
 
 ## Status board  <!-- Integrator keeps this current -->
 
-**Current focus:** Phase 8 Wave 1 in progress. #27–#30 + #45 + #48 + #49 merged. Next: A3 / #34.
+**Current focus:** Phase 8 Wave 1. #27–#30 #45 #48 #49 merged. **A3 / #53 open for review.** Next: A4 / #35.
 
 **Merged:** #27 #28 #29 #30 (Phase 7 + planning), #45 (pre-login reports),
-**#48 A1** (`aab8871` — company identity + contact block, `CompanyEmail` with source-row lineage,
-timestamps dropped by design), **#49 A2** (`67e9f31` — `ShareholdingPatternRow`, both SEBI-category
-grids, Corporate → Ownership tables).
+**#48 A1** (`aab8871` — company identity + contact block), **#49 A2** (`67e9f31` —
+`ShareholdingPatternRow`, both SEBI grids).
+
+**In review:** **#53 A3** (`feature/a3-name-history-pba`) — `HighlightsParser` for NAME HISTORY +
+PRINCIPAL BUSINESS ACTIVITIES; new `CompanyNameHistory` + `PrincipalBusinessActivity` entities;
+Corporate → Overview tables. 337 tests green, CI green. → **@codex**.
 
 **Phase 8:** EPIC #31. Wave 1 = #32–#38 (A1–A7) + **#50–#52** (A8–A10, new sheets): A1/A2 done,
-A3–A10 open. Wave 2 = #39–#44 (render audit), open. Wave 3 (restyle) + Wave 4 (dossier) not yet
-split into issues. The catalogue (`docs/data-coverage-catalogue.json`) is the contract — G1 & G3
-now marked DONE.
+A3 in review, A4–A10 open. Wave 2 = #39–#44 (render audit), open. Wave 3/4 not yet split.
+Catalogue G1, G3, G4, G5 → DONE.
 
 **Owner TODO (still open):** apply migrations locally before running the portal —
 `AddPreLoginReportJobs` (#45), `AddCompanyIdentityAndContact` (#48), `AddShareholdingPattern` (#49).
