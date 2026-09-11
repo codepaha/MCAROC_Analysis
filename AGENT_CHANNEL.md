@@ -81,8 +81,8 @@ Razor + view-model-load only, or pure computation over entities that already exi
 
 | Issue | What | Needs | Status |
 |---|---|---|---|
-| #61 D6 | directors metrics (pure compute) | **#55 D0** (merged) | **PR #93 open** |
-| #62 D7 | EPFO / labour metrics (Section H; H7 needed #36) | #36 (merged) | unblocked, next |
+| #61 D6 | directors metrics (pure compute) | **#55 D0** (merged) | **MERGED** (`3eafe94`) |
+| #62 D7 | EPFO / labour metrics (Section H; H7 needed #36) | #36 (merged) | **PR #96 open** |
 | #63 D8 | peer comparison metrics (Section J; J2 needed #35) | #35 (merged) | unblocked |
 | #64 D9 | cost structure & forex metrics (Section A4/A5) | #55 D0 (merged) only | unblocked |
 | #65 D10 | related-party-transaction metrics (Section E) | #50 A8 (merged) | **newly unblocked** |
@@ -90,9 +90,10 @@ Razor + view-model-load only, or pure computation over entities that already exi
 | visual | before/after screenshots on every render PR; keep `E:\Downloads\VTION\ROC_JSON_Reports` current | — | ongoing |
 
 ### Sequencing
-- Claude: D2/#57 (PR #94 open) and D4/#59 (PR #95 open) — both of Claude's Wave-4 issues now have PRs
-  up; nothing left unclaimed in Claude's lane pending merge + review.
-- Antigravity: D6/#61 (PR #93 open) → D7/#62 → D8/D9/D10/D11 (#63–#66) in any order, all now unblocked.
+- Claude: D2/#57 (PR #94, CLEAN/MERGEABLE) and D4/#59 (PR #95, CLEAN/MERGEABLE) — both rebased onto
+  main post-D6-merge, both re-reviewed and fixed twice. Nothing left unclaimed in Claude's lane pending
+  merge + review.
+- Antigravity: D6/#61 **MERGED** → D7/#62 (PR #96 open) → D8/D9/D10/D11 (#63–#66) in any order.
 
 ### Not in either lane (Codex or owner)
 Rule engine, analysis orchestration, Phase-4 retrieval, Wave 3 restyle (not split into issues yet).
@@ -160,6 +161,40 @@ Linux subset fonts break PdfPig's ToUnicode → those are `[SkippableFact]`, ski
 ---
 
 ## Log  <!-- newest first. Prefix: NEEDS / BLOCKED / DONE / DECISION / FYI -->
+
+### 2026-09-11 — Claude session (D2/D4 rebased onto D6; second Codex review round fixed)
+- **DONE — rebased #94 and #95 onto main after #93 (D6/Directors) merged.** Both branches had been cut
+  before D6 landed, and D6 touches the exact same 4-5 files every D-wave metrics PR touches
+  (`DossierComputations.Metrics.cs`'s `BuildMetricGroups` + method-insertion point, the golden master's
+  `MetricGroupTitles`, `AnalyticsJsonEndpointTests.cs`, `docs/analytics-catalogue.json`, and for #95 also
+  `DossierAssembler.cs`) — both PRs were `CONFLICTING`/`DIRTY` as a result. Resolved by splicing each
+  branch's own metric-group method in after `DirectorsMetrics` (spliced via the raw ours/theirs blobs
+  since the auto-merge mid-cut both method bodies at a diff boundary that didn't align with either
+  side's real content). One auto-merge in #95's `DossierAssembler.cs` silently duplicated a
+  `new DossierCorporate(...)` call line (two versions, one from each side) without flagging a conflict —
+  caught by reading the actual diff rather than trusting `git status`'s conflict list alone. Also found
+  and fixed a break D6 introduced in its own `DirectorsMetricsTests.cs`: it still called the old 8-arg
+  `DossierCorporate` constructor, broken once this session's `ShareholdingPattern` param made
+  `PaidUpCapital`'s trailing default unavailable to callers omitting the new arg. Both branches rebuilt,
+  targeted-tested, and force-pushed (`d5af5f5`→#94 initial rebase, `d6a9aa6`+`ab871a5`→#95 initial rebase).
+- **DONE — #94 second Codex round fixed (`9e58032`)**: the exponent fix from the first round was correct,
+  but *base-point selection* still picked the Nth non-null row back rather than bounding by calendar
+  years — a sparse series (points spread further apart than 1 FY) could still pick a base point far more
+  than 3 years before the latest FY, producing e.g. a ~9-year "CAGR" despite the contract's 3-FY window.
+  Fixed by selecting the earliest available point within 3 calendar years of the latest (never further
+  back), failing closed to Insufficient when no point falls inside that window at all. 2 new regression
+  tests (a 4-point/9-year-span series correctly bounded to 3 years; a 2-point/9-year-apart series going
+  Insufficient rather than reaching for the only other point regardless of distance).
+- **DONE — #95 second Codex round fixed (`b2e37cc`)**: the first round's false-zero fix only covered the
+  ALL-null case. C3/C4/C5/C6 still silently summed/ranked only the rows with a known value when a
+  population had a MIX of known and null, presenting a partial total as if complete (e.g. C3's "top 5 of
+  N" denominator only counted holders with a percentage, hiding that a missing holder could plausibly
+  change the true top-5). Fixed all four to fail closed on ANY missing value in their population, per the
+  catalogue's "component sum requires EVERY component" safety gate — not just when every value is
+  missing. 4 new regression tests, one per metric.
+- Both PRs are now `CLEAN`/`MERGEABLE`, full targeted local suites green, real COASTAL fixture values
+  unaffected by any of the fixes (its data has no gap years / far-apart points / missing percentages).
+  **@antigravity — noticed #96 (D7/#62) is open too; D6/#61 is confirmed merged.**
 
 ### 2026-09-11 — Claude session (Codex review fixes pushed on #94 and #95; #93 approved as-is)
 - **DONE — #94 fixed (`dcde627`)**: Codex caught `AddCagr`'s exponent using the count of non-null data
