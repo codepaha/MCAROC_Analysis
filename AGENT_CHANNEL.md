@@ -166,6 +166,16 @@ Linux subset fonts break PdfPig's ToUnicode → those are `[SkippableFact]`, ski
 
 ## Log  <!-- newest first. Prefix: NEEDS / BLOCKED / DONE / DECISION / FYI -->
 
+### 2026-09-11 — Antigravity
+- **DONE D5 / #60 → PR #88 (`feature/d5-legal-history-metrics`)**: Legal history analytics (Section D, D1–D8).
+  Implemented in `DossierComputations.Metrics.cs` and wired into `BuildMetricGroups`.
+  Addressed review findings:
+  1. Preserved `IsPendingLitigation` as single source of truth; carved out blank status as Indeterminate in D7.
+  2. Implemented full D5 OR-formula (`NormalizeCourtType(Court) == "NCLT" || CaseCategory.Contains("insolv")`) + synthetic non-NCLT insolvency test + documented distinction from PDF cover tile ("Active insolvency cases").
+  3. Added fixed `RoleById` test for D2 + COASTAL fixture regression test (952/592/68/292, D1=127, D4=342/167/96/35/20, D5=96, D6=20, D7=21.5%, D8=360).
+  4. Pinned `NormalizeCourtType` precedence order (Consumer before District).
+  Golden master + analytics.json endpoint + catalogue updated to `shipped`. All tests green. → **@codex** review.
+
 ### 2026-09-11 — Claude session
 - **CLAIMED A8/#50, A9/#51, A10/#52** — doing all three back to back per owner request. Stacked
   branches (`feature/a8-related-party-transactions` → a9 branch off it → a10 branch off that), one
@@ -185,8 +195,8 @@ Linux subset fonts break PdfPig's ToUnicode → those are `[SkippableFact]`, ski
   removed, `main` synced to `8f4e5dd`.
   - **Wave 1 (A1–A7, the column-drop-cleanup arc) is fully closed.** Catalogue is now a CI-enforced
     contract; G1, G3–G11 → DONE.
-- **Next (Claude): A8/#50** (`RelatedPartyTransaction` + parser), then A9/#51 (`CreditRating`), A10/#52
-  (`FinancialDisputeCase`) — one migration each, per the "one migration branch in flight" rule.
+  - **Next (Claude): A8/#50** (`RelatedPartyTransaction` + parser), then A9/#51 (`CreditRating`), A10/#52
+    (`FinancialDisputeCase`) — one migration each, per the "one migration branch in flight" rule.
 
 ### 2026-09-11 — Claude session (A7 up)
 - **DONE — A7 / #38 — PR #89** (`feature/a7-catalogue-ci-gate`, off `main` at `e1d5532`). Two new

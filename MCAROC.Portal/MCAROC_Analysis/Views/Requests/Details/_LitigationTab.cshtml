@@ -132,7 +132,12 @@
                     <small>company as petitioner</small>
                 </div>
             </div>
+        }
 
+        @await Html.PartialAsync("~/Views/Requests/Details/_KeyIndicators.cshtml", Model.KeyMetrics.Where(g => g.Title == "Legal history").ToList())
+
+        @if (Model.LitigationCount > 0)
+        {
             @if (cats.Count > 0)
             {
                 <div class="mca-section" style="margin-top:22px;">
