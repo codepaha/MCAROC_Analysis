@@ -51,21 +51,25 @@ public class FinancialDisputeParserTests
     // ── Same table-boundary hardening Codex's review required on the sibling A8/A9 parsers ──
 
     [Fact]
-    public void StopsAtARepeatedHeaderRatherThanTreatingItAsData()
+    public void SkipsARepeatedHeaderAndKeepsParsingBothSidesOfIt()
     {
         var header = Row("Amount Payable / Receivable", "Type Of Financial Dispute", "Currency", "Amount Under Default",
             "Verdict", "Court", "Litigant(s)", "Case No.", "Date Of Default", "Date Of Judgement");
         var sheet = Sheet("Legal Cases - Financial Dispute",
             header,
             Row("Payable", "Trade Payable", "INR", 12.5, "ALLOWED", "NCLT", "ACME BANK vs. TEST CORP", "CP123", "1 Jan, 2020", "5 May, 2021"),
-            // No blank separator — the header repeats (e.g. a page-break artifact).
+            // No blank separator — the header repeats (a normal page-break/continuation artifact in a
+            // paginated export). Rows on both sides are real and must both be kept.
             header,
-            Row("Receivable", "x", "INR", 1.0, "x", "x", "SHOULD NOT BE PARSED", "WP999", "-", "-"));
+            Row("Receivable", "Trade Receivable", "INR", 8.0, "PENDING", "HIGH COURT", "TEST CORP vs. OTHER LTD", "WP456", "-", "-"));
 
         var r = FinancialDisputeParser.Parse(sheet, 1, 1, 10);
 
-        var item = Assert.Single(r.Items);
-        Assert.Equal("CP123", item.CaseNumber);
+        Assert.Equal(2, r.Items.Count);
+        Assert.Equal("CP123", r.Items[0].CaseNumber);
+        Assert.Equal(2, r.Items[0].SourceRowNumber);
+        Assert.Equal("WP456", r.Items[1].CaseNumber);
+        Assert.Equal(4, r.Items[1].SourceRowNumber); // row 3 is the repeated header, skipped but not counted out
     }
 
     [Fact]

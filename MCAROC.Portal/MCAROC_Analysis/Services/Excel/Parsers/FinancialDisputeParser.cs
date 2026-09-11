@@ -9,9 +9,10 @@ namespace MCAROC_Analysis.Services.Excel.Parsers;
 /// DEFAULT. Absent from the COASTAL fixture (12/41 of the wider portfolio set carry it) — column layout
 /// from the A10/#52 issue, not verified against a real workbook.
 ///
-/// The data loop stops (does not merely skip) at the first table-boundary signal — both identity
-/// columns (Litigants, Case No.) blank, a repeated header, or a "Total"/footer line — so a footer, a
-/// repeated header, or an unrelated table further down can never be silently ingested as a dispute case
+/// The data loop stops at a real table-boundary signal — both identity columns (Litigants, Case No.)
+/// blank, or a "Total"/footer line — so a footer or an unrelated table further down can never be
+/// silently ingested as a dispute case. A repeated full header is a normal page-break/continuation
+/// artifact, not a boundary: it is skipped, not treated as end-of-table, so rows after it are not lost
 /// (same hardening Codex's review required on the sibling A8/A9 parsers).</summary>
 public static class FinancialDisputeParser
 {
@@ -33,7 +34,7 @@ public static class FinancialDisputeParser
         for (var r = headerRow + 1; r < sheet.Rows.Count; r++)
         {
             var row = sheet.Rows[r];
-            if (IsHeaderRow(row)) break; // a repeated header ends this table, not a data row
+            if (IsHeaderRow(row)) continue; // a repeated header is a page-break artifact — skip it, keep parsing
 
             var litigants = Cell(row, 6);
             var caseNumber = Cell(row, 7);
