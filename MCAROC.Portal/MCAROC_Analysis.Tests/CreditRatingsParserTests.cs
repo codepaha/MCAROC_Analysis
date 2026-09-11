@@ -86,19 +86,24 @@ public class CreditRatingsParserTests
     // ── Codex review (PR #91): the table must have a real boundary, not "scan to end of sheet" ──
 
     [Fact]
-    public void StopsAtARepeatedHeaderRatherThanTreatingItAsData()
+    public void SkipsARepeatedAcceptedHeaderAndKeepsParsingBothSidesOfIt()
     {
+        var header = Row("AGENCY", "DATE", "INSTRUMENT", "AMOUNT", "CURRENCY", "RATING", "ACTION", "OUTLOOK", "REMARKS");
         var sheet = Sheet("Credit Ratings",
-            Row("AGENCY", "DATE", "INSTRUMENT", "AMOUNT", "CURRENCY", "RATING", "ACTION", "OUTLOOK", "REMARKS"),
+            header,
             Row("CRISIL", "15 Jun, 2020", "Long Term Bank Facilities", 150.0, "INR", "CRISIL A", "Reaffirmed", "Stable", "-"),
-            // No blank separator — the header repeats (e.g. a page-break artifact).
-            Row("AGENCY", "DATE", "INSTRUMENT", "AMOUNT", "CURRENCY", "RATING", "ACTION", "OUTLOOK", "REMARKS"),
-            Row("SHOULD NOT BE PARSED", "1 Jan, 2021", "x", 1.0, "INR", "x", "x", "x", "x"));
+            // No blank separator — the header repeats (a normal page-break/continuation artifact).
+            // Rows on both sides are real and must both be kept.
+            header,
+            Row("ICRA", "1 Jan, 2021", "Cash Credit", 75.0, "INR", "ICRA A+", "Upgraded", "Positive", "-"));
 
         var r = CreditRatingsParser.Parse(sheet, null, 1, 1, 10);
 
-        var item = Assert.Single(r.Items);
-        Assert.Equal("CRISIL", item.Agency);
+        Assert.Equal(2, r.Items.Count);
+        Assert.Equal("CRISIL", r.Items[0].Agency);
+        Assert.Equal(2, r.Items[0].SourceRowNumber);
+        Assert.Equal("ICRA", r.Items[1].Agency);
+        Assert.Equal(4, r.Items[1].SourceRowNumber); // row 3 is the repeated header, skipped but not counted out
     }
 
     [Fact]
@@ -134,13 +139,31 @@ public class CreditRatingsParserTests
     }
 
     [Fact]
-    public void UnacceptedRatingsStopsAtARepeatedHeaderAndATotalRow()
+    public void UnacceptedRatingsSkipsARepeatedHeaderAndKeepsParsingBothSidesOfIt()
+    {
+        var header = Row("AGENCY", "INSTRUMENT", "AMOUNT", "CURRENCY", "RATING", "DATE OF NON-ACCEPTANCE", "REMARKS");
+        var sheet = Sheet("Unaccepted Ratings",
+            header,
+            Row("CARE", "Term Loan", 50.0, "INR", "CARE BB+", "10 Mar, 2019", "-"),
+            header,
+            Row("BRICKWORK", "Cash Credit", 20.0, "INR", "BWR BB", "5 Feb, 2020", "-"));
+
+        var r = CreditRatingsParser.Parse(null, sheet, 1, 1, 10);
+
+        Assert.Equal(2, r.Items.Count);
+        Assert.Equal("CARE", r.Items[0].Agency);
+        Assert.Equal(2, r.Items[0].SourceRowNumber);
+        Assert.Equal("BRICKWORK", r.Items[1].Agency);
+        Assert.Equal(4, r.Items[1].SourceRowNumber); // row 3 is the repeated header, skipped but not counted out
+    }
+
+    [Fact]
+    public void UnacceptedRatingsStopsAtATotalRow()
     {
         var sheet = Sheet("Unaccepted Ratings",
             Row("AGENCY", "INSTRUMENT", "AMOUNT", "CURRENCY", "RATING", "DATE OF NON-ACCEPTANCE", "REMARKS"),
             Row("CARE", "Term Loan", 50.0, "INR", "CARE BB+", "10 Mar, 2019", "-"),
-            Row("AGENCY", "INSTRUMENT", "AMOUNT", "CURRENCY", "RATING", "DATE OF NON-ACCEPTANCE", "REMARKS"),
-            Row("SHOULD NOT BE PARSED", "x", 1.0, "INR", "x", "1 Jan, 2020", "x"));
+            Row("Total", "", 50.0, "", "", "", ""));
 
         var r = CreditRatingsParser.Parse(null, sheet, 1, 1, 10);
 

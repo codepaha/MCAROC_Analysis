@@ -14,9 +14,11 @@ namespace MCAROC_Analysis.Services.Excel.Parsers;
 /// dynamically (tolerates the trailing-space header observed in some exports, "AGENCY ") rather than
 /// assumed at a fixed index.
 ///
-/// Both data loops stop (not merely skip) at the first table-boundary signal — a blank row, a repeated
-/// header (either shape), or a "Total"/footer line — so a footer, a repeated header, or an unrelated
-/// row can never be silently ingested as a rating (Codex review, PR #91).</summary>
+/// Both data loops stop at a real table-boundary signal — a blank row, a "Total"/footer line, or the
+/// OTHER shape's header (a positively identified different section) — so a footer or an unrelated row
+/// can never be silently ingested as a rating. A row repeating the loop's OWN header shape is a normal
+/// page-break/continuation artifact, not a boundary: it is skipped, not treated as end-of-table, so
+/// rows after it are not lost (Codex review, PR #91).</summary>
 public static class CreditRatingsParser
 {
     private const string ParserName = nameof(CreditRatingsParser);
@@ -42,7 +44,8 @@ public static class CreditRatingsParser
                 for (; r < creditRatingsSheet.Rows.Count; r++)
                 {
                     var row = creditRatingsSheet.Rows[r];
-                    if (IsAcceptedHeaderRow(row) || IsUnacceptedHeaderRow(row)) break; // a repeated header ends this table
+                    if (IsAcceptedHeaderRow(row)) continue; // a repeated own-header is a page-break artifact — skip it, keep parsing
+                    if (IsUnacceptedHeaderRow(row)) break; // a different section's header — genuine boundary
                     var agency = Cell(row, 0);
                     if (string.IsNullOrEmpty(agency)) break; // a blank row ends the table — never scan past it
                     if (IsFooterRow(agency)) break;
@@ -107,7 +110,8 @@ public static class CreditRatingsParser
         for (var r = headerRow + 1; r < sheet.Rows.Count; r++)
         {
             var row = sheet.Rows[r];
-            if (IsAcceptedHeaderRow(row) || IsUnacceptedHeaderRow(row)) break; // a repeated header ends this table
+            if (IsUnacceptedHeaderRow(row)) continue; // a repeated own-header is a page-break artifact — skip it, keep parsing
+            if (IsAcceptedHeaderRow(row)) break; // a different section's header — genuine boundary
             var agency = Cell(row, 0);
             if (string.IsNullOrEmpty(agency)) break;
             if (IsFooterRow(agency)) break;
