@@ -111,11 +111,11 @@ Rule engine, analysis orchestration, Phase-4 retrieval, Wave 3 restyle (not spli
 **Current focus:** Phase 8, two lanes.
 Claude done: #79 CI shift · A4/#35 · A11/#75 · A5/#36 · A6/#37 (PR #87, `075dc83`) · A7/#38
 (PR #89, `8f4e5dd`) — Wave 1's column-drop cleanup fully closed out. **A8/#50 → PR #90, A9/#51 → PR #91,
-A10/#52 → PR #92 — all three up for @codex review, stacked #90 → #91 → #92.** All three sheets are
-absent from the COASTAL fixture, so none have real-workbook reconciliation — synthetic-only test
-coverage, flagged in each PR. **Pausing here per owner request.** Next when resumed: D2/#57, D4/#59.
-Antigravity: D5/#60 → **PR #88 open** (addresses the plan-review findings — worth confirming both the
-`IsPendingLitigation` reuse and the D5 CaseCategory-OR-NCLT fix landed before merge). Next: D6/#61, D7/#62.
+A10/#52 → PR #92 — Codex found a real parser-hardening blocker on all three (see Log); fixed, rebased
+onto merged main (picks up D5), all green and mergeable, back up for @codex re-review.** All three
+sheets are absent from the COASTAL fixture, so none have real-workbook reconciliation — synthetic-only
+test coverage, flagged in each PR. **Pausing here per owner request.** Next when resumed: D2/#57, D4/#59.
+Antigravity: D5/#60 → **MERGED as `bf19713`** (PR #88). Next: D6/#61, D7/#62.
 Also merged since the last board update: pre-login reports edit-pipeline (**#86**); issue **#46**
 closed (fixed by #86).
 
@@ -167,6 +167,34 @@ Linux subset fonts break PdfPig's ToUnicode → those are `[SkippableFact]`, ski
 ---
 
 ## Log  <!-- newest first. Prefix: NEEDS / BLOCKED / DONE / DECISION / FYI -->
+
+### 2026-09-11 — Claude session (A8–A10 hardened + rebased)
+- **DONE — real Codex finding, fixed on all three.** `RelatedPartyTransactionsParser` (#90) and
+  `CreditRatingsParser` (#91) located their header by a single-cell check and then treated every
+  subsequent non-blank row as data all the way to the end of the sheet (`continue`, not `break`, past a
+  blank row) — a repeated header, a "Total"/footer line, or an unrelated table further down would all
+  have silently become fake transactions/ratings. Real BFSI data-integrity risk, correctly flagged as a
+  blocker despite green CI (the synthetic fixtures never exercised the failure mode).
+  - Fixed all three parsers (including `FinancialDisputeParser` / #92 proactively — same flaw, hadn't
+    been reviewed yet but no reason to wait for a second round-trip): full multi-column header
+    validation instead of one cell, data loop breaks (not continues) at the first blank row/repeated
+    header/"Total" footer. 10 new regression tests total across the three parsers, each pinning the
+    specific failure mode Codex named.
+  - **Rebased the stack** (#90 → #91 → #92) onto `main` post-D5-merge as requested. #90 rebased clean;
+    #91 rebased clean onto the new #90; #92 hit a real add/add conflict in the new
+    `LitigationTabRenderingTests.cs` — D5's PR independently created a file at that same path (Key
+    Indicators render tests) while my A10 branch created one for the Financial Disputes section.
+    Resolved by merging both test classes together (kept every test from both sides), not picking one.
+    `_LitigationTab.cshtml` auto-merged cleanly (D5's Key Indicators partial + my Financial Disputes
+    sub-tab coexist fine).
+  - All three force-pushed; full build + targeted sweep (36 tests) + real-fixture
+    `SourceReconciliationTests`/`CatalogueCoverageTests`/`AnalyticsJsonEndpointTests` (26 tests) all
+    green post-rebase. Fresh CI runs on all three: green, `mergeable: MERGEABLE`.
+  - **Also answers @owner's "will PR #92 CI run?"** — it hadn't (zero check-runs ever recorded against
+    its original head SHA, `mergeable` stuck on `CONFLICTING` despite `git merge-tree` showing a clean
+    auto-merge) — looked like a stuck/stale GitHub-side mergeability computation from three PRs opened
+    in rapid succession. The rebase + force-push forced a fresh `synchronize` event; CI now runs
+    normally on all three. → **@codex re-review**, same order.
 
 ### 2026-09-11 — Claude session (A8–A10 up, pausing)
 - **DONE — A8/#50, A9/#51, A10/#52 all built back to back per owner request**, stacked branches
