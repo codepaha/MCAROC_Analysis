@@ -109,10 +109,10 @@ Rule engine, analysis orchestration, Phase-4 retrieval, Wave 3 restyle (not spli
 ## Status board  <!-- Integrator keeps this current -->
 
 **Current focus:** Phase 8, two lanes.
-Claude done: #79 CI shift · A4/#35 · A11/#75 · A5/#36 · **A6/#37** (PR #87, `075dc83`).
-Next: A7/#38, A8–A10 (#50–#52), D2/#57, D4/#59.
-Antigravity done: B1–B6 (#68–#73), D0/#67, D12/#74, D1/#56, D3/#58. **CLAIMED D5/#60** (in progress).
-Next: D6/#61, D7/#62.
+Claude done: #79 CI shift · A4/#35 · A11/#75 · A5/#36 · A6/#37 (PR #87, `075dc83`). **PR #89 (A7/#38)
+up for @codex review.** Next: A8–A10 (#50–#52), D2/#57, D4/#59.
+Antigravity: D5/#60 → **PR #88 open** (addresses the plan-review findings — worth confirming both the
+`IsPendingLitigation` reuse and the D5 CaseCategory-OR-NCLT fix landed before merge). Next: D6/#61, D7/#62.
 Also merged since the last board update: pre-login reports edit-pipeline (**#86**); issue **#46**
 closed (fixed by #86).
 
@@ -164,6 +164,30 @@ Linux subset fonts break PdfPig's ToUnicode → those are `[SkippableFact]`, ski
 ---
 
 ## Log  <!-- newest first. Prefix: NEEDS / BLOCKED / DONE / DECISION / FYI -->
+
+### 2026-09-11 — Claude session (A7 up)
+- **DONE — A7 / #38 — PR #89** (`feature/a7-catalogue-ci-gate`, off `main` at `e1d5532`). Two new
+  tests only (no application code touched): `Every_incomplete_field_references_a_tracked_gap` (plain
+  fact, runs on hosted CI, catches a catalogue row going stale) and `Every_real_workbook_column_is_catalogued`
+  (skippable, self-hosted only, diffs every real header cell in both workbooks against the catalogue).
+  Header-row location is sheet-shape-aware (`HeaderGroups.cs`) — Legal History/Auditors/Compliance/Peer
+  Comparison/Structure each mirror their parser's own section-detection logic; the financial-data
+  matrix sheets are deliberately excluded (their completeness is already architecturally guaranteed by
+  the typed-map-or-FinancialFact-catchall, not a fixed column list).
+  - Went from **133 real mismatches to 0** against the actual COASTAL headers (not assumed) — mostly
+    catalogue paraphrasing ("PUC-or-Obligation" etc.) but also 3 **real** drift findings: ChargeReport's
+    "About the Company" is the full 45-row sheet, not the "identity-check only" stub previously
+    documented; Auditors' Comments' detail table drops 5 of 7 columns (new gap **G18**); EPFO's
+    LATEST DATE OF CREDIT/NO. OF EMPLOYEES/AMOUNT + both sheets' "FILING DETAILS" boilerplate were
+    uncatalogued. Also closed the gap-id hole my own A6 CancellationDate fix left (**G17**).
+  - Sanity-checked the gate isn't vacuous: broke one live catalogue row, confirmed the exact-column
+    failure message, reverted before committing. → **@codex review.**
+- **FYI — @antigravity's PR #88 (D5/#60) is open**, addressing the plan-review findings posted on
+  issue #60 (`ClassifyLitigationStatus` reusing `IsPendingLitigation` instead of a parallel classifier;
+  D5's `CaseCategory ~ Insolvency OR court ~ NCLT` implemented explicitly). Worth a review pass
+  confirming both landed before merge — the COASTAL numbers alone won't prove it (that's exactly why
+  they were invisible in the first plan).
+- **Next (Claude):** A8–A10 (#50–#52) once #89 merges.
 
 ### 2026-09-11 — Claude session
 - **CLAIMED A7 / #38 — `feature/a7-catalogue-ci-gate`**, off `main` at `e1d5532`. Reconciliation-test
