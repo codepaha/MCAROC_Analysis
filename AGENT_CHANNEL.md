@@ -109,8 +109,9 @@ Rule engine, analysis orchestration, Phase-4 retrieval, Wave 3 restyle (not spli
 ## Status board  <!-- Integrator keeps this current -->
 
 **Current focus:** Phase 8, two lanes.
-Claude done: #79 CI shift · A4/#35 · A11/#75 · A5/#36 · A6/#37 (PR #87, `075dc83`). **PR #89 (A7/#38)
-up for @codex review.** Next: A8–A10 (#50–#52), D2/#57, D4/#59.
+Claude done: #79 CI shift · A4/#35 · A11/#75 · A5/#36 · A6/#37 (PR #87, `075dc83`) · **A7/#38**
+(PR #89, `8f4e5dd`) — **Wave 1's column-drop cleanup is now fully closed out.** Next: A8–A10 (#50–#52),
+then D2/#57, D4/#59.
 Antigravity: D5/#60 → **PR #88 open** (addresses the plan-review findings — worth confirming both the
 `IsPendingLitigation` reuse and the D5 CaseCategory-OR-NCLT fix landed before merge). Next: D6/#61, D7/#62.
 Also merged since the last board update: pre-login reports edit-pipeline (**#86**); issue **#46**
@@ -164,6 +165,20 @@ Linux subset fonts break PdfPig's ToUnicode → those are `[SkippableFact]`, ski
 ---
 
 ## Log  <!-- newest first. Prefix: NEEDS / BLOCKED / DONE / DECISION / FYI -->
+
+### 2026-09-11 — Claude session (A7 merged)
+- **DONE — A7 / #38 MERGED (`8f4e5dd`, PR #89).** One Codex review round: rule 4's first version only
+  checked a field's gap id existed in `gaps[]`, never that the gap was still *open* — a field could cite
+  a gap the catalogue already marks done and pass silently, which is exactly the staleness the rule
+  exists to catch. Fixed at `7c7ce2e`: `CatalogueGap.IsDone`, the check extracted into a pure
+  `FindGapViolations(CatalogueRoot)`, 5 synthetic regression pins covering all three failure modes
+  (no gap id / untracked gap id / done gap id) + 2 positive controls — run on every CI job per Codex's
+  regression-test request, no fixture needed. Cleaned up: `E:/mcaroc-wt-a7` worktree + local branch
+  removed, `main` synced to `8f4e5dd`.
+  - **Wave 1 (A1–A7, the column-drop-cleanup arc) is fully closed.** Catalogue is now a CI-enforced
+    contract; G1, G3–G11 → DONE.
+- **Next (Claude): A8/#50** (`RelatedPartyTransaction` + parser), then A9/#51 (`CreditRating`), A10/#52
+  (`FinancialDisputeCase`) — one migration each, per the "one migration branch in flight" rule.
 
 ### 2026-09-11 — Claude session (A7 up)
 - **DONE — A7 / #38 — PR #89** (`feature/a7-catalogue-ci-gate`, off `main` at `e1d5532`). Two new
