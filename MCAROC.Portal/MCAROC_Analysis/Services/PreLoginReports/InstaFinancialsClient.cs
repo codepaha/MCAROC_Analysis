@@ -11,6 +11,9 @@ public sealed class InstaFinancialsOptions
     public const string SectionName = "InstaFinancials";
     public string BaseUrl { get; init; } = "https://api.instafinancials.com/InstaReports/v2/InstaBasic/CompanyCIN";
     public string ApiKey { get; init; } = string.Empty;
+    /// <summary>InstaFinancials cache-freshness control. 888 = fetch fresh from MCA, falling back to the latest
+    /// cached record if the MCA refresh fails — the vendor's recommended setting for production availability.</summary>
+    public int DaysToIgnore { get; init; } = 888;
 }
 
 public sealed class PreLoginReportException(string message, bool retryable = false) : Exception(message)
@@ -21,9 +24,11 @@ public sealed class PreLoginReportException(string message, bool retryable = fal
 public sealed record InstaCompany(
     string Name, string RocName, string RegistrationNumber, string Category, string Subcategory,
     string Class, string AuthorisedCapital, string PaidUpCapital, string Members, string Incorporated,
-    string Address, string Email, string Listed, string LastAgm, string BalanceSheetDate, string Status);
+    string Address, string Email, string Listed, string LastAgm, string BalanceSheetDate, string Status,
+    // SBI-only fields — InstaBasic has no corresponding data, so these are always manually entered on the Review page.
+    string ActiveCompliance = "-", string BooksOfAccountAddress = "-");
 
-public sealed record InstaCharge(string Id, string Holder, string Created, string Modified, string Satisfied, string Amount, bool IsOpen);
+public sealed record InstaCharge(string Id, string Holder, string Created, string Modified, string Satisfied, string Amount, bool IsOpen, string Srn = "-");
 public sealed record InstaDirector(string Name, string DinOrPan, string Designation, string Appointed);
 public sealed record InstaReportData(InstaCompany Company, IReadOnlyList<InstaCharge> Charges, IReadOnlyList<InstaDirector> Directors);
 
@@ -36,7 +41,7 @@ public sealed class InstaFinancialsClient(HttpClient http, IOptions<InstaFinanci
             throw new PreLoginReportException("Report generation is not configured. Set InstaFinancials:ApiKey in user secrets or the production secret store.");
 
         var baseUrl = settings.BaseUrl.TrimEnd('/');
-        using var request = new HttpRequestMessage(HttpMethod.Get, $"{baseUrl}/{Uri.EscapeDataString(cin)}");
+        using var request = new HttpRequestMessage(HttpMethod.Get, $"{baseUrl}/{Uri.EscapeDataString(cin)}?daysToIgnore={settings.DaysToIgnore}");
         request.Headers.Add("user-key", settings.ApiKey.Trim());
         request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
 
@@ -67,16 +72,30 @@ public sealed class InstaFinancialsClient(HttpClient http, IOptions<InstaFinanci
         var charges = Array(Property(reportData, "indexChargesData")).Select(c => new InstaCharge(
             Text(c, "chargeId"), Text(c, "chName", Text(c, "chargeHolderName")), Date(c, "dateOfCreation"),
             Date(c, "dateOfModification"), Date(c, "dateOfSatisfaction"), Money(c, "amount"),
-            string.Equals(Text(c, "chargeStatus", ""), "open", StringComparison.OrdinalIgnoreCase))).ToList();
+            string.Equals(Text(c, "chargeStatus", ""), "open", StringComparison.OrdinalIgnoreCase),
+            Text(c, "SRN"))).ToList();
 
-        var directors = Array(Property(reportData, "directorData")).Select(d =>
-        {
-            var name = string.Join(' ', new[] { Text(d, "FirstName", ""), Text(d, "MiddleName", ""), Text(d, "LastName", "") }.Where(x => !string.IsNullOrWhiteSpace(x) && x != "-"));
-            var din = Text(d, "DIN");
-            var pan = Text(d, "PAN");
-            return new InstaDirector(name == "-" ? "-" : CultureInfo.InvariantCulture.TextInfo.ToTitleCase(name.ToLowerInvariant()),
-                din != "-" ? din : pan != "-" ? $"PAN {pan}" : "-", Designation(d, cin), Date(d, "dateOfAppointment"));
-        }).Where(d => d.Name != "-").OrderBy(d => d.Name, StringComparer.OrdinalIgnoreCase).ToList();
+        var directors = Array(Property(reportData, "directorData"))
+            .Select(d =>
+            {
+                var name = string.Join(' ', new[] { Text(d, "FirstName", ""), Text(d, "MiddleName", ""), Text(d, "LastName", "") }.Where(x => !string.IsNullOrWhiteSpace(x) && x != "-"));
+                // All 3 name parts can be individually filtered out (e.g. all "." placeholders), leaving an
+                // empty join that the "-" checks below wouldn't catch — normalize it to "-" so this entry is
+                // excluded like any other nameless record, instead of appearing with a blank name.
+                if (string.IsNullOrWhiteSpace(name)) name = "-";
+                return new { Raw = d, Name = name, Din = Text(d, "DIN"), Pan = Text(d, "PAN"), Appointed = Date(d, "dateOfAppointment") };
+            })
+            .Where(x => x.Name != "-")
+            // InstaBasic's directorData is one row per historical role event against this company, not one
+            // row per person — the same DIN/PAN can appear more than once (e.g. re-appointed under a
+            // different designation years later). Collapse to one row per person, keeping whichever
+            // appointment is most recent so the report reflects current status, not a stale earlier role.
+            .GroupBy(x => x.Din != "-" ? $"DIN:{x.Din}" : x.Pan != "-" ? $"PAN:{x.Pan}" : $"NAME:{x.Name}")
+            .Select(g => g.OrderByDescending(x => AppointmentSortKey(x.Appointed)).First())
+            .Select(x => new InstaDirector(
+                CultureInfo.InvariantCulture.TextInfo.ToTitleCase(x.Name.ToLowerInvariant()),
+                x.Din != "-" ? x.Din : x.Pan != "-" ? $"PAN {x.Pan}" : "-", Designation(x.Raw, cin), x.Appointed))
+            .OrderBy(d => d.Name, StringComparer.OrdinalIgnoreCase).ToList();
 
         return new InstaReportData(company, charges, directors);
     }
@@ -88,7 +107,10 @@ public sealed class InstaFinancialsClient(HttpClient http, IOptions<InstaFinanci
     {
         var item = Property(value, property);
         var text = item.ValueKind == JsonValueKind.String ? item.GetString() : item.ValueKind is JsonValueKind.Number or JsonValueKind.True or JsonValueKind.False ? item.ToString() : null;
-        return string.IsNullOrWhiteSpace(text) || string.Equals(text, "NA", StringComparison.OrdinalIgnoreCase) ? fallback : text.Trim();
+        text = text?.Trim();
+        // InstaBasic uses "." as a placeholder for a genuinely missing value (seen on director
+        // FirstName/MiddleName/LastName) rather than omitting the field or using "-"/"NA" like elsewhere.
+        return string.IsNullOrWhiteSpace(text) || string.Equals(text, "NA", StringComparison.OrdinalIgnoreCase) || text == "." ? fallback : text;
     }
     private static string Money(JsonElement value, string property)
     {
@@ -98,8 +120,10 @@ public sealed class InstaFinancialsClient(HttpClient http, IOptions<InstaFinanci
     private static string Date(JsonElement value, string property)
     {
         var raw = Text(value, property);
-        return raw != "-" && DateTimeOffset.TryParse(raw, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var date)
-            ? date.ToString("dd-MM-yyyy", CultureInfo.InvariantCulture) : raw;
+        if (raw == "-" || !DateTimeOffset.TryParse(raw, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var date)) return raw;
+        // InstaBasic uses 01-01-1900 as a sentinel for "no real date" rather than omitting the field —
+        // no genuine MCA filing date predates 1900, so any parsed year that low is the sentinel, not data.
+        return date.Year <= 1900 ? "-" : date.ToString("dd-MM-yyyy", CultureInfo.InvariantCulture);
     }
     private static string Listed(string raw) => raw.ToUpperInvariant() switch { "Y" => "Listed", "N" => "Unlisted", _ => raw };
     private static string Address(JsonElement company)
@@ -116,7 +140,12 @@ public sealed class InstaFinancialsClient(HttpClient http, IOptions<InstaFinanci
     private static string Designation(JsonElement director, string cin)
     {
         var roles = Array(Property(director, "MCAUserRole")).Where(r => Text(r, "cin", "") == cin || Text(r, "ucin", "") == cin).ToList();
-        return roles.Select(r => Text(r, "designation", "")).FirstOrDefault(x => x != "-")
-            ?? roles.Select(r => Text(r, "roleLICValue", "")).FirstOrDefault(x => x != "-") ?? "Director";
+        // Text()'s default fallback is "-", which is required here: passing "" as the fallback would make
+        // a genuinely blank "designation" field return "" instead of "-", which already satisfies the
+        // `!= "-"` check below and short-circuits before ever trying the roleLICValue fallback.
+        return roles.Select(r => Text(r, "designation")).FirstOrDefault(x => x != "-")
+            ?? roles.Select(r => Text(r, "roleLICValue")).FirstOrDefault(x => x != "-") ?? "Director";
     }
+    private static DateTime AppointmentSortKey(string formattedDate) =>
+        DateTime.TryParseExact(formattedDate, "dd-MM-yyyy", CultureInfo.InvariantCulture, DateTimeStyles.None, out var date) ? date : DateTime.MinValue;
 }

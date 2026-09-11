@@ -11,10 +11,7 @@ public sealed class PreLoginReportJobService(AppDbContext db, PreLoginReportQueu
 {
     public async Task<Guid> QueueBatchAsync(IEnumerable<string> cins, PreLoginReportFormat format, CancellationToken cancellationToken)
     {
-        var normalized = cins.Select(x => x.Trim().ToUpperInvariant()).Where(x => x.Length > 0).Distinct().Take(25).ToList();
-        if (normalized.Count == 0) throw new PreLoginReportException("Enter at least one CIN.");
-        if (normalized.Any(cin => !Regex.IsMatch(cin, "^[LU][0-9]{5}[A-Z]{2}[0-9]{4}[A-Z]{3}[0-9]{6}$")))
-            throw new PreLoginReportException("Batch processing accepts company CINs only. LLPINs are not supported by the configured API.");
+        var normalized = ValidateCins(cins.Take(25));
         var batch = Guid.NewGuid();
         foreach (var cin in normalized)
         {
@@ -25,11 +22,74 @@ public sealed class PreLoginReportJobService(AppDbContext db, PreLoginReportQueu
         return batch;
     }
 
+    /// <summary>Queues a single CIN the same way as a 1-CIN batch — the single-CIN and batch entry points
+    /// share one pipeline, so a single-CIN request also lands in History and never blocks the browser on a
+    /// slow live MCA fetch.</summary>
+    public async Task<Guid> QueueSingleAsync(string cin, string? submittedCompanyName, PreLoginReportFormat format, CancellationToken cancellationToken)
+    {
+        var normalized = ValidateCins([cin]);
+        var batch = Guid.NewGuid();
+        db.PreLoginReportJobs.Add(new PreLoginReportJob
+        {
+            BatchId = batch, Cin = normalized[0], SubmittedCompanyName = submittedCompanyName, Format = format.ToString(),
+            Status = PreLoginReportJobStatus.Queued, ProgressPercent = 0, CreatedUtc = DateTime.UtcNow
+        });
+        await db.SaveChangesAsync(cancellationToken);
+        var id = await db.PreLoginReportJobs.Where(x => x.BatchId == batch).Select(x => x.PreLoginReportJobId).SingleAsync(cancellationToken);
+        queue.Enqueue(id);
+        return batch;
+    }
+
+    private static IReadOnlyList<string> ValidateCins(IEnumerable<string> cins)
+    {
+        var normalized = cins.Select(x => x.Trim().ToUpperInvariant()).Where(x => x.Length > 0).Distinct().ToList();
+        if (normalized.Count == 0) throw new PreLoginReportException("Enter at least one CIN.");
+        if (normalized.Any(cin => !Regex.IsMatch(cin, "^[LU][0-9]{5}[A-Z]{2}[0-9]{4}[A-Z]{3}[0-9]{6}$")))
+            throw new PreLoginReportException("Only company CINs are supported. LLPINs are not supported by the configured API.");
+        return normalized;
+    }
+
     public async Task<IReadOnlyList<PreLoginReportJob>> HistoryAsync(CancellationToken cancellationToken) =>
         await db.PreLoginReportJobs.OrderByDescending(x => x.CreatedUtc).Take(200).ToListAsync(cancellationToken);
 
     public async Task<PreLoginReportJob?> FindAsync(long id, CancellationToken cancellationToken) =>
         await db.PreLoginReportJobs.FindAsync([id], cancellationToken);
+
+    /// <summary>Loads a completed job's fetched data (captured in DataJson right after fetch, before
+    /// generation) as an editable draft — the basis for the optional "Edit" action on the History page.</summary>
+    public async Task<PreLoginReportDraftViewModel> GetEditableDraftAsync(long id, CancellationToken cancellationToken)
+    {
+        var job = await FindAsync(id, cancellationToken) ?? throw new PreLoginReportException("Report request not found.");
+        if (string.IsNullOrWhiteSpace(job.DataJson))
+            throw new PreLoginReportException("This report has no fetched data available to edit.");
+        var data = JsonSerializer.Deserialize<InstaReportData>(job.DataJson)
+            ?? throw new PreLoginReportException("Stored report data is corrupt.");
+        return PreLoginReportService.ToDraft(job.PreLoginReportJobId, job.Cin, Enum.Parse<PreLoginReportFormat>(job.Format), data);
+    }
+
+    /// <summary>Applies a user's edits (including any added/removed charge or director rows) and
+    /// regenerates the stored report in place.</summary>
+    public async Task ApplyEditAndRegenerateAsync(long id, PreLoginReportDraftViewModel draft, CancellationToken cancellationToken)
+    {
+        var job = await FindAsync(id, cancellationToken) ?? throw new PreLoginReportException("Report request not found.");
+        var format = Enum.Parse<PreLoginReportFormat>(job.Format);
+        var data = PreLoginReportService.ApplyEdits(draft);
+        var generated = await reports.GenerateFromDataAsync(job.Cin, format, data, cancellationToken);
+        if (!string.IsNullOrWhiteSpace(job.ReportStoragePath) && File.Exists(job.ReportStoragePath)) File.Delete(job.ReportStoragePath);
+        job.ReportStoragePath = await StoreReportAsync(job.PreLoginReportJobId, generated, cancellationToken);
+        job.DataJson = JsonSerializer.Serialize(data);
+        job.Status = PreLoginReportJobStatus.Completed; job.ProgressPercent = 100; job.CompletedUtc = DateTime.UtcNow;
+        await db.SaveChangesAsync(cancellationToken);
+    }
+
+    private async Task<string> StoreReportAsync(long jobId, GeneratedReport generated, CancellationToken cancellationToken)
+    {
+        var directory = Path.Combine(environment.ContentRootPath, "App_Data", "PreLoginReports");
+        Directory.CreateDirectory(directory);
+        var path = Path.Combine(directory, $"{jobId}-{generated.FileName}");
+        await File.WriteAllBytesAsync(path, generated.Bytes, cancellationToken);
+        return path;
+    }
 
     public async Task RerunAsync(long id, CancellationToken cancellationToken)
     {
@@ -52,10 +112,8 @@ public sealed class PreLoginReportJobService(AppDbContext db, PreLoginReportQueu
             job.DataJson = JsonSerializer.Serialize(data); job.Status = PreLoginReportJobStatus.Generating; job.ProgressPercent = 60;
             await db.SaveChangesAsync(cancellationToken);
             var generated = await reports.GenerateFromDataAsync(job.Cin, format, data, cancellationToken);
-            var directory = Path.Combine(environment.ContentRootPath, "App_Data", "PreLoginReports"); Directory.CreateDirectory(directory);
-            var path = Path.Combine(directory, $"{job.PreLoginReportJobId}-{generated.FileName}");
-            await File.WriteAllBytesAsync(path, generated.Bytes, cancellationToken);
-            job.ReportStoragePath = path; job.Status = PreLoginReportJobStatus.Completed; job.ProgressPercent = 100; job.CompletedUtc = DateTime.UtcNow; job.FailureReason = null;
+            job.ReportStoragePath = await StoreReportAsync(job.PreLoginReportJobId, generated, cancellationToken);
+            job.Status = PreLoginReportJobStatus.Completed; job.ProgressPercent = 100; job.CompletedUtc = DateTime.UtcNow; job.FailureReason = null;
             await db.SaveChangesAsync(cancellationToken);
         }
         catch (PreLoginReportException ex) { await FailOrRetryAsync(job, ex.Message, ex.Retryable, cancellationToken); }

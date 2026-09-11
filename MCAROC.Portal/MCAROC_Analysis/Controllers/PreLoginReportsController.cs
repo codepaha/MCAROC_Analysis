@@ -5,10 +5,12 @@ using Microsoft.AspNetCore.Mvc;
 
 namespace MCAROC_Analysis.Controllers;
 
-/// <summary>Public, credential-free entry point for the two MCA report formats.</summary>
+/// <summary>Public, credential-free entry point for the two MCA report formats. Single-CIN and batch
+/// requests share one pipeline (both just queue a job) — editing is an optional, post-hoc action from
+/// History, not a mandatory gate before generation.</summary>
 [AllowAnonymous]
 [Route("pre-login-reports")]
-public sealed class PreLoginReportsController(PreLoginReportService reports, PreLoginReportJobService jobs) : Controller
+public sealed class PreLoginReportsController(PreLoginReportJobService jobs) : Controller
 {
     [HttpGet("")]
     public IActionResult Index() => View(new PreLoginReportViewModel());
@@ -22,29 +24,13 @@ public sealed class PreLoginReportsController(PreLoginReportService reports, Pre
 
         try
         {
-            return View("Review", await reports.PrepareDraftAsync(model, cancellationToken));
+            var batchId = await jobs.QueueSingleAsync(model.Cin, model.CompanyName, model.Format, cancellationToken);
+            return RedirectToAction(nameof(History), new { batch = batchId });
         }
         catch (PreLoginReportException ex)
         {
             ModelState.AddModelError(string.Empty, ex.Message);
             return View("Index", model);
-        }
-    }
-
-    [HttpPost("generate")]
-    [ValidateAntiForgeryToken]
-    public async Task<IActionResult> Generate(PreLoginReportDraftViewModel model, CancellationToken cancellationToken)
-    {
-        if (!ModelState.IsValid) return View("Review", model);
-        try
-        {
-            var document = await reports.GenerateDraftAsync(model, cancellationToken);
-            return File(document.Bytes, "application/vnd.openxmlformats-officedocument.wordprocessingml.document", document.FileName);
-        }
-        catch (PreLoginReportException ex)
-        {
-            ModelState.AddModelError(string.Empty, ex.Message);
-            return View("Review", model);
         }
     }
 
@@ -65,6 +51,30 @@ public sealed class PreLoginReportsController(PreLoginReportService reports, Pre
     {
         ViewBag.Batch = batch;
         return View(await jobs.HistoryAsync(cancellationToken));
+    }
+
+    [HttpGet("{id:long}/edit")]
+    public async Task<IActionResult> Edit(long id, CancellationToken cancellationToken)
+    {
+        try { return View(await jobs.GetEditableDraftAsync(id, cancellationToken)); }
+        catch (PreLoginReportException ex) { TempData["ReportError"] = ex.Message; return RedirectToAction(nameof(History)); }
+    }
+
+    [HttpPost("{id:long}/edit")]
+    [ValidateAntiForgeryToken]
+    public async Task<IActionResult> Edit(long id, PreLoginReportDraftViewModel model, CancellationToken cancellationToken)
+    {
+        if (!ModelState.IsValid) return View(model);
+        try
+        {
+            await jobs.ApplyEditAndRegenerateAsync(id, model, cancellationToken);
+            return RedirectToAction(nameof(History));
+        }
+        catch (PreLoginReportException ex)
+        {
+            ModelState.AddModelError(string.Empty, ex.Message);
+            return View(model);
+        }
     }
 
     [HttpPost("{id:long}/rerun")]

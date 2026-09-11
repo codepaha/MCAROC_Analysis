@@ -7,12 +7,12 @@
     <div>
         <div class="pi-kicker">Public report generation</div>
         <h1>Pre-login MCA Reports</h1>
-        <p>Enter a company CIN, choose SBI or PRR, and download the generated Word report.</p>
+        <p>Enter a company CIN, choose SBI or PRR, and the report is generated in the background — track it and download it from report history. Need to fix a field or add a charge afterward? Edit any completed report from there too.</p>
     </div>
 </div>
 
 <div class="pi-panel mt-3" style="padding:24px;max-width:680px;">
-    <h2 class="h5">Batch processing</h2><p class="text-muted">Up to 25 CINs. Batch reports use API data as returned and are saved to report history; use the individual flow above when you need to edit fields first.</p>
+    <h2 class="h5">Batch processing</h2><p class="text-muted">Up to 25 CINs, one report each.</p>
     <form asp-action="Batch" method="post"><label asp-for="Format" class="form-label">Report format</label><select asp-for="Format" class="form-select mb-3"><option value="Sbi">SBI</option><option value="Prr">PRR</option></select>
         <label asp-for="Cins" class="form-label">One CIN per line</label><textarea asp-for="Cins" class="form-control" rows="5" placeholder="U74899DL1991PTC043274"></textarea>
         <button type="submit" class="btn btn-outline-primary mt-3">Queue batch</button> <a asp-action="History" class="btn btn-link mt-3">View report history</a>
@@ -44,7 +44,7 @@
                 <label class="form-check-label" for="formatPrr"><strong>PRR</strong> - company profile, MCA-ROC charges and directors/signatories.</label>
             </div>
         </fieldset>
-        <button type="submit" class="btn btn-primary"><i class="bi bi-arrow-right-circle me-1"></i>Fetch &amp; review data</button>
+        <button type="submit" class="btn btn-primary"><i class="bi bi-arrow-right-circle me-1"></i>Generate report</button>
     </form>
 </div>
 
