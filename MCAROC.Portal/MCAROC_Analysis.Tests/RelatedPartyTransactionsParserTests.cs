@@ -46,4 +46,58 @@ public class RelatedPartyTransactionsParserTests
         Assert.Empty(r.Items);
         Assert.Single(r.Warnings, w => w.IssueCode == "RPT_HEADER_NOT_FOUND");
     }
+
+    // ── Codex review (PR #90): the table must have a real boundary, not "scan to end of sheet" ──
+
+    [Fact]
+    public void StopsAtABlankRowRatherThanScanningPastIt()
+    {
+        var sheet = Sheet("Related Party Transactions",
+            Row("RELATED PARTY TRANSACTIONS"),
+            Row("Financial Year Ending On", "Entity Type", "Entity Name", "Relationship", "Transaction Type", "Amount (Rs. Crore)"),
+            Row("31 Mar, 2017", "Company", "GRANDEUR POWER PROJECTS PRIVATE LIMITED", "SUBSIDIARY CORPORATES", "Revenue", 12.5),
+            Row(""),
+            // An unrelated table further down the sheet whose 3rd column happens to be populated —
+            // must never be picked up as more RPT rows.
+            Row("Some Other Section"),
+            Row("Col A", "Col B", "Col C"),
+            Row("x", "y", "NOT A PARTY NAME"));
+
+        var r = RelatedPartyTransactionsParser.Parse(sheet, 1, 1, 10);
+
+        var item = Assert.Single(r.Items);
+        Assert.Equal("GRANDEUR POWER PROJECTS PRIVATE LIMITED", item.EntityNameRaw);
+    }
+
+    [Fact]
+    public void StopsAtARepeatedHeaderRatherThanTreatingItAsData()
+    {
+        var sheet = Sheet("Related Party Transactions",
+            Row("RELATED PARTY TRANSACTIONS"),
+            Row("Financial Year Ending On", "Entity Type", "Entity Name", "Relationship", "Transaction Type", "Amount (Rs. Crore)"),
+            Row("31 Mar, 2017", "Company", "GRANDEUR POWER PROJECTS PRIVATE LIMITED", "SUBSIDIARY CORPORATES", "Revenue", 12.5),
+            // No blank separator — the table's own header repeats (e.g. a page-break artifact).
+            Row("Financial Year Ending On", "Entity Type", "Entity Name", "Relationship", "Transaction Type", "Amount (Rs. Crore)"),
+            Row("31 Mar, 2016", "Company", "SHOULD NOT BE PARSED", "SUBSIDIARY CORPORATES", "Revenue", 1.0));
+
+        var r = RelatedPartyTransactionsParser.Parse(sheet, 1, 1, 10);
+
+        var item = Assert.Single(r.Items);
+        Assert.Equal("GRANDEUR POWER PROJECTS PRIVATE LIMITED", item.EntityNameRaw);
+    }
+
+    [Fact]
+    public void StopsAtATotalFooterRow()
+    {
+        var sheet = Sheet("Related Party Transactions",
+            Row("RELATED PARTY TRANSACTIONS"),
+            Row("Financial Year Ending On", "Entity Type", "Entity Name", "Relationship", "Transaction Type", "Amount (Rs. Crore)"),
+            Row("31 Mar, 2017", "Company", "GRANDEUR POWER PROJECTS PRIVATE LIMITED", "SUBSIDIARY CORPORATES", "Revenue", 12.5),
+            Row("", "", "Total", "", "", 12.5));
+
+        var r = RelatedPartyTransactionsParser.Parse(sheet, 1, 1, 10);
+
+        var item = Assert.Single(r.Items);
+        Assert.Equal("GRANDEUR POWER PROJECTS PRIVATE LIMITED", item.EntityNameRaw);
+    }
 }

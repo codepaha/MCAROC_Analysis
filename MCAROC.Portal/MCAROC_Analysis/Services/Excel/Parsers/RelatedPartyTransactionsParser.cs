@@ -7,7 +7,11 @@ namespace MCAROC_Analysis.Services.Excel.Parsers;
 /// Relationship / Transaction Type / Amount (Rs. Crore). Absent from the COASTAL fixture (25/41 of the
 /// wider portfolio set carry it) — column layout from the A8/#50 issue, not verified against a real
 /// workbook; header row is located dynamically rather than assumed at a fixed index so a banner-less
-/// export still parses.</summary>
+/// export still parses.
+///
+/// The data loop stops (does not merely skip) at the first table-boundary signal — a blank row, a
+/// repeated header, or a "Total"/footer line — so a footer, a repeated header, or an unrelated table
+/// further down the sheet can never be silently ingested as transactions (Codex review, PR #90).</summary>
 public static class RelatedPartyTransactionsParser
 {
     private const string ParserName = nameof(RelatedPartyTransactionsParser);
@@ -21,15 +25,18 @@ public static class RelatedPartyTransactionsParser
         if (headerRow < 0)
         {
             result.AddWarning(new ParseIssue(IssueSeverity.Warning, ParserName, null, null,
-                "RPT_HEADER_NOT_FOUND", "Could not locate the 'Entity Name' header row."));
+                "RPT_HEADER_NOT_FOUND", "Could not locate the full 'Related Party Transactions' header row."));
             return result;
         }
 
         for (var r = headerRow + 1; r < sheet.Rows.Count; r++)
         {
             var row = sheet.Rows[r];
+            if (IsHeaderRow(row)) break; // a repeated header ends this table, not a data row
+            if (IsFooterRow(row)) break; // "Total" / "Grand Total" etc.
+
             var name = Cell(row, 2);
-            if (string.IsNullOrEmpty(name)) continue;
+            if (string.IsNullOrEmpty(name)) break; // a blank row ends the table — never scan past it
 
             var rpt = new RelatedPartyTransaction
             {
@@ -53,16 +60,33 @@ public static class RelatedPartyTransactionsParser
         return result;
     }
 
+    /// <summary>Validates the FULL expected header shape (all 5 text columns), not just "Entity Name"
+    /// in column 2 — a lone-column check can't tell a real header from an unrelated row that happens to
+    /// carry "Entity Name" in the same position.</summary>
+    private static bool IsHeaderRow(IReadOnlyList<object?> row) =>
+        CellEquals(row, 0, "Financial Year Ending On") &&
+        CellEquals(row, 1, "Entity Type") &&
+        CellEquals(row, 2, "Entity Name") &&
+        CellEquals(row, 3, "Relationship") &&
+        CellEquals(row, 4, "Transaction Type");
+
+    private static bool IsFooterRow(IReadOnlyList<object?> row)
+    {
+        var c2 = Cell(row, 2);
+        return c2 is not null && (c2.Equals("Total", StringComparison.OrdinalIgnoreCase)
+            || c2.StartsWith("Grand Total", StringComparison.OrdinalIgnoreCase));
+    }
+
     private static int FindHeaderRow(SheetData sheet)
     {
         for (var r = 0; r < Math.Min(sheet.Rows.Count, 6); r++)
-        {
-            var c2 = sheet.Rows[r].Count > 2 ? sheet.Rows[r][2]?.ToString()?.Trim() : null;
-            if (string.Equals(c2, "Entity Name", StringComparison.OrdinalIgnoreCase))
+            if (IsHeaderRow(sheet.Rows[r]))
                 return r;
-        }
         return -1;
     }
+
+    private static bool CellEquals(IReadOnlyList<object?> row, int i, string expected) =>
+        string.Equals(Cell(row, i), expected, StringComparison.OrdinalIgnoreCase);
 
     private static string? Cell(IReadOnlyList<object?> row, int i)
     {
