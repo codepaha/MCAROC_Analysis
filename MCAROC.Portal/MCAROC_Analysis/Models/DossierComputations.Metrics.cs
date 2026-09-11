@@ -27,7 +27,8 @@ public static partial class DossierComputations
             ChargeRegisterMetrics(model),
             GstComplianceMetrics(model),
             LitigationMetrics(model),
-            DirectorsMetrics(model)
+            DirectorsMetrics(model),
+            FinancialTrendMetrics(model)
         };
 
         return groups.Where(g => g.HasAny).ToList();
@@ -1071,5 +1072,329 @@ public static partial class DossierComputations
         if (d.Contains("DIRECTOR")) return "Director";
 
         return "Other";
+    }
+
+    /// <summary>Section A — Financial trend &amp; leverage analytics (Issue #57 / D2,
+    /// docs/analytics-catalogue.json §A, A2/A3). A1.x (the 16 source-reported ratios) is already
+    /// surfaced verbatim by B1/#39's Ratios sub-tab — not re-modelled here, since <c>MetricResult</c>
+    /// is for DERIVED values and the catalogue is explicit that those 16 are never recomputed.
+    /// A4/A5 (cost structure, forex) are D9/#64's scope, not this one's.
+    /// Pure computation over <paramref name="model"/>.</summary>
+    public static MetricGroup FinancialTrendMetrics(Dossier.DossierModel model)
+    {
+        var list = new List<MetricResult>();
+        var years = model.Financials.Standalone.OrderBy(f => f.FinancialYear).ToList();
+        var latest = years.Count > 0 ? years[^1] : null;
+        var prior = years.Count > 1 ? years[^2] : null;
+
+        // A2.1 / A2.2 / A2.3: CAGR over the widest available span up to 3 years.
+        var revenueCagr = AddCagr(list, years, f => f.Revenue, "Revenue CAGR", allowNegativeBaseFallback: false,
+            "FinancialYearData.Revenue");
+        AddCagr(list, years, f => f.Pat, "PAT CAGR", allowNegativeBaseFallback: true, "FinancialYearData.Pat");
+        AddCagr(list, years, f => f.Ebitda, "EBITDA CAGR", allowNegativeBaseFallback: true, "FinancialYearData.Ebitda");
+
+        // A2.4: total debt growth YoY. Debt = reported TotalDebt, else LTB+STB only when both present.
+        var debtGrowth = AddYoY(list, "Total debt growth (YoY)", latest, prior, Debt,
+            "FinancialYearData.TotalDebt", "FinancialYearData.LongTermBorrowings", "FinancialYearData.ShortTermBorrowings");
+
+        // A2.5: net worth growth YoY, flagged if the latest net worth is negative.
+        var negativeNetWorthSuffix = latest?.NetWorth is < 0m ? " (net worth is negative)" : "";
+        AddYoY(list, "Net worth growth (YoY)", latest, prior, f => f.NetWorth,
+            "FinancialYearData.NetWorth", negativeNetWorthSuffix);
+
+        // A2.6: operating leverage = EBITDA growth % / Revenue growth % over the same (latest YoY) span.
+        // Uses the RAW (unrounded) growth fractions for the division — dividing the already-rounded
+        // A2.4/A2.5-style 1dp percentages would compound rounding error into the ratio; only the final
+        // displayed value is rounded, matching this file's other ratio metrics (e.g. the HHI in
+        // ChargeRegisterMetrics).
+        {
+            var ebitdaGrowthRaw = RawGrowthFraction(latest?.Ebitda, prior?.Ebitda);
+            var revenueGrowthRaw = RawGrowthFraction(latest?.Revenue, prior?.Revenue);
+            if (latest is null || prior is null)
+            {
+                list.Add(MetricResult.Insufficient("Operating leverage", MetricUnit.Ratio,
+                    "Fewer than 2 reported years", "FinancialYearData.Ebitda", "FinancialYearData.Revenue"));
+            }
+            else if (ebitdaGrowthRaw is null || revenueGrowthRaw is null)
+            {
+                list.Add(MetricResult.Insufficient("Operating leverage", MetricUnit.Ratio,
+                    "EBITDA or revenue growth could not be computed for the latest year", "FinancialYearData.Ebitda", "FinancialYearData.Revenue"));
+            }
+            else if (revenueGrowthRaw == 0m)
+            {
+                list.Add(MetricResult.Insufficient("Operating leverage", MetricUnit.Ratio,
+                    "Revenue growth is ~0% — ratio is not meaningful (n/m)", "FinancialYearData.Ebitda", "FinancialYearData.Revenue"));
+            }
+            else
+            {
+                var leverage = Math.Round(ebitdaGrowthRaw.Value / revenueGrowthRaw.Value, 2);
+                list.Add(MetricResult.Ok("Operating leverage", leverage, MetricUnit.Ratio,
+                    $"FY{prior.FinancialYear}–FY{latest.FinancialYear}", "FinancialYearData.Ebitda", "FinancialYearData.Revenue"));
+            }
+        }
+
+        // A3.1 / A3.2: net debt and net debt / EBITDA, latest FY only.
+        decimal? netDebt = null;
+        if (latest is null)
+        {
+            list.Add(MetricResult.Insufficient("Net debt", MetricUnit.Crore,
+                "No financial year data on file", "FinancialYearData.TotalDebt", "FinancialYearData.CashAndBank"));
+        }
+        else
+        {
+            var debt = Debt(latest);
+            if (debt is null || latest.CashAndBank is null)
+            {
+                list.Add(MetricResult.Insufficient("Net debt", MetricUnit.Crore,
+                    $"FY{latest.FinancialYear}: total debt or cash-and-bank not available",
+                    "FinancialYearData.TotalDebt", "FinancialYearData.LongTermBorrowings", "FinancialYearData.ShortTermBorrowings", "FinancialYearData.CashAndBank"));
+            }
+            else
+            {
+                netDebt = Math.Round(debt.Value - latest.CashAndBank.Value, 2);
+                list.Add(MetricResult.Ok("Net debt", netDebt.Value, MetricUnit.Crore, $"FY{latest.FinancialYear}",
+                    "FinancialYearData.TotalDebt", "FinancialYearData.LongTermBorrowings", "FinancialYearData.ShortTermBorrowings", "FinancialYearData.CashAndBank"));
+            }
+        }
+
+        if (latest is null)
+        {
+            list.Add(MetricResult.Insufficient("Net debt / EBITDA", MetricUnit.Times,
+                "No financial year data on file", "FinancialYearData.TotalDebt", "FinancialYearData.Ebitda"));
+        }
+        else if (netDebt is null)
+        {
+            list.Add(MetricResult.Insufficient("Net debt / EBITDA", MetricUnit.Times,
+                $"FY{latest.FinancialYear}: net debt could not be computed",
+                "FinancialYearData.TotalDebt", "FinancialYearData.CashAndBank", "FinancialYearData.Ebitda"));
+        }
+        else if (latest.Ebitda is null || latest.Ebitda <= 0m)
+        {
+            list.Add(MetricResult.Insufficient("Net debt / EBITDA", MetricUnit.Times,
+                $"FY{latest.FinancialYear}: EBITDA is zero, negative, or not reported — ratio not meaningful",
+                "FinancialYearData.TotalDebt", "FinancialYearData.CashAndBank", "FinancialYearData.Ebitda"));
+        }
+        else
+        {
+            list.Add(MetricResult.Ok("Net debt / EBITDA", Math.Round(netDebt.Value / latest.Ebitda.Value, 2), MetricUnit.Times,
+                $"FY{latest.FinancialYear}", "FinancialYearData.TotalDebt", "FinancialYearData.CashAndBank", "FinancialYearData.Ebitda"));
+        }
+
+        // A3.3: FCF proxy = CFO + CFI. A3.4: CFO / PAT. A3.6: cash-to-accrual divergence.
+        // All three are null whenever the latest FY's cash-flow figures were column-inferred (the
+        // source sheet carried no year header for that section) — inferred CFO/CFI are excluded from
+        // every automated conclusion, per the CashFlowYearInferred contract.
+        if (latest is null)
+        {
+            list.Add(MetricResult.Insufficient("Free cash flow (proxy)", MetricUnit.Crore, "No financial year data on file", "FinancialYearData.Cfo", "FinancialYearData.Cfi"));
+            list.Add(MetricResult.Insufficient("CFO / PAT", MetricUnit.Ratio, "No financial year data on file", "FinancialYearData.Cfo", "FinancialYearData.Pat"));
+            list.Add(MetricResult.Insufficient("Cash-to-accrual divergence", MetricUnit.Percent, "No financial year data on file", "FinancialYearData.Pat", "FinancialYearData.Cfo"));
+        }
+        else if (latest.CashFlowYearInferred)
+        {
+            var reason = $"FY{latest.FinancialYear}'s cash-flow figures are column-inferred, not year-labelled in the source — excluded from automated conclusions";
+            list.Add(MetricResult.Insufficient("Free cash flow (proxy)", MetricUnit.Crore, reason, "FinancialYearData.Cfo", "FinancialYearData.Cfi", "FinancialYearData.CashFlowYearInferred"));
+            list.Add(MetricResult.Insufficient("CFO / PAT", MetricUnit.Ratio, reason, "FinancialYearData.Cfo", "FinancialYearData.Pat", "FinancialYearData.CashFlowYearInferred"));
+            list.Add(MetricResult.Insufficient("Cash-to-accrual divergence", MetricUnit.Percent, reason, "FinancialYearData.Pat", "FinancialYearData.Cfo", "FinancialYearData.CashFlowYearInferred"));
+        }
+        else
+        {
+            if (latest.Cfo is null)
+            {
+                list.Add(MetricResult.Insufficient("Free cash flow (proxy)", MetricUnit.Crore,
+                    $"FY{latest.FinancialYear}: CFO not reported", "FinancialYearData.Cfo", "FinancialYearData.Cfi"));
+            }
+            else if (latest.Cfi is null)
+            {
+                list.Add(MetricResult.Insufficient("Free cash flow (proxy)", MetricUnit.Crore,
+                    $"FY{latest.FinancialYear}: CFI not reported", "FinancialYearData.Cfo", "FinancialYearData.Cfi"));
+            }
+            else
+            {
+                list.Add(MetricResult.Ok("Free cash flow (proxy)", Math.Round(latest.Cfo.Value + latest.Cfi.Value, 2), MetricUnit.Crore,
+                    $"FY{latest.FinancialYear} — CFO less net investing, not true FCF", "FinancialYearData.Cfo", "FinancialYearData.Cfi"));
+            }
+
+            if (latest.Cfo is null || latest.Pat is null || latest.Pat <= 0m)
+            {
+                list.Add(MetricResult.Insufficient("CFO / PAT", MetricUnit.Ratio,
+                    $"FY{latest.FinancialYear}: CFO not reported, or PAT is zero/negative", "FinancialYearData.Cfo", "FinancialYearData.Pat"));
+            }
+            else
+            {
+                list.Add(MetricResult.Ok("CFO / PAT", Math.Round(latest.Cfo.Value / latest.Pat.Value, 2), MetricUnit.Ratio,
+                    $"FY{latest.FinancialYear}", "FinancialYearData.Cfo", "FinancialYearData.Pat"));
+            }
+
+            if (latest.Pat is null or 0m || latest.Cfo is null)
+            {
+                list.Add(MetricResult.Insufficient("Cash-to-accrual divergence", MetricUnit.Percent,
+                    $"FY{latest.FinancialYear}: PAT is zero/not reported, or CFO not reported", "FinancialYearData.Pat", "FinancialYearData.Cfo"));
+            }
+            else
+            {
+                var divergence = Math.Round((latest.Pat.Value - latest.Cfo.Value) / Math.Abs(latest.Pat.Value) * 100m, 1);
+                list.Add(MetricResult.Ok("Cash-to-accrual divergence", divergence, MetricUnit.Percent,
+                    $"FY{latest.FinancialYear}", "FinancialYearData.Pat", "FinancialYearData.Cfo"));
+            }
+        }
+
+        // A3.5: debt-funded-growth flag — only assertable when both A2.1 (Revenue CAGR) and A2.4
+        // (debt growth YoY) were themselves computable; never inferred when either is insufficient.
+        if (revenueCagr is null || debtGrowth is null)
+        {
+            list.Add(MetricResult.Insufficient("Debt-funded-growth flag", MetricUnit.Count,
+                "Revenue CAGR or total debt growth could not be computed",
+                "FinancialYearData.Revenue", "FinancialYearData.TotalDebt"));
+        }
+        else
+        {
+            var flagged = debtGrowth.Value > revenueCagr.Value && debtGrowth.Value > 20m;
+            list.Add(MetricResult.Ok("Debt-funded-growth flag", flagged ? 1m : 0m, MetricUnit.Count,
+                $"debt growth {debtGrowth.Value:0.0}% vs revenue CAGR {revenueCagr.Value:0.0}%",
+                "FinancialYearData.Revenue", "FinancialYearData.TotalDebt", "FinancialYearData.LongTermBorrowings", "FinancialYearData.ShortTermBorrowings"));
+        }
+
+        return new MetricGroup("Financial trend & leverage", list);
+    }
+
+    /// <summary>Reported TotalDebt when present, else LongTermBorrowings + ShortTermBorrowings — only
+    /// when BOTH components are non-null (a missing component means debt is unknown, never zero).</summary>
+    private static decimal? Debt(FinancialYearData f) =>
+        f.TotalDebt ?? (f.LongTermBorrowings is not null && f.ShortTermBorrowings is not null
+            ? f.LongTermBorrowings.Value + f.ShortTermBorrowings.Value
+            : null);
+
+    private static decimal? YoYPercent(decimal? current, decimal? prior)
+    {
+        if (current is null || prior is null || prior.Value == 0m) return null;
+        return Math.Round((current.Value - prior.Value) / Math.Abs(prior.Value) * 100m, 1);
+    }
+
+    /// <summary>Same growth calculation as <see cref="YoYPercent"/> but as an unrounded fraction (not a
+    /// rounded percent) — for a metric that divides two growth rates against each other (A2.6), so the
+    /// division isn't compounding two independent 1dp roundings.</summary>
+    private static decimal? RawGrowthFraction(decimal? current, decimal? prior)
+    {
+        if (current is null || prior is null || prior.Value == 0m) return null;
+        return (current.Value - prior.Value) / Math.Abs(prior.Value);
+    }
+
+    /// <summary>Appends a YoY-growth <see cref="MetricResult"/> (latest vs prior FY) and returns the
+    /// raw percent so a downstream metric (A3.5) can consume it without re-parsing display text.</summary>
+    private static decimal? AddYoY(
+        List<MetricResult> list, string label, FinancialYearData? latest, FinancialYearData? prior,
+        Func<FinancialYearData, decimal?> selector, params string[] inputs)
+    {
+        if (latest is null || prior is null)
+        {
+            list.Add(MetricResult.Insufficient(label, MetricUnit.Percent, "Fewer than 2 reported years", inputs));
+            return null;
+        }
+        var pct = YoYPercent(selector(latest), selector(prior));
+        if (pct is null)
+        {
+            list.Add(MetricResult.Insufficient(label, MetricUnit.Percent,
+                $"FY{prior.FinancialYear} value is zero/not reported — growth undefined", inputs));
+            return null;
+        }
+        list.Add(MetricResult.Ok(label, pct.Value, MetricUnit.Percent, $"FY{prior.FinancialYear}–FY{latest.FinancialYear}", inputs));
+        return pct;
+    }
+
+    private static decimal? AddYoY(
+        List<MetricResult> list, string label, FinancialYearData? latest, FinancialYearData? prior,
+        Func<FinancialYearData, decimal?> selector, string input, string noteSuffix)
+    {
+        if (latest is null || prior is null)
+        {
+            list.Add(MetricResult.Insufficient(label, MetricUnit.Percent, "Fewer than 2 reported years", input));
+            return null;
+        }
+        var pct = YoYPercent(selector(latest), selector(prior));
+        if (pct is null)
+        {
+            list.Add(MetricResult.Insufficient(label, MetricUnit.Percent,
+                $"FY{prior.FinancialYear} value is zero/not reported — growth undefined", input));
+            return null;
+        }
+        list.Add(MetricResult.Ok(label, pct.Value, MetricUnit.Percent, $"FY{prior.FinancialYear}–FY{latest.FinancialYear}{noteSuffix}", input));
+        return pct;
+    }
+
+    /// <summary>CAGR over the widest available span up to 3 CALENDAR years: the base point is the
+    /// earliest non-null <paramref name="selector"/> point whose FY is within 3 years of the latest
+    /// non-null point (never chosen by counting rows back) — insufficient when no earlier point falls
+    /// inside that 3-year window, even if an older point exists further back. The compounding exponent
+    /// is always the true elapsed FYs between the chosen points (endPoint.Year - basePoint.Year), which
+    /// the window selection now guarantees is between 1 and 3. When the base-year value is negative and
+    /// <paramref name="allowNegativeBaseFallback"/> is true, falls back to a total %-change figure with
+    /// a caveat in the period text (not a true CAGR) instead of failing outright. Returns the computed
+    /// percent (Ok path only) so a downstream metric can reuse it.</summary>
+    private static decimal? AddCagr(
+        List<MetricResult> list, List<FinancialYearData> years, Func<FinancialYearData, decimal?> selector,
+        string label, bool allowNegativeBaseFallback, string input)
+    {
+        var series = years.Where(y => selector(y) is not null)
+            .Select(y => (Year: y.FinancialYear, Value: selector(y)!.Value)).ToList();
+
+        if (series.Count < 2)
+        {
+            list.Add(MetricResult.Insufficient(label, MetricUnit.Percent,
+                $"Fewer than 2 reported years for {label}", input));
+            return null;
+        }
+
+        var endPoint = series[^1];
+
+        // The base point must be chosen by CALENDAR distance from the end point, not by counting
+        // non-null rows back — a sparse series (data points spread further apart than 1 FY, because
+        // some FYs' value for this field is null) would otherwise let a 3-row lookback span far more
+        // than 3 actual years, producing e.g. a 10-year "CAGR" despite the contract's 3-FY window. This
+        // also fixes the companion bug where the exponent must match: it is always the true elapsed FYs
+        // between the chosen points, not a count of rows.
+        var candidates = series.Where(p => p.Year < endPoint.Year && endPoint.Year - p.Year <= 3)
+            .OrderBy(p => p.Year).ToList();
+        if (candidates.Count == 0)
+        {
+            list.Add(MetricResult.Insufficient(label, MetricUnit.Percent,
+                $"FY{endPoint.Year}: no earlier reported year within the last 3 FYs — {label} requires a base year inside that window", input));
+            return null;
+        }
+        var basePoint = candidates[0];
+        var period = $"FY{basePoint.Year}–FY{endPoint.Year}";
+        var yearsElapsed = endPoint.Year - basePoint.Year; // guaranteed 1..3 by the candidates filter above
+
+        if (basePoint.Value == 0m)
+        {
+            list.Add(MetricResult.Insufficient(label, MetricUnit.Percent,
+                $"{period}: base year value is zero — {label} undefined", input));
+            return null;
+        }
+
+        // CAGR (a fractional root) is only real-valued when base and end share a sign and the ratio is
+        // positive — not just when the base is negative. A positive base with a negative end (e.g. PAT
+        // swinging from profit to loss) makes the ratio negative too, and Math.Pow(negative, 1/n) is
+        // NaN for a non-integer exponent, which throws on cast to decimal — so this checks the ratio,
+        // not just the base's sign, before ever computing it.
+        var cagrUndefined = basePoint.Value < 0m || endPoint.Value <= 0m;
+        if (cagrUndefined)
+        {
+            if (!allowNegativeBaseFallback)
+            {
+                list.Add(MetricResult.Insufficient(label, MetricUnit.Percent,
+                    $"{period}: base or end year value is zero/negative — CAGR undefined", input));
+                return null;
+            }
+            var totalChange = Math.Round((endPoint.Value - basePoint.Value) / Math.Abs(basePoint.Value) * 100m, 1);
+            list.Add(MetricResult.Ok(label, totalChange, MetricUnit.Percent,
+                $"{period} — total % change (base or end year is zero/negative, not a true CAGR)", input));
+            return totalChange;
+        }
+
+        var ratio = (double)(endPoint.Value / basePoint.Value);
+        var cagr = Math.Round((decimal)(Math.Pow(ratio, 1.0 / yearsElapsed) - 1) * 100m, 1);
+        list.Add(MetricResult.Ok(label, cagr, MetricUnit.Percent, period, input));
+        return cagr;
     }
 }
