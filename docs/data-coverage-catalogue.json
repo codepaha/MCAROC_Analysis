@@ -23,12 +23,12 @@
       "portal_tab": "Corporate (fixed header + About section)", "dossier": "Cover + Snapshot",
       "fields": [
         {"source": "Legal Name / CIN / PAN", "entityField": "CompanyName / Cin / Pan", "status": "live"},
-        {"source": "the source-export header timestamp rows (report generated / data refreshed / MCA master data updated / documents collected)", "entityField": null, "status": "dropped-by-design", "note": "A1/#32 — source-EXPORT metadata (when the upstream aggregator generated the file), not company data; deliberately not retained or surfaced. The dossier's 'as of' line derives from the ingestion run + latest filing dates instead."},
+        {"source": "Printed at / Probed at / MCA Master Data Updated at / Documents collected from MCA at (the source-export header timestamp rows)", "entityField": null, "status": "dropped-by-design", "note": "A1/#32 — source-EXPORT metadata (when the upstream aggregator generated the file), not company data; deliberately not retained or surfaced. The dossier's 'as of' line derives from the ingestion run + latest filing dates instead."},
         {"source": "Authorised Capital / Paid Up Capital", "entityField": "AuthorisedCapital / PaidUpCapital", "status": "live"},
         {"source": "Sum of Charges (Crore)", "entityField": "CompanyProfile.McaSumOfChargesCrore", "status": "live", "note": "A1/#32; kept alongside our computed open-charge total"},
         {"source": "Company Status / Active Compliance", "entityField": "CompanyStatus / ComplianceStatus", "status": "live"},
-        {"source": "Registered Address (line1,line2,city,state,pin)", "entityField": "RegisteredAddress (joined) + RegisteredAddressCity / State / PinCode", "status": "live", "note": "A1/#32; line1/line2 remain folded into the joined string"},
-        {"source": "Business Address (line1,line2,city,state,pin)", "entityField": "CompanyProfile.BusinessAddress (joined)", "status": "live", "note": "A1/#32"},
+        {"source": "Registered Address: Address Line 1 / Address Line 2 / City / State / Pin Code", "entityField": "RegisteredAddress (joined) + RegisteredAddressCity / State / PinCode", "status": "live", "note": "A1/#32; line1/line2 remain folded into the joined string"},
+        {"source": "Business Address: Address Line 1 / Address Line 2 / City / State / Pin Code", "entityField": "CompanyProfile.BusinessAddress (joined)", "status": "live", "note": "A1/#32"},
         {"source": "Website", "entityField": "CompanyProfile.Website", "status": "live", "note": "A1/#32"},
         {"source": "Email (x3, with '* unreachable' marker)", "entityField": "CompanyEmail (EmailAddress, IsReachable)", "status": "live", "note": "A1/#32; new entity, one row per address"},
         {"source": "Phone", "entityField": "CompanyProfile.Phone", "status": "live", "note": "A1/#32"},
@@ -46,7 +46,7 @@
       "parser": "DirectorsParser", "entity": "Director (+ CompanyOfficer for non-DIN rows)",
       "portal_tab": "Corporate", "dossier": "Annexure A",
       "fields": [
-        {"source": "NAME / DIN / PRESENT DESIGNATION / PDAD / OAD / DATE OF CESSATION / FLAGS", "entityField": "NameRaw / Din / Designation / DesignationAppointmentDate / OriginalAppointmentDate / CessationDate / Flags", "status": "live"},
+        {"source": "NAME / DIN / PRESENT DESIGNATION / PRESENT DESIGNATION APPOINTMENT DATE / ORIGINAL APPOINTMENT DATE / DATE OF CESSATION / FLAGS", "entityField": "NameRaw / Din / Designation / DesignationAppointmentDate / OriginalAppointmentDate / CessationDate / Flags", "status": "live"},
         {"source": "rows with DIN = '-' (Company Secretary etc.)", "entityField": "CompanyOfficer.*", "status": "parsed-not-shown", "gap": "G8", "note": "3 officers for COASTAL; confirm _CorporateTab renders them"}
       ]
     },
@@ -63,7 +63,7 @@
       "parser": "OtherDirectorshipsParser", "entity": "DirectorAssociation",
       "portal_tab": "Corporate (director drawer)", "dossier": "Annexure A",
       "fields": [
-        {"source": "DIRECTOR NAME / CORPORATE NAME / CIN-LLPIN / CORPORATE TYPE / PUC-or-OBLIGATION / SUM OF CHARGES / DATE OF INCORP / COMPANY-LLP STATUS / ACTIVE COMPLIANCE / APPOINTMENT DATE / CESSATION DATE", "entityField": "DirectorNameRaw / ConnectedCompanyRaw / ConnectedCin / CorporateType / PaidUpCapitalCrore / SumOfChargesCrore / DateOfIncorporation / CompanyStatus / ActiveCompliance / AppointmentDate / CessationDate", "status": "live"}
+        {"source": "DIRECTOR NAME / CORPORATE NAME / CIN-LLPIN / CORPORATE TYPE / PAID UP CAPITAL / OBLIGATION OF CONTRIBUTION / SUM OF CHARGES / DATE OF INCORP / COMPANY-LLP STATUS / ACTIVE COMPLIANCE / APPOINTMENT DATE / CESSATION DATE", "entityField": "DirectorNameRaw / ConnectedCompanyRaw / ConnectedCin / CorporateType / PaidUpCapitalCrore / SumOfChargesCrore / DateOfIncorporation / CompanyStatus / ActiveCompliance / AppointmentDate / CessationDate", "status": "live"}
       ]
     },
     {
@@ -109,7 +109,7 @@
       "fields": [
         {"source": "Financial Year Ending On / Entity Name / Shareholding (%)", "entityField": "FinancialYear / ShareholderNameRaw / HoldingPercentage", "status": "live"},
         {"source": "Relationship / Entity Type", "entityField": "RelationshipRaw / ShareholderType", "status": "live", "note": "A6/#37"},
-        {"source": "Country/City / Paid Up Capital-or-Obligation / Sum Of Charges / Date Of Incorporation / Company-LLP Status / Active Compliance / Remarks", "entityField": "Location / PaidUpCapitalCrore / SumOfChargesCrore / DateOfIncorporation / CompanyStatus / ActiveCompliance / Remarks", "status": "live", "note": "A6/#37"}
+        {"source": "Country / City / Paid Up Capital / Obligation Of Contribution / Sum Of Charges / Date Of Incorporation / Company-LLP Status / Active Compliance / Remarks", "entityField": "Location / PaidUpCapitalCrore / SumOfChargesCrore / DateOfIncorporation / CompanyStatus / ActiveCompliance / Remarks", "status": "live", "note": "A6/#37"}
       ]
     },
     {
@@ -125,7 +125,7 @@
       "parser": "RelatedCorporatesParser", "entity": "RelatedCorporate",
       "portal_tab": "Corporate", "dossier": "Annexure A",
       "fields": [
-        {"source": "FY Ending / Corporate Name / Relationship / Corporate Type / Shareholding % / Country-City / PUC-or-Obligation / Sum Of Charges / Date Of Incorporation / Company-LLP Status", "entityField": "FinancialYearEnding / EntityNameRaw / RelationshipRaw+RelationshipType / CorporateType / HoldingPercent / Location / PaidUpCapitalCrore / SumOfChargesCrore / DateOfIncorporation / CompanyStatus", "status": "live"},
+        {"source": "Financial Year Ending On / Corporate Name / Relationship / Corporate Type / Shareholding % / Country / City / Paid Up Capital / Obligation Of Contribution / Sum Of Charges / Date Of Incorporation / Company-LLP Status", "entityField": "FinancialYearEnding / EntityNameRaw / RelationshipRaw+RelationshipType / CorporateType / HoldingPercent / Location / PaidUpCapitalCrore / SumOfChargesCrore / DateOfIncorporation / CompanyStatus", "status": "live"},
         {"source": "Active Compliance / Remarks", "entityField": "ActiveCompliance / Remarks", "status": "live", "note": "A6/#37"},
         {"source": "CIN (in parentheses under Corporate Name in the PDF; own column here?)", "entityField": "Cin", "status": "live"}
       ]
@@ -162,7 +162,7 @@
       "workbook": "RocReport", "sheet": "Satisfied Charges Sequence", "shape": "same, satisfied charges",
       "parser": "ChargesParser", "entity": "RocCharge(status=Satisfied) + RocChargeEvent",
       "portal_tab": "Charges & Security", "dossier": "Annexure C", "fields": [
-        {"source": "same 9 cols", "entityField": "RocCharge/RocChargeEvent (SatisfactionDate set)", "status": "live"}
+        {"source": "SERIAL NUMBER / CHARGE ID / STATUS / DATE / FILING DATE / HOLDER NAME / CHARGE AMOUNT / PROPERTY TYPE / NUMBER OF HOLDERS (same 9 cols as Open Charges Sequence)", "entityField": "RocCharge/RocChargeEvent (SatisfactionDate set)", "status": "live"}
       ]
     },
     {
@@ -170,6 +170,7 @@
       "parser": "ChargesParser", "entity": "RocChargeEvent (all 18 fields)",
       "portal_tab": "Charges & Security (_ChargeDrawer)", "dossier": "Annexure C (charge cards)",
       "fields": [
+        {"source": "SERIAL NUMBER / CHARGE ID / STATUS / DATE / FILING DATE / HOLDER NAME / AMOUNT / PROPERTY TYPE / NUMBER OF HOLDERS (same base 9 cols as Open Charges Sequence)", "entityField": "RocChargeEvent (base fields)", "status": "live"},
         {"source": "INSTRUMENT DESCRIPTION / RATE OF INTEREST / TERMS OF PAYMENT / PROPERTY PARTICULARS / EXTENT AND OPERATION / OTHER TERMS / MODIFICATION PARTICULARS / JOINT HOLDING / CONSORTIUM HOLDING", "entityField": "RocChargeEvent.InstrumentDescription / RateOfInterest / TermsOfPayment / PropertyParticulars / ExtentAndOperation / OtherTerms / ModificationParticulars / JointHolding / ConsortiumHolding", "status": "live", "note": "B5/#43 — verified _ChargeDrawer and dossier ChargeCard render every field verbatim without clip"}
       ]
     },
@@ -190,15 +191,18 @@
       "parser": "AuditorsParser (basis=Standalone)", "entity": "AuditorObservation",
       "portal_tab": "Compliance", "dossier": "Annexure B",
       "fields": [
-        {"source": "Financial Year / Whether Qualified-Reservation-Adverse / Comments Given By (auditor name + membership no + firm + firm reg no)", "entityField": "FinancialYear / HasQualificationOrAdverseRemark / AuditorName+MembershipNumber+FirmName+FirmRegistrationNumber", "status": "live", "note": "A6/#37 — split from the 'NAME (Membership Number: X) of FIRM (Registration Number: Y)' text; falls back to the raw string when the format doesn't match"},
-        {"source": "Comments under Disclosures - Auditors' Report / Directors' Report (CARO-style clause text)", "entityField": "ObservationText", "status": "live"}
+        {"source": "Financial Year / Whether Auditors' Report has been Qualified or has any Reservations or Contains Adverse Remarks / Comments Given By (auditor name + membership no + firm + firm reg no)", "entityField": "FinancialYear / HasQualificationOrAdverseRemark / AuditorName+MembershipNumber+FirmName+FirmRegistrationNumber", "status": "live", "note": "A6/#37 — split from the 'NAME (Membership Number: X) of FIRM (Registration Number: Y)' text; falls back to the raw string when the format doesn't match"},
+        {"source": "detail table: Financial Year / Auditors' Comments (CARO-style clause text, under a 'Serial Number | Financial Year | Section | Section Name | Auditors' Comments | Directors' Comments | Footnotes' header)", "entityField": "FinancialYear / ObservationText", "status": "live", "note": "A7/#38 — the detail table's own header carries more columns than are captured; see G18"},
+        {"source": "detail table: Serial Number / Section / Section Name / Directors' Comments / Footnotes", "entityField": null, "status": "not-parsed", "gap": "G18"}
       ]
     },
     {
       "workbook": "RocReport", "sheet": "Auditors' Comments-Consolidated", "shape": "same, consolidated",
       "parser": "AuditorsParser (basis=Consolidated)", "entity": "AuditorObservation(Basis=Consolidated)",
       "portal_tab": "Compliance", "dossier": "Annexure B", "fields": [
-        {"source": "same", "entityField": "AuditorObservation(Basis=Consolidated)", "status": "live", "note": "A6/#37"}
+        {"source": "Financial Year / Whether Auditors' Report has been Qualified or has any Reservations or Contains Adverse Remarks / Comments Given By (same layout as Auditors' Comments-Standalone)", "entityField": "AuditorObservation(Basis=Consolidated)", "status": "live", "note": "A6/#37"},
+        {"source": "detail table: Financial Year / Auditors' Comments (same layout as Auditors' Comments-Standalone)", "entityField": "FinancialYear / ObservationText", "status": "live", "note": "A7/#38"},
+        {"source": "detail table: Serial Number / Section / Section Name / Directors' Comments / Footnotes", "entityField": null, "status": "not-parsed", "gap": "G18"}
       ]
     },
     {
@@ -209,7 +213,8 @@
         {"source": "GSTIN / GSTIN STATUS / STATE / DATE OF REGISTRATION / TAXPAYER TYPE / TRADE NAME / NATURE OF BUSINESS ACTIVITIES / FLAGS", "entityField": "Gstin / Status / State / RegistrationDate / TaxpayerType / TradeName / NatureOfBusinessActivities / Flags", "status": "live"},
         {"source": "RETURN TYPE / LATEST FILING(S) / FINANCIAL YEAR / TAX PERIOD (latest-filing summary)", "entityField": "(via GstFiling)", "status": "live"},
         {"source": "CENTRE JURISDICTION / STATE JURISDICTION / LEGAL NAME OF BUSINESS", "entityField": "CentreJurisdiction / StateJurisdiction / LegalNameOfBusiness", "status": "live", "note": "A6/#37"},
-        {"source": "CancellationDate (for Inactive GSTINs)", "entityField": "CancellationDate", "status": "not-parsed", "note": "no CANCELLATION DATE column exists in the real GST sheet (16 cols, verified against the COASTAL fixture) and GstParser never sets this field — the entity property is vestigial; not fixed here, out of A6's scope"}
+        {"source": "CancellationDate (for Inactive GSTINs)", "entityField": "CancellationDate", "status": "not-parsed", "gap": "G17", "note": "no CANCELLATION DATE column exists in the real GST sheet (16 cols, verified against the COASTAL fixture) and GstParser never sets this field — the entity property is vestigial; not fixed here, out of A6's scope"},
+        {"source": "FILING DETAILS", "entityField": null, "status": "dropped-by-design", "note": "A7/#38 — boilerplate redirect text ('See Annexure - GST for Filing Details'), not data; the actual per-period filing history is fully parsed from the Annexure - GST sheet"}
       ]
     },
     {
@@ -238,7 +243,9 @@
       "portal_tab": "Compliance", "dossier": "Annexure D",
       "fields": [
         {"source": "WORKING STATUS / ESTABLISHMENT ID / ESTABLISHMENT NAME / CITY / LATEST WAGE MONTH", "entityField": "WorkingStatus / EstablishmentId / Name / City / LatestWageMonth", "status": "live", "note": "A5/#36 — the latest-month figures stay in EpfoContribution (the annexure is authoritative)"},
-        {"source": "DATE OF SETUP / PRINCIPAL BUSINESS ACTIVITIES / ADDRESS / EXEMPTION STATUS / FLAGS", "entityField": "DateOfSetup / PrincipalBusinessActivities / Address / ExemptionStatus / Flags", "status": "live", "gap": "G7", "note": "A5/#36 — trailing metadata columns are unlabelled in the export, read positionally; rendered as per-establishment profile cards on the Compliance tab"}
+        {"source": "LATEST DATE OF CREDIT / NO. OF EMPLOYEES / AMOUNT", "entityField": null, "status": "dropped-by-design", "note": "A7/#38 — same latest-month figures the Annexure - EPFO Establishments sheet parses per month (EpfoContribution.PaymentDate / EmployeeCount / ContributionAmountCrore); the annexure is authoritative, per the note above"},
+        {"source": "DATE OF SETUP / PRINCIPAL BUSINESS ACTIVITIES / ADDRESS / EXEMPTION STATUS / FLAGS", "entityField": "DateOfSetup / PrincipalBusinessActivities / Address / ExemptionStatus / Flags", "status": "live", "gap": "G7", "note": "A5/#36 — trailing metadata columns are unlabelled in the export, read positionally; rendered as per-establishment profile cards on the Compliance tab"},
+        {"source": "FILING DETAILS", "entityField": null, "status": "dropped-by-design", "note": "A7/#38 — boilerplate redirect text ('See Annexure - EPFO Establishments'), not data"}
       ]
     },
     {
@@ -274,23 +281,26 @@
       ]
     },
     {
-      "workbook": "ChargeReport", "sheet": "About the Company", "shape": "key-value, identity-check only",
+      "workbook": "ChargeReport", "sheet": "About the Company", "shape": "key-value, 45 rows — A7/#38 found this is the SAME full company-profile sheet as RocReport's, not a stripped-down identity block as previously documented",
       "parser": "IngestionOrchestrator.ValidateRocVsCharge", "entity": "(none)",
       "portal_tab": null, "dossier": null,
-      "fields": [{"source": "Legal Name / CIN / PAN", "entityField": null, "status": "dropped-by-design", "note": "used only to confirm the charge workbook belongs to the same company"}]
+      "fields": [
+        {"source": "Legal Name / CIN / PAN", "entityField": null, "status": "dropped-by-design", "note": "used only to confirm the charge workbook belongs to the same company"},
+        {"source": "Printed at / Probed at / MCA Master Data Updated at / Documents collected from MCA at / Authorised Capital (Crore) / Paid Up Capital (Crore) / Sum of Charges (Crore) / Company Status / Active Compliance / Address Line 1 / Address Line 2 / City / State / Pin Code / Website / Email / Phone / Type of Entity / Listing Status / Date of Incorporation / Date of Last AGM / LEI / Broad Industry Category / Industry / Segment(s)", "entityField": null, "status": "dropped-by-design", "note": "A7/#38 — duplicate company-profile data, identical to what RocReport's own About the Company sheet already fully parses for the same company; re-parsing a second copy would be pure redundancy, not missing data"}
+      ]
     },
     {
       "workbook": "ChargeReport", "sheet": "Open Charges Sequence / Satisfied Charges Sequence", "shape": "same 9 cols as RocReport",
       "parser": "ChargesParser", "entity": "RocCharge + RocChargeEvent",
       "portal_tab": "Charges & Security", "dossier": "Annexure C",
-      "fields": [{"source": "9 cols", "entityField": "RocCharge/RocChargeEvent", "status": "live", "note": "charge workbook is the authoritative source when present"}]
+      "fields": [{"source": "SERIAL NUMBER / CHARGE ID / STATUS / DATE / FILING DATE / HOLDER NAME / CHARGE AMOUNT / PROPERTY TYPE / NUMBER OF HOLDERS (same 9 cols as RocReport)", "entityField": "RocCharge/RocChargeEvent", "status": "live", "note": "charge workbook is the authoritative source when present"}]
     },
     {
       "workbook": "ChargeReport", "sheet": "Open Charges in Details / Satisfied Charges in Details", "shape": "18 cols, full CHG-1 prose for BOTH open and satisfied",
       "parser": "ChargesParser", "entity": "RocChargeEvent (18 fields)",
       "portal_tab": "Charges & Security (_ChargeDrawer)", "dossier": "Annexure C",
       "fields": [
-        {"source": "all 18 cols incl. INSTRUMENT/RATE/TERMS/PARTICULARS/EXTENT/OTHER/MODIFICATION/JOINT/CONSORTIUM — for satisfied charges too", "entityField": "RocChargeEvent.*", "status": "live", "note": "B5/#43 — verified drawer and annexure render full satisfied-charge prose without truncation"}
+        {"source": "SERIAL NUMBER / CHARGE ID / STATUS / DATE / FILING DATE / HOLDER NAME / AMOUNT / PROPERTY TYPE / NUMBER OF HOLDERS / INSTRUMENT DESCRIPTION / RATE OF INTEREST / TERMS OF PAYMENT / PROPERTY PARTICULARS / EXTENT AND OPERATION / OTHER TERMS / MODIFICATION PARTICULARS / JOINT HOLDING / CONSORTIUM HOLDING (all 18 cols, for satisfied charges too)", "entityField": "RocChargeEvent.*", "status": "live", "note": "B5/#43 — verified drawer and annexure render full satisfied-charge prose without truncation"}
       ]
     },
     {
@@ -378,7 +388,15 @@
     {"id": "G16", "title": "Legal Cases - Financial Dispute sheet not parsed", "severity": "medium",
      "detail": "Money-claim disputes with amount-under-default + verdict — 12/41 companies. Separate register from Legal History; directly material to a lender.",
      "fix": "New FinancialDisputeCase entity + parser (flat 10-col table) + Litigation-tab section.",
-     "issue": "#52"}
+     "issue": "#52"},
+    {"id": "G17", "title": "GstRegistration.CancellationDate is vestigial — no matching source column", "severity": "low",
+     "detail": "A6/#37 review (Codex, PR #87): the real GST sheet (16 cols, verified against the COASTAL fixture) has no CANCELLATION DATE column at all, so GstParser never sets this field. Not a dropped column — the entity property doesn't correspond to any real source data.",
+     "fix": "Either remove the unused CancellationDate property, or confirm against a wider company sample whether any real GST sheet ever carries a cancellation date and parse it if so.",
+     "issue": null},
+    {"id": "G18", "title": "Auditors' Comments detail-table columns dropped", "severity": "low",
+     "detail": "A7/#38 discovery: the sheet's second stacked table (Serial Number | Financial Year | Section | Section Name | Auditors' Comments | Directors' Comments | Footnotes — see AuditorsParser's own doc comment) only reads Financial Year and Auditors' Comments (-> ObservationText). Serial Number, Section (a numeric code, e.g. 700600), Section Name, Directors' Comments, and Footnotes are read nowhere.",
+     "fix": "Decide whether Directors' Comments / Section Name are worth a dedicated field on AuditorObservation, or explicitly dropped-by-design (Section is a redundant numeric code for Section Name; Serial Number/Footnotes look structural).",
+     "issue": null}
   ],
 
   "benchmark_take_leave": {
