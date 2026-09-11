@@ -44,13 +44,14 @@ public class AnalyticsJsonEndpointTests : IAsyncLifetime
         Assert.Equal(requestId, t.GetProperty("requestId")!.GetValue(v));
         Assert.Equal(ingestionRunId, t.GetProperty("ingestionRunId")!.GetValue(v));
         var groups = Assert.IsAssignableFrom<IReadOnlyList<MetricGroup>>(t.GetProperty("metricGroups")!.GetValue(v));
-        // With D1, D2, D3, D5, and D6 landed, Charge register, GST compliance, Legal history, Directors,
-        // and Financial trend & leverage groups are present.
+        // With D1, D2, D3, D4, D5, and D6 landed, Charge register, GST compliance, Legal history,
+        // Directors, Financial trend & leverage, and Shareholding groups are present.
         Assert.NotEmpty(groups);
         Assert.Contains(groups, g => g.Title == "Charge register");
         Assert.Contains(groups, g => g.Title == "GST compliance");
         Assert.Contains(groups, g => g.Title == "Legal history");
         Assert.Contains(groups, g => g.Title == "Directors");
         Assert.Contains(groups, g => g.Title == "Financial trend & leverage");
+        Assert.Contains(groups, g => g.Title == "Shareholding");
     }
 }

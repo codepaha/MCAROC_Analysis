@@ -44,6 +44,8 @@ public class DossierAssembler(AppDbContext db)
         var desigHistory = await db.DirectorAssignmentHistories.Where(x => x.IngestionRunId == runId).ToListAsync(ct);
         var otherDirectorships = await db.DirectorAssociations.Where(x => x.IngestionRunId == runId).ToListAsync(ct);
         var structure = await db.CompanyStructures.FirstOrDefaultAsync(x => x.IngestionRunId == runId, ct);
+        var shareholdingPattern = await db.ShareholdingPatternRows.Where(x => x.IngestionRunId == runId)
+            .OrderBy(x => x.HolderClass).ThenBy(x => x.AsOnDate).ThenBy(x => x.DisplayOrder).ToListAsync(ct);
         var profile = await db.CompanyProfiles.FirstOrDefaultAsync(x => x.IngestionRunId == runId, ct);
 
         // ── Financials ──
@@ -101,7 +103,7 @@ public class DossierAssembler(AppDbContext db)
                 request.CompanyName, request.Cin ?? profile?.Cin, request.Pan ?? profile?.Pan,
                 profile?.IncorporationDate, profile?.CompanyStatus,
                 request.Client?.ClientName ?? "", DateTime.UtcNow, run?.CompletedDate, run?.SourceSnapshotDate),
-            new DossierCorporate(directors, officers, shareholders, related, allotments, desigHistory, otherDirectorships, structure, profile?.PaidUpCapital),
+            new DossierCorporate(directors, officers, shareholders, related, allotments, desigHistory, otherDirectorships, structure, profile?.PaidUpCapital, shareholdingPattern),
             new DossierFinancials(standalone, consolidated, facts, parameters, auditors, peers),
             new DossierCharges(
                 charges,
