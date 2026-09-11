@@ -6,10 +6,21 @@ namespace MCAROC_Analysis.Services.PreLoginReports;
 
 public sealed class PreLoginReportWorker(IServiceScopeFactory scopes, PreLoginReportQueue queue, ILogger<PreLoginReportWorker> logger) : BackgroundService
 {
+    // Each job makes a live call to a third-party API (InstaFinancials) that can take several minutes —
+    // without a cap, clicking Rerun on many jobs at once (any mix of SBI/PRR; format doesn't matter to the
+    // queue) would fire that many concurrent calls to the vendor. Jobs beyond this limit just wait their
+    // turn in the queue (visible in History as "Queued") instead of all starting at once.
+    private const int MaxConcurrentJobs = 3;
+    private readonly SemaphoreSlim concurrency = new(MaxConcurrentJobs, MaxConcurrentJobs);
+
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         await RecoverAsync(stoppingToken);
-        await foreach (var jobId in queue.ReadAllAsync(stoppingToken)) _ = RunAsync(jobId, stoppingToken);
+        await foreach (var jobId in queue.ReadAllAsync(stoppingToken))
+        {
+            await concurrency.WaitAsync(stoppingToken);
+            _ = RunAsync(jobId, stoppingToken);
+        }
     }
     private async Task RecoverAsync(CancellationToken token)
     {
@@ -31,5 +42,6 @@ public sealed class PreLoginReportWorker(IServiceScopeFactory scopes, PreLoginRe
     {
         try { using var scope = scopes.CreateScope(); await scope.ServiceProvider.GetRequiredService<PreLoginReportJobService>().ProcessAsync(jobId, token); }
         catch (Exception ex) { logger.LogError(ex, "Unhandled pre-login report job failure for {JobId}", jobId); }
+        finally { concurrency.Release(); }
     }
 }

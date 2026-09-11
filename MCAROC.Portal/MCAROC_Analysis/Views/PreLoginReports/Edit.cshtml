@@ -1,0 +1,89 @@
+@model PreLoginReportDraftViewModel
+@{
+    ViewData["Title"] = "Edit pre-login report";
+}
+
+<div class="pi-page-head"><div><div class="pi-kicker">Optional edit</div><h1>Edit report data</h1><p>Change any field, add or remove a charge (or director), then regenerate the @Model.Format.ToString().ToUpperInvariant() Word report. This replaces the downloadable file in history.</p></div></div>
+<div class="pi-panel" style="padding:24px;">
+    <form asp-action="Edit" asp-route-id="@Model.JobId" method="post">
+        <div asp-validation-summary="ModelOnly" class="text-danger mb-3"></div>
+        <input asp-for="JobId" type="hidden" /><input asp-for="Cin" type="hidden" /><input asp-for="Format" type="hidden" />
+        <h3 class="h5 mb-3">Company details</h3>
+        <div class="row g-3 mb-4">
+            <div class="col-md-6"><label asp-for="Company.Name" class="form-label">Company name</label><input asp-for="Company.Name" class="form-control" /></div>
+            <div class="col-md-3"><label asp-for="Company.RocName" class="form-label">ROC</label><input asp-for="Company.RocName" class="form-control" /></div>
+            <div class="col-md-3"><label asp-for="Company.RegistrationNumber" class="form-label">Registration no.</label><input asp-for="Company.RegistrationNumber" class="form-control" /></div>
+            <div class="col-md-4"><label asp-for="Company.Category" class="form-label">Category</label><input asp-for="Company.Category" class="form-control" /></div>
+            <div class="col-md-4"><label asp-for="Company.Subcategory" class="form-label">Subcategory</label><input asp-for="Company.Subcategory" class="form-control" /></div>
+            <div class="col-md-4"><label asp-for="Company.Class" class="form-label">Class</label><input asp-for="Company.Class" class="form-control" /></div>
+            <div class="col-md-3"><label asp-for="Company.AuthorisedCapital" class="form-label">Authorised capital</label><input asp-for="Company.AuthorisedCapital" class="form-control" /></div>
+            <div class="col-md-3"><label asp-for="Company.PaidUpCapital" class="form-label">Paid-up capital</label><input asp-for="Company.PaidUpCapital" class="form-control" /></div>
+            <div class="col-md-3"><label asp-for="Company.Incorporated" class="form-label">Incorporated</label><input asp-for="Company.Incorporated" class="form-control" /></div>
+            <div class="col-md-3"><label asp-for="Company.Listed" class="form-label">Listed status</label><input asp-for="Company.Listed" class="form-control" /></div>
+            <div class="col-md-3"><label asp-for="Company.Members" class="form-label">Members</label><input asp-for="Company.Members" class="form-control" /></div>
+            <div class="col-md-3"><label asp-for="Company.LastAgm" class="form-label">Last AGM</label><input asp-for="Company.LastAgm" class="form-control" /></div>
+            <div class="col-md-3"><label asp-for="Company.BalanceSheetDate" class="form-label">Balance sheet date</label><input asp-for="Company.BalanceSheetDate" class="form-control" /></div>
+            <div class="col-md-6"><label asp-for="Company.Email" class="form-label">Email</label><input asp-for="Company.Email" class="form-control" /></div>
+            <div class="col-md-6"><label asp-for="Company.Status" class="form-label">Company status</label><input asp-for="Company.Status" class="form-control" /></div>
+            <div class="col-12"><label asp-for="Company.Address" class="form-label">Registered address</label><textarea asp-for="Company.Address" class="form-control" rows="3"></textarea></div>
+            @if (Model.Format == PreLoginReportFormat.Sbi)
+            {
+                <div class="col-md-6"><label asp-for="Company.ActiveCompliance" class="form-label">Active compliance</label><input asp-for="Company.ActiveCompliance" class="form-control" /><div class="form-text">Not returned by the API &mdash; enter manually if known.</div></div>
+                <div class="col-12"><label asp-for="Company.BooksOfAccountAddress" class="form-label">Address at which books of account are maintained</label><textarea asp-for="Company.BooksOfAccountAddress" class="form-control" rows="2"></textarea><div class="form-text">Not returned by the API &mdash; enter manually if known.</div></div>
+            }
+        </div>
+        <h3 class="h5 mb-3">MCA-ROC charges</h3>
+        <div class="table-responsive mb-2"><table class="table table-sm align-middle" id="chargesTable"><thead><tr>@if (Model.Format == PreLoginReportFormat.Sbi) { <th>SRN</th> }<th>Charge ID</th><th>Holder</th><th>Created</th><th>Modified</th><th>Satisfied</th><th>Amount</th><th>Open</th><th></th></tr></thead><tbody>
+        @for (var i = 0; i < Model.Charges.Count; i++) { <tr>@if (Model.Format == PreLoginReportFormat.Sbi) { <td><input asp-for="Charges[i].Srn" class="form-control form-control-sm" /></td> }<td><input asp-for="Charges[i].Id" class="form-control form-control-sm" /></td><td><input asp-for="Charges[i].Holder" class="form-control form-control-sm" /></td><td><input asp-for="Charges[i].Created" class="form-control form-control-sm" /></td><td><input asp-for="Charges[i].Modified" class="form-control form-control-sm" /></td><td><input asp-for="Charges[i].Satisfied" class="form-control form-control-sm" /></td><td><input asp-for="Charges[i].Amount" class="form-control form-control-sm" /></td><td class="text-center"><input asp-for="Charges[i].IsOpen" class="form-check-input" /></td><td><button type="button" class="btn btn-sm btn-outline-danger row-remove">&times;</button></td></tr> }
+        </tbody></table></div>
+        <button type="button" class="btn btn-sm btn-outline-secondary mb-4" id="addChargeRow"><i class="bi bi-plus-lg me-1"></i>Add charge</button>
+        <template id="chargeRowTemplate"><tr>@if (Model.Format == PreLoginReportFormat.Sbi) { <td><input name="Charges[0].Srn" class="form-control form-control-sm" value="-" /></td> }<td><input name="Charges[0].Id" class="form-control form-control-sm" value="-" /></td><td><input name="Charges[0].Holder" class="form-control form-control-sm" value="-" /></td><td><input name="Charges[0].Created" class="form-control form-control-sm" value="-" /></td><td><input name="Charges[0].Modified" class="form-control form-control-sm" value="-" /></td><td><input name="Charges[0].Satisfied" class="form-control form-control-sm" value="-" /></td><td><input name="Charges[0].Amount" class="form-control form-control-sm" value="-" /></td><td class="text-center"><input type="checkbox" name="Charges[0].IsOpen" class="form-check-input" value="true" /></td><td><button type="button" class="btn btn-sm btn-outline-danger row-remove">&times;</button></td></tr></template>
+
+        @if (Model.Format == PreLoginReportFormat.Prr)
+        {
+            <h3 class="h5 mb-3">Directors / signatories</h3>
+            <div class="table-responsive mb-2"><table class="table table-sm" id="directorsTable"><thead><tr><th>Name</th><th>DIN / PAN</th><th>Designation</th><th>Appointment</th><th></th></tr></thead><tbody>@for (var i = 0; i < Model.Directors.Count; i++) { <tr><td><input asp-for="Directors[i].Name" class="form-control form-control-sm" /></td><td><input asp-for="Directors[i].DinOrPan" class="form-control form-control-sm" /></td><td><input asp-for="Directors[i].Designation" class="form-control form-control-sm" /></td><td><input asp-for="Directors[i].Appointed" class="form-control form-control-sm" /></td><td><button type="button" class="btn btn-sm btn-outline-danger row-remove">&times;</button></td></tr> }</tbody></table></div>
+            <button type="button" class="btn btn-sm btn-outline-secondary mb-4" id="addDirectorRow"><i class="bi bi-plus-lg me-1"></i>Add director</button>
+            <template id="directorRowTemplate"><tr><td><input name="Directors[0].Name" class="form-control form-control-sm" value="-" /></td><td><input name="Directors[0].DinOrPan" class="form-control form-control-sm" value="-" /></td><td><input name="Directors[0].Designation" class="form-control form-control-sm" value="-" /></td><td><input name="Directors[0].Appointed" class="form-control form-control-sm" value="-" /></td><td><button type="button" class="btn btn-sm btn-outline-danger row-remove">&times;</button></td></tr></template>
+        }
+        <div class="mt-3">
+            <button class="btn btn-primary" type="submit"><i class="bi bi-arrow-repeat me-1"></i>Save &amp; regenerate</button> <a asp-action="History" class="btn btn-outline-secondary">Cancel</a>
+        </div>
+    </form>
+</div>
+@section Scripts {
+    <partial name="_ValidationScriptsPartial" />
+    <script>
+        // Re-indexes every bound input's name in a table body to a contiguous 0-based sequence
+        // (e.g. "Charges[2].Id") matching its current row position, so ASP.NET Core's default
+        // list model binder — which expects contiguous indices — still works after add/remove.
+        function reindexRows(tbody, prefix) {
+            Array.from(tbody.querySelectorAll('tr')).forEach(function (row, index) {
+                row.querySelectorAll('[name]').forEach(function (el) {
+                    el.name = el.name.replace(new RegExp('^' + prefix + '\\[\\d+\\]'), prefix + '[' + index + ']');
+                });
+            });
+        }
+
+        function wireTable(tableId, templateId, addButtonId, prefix) {
+            var table = document.getElementById(tableId);
+            if (!table) return;
+            var tbody = table.querySelector('tbody');
+            var template = document.getElementById(templateId);
+            var addButton = document.getElementById(addButtonId);
+
+            addButton.addEventListener('click', function () {
+                tbody.appendChild(template.content.cloneNode(true));
+                reindexRows(tbody, prefix);
+            });
+            tbody.addEventListener('click', function (e) {
+                if (!e.target.classList.contains('row-remove')) return;
+                e.target.closest('tr').remove();
+                reindexRows(tbody, prefix);
+            });
+        }
+
+        wireTable('chargesTable', 'chargeRowTemplate', 'addChargeRow', 'Charges');
+        wireTable('directorsTable', 'directorRowTemplate', 'addDirectorRow', 'Directors');
+    </script>
+}
