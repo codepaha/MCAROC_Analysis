@@ -60,6 +60,7 @@ public class RequestDetailsViewModel
     public CompanyStructure? Structure { get; set; }
     public List<RelatedCorporate> RelatedCorporates { get; set; } = [];
     public List<RelatedPartyTransaction> RelatedPartyTransactions { get; set; } = [];
+    public List<CreditRating> CreditRatings { get; set; } = [];
     public List<ComplianceRecord> ComplianceRecords { get; set; } = [];
     public List<FinancialParameter> FinancialParameters { get; set; } = [];
     public List<SecurityAllotment> SecurityAllotments { get; set; } = [];

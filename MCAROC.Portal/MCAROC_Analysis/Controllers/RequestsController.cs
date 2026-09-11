@@ -266,6 +266,8 @@ public class RequestsController(
                 .OrderBy(x => x.RelationshipType).ThenBy(x => x.EntityNameNormalized).ToListAsync();
             vm.RelatedPartyTransactions = await db.RelatedPartyTransactions.Where(x => x.IngestionRunId == runId)
                 .OrderByDescending(x => x.FinancialYearEnding).ThenBy(x => x.EntityNameNormalized).ToListAsync();
+            vm.CreditRatings = await db.CreditRatings.Where(x => x.IngestionRunId == runId)
+                .OrderBy(x => x.Agency).ThenByDescending(x => x.RatingDate).ToListAsync();
             vm.ComplianceRecords = await db.ComplianceRecords.Where(x => x.IngestionRunId == runId)
                 .OrderBy(x => x.RecordType).ThenByDescending(x => x.RecordDate).ToListAsync();
             vm.FinancialParameters = await db.FinancialParameters.Where(x => x.IngestionRunId == runId)

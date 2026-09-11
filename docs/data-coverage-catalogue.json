@@ -312,11 +312,19 @@
       ]
     },
     {
-      "workbook": "RocReport", "sheet": "Credit Ratings + Unaccepted Ratings", "shape": "flat table, 9 cols (Credit Ratings) / 7 cols (Unaccepted); header row 0, trailing-space header 'AGENCY ' (9/41 and 2/41 companies; absent from the COASTAL fixture)",
-      "parser": "(none yet — A9/#51)", "entity": "(none yet)",
+      "workbook": "RocReport", "sheet": "Credit Ratings", "shape": "flat table, 9 cols, header row 0, trailing-space header 'AGENCY ' in some exports (9/41 companies; absent from the COASTAL fixture)",
+      "parser": "CreditRatingsParser", "entity": "CreditRating (IsAccepted=true)",
       "portal_tab": "Compliance", "dossier": "Annexure D",
       "fields": [
-        {"source": "AGENCY / DATE / INSTRUMENT / AMOUNT / CURRENCY / RATING / ACTION / OUTLOOK / REMARKS (+ DATE OF NON-ACCEPTANCE for unaccepted)", "entityField": null, "status": "not-parsed", "gap": "G15"}
+        {"source": "AGENCY / DATE / INSTRUMENT / AMOUNT / CURRENCY / RATING / ACTION / OUTLOOK / REMARKS", "entityField": "Agency / RatingDate / Instrument / Amount / Currency / Rating / Action / Outlook / Remarks", "status": "live", "note": "A9/#51 — column layout from the VTION portfolio audit, not a real workbook (absent from COASTAL); synthetic-only test coverage. Also checks for an 'UNACCEPTED RATINGS' banner embedded further down this same sheet, per the issue's note that some exports fold it in rather than using a separate sheet."}
+      ]
+    },
+    {
+      "workbook": "RocReport", "sheet": "Unaccepted Ratings", "shape": "flat table, 7 cols, header row 0 (2/41 companies; absent from the COASTAL fixture; some exports fold this into the Credit Ratings sheet instead — see above)",
+      "parser": "CreditRatingsParser", "entity": "CreditRating (IsAccepted=false)",
+      "portal_tab": "Compliance", "dossier": "Annexure D",
+      "fields": [
+        {"source": "AGENCY / INSTRUMENT / AMOUNT / CURRENCY / RATING / DATE OF NON-ACCEPTANCE / REMARKS", "entityField": "Agency / Instrument / Amount / Currency / Rating / RatingDate / Remarks", "status": "live", "note": "A9/#51"}
       ]
     },
     {
@@ -381,7 +389,7 @@
      "detail": "Transaction-level RPT disclosure (party x transaction type x FY, with amount) — 25/41 companies in the wider portfolio set. Distinct from Related Corporates.",
      "fix": "New RelatedPartyTransaction entity + parser (flat 6-col table, header row 1) + Corporate-tab render.",
      "issue": "#50"},
-    {"id": "G15", "title": "Credit Ratings + Unaccepted Ratings sheets not parsed", "severity": "medium",
+    {"id": "G15", "title": "Credit Ratings + Unaccepted Ratings sheets not parsed", "severity": "medium", "status": "DONE (A9 / #51)",
      "detail": "Credit-rating history (agency, instrument, amount, rating, action, outlook) and non-accepted ratings — 9/41 and 2/41 companies. Material to a BFSI view.",
      "fix": "New CreditRating entity (IsAccepted flag) + dynamic header-driven parser + Compliance-tab render.",
      "issue": "#51"},

@@ -343,6 +343,15 @@ public class IngestionOrchestrator(AppDbContext db, IExcelSheetReader sheetReade
             Collect(r, issues, ref itemCount);
         }
 
+        var creditRatingsSheet = rocSheets.Find(SheetAliases.CreditRatings);
+        var unacceptedRatingsSheet = rocSheets.Find(SheetAliases.UnacceptedRatings);
+        if (creditRatingsSheet is not null || unacceptedRatingsSheet is not null)
+        {
+            var r = CreditRatingsParser.Parse(creditRatingsSheet, unacceptedRatingsSheet, requestId, runId, rocDocumentId);
+            db.CreditRatings.AddRange(r.Items);
+            Collect(r, issues, ref itemCount);
+        }
+
         var complianceSheet = rocSheets.Find(SheetAliases.Compliance);
         if (complianceSheet is not null)
         {
