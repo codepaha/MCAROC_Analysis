@@ -45,7 +45,9 @@ public static class RelatedCorporatesParser
                 RelationshipType = NormalizeRelationship(Cell(row, 2)),
                 CorporateType = Cell(row, 3),
                 Location = Cell(row, 5),
-                CompanyStatus = Cell(row, 9)
+                CompanyStatus = Cell(row, 9),
+                ActiveCompliance = Cell(row, 10),
+                Remarks = Cell(row, 11)
             };
             if (DateNormalizer.TryParse(row.Count > 0 ? row[0] : null, out var fye)) rc.FinancialYearEnding = fye;
             if (AmountNormalizer.TryParse(CellRaw(row, 4), out var hp, out _)) rc.HoldingPercent = hp;

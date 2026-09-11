@@ -54,7 +54,10 @@ public static class GstParser
                     TaxpayerType = Cell(row, 10),
                     TradeName = Cell(row, 12),
                     NatureOfBusinessActivities = Cell(row, 13),
-                    Flags = Cell(row, 14)
+                    Flags = Cell(row, 14),
+                    CentreJurisdiction = Cell(row, 8),
+                    StateJurisdiction = Cell(row, 9),
+                    LegalNameOfBusiness = Cell(row, 11)
                 };
                 if (DateNormalizer.TryParse(row.Count > 7 ? row[7] : null, out var regDate)) reg.RegistrationDate = regDate;
 

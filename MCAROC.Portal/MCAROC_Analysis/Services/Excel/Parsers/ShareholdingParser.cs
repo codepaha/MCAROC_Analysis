@@ -88,6 +88,10 @@ public static class ShareholdingParser
             var shares = row.Count > 3 ? row[3] : null;
             if (AmountNormalizer.TryParse(shares, out var sharesValue, out _) && sharesValue is not null)
                 sh.SharesHeld ??= (long)sharesValue.Value;
+
+            sh.Designation ??= Cell(row, 1);
+            if (sh.CessationDate is null && DateNormalizer.TryParse(row.Count > 4 ? row[4] : null, out var cessation))
+                sh.CessationDate = cessation;
         }
     }
 
@@ -143,6 +147,22 @@ public static class ShareholdingParser
             var pct = row.Count > 4 ? row[4] : null;
             if (AmountNormalizer.TryParse(pct, out var pctValue, out _) && pctValue is not null)
                 sh.HoldingPercentage = pctValue; // this sheet is authoritative for %, overwrite if present
+
+            // This sheet is authoritative for all of these — overwrite rather than ??=.
+            sh.RelationshipRaw = string.IsNullOrEmpty(relationship) || relationship == "-" ? null : relationship;
+            sh.Location = Cell(row, 5);
+            sh.CompanyStatus = Cell(row, 9);
+            sh.ActiveCompliance = Cell(row, 10);
+            sh.Remarks = Cell(row, 11);
+            if (AmountNormalizer.TryParse(row.Count > 6 ? row[6] : null, out var puc, out _)) sh.PaidUpCapitalCrore = puc;
+            if (AmountNormalizer.TryParse(row.Count > 7 ? row[7] : null, out var soc, out _)) sh.SumOfChargesCrore = soc;
+            if (DateNormalizer.TryParse(row.Count > 8 ? row[8] : null, out var doi)) sh.DateOfIncorporation = doi;
         }
+    }
+
+    private static string? Cell(IReadOnlyList<object?> row, int index)
+    {
+        var text = index < row.Count ? row[index]?.ToString()?.Trim() : null;
+        return string.IsNullOrEmpty(text) || text == "-" ? null : text;
     }
 }

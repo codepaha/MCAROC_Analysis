@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using MCAROC_Analysis.Data.Entities;
 
 namespace MCAROC_Analysis.Services.Excel.Parsers;
@@ -15,6 +16,13 @@ namespace MCAROC_Analysis.Services.Excel.Parsers;
 /// serial number — this parser stops at the blank row and switches column mapping for table 2.</summary>
 public static class AuditorsParser
 {
+    /// <summary>Matches "NAME (Membership Number: X) of FIRM (Registration Number: Y)", with an optional
+    /// leading "-" bullet and trailing period, e.g. "- MANAS KUMAR MANIA (Membership Number: 300113) of
+    /// U K MAHAPATRA &amp; CO (Registration Number: 320039E)."</summary>
+    private static readonly Regex AuditorIdentityPattern = new(
+        @"^-?\s*(?<name>.+?)\s*\(Membership Number:\s*(?<membership>[^)]+)\)\s+of\s+(?<firm>.+?)\s*\(Registration Number:\s*(?<frn>[^)]+)\)\.?\s*$",
+        RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
     /// <summary>Also parses the identically-structured "Auditors' Comments-Consolidated" sheet — pass
     /// <paramref name="basis"/> = Consolidated.</summary>
     public static ParseResult<AuditorObservation> Parse(
@@ -33,7 +41,7 @@ public static class AuditorsParser
             var qualified = Cell(row, 1)?.ToString()?.Trim();
             var commentsBy = Cell(row, 4)?.ToString()?.Trim();
 
-            result.Items.Add(new AuditorObservation
+            var observation = new AuditorObservation
             {
                 RequestId = requestId,
                 IngestionRunId = ingestionRunId,
@@ -45,7 +53,18 @@ public static class AuditorsParser
                 HasQualificationOrAdverseRemark = qualified?.Equals("Yes", StringComparison.OrdinalIgnoreCase) == true,
                 AuditorName = commentsBy,
                 ObservationText = commentsBy
-            });
+            };
+
+            var identity = commentsBy is null ? null : AuditorIdentityPattern.Match(commentsBy);
+            if (identity is { Success: true })
+            {
+                observation.AuditorName = identity.Groups["name"].Value.Trim();
+                observation.MembershipNumber = identity.Groups["membership"].Value.Trim();
+                observation.FirmName = identity.Groups["firm"].Value.Trim();
+                observation.FirmRegistrationNumber = identity.Groups["frn"].Value.Trim();
+            }
+
+            result.Items.Add(observation);
         }
 
         var detailHeaderRow = -1;
