@@ -137,6 +137,29 @@ public class ShareholdingMetricsTests
     }
 
     [Fact]
+    public void C3_and_C4_fail_closed_rather_than_summing_a_partial_total_when_a_holder_lacks_a_percentage()
+    {
+        // Regression: one disclosed holder for the latest FY has a percentage, another doesn't.
+        // Silently ranking/summing only the known holder (old behaviour) would present a partial figure
+        // as the definitive top-5 concentration / type split, when the missing holder could plausibly
+        // change either result.
+        var shareholders = new List<Shareholding>
+        {
+            new() { FinancialYear = 2017, HoldingPercentage = 30m, SourceType = ShareholdingSourceType.MajorShareholding, ShareholderType = "INDIVIDUALS" },
+            new() { FinancialYear = 2017, HoldingPercentage = null, SourceType = ShareholdingSourceType.MajorShareholding, ShareholderType = "BODIES CORPORATE" },
+        };
+        var group = DossierComputations.ShareholdingMetrics(CreateMinimalDossier(shareholders: shareholders));
+
+        var c3 = M(group, "Top-5 >5%-shareholder concentration");
+        Assert.False(c3.HasValue);
+        Assert.Contains("1 of 2 disclosed holder(s) have no reported HoldingPercentage", c3.InsufficiencyReason);
+
+        var c4 = M(group, "Corporate vs individual >5%-shareholder split");
+        Assert.False(c4.HasValue);
+        Assert.Contains("1 of 2 disclosed holder(s) have no reported HoldingPercentage", c4.InsufficiencyReason);
+    }
+
+    [Fact]
     public void C4_groups_by_shareholder_type_in_the_latest_year_only()
     {
         var shareholders = new List<Shareholding>
@@ -241,7 +264,26 @@ public class ShareholdingMetricsTests
 
         var c5 = M(group, "Multi-year promoter-holding trend (FY2017)");
         Assert.False(c5.HasValue);
-        Assert.Contains("none report EquityPercent", c5.InsufficiencyReason);
+        Assert.Contains("1 of 1 Promoter-class row(s) have no reported EquityPercent", c5.InsufficiencyReason);
+    }
+
+    [Fact]
+    public void C5_fails_closed_rather_than_summing_a_partial_total_when_some_promoter_rows_lack_a_value()
+    {
+        // Regression: one Promoter-class row has a value, another doesn't. Summing only the known row
+        // (old behaviour) would silently understate the true total and present it as complete.
+        var pattern = new List<ShareholdingPatternRow>
+        {
+            new() { HolderClass = ShareholderClass.Promoter, AsOnDate = new DateOnly(2017, 3, 31),
+                Category = "(i) Indian", CategoryGroup = "1. Individual / Hindu Undivided Family", EquityPercent = 8m },
+            new() { HolderClass = ShareholderClass.Promoter, AsOnDate = new DateOnly(2017, 3, 31),
+                Category = "(ii) Non-resident Indian (others)", CategoryGroup = "1. Individual / Hindu Undivided Family", EquityPercent = null },
+        };
+        var group = DossierComputations.ShareholdingMetrics(CreateMinimalDossier(pattern: pattern));
+
+        var c5 = M(group, "Multi-year promoter-holding trend (FY2017)");
+        Assert.False(c5.HasValue);
+        Assert.Contains("1 of 2 Promoter-class row(s) have no reported EquityPercent", c5.InsufficiencyReason);
     }
 
     [Fact]
@@ -255,7 +297,25 @@ public class ShareholdingMetricsTests
 
         var bank = M(group, "SEBI-category grid rollup (Public: 4. Bank)");
         Assert.False(bank.HasValue);
-        Assert.Contains("no EquityPercent reported", bank.InsufficiencyReason);
+        Assert.Contains("1 of 1 row(s) in this category have no reported EquityPercent", bank.InsufficiencyReason);
+    }
+
+    [Fact]
+    public void C6_fails_closed_rather_than_summing_a_partial_total_when_one_sub_row_lacks_a_value()
+    {
+        // Regression: same shape as the C5 case above, but for a multi-sub-row category bucket.
+        var pattern = new List<ShareholdingPatternRow>
+        {
+            new() { HolderClass = ShareholderClass.Promoter, AsOnDate = new DateOnly(2017, 3, 31),
+                Category = "(i) Indian", CategoryGroup = "1. Individual / Hindu Undivided Family", EquityPercent = 8m },
+            new() { HolderClass = ShareholderClass.Promoter, AsOnDate = new DateOnly(2017, 3, 31),
+                Category = "(ii) Non-resident Indian (others)", CategoryGroup = "1. Individual / Hindu Undivided Family", EquityPercent = null },
+        };
+        var group = DossierComputations.ShareholdingMetrics(CreateMinimalDossier(pattern: pattern));
+
+        var rollup = M(group, "SEBI-category grid rollup (Promoter: 1. Individual / Hindu Undivided Family)");
+        Assert.False(rollup.HasValue);
+        Assert.Contains("1 of 2 row(s) in this category have no reported EquityPercent", rollup.InsufficiencyReason);
     }
 
     [Fact]

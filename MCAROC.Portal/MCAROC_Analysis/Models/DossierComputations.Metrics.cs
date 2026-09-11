@@ -1458,48 +1458,57 @@ public static partial class DossierComputations
         {
             var latestYear = disclosed.Max(s => s.FinancialYear);
             var latestYearRows = disclosed.Where(s => s.FinancialYear == latestYear).ToList();
-            var withPct = latestYearRows.Where(s => s.HoldingPercentage is not null).ToList();
+            var missingPct = latestYearRows.Count(s => s.HoldingPercentage is null);
 
-            // C3
-            if (withPct.Count == 0)
+            // Fail closed on ANY missing percentage in the population, rather than silently summing
+            // only the holders with a known value — a partial sum over an incomplete population would
+            // misrepresent itself as the true top-5 concentration / type split (the excluded holder(s)
+            // could plausibly change either result). Per the catalogue's "component sum requires EVERY
+            // component" safety gate.
+            if (missingPct > 0)
             {
-                list.Add(MetricResult.Insufficient("Top-5 >5%-shareholder concentration", MetricUnit.Percent,
-                    $"FY{latestYear}: {latestYearRows.Count} disclosed holder(s), none with a reported percentage",
+                var reason = $"FY{latestYear}: {missingPct} of {latestYearRows.Count} disclosed holder(s) have no reported HoldingPercentage — the sum would be incomplete";
+                list.Add(MetricResult.Insufficient("Top-5 >5%-shareholder concentration", MetricUnit.Percent, reason,
                     "Shareholding.HoldingPercentage", "Shareholding.FinancialYear"));
-            }
-            else
-            {
-                var top5 = withPct.OrderByDescending(s => s.HoldingPercentage!.Value).Take(5).ToList();
-                var top5Sum = top5.Sum(s => s.HoldingPercentage!.Value);
-                list.Add(MetricResult.Ok("Top-5 >5%-shareholder concentration", top5Sum, MetricUnit.Percent,
-                    $"FY{latestYear} — top {top5.Count} of {withPct.Count} disclosed >5% holder(s) " +
-                    "(only holders above the 5% MCA disclosure threshold are captured)",
-                    "Shareholding.HoldingPercentage", "Shareholding.FinancialYear"));
-            }
-
-            // C4: grouped by the sheet's own ShareholderType. A blank type is not a category — per the
-            // catalogue it makes the metric insufficient only when EVERY disclosed holder lacks a type;
-            // when only some do, those rows are excluded from the split (never given a fake "Unspecified"
-            // bucket) and the exclusion is named in the period text of the buckets that do render.
-            var typed = withPct.Where(s => !string.IsNullOrWhiteSpace(s.ShareholderType)).ToList();
-            if (typed.Count == 0)
-            {
-                list.Add(MetricResult.Insufficient("Corporate vs individual >5%-shareholder split", MetricUnit.Percent,
-                    $"FY{latestYear}: {withPct.Count} disclosed holder(s), none with a reported ShareholderType",
+                list.Add(MetricResult.Insufficient("Corporate vs individual >5%-shareholder split", MetricUnit.Percent, reason,
                     "Shareholding.ShareholderType", "Shareholding.HoldingPercentage"));
             }
             else
             {
-                var untyped = withPct.Count - typed.Count;
-                var exclusionNote = untyped > 0 ? $" ({untyped} with no reported type excluded)" : "";
-                foreach (var g in typed
-                    .GroupBy(s => s.ShareholderType!.Trim())
-                    .OrderByDescending(g => g.Sum(s => s.HoldingPercentage!.Value)).ThenBy(g => g.Key, StringComparer.OrdinalIgnoreCase))
+                // C3
+                var top5 = latestYearRows.OrderByDescending(s => s.HoldingPercentage!.Value).Take(5).ToList();
+                var top5Sum = top5.Sum(s => s.HoldingPercentage!.Value);
+                list.Add(MetricResult.Ok("Top-5 >5%-shareholder concentration", top5Sum, MetricUnit.Percent,
+                    $"FY{latestYear} — top {top5.Count} of {latestYearRows.Count} disclosed >5% holder(s) " +
+                    "(only holders above the 5% MCA disclosure threshold are captured)",
+                    "Shareholding.HoldingPercentage", "Shareholding.FinancialYear"));
+
+                // C4: grouped by the sheet's own ShareholderType. A blank type is not a category — per
+                // the catalogue it makes the metric insufficient only when EVERY disclosed holder lacks
+                // a type; when only some do, those rows are excluded from the split (never given a fake
+                // "Unspecified" bucket) and the exclusion is named in the period text of the buckets that
+                // do render. This is independent of the percentage-completeness gate above — every row
+                // reaching here already has a known percentage.
+                var typed = latestYearRows.Where(s => !string.IsNullOrWhiteSpace(s.ShareholderType)).ToList();
+                if (typed.Count == 0)
                 {
-                    var sum = g.Sum(s => s.HoldingPercentage!.Value);
-                    list.Add(MetricResult.Ok($"Corporate vs individual >5%-shareholder split ({g.Key})", sum, MetricUnit.Percent,
-                        $"FY{latestYear} — {g.Count()} of {withPct.Count} disclosed >5% holder(s){exclusionNote}",
+                    list.Add(MetricResult.Insufficient("Corporate vs individual >5%-shareholder split", MetricUnit.Percent,
+                        $"FY{latestYear}: {latestYearRows.Count} disclosed holder(s), none with a reported ShareholderType",
                         "Shareholding.ShareholderType", "Shareholding.HoldingPercentage"));
+                }
+                else
+                {
+                    var untyped = latestYearRows.Count - typed.Count;
+                    var exclusionNote = untyped > 0 ? $" ({untyped} with no reported type excluded)" : "";
+                    foreach (var g in typed
+                        .GroupBy(s => s.ShareholderType!.Trim())
+                        .OrderByDescending(g => g.Sum(s => s.HoldingPercentage!.Value)).ThenBy(g => g.Key, StringComparer.OrdinalIgnoreCase))
+                    {
+                        var sum = g.Sum(s => s.HoldingPercentage!.Value);
+                        list.Add(MetricResult.Ok($"Corporate vs individual >5%-shareholder split ({g.Key})", sum, MetricUnit.Percent,
+                            $"FY{latestYear} — {g.Count()} of {latestYearRows.Count} disclosed >5% holder(s){exclusionNote}",
+                            "Shareholding.ShareholderType", "Shareholding.HoldingPercentage"));
+                    }
                 }
             }
         }
@@ -1520,22 +1529,28 @@ public static partial class DossierComputations
             var singlePoint = dates.Count == 1;
             foreach (var date in dates)
             {
-                // A missing/valueless Promoter row must never collapse to a false 0% via `?? 0m` on an
-                // empty Sum — that would misreport "no data for this date" as "confirmed zero holding".
+                // Fail closed on ANY Promoter row missing EquityPercent for this date — summing only the
+                // rows that happen to have a value (old behaviour) would silently understate the true
+                // total and present a partial sum as if it were complete. A missing/valueless row must
+                // also never collapse to a false 0% via `?? 0m` on an empty Sum.
                 var promoterRows = dated.Where(p => p.AsOnDate == date && p.HolderClass == ShareholderClass.Promoter).ToList();
-                var promoterWithValue = promoterRows.Where(p => p.EquityPercent is not null).ToList();
+                var missingValue = promoterRows.Count(p => p.EquityPercent is null);
                 var note = singlePoint ? " (single point — no multi-year trend available)" : "";
-                if (promoterWithValue.Count == 0)
+                if (promoterRows.Count == 0)
                 {
-                    var reason = promoterRows.Count == 0
-                        ? $"As on {date:d MMM yyyy}: no Promoter-class rows reported"
-                        : $"As on {date:d MMM yyyy}: Promoter-class rows present but none report EquityPercent";
                     list.Add(MetricResult.Insufficient($"Multi-year promoter-holding trend (FY{date.Year})", MetricUnit.Percent,
-                        reason, "ShareholdingPatternRow.HolderClass", "ShareholdingPatternRow.AsOnDate", "ShareholdingPatternRow.EquityPercent"));
+                        $"As on {date:d MMM yyyy}: no Promoter-class rows reported",
+                        "ShareholdingPatternRow.HolderClass", "ShareholdingPatternRow.AsOnDate", "ShareholdingPatternRow.EquityPercent"));
+                }
+                else if (missingValue > 0)
+                {
+                    list.Add(MetricResult.Insufficient($"Multi-year promoter-holding trend (FY{date.Year})", MetricUnit.Percent,
+                        $"As on {date:d MMM yyyy}: {missingValue} of {promoterRows.Count} Promoter-class row(s) have no reported EquityPercent — the total would be incomplete",
+                        "ShareholdingPatternRow.HolderClass", "ShareholdingPatternRow.AsOnDate", "ShareholdingPatternRow.EquityPercent"));
                 }
                 else
                 {
-                    var promoterSum = promoterWithValue.Sum(p => p.EquityPercent!.Value);
+                    var promoterSum = promoterRows.Sum(p => p.EquityPercent!.Value);
                     list.Add(MetricResult.Ok($"Multi-year promoter-holding trend (FY{date.Year})", promoterSum, MetricUnit.Percent,
                         $"As on {date:d MMM yyyy}{note}",
                         "ShareholdingPatternRow.HolderClass", "ShareholdingPatternRow.AsOnDate", "ShareholdingPatternRow.EquityPercent"));
@@ -1543,23 +1558,25 @@ public static partial class DossierComputations
             }
 
             // C6: latest AsOnDate only, one metric per (class, top-level numbered category). Same
-            // false-zero guard as C5 — a category present with no EquityPercent must not silently sum to 0.
+            // fail-closed rule as C5 — a category with ANY sub-row missing EquityPercent must not
+            // silently sum only the known ones, and must never collapse to a false 0%.
             var latestDate = dates[^1];
             var latestRows = dated.Where(p => p.AsOnDate == latestDate).ToList();
             foreach (var g in latestRows
                 .GroupBy(p => (p.HolderClass, TopLevel: p.CategoryGroup ?? p.Category))
                 .OrderBy(g => g.Key.HolderClass).ThenBy(g => g.Min(p => p.DisplayOrder)))
             {
-                var withValue = g.Where(p => p.EquityPercent is not null).ToList();
-                if (withValue.Count == 0)
+                var rows = g.ToList();
+                var missing = rows.Count(p => p.EquityPercent is null);
+                if (missing > 0)
                 {
                     list.Add(MetricResult.Insufficient($"SEBI-category grid rollup ({g.Key.HolderClass}: {g.Key.TopLevel})", MetricUnit.Percent,
-                        $"As on {latestDate:d MMM yyyy}: category present but no EquityPercent reported",
+                        $"As on {latestDate:d MMM yyyy}: {missing} of {rows.Count} row(s) in this category have no reported EquityPercent — the total would be incomplete",
                         "ShareholdingPatternRow.HolderClass", "ShareholdingPatternRow.Category", "ShareholdingPatternRow.EquityPercent"));
                 }
                 else
                 {
-                    var sum = withValue.Sum(p => p.EquityPercent!.Value);
+                    var sum = rows.Sum(p => p.EquityPercent!.Value);
                     list.Add(MetricResult.Ok($"SEBI-category grid rollup ({g.Key.HolderClass}: {g.Key.TopLevel})", sum, MetricUnit.Percent,
                         $"As on {latestDate:d MMM yyyy}",
                         "ShareholdingPatternRow.HolderClass", "ShareholdingPatternRow.Category", "ShareholdingPatternRow.EquityPercent"));
