@@ -1322,11 +1322,15 @@ public static partial class DossierComputations
         return pct;
     }
 
-    /// <summary>CAGR over the widest available span up to 3 years (n = min(3, yearsAvailable-1)), using
-    /// the earliest and latest non-null points for <paramref name="selector"/>. When the base-year value
-    /// is negative and <paramref name="allowNegativeBaseFallback"/> is true, falls back to a total
-    /// %-change figure with a caveat in the period text (not a true CAGR) instead of failing outright.
-    /// Returns the computed percent (Ok path only) so a downstream metric can reuse it.</summary>
+    /// <summary>CAGR over the widest available window of up to 3 non-null data points (selecting the
+    /// base point n = min(3, count-1) points back from the latest), using the earliest and latest
+    /// non-null points for <paramref name="selector"/>. The compounding exponent is always the actual
+    /// elapsed FYs between those two points (endPoint.Year - basePoint.Year) — never the count of
+    /// selected points — so a gap year (a reported FY whose value is null for this field) doesn't
+    /// silently shrink the exponent and overstate the rate. When the base-year value is negative and
+    /// <paramref name="allowNegativeBaseFallback"/> is true, falls back to a total %-change figure with
+    /// a caveat in the period text (not a true CAGR) instead of failing outright. Returns the computed
+    /// percent (Ok path only) so a downstream metric can reuse it.</summary>
     private static decimal? AddCagr(
         List<MetricResult> list, List<FinancialYearData> years, Func<FinancialYearData, decimal?> selector,
         string label, bool allowNegativeBaseFallback, string input)
@@ -1345,6 +1349,19 @@ public static partial class DossierComputations
         var basePoint = series[series.Count - 1 - n];
         var endPoint = series[^1];
         var period = $"FY{basePoint.Year}–FY{endPoint.Year}";
+
+        // The compounding exponent must be the actual elapsed FYs between the chosen base and end
+        // points, not the count of non-null data points (n) — a gap year (a reported FY whose value for
+        // this field is null, so it is excluded from `series`) would otherwise be silently skipped from
+        // the exponent too, materially overstating CAGR on a sparse series (e.g. FY2014→FY2017 with
+        // FY2015 excluded is 3 elapsed years, not 2).
+        var yearsElapsed = endPoint.Year - basePoint.Year;
+        if (yearsElapsed <= 0)
+        {
+            list.Add(MetricResult.Insufficient(label, MetricUnit.Percent,
+                $"{period}: base and end year are not chronologically distinct — {label} undefined", input));
+            return null;
+        }
 
         if (basePoint.Value == 0m)
         {
@@ -1374,7 +1391,7 @@ public static partial class DossierComputations
         }
 
         var ratio = (double)(endPoint.Value / basePoint.Value);
-        var cagr = Math.Round((decimal)(Math.Pow(ratio, 1.0 / n) - 1) * 100m, 1);
+        var cagr = Math.Round((decimal)(Math.Pow(ratio, 1.0 / yearsElapsed) - 1) * 100m, 1);
         list.Add(MetricResult.Ok(label, cagr, MetricUnit.Percent, period, input));
         return cagr;
     }

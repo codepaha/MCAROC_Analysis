@@ -75,6 +75,26 @@ public class FinancialTrendMetricsTests
     }
 
     [Fact]
+    public void Revenue_cagr_exponent_uses_elapsed_FYs_not_the_count_of_reported_points()
+    {
+        // Regression: FY2015 has no Revenue row at all (a gap, not a zero) between FY2014 and FY2016/17.
+        // The exponent must be the 3 elapsed calendar years (2017-2014), not 2 (the count of non-null
+        // points minus 1) — using the point-count as the exponent overstates the rate on any sparse series.
+        var years = new List<FinancialYearData>
+        {
+            new() { FinancialYear = 2014, Revenue = 100m },
+            new() { FinancialYear = 2016, Revenue = 200m },
+            new() { FinancialYear = 2017, Revenue = 300m },
+        };
+        var group = DossierComputations.FinancialTrendMetrics(CreateMinimalDossier(years));
+
+        var m = M(group, "Revenue CAGR");
+        Assert.True(m.HasValue);
+        Assert.Equal(44.2m, m.Value); // (300/100)^(1/3) - 1 = 44.2%, NOT (300/100)^(1/2)-1 = 73.2%
+        Assert.Equal("FY2014–FY2017", m.Period);
+    }
+
+    [Fact]
     public void Revenue_cagr_is_insufficient_with_fewer_than_2_years()
     {
         var group = DossierComputations.FinancialTrendMetrics(
