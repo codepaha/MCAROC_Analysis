@@ -24,6 +24,28 @@ public class AuditorsParserTests
         Assert.Equal(2025, result.Items[0].FinancialYear);
         Assert.True(result.Items[0].HasQualificationOrAdverseRemark);
         Assert.Equal("- SAXENA RAJEEV KUMAR", result.Items[0].ObservationText);
+        // Name-only text doesn't match the "NAME (Membership Number: X) of FIRM (Registration Number: Y)"
+        // format — AuditorName keeps the raw text and the structured fields stay null.
+        Assert.Equal("- SAXENA RAJEEV KUMAR", result.Items[0].AuditorName);
+        Assert.Null(result.Items[0].MembershipNumber);
+    }
+
+    [Fact]
+    public void SplitsAuditorNameMembershipAndFirmFromCommentsGivenBy()
+    {
+        var sheet = Sheet("Auditors' Comments-Standalone",
+            Row("AUDITORS' COMMENTS - STANDALONE"),
+            Row("Financial Year", "Qualified?", "", "", "Comments Given By"),
+            Row(2016.0, "No", "", "",
+                "- MANAS KUMAR MANIA (Membership Number: 300113) of U K MAHAPATRA & CO (Registration Number: 320039E)."));
+
+        var result = AuditorsParser.Parse(sheet, 1, 1, 10);
+
+        var obs = Assert.Single(result.Items);
+        Assert.Equal("MANAS KUMAR MANIA", obs.AuditorName);
+        Assert.Equal("300113", obs.MembershipNumber);
+        Assert.Equal("U K MAHAPATRA & CO", obs.FirmName);
+        Assert.Equal("320039E", obs.FirmRegistrationNumber);
     }
 
     [Fact]

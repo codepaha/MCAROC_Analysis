@@ -333,17 +333,25 @@
             @if (Model.Shareholdings.Count > 0)
             {
                 <div class="pi-table-wrap"><table class="pi-results-table">
-                    <thead><tr><th>Year</th><th>Shareholder</th><th>Type</th><th>Promoter</th><th class="text-end">% Held</th><th class="text-end">Shares</th><th>Source</th></tr></thead>
+                    <thead><tr><th>Year</th><th>Shareholder</th><th>Type</th><th>Designation</th><th>Promoter</th><th class="text-end">% Held</th><th class="text-end">Shares</th><th>Status</th><th>Source</th></tr></thead>
                     <tbody>
                     @foreach (var s in Model.Shareholdings)
                     {
                         <tr>
                             <td>FY@(s.FinancialYear)</td>
-                            <td>@s.ShareholderNameRaw</td>
+                            <td>
+                                @s.ShareholderNameRaw
+                                @if (!string.IsNullOrWhiteSpace(s.Remarks)) { <br /><small class="text-muted">@s.Remarks</small> }
+                            </td>
                             <td>@Or(s.ShareholderType)</td>
+                            <td>@Or(s.Designation ?? s.RelationshipRaw)</td>
                             <td>@(s.IsPromoter ? "Yes" : "—")</td>
                             <td class="text-end">@Num(s.HoldingPercentage)%</td>
                             <td class="text-end">@(s.SharesHeld?.ToString("N0") ?? "—")</td>
+                            <td>
+                                @if (s.CessationDate is { } cd) { <span>Ceased @D(cd)</span> }
+                                else { @Or(s.CompanyStatus ?? s.ActiveCompliance) }
+                            </td>
                             <td>@s.SourceType</td>
                         </tr>
                     }
@@ -399,12 +407,15 @@
                 <div class="mca-section">
                     <h3>@grp.Key <span class="mca-count">@grp.Count()</span></h3>
                     <div class="pi-table-wrap"><table class="pi-results-table">
-                        <thead><tr><th>Entity</th><th>CIN</th><th>Type</th><th class="text-end">Holding %</th><th class="text-end">Paid-up (Cr)</th><th class="text-end">Charges (Cr)</th><th>Status</th><th>Location</th></tr></thead>
+                        <thead><tr><th>Entity</th><th>CIN</th><th>Type</th><th class="text-end">Holding %</th><th class="text-end">Paid-up (Cr)</th><th class="text-end">Charges (Cr)</th><th>Status</th><th>Location</th><th>Compliance</th></tr></thead>
                         <tbody>
                         @foreach (var rc in grp.OrderBy(x => x.EntityNameNormalized))
                         {
                             <tr>
-                                <td>@rc.EntityNameRaw</td>
+                                <td>
+                                    @rc.EntityNameRaw
+                                    @if (!string.IsNullOrWhiteSpace(rc.Remarks)) { <br /><small class="text-muted">@rc.Remarks</small> }
+                                </td>
                                 <td class="report-id">@Or(rc.Cin)</td>
                                 <td>@Or(rc.CorporateType)</td>
                                 <td class="text-end">@Num(rc.HoldingPercent)</td>
@@ -412,6 +423,7 @@
                                 <td class="text-end">@Num(rc.SumOfChargesCrore)</td>
                                 <td>@Or(rc.CompanyStatus)</td>
                                 <td>@Or(rc.Location)</td>
+                                <td>@Or(rc.ActiveCompliance)</td>
                             </tr>
                         }
                         </tbody>

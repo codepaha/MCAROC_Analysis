@@ -107,7 +107,17 @@
             {
                 <tr>
                     <td>FY@(a.FinancialYear)</td>
-                    <td>@Or(a.AuditorName)</td>
+                    <td>
+                        @Or(a.AuditorName)
+                        @if (!string.IsNullOrWhiteSpace(a.FirmName))
+                        {
+                            <br /><small class="text-muted">
+                                @a.FirmName
+                                @(string.IsNullOrWhiteSpace(a.FirmRegistrationNumber) ? "" : $" (Reg. No. {a.FirmRegistrationNumber})")
+                                @(string.IsNullOrWhiteSpace(a.MembershipNumber) ? "" : $" · Membership No. {a.MembershipNumber}")
+                            </small>
+                        }
+                    </td>
                     <td>@(a.HasQualificationOrAdverseRemark ? "Yes" : "No")</td>
                     <td>
                         @if (!string.IsNullOrWhiteSpace(a.ObservationText) && a.ObservationText.Length > 240)
@@ -316,11 +326,22 @@
             @if (Model.GstRegistrations.Count > 0)
             {
                 <div class="pi-table-wrap"><table class="pi-results-table">
-                    <thead><tr><th>GSTIN</th><th>State</th><th>Status</th><th>Registered</th><th>Cancelled</th><th class="text-end">Returns on file</th></tr></thead>
+                    <thead><tr><th>GSTIN</th><th>State</th><th>Jurisdiction</th><th>Status</th><th>Registered</th><th>Cancelled</th><th class="text-end">Returns on file</th></tr></thead>
                     <tbody>
                     @foreach (var g in Model.GstRegistrations)
                     {
-                        <tr><td class="report-id">@g.Gstin</td><td>@Or(g.State)</td><td>@Or(g.Status)</td><td>@D(g.RegistrationDate)</td><td>@D(g.CancellationDate)</td><td class="text-end">@g.Filings.Count</td></tr>
+                        <tr>
+                            <td class="report-id">
+                                @g.Gstin
+                                @if (!string.IsNullOrWhiteSpace(g.LegalNameOfBusiness)) { <br /><small class="text-muted">@g.LegalNameOfBusiness</small> }
+                            </td>
+                            <td>@Or(g.State)</td>
+                            <td>@Or(g.CentreJurisdiction)@(string.IsNullOrWhiteSpace(g.StateJurisdiction) ? "" : $" / {g.StateJurisdiction}")</td>
+                            <td>@Or(g.Status)</td>
+                            <td>@D(g.RegistrationDate)</td>
+                            <td>@D(g.CancellationDate)</td>
+                            <td class="text-end">@g.Filings.Count</td>
+                        </tr>
                     }
                     </tbody>
                 </table></div>

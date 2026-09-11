@@ -23,4 +23,6 @@ public class RelatedCorporate : ExtractedEntityBase
     public decimal? SumOfChargesCrore { get; set; }
     public DateOnly? DateOfIncorporation { get; set; }
     public string? CompanyStatus { get; set; }
+    public string? ActiveCompliance { get; set; }
+    public string? Remarks { get; set; }
 }

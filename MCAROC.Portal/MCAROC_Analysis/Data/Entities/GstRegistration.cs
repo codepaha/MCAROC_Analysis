@@ -15,6 +15,9 @@ public class GstRegistration : ExtractedEntityBase
     public string? TradeName { get; set; }
     public string? NatureOfBusinessActivities { get; set; }
     public string? Flags { get; set; }
+    public string? CentreJurisdiction { get; set; }
+    public string? StateJurisdiction { get; set; }
+    public string? LegalNameOfBusiness { get; set; }
 
     public List<GstFiling> Filings { get; set; } = [];
 }

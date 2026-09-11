@@ -329,4 +329,56 @@ public class ComplianceTabRenderingTests
         Assert.Contains("<th>TRRN</th>", html);
         Assert.Contains("2606360162374", html);
     }
+
+    // ── A6 / #37 — column-drop fixes ──
+
+    [Fact]
+    public async Task Gst_registration_shows_jurisdiction_and_legal_name()
+    {
+        var vm = CreateViewModel();
+        vm.GstRegistrations =
+        [
+            new GstRegistration
+            {
+                Gstin = "14AABCC1907E1ZC",
+                State = "Manipur",
+                Status = "Active",
+                CentreJurisdiction = "IMPHAL II RANGE",
+                StateJurisdiction = "Work Contracts",
+                LegalNameOfBusiness = "COASTAL PROJECTS LIMITED"
+            }
+        ];
+
+        var html = await RenderComplianceTabAsync(vm);
+
+        Assert.Contains("IMPHAL II RANGE", html);
+        Assert.Contains("Work Contracts", html);
+        Assert.Contains("COASTAL PROJECTS LIMITED", html);
+    }
+
+    [Fact]
+    public async Task Auditor_observation_shows_firm_identity_when_parsed()
+    {
+        var vm = CreateViewModel();
+        vm.AuditorObservations =
+        [
+            new AuditorObservation
+            {
+                FinancialYear = 2016,
+                Basis = FinancialBasis.Standalone,
+                AuditorName = "MANAS KUMAR MANIA",
+                MembershipNumber = "300113",
+                FirmName = "U K MAHAPATRA & CO",
+                FirmRegistrationNumber = "320039E",
+                ObservationText = "- MANAS KUMAR MANIA (Membership Number: 300113) of U K MAHAPATRA & CO (Registration Number: 320039E)."
+            }
+        ];
+
+        var html = await RenderComplianceTabAsync(vm);
+
+        Assert.Contains("MANAS KUMAR MANIA", html);
+        Assert.Contains("U K MAHAPATRA &amp; CO", html);
+        Assert.Contains("320039E", html);
+        Assert.Contains("300113", html);
+    }
 }

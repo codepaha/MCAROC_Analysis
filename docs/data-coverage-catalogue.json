@@ -99,7 +99,7 @@
       "parser": "ShareholdingParser", "entity": "Shareholding (SourceType=DirectorShareholding)",
       "portal_tab": "Corporate", "dossier": "Annexure A",
       "fields": [
-        {"source": "Name / Designation / Shareholding (%) / Number of Shares / Cessation Date", "entityField": "ShareholderNameRaw / (Designation dropped) / HoldingPercentage / SharesHeld / (Cessation dropped)", "status": "shown-partial", "gap": "G9", "note": "Designation + Cessation Date columns dropped"}
+        {"source": "Name / Designation / Shareholding (%) / Number of Shares / Cessation Date", "entityField": "ShareholderNameRaw / Designation / HoldingPercentage / SharesHeld / CessationDate", "status": "live", "note": "A6/#37 — Designation + Cessation Date now captured"}
       ]
     },
     {
@@ -108,8 +108,8 @@
       "portal_tab": "Corporate", "dossier": "Annexure A",
       "fields": [
         {"source": "Financial Year Ending On / Entity Name / Shareholding (%)", "entityField": "FinancialYear / ShareholderNameRaw / HoldingPercentage", "status": "live"},
-        {"source": "Relationship / Entity Type", "entityField": "(Relationship dropped) / ShareholderType", "status": "shown-partial", "gap": "G9"},
-        {"source": "Country/City / Paid Up Capital-or-Obligation / Sum Of Charges / Date Of Incorporation / Company-LLP Status / Active Compliance / Remarks", "entityField": null, "status": "not-parsed", "gap": "G9"}
+        {"source": "Relationship / Entity Type", "entityField": "RelationshipRaw / ShareholderType", "status": "live", "note": "A6/#37"},
+        {"source": "Country/City / Paid Up Capital-or-Obligation / Sum Of Charges / Date Of Incorporation / Company-LLP Status / Active Compliance / Remarks", "entityField": "Location / PaidUpCapitalCrore / SumOfChargesCrore / DateOfIncorporation / CompanyStatus / ActiveCompliance / Remarks", "status": "live", "note": "A6/#37"}
       ]
     },
     {
@@ -126,7 +126,7 @@
       "portal_tab": "Corporate", "dossier": "Annexure A",
       "fields": [
         {"source": "FY Ending / Corporate Name / Relationship / Corporate Type / Shareholding % / Country-City / PUC-or-Obligation / Sum Of Charges / Date Of Incorporation / Company-LLP Status", "entityField": "FinancialYearEnding / EntityNameRaw / RelationshipRaw+RelationshipType / CorporateType / HoldingPercent / Location / PaidUpCapitalCrore / SumOfChargesCrore / DateOfIncorporation / CompanyStatus", "status": "live"},
-        {"source": "Active Compliance / Remarks", "entityField": null, "status": "not-parsed", "gap": "G10"},
+        {"source": "Active Compliance / Remarks", "entityField": "ActiveCompliance / Remarks", "status": "live", "note": "A6/#37"},
         {"source": "CIN (in parentheses under Corporate Name in the PDF; own column here?)", "entityField": "Cin", "status": "live"}
       ]
     },
@@ -190,7 +190,7 @@
       "parser": "AuditorsParser (basis=Standalone)", "entity": "AuditorObservation",
       "portal_tab": "Compliance", "dossier": "Annexure B",
       "fields": [
-        {"source": "Financial Year / Whether Qualified-Reservation-Adverse / Comments Given By (auditor name + membership no + firm + firm reg no)", "entityField": "FinancialYear / HasQualificationOrAdverseRemark / AuditorName", "status": "shown-partial", "gap": "G11", "note": "structured firm identity (membership no, firm reg no) folded into a string"},
+        {"source": "Financial Year / Whether Qualified-Reservation-Adverse / Comments Given By (auditor name + membership no + firm + firm reg no)", "entityField": "FinancialYear / HasQualificationOrAdverseRemark / AuditorName+MembershipNumber+FirmName+FirmRegistrationNumber", "status": "live", "note": "A6/#37 — split from the 'NAME (Membership Number: X) of FIRM (Registration Number: Y)' text; falls back to the raw string when the format doesn't match"},
         {"source": "Comments under Disclosures - Auditors' Report / Directors' Report (CARO-style clause text)", "entityField": "ObservationText", "status": "live"}
       ]
     },
@@ -198,7 +198,7 @@
       "workbook": "RocReport", "sheet": "Auditors' Comments-Consolidated", "shape": "same, consolidated",
       "parser": "AuditorsParser (basis=Consolidated)", "entity": "AuditorObservation(Basis=Consolidated)",
       "portal_tab": "Compliance", "dossier": "Annexure B", "fields": [
-        {"source": "same", "entityField": "AuditorObservation(Basis=Consolidated)", "status": "shown-partial", "gap": "G11"}
+        {"source": "same", "entityField": "AuditorObservation(Basis=Consolidated)", "status": "live", "note": "A6/#37"}
       ]
     },
     {
@@ -208,8 +208,8 @@
       "fields": [
         {"source": "GSTIN / GSTIN STATUS / STATE / DATE OF REGISTRATION / TAXPAYER TYPE / TRADE NAME / NATURE OF BUSINESS ACTIVITIES / FLAGS", "entityField": "Gstin / Status / State / RegistrationDate / TaxpayerType / TradeName / NatureOfBusinessActivities / Flags", "status": "live"},
         {"source": "RETURN TYPE / LATEST FILING(S) / FINANCIAL YEAR / TAX PERIOD (latest-filing summary)", "entityField": "(via GstFiling)", "status": "live"},
-        {"source": "CENTRE JURISDICTION / STATE JURISDICTION / LEGAL NAME OF BUSINESS", "entityField": null, "status": "not-parsed", "gap": "G10"},
-        {"source": "CancellationDate (for Inactive GSTINs)", "entityField": "CancellationDate", "status": "live"}
+        {"source": "CENTRE JURISDICTION / STATE JURISDICTION / LEGAL NAME OF BUSINESS", "entityField": "CentreJurisdiction / StateJurisdiction / LegalNameOfBusiness", "status": "live", "note": "A6/#37"},
+        {"source": "CancellationDate (for Inactive GSTINs)", "entityField": "CancellationDate", "status": "not-parsed", "note": "no CANCELLATION DATE column exists in the real GST sheet (16 cols, verified against the COASTAL fixture) and GstParser never sets this field — the entity property is vestigial; not fixed here, out of A6's scope"}
       ]
     },
     {
@@ -350,18 +350,18 @@
      "detail": "462 FinancialFacts, 23 FinancialParameters, 3 CompanyOfficers and the CashFlowYearInferred flag are ingested but the portal tabs may not render them fully. Audit each tab and wire the missing renders.",
      "fix": "Per-tab render audit (Corporate: officers; Financials: full statement incl. facts + ratios + parameters + inferred-year caption).",
      "issue": null},
-    {"id": "G9", "title": "Shareholding entity drops columns", "severity": "medium",
+    {"id": "G9", "title": "Shareholding entity drops columns", "severity": "medium", "status": "DONE (A6 / #37)",
      "detail": "Director Shareholding drops Designation + Cessation Date; Shareholding >5% drops Relationship, Country/City, PUC/Obligation, Sum of Charges, Date of Incorp, Status, Active Compliance, Remarks.",
      "fix": "Extend Shareholding entity + parser to carry the full column set.",
-     "issue": null},
-    {"id": "G10", "title": "Minor column drops (RelatedCorporate, GstRegistration)", "severity": "low",
+     "issue": "#37"},
+    {"id": "G10", "title": "Minor column drops (RelatedCorporate, GstRegistration)", "severity": "low", "status": "DONE (A6 / #37)",
      "detail": "RelatedCorporate: Active Compliance, Remarks. GstRegistration: Centre Jurisdiction, State Jurisdiction, Legal Name of Business.",
      "fix": "Add the fields to the entities + parsers.",
-     "issue": null},
-    {"id": "G11", "title": "Auditor firm identity not structured", "severity": "low",
+     "issue": "#37"},
+    {"id": "G11", "title": "Auditor firm identity not structured", "severity": "low", "status": "DONE (A6 / #37)",
      "detail": "'Comments Given By' (auditor name, membership number, firm name, firm registration number) folded into AuditorObservation.AuditorName string.",
      "fix": "Split into AuditorName / MembershipNumber / FirmName / FirmRegistrationNumber.",
-     "issue": null},
+     "issue": "#37"},
     {"id": "G12", "title": "Litigation Uncertain (Unverified Court Records) has no UI cue", "severity": "medium",
      "detail": "PR #29 routes 'Unverified Court Records' rows to MatchStatus=Uncertain, but the Litigation tab shows them under category 'Other' with no 'unverified — verify against source' banner. the benchmark tool gives Probable + Unverified their own sections with a plain-English disclaimer.",
      "fix": "Litigation tab (Track B): split Confirmed / Probable / Unverified into separate sub-sections, each with a disclaimer.",

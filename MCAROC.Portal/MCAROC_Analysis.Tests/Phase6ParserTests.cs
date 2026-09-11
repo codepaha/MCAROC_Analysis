@@ -112,6 +112,8 @@ public class RelatedCorporatesParserTests
         Assert.Equal(533.1m, r.Items[0].PaidUpCapitalCrore);
         Assert.Equal(1279.0m, r.Items[0].SumOfChargesCrore);
         Assert.Null(r.Items[1].PaidUpCapitalCrore); // "-" is not zero
+        Assert.Equal("Active Compliant", r.Items[0].ActiveCompliance);
+        Assert.Null(r.Items[0].Remarks); // "-" means no remark
     }
 }
 
