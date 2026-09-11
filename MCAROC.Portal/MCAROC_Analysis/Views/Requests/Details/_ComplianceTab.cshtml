@@ -505,6 +505,11 @@
             </div>
         }
         else { <div class="mca-empty"><i class="bi bi-people"></i><p>@Model.SheetCoverage.EmptyState("No EPFO data was extracted.", SheetAliases.Epfo, SheetAliases.EpfoAnnexure)</p></div> }
+
+        @await Html.PartialAsync("~/Views/Requests/Details/_KeyIndicators.cshtml",
+            Model.KeyMetrics.Where(g => g.Title == "EPFO / labour")
+                .Select(g => new MCAROC_Analysis.Models.Dossier.MetricGroup(g.Title, g.Metrics.Where(m => m.Label != "Revenue per EPFO employee").ToList()))
+                .Where(g => g.HasAny).ToList())
     </div>
 
     @* ── MSME ── *@

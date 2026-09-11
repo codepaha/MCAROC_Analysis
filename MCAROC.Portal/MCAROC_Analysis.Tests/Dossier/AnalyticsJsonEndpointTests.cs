@@ -53,5 +53,6 @@ public class AnalyticsJsonEndpointTests : IAsyncLifetime
         Assert.Contains(groups, g => g.Title == "Directors");
         Assert.Contains(groups, g => g.Title == "Financial trend & leverage");
         Assert.Contains(groups, g => g.Title == "Shareholding");
+        Assert.Contains(groups, g => g.Title == "EPFO / labour");
     }
 }
