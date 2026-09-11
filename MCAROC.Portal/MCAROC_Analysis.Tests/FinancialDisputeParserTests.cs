@@ -47,4 +47,57 @@ public class FinancialDisputeParserTests
         Assert.Empty(r.Items);
         Assert.Single(r.Warnings, w => w.IssueCode == "FINANCIAL_DISPUTE_HEADER_NOT_FOUND");
     }
+
+    // ── Same table-boundary hardening Codex's review required on the sibling A8/A9 parsers ──
+
+    [Fact]
+    public void StopsAtARepeatedHeaderRatherThanTreatingItAsData()
+    {
+        var header = Row("Amount Payable / Receivable", "Type Of Financial Dispute", "Currency", "Amount Under Default",
+            "Verdict", "Court", "Litigant(s)", "Case No.", "Date Of Default", "Date Of Judgement");
+        var sheet = Sheet("Legal Cases - Financial Dispute",
+            header,
+            Row("Payable", "Trade Payable", "INR", 12.5, "ALLOWED", "NCLT", "ACME BANK vs. TEST CORP", "CP123", "1 Jan, 2020", "5 May, 2021"),
+            // No blank separator — the header repeats (e.g. a page-break artifact).
+            header,
+            Row("Receivable", "x", "INR", 1.0, "x", "x", "SHOULD NOT BE PARSED", "WP999", "-", "-"));
+
+        var r = FinancialDisputeParser.Parse(sheet, 1, 1, 10);
+
+        var item = Assert.Single(r.Items);
+        Assert.Equal("CP123", item.CaseNumber);
+    }
+
+    [Fact]
+    public void StopsAtATotalFooterRow()
+    {
+        var sheet = Sheet("Legal Cases - Financial Dispute",
+            Row("Amount Payable / Receivable", "Type Of Financial Dispute", "Currency", "Amount Under Default",
+                "Verdict", "Court", "Litigant(s)", "Case No.", "Date Of Default", "Date Of Judgement"),
+            Row("Payable", "Trade Payable", "INR", 12.5, "ALLOWED", "NCLT", "ACME BANK vs. TEST CORP", "CP123", "1 Jan, 2020", "5 May, 2021"),
+            Row("", "", "", 12.5, "", "", "Total", "", "", ""));
+
+        var r = FinancialDisputeParser.Parse(sheet, 1, 1, 10);
+
+        var item = Assert.Single(r.Items);
+        Assert.Equal("CP123", item.CaseNumber);
+    }
+
+    [Fact]
+    public void StopsAtABlankRowRatherThanScanningPastIt()
+    {
+        var sheet = Sheet("Legal Cases - Financial Dispute",
+            Row("Amount Payable / Receivable", "Type Of Financial Dispute", "Currency", "Amount Under Default",
+                "Verdict", "Court", "Litigant(s)", "Case No.", "Date Of Default", "Date Of Judgement"),
+            Row("Payable", "Trade Payable", "INR", 12.5, "ALLOWED", "NCLT", "ACME BANK vs. TEST CORP", "CP123", "1 Jan, 2020", "5 May, 2021"),
+            Row(""),
+            // An unrelated table further down whose 7th/8th columns happen to be populated.
+            Row("Some Other Section"),
+            Row("x", "x", "x", "x", "x", "x", "NOT A LITIGANT", "NOT-A-CASE"));
+
+        var r = FinancialDisputeParser.Parse(sheet, 1, 1, 10);
+
+        var item = Assert.Single(r.Items);
+        Assert.Equal("CP123", item.CaseNumber);
+    }
 }
