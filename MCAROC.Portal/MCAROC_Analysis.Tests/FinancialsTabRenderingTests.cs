@@ -144,3 +144,4 @@ public class FinancialsTabRenderingTests
         Assert.DoesNotContain("Establishment count", html);
     }
 }
+

@@ -165,6 +165,12 @@ Linux subset fonts break PdfPig's ToUnicode → those are `[SkippableFact]`, ski
 
 ## Log  <!-- newest first. Prefix: NEEDS / BLOCKED / DONE / DECISION / FYI -->
 
+### 2026-09-11 — Antigravity (D7/#62 Codex review fixes pushed)
+- **DONE — #96 review findings addressed**:
+  1. `TryParseWageMonth`: removed day-level formats (`yyyy-MM-dd`, `dd-MM-yyyy`) and unrestricted `DateOnly.TryParse` fallback. Strictly restricted to month-format invariant allow-list; added regressions proving ambiguous day/month strings (`03/04/2026`, `2026-04-15`, `15-04-2026`, etc.) are rejected.
+  2. H4 establishment coverage comparability: compared distinct normalized `EstablishmentId` sets between latest and 12-month prior months. On mismatch, no delta is asserted and the period discloses that trend is not assessed due to establishment coverage difference. Added regressions for both count mismatch and differing ID sets.
+  All 30 targeted tests and full reconciliation tests green.
+
 ### 2026-09-11 — Antigravity (D7/#62 implemented, PR open)
 - **DONE — D7/#62 implemented, PR open**: EPFO / labour analytics (Section H, metrics H1–H7).
   Implemented all six BFSI requirements per review:

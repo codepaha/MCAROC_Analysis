@@ -82,13 +82,21 @@ public class EpfoMetricsTests
         Assert.True(DossierComputations.TryParseWageMonth("December 2016", out var m8));
         Assert.Equal(new DateOnly(2016, 12, 1), m8);
 
-        // Invalid or ambiguous inputs must fail
+        // Invalid, ambiguous, or day-level inputs must fail
         Assert.False(DossierComputations.TryParseWageMonth(null, out _));
         Assert.False(DossierComputations.TryParseWageMonth("", out _));
         Assert.False(DossierComputations.TryParseWageMonth("   ", out _));
         Assert.False(DossierComputations.TryParseWageMonth("-", out _));
         Assert.False(DossierComputations.TryParseWageMonth("invalid", out _));
         Assert.False(DossierComputations.TryParseWageMonth("2026", out _));
+        Assert.False(DossierComputations.TryParseWageMonth("03/04/2026", out _));
+        Assert.False(DossierComputations.TryParseWageMonth("2026-04-15", out _));
+        Assert.False(DossierComputations.TryParseWageMonth("15-04-2026", out _));
+        Assert.False(DossierComputations.TryParseWageMonth("15/04/2026", out _));
+        Assert.False(DossierComputations.TryParseWageMonth("2026/04/15", out _));
+        Assert.False(DossierComputations.TryParseWageMonth("4/3/2026", out _));
+        Assert.False(DossierComputations.TryParseWageMonth("2026-05-01", out _));
+        Assert.False(DossierComputations.TryParseWageMonth("01-05-2026", out _));
     }
 
     [Fact]
@@ -255,6 +263,51 @@ public class EpfoMetricsTests
         Assert.True(h4.HasValue);
         Assert.Equal(10m, h4.Value);
         Assert.Contains("trend not assessed due to incomplete prior-month data", h4.Period);
+    }
+
+    [Fact]
+    public void H4_trend_discloses_establishment_coverage_difference_when_prior_and_latest_establishments_mismatch()
+    {
+        // May 2026 has EST1 and EST2 (2 establishments, total headcount = 15)
+        // May 2025 has only EST1 (1 establishment, headcount = 10)
+        // Even though both have complete headcount, coverage is not comparable — no delta should be asserted!
+        var contribs = new List<EpfoContribution>
+        {
+            new() { EstablishmentId = "EST1", WageMonth = "May, 2026", EmployeeCount = 10, ContributionAmountCrore = 0.1m },
+            new() { EstablishmentId = "EST2", WageMonth = "May, 2026", EmployeeCount = 5, ContributionAmountCrore = 0.05m },
+            new() { EstablishmentId = "EST1", WageMonth = "May, 2025", EmployeeCount = 10, ContributionAmountCrore = 0.1m }
+        };
+
+        var model = CreateMinimalDossier(contribs);
+        var group = DossierComputations.EpfoMetrics(model);
+
+        var h4 = Assert.Single(group.Metrics, m => m.Label == "Employee count (EPFO) + trend");
+        Assert.True(h4.HasValue);
+        Assert.Equal(15m, h4.Value);
+        Assert.Contains("trend not assessed: establishment coverage differs (2 establishment(s) in May 2026 vs 1 in May 2025)", h4.Period);
+        Assert.DoesNotContain("+5", h4.Period);
+        Assert.DoesNotContain("-5", h4.Period);
+    }
+
+    [Fact]
+    public void H4_trend_discloses_establishment_coverage_difference_when_same_count_but_different_establishments()
+    {
+        // May 2026 has EST2 (1 establishment, headcount = 15)
+        // May 2025 has EST1 (1 establishment, headcount = 10)
+        var contribs = new List<EpfoContribution>
+        {
+            new() { EstablishmentId = "EST2", WageMonth = "May, 2026", EmployeeCount = 15, ContributionAmountCrore = 0.1m },
+            new() { EstablishmentId = "EST1", WageMonth = "May, 2025", EmployeeCount = 10, ContributionAmountCrore = 0.1m }
+        };
+
+        var model = CreateMinimalDossier(contribs);
+        var group = DossierComputations.EpfoMetrics(model);
+
+        var h4 = Assert.Single(group.Metrics, m => m.Label == "Employee count (EPFO) + trend");
+        Assert.True(h4.HasValue);
+        Assert.Equal(15m, h4.Value);
+        Assert.Contains("trend not assessed: establishment coverage differs", h4.Period);
+        Assert.Contains("EST2 in May 2026 vs EST1 in May 2025", h4.Period);
     }
 
     [Fact]
