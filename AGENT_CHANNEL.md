@@ -68,11 +68,13 @@ Everything that adds an entity + EF migration, plus the metrics scaffold and the
 **One migration branch in flight at a time** — Claude serialises this lane.
 
 **Wave 1 (A1–A11) + A7 CI enforcement: all DONE, all merged.** D0 DONE (`572d8bf`).
+**Wave 4 D2/#57 and D4/#59 (Claude's full assignment): both DONE, both merged. Claude's lane has
+nothing outstanding — see the owner/Codex for what's next.**
 
 | Issue | What | Status |
 |---|---|---|
 | #57 D2 | financial trend & leverage metrics (parity-test heavy) | **MERGED** (`cad21f0`) |
-| #59 D4 | shareholding metrics | **PR #95 open** (rebased onto merged D2, MERGEABLE) |
+| #59 D4 | shareholding metrics | **MERGED** (`8f83b04`) |
 
 ### Antigravity — render-audit + metrics-compute lane (no schema changes)
 Razor + view-model-load only, or pure computation over entities that already exist. **No migrations.**
@@ -90,8 +92,8 @@ Razor + view-model-load only, or pure computation over entities that already exi
 | visual | before/after screenshots on every render PR; keep `E:\Downloads\VTION\ROC_JSON_Reports` current | — | ongoing |
 
 ### Sequencing
-- Claude: D2/#57 **MERGED** → D4/#59 (PR #95, MERGEABLE, rebased onto merged D2) — last of Claude's
-  Wave-4 issues, awaiting review.
+- Claude: D2/#57 **MERGED** → D4/#59 **MERGED** — both of Claude's Wave-4 issues done. Lane is empty
+  pending a new assignment.
 - Antigravity: D6/#61 **MERGED** → D7/#62 (PR #96 open) → D8/D9/D10/D11 (#63–#66) in any order.
 
 ### Not in either lane (Codex or owner)
@@ -107,8 +109,8 @@ Claude done: #79 CI shift · A4/#35 · A11/#75 · A5/#36 · A6/#37 (PR #87, `075
 MERGED.** Wave 1 fully closed; the RelatedPartyTransaction/CreditRating/FinancialDisputeCase trio done.
 All three sheets are absent from the COASTAL fixture — synthetic-only test coverage, flagged in each PR;
 worth a real-workbook check whenever a company with these sheets is ingested. **D2/#57 → MERGED**
-(PR #94, `cad21f0`). **D4/#59 → PR #95 open**, rebased onto merged D2, MERGEABLE, awaiting review — last
-of Claude's Wave-4 issues.
+(PR #94, `cad21f0`). **D4/#59 → MERGED** (PR #95, `8f83b04`). Both of Claude's Wave-4 issues done —
+lane empty pending a new assignment.
 Antigravity: D5/#60 → **MERGED** (PR #88, `bf19713`). D6/#61 → **MERGED** (PR #93, `3eafe94`). D7/#62 →
 **PR #96 open**. **Next: D8–D11 (#63–#66)** — all unblocked, assigned per the Task division table.
 Also merged since the last board update: pre-login reports edit-pipeline (**#86**); issue **#46**
@@ -162,6 +164,12 @@ Linux subset fonts break PdfPig's ToUnicode → those are `[SkippableFact]`, ski
 ---
 
 ## Log  <!-- newest first. Prefix: NEEDS / BLOCKED / DONE / DECISION / FYI -->
+
+### 2026-09-11 — Claude session (D4/#59 MERGED — Claude's Wave-4 lane empty)
+- **DONE — #95 (D4/#59) MERGED** (`8f83b04`), feature branch deleted, local worktree/branch cleaned up.
+  Shareholding analytics (C1–C6) now shipped on `main`. Both of Claude's Wave-4 issues (D2/#57, D4/#59)
+  are done and merged — nothing left claimed or in progress in Claude's lane. @owner/@codex — ping if
+  there's a new task to pick up; otherwise idle pending assignment.
 
 ### 2026-09-11 — Claude session (D2/#57 MERGED; D4/#59 rebased onto it, clean)
 - **DONE — #94 (D2/#57) MERGED** (`cad21f0`), feature branch deleted. Financial trend & leverage
