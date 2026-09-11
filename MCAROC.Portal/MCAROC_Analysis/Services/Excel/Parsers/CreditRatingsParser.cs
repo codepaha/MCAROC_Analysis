@@ -12,7 +12,11 @@ namespace MCAROC_Analysis.Services.Excel.Parsers;
 /// (9/41 and 2/41 of the wider portfolio set carry them respectively), so this parser has not been
 /// verified against a real workbook — column layout is exactly the issue's spec, header row is located
 /// dynamically (tolerates the trailing-space header observed in some exports, "AGENCY ") rather than
-/// assumed at a fixed index.</summary>
+/// assumed at a fixed index.
+///
+/// Both data loops stop (not merely skip) at the first table-boundary signal — a blank row, a repeated
+/// header (either shape), or a "Total"/footer line — so a footer, a repeated header, or an unrelated
+/// row can never be silently ingested as a rating (Codex review, PR #91).</summary>
 public static class CreditRatingsParser
 {
     private const string ParserName = nameof(CreditRatingsParser);
@@ -26,20 +30,22 @@ public static class CreditRatingsParser
 
         if (creditRatingsSheet is not null)
         {
-            var headerRow = FindHeaderRow(creditRatingsSheet);
-            if (headerRow < 0)
+            var headerRow = FindRow(creditRatingsSheet, r => IsAcceptedHeaderRow(creditRatingsSheet.Rows[r]), 0);
+            if (headerRow is null)
             {
                 result.AddWarning(new ParseIssue(IssueSeverity.Warning, ParserName, null, null,
-                    "CREDIT_RATINGS_HEADER_NOT_FOUND", "Could not locate the 'AGENCY' header row on the Credit Ratings sheet."));
+                    "CREDIT_RATINGS_HEADER_NOT_FOUND", "Could not locate the full 'Credit Ratings' header row."));
             }
             else
             {
-                var r = headerRow + 1;
+                var r = headerRow.Value + 1;
                 for (; r < creditRatingsSheet.Rows.Count; r++)
                 {
                     var row = creditRatingsSheet.Rows[r];
+                    if (IsAcceptedHeaderRow(row) || IsUnacceptedHeaderRow(row)) break; // a repeated header ends this table
                     var agency = Cell(row, 0);
-                    if (string.IsNullOrEmpty(agency)) break; // blank row ends the accepted table
+                    if (string.IsNullOrEmpty(agency)) break; // a blank row ends the table — never scan past it
+                    if (IsFooterRow(agency)) break;
                     if (string.Equals(agency, UnacceptedBanner, StringComparison.OrdinalIgnoreCase)) break; // embedded sub-section
 
                     result.Items.Add(ParseAcceptedRow(creditRatingsSheet, row, r, agency, requestId, ingestionRunId, sourceDocumentId));
@@ -50,21 +56,21 @@ public static class CreditRatingsParser
                     && string.Equals(c, UnacceptedBanner, StringComparison.OrdinalIgnoreCase), r);
                 if (embeddedBanner is { } eb)
                 {
-                    var embeddedHeader = FindHeaderRow(creditRatingsSheet, eb + 1);
-                    if (embeddedHeader >= 0)
-                        ParseUnacceptedRows(creditRatingsSheet, embeddedHeader, requestId, ingestionRunId, sourceDocumentId, result);
+                    var embeddedHeader = FindRow(creditRatingsSheet, i => IsUnacceptedHeaderRow(creditRatingsSheet.Rows[i]), eb + 1);
+                    if (embeddedHeader is { } eh)
+                        ParseUnacceptedRows(creditRatingsSheet, eh, requestId, ingestionRunId, sourceDocumentId, result);
                 }
             }
         }
 
         if (unacceptedSheet is not null)
         {
-            var headerRow = FindHeaderRow(unacceptedSheet);
-            if (headerRow < 0)
+            var headerRow = FindRow(unacceptedSheet, r => IsUnacceptedHeaderRow(unacceptedSheet.Rows[r]), 0);
+            if (headerRow is null)
                 result.AddWarning(new ParseIssue(IssueSeverity.Warning, ParserName, null, null,
-                    "UNACCEPTED_RATINGS_HEADER_NOT_FOUND", "Could not locate the 'AGENCY' header row on the Unaccepted Ratings sheet."));
+                    "UNACCEPTED_RATINGS_HEADER_NOT_FOUND", "Could not locate the full 'Unaccepted Ratings' header row."));
             else
-                ParseUnacceptedRows(unacceptedSheet, headerRow, requestId, ingestionRunId, sourceDocumentId, result);
+                ParseUnacceptedRows(unacceptedSheet, headerRow.Value, requestId, ingestionRunId, sourceDocumentId, result);
         }
 
         return result;
@@ -101,8 +107,10 @@ public static class CreditRatingsParser
         for (var r = headerRow + 1; r < sheet.Rows.Count; r++)
         {
             var row = sheet.Rows[r];
+            if (IsAcceptedHeaderRow(row) || IsUnacceptedHeaderRow(row)) break; // a repeated header ends this table
             var agency = Cell(row, 0);
             if (string.IsNullOrEmpty(agency)) break;
+            if (IsFooterRow(agency)) break;
 
             var cr = new CreditRating
             {
@@ -124,10 +132,27 @@ public static class CreditRatingsParser
         }
     }
 
-    /// <summary>Locates the "AGENCY" header row, tolerating a trailing-space variant ("AGENCY ")
-    /// observed in some exports.</summary>
-    private static int FindHeaderRow(SheetData sheet, int startAt = 0) =>
-        FindRow(sheet, r => string.Equals(Cell(sheet.Rows[r], 0), "AGENCY", StringComparison.OrdinalIgnoreCase), startAt) ?? -1;
+    /// <summary>Validates the full 9-column accepted-ratings header shape (not just "AGENCY" in column
+    /// 0, which can't distinguish this layout from the 7-column unaccepted one, let alone from an
+    /// unrelated row). Tolerates the trailing-space "AGENCY " variant observed in some exports — the
+    /// shared <see cref="Cell"/> helper already trims.</summary>
+    private static bool IsAcceptedHeaderRow(IReadOnlyList<object?> row) =>
+        CellEquals(row, 0, "AGENCY") && CellEquals(row, 1, "DATE") && CellEquals(row, 2, "INSTRUMENT") &&
+        CellEquals(row, 3, "AMOUNT") && CellEquals(row, 4, "CURRENCY") && CellEquals(row, 5, "RATING") &&
+        CellEquals(row, 6, "ACTION") && CellEquals(row, 7, "OUTLOOK");
+
+    /// <summary>Validates the full 7-column unaccepted-ratings header shape.</summary>
+    private static bool IsUnacceptedHeaderRow(IReadOnlyList<object?> row) =>
+        CellEquals(row, 0, "AGENCY") && CellEquals(row, 1, "INSTRUMENT") && CellEquals(row, 2, "AMOUNT") &&
+        CellEquals(row, 3, "CURRENCY") && CellEquals(row, 4, "RATING") &&
+        (Cell(row, 5)?.StartsWith("DATE OF NON", StringComparison.OrdinalIgnoreCase) ?? false);
+
+    private static bool IsFooterRow(string agency) =>
+        agency.Equals("Total", StringComparison.OrdinalIgnoreCase) ||
+        agency.StartsWith("Grand Total", StringComparison.OrdinalIgnoreCase);
+
+    private static bool CellEquals(IReadOnlyList<object?> row, int i, string expected) =>
+        string.Equals(Cell(row, i), expected, StringComparison.OrdinalIgnoreCase);
 
     private static int? FindRow(SheetData sheet, Func<int, bool> predicate, int startAt)
     {

@@ -82,4 +82,69 @@ public class CreditRatingsParserTests
         Assert.Empty(r.Items);
         Assert.Single(r.Warnings, w => w.IssueCode == "CREDIT_RATINGS_HEADER_NOT_FOUND");
     }
+
+    // ── Codex review (PR #91): the table must have a real boundary, not "scan to end of sheet" ──
+
+    [Fact]
+    public void StopsAtARepeatedHeaderRatherThanTreatingItAsData()
+    {
+        var sheet = Sheet("Credit Ratings",
+            Row("AGENCY", "DATE", "INSTRUMENT", "AMOUNT", "CURRENCY", "RATING", "ACTION", "OUTLOOK", "REMARKS"),
+            Row("CRISIL", "15 Jun, 2020", "Long Term Bank Facilities", 150.0, "INR", "CRISIL A", "Reaffirmed", "Stable", "-"),
+            // No blank separator — the header repeats (e.g. a page-break artifact).
+            Row("AGENCY", "DATE", "INSTRUMENT", "AMOUNT", "CURRENCY", "RATING", "ACTION", "OUTLOOK", "REMARKS"),
+            Row("SHOULD NOT BE PARSED", "1 Jan, 2021", "x", 1.0, "INR", "x", "x", "x", "x"));
+
+        var r = CreditRatingsParser.Parse(sheet, null, 1, 1, 10);
+
+        var item = Assert.Single(r.Items);
+        Assert.Equal("CRISIL", item.Agency);
+    }
+
+    [Fact]
+    public void StopsAtATotalFooterRow()
+    {
+        var sheet = Sheet("Credit Ratings",
+            Row("AGENCY", "DATE", "INSTRUMENT", "AMOUNT", "CURRENCY", "RATING", "ACTION", "OUTLOOK", "REMARKS"),
+            Row("CRISIL", "15 Jun, 2020", "Long Term Bank Facilities", 150.0, "INR", "CRISIL A", "Reaffirmed", "Stable", "-"),
+            Row("Total", "", "", 150.0, "", "", "", "", ""));
+
+        var r = CreditRatingsParser.Parse(sheet, null, 1, 1, 10);
+
+        var item = Assert.Single(r.Items);
+        Assert.Equal("CRISIL", item.Agency);
+    }
+
+    [Fact]
+    public void StopsAtAnUnrelatedRowRatherThanScanningPastAGap()
+    {
+        var sheet = Sheet("Credit Ratings",
+            Row("AGENCY", "DATE", "INSTRUMENT", "AMOUNT", "CURRENCY", "RATING", "ACTION", "OUTLOOK", "REMARKS"),
+            Row("CRISIL", "15 Jun, 2020", "Long Term Bank Facilities", 150.0, "INR", "CRISIL A", "Reaffirmed", "Stable", "-"),
+            Row(""),
+            // An unrelated section further down the sheet whose 1st column happens to be populated —
+            // must never be picked up as more ratings.
+            Row("Some Other Section"),
+            Row("NOT AN AGENCY", "x", "y"));
+
+        var r = CreditRatingsParser.Parse(sheet, null, 1, 1, 10);
+
+        var item = Assert.Single(r.Items);
+        Assert.Equal("CRISIL", item.Agency);
+    }
+
+    [Fact]
+    public void UnacceptedRatingsStopsAtARepeatedHeaderAndATotalRow()
+    {
+        var sheet = Sheet("Unaccepted Ratings",
+            Row("AGENCY", "INSTRUMENT", "AMOUNT", "CURRENCY", "RATING", "DATE OF NON-ACCEPTANCE", "REMARKS"),
+            Row("CARE", "Term Loan", 50.0, "INR", "CARE BB+", "10 Mar, 2019", "-"),
+            Row("AGENCY", "INSTRUMENT", "AMOUNT", "CURRENCY", "RATING", "DATE OF NON-ACCEPTANCE", "REMARKS"),
+            Row("SHOULD NOT BE PARSED", "x", 1.0, "INR", "x", "1 Jan, 2020", "x"));
+
+        var r = CreditRatingsParser.Parse(null, sheet, 1, 1, 10);
+
+        var item = Assert.Single(r.Items);
+        Assert.Equal("CARE", item.Agency);
+    }
 }
