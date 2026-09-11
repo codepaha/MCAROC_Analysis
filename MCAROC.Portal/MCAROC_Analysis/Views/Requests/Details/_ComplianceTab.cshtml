@@ -96,6 +96,7 @@
         ("EPFO", "epfo", Model.EpfoContributions.Count),
         ("MSME", "msme", Model.MsmePayments.Count),
         ("Auditor", "auditor", Model.AuditorObservations.Count),
+        ("Credit Ratings", "credit-ratings", Model.CreditRatings.Count),
     };
 
     void AuditorTable(List<AuditorObservation> rows)
@@ -545,6 +546,54 @@
             }
         }
         else { <div class="mca-empty"><i class="bi bi-clipboard-check"></i><p>@Model.SheetCoverage.EmptyState("No auditor observations were extracted.", SheetAliases.Auditors, SheetAliases.AuditorsConsolidated)</p></div> }
+    </div>
+
+    @* ── Credit Ratings ── *@
+    <div class="tab-pane fade mca-subtab-panel" id="sec-compliance-credit-ratings" role="tabpanel">
+        @{ var accepted = Model.CreditRatings.Where(c => c.IsAccepted).ToList(); var unaccepted = Model.CreditRatings.Where(c => !c.IsAccepted).ToList(); }
+        @if (Model.CreditRatings.Count > 0)
+        {
+            @if (accepted.Count > 0)
+            {
+                <div class="mca-section">
+                    <h3>Ratings <span class="mca-count">@accepted.Count</span></h3>
+                    <div class="pi-table-wrap"><table class="pi-results-table">
+                        <thead><tr><th>Agency</th><th>Date</th><th>Instrument</th><th class="text-end">Amount</th><th>Currency</th><th>Rating</th><th>Action</th><th>Outlook</th><th>Remarks</th></tr></thead>
+                        <tbody>
+                        @foreach (var c in accepted.OrderByDescending(x => x.RatingDate))
+                        {
+                            <tr>
+                                <td>@c.Agency</td><td>@D(c.RatingDate)</td><td>@Or(c.Instrument)</td>
+                                <td class="text-end">@Num(c.Amount)</td><td>@Or(c.Currency)</td>
+                                <td>@Or(c.Rating)</td><td>@Or(c.Action)</td><td>@Or(c.Outlook)</td><td>@Or(c.Remarks)</td>
+                            </tr>
+                        }
+                        </tbody>
+                    </table></div>
+                </div>
+            }
+            @if (unaccepted.Count > 0)
+            {
+                <div class="mca-section">
+                    <h3>Unaccepted Ratings <span class="mca-count">@unaccepted.Count</span></h3>
+                    <p class="text-muted">The issuer did not accept or participate in these rating exercises.</p>
+                    <div class="pi-table-wrap"><table class="pi-results-table">
+                        <thead><tr><th>Agency</th><th>Instrument</th><th class="text-end">Amount</th><th>Currency</th><th>Rating</th><th>Date of Non-Acceptance</th><th>Remarks</th></tr></thead>
+                        <tbody>
+                        @foreach (var c in unaccepted.OrderByDescending(x => x.RatingDate))
+                        {
+                            <tr>
+                                <td>@c.Agency</td><td>@Or(c.Instrument)</td>
+                                <td class="text-end">@Num(c.Amount)</td><td>@Or(c.Currency)</td>
+                                <td>@Or(c.Rating)</td><td>@D(c.RatingDate)</td><td>@Or(c.Remarks)</td>
+                            </tr>
+                        }
+                        </tbody>
+                    </table></div>
+                </div>
+            }
+        }
+        else { <div class="mca-empty"><i class="bi bi-award"></i><p>@Model.SheetCoverage.EmptyState("No credit rating history was reported in this workbook.", SheetAliases.CreditRatings, SheetAliases.UnacceptedRatings)</p></div> }
     </div>
 
 </div>

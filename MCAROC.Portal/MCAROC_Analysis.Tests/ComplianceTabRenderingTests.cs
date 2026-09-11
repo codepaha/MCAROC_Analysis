@@ -381,4 +381,34 @@ public class ComplianceTabRenderingTests
         Assert.Contains("320039E", html);
         Assert.Contains("300113", html);
     }
+
+    // ── A9 / #51 — Credit Ratings + Unaccepted Ratings ──
+
+    [Fact]
+    public async Task Credit_ratings_section_separates_accepted_from_unaccepted()
+    {
+        var vm = CreateViewModel();
+        vm.CreditRatings =
+        [
+            new CreditRating
+            {
+                Agency = "CRISIL", RatingDate = new DateOnly(2020, 6, 15), Instrument = "Long Term Bank Facilities",
+                Amount = 150.0m, Currency = "INR", Rating = "CRISIL A", Action = "Reaffirmed", Outlook = "Stable",
+                IsAccepted = true
+            },
+            new CreditRating
+            {
+                Agency = "CARE", Instrument = "Term Loan", Amount = 50.0m, Currency = "INR", Rating = "CARE BB+",
+                RatingDate = new DateOnly(2019, 3, 10), IsAccepted = false
+            }
+        ];
+
+        var html = await RenderComplianceTabAsync(vm);
+
+        Assert.Contains("CRISIL", html);
+        Assert.Contains("Reaffirmed", html);
+        Assert.Contains("Unaccepted Ratings", html);
+        Assert.Contains("CARE", html);
+        Assert.Contains("did not accept or participate", html);
+    }
 }

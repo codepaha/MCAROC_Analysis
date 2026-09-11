@@ -48,6 +48,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<PrincipalBusinessActivity> PrincipalBusinessActivities => Set<PrincipalBusinessActivity>();
     public DbSet<RelatedCorporate> RelatedCorporates => Set<RelatedCorporate>();
     public DbSet<RelatedPartyTransaction> RelatedPartyTransactions => Set<RelatedPartyTransaction>();
+    public DbSet<CreditRating> CreditRatings => Set<CreditRating>();
     public DbSet<ComplianceRecord> ComplianceRecords => Set<ComplianceRecord>();
     public DbSet<FinancialParameter> FinancialParameters => Set<FinancialParameter>();
     public DbSet<SecurityAllotment> SecurityAllotments => Set<SecurityAllotment>();
