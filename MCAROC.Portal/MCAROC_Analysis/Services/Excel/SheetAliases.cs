@@ -38,6 +38,7 @@ public static class SheetAliases
     public static readonly string[] RelatedPartyTransactions = ["Related Party Transactions"];
     public static readonly string[] CreditRatings = ["Credit Ratings"];
     public static readonly string[] UnacceptedRatings = ["Unaccepted Ratings"];
+    public static readonly string[] LegalCasesFinancialDispute = ["Legal Cases - Financial Dispute"];
 
     /// <summary>The optional sheets whose presence the orchestrator records per ingestion run — exactly
     /// the sheets a section parser reads in <c>IngestionOrchestrator.RunSectionParsers</c>, so every
@@ -54,7 +55,7 @@ public static class SheetAliases
         Epfo, EpfoAnnexure, Auditors, AuditorsConsolidated, LegalHistory, Structure,
         RelatedCorporates, Compliance, SecuritiesAllotment, Proprietorship,
         DirectorAssociationHistory, PeerComparison, Highlights, FinancialParametersAnnexure,
-        RelatedPartyTransactions, CreditRatings, UnacceptedRatings,
+        RelatedPartyTransactions, CreditRatings, UnacceptedRatings, LegalCasesFinancialDispute,
     ];
 
     /// <summary>The canonical (reviewer-facing) name for an alias set — its first entry.</summary>

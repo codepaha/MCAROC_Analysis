@@ -329,10 +329,10 @@
     },
     {
       "workbook": "RocReport", "sheet": "Legal Cases - Financial Dispute", "shape": "flat table, 10 cols, header row 0 (12/41 companies; absent from the COASTAL fixture)",
-      "parser": "(none yet — A10/#52)", "entity": "(none yet)",
+      "parser": "FinancialDisputeParser", "entity": "FinancialDisputeCase",
       "portal_tab": "Litigation", "dossier": "Annexure E",
       "fields": [
-        {"source": "Amount Payable/Receivable / Type Of Financial Dispute / Currency / Amount Under Default / Verdict / Court / Litigant(s) / Case No. / Date Of Default / Date Of Judgement", "entityField": null, "status": "not-parsed", "gap": "G16"}
+        {"source": "Amount Payable/Receivable / Type Of Financial Dispute / Currency / Amount Under Default / Verdict / Court / Litigant(s) / Case No. / Date Of Default / Date Of Judgement", "entityField": "Direction / DisputeType / Currency / AmountUnderDefault / Verdict / Court / Litigants / CaseNumber / DateOfDefault / DateOfJudgement", "status": "live", "note": "A10/#52 — column layout from the VTION portfolio audit, not a real workbook (absent from COASTAL); synthetic-only test coverage. Separate register from Legal History, its own Litigation-tab section."}
       ]
     }
   ],
@@ -393,7 +393,7 @@
      "detail": "Credit-rating history (agency, instrument, amount, rating, action, outlook) and non-accepted ratings — 9/41 and 2/41 companies. Material to a BFSI view.",
      "fix": "New CreditRating entity (IsAccepted flag) + dynamic header-driven parser + Compliance-tab render.",
      "issue": "#51"},
-    {"id": "G16", "title": "Legal Cases - Financial Dispute sheet not parsed", "severity": "medium",
+    {"id": "G16", "title": "Legal Cases - Financial Dispute sheet not parsed", "severity": "medium", "status": "DONE (A10 / #52)",
      "detail": "Money-claim disputes with amount-under-default + verdict — 12/41 companies. Separate register from Legal History; directly material to a lender.",
      "fix": "New FinancialDisputeCase entity + parser (flat 10-col table) + Litigation-tab section.",
      "issue": "#52"},

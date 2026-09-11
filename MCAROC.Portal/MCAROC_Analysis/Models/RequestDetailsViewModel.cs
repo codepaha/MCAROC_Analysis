@@ -36,6 +36,7 @@ public class RequestDetailsViewModel
     public List<EpfoEstablishment> EpfoEstablishments { get; set; } = [];
     public List<AuditorObservation> AuditorObservations { get; set; } = [];
     public List<Litigation> Litigations { get; set; } = [];
+    public List<FinancialDisputeCase> FinancialDisputeCases { get; set; } = [];
 
     // Phase 7.0 — completeness layer
     public List<CompanyOfficer> CompanyOfficers { get; set; } = [];

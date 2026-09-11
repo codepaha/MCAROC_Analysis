@@ -98,6 +98,11 @@
             Unverified <span class="badge">@unverified.Count</span>
         </button>
     </li>
+    <li class="nav-item" role="presentation">
+        <button class="nav-link" data-bs-toggle="tab" data-bs-target="#sec-litigation-financial-disputes" type="button" role="tab">
+            Financial Disputes <span class="badge">@Model.FinancialDisputeCases.Count</span>
+        </button>
+    </li>
 </ul>
 
 <div class="tab-content">
@@ -233,6 +238,38 @@
         else
         {
             <div class="mca-empty"><i class="bi bi-bank"></i><p>@Model.SheetCoverage.EmptyState("No unverified court records were reported.", SheetAliases.LegalHistory)</p></div>
+        }
+    </div>
+
+    <!-- 5. FINANCIAL DISPUTES TAB -->
+    <div class="tab-pane fade mca-subtab-panel" id="sec-litigation-financial-disputes" role="tabpanel">
+        <p class="text-muted">Money-claim disputes with an amount under default — a separate register from Legal History above, not litigation role/status cases.</p>
+        @if (Model.FinancialDisputeCases.Count > 0)
+        {
+            <div class="pi-table-wrap"><table class="pi-results-table">
+                <thead><tr><th>Direction</th><th>Type</th><th class="text-end">Amount Under Default</th><th>Currency</th><th>Verdict</th><th>Court</th><th>Parties</th><th>Case No.</th><th>Date of Default</th><th>Date of Judgement</th></tr></thead>
+                <tbody>
+                @foreach (var fd in Model.FinancialDisputeCases)
+                {
+                    <tr>
+                        <td>@Or(fd.Direction)</td>
+                        <td>@Or(fd.DisputeType)</td>
+                        <td class="text-end"><strong>@Num(fd.AmountUnderDefault)</strong></td>
+                        <td>@Or(fd.Currency)</td>
+                        <td><strong>@Or(fd.Verdict)</strong></td>
+                        <td>@Or(fd.Court)</td>
+                        <td>@Or(fd.Litigants)</td>
+                        <td class="report-id">@Or(fd.CaseNumber)</td>
+                        <td>@D(fd.DateOfDefault)</td>
+                        <td>@D(fd.DateOfJudgement)</td>
+                    </tr>
+                }
+                </tbody>
+            </table></div>
+        }
+        else
+        {
+            <div class="mca-empty"><i class="bi bi-bank"></i><p>@Model.SheetCoverage.EmptyState("No financial dispute cases were reported in this workbook.", SheetAliases.LegalCasesFinancialDispute)</p></div>
         }
     </div>
 
