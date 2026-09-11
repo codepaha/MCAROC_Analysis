@@ -26,6 +26,43 @@ public class HeaderGroupsTests
         Assert.Equal(["A", "B", "C"], bare.Chunks.ToArray());
     }
 
+    // ── Rule 4 regression pins (Codex review on PR #89, eb7b603): the first version checked a gap id
+    // exists in gaps[] but never that it's still open — a field could sit forever citing a gap the
+    // catalogue itself already marks done, which is exactly the staleness this rule exists to catch. ──
+
+    private static CatalogueRoot RootWith(string status, string? gap, params CatalogueGap[] gaps) =>
+        new([new CatalogueSheet("RocReport", "Test Sheet", [new CatalogueField("Some Column", status, gap)])], [.. gaps]);
+
+    [Fact]
+    public void Not_parsed_field_with_no_gap_id_is_a_violation() =>
+        Assert.Single(CatalogueCoverageTests.FindGapViolations(RootWith("not-parsed", null)));
+
+    [Fact]
+    public void Not_parsed_field_referencing_an_untracked_gap_is_a_violation() =>
+        Assert.Single(CatalogueCoverageTests.FindGapViolations(RootWith("not-parsed", "G99")));
+
+    [Fact]
+    public void Not_parsed_field_referencing_an_already_done_gap_is_a_violation()
+    {
+        // The regression Codex's review caught: G1 IS tracked, so the old check (existence only)
+        // passed this — but the catalogue already records G1 as fixed, so a field still citing it as
+        // not-parsed is stale, not legitimately incomplete.
+        var violations = CatalogueCoverageTests.FindGapViolations(
+            RootWith("parsed-not-shown", "G1", new CatalogueGap("G1", "DONE (A1 / #32)")));
+
+        var v = Assert.Single(violations);
+        Assert.Contains("already marks done", v);
+    }
+
+    [Fact]
+    public void Not_parsed_field_referencing_a_still_open_gap_is_fine() =>
+        Assert.Empty(CatalogueCoverageTests.FindGapViolations(
+            RootWith("not-parsed", "G8", new CatalogueGap("G8", null))));
+
+    [Fact]
+    public void Live_field_needs_no_gap_at_all() =>
+        Assert.Empty(CatalogueCoverageTests.FindGapViolations(RootWith("live", null)));
+
     [Fact]
     public void Structure_grid_title_ends_the_summary_block_without_leaking_grid_content()
     {

@@ -6,8 +6,10 @@ namespace MCAROC_Analysis.Tests.CatalogueCoverage;
 /// <summary>A7 (#38) — turns <c>docs/data-coverage-catalogue.json</c> from documentation into an
 /// enforced contract:
 ///   1. Every field entry marked <c>not-parsed</c> / <c>parsed-not-shown</c> must name a gap id that is
-///      actually tracked in the catalogue's <c>gaps[]</c> list (catches a catalogue row going stale —
-///      e.g. a gap marked fixed elsewhere but a field row never updated) — always runs, no fixture needed.
+///      both tracked in the catalogue's <c>gaps[]</c> list AND still open there — not a gap the
+///      catalogue itself already marks "DONE (...)" (catches a catalogue row going stale: the gap
+///      closed elsewhere but this field row was never updated to 'live'/'dropped-by-design') — always
+///      runs, no fixture needed.
 ///   2. Every column header in the real COASTAL workbooks must be represented in the catalogue by some
 ///      field entry (any status) — a brand-new or renamed column with zero catalogue entry fails loudly,
 ///      telling the dev to add a row. Needs the real (git-ignored) fixtures, so it's a <see cref="SkippableFact"/>
@@ -66,13 +68,23 @@ public class CatalogueCoverageTests
         return null;
     }
 
-    // ── Rule 4: every not-parsed / parsed-not-shown field names a tracked gap ──
+    // ── Rule 4: every not-parsed / parsed-not-shown field names a tracked, still-open gap ──
 
     [Fact]
     public void Every_incomplete_field_references_a_tracked_gap()
     {
-        var catalogue = CatalogueRoot.Load(RepoRoot());
-        var gapIds = catalogue.Gaps.Select(g => g.Id).ToHashSet();
+        var violations = FindGapViolations(CatalogueRoot.Load(RepoRoot()));
+        Assert.True(violations.Count == 0,
+            $"{violations.Count} catalogue row(s) are incomplete without a tracked, open gap id:\n" + string.Join("\n", violations));
+    }
+
+    /// <summary>Pure so <see cref="HeaderGroupsTests"/> can pin all three failure modes against
+    /// synthetic data: no gap id, a gap id absent from gaps[], and — the one PR #89's first version
+    /// missed (Codex review) — a gap id that IS tracked but already marked done, which is exactly the
+    /// stale-catalogue regression this rule exists to catch (the gap moved on, the field row didn't).</summary>
+    internal static List<string> FindGapViolations(CatalogueRoot catalogue)
+    {
+        var gapsById = catalogue.Gaps.ToDictionary(g => g.Id);
         var violations = new List<string>();
 
         foreach (var sheet in catalogue.Sheets)
@@ -81,13 +93,21 @@ public class CatalogueCoverageTests
                 if (field.Status is not ("not-parsed" or "parsed-not-shown")) continue;
 
                 if (string.IsNullOrWhiteSpace(field.Gap))
+                {
                     violations.Add($"{sheet.Workbook}/{sheet.Sheet}: \"{field.Source}\" is '{field.Status}' but names no gap id");
-                else if (!gapIds.Contains(field.Gap))
+                }
+                else if (!gapsById.TryGetValue(field.Gap, out var gap))
+                {
                     violations.Add($"{sheet.Workbook}/{sheet.Sheet}: \"{field.Source}\" references gap '{field.Gap}', which is not in gaps[]");
+                }
+                else if (gap.IsDone)
+                {
+                    violations.Add($"{sheet.Workbook}/{sheet.Sheet}: \"{field.Source}\" is '{field.Status}' but references gap '{field.Gap}', " +
+                        "which the catalogue already marks done — either the field row is stale (should be 'live'/'dropped-by-design' now) or the gap closed prematurely");
+                }
             }
 
-        Assert.True(violations.Count == 0,
-            $"{violations.Count} catalogue row(s) are incomplete without a tracked gap id:\n" + string.Join("\n", violations));
+        return violations;
     }
 
     // ── Rules 3 + 5: every real workbook column is catalogued ──

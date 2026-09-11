@@ -46,4 +46,10 @@ public sealed record CatalogueField(
 
 public sealed record CatalogueGap(
     [property: JsonPropertyName("id")] string Id,
-    [property: JsonPropertyName("status")] string? Status);
+    [property: JsonPropertyName("status")] string? Status)
+{
+    /// <summary>A gap the catalogue itself already records as fixed ("DONE (A6 / #37)"). A field row
+    /// still pointing at a done gap while claiming not-parsed/parsed-not-shown is exactly the stale
+    /// condition A7 exists to catch — the gap moved on without the field row being updated.</summary>
+    public bool IsDone => Status is not null && Status.StartsWith("DONE", StringComparison.OrdinalIgnoreCase);
+}
