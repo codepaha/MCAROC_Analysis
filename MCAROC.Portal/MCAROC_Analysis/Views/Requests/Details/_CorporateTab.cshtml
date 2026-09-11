@@ -330,6 +330,8 @@
             <p class="text-muted">@Model.SheetCoverage.EmptyState("No shareholding summary (promoter/public split) was reported in this workbook.", SheetAliases.Structure)</p>
         }
 
+        @await Html.PartialAsync("Details/_KeyIndicators", Model.KeyMetrics.Where(g => g.Title == "Shareholding").ToList())
+
         <div class="mca-section">
             <h3>Shareholders <span class="mca-count">@Model.Shareholdings.Count</span></h3>
             @if (Model.Shareholdings.Count > 0)
