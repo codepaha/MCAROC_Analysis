@@ -279,6 +279,16 @@ Linux subset fonts break PdfPig's ToUnicode → those are `[SkippableFact]`, ski
 - **Pausing here per owner request** — all three PRs are up for @codex review, none merged yet.
 
 ### 2026-09-11 — Antigravity
+- **DONE D6 / #61 → branch `feature/d6-directors-metrics`**: Directors analytics (Section I, I1–I6).
+  1. Persisted source workbook "Printed at" timestamp on `IngestionRun.SourceSnapshotDate` via tested `DateTimeNormalizer` (terminal "Hours" stripping, provenance tracking, warnings on missing/malformed/conflicting timestamps).
+  2. Implemented strict fail-closed anchor: I2, I3, I6 evaluate to `Insufficient` if `SourceSnapshotDate` is null (zero fallback to `McaDataAsOf` or `ReportDate`).
+  3. Word-aware designation normalisation (I4) prioritizing Independent Director before Executive/Whole-time to prevent collisions with Non-Executive Independent Director.
+  4. Future appointment dates excluded from tenure calculation with period disclosure and never producing negative tenure.
+  5. Flagged director count (I5) excluding null, whitespace, and hyphens ("-", "--").
+  6. Pinned COASTAL fixture control totals (24 directors, 3 officers, I1=3, I2=1.0 yrs, I3=6, I4=2 Director/1 Additional Director, I5=7, I6=2.0 yrs).
+  7. Management subtab renders Key Indicators outside conditionals; golden master, analytics.json, and catalogue updated to shipped. → **@codex** review.
+
+### 2026-09-11 — Antigravity
 - **DONE D5 / #60 → PR #88 (`feature/d5-legal-history-metrics`)**: Legal history analytics (Section D, D1–D8).
   Implemented in `DossierComputations.Metrics.cs` and wired into `BuildMetricGroups`.
   Addressed review findings:

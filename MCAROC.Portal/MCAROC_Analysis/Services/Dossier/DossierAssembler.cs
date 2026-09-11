@@ -100,7 +100,7 @@ public class DossierAssembler(AppDbContext db)
             new DossierCover(
                 request.CompanyName, request.Cin ?? profile?.Cin, request.Pan ?? profile?.Pan,
                 profile?.IncorporationDate, profile?.CompanyStatus,
-                request.Client?.ClientName ?? "", DateTime.UtcNow, run?.CompletedDate),
+                request.Client?.ClientName ?? "", DateTime.UtcNow, run?.CompletedDate, run?.SourceSnapshotDate),
             new DossierCorporate(directors, officers, shareholders, related, allotments, desigHistory, otherDirectorships, structure, profile?.PaidUpCapital),
             new DossierFinancials(standalone, consolidated, facts, parameters, auditors, peers),
             new DossierCharges(

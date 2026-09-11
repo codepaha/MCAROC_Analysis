@@ -41,7 +41,8 @@
   "MetricGroupTitles": [
     "Charge register",
     "GST compliance",
-    "Legal history"
+    "Legal history",
+    "Directors"
   ],
   "DataSufficiencyNoteCodes": [
     "FIN_LEVERAGE_TREND",

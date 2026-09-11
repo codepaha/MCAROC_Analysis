@@ -24,7 +24,7 @@ public sealed record DossierModel(
 
 public sealed record DossierCover(
     string CompanyName, string? Cin, string? Pan, DateOnly? IncorporationDate, string? Status,
-    string ClientName, DateTime ReportDate, DateTime? McaDataAsOf);
+    string ClientName, DateTime ReportDate, DateTime? McaDataAsOf, DateTime? SourceSnapshotDate = null);
 
 public sealed record DossierCorporate(
     IReadOnlyList<Director> Directors,

@@ -12,6 +12,10 @@ public class IngestionRun
     public DateTime StartedDate { get; set; }
     public DateTime? CompletedDate { get; set; }
 
+    /// <summary>The source workbook's own export/snapshot timestamp parsed from 'About the Company' (e.g. "Printed at").
+    /// Immutable anchor for time-sensitive metrics; null if the source workbook omitted the header or it could not be parsed.</summary>
+    public DateTime? SourceSnapshotDate { get; set; }
+
     public IngestionRunStatus Status { get; set; } = IngestionRunStatus.Running;
 
     /// <summary>Bumped manually when parser logic changes materially.</summary>

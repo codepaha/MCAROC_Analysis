@@ -173,6 +173,8 @@
 
     @* ── Management ── *@
     <div class="tab-pane fade mca-subtab-panel" id="sec-corporate-management" role="tabpanel">
+        @await Html.PartialAsync("Details/_KeyIndicators", Model.KeyMetrics.Where(g => g.Title == "Directors").ToList())
+
         <div class="mca-section">
             <h3>Current Directors <span class="mca-count">@currentDirectors.Count</span></h3>
             @if (currentDirectors.Count > 0)
