@@ -9,9 +9,10 @@ namespace MCAROC_Analysis.Services.Excel.Parsers;
 /// workbook; header row is located dynamically rather than assumed at a fixed index so a banner-less
 /// export still parses.
 ///
-/// The data loop stops (does not merely skip) at the first table-boundary signal — a blank row, a
-/// repeated header, or a "Total"/footer line — so a footer, a repeated header, or an unrelated table
-/// further down the sheet can never be silently ingested as transactions (Codex review, PR #90).</summary>
+/// The data loop stops at a real table-boundary signal — a blank row or a "Total"/footer line — so a
+/// footer or an unrelated table further down the sheet can never be silently ingested as transactions.
+/// A repeated full header is a normal page-break/continuation artifact, not a boundary: it is skipped,
+/// not treated as end-of-table, so rows after it are not lost (Codex review, PR #90).</summary>
 public static class RelatedPartyTransactionsParser
 {
     private const string ParserName = nameof(RelatedPartyTransactionsParser);
@@ -32,7 +33,7 @@ public static class RelatedPartyTransactionsParser
         for (var r = headerRow + 1; r < sheet.Rows.Count; r++)
         {
             var row = sheet.Rows[r];
-            if (IsHeaderRow(row)) break; // a repeated header ends this table, not a data row
+            if (IsHeaderRow(row)) continue; // a repeated header is a page-break artifact — skip it, keep parsing
             if (IsFooterRow(row)) break; // "Total" / "Grand Total" etc.
 
             var name = Cell(row, 2);

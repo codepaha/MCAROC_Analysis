@@ -70,20 +70,25 @@ public class RelatedPartyTransactionsParserTests
     }
 
     [Fact]
-    public void StopsAtARepeatedHeaderRatherThanTreatingItAsData()
+    public void SkipsARepeatedHeaderAndKeepsParsingBothSidesOfIt()
     {
+        var header = Row("Financial Year Ending On", "Entity Type", "Entity Name", "Relationship", "Transaction Type", "Amount (Rs. Crore)");
         var sheet = Sheet("Related Party Transactions",
             Row("RELATED PARTY TRANSACTIONS"),
-            Row("Financial Year Ending On", "Entity Type", "Entity Name", "Relationship", "Transaction Type", "Amount (Rs. Crore)"),
+            header,
             Row("31 Mar, 2017", "Company", "GRANDEUR POWER PROJECTS PRIVATE LIMITED", "SUBSIDIARY CORPORATES", "Revenue", 12.5),
-            // No blank separator — the table's own header repeats (e.g. a page-break artifact).
-            Row("Financial Year Ending On", "Entity Type", "Entity Name", "Relationship", "Transaction Type", "Amount (Rs. Crore)"),
-            Row("31 Mar, 2016", "Company", "SHOULD NOT BE PARSED", "SUBSIDIARY CORPORATES", "Revenue", 1.0));
+            // No blank separator — the table's own header repeats (a normal page-break/continuation
+            // artifact in a paginated export). Rows on both sides are real and must both be kept.
+            header,
+            Row("31 Mar, 2016", "Company", "SABBINENI SURENDRA", "KEY MANAGERIAL PERSONNEL", "Revenue", 1.0));
 
         var r = RelatedPartyTransactionsParser.Parse(sheet, 1, 1, 10);
 
-        var item = Assert.Single(r.Items);
-        Assert.Equal("GRANDEUR POWER PROJECTS PRIVATE LIMITED", item.EntityNameRaw);
+        Assert.Equal(2, r.Items.Count);
+        Assert.Equal("GRANDEUR POWER PROJECTS PRIVATE LIMITED", r.Items[0].EntityNameRaw);
+        Assert.Equal(3, r.Items[0].SourceRowNumber);
+        Assert.Equal("SABBINENI SURENDRA", r.Items[1].EntityNameRaw);
+        Assert.Equal(5, r.Items[1].SourceRowNumber); // row 4 is the repeated header, skipped but not counted out
     }
 
     [Fact]
