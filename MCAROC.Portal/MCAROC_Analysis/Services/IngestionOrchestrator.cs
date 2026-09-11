@@ -316,6 +316,14 @@ public class IngestionOrchestrator(AppDbContext db, IExcelSheetReader sheetReade
             Collect(r, issues, ref itemCount);
         }
 
+        var financialDisputeSheet = rocSheets.Find(SheetAliases.LegalCasesFinancialDispute);
+        if (financialDisputeSheet is not null)
+        {
+            var r = FinancialDisputeParser.Parse(financialDisputeSheet, requestId, runId, rocDocumentId);
+            db.FinancialDisputeCases.AddRange(r.Items);
+            Collect(r, issues, ref itemCount);
+        }
+
         // ── Phase 6 domain sheets ──
         var structureSheet = rocSheets.Find(SheetAliases.Structure);
         if (structureSheet is not null)

@@ -253,6 +253,8 @@ public class RequestsController(
             vm.AuditorObservations = await db.AuditorObservations.Where(x => x.IngestionRunId == runId)
                 .OrderByDescending(x => x.FinancialYear).ToListAsync();
             vm.Litigations = await db.Litigations.Where(x => x.IngestionRunId == runId).ToListAsync();
+            vm.FinancialDisputeCases = await db.FinancialDisputeCases.Where(x => x.IngestionRunId == runId)
+                .OrderByDescending(x => x.DateOfDefault).ToListAsync();
 
             // Phase 6 — the 12 additional workbook sheets.
             vm.Structure = await db.CompanyStructures.FirstOrDefaultAsync(x => x.IngestionRunId == runId);

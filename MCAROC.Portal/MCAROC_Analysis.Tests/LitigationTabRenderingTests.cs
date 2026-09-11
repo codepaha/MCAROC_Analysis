@@ -19,6 +19,9 @@ using Xunit;
 
 namespace MCAROC_Analysis.Tests;
 
+/// <summary>Render coverage for the Litigation tab: D5/#60's Key Indicators block (zero and populated
+/// litigation) and the A10/#52 "Financial Disputes" section. Mirrors the harness in
+/// <see cref="ComplianceTabRenderingTests"/>.</summary>
 public class LitigationTabRenderingTests
 {
     private static string FindRepoRoot()
@@ -137,6 +140,8 @@ public class LitigationTabRenderingTests
         public IFileProvider ContentRootFileProvider { get; set; } = new NullFileProvider();
     }
 
+    // ── D5 / #60 — Key Indicators block ──
+
     [Fact]
     public async Task Zero_litigation_renders_key_indicators_block_and_empty_state()
     {
@@ -200,5 +205,43 @@ public class LitigationTabRenderingTests
         Assert.Contains("Legal history", html);
         Assert.Contains("Confirmed pending case count", html);
         Assert.DoesNotContain("No litigation was matched to this entity.", html);
+    }
+
+    // ── A10 / #52 — Financial Disputes section ──
+
+    [Fact]
+    public async Task Financial_dispute_row_shows_direction_amount_and_verdict()
+    {
+        var vm = CreateViewModel();
+        vm.FinancialDisputeCases =
+        [
+            new FinancialDisputeCase
+            {
+                Direction = "Payable",
+                DisputeType = "Trade Payable",
+                Currency = "INR",
+                AmountUnderDefault = 12.5m,
+                Verdict = "ALLOWED",
+                Court = "NCLT",
+                Litigants = "ACME BANK vs. TEST CORP",
+                CaseNumber = "CP123",
+                DateOfDefault = new DateOnly(2020, 1, 1)
+            }
+        ];
+
+        var html = await RenderLitigationTabAsync(vm);
+
+        Assert.Contains("Financial Disputes", html);
+        Assert.Contains("Payable", html);
+        Assert.Contains("ALLOWED", html);
+        Assert.Contains("ACME BANK vs. TEST CORP", html);
+        Assert.Contains("12.50", html);
+    }
+
+    [Fact]
+    public async Task Empty_financial_disputes_shows_empty_state()
+    {
+        var html = await RenderLitigationTabAsync(CreateViewModel());
+        Assert.Contains("No financial dispute cases were reported", html);
     }
 }
