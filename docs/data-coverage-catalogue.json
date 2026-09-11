@@ -305,10 +305,10 @@
     },
     {
       "workbook": "RocReport", "sheet": "Related Party Transactions", "shape": "banner + flat table, 6 cols, multi-year (25/41 companies in the wider portfolio set; absent from the COASTAL fixture)",
-      "parser": "(none yet — A8/#50)", "entity": "(none yet)",
+      "parser": "RelatedPartyTransactionsParser", "entity": "RelatedPartyTransaction",
       "portal_tab": "Corporate", "dossier": "Annexure A",
       "fields": [
-        {"source": "Financial Year Ending On / Entity Type / Entity Name / Relationship / Transaction Type / Amount (Rs. Crore)", "entityField": null, "status": "not-parsed", "gap": "G14"}
+        {"source": "Financial Year Ending On / Entity Type / Entity Name / Relationship / Transaction Type / Amount (Rs. Crore)", "entityField": "FinancialYearEnding / EntityType / EntityNameRaw / RelationshipRaw / TransactionType / AmountCrore", "status": "live", "note": "A8/#50 — column layout from the VTION portfolio audit, not a real workbook (absent from COASTAL); synthetic-only test coverage"}
       ]
     },
     {
@@ -377,7 +377,7 @@
      "fix": "Litigation tab (Track B): split Confirmed / Probable / Unverified into separate sub-sections, each with a disclaimer.",
      "issue": null},
     {"id": "G13", "title": "EPFO TRRN dropped", "severity": "low", "status": "DONE (A5 / #36)", "detail": "Transaction reference number on the monthly EPFO annexure not stored.", "fix": "Added EpfoContribution.Trrn (migration AddEpfoEstablishment).", "issue": "#36"},
-    {"id": "G14", "title": "Related Party Transactions sheet not parsed", "severity": "medium",
+    {"id": "G14", "title": "Related Party Transactions sheet not parsed", "severity": "medium", "status": "DONE (A8 / #50)",
      "detail": "Transaction-level RPT disclosure (party x transaction type x FY, with amount) — 25/41 companies in the wider portfolio set. Distinct from Related Corporates.",
      "fix": "New RelatedPartyTransaction entity + parser (flat 6-col table, header row 1) + Corporate-tab render.",
      "issue": "#50"},

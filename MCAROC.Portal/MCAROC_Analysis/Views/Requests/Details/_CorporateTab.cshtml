@@ -12,7 +12,7 @@
         ("Management", "management", Model.Directors.Count + Model.CompanyOfficers.Count),
         ("Director Network", "network", Model.DirectorAssociations.Count + Model.ProprietorshipAssociations.Count),
         ("Ownership", "ownership", Model.Shareholdings.Count),
-        ("Group Entities", "group", Model.RelatedCorporates.Count),
+        ("Group Entities", "group", Model.RelatedCorporates.Count + Model.RelatedPartyTransactions.Count),
         ("Capital", "capital", Model.SecurityAllotments.Count),
     };
 }
@@ -435,6 +435,30 @@
         {
             <div class="mca-empty"><i class="bi bi-diagram-2"></i><p>@Model.SheetCoverage.EmptyState("No related corporates (subsidiaries / associates / JVs) were reported in this workbook.", SheetAliases.RelatedCorporates)</p></div>
         }
+
+        <div class="mca-section">
+            <h3>Related Party Transactions <span class="mca-count">@Model.RelatedPartyTransactions.Count</span></h3>
+            @if (Model.RelatedPartyTransactions.Count > 0)
+            {
+                <div class="pi-table-wrap"><table class="pi-results-table">
+                    <thead><tr><th>FY Ending</th><th>Entity</th><th>Type</th><th>Relationship</th><th>Transaction Type</th><th class="text-end">Amount (Cr)</th></tr></thead>
+                    <tbody>
+                    @foreach (var rpt in Model.RelatedPartyTransactions)
+                    {
+                        <tr>
+                            <td>@D(rpt.FinancialYearEnding)</td>
+                            <td>@rpt.EntityNameRaw</td>
+                            <td>@Or(rpt.EntityType)</td>
+                            <td>@Or(rpt.RelationshipRaw)</td>
+                            <td>@Or(rpt.TransactionType)</td>
+                            <td class="text-end">@Num(rpt.AmountCrore)</td>
+                        </tr>
+                    }
+                    </tbody>
+                </table></div>
+            }
+            else { <div class="mca-empty"><i class="bi bi-diagram-2"></i><p>@Model.SheetCoverage.EmptyState("No related party transactions were reported in this workbook.", SheetAliases.RelatedPartyTransactions)</p></div> }
+        </div>
     </div>
 
     @* ── Capital ── *@

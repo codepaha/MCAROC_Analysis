@@ -47,6 +47,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<CompanyNameHistory> CompanyNameHistories => Set<CompanyNameHistory>();
     public DbSet<PrincipalBusinessActivity> PrincipalBusinessActivities => Set<PrincipalBusinessActivity>();
     public DbSet<RelatedCorporate> RelatedCorporates => Set<RelatedCorporate>();
+    public DbSet<RelatedPartyTransaction> RelatedPartyTransactions => Set<RelatedPartyTransaction>();
     public DbSet<ComplianceRecord> ComplianceRecords => Set<ComplianceRecord>();
     public DbSet<FinancialParameter> FinancialParameters => Set<FinancialParameter>();
     public DbSet<SecurityAllotment> SecurityAllotments => Set<SecurityAllotment>();
