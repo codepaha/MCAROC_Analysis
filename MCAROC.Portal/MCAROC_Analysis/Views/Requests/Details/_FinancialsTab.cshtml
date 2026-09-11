@@ -56,6 +56,8 @@
                 <div class="pi-metric"><span>Reporting Bases</span><strong>@(con.Count > 0 ? "S + C" : "S")</strong><small>@std.Count standalone · @con.Count consolidated year(s)</small></div>
             </div>
             <p class="text-muted mt-3 mb-0">Standalone is the primary basis (rule engine + default answers). Use the toggle on each statement to view consolidated where available.</p>
+
+            @await Html.PartialAsync("Details/_KeyIndicators", Model.KeyMetrics.Where(g => g.Title == "Financial trend & leverage").ToList())
         }
         else { <div class="mca-empty"><i class="bi bi-cash-stack"></i><p>Financial highlights become available once extraction completes.</p></div> }
     </div>
