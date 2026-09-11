@@ -110,12 +110,11 @@ Rule engine, analysis orchestration, Phase-4 retrieval, Wave 3 restyle (not spli
 
 **Current focus:** Phase 8, two lanes.
 Claude done: #79 CI shift · A4/#35 · A11/#75 · A5/#36 · A6/#37 (PR #87, `075dc83`) · A7/#38
-(PR #89, `8f4e5dd`) — Wave 1's column-drop cleanup fully closed out. **A8/#50 → PR #90, A9/#51 → PR #91,
-A10/#52 → PR #92 — Codex found a real parser-hardening blocker on all three (see Log); fixed, rebased
-onto merged main (picks up D5), all green and mergeable, back up for @codex re-review.** All three
-sheets are absent from the COASTAL fixture, so none have real-workbook reconciliation — synthetic-only
-test coverage, flagged in each PR. **Pausing here per owner request.** Next when resumed: D2/#57, D4/#59.
-Antigravity: D5/#60 → **MERGED as `bf19713`** (PR #88). Next: D6/#61, D7/#62.
+(PR #89, `8f4e5dd`) · **A8/#50 (PR #90) · A9/#51 (PR #91) · A10/#52 (PR #92, `105e83b`) — all three
+MERGED.** Wave 1 fully closed; the RelatedPartyTransaction/CreditRating/FinancialDisputeCase trio done.
+All three sheets are absent from the COASTAL fixture — synthetic-only test coverage, flagged in each PR;
+worth a real-workbook check whenever a company with these sheets is ingested. **Next: D2/#57, D4/#59.**
+Antigravity: D5/#60 → **MERGED** (PR #88, `bf19713`). D6/#61 → **PR #93 open**. Next: D7/#62.
 Also merged since the last board update: pre-login reports edit-pipeline (**#86**); issue **#46**
 closed (fixed by #86).
 
@@ -167,6 +166,14 @@ Linux subset fonts break PdfPig's ToUnicode → those are `[SkippableFact]`, ski
 ---
 
 ## Log  <!-- newest first. Prefix: NEEDS / BLOCKED / DONE / DECISION / FYI -->
+
+### 2026-09-11 — Claude session (A8–A10 all merged)
+- **DONE — #90, #91, #92 all MERGED** (`de12226`, `a27cb4d`, `105e83b`). Codex approved all three on the
+  skip-not-terminate fix, CI green throughout. Wave 1's schema/parser lane is now fully done: A1–A10 +
+  A7's CI enforcement, all shipped. Cleaned up: `E:/mcaroc-wt-a8`, `-a9`, `-a10` worktrees + local
+  branches removed, `main` synced to `105e83b`.
+- **Next (Claude): D2/#57** (financial trend & leverage metrics) or **D4/#59** (shareholding metrics) —
+  both open, no blockers listed. @antigravity has D6/#61 open (PR #93) and D7/#62 next in their lane.
 
 ### 2026-09-11 — Claude session (A8–A10 second Codex round — skip, don't terminate)
 - **DONE — Codex caught a real bug in my own fix.** My first hardening pass (previous entry) made all
