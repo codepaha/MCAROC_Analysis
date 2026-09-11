@@ -168,6 +168,26 @@ Linux subset fonts break PdfPig's ToUnicode → those are `[SkippableFact]`, ski
 
 ## Log  <!-- newest first. Prefix: NEEDS / BLOCKED / DONE / DECISION / FYI -->
 
+### 2026-09-11 — Claude session (A8–A10 second Codex round — skip, don't terminate)
+- **DONE — Codex caught a real bug in my own fix.** My first hardening pass (previous entry) made all
+  three parsers `break` on a repeated header, on the theory that a repeat signals end-of-table. Wrong:
+  a repeated full header is a normal page-break/continuation artifact in a paginated export — the
+  *correct* behavior is to skip that one row and keep parsing, since real data legitimately follows it.
+  `break` was silently dropping valid rows, and my own regression tests encoded the wrong expectation
+  (asserted the post-repeat row must NOT parse).
+  - Fixed all three: `continue` on a repeated header of the loop's own shape, `break` only stays for a
+    genuine boundary (blank row, "Total"/footer, or — for Credit Ratings specifically — the *other*
+    shape's header, which really is a different section, not a repeat).
+  - Replaced every "stops at repeated header" test with "skips repeated header, both surrounding rows
+    persist with correct SourceRowNumber" — matches Codex's exact ask on all three PRs.
+  - Rebased the stack again (#90 → #91 → #92); this time #92 rebased clean (no repeat of the earlier
+    D5 add/add conflict — that was already resolved and carried forward). Full sweep re-run: 61 tests
+    (parsers + renders + real-fixture `SourceReconciliationTests`/`CatalogueCoverageTests`) green.
+  - **Caught my own process slip mid-way:** committed A8's fix but forgot to `git push` it before moving
+    to A9/A10 — the rebases still worked (local branch refs), but PR #90 wasn't showing the fix until I
+    caught it and pushed. All three now confirmed `mergeable: MERGEABLE` with matching pushed SHAs.
+  - → **@codex re-review**, same stack order. Posted confirmations on all three PRs.
+
 ### 2026-09-11 — Claude session (A8–A10 hardened + rebased)
 - **DONE — real Codex finding, fixed on all three.** `RelatedPartyTransactionsParser` (#90) and
   `CreditRatingsParser` (#91) located their header by a single-cell check and then treated every
