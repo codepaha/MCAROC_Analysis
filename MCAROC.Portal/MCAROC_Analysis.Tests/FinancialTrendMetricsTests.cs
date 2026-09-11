@@ -33,7 +33,7 @@ public class FinancialTrendMetricsTests
             AnalysisRunId: 1,
             Cover: new DossierCover("Test Company", "U12345AB2020PTC123456", "ABCDE1234F",
                 new DateOnly(2020, 1, 1), "Active", "Client", reportDate, reportDate),
-            Corporate: new DossierCorporate([], [], [], [], [], [], [], null),
+            Corporate: new DossierCorporate([], [], [], [], [], [], [], null, null, []),
             Financials: new DossierFinancials(standalone, [], [], [], [], []),
             Charges: new DossierCharges([], [], [], [], 0),
             Compliance: new DossierCompliance([], [], [], [], [], []),
