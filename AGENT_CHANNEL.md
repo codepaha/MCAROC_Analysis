@@ -71,8 +71,8 @@ Everything that adds an entity + EF migration, plus the metrics scaffold and the
 
 | Issue | What | Status |
 |---|---|---|
-| #57 D2 | financial trend & leverage metrics (parity-test heavy) | **PR #94 open** |
-| #59 D4 | shareholding metrics | **PR #95 open** |
+| #57 D2 | financial trend & leverage metrics (parity-test heavy) | **MERGED** (`cad21f0`) |
+| #59 D4 | shareholding metrics | **PR #95 open** (rebased onto merged D2, MERGEABLE) |
 
 ### Antigravity — render-audit + metrics-compute lane (no schema changes)
 Razor + view-model-load only, or pure computation over entities that already exist. **No migrations.**
@@ -90,9 +90,8 @@ Razor + view-model-load only, or pure computation over entities that already exi
 | visual | before/after screenshots on every render PR; keep `E:\Downloads\VTION\ROC_JSON_Reports` current | — | ongoing |
 
 ### Sequencing
-- Claude: D2/#57 (PR #94, CLEAN/MERGEABLE) and D4/#59 (PR #95, CLEAN/MERGEABLE) — both rebased onto
-  main post-D6-merge, both re-reviewed and fixed twice. Nothing left unclaimed in Claude's lane pending
-  merge + review.
+- Claude: D2/#57 **MERGED** → D4/#59 (PR #95, MERGEABLE, rebased onto merged D2) — last of Claude's
+  Wave-4 issues, awaiting review.
 - Antigravity: D6/#61 **MERGED** → D7/#62 (PR #96 open) → D8/D9/D10/D11 (#63–#66) in any order.
 
 ### Not in either lane (Codex or owner)
@@ -107,9 +106,11 @@ Claude done: #79 CI shift · A4/#35 · A11/#75 · A5/#36 · A6/#37 (PR #87, `075
 (PR #89, `8f4e5dd`) · **A8/#50 (PR #90) · A9/#51 (PR #91) · A10/#52 (PR #92, `105e83b`) — all three
 MERGED.** Wave 1 fully closed; the RelatedPartyTransaction/CreditRating/FinancialDisputeCase trio done.
 All three sheets are absent from the COASTAL fixture — synthetic-only test coverage, flagged in each PR;
-worth a real-workbook check whenever a company with these sheets is ingested. **Next: D2/#57, D4/#59.**
-Antigravity: D5/#60 → **MERGED** (PR #88, `bf19713`). D6/#61 → **PR #93 open**. **Next: D7/#62, then
-D8–D11 (#63–#66)** — all newly unblocked now A4/A5/A8/A9 are merged, assigned per the Task division table.
+worth a real-workbook check whenever a company with these sheets is ingested. **D2/#57 → MERGED**
+(PR #94, `cad21f0`). **D4/#59 → PR #95 open**, rebased onto merged D2, MERGEABLE, awaiting review — last
+of Claude's Wave-4 issues.
+Antigravity: D5/#60 → **MERGED** (PR #88, `bf19713`). D6/#61 → **MERGED** (PR #93, `3eafe94`). D7/#62 →
+**PR #96 open**. **Next: D8–D11 (#63–#66)** — all unblocked, assigned per the Task division table.
 Also merged since the last board update: pre-login reports edit-pipeline (**#86**); issue **#46**
 closed (fixed by #86).
 
@@ -161,6 +162,22 @@ Linux subset fonts break PdfPig's ToUnicode → those are `[SkippableFact]`, ski
 ---
 
 ## Log  <!-- newest first. Prefix: NEEDS / BLOCKED / DONE / DECISION / FYI -->
+
+### 2026-09-11 — Claude session (D2/#57 MERGED; D4/#59 rebased onto it, clean)
+- **DONE — #94 (D2/#57) MERGED** (`cad21f0`), feature branch deleted. Financial trend & leverage
+  analytics (A2.x/A3.x) now shipped on `main`.
+- **DONE — rebased #95 (D4/#59) onto the new `main`.** Same shared-file conflict pattern as the D6
+  rebase (`DossierComputations.Metrics.cs`'s `BuildMetricGroups` + insertion point, golden master
+  `MetricGroupTitles`, `AnalyticsJsonEndpointTests.cs`, `docs/analytics-catalogue.json`) — resolved the
+  same way, splicing `ShareholdingMetrics` in after `FinancialTrendMetrics`. `DossierAssembler.cs` did
+  *not* conflict this time (D2 never touched it). Also found and fixed the same class of break D2's own
+  merged test file (`FinancialTrendMetricsTests.cs`) introduced: an old 8-arg `DossierCorporate(...)`
+  call broken by this branch's 10-arg constructor — same fix pattern as the earlier
+  `DirectorsMetricsTests.cs` break. Rebuilt, targeted-tested (67 tests incl. golden master + both real
+  COASTAL fixture tests), force-pushed (`414f021`). **#95 is now `MERGEABLE`** (no conflicts); CI running
+  on the fresh push. This was #95's third head since opening (`e2ed91d` → `b2e37cc` → `414f021`) across
+  two rebases and two review rounds — worth noting in case any earlier review comment references a stale
+  SHA.
 
 ### 2026-09-11 — Claude session (D2/D4 rebased onto D6; second Codex review round fixed)
 - **DONE — rebased #94 and #95 onto main after #93 (D6/Directors) merged.** Both branches had been cut
