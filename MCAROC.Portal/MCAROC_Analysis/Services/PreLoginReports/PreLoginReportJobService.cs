@@ -56,10 +56,15 @@ public sealed class PreLoginReportJobService(AppDbContext db, PreLoginReportQueu
         await db.PreLoginReportJobs.FindAsync([id], cancellationToken);
 
     /// <summary>Loads a completed job's fetched data (captured in DataJson right after fetch, before
-    /// generation) as an editable draft — the basis for the optional "Edit" action on the History page.</summary>
+    /// generation) as an editable draft — the basis for the optional "Edit" action on the History page.
+    /// Restricted to Completed jobs: DataJson is already populated once fetch finishes (status Generating),
+    /// so without this check an edit opened against an in-flight job could regenerate concurrently with the
+    /// worker's own ProcessAsync run and race it for job.ReportStoragePath/DataJson/Status.</summary>
     public async Task<PreLoginReportDraftViewModel> GetEditableDraftAsync(long id, CancellationToken cancellationToken)
     {
         var job = await FindAsync(id, cancellationToken) ?? throw new PreLoginReportException("Report request not found.");
+        if (job.Status != PreLoginReportJobStatus.Completed)
+            throw new PreLoginReportException("This report is still being generated. Wait for it to complete before editing.");
         if (string.IsNullOrWhiteSpace(job.DataJson))
             throw new PreLoginReportException("This report has no fetched data available to edit.");
         var data = JsonSerializer.Deserialize<InstaReportData>(job.DataJson)
@@ -68,10 +73,13 @@ public sealed class PreLoginReportJobService(AppDbContext db, PreLoginReportQueu
     }
 
     /// <summary>Applies a user's edits (including any added/removed charge or director rows) and
-    /// regenerates the stored report in place.</summary>
+    /// regenerates the stored report in place. Same Completed-only restriction as <see cref="GetEditableDraftAsync"/>
+    /// — see that method's remarks for the race this closes.</summary>
     public async Task ApplyEditAndRegenerateAsync(long id, PreLoginReportDraftViewModel draft, CancellationToken cancellationToken)
     {
         var job = await FindAsync(id, cancellationToken) ?? throw new PreLoginReportException("Report request not found.");
+        if (job.Status != PreLoginReportJobStatus.Completed)
+            throw new PreLoginReportException("This report is still being generated. Wait for it to complete before editing.");
         var format = Enum.Parse<PreLoginReportFormat>(job.Format);
         var data = PreLoginReportService.ApplyEdits(draft);
         var generated = await reports.GenerateFromDataAsync(job.Cin, format, data, cancellationToken);
