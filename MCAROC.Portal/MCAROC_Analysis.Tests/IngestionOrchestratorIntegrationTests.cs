@@ -32,6 +32,7 @@ public class IngestionOrchestratorIntegrationTests : IAsyncLifetime
     public Task DisposeAsync() => Task.CompletedTask;
 
     private static SheetData CompanyProfileSheet(string cin) => Sheet("About the Company",
+        Row("Printed at", "10 Mar, 2026 10:00 Hours"),
         Row("Legal Name", "TEST COMPANY PRIVATE LIMITED"),
         Row("CIN", cin),
         Row("PAN", "AAAAA0000A"),
@@ -72,6 +73,7 @@ public class IngestionOrchestratorIntegrationTests : IAsyncLifetime
 
         Assert.Equal(IngestionRunStatus.CompletedClean, run.Status);
         Assert.Equal(1, run.RunNumber);
+        Assert.Equal(new DateTime(2026, 3, 10, 10, 0, 0), run.SourceSnapshotDate);
 
         await using var verifyDb = CreateContext();
         var reloadedRequest = await verifyDb.Requests.FirstAsync(r => r.RequestId == request.RequestId);

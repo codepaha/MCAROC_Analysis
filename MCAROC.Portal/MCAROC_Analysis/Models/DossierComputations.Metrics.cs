@@ -973,13 +973,8 @@ public static partial class DossierComputations
         }
 
         // ── I4: Board composition by designation ──
-        // Group active directors by normalised designation.
-        if (active.Count == 0)
-        {
-            list.Add(MetricResult.Insufficient("Board composition by designation", MetricUnit.Count,
-                "0 active directors on record", "Director.Designation", "Director.CessationDate"));
-        }
-        else
+        // Group active directors by normalised designation. Buckets are omitted when no directors are active.
+        if (active.Count > 0)
         {
             var buckets = active
                 .GroupBy(d => NormalizeDirectorDesignation(d.Designation))
@@ -1045,6 +1040,8 @@ public static partial class DossierComputations
                 var tenure = Math.Round((decimal)(asOfDate.Value.DayNumber - longest.OriginalAppointmentDate!.Value.DayNumber) / 365.25m, 1);
                 var dirName = string.IsNullOrWhiteSpace(longest.NameRaw) ? "Director" : longest.NameRaw.Trim();
                 var periodStr = $"{dirName} (appointed {Fmt(longest.OriginalAppointmentDate!.Value)})";
+                if (futureAppointments.Count > 0)
+                    periodStr += $" ({futureAppointments.Count} future appointment date(s) excluded)";
 
                 list.Add(MetricResult.Ok("Longest-serving director", tenure, MetricUnit.Years,
                     periodStr, "Director.OriginalAppointmentDate", "DossierCover.SourceSnapshotDate"));

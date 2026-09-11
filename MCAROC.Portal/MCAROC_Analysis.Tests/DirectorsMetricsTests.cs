@@ -133,7 +133,37 @@ public class DirectorsMetricsTests
         var i6 = Assert.Single(group.Metrics, m => m.Label == "Longest-serving director");
         Assert.True(i6.HasValue);
         Assert.Equal(1.0m, i6.Value);
-        Assert.Equal("Past Director (appointed 9 Sep 2025)", i6.Period);
+        Assert.Equal("Past Director (appointed 9 Sep 2025) (1 future appointment date(s) excluded)", i6.Period);
+    }
+
+    [Fact]
+    public void I4_designation_buckets_omitted_when_zero_active_directors()
+    {
+        var anchor = new DateTime(2026, 9, 9, 0, 0, 0, DateTimeKind.Utc);
+        var directors = new List<Director>
+        {
+            new() { NameRaw = "Ceased 1", CessationDate = new DateOnly(2025, 1, 1), Designation = "Director" },
+            new() { NameRaw = "Ceased 2", CessationDate = new DateOnly(2024, 6, 1), Designation = "Managing Director" }
+        };
+
+        var model = CreateMinimalDossier(directors, sourceSnapshotDate: anchor);
+        var group = DossierComputations.DirectorsMetrics(model);
+
+        // I1 is 0
+        var i1 = Assert.Single(group.Metrics, m => m.Label == "Active director count");
+        Assert.Equal(0m, i1.Value);
+
+        // Designation buckets MUST be omitted completely (contract: buckets only emitted for populated active groups)
+        Assert.DoesNotContain(group.Metrics, m => m.Label.StartsWith("Board composition by designation"));
+
+        // I2 and I6 are Insufficient
+        var i2 = Assert.Single(group.Metrics, m => m.Label == "Average board tenure");
+        Assert.False(i2.HasValue);
+        Assert.Equal("0 active directors on record", i2.InsufficiencyReason);
+
+        var i6 = Assert.Single(group.Metrics, m => m.Label == "Longest-serving director");
+        Assert.False(i6.HasValue);
+        Assert.Equal("0 active directors on record", i6.InsufficiencyReason);
     }
 
     [Fact]
@@ -365,3 +395,4 @@ public class DirectorsMetricsTests
         Assert.Equal("YENNETI RAJA RAMESWARA KRISHNA (appointed 5 Sep 2024)", i6.Period);
     }
 }
+
