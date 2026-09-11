@@ -1322,12 +1322,12 @@ public static partial class DossierComputations
         return pct;
     }
 
-    /// <summary>CAGR over the widest available window of up to 3 non-null data points (selecting the
-    /// base point n = min(3, count-1) points back from the latest), using the earliest and latest
-    /// non-null points for <paramref name="selector"/>. The compounding exponent is always the actual
-    /// elapsed FYs between those two points (endPoint.Year - basePoint.Year) — never the count of
-    /// selected points — so a gap year (a reported FY whose value is null for this field) doesn't
-    /// silently shrink the exponent and overstate the rate. When the base-year value is negative and
+    /// <summary>CAGR over the widest available span up to 3 CALENDAR years: the base point is the
+    /// earliest non-null <paramref name="selector"/> point whose FY is within 3 years of the latest
+    /// non-null point (never chosen by counting rows back) — insufficient when no earlier point falls
+    /// inside that 3-year window, even if an older point exists further back. The compounding exponent
+    /// is always the true elapsed FYs between the chosen points (endPoint.Year - basePoint.Year), which
+    /// the window selection now guarantees is between 1 and 3. When the base-year value is negative and
     /// <paramref name="allowNegativeBaseFallback"/> is true, falls back to a total %-change figure with
     /// a caveat in the period text (not a true CAGR) instead of failing outright. Returns the computed
     /// percent (Ok path only) so a downstream metric can reuse it.</summary>
@@ -1345,23 +1345,25 @@ public static partial class DossierComputations
             return null;
         }
 
-        var n = Math.Min(3, series.Count - 1);
-        var basePoint = series[series.Count - 1 - n];
         var endPoint = series[^1];
-        var period = $"FY{basePoint.Year}–FY{endPoint.Year}";
 
-        // The compounding exponent must be the actual elapsed FYs between the chosen base and end
-        // points, not the count of non-null data points (n) — a gap year (a reported FY whose value for
-        // this field is null, so it is excluded from `series`) would otherwise be silently skipped from
-        // the exponent too, materially overstating CAGR on a sparse series (e.g. FY2014→FY2017 with
-        // FY2015 excluded is 3 elapsed years, not 2).
-        var yearsElapsed = endPoint.Year - basePoint.Year;
-        if (yearsElapsed <= 0)
+        // The base point must be chosen by CALENDAR distance from the end point, not by counting
+        // non-null rows back — a sparse series (data points spread further apart than 1 FY, because
+        // some FYs' value for this field is null) would otherwise let a 3-row lookback span far more
+        // than 3 actual years, producing e.g. a 10-year "CAGR" despite the contract's 3-FY window. This
+        // also fixes the companion bug where the exponent must match: it is always the true elapsed FYs
+        // between the chosen points, not a count of rows.
+        var candidates = series.Where(p => p.Year < endPoint.Year && endPoint.Year - p.Year <= 3)
+            .OrderBy(p => p.Year).ToList();
+        if (candidates.Count == 0)
         {
             list.Add(MetricResult.Insufficient(label, MetricUnit.Percent,
-                $"{period}: base and end year are not chronologically distinct — {label} undefined", input));
+                $"FY{endPoint.Year}: no earlier reported year within the last 3 FYs — {label} requires a base year inside that window", input));
             return null;
         }
+        var basePoint = candidates[0];
+        var period = $"FY{basePoint.Year}–FY{endPoint.Year}";
+        var yearsElapsed = endPoint.Year - basePoint.Year; // guaranteed 1..3 by the candidates filter above
 
         if (basePoint.Value == 0m)
         {

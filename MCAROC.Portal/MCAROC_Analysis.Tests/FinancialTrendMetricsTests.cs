@@ -95,6 +95,46 @@ public class FinancialTrendMetricsTests
     }
 
     [Fact]
+    public void Revenue_cagr_never_reaches_further_back_than_3_calendar_years_for_the_base_point()
+    {
+        // Regression: 4 non-null points spread 3 years apart each (9 years total). Selecting the base
+        // point by counting rows back (old bug) would pick FY2008 (3 rows back), producing a ~9-year
+        // "CAGR" despite the contract's 3-FY window. The base point must be the earliest point that is
+        // still within 3 calendar years of the latest — here that's FY2014, not FY2008 or FY2011.
+        var years = new List<FinancialYearData>
+        {
+            new() { FinancialYear = 2008, Revenue = 50m },
+            new() { FinancialYear = 2011, Revenue = 80m },
+            new() { FinancialYear = 2014, Revenue = 120m },
+            new() { FinancialYear = 2017, Revenue = 300m },
+        };
+        var group = DossierComputations.FinancialTrendMetrics(CreateMinimalDossier(years));
+
+        var m = M(group, "Revenue CAGR");
+        Assert.True(m.HasValue);
+        Assert.Equal("FY2014–FY2017", m.Period); // NOT FY2008-FY2017 or FY2011-FY2017
+        Assert.Equal(35.7m, m.Value); // (300/120)^(1/3) - 1 = 35.7%
+    }
+
+    [Fact]
+    public void Revenue_cagr_is_insufficient_when_no_earlier_point_falls_within_the_3_year_window()
+    {
+        // Two non-null points exist (passes the ">= 2 points" check) but they're 9 years apart — there
+        // is no base year within the contract's 3-FY window, so this must fail closed, not silently use
+        // the only other point available regardless of how far back it is.
+        var years = new List<FinancialYearData>
+        {
+            new() { FinancialYear = 2008, Revenue = 50m },
+            new() { FinancialYear = 2017, Revenue = 300m },
+        };
+        var group = DossierComputations.FinancialTrendMetrics(CreateMinimalDossier(years));
+
+        var m = M(group, "Revenue CAGR");
+        Assert.False(m.HasValue);
+        Assert.Contains("no earlier reported year within the last 3 FYs", m.InsufficiencyReason);
+    }
+
+    [Fact]
     public void Revenue_cagr_is_insufficient_with_fewer_than_2_years()
     {
         var group = DossierComputations.FinancialTrendMetrics(
