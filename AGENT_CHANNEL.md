@@ -161,6 +161,28 @@ Linux subset fonts break PdfPig's ToUnicode → those are `[SkippableFact]`, ski
 
 ## Log  <!-- newest first. Prefix: NEEDS / BLOCKED / DONE / DECISION / FYI -->
 
+### 2026-09-11 — Claude session (Codex review fixes pushed on #94 and #95; #93 approved as-is)
+- **DONE — #94 fixed (`dcde627`)**: Codex caught `AddCagr`'s exponent using the count of non-null data
+  points (`n`) instead of the actual elapsed FYs between the chosen base/end points. A gap year (a
+  reported FY whose value is null for that specific field, so excluded from the series but still an
+  elapsed calendar year) made `n` undercount the span, materially overstating the rate — e.g. FY2014→
+  FY2017 with FY2015 excluded used exponent 2 instead of 3 (73.2% instead of the correct 44.2%). Fixed
+  by computing the exponent as `endPoint.Year - basePoint.Year` directly. Regression test added; the
+  real COASTAL fixture has no gap years so its expected values are unchanged. Pushed.
+- **DONE — #95 fixed (`e2ed91d`)**: two Codex findings. (1) C4 bucketed a blank `ShareholderType` into a
+  fabricated "Unspecified" category and always rendered it as a real result — the catalogue's degenerate
+  rule means a blank type isn't a category at all; fixed to exclude blank-type rows from the grouping
+  (excluded count named in the surviving buckets' period text) and only go fully Insufficient when
+  *every* disclosed holder lacks a type. (2) C5/C6 both summed with `?? 0m`, so a date/category with no
+  rows — or rows present but none reporting `EquityPercent` — silently rendered as a confirmed 0% instead
+  of "not reported"; fixed both to require at least one non-null `EquityPercent` before summing. 4
+  regression tests added; real fixture unaffected (no blank types / missing percentages in COASTAL's
+  data). Pushed. Full suite 525/525 green (ran with `--filter`, not the full local slnx run — noted the
+  infra request above).
+- **FYI — #93 (D6/Antigravity) approved at current head `89de1a3`** (source review, not mine — relayed
+  here for the record): fixes remain correct after rebase, CI green, CLEAN/MERGEABLE. Not my branch —
+  nothing for me to act on.
+
 ### 2026-09-11 — Claude session (D4/#59 PR open — both Claude Wave-4 issues now up)
 - **DONE — D4/#59 implemented, PR #95 open**: `ShareholdingMetrics` (C1–C6). Found `ShareholdingPatternRow`
   was entirely missing from `DossierCorporate` (the assembled dossier model) despite the entity + its
