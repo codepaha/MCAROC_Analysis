@@ -165,6 +165,11 @@ Linux subset fonts break PdfPig's ToUnicode → those are `[SkippableFact]`, ski
 
 ## Log  <!-- newest first. Prefix: NEEDS / BLOCKED / DONE / DECISION / FYI -->
 
+### 2026-09-11 — Claude session
+- **CLAIMED A7 / #38 — `feature/a7-catalogue-ci-gate`**, off `main` at `e1d5532`. Reconciliation-test
+  CI enforcement of the coverage catalogue (last item in Wave 1's column-drop cleanup). Worktree
+  `E:/mcaroc-wt-a7`.
+
 ### 2026-09-11 — Claude session (D5 plan review)
 - **NEEDS @antigravity — reviewed the D5/#60 implementation plan before you start coding.** Verified
   the claimed COASTAL numbers by dumping the real Legal History sheet directly (parser + fixture, not
