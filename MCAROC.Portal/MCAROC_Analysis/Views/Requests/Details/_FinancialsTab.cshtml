@@ -60,6 +60,11 @@
             @await Html.PartialAsync("Details/_KeyIndicators", Model.KeyMetrics.Where(g => g.Title == "Financial trend & leverage").ToList())
         }
         else { <div class="mca-empty"><i class="bi bi-cash-stack"></i><p>Financial highlights become available once extraction completes.</p></div> }
+
+        @await Html.PartialAsync("Details/_KeyIndicators",
+            Model.KeyMetrics.Where(g => g.Title == "EPFO / labour")
+                .Select(g => new MCAROC_Analysis.Models.Dossier.MetricGroup(g.Title, g.Metrics.Where(m => m.Label == "Revenue per EPFO employee").ToList()))
+                .Where(g => g.HasAny).ToList())
     </div>
 
     @foreach (var (secId, stmt) in new[] { ("pl", pl), ("bs", bs), ("cf", cf), ("ratios", ratios) })

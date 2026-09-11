@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using MCAROC_Analysis.Data.Entities;
 using MCAROC_Analysis.Models;
+using MCAROC_Analysis.Models.Dossier;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
@@ -410,5 +411,70 @@ public class ComplianceTabRenderingTests
         Assert.Contains("Unaccepted Ratings", html);
         Assert.Contains("CARE", html);
         Assert.Contains("did not accept or participate", html);
+    }
+
+    // ── D7 / #62 — EPFO Key Indicators ──
+
+    [Fact]
+    public async Task Epfo_key_indicators_render_in_epfo_subtab_excluding_h6()
+    {
+        var vm = CreateViewModel();
+        vm.EpfoContributions =
+        [
+            new EpfoContribution { EstablishmentId = "EST1", WageMonth = "May, 2026", EmployeeCount = 10, ContributionAmountCrore = 0.5m }
+        ];
+
+        var metrics = new List<MetricResult>
+        {
+            MetricResult.Ok("PF remittance on-time rate", 95.0m, MetricUnit.Percent, "19 on-time of 20 assessed", "EpfoContribution.PaymentDate"),
+            MetricResult.Ok("PF late-remittance count", 1m, MetricUnit.Count, "1 late of 20 assessed", "EpfoContribution.PaymentDate"),
+            MetricResult.Ok("Latest-month PF contribution", 0.5m, MetricUnit.Crore, "May 2026", "EpfoContribution.ContributionAmountCrore"),
+            MetricResult.Ok("Employee count (EPFO) + trend", 10m, MetricUnit.Count, "May 2026 (+2 vs May 2025: 8)", "EpfoContribution.EmployeeCount"),
+            MetricResult.Ok("PF contribution per recorded EPFO employee (latest month)", 5000m, MetricUnit.Rupees, "May 2026", "EpfoContribution.ContributionAmountCrore"),
+            MetricResult.Ok("Revenue per EPFO employee", 25.0m, MetricUnit.Crore, "FY2026 revenue vs May 2026 headcount", "FinancialYearData.Revenue"),
+            MetricResult.Ok("Establishment count + locations + flags", 1m, MetricUnit.Count, "1 live of 1 establishment across 1 location", "EpfoEstablishment.WorkingStatus")
+        };
+
+        vm.KeyMetrics = [new MetricGroup("EPFO / labour", metrics)];
+
+        var html = await RenderComplianceTabAsync(vm);
+
+        // Subtab panel #sec-compliance-epfo should contain H1-H5 and H7
+        Assert.Contains("PF remittance on-time rate", html);
+        Assert.Contains("PF late-remittance count", html);
+        Assert.Contains("Latest-month PF contribution", html);
+        Assert.Contains("Employee count (EPFO)", html);
+        Assert.Contains("PF contribution per recorded EPFO employee (latest month)", html);
+        Assert.Contains("Establishment count", html);
+
+        // H6 (Revenue per EPFO employee) is surfaced on Financials tab, NOT Compliance tab
+        Assert.DoesNotContain("Revenue per EPFO employee", html);
+    }
+
+    [Fact]
+    public async Task Epfo_key_indicators_render_when_epfo_records_are_empty()
+    {
+        var vm = CreateViewModel();
+        vm.EpfoContributions = [];
+        vm.EpfoEstablishments = [];
+
+        var metrics = new List<MetricResult>
+        {
+            MetricResult.Insufficient("PF remittance on-time rate", MetricUnit.Percent, "No EPFO contribution records on file", "EpfoContribution.PaymentDate"),
+            MetricResult.Insufficient("PF late-remittance count", MetricUnit.Count, "No EPFO contribution records on file", "EpfoContribution.PaymentDate"),
+            MetricResult.Insufficient("Latest-month PF contribution", MetricUnit.Crore, "No EPFO contribution records on file", "EpfoContribution.ContributionAmountCrore"),
+            MetricResult.Insufficient("Employee count (EPFO) + trend", MetricUnit.Count, "No EPFO contribution records on file", "EpfoContribution.EmployeeCount"),
+            MetricResult.Insufficient("PF contribution per recorded EPFO employee (latest month)", MetricUnit.Rupees, "No EPFO contribution records on file", "EpfoContribution.ContributionAmountCrore"),
+            MetricResult.Insufficient("Establishment count + locations + flags", MetricUnit.Count, "No EPFO establishment records on file", "EpfoEstablishment.WorkingStatus")
+        };
+
+        vm.KeyMetrics = [new MetricGroup("EPFO / labour", metrics)];
+
+        var html = await RenderComplianceTabAsync(vm);
+
+        Assert.Contains("No EPFO data was extracted.", html);
+        Assert.Contains("Key Indicators", html);
+        Assert.Contains("No EPFO contribution records on file", html);
+        Assert.Contains("No EPFO establishment records on file", html);
     }
 }

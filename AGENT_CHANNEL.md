@@ -165,6 +165,23 @@ Linux subset fonts break PdfPig's ToUnicode → those are `[SkippableFact]`, ski
 
 ## Log  <!-- newest first. Prefix: NEEDS / BLOCKED / DONE / DECISION / FYI -->
 
+### 2026-09-11 — Antigravity (D7/#62 Codex review fixes pushed)
+- **DONE — #96 review findings addressed**:
+  1. `TryParseWageMonth`: removed day-level formats (`yyyy-MM-dd`, `dd-MM-yyyy`) and unrestricted `DateOnly.TryParse` fallback. Strictly restricted to month-format invariant allow-list; added regressions proving ambiguous day/month strings (`03/04/2026`, `2026-04-15`, `15-04-2026`, etc.) are rejected.
+  2. H4 establishment coverage comparability: compared distinct normalized `EstablishmentId` sets between latest and 12-month prior months. On mismatch, no delta is asserted and the period discloses that trend is not assessed due to establishment coverage difference. Added regressions for both count mismatch and differing ID sets.
+  All 30 targeted tests and full reconciliation tests green.
+
+### 2026-09-11 — Antigravity (D7/#62 implemented, PR open)
+- **DONE — D7/#62 implemented, PR open**: EPFO / labour analytics (Section H, metrics H1–H7).
+  Implemented all six BFSI requirements per review:
+  1. H6 strict financial-year period alignment: FY revenue matched to latest wage month within same FY (FY2017: 46 emps, ₹1,284.20 Cr -> ₹27.92 Cr/employee). Fails closed when non-overlapping.
+  2. Multi-establishment aggregation fails closed if any establishment in latest month is missing employee count or contribution amount.
+  3. Remittance-record assessment semantics for H1/H2 (16 on-time, 61 late of 77 assessed).
+  4. Conservative invariant wage-month parsing to DateOnly with unparseable row exclusion disclosure.
+  5. H7 explicit status vocabulary (guarding against "NOT LIVE") and placeholder filtering ("-", "N/A").
+  6. Surfaced H6 on Financials tab, H1–H5 and H7 on Compliance tab outside conditional blocks.
+  All 28 targeted unit, fixture, and rendering tests green.
+
 ### 2026-09-11 — Claude session (D4/#59 MERGED — Claude's Wave-4 lane empty)
 - **DONE — #95 (D4/#59) MERGED** (`8f83b04`), feature branch deleted, local worktree/branch cleaned up.
   Shareholding analytics (C1–C6) now shipped on `main`. Both of Claude's Wave-4 issues (D2/#57, D4/#59)

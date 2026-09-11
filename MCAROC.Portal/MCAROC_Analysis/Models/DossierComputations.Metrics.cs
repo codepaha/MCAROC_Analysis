@@ -1,3 +1,4 @@
+using System.Globalization;
 using MCAROC_Analysis.Data.Entities;
 using MCAROC_Analysis.Models.Dossier;
 
@@ -29,7 +30,8 @@ public static partial class DossierComputations
             LitigationMetrics(model),
             DirectorsMetrics(model),
             FinancialTrendMetrics(model),
-            ShareholdingMetrics(model)
+            ShareholdingMetrics(model),
+            EpfoMetrics(model)
         };
 
         return groups.Where(g => g.HasAny).ToList();
@@ -1585,5 +1587,385 @@ public static partial class DossierComputations
         }
 
         return new MetricGroup("Shareholding", list);
+    }
+
+    /// <summary>Section H — EPFO / labour analytics (Issue #62 / D7, docs/analytics-catalogue.json §H).
+    /// Pure computation over <paramref name="model"/>.</summary>
+    public static MetricGroup EpfoMetrics(Dossier.DossierModel model)
+    {
+        var contribs = model.Compliance.Epfo;
+        var establishments = model.Compliance.EpfoEstablishments;
+        var list = new List<MetricResult>();
+
+        // ── Parse and sort wage months chronologically ──
+        var parsedContribs = new List<(EpfoContribution Contrib, DateOnly Month)>();
+        var unparseableContribs = new List<EpfoContribution>();
+
+        foreach (var c in contribs)
+        {
+            if (TryParseWageMonth(c.WageMonth, out var m))
+                parsedContribs.Add((c, m));
+            else
+                unparseableContribs.Add(c);
+        }
+
+        var unparseableSuffix = unparseableContribs.Count > 0
+            ? $" ({unparseableContribs.Count} unparseable wage month(s) excluded)"
+            : "";
+
+        // Remittance-level assessments (establishment-month remittance records)
+        var assessed = contribs.Where(c => c.PaymentDate is not null && c.PaymentDueDate is not null).ToList();
+        var indeterminate = contribs.Where(c => c.PaymentDate is null || c.PaymentDueDate is null).ToList();
+
+        // ── H1: PF remittance on-time rate ──
+        if (contribs.Count == 0)
+        {
+            list.Add(MetricResult.Insufficient("PF remittance on-time rate", MetricUnit.Percent,
+                "No EPFO contribution records on file",
+                "EpfoContribution.PaymentDate", "EpfoContribution.PaymentDueDate", "EpfoContribution.PaymentStatus"));
+        }
+        else if (assessed.Count == 0)
+        {
+            list.Add(MetricResult.Insufficient("PF remittance on-time rate", MetricUnit.Percent,
+                $"0 of {contribs.Count} remittance records have both payment and due dates ({indeterminate.Count} indeterminate)",
+                "EpfoContribution.PaymentDate", "EpfoContribution.PaymentDueDate", "EpfoContribution.PaymentStatus"));
+        }
+        else
+        {
+            var onTime = assessed.Count(c => c.PaymentDate <= c.PaymentDueDate);
+            var late = assessed.Count - onTime;
+            var rate = Math.Round((decimal)onTime / assessed.Count * 100m, 1);
+            var periodStr = indeterminate.Count > 0
+                ? $"{onTime} on-time, {late} late of {assessed.Count} assessed remittances ({indeterminate.Count} indeterminate)"
+                : $"{onTime} on-time, {late} late of {assessed.Count} assessed remittances";
+
+            list.Add(MetricResult.Ok("PF remittance on-time rate", rate, MetricUnit.Percent,
+                periodStr, "EpfoContribution.PaymentDate", "EpfoContribution.PaymentDueDate", "EpfoContribution.PaymentStatus"));
+        }
+
+        // ── H2: PF late-remittance count ──
+        if (contribs.Count == 0)
+        {
+            list.Add(MetricResult.Insufficient("PF late-remittance count", MetricUnit.Count,
+                "No EPFO contribution records on file",
+                "EpfoContribution.PaymentDate", "EpfoContribution.PaymentDueDate", "EpfoContribution.WageMonth"));
+        }
+        else if (assessed.Count == 0)
+        {
+            list.Add(MetricResult.Insufficient("PF late-remittance count", MetricUnit.Count,
+                $"{indeterminate.Count} remittance records indeterminate (missing payment or due date)",
+                "EpfoContribution.PaymentDate", "EpfoContribution.PaymentDueDate", "EpfoContribution.WageMonth"));
+        }
+        else
+        {
+            var lateCount = assessed.Count(c => c.PaymentDate > c.PaymentDueDate);
+            var periodStr = indeterminate.Count > 0
+                ? $"{lateCount} late remittance(s) of {assessed.Count} assessed remittances ({indeterminate.Count} indeterminate)"
+                : $"{lateCount} late remittance(s) of {assessed.Count} assessed remittances";
+
+            list.Add(MetricResult.Ok("PF late-remittance count", (decimal)lateCount, MetricUnit.Count,
+                periodStr, "EpfoContribution.PaymentDate", "EpfoContribution.PaymentDueDate", "EpfoContribution.WageMonth"));
+        }
+
+        // Month groups ordered strictly by DateOnly
+        var monthGroups = parsedContribs
+            .GroupBy(x => x.Month)
+            .OrderBy(g => g.Key)
+            .ToList();
+
+        // ── H3: Latest-month PF contribution ──
+        // ── H4: Employee count (EPFO) + trend ──
+        // ── H5: PF contribution per recorded EPFO employee (latest month) ──
+        bool h3Ok = false;
+        decimal? h3AmountCr = null;
+        bool h4Ok = false;
+        int? h4Headcount = null;
+
+        if (monthGroups.Count == 0)
+        {
+            var noMonthReason = contribs.Count == 0
+                ? "No EPFO contribution records on file"
+                : $"All {contribs.Count} EPFO wage month records were unparseable";
+
+            list.Add(MetricResult.Insufficient("Latest-month PF contribution", MetricUnit.Crore,
+                noMonthReason, "EpfoContribution.ContributionAmountCrore", "EpfoContribution.WageMonth"));
+
+            list.Add(MetricResult.Insufficient("Employee count (EPFO) + trend", MetricUnit.Count,
+                noMonthReason, "EpfoContribution.EmployeeCount", "EpfoContribution.WageMonth"));
+
+            list.Add(MetricResult.Insufficient("PF contribution per recorded EPFO employee (latest month)", MetricUnit.Rupees,
+                noMonthReason, "EpfoContribution.ContributionAmountCrore", "EpfoContribution.EmployeeCount"));
+        }
+        else
+        {
+            var latestGroup = monthGroups[^1];
+            var latestMonth = latestGroup.Key;
+            var latestRows = latestGroup.Select(x => x.Contrib).ToList();
+            var latestMonthStr = latestMonth.ToString("MMM yyyy", CultureInfo.InvariantCulture);
+
+            // H3: Latest-month PF contribution
+            var missingAmount = latestRows.Count(r => r.ContributionAmountCrore is null);
+            if (missingAmount > 0)
+            {
+                list.Add(MetricResult.Insufficient("Latest-month PF contribution", MetricUnit.Crore,
+                    $"Incomplete data: {missingAmount} of {latestRows.Count} establishment records in {latestMonthStr} missing ContributionAmount",
+                    "EpfoContribution.ContributionAmountCrore", "EpfoContribution.WageMonth"));
+            }
+            else
+            {
+                var totalContribCr = latestRows.Sum(r => r.ContributionAmountCrore!.Value);
+                h3AmountCr = totalContribCr;
+                h3Ok = true;
+                var periodStr = $"{latestMonthStr} ({latestRows.Count} establishment(s)){unparseableSuffix}";
+                list.Add(MetricResult.Ok("Latest-month PF contribution", totalContribCr, MetricUnit.Crore,
+                    periodStr, "EpfoContribution.ContributionAmountCrore", "EpfoContribution.WageMonth"));
+            }
+
+            // H4: Employee count (EPFO) + trend
+            var missingHeadcount = latestRows.Count(r => r.EmployeeCount is null);
+            if (missingHeadcount > 0)
+            {
+                list.Add(MetricResult.Insufficient("Employee count (EPFO) + trend", MetricUnit.Count,
+                    $"Incomplete data: {missingHeadcount} of {latestRows.Count} establishment records in {latestMonthStr} missing EmployeeCount",
+                    "EpfoContribution.EmployeeCount", "EpfoContribution.WageMonth"));
+            }
+            else
+            {
+                var totalHeadcount = latestRows.Sum(r => r.EmployeeCount!.Value);
+                h4Headcount = totalHeadcount;
+                h4Ok = true;
+
+                // 12-month prior trend
+                var priorMonth = latestMonth.AddMonths(-12);
+                var priorGroup = monthGroups.FirstOrDefault(g => g.Key == priorMonth);
+                string trendDisclosure;
+
+                if (priorGroup is null)
+                {
+                    trendDisclosure = "no record 12 months prior";
+                }
+                else
+                {
+                    var priorRows = priorGroup.Select(x => x.Contrib).ToList();
+                    if (priorRows.Any(r => r.EmployeeCount is null))
+                    {
+                        trendDisclosure = "trend not assessed due to incomplete prior-month data";
+                    }
+                    else
+                    {
+                        static string NormEstId(string? id) => string.IsNullOrWhiteSpace(id) ? "(unknown)" : id.Trim().ToUpperInvariant();
+                        var latestEstIds = latestRows.Select(r => NormEstId(r.EstablishmentId)).ToHashSet(StringComparer.OrdinalIgnoreCase);
+                        var priorEstIds = priorRows.Select(r => NormEstId(r.EstablishmentId)).ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+                        if (!latestEstIds.SetEquals(priorEstIds))
+                        {
+                            var priorMonthStr = priorMonth.ToString("MMM yyyy", CultureInfo.InvariantCulture);
+                            var detail = latestEstIds.Count == priorEstIds.Count
+                                ? $"{string.Join(", ", latestEstIds)} in {latestMonthStr} vs {string.Join(", ", priorEstIds)} in {priorMonthStr}"
+                                : $"{latestEstIds.Count} establishment(s) in {latestMonthStr} vs {priorEstIds.Count} in {priorMonthStr}";
+                            trendDisclosure = $"trend not assessed: establishment coverage differs ({detail})";
+                        }
+                        else
+                        {
+                            var priorHeadcount = priorRows.Sum(r => r.EmployeeCount!.Value);
+                            var delta = totalHeadcount - priorHeadcount;
+                            var priorMonthStr = priorMonth.ToString("MMM yyyy", CultureInfo.InvariantCulture);
+                            trendDisclosure = $"{delta:+0;-0;0} vs {priorMonthStr}: {priorHeadcount}";
+                        }
+                    }
+                }
+
+                var periodStr = $"{latestMonthStr} ({trendDisclosure}){unparseableSuffix}";
+                list.Add(MetricResult.Ok("Employee count (EPFO) + trend", (decimal)totalHeadcount, MetricUnit.Count,
+                    periodStr, "EpfoContribution.EmployeeCount", "EpfoContribution.WageMonth"));
+            }
+
+            // H5: PF contribution per recorded EPFO employee (latest month)
+            if (!h3Ok || !h4Ok)
+            {
+                var reason = !h4Ok
+                    ? "Latest-month employee count is insufficient"
+                    : "Latest-month contribution amount is insufficient";
+                list.Add(MetricResult.Insufficient("PF contribution per recorded EPFO employee (latest month)", MetricUnit.Rupees,
+                    reason, "EpfoContribution.ContributionAmountCrore", "EpfoContribution.EmployeeCount"));
+            }
+            else if (h4Headcount!.Value <= 0)
+            {
+                list.Add(MetricResult.Insufficient("PF contribution per recorded EPFO employee (latest month)", MetricUnit.Rupees,
+                    "Latest-month employee count is 0",
+                    "EpfoContribution.ContributionAmountCrore", "EpfoContribution.EmployeeCount"));
+            }
+            else
+            {
+                var inrPerEmp = Math.Round((h3AmountCr!.Value * 10_000_000m) / h4Headcount.Value, 0);
+                var periodStr = $"{latestMonthStr} (₹{h3AmountCr.Value:0.##} Cr across {h4Headcount.Value} employees; proxy only, not salary){unparseableSuffix}";
+                list.Add(MetricResult.Ok("PF contribution per recorded EPFO employee (latest month)", inrPerEmp, MetricUnit.Rupees,
+                    periodStr, "EpfoContribution.ContributionAmountCrore", "EpfoContribution.EmployeeCount"));
+            }
+        }
+
+        // ── H6: Revenue per EPFO employee ──
+        // Aligned strictly to the same financial year (Apr (Y-1) to Mar Y).
+        var standalone = model.Financials.Standalone.Where(y => y.Revenue is not null).OrderBy(y => y.FinancialYear).ToList();
+        var consolidated = model.Financials.Consolidated.Where(y => y.Revenue is not null).OrderBy(y => y.FinancialYear).ToList();
+        var latestFy = standalone.Count > 0 ? standalone[^1] : (consolidated.Count > 0 ? consolidated[^1] : null);
+
+        if (latestFy is null)
+        {
+            list.Add(MetricResult.Insufficient("Revenue per EPFO employee", MetricUnit.Crore,
+                "No revenue data on record",
+                "FinancialYearData.Revenue", "EpfoContribution.EmployeeCount", "EpfoContribution.WageMonth"));
+        }
+        else
+        {
+            var fyYear = latestFy.FinancialYear;
+            var fyStart = new DateOnly(fyYear - 1, 4, 1);
+            var fyEnd = new DateOnly(fyYear, 3, 31);
+            var matchingGroups = monthGroups.Where(g => g.Key >= fyStart && g.Key <= fyEnd).ToList();
+
+            if (matchingGroups.Count == 0)
+            {
+                list.Add(MetricResult.Insufficient("Revenue per EPFO employee", MetricUnit.Crore,
+                    $"No EPFO contribution records found in matching financial year (FY{fyYear}: Apr {fyYear - 1} \u2013 Mar {fyYear})",
+                    "FinancialYearData.Revenue", "EpfoContribution.EmployeeCount", "EpfoContribution.WageMonth"));
+            }
+            else
+            {
+                var matchedGroup = matchingGroups[^1];
+                var matchedMonth = matchedGroup.Key;
+                var matchedRows = matchedGroup.Select(x => x.Contrib).ToList();
+                var matchedMonthStr = matchedMonth.ToString("MMM yyyy", CultureInfo.InvariantCulture);
+
+                var missingMatchedHeadcount = matchedRows.Count(r => r.EmployeeCount is null);
+                if (missingMatchedHeadcount > 0)
+                {
+                    list.Add(MetricResult.Insufficient("Revenue per EPFO employee", MetricUnit.Crore,
+                        $"Incomplete data: {missingMatchedHeadcount} of {matchedRows.Count} establishment records in FY{fyYear} matching month ({matchedMonthStr}) missing EmployeeCount",
+                        "FinancialYearData.Revenue", "EpfoContribution.EmployeeCount", "EpfoContribution.WageMonth"));
+                }
+                else
+                {
+                    var fyHeadcount = matchedRows.Sum(r => r.EmployeeCount!.Value);
+                    if (fyHeadcount <= 0)
+                    {
+                        list.Add(MetricResult.Insufficient("Revenue per EPFO employee", MetricUnit.Crore,
+                            $"EPFO employee count in matching FY{fyYear} ({matchedMonthStr}) is 0",
+                            "FinancialYearData.Revenue", "EpfoContribution.EmployeeCount", "EpfoContribution.WageMonth"));
+                    }
+                    else
+                    {
+                        var revPerEmp = Math.Round(latestFy.Revenue!.Value / fyHeadcount, 2);
+                        var periodStr = $"FY{fyYear} revenue (₹{latestFy.Revenue!.Value:N2} Cr) vs {matchedMonthStr} EPFO headcount ({fyHeadcount} employees) (EPFO headcount \u2260 total headcount)";
+                        list.Add(MetricResult.Ok("Revenue per EPFO employee", revPerEmp, MetricUnit.Crore,
+                            periodStr, "FinancialYearData.Revenue", "EpfoContribution.EmployeeCount", "EpfoContribution.WageMonth"));
+                    }
+                }
+            }
+        }
+
+        // ── H7: Establishment count + locations + flags ──
+        if (establishments.Count == 0)
+        {
+            list.Add(MetricResult.Insufficient("Establishment count + locations + flags", MetricUnit.Count,
+                "No EPFO establishment records on file",
+                "EpfoEstablishment.WorkingStatus", "EpfoEstablishment.City", "EpfoEstablishment.Flags"));
+        }
+        else
+        {
+            var liveCount = establishments.Count(e => IsLiveEpfoStatus(e.WorkingStatus));
+            var closedCount = establishments.Count(e => IsClosedEpfoStatus(e.WorkingStatus));
+            var unknownStatusCount = establishments.Count - liveCount - closedCount;
+
+            var validCityEstablishments = establishments.Where(e => IsValidEpfoCity(e.City)).ToList();
+            var distinctCities = validCityEstablishments
+                .Select(e => e.City!.Trim())
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            var unknownCityCount = establishments.Count - validCityEstablishments.Count;
+
+            var flaggedCount = establishments.Count(e => HasSubstantiveEpfoFlag(e.Flags));
+
+            var statusDesc = unknownStatusCount > 0
+                ? $"{liveCount} live, {closedCount} closed, {unknownStatusCount} unknown of {establishments.Count} establishment(s)"
+                : $"{liveCount} live, {closedCount} closed of {establishments.Count} establishment(s)";
+
+            var locDesc = unknownCityCount > 0
+                ? $"{distinctCities.Count} location(s) ({unknownCityCount} unknown city)"
+                : $"{distinctCities.Count} location(s)";
+
+            var periodStr = $"{statusDesc} across {locDesc}; {flaggedCount} flagged";
+
+            list.Add(MetricResult.Ok("Establishment count + locations + flags", (decimal)liveCount, MetricUnit.Count,
+                periodStr, "EpfoEstablishment.WorkingStatus", "EpfoEstablishment.City", "EpfoEstablishment.Flags"));
+        }
+
+        return new MetricGroup("EPFO / labour", list);
+    }
+
+    private static readonly string[] EpfoWageMonthFormats =
+    [
+        "MMM, yyyy", "MMMM, yyyy", "MMM yyyy", "MMMM yyyy", "MMM-yyyy", "MMMM-yyyy", "yyyy-MM", "MM-yyyy", "MM/yyyy", "yyyy/MM"
+    ];
+
+    /// <summary>Normalises free-text WageMonth to the 1st of the month anchor DateOnly using an invariant allow-list of month formats.
+    /// Ambiguous day-level strings or unsupported formats return false and must be handled fail-closed.</summary>
+    public static bool TryParseWageMonth(string? wageMonth, out DateOnly monthAnchor)
+    {
+        monthAnchor = default;
+        if (string.IsNullOrWhiteSpace(wageMonth)) return false;
+        var text = wageMonth.Trim();
+        foreach (var format in EpfoWageMonthFormats)
+        {
+            if (DateOnly.TryParseExact(text, format, CultureInfo.InvariantCulture, DateTimeStyles.None, out var parsed))
+            {
+                monthAnchor = new DateOnly(parsed.Year, parsed.Month, 1);
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /// <summary>Approved status vocabulary for live EPFO establishments.
+    /// Explicitly guards against substring collisions such as 'NOT LIVE'.</summary>
+    public static bool IsLiveEpfoStatus(string? status)
+    {
+        if (string.IsNullOrWhiteSpace(status)) return false;
+        var s = status.Trim().ToUpperInvariant();
+        if (s.Contains("NOT LIVE") || s.Contains("CLOSED") || s.Contains("INACTIVE") || s.Contains("DE-REGISTERED") || s.Contains("DEREGISTERED") || s.Contains("SUSPENDED"))
+            return false;
+        return s.Contains("LIVE") || s.Contains("WORKING") || s.Contains("ACTIVE");
+    }
+
+    /// <summary>Approved status vocabulary for closed/inactive EPFO establishments.</summary>
+    public static bool IsClosedEpfoStatus(string? status)
+    {
+        if (string.IsNullOrWhiteSpace(status)) return false;
+        var s = status.Trim().ToUpperInvariant();
+        return s.Contains("NOT LIVE") || s.Contains("CLOSED") || s.Contains("INACTIVE") || s.Contains("DE-REGISTERED") || s.Contains("DEREGISTERED") || s.Contains("SUSPENDED");
+    }
+
+    private static readonly HashSet<string> CleanEpfoFlagValues = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "-", "--", "---", "N/A", "NA", "NONE", "NIL", "NO", "NOT APPLICABLE", "NULL"
+    };
+
+    /// <summary>Filters out null, whitespace, and placeholder tokens from EPFO establishment flags.</summary>
+    public static bool HasSubstantiveEpfoFlag(string? flags)
+    {
+        if (string.IsNullOrWhiteSpace(flags)) return false;
+        var trimmed = flags.Trim();
+        return !CleanEpfoFlagValues.Contains(trimmed);
+    }
+
+    private static readonly HashSet<string> PlaceholderEpfoCities = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "-", "--", "---", "N/A", "NA", "NONE", "UNKNOWN", "NOT AVAILABLE", "NOT APPLICABLE", "NULL"
+    };
+
+    /// <summary>Counts only genuine, non-placeholder city values as valid establishment locations.</summary>
+    public static bool IsValidEpfoCity(string? city)
+    {
+        if (string.IsNullOrWhiteSpace(city)) return false;
+        return !PlaceholderEpfoCities.Contains(city.Trim());
     }
 }
