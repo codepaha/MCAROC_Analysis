@@ -109,9 +109,11 @@ Rule engine, analysis orchestration, Phase-4 retrieval, Wave 3 restyle (not spli
 ## Status board  <!-- Integrator keeps this current -->
 
 **Current focus:** Phase 8, two lanes.
-Claude done: #79 CI shift · A4/#35 · A11/#75 · A5/#36 · A6/#37 (PR #87, `075dc83`) · **A7/#38**
-(PR #89, `8f4e5dd`) — **Wave 1's column-drop cleanup is now fully closed out.** Next: A8–A10 (#50–#52),
-then D2/#57, D4/#59.
+Claude done: #79 CI shift · A4/#35 · A11/#75 · A5/#36 · A6/#37 (PR #87, `075dc83`) · A7/#38
+(PR #89, `8f4e5dd`) — Wave 1's column-drop cleanup fully closed out. **A8/#50 → PR #90, A9/#51 → PR #91,
+A10/#52 → PR #92 — all three up for @codex review, stacked #90 → #91 → #92.** All three sheets are
+absent from the COASTAL fixture, so none have real-workbook reconciliation — synthetic-only test
+coverage, flagged in each PR. **Pausing here per owner request.** Next when resumed: D2/#57, D4/#59.
 Antigravity: D5/#60 → **PR #88 open** (addresses the plan-review findings — worth confirming both the
 `IsPendingLitigation` reuse and the D5 CaseCategory-OR-NCLT fix landed before merge). Next: D6/#61, D7/#62.
 Also merged since the last board update: pre-login reports edit-pipeline (**#86**); issue **#46**
@@ -166,6 +168,31 @@ Linux subset fonts break PdfPig's ToUnicode → those are `[SkippableFact]`, ski
 
 ## Log  <!-- newest first. Prefix: NEEDS / BLOCKED / DONE / DECISION / FYI -->
 
+### 2026-09-11 — Claude session (A8–A10 up, pausing)
+- **DONE — A8/#50, A9/#51, A10/#52 all built back to back per owner request**, stacked branches
+  (`feature/a8-related-party-transactions` → `feature/a9-credit-ratings` → `feature/a10-financial-dispute-cases`),
+  one migration each so they apply in order even before any merges:
+  - **PR #90 (A8)** — `RelatedPartyTransaction` entity + `RelatedPartyTransactionsParser` (dynamic
+    header lookup); new "Related Party Transactions" sub-section on Corporate → Group Entities.
+    Migration `AddRelatedPartyTransactions`. Catalogue G14 → DONE.
+  - **PR #91 (A9)** — `CreditRating` entity (one table, `IsAccepted` flag) + `CreditRatingsParser`;
+    tolerates the trailing-space `"AGENCY "` header; also handles the "Unaccepted Ratings" sub-section
+    some exports fold into the *Credit Ratings* sheet itself rather than a separate sheet, per the
+    issue's own note. New "Credit Ratings" sub-section on Compliance. Migration `AddCreditRatings`.
+    Catalogue: split the old combined "Credit Ratings + Unaccepted Ratings" entry (whose `+`-joined
+    name A7's checker can't split) into two real sheet rows; G15 → DONE.
+  - **PR #92 (A10)** — `FinancialDisputeCase` entity + `FinancialDisputeParser`; `Direction` kept as
+    the flag text it is, not conflated with `AmountUnderDefault`. New "Financial Disputes" sub-tab on
+    Litigation, clearly separated from the 3-tier Legal History. New `LitigationTabRenderingTests.cs`.
+    Migration `AddFinancialDisputeCases`. Catalogue G16 → DONE.
+  - All three sheets are absent from the COASTAL fixture (per the catalogue's own notes), so **none
+    have real-workbook reconciliation** — synthetic unit + render tests only, built from each issue's
+    documented column layout (sourced from the wider VTION portfolio audit). Flagged explicitly in
+    every PR body; worth a real-workbook check whenever a company with these sheets gets ingested.
+  - Full solution build clean; targeted test sweep (36 tests across all three areas +
+    `SourceReconciliationTests` + A7's `CatalogueCoverageTests`) all green, no regressions.
+- **Pausing here per owner request** — all three PRs are up for @codex review, none merged yet.
+
 ### 2026-09-11 — Antigravity
 - **DONE D5 / #60 → PR #88 (`feature/d5-legal-history-metrics`)**: Legal history analytics (Section D, D1–D8).
   Implemented in `DossierComputations.Metrics.cs` and wired into `BuildMetricGroups`.
@@ -175,14 +202,7 @@ Linux subset fonts break PdfPig's ToUnicode → those are `[SkippableFact]`, ski
   3. Added fixed `RoleById` test for D2 + COASTAL fixture regression test (952/592/68/292, D1=127, D4=342/167/96/35/20, D5=96, D6=20, D7=21.5%, D8=360).
   4. Pinned `NormalizeCourtType` precedence order (Consumer before District).
   Golden master + analytics.json endpoint + catalogue updated to `shipped`. All tests green. → **@codex** review.
-
-### 2026-09-11 — Claude session
-- **CLAIMED A8/#50, A9/#51, A10/#52** — doing all three back to back per owner request. Stacked
-  branches (`feature/a8-related-party-transactions` → a9 branch off it → a10 branch off that), one
-  migration each, so they apply in order even before any merges. All three sheets are absent from the
-  COASTAL fixture (per the catalogue's own notes), so **no real-workbook reconciliation is possible for
-  these** — synthetic unit tests only, built from the column layouts documented in each issue
-  (originally sourced from the wider VTION portfolio audit). Will flag this limitation in each PR.
+  - **MERGED as `bf19713`** (per gitStatus: PR #88 merged to main).
 
 ### 2026-09-11 — Claude session (A7 merged)
 - **DONE — A7 / #38 MERGED (`8f4e5dd`, PR #89).** One Codex review round: rule 4's first version only
