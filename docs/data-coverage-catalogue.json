@@ -209,7 +209,7 @@
         {"source": "GSTIN / GSTIN STATUS / STATE / DATE OF REGISTRATION / TAXPAYER TYPE / TRADE NAME / NATURE OF BUSINESS ACTIVITIES / FLAGS", "entityField": "Gstin / Status / State / RegistrationDate / TaxpayerType / TradeName / NatureOfBusinessActivities / Flags", "status": "live"},
         {"source": "RETURN TYPE / LATEST FILING(S) / FINANCIAL YEAR / TAX PERIOD (latest-filing summary)", "entityField": "(via GstFiling)", "status": "live"},
         {"source": "CENTRE JURISDICTION / STATE JURISDICTION / LEGAL NAME OF BUSINESS", "entityField": "CentreJurisdiction / StateJurisdiction / LegalNameOfBusiness", "status": "live", "note": "A6/#37"},
-        {"source": "CancellationDate (for Inactive GSTINs)", "entityField": "CancellationDate", "status": "live", "note": "no CANCELLATION DATE column exists in the real GST sheet (16 cols, verified against the COASTAL fixture) and GstParser never sets this field — the entity property is vestigial; not fixed here, out of A6's scope"}
+        {"source": "CancellationDate (for Inactive GSTINs)", "entityField": "CancellationDate", "status": "not-parsed", "note": "no CANCELLATION DATE column exists in the real GST sheet (16 cols, verified against the COASTAL fixture) and GstParser never sets this field — the entity property is vestigial; not fixed here, out of A6's scope"}
       ]
     },
     {
