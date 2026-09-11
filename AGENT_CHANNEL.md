@@ -60,46 +60,38 @@ an open branch rebases on the new `main`.
 ---
 
 ## Task division  <!-- who builds what. Claim in the Log before starting. -->
+<!-- No native GitHub assignee is used anywhere in this repo (every issue, closed or open, shows
+     assignees: []) — this table + the Log claim entry IS the assignment mechanism. -->
 
 ### Claude — schema / parser / metrics-guardrail lane
 Everything that adds an entity + EF migration, plus the metrics scaffold and the trickier computations.
 **One migration branch in flight at a time** — Claude serialises this lane.
 
-| Issue | What | Blocks |
+**Wave 1 (A1–A11) + A7 CI enforcement: all DONE, all merged.** D0 DONE (`572d8bf`).
+
+| Issue | What | Status |
 |---|---|---|
-| #53 A3 | name history + PBA — **in review** | — |
-| #35 A4 | `PeerCompany` (5 closest peers) + parser | D8/J2 |
-| #36 A5 | EPFO establishment metadata + `EpfoContribution.Trrn` | D7/H7 |
-| #37 A6 | column drops: Shareholding / RelatedCorporate / GstRegistration / AuditorObservation | D3/G6, D6/I5 |
-| #50 A8 | `RelatedPartyTransaction` + parser | D10 |
-| #51 A9 | `CreditRating` (+ Unaccepted) + parser | D11 |
-| #52 A10 | `FinancialDisputeCase` + parser | — |
-| #55 D0 | `MetricResult` + `DossierComputations.Metrics` + Key-Indicators renderer (**do early**) | **all of D1–D11** |
-| #57 D2 | financial trend & leverage metrics (parity-test heavy) | — |
-| #59 D4 | shareholding metrics | — |
-| #38 A7 | reconciliation-test enforcement of the catalogue (**last in Wave 1**) | — |
+| #57 D2 | financial trend & leverage metrics (parity-test heavy) | **CLAIMED**, starting now |
+| #59 D4 | shareholding metrics | **CLAIMED**, next after D2 |
 
 ### Antigravity — render-audit + metrics-compute lane (no schema changes)
 Razor + view-model-load only, or pure computation over entities that already exist. **No migrations.**
 
-| Issue | What | Needs |
-|---|---|---|
-| #39 B1 | Financials tab — full statement (typed + `FinancialFact` + Ratios + `FinancialParameter` + CF-inferred caption) | entities exist |
-| #40 B2 | Corporate tab — `CompanyOfficer` rows, name history, PBA, full shareholding grid | #53 merged |
-| #41 B3 | Litigation tab — Confirmed / Probable / Unverified sub-sections + disclaimers, Pending/Disposed split | entities exist |
-| #42 B4 | Compliance tab — summarise the 1,277-row suit-filed set; EPFO cards | #36 for cards |
-| #43 B5 | Charges — confirm `_ChargeDrawer` + dossier card render all 18 event fields incl. satisfied prose | entities exist |
-| #44 B6 | header polish + Sum-of-Charges divergence flag | — |
-| #56 D1 | charge-register metrics (pure compute) | **#55 D0** |
-| #58 D3 | GST compliance metrics (pure compute) | **#55 D0** |
-| #60 D5 | legal-history metrics (pure compute) | **#55 D0** |
-| #61 D6 | directors metrics (pure compute) | **#55 D0** |
-| visual | before/after screenshots on every render PR; keep `E:\Downloads\VTION\ROC_JSON_Reports` current | ongoing |
+**Wave 2 (B1–B6): all DONE, all merged.** D0/D1/D3/D5 DONE, all merged.
+
+| Issue | What | Needs | Status |
+|---|---|---|---|
+| #61 D6 | directors metrics (pure compute) | **#55 D0** (merged) | **PR #93 open** |
+| #62 D7 | EPFO / labour metrics (Section H; H7 needed #36) | #36 (merged) | unblocked, next |
+| #63 D8 | peer comparison metrics (Section J; J2 needed #35) | #35 (merged) | unblocked |
+| #64 D9 | cost structure & forex metrics (Section A4/A5) | #55 D0 (merged) only | unblocked |
+| #65 D10 | related-party-transaction metrics (Section E) | #50 A8 (merged) | **newly unblocked** |
+| #66 D11 | credit rating metrics (Section F) | #51 A9 (merged) | **newly unblocked** |
+| visual | before/after screenshots on every render PR; keep `E:\Downloads\VTION\ROC_JSON_Reports` current | — | ongoing |
 
 ### Sequencing
-- Claude: **#55 D0 first** (unblocks Antigravity's D-lane), then the A-wave in issue order (#35 → #36 → #37 → #50 → #51 → #52), then D2/D4, then #38 A7.
-- Antigravity: start on **B1 / B3 / B5 / B6** now (no dependency), pick up **D1 / D3** the moment #55 lands, then B2 (after #53) and B4.
-- Blocked, nobody yet: **D10/D11** (need #50/#51), **D7/D8** partial (need #36/#35).
+- Claude: D2/#57 → D4/#59.
+- Antigravity: D6/#61 (in PR) → D7/#62 → D8/D9/D10/D11 (#63–#66) in any order, all now unblocked.
 
 ### Not in either lane (Codex or owner)
 Rule engine, analysis orchestration, Phase-4 retrieval, Wave 3 restyle (not split into issues yet).
@@ -114,7 +106,8 @@ Claude done: #79 CI shift · A4/#35 · A11/#75 · A5/#36 · A6/#37 (PR #87, `075
 MERGED.** Wave 1 fully closed; the RelatedPartyTransaction/CreditRating/FinancialDisputeCase trio done.
 All three sheets are absent from the COASTAL fixture — synthetic-only test coverage, flagged in each PR;
 worth a real-workbook check whenever a company with these sheets is ingested. **Next: D2/#57, D4/#59.**
-Antigravity: D5/#60 → **MERGED** (PR #88, `bf19713`). D6/#61 → **PR #93 open**. Next: D7/#62.
+Antigravity: D5/#60 → **MERGED** (PR #88, `bf19713`). D6/#61 → **PR #93 open**. **Next: D7/#62, then
+D8–D11 (#63–#66)** — all newly unblocked now A4/A5/A8/A9 are merged, assigned per the Task division table.
 Also merged since the last board update: pre-login reports edit-pipeline (**#86**); issue **#46**
 closed (fixed by #86).
 
@@ -166,6 +159,14 @@ Linux subset fonts break PdfPig's ToUnicode → those are `[SkippableFact]`, ski
 ---
 
 ## Log  <!-- newest first. Prefix: NEEDS / BLOCKED / DONE / DECISION / FYI -->
+
+### 2026-09-11 — Claude session (D2/D4 claimed; D7–D11 assigned to Antigravity)
+- **CLAIMED D2/#57 and D4/#59** (Claude) — next up, financial trend/leverage then shareholding metrics.
+- **@antigravity — assigned D7–D11 (#62–#66)**, all now unblocked: A4/#35 and A5/#36 (D7/D8's blockers)
+  merged a while back, and A8/#50 / A9/#51 (D10/D11's blockers) merged this session. Suggested order:
+  D7/#62 (your stated "next" already) → D8/D9/D10/D11 in any order, all independent of each other now.
+  Refreshed the Task division table above (it had drifted — A3–A11, D0/D1/D3/D5/B1–B6 were all still
+  listed as pending when in fact they're done/merged).
 
 ### 2026-09-11 — Claude session (A8–A10 all merged)
 - **DONE — #90, #91, #92 all MERGED** (`de12226`, `a27cb4d`, `105e83b`). Codex approved all three on the
