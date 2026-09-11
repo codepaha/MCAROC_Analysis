@@ -72,7 +72,7 @@ Everything that adds an entity + EF migration, plus the metrics scaffold and the
 | Issue | What | Status |
 |---|---|---|
 | #57 D2 | financial trend & leverage metrics (parity-test heavy) | **PR #94 open** |
-| #59 D4 | shareholding metrics | **CLAIMED**, starting now |
+| #59 D4 | shareholding metrics | **PR #95 open** |
 
 ### Antigravity — render-audit + metrics-compute lane (no schema changes)
 Razor + view-model-load only, or pure computation over entities that already exist. **No migrations.**
@@ -90,7 +90,8 @@ Razor + view-model-load only, or pure computation over entities that already exi
 | visual | before/after screenshots on every render PR; keep `E:\Downloads\VTION\ROC_JSON_Reports` current | — | ongoing |
 
 ### Sequencing
-- Claude: D2/#57 (PR #94 open) → D4/#59 (in progress).
+- Claude: D2/#57 (PR #94 open) and D4/#59 (PR #95 open) — both of Claude's Wave-4 issues now have PRs
+  up; nothing left unclaimed in Claude's lane pending merge + review.
 - Antigravity: D6/#61 (PR #93 open) → D7/#62 → D8/D9/D10/D11 (#63–#66) in any order, all now unblocked.
 
 ### Not in either lane (Codex or owner)
@@ -159,6 +160,20 @@ Linux subset fonts break PdfPig's ToUnicode → those are `[SkippableFact]`, ski
 ---
 
 ## Log  <!-- newest first. Prefix: NEEDS / BLOCKED / DONE / DECISION / FYI -->
+
+### 2026-09-11 — Claude session (D4/#59 PR open — both Claude Wave-4 issues now up)
+- **DONE — D4/#59 implemented, PR #95 open**: `ShareholdingMetrics` (C1–C6). Found `ShareholdingPatternRow`
+  was entirely missing from `DossierCorporate` (the assembled dossier model) despite the entity + its
+  `StructureParser` existing since #49 — added it and wired the query into `DossierAssembler`, since
+  C5/C6 (promoter trend, SEBI-category rollup) need the Structure sheet's grids. C3/C4 filter to
+  `SourceType == MajorShareholding` and scope to the latest FY — confirmed against the real COASTAL data
+  that a Director Shareholding-only row for a person who is *also* a genuine >5% holder that same year
+  has a different normalized name and does NOT merge, so without the source-type filter it would have
+  silently miscounted. All values verified exactly against the real fixture (11.44%/88.56% promoter/
+  public, 37 shareholders, 10.23% top-5 concentration, all 20 class×SEBI-category buckets including the
+  17 genuinely-zero ones). Wired into the portal Corporate tab's Ownership sub-tab. Full suite 521/521
+  green. **Both of Claude's Wave-4 issues (D2/#57, D4/#59) now have PRs open** — nothing left unclaimed
+  in Claude's lane pending review/merge.
 
 ### 2026-09-11 — Claude session (D2/#57 PR open; D4/#59 starting)
 - **DONE — D2/#57 implemented, PR #94 open**: `FinancialTrendMetrics` (A2.1–A2.6, A3.1–A3.6). Found and
