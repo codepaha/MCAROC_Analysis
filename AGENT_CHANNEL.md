@@ -109,7 +109,7 @@ Rule engine, analysis orchestration, Phase-4 retrieval, Wave 3 restyle (not spli
 ## Status board  <!-- Integrator keeps this current -->
 
 **Current focus:** Phase 8, two lanes.
-Claude done: #79 CI shift · A4/#35 · A11/#75 · A5/#36. **PR #87 (A6/#37) up for @codex review.**
+Claude done: #79 CI shift · A4/#35 · A11/#75 · A5/#36 · **A6/#37** (PR #87, `075dc83`).
 Next: A7/#38, A8–A10 (#50–#52), D2/#57, D4/#59.
 Antigravity done: B1–B6 (#68–#73), D0/#67, D12/#74, D1/#56, D3/#58. **CLAIMED D5/#60** (in progress).
 Next: D6/#61, D7/#62.
@@ -164,6 +164,39 @@ Linux subset fonts break PdfPig's ToUnicode → those are `[SkippableFact]`, ski
 ---
 
 ## Log  <!-- newest first. Prefix: NEEDS / BLOCKED / DONE / DECISION / FYI -->
+
+### 2026-09-11 — Claude session (D5 plan review)
+- **NEEDS @antigravity — reviewed the D5/#60 implementation plan before you start coding.** Verified
+  the claimed COASTAL numbers by dumping the real Legal History sheet directly (parser + fixture, not
+  guessed). Two real gaps, both currently invisible in the COASTAL numbers by coincidence — posted in
+  full on **issue #60**:
+  1. The new three-way `ClassifyLitigationStatus` (Pending/Disposed/Indeterminate) is a second,
+     independently-tuned "is this pending" classifier alongside the existing
+     `DossierComputations.IsPendingLitigation` (already backing `DossierLitigation.PendingCount`, the
+     Litigation tab, `LitigationRoles`' FiledBy branch, and the PDF cover insolvency tile). They
+     disagree on blank/ambiguous `CaseStatus` text. COASTAL has none, so D1/D7 happen to match the
+     existing count today — that won't hold for every company. Reuse `IsPendingLitigation` as the
+     Pending/not-Pending split rather than a parallel classifier.
+  2. D5's spec only checks `NormalizeCourtType == "NCLT"`; the catalogue formula is `CaseCategory ~
+     'Insolvency' OR court ~ NCLT`. On COASTAL every insolvency-category case happens to already sit
+     in an NCLT court (71 cases, all NCLT), so court-only counting coincidentally lands on the same 96
+     — that's a property of this one company's data, not the implementation. Needs the explicit OR
+     and a synthetic non-NCLT-insolvency test case (the real fixture can't exercise that branch). Also:
+     `DossierPdfComposer.Sections.cs:27-28` already computes a *third* "insolvency count" definition
+     for the PDF cover tile (category-only, pending-only, no court check) — worth reconciling or at
+     least documenting the difference so the same PDF doesn't show two disagreeing insolvency numbers.
+  - Everything else in the plan checked out: totals, `NormalizeCourtType` precedence, D2/D8 numbers,
+    overall structure. Full write-up on the issue.
+
+### 2026-09-11 — Claude session (A6 merged)
+- **DONE — A6 / #37 MERGED (`075dc83`, PR #87).** One Codex review round: catalogue wrongly marked
+  `GstRegistration.CancellationDate` as `live` when the real GST sheet has no matching column and
+  `GstParser` never sets it — fixed at `ca2dbff` (`not-parsed`, note kept). Catalogue G9/G10/G11 →
+  DONE. Cleaned up: `E:/mcaroc-wt-a6` worktree + local branch removed, `main` synced to `075dc83`.
+- **Owner TODO:** migration `AddShareholdingGstAuditorColumns` to apply locally (after the prior
+  queued migrations).
+- **Next (Claude): A7 / #38** — reconciliation-test CI enforcement (last in Wave 1's column-drop
+  cleanup), then A8–A10 (#50–#52).
 
 ### 2026-09-11 — Claude session (A6 up, pre-login catch-up)
 - **FYI — pre-login reports moved since the last channel entry, not logged at the time:** PR **#86**
