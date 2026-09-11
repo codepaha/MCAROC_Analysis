@@ -297,6 +297,32 @@ public class LitigationMetricsTests
         Assert.Equal(new[] { "DossierComputations.LitigationRoles" }, d2.Inputs);
     }
 
+    [Fact]
+    public void D3_blank_category_mapped_to_uncategorised_bucket()
+    {
+        var cases = new List<Litigation>
+        {
+            new() { MatchStatus = LitigationMatchStatus.Confirmed, CaseCategory = null },
+            new() { MatchStatus = LitigationMatchStatus.Confirmed, CaseCategory = "" },
+            new() { MatchStatus = LitigationMatchStatus.Probable, CaseCategory = "   " },
+            new() { MatchStatus = LitigationMatchStatus.Confirmed, CaseCategory = "Civil Cases" },
+            new() { MatchStatus = LitigationMatchStatus.Uncertain, CaseCategory = null } // Uncertain excluded from D3
+        };
+
+        var model = CreateMinimalDossier(cases);
+        var group = DossierComputations.LitigationMetrics(model);
+
+        var uncategorised = Assert.Single(group.Metrics, m => m.Label == "Cases by category (Uncategorised)");
+        Assert.True(uncategorised.HasValue);
+        Assert.Equal(3m, uncategorised.Value);
+        Assert.Equal("3 of 4 confirmed/probable cases", uncategorised.Period);
+
+        var civil = Assert.Single(group.Metrics, m => m.Label == "Cases by category (Civil Cases)");
+        Assert.True(civil.HasValue);
+        Assert.Equal(1m, civil.Value);
+        Assert.Equal("1 of 4 confirmed/probable cases", civil.Period);
+    }
+
     [SkippableFact]
     public void Coastal_fixture_exact_legal_history_metrics()
     {
