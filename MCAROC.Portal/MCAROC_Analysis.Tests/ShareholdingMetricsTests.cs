@@ -154,7 +154,7 @@ public class ShareholdingMetricsTests
     }
 
     [Fact]
-    public void C4_buckets_a_blank_shareholder_type_as_unspecified()
+    public void C4_is_insufficient_when_every_disclosed_holder_has_no_reported_type()
     {
         var shareholders = new List<Shareholding>
         {
@@ -162,8 +162,26 @@ public class ShareholdingMetricsTests
         };
         var group = DossierComputations.ShareholdingMetrics(CreateMinimalDossier(shareholders: shareholders));
 
-        var unspecified = M(group, "Corporate vs individual >5%-shareholder split (Unspecified)");
-        Assert.Equal(15m, unspecified.Value);
+        var c4 = M(group, "Corporate vs individual >5%-shareholder split");
+        Assert.False(c4.HasValue);
+        Assert.Contains("none with a reported ShareholderType", c4.InsufficiencyReason);
+    }
+
+    [Fact]
+    public void C4_excludes_a_blank_shareholder_type_row_rather_than_inventing_an_unspecified_category()
+    {
+        var shareholders = new List<Shareholding>
+        {
+            new() { FinancialYear = 2017, HoldingPercentage = 30m, SourceType = ShareholdingSourceType.MajorShareholding, ShareholderType = "INDIVIDUALS" },
+            new() { FinancialYear = 2017, HoldingPercentage = 15m, SourceType = ShareholdingSourceType.MajorShareholding, ShareholderType = null },
+        };
+        var group = DossierComputations.ShareholdingMetrics(CreateMinimalDossier(shareholders: shareholders));
+
+        // Only the typed row becomes a bucket; the blank-type row is excluded, not a fake "Unspecified" category.
+        var individuals = M(group, "Corporate vs individual >5%-shareholder split (INDIVIDUALS)");
+        Assert.Equal(30m, individuals.Value);
+        Assert.Contains("1 with no reported type excluded", individuals.Period);
+        Assert.DoesNotContain(group.Metrics, m => m.Label.Contains("Unspecified"));
     }
 
     [Fact]
@@ -194,6 +212,50 @@ public class ShareholdingMetricsTests
         Assert.Equal(20m, M(group, "Multi-year promoter-holding trend (FY2016)").Value);
         Assert.Equal(11.44m, M(group, "Multi-year promoter-holding trend (FY2017)").Value);
         Assert.DoesNotContain("single point", M(group, "Multi-year promoter-holding trend (FY2017)").Period);
+    }
+
+    [Fact]
+    public void C5_is_insufficient_rather_than_a_false_zero_when_no_promoter_rows_exist_for_a_date()
+    {
+        // Regression: a date with only Public-class rows (Promoter grid missing/unparsed for that date)
+        // must not silently report 0% promoter holding via Sum(...  ?? 0m) on an empty sequence.
+        var pattern = new List<ShareholdingPatternRow>
+        {
+            new() { HolderClass = ShareholderClass.Public, AsOnDate = new DateOnly(2017, 3, 31), Category = "4. Bank", EquityPercent = 52.88m },
+        };
+        var group = DossierComputations.ShareholdingMetrics(CreateMinimalDossier(pattern: pattern));
+
+        var c5 = M(group, "Multi-year promoter-holding trend (FY2017)");
+        Assert.False(c5.HasValue);
+        Assert.Contains("no Promoter-class rows reported", c5.InsufficiencyReason);
+    }
+
+    [Fact]
+    public void C5_is_insufficient_rather_than_a_false_zero_when_promoter_rows_have_no_EquityPercent()
+    {
+        var pattern = new List<ShareholdingPatternRow>
+        {
+            new() { HolderClass = ShareholderClass.Promoter, AsOnDate = new DateOnly(2017, 3, 31), Category = "1. Individual / Hindu Undivided Family", EquityPercent = null },
+        };
+        var group = DossierComputations.ShareholdingMetrics(CreateMinimalDossier(pattern: pattern));
+
+        var c5 = M(group, "Multi-year promoter-holding trend (FY2017)");
+        Assert.False(c5.HasValue);
+        Assert.Contains("none report EquityPercent", c5.InsufficiencyReason);
+    }
+
+    [Fact]
+    public void C6_is_insufficient_rather_than_a_false_zero_when_a_category_has_no_EquityPercent()
+    {
+        var pattern = new List<ShareholdingPatternRow>
+        {
+            new() { HolderClass = ShareholderClass.Public, AsOnDate = new DateOnly(2017, 3, 31), Category = "4. Bank", EquityPercent = null, EquityShares = 174983550L },
+        };
+        var group = DossierComputations.ShareholdingMetrics(CreateMinimalDossier(pattern: pattern));
+
+        var bank = M(group, "SEBI-category grid rollup (Public: 4. Bank)");
+        Assert.False(bank.HasValue);
+        Assert.Contains("no EquityPercent reported", bank.InsufficiencyReason);
     }
 
     [Fact]
