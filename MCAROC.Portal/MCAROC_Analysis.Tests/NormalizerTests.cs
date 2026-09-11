@@ -111,3 +111,54 @@ public class NameNormalizerTests
         Assert.Equal("HDFC BANK LIMITED", NameNormalizer.Normalize("  hdfc   bank limited "));
     }
 }
+
+public class DateTimeNormalizerTests
+{
+    [Fact]
+    public void ParsesSourceTimestampWithTrailingHours()
+    {
+        Assert.True(DateTimeNormalizer.TryParse("9 Sep, 2026 09:32 Hours", out var result));
+        Assert.Equal(new DateTime(2026, 9, 9, 9, 32, 0), result);
+    }
+
+    [Theory]
+    [InlineData("9 Sep, 2026 09:32 Hours")]
+    [InlineData("9 Sep, 2026 09:32 hours")]
+    [InlineData("9 Sep, 2026 09:32 hrs")]
+    [InlineData("9 Sep, 2026 09:32 hr")]
+    [InlineData("9 Sep, 2026 09:32")]
+    public void StripsTerminalHourVariants(string input)
+    {
+        Assert.True(DateTimeNormalizer.TryParse(input, out var result));
+        Assert.Equal(new DateTime(2026, 9, 9, 9, 32, 0), result);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("-")]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void TreatsBlankAndDashAsNull(string? input)
+    {
+        Assert.True(DateTimeNormalizer.TryParse(input, out var result));
+        Assert.Null(result);
+    }
+
+    [Fact]
+    public void PassesThroughNativeDateTimeCells()
+    {
+        var dt = new DateTime(2026, 9, 9, 9, 32, 0);
+        Assert.True(DateTimeNormalizer.TryParse(dt, out var result));
+        Assert.Equal(dt, result);
+    }
+
+    [Theory]
+    [InlineData("not a date")]
+    [InlineData("99/99/9999 25:61")]
+    [InlineData("2026-13-45")]
+    public void ReturnsFalseForUnparsableText(string input)
+    {
+        Assert.False(DateTimeNormalizer.TryParse(input, out _));
+    }
+}
+

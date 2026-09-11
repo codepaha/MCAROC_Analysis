@@ -12,13 +12,18 @@ public static class CompanyProfileParser
     private const string ParserName = nameof(CompanyProfileParser);
 
     public static ParseResult<CompanyProfile> Parse(SheetData sheet, long requestId, long ingestionRunId, long? sourceDocumentId) =>
-        Parse(sheet, requestId, ingestionRunId, sourceDocumentId, out _);
+        Parse(sheet, requestId, ingestionRunId, sourceDocumentId, out _, out _);
 
     public static ParseResult<CompanyProfile> Parse(
-        SheetData sheet, long requestId, long ingestionRunId, long? sourceDocumentId, out List<CompanyEmail> emails)
+        SheetData sheet, long requestId, long ingestionRunId, long? sourceDocumentId, out List<CompanyEmail> emails) =>
+        Parse(sheet, requestId, ingestionRunId, sourceDocumentId, out emails, out _);
+
+    public static ParseResult<CompanyProfile> Parse(
+        SheetData sheet, long requestId, long ingestionRunId, long? sourceDocumentId, out List<CompanyEmail> emails, out DateTime? sourceSnapshotDate)
     {
         var result = new ParseResult<CompanyProfile>();
         emails = [];
+        sourceSnapshotDate = null;
 
         var profile = new CompanyProfile
         {
@@ -35,6 +40,10 @@ public static class CompanyProfileParser
         var rawEmails = new List<(string Raw, int SourceRow)>();
         var anyEmailUnreachable = false;
         var inEmailBlock = false;
+
+        var printedAtCount = 0;
+        DateTime? parsedSnapshotDate = null;
+        var hasConflictingPrintedAt = false;
 
         for (var r = 0; r < sheet.Rows.Count; r++)
         {
@@ -80,6 +89,43 @@ public static class CompanyProfileParser
             if (label.StartsWith('*') && label.Contains("not successful", StringComparison.OrdinalIgnoreCase))
             {
                 anyEmailUnreachable = true;
+                continue;
+            }
+
+            if (string.Equals(label, "Printed at", StringComparison.OrdinalIgnoreCase))
+            {
+                printedAtCount++;
+                if (string.IsNullOrWhiteSpace(valueText) || valueText == "-")
+                {
+                    result.AddWarning(new ParseIssue(IssueSeverity.Warning, ParserName, "SourceSnapshotDate",
+                        valueText, "BAD_DATETIME", "Empty or missing value for 'Printed at' timestamp", r + 1));
+                    if (parsedSnapshotDate != null)
+                    {
+                        hasConflictingPrintedAt = true;
+                    }
+                }
+                else if (DateTimeNormalizer.TryParse(value, out var parsedDt) && parsedDt.HasValue)
+                {
+                    if (printedAtCount == 1)
+                    {
+                        parsedSnapshotDate = parsedDt.Value;
+                    }
+                    else if (parsedSnapshotDate != parsedDt.Value)
+                    {
+                        hasConflictingPrintedAt = true;
+                        result.AddWarning(new ParseIssue(IssueSeverity.Warning, ParserName, "SourceSnapshotDate",
+                            valueText, "CONFLICTING_PRINTED_AT", $"Conflicting 'Printed at' timestamp found at row {r + 1}", r + 1));
+                    }
+                }
+                else
+                {
+                    result.AddWarning(new ParseIssue(IssueSeverity.Warning, ParserName, "SourceSnapshotDate",
+                        valueText, "BAD_DATETIME", $"Could not parse 'Printed at' timestamp '{valueText}'", r + 1));
+                    if (parsedSnapshotDate != null)
+                    {
+                        hasConflictingPrintedAt = true;
+                    }
+                }
                 continue;
             }
 
@@ -173,6 +219,21 @@ public static class CompanyProfileParser
                     : (rawEmails.Count == 1 && anyEmailUnreachable) ? false
                     : null
             });
+        }
+
+        if (printedAtCount == 0)
+        {
+            result.AddWarning(new ParseIssue(IssueSeverity.Warning, ParserName, "SourceSnapshotDate",
+                null, "MISSING_PRINTED_AT", "'Printed at' timestamp row is absent from About the Company sheet"));
+            sourceSnapshotDate = null;
+        }
+        else if (hasConflictingPrintedAt)
+        {
+            sourceSnapshotDate = null;
+        }
+        else
+        {
+            sourceSnapshotDate = parsedSnapshotDate;
         }
 
         if (string.IsNullOrEmpty(profile.CompanyName) || string.IsNullOrEmpty(profile.Cin))

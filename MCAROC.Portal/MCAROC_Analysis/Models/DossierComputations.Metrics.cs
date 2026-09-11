@@ -26,7 +26,8 @@ public static partial class DossierComputations
         {
             ChargeRegisterMetrics(model),
             GstComplianceMetrics(model),
-            LitigationMetrics(model)
+            LitigationMetrics(model),
+            DirectorsMetrics(model)
         };
 
         return groups.Where(g => g.HasAny).ToList();
@@ -877,5 +878,201 @@ public static partial class DossierComputations
             d8Period, "Litigation.MatchStatus"));
 
         return new MetricGroup("Legal history", list);
+    }
+
+    /// <summary>Section I — Directors analytics (Issue #61 / D6, docs/analytics-catalogue.json §I).
+    /// Pure computation over <paramref name="model"/>.</summary>
+    public static MetricGroup DirectorsMetrics(Dossier.DossierModel model)
+    {
+        var directors = model.Corporate.Directors;
+        var active = directors.Where(d => d.CessationDate is null).ToList();
+
+        // Time anchor: strictly workbook-derived SourceSnapshotDate.
+        // Fail-closed: if SourceSnapshotDate is null, I2/I3/I6 emit Insufficient (no fallback to McaDataAsOf or ReportDate).
+        DateOnly? asOfDate = model.Cover.SourceSnapshotDate is { } snap
+            ? DateOnly.FromDateTime(snap)
+            : null;
+
+        static string Fmt(DateOnly d) => d.ToString("d MMM yyyy", System.Globalization.CultureInfo.InvariantCulture);
+
+        var list = new List<MetricResult>();
+
+        // ── I1: Active director count ──
+        // Degenerate: 0 with note.
+        var i1Period = directors.Count == 0
+            ? "0 directors on record"
+            : asOfDate.HasValue
+                ? $"as at {Fmt(asOfDate.Value)} ({active.Count} active of {directors.Count} directors on record)"
+                : $"({active.Count} active of {directors.Count} directors on record)";
+
+        list.Add(MetricResult.Ok("Active director count", (decimal)active.Count, MetricUnit.Count,
+            i1Period, "Director.CessationDate"));
+
+        // ── I2: Average board tenure ──
+        // Mean over active directors with valid appointment dates <= asOfDate.
+        // Future appointment dates excluded; fail closed if asOfDate is null.
+        if (asOfDate is null)
+        {
+            list.Add(MetricResult.Insufficient("Average board tenure", MetricUnit.Years,
+                "No trustworthy source snapshot date on file", "DossierCover.SourceSnapshotDate", "Director.OriginalAppointmentDate"));
+        }
+        else if (active.Count == 0)
+        {
+            list.Add(MetricResult.Insufficient("Average board tenure", MetricUnit.Years,
+                "0 active directors on record", "Director.CessationDate", "Director.OriginalAppointmentDate"));
+        }
+        else
+        {
+            var withDates = active.Where(d => d.OriginalAppointmentDate.HasValue).ToList();
+            var futureAppointments = withDates.Where(d => d.OriginalAppointmentDate!.Value > asOfDate.Value).ToList();
+            var eligible = withDates.Where(d => d.OriginalAppointmentDate!.Value <= asOfDate.Value).ToList();
+
+            if (eligible.Count == 0)
+            {
+                if (futureAppointments.Count > 0)
+                {
+                    list.Add(MetricResult.Insufficient("Average board tenure", MetricUnit.Years,
+                        $"All {futureAppointments.Count} active director appointment date(s) are in the future relative to source snapshot {Fmt(asOfDate.Value)}",
+                        "Director.OriginalAppointmentDate", "DossierCover.SourceSnapshotDate"));
+                }
+                else
+                {
+                    list.Add(MetricResult.Insufficient("Average board tenure", MetricUnit.Years,
+                        "No active directors have an appointment date on file", "Director.OriginalAppointmentDate"));
+                }
+            }
+            else
+            {
+                var tenures = eligible.Select(d => (decimal)(asOfDate.Value.DayNumber - d.OriginalAppointmentDate!.Value.DayNumber) / 365.25m).ToList();
+                var meanTenure = Math.Round(tenures.Average(), 1);
+                var periodStr = $"mean over {eligible.Count} active directors as at {Fmt(asOfDate.Value)}";
+                if (futureAppointments.Count > 0)
+                    periodStr += $" ({futureAppointments.Count} future appointment date(s) excluded)";
+
+                list.Add(MetricResult.Ok("Average board tenure", meanTenure, MetricUnit.Years,
+                    periodStr, "Director.OriginalAppointmentDate", "DossierCover.SourceSnapshotDate"));
+            }
+        }
+
+        // ── I3: Directors ceased in the trailing 3 years ──
+        // Count ceased directors within 3 years before asOfDate.
+        // Degenerate: 0. Fail closed if asOfDate is null.
+        if (asOfDate is null)
+        {
+            list.Add(MetricResult.Insufficient("Directors ceased in the trailing 3 years", MetricUnit.Count,
+                "No trustworthy source snapshot date on file", "DossierCover.SourceSnapshotDate", "Director.CessationDate"));
+        }
+        else
+        {
+            var from = asOfDate.Value.AddYears(-3);
+            var to = asOfDate.Value;
+            var ceasedCount = directors.Count(d => d.CessationDate.HasValue && d.CessationDate.Value >= from && d.CessationDate.Value <= to);
+            var periodStr = $"{ceasedCount} ceased between {Fmt(from)} and {Fmt(to)}";
+            list.Add(MetricResult.Ok("Directors ceased in the trailing 3 years", (decimal)ceasedCount, MetricUnit.Count,
+                periodStr, "Director.CessationDate", "DossierCover.SourceSnapshotDate"));
+        }
+
+        // ── I4: Board composition by designation ──
+        // Group active directors by normalised designation.
+        if (active.Count == 0)
+        {
+            list.Add(MetricResult.Insufficient("Board composition by designation", MetricUnit.Count,
+                "0 active directors on record", "Director.Designation", "Director.CessationDate"));
+        }
+        else
+        {
+            var buckets = active
+                .GroupBy(d => NormalizeDirectorDesignation(d.Designation))
+                .OrderByDescending(g => g.Count())
+                .ThenBy(g => g.Key);
+
+            foreach (var bucket in buckets)
+            {
+                var name = $"Board composition by designation ({bucket.Key})";
+                var period = $"{bucket.Count()} of {active.Count} active directors";
+                list.Add(MetricResult.Ok(name, (decimal)bucket.Count(), MetricUnit.Count,
+                    period, "Director.Designation"));
+            }
+        }
+
+        // ── I5: Flagged director count ──
+        // Over all directors on record. Hyphens and whitespace treated as unflagged.
+        // Degenerate: 0.
+        var flaggedCount = directors.Count(d => !string.IsNullOrWhiteSpace(d.Flags) && d.Flags.Trim() != "-" && d.Flags.Trim() != "--");
+        var i5Period = directors.Count == 0
+            ? "0 directors on record"
+            : $"{flaggedCount} of {directors.Count} directors on record flagged";
+
+        list.Add(MetricResult.Ok("Flagged director count", (decimal)flaggedCount, MetricUnit.Count,
+            i5Period, "Director.Flags"));
+
+        // ── I6: Longest-serving director ──
+        // Max tenure over active directors with OriginalAppointmentDate <= asOfDate.
+        // Fail closed if asOfDate is null.
+        if (asOfDate is null)
+        {
+            list.Add(MetricResult.Insufficient("Longest-serving director", MetricUnit.Years,
+                "No trustworthy source snapshot date on file", "DossierCover.SourceSnapshotDate", "Director.OriginalAppointmentDate"));
+        }
+        else if (active.Count == 0)
+        {
+            list.Add(MetricResult.Insufficient("Longest-serving director", MetricUnit.Years,
+                "0 active directors on record", "Director.CessationDate", "Director.OriginalAppointmentDate"));
+        }
+        else
+        {
+            var withDates = active.Where(d => d.OriginalAppointmentDate.HasValue).ToList();
+            var futureAppointments = withDates.Where(d => d.OriginalAppointmentDate!.Value > asOfDate.Value).ToList();
+            var eligible = withDates.Where(d => d.OriginalAppointmentDate!.Value <= asOfDate.Value).ToList();
+
+            if (eligible.Count == 0)
+            {
+                if (futureAppointments.Count > 0)
+                {
+                    list.Add(MetricResult.Insufficient("Longest-serving director", MetricUnit.Years,
+                        $"All {futureAppointments.Count} active director appointment date(s) are in the future relative to source snapshot {Fmt(asOfDate.Value)}",
+                        "Director.OriginalAppointmentDate", "DossierCover.SourceSnapshotDate"));
+                }
+                else
+                {
+                    list.Add(MetricResult.Insufficient("Longest-serving director", MetricUnit.Years,
+                        "No active directors have an appointment date on file", "Director.OriginalAppointmentDate"));
+                }
+            }
+            else
+            {
+                var longest = eligible.OrderBy(d => d.OriginalAppointmentDate!.Value).ThenBy(d => d.NameRaw).First();
+                var tenure = Math.Round((decimal)(asOfDate.Value.DayNumber - longest.OriginalAppointmentDate!.Value.DayNumber) / 365.25m, 1);
+                var dirName = string.IsNullOrWhiteSpace(longest.NameRaw) ? "Director" : longest.NameRaw.Trim();
+                var periodStr = $"{dirName} (appointed {Fmt(longest.OriginalAppointmentDate!.Value)})";
+
+                list.Add(MetricResult.Ok("Longest-serving director", tenure, MetricUnit.Years,
+                    periodStr, "Director.OriginalAppointmentDate", "DossierCover.SourceSnapshotDate"));
+            }
+        }
+
+        return new MetricGroup("Directors", list);
+    }
+
+    /// <summary>Word-aware normalisation for director designations (catalogue §I, metric I4).
+    /// Precedence is critical: Independent must be evaluated before Executive / Whole-time
+    /// so 'Non-Executive Independent Director' normalises to 'Independent Director', and
+    /// Non-Executive must be evaluated before Executive so 'Non-Executive Director' does not
+    /// collapse to 'Whole-time Director'.</summary>
+    public static string NormalizeDirectorDesignation(string? designation)
+    {
+        if (string.IsNullOrWhiteSpace(designation)) return "Other";
+        var d = designation.Trim().ToUpperInvariant();
+
+        if (d.Contains("MANAGING")) return "Managing Director";
+        if (d.Contains("INDEPENDENT")) return "Independent Director";
+        if (d.Contains("NOMINEE")) return "Nominee Director";
+        if (d.Contains("ALTERNATE")) return "Alternate Director";
+        if (d.Contains("ADDITIONAL")) return "Additional Director";
+        if (d.Contains("NON-EXECUTIVE") || d.Contains("NON EXECUTIVE") || d.Contains("NONEXECUTIVE")) return "Non-Executive Director";
+        if (d.Contains("WHOLE-TIME") || d.Contains("WHOLE TIME") || d.Contains("WHOLETIME") || d.Contains("EXECUTIVE")) return "Whole-time Director";
+        if (d.Contains("DIRECTOR")) return "Director";
+
+        return "Other";
     }
 }

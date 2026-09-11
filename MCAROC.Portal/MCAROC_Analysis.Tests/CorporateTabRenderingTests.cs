@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using MCAROC_Analysis.Data.Entities;
 using MCAROC_Analysis.Models;
+using MCAROC_Analysis.Models.Dossier;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
@@ -189,5 +190,45 @@ public class CorporateTabRenderingTests
         Assert.Contains("GRANDEUR POWER PROJECTS PRIVATE LIMITED", html);
         Assert.Contains("Revenue", html);
         Assert.Contains("12.50", html);
+    }
+
+    [Fact]
+    public async Task Directors_key_indicators_render_in_management_subtab()
+    {
+        var vm = CreateViewModel();
+        vm.KeyMetrics =
+        [
+            new MetricGroup("Directors",
+            [
+                MetricResult.Ok("Active director count", 3, MetricUnit.Count, "3 active directors", "Director.CessationDate"),
+                MetricResult.Ok("Average board tenure", 1.0m, MetricUnit.Years, "mean over 3 active directors", "Director.OriginalAppointmentDate")
+            ])
+        ];
+
+        var html = await RenderCorporateTabAsync(vm);
+
+        Assert.Contains("Active director count", html);
+        Assert.Contains("Average board tenure", html);
+    }
+
+    [Fact]
+    public async Task Directors_key_indicators_render_when_zero_directors()
+    {
+        var vm = CreateViewModel();
+        vm.Directors = [];
+        vm.KeyMetrics =
+        [
+            new MetricGroup("Directors",
+            [
+                MetricResult.Ok("Active director count", 0, MetricUnit.Count, "0 directors on record", "Director.CessationDate"),
+                MetricResult.Insufficient("Average board tenure", MetricUnit.Years, "0 active directors on record", "Director.CessationDate")
+            ])
+        ];
+
+        var html = await RenderCorporateTabAsync(vm);
+
+        Assert.Contains("Active director count", html);
+        Assert.Contains("Average board tenure", html);
+        Assert.Contains("0 active directors on record", html);
     }
 }
