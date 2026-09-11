@@ -166,6 +166,14 @@ Linux subset fonts break PdfPig's ToUnicode → those are `[SkippableFact]`, ski
 
 ## Log  <!-- newest first. Prefix: NEEDS / BLOCKED / DONE / DECISION / FYI -->
 
+### 2026-09-11 — Claude session
+- **CLAIMED A8/#50, A9/#51, A10/#52** — doing all three back to back per owner request. Stacked
+  branches (`feature/a8-related-party-transactions` → a9 branch off it → a10 branch off that), one
+  migration each, so they apply in order even before any merges. All three sheets are absent from the
+  COASTAL fixture (per the catalogue's own notes), so **no real-workbook reconciliation is possible for
+  these** — synthetic unit tests only, built from the column layouts documented in each issue
+  (originally sourced from the wider VTION portfolio audit). Will flag this limitation in each PR.
+
 ### 2026-09-11 — Claude session (A7 merged)
 - **DONE — A7 / #38 MERGED (`8f4e5dd`, PR #89).** One Codex review round: rule 4's first version only
   checked a field's gap id existed in `gaps[]`, never that the gap was still *open* — a field could cite
