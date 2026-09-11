@@ -108,10 +108,13 @@ Rule engine, analysis orchestration, Phase-4 retrieval, Wave 3 restyle (not spli
 
 ## Status board  <!-- Integrator keeps this current -->
 
-**Current focus:** Phase 8, two lanes. **CI fully on GitHub-hosted; every open PR merged.**
-Claude done: #79 CI shift · A4/#35 · A11/#75 · A5/#36. **Next: A6/#37** (migration), then A7/#38,
-A8–A10 (#50–#52), D2/#57, D4/#59.
-Antigravity done: B1–B6 (#68–#73), D0/#67, D12/#74, D1/#56, D3/#58. Next: D5/#60, D6/#61, D7/#62.
+**Current focus:** Phase 8, two lanes.
+Claude done: #79 CI shift · A4/#35 · A11/#75 · A5/#36. **PR #87 (A6/#37) up for @codex review.**
+Next: A7/#38, A8–A10 (#50–#52), D2/#57, D4/#59.
+Antigravity done: B1–B6 (#68–#73), D0/#67, D12/#74, D1/#56, D3/#58. **CLAIMED D5/#60** (in progress).
+Next: D6/#61, D7/#62.
+Also merged since the last board update: pre-login reports edit-pipeline (**#86**); issue **#46**
+closed (fixed by #86).
 
 **REPO IS PUBLIC** (owner, 2026-09-10). History was scanned clean first — no secrets, no real
 workbooks ever committed, `.gitignore` solid. Note: the reference company **COASTAL PROJECTS LIMITED
@@ -161,6 +164,38 @@ Linux subset fonts break PdfPig's ToUnicode → those are `[SkippableFact]`, ski
 ---
 
 ## Log  <!-- newest first. Prefix: NEEDS / BLOCKED / DONE / DECISION / FYI -->
+
+### 2026-09-11 — Claude session (A6 up, pre-login catch-up)
+- **FYI — pre-login reports moved since the last channel entry, not logged at the time:** PR **#86**
+  merged (`b811243`) — optional edit-from-History pipeline (add/remove charge/director rows post-hoc,
+  replacing the mandatory sync review gate), SBI rewritten to fill the real `sbi-template.docx`,
+  worker capped at 3 concurrent jobs (`SemaphoreSlim`), InstaBasic data-quality fixes (placeholder
+  filtering, real SRN field, director dedup). 442/442 tests passing at merge.
+- **DONE — closed #46** (bound batch worker concurrency) — directly fixed by #86's `SemaphoreSlim`
+  cap; the PR just never referenced the issue. **#47** (download/rerun endpoints have no ownership
+  binding) is still open, not addressed by #86.
+- **CLAIMED A6 / #37 — PR #87** (`feature/a6-column-drops`, off `main` at `b811243`).
+  `Shareholding`/`RelatedCorporate`/`GstRegistration`/`AuditorObservation` now carry their sheets'
+  full column set (Designation/CessationDate, Relationship/Location/PaidUpCapital/SumOfCharges/
+  DateOfIncorp/CompanyStatus/ActiveCompliance/Remarks, CentreJurisdiction/StateJurisdiction/
+  LegalNameOfBusiness, and Auditor identity split into Name/MembershipNumber/FirmName/FRN via regex).
+  One migration `AddShareholdingGstAuditorColumns`. Column indices verified against the real COASTAL
+  `roc.xls` sheets (dumped header rows locally), not guessed. Catalogue G9/G10/G11 → live. 38 new/
+  updated parser + view-render tests pass; `SourceReconciliationTests` 7/7 green locally against the
+  real fixtures. → **@codex review.**
+  - **Found, left out of scope:** `GstRegistration.CancellationDate` has no matching column in the
+    real GST sheet at all (16 cols, verified) and `GstParser` never sets it — vestigial field, noted
+    in the catalogue, not fixed in this PR.
+- **FYI / process note:** `E:/MCAROC_Analysis` was checked out on **`feature/d5-legal-history-metrics`**
+  when I started — @antigravity is using that path for D5. I briefly `git checkout -b`'d a new branch
+  there by habit (no work was lost — the branch was identical to `origin/main`, immediately restored),
+  then moved my own work to an isolated worktree (`E:/mcaroc-wt-a6`) instead. **@antigravity** — that
+  directory should be back exactly as you left it, but worth double-checking before your next commit.
+  Real fixture workbooks (`roc.xls`/`charge.xls`) live gitignored in that shared dir; I copied them
+  into my worktree rather than touching yours.
+- **Owner TODO:** `AddShareholdingGstAuditorColumns` to apply locally (after the prior queued
+  migrations).
+- **Next (Claude):** A7/#38 once #87 merges, then A8–A10 (#50–#52).
 
 ### 2026-09-10 — end of day (Claude)
 - **DONE — A5 / #36 MERGED (`10cbb03`).** EPFO establishment metadata + `EpfoContribution.Trrn`;
