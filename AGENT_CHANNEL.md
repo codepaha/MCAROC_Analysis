@@ -71,8 +71,8 @@ Everything that adds an entity + EF migration, plus the metrics scaffold and the
 
 | Issue | What | Status |
 |---|---|---|
-| #57 D2 | financial trend & leverage metrics (parity-test heavy) | **CLAIMED**, starting now |
-| #59 D4 | shareholding metrics | **CLAIMED**, next after D2 |
+| #57 D2 | financial trend & leverage metrics (parity-test heavy) | **PR #94 open** |
+| #59 D4 | shareholding metrics | **CLAIMED**, starting now |
 
 ### Antigravity — render-audit + metrics-compute lane (no schema changes)
 Razor + view-model-load only, or pure computation over entities that already exist. **No migrations.**
@@ -90,8 +90,8 @@ Razor + view-model-load only, or pure computation over entities that already exi
 | visual | before/after screenshots on every render PR; keep `E:\Downloads\VTION\ROC_JSON_Reports` current | — | ongoing |
 
 ### Sequencing
-- Claude: D2/#57 → D4/#59.
-- Antigravity: D6/#61 (in PR) → D7/#62 → D8/D9/D10/D11 (#63–#66) in any order, all now unblocked.
+- Claude: D2/#57 (PR #94 open) → D4/#59 (in progress).
+- Antigravity: D6/#61 (PR #93 open) → D7/#62 → D8/D9/D10/D11 (#63–#66) in any order, all now unblocked.
 
 ### Not in either lane (Codex or owner)
 Rule engine, analysis orchestration, Phase-4 retrieval, Wave 3 restyle (not split into issues yet).
@@ -159,6 +159,20 @@ Linux subset fonts break PdfPig's ToUnicode → those are `[SkippableFact]`, ski
 ---
 
 ## Log  <!-- newest first. Prefix: NEEDS / BLOCKED / DONE / DECISION / FYI -->
+
+### 2026-09-11 — Claude session (D2/#57 PR open; D4/#59 starting)
+- **DONE — D2/#57 implemented, PR #94 open**: `FinancialTrendMetrics` (A2.1–A2.6, A3.1–A3.6). Found and
+  fixed two numerical edge cases before any test run: (1) `Math.Pow(negative, fractional)` → `NaN` →
+  throws on cast to `decimal` when a CAGR's base year is positive but the end year is negative (e.g. PAT
+  swinging profit→loss) — now checked on the ratio's sign, not just the base's; (2) Operating leverage
+  (A2.6) was compounding rounding error by dividing two already-rounded YoY percentages — switched to an
+  unrounded `RawGrowthFraction` helper, rounding only the final ratio. All 12 hand-computed values
+  verified exactly against the real COASTAL fixture (Revenue CAGR -3.9%, PAT CAGR 101.0% fallback, EBITDA
+  CAGR 32.4%, debt growth 2.6%, net worth growth 1.0%, operating leverage 6.80x, net debt 4084.50 Cr, net
+  debt/EBITDA 7.80x, FY2017 CFO-derived metrics correctly Insufficient on `CashFlowYearInferred`). Wired
+  into the portal Financials tab; dossier PDF Snapshot + `analytics.json` already render every group
+  generically, no extra wiring needed there. Full suite 520/520 green. **Next: D4/#59** (shareholding
+  metrics), starting now.
 
 ### 2026-09-11 — Claude session (D2/D4 claimed; D7–D11 assigned to Antigravity)
 - **CLAIMED D2/#57 and D4/#59** (Claude) — next up, financial trend/leverage then shareholding metrics.
