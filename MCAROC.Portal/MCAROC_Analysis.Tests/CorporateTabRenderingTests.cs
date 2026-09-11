@@ -162,4 +162,32 @@ public class CorporateTabRenderingTests
         Assert.Contains("Active Compliant", html);
         Assert.Contains("Group holding company", html);
     }
+
+    // ── A8 / #50 — Related Party Transactions ──
+
+    [Fact]
+    public async Task Related_party_transaction_row_renders_entity_type_and_amount()
+    {
+        var vm = CreateViewModel();
+        vm.RelatedPartyTransactions =
+        [
+            new RelatedPartyTransaction
+            {
+                FinancialYearEnding = new DateOnly(2017, 3, 31),
+                EntityType = "Company",
+                EntityNameRaw = "GRANDEUR POWER PROJECTS PRIVATE LIMITED",
+                EntityNameNormalized = "GRANDEUR POWER PROJECTS PRIVATE LIMITED",
+                RelationshipRaw = "SUBSIDIARY CORPORATES",
+                TransactionType = "Revenue",
+                AmountCrore = 12.5m
+            }
+        ];
+
+        var html = await RenderCorporateTabAsync(vm);
+
+        Assert.Contains("Related Party Transactions", html);
+        Assert.Contains("GRANDEUR POWER PROJECTS PRIVATE LIMITED", html);
+        Assert.Contains("Revenue", html);
+        Assert.Contains("12.50", html);
+    }
 }

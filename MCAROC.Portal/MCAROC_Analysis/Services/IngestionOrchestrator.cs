@@ -335,6 +335,14 @@ public class IngestionOrchestrator(AppDbContext db, IExcelSheetReader sheetReade
             Collect(r, issues, ref itemCount);
         }
 
+        var rptSheet = rocSheets.Find(SheetAliases.RelatedPartyTransactions);
+        if (rptSheet is not null)
+        {
+            var r = RelatedPartyTransactionsParser.Parse(rptSheet, requestId, runId, rocDocumentId);
+            db.RelatedPartyTransactions.AddRange(r.Items);
+            Collect(r, issues, ref itemCount);
+        }
+
         var complianceSheet = rocSheets.Find(SheetAliases.Compliance);
         if (complianceSheet is not null)
         {
