@@ -40,7 +40,8 @@
   ],
   "MetricGroupTitles": [
     "Charge register",
-    "GST compliance"
+    "GST compliance",
+    "Legal history"
   ],
   "DataSufficiencyNoteCodes": [
     "FIN_LEVERAGE_TREND",

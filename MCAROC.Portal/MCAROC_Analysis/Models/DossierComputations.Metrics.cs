@@ -25,7 +25,8 @@ public static partial class DossierComputations
         var groups = new List<MetricGroup>
         {
             ChargeRegisterMetrics(model),
-            GstComplianceMetrics(model)
+            GstComplianceMetrics(model),
+            LitigationMetrics(model)
         };
 
         return groups.Where(g => g.HasAny).ToList();
@@ -655,4 +656,226 @@ public static partial class DossierComputations
         status is not null
         && status.Contains("active", StringComparison.OrdinalIgnoreCase)
         && !status.Contains("inactive", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>Court type normalisation according to precedence rules:
+    /// 1. NCLT: "NCLT" or "NATIONAL COMPANY LAW"
+    /// 2. DRT: "DEBT RECOVERY", "DEBTS RECOVERY", "DRT", or "DRAT"
+    /// 3. High Court: "HIGH COURT"
+    /// 4. Consumer Court: "CONSUMER" (evaluated before District Court to prevent "District Consumer Forum" false matches)
+    /// 5. District Court: "DISTRICT", "CITY CIVIL", or "SESSIONS"
+    /// 6. Fallback: "Other"
+    /// </summary>
+    public static string NormalizeCourtType(string? court)
+    {
+        if (string.IsNullOrWhiteSpace(court)) return "Other";
+        var c = court.Trim();
+
+        if (c.Contains("NCLT", StringComparison.OrdinalIgnoreCase) ||
+            c.Contains("NATIONAL COMPANY LAW", StringComparison.OrdinalIgnoreCase))
+            return "NCLT";
+
+        if (c.Contains("DEBT RECOVERY", StringComparison.OrdinalIgnoreCase) ||
+            c.Contains("DEBTS RECOVERY", StringComparison.OrdinalIgnoreCase) ||
+            c.Contains("DRT", StringComparison.OrdinalIgnoreCase) ||
+            c.Contains("DRAT", StringComparison.OrdinalIgnoreCase))
+            return "DRT";
+
+        if (c.Contains("HIGH COURT", StringComparison.OrdinalIgnoreCase))
+            return "High Court";
+
+        if (c.Contains("CONSUMER", StringComparison.OrdinalIgnoreCase))
+            return "Consumer Court";
+
+        if (c.Contains("DISTRICT", StringComparison.OrdinalIgnoreCase) ||
+            c.Contains("CITY CIVIL", StringComparison.OrdinalIgnoreCase) ||
+            c.Contains("SESSIONS", StringComparison.OrdinalIgnoreCase))
+            return "District Court";
+
+        return "Other";
+    }
+
+    /// <summary>D5 formula: CaseCategory ~ 'Insolvency' OR Court ~ NCLT (over Confirmed + Probable cases).</summary>
+    public static bool IsNcltOrInsolvency(Litigation l) =>
+        NormalizeCourtType(l.Court) == "NCLT" ||
+        (l.CaseCategory ?? "").Contains("insolv", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>D6 formula: Court ~ 'DEBT RECOVERY TRIBUNAL' (over Confirmed + Probable cases).</summary>
+    public static bool IsDrt(Litigation l)
+    {
+        if (l.Court is null) return false;
+        var c = l.Court;
+        return c.Contains("DEBT RECOVERY", StringComparison.OrdinalIgnoreCase) ||
+               c.Contains("DEBTS RECOVERY", StringComparison.OrdinalIgnoreCase) ||
+               c.Contains("DRT", StringComparison.OrdinalIgnoreCase) ||
+               c.Contains("DRAT", StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>Section D — Legal history analytics (Issue #60 / D5, docs/analytics-catalogue.json §D).
+    /// Pure computation over <paramref name="model"/>.</summary>
+    public static MetricGroup LitigationMetrics(Dossier.DossierModel model)
+    {
+        var list = new List<MetricResult>();
+        var lit = model.Litigation;
+        var all = lit.All;
+
+        var asOfDate = model.Cover.McaDataAsOf is { } dt
+            ? DateOnly.FromDateTime(dt)
+            : DateOnly.FromDateTime(model.Cover.ReportDate);
+        var asOfStr = $"as at {asOfDate:d MMM yyyy}";
+
+        var confirmed = all.Where(l => l.MatchStatus == LitigationMatchStatus.Confirmed).ToList();
+        var relevant = all.Where(l => l.MatchStatus is LitigationMatchStatus.Confirmed or LitigationMatchStatus.Probable).ToList();
+
+        // ── D1: Confirmed pending case count ──
+        // Catalogue: degenerate is "0 with note"
+        if (all.Count == 0 || confirmed.Count == 0)
+        {
+            list.Add(MetricResult.Ok("Confirmed pending case count", 0m, MetricUnit.Count,
+                $"{asOfStr} (0 confirmed cases on record)", "Litigation.MatchStatus", "Litigation.CaseStatus"));
+        }
+        else
+        {
+            var pendingConfirmed = confirmed.Count(IsPendingLitigation);
+            var periodStr = pendingConfirmed == 0
+                ? $"{asOfStr} (0 pending of {confirmed.Count} confirmed cases)"
+                : $"{asOfStr} ({pendingConfirmed} pending of {confirmed.Count} confirmed cases)";
+            list.Add(MetricResult.Ok("Confirmed pending case count", (decimal)pendingConfirmed, MetricUnit.Count,
+                periodStr, "Litigation.MatchStatus", "Litigation.CaseStatus"));
+        }
+
+        // ── D2: Cases filed against vs by the company ──
+        // Only from DossierComputations.LitigationRoles (read from DossierLitigation properties), never inferred.
+        var against = lit.FiledAgainstCount;
+        var by = lit.FiledByCount;
+        var notDet = lit.NotDeterminedCount;
+        var d2Period = $"{against} filed against, {by} filed by, {notDet} role not determined";
+        list.Add(MetricResult.Ok("Cases filed against vs by the company", (decimal)against, MetricUnit.Count,
+            d2Period, "DossierComputations.LitigationRoles"));
+
+        // ── D3: Cases by category ──
+        // Confirmed + Probable only. Emits bucket metrics only when relevant buckets exist.
+        if (relevant.Count > 0)
+        {
+            var byCategory = relevant
+                .GroupBy(l => string.IsNullOrWhiteSpace(l.CaseCategory) ? "Uncategorised" : l.CaseCategory.Trim())
+                .OrderByDescending(g => g.Count())
+                .ThenBy(g => g.Key, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            foreach (var g in byCategory)
+            {
+                var cat = g.Key;
+                var count = g.Count();
+                var periodStr = $"{count} of {relevant.Count} confirmed/probable cases";
+                list.Add(MetricResult.Ok($"Cases by category ({cat})", (decimal)count, MetricUnit.Count,
+                    periodStr, "Litigation.CaseCategory", "Litigation.MatchStatus"));
+            }
+        }
+
+        // ── D4: Cases by court type ──
+        // Confirmed + Probable only. Emits bucket metrics only when relevant buckets exist.
+        if (relevant.Count > 0)
+        {
+            var courtTypeOrder = new[] { "NCLT", "High Court", "DRT", "District Court", "Consumer Court", "Other" };
+            var byCourt = relevant
+                .GroupBy(l => NormalizeCourtType(l.Court))
+                .ToDictionary(g => g.Key, g => g.Count());
+
+            foreach (var ct in courtTypeOrder)
+            {
+                if (byCourt.TryGetValue(ct, out var count) && count > 0)
+                {
+                    var periodStr = $"{count} of {relevant.Count} confirmed/probable cases";
+                    list.Add(MetricResult.Ok($"Cases by court type ({ct})", (decimal)count, MetricUnit.Count,
+                        periodStr, "Litigation.Court"));
+                }
+            }
+        }
+
+        // ── D5: NCLT / insolvency case count ──
+        // Catalogue: degenerate is "0 with note"
+        if (all.Count == 0)
+        {
+            list.Add(MetricResult.Ok("NCLT / insolvency case count", 0m, MetricUnit.Count,
+                $"{asOfStr} (0 NCLT/insolvency cases on file)", "Litigation.CaseCategory", "Litigation.Court"));
+        }
+        else if (relevant.Count == 0)
+        {
+            list.Add(MetricResult.Ok("NCLT / insolvency case count", 0m, MetricUnit.Count,
+                $"{asOfStr} (0 Confirmed/Probable cases on file)", "Litigation.CaseCategory", "Litigation.Court"));
+        }
+        else
+        {
+            var ncltCount = relevant.Count(IsNcltOrInsolvency);
+            var periodStr = ncltCount == 0
+                ? $"{asOfStr} (0 NCLT/insolvency cases of {relevant.Count} confirmed/probable cases)"
+                : $"{asOfStr} ({ncltCount} of {relevant.Count} confirmed/probable cases)";
+            list.Add(MetricResult.Ok("NCLT / insolvency case count", (decimal)ncltCount, MetricUnit.Count,
+                periodStr, "Litigation.CaseCategory", "Litigation.Court"));
+        }
+
+        // ── D6: DRT case count ──
+        // Catalogue: degenerate is "0 with note"
+        if (all.Count == 0)
+        {
+            list.Add(MetricResult.Ok("DRT case count", 0m, MetricUnit.Count,
+                $"{asOfStr} (0 DRT cases on file)", "Litigation.Court"));
+        }
+        else if (relevant.Count == 0)
+        {
+            list.Add(MetricResult.Ok("DRT case count", 0m, MetricUnit.Count,
+                $"{asOfStr} (0 Confirmed/Probable cases on file)", "Litigation.Court"));
+        }
+        else
+        {
+            var drtCount = relevant.Count(IsDrt);
+            var periodStr = drtCount == 0
+                ? $"{asOfStr} (0 DRT cases of {relevant.Count} confirmed/probable cases)"
+                : $"{asOfStr} ({drtCount} of {relevant.Count} confirmed/probable cases)";
+            list.Add(MetricResult.Ok("DRT case count", (decimal)drtCount, MetricUnit.Count,
+                periodStr, "Litigation.Court"));
+        }
+
+        // ── D7: Pending vs disposed ratio ──
+        // Over Confirmed cases only. Single source of truth IsPendingLitigation for Pending.
+        // Carve out missing CaseStatus as Indeterminate.
+        if (confirmed.Count == 0)
+        {
+            list.Add(MetricResult.Insufficient("Pending vs disposed ratio", MetricUnit.Percent,
+                "0 confirmed litigation cases on record", "Litigation.CaseStatus"));
+        }
+        else
+        {
+            var pending = confirmed.Count(IsPendingLitigation);
+            var indeterminate = confirmed.Count(l => string.IsNullOrWhiteSpace(l.CaseStatus));
+            var disposed = confirmed.Count - pending - indeterminate;
+            var assessed = pending + disposed;
+
+            if (assessed == 0)
+            {
+                list.Add(MetricResult.Insufficient("Pending vs disposed ratio", MetricUnit.Percent,
+                    $"{indeterminate} confirmed cases indeterminate (missing CaseStatus)", "Litigation.CaseStatus"));
+            }
+            else
+            {
+                var ratio = Math.Round((decimal)pending / assessed * 100m, 1);
+                var periodStr = indeterminate > 0
+                    ? $"{pending} pending, {disposed} disposed of {assessed} assessed ({indeterminate} indeterminate)"
+                    : $"{pending} pending, {disposed} disposed of {assessed} assessed";
+                list.Add(MetricResult.Ok("Pending vs disposed ratio", ratio, MetricUnit.Percent,
+                    periodStr, "Litigation.CaseStatus"));
+            }
+        }
+
+        // ── D8: Probable + Uncertain exposure count ──
+        // Catalogue: degenerate is "0", caveat: standard disclaimer
+        var probableCount = all.Count(l => l.MatchStatus == LitigationMatchStatus.Probable);
+        var uncertainCount = all.Count(l => l.MatchStatus == LitigationMatchStatus.Uncertain);
+        var exposureCount = probableCount + uncertainCount;
+        var d8Period = $"{probableCount} probable, {uncertainCount} unverified (name-match only / court not reached)";
+        list.Add(MetricResult.Ok("Probable + Uncertain exposure count", (decimal)exposureCount, MetricUnit.Count,
+            d8Period, "Litigation.MatchStatus"));
+
+        return new MetricGroup("Legal history", list);
+    }
 }
