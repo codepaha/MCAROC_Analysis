@@ -116,7 +116,7 @@ request, 2026-09-12) since this lane hadn't claimed them yet — remaining 6 sti
 | #123 C5b | Crore/Lakh/₹ unit toggle + typed amount renderer (file the generated call-site classification table as evidence, don't hardcode counts in the PR) | #112 C1 (merged) | **CLAIMED** (Claude) |
 | #116 C6 | shared inline-SVG viz contract (dossier + dashboard mappings kept separate) + 6 partials | #112 C1 (merged) | **CLAIMED** (Claude) |
 | #117 C7a | in-app PDF viewer, request-scoped + dedup-aware — **Claude reviews the scoping/dedup code before merge** | none | **MERGED** (PR #127, `9b1096b`) |
-| #119 C7b | relocate chat to docked panel, JSON hardening (antiforgery, length limit, error contract) | #117 C7a (merged) | open |
+| #119 C7b | relocate chat to docked panel, JSON hardening (antiforgery, length limit, error contract) | #117 C7a (merged) | **CLAIMED** (Antigravity, `feature/119-chat-docked-panel`) |
 | #122 C7c | wire the dead Ctrl+K command-palette scaffold | #119 C7b | open |
 | #120 C9 | dashboard restyle — retire Chart.js for #116's SVG partials | #116 C6 | open |
 | #124 C10 | print stylesheet — deliberately last | all of the above | open |
@@ -230,6 +230,18 @@ Linux subset fonts break PdfPig's ToUnicode → those are `[SkippableFact]`, ski
   native ScrollSpy is already vendored) — worktree/branch removed, zero cleanup owed. **#121 is back in
   Antigravity's queue, unclaimed by Claude.** Still holding #114 (C4, PR #129, 1 review round fixed) and
   #115 (C5a, PR #130, awaiting first review).
+
+### 2026-09-12 — Antigravity (CLAIMED #119 C7b: Relocate chat to docked panel + JSON hardening)
+- **CLAIMED #119 (C7b)** on branch `feature/119-chat-docked-panel`.
+  - Approved implementation plan covers:
+    - Route `POST /Requests/{requestId}/chat` with route-level scoping and no body redundancy.
+    - JSON antiforgery configuration (`RequestVerificationToken` header).
+    - Authoritative batch selector and retrieval isolation in `DocumentRetriever`.
+    - Typed `ChatTurnResult` outcome mapping (`Success`, `RequestNotFound`, `UpstreamFailure`) without free-text inspection or leaking `ex.Message`.
+    - Cancellation vs. failure semantics: client abort rolls back user question and rethrows `OperationCanceledException`; upstream AI failure persists both user turn and failed assistant turn.
+    - Verified `FilingDocumentId` citation lineage linking into C7a in-app viewer.
+    - Docked `<aside>` panel placed in `Details.cshtml`, removing old transcript/form in `_DocumentsTab.cshtml`.
+    - Text-only DOM rendering (`textContent`) and flight locking to prevent duplicate submissions.
 
 ### 2026-09-12 — Claude session (CLAIMED #114 C4, #115 C5a, #121 C2 — owner asked to pick up some of Antigravity's lane)
 - **CLAIMED #114 (C4), #115 (C5a), #121 (C2)** — owner-requested pickup from Antigravity's Wave-3 queue,
