@@ -69,20 +69,18 @@ Everything that adds an entity + EF migration, plus the metrics scaffold and the
 
 **Wave 1 (A1–A11) + A7 CI enforcement: all DONE, all merged.** D0 DONE (`572d8bf`).
 **Wave 4 D2/#57 and D4/#59 (Claude's full assignment): both DONE, both merged.**
-**New work (owner-requested, 2026-09-12): #97 corporate event timeline + #98 K1 capital reconciliation
-— both CLAIMED, following the owner's feedback on an external LLM's feature proposal (score idea
-rejected; timeline + one discrepancy-engine extension approved). See the plan file
-`serene-whistling-wave.md` for the full design (revised once after a rigorous pre-build review — real
-gaps caught: `DossierModel` was missing 3 needed entities, `DossierAssembler` requires a completed
-`AnalysisRun` so a `DossierModel`-based timeline would vanish mid-analysis, and `Inputs` needed to be
-structured provenance not free text).**
+**Owner-requested follow-on (2026-09-12): #97 corporate event timeline + #98 K1 capital reconciliation
+— both DONE, both merged.** Followed the owner's feedback on an external LLM's feature proposal (score
+idea rejected; timeline + one discrepancy-engine extension approved). Plan file `serene-whistling-wave.md`
+has the full design history (revised once after a rigorous pre-build review before any code was written,
+then hardened through 3 further review rounds on #101 alone — see the Log below for specifics).
 
 | Issue | What | Status |
 |---|---|---|
 | #57 D2 | financial trend & leverage metrics (parity-test heavy) | **MERGED** (`cad21f0`) |
 | #59 D4 | shareholding metrics | **MERGED** (`8f83b04`) |
 | #98 K1 | capital reconciliation (paid-up capital vs balance sheet) | **MERGED** (`73f7ea5`) |
-| #97 | corporate event timeline (new portal tab, bypasses `DossierModel`/`DossierAssembler`) | **PR #101 open**, fixes pushed |
+| #97 | corporate event timeline (new portal tab, bypasses `DossierModel`/`DossierAssembler`) | **MERGED** (`d7e5854`) |
 
 ### Antigravity — render-audit + metrics-compute lane (no schema changes)
 Razor + view-model-load only, or pure computation over entities that already exist. **No migrations.**
@@ -173,6 +171,22 @@ Linux subset fonts break PdfPig's ToUnicode → those are `[SkippableFact]`, ski
 ---
 
 ## Log  <!-- newest first. Prefix: NEEDS / BLOCKED / DONE / DECISION / FYI -->
+
+### 2026-09-12 — Claude session (#97 corporate timeline MERGED — owner follow-on request closed)
+- **DONE — #101 (#97) MERGED** (`d7e5854`), feature branch deleted, local worktree/branch cleaned up.
+  One more fix landed first: the CI-only failure the hosted `build-and-test` job caught (self-hosted
+  `windows-tests` passed regardless) — two tests set `RocChargeEvent.RocChargeId` to a hardcoded value
+  with no matching `RocCharge` row, violating the real FK constraint. Only passed locally by coincidence
+  (stale leftover data in the shared local SQLEXPRESS test DB happened to have a row at that id); a
+  fresh CI database correctly rejected it. Fixed both to go through `RocCharge.Events.Add(...)` so EF
+  assigns the real FK, matching `DossierTestSeed.cs`'s existing pattern.
+- **Both owner-requested items from the 2026-09-12 feature-proposal review are now done and merged**:
+  K1/#98 (capital reconciliation) and #97 (corporate event timeline). #101 alone went through 4 review
+  rounds after the initial architecture approval — provenance/isolation/false-zero fixes, a UI provenance
+  display + isolation/omission regressions, a rendering regression for the actual HTML (which caught a
+  real Razor whitespace bug before it shipped), and this FK seeding fix — worth remembering as a
+  reference for how much iteration even an architecturally-sound PR can need once mid- and
+  Windows/CI-only issues surface.
 
 ### 2026-09-12 — Claude session (#101 rendering regression pushed; D8 confirmed merged)
 - **DONE — #101 fixed and pushed (`7e888d8`)**: one final review ask — a Razor-rendering regression
