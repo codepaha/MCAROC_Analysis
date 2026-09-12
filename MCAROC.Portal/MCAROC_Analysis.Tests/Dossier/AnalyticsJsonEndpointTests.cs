@@ -44,8 +44,9 @@ public class AnalyticsJsonEndpointTests : IAsyncLifetime
         Assert.Equal(requestId, t.GetProperty("requestId")!.GetValue(v));
         Assert.Equal(ingestionRunId, t.GetProperty("ingestionRunId")!.GetValue(v));
         var groups = Assert.IsAssignableFrom<IReadOnlyList<MetricGroup>>(t.GetProperty("metricGroups")!.GetValue(v));
-        // With D1, D2, D3, D4, D5, and D6 landed, Charge register, GST compliance, Legal history,
-        // Directors, Financial trend & leverage, and Shareholding groups are present.
+        // With D1-D7 and K1 landed, Charge register, GST compliance, Legal history, Directors,
+        // Financial trend & leverage, Shareholding, EPFO / labour, and Capital reconciliation groups
+        // are present.
         Assert.NotEmpty(groups);
         Assert.Contains(groups, g => g.Title == "Charge register");
         Assert.Contains(groups, g => g.Title == "GST compliance");
@@ -54,5 +55,6 @@ public class AnalyticsJsonEndpointTests : IAsyncLifetime
         Assert.Contains(groups, g => g.Title == "Financial trend & leverage");
         Assert.Contains(groups, g => g.Title == "Shareholding");
         Assert.Contains(groups, g => g.Title == "EPFO / labour");
+        Assert.Contains(groups, g => g.Title == "Capital reconciliation");
     }
 }

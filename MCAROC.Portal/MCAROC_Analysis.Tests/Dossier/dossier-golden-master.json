@@ -45,7 +45,8 @@
     "Directors",
     "Financial trend & leverage",
     "Shareholding",
-    "EPFO / labour"
+    "EPFO / labour",
+    "Capital reconciliation"
   ],
   "DataSufficiencyNoteCodes": [
     "FIN_LEVERAGE_TREND",
