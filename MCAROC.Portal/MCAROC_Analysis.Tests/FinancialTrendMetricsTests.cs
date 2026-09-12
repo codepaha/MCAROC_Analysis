@@ -737,6 +737,68 @@ public class FinancialTrendMetricsTests
     }
 
     [Fact]
+    public void Competing_duplicate_facts_mixing_numeric_and_non_numeric_fail_closed()
+    {
+        var years = new List<FinancialYearData>
+        {
+            new() { FinancialYear = 2024, Revenue = 100.0m, Basis = FinancialBasis.Standalone }
+        };
+
+        // Case 1: Numeric vs non-dash non-numeric (e.g. "N/A")
+        var factsNa = new List<FinancialFact>
+        {
+            new() { FinancialYear = 2024, Basis = FinancialBasis.Standalone, Section = FinancialStatementSection.ProfitAndLoss, Label = "Cost of Materials Consumed", NumericValue = 30.0m, RawValue = "30.0" },
+            new() { FinancialYear = 2024, Basis = FinancialBasis.Standalone, Section = FinancialStatementSection.ProfitAndLoss, Label = "Cost of Materials Consumed", NumericValue = null, RawValue = "N/A" }
+        };
+        var groupNa = DossierComputations.FinancialTrendMetrics(CreateMinimalDossier(years, factsNa, []));
+        var a42Na = M(groupNa, "Material cost % of revenue");
+        Assert.False(a42Na.HasValue);
+        Assert.Contains("conflicting values reported for 'Cost of Materials Consumed' in ProfitAndLoss (numeric vs non-numeric)", a42Na.InsufficiencyReason);
+
+        // Case 2: Numeric vs explicit dash ("-")
+        var factsDash = new List<FinancialFact>
+        {
+            new() { FinancialYear = 2024, Basis = FinancialBasis.Standalone, Section = FinancialStatementSection.ProfitAndLoss, Label = "Cost of Materials Consumed", NumericValue = 30.0m, RawValue = "30.0" },
+            new() { FinancialYear = 2024, Basis = FinancialBasis.Standalone, Section = FinancialStatementSection.ProfitAndLoss, Label = "Cost of Materials Consumed", NumericValue = null, RawValue = "-" }
+        };
+        var groupDash = DossierComputations.FinancialTrendMetrics(CreateMinimalDossier(years, factsDash, []));
+        var a42Dash = M(groupDash, "Material cost % of revenue");
+        Assert.False(a42Dash.HasValue);
+        Assert.Contains("conflicting values reported for 'Cost of Materials Consumed' in ProfitAndLoss (- vs numeric)", a42Dash.InsufficiencyReason);
+    }
+
+    [Fact]
+    public void Competing_duplicate_parameters_mixing_numeric_and_non_numeric_fail_closed()
+    {
+        var years = new List<FinancialYearData>
+        {
+            new() { FinancialYear = 2024, Revenue = 100.0m, Basis = FinancialBasis.Standalone }
+        };
+
+        // Case 1: Numeric vs non-dash non-numeric (e.g. "N/A")
+        var paramsNa = new List<FinancialParameter>
+        {
+            new() { FinancialYear = 2024, ParameterName = "Income in foreign currency", NumericValue = 20.0m, RawValue = "20.0", Unit = "Rs. Crore" },
+            new() { FinancialYear = 2024, ParameterName = "Income in foreign currency", NumericValue = null, RawValue = "N/A", TextValue = "N/A", Unit = "Rs. Crore" }
+        };
+        var groupNa = DossierComputations.FinancialTrendMetrics(CreateMinimalDossier(years, [], paramsNa));
+        var a51Na = M(groupNa, "Export income % of revenue");
+        Assert.False(a51Na.HasValue);
+        Assert.Contains("conflicting values reported for 'Income in foreign currency' (numeric vs non-numeric)", a51Na.InsufficiencyReason);
+
+        // Case 2: Numeric vs explicit dash ("-")
+        var paramsDash = new List<FinancialParameter>
+        {
+            new() { FinancialYear = 2024, ParameterName = "Income in foreign currency", NumericValue = 20.0m, RawValue = "20.0", Unit = "Rs. Crore" },
+            new() { FinancialYear = 2024, ParameterName = "Income in foreign currency", NumericValue = null, RawValue = "-", TextValue = "-", Unit = "Rs. Crore" }
+        };
+        var groupDash = DossierComputations.FinancialTrendMetrics(CreateMinimalDossier(years, [], paramsDash));
+        var a51Dash = M(groupDash, "Export income % of revenue");
+        Assert.False(a51Dash.HasValue);
+        Assert.Contains("conflicting values reported for 'Income in foreign currency' (- vs numeric)", a51Dash.InsufficiencyReason);
+    }
+
+    [Fact]
     public void Strict_latest_fy_alignment_no_backfilling()
     {
         var years = new List<FinancialYearData>

@@ -1531,11 +1531,27 @@ public static partial class DossierComputations
                 $"FY{fy}: '{approvedLabel}' not reported in {expectedSection}", inputs));
         }
 
+        var hasDash = matches.Any(f => f.RawValue.Trim() == "-");
+        var hasNonNumeric = matches.Any(f => f.NumericValue is null);
         var distinctNumeric = matches.Select(f => f.NumericValue).Where(v => v is not null).Select(v => v!.Value).Distinct().ToList();
+
+        if (distinctNumeric.Count > 0 && hasNonNumeric)
+        {
+            var conflictDetail = hasDash ? "- vs numeric" : "numeric vs non-numeric";
+            return (null, MetricResult.Insufficient(targetConcept, MetricUnit.Percent,
+                $"FY{fy}: conflicting values reported for '{approvedLabel}' in {expectedSection} ({conflictDetail})", inputs));
+        }
+
         if (distinctNumeric.Count > 1)
         {
             return (null, MetricResult.Insufficient(targetConcept, MetricUnit.Percent,
                 $"FY{fy}: conflicting values reported for '{approvedLabel}' in {expectedSection} ({string.Join(", ", distinctNumeric)})", inputs));
+        }
+
+        if (hasDash)
+        {
+            return (null, MetricResult.Insufficient(targetConcept, MetricUnit.Percent,
+                $"FY{fy}: '{approvedLabel}' in {expectedSection} explicitly reported as '-'", inputs));
         }
 
         if (distinctNumeric.Count == 0)
@@ -1568,12 +1584,20 @@ public static partial class DossierComputations
 
         // Check if any row was reported as "-"
         var hasDash = matches.Any(p => p.RawValue.Trim() == "-" || p.TextValue?.Trim() == "-");
+        var hasNonNumeric = matches.Any(p => p.NumericValue is null);
         var distinctNumeric = matches.Select(p => p.NumericValue).Where(v => v is not null).Select(v => v!.Value).Distinct().ToList();
 
-        if (hasDash && distinctNumeric.Count > 0)
+        if (distinctNumeric.Count > 0 && hasNonNumeric)
+        {
+            var conflictDetail = hasDash ? "- vs numeric" : "numeric vs non-numeric";
+            return (null, MetricResult.Insufficient(targetConcept, resultUnit,
+                $"FY{fy}: conflicting values reported for '{approvedLabel}' ({conflictDetail})", inputs));
+        }
+
+        if (distinctNumeric.Count > 1)
         {
             return (null, MetricResult.Insufficient(targetConcept, resultUnit,
-                $"FY{fy}: conflicting values reported for '{approvedLabel}' (- vs numeric)", inputs));
+                $"FY{fy}: conflicting values reported for '{approvedLabel}' ({string.Join(", ", distinctNumeric)})", inputs));
         }
 
         if (hasDash)
@@ -1588,12 +1612,6 @@ public static partial class DossierComputations
         {
             return (null, MetricResult.Insufficient(targetConcept, resultUnit,
                 $"FY{fy}: '{approvedLabel}' unit is '{invalidUnitParam.Unit}' (expected Rs. Crore)", inputs));
-        }
-
-        if (distinctNumeric.Count > 1)
-        {
-            return (null, MetricResult.Insufficient(targetConcept, resultUnit,
-                $"FY{fy}: conflicting values reported for '{approvedLabel}' ({string.Join(", ", distinctNumeric)})", inputs));
         }
 
         if (distinctNumeric.Count == 0)
