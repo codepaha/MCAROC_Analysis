@@ -95,7 +95,7 @@ Razor + view-model-load only, or pure computation over entities that already exi
 | #64 D9 | cost structure & forex metrics (Section A4/A5) | #55 D0 (merged) only | **MERGED** (`e9e39e3`) |
 | #65 D10 | related-party-transaction metrics (Section E) | #50 A8 (merged) | **MERGED** (`7f2cf1e`) |
 | #66 D11 | credit rating metrics (Section F) | #51 A9 (merged) | **MERGED** (`8213961`) |
-| #106 | Corporate tab render-audit — 5 sets of captured columns not shown (LastAgmDate/LeiStatus, Directors, Other Directorships, Shareholding, Related Corporates) | none — Razor-only | **CLAIMED by Claude**, starting now |
+| #106 | Corporate tab render-audit — 5 sets of captured columns not shown (LastAgmDate/LeiStatus, Directors, Other Directorships, Shareholding, Related Corporates) | none — Razor-only | **PR #109 open** (`fix/106-corporate-render-gaps`) |
 | #107 | Compliance tab render-audit — GST registration + EPFO contribution columns not shown | none — Razor-only | **open, unclaimed** |
 | visual | before/after screenshots on every render PR; keep `E:\Downloads\VTION\ROC_JSON_Reports` current | — | ongoing |
 
@@ -181,6 +181,25 @@ Linux subset fonts break PdfPig's ToUnicode → those are `[SkippableFact]`, ski
 ---
 
 ## Log  <!-- newest first. Prefix: NEEDS / BLOCKED / DONE / DECISION / FYI -->
+
+### 2026-09-12 — Claude session (PR #108 MERGED; PR #109 open for #106)
+- **PR #108 MERGED into `main` as `cd5b35b`** (source-approved by reviewer at `f6dcd3`; both required CI
+  jobs green, CLEAN/mergeable). Confirms: G19–G25 tracked as captured-but-not-rendered, G8/G12 correctly
+  closed. Codex's own review independently caught the exact "Obligation of Contribution" false alarm I'd
+  already self-corrected (`f6dcd38`, before the review posted) — good cross-check, no new issue.
+- **Resolved the `ObligationOfContribution` question**: verified directly against the real `roc.xls`
+  header (all three sheets) — it's ONE combined column sharing the same cell as "Paid Up Capital" (LLP
+  contribution vs. company paid-up capital, same slot), not a separate field. All three parsers already
+  read it correctly. No parser/entity/migration work needed for #106 after all — it's purely Razor.
+- **PR #109 open** (`fix/106-corporate-render-gaps`) — adds the 5 missing column sets to `_CorporateTab.cshtml`/
+  `_DirectorTable.cshtml` (LastAgmDate/LeiStatus, DesignationAppointmentDate/Flags, Other Directorships'
+  DateOfIncorporation/ActiveCompliance, Shareholding's Location/PaidUpCapitalCrore/SumOfChargesCrore/
+  DateOfIncorporation, RelatedCorporate's FinancialYearEnding/DateOfIncorporation), plus rebased onto
+  #108 and flipped G19–G23 to DONE + the affected catalogue rows to `live` in the same PR. New rendering
+  tests in `CorporateTabRenderingTests.cs`; full suite green. `@codex review` requested.
+- **#107 (Compliance tab) still open, unclaimed** — same shape of fix (GstRegistration/EpfoContribution
+  columns), no parser risk expected (no "Obligation of Contribution"-style combined-column surprises
+  known for that sheet, but worth a quick header check before assuming).
 
 ### 2026-09-12 — Claude session (CLAIMED #106)
 - **CLAIMED #106** (Corporate tab render-audit) while PR #108 is under Codex review. Branch
