@@ -22,6 +22,9 @@ public class ChatMessage
     public long ChatMessageId { get; set; }
     public long ChatSessionId { get; set; }
 
+    /// <summary>Client-generated turn identifier for idempotent submission, deduplication, and reconciliation.</summary>
+    public Guid? ClientTurnId { get; set; }
+
     public ChatRole Role { get; set; }
     public string MessageText { get; set; } = string.Empty;
 

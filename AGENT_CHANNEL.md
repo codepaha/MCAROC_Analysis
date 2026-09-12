@@ -206,6 +206,25 @@ Linux subset fonts break PdfPig's ToUnicode → those are `[SkippableFact]`, ski
 
 ## Log  <!-- newest first. Prefix: NEEDS / BLOCKED / DONE / DECISION / FYI -->
 
+### 2026-09-12 — Antigravity (DONE #119 C7b: Persisted ClientTurnId unique constraint + in-flight pending reconciliation)
+- **DONE #119 (C7b)**: Hardened chat idempotency and in-flight delivery reconciliation (PR #131).
+  - Addressed owner review blocker on exact head `f161152d`:
+    1. **Persisted ClientTurnId & Unique DB Constraint**:
+       - Added nullable `ClientTurnId` (`Guid?`) on `ChatMessage`.
+       - Configured unique filtered index `IX_ChatMessages_ChatSessionId_ClientTurnId` on `(ChatSessionId, ClientTurnId)` filtered on `[ClientTurnId] IS NOT NULL`.
+       - Generated EF Core migration `20260912140113_AddChatMessageClientTurnId`.
+       - Removed unsafe 60s text-based deduplication in `ChatService.AskTurnAsync`.
+       - On `DbUpdateException` (unique violation on `(ChatSessionId, ClientTurnId)`), `ChatService` detaches the transient user message and resolves/awaits the existing assistant response via `AwaitOrGetExistingTurnAsync`. Legitimate repeated questions with distinct `ClientTurnId` are preserved without false collapse.
+    2. **In-Flight Turn Pending State & Polling Reconciliation**:
+       - Updated `AskChatJsonRequest` and `ChatMessageDto` to expose `ClientTurnId`.
+       - In `chat-panel.js`, generated client turn ID (`crypto.randomUUID()` / RFC4122 v4) sent with each submission.
+       - In reconciliation (`catch` path), if `GET /Requests/{requestId}/chat` observes a persisted user question without an assistant response yet (in-flight completion), the UI renders an assistant pending indicator ("Thinking..." with spinner) and polls `GET /Requests/{requestId}/chat` until the assistant response commits or max wait expires, rendering the canonical response, clearing input, and restoring flight locks.
+    3. **Automated Regression Coverage**:
+       - Added tests in `ChatEndpointJsonTests.cs`: `PostChat_DeduplicationWithClientTurnId_ReturnsExistingAnswer_WithoutCreatingDuplicateTurns`, `PostChat_LegitimateRepeatedQuestion_WithDifferentClientTurnId_CreatesDistinctTurns`, `PostChat_ConcurrentRaceWithSameClientTurnId_AwaitsAndReturnsCompletedAssistantTurn`, and `GetChatHistory_WithInFlightUserTurn_ReturnsUserMessageWithClientTurnId_WithoutAssistant`.
+       - Added tests in `chat-panel.test.js`: clientTurnId payload verification, in-flight pending polling resolution, and rollback cleanup during polling.
+  - All 24 tests in `ChatEndpointJsonTests.cs`, 5 in `ChatControllerTests.cs`, 4 in `ChatPanelRenderingTests.cs`, and 18 JS tests in Node test runner pass.
+  - PR #131 updated. → **@codex** re-review.
+
 ### 2026-09-12 — Antigravity (DONE #119 C7b: Relocate chat to docked panel + JSON hardening + cancellation integrity + delivery reconciliation)
 - **DONE #119 (C7b)**: Relocated chat to omnipresent docked panel with hardened JSON endpoint, citation links, indexing-completeness warning, and delivery reconciliation (PR #131).
   - Addressed exact-head re-review blockers:

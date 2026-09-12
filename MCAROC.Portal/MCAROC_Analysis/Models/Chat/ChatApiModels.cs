@@ -3,6 +3,7 @@ namespace MCAROC_Analysis.Models.Chat;
 public class AskChatJsonRequest
 {
     public string? Question { get; set; }
+    public Guid? ClientTurnId { get; set; }
 }
 
 public class ChatCitationDto
@@ -18,6 +19,7 @@ public class ChatCitationDto
 public class ChatMessageDto
 {
     public long Id { get; set; }
+    public Guid? ClientTurnId { get; set; }
     public string Role { get; set; } = string.Empty;
     public string Text { get; set; } = string.Empty;
     public string Status { get; set; } = string.Empty;

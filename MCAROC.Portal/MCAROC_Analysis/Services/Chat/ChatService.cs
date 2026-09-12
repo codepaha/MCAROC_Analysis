@@ -39,10 +39,18 @@ public class ChatService(
         return result.Message;
     }
 
+    public virtual Task<ChatTurnResult> AskTurnAsync(long requestId, string question, CancellationToken ct) =>
+        AskTurnAsync(requestId, question, null, ct);
+
     /// <summary>Drives one chat turn with typed outcomes for the API layer: persists the question,
     /// calls completion, and handles cancellation (rollback) vs upstream failure (audit persistence)
-    /// cleanly without leaking exception details.</summary>
-    public virtual async Task<ChatTurnResult> AskTurnAsync(long requestId, string question, CancellationToken ct)
+    /// cleanly without leaking exception details. Enforces unique clientTurnId per session to ensure
+    /// atomic, durable deduplication across retry races.</summary>
+    public virtual async Task<ChatTurnResult> AskTurnAsync(
+        long requestId,
+        string question,
+        Guid? clientTurnId,
+        CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(question))
             return new ChatTurnResult(ChatTurnOutcome.QuestionEmpty);
@@ -57,36 +65,30 @@ public class ChatService(
 
         var session = await GetOrCreateSessionAsync(requestId, ct);
 
-        // Durable deduplication: If a completed turn with the identical question was persisted
-        // in this session within the last 60 seconds, return that existing turn to prevent duplicates from retry races.
-        var recentTurns = await db.ChatMessages
-            .Where(m => m.ChatSessionId == session.ChatSessionId)
-            .OrderByDescending(m => m.CreatedDate)
-            .Take(2)
-            .ToListAsync(ct);
-
-        var existingUserMsg = recentTurns.FirstOrDefault(m => m.Role == ChatRole.User);
-        var existingAssistantMsg = recentTurns.FirstOrDefault(m => m.Role == ChatRole.Assistant);
-        if (existingUserMsg is not null
-            && string.Equals(existingUserMsg.MessageText.Trim(), trimmed, StringComparison.OrdinalIgnoreCase)
-            && (DateTime.UtcNow - existingUserMsg.CreatedDate) < TimeSpan.FromSeconds(60))
-        {
-            if (existingAssistantMsg is not null)
-            {
-                var existingOutcome = existingAssistantMsg.Status == ChatMessageStatus.Failed
-                    ? ChatTurnOutcome.UpstreamFailure
-                    : ChatTurnOutcome.Success;
-                return new ChatTurnResult(existingOutcome, existingAssistantMsg);
-            }
-        }
-
         var userMessage = new ChatMessage
         {
-            ChatSessionId = session.ChatSessionId, Role = ChatRole.User, MessageText = trimmed, CreatedDate = DateTime.UtcNow
+            ChatSessionId = session.ChatSessionId,
+            ClientTurnId = clientTurnId,
+            Role = ChatRole.User,
+            MessageText = trimmed,
+            CreatedDate = DateTime.UtcNow
         };
         db.ChatMessages.Add(userMessage);
         session.LastActivityDate = DateTime.UtcNow;
-        await db.SaveChangesAsync(ct);
+
+        try
+        {
+            await db.SaveChangesAsync(ct);
+        }
+        catch (DbUpdateException ex) when (clientTurnId.HasValue &&
+            (ex.InnerException is SqlException { Number: SqlUniqueIndexViolation or SqlUniqueConstraintViolation }
+             || ex.InnerException?.Message.Contains("IX_ChatMessages_ChatSessionId_ClientTurnId") == true
+             || ex.Message.Contains("IX_ChatMessages_ChatSessionId_ClientTurnId")))
+        {
+            // Concurrent retry with identical ClientTurnId: return existing turn
+            db.Entry(userMessage).State = EntityState.Detached;
+            return await AwaitOrGetExistingTurnAsync(session.ChatSessionId, clientTurnId.Value, ct);
+        }
 
         // Fresh retrieval every turn — prior assistant messages are conversational context only, never
         // treated as evidence, so history is loaded purely to help the model interpret a follow-up like
@@ -223,5 +225,50 @@ public class ChatService(
             db.Entry(session).State = EntityState.Detached;
             return await db.ChatSessions.FirstAsync(s => s.RequestId == requestId, ct);
         }
+    }
+
+    internal virtual async Task<ChatTurnResult> AwaitOrGetExistingTurnAsync(
+        long sessionId,
+        Guid clientTurnId,
+        CancellationToken ct)
+    {
+        var existingUser = await db.ChatMessages
+            .AsNoTracking()
+            .FirstOrDefaultAsync(m => m.ChatSessionId == sessionId && m.ClientTurnId == clientTurnId, ct);
+
+        if (existingUser is null)
+        {
+            return new ChatTurnResult(ChatTurnOutcome.UpstreamFailure);
+        }
+
+        for (var attempt = 0; attempt < 60 && !ct.IsCancellationRequested; attempt++)
+        {
+            var assistant = await db.ChatMessages
+                .AsNoTracking()
+                .Where(m => m.ChatSessionId == sessionId && m.ChatMessageId > existingUser.ChatMessageId && m.Role == ChatRole.Assistant)
+                .OrderBy(m => m.ChatMessageId)
+                .FirstOrDefaultAsync(ct);
+
+            if (assistant is not null)
+            {
+                var outcome = assistant.Status == ChatMessageStatus.Failed
+                    ? ChatTurnOutcome.UpstreamFailure
+                    : ChatTurnOutcome.Success;
+                return new ChatTurnResult(outcome, assistant);
+            }
+
+            var userStillExists = await db.ChatMessages
+                .AsNoTracking()
+                .AnyAsync(m => m.ChatMessageId == existingUser.ChatMessageId, ct);
+
+            if (!userStillExists)
+            {
+                break;
+            }
+
+            await Task.Delay(250, ct);
+        }
+
+        return new ChatTurnResult(ChatTurnOutcome.UpstreamFailure);
     }
 }

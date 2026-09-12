@@ -79,12 +79,13 @@ public class ChatEndpointJsonTests : IAsyncLifetime
             _db = db;
         }
 
-        public override async Task<ChatTurnResult> AskTurnAsync(long requestId, string question, CancellationToken ct)
+        public override async Task<ChatTurnResult> AskTurnAsync(long requestId, string question, Guid? clientTurnId, CancellationToken ct)
         {
             var session = await GetOrCreateSessionAsync(requestId, ct);
             var assistantMsg = new ChatMessage
             {
                 ChatSessionId = session.ChatSessionId,
+                ClientTurnId = clientTurnId,
                 Role = ChatRole.Assistant,
                 MessageText = "Here is the verified answer.",
                 Status = ChatMessageStatus.Success,
@@ -94,6 +95,9 @@ public class ChatEndpointJsonTests : IAsyncLifetime
             await _db.SaveChangesAsync(ct);
             return new ChatTurnResult(ChatTurnOutcome.Success, assistantMsg);
         }
+
+        public override Task<ChatTurnResult> AskTurnAsync(long requestId, string question, CancellationToken ct) =>
+            AskTurnAsync(requestId, question, null, ct);
     }
 
     private static async Task<IHost> CreateTestHostAsync(Action<IServiceCollection>? configureServices = null)
@@ -457,12 +461,13 @@ public class ChatEndpointJsonTests : IAsyncLifetime
             _rawCitationsJson = rawCitationsJson;
         }
 
-        public override async Task<ChatTurnResult> AskTurnAsync(long requestId, string question, CancellationToken ct)
+        public override async Task<ChatTurnResult> AskTurnAsync(long requestId, string question, Guid? clientTurnId, CancellationToken ct)
         {
             var session = await GetOrCreateSessionAsync(requestId, ct);
             var assistantMsg = new ChatMessage
             {
                 ChatSessionId = session.ChatSessionId,
+                ClientTurnId = clientTurnId,
                 Role = ChatRole.Assistant,
                 MessageText = "Answer with strange citations",
                 CitedSourcesJson = _rawCitationsJson,
@@ -473,6 +478,9 @@ public class ChatEndpointJsonTests : IAsyncLifetime
             await _db.SaveChangesAsync(ct);
             return new ChatTurnResult(ChatTurnOutcome.Success, assistantMsg);
         }
+
+        public override Task<ChatTurnResult> AskTurnAsync(long requestId, string question, CancellationToken ct) =>
+            AskTurnAsync(requestId, question, null, ct);
     }
 
     [Theory]
@@ -560,12 +568,13 @@ public class ChatEndpointJsonTests : IAsyncLifetime
             _citations = citations;
         }
 
-        public override async Task<ChatTurnResult> AskTurnAsync(long requestId, string question, CancellationToken ct)
+        public override async Task<ChatTurnResult> AskTurnAsync(long requestId, string question, Guid? clientTurnId, CancellationToken ct)
         {
             var session = await GetOrCreateSessionAsync(requestId, ct);
             var assistantMsg = new ChatMessage
             {
                 ChatSessionId = session.ChatSessionId,
+                ClientTurnId = clientTurnId,
                 Role = ChatRole.Assistant,
                 MessageText = "Answer with citations.",
                 CitedSourcesJson = JsonSerializer.Serialize(_citations),
@@ -576,6 +585,9 @@ public class ChatEndpointJsonTests : IAsyncLifetime
             await _db.SaveChangesAsync(ct);
             return new ChatTurnResult(ChatTurnOutcome.Success, assistantMsg);
         }
+
+        public override Task<ChatTurnResult> AskTurnAsync(long requestId, string question, CancellationToken ct) =>
+            AskTurnAsync(requestId, question, null, ct);
     }
 
     [Fact]
@@ -752,7 +764,7 @@ public class ChatEndpointJsonTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task PostChat_Deduplication_ReturnsExistingAnswer_WithoutCreatingDuplicateTurns()
+    public async Task PostChat_DeduplicationWithClientTurnId_ReturnsExistingAnswer_WithoutCreatingDuplicateTurns()
     {
         await using var db = CreateContext();
         var requestId = await SeedRequestAsync("Dedup Corp");
@@ -760,12 +772,14 @@ public class ChatEndpointJsonTests : IAsyncLifetime
         var completionService = new SuccessfulMockCompletionService();
         var realChatService = new ChatService(db, contextBuilder, completionService, NullLogger<ChatService>.Instance);
 
+        var clientTurnId = Guid.NewGuid();
+
         // First ask
-        var turn1 = await realChatService.AskTurnAsync(requestId, "Who is the managing director?", CancellationToken.None);
+        var turn1 = await realChatService.AskTurnAsync(requestId, "Who is the managing director?", clientTurnId, CancellationToken.None);
         Assert.Equal(ChatTurnOutcome.Success, turn1.Outcome);
 
-        // Immediate retry with identical question
-        var turn2 = await realChatService.AskTurnAsync(requestId, "Who is the managing director?", CancellationToken.None);
+        // Immediate retry with identical ClientTurnId
+        var turn2 = await realChatService.AskTurnAsync(requestId, "Who is the managing director?", clientTurnId, CancellationToken.None);
         Assert.Equal(ChatTurnOutcome.Success, turn2.Outcome);
         Assert.Equal(turn1.Message?.ChatMessageId, turn2.Message?.ChatMessageId);
 
@@ -776,6 +790,38 @@ public class ChatEndpointJsonTests : IAsyncLifetime
             .ToListAsync();
 
         Assert.Equal(2, messages.Count);
+        Assert.Equal(clientTurnId, messages.First(m => m.Role == ChatRole.User).ClientTurnId);
+    }
+
+    [Fact]
+    public async Task PostChat_LegitimateRepeatedQuestion_WithDifferentClientTurnId_CreatesDistinctTurns()
+    {
+        await using var db = CreateContext();
+        var requestId = await SeedRequestAsync("Repeat Corp");
+        var contextBuilder = new StubRetrievalContextBuilder();
+        var completionService = new SuccessfulMockCompletionService();
+        var realChatService = new ChatService(db, contextBuilder, completionService, NullLogger<ChatService>.Instance);
+
+        var clientTurnId1 = Guid.NewGuid();
+        var clientTurnId2 = Guid.NewGuid();
+
+        var turn1 = await realChatService.AskTurnAsync(requestId, "Who is the managing director?", clientTurnId1, CancellationToken.None);
+        Assert.Equal(ChatTurnOutcome.Success, turn1.Outcome);
+
+        var turn2 = await realChatService.AskTurnAsync(requestId, "Who is the managing director?", clientTurnId2, CancellationToken.None);
+        Assert.Equal(ChatTurnOutcome.Success, turn2.Outcome);
+        Assert.NotEqual(turn1.Message?.ChatMessageId, turn2.Message?.ChatMessageId);
+
+        // Verify that database has 4 messages (2 user, 2 assistant)
+        await using var verifyDb = CreateContext();
+        var messages = await verifyDb.ChatMessages
+            .Where(m => verifyDb.ChatSessions.Any(s => s.ChatSessionId == m.ChatSessionId && s.RequestId == requestId))
+            .OrderBy(m => m.CreatedDate)
+            .ToListAsync();
+
+        Assert.Equal(4, messages.Count);
+        Assert.Equal(2, messages.Count(m => m.Role == ChatRole.User));
+        Assert.Equal(2, messages.Count(m => m.Role == ChatRole.Assistant));
     }
 
     [Fact]
@@ -798,5 +844,95 @@ public class ChatEndpointJsonTests : IAsyncLifetime
             .Where(m => verifyDb.ChatSessions.Any(s => s.ChatSessionId == m.ChatSessionId && s.RequestId == requestId))
             .ToListAsync();
         Assert.Empty(messages);
+    }
+
+    private sealed class DelayedMockCompletionService(TimeSpan delay) : ChatCompletionService
+    {
+        public override async Task<ChatCompletionResult> CompleteAsync(
+            string companyName, RetrievalContext context, IReadOnlyList<ChatMessage> history, string question, CancellationToken ct)
+        {
+            await Task.Delay(delay, ct);
+            return new ChatCompletionResult("Delayed answer ready", false, []);
+        }
+    }
+
+    [Fact]
+    public async Task PostChat_ConcurrentRaceWithSameClientTurnId_AwaitsAndReturnsCompletedAssistantTurn()
+    {
+        await using var db = CreateContext();
+        var requestId = await SeedRequestAsync("Concurrent Corp");
+        var contextBuilder = new StubRetrievalContextBuilder();
+        var delayedCompletion = new DelayedMockCompletionService(TimeSpan.FromMilliseconds(600));
+
+        var clientTurnId = Guid.NewGuid();
+
+        var task1 = Task.Run(async () =>
+        {
+            await using var ctx1 = CreateContext();
+            var service1 = new ChatService(ctx1, contextBuilder, delayedCompletion, NullLogger<ChatService>.Instance);
+            return await service1.AskTurnAsync(requestId, "Who is the managing director?", clientTurnId, CancellationToken.None);
+        });
+
+        // Small delay to ensure task1 enters completeAsync before task2 tries to insert the same ClientTurnId
+        await Task.Delay(150);
+
+        var task2 = Task.Run(async () =>
+        {
+            await using var ctx2 = CreateContext();
+            var service2 = new ChatService(ctx2, contextBuilder, delayedCompletion, NullLogger<ChatService>.Instance);
+            return await service2.AskTurnAsync(requestId, "Who is the managing director?", clientTurnId, CancellationToken.None);
+        });
+
+        var results = await Task.WhenAll(task1, task2);
+        Assert.Equal(ChatTurnOutcome.Success, results[0].Outcome);
+        Assert.Equal(ChatTurnOutcome.Success, results[1].Outcome);
+        Assert.NotNull(results[0].Message);
+        Assert.NotNull(results[1].Message);
+        Assert.Equal(results[0].Message!.ChatMessageId, results[1].Message!.ChatMessageId);
+
+        await using var verifyDb = CreateContext();
+        var messages = await verifyDb.ChatMessages
+            .Where(m => verifyDb.ChatSessions.Any(s => s.ChatSessionId == m.ChatSessionId && s.RequestId == requestId))
+            .ToListAsync();
+
+        Assert.Equal(2, messages.Count);
+        Assert.Equal(clientTurnId, messages.First(m => m.Role == ChatRole.User).ClientTurnId);
+    }
+
+    [Fact]
+    public async Task GetChatHistory_WithInFlightUserTurn_ReturnsUserMessageWithClientTurnId_WithoutAssistant()
+    {
+        await using var db = CreateContext();
+        var requestId = await SeedRequestAsync("InFlight Corp");
+
+        var session = new ChatSession { RequestId = requestId, CreatedDate = DateTime.UtcNow, LastActivityDate = DateTime.UtcNow };
+        db.ChatSessions.Add(session);
+        await db.SaveChangesAsync();
+
+        var clientTurnId = Guid.NewGuid();
+        var userMsg = new ChatMessage
+        {
+            ChatSessionId = session.ChatSessionId,
+            ClientTurnId = clientTurnId,
+            Role = ChatRole.User,
+            MessageText = "What are the latest filings?",
+            CreatedDate = DateTime.UtcNow
+        };
+        db.ChatMessages.Add(userMsg);
+        await db.SaveChangesAsync();
+
+        var controller = NewController(db);
+        var chatService = new ChatService(db, new StubRetrievalContextBuilder(), new SuccessfulMockCompletionService(), NullLogger<ChatService>.Instance);
+
+        var result = await controller.GetChatHistory(requestId, chatService, CancellationToken.None);
+        var okResult = Assert.IsType<OkObjectResult>(result);
+        dynamic resData = okResult.Value!;
+        Assert.True((bool)resData.success);
+
+        var messages = (List<ChatMessageDto>)resData.messages;
+        Assert.Single(messages);
+        Assert.Equal("What are the latest filings?", messages[0].Text);
+        Assert.Equal("User", messages[0].Role);
+        Assert.Equal(clientTurnId, messages[0].ClientTurnId);
     }
 }

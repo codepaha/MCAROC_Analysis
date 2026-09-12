@@ -335,3 +335,135 @@ test('chat-panel: empty question is rejected without adding turn', async () => {
     assert.equal(turns.length, 0);
     assert.match(fixture.errorBanner.textContent, /cannot be empty/i);
 });
+
+test('chat-panel: submission sends a clientTurnId UUID in the request payload', async () => {
+    const fixture = setupFixture();
+    let capturedBody = null;
+    const mockFetch = async (url, options) => {
+        if (options && options.method === 'POST') {
+            capturedBody = JSON.parse(options.body);
+            return {
+                ok: true,
+                status: 200,
+                json: async () => ({
+                    success: true,
+                    message: { role: 'Assistant', text: 'Answer.', status: 'Success' }
+                })
+            };
+        }
+        return { ok: false };
+    };
+
+    const controller = initChatPanel(fixture.doc, mockFetch);
+    fixture.input.value = 'Valid question?';
+    await controller.handleSubmit();
+
+    assert.ok(capturedBody, 'POST body captured');
+    assert.equal(capturedBody.question, 'Valid question?');
+    assert.ok(capturedBody.clientTurnId, 'clientTurnId must be present in payload');
+    assert.match(capturedBody.clientTurnId, /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i, 'clientTurnId must be a valid UUID');
+});
+
+test('chat-panel: reconciliation observing user-only pending turn enters pending state and polls until assistant arrives', async () => {
+    const fixture = setupFixture();
+    let getCallCount = 0;
+    const mockFetch = async (url, options) => {
+        if (options && options.method === 'POST') {
+            const err = new Error('Client timeout');
+            err.name = 'AbortError';
+            throw err;
+        }
+
+        // GET calls:
+        getCallCount++;
+        if (getCallCount === 1) {
+            // First reconcile GET: server persisted user message, assistant is still generating (in-flight)
+            return {
+                ok: true,
+                status: 200,
+                json: async () => ({
+                    success: true,
+                    messages: [
+                        { role: 'User', text: 'Tell me about charges.', status: 'Success' }
+                    ]
+                })
+            };
+        }
+
+        // Subsequent poll GET: assistant response has now committed
+        return {
+            ok: true,
+            status: 200,
+            json: async () => ({
+                success: true,
+                messages: [
+                    { role: 'User', text: 'Tell me about charges.', status: 'Success' },
+                    { role: 'Assistant', text: 'Here are the charges details.', status: 'Success' }
+                ]
+            })
+        };
+    };
+
+    // Use fast pollInterval (10ms) so test finishes instantly
+    const controller = initChatPanel(fixture.doc, mockFetch, 5000, 10);
+    fixture.input.value = 'Tell me about charges.';
+    await controller.handleSubmit();
+
+    assert.ok(getCallCount >= 2, `Poll GET must be called at least twice (actual: ${getCallCount})`);
+    const turns = fixture.messagesContainer.querySelectorAll('.mca-chat-turn');
+    assert.equal(turns.length, 2, 'Canonical turns rendered after polling resolves');
+    assert.ok(turns[0].className.includes('user'));
+    assert.ok(turns[1].className.includes('assistant'));
+    assert.equal(turns[1].children[0].textContent.includes('Here are the charges details.'), true);
+    assert.equal(fixture.input.value, '', 'Input cleared once completed turn is reconciled');
+    assert.equal(fixture.input.disabled, false, 'Input re-enabled');
+    assert.equal(fixture.submitBtn.disabled, false, 'Submit button re-enabled');
+});
+
+test('chat-panel: polling for pending turn cleans up optimistic turn if server cancels/rolls back during polling', async () => {
+    const fixture = setupFixture();
+    let getCallCount = 0;
+    const mockFetch = async (url, options) => {
+        if (options && options.method === 'POST') {
+            const err = new Error('Client timeout');
+            err.name = 'AbortError';
+            throw err;
+        }
+
+        getCallCount++;
+        if (getCallCount === 1) {
+            // User message present
+            return {
+                ok: true,
+                status: 200,
+                json: async () => ({
+                    success: true,
+                    messages: [
+                        { role: 'User', text: 'Tell me about charges.', status: 'Success' }
+                    ]
+                })
+            };
+        }
+
+        // Server rolled back user message
+        return {
+            ok: true,
+            status: 200,
+            json: async () => ({
+                success: true,
+                messages: []
+            })
+        };
+    };
+
+    const controller = initChatPanel(fixture.doc, mockFetch, 5000, 10);
+    fixture.input.value = 'Tell me about charges.';
+    await controller.handleSubmit();
+
+    assert.ok(getCallCount >= 2, `Poll GET must be called at least twice (actual: ${getCallCount})`);
+    const turns = fixture.messagesContainer.querySelectorAll('.mca-chat-turn');
+    assert.equal(turns.length, 0, 'Optimistic user turn must be removed when server rolled back');
+    assert.match(fixture.errorBanner.textContent, /cancelled or rolled back/i);
+    assert.equal(fixture.input.disabled, false, 'Input re-enabled for retry');
+    assert.equal(fixture.submitBtn.disabled, false, 'Submit button re-enabled');
+});

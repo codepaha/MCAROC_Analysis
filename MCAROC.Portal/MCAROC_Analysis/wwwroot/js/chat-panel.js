@@ -96,7 +96,18 @@
         return turnDiv;
     }
 
-    function initChatPanel(doc, fetchFn, timeoutOverrideMs) {
+    function generateUUID() {
+        if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+            return crypto.randomUUID();
+        }
+        return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
+            const r = Math.random() * 16 | 0;
+            const v = c === 'x' ? r : (r & 0x3 | 0x8);
+            return v.toString(16);
+        });
+    }
+
+    function initChatPanel(doc, fetchFn, timeoutOverrideMs, pollIntervalOverrideMs) {
         const d = doc || (typeof document !== 'undefined' ? document : null);
         if (!d) return null;
 
@@ -120,6 +131,7 @@
         let abortController = null;
         const fetchImpl = fetchFn || (typeof fetch !== 'undefined' ? fetch : null);
         const timeoutMs = typeof timeoutOverrideMs === 'number' ? timeoutOverrideMs : 45000;
+        const pollIntervalMs = typeof pollIntervalOverrideMs === 'number' ? pollIntervalOverrideMs : 1500;
 
         // ── Drawer Open / Close & Focus Management ──
         function openPanel() {
@@ -245,6 +257,98 @@
             }
         }
 
+        async function pollPendingTurn(turnId, questionText, userTurnEl) {
+            const pendingTurn = d.createElement('div');
+            pendingTurn.className = 'mca-chat-turn assistant mca-chat-turn-pending';
+
+            const bubble = d.createElement('div');
+            bubble.className = 'mca-chat-bubble';
+
+            const header = d.createElement('div');
+            header.className = 'mca-chat-bubble-header';
+            const strong = d.createElement('strong');
+            strong.textContent = 'Assistant';
+            header.appendChild(strong);
+            bubble.appendChild(header);
+
+            const textDiv = d.createElement('div');
+            textDiv.className = 'mca-chat-text text-muted';
+            const spinner = d.createElement('span');
+            spinner.className = 'spinner-border spinner-border-sm me-2';
+            spinner.setAttribute('role', 'status');
+            spinner.setAttribute('aria-hidden', 'true');
+            textDiv.appendChild(spinner);
+            const thinkingText = d.createTextNode('Thinking...');
+            textDiv.appendChild(thinkingText);
+            bubble.appendChild(textDiv);
+            pendingTurn.appendChild(bubble);
+
+            messagesContainer.appendChild(pendingTurn);
+            scrollToBottom();
+
+            const maxAttempts = 20;
+            let resolved = false;
+
+            for (let attempt = 0; attempt < maxAttempts; attempt++) {
+                await new Promise(function (res) { setTimeout(res, pollIntervalMs); });
+
+                try {
+                    const pollRes = await fetchImpl('/Requests/' + encodeURIComponent(requestId) + '/chat', {
+                        method: 'GET',
+                        headers: { 'X-Requested-With': 'XMLHttpRequest' }
+                    });
+
+                    if (pollRes && pollRes.ok) {
+                        const pollHistory = await pollRes.json().catch(function () { return null; });
+                        if (pollHistory && pollHistory.success && Array.isArray(pollHistory.messages)) {
+                            const uIdx = pollHistory.messages.findIndex(function (m) {
+                                return (m.clientTurnId && m.clientTurnId.toLowerCase() === turnId.toLowerCase())
+                                    || ((m.role || '').toLowerCase() === 'user' && m.text === questionText);
+                            });
+
+                            if (uIdx !== -1) {
+                                const asst = pollHistory.messages.slice(uIdx + 1).find(function (m) {
+                                    return (m.role || '').toLowerCase() === 'assistant';
+                                });
+
+                                if (asst) {
+                                    resolved = true;
+                                    if (pendingTurn && pendingTurn.remove) pendingTurn.remove();
+                                    renderTranscript(pollHistory.messages);
+                                    if (asst.status && asst.status.toLowerCase() === 'failed') {
+                                        showError('Sorry, something went wrong answering that question. Please try again.');
+                                    } else {
+                                        hideError();
+                                    }
+                                    input.value = '';
+                                    if (charCount) charCount.textContent = '0';
+                                    break;
+                                }
+                            } else {
+                                // User turn was deleted / rolled back by server
+                                resolved = true;
+                                if (pendingTurn && pendingTurn.remove) pendingTurn.remove();
+                                if (userTurnEl && userTurnEl.remove) userTurnEl.remove();
+                                if (emptyState && messagesContainer.querySelectorAll && messagesContainer.querySelectorAll('.mca-chat-turn').length === 0) {
+                                    messagesContainer.appendChild(emptyState);
+                                }
+                                showError('Request was cancelled or rolled back by server; please try again.');
+                                break;
+                            }
+                        }
+                    }
+                } catch (e) {
+                    // Polling network blip, retry next attempt
+                }
+            }
+
+            if (!resolved) {
+                if (pendingTurn && pendingTurn.remove) pendingTurn.remove();
+                markTurnIndeterminate(userTurnEl);
+                showError('Assistant response is taking longer than expected. Please refresh to check for the latest reply.');
+            }
+        }
+
         // ── Form Submission ──
         async function handleSubmit(e) {
             if (e && e.preventDefault) e.preventDefault();
@@ -260,6 +364,8 @@
                 return;
             }
 
+            const clientTurnId = generateUUID();
+
             hideError();
             isSubmitting = true;
             input.disabled = true;
@@ -270,6 +376,7 @@
 
             // Immediately append user's turn
             const userTurn = createBubbleElement('User', question, 'Success', [], new Date(), d);
+            if (userTurn && userTurn.setAttribute) userTurn.setAttribute('data-client-turn-id', clientTurnId);
             messagesContainer.appendChild(userTurn);
             scrollToBottom();
 
@@ -290,7 +397,7 @@
                         'RequestVerificationToken': token,
                         'X-Requested-With': 'XMLHttpRequest'
                     },
-                    body: JSON.stringify({ question: question }),
+                    body: JSON.stringify({ question: question, clientTurnId: clientTurnId }),
                     signal: abortController.signal
                 });
 
@@ -363,16 +470,27 @@
                         const history = await reconcileRes.json().catch(function () { return null; });
                         if (history && history.success && Array.isArray(history.messages)) {
                             reconciled = true;
-                            const persistedUserTurn = history.messages.find(function (m) {
-                                return (m.role || '').toLowerCase() === 'user' && m.text === question;
+                            const userIndex = history.messages.findIndex(function (m) {
+                                return (m.clientTurnId && m.clientTurnId.toLowerCase() === clientTurnId.toLowerCase())
+                                    || ((m.role || '').toLowerCase() === 'user' && m.text === question);
                             });
 
-                            if (persistedUserTurn) {
-                                // Server committed the turn! Render canonical transcript to prevent duplicates.
-                                renderTranscript(history.messages);
-                                hideError();
-                                input.value = '';
-                                if (charCount) charCount.textContent = '0';
+                            if (userIndex !== -1) {
+                                const assistantMsg = history.messages.slice(userIndex + 1).find(function (m) {
+                                    return (m.role || '').toLowerCase() === 'assistant';
+                                });
+
+                                if (assistantMsg) {
+                                    // Server committed full turn: render canonical transcript
+                                    renderTranscript(history.messages);
+                                    hideError();
+                                    input.value = '';
+                                    if (charCount) charCount.textContent = '0';
+                                } else {
+                                    // Server committed user question, but assistant is still generating (in-flight pending turn)
+                                    await pollPendingTurn(clientTurnId, question, userTurn);
+                                    return;
+                                }
                             } else {
                                 // Server confirmed the question was NOT persisted (it was cancelled / rolled back).
                                 if (userTurn && userTurn.remove) {

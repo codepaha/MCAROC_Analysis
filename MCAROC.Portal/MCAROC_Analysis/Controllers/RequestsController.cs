@@ -734,7 +734,7 @@ public class RequestsController(
                 .Select(d => d.FilingDocumentId)
                 .ToListAsync(ct)).ToHashSet();
 
-        var result = await chatService.AskTurnAsync(requestId, trimmed, ct);
+        var result = await chatService.AskTurnAsync(requestId, trimmed, model.ClientTurnId, ct);
 
         if (result.Outcome == ChatTurnOutcome.RequestNotFound)
         {
@@ -790,6 +790,7 @@ public class RequestsController(
         var dto = new ChatMessageDto
         {
             Id = m.ChatMessageId,
+            ClientTurnId = m.ClientTurnId,
             Role = m.Role.ToString(),
             Text = m.MessageText,
             Status = m.Status?.ToString() ?? string.Empty,
