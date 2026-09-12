@@ -35,8 +35,9 @@
         {"source": "About the Company (narrative paragraph)", "entityField": "CompanyProfile.NarrativeDescription", "status": "live", "note": "A1/#32"},
         {"source": "Type of Entity / Listing Status", "entityField": "CompanyProfile.EntityType / ListingStatus", "status": "live", "note": "A1/#32; previously mis-stored in BusinessActivity"},
         {"source": "Date of Incorporation", "entityField": "IncorporationDate", "status": "live"},
-        {"source": "Date of Last AGM", "entityField": "CompanyProfile.LastAgmDate", "status": "live", "note": "A1/#32"},
-        {"source": "LEI (+ status)", "entityField": "CompanyProfile.Lei / LeiStatus", "status": "live", "note": "A1/#32"},
+        {"source": "Date of Last AGM", "entityField": "CompanyProfile.LastAgmDate", "status": "parsed-not-shown", "gap": "G19", "note": "A1/#32 parsed it; render audit 2026-09-12 found it never rendered anywhere"},
+        {"source": "LEI", "entityField": "CompanyProfile.Lei", "status": "live", "note": "A1/#32; renders in the fixed page header, not the Corporate tab About section"},
+        {"source": "LEI status", "entityField": "CompanyProfile.LeiStatus", "status": "parsed-not-shown", "gap": "G19", "note": "A1/#32 parsed it; render audit 2026-09-12 found it never rendered anywhere, not even next to the LEI number"},
         {"source": "Broad Industry Category / Industry", "entityField": "CompanyProfile.Industry", "status": "live"},
         {"source": "Segment(s)", "entityField": "CompanyProfile.Segment", "status": "live", "note": "A1/#32; previously dropped"}
       ]
@@ -46,8 +47,9 @@
       "parser": "DirectorsParser", "entity": "Director (+ CompanyOfficer for non-DIN rows)",
       "portal_tab": "Corporate", "dossier": "Annexure A",
       "fields": [
-        {"source": "NAME / DIN / PRESENT DESIGNATION / PRESENT DESIGNATION APPOINTMENT DATE / ORIGINAL APPOINTMENT DATE / DATE OF CESSATION / FLAGS", "entityField": "NameRaw / Din / Designation / DesignationAppointmentDate / OriginalAppointmentDate / CessationDate / Flags", "status": "live"},
-        {"source": "rows with DIN = '-' (Company Secretary etc.)", "entityField": "CompanyOfficer.*", "status": "parsed-not-shown", "gap": "G8", "note": "3 officers for COASTAL; confirm _CorporateTab renders them"}
+        {"source": "NAME / DIN / PRESENT DESIGNATION / ORIGINAL APPOINTMENT DATE / DATE OF CESSATION", "entityField": "NameRaw / Din / Designation / OriginalAppointmentDate / CessationDate", "status": "live"},
+        {"source": "PRESENT DESIGNATION APPOINTMENT DATE / FLAGS", "entityField": "DesignationAppointmentDate / Flags", "status": "parsed-not-shown", "gap": "G20", "note": "Render audit 2026-09-12: _DirectorTable.cshtml has no column for either. Flags feeds the I5 metric's count but its text is never shown."},
+        {"source": "rows with DIN = '-' (Company Secretary etc.)", "entityField": "CompanyOfficer.*", "status": "live", "note": "Confirmed by render audit 2026-09-12: renders as its own 'Key Managerial Personnel / Officers' table on Corporate → Management (3 rows for COASTAL). G8 closed."}
       ]
     },
     {
@@ -63,7 +65,8 @@
       "parser": "OtherDirectorshipsParser", "entity": "DirectorAssociation",
       "portal_tab": "Corporate (director drawer)", "dossier": "Annexure A",
       "fields": [
-        {"source": "DIRECTOR NAME / CORPORATE NAME / CIN-LLPIN / CORPORATE TYPE / PAID UP CAPITAL / OBLIGATION OF CONTRIBUTION / SUM OF CHARGES / DATE OF INCORP / COMPANY-LLP STATUS / ACTIVE COMPLIANCE / APPOINTMENT DATE / CESSATION DATE", "entityField": "DirectorNameRaw / ConnectedCompanyRaw / ConnectedCin / CorporateType / PaidUpCapitalCrore / SumOfChargesCrore / DateOfIncorporation / CompanyStatus / ActiveCompliance / AppointmentDate / CessationDate", "status": "live"}
+        {"source": "DIRECTOR NAME / CORPORATE NAME / CIN-LLPIN / CORPORATE TYPE / PAID UP CAPITAL / OBLIGATION OF CONTRIBUTION / SUM OF CHARGES / COMPANY-LLP STATUS / APPOINTMENT DATE / CESSATION DATE", "entityField": "DirectorNameRaw / ConnectedCompanyRaw / ConnectedCin / CorporateType / PaidUpCapitalCrore / SumOfChargesCrore / CompanyStatus / AppointmentDate / CessationDate", "status": "live", "note": "Verified against the real roc.xls header (2026-09-12): 'PAID UP CAPITAL / OBLIGATION OF CONTRIBUTION' is ONE combined column (LLP contribution vs. company paid-up capital, same slot) already correctly captured as PaidUpCapitalCrore — not two columns, nothing unparsed."},
+        {"source": "DATE OF INCORP / ACTIVE COMPLIANCE", "entityField": "DateOfIncorporation / ActiveCompliance", "status": "parsed-not-shown", "gap": "G21", "note": "Render audit 2026-09-12: both captured, neither has a column in the Other Directorships table."}
       ]
     },
     {
@@ -108,8 +111,9 @@
       "portal_tab": "Corporate", "dossier": "Annexure A",
       "fields": [
         {"source": "Financial Year Ending On / Entity Name / Shareholding (%)", "entityField": "FinancialYear / ShareholderNameRaw / HoldingPercentage", "status": "live"},
-        {"source": "Relationship / Entity Type", "entityField": "RelationshipRaw / ShareholderType", "status": "live", "note": "A6/#37"},
-        {"source": "Country / City / Paid Up Capital / Obligation Of Contribution / Sum Of Charges / Date Of Incorporation / Company-LLP Status / Active Compliance / Remarks", "entityField": "Location / PaidUpCapitalCrore / SumOfChargesCrore / DateOfIncorporation / CompanyStatus / ActiveCompliance / Remarks", "status": "live", "note": "A6/#37"}
+        {"source": "Relationship / Entity Type", "entityField": "RelationshipRaw / ShareholderType", "status": "live", "note": "A6/#37 — folded into the Designation/Type columns of the merged Shareholders table"},
+        {"source": "Company-LLP Status / Active Compliance / Remarks", "entityField": "CompanyStatus / ActiveCompliance / Remarks", "status": "live", "note": "A6/#37 — folded into the Status column and a name-cell footnote"},
+        {"source": "Country / City / Paid Up Capital / Obligation Of Contribution / Sum Of Charges / Date Of Incorporation", "entityField": "Location / PaidUpCapitalCrore / SumOfChargesCrore / DateOfIncorporation", "status": "parsed-not-shown", "gap": "G22", "note": "A6/#37 parsed all four ('Paid Up Capital / Obligation Of Contribution' verified 2026-09-12 as ONE combined column, already captured as PaidUpCapitalCrore); render audit 2026-09-12 found none of the four has a column in the Corporate → Ownership Shareholders table."}
       ]
     },
     {
@@ -125,9 +129,10 @@
       "parser": "RelatedCorporatesParser", "entity": "RelatedCorporate",
       "portal_tab": "Corporate", "dossier": "Annexure A",
       "fields": [
-        {"source": "Financial Year Ending On / Corporate Name / Relationship / Corporate Type / Shareholding % / Country / City / Paid Up Capital / Obligation Of Contribution / Sum Of Charges / Date Of Incorporation / Company-LLP Status", "entityField": "FinancialYearEnding / EntityNameRaw / RelationshipRaw+RelationshipType / CorporateType / HoldingPercent / Location / PaidUpCapitalCrore / SumOfChargesCrore / DateOfIncorporation / CompanyStatus", "status": "live"},
+        {"source": "Corporate Name / Relationship / Corporate Type / Shareholding % / Country / City / Paid Up Capital / Obligation Of Contribution / Sum Of Charges / Company-LLP Status", "entityField": "EntityNameRaw / RelationshipRaw+RelationshipType / CorporateType / HoldingPercent / Location / PaidUpCapitalCrore / SumOfChargesCrore / CompanyStatus", "status": "live", "note": "'Paid Up Capital / Obligation Of Contribution' verified 2026-09-12 as ONE combined column, already captured as PaidUpCapitalCrore."},
         {"source": "Active Compliance / Remarks", "entityField": "ActiveCompliance / Remarks", "status": "live", "note": "A6/#37"},
-        {"source": "CIN (in parentheses under Corporate Name in the PDF; own column here?)", "entityField": "Cin", "status": "live"}
+        {"source": "CIN (in parentheses under Corporate Name in the PDF; own column here?)", "entityField": "Cin", "status": "live"},
+        {"source": "Financial Year Ending On / Date Of Incorporation", "entityField": "FinancialYearEnding / DateOfIncorporation", "status": "parsed-not-shown", "gap": "G23", "note": "Render audit 2026-09-12: both captured, neither has a column in the Group Entities table — two rows for the same related entity across FYs currently look identical without FinancialYearEnding."}
       ]
     },
     {
@@ -210,7 +215,8 @@
       "parser": "GstParser", "entity": "GstRegistration",
       "portal_tab": "Compliance", "dossier": "Annexure D",
       "fields": [
-        {"source": "GSTIN / GSTIN STATUS / STATE / DATE OF REGISTRATION / TAXPAYER TYPE / TRADE NAME / NATURE OF BUSINESS ACTIVITIES / FLAGS", "entityField": "Gstin / Status / State / RegistrationDate / TaxpayerType / TradeName / NatureOfBusinessActivities / Flags", "status": "live"},
+        {"source": "GSTIN / GSTIN STATUS / STATE / DATE OF REGISTRATION", "entityField": "Gstin / Status / State / RegistrationDate", "status": "live"},
+        {"source": "TAXPAYER TYPE / TRADE NAME / NATURE OF BUSINESS ACTIVITIES / FLAGS", "entityField": "TaxpayerType / TradeName / NatureOfBusinessActivities / Flags", "status": "parsed-not-shown", "gap": "G24", "note": "Render audit 2026-09-12: all four captured, none has a column in the GST Registrations table. Flags feeds the G6 analytics metric's count but its text is never shown per registration."},
         {"source": "RETURN TYPE / LATEST FILING(S) / FINANCIAL YEAR / TAX PERIOD (latest-filing summary)", "entityField": "(via GstFiling)", "status": "live"},
         {"source": "CENTRE JURISDICTION / STATE JURISDICTION / LEGAL NAME OF BUSINESS", "entityField": "CentreJurisdiction / StateJurisdiction / LegalNameOfBusiness", "status": "live", "note": "A6/#37"},
         {"source": "CancellationDate (for Inactive GSTINs)", "entityField": "CancellationDate", "status": "not-parsed", "gap": "G17", "note": "no CANCELLATION DATE column exists in the real GST sheet (16 cols, verified against the COASTAL fixture) and GstParser never sets this field — the entity property is vestigial; not fixed here, out of A6's scope"},
@@ -268,7 +274,8 @@
       "parser": "EpfoParser", "entity": "EpfoContribution",
       "portal_tab": "Compliance (paged)", "dossier": "Annexure D",
       "fields": [
-        {"source": "WORKING STATUS / ESTABLISHMENT ID / ESTABLISHMENT NAME / WAGE MONTH / NO. OF EMPLOYEES / AMOUNT / DATE OF CREDIT / PAYMENT DUE DATE / STATUS", "entityField": "WorkingStatus / EstablishmentId / EstablishmentName / WageMonth / EmployeeCount / ContributionAmountCrore / PaymentDate / PaymentDueDate / PaymentStatus", "status": "live"},
+        {"source": "WORKING STATUS / ESTABLISHMENT ID / ESTABLISHMENT NAME / WAGE MONTH / NO. OF EMPLOYEES / AMOUNT / STATUS", "entityField": "WorkingStatus / EstablishmentId / EstablishmentName / WageMonth / EmployeeCount / ContributionAmountCrore / PaymentStatus", "status": "live", "note": "WorkingStatus renders via the per-establishment profile card (Compliance → EPFO), not as a column in the per-row Contribution table."},
+        {"source": "DATE OF CREDIT / PAYMENT DUE DATE", "entityField": "PaymentDate / PaymentDueDate", "status": "parsed-not-shown", "gap": "G25", "note": "Render audit 2026-09-12: both drive the H1/H2 analytics metrics internally, but neither renders per-row — only the derived PaymentStatus text does."},
         {"source": "TRRN (transaction reference number)", "entityField": "Trrn", "status": "live", "gap": "G13", "note": "A5/#36"}
       ]
     },
@@ -365,8 +372,9 @@
      "fix": "New EpfoEstablishment entity (establishmentId, name, city, dateOfSetup, principalBusinessActivities, address, exemptionStatus, workingStatus, flags, latestWageMonth) + EpfoParser.ParseEstablishments; migration AddEpfoEstablishment; per-establishment profile fields on the Compliance-tab establishment cards + a Snapshot count in the dossier.",
      "issue": "#36"},
     {"id": "G8", "title": "Parsed-but-not-(fully)-shown: FinancialFacts, FinancialParameters, CompanyOfficers, CashFlowYearInferred", "severity": "high",
+     "status": "DONE (confirmed by render audit, 2026-09-12)",
      "detail": "462 FinancialFacts, 23 FinancialParameters, 3 CompanyOfficers and the CashFlowYearInferred flag are ingested but the portal tabs may not render them fully. Audit each tab and wire the missing renders.",
-     "fix": "Per-tab render audit (Corporate: officers; Financials: full statement incl. facts + ratios + parameters + inferred-year caption).",
+     "fix": "Per-tab render audit (Corporate: officers; Financials: full statement incl. facts + ratios + parameters + inferred-year caption). Confirmed already done: FinancialStatementBuilder appends unmapped facts (not just the ~25 typed fields), the Ratios sub-tab and Additional Indicators table both render, the Cash Flow Year Alignment banner + asterisk badges are in _FinancialStatement.cshtml, and CompanyOfficers has its own 'Key Managerial Personnel' table on Corporate → Management.",
      "issue": null},
     {"id": "G9", "title": "Shareholding entity drops columns", "severity": "medium", "status": "DONE (A6 / #37)",
      "detail": "Director Shareholding drops Designation + Cessation Date; Shareholding >5% drops Relationship, Country/City, PUC/Obligation, Sum of Charges, Date of Incorp, Status, Active Compliance, Remarks.",
@@ -381,9 +389,10 @@
      "fix": "Split into AuditorName / MembershipNumber / FirmName / FirmRegistrationNumber.",
      "issue": "#37"},
     {"id": "G12", "title": "Litigation Uncertain (Unverified Court Records) has no UI cue", "severity": "medium",
+     "status": "DONE (B3 / #41)",
      "detail": "PR #29 routes 'Unverified Court Records' rows to MatchStatus=Uncertain, but the Litigation tab shows them under category 'Other' with no 'unverified — verify against source' banner. the benchmark tool gives Probable + Unverified their own sections with a plain-English disclaimer.",
-     "fix": "Litigation tab (Track B): split Confirmed / Probable / Unverified into separate sub-sections, each with a disclaimer.",
-     "issue": null},
+     "fix": "Litigation tab (Track B): split Confirmed / Probable / Unverified into separate sub-sections, each with a disclaimer. Done: _LitigationTab.cshtml has a dedicated Unverified sub-tab with a 'Provisional Court Records' banner — the sheet's own field row already noted this (B3/#41) but the gap itself was never marked done. Confirmed still true by render audit 2026-09-12.",
+     "issue": "#41"},
     {"id": "G13", "title": "EPFO TRRN dropped", "severity": "low", "status": "DONE (A5 / #36)", "detail": "Transaction reference number on the monthly EPFO annexure not stored.", "fix": "Added EpfoContribution.Trrn (migration AddEpfoEstablishment).", "issue": "#36"},
     {"id": "G14", "title": "Related Party Transactions sheet not parsed", "severity": "medium", "status": "DONE (A8 / #50)",
      "detail": "Transaction-level RPT disclosure (party x transaction type x FY, with amount) — 25/41 companies in the wider portfolio set. Distinct from Related Corporates.",
@@ -404,7 +413,35 @@
     {"id": "G18", "title": "Auditors' Comments detail-table columns dropped", "severity": "low",
      "detail": "A7/#38 discovery: the sheet's second stacked table (Serial Number | Financial Year | Section | Section Name | Auditors' Comments | Directors' Comments | Footnotes — see AuditorsParser's own doc comment) only reads Financial Year and Auditors' Comments (-> ObservationText). Serial Number, Section (a numeric code, e.g. 700600), Section Name, Directors' Comments, and Footnotes are read nowhere.",
      "fix": "Decide whether Directors' Comments / Section Name are worth a dedicated field on AuditorObservation, or explicitly dropped-by-design (Section is a redundant numeric code for Section Name; Serial Number/Footnotes look structural).",
-     "issue": null}
+     "issue": null},
+    {"id": "G19", "title": "CompanyProfile.LastAgmDate / LeiStatus never rendered", "severity": "low",
+     "detail": "Found by render audit 2026-09-12: both fields are parsed and stored (LastAgmDate since A1/#32, LeiStatus alongside Lei). Lei itself renders in the fixed page header; LastAgmDate and LeiStatus render nowhere — not the Corporate tab, not the dossier PDF.",
+     "fix": "Add both to the Corporate tab About section (and/or the page header alongside Lei).",
+     "issue": "#106"},
+    {"id": "G20", "title": "Directors table drops DesignationAppointmentDate and Flags", "severity": "medium",
+     "detail": "Found by render audit 2026-09-12: _DirectorTable.cshtml (shared by Current/Former Directors) has 5 columns (Name/DIN/Designation/Appointed/Ceased) — OriginalAppointmentDate renders as 'Appointed' but DesignationAppointmentDate (the present designation's own start date) has no column. Flags is captured and feeds the I5 analytics metric's count, but the flag text itself is never shown — a reviewer can see a count of flagged directors but not which director or why.",
+     "fix": "Add both columns to _DirectorTable.cshtml.",
+     "issue": "#106"},
+    {"id": "G21", "title": "Other Directorships: Date of Incorp / Active Compliance not rendered", "severity": "low",
+     "detail": "Found by render audit 2026-09-12: DateOfIncorporation and ActiveCompliance are captured on DirectorAssociation but the Other Directorships table has no column for either. (Initial audit also flagged 'Obligation Of Contribution' as unparsed — verified 2026-09-12 against the real roc.xls header that this is a false alarm: it's one combined column with Paid Up Capital, not a separate field, and is already captured correctly.)",
+     "fix": "Add DateOfIncorporation/ActiveCompliance columns to the Other Directorships table.",
+     "issue": "#106"},
+    {"id": "G22", "title": "Shareholding (>5% sheet fields): Location / PUC / Sum of Charges / Date of Incorp not rendered", "severity": "medium",
+     "detail": "Found by render audit 2026-09-12: the Corporate → Ownership Shareholders table renders RelationshipRaw/ShareholderType/CompanyStatus/ActiveCompliance/Remarks (folded into existing columns) but has no columns for Location, PaidUpCapitalCrore, SumOfChargesCrore, or DateOfIncorporation — all captured on the Shareholding entity. (Initial audit's 'Obligation Of Contribution not parsed' claim was a false alarm — see G21.)",
+     "fix": "Add the four missing columns to the Shareholders table.",
+     "issue": "#106"},
+    {"id": "G23", "title": "RelatedCorporate: FinancialYearEnding / DateOfIncorporation not rendered", "severity": "medium",
+     "detail": "Found by render audit 2026-09-12: the Corporate → Group Entities table has no column for FinancialYearEnding or DateOfIncorporation, both captured on RelatedCorporate. FinancialYearEnding matters in particular — two rows for the same related entity across different FYs currently look identical. (Initial audit's 'Obligation Of Contribution not parsed' claim was a false alarm — see G21.)",
+     "fix": "Add FinancialYearEnding/DateOfIncorporation columns to the table.",
+     "issue": "#106"},
+    {"id": "G24", "title": "GstRegistration: TaxpayerType / TradeName / NatureOfBusinessActivities / Flags not rendered", "severity": "medium",
+     "detail": "Found by render audit 2026-09-12: all four are captured on GstRegistration but the Compliance → GST Registrations table has no columns for them. Flags feeds the G6 analytics metric's boolean count, but a reviewer has no way to see what a given GSTIN's flag actually says.",
+     "fix": "Add the four columns to the GST Registrations table on _ComplianceTab.cshtml.",
+     "issue": "#107"},
+    {"id": "G25", "title": "EpfoContribution: PaymentDate / PaymentDueDate not rendered per row", "severity": "medium",
+     "detail": "Found by render audit 2026-09-12: both are captured and drive the H1 (on-time rate) / H2 (late-remittance count) analytics metrics internally, but the Compliance → EPFO Contribution & Headcount History table shows only the derived PaymentStatus text — a reviewer can't verify an individual 'late' classification by eye without the actual due/paid dates.",
+     "fix": "Add PaymentDate/PaymentDueDate columns to the Contribution & Headcount History table.",
+     "issue": "#107"}
   ],
 
   "benchmark_take_leave": {
