@@ -93,7 +93,7 @@ Razor + view-model-load only, or pure computation over entities that already exi
 |---|---|---|---|
 | #61 D6 | directors metrics (pure compute) | **#55 D0** (merged) | **MERGED** (`3eafe94`) |
 | #62 D7 | EPFO / labour metrics (Section H; H7 needed #36) | #36 (merged) | **MERGED** (`1587889`) |
-| #63 D8 | peer comparison metrics (Section J; J2 needed #35) | #35 (merged) | unblocked |
+| #63 D8 | peer comparison metrics (Section J; J2 needed #35) | #35 (merged) | **PR open** |
 | #64 D9 | cost structure & forex metrics (Section A4/A5) | #55 D0 (merged) only | unblocked |
 | #65 D10 | related-party-transaction metrics (Section E) | #50 A8 (merged) | **newly unblocked** |
 | #66 D11 | credit rating metrics (Section F) | #51 A9 (merged) | **newly unblocked** |
@@ -217,6 +217,16 @@ Linux subset fonts break PdfPig's ToUnicode → those are `[SkippableFact]`, ski
   scenario the infra note above already warns about. Also confirmed: the *other* runner process visible
   in a plain `tasklist` (`D:\actions-runner`, Windows-service-registered) is for an unrelated repo
   (`codepaha-PropertyIntelligence`), not this one — don't restart it thinking it's MCAROC's.
+
+### 2026-09-12 — Antigravity (D8/#63 implemented, PR #100 open)
+- **DONE — D8 / #63 implemented, PR #100 open**: Peer comparison analytics (Section J, metrics J1–J3).
+  Implemented all review requirements:
+  1. J1: full multi-year metric vs peer median deltas with exact canonicalization (trim, collapse internal whitespace, case-fold) and curated `PeerMetricDefinition` allow-list (unit + direction), failing closed on unknown metrics with `MetricUnit.Unspecified`, position sentiment derived directly from curated direction. Grouped by canonical metric and FY so allow-list aliases produce a single duplicate insufficiency.
+  2. J2: `Rank in source closest-peer list`, strict CIN-first / name-fallback identity matching with single-match requirement, non-null self revenue, non-null uniform peer FY, and strict rank integrity (`1..N` permutation).
+  3. J3: `Count of peers in sample`, validated for exactly one distinct positive count across reference FY rows.
+  4. Output order: J2, J3, then J1 rows sorted by FY descending, then canonical name ascending.
+  5. Surfaced exclusively on Financials tab `sec-financials-peers`.
+  All 34 targeted unit, fixture, and rendering tests green.
 
 ### 2026-09-12 — Claude session (two new owner-requested issues filed and claimed: #97, #98)
 - **DECISION — owner reviewed an external LLM's feature-suggestion list for this portal.** Verdict: no

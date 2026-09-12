@@ -122,6 +122,8 @@
     </div>
 
     <div class="tab-pane fade mca-subtab-panel" id="sec-financials-peers" role="tabpanel">
+        @await Html.PartialAsync("Details/_KeyIndicators", Model.KeyMetrics.Where(g => g.Title == "Peer comparison").ToList())
+
         @if (Model.PeerComparisonMetrics.Count > 0)
         {
             var meta = Model.PeerComparisonMetrics.First();

@@ -143,5 +143,41 @@ public class FinancialsTabRenderingTests
         Assert.DoesNotContain("PF remittance on-time rate", html);
         Assert.DoesNotContain("Establishment count", html);
     }
+
+    [Fact]
+    public async Task Financials_peers_subtab_renders_peer_comparison_key_indicators()
+    {
+        var vm = CreateViewModel();
+        vm.FinancialYears =
+        [
+            new FinancialYearData { FinancialYear = 2026, Revenue = 100m, NetWorth = 50m, Pat = 10m }
+        ];
+
+        var metrics = new List<MetricResult>
+        {
+            MetricResult.Ok("Rank in source closest-peer list", 3m, MetricUnit.Count, "Rank 3 of 5", "PeerCompany.Rank"),
+            MetricResult.Ok("Count of peers in sample", 30m, MetricUnit.Count, "FY2017", "PeerComparisonMetric.PeerCount"),
+            MetricResult.Ok("EBITDA Margin (%) vs peer median", 31.9m, MetricUnit.Percent, "FY2017", "PeerComparisonMetric.CompanyValue")
+        };
+
+        vm.KeyMetrics = [new MetricGroup("Peer comparison", metrics)];
+
+        var html = await RenderFinancialsTabAsync(vm);
+
+        // Rendered in sec-financials-peers
+        var peersIdx = html.IndexOf("id=\"sec-financials-peers\"");
+        Assert.True(peersIdx >= 0);
+        var peersSection = html.Substring(peersIdx);
+
+        Assert.Contains("Rank in source closest-peer list", peersSection);
+        Assert.Contains("Count of peers in sample", peersSection);
+        Assert.Contains("EBITDA Margin (%) vs peer median", peersSection);
+
+        // Must NOT render in sec-financials-summary
+        var summaryIdx = html.IndexOf("id=\"sec-financials-summary\"");
+        var summarySection = html.Substring(summaryIdx, peersIdx - summaryIdx);
+        Assert.DoesNotContain("Rank in source closest-peer list", summarySection);
+        Assert.DoesNotContain("EBITDA Margin (%) vs peer median", summarySection);
+    }
 }
 
