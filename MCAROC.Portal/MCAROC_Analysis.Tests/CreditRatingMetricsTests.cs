@@ -588,4 +588,58 @@ public class CreditRatingMetricsTests
         Assert.Equal(1m, f5.Value);
         Assert.Contains("unaccepted 'CRISIL A' vs accepted 'CRISIL AA'", f5.Period);
     }
+
+    [Fact]
+    public void F5_undated_accepted_record_fails_closed_rather_than_silently_falling_back_to_older_record()
+    {
+        // Regression requested in PR #105 review:
+        // Accepted X/CRISIL BBB dated 2022, accepted X/CRISIL BBB with null RatingDate, and unaccepted X/CRISIL BBB dated 2023.
+        // If the undated accepted row is filtered by `a.RatingDate <= uDate` before validation,
+        // it is silently ignored and the dated 2022 record falsely emits Ok(0) (zero gap).
+        // It must fail closed to Insufficient citing the missing RatingDate with source provenance.
+        var ratings = new List<CreditRating>
+        {
+            new()
+            {
+                Agency = "CRISIL",
+                Instrument = "X",
+                Rating = "BBB",
+                RatingDate = new DateOnly(2022, 1, 1),
+                IsAccepted = true,
+                SourceSheetName = "Rating",
+                SourceRowNumber = 5
+            },
+            new()
+            {
+                Agency = "CRISIL",
+                Instrument = "X",
+                Rating = "BBB",
+                RatingDate = null,
+                IsAccepted = true,
+                SourceSheetName = "Rating",
+                SourceRowNumber = 6
+            },
+            new()
+            {
+                Agency = "CRISIL",
+                Instrument = "X",
+                Rating = "BBB",
+                RatingDate = new DateOnly(2023, 1, 1),
+                IsAccepted = false,
+                SourceSheetName = "Unaccepted",
+                SourceRowNumber = 2
+            }
+        };
+
+        var model = CreateModelWithRatings(ratings);
+        var group = DossierComputations.CreditRatingMetrics(model);
+
+        var f5 = M(group, "Accepted vs unaccepted rating gap");
+        Assert.False(f5.HasValue);
+        Assert.Equal(MetricUnit.Count, f5.Unit);
+        Assert.Contains("missing RatingDate", f5.InsufficiencyReason);
+        Assert.Contains("row 6", f5.InsufficiencyReason);
+        Assert.Contains("CRISIL", f5.InsufficiencyReason);
+    }
 }
+

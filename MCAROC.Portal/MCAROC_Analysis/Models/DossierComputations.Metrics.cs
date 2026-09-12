@@ -2791,23 +2791,51 @@ public static partial class DossierComputations
         }
         else
         {
+            static string? EffectiveRating(CreditRating r) =>
+                string.Equals(r.Action?.Trim(), "Withdrawn", StringComparison.OrdinalIgnoreCase) && string.IsNullOrWhiteSpace(r.Rating)
+                    ? "Withdrawn"
+                    : r.Rating;
+
             var unacceptedMissing = unaccepted.FirstOrDefault(u =>
                 string.IsNullOrWhiteSpace(u.Instrument) ||
                 string.IsNullOrWhiteSpace(u.Agency) ||
-                string.IsNullOrWhiteSpace(u.Rating) ||
+                string.IsNullOrWhiteSpace(EffectiveRating(u)) ||
                 u.RatingDate is null);
+
+            var acceptedMissing = accepted.FirstOrDefault(a =>
+                string.IsNullOrWhiteSpace(a.Instrument) ||
+                string.IsNullOrWhiteSpace(a.Agency) ||
+                string.IsNullOrWhiteSpace(EffectiveRating(a)) ||
+                a.RatingDate is null);
 
             if (unacceptedMissing is not null)
             {
                 var missingField = string.IsNullOrWhiteSpace(unacceptedMissing.Instrument) ? "Instrument"
                     : string.IsNullOrWhiteSpace(unacceptedMissing.Agency) ? "Agency"
-                    : string.IsNullOrWhiteSpace(unacceptedMissing.Rating) ? "Rating"
+                    : string.IsNullOrWhiteSpace(EffectiveRating(unacceptedMissing)) ? "Rating"
                     : "RatingDate";
 
                 list.Add(MetricResult.Insufficient(
                     f5Label,
                     MetricUnit.Count,
                     $"Unaccepted rating record (sheet '{unacceptedMissing.SourceSheetName}', row {unacceptedMissing.SourceRowNumber}) missing required field {missingField}",
+                    "CreditRating.Instrument", "CreditRating.Agency", "CreditRating.Rating", "CreditRating.RatingDate",
+                    "CreditRating.IsAccepted", "CreditRating.SourceSheetName", "CreditRating.SourceRowNumber"));
+            }
+            else if (acceptedMissing is not null)
+            {
+                var missingField = string.IsNullOrWhiteSpace(acceptedMissing.Instrument) ? "Instrument"
+                    : string.IsNullOrWhiteSpace(acceptedMissing.Agency) ? "Agency"
+                    : string.IsNullOrWhiteSpace(EffectiveRating(acceptedMissing)) ? "Rating"
+                    : "RatingDate";
+
+                var instText = string.IsNullOrWhiteSpace(acceptedMissing.Instrument) ? "unknown instrument" : $"'{acceptedMissing.Instrument.Trim()}'";
+                var agencyText = string.IsNullOrWhiteSpace(acceptedMissing.Agency) ? "unknown agency" : acceptedMissing.Agency.Trim();
+
+                list.Add(MetricResult.Insufficient(
+                    f5Label,
+                    MetricUnit.Count,
+                    $"Accepted comparator for {instText} ({agencyText}) (sheet '{acceptedMissing.SourceSheetName}', row {acceptedMissing.SourceRowNumber}) missing {missingField}",
                     "CreditRating.Instrument", "CreditRating.Agency", "CreditRating.Rating", "CreditRating.RatingDate",
                     "CreditRating.IsAccepted", "CreditRating.SourceSheetName", "CreditRating.SourceRowNumber"));
             }
@@ -2821,7 +2849,7 @@ public static partial class DossierComputations
                     var uInst = NameNormalizer.Normalize(u.Instrument);
                     var uAgency = NameNormalizer.Normalize(u.Agency);
                     var uDate = u.RatingDate!.Value;
-                    var uRatingNorm = NormalizeRating(u.Rating);
+                    var uRatingNorm = NormalizeRating(EffectiveRating(u));
 
                     var candidateAccepted = accepted.Where(a =>
                         NameNormalizer.Normalize(a.Instrument) == uInst &&
@@ -2839,22 +2867,9 @@ public static partial class DossierComputations
                         break;
                     }
 
-                    var invalidCandidate = candidateAccepted.FirstOrDefault(a => string.IsNullOrWhiteSpace(a.Rating) || a.RatingDate is null);
-                    if (invalidCandidate is not null)
-                    {
-                        var missingField = invalidCandidate.RatingDate is null ? "RatingDate" : "Rating";
-                        f5Error = MetricResult.Insufficient(
-                            f5Label,
-                            MetricUnit.Count,
-                            $"Accepted comparator for '{u.Instrument!.Trim()}' ({u.Agency.Trim()}) (sheet '{invalidCandidate.SourceSheetName}', row {invalidCandidate.SourceRowNumber}) missing {missingField}",
-                            "CreditRating.Instrument", "CreditRating.Agency", "CreditRating.Rating", "CreditRating.RatingDate",
-                            "CreditRating.IsAccepted", "CreditRating.SourceSheetName", "CreditRating.SourceRowNumber");
-                        break;
-                    }
-
                     var maxAsOfDate = candidateAccepted.Max(a => a.RatingDate!.Value);
                     var latestAsOfRows = candidateAccepted.Where(a => a.RatingDate == maxAsOfDate).ToList();
-                    var distinctAcceptedRatings = latestAsOfRows.Select(a => NormalizeRating(a.Rating)).Distinct().ToList();
+                    var distinctAcceptedRatings = latestAsOfRows.Select(a => NormalizeRating(EffectiveRating(a))).Distinct().ToList();
 
                     if (distinctAcceptedRatings.Count > 1)
                     {
@@ -2870,7 +2885,7 @@ public static partial class DossierComputations
                     var acceptedRatingNorm = distinctAcceptedRatings[0];
                     if (uRatingNorm != acceptedRatingNorm)
                     {
-                        gaps.Add($"unaccepted '{u.Rating!.Trim()}' vs accepted '{latestAsOfRows[0].Rating!.Trim()}' on '{u.Instrument!.Trim()}' ({u.Agency.Trim()}) as of {uDate:d MMM yyyy}");
+                        gaps.Add($"unaccepted '{EffectiveRating(u)!.Trim()}' vs accepted '{EffectiveRating(latestAsOfRows[0])!.Trim()}' on '{u.Instrument!.Trim()}' ({u.Agency.Trim()}) as of {uDate:d MMM yyyy}");
                     }
                 }
 
