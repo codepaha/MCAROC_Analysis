@@ -174,6 +174,19 @@ Linux subset fonts break PdfPig's ToUnicode → those are `[SkippableFact]`, ski
 
 ## Log  <!-- newest first. Prefix: NEEDS / BLOCKED / DONE / DECISION / FYI -->
 
+### 2026-09-12 — Claude session (D10/#65 PR #103 — E6 calculation fix)
+- **FIXED (`a6b0e31`)** — reviewer (owner via Codex) found E6 ("RPT growing faster than revenue") called
+  `AddCagrCore` independently on the RPT-totals series and the revenue series, so each could pick its own
+  `(base, end)` FY pair — comparing unrelated spans when the two series don't share every year (e.g. clean
+  RPT totals only for FY2023/FY2024 vs revenue also reported for FY2021 wrongly flagged `true` by comparing
+  RPT's FY23-24 100% jump against revenue's FY21-24 ~44.2% CAGR, when the real FY23-24 revenue growth is
+  200%). Fix: intersect E1's clean per-FY RPT totals with reported Revenue years first, then run both
+  series through `AddCagrCore` restricted to that identical year set — since its window selection depends
+  only on which years are present (not their values), both calls now resolve to the same `(base, end)`
+  pair by construction. Added the reviewer's exact counterexample plus a no-shared-FY regression. Data
+  wiring, per-FY fail-closed sums, and CI were already sound per the review — this was the only blocker.
+  Full suite green (707/1 skip, unrelated D9 fixture). Rebased cleanly onto main, pushed, review replied.
+
 ### 2026-09-12 — Claude session (D10/#65 PR #103 open)
 - **PR #103 OPEN (#65) — feature/d10-related-party-transactions**: related-party-transaction analytics
   (Section E, metrics E1-E6). Wired `RelatedPartyTransaction` into `DossierModel`/`DossierAssembler`
