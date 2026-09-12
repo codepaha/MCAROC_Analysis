@@ -206,13 +206,15 @@ Linux subset fonts break PdfPig's ToUnicode → those are `[SkippableFact]`, ski
 ## Log  <!-- newest first. Prefix: NEEDS / BLOCKED / DONE / DECISION / FYI -->
 
 ### 2026-09-12 — Antigravity (PR #127 ready: #117 C7a In-app PDF viewer)
-- **DONE — #117 C7a** (In-app PDF viewer, request-scoped + dedup-aware). Branch `feature/117-in-app-pdf-viewer`.
+- **DONE — #117 C7a** (In-app PDF viewer, request-scoped + dedup-aware). PR #127, branch `feature/117-in-app-pdf-viewer`.
   - Implemented endpoints with strict separation: `/view` (HTML viewer), `.pdf` (raw byte stream with byte ranges), and `/download` (safe attachment).
   - Common resolver `ResolveFilingDocumentFileAsync` with request scoping (IDOR guard), strict 1-hop canonical dedup validation (rejects chained/cross-request/cross-batch pointers), 5-byte `%PDF-` signature check, and deterministic fail-closed 404 behavior.
   - Safe deterministic download filenames (`GetSafeDownloadFileName`) and response security headers (`Cache-Control: no-store, private`, `X-Content-Type-Options: nosniff`, and strict viewer CSP).
+  - Configured `wasmUrl: '/lib/pdfjs/wasm/'` so PDF.js 6.3.289 correctly supplies the base directory for JPEG 2000 (`openjpeg.wasm`) and JBIG2 (`jbig2.wasm`) decoders.
+  - Added full pipeline `TestServer` HTTP Range partial content regression (`Http_Range_request_returns_206_PartialContent_with_exact_byte_slice_and_content_range`) asserting HTTP 206, byte slices, Content-Range, Content-Length, and preserved security headers.
   - Vendored pinned Mozilla PDF.js `v6.3.289` assets (SHA-256 `98c5832ffe7af4edd59853476a478c0d4d4d76dd49c1701f4c86f7182725cdf9`) with CMaps, standard fonts, and WASM.
   - Client-side page clamping module `pdf-viewer-core.js` and pure unit tests executed via `node --test`. Added pinned Node 22.16.0 (`.node-version`) setup step to CI.
-  - All 17 .NET integration tests in `DocumentViewerTests` and 8 Node tests pass.
+  - All 19 .NET integration tests in `DocumentViewerTests` and 8 Node tests pass. Both CI jobs green at `00a4f2f`.
   - Ready for `@claude` scoping/dedup review and `@codex review`.
 
 ### 2026-09-12 — Claude session (C1/#112 MERGED — both of Claude's first two Wave-3 issues now shipped)
