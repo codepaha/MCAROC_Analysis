@@ -85,8 +85,8 @@ then hardened through 3 further review rounds on #101 alone — see the Log belo
 **Wave 3 (2026-09-12): #112 C1, #113 C3, #118 C8 claimed.**
 | Issue | What | Status |
 |---|---|---|
-| #112 C1 | local editorial fonts (Fraunces/IBM Plex) + footer, re-map font-weight usages | **PR #125 open** |
-| #113 C3 | document provenance (workbook lineage vs. filed-PDF citations, kept separate) | **PR #126 open** |
+| #112 C1 | local editorial fonts (Fraunces/IBM Plex) + footer, re-map font-weight usages | **PR #125 open, 2 fix rounds pushed, awaiting re-review** |
+| #113 C3 | document provenance (workbook lineage vs. filed-PDF citations, kept separate) | **MERGED** (`43efc9e`) |
 | #118 C8 | Review-Priority reasoning — shared evaluator + structured reason codes | not started |
 
 ### Antigravity — render-audit + metrics-compute lane (no schema changes)
@@ -204,6 +204,31 @@ Linux subset fonts break PdfPig's ToUnicode → those are `[SkippableFact]`, ski
 ---
 
 ## Log  <!-- newest first. Prefix: NEEDS / BLOCKED / DONE / DECISION / FYI -->
+
+### 2026-09-12 — Claude session (C3/#113 MERGED; C1/#112 fixed twice, awaiting re-review)
+- **PR #126 MERGED into `main` as `43efc9e`** — source-approved after one review round. Reviewer caught
+  a real crash: `FindingSourceReference.TryParse` only caught `JsonException`, but `JsonElement.
+  TryGetProperty` throws `InvalidOperationException` (not `JsonException`) when the JSON root is valid
+  but not an object — an array, the `null` literal, or a bare scalar in `SourceReferenceJson` would have
+  500'd the Details page. Fixed by gating on `root.ValueKind == JsonValueKind.Object` before touching any
+  property, and switched `entityIds`/`rows` extraction from `GetInt64()`/`GetInt32()` (throws on
+  overflow) to `TryGetInt64()`/`TryGetInt32()` so one oversized array entry is dropped, not fatal. 9 new
+  regression tests. Issue #113 auto-closed cleanly. Claude's Wave-3 lane: 1 of 3 done.
+- **PR #125 fixed twice, still open** (`feature/112-editorial-fonts`, now at `2ed9ed4`). First round: the
+  original 700/750/800 sweep missed Bootstrap's own `fw-bold` utility (`_FinancialStatement.cshtml`) and
+  an inline `style="font-weight:700"` (`New.cshtml`) — fixed both directly, and added a global safety net
+  (`b, strong, th` capped at 600; `.fw-bold`/`.fw-bolder` overridden with `!important` to beat Bootstrap's
+  own) since native `<b>`/`<strong>`/`<th>` compute to the browser's default "bolder" (700) with **no**
+  explicit class or inline style at all — same underlying gap, just latent. Also swapped the static
+  `v1.0.0` footer for a real build identifier: added `Microsoft.Build.Tasks.Git` (dev-dependency, no
+  runtime footprint) so `AssemblyInformationalVersion` picks up the actual git SHA at build time; new
+  `BuildInfo.Version` renders `1.0.0+<short-sha>`, verified against the built DLL's `ProductVersion`.
+  Second round: 5 `font-weight: 650` sites in `app.css` (a value the original sweep's regex never
+  targeted — it only matched 700/750/800) were still above the bundled ceiling — fixed, and this time
+  swept every `wwwroot/css/*.css` file for **every** distinct numeric `font-weight` value to confirm only
+  400/500/600 remain anywhere sitewide, not just re-grepping the two values just fixed. **Lesson for next
+  time: when a reviewer finds one instance of "the sweep missed a weight," re-verify by enumerating every
+  distinct value actually present, not by re-running the same targeted regex.**
 
 ### 2026-09-12 — Claude session (PR #125 open for C1/#112, PR #126 open for C3/#113)
 - **PR #125 open** (`feature/112-editorial-fonts`, → Closes #112): local `@font-face` for Fraunces/IBM
