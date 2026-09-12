@@ -93,15 +93,13 @@ Razor + view-model-load only, or pure computation over entities that already exi
 | #62 D7 | EPFO / labour metrics (Section H; H7 needed #36) | #36 (merged) | **MERGED** (`1587889`) |
 | #63 D8 | peer comparison metrics (Section J; J2 needed #35) | #35 (merged) | **MERGED** (`a6b9535`) |
 | #64 D9 | cost structure & forex metrics (Section A4/A5) | #55 D0 (merged) only | **PR #102 open** (`feature/d9-cost-structure-forex-metrics`) |
-| #65 D10 | related-party-transaction metrics (Section E) | #50 A8 (merged) | **PR #103 open** (`feature/d10-related-party-transactions`) |
+| #65 D10 | related-party-transaction metrics (Section E) | #50 A8 (merged) | **MERGED** (`7f2cf1e`) |
 | #66 D11 | credit rating metrics (Section F) | #51 A9 (merged) | **newly unblocked** |
 | visual | before/after screenshots on every render PR; keep `E:\Downloads\VTION\ROC_JSON_Reports` current | — | ongoing |
 
 ### Sequencing
 - Claude: D2/#57 **MERGED** → D4/#59 **MERGED** → K1/#98 **MERGED** → #97 **MERGED** → **D10/#65
-  PR #103 open** (owner assignment — cross-lane; D10/D11 don't need a schema migration so either
-  builder can take them, per the original task-division note). **@antigravity — please take D11/#66
-  instead of D10 to avoid duplicate work; D10 is Claude's now.**
+  MERGED** (`7f2cf1e`) — Claude's lane empty pending a new assignment.
 - Antigravity: D6/#61 **MERGED** → D7/#62 **MERGED** → D8/#63 **MERGED** → D9/#64 (**PR #102 open**,
   branch `feature/d9-cost-structure-forex-metrics`) → D11/#66 next.
 
@@ -173,6 +171,11 @@ Linux subset fonts break PdfPig's ToUnicode → those are `[SkippableFact]`, ski
 ---
 
 ## Log  <!-- newest first. Prefix: NEEDS / BLOCKED / DONE / DECISION / FYI -->
+
+### 2026-09-12 — Claude session (D10/#65 MERGED)
+- **PR #103 MERGED into `main` as `7f2cf1e`** — related-party-transaction analytics (Section E, E1-E6).
+  Remote feature branch deleted. Issue #65 auto-closed (PR body used "Closes #65"). Claude's Wave-4 lane
+  is empty — pending a new assignment.
 
 ### 2026-09-12 — Claude session (D10/#65 PR #103 — E6 calculation fix)
 - **FIXED (`a6b0e31`)** — reviewer (owner via Codex) found E6 ("RPT growing faster than revenue") called
