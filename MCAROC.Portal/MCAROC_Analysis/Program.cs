@@ -142,6 +142,18 @@ app.UseRouting();
 
 app.UseAuthorization();
 
+var staticFileContentTypeProvider = new Microsoft.AspNetCore.StaticFiles.FileExtensionContentTypeProvider();
+staticFileContentTypeProvider.Mappings[".mjs"] = "text/javascript";
+staticFileContentTypeProvider.Mappings[".wasm"] = "application/wasm";
+staticFileContentTypeProvider.Mappings[".bcmap"] = "application/octet-stream";
+staticFileContentTypeProvider.Mappings[".pfb"] = "application/x-font-type1";
+staticFileContentTypeProvider.Mappings[".ttf"] = "font/ttf";
+
+app.UseStaticFiles(new StaticFileOptions
+{
+    ContentTypeProvider = staticFileContentTypeProvider
+});
+
 app.MapStaticAssets();
 
 app.MapControllerRoute(
