@@ -113,10 +113,10 @@ request, 2026-09-12) since this lane hadn't claimed them yet — remaining 6 sti
 | #121 C2 | per-tab sticky contents nav + scroll-spy | #112 C1 (merged) | **CLAIMED** (Antigravity — bundled with #119 C7b, see their plan) |
 | #114 C4 | 3 missing colour-as-signal annotation patterns | #112 C1 (merged) | **CLAIMED** (Claude) |
 | #115 C5a | group charges by holder | #112 C1 (merged) | **MERGED** (`9a92fac`) |
-| #123 C5b | Crore/Lakh/₹ unit toggle + typed amount renderer (file the generated call-site classification table as evidence, don't hardcode counts in the PR) | #112 C1 (merged) | **CLAIMED** (Claude) |
-| #116 C6 | shared inline-SVG viz contract (dossier + dashboard mappings kept separate) + 6 partials | #112 C1 (merged) | **CLAIMED** (Claude) |
+| #123 C5b | Crore/Lakh/₹ unit toggle + typed amount renderer (file the generated call-site classification table as evidence, don't hardcode counts in the PR) | #112 C1 (merged) | **PR #132 open** (`feature/123-amount-unit-toggle`) — 1 review round fixed (atomic unit switching), rebased on main, `@codex review` |
+| #116 C6 | shared inline-SVG viz contract (dossier + dashboard mappings kept separate) + 6 partials | #112 C1 (merged) | **PR #134 open** (`feature/116-shared-viz-contract`) → `@codex review` |
 | #117 C7a | in-app PDF viewer, request-scoped + dedup-aware — **Claude reviews the scoping/dedup code before merge** | none | **MERGED** (PR #127, `9b1096b`) |
-| #119 C7b | relocate chat to docked panel, JSON hardening (antiforgery, length limit, error contract) | #117 C7a (merged) | **CLAIMED** (Antigravity, `feature/119-chat-docked-panel`) |
+| #119 C7b | relocate chat to docked panel, JSON hardening (antiforgery, length limit, error contract) | #117 C7a (merged) | **MERGED** (PR #131, `dd33f22`) |
 | #122 C7c | wire the dead Ctrl+K command-palette scaffold | #119 C7b | open |
 | #120 C9 | dashboard restyle — retire Chart.js for #116's SVG partials | #116 C6 | open |
 | #124 C10 | print stylesheet — deliberately last | all of the above | open |
@@ -205,6 +205,44 @@ Linux subset fonts break PdfPig's ToUnicode → those are `[SkippableFact]`, ski
 ---
 
 ## Log  <!-- newest first. Prefix: NEEDS / BLOCKED / DONE / DECISION / FYI -->
+
+### 2026-09-12 — Claude session (PR #134 open for #116 C6 — shared inline-SVG viz contract)
+- **PR #132 (#123 C5b) — Codex review round 1 fixed and re-requested.** Blocker: `amount-unit.js` caught
+  a per-element conversion failure but only `console.error`'d it, leaving that element's stale Crore
+  text in place while every `[data-amount-unit-label]` still flipped to the new unit — a page could show
+  "₹… Cr" next to a header already saying "₹ Lakh". Fixed by splitting the switch into a pure planning
+  step (`planUnitSwitch` — computes every element's new text, throws before touching the DOM if even one
+  value fails) and a commit step (`applyPlan`) that only runs once planning fully succeeds. On failure:
+  the radio reverts to the previous unit, a `role="alert"` banner appears, and — the actual fix — every
+  element (including ones that would have converted fine) stays untouched. New `amount-unit.test.js` (5
+  cases) proves this for an over-precision value and an unknown label variant. Also rebased onto `main`
+  (10 commits behind — #112/#113/#114/#118/#119/#127 all landed since this branch's base); only real
+  conflict was `ci.yml`'s JS test-runner line, kept the glob. Head is now `19e7011`, both CI jobs green,
+  re-requested `@codex review`.
+- **PR #134 open** (`feature/116-shared-viz-contract`, → Closes #116): built to the same approved plan
+  (`serene-whistling-wave.md`) as #123. New `Models/Viz/ChartPeriod` (factory-only: `ForFinancialYear`/
+  `ForDate`, no public constructor to bypass them — a blank label or a SortKey/ActualDate mismatch is not
+  constructible), `ChartTimePoint`, `ChartSeries` (fail-closed `Create()`, mirrors `MetricResult`'s own
+  constructor discipline — rejects a blank label, no provenance, zero points, duplicate periods,
+  `MetricUnit.Text`/`Unspecified`). Reference implementation: `DossierComputations.BuildRevenueTrendSeries`
+  → a new `Details/_Sparkline.cshtml` partial wired into `_FinancialsTab.cshtml`'s Summary — a real,
+  used feature. The SVG geometry (index-based x-positions, y-scale from the series' own actual range,
+  segments broken at null gaps, a sign-crossing baseline) lives in a separate pure `SparklineGeometry`
+  helper, independently unit-tested. Extracted `MetricUnitFormat` out of `MetricResult.DisplayValue()` so
+  it and the sparkline's fallback table share one formatter, per the plan's review requirement.
+  `DashboardChartMapping.ToChartSeries` proves the contract serves the Dashboard's real weekly/monthly
+  dates too (unit-tested only, `Index.cshtml` untouched — that's C9/#120). A sibling
+  `ChartCategorySeries`/`ChartCategoryPoint` shape is defined for the 5 deferred partials, not wired to
+  anything yet, per the issue's own scope.
+  - **Self-caught bug, fixed before it shipped**: `DashboardChartMapping`'s date labels used
+    `.ToString("MMM yyyy")` with no explicit culture — non-deterministic across machines (renders "Sept"
+    instead of "Sep" under some cultures' calendar data), the exact same ambient-culture pitfall #123/C5b
+    hit with `DetailsFormat.Money()`. A test caught it immediately; fixed with explicit
+    `CultureInfo.InvariantCulture`.
+  - Full suite (Release): 881 passed / 18 skipped (fixture-dependent) / 0 failed. `@codex review`
+    requested.
+- **Both C5b and C6 (Claude's remaining Wave-3 lane) are now in review in parallel** — #123 mid-fix-cycle,
+  #116 freshly opened. Next up once either clears: nothing else is currently claimed in Claude's lane.
 
 ### 2026-09-12 — Antigravity (DONE #119 C7b: Required ClientTurnId + Durable InReplyToChatMessageId Linkage)
 - **DONE #119 (C7b)**: Resolved re-review blockers regarding optional client IDs and unlinked assistant turns (PR #131).
