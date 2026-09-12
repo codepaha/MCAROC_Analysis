@@ -236,6 +236,16 @@
         {"id": "J2", "name": "Revenue rank among closest peers", "unit": "rank", "formula": "company revenue position within the closest-peers-by-revenue list", "inputs": ["closest-peers list revenue", "FinancialYearData.Revenue"], "status": "blocked", "depends_on_issue": "#35"},
         {"id": "J3", "name": "Count of peers in sample", "unit": "count", "formula": "PeerComparisonMetric '# of peers in sample' metadata", "inputs": ["PeerComparison metadata"], "degenerate": "null if absent", "status": "planned", "surfaced_in": ["portal:Financials"]}
       ]
+    },
+
+    {
+      "id": "K", "title": "Capital reconciliation analytics",
+      "source_entities": ["CompanyProfile", "FinancialYearData (Basis=Standalone)"],
+      "issue": "#98",
+      "notes": "Extends the §B10 cross-source-discrepancy pattern to a second independently-sourced, already-typed pair of figures: the 'About the Company' identity snapshot vs the latest standalone Balance Sheet. 'About the Company' is a hard-required sheet (ingestion fails without it), so only the standalone-financials side can genuinely be 'sheet not in this upload' rather than 'field blank'.",
+      "metrics": [
+        {"id": "K1", "name": "MCA master-data paid-up capital vs standalone share capital", "unit": "INR Crore", "formula": "CompanyProfile.PaidUpCapital - FinancialYearData.ShareCapital [latest Standalone FY]", "inputs": ["CompanyProfile.PaidUpCapital", "FinancialYearData.ShareCapital"], "degenerate": "insufficient ONLY when either figure is not reported — a reported 0 is a valid value, never treated as missing", "status": "shipped", "surfaced_in": ["portal:Corporate"], "caveat": "A non-zero difference can be legitimate: capital raised or reduced after the FY the balance sheet reports. Framed as a cross-period comparison, never a confirmed error."}
+      ]
     }
   ],
 

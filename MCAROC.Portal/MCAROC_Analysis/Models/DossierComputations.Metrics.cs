@@ -1,6 +1,7 @@
 using System.Globalization;
 using MCAROC_Analysis.Data.Entities;
 using MCAROC_Analysis.Models.Dossier;
+using MCAROC_Analysis.Services.Excel;
 
 namespace MCAROC_Analysis.Models;
 
@@ -31,7 +32,8 @@ public static partial class DossierComputations
             DirectorsMetrics(model),
             FinancialTrendMetrics(model),
             ShareholdingMetrics(model),
-            EpfoMetrics(model)
+            EpfoMetrics(model),
+            CapitalReconciliationMetrics(model)
         };
 
         return groups.Where(g => g.HasAny).ToList();
@@ -1967,5 +1969,49 @@ public static partial class DossierComputations
     {
         if (string.IsNullOrWhiteSpace(city)) return false;
         return !PlaceholderEpfoCities.Contains(city.Trim());
+    }
+
+    /// <summary>Section K — Capital reconciliation analytics (Issue #98 / K1, docs/analytics-catalogue.json §K).
+    /// Extends the §B10 cross-source-discrepancy pattern to a second independently-sourced, already-typed
+    /// pair of figures: the "About the Company" identity snapshot vs the latest standalone Balance Sheet.
+    /// A non-zero difference is a genuine cross-period comparison, never a confirmed error — capital can
+    /// legitimately change after the FY the balance sheet reports. "About the Company" is a hard-required
+    /// sheet (ingestion fails without it), so only the standalone-financials side can genuinely be
+    /// "sheet not in this upload" rather than "field blank" — <see cref="SheetCoverage.WasAbsent"/> is used
+    /// only on that side. Pure computation over <paramref name="model"/>.</summary>
+    public static MetricGroup CapitalReconciliationMetrics(Dossier.DossierModel model)
+    {
+        const string label = "MCA master-data paid-up capital vs standalone share capital";
+        var list = new List<MetricResult>();
+        var profilePaidUp = model.Corporate.PaidUpCapital;
+        var latest = model.Financials.Latest;
+
+        if (profilePaidUp is null)
+        {
+            list.Add(MetricResult.Insufficient(label, MetricUnit.Crore,
+                "Paid-up capital not reported on the About the Company sheet",
+                "CompanyProfile.PaidUpCapital", "FinancialYearData.ShareCapital"));
+        }
+        else if (latest?.ShareCapital is null)
+        {
+            var reason = model.SourceCoverage.WasAbsent(SheetAliases.StandaloneFinancialData)
+                ? "Standalone Financial Data sheet not in this upload"
+                : latest is null
+                    ? "No standalone financial year data on record"
+                    : $"FY{latest.FinancialYear}: Share Capital row not reported on the Standalone Financial Data sheet";
+            list.Add(MetricResult.Insufficient(label, MetricUnit.Crore, reason,
+                "CompanyProfile.PaidUpCapital", "FinancialYearData.ShareCapital"));
+        }
+        else
+        {
+            var diff = Math.Round(profilePaidUp.Value - latest.ShareCapital.Value, 2);
+            var asOfSuffix = model.Cover.SourceSnapshotDate is { } snap ? $" as of {snap:d MMM yyyy}" : "";
+            var period = $"FY{latest.FinancialYear} — MCA master-data snapshot ₹{profilePaidUp.Value:0.##} Cr{asOfSuffix} " +
+                $"vs standalone share capital ₹{latest.ShareCapital.Value:0.##} Cr";
+            list.Add(MetricResult.Ok(label, diff, MetricUnit.Crore, period,
+                "CompanyProfile.PaidUpCapital", "FinancialYearData.ShareCapital"));
+        }
+
+        return new MetricGroup("Capital reconciliation", list);
     }
 }
