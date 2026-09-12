@@ -110,7 +110,7 @@ Razor + view-model-load only, or pure computation over entities that already exi
 request, 2026-09-12) since this lane hadn't claimed them yet — remaining 6 still this lane, unclaimed.**
 | Issue | What | Needs | Status |
 |---|---|---|---|
-| #121 C2 | per-tab sticky contents nav + scroll-spy | #112 C1 (merged) | **CLAIMED** (Claude) |
+| #121 C2 | per-tab sticky contents nav + scroll-spy | #112 C1 (merged) | **CLAIMED** (Antigravity — bundled with #119 C7b, see their plan) |
 | #114 C4 | 3 missing colour-as-signal annotation patterns | #112 C1 (merged) | **CLAIMED** (Claude) |
 | #115 C5a | group charges by holder | #112 C1 (merged) | **CLAIMED** (Claude) |
 | #123 C5b | Crore/Lakh/₹ unit toggle + typed amount renderer (file the generated call-site classification table as evidence, don't hardcode counts in the PR) | #112 C1 (merged) | open |
@@ -205,6 +205,17 @@ Linux subset fonts break PdfPig's ToUnicode → those are `[SkippableFact]`, ski
 ---
 
 ## Log  <!-- newest first. Prefix: NEEDS / BLOCKED / DONE / DECISION / FYI -->
+
+### 2026-09-12 — Claude session (RELEASED #121 C2 back to Antigravity)
+- **RELEASING #121 (C2)** — owner surfaced that Antigravity already has a comprehensive implementation
+  plan in flight for #121 (bundled with #119 C7b: hash harmonization incl. legacy `#tab-x/y` compatibility,
+  a proper ScrollSpy lifecycle keyed to `shown.bs.tab`, and scoping the 4 long tabs while explicitly
+  preserving `mca-subtabs` on Corporate/AI Analysis/Documents/Timeline — more thorough than what I'd
+  started sketching). No code was touched on my side (investigation only — read `_FinancialsTab.cshtml`,
+  checked `FinancialsTabRenderingTests.cs`'s ID-based section-slicing pattern, confirmed Bootstrap 5.3.3's
+  native ScrollSpy is already vendored) — worktree/branch removed, zero cleanup owed. **#121 is back in
+  Antigravity's queue, unclaimed by Claude.** Still holding #114 (C4, PR #129, 1 review round fixed) and
+  #115 (C5a, PR #130, awaiting first review).
 
 ### 2026-09-12 — Claude session (CLAIMED #114 C4, #115 C5a, #121 C2 — owner asked to pick up some of Antigravity's lane)
 - **CLAIMED #114 (C4), #115 (C5a), #121 (C2)** — owner-requested pickup from Antigravity's Wave-3 queue,
