@@ -82,11 +82,11 @@ then hardened through 3 further review rounds on #101 alone — see the Log belo
 | #98 K1 | capital reconciliation (paid-up capital vs balance sheet) | **MERGED** (`73f7ea5`) |
 | #97 | corporate event timeline (new portal tab, bypasses `DossierModel`/`DossierAssembler`) | **MERGED** (`d7e5854`) |
 
-**Wave 3 (2026-09-12): #112 C1, #113 C3, #118 C8 claimed — starting with C1/C3, C8 after.**
+**Wave 3 (2026-09-12): #112 C1, #113 C3, #118 C8 claimed.**
 | Issue | What | Status |
 |---|---|---|
-| #112 C1 | local editorial fonts (Fraunces/IBM Plex) + footer, re-map font-weight usages | in progress |
-| #113 C3 | document provenance (workbook lineage vs. filed-PDF citations, kept separate) | in progress |
+| #112 C1 | local editorial fonts (Fraunces/IBM Plex) + footer, re-map font-weight usages | **PR #125 open** |
+| #113 C3 | document provenance (workbook lineage vs. filed-PDF citations, kept separate) | **PR #126 open** |
 | #118 C8 | Review-Priority reasoning — shared evaluator + structured reason codes | not started |
 
 ### Antigravity — render-audit + metrics-compute lane (no schema changes)
@@ -204,6 +204,37 @@ Linux subset fonts break PdfPig's ToUnicode → those are `[SkippableFact]`, ski
 ---
 
 ## Log  <!-- newest first. Prefix: NEEDS / BLOCKED / DONE / DECISION / FYI -->
+
+### 2026-09-12 — Claude session (PR #125 open for C1/#112, PR #126 open for C3/#113)
+- **PR #125 open** (`feature/112-editorial-fonts`, → Closes #112): local `@font-face` for Fraunces/IBM
+  Plex Sans/IBM Plex Mono (same files the dossier PDF uses, `wwwroot/fonts/`), Google Fonts `@import`
+  removed. All 73 `font-weight: 700/750/800` sites across `app.css`/`mcaroc.css` remapped to `600` (the
+  heaviest bundled weight) so the browser never synthesizes a bold. New `--font-display` token (Fraunces)
+  applied only to genuine headings (page h1, section/panel h2, dashboard hero, company-id header,
+  `.mca-section > h3`) — badges/labels/stat-numbers stay on the body/mono families. Footer now shows the
+  real assembly version + (outside Production) the environment name. Verified locally via a running dev
+  server: 8 `@font-face` rules serve, zero `fonts.googleapis.com` requests, footer renders `v1.0.0 •
+  Development`. `DossierThemeSyncTests` unaffected (colors untouched). **Side finding worth knowing**:
+  `wwwroot/css/dossier-tokens.css` (the file that test checks) is not actually linked anywhere in the
+  portal — the live app uses its own separate blue palette in `app.css`; `dossier-tokens.css` only keeps
+  the PDF's `DossierTheme.cs` colors internally consistent against a file the portal never loads. Noted
+  in the PR, out of scope for #112.
+- **PR #126 open** (`feature/113-document-provenance`, → Closes #113): 4 distinct provenance treatments,
+  never merged into one UI — (a) direct entity rows get a new `_WorkbookProvenance.cshtml` partial
+  ("Source: sheet, row N"), wired into the Director table, GST Registrations table, and each charge's
+  lifecycle event; (b) computed `AnalysisFinding` cards get a new `FindingSourceReference` parsing
+  `SourceReferenceJson` — **checked what `ChargeRules.cs`/`LitigationRules.cs` actually write (only
+  `entityType`+`entityIds`) rather than trusting the entity's own doc comment, which describes an
+  aspirational `sheet`/`rows` shape no rule populates** — falls back to "Computed value" when nothing
+  survives parsing; (c) genuinely missing lineage renders "Source not recorded", never a blank or guessed
+  citation; (d) AI chat citations now branch on the real `SourceType` (`DocumentChunk` vs
+  `StructuredFact`, confirmed in `ChatCompletionService.cs`) — a document-chunk citation shows "Source:
+  DocumentName, page N", a structured-fact one shows "Computed from parsed data (EntityType)" and never
+  claims a page number it doesn't have. No new isolation test needed — every touched surface already
+  comes from `DossierAssembler`, which scopes every query to `LatestCompletedIngestionRunId` (confirmed
+  by reading it directly), the same mechanism `CorporateTimelineBuilderTests` already proves. 17 new
+  tests + 1 added to `ComplianceTabRenderingTests.cs`, full targeted sweep 59/59 green.
+- Both PRs → `@codex review`. Next up in Claude's Wave-3 lane: **#118 (C8)** once these two merge.
 
 ### 2026-09-12 — Claude session (Wave 3 split into 13 issues #112–#124; EPIC #31 updated)
 - **DONE — filed all 13 Wave-3 issues** (#112–#124) under EPIC #31 and rewrote its Wave 3 section
