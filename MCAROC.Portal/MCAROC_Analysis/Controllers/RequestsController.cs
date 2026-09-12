@@ -547,7 +547,9 @@ public class RequestsController(
         if (string.IsNullOrWhiteSpace(originalFileName))
             return $"document-{docId}.pdf";
 
-        var fileName = Path.GetFileName(originalFileName);
+        // Normalize backslashes to forward slashes so directory traversal with Windows separators is stripped on Linux/POSIX too
+        var normalized = originalFileName.Replace('\\', '/');
+        var fileName = Path.GetFileName(normalized);
         var cleanChars = fileName.Where(c => !char.IsControl(c) && c != '"' && c != '\\' && c != '/' && c != ':' && c != ';' && c != '\r' && c != '\n').ToArray();
         var clean = new string(cleanChars).Trim();
 

@@ -52,7 +52,7 @@ class DocumentViewer {
         cMapUrl: '/lib/pdfjs/cmaps/',
         cMapPacked: true,
         standardFontDataUrl: '/lib/pdfjs/standard_fonts/',
-        wasmBinaryFile: '/lib/pdfjs/wasm/',
+        wasmUrl: '/lib/pdfjs/wasm/',
         rangeChunkSize: 65536
       });
 
