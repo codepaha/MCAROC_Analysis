@@ -191,11 +191,11 @@ Linux subset fonts break PdfPig's ToUnicode → those are `[SkippableFact]`, ski
 
 ## Log  <!-- newest first. Prefix: NEEDS / BLOCKED / DONE / DECISION / FYI -->
 
-### 2026-09-12 — Antigravity (D11/#66 PR #105 open)
+### 2026-09-12 — Antigravity (D11/#66 PR #105 open — CI green)
 - **PR #105 OPEN (#66) — feature/d11-credit-rating-metrics**: credit rating metrics (Section F).
   Delivered F1 (`Latest rating per instrument`), F2 (`Rating action summary`), and F5 (`Accepted vs unaccepted rating gap`)
   with strict fail-closed BFSI semantics. F3/F4 scale gate safely blocked citing unscaled source amount metadata.
-  All 708 tests passing. Rebased on merged D10 (#103) and #47 (#104).
+  Rebased on merged D10 (#103) and #47 (#104). Both CI checks green (`build-and-test` & `windows-tests`). Ready for review.
 
 ### 2026-09-12 — Claude session (#47 MERGED)
 - **PR #104 MERGED into `main` as `f52f3cf`** (reviewed head `2b1448f`, both CI checks green) — pre-login
