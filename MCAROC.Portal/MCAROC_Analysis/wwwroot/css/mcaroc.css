@@ -39,8 +39,9 @@
 .mca-company-id h1 {
     margin: 0;
     color: var(--text);
+    font-family: var(--font-display);
     font-size: 23px;
-    font-weight: 750;
+    font-weight: 600;
     line-height: 1.2;
     letter-spacing: -0.02em;
 }
@@ -121,7 +122,7 @@
     background: var(--surface-3);
     color: var(--muted);
     font-size: 10.5px;
-    font-weight: 700;
+    font-weight: 600;
     vertical-align: middle;
 }
 .mca-tabs .nav-link.active .badge { background: var(--brand-soft); color: var(--brand-strong); }
@@ -156,7 +157,7 @@
     background: var(--surface-3);
     color: var(--muted);
     font-size: 10px;
-    font-weight: 700;
+    font-weight: 600;
 }
 
 /* ---------------------------------------------------------------------
@@ -167,8 +168,9 @@
 .mca-section > h3 {
     margin: 0 0 12px;
     color: var(--text);
+    font-family: var(--font-display);
     font-size: 15px;
-    font-weight: 700;
+    font-weight: 600;
     letter-spacing: -0.01em;
 }
 .mca-section > h3 .mca-count { margin-left: 6px; color: var(--muted); font-weight: 500; font-size: 13px; }
@@ -188,7 +190,7 @@
     margin: 0 0 4px;
     color: var(--muted);
     font-size: 11px;
-    font-weight: 700;
+    font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.4px;
 }
@@ -216,11 +218,11 @@
     margin: 0 0 4px;
     color: var(--text);
     font-size: 14px;
-    font-weight: 700;
+    font-weight: 600;
 }
 .mca-finding h4 .mca-finding-meta { margin-left: 6px; color: var(--muted); font-weight: 500; font-size: 12px; }
 .mca-finding p { margin: 4px 0 0; color: var(--text-2); font-size: 13.5px; line-height: 1.55; }
-.mca-finding .mca-finding-label { color: var(--text); font-weight: 700; }
+.mca-finding .mca-finding-label { color: var(--text); font-weight: 600; }
 .mca-finding .mca-related { margin-top: 6px; color: var(--muted); font-size: 12px; font-family: var(--mono); }
 
 .mca-sev-dot {
@@ -356,6 +358,7 @@ details > summary.mca-json-toggle {
 .pi-app-footer {
     display: flex;
     align-items: center;
+    flex-wrap: wrap;
     gap: 9px;
     padding: 14px 32px;
     border-top: 1px solid var(--border);
@@ -363,6 +366,7 @@ details > summary.mca-json-toggle {
     font-size: 12px;
 }
 .pi-app-footer img { width: 16px; height: 16px; object-fit: contain; opacity: 0.85; }
+.pi-app-footer-meta { margin-left: auto; font-family: var(--mono); color: var(--muted); white-space: nowrap; }
 @media (max-width: 720px) { .pi-app-footer { padding: 12px 16px; } }
 
 /* ---------------------------------------------------------------------
@@ -416,7 +420,7 @@ details > summary.mca-json-toggle {
     background: rgba(0, 0, 0, 0.12);
     color: inherit;
     font-size: 10.5px;
-    font-weight: 700;
+    font-weight: 600;
     padding: 1px 6px;
     border-radius: var(--r-pill);
 }
