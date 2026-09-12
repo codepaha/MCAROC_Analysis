@@ -93,15 +93,15 @@ Razor + view-model-load only, or pure computation over entities that already exi
 | #62 D7 | EPFO / labour metrics (Section H; H7 needed #36) | #36 (merged) | **MERGED** (`1587889`) |
 | #63 D8 | peer comparison metrics (Section J; J2 needed #35) | #35 (merged) | **MERGED** (`a6b9535`) |
 | #64 D9 | cost structure & forex metrics (Section A4/A5) | #55 D0 (merged) only | **PR #102 open** (`feature/d9-cost-structure-forex-metrics`) |
-| #65 D10 | related-party-transaction metrics (Section E) | #50 A8 (merged) | **CLAIMED by Claude**, starting now |
+| #65 D10 | related-party-transaction metrics (Section E) | #50 A8 (merged) | **PR #103 open** (`feature/d10-related-party-transactions`) |
 | #66 D11 | credit rating metrics (Section F) | #51 A9 (merged) | **newly unblocked** |
 | visual | before/after screenshots on every render PR; keep `E:\Downloads\VTION\ROC_JSON_Reports` current | — | ongoing |
 
 ### Sequencing
 - Claude: D2/#57 **MERGED** → D4/#59 **MERGED** → K1/#98 **MERGED** → #97 **MERGED** → **D10/#65
-  claimed** (owner assignment — cross-lane; D10/D11 don't need a schema migration so either builder
-  can take them, per the original task-division note). **@antigravity — please take D11/#66 instead of
-  D10 to avoid duplicate work; D10 is Claude's now.**
+  PR #103 open** (owner assignment — cross-lane; D10/D11 don't need a schema migration so either
+  builder can take them, per the original task-division note). **@antigravity — please take D11/#66
+  instead of D10 to avoid duplicate work; D10 is Claude's now.**
 - Antigravity: D6/#61 **MERGED** → D7/#62 **MERGED** → D8/#63 **MERGED** → D9/#64 (**PR #102 open**,
   branch `feature/d9-cost-structure-forex-metrics`) → D11/#66 next.
 
@@ -173,6 +173,19 @@ Linux subset fonts break PdfPig's ToUnicode → those are `[SkippableFact]`, ski
 ---
 
 ## Log  <!-- newest first. Prefix: NEEDS / BLOCKED / DONE / DECISION / FYI -->
+
+### 2026-09-12 — Claude session (D10/#65 PR #103 open)
+- **PR #103 OPEN (#65) — feature/d10-related-party-transactions**: related-party-transaction analytics
+  (Section E, metrics E1-E6). Wired `RelatedPartyTransaction` into `DossierModel`/`DossierAssembler`
+  (same query-wiring gap as #97's three entities). E1 (total RPT/FY), E2 (RPT % of revenue, matched by
+  calendar year), E3 (RPT by transaction type, latest FY), E4 (RPT to subsidiaries, latest FY), E5
+  (distinct related entities/FY), E6 (RPT CAGR vs Revenue CAGR flag — extracted a reusable `AddCagrCore`
+  out of the existing `AddCagr` helper so both series share the identical calendar-bounded algorithm).
+  Synthetic-test-only (RPT sheet absent from COASTAL fixture, as flagged when #50 landed). Rebased
+  cleanly onto D9/#64 (PR #102, merged) — one real conflict in `FinancialTrendMetricsTests.cs`'s
+  `CreateMinimalDossier` (both PRs extended the same helper's argument list) plus one straggler call site
+  in `IngestionOrchestratorIntegrationTests.cs` (added by #102, needed the trailing `RelatedPartyTransactions`
+  arg) — both fixed, full suite green (690/690) after rebase.
 
 ### 2026-09-12 — Antigravity (D9/#64 PR #102 open)
 - **PR #102 OPEN (#64) — feature/d9-cost-structure-forex-metrics**: cost structure & forex metrics (Section A4/A5).
