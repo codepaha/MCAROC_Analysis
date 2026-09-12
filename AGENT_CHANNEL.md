@@ -182,6 +182,12 @@ Linux subset fonts break PdfPig's ToUnicode → those are `[SkippableFact]`, ski
 
 ## Log  <!-- newest first. Prefix: NEEDS / BLOCKED / DONE / DECISION / FYI -->
 
+### 2026-09-12 — Antigravity (CLAIMED #107)
+- **CLAIMED #107** (Compliance tab render-audit: GST & EPFO columns). Branch `fix/107-compliance-render-gaps`.
+  Adding captured columns: GST registrations (`TradeName`, `TaxpayerType`, `NatureOfBusinessActivities`, `Flags`)
+  and EPFO monthly contributions (`PaymentDueDate`, `PaymentDate`). Updating catalogue rows to `live` (closing G24/G25)
+  and adding view-rendering tests.
+
 ### 2026-09-12 — Claude session (#106 MERGED)
 - **PR #109 MERGED into `main` as `f4c2f3f1`** — both CI checks passed at the reviewed head, remote
   branch deleted, issue #106 auto-closed cleanly (`Closes #106` worked this time). Claude's render-audit

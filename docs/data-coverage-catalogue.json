@@ -216,7 +216,7 @@
       "portal_tab": "Compliance", "dossier": "Annexure D",
       "fields": [
         {"source": "GSTIN / GSTIN STATUS / STATE / DATE OF REGISTRATION", "entityField": "Gstin / Status / State / RegistrationDate", "status": "live"},
-        {"source": "TAXPAYER TYPE / TRADE NAME / NATURE OF BUSINESS ACTIVITIES / FLAGS", "entityField": "TaxpayerType / TradeName / NatureOfBusinessActivities / Flags", "status": "parsed-not-shown", "gap": "G24", "note": "Render audit 2026-09-12: all four captured, none has a column in the GST Registrations table. Flags feeds the G6 analytics metric's count but its text is never shown per registration."},
+        {"source": "TAXPAYER TYPE / TRADE NAME / NATURE OF BUSINESS ACTIVITIES / FLAGS", "entityField": "TaxpayerType / TradeName / NatureOfBusinessActivities / Flags", "status": "live", "gap": "G24", "note": "#107 (Compliance tab render audit: all four columns rendered in GST Registrations table)"},
         {"source": "RETURN TYPE / LATEST FILING(S) / FINANCIAL YEAR / TAX PERIOD (latest-filing summary)", "entityField": "(via GstFiling)", "status": "live"},
         {"source": "CENTRE JURISDICTION / STATE JURISDICTION / LEGAL NAME OF BUSINESS", "entityField": "CentreJurisdiction / StateJurisdiction / LegalNameOfBusiness", "status": "live", "note": "A6/#37"},
         {"source": "CancellationDate (for Inactive GSTINs)", "entityField": "CancellationDate", "status": "not-parsed", "gap": "G17", "note": "no CANCELLATION DATE column exists in the real GST sheet (16 cols, verified against the COASTAL fixture) and GstParser never sets this field — the entity property is vestigial; not fixed here, out of A6's scope"},
@@ -275,7 +275,7 @@
       "portal_tab": "Compliance (paged)", "dossier": "Annexure D",
       "fields": [
         {"source": "WORKING STATUS / ESTABLISHMENT ID / ESTABLISHMENT NAME / WAGE MONTH / NO. OF EMPLOYEES / AMOUNT / STATUS", "entityField": "WorkingStatus / EstablishmentId / EstablishmentName / WageMonth / EmployeeCount / ContributionAmountCrore / PaymentStatus", "status": "live", "note": "WorkingStatus renders via the per-establishment profile card (Compliance → EPFO), not as a column in the per-row Contribution table."},
-        {"source": "DATE OF CREDIT / PAYMENT DUE DATE", "entityField": "PaymentDate / PaymentDueDate", "status": "parsed-not-shown", "gap": "G25", "note": "Render audit 2026-09-12: both drive the H1/H2 analytics metrics internally, but neither renders per-row — only the derived PaymentStatus text does."},
+        {"source": "DATE OF CREDIT / PAYMENT DUE DATE", "entityField": "PaymentDate / PaymentDueDate", "status": "live", "gap": "G25", "note": "#107 (Compliance tab render audit: both columns rendered in EPFO Contribution & Headcount History table)"},
         {"source": "TRRN (transaction reference number)", "entityField": "Trrn", "status": "live", "gap": "G13", "note": "A5/#36"}
       ]
     },
@@ -440,10 +440,12 @@
      "fix": "Add FinancialYearEnding/DateOfIncorporation columns to the table.",
      "issue": "#106"},
     {"id": "G24", "title": "GstRegistration: TaxpayerType / TradeName / NatureOfBusinessActivities / Flags not rendered", "severity": "medium",
+     "status": "DONE (#107)",
      "detail": "Found by render audit 2026-09-12: all four are captured on GstRegistration but the Compliance → GST Registrations table has no columns for them. Flags feeds the G6 analytics metric's boolean count, but a reviewer has no way to see what a given GSTIN's flag actually says.",
      "fix": "Add the four columns to the GST Registrations table on _ComplianceTab.cshtml.",
      "issue": "#107"},
     {"id": "G25", "title": "EpfoContribution: PaymentDate / PaymentDueDate not rendered per row", "severity": "medium",
+     "status": "DONE (#107)",
      "detail": "Found by render audit 2026-09-12: both are captured and drive the H1 (on-time rate) / H2 (late-remittance count) analytics metrics internally, but the Compliance → EPFO Contribution & Headcount History table shows only the derived PaymentStatus text — a reviewer can't verify an individual 'late' classification by eye without the actual due/paid dates.",
      "fix": "Add PaymentDate/PaymentDueDate columns to the Contribution & Headcount History table.",
      "issue": "#107"}

@@ -531,4 +531,101 @@ public class ComplianceTabRenderingTests
         Assert.Contains("Latest rating per instrument", html);
         Assert.Contains("No credit rating records on file", html);
     }
+
+    // ── G24 / #107 — GST Registrations table columns ──
+
+    [Fact]
+    public async Task Gst_registrations_table_renders_trade_name_taxpayer_type_nature_of_business_and_flags()
+    {
+        var vm = CreateViewModel();
+        vm.GstRegistrations =
+        [
+            new GstRegistration
+            {
+                Gstin = "29AABCC1907E1ZK",
+                LegalNameOfBusiness = "COASTAL INFRASTRUCTURE LTD",
+                TradeName = "COASTAL BUILDERS",
+                TaxpayerType = "Regular",
+                State = "Karnataka",
+                CentreJurisdiction = "RANGE-I",
+                StateJurisdiction = "WARD-10",
+                Status = "Active",
+                RegistrationDate = new DateOnly(2018, 7, 1),
+                CancellationDate = null,
+                NatureOfBusinessActivities = "Works Contract / Infrastructure Development",
+                Flags = "High Risk Return Delayed"
+            }
+        ];
+
+        var html = await RenderComplianceTabAsync(vm);
+
+        // Header assertions
+        Assert.Contains("Trade Name", html);
+        Assert.Contains("Taxpayer Type", html);
+        Assert.Contains("Nature of Business", html);
+        Assert.Contains("Flags", html);
+
+        // Data row assertions
+        Assert.Contains("COASTAL BUILDERS", html);
+        Assert.Contains("Regular", html);
+        Assert.Contains("Works Contract / Infrastructure Development", html);
+        Assert.Contains("High Risk Return Delayed", html);
+    }
+
+    [Fact]
+    public async Task Gst_registrations_table_handles_null_and_dash_flags_cleanly()
+    {
+        var vm = CreateViewModel();
+        vm.GstRegistrations =
+        [
+            new GstRegistration
+            {
+                Gstin = "29AABCC1907E1ZK",
+                TradeName = null,
+                TaxpayerType = null,
+                NatureOfBusinessActivities = null,
+                Flags = "-"
+            }
+        ];
+
+        var html = await RenderComplianceTabAsync(vm);
+
+        Assert.Contains("29AABCC1907E1ZK", html);
+        Assert.DoesNotContain("<span class=\"badge bg-light text-dark\">-</span>", html);
+    }
+
+    // ── G25 / #107 — EPFO Contribution table columns ──
+
+    [Fact]
+    public async Task Epfo_contribution_history_table_renders_payment_due_date_and_payment_date()
+    {
+        var vm = CreateViewModel();
+        vm.EpfoContributions =
+        [
+            new EpfoContribution
+            {
+                EstablishmentId = "MH/BAN/0012345/000",
+                EstablishmentName = "Coastal Regional Office",
+                WageMonth = "2023-03",
+                Trrn = "1012304056789",
+                EmployeeCount = 150,
+                ContributionAmountCrore = 0.45m,
+                PaymentDueDate = new DateOnly(2023, 4, 15),
+                PaymentDate = new DateOnly(2023, 4, 20),
+                PaymentStatus = "Late"
+            }
+        ];
+
+        var html = await RenderComplianceTabAsync(vm);
+
+        // Header assertions
+        Assert.Contains("Due Date", html);
+        Assert.Contains("Payment Date", html);
+
+        // Data row assertions
+        Assert.Contains("15 Apr 2023", html);
+        Assert.Contains("20 Apr 2023", html);
+        Assert.Contains("Late", html);
+    }
 }
+
