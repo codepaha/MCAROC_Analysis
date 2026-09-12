@@ -196,9 +196,9 @@ public sealed class PreLoginReportService(InstaFinancialsClient client, IWebHost
         firstPara.Append(newRun);
     }
 
-    public static PreLoginReportDraftViewModel ToDraft(long jobId, string cin, PreLoginReportFormat format, InstaReportData data) => new()
+    public static PreLoginReportDraftViewModel ToDraft(long jobId, Guid batchId, string cin, PreLoginReportFormat format, InstaReportData data) => new()
     {
-        JobId = jobId, Cin = cin, Format = format, Company = ToEditable(data.Company),
+        JobId = jobId, BatchId = batchId, Cin = cin, Format = format, Company = ToEditable(data.Company),
         Charges = data.Charges.Select(c => new EditableChargeViewModel { Srn = c.Srn, Id = c.Id, Holder = c.Holder, Created = c.Created, Modified = c.Modified, Satisfied = c.Satisfied, Amount = c.Amount, IsOpen = c.IsOpen }).ToList(),
         Directors = data.Directors.Select(d => new EditableDirectorViewModel { Name = d.Name, DinOrPan = d.DinOrPan, Designation = d.Designation, Appointed = d.Appointed }).ToList()
     };

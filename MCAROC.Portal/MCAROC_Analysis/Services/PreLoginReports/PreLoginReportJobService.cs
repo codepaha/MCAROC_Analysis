@@ -49,35 +49,52 @@ public sealed class PreLoginReportJobService(AppDbContext db, PreLoginReportQueu
         return normalized;
     }
 
-    public async Task<IReadOnlyList<PreLoginReportJob>> HistoryAsync(CancellationToken cancellationToken) =>
-        await db.PreLoginReportJobs.OrderByDescending(x => x.CreatedUtc).Take(200).ToListAsync(cancellationToken);
+    /// <summary>Jobs belonging to one batch — the only "history" a caller can see. There is no login on
+    /// this pipeline, so the <see cref="PreLoginReportJob.BatchId"/> Guid IS the access credential: it is
+    /// unguessable (random, 122 bits) and never listed anywhere, unlike the sequential
+    /// <see cref="PreLoginReportJob.PreLoginReportJobId"/>. See #47 — the previous unscoped "return every
+    /// job in the system" version let any anonymous visitor browse every user's CINs and download/rerun
+    /// their reports by guessing/incrementing the bare id.</summary>
+    public async Task<IReadOnlyList<PreLoginReportJob>> HistoryAsync(Guid batch, CancellationToken cancellationToken) =>
+        await db.PreLoginReportJobs.Where(x => x.BatchId == batch).OrderByDescending(x => x.CreatedUtc).ToListAsync(cancellationToken);
 
+    /// <summary>Looks up a job by id alone — for the background worker only (<see cref="PreLoginReportWorker"/>
+    /// via <see cref="ProcessAsync"/>), which has no batch context and is not attacker-controlled. Every
+    /// externally-reachable lookup (download/edit/rerun) MUST go through <see cref="FindInBatchAsync"/>
+    /// instead, or it reintroduces #47's ownership gap.</summary>
     public async Task<PreLoginReportJob?> FindAsync(long id, CancellationToken cancellationToken) =>
         await db.PreLoginReportJobs.FindAsync([id], cancellationToken);
+
+    /// <summary>The only job lookup safe to expose to an anonymous caller: returns null — identically,
+    /// whether <paramref name="id"/> doesn't exist at all or exists under a DIFFERENT batch — so a caller
+    /// who knows one batch's Guid can never probe for the existence of another batch's job ids (#47).</summary>
+    public async Task<PreLoginReportJob?> FindInBatchAsync(Guid batch, long id, CancellationToken cancellationToken) =>
+        await db.PreLoginReportJobs.FirstOrDefaultAsync(x => x.PreLoginReportJobId == id && x.BatchId == batch, cancellationToken);
 
     /// <summary>Loads a completed job's fetched data (captured in DataJson right after fetch, before
     /// generation) as an editable draft — the basis for the optional "Edit" action on the History page.
     /// Restricted to Completed jobs: DataJson is already populated once fetch finishes (status Generating),
     /// so without this check an edit opened against an in-flight job could regenerate concurrently with the
-    /// worker's own ProcessAsync run and race it for job.ReportStoragePath/DataJson/Status.</summary>
-    public async Task<PreLoginReportDraftViewModel> GetEditableDraftAsync(long id, CancellationToken cancellationToken)
+    /// worker's own ProcessAsync run and race it for job.ReportStoragePath/DataJson/Status. Restricted to
+    /// <paramref name="batch"/> per #47 — see <see cref="FindInBatchAsync"/>.</summary>
+    public async Task<PreLoginReportDraftViewModel> GetEditableDraftAsync(Guid batch, long id, CancellationToken cancellationToken)
     {
-        var job = await FindAsync(id, cancellationToken) ?? throw new PreLoginReportException("Report request not found.");
+        var job = await FindInBatchAsync(batch, id, cancellationToken) ?? throw new PreLoginReportException("Report request not found.");
         if (job.Status != PreLoginReportJobStatus.Completed)
             throw new PreLoginReportException("This report is still being generated. Wait for it to complete before editing.");
         if (string.IsNullOrWhiteSpace(job.DataJson))
             throw new PreLoginReportException("This report has no fetched data available to edit.");
         var data = JsonSerializer.Deserialize<InstaReportData>(job.DataJson)
             ?? throw new PreLoginReportException("Stored report data is corrupt.");
-        return PreLoginReportService.ToDraft(job.PreLoginReportJobId, job.Cin, Enum.Parse<PreLoginReportFormat>(job.Format), data);
+        return PreLoginReportService.ToDraft(job.PreLoginReportJobId, job.BatchId, job.Cin, Enum.Parse<PreLoginReportFormat>(job.Format), data);
     }
 
     /// <summary>Applies a user's edits (including any added/removed charge or director rows) and
     /// regenerates the stored report in place. Same Completed-only restriction as <see cref="GetEditableDraftAsync"/>
-    /// — see that method's remarks for the race this closes.</summary>
-    public async Task ApplyEditAndRegenerateAsync(long id, PreLoginReportDraftViewModel draft, CancellationToken cancellationToken)
+    /// — see that method's remarks for the race this closes. Restricted to <paramref name="batch"/> per #47.</summary>
+    public async Task ApplyEditAndRegenerateAsync(Guid batch, long id, PreLoginReportDraftViewModel draft, CancellationToken cancellationToken)
     {
-        var job = await FindAsync(id, cancellationToken) ?? throw new PreLoginReportException("Report request not found.");
+        var job = await FindInBatchAsync(batch, id, cancellationToken) ?? throw new PreLoginReportException("Report request not found.");
         if (job.Status != PreLoginReportJobStatus.Completed)
             throw new PreLoginReportException("This report is still being generated. Wait for it to complete before editing.");
         var format = Enum.Parse<PreLoginReportFormat>(job.Format);
@@ -99,9 +116,10 @@ public sealed class PreLoginReportJobService(AppDbContext db, PreLoginReportQueu
         return path;
     }
 
-    public async Task RerunAsync(long id, CancellationToken cancellationToken)
+    /// <summary>Restricted to <paramref name="batch"/> per #47 — see <see cref="FindInBatchAsync"/>.</summary>
+    public async Task RerunAsync(Guid batch, long id, CancellationToken cancellationToken)
     {
-        var job = await FindAsync(id, cancellationToken) ?? throw new PreLoginReportException("Report request not found.");
+        var job = await FindInBatchAsync(batch, id, cancellationToken) ?? throw new PreLoginReportException("Report request not found.");
         job.Status = PreLoginReportJobStatus.Queued; job.ProgressPercent = 0; job.AttemptCount = 0; job.FailureReason = null; job.NextAttemptUtc = null; job.ReportStoragePath = null; job.CompletedUtc = null;
         await db.SaveChangesAsync(cancellationToken); queue.Enqueue(job.PreLoginReportJobId);
     }
