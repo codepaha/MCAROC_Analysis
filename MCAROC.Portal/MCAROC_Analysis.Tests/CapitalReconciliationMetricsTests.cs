@@ -83,6 +83,18 @@ public class CapitalReconciliationMetricsTests
     }
 
     [Fact]
+    public void Preserves_full_decimal_precision_rather_than_rounding_the_stored_difference()
+    {
+        // Both source columns are decimal(18,4) — rounding the stored Value (rather than only the
+        // on-screen display) would silently lose real parsed precision. 10.0104 - 1.0001 = 9.0103,
+        // not 9.01.
+        var model = CreateMinimalDossier(10.0104m, [new() { FinancialYear = 2017, ShareCapital = 1.0001m }]);
+        var m = M(DossierComputations.CapitalReconciliationMetrics(model));
+        Assert.True(m.HasValue);
+        Assert.Equal(9.0103m, m.Value);
+    }
+
+    [Fact]
     public void Negative_and_positive_and_zero_differences_all_produce_an_Ok_result()
     {
         var negative = CreateMinimalDossier(10m, [new() { FinancialYear = 2017, ShareCapital = 50m }]);

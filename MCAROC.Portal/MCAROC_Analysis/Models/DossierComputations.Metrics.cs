@@ -2004,7 +2004,9 @@ public static partial class DossierComputations
         }
         else
         {
-            var diff = Math.Round(profilePaidUp.Value - latest.ShareCapital.Value, 2);
+            // Exact subtraction — both source columns are decimal(18,4), and rounding here would lose
+            // real parsed precision. MetricResult.DisplayValue() rounds only for on-screen formatting.
+            var diff = profilePaidUp.Value - latest.ShareCapital.Value;
             var asOfSuffix = model.Cover.SourceSnapshotDate is { } snap ? $" as of {snap:d MMM yyyy}" : "";
             var period = $"FY{latest.FinancialYear} — MCA master-data snapshot ₹{profilePaidUp.Value:0.##} Cr{asOfSuffix} " +
                 $"vs standalone share capital ₹{latest.ShareCapital.Value:0.##} Cr";
