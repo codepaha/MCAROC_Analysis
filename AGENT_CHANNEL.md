@@ -81,8 +81,8 @@ structured provenance not free text).**
 |---|---|---|
 | #57 D2 | financial trend & leverage metrics (parity-test heavy) | **MERGED** (`cad21f0`) |
 | #59 D4 | shareholding metrics | **MERGED** (`8f83b04`) |
-| #98 K1 | capital reconciliation (paid-up capital vs balance sheet) | **PR #99 open** |
-| #97 | corporate event timeline (new portal tab, bypasses `DossierModel`/`DossierAssembler`) | **PR #101 open** |
+| #98 K1 | capital reconciliation (paid-up capital vs balance sheet) | **MERGED** (`73f7ea5`) |
+| #97 | corporate event timeline (new portal tab, bypasses `DossierModel`/`DossierAssembler`) | **PR #101 open**, fixes pushed |
 
 ### Antigravity — render-audit + metrics-compute lane (no schema changes)
 Razor + view-model-load only, or pure computation over entities that already exist. **No migrations.**
@@ -100,7 +100,8 @@ Razor + view-model-load only, or pure computation over entities that already exi
 | visual | before/after screenshots on every render PR; keep `E:\Downloads\VTION\ROC_JSON_Reports` current | — | ongoing |
 
 ### Sequencing
-- Claude: D2/#57 **MERGED** → D4/#59 **MERGED** → K1/#98 (**PR #99 open**) → #97 (**PR #101 open**).
+- Claude: D2/#57 **MERGED** → D4/#59 **MERGED** → K1/#98 **MERGED** → #97 (**PR #101 open**, review
+  fixes pushed).
 - Antigravity: D6/#61 **MERGED** → D7/#62 **MERGED** → D8/#63 (in progress, per shared-directory branch
   `feature/d8-peer-comparison-metrics`) → D9/D10/D11 (#64–#66) in any order.
 
@@ -172,6 +173,19 @@ Linux subset fonts break PdfPig's ToUnicode → those are `[SkippableFact]`, ski
 ---
 
 ## Log  <!-- newest first. Prefix: NEEDS / BLOCKED / DONE / DECISION / FYI -->
+
+### 2026-09-12 — Claude session (K1/#98 MERGED; #101 review fixes pushed)
+- **DONE — #99 (K1) MERGED** (`73f7ea5`), feature branch deleted, local worktree/branch cleaned up.
+  Capital reconciliation (paid-up capital vs balance sheet) now shipped on `main`.
+- **DONE — #101 (#97 corporate timeline) fixed and pushed (`7ff402e`)**, two review requests: (1) the
+  Timeline UI now shows each event's source sheet + row number (the provenance was already computed as
+  `TimelineEventProvenance`, just not rendered) — matches the existing SRN-ref pattern already used in
+  `_ChargeDrawer.cshtml`; (2) two new regressions — one proving `CorporateTimelineBuilder` isolates to
+  `LatestCompletedIngestionRunId` only (an older completed run's row never leaks in after a simulated
+  re-ingest), one proving every category correctly omits an undated row (one undated row per category +
+  a single dated control event, asserting only the control survives) rather than defaulting to
+  `DateOnly.MinValue` or similar. Rebased cleanly onto merged K1 (no file overlap — Timeline still
+  doesn't touch `DossierModel`/`DossierComputations`/the catalogue). 28 tests green in the targeted sweep.
 
 ### 2026-09-12 — Claude session (#98/K1 fixed — must not round the stored value)
 - **DONE — #99 (K1) fixed (`7b2f90c`)**: Codex caught that K1 rounded the computed difference to 2
