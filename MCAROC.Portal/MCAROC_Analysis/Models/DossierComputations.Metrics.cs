@@ -37,7 +37,8 @@ public static partial class DossierComputations
             EpfoMetrics(model),
             PeerComparisonMetrics(model),
             CapitalReconciliationMetrics(model),
-            RelatedPartyTransactionMetrics(model)
+            RelatedPartyTransactionMetrics(model),
+            CreditRatingMetrics(model)
         };
 
         return groups.Where(g => g.HasAny).ToList();
@@ -2583,6 +2584,337 @@ public static partial class DossierComputations
         }
 
         return new MetricGroup("Capital reconciliation", list);
+    }
+
+    /// <summary>Normalizes rating strings for comparison — trims, collapses internal whitespace, and uppercases,
+    /// while strictly preserving special symbols (+, -, /) that carry credit distinction (e.g. "AA+" vs " aa+ ").</summary>
+    private static string NormalizeRating(string? r)
+    {
+        if (string.IsNullOrWhiteSpace(r)) return string.Empty;
+        var collapsed = string.Join(' ', r.Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries));
+        return collapsed.ToUpperInvariant();
+    }
+
+    /// <summary>Section F — Credit rating analytics (Issue #66 / D11, docs/analytics-catalogue.json §F).
+    /// Pure computation over <paramref name="model"/>.</summary>
+    public static MetricGroup CreditRatingMetrics(Dossier.DossierModel model)
+    {
+        var ratings = model.Compliance.CreditRatings;
+        var list = new List<MetricResult>();
+
+        var emptyReason = model.SourceCoverage.AllAbsent(SheetAliases.CreditRatings, SheetAliases.UnacceptedRatings)
+            ? "Credit Ratings and Unaccepted Ratings sheets not in this upload"
+            : "No credit rating records on file";
+
+        if (ratings.Count == 0)
+        {
+            list.Add(MetricResult.Insufficient("Latest rating per instrument", MetricUnit.Text, emptyReason,
+                "CreditRating.Rating", "CreditRating.Instrument", "CreditRating.RatingDate"));
+            list.Add(MetricResult.Insufficient("Rating action summary", MetricUnit.Count, emptyReason,
+                "CreditRating.Action"));
+            list.Add(MetricResult.Insufficient("Total rated amount", MetricUnit.Crore, emptyReason,
+                "CreditRating.Amount", "CreditRating.Instrument"));
+            list.Add(MetricResult.Insufficient("Rated amount vs open charge coverage", MetricUnit.Times, emptyReason,
+                "CreditRating.Amount", "RocCharge.CurrentAmount"));
+            list.Add(MetricResult.Insufficient("Accepted vs unaccepted rating gap", MetricUnit.Count, emptyReason,
+                "CreditRating.IsAccepted", "CreditRating.Rating"));
+            return new MetricGroup("Credit ratings", list);
+        }
+
+        var accepted = ratings.Where(c => c.IsAccepted).ToList();
+
+        // ── F1: Latest rating per instrument (MetricUnit.Text) ──
+        // Guard against missing agency or instrument in accepted ratings
+        var acceptedMissingAgency = accepted.Where(c => string.IsNullOrWhiteSpace(c.Agency)).ToList();
+        foreach (var row in acceptedMissingAgency)
+        {
+            var instLabel = string.IsNullOrWhiteSpace(row.Instrument) ? "unspecified instrument" : row.Instrument.Trim();
+            list.Add(MetricResult.Insufficient(
+                $"Latest rating ({instLabel})",
+                MetricUnit.Text,
+                $"Accepted rating row (sheet '{row.SourceSheetName}', row {row.SourceRowNumber}) missing Agency",
+                "CreditRating.Agency", "CreditRating.Instrument", "CreditRating.Rating", "CreditRating.RatingDate",
+                "CreditRating.SourceSheetName", "CreditRating.SourceRowNumber"));
+        }
+
+        var acceptedMissingInstrument = accepted.Where(c => !string.IsNullOrWhiteSpace(c.Agency) && string.IsNullOrWhiteSpace(c.Instrument)).ToList();
+        foreach (var row in acceptedMissingInstrument)
+        {
+            list.Add(MetricResult.Insufficient(
+                "Latest rating (unspecified instrument)",
+                MetricUnit.Text,
+                $"Accepted rating row (sheet '{row.SourceSheetName}', row {row.SourceRowNumber}) from '{row.Agency}' missing Instrument name",
+                "CreditRating.Instrument", "CreditRating.Agency", "CreditRating.Rating", "CreditRating.RatingDate",
+                "CreditRating.SourceSheetName", "CreditRating.SourceRowNumber"));
+        }
+
+        var validAccepted = accepted.Where(c => !string.IsNullOrWhiteSpace(c.Agency) && !string.IsNullOrWhiteSpace(c.Instrument)).ToList();
+        var instrumentGroups = validAccepted
+            .GroupBy(c => (InstrumentNorm: NameNormalizer.Normalize(c.Instrument), AgencyNorm: NameNormalizer.Normalize(c.Agency)))
+            .OrderBy(g => g.Key.InstrumentNorm)
+            .ThenBy(g => g.Key.AgencyNorm);
+
+        foreach (var group in instrumentGroups)
+        {
+            var displayInstrument = group.First().Instrument!.Trim();
+            var displayAgency = group.First().Agency.Trim();
+            var label = $"Latest rating ({displayInstrument} - {displayAgency})";
+
+            var rowMissingDate = group.FirstOrDefault(c => c.RatingDate is null);
+            if (rowMissingDate is not null)
+            {
+                list.Add(MetricResult.Insufficient(
+                    label,
+                    MetricUnit.Text,
+                    $"Accepted rating row (sheet '{rowMissingDate.SourceSheetName}', row {rowMissingDate.SourceRowNumber}) missing RatingDate; latest rating cannot be determined",
+                    "CreditRating.RatingDate", "CreditRating.Instrument", "CreditRating.Agency",
+                    "CreditRating.SourceSheetName", "CreditRating.SourceRowNumber"));
+                continue;
+            }
+
+            var maxDate = group.Max(c => c.RatingDate!.Value);
+            var latestRows = group.Where(c => c.RatingDate == maxDate).ToList();
+            var distinctRatings = latestRows.Select(c => NormalizeRating(c.Rating)).Distinct().ToList();
+
+            if (distinctRatings.Count > 1)
+            {
+                list.Add(MetricResult.Insufficient(
+                    label,
+                    MetricUnit.Text,
+                    $"Conflicting ratings on {maxDate:d MMM yyyy} for {displayAgency}",
+                    "CreditRating.Rating", "CreditRating.RatingDate", "CreditRating.Instrument", "CreditRating.Agency",
+                    "CreditRating.SourceSheetName", "CreditRating.SourceRowNumber"));
+                continue;
+            }
+
+            var winner = latestRows[0];
+            var winnerRating = winner.Rating?.Trim();
+            var isWithdrawn = string.Equals(winner.Action?.Trim(), "Withdrawn", StringComparison.OrdinalIgnoreCase);
+
+            if (!string.IsNullOrWhiteSpace(winnerRating))
+            {
+                list.Add(MetricResult.Ok(
+                    label,
+                    winnerRating,
+                    $"as of {maxDate:d MMM yyyy}",
+                    "CreditRating.Instrument", "CreditRating.Agency", "CreditRating.Rating", "CreditRating.RatingDate"));
+            }
+            else if (isWithdrawn)
+            {
+                list.Add(MetricResult.Ok(
+                    label,
+                    "Withdrawn",
+                    $"as of {maxDate:d MMM yyyy}",
+                    "CreditRating.Instrument", "CreditRating.Agency", "CreditRating.Action", "CreditRating.RatingDate"));
+            }
+            else
+            {
+                list.Add(MetricResult.Insufficient(
+                    label,
+                    MetricUnit.Text,
+                    $"Rating not reported on {maxDate:d MMM yyyy}",
+                    "CreditRating.Rating", "CreditRating.RatingDate", "CreditRating.Instrument", "CreditRating.Agency",
+                    "CreditRating.SourceSheetName", "CreditRating.SourceRowNumber"));
+            }
+        }
+
+        // ── F2: Rating action summary (MetricUnit.Count by canonical action) ──
+        var totalAccepted = accepted.Count;
+        var missingCount = accepted.Count(c => string.IsNullOrWhiteSpace(c.Action));
+        var withAction = accepted.Where(c => !string.IsNullOrWhiteSpace(c.Action)).ToList();
+
+        if (withAction.Count == 0)
+        {
+            list.Add(MetricResult.Insufficient(
+                "Rating action summary",
+                MetricUnit.Count,
+                "No rating actions recorded on file across accepted ratings",
+                "CreditRating.Action"));
+        }
+        else
+        {
+            var canonicalMap = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["ASSIGNED"] = "Assigned",
+                ["REAFFIRMED"] = "Reaffirmed",
+                ["UPGRADED"] = "Upgraded",
+                ["DOWNGRADED"] = "Downgraded",
+                ["WITHDRAWN"] = "Withdrawn",
+                ["SUSPENDED"] = "Suspended"
+            };
+
+            var actionBuckets = withAction
+                .GroupBy(c => canonicalMap.GetValueOrDefault(c.Action!.Trim(), "Other"))
+                .OrderByDescending(g => g.Count())
+                .ThenBy(g => g.Key);
+
+            foreach (var bucket in actionBuckets)
+            {
+                var period = missingCount > 0
+                    ? $"{bucket.Count()} of {withAction.Count} classified actions ({missingCount} of {totalAccepted} accepted rows missing action)"
+                    : $"{bucket.Count()} of {totalAccepted} rating actions";
+
+                list.Add(MetricResult.Ok(
+                    $"Rating action summary ({bucket.Key})",
+                    (decimal)bucket.Count(),
+                    MetricUnit.Count,
+                    period,
+                    "CreditRating.Action"));
+            }
+        }
+
+        // ── F3 & F4: Scale Gate Blocked ──
+        list.Add(MetricResult.Insufficient(
+            "Total rated amount",
+            MetricUnit.Crore,
+            "Source AMOUNT lacks explicit scale/denomination metadata; cross-source crore aggregation blocked",
+            "CreditRating.Amount", "CreditRating.Currency"));
+
+        list.Add(MetricResult.Insufficient(
+            "Rated amount vs open charge coverage",
+            MetricUnit.Times,
+            "Blocked on total rated amount scale gate; cannot compute coverage against open charges",
+            "CreditRating.Amount", "RocCharge.CurrentAmount"));
+
+        // ── F5: Accepted vs unaccepted rating gap (MetricUnit.Count: 0 or 1 flag) ──
+        const string f5Label = "Accepted vs unaccepted rating gap";
+        var unaccepted = ratings.Where(c => !c.IsAccepted).ToList();
+
+        if (unaccepted.Count == 0)
+        {
+            list.Add(MetricResult.Ok(
+                f5Label,
+                0m,
+                MetricUnit.Count,
+                "No unaccepted ratings on file",
+                "CreditRating.IsAccepted"));
+        }
+        else
+        {
+            static string? EffectiveRating(CreditRating r) =>
+                string.Equals(r.Action?.Trim(), "Withdrawn", StringComparison.OrdinalIgnoreCase) && string.IsNullOrWhiteSpace(r.Rating)
+                    ? "Withdrawn"
+                    : r.Rating;
+
+            var unacceptedMissing = unaccepted.FirstOrDefault(u =>
+                string.IsNullOrWhiteSpace(u.Instrument) ||
+                string.IsNullOrWhiteSpace(u.Agency) ||
+                string.IsNullOrWhiteSpace(EffectiveRating(u)) ||
+                u.RatingDate is null);
+
+            var acceptedMissing = accepted.FirstOrDefault(a =>
+                string.IsNullOrWhiteSpace(a.Instrument) ||
+                string.IsNullOrWhiteSpace(a.Agency) ||
+                string.IsNullOrWhiteSpace(EffectiveRating(a)) ||
+                a.RatingDate is null);
+
+            if (unacceptedMissing is not null)
+            {
+                var missingField = string.IsNullOrWhiteSpace(unacceptedMissing.Instrument) ? "Instrument"
+                    : string.IsNullOrWhiteSpace(unacceptedMissing.Agency) ? "Agency"
+                    : string.IsNullOrWhiteSpace(EffectiveRating(unacceptedMissing)) ? "Rating"
+                    : "RatingDate";
+
+                list.Add(MetricResult.Insufficient(
+                    f5Label,
+                    MetricUnit.Count,
+                    $"Unaccepted rating record (sheet '{unacceptedMissing.SourceSheetName}', row {unacceptedMissing.SourceRowNumber}) missing required field {missingField}",
+                    "CreditRating.Instrument", "CreditRating.Agency", "CreditRating.Rating", "CreditRating.RatingDate",
+                    "CreditRating.IsAccepted", "CreditRating.SourceSheetName", "CreditRating.SourceRowNumber"));
+            }
+            else if (acceptedMissing is not null)
+            {
+                var missingField = string.IsNullOrWhiteSpace(acceptedMissing.Instrument) ? "Instrument"
+                    : string.IsNullOrWhiteSpace(acceptedMissing.Agency) ? "Agency"
+                    : string.IsNullOrWhiteSpace(EffectiveRating(acceptedMissing)) ? "Rating"
+                    : "RatingDate";
+
+                var instText = string.IsNullOrWhiteSpace(acceptedMissing.Instrument) ? "unknown instrument" : $"'{acceptedMissing.Instrument.Trim()}'";
+                var agencyText = string.IsNullOrWhiteSpace(acceptedMissing.Agency) ? "unknown agency" : acceptedMissing.Agency.Trim();
+
+                list.Add(MetricResult.Insufficient(
+                    f5Label,
+                    MetricUnit.Count,
+                    $"Accepted comparator for {instText} ({agencyText}) (sheet '{acceptedMissing.SourceSheetName}', row {acceptedMissing.SourceRowNumber}) missing {missingField}",
+                    "CreditRating.Instrument", "CreditRating.Agency", "CreditRating.Rating", "CreditRating.RatingDate",
+                    "CreditRating.IsAccepted", "CreditRating.SourceSheetName", "CreditRating.SourceRowNumber"));
+            }
+            else
+            {
+                MetricResult? f5Error = null;
+                var gaps = new List<string>();
+
+                foreach (var u in unaccepted)
+                {
+                    var uInst = NameNormalizer.Normalize(u.Instrument);
+                    var uAgency = NameNormalizer.Normalize(u.Agency);
+                    var uDate = u.RatingDate!.Value;
+                    var uRatingNorm = NormalizeRating(EffectiveRating(u));
+
+                    var candidateAccepted = accepted.Where(a =>
+                        NameNormalizer.Normalize(a.Instrument) == uInst &&
+                        NameNormalizer.Normalize(a.Agency) == uAgency &&
+                        a.RatingDate <= uDate).ToList();
+
+                    if (candidateAccepted.Count == 0)
+                    {
+                        f5Error = MetricResult.Insufficient(
+                            f5Label,
+                            MetricUnit.Count,
+                            $"Unaccepted rating for '{u.Instrument!.Trim()}' ({u.Agency.Trim()}) as of {uDate:d MMM yyyy} (sheet '{u.SourceSheetName}', row {u.SourceRowNumber}) has no accepted comparator from the same agency on or before that date",
+                            "CreditRating.Instrument", "CreditRating.Agency", "CreditRating.RatingDate",
+                            "CreditRating.IsAccepted", "CreditRating.SourceSheetName", "CreditRating.SourceRowNumber");
+                        break;
+                    }
+
+                    var maxAsOfDate = candidateAccepted.Max(a => a.RatingDate!.Value);
+                    var latestAsOfRows = candidateAccepted.Where(a => a.RatingDate == maxAsOfDate).ToList();
+                    var distinctAcceptedRatings = latestAsOfRows.Select(a => NormalizeRating(EffectiveRating(a))).Distinct().ToList();
+
+                    if (distinctAcceptedRatings.Count > 1)
+                    {
+                        f5Error = MetricResult.Insufficient(
+                            f5Label,
+                            MetricUnit.Count,
+                            $"Accepted comparator for '{u.Instrument!.Trim()}' ({u.Agency.Trim()}) has ambiguous conflicting ratings on latest as-of date {maxAsOfDate:d MMM yyyy}",
+                            "CreditRating.Rating", "CreditRating.RatingDate", "CreditRating.Instrument", "CreditRating.Agency",
+                            "CreditRating.IsAccepted", "CreditRating.SourceSheetName", "CreditRating.SourceRowNumber");
+                        break;
+                    }
+
+                    var acceptedRatingNorm = distinctAcceptedRatings[0];
+                    if (uRatingNorm != acceptedRatingNorm)
+                    {
+                        gaps.Add($"unaccepted '{EffectiveRating(u)!.Trim()}' vs accepted '{EffectiveRating(latestAsOfRows[0])!.Trim()}' on '{u.Instrument!.Trim()}' ({u.Agency.Trim()}) as of {uDate:d MMM yyyy}");
+                    }
+                }
+
+                if (f5Error is not null)
+                {
+                    list.Add(f5Error);
+                }
+                else if (gaps.Count > 0)
+                {
+                    list.Add(MetricResult.Ok(
+                        f5Label,
+                        1m,
+                        MetricUnit.Count,
+                        string.Join("; ", gaps),
+                        "CreditRating.IsAccepted", "CreditRating.Rating", "CreditRating.Agency", "CreditRating.RatingDate"));
+                }
+                else
+                {
+                    list.Add(MetricResult.Ok(
+                        f5Label,
+                        0m,
+                        MetricUnit.Count,
+                        "All unaccepted ratings match accepted ratings for the same instrument and agency on or before rating date",
+                        "CreditRating.IsAccepted", "CreditRating.Rating", "CreditRating.Agency", "CreditRating.RatingDate"));
+                }
+            }
+        }
+
+        return new MetricGroup("Credit ratings", list);
     }
 
     /// <summary>Section E — Related-party-transaction analytics (Issue #65 / D10, docs/analytics-catalogue.json §E).

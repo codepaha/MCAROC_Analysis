@@ -47,7 +47,7 @@ public class EpfoMetricsTests
             Corporate: new DossierCorporate([], [], [], [], [], [], [], null, null, [], []),
             Financials: new DossierFinancials(standaloneFinancials ?? [], [], [], [], [], []),
             Charges: new DossierCharges([], [], [], [], 0),
-            Compliance: new DossierCompliance([], [], [], contribs, establishments ?? [], []),
+            Compliance: new DossierCompliance([], [], [], contribs, establishments ?? [], [], []),
             Litigation: new DossierLitigation([], [], new Dictionary<long, LitigationRole>()),
             ExecSummary: new DossierExecSummary(ReviewPriority.Medium, 0, 0, 0, 0, [], null, []),
             SourceSheets: [],

@@ -599,6 +599,9 @@
             }
         }
         else { <div class="mca-empty"><i class="bi bi-award"></i><p>@Model.SheetCoverage.EmptyState("No credit rating history was reported in this workbook.", SheetAliases.CreditRatings, SheetAliases.UnacceptedRatings)</p></div> }
+
+        @await Html.PartialAsync("~/Views/Requests/Details/_KeyIndicators.cshtml",
+            Model.KeyMetrics.Where(g => g.Title == "Credit ratings").ToList())
     </div>
 
 </div>

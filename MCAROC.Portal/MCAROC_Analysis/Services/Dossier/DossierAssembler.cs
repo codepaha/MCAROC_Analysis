@@ -76,6 +76,8 @@ public class DossierAssembler(AppDbContext db)
             .OrderByDescending(x => x.WageMonth).ToListAsync(ct);
         var epfoEstablishments = await db.EpfoEstablishments.Where(x => x.IngestionRunId == runId)
             .OrderBy(x => x.Name).ToListAsync(ct);
+        var creditRatings = await db.CreditRatings.Where(x => x.IngestionRunId == runId)
+            .OrderByDescending(x => x.RatingDate).ToListAsync(ct);
 
         // ── Litigation ──
         var litigations = await db.Litigations.Where(x => x.IngestionRunId == runId).ToListAsync(ct);
@@ -114,7 +116,7 @@ public class DossierAssembler(AppDbContext db)
                 DossierComputations.SatisfiedChargesBySatisfaction(charges),
                 DossierComputations.LenderConcentration(charges),
                 findings.Count(f => f.Code == ChargeRules.MaterialEnhancementCode)),
-            new DossierCompliance(compliance, msme, gst, epfo, epfoEstablishments, DossierDeduplicator.SummariseSuitFiled(compliance)),
+            new DossierCompliance(compliance, msme, gst, epfo, epfoEstablishments, DossierDeduplicator.SummariseSuitFiled(compliance), creditRatings),
             new DossierLitigation(litigations, DossierDeduplicator.ThreadLitigation(litigations), roles),
             new DossierExecSummary(
                 analysis.OverallReviewPriority,

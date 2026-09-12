@@ -36,7 +36,7 @@ public class GstComplianceMetricsTests
             Corporate: new DossierCorporate([], [], [], [], [], [], [], null, null, [], []),
             Financials: new DossierFinancials([], [], [], [], [], []),
             Charges: new DossierCharges([], [], [], [], 0),
-            Compliance: new DossierCompliance([], [], gstRegs, [], [], []),
+            Compliance: new DossierCompliance([], [], gstRegs, [], [], [], []),
             Litigation: new DossierLitigation([], [], new Dictionary<long, LitigationRole>()),
             ExecSummary: new DossierExecSummary(ReviewPriority.Medium, 0, 0, 0, 0, [], null, []),
             SourceSheets: [],

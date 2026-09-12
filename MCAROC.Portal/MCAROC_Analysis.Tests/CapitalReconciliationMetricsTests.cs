@@ -42,7 +42,7 @@ public class CapitalReconciliationMetricsTests
             Corporate: new DossierCorporate([], [], [], [], [], [], [], null, paidUpCapital, [], []),
             Financials: new DossierFinancials(standalone ?? [], consolidated ?? [], [], [], [], []),
             Charges: new DossierCharges([], [], [], [], 0),
-            Compliance: new DossierCompliance([], [], [], [], [], []),
+            Compliance: new DossierCompliance([], [], [], [], [], [], []),
             Litigation: new DossierLitigation([], [], new Dictionary<long, LitigationRole>()),
             ExecSummary: new DossierExecSummary(ReviewPriority.Medium, 0, 0, 0, 0, [], null, []),
             SourceSheets: [],

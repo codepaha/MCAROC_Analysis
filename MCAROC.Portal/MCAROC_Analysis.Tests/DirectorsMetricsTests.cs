@@ -48,7 +48,7 @@ public class DirectorsMetricsTests
             Corporate: new DossierCorporate(directors, [], [], [], [], [], [], null, null, [], []),
             Financials: new DossierFinancials([], [], [], [], [], []),
             Charges: new DossierCharges([], [], [], [], 0),
-            Compliance: new DossierCompliance([], [], [], [], [], []),
+            Compliance: new DossierCompliance([], [], [], [], [], [], []),
             Litigation: new DossierLitigation([], [], new Dictionary<long, LitigationRole>()),
             ExecSummary: new DossierExecSummary(ReviewPriority.Medium, 0, 0, 0, 0, [], null, []),
             SourceSheets: [],

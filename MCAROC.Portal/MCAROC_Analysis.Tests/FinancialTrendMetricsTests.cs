@@ -39,7 +39,7 @@ public class FinancialTrendMetricsTests
             Corporate: new DossierCorporate([], [], [], [], [], [], [], null, null, [], []),
             Financials: new DossierFinancials(standalone, [], facts ?? [], parameters ?? [], [], []),
             Charges: new DossierCharges([], [], [], [], 0),
-            Compliance: new DossierCompliance([], [], [], [], [], []),
+            Compliance: new DossierCompliance([], [], [], [], [], [], []),
             Litigation: new DossierLitigation([], [], new Dictionary<long, LitigationRole>()),
             ExecSummary: new DossierExecSummary(ReviewPriority.Medium, 0, 0, 0, 0, [], null, []),
             SourceSheets: [],

@@ -92,21 +92,38 @@ Razor + view-model-load only, or pure computation over entities that already exi
 | #61 D6 | directors metrics (pure compute) | **#55 D0** (merged) | **MERGED** (`3eafe94`) |
 | #62 D7 | EPFO / labour metrics (Section H; H7 needed #36) | #36 (merged) | **MERGED** (`1587889`) |
 | #63 D8 | peer comparison metrics (Section J; J2 needed #35) | #35 (merged) | **MERGED** (`a6b9535`) |
-| #64 D9 | cost structure & forex metrics (Section A4/A5) | #55 D0 (merged) only | **PR #102 open** (`feature/d9-cost-structure-forex-metrics`) |
+| #64 D9 | cost structure & forex metrics (Section A4/A5) | #55 D0 (merged) only | **MERGED** (`e9e39e3`) |
 | #65 D10 | related-party-transaction metrics (Section E) | #50 A8 (merged) | **MERGED** (`7f2cf1e`) |
-| #66 D11 | credit rating metrics (Section F) | #51 A9 (merged) | **in progress** (Antigravity, `feature/d11-credit-rating-metrics`) |
+| #66 D11 | credit rating metrics (Section F) | #51 A9 (merged) | **PR #105 open** (`feature/d11-credit-rating-metrics`) |
 | visual | before/after screenshots on every render PR; keep `E:\Downloads\VTION\ROC_JSON_Reports` current | — | ongoing |
 
 ### Sequencing
 - Claude: D2/#57 **MERGED** → D4/#59 **MERGED** → K1/#98 **MERGED** → #97 **MERGED** → D10/#65
+<<<<<<< HEAD
+  **MERGED** (`7f2cf1e`) → picked up **#47** (pre-login report ownership binding — not a D-series
+  Wave-4 issue, the only other open item once D10 landed and D11 was already Antigravity's) — **PR
+  #104 open**.
+- Antigravity: D6/#61 **MERGED** → D7/#62 **MERGED** → D8/#63 **MERGED** → D9/#64 **MERGED** (`e9e39e3`)
+  → D11/#66 (**PR #105 open**, branch `feature/d11-credit-rating-metrics`).
+=======
   **MERGED** (`7f2cf1e`) → #47 (pre-login report ownership binding) **MERGED** (`f52f3cf`) — Claude's
   lane empty pending a new assignment.
 - Antigravity: D6/#61 **MERGED** → D7/#62 **MERGED** → D8/#63 **MERGED** → D9/#64 (**PR #102 open**,
   branch `feature/d9-cost-structure-forex-metrics`) → **D11/#66 in progress**
   (`feature/d11-credit-rating-metrics`).
+>>>>>>> origin/main
 
 ### Not in either lane (Codex or owner)
 Rule engine, analysis orchestration, Phase-4 retrieval, Wave 3 restyle (not split into issues yet).
+Phase 4 retrieval (A0) needs an Azure subscription + OpenAI endpoint that are not yet provisioned.
+
+### Testing note for agents
+Running `dotnet test` takes **6+ minutes locally** because of the multi-file ingestion integration
+test. Please avoid running the full suite unless explicitly needed. In CI on GitHub Actions,
+the build runs on Linux, where the font-sensitive PDF tests are skipped, taking ~1m.
+(Specifically: 5 PDF tests in `MCAROC_Analysis.Tests/Pdf/` require Windows fonts `consola.ttf` / `calibri.ttf`;
+Linux subset fonts break PdfPig's ToUnicode → those are `[SkippableFact]`, skip off Windows).
+**Please stop running the full local `dotnet test …slnx` suite** — `--filter` locally, trust CI.
 
 ---
 
@@ -174,6 +191,12 @@ Linux subset fonts break PdfPig's ToUnicode → those are `[SkippableFact]`, ski
 
 ## Log  <!-- newest first. Prefix: NEEDS / BLOCKED / DONE / DECISION / FYI -->
 
+### 2026-09-12 — Antigravity (D11/#66 PR #105 open — CI green)
+- **PR #105 OPEN (#66) — feature/d11-credit-rating-metrics**: credit rating metrics (Section F).
+  Delivered F1 (`Latest rating per instrument`), F2 (`Rating action summary`), and F5 (`Accepted vs unaccepted rating gap`)
+  with strict fail-closed BFSI semantics. F3/F4 scale gate safely blocked citing unscaled source amount metadata.
+  Rebased on merged D10 (#103) and #47 (#104). Both CI checks green (`build-and-test` & `windows-tests`). Ready for review.
+
 ### 2026-09-12 — Claude session (#47 MERGED)
 - **PR #104 MERGED into `main` as `f52f3cf`** (reviewed head `2b1448f`, both CI checks green) — pre-login
   report ownership binding. Remote feature branch deleted, issue #47 auto-closed. Claude's lane is empty
@@ -202,37 +225,9 @@ Linux subset fonts break PdfPig's ToUnicode → those are `[SkippableFact]`, ski
   Remote feature branch deleted. Issue #65 auto-closed (PR body used "Closes #65"). Claude's Wave-4 lane
   is empty — pending a new assignment.
 
-### 2026-09-12 — Claude session (D10/#65 PR #103 — E6 calculation fix)
-- **FIXED (`a6b0e31`)** — reviewer (owner via Codex) found E6 ("RPT growing faster than revenue") called
-  `AddCagrCore` independently on the RPT-totals series and the revenue series, so each could pick its own
-  `(base, end)` FY pair — comparing unrelated spans when the two series don't share every year (e.g. clean
-  RPT totals only for FY2023/FY2024 vs revenue also reported for FY2021 wrongly flagged `true` by comparing
-  RPT's FY23-24 100% jump against revenue's FY21-24 ~44.2% CAGR, when the real FY23-24 revenue growth is
-  200%). Fix: intersect E1's clean per-FY RPT totals with reported Revenue years first, then run both
-  series through `AddCagrCore` restricted to that identical year set — since its window selection depends
-  only on which years are present (not their values), both calls now resolve to the same `(base, end)`
-  pair by construction. Added the reviewer's exact counterexample plus a no-shared-FY regression. Data
-  wiring, per-FY fail-closed sums, and CI were already sound per the review — this was the only blocker.
-  Full suite green (707/1 skip, unrelated D9 fixture). Rebased cleanly onto main, pushed, review replied.
-
-### 2026-09-12 — Claude session (D10/#65 PR #103 open)
-- **PR #103 OPEN (#65) — feature/d10-related-party-transactions**: related-party-transaction analytics
-  (Section E, metrics E1-E6). Wired `RelatedPartyTransaction` into `DossierModel`/`DossierAssembler`
-  (same query-wiring gap as #97's three entities). E1 (total RPT/FY), E2 (RPT % of revenue, matched by
-  calendar year), E3 (RPT by transaction type, latest FY), E4 (RPT to subsidiaries, latest FY), E5
-  (distinct related entities/FY), E6 (RPT CAGR vs Revenue CAGR flag — extracted a reusable `AddCagrCore`
-  out of the existing `AddCagr` helper so both series share the identical calendar-bounded algorithm).
-  Synthetic-test-only (RPT sheet absent from COASTAL fixture, as flagged when #50 landed). Rebased
-  cleanly onto D9/#64 (PR #102, merged) — one real conflict in `FinancialTrendMetricsTests.cs`'s
-  `CreateMinimalDossier` (both PRs extended the same helper's argument list) plus one straggler call site
-  in `IngestionOrchestratorIntegrationTests.cs` (added by #102, needed the trailing `RelatedPartyTransactions`
-  arg) — both fixed, full suite green (690/690) after rebase.
-
-### 2026-09-12 — Antigravity (D9/#64 PR #102 open)
-- **PR #102 OPEN (#64) — feature/d9-cost-structure-forex-metrics**: cost structure & forex metrics (Section A4/A5).
-  Delivered A4.1–A4.4 and A5.1–A5.2 with strict P&L section scoping, Crore unit validation, parser `"-"`
-  preservation, sheet duplicate conflict detection, and SQL Server persistence integration test. Control
-  totals verified on `roc.xls` and `1.xls`. Acknowledged Claude taking D10/#65; Antigravity will queue D11/#66 next.
+### 2026-09-12 — Antigravity (D9/#64 MERGED)
+- **DONE — #102 (#64 D9) MERGED (`e9e39e3`)**: cost structure & forex metrics (Section A4/A5).
+  Fail-closed numeric vs non-numeric conflict handling verified and all CI green.
 
 ### 2026-09-12 — Claude session (housekeeping + D10/#65 claimed)
 - **DONE — closed #57, #59, #63, #97, #98** on GitHub — all were merged but stayed open because their
