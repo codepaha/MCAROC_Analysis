@@ -86,11 +86,14 @@
                         <text>&middot;</text>
                         if (!string.IsNullOrWhiteSpace(c.LatestChargeHolderRaw))
                         {
-                            <span class="mca-badge sev-watch">@e.HolderNameRaw (now @c.LatestChargeHolderRaw)</span>
+                            @* Factual, not a rename claim: this event's own recorded holder differs from the
+                               charge's latest recorded holder. There may be several holder changes across a
+                               charge's lifecycle events, so this never asserts a direct A-became-B rename. *@
+                            <span class="mca-badge sev-watch">Recorded holder: @e.HolderNameRaw; latest recorded holder: @c.LatestChargeHolderRaw</span>
                         }
                         else
                         {
-                            <span class="text-muted">@e.HolderNameRaw</span>
+                            <span class="text-muted">Recorded holder: @e.HolderNameRaw</span>
                         }
                     }
                 </div>

@@ -273,8 +273,11 @@ public class ChargesTabRenderingTests
     }
 
     [Fact]
-    public async Task Renamed_charge_holder_shows_the_old_name_now_new_name_badge_in_the_drawer()
+    public async Task Differing_event_holder_shows_factual_recorded_vs_latest_wording_not_a_rename_claim()
     {
+        // Deliberately not "(now X)" — an event's holder differing from the charge's latest recorded
+        // holder only proves those two facts, not that the same entity was directly renamed (a charge can
+        // carry several holder changes across its lifecycle events).
         var vm = CreateViewModel();
         var charge = new RocCharge { ChargeId = 1, RocChargeNumber = "CHG-503", LatestChargeHolderRaw = "New Bank Ltd", CurrentAmount = 10m, SatisfactionDate = null };
         charge.Events.Add(new RocChargeEvent
@@ -287,6 +290,24 @@ public class ChargesTabRenderingTests
 
         var html = await RenderChargesTabAsync(vm);
 
-        Assert.Contains("<span class=\"mca-badge sev-watch\">Old Bank Ltd (now New Bank Ltd)</span>", html);
+        Assert.Contains(
+            "<span class=\"mca-badge sev-watch\">Recorded holder: Old Bank Ltd; latest recorded holder: New Bank Ltd</span>",
+            html);
+        Assert.DoesNotContain("(now New Bank Ltd)", html);
+    }
+
+    [Fact]
+    public async Task Multiple_holder_changes_each_event_states_its_own_recorded_holder_not_one_rename_pair()
+    {
+        var vm = CreateViewModel();
+        var charge = new RocCharge { ChargeId = 2, RocChargeNumber = "CHG-504", LatestChargeHolderRaw = "Third Bank Ltd", CurrentAmount = 10m, SatisfactionDate = null };
+        charge.Events.Add(new RocChargeEvent { RocChargeId = 2, EventType = ChargeEventType.Creation, HolderNameRaw = "First Bank Ltd" });
+        charge.Events.Add(new RocChargeEvent { RocChargeId = 2, EventType = ChargeEventType.Modification, HolderNameRaw = "Second Bank Ltd" });
+        vm.Charges = [charge];
+
+        var html = await RenderChargesTabAsync(vm);
+
+        Assert.Contains("Recorded holder: First Bank Ltd; latest recorded holder: Third Bank Ltd", html);
+        Assert.Contains("Recorded holder: Second Bank Ltd; latest recorded holder: Third Bank Ltd", html);
     }
 }
