@@ -116,6 +116,61 @@ public class CorporateTimelineBuilderTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Only_the_latest_completed_ingestion_runs_rows_are_included_after_a_re_ingest()
+    {
+        // A request can have multiple IngestionRuns over time (a file replace / re-ingest). The builder
+        // must isolate to request.LatestCompletedIngestionRunId only — an older run's rows (still in the
+        // DB, tagged with the old IngestionRunId) must never leak into the timeline alongside the new run's.
+        await using var db = CreateContext();
+        var (requestId, oldIngestionRunId) = await SeedRequestAsync(db);
+        db.CompanyProfiles.Add(Tag(new CompanyProfile { CompanyName = "Old Co", IncorporationDate = new DateOnly(2000, 1, 1) }, requestId, oldIngestionRunId));
+        await db.SaveChangesAsync();
+
+        var request = await db.Requests.SingleAsync(r => r.RequestId == requestId);
+        var newRun = new IngestionRun { RequestId = requestId, RunNumber = 2, StartedDate = DateTime.UtcNow, CompletedDate = DateTime.UtcNow, Status = IngestionRunStatus.CompletedClean };
+        db.IngestionRuns.Add(newRun);
+        await db.SaveChangesAsync();
+        request.LatestCompletedIngestionRunId = newRun.IngestionRunId;
+        await db.SaveChangesAsync();
+        db.CompanyProfiles.Add(Tag(new CompanyProfile { CompanyName = "New Co", IncorporationDate = new DateOnly(2015, 6, 1) }, requestId, newRun.IngestionRunId));
+        await db.SaveChangesAsync();
+
+        var result = await new CorporateTimelineBuilder(db).BuildAsync(requestId);
+        var e = Assert.Single(result!);
+        Assert.Equal(new DateOnly(2015, 6, 1), e.Date);
+        Assert.DoesNotContain(result!, x => x.Date == new DateOnly(2000, 1, 1));
+    }
+
+    [Fact]
+    public async Task Rows_without_a_date_are_omitted_not_included_with_a_default_date()
+    {
+        // One row per category with every relevant date field null, plus a single genuinely dated
+        // control event — proves the builder actually ran (not vacuously empty) while every undated row
+        // across every category is correctly excluded, never defaulted to DateOnly.MinValue or similar.
+        await using var db = CreateContext();
+        var (requestId, ingestionRunId) = await SeedRequestAsync(db);
+
+        db.CompanyProfiles.Add(Tag(new CompanyProfile { CompanyName = "Timeline Test Co", IncorporationDate = null }, requestId, ingestionRunId));
+        db.CompanyNameHistories.Add(Tag(new CompanyNameHistory { PreviousName = "Undated Name", TillDate = null, DisplayOrder = 1 }, requestId, ingestionRunId));
+        db.Directors.Add(Tag(new Director { Din = "999", NameRaw = "UNDATED DIRECTOR", OriginalAppointmentDate = null, CessationDate = null }, requestId, ingestionRunId));
+        db.RocChargeEvents.Add(Tag(new RocChargeEvent { RocChargeId = 1, EventType = ChargeEventType.Creation, EventDate = null }, requestId, ingestionRunId));
+        db.SecurityAllotments.Add(Tag(new SecurityAllotment { AllotmentDate = null }, requestId, ingestionRunId));
+        db.CreditRatings.Add(Tag(new CreditRating { Agency = "CRISIL", RatingDate = null }, requestId, ingestionRunId));
+        db.FinancialDisputeCases.Add(Tag(new FinancialDisputeCase { DateOfDefault = null, DateOfJudgement = null }, requestId, ingestionRunId));
+        db.GstRegistrations.Add(Tag(new GstRegistration { Gstin = "UNDATED", RegistrationDate = null, CancellationDate = null }, requestId, ingestionRunId));
+        db.EpfoEstablishments.Add(Tag(new EpfoEstablishment { EstablishmentId = "E-UNDATED", DateOfSetup = null }, requestId, ingestionRunId));
+        db.ComplianceRecords.Add(Tag(new ComplianceRecord { RecordType = ComplianceRecordType.Other, RecordDate = null }, requestId, ingestionRunId));
+        db.EpfoEstablishments.Add(Tag(new EpfoEstablishment { EstablishmentId = "E-DATED", DateOfSetup = new DateOnly(2012, 1, 1) }, requestId, ingestionRunId));
+
+        await db.SaveChangesAsync();
+
+        var result = await new CorporateTimelineBuilder(db).BuildAsync(requestId);
+        var e = Assert.Single(result!);
+        Assert.Equal(new DateOnly(2012, 1, 1), e.Date);
+        Assert.Equal(nameof(EpfoEstablishment), e.Provenance.EntityType);
+    }
+
+    [Fact]
     public async Task Incorporation_event_is_dated_and_provenanced()
     {
         await using var db = CreateContext();
