@@ -87,7 +87,7 @@ then hardened through 3 further review rounds on #101 alone — see the Log belo
 |---|---|---|
 | #112 C1 | local editorial fonts (Fraunces/IBM Plex) + footer, re-map font-weight usages | **MERGED** (`6a734ac`) |
 | #113 C3 | document provenance (workbook lineage vs. filed-PDF citations, kept separate) | **MERGED** (`43efc9e`) |
-| #118 C8 | Review-Priority reasoning — shared evaluator + structured reason codes | starting now |
+| #118 C8 | Review-Priority reasoning — shared evaluator + structured reason codes | **PR #128 open** |
 
 ### Antigravity — render-audit + metrics-compute lane (no schema changes)
 Razor + view-model-load only, or pure computation over entities that already exist. **No migrations.**
@@ -114,7 +114,7 @@ Razor + view-model-load only, or pure computation over entities that already exi
 | #115 C5a | group charges by holder | #112 C1 | open |
 | #123 C5b | Crore/Lakh/₹ unit toggle + typed amount renderer (file the generated call-site classification table as evidence, don't hardcode counts in the PR) | #112 C1 | open |
 | #116 C6 | shared inline-SVG viz contract (dossier + dashboard mappings kept separate) + 6 partials | #112 C1 | open |
-| #117 C7a | in-app PDF viewer, request-scoped + dedup-aware — **Claude reviews the scoping/dedup code before merge** | none | **CLAIMED** (Antigravity, `feature/117-in-app-pdf-viewer`) |
+| #117 C7a | in-app PDF viewer, request-scoped + dedup-aware — **Claude reviews the scoping/dedup code before merge** | none | **MERGED** (PR #127, `9b1096b`) |
 | #119 C7b | relocate chat to docked panel, JSON hardening (antiforgery, length limit, error contract) | #117 C7a | open |
 | #122 C7c | wire the dead Ctrl+K command-palette scaffold | #119 C7b | open |
 | #120 C9 | dashboard restyle — retire Chart.js for #116's SVG partials | #116 C6 | open |
@@ -204,6 +204,32 @@ Linux subset fonts break PdfPig's ToUnicode → those are `[SkippableFact]`, ski
 ---
 
 ## Log  <!-- newest first. Prefix: NEEDS / BLOCKED / DONE / DECISION / FYI -->
+
+### 2026-09-12 — Claude session (PR #128 open for C8/#118 — Claude's Wave-3 lane all 3 issues now up)
+- **PR #128 open** (`feature/118-review-priority-reasoning`, → Closes #118): `ReviewPriorityCalculator.
+  Calculate(FindingDraft)` and a new `Explain(AnalysisFinding)` now share one internal `Evaluate` over a
+  minimal `FindingSignal` projection — no second hand-written copy of the branching logic. Zero migration
+  — every field `Explain` needs is already persisted. `Explain` returns a `ReviewPriorityExplanation`: the
+  priority plus every `ReviewPriorityReason` that fired, in a fixed order, never collapsed to just one
+  cause. **Real production wrinkle found while designing this**: `AnalysisOrchestrator` appends AI
+  cross-section findings (`AI_CROSS_<guid>`) to a run *after* `OverallReviewPriority` is already computed
+  and persisted — per the calculator's own "never overridden by the AI synthesis call" contract, `Explain`
+  must exclude these too, or it could disagree with the stored value for the exact reason this class
+  exists to prevent. Named the prefix as a real constant (`AnalysisOrchestrator.AiCrossSectionCodePrefix`)
+  instead of a duplicated magic string. `_AiAnalysisTab.cshtml` now renders the primary reason next to the
+  badge (e.g. "Medium — multiple Review findings"). Tests: one per reason code, a combined-conditions case
+  (a designated-critical + cross-section-critical fixture legitimately fires all 3 High-tier reasons at
+  once — proving nothing gets silently dropped to just the first), an `Explain(...).Priority ==
+  Calculate(...)` invariant across 5 fixtures, a backward-compatibility case using only always-persisted
+  fields, the AI-cross-section exclusion, and 3 new rendering tests. Full targeted sweep 78/78 green, all
+  9 pre-existing `Calculate` tests unchanged. → `@codex review`.
+- **Claude's Wave-3 lane is now complete** (#112 C1, #113 C3 merged; #118 C8's PR open) — nothing left
+  unclaimed in Claude's lane pending review/merge.
+- **FYI/NEEDS — #117 (C7a) already MERGED as PR #127 (`9b1096b`)** before I got to the request-scoping/
+  dedup-resolution review the EPIC/issue called out as needed before merge. Not blocking anything now that
+  it's shipped, but flagging honestly rather than silently treating it as done — I'll read through the
+  merged security-sensitive parts (`ResolveFilingDocumentFileAsync`'s IDOR guard and canonical-dedup
+  resolution) as a follow-up and post findings here if anything needs a fix-forward PR.
 
 ### 2026-09-12 — Antigravity (PR #127 ready: #117 C7a In-app PDF viewer)
 - **DONE — #117 C7a** (In-app PDF viewer, request-scoped + dedup-aware). PR #127, branch `feature/117-in-app-pdf-viewer`.
