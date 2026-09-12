@@ -93,15 +93,17 @@ Razor + view-model-load only, or pure computation over entities that already exi
 | #62 D7 | EPFO / labour metrics (Section H; H7 needed #36) | #36 (merged) | **MERGED** (`1587889`) |
 | #63 D8 | peer comparison metrics (Section J; J2 needed #35) | #35 (merged) | **MERGED** |
 | #64 D9 | cost structure & forex metrics (Section A4/A5) | #55 D0 (merged) only | unblocked |
-| #65 D10 | related-party-transaction metrics (Section E) | #50 A8 (merged) | **newly unblocked** |
+| #65 D10 | related-party-transaction metrics (Section E) | #50 A8 (merged) | **CLAIMED by Claude**, starting now |
 | #66 D11 | credit rating metrics (Section F) | #51 A9 (merged) | **newly unblocked** |
 | visual | before/after screenshots on every render PR; keep `E:\Downloads\VTION\ROC_JSON_Reports` current | — | ongoing |
 
 ### Sequencing
-- Claude: D2/#57 **MERGED** → D4/#59 **MERGED** → K1/#98 **MERGED** → #97 (**PR #101 open**, review
-  fixes pushed).
-- Antigravity: D6/#61 **MERGED** → D7/#62 **MERGED** → D8/#63 (in progress, per shared-directory branch
-  `feature/d8-peer-comparison-metrics`) → D9/D10/D11 (#64–#66) in any order.
+- Claude: D2/#57 **MERGED** → D4/#59 **MERGED** → K1/#98 **MERGED** → #97 **MERGED** → **D10/#65
+  claimed** (owner assignment — cross-lane; D10/D11 don't need a schema migration so either builder
+  can take them, per the original task-division note). **@antigravity — please take D11/#66 instead of
+  D10 to avoid duplicate work; D10 is Claude's now.**
+- Antigravity: D6/#61 **MERGED** → D7/#62 **MERGED** → D8/#63 **MERGED** → D9/#64 (in progress, per
+  shared-directory branch `feature/d9-cost-structure-forex-metrics`) → D11/#66 next.
 
 ### Not in either lane (Codex or owner)
 Rule engine, analysis orchestration, Phase-4 retrieval, Wave 3 restyle (not split into issues yet).
@@ -171,6 +173,17 @@ Linux subset fonts break PdfPig's ToUnicode → those are `[SkippableFact]`, ski
 ---
 
 ## Log  <!-- newest first. Prefix: NEEDS / BLOCKED / DONE / DECISION / FYI -->
+
+### 2026-09-12 — Claude session (housekeeping + D10/#65 claimed)
+- **DONE — closed #57, #59, #63, #97, #98** on GitHub — all were merged but stayed open because their
+  PRs said "implements #N" rather than a closing keyword, so nothing auto-closed them on merge. Worth
+  remembering: check for this on every future merge, not just when asked.
+- **CLAIMED D10/#65** (related-party-transaction analytics, Section E) — owner's call, cross-lane
+  (D10/D11 don't need a migration, so either builder can take them per the original task-division note).
+  Confirmed via `AppDbContext.cs` that `RelatedPartyTransaction`'s `DbSet` exists (from A8/#50) but,
+  like #97's three entities before it, is queried nowhere in `DossierAssembler` — `DossierModel` doesn't
+  carry it yet. Also confirmed (again, per A8/A9/A10's own notes) that the RPT sheet is absent from the
+  COASTAL fixture, so this will be synthetic-test-only, same as those three.
 
 ### 2026-09-12 — Claude session (#97 corporate timeline MERGED — owner follow-on request closed)
 - **DONE — #101 (#97) MERGED** (`d7e5854`), feature branch deleted, local worktree/branch cleaned up.
