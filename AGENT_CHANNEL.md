@@ -94,14 +94,17 @@ Razor + view-model-load only, or pure computation over entities that already exi
 | #63 D8 | peer comparison metrics (Section J; J2 needed #35) | #35 (merged) | **MERGED** (`a6b9535`) |
 | #64 D9 | cost structure & forex metrics (Section A4/A5) | #55 D0 (merged) only | **PR #102 open** (`feature/d9-cost-structure-forex-metrics`) |
 | #65 D10 | related-party-transaction metrics (Section E) | #50 A8 (merged) | **MERGED** (`7f2cf1e`) |
-| #66 D11 | credit rating metrics (Section F) | #51 A9 (merged) | **newly unblocked** |
+| #66 D11 | credit rating metrics (Section F) | #51 A9 (merged) | **in progress** (Antigravity, `feature/d11-credit-rating-metrics`) |
 | visual | before/after screenshots on every render PR; keep `E:\Downloads\VTION\ROC_JSON_Reports` current | — | ongoing |
 
 ### Sequencing
-- Claude: D2/#57 **MERGED** → D4/#59 **MERGED** → K1/#98 **MERGED** → #97 **MERGED** → **D10/#65
-  MERGED** (`7f2cf1e`) — Claude's lane empty pending a new assignment.
+- Claude: D2/#57 **MERGED** → D4/#59 **MERGED** → K1/#98 **MERGED** → #97 **MERGED** → D10/#65
+  **MERGED** (`7f2cf1e`) → picked up **#47** (pre-login report ownership binding — not a D-series
+  Wave-4 issue, the only other open item once D10 landed and D11 was already Antigravity's) — **PR
+  #104 open**.
 - Antigravity: D6/#61 **MERGED** → D7/#62 **MERGED** → D8/#63 **MERGED** → D9/#64 (**PR #102 open**,
-  branch `feature/d9-cost-structure-forex-metrics`) → D11/#66 next.
+  branch `feature/d9-cost-structure-forex-metrics`) → **D11/#66 in progress**
+  (`feature/d11-credit-rating-metrics`).
 
 ### Not in either lane (Codex or owner)
 Rule engine, analysis orchestration, Phase-4 retrieval, Wave 3 restyle (not split into issues yet).
@@ -171,6 +174,24 @@ Linux subset fonts break PdfPig's ToUnicode → those are `[SkippableFact]`, ski
 ---
 
 ## Log  <!-- newest first. Prefix: NEEDS / BLOCKED / DONE / DECISION / FYI -->
+
+### 2026-09-12 — Claude session (#47 PR #104 open — pre-login report ownership fix)
+- **PR #104 OPEN (#47) — fix/47-prelogin-report-ownership**: with D10 merged and D11 already
+  Antigravity's, picked up the only other open issue — #47 (pre-login report endpoints have no
+  ownership binding). Investigation found it was worse than the issue text: `HistoryAsync` returned
+  the last 200 jobs from EVERY user with no batch filter at all, and BOTH the pre-login Index page
+  and the main portal's shared sidebar (`_Layout.cshtml`) linked straight to that unscoped global
+  list — no id-guessing needed to browse every submitted CIN and reach Download/Edit/Rerun. Confirmed
+  via `Program.cs` that this app has **no authentication/authorization setup anywhere** — the whole
+  portal is open, so `PreLoginReportJob.BatchId` (a random Guid already assigned per request, unused
+  for access control until now) is the only credential available. Fix: History/Edit/Rerun/Download
+  routes now require `{batch:guid}`; `FindInBatchAsync` returns null identically for a nonexistent id
+  vs. a wrong-batch id (no existence-probing); `FindAsync(id)` kept only for the background worker
+  (no batch context, not attacker-controlled). Removed both links to the now-gone unscoped history
+  page. Full suite green (712/713, 1 unrelated skip) — note the run took ~5 min instead of the usual
+  ~1-2 min this time; diagnosed via `sys.dm_exec_requests` as no actual deadlock/blocking, just slow
+  SQL connection-pool recovery after I force-killed a manual dev-server smoke test mid-run — not a
+  code issue, just a caution for future manual `dotnet run` smoke-testing on this shared local DB.
 
 ### 2026-09-12 — Claude session (D10/#65 MERGED)
 - **PR #103 MERGED into `main` as `7f2cf1e`** — related-party-transaction analytics (Section E, E1-E6).
