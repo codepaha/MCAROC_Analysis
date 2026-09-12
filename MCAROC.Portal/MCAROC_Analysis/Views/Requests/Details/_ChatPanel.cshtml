@@ -75,11 +75,12 @@
                                         <small class="text-muted d-block mb-1">Sources:</small>
                                         @foreach (var cit in citDoc.RootElement.EnumerateArray())
                                         {
-                                            var sourceType = cit.TryGetProperty("SourceType", out var st) ? st.GetString() : null;
-                                            var label = cit.TryGetProperty("Label", out var l) ? l.GetString() : null;
-                                            var docName = cit.TryGetProperty("DocumentName", out var dn) ? dn.GetString() : null;
-                                            int? pageNumber = cit.TryGetProperty("PageNumber", out var pn) && pn.ValueKind == System.Text.Json.JsonValueKind.Number ? pn.GetInt32() : null;
-                                            long? docId = cit.TryGetProperty("DocumentId", out var di) && di.ValueKind == System.Text.Json.JsonValueKind.Number ? di.GetInt64() : null;
+                                            if (cit.ValueKind != System.Text.Json.JsonValueKind.Object) continue;
+                                            var sourceType = cit.TryGetProperty("SourceType", out var st) && st.ValueKind == System.Text.Json.JsonValueKind.String ? st.GetString() : null;
+                                            var label = cit.TryGetProperty("Label", out var l) && l.ValueKind == System.Text.Json.JsonValueKind.String ? l.GetString() : null;
+                                            var docName = cit.TryGetProperty("DocumentName", out var dn) && dn.ValueKind == System.Text.Json.JsonValueKind.String ? dn.GetString() : null;
+                                            int? pageNumber = cit.TryGetProperty("PageNumber", out var pn) && pn.ValueKind == System.Text.Json.JsonValueKind.Number && pn.TryGetInt32(out var pVal) && pVal > 0 ? pVal : null;
+                                            long? docId = cit.TryGetProperty("DocumentId", out var di) && di.ValueKind == System.Text.Json.JsonValueKind.Number && di.TryGetInt64(out var dVal) && dVal > 0 ? dVal : null;
 
                                             string display;
                                             if (sourceType == "DocumentChunk" && !string.IsNullOrEmpty(docName) && pageNumber.HasValue)
@@ -110,7 +111,7 @@
                                     </div>
                                 }
                             }
-                            catch (System.Text.Json.JsonException)
+                            catch (Exception ex) when (ex is System.Text.Json.JsonException or FormatException or InvalidOperationException)
                             {
                             }
                         }

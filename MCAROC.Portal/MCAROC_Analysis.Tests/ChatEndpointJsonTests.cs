@@ -341,6 +341,119 @@ public class ChatEndpointJsonTests : IAsyncLifetime
         Assert.Empty(messages);
     }
 
+    private sealed class SuccessfulMockCompletionService : ChatCompletionService
+    {
+        public override Task<ChatCompletionResult> CompleteAsync(
+            string companyName, RetrievalContext context, IReadOnlyList<ChatMessage> history, string question, CancellationToken ct)
+        {
+            return Task.FromResult(new ChatCompletionResult("Answer ready to save", false, []));
+        }
+    }
+
+    private sealed class SaveCancelingChatService : ChatService
+    {
+        private readonly CancellationTokenSource _cts;
+
+        public SaveCancelingChatService(
+            AppDbContext db,
+            RetrievalContextBuilder contextBuilder,
+            ChatCompletionService completionService,
+            CancellationTokenSource cts)
+            : base(db, contextBuilder, completionService, NullLogger<ChatService>.Instance)
+        {
+            _cts = cts;
+        }
+
+        internal override Task BeforeAssistantMessageSaveAsync(CancellationToken ct)
+        {
+            _cts.Cancel();
+            return Task.CompletedTask;
+        }
+    }
+
+    [Fact]
+    public async Task PostChat_CancellationDuringAssistantSave_DetachesAssistant_RollsBackUserTurn_AndNeverPersistsOrphanAssistant()
+    {
+        await using var db = CreateContext();
+        var requestId = await SeedRequestAsync("Save Cancel Corp");
+        var contextBuilder = new StubRetrievalContextBuilder();
+        var completionService = new SuccessfulMockCompletionService();
+
+        using var cts = new CancellationTokenSource();
+        var realChatService = new SaveCancelingChatService(db, contextBuilder, completionService, cts);
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(async () =>
+        {
+            await realChatService.AskTurnAsync(requestId, "Will assistant be saved if cancelled during save?", cts.Token);
+        });
+
+        // Assert that NO orphan assistant was saved and user message was rolled back
+        await using var verifyDb = CreateContext();
+        var messages = await verifyDb.ChatMessages
+            .Where(m => verifyDb.ChatSessions.Any(s => s.ChatSessionId == m.ChatSessionId && s.RequestId == requestId))
+            .ToListAsync();
+
+        Assert.Empty(messages);
+    }
+
+    // ── 5. Malformed Citations Resilience Tests ──
+
+    private sealed class RawCitationsChatService : ChatService
+    {
+        private readonly AppDbContext _db;
+        private readonly string _rawCitationsJson;
+
+        public RawCitationsChatService(AppDbContext db, string rawCitationsJson)
+            : base(db, null!, null!, NullLogger<ChatService>.Instance)
+        {
+            _db = db;
+            _rawCitationsJson = rawCitationsJson;
+        }
+
+        public override async Task<ChatTurnResult> AskTurnAsync(long requestId, string question, CancellationToken ct)
+        {
+            var session = await GetOrCreateSessionAsync(requestId, ct);
+            var assistantMsg = new ChatMessage
+            {
+                ChatSessionId = session.ChatSessionId,
+                Role = ChatRole.Assistant,
+                MessageText = "Answer with strange citations",
+                CitedSourcesJson = _rawCitationsJson,
+                Status = ChatMessageStatus.Success,
+                CreatedDate = DateTime.UtcNow
+            };
+            _db.ChatMessages.Add(assistantMsg);
+            await _db.SaveChangesAsync(ct);
+            return new ChatTurnResult(ChatTurnOutcome.Success, assistantMsg);
+        }
+    }
+
+    [Theory]
+    [InlineData("""[123, "not_an_object", null, true]""")]
+    [InlineData("""[{"SourceType":"DocumentChunk","PageNumber":99999999999999999999999999999999999999999999999999,"DocumentId":1e50}]""")]
+    [InlineData("""[{"SourceType":123,"Label":null,"DocumentName":false,"PageNumber":-5,"DocumentId":-10}]""")]
+    [InlineData("""{"not":"an_array"}""")]
+    [InlineData("""{corrupt-json""")]
+    public async Task PostChat_MalformedPersistedCitations_NeverThrows500_AndSafelySanitizes(string malformedCitationsJson)
+    {
+        await using var db = CreateContext();
+        var requestId = await SeedRequestAsync("Malformed Citations Corp");
+        var controller = NewController(db);
+        var chatService = new RawCitationsChatService(db, malformedCitationsJson);
+
+        var result = await controller.AskChat(requestId, new AskChatJsonRequest { Question = "Safe question" }, chatService, CancellationToken.None);
+
+        var okResult = Assert.IsType<OkObjectResult>(result);
+        var apiRes = Assert.IsType<ChatApiResponse>(okResult.Value);
+        Assert.True(apiRes.Success);
+        Assert.NotNull(apiRes.Message);
+        Assert.All(apiRes.Message.Citations, c =>
+        {
+            Assert.NotNull(c.SourceType);
+            Assert.NotNull(c.Label);
+        });
+    }
+
     // ── 5. DocumentRetriever Authoritative Batch Isolation ──
 
     private static float[] Axis(int dim, float sign = 1f)

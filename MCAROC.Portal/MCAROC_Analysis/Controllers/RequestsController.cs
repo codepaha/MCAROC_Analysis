@@ -771,34 +771,50 @@ public class RequestsController(
                 {
                     foreach (var cit in doc.RootElement.EnumerateArray())
                     {
-                        var sourceType = cit.TryGetProperty("SourceType", out var st) ? st.GetString() ?? "" : "";
-                        var label = cit.TryGetProperty("Label", out var l) ? l.GetString() ?? "" : "";
-                        var docName = cit.TryGetProperty("DocumentName", out var dn) ? dn.GetString() : null;
-                        int? pageNumber = cit.TryGetProperty("PageNumber", out var pn) && pn.ValueKind == JsonValueKind.Number ? pn.GetInt32() : null;
-                        long? docId = cit.TryGetProperty("DocumentId", out var di) && di.ValueKind == JsonValueKind.Number ? di.GetInt64() : null;
-
-                        string? viewerUrl = null;
-                        if (sourceType == "DocumentChunk" && docId.HasValue && validDocIds.Contains(docId.Value))
+                        try
                         {
-                            var p = pageNumber.GetValueOrDefault(1);
-                            viewerUrl = $"/Requests/{requestId}/documents/{docId.Value}/view#page={p}";
+                            if (cit.ValueKind != JsonValueKind.Object)
+                                continue;
+
+                            var sourceType = cit.TryGetProperty("SourceType", out var st) && st.ValueKind == JsonValueKind.String
+                                ? st.GetString() ?? "" : "";
+                            var label = cit.TryGetProperty("Label", out var l) && l.ValueKind == JsonValueKind.String
+                                ? l.GetString() ?? "" : "";
+                            var docName = cit.TryGetProperty("DocumentName", out var dn) && dn.ValueKind == JsonValueKind.String
+                                ? dn.GetString() : null;
+
+                            int? pageNumber = cit.TryGetProperty("PageNumber", out var pn) && pn.ValueKind == JsonValueKind.Number && pn.TryGetInt32(out var pVal) && pVal > 0
+                                ? pVal : null;
+                            long? docId = cit.TryGetProperty("DocumentId", out var di) && di.ValueKind == JsonValueKind.Number && di.TryGetInt64(out var dVal) && dVal > 0
+                                ? dVal : null;
+
+                            string? viewerUrl = null;
+                            if (sourceType == "DocumentChunk" && docId.HasValue && validDocIds.Contains(docId.Value))
+                            {
+                                var p = pageNumber.GetValueOrDefault(1);
+                                viewerUrl = $"/Requests/{requestId}/documents/{docId.Value}/view#page={p}";
+                            }
+
+                            dto.Citations.Add(new ChatCitationDto
+                            {
+                                SourceType = sourceType,
+                                Label = label,
+                                DocumentName = docName,
+                                PageNumber = pageNumber,
+                                DocumentId = docId,
+                                ViewerUrl = viewerUrl
+                            });
                         }
-
-                        dto.Citations.Add(new ChatCitationDto
+                        catch (Exception ex) when (ex is FormatException or InvalidOperationException)
                         {
-                            SourceType = sourceType,
-                            Label = label,
-                            DocumentName = docName,
-                            PageNumber = pageNumber,
-                            DocumentId = docId,
-                            ViewerUrl = viewerUrl
-                        });
+                            // Skip individually malformed citation record without dropping the others
+                        }
                     }
                 }
             }
-            catch (JsonException)
+            catch (Exception ex) when (ex is JsonException or FormatException or InvalidOperationException)
             {
-                // Fallback on corrupt JSON: keep citations list empty
+                // Fallback on corrupt top-level JSON: keep citations list safe
             }
         }
 

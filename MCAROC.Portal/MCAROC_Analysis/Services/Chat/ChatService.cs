@@ -66,7 +66,7 @@ public class ChatService(
             .ToListAsync(ct);
         priorHistory.Reverse();
 
-        ChatMessage assistantMessage;
+        ChatMessage? assistantMessage = null;
         try
         {
             var context = await contextBuilder.BuildAsync(requestId, question, ct);
@@ -90,12 +90,17 @@ public class ChatService(
                 CreatedDate = DateTime.UtcNow
             };
             db.ChatMessages.Add(assistantMessage);
+            await BeforeAssistantMessageSaveAsync(ct);
             await db.SaveChangesAsync(ct);
             return new ChatTurnResult(ChatTurnOutcome.Success, assistantMessage);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
-            // Client aborted or timeout: roll back user message so no orphaned turn remains
+            // Client aborted or timeout: detach pending assistant entity and roll back user message so no orphaned turn remains
+            if (assistantMessage is not null)
+            {
+                db.Entry(assistantMessage).State = EntityState.Detached;
+            }
             db.ChatMessages.Remove(userMessage);
             await db.SaveChangesAsync(CancellationToken.None);
             throw;
@@ -103,7 +108,11 @@ public class ChatService(
         catch (Exception ex)
         {
             logger.LogWarning(ex, "Chat completion failed for request {RequestId}", requestId);
-            assistantMessage = new ChatMessage
+            if (assistantMessage is not null && db.Entry(assistantMessage).State != EntityState.Detached)
+            {
+                db.Entry(assistantMessage).State = EntityState.Detached;
+            }
+            var failedAssistantMessage = new ChatMessage
             {
                 ChatSessionId = session.ChatSessionId,
                 Role = ChatRole.Assistant,
@@ -111,11 +120,16 @@ public class ChatService(
                 Status = ChatMessageStatus.Failed,
                 CreatedDate = DateTime.UtcNow
             };
-            db.ChatMessages.Add(assistantMessage);
+            db.ChatMessages.Add(failedAssistantMessage);
             await db.SaveChangesAsync(CancellationToken.None);
-            return new ChatTurnResult(ChatTurnOutcome.UpstreamFailure, assistantMessage);
+            return new ChatTurnResult(ChatTurnOutcome.UpstreamFailure, failedAssistantMessage);
         }
     }
+
+    /// <summary>Test seam: runs in AskTurnAsync after assistantMessage is added to the DbContext change
+    /// tracker but immediately before awaiting SaveChangesAsync(ct), allowing tests to force cancellation
+    /// during the save step. No-op in production.</summary>
+    internal virtual Task BeforeAssistantMessageSaveAsync(CancellationToken ct) => Task.CompletedTask;
 
     // 2601 = duplicate key in a unique index; 2627 = unique/primary-key constraint violation.
     private const int SqlUniqueIndexViolation = 2601;
