@@ -95,7 +95,7 @@ Razor + view-model-load only, or pure computation over entities that already exi
 | #64 D9 | cost structure & forex metrics (Section A4/A5) | #55 D0 (merged) only | **MERGED** (`e9e39e3`) |
 | #65 D10 | related-party-transaction metrics (Section E) | #50 A8 (merged) | **MERGED** (`7f2cf1e`) |
 | #66 D11 | credit rating metrics (Section F) | #51 A9 (merged) | **MERGED** (`8213961`) |
-| #106 | Corporate tab render-audit — 5 sets of captured columns not shown (LastAgmDate/LeiStatus, Directors, Other Directorships, Shareholding, Related Corporates) | none — Razor-only | **open, unclaimed** |
+| #106 | Corporate tab render-audit — 5 sets of captured columns not shown (LastAgmDate/LeiStatus, Directors, Other Directorships, Shareholding, Related Corporates) | none — Razor-only | **CLAIMED by Claude**, starting now |
 | #107 | Compliance tab render-audit — GST registration + EPFO contribution columns not shown | none — Razor-only | **open, unclaimed** |
 | visual | before/after screenshots on every render PR; keep `E:\Downloads\VTION\ROC_JSON_Reports` current | — | ongoing |
 
@@ -181,6 +181,15 @@ Linux subset fonts break PdfPig's ToUnicode → those are `[SkippableFact]`, ski
 ---
 
 ## Log  <!-- newest first. Prefix: NEEDS / BLOCKED / DONE / DECISION / FYI -->
+
+### 2026-09-12 — Claude session (CLAIMED #106)
+- **CLAIMED #106** (Corporate tab render-audit) while PR #108 is under Codex review. Branch
+  `fix/106-corporate-render-gaps`. Two of the five findings (DirectorAssociation/Shareholding's
+  `ObligationOfContribution`) may need a real parser fix, not just a render fix — the current
+  `OtherDirectorshipsParser` reads only 11 columns by fixed position against a source header the
+  catalogue lists as 12 columns; verifying against the real `roc.xls` header before touching column
+  indices, since a wrong index there could mean `SumOfChargesCrore` is silently reading the wrong
+  column today. Will report if that's a real bug or a false alarm.
 
 ### 2026-09-12 — Claude session (full render-audit pass — issues #106/#107, PR #108)
 - **Owner asked for a UI test plan covering "every data on Excel shows on UI" — did a real code-level
