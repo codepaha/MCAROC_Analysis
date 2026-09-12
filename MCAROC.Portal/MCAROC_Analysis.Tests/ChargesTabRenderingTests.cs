@@ -410,4 +410,39 @@ public class ChargesTabRenderingTests
         Assert.Contains("<strong>Canara Bank</strong>", html);
         Assert.Contains("2 charge(s)", html);
     }
+
+    [Fact]
+    public async Task Open_charge_drawer_row_is_nested_inside_its_holder_groups_collapsible_tbody()
+    {
+        // The ?charge=<id> deep link (Details.cshtml) walks up from the drawer row via
+        // row.closest('tbody.collapse') to find and expand its holder group before opening the drawer
+        // itself - this pins the markup contract that lookup depends on.
+        var vm = CreateViewModel();
+        vm.Charges = [new RocCharge { ChargeId = 71, RocChargeNumber = "CHG-701", LatestChargeHolderRaw = "Axis Bank", LatestChargeHolderNormalized = "AXIS BANK", CurrentAmount = 10m, SatisfactionDate = null }];
+
+        var html = await RenderChargesTabAsync(vm);
+
+        var groupOpenIdx = html.IndexOf("<tbody class=\"collapse\" id=\"open-holder-0\">");
+        var rowIdx = html.IndexOf("id=\"charge-71\"");
+        var groupCloseIdx = html.IndexOf("</tbody>", rowIdx);
+
+        Assert.True(groupOpenIdx >= 0 && groupOpenIdx < rowIdx && rowIdx < groupCloseIdx,
+            "Expected the charge's drawer row to be nested inside its holder group's collapsible <tbody>.");
+    }
+
+    [Fact]
+    public async Task Satisfied_charge_drawer_row_is_nested_inside_its_holder_groups_collapsible_tbody()
+    {
+        var vm = CreateViewModel();
+        vm.Charges = [new RocCharge { ChargeId = 72, RocChargeNumber = "CHG-702", LatestChargeHolderRaw = "Axis Bank", LatestChargeHolderNormalized = "AXIS BANK", CurrentAmount = 10m, SatisfactionDate = new DateOnly(2022, 1, 1) }];
+
+        var html = await RenderChargesTabAsync(vm);
+
+        var groupOpenIdx = html.IndexOf("<tbody class=\"collapse\" id=\"satisfied-holder-0\">");
+        var rowIdx = html.IndexOf("id=\"charge-72\"");
+        var groupCloseIdx = html.IndexOf("</tbody>", rowIdx);
+
+        Assert.True(groupOpenIdx >= 0 && groupOpenIdx < rowIdx && rowIdx < groupCloseIdx,
+            "Expected the charge's drawer row to be nested inside its holder group's collapsible <tbody>.");
+    }
 }
