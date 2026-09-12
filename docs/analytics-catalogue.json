@@ -228,13 +228,13 @@
 
     {
       "id": "J", "title": "Peer comparison analytics",
-      "source_entities": ["PeerComparisonMetric", "closest-peers list (#35 — not parsed yet)"],
+      "source_entities": ["PeerComparisonMetric", "PeerCompany (#35)"],
       "issue": "D8",
       "notes": "PeerComparisonDisplayRules already governs what's safe to show. Metrics vs peer MEDIAN only (never a fabricated rank when only a median is given).",
       "metrics": [
-        {"id": "J1", "name": "Metric vs peer median (per metric, per FY)", "unit": "delta / percentile band", "formula": "company actual - peer median, per PeerComparisonMetric row", "inputs": ["PeerComparisonMetric.ActualValue", "PeerComparisonMetric.MedianValue"], "degenerate": "null if median not given for that metric/FY", "status": "planned", "surfaced_in": ["dossier:Section1", "portal:Financials"]},
-        {"id": "J2", "name": "Revenue rank among closest peers", "unit": "rank", "formula": "company revenue position within the closest-peers-by-revenue list", "inputs": ["closest-peers list revenue", "FinancialYearData.Revenue"], "status": "blocked", "depends_on_issue": "#35"},
-        {"id": "J3", "name": "Count of peers in sample", "unit": "count", "formula": "PeerComparisonMetric '# of peers in sample' metadata", "inputs": ["PeerComparison metadata"], "degenerate": "null if absent", "status": "planned", "surfaced_in": ["portal:Financials"]}
+        {"id": "J1", "name": "Metric vs peer median (per metric, per FY)", "unit": "delta in the source metric's unit", "formula": "company actual - peer median, per PeerComparisonMetric row", "inputs": ["PeerComparisonMetric.CompanyValue", "PeerComparisonMetric.PeerMedianValue"], "degenerate": "null if median not given for that metric/FY", "status": "shipped", "surfaced_in": ["portal:Financials"]},
+        {"id": "J2", "name": "Rank in source closest-peer list", "unit": "rank", "formula": "company revenue position within the closest-peers-by-revenue list", "inputs": ["PeerCompany.Cin", "PeerCompany.LegalName", "PeerCompany.Rank", "PeerCompany.RevenueCrore", "PeerCompany.FinancialYear"], "status": "shipped", "surfaced_in": ["portal:Financials"]},
+        {"id": "J3", "name": "Count of peers in sample", "unit": "count", "formula": "PeerComparisonMetric '# of peers in sample' metadata", "inputs": ["PeerComparisonMetric.PeerCount"], "degenerate": "null if absent", "status": "shipped", "surfaced_in": ["portal:Financials"]}
       ]
     },
 

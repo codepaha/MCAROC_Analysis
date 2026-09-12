@@ -59,6 +59,7 @@ public class DossierAssembler(AppDbContext db)
         var auditors = await db.AuditorObservations.Where(x => x.IngestionRunId == runId)
             .OrderByDescending(x => x.FinancialYear).ToListAsync(ct);
         var peers = await db.PeerComparisonMetrics.Where(x => x.IngestionRunId == runId).ToListAsync(ct);
+        var peerCompanies = await db.PeerCompanies.Where(x => x.IngestionRunId == runId).OrderBy(x => x.Rank).ToListAsync(ct);
 
         // ── Charges ──
         var charges = await db.RocCharges.Include(c => c.Events).ThenInclude(e => e.SecurityComponents)
@@ -104,7 +105,7 @@ public class DossierAssembler(AppDbContext db)
                 profile?.IncorporationDate, profile?.CompanyStatus,
                 request.Client?.ClientName ?? "", DateTime.UtcNow, run?.CompletedDate, run?.SourceSnapshotDate),
             new DossierCorporate(directors, officers, shareholders, related, allotments, desigHistory, otherDirectorships, structure, profile?.PaidUpCapital, shareholdingPattern),
-            new DossierFinancials(standalone, consolidated, facts, parameters, auditors, peers),
+            new DossierFinancials(standalone, consolidated, facts, parameters, auditors, peers, peerCompanies),
             new DossierCharges(
                 charges,
                 DossierComputations.OpenChargesByAmount(charges),

@@ -47,8 +47,10 @@ public sealed record DossierFinancials(
     IReadOnlyList<FinancialFact> Facts,
     IReadOnlyList<FinancialParameter> Parameters,
     IReadOnlyList<AuditorObservation> AuditorObservations,
-    IReadOnlyList<PeerComparisonMetric> PeerComparison)
+    IReadOnlyList<PeerComparisonMetric> PeerComparison,
+    IReadOnlyList<PeerCompany>? ClosestPeers = null)
 {
+    public IReadOnlyList<PeerCompany> ClosestPeersList => ClosestPeers ?? [];
     public FinancialYearData? Latest => Standalone.OrderBy(f => f.FinancialYear).LastOrDefault();
     public int? LatestYear => Latest?.FinancialYear;
     public decimal? LatestRevenue => Latest?.Revenue;

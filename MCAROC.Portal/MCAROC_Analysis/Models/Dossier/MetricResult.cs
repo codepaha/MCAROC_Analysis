@@ -82,7 +82,7 @@ public sealed record MetricResult
     }
 }
 
-public enum MetricUnit { Count, Percent, Ratio, Times, Crore, Rupees, Days, Years }
+public enum MetricUnit { Count, Percent, Ratio, Times, Crore, Rupees, Days, Years, Unspecified }
 
 /// <summary>A titled set of related metrics, rendered together (e.g. "Charge register",
 /// "Financial trend &amp; leverage"). The dossier Snapshot and the portal tabs both render a
