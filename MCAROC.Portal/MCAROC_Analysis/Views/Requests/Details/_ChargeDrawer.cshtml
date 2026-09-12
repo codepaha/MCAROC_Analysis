@@ -90,6 +90,7 @@
                 {
                     <div class="text-muted mt-1"><b>Modification Particulars:</b> @e.ModificationParticulars</div>
                 }
+                <div class="mt-1">@await Html.PartialAsync("Details/_WorkbookProvenance", e)</div>
             </li>
         }
         </ul>

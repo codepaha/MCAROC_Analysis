@@ -1,6 +1,6 @@
 @model List<Director>
 <div class="pi-table-wrap"><table class="pi-results-table">
-    <thead><tr><th>Name</th><th>DIN</th><th>Designation</th><th>Present Role Since</th><th>Appointed</th><th>Ceased</th><th>Flags</th></tr></thead>
+    <thead><tr><th>Name</th><th>DIN</th><th>Designation</th><th>Present Role Since</th><th>Appointed</th><th>Ceased</th><th>Flags</th><th>Source</th></tr></thead>
     <tbody>
     @foreach (var d in Model.OrderBy(d => d.NameRaw))
     {
@@ -12,6 +12,7 @@
             <td>@D(d.OriginalAppointmentDate)</td>
             <td>@D(d.CessationDate)</td>
             <td>@if (!string.IsNullOrWhiteSpace(d.Flags)) { <span class="badge bg-light text-dark">@d.Flags</span> }</td>
+            <td>@await Html.PartialAsync("Details/_WorkbookProvenance", d)</td>
         </tr>
     }
     </tbody>
