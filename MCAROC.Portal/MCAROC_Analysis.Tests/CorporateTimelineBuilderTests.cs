@@ -153,7 +153,9 @@ public class CorporateTimelineBuilderTests : IAsyncLifetime
         db.CompanyProfiles.Add(Tag(new CompanyProfile { CompanyName = "Timeline Test Co", IncorporationDate = null }, requestId, ingestionRunId));
         db.CompanyNameHistories.Add(Tag(new CompanyNameHistory { PreviousName = "Undated Name", TillDate = null, DisplayOrder = 1 }, requestId, ingestionRunId));
         db.Directors.Add(Tag(new Director { Din = "999", NameRaw = "UNDATED DIRECTOR", OriginalAppointmentDate = null, CessationDate = null }, requestId, ingestionRunId));
-        db.RocChargeEvents.Add(Tag(new RocChargeEvent { RocChargeId = 1, EventType = ChargeEventType.Creation, EventDate = null }, requestId, ingestionRunId));
+        var undatedCharge = Tag(new RocCharge { RocChargeNumber = "C-UNDATED", ChargeStatus = "Open" }, requestId, ingestionRunId);
+        undatedCharge.Events.Add(Tag(new RocChargeEvent { EventType = ChargeEventType.Creation, EventDate = null }, requestId, ingestionRunId));
+        db.RocCharges.Add(undatedCharge);
         db.SecurityAllotments.Add(Tag(new SecurityAllotment { AllotmentDate = null }, requestId, ingestionRunId));
         db.CreditRatings.Add(Tag(new CreditRating { Agency = "CRISIL", RatingDate = null }, requestId, ingestionRunId));
         db.FinancialDisputeCases.Add(Tag(new FinancialDisputeCase { DateOfDefault = null, DateOfJudgement = null }, requestId, ingestionRunId));
@@ -246,11 +248,15 @@ public class CorporateTimelineBuilderTests : IAsyncLifetime
     {
         await using var db = CreateContext();
         var (requestId, ingestionRunId) = await SeedRequestAsync(db);
-        db.RocChargeEvents.Add(Tag(new RocChargeEvent
+        // RocChargeEvent.RocChargeId is a real FK — go through the RocCharge.Events navigation so EF
+        // assigns it, rather than guessing an id no RocCharge row actually has.
+        var charge = Tag(new RocCharge { RocChargeNumber = "C1", ChargeStatus = "Open" }, requestId, ingestionRunId);
+        charge.Events.Add(Tag(new RocChargeEvent
         {
-            RocChargeId = 1, EventType = ChargeEventType.Creation, EventDate = new DateOnly(2016, 3, 18),
+            EventType = ChargeEventType.Creation, EventDate = new DateOnly(2016, 3, 18),
             ChargeAmount = 610m, HolderNameRaw = "STATE BANK OF INDIA"
         }, requestId, ingestionRunId));
+        db.RocCharges.Add(charge);
         await db.SaveChangesAsync();
 
         var result = await new CorporateTimelineBuilder(db).BuildAsync(requestId);
