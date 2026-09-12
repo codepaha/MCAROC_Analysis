@@ -155,15 +155,16 @@
 
     {
       "id": "E", "title": "Related-party-transaction analytics",
-      "source_entities": ["RelatedPartyTransaction (#50 — not parsed yet)"],
-      "issue": "D10", "status": "blocked", "depends_on_issue": "#50",
+      "source_entities": ["RelatedPartyTransaction"],
+      "issue": "D10 / #65",
+      "notes": "The 'Related Party Transactions' sheet is a TrackedOptionalSheet — absent from a large share of the wider portfolio (and from the COASTAL fixture), so an empty result is worded 'sheet not in this upload' only when SourceCoverage confirms it; a present-but-empty sheet ('no related-party dealings that period') is a distinct, legitimate outcome. E1/E5 bucket by FinancialYearEnding's year; rows with no reported year are excluded from every FY bucket (noted, never silently dropped). E3/E4 are scoped to the latest reported FY only, matching the established C3/C4/C6/K1 latest-period-only convention. E6 reuses the same calendar-bounded CAGR core as A2.1.",
       "metrics": [
-        {"id": "E1", "name": "Total RPT value per FY", "unit": "INR Crore", "formula": "Σ AmountCrore by FinancialYearEnding", "status": "blocked", "depends_on_issue": "#50"},
-        {"id": "E2", "name": "RPT as % of revenue", "unit": "percent", "formula": "totalRPT[FY] / Revenue[FY]", "inputs": ["RelatedPartyTransaction.AmountCrore", "FinancialYearData.Revenue"], "status": "blocked", "depends_on_issue": "#50"},
-        {"id": "E3", "name": "RPT by transaction type", "unit": "INR Crore by bucket", "formula": "group by TransactionType", "status": "blocked", "depends_on_issue": "#50"},
-        {"id": "E4", "name": "RPT to subsidiaries", "unit": "INR Crore", "formula": "Σ where Relationship ~ 'Subsidiary'", "status": "blocked", "depends_on_issue": "#50"},
-        {"id": "E5", "name": "Distinct related entities transacted per FY", "unit": "count", "formula": "count distinct EntityName by FY", "status": "blocked", "depends_on_issue": "#50"},
-        {"id": "E6", "name": "RPT growing faster than revenue", "unit": "flag", "formula": "RPT CAGR vs Revenue CAGR", "inputs": ["E1", "A2.1"], "status": "blocked", "depends_on_issue": "#50"}
+        {"id": "E1", "name": "Total RPT value per FY", "unit": "INR Crore", "formula": "Σ AmountCrore by FinancialYearEnding, bucketed per FY", "inputs": ["RelatedPartyTransaction.AmountCrore", "RelatedPartyTransaction.FinancialYearEnding"], "degenerate": "insufficient for a given FY when ANY row in that FY has no reported Amount — never a partial sum", "status": "shipped", "surfaced_in": ["portal:Corporate"]},
+        {"id": "E2", "name": "RPT as % of revenue", "unit": "percent", "formula": "totalRPT[FY] / Revenue[FY]", "inputs": ["RelatedPartyTransaction.AmountCrore", "FinancialYearData.Revenue"], "degenerate": "insufficient when that FY's E1 total is not computable, or Revenue for that FY is missing or zero", "status": "shipped", "surfaced_in": ["dossier:KeyIndicators", "portal:Corporate"]},
+        {"id": "E3", "name": "RPT by transaction type", "unit": "INR Crore by bucket", "formula": "group by TransactionType, latest reported FY only", "inputs": ["RelatedPartyTransaction.TransactionType", "RelatedPartyTransaction.AmountCrore"], "degenerate": "rows with no reported TransactionType are excluded from the split (never an 'Unspecified' bucket); insufficient only when EVERY latest-FY row lacks a type, or any latest-FY row lacks an Amount", "status": "shipped", "surfaced_in": ["portal:Corporate"]},
+        {"id": "E4", "name": "RPT to subsidiaries", "unit": "INR Crore", "formula": "Σ where RelationshipRaw contains 'Subsidiary', latest reported FY only", "inputs": ["RelatedPartyTransaction.RelationshipRaw", "RelatedPartyTransaction.AmountCrore"], "degenerate": "a genuine zero (no subsidiary-labelled relationship) is a valid Ok result, not insufficient", "status": "shipped", "surfaced_in": ["portal:Corporate"]},
+        {"id": "E5", "name": "Distinct related entities transacted per FY", "unit": "count", "formula": "count distinct EntityNameNormalized by FY", "inputs": ["RelatedPartyTransaction.EntityNameNormalized", "RelatedPartyTransaction.FinancialYearEnding"], "status": "shipped", "surfaced_in": ["portal:Corporate"]},
+        {"id": "E6", "name": "RPT growing faster than revenue", "unit": "flag", "formula": "RPT CAGR (over E1's clean per-FY totals) vs Revenue CAGR, same calendar-bounded window/negative-base algorithm as A2.1", "inputs": ["E1", "A2.1"], "degenerate": "insufficient when either CAGR cannot be computed (fewer than 2 comparable years, or no base year within the 3-FY window)", "status": "shipped", "surfaced_in": ["portal:Corporate"]}
       ]
     },
 

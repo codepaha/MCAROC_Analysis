@@ -46,6 +46,8 @@ public class DossierAssembler(AppDbContext db)
         var structure = await db.CompanyStructures.FirstOrDefaultAsync(x => x.IngestionRunId == runId, ct);
         var shareholdingPattern = await db.ShareholdingPatternRows.Where(x => x.IngestionRunId == runId)
             .OrderBy(x => x.HolderClass).ThenBy(x => x.AsOnDate).ThenBy(x => x.DisplayOrder).ToListAsync(ct);
+        var relatedPartyTransactions = await db.RelatedPartyTransactions.Where(x => x.IngestionRunId == runId)
+            .OrderBy(x => x.FinancialYearEnding).ThenBy(x => x.EntityNameNormalized).ToListAsync(ct);
         var profile = await db.CompanyProfiles.FirstOrDefaultAsync(x => x.IngestionRunId == runId, ct);
 
         // ── Financials ──
@@ -104,7 +106,7 @@ public class DossierAssembler(AppDbContext db)
                 request.CompanyName, request.Cin ?? profile?.Cin, request.Pan ?? profile?.Pan,
                 profile?.IncorporationDate, profile?.CompanyStatus,
                 request.Client?.ClientName ?? "", DateTime.UtcNow, run?.CompletedDate, run?.SourceSnapshotDate),
-            new DossierCorporate(directors, officers, shareholders, related, allotments, desigHistory, otherDirectorships, structure, profile?.PaidUpCapital, shareholdingPattern),
+            new DossierCorporate(directors, officers, shareholders, related, allotments, desigHistory, otherDirectorships, structure, profile?.PaidUpCapital, shareholdingPattern, relatedPartyTransactions),
             new DossierFinancials(standalone, consolidated, facts, parameters, auditors, peers, peerCompanies),
             new DossierCharges(
                 charges,
