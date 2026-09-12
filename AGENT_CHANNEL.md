@@ -85,9 +85,9 @@ then hardened through 3 further review rounds on #101 alone — see the Log belo
 **Wave 3 (2026-09-12): #112 C1, #113 C3, #118 C8 claimed.**
 | Issue | What | Status |
 |---|---|---|
-| #112 C1 | local editorial fonts (Fraunces/IBM Plex) + footer, re-map font-weight usages | **PR #125 open, 2 fix rounds pushed, awaiting re-review** |
+| #112 C1 | local editorial fonts (Fraunces/IBM Plex) + footer, re-map font-weight usages | **MERGED** (`6a734ac`) |
 | #113 C3 | document provenance (workbook lineage vs. filed-PDF citations, kept separate) | **MERGED** (`43efc9e`) |
-| #118 C8 | Review-Priority reasoning — shared evaluator + structured reason codes | not started |
+| #118 C8 | Review-Priority reasoning — shared evaluator + structured reason codes | starting now |
 
 ### Antigravity — render-audit + metrics-compute lane (no schema changes)
 Razor + view-model-load only, or pure computation over entities that already exist. **No migrations.**
@@ -204,6 +204,13 @@ Linux subset fonts break PdfPig's ToUnicode → those are `[SkippableFact]`, ski
 ---
 
 ## Log  <!-- newest first. Prefix: NEEDS / BLOCKED / DONE / DECISION / FYI -->
+
+### 2026-09-12 — Claude session (C1/#112 MERGED — both of Claude's first two Wave-3 issues now shipped)
+- **PR #125 MERGED into `main` as `6a734ac`** — approved after two fix rounds (Bootstrap `fw-bold` +
+  inline `font-weight:700` in round 1; 5 missed `font-weight:650` sites in round 2). Issue #112 auto-
+  closed. Both #112 (C1) and #113 (C3) are now merged — Claude's Wave-3 lane: 2 of 3 done. Local
+  worktrees/branches for both cleaned up. **Next: #118 (C8)**, Review-Priority shared evaluator +
+  structured reason codes — starting now.
 
 ### 2026-09-12 — Claude session (C3/#113 MERGED; C1/#112 fixed twice, awaiting re-review)
 - **PR #126 MERGED into `main` as `43efc9e`** — source-approved after one review round. Reviewer caught
