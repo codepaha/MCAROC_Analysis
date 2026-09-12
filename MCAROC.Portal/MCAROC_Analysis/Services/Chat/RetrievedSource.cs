@@ -21,4 +21,5 @@ public record RetrievedSource(
     string? DocumentName = null,
     int? PageNumber = null,
     string? EntityType = null,
-    long? EntityId = null);
+    long? EntityId = null,
+    long? DocumentId = null);

@@ -10,6 +10,15 @@ namespace MCAROC_Analysis.Services.Chat;
 /// <summary>Drives one chat turn: persist the question, build retrieval context, call Gemini, validate,
 /// persist the answer. Runs synchronously within the HTTP request — a chat question needs an answer now,
 /// unlike Phase 2/3's fire-and-forget background pipelines.</summary>
+public enum ChatTurnOutcome
+{
+    Success,
+    RequestNotFound,
+    UpstreamFailure
+}
+
+public record ChatTurnResult(ChatTurnOutcome Outcome, ChatMessage? Message = null);
+
 public class ChatService(
     AppDbContext db,
     RetrievalContextBuilder contextBuilder,
@@ -21,21 +30,28 @@ public class ChatService(
     public virtual Task<bool> RequestExistsAsync(long requestId, CancellationToken ct) =>
         db.Requests.AnyAsync(r => r.RequestId == requestId, ct);
 
-    /// <summary>Returns the persisted assistant message, or <c>null</c> if <paramref name="requestId"/>
-    /// matches no request. The existence check runs before any write, so a bad id never creates an
-    /// orphan session (the controller also guards up front, unconditionally).</summary>
     public virtual async Task<ChatMessage?> AskAsync(long requestId, string question, CancellationToken ct)
+    {
+        var result = await AskTurnAsync(requestId, question, ct);
+        return result.Message;
+    }
+
+    /// <summary>Drives one chat turn with typed outcomes for the API layer: persists the question,
+    /// calls completion, and handles cancellation (rollback) vs upstream failure (audit persistence)
+    /// cleanly without leaking exception details.</summary>
+    public virtual async Task<ChatTurnResult> AskTurnAsync(long requestId, string question, CancellationToken ct)
     {
         var request = await db.Requests.FirstOrDefaultAsync(r => r.RequestId == requestId, ct);
         if (request is null)
-            return null;
+            return new ChatTurnResult(ChatTurnOutcome.RequestNotFound);
 
         var session = await GetOrCreateSessionAsync(requestId, ct);
 
-        db.ChatMessages.Add(new ChatMessage
+        var userMessage = new ChatMessage
         {
             ChatSessionId = session.ChatSessionId, Role = ChatRole.User, MessageText = question, CreatedDate = DateTime.UtcNow
-        });
+        };
+        db.ChatMessages.Add(userMessage);
         session.LastActivityDate = DateTime.UtcNow;
         await db.SaveChangesAsync(ct);
 
@@ -73,6 +89,16 @@ public class ChatService(
                 Status = ChatMessageStatus.Success,
                 CreatedDate = DateTime.UtcNow
             };
+            db.ChatMessages.Add(assistantMessage);
+            await db.SaveChangesAsync(ct);
+            return new ChatTurnResult(ChatTurnOutcome.Success, assistantMessage);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            // Client aborted or timeout: roll back user message so no orphaned turn remains
+            db.ChatMessages.Remove(userMessage);
+            await db.SaveChangesAsync(CancellationToken.None);
+            throw;
         }
         catch (Exception ex)
         {
@@ -85,11 +111,10 @@ public class ChatService(
                 Status = ChatMessageStatus.Failed,
                 CreatedDate = DateTime.UtcNow
             };
+            db.ChatMessages.Add(assistantMessage);
+            await db.SaveChangesAsync(CancellationToken.None);
+            return new ChatTurnResult(ChatTurnOutcome.UpstreamFailure, assistantMessage);
         }
-
-        db.ChatMessages.Add(assistantMessage);
-        await db.SaveChangesAsync(ct);
-        return assistantMessage;
     }
 
     // 2601 = duplicate key in a unique index; 2627 = unique/primary-key constraint violation.

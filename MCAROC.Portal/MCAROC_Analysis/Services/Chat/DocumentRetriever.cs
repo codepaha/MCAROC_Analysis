@@ -23,12 +23,12 @@ public record DocumentChunkMatch(DocumentChunk Chunk, double Distance);
 /// for a type this new (SQL Server 2025's VECTOR + EF Core 10 shipped together).</summary>
 public class DocumentRetriever(AppDbContext db, ChatRetrievalOptions options)
 {
-    public async Task<List<DocumentChunkMatch>> SearchRequestDocumentsAsync(
-        long requestId, float[] queryEmbedding, QuestionHints hints, CancellationToken ct)
+    public virtual async Task<List<DocumentChunkMatch>> SearchRequestDocumentsAsync(
+        long requestId, long? batchId, float[] queryEmbedding, QuestionHints hints, CancellationToken ct)
     {
         var queryVector = new SqlVector<float>(queryEmbedding);
 
-        var hinted = await SearchAsync(requestId, queryVector, hints, ct);
+        var hinted = await SearchAsync(requestId, batchId, queryVector, hints, ct);
         var passingHinted = hinted.Where(m => m.Distance <= options.MaxCosineDistance).ToList();
 
         if (!hints.HasSoftHints || passingHinted.Count >= options.MinAcceptableResults)
@@ -38,13 +38,18 @@ public class DocumentRetriever(AppDbContext db, ChatRetrievalOptions options)
         // (and any hard SRN match) filter, so an overly-specific hint can never silently starve the answer
         // of evidence an unfiltered search would have found.
         var fallbackHints = hints with { Category = null, FormTypeKeyword = null, LenderNameKeyword = null };
-        var fallback = await SearchAsync(requestId, queryVector, fallbackHints, ct);
+        var fallback = await SearchAsync(requestId, batchId, queryVector, fallbackHints, ct);
         return fallback.Where(m => m.Distance <= options.MaxCosineDistance).ToList();
     }
 
-    private async Task<List<DocumentChunkMatch>> SearchAsync(long requestId, SqlVector<float> queryVector, QuestionHints hints, CancellationToken ct)
+    public Task<List<DocumentChunkMatch>> SearchRequestDocumentsAsync(
+        long requestId, float[] queryEmbedding, QuestionHints hints, CancellationToken ct) =>
+        SearchRequestDocumentsAsync(requestId, null, queryEmbedding, hints, ct);
+
+    private async Task<List<DocumentChunkMatch>> SearchAsync(long requestId, long? batchId, SqlVector<float> queryVector, QuestionHints hints, CancellationToken ct)
     {
         var whereClauses = new List<string> { "RequestId = @requestId" };
+        if (batchId.HasValue) whereClauses.Add("BatchId = @batchId");
         if (hints.SrnMatch is not null) whereClauses.Add("Srn = @srn");
         if (hints.Category is not null) whereClauses.Add("Category = @category");
         if (hints.FormTypeKeyword is not null) whereClauses.Add("FormType IS NOT NULL AND FormType LIKE @formType");
@@ -83,6 +88,7 @@ public class DocumentRetriever(AppDbContext db, ChatRetrievalOptions options)
             cmd.CommandText = sql;
             cmd.Parameters.Add(new SqlParameter("@topK", SqlDbType.Int) { Value = options.TopK });
             cmd.Parameters.Add(new SqlParameter("@requestId", SqlDbType.BigInt) { Value = requestId });
+            if (batchId.HasValue) cmd.Parameters.Add(new SqlParameter("@batchId", SqlDbType.BigInt) { Value = batchId.Value });
             var vectorParam = cmd.Parameters.Add("@queryVector", Microsoft.Data.SqlDbTypeExtensions.Vector, EmbeddingService.Dimensions);
             vectorParam.Value = queryVector;
             if (hints.SrnMatch is not null) cmd.Parameters.Add(new SqlParameter("@srn", SqlDbType.NVarChar, 450) { Value = hints.SrnMatch });
