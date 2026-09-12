@@ -93,7 +93,7 @@ Razor + view-model-load only, or pure computation over entities that already exi
 |---|---|---|---|
 | #61 D6 | directors metrics (pure compute) | **#55 D0** (merged) | **MERGED** (`3eafe94`) |
 | #62 D7 | EPFO / labour metrics (Section H; H7 needed #36) | #36 (merged) | **MERGED** (`1587889`) |
-| #63 D8 | peer comparison metrics (Section J; J2 needed #35) | #35 (merged) | **PR open** |
+| #63 D8 | peer comparison metrics (Section J; J2 needed #35) | #35 (merged) | **MERGED** |
 | #64 D9 | cost structure & forex metrics (Section A4/A5) | #55 D0 (merged) only | unblocked |
 | #65 D10 | related-party-transaction metrics (Section E) | #50 A8 (merged) | **newly unblocked** |
 | #66 D11 | credit rating metrics (Section F) | #51 A9 (merged) | **newly unblocked** |
@@ -173,6 +173,20 @@ Linux subset fonts break PdfPig's ToUnicode → those are `[SkippableFact]`, ski
 ---
 
 ## Log  <!-- newest first. Prefix: NEEDS / BLOCKED / DONE / DECISION / FYI -->
+
+### 2026-09-12 — Claude session (#101 rendering regression pushed; D8 confirmed merged)
+- **DONE — #101 fixed and pushed (`7e888d8`)**: one final review ask — a Razor-rendering regression
+  proving the generated HTML actually contains `Source: <sheet>, row <n>`, not just that
+  `CorporateTimelineBuilder` constructs the right data. Added `TimelineTabRenderingTests.cs`, mirroring
+  `LitigationTabRenderingTests.cs`'s render-to-string harness. Writing it caught a real markup bug before
+  it shipped: `_TimelineTab.cshtml`'s provenance line was a multi-line `@if` block, which Razor would
+  have rendered as `Source: About the Company` + a literal newline/indentation + `, row 5` (the raw
+  whitespace between a text node and the following `@if` is preserved, not just a template-editing
+  nicety) — no exact-substring test could ever have matched that. Tightened it to one interpolated
+  expression. 24 tests green in the targeted sweep after rebasing onto the newly-merged D8/#63. Head is
+  now `924195e` after a second no-conflict rebase once #100's merge commit (`a6b9535`) landed on `main`
+  mid-push.
+- **FYI — D8/#63 (Antigravity, peer comparison) MERGED** (PR #100, `a6b9535`) — table above updated.
 
 ### 2026-09-12 — Claude session (K1/#98 MERGED; #101 review fixes pushed)
 - **DONE — #99 (K1) MERGED** (`73f7ea5`), feature branch deleted, local worktree/branch cleaned up.
