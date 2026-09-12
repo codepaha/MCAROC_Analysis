@@ -18,6 +18,19 @@
             <span class="mca-badge">@System.Text.RegularExpressions.Regex.Replace(t, "(\\B[A-Z])", " $1")</span>
         }
     }
+
+    // Groups by the same normalized key the parser already computes for holder-identity matching
+    // (RocCharge.LatestChargeHolderNormalized), so spelling/case variants of one real lender collapse
+    // into one group instead of fragmenting it. A blank normalized key (blank raw holder) groups every
+    // unknown-holder charge together under its own "Unknown Charge Holder" heading, matching #114's badge.
+    List<IGrouping<string, RocCharge>> GroupByHolder(IEnumerable<RocCharge> charges) => charges
+        .GroupBy(c => c.LatestChargeHolderNormalized)
+        .OrderBy(g => string.IsNullOrWhiteSpace(g.Key) ? 1 : 0) // Unknown-holder group sorts last
+        .ThenBy(g => g.Key)
+        .ToList();
+
+    string HolderGroupLabel(IGrouping<string, RocCharge> group) =>
+        string.IsNullOrWhiteSpace(group.Key) ? "Unknown Charge Holder" : group.First().LatestChargeHolderRaw;
 }
 
 <ul class="nav mca-subtabs" data-mca-sections="charges" role="tablist">
@@ -123,26 +136,50 @@
         {
             <div class="pi-table-wrap"><table class="pi-results-table">
                 <thead><tr><th>Charge ID</th><th>Holder</th><th>Created</th><th class="text-end">Registered Amount</th><th>Last Event</th><th>Facility</th><th>Security</th><th></th></tr></thead>
-                <tbody>
-                @foreach (var c in open)
+                @{ var openGroups = GroupByHolder(open); }
+                @for (var gi = 0; gi < openGroups.Count; gi++)
                 {
-                    var facility = c.LatestPrimaryFacilityType?.ToString();
-                    var secCount = RequestDetailsViewModel.SecurityTypeLabels(c).Count;
-                    <tr>
-                        <td class="report-id">@c.RocChargeNumber</td>
-                        <td>@(string.IsNullOrWhiteSpace(c.LatestChargeHolderRaw) ? Html.Raw("<span class=\"mca-badge sev-watch\">Unknown Charge Holder</span>") : Html.Raw(System.Net.WebUtility.HtmlEncode(c.LatestChargeHolderRaw)))</td>
-                        <td>@D(c.CreationDate)</td>
-                        <td class="text-end">@Money(c.CurrentAmount)</td>
-                        <td>@D(c.LatestModificationDate ?? c.CreationDate)</td>
-                        <td>@(facility ?? "—")</td>
-                        <td>@if (secCount > 0) { SecurityBadges(c); } else { <text>—</text> }</td>
-                        <td><a class="mca-chip" data-bs-toggle="collapse" href="#charge-@c.ChargeId" role="button">Details</a></td>
-                    </tr>
-                    <tr class="collapse" id="charge-@c.ChargeId">
-                        <td colspan="8">@await Html.PartialAsync("Details/_ChargeDrawer", ChargeDrawerViewModel.For(c, Model.AnalysisFindings))</td>
-                    </tr>
+                    var group = openGroups[gi];
+                    var groupId = $"open-holder-{gi}";
+                    <tbody>
+                        <tr class="mca-holder-group-row">
+                            <td colspan="8">
+                                <a class="mca-holder-group-toggle" data-bs-toggle="collapse" href="#@groupId" role="button" aria-expanded="false" aria-controls="@groupId">
+                                    <i class="bi bi-chevron-right mca-holder-group-caret"></i>
+                                    @if (string.IsNullOrWhiteSpace(group.Key))
+                                    {
+                                        <span class="mca-badge sev-watch">Unknown Charge Holder</span>
+                                    }
+                                    else
+                                    {
+                                        <strong>@HolderGroupLabel(group)</strong>
+                                    }
+                                    <span class="mca-count">@group.Count() charge(s)</span>
+                                </a>
+                            </td>
+                        </tr>
+                    </tbody>
+                    <tbody class="collapse" id="@groupId">
+                    @foreach (var c in group)
+                    {
+                        var facility = c.LatestPrimaryFacilityType?.ToString();
+                        var secCount = RequestDetailsViewModel.SecurityTypeLabels(c).Count;
+                        <tr>
+                            <td class="report-id">@c.RocChargeNumber</td>
+                            <td>@(string.IsNullOrWhiteSpace(c.LatestChargeHolderRaw) ? Html.Raw("<span class=\"mca-badge sev-watch\">Unknown Charge Holder</span>") : Html.Raw(System.Net.WebUtility.HtmlEncode(c.LatestChargeHolderRaw)))</td>
+                            <td>@D(c.CreationDate)</td>
+                            <td class="text-end">@Money(c.CurrentAmount)</td>
+                            <td>@D(c.LatestModificationDate ?? c.CreationDate)</td>
+                            <td>@(facility ?? "—")</td>
+                            <td>@if (secCount > 0) { SecurityBadges(c); } else { <text>—</text> }</td>
+                            <td><a class="mca-chip" data-bs-toggle="collapse" href="#charge-@c.ChargeId" role="button">Details</a></td>
+                        </tr>
+                        <tr class="collapse" id="charge-@c.ChargeId">
+                            <td colspan="8">@await Html.PartialAsync("Details/_ChargeDrawer", ChargeDrawerViewModel.For(c, Model.AnalysisFindings))</td>
+                        </tr>
+                    }
+                    </tbody>
                 }
-                </tbody>
             </table></div>
         }
         else if (extracted) { <div class="mca-empty"><i class="bi bi-unlock"></i><p>No open (unsatisfied) charges.</p></div> }
@@ -156,26 +193,50 @@
             <p class="text-muted">Historical / satisfied — satisfaction on the register is not the same as confirmed clean repayment.</p>
             <div class="pi-table-wrap"><table class="pi-results-table">
                 <thead><tr><th>Charge ID</th><th>Holder</th><th class="text-end">Registered Amount</th><th>Created</th><th>Satisfied</th><th>Duration</th><th></th></tr></thead>
-                <tbody>
-                @foreach (var c in satisfied)
+                @{ var satisfiedGroups = GroupByHolder(satisfied); }
+                @for (var gi = 0; gi < satisfiedGroups.Count; gi++)
                 {
-                    var dur = (c.CreationDate is { } cr && c.SatisfactionDate is { } sat)
-                        ? $"{(sat.ToDateTime(TimeOnly.MinValue) - cr.ToDateTime(TimeOnly.MinValue)).Days / 365.0:0.#} yr"
-                        : "—";
-                    <tr>
-                        <td class="report-id">@c.RocChargeNumber</td>
-                        <td>@(string.IsNullOrWhiteSpace(c.LatestChargeHolderRaw) ? Html.Raw("<span class=\"mca-badge sev-watch\">Unknown Charge Holder</span>") : Html.Raw(System.Net.WebUtility.HtmlEncode(c.LatestChargeHolderRaw)))</td>
-                        <td class="text-end">@Money(c.CurrentAmount)</td>
-                        <td>@D(c.CreationDate)</td>
-                        <td>@D(c.SatisfactionDate)</td>
-                        <td>@dur</td>
-                        <td><a class="mca-chip" data-bs-toggle="collapse" href="#charge-@c.ChargeId" role="button">Details</a></td>
-                    </tr>
-                    <tr class="collapse" id="charge-@c.ChargeId">
-                        <td colspan="7">@await Html.PartialAsync("Details/_ChargeDrawer", ChargeDrawerViewModel.For(c, Model.AnalysisFindings))</td>
-                    </tr>
+                    var group = satisfiedGroups[gi];
+                    var groupId = $"satisfied-holder-{gi}";
+                    <tbody>
+                        <tr class="mca-holder-group-row">
+                            <td colspan="7">
+                                <a class="mca-holder-group-toggle" data-bs-toggle="collapse" href="#@groupId" role="button" aria-expanded="false" aria-controls="@groupId">
+                                    <i class="bi bi-chevron-right mca-holder-group-caret"></i>
+                                    @if (string.IsNullOrWhiteSpace(group.Key))
+                                    {
+                                        <span class="mca-badge sev-watch">Unknown Charge Holder</span>
+                                    }
+                                    else
+                                    {
+                                        <strong>@HolderGroupLabel(group)</strong>
+                                    }
+                                    <span class="mca-count">@group.Count() charge(s)</span>
+                                </a>
+                            </td>
+                        </tr>
+                    </tbody>
+                    <tbody class="collapse" id="@groupId">
+                    @foreach (var c in group)
+                    {
+                        var dur = (c.CreationDate is { } cr && c.SatisfactionDate is { } sat)
+                            ? $"{(sat.ToDateTime(TimeOnly.MinValue) - cr.ToDateTime(TimeOnly.MinValue)).Days / 365.0:0.#} yr"
+                            : "—";
+                        <tr>
+                            <td class="report-id">@c.RocChargeNumber</td>
+                            <td>@(string.IsNullOrWhiteSpace(c.LatestChargeHolderRaw) ? Html.Raw("<span class=\"mca-badge sev-watch\">Unknown Charge Holder</span>") : Html.Raw(System.Net.WebUtility.HtmlEncode(c.LatestChargeHolderRaw)))</td>
+                            <td class="text-end">@Money(c.CurrentAmount)</td>
+                            <td>@D(c.CreationDate)</td>
+                            <td>@D(c.SatisfactionDate)</td>
+                            <td>@dur</td>
+                            <td><a class="mca-chip" data-bs-toggle="collapse" href="#charge-@c.ChargeId" role="button">Details</a></td>
+                        </tr>
+                        <tr class="collapse" id="charge-@c.ChargeId">
+                            <td colspan="7">@await Html.PartialAsync("Details/_ChargeDrawer", ChargeDrawerViewModel.For(c, Model.AnalysisFindings))</td>
+                        </tr>
+                    }
+                    </tbody>
                 }
-                </tbody>
             </table></div>
         }
         else if (extracted) { <div class="mca-empty"><i class="bi bi-lock"></i><p>No satisfied charges on record.</p></div> }

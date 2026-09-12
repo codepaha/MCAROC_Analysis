@@ -412,6 +412,21 @@ details > summary.mca-json-toggle {
 .mca-badge.sev-critical { background: rgba(220, 38, 38, 0.12); color: #b91c1c; }
 .mca-badge.sev-watch { background: rgba(217, 119, 6, 0.14); color: #b45309; }
 
+/* Charge holder group headers (C5a) */
+.mca-holder-group-row { background: var(--surface-2); }
+.mca-holder-group-row:hover { background: var(--surface-3); }
+.mca-holder-group-toggle {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--text);
+    font-weight: 600;
+}
+.mca-holder-group-toggle:hover { color: var(--brand-strong); }
+.mca-holder-group-toggle:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
+.mca-holder-group-caret { transition: transform .15s ease; color: var(--muted); }
+.mca-holder-group-toggle[aria-expanded="true"] .mca-holder-group-caret { transform: rotate(90deg); }
+
 /* Filter chips + pager (Documents tab, paged list) */
 .mca-filter-chips { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 6px; }
 .mca-filter-chips .mca-chip.active { background: var(--brand); border-color: var(--brand); color: #fff; }
