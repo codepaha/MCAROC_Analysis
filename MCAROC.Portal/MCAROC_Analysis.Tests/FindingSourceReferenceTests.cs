@@ -26,6 +26,78 @@ public class FindingSourceReferenceTests
         Assert.Null(FindingSourceReference.TryParse("{not valid json"));
     }
 
+    // ── Valid JSON, wrong shape — TryGetProperty throws InvalidOperationException on a non-object
+    // element, so these must be guarded explicitly, not just caught as a JsonException. ──
+
+    [Fact]
+    public void Json_array_root_yields_no_reference_not_a_crash()
+    {
+        Assert.Null(FindingSourceReference.TryParse("[]"));
+    }
+
+    [Fact]
+    public void Json_null_literal_yields_no_reference_not_a_crash()
+    {
+        Assert.Null(FindingSourceReference.TryParse("null"));
+    }
+
+    [Fact]
+    public void Json_scalar_number_yields_no_reference_not_a_crash()
+    {
+        Assert.Null(FindingSourceReference.TryParse("5"));
+    }
+
+    [Fact]
+    public void Json_scalar_string_yields_no_reference_not_a_crash()
+    {
+        Assert.Null(FindingSourceReference.TryParse("\"hello\""));
+    }
+
+    [Fact]
+    public void EntityIds_as_a_non_array_value_is_ignored_not_a_crash()
+    {
+        var reference = FindingSourceReference.TryParse("""{"entityType":"Litigation","entityIds":"not-an-array"}""");
+
+        Assert.NotNull(reference);
+        Assert.Empty(reference!.EntityIds);
+        Assert.Equal("Computed value", reference.DisplayText());
+    }
+
+    // ── Numeric overflow inside entityIds/rows — GetInt64/GetInt32 throw FormatException on a value
+    // that doesn't fit; TryGetInt64/TryGetInt32 must be used so an oversized id is dropped, not fatal. ──
+
+    [Fact]
+    public void Entity_id_too_large_for_int64_is_dropped_not_a_crash()
+    {
+        var reference = FindingSourceReference.TryParse(
+            """{"entityType":"Litigation","entityIds":[10,99999999999999999999999999999,11]}""");
+
+        Assert.NotNull(reference);
+        Assert.Equal([10L, 11L], reference!.EntityIds);
+        Assert.Equal("Computed from: 2 Litigation records", reference.DisplayText());
+    }
+
+    [Fact]
+    public void Row_number_too_large_for_int32_is_dropped_not_a_crash()
+    {
+        var reference = FindingSourceReference.TryParse(
+            """{"sheet":"Standalone Financial Data","rows":[14,99999999999,15]}""");
+
+        Assert.NotNull(reference);
+        Assert.Equal([14, 15], reference!.Rows);
+        Assert.Equal("Computed from: Standalone Financial Data, rows 14, 15", reference.DisplayText());
+    }
+
+    [Fact]
+    public void Non_numeric_entries_in_entityIds_are_skipped_not_a_crash()
+    {
+        var reference = FindingSourceReference.TryParse(
+            """{"entityType":"Litigation","entityIds":[10,"oops",null,11]}""");
+
+        Assert.NotNull(reference);
+        Assert.Equal([10L, 11L], reference!.EntityIds);
+    }
+
     [Fact]
     public void Real_shape_entityType_and_entityIds_only_shows_record_count()
     {

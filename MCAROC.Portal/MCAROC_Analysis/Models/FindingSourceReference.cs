@@ -27,19 +27,18 @@ public sealed class FindingSourceReference
             using var doc = JsonDocument.Parse(sourceReferenceJson);
             var root = doc.RootElement;
 
+            // Valid JSON that isn't an object (an array, "null", a bare number/string, ...) has no
+            // properties to read at all — TryGetProperty itself throws InvalidOperationException on a
+            // non-object element, so this must be checked before touching any property.
+            if (root.ValueKind != JsonValueKind.Object) return null;
+
             string? entityType = root.TryGetProperty("entityType", out var et) && et.ValueKind == JsonValueKind.String
                 ? et.GetString() : null;
             string? sheet = root.TryGetProperty("sheet", out var sh) && sh.ValueKind == JsonValueKind.String
                 ? sh.GetString() : null;
 
-            var entityIds = root.TryGetProperty("entityIds", out var eids) && eids.ValueKind == JsonValueKind.Array
-                ? eids.EnumerateArray().Where(e => e.ValueKind == JsonValueKind.Number)
-                    .Select(e => e.GetInt64()).ToList()
-                : [];
-            var rows = root.TryGetProperty("rows", out var rws) && rws.ValueKind == JsonValueKind.Array
-                ? rws.EnumerateArray().Where(e => e.ValueKind == JsonValueKind.Number)
-                    .Select(e => e.GetInt32()).ToList()
-                : [];
+            var entityIds = ExtractIds(root, "entityIds", (JsonElement e, out long v) => e.TryGetInt64(out v));
+            var rows = ExtractIds(root, "rows", (JsonElement e, out int v) => e.TryGetInt32(out v));
 
             if (string.IsNullOrWhiteSpace(entityType) && string.IsNullOrWhiteSpace(sheet)) return null;
 
@@ -49,6 +48,27 @@ public sealed class FindingSourceReference
         {
             return null;
         }
+    }
+
+    private delegate bool TryGet<T>(JsonElement element, out T value);
+
+    /// <summary>Reads a JSON array property into a list of numbers, silently dropping (never throwing on)
+    /// any element that isn't an array, isn't numeric, or numerically overflows the target type — a
+    /// malformed entry should never take down the whole reference.</summary>
+    private static List<T> ExtractIds<T>(JsonElement root, string propertyName, TryGet<T> tryGet)
+    {
+        if (!root.TryGetProperty(propertyName, out var array) || array.ValueKind != JsonValueKind.Array)
+            return [];
+
+        var results = new List<T>();
+        foreach (var element in array.EnumerateArray())
+        {
+            if (element.ValueKind == JsonValueKind.Number && tryGet(element, out var value))
+            {
+                results.Add(value);
+            }
+        }
+        return results;
     }
 
     /// <summary>"Computed value" when nothing identifiable survived parsing — never a guessed citation.</summary>
