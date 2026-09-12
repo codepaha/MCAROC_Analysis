@@ -82,7 +82,7 @@ structured provenance not free text).**
 | #57 D2 | financial trend & leverage metrics (parity-test heavy) | **MERGED** (`cad21f0`) |
 | #59 D4 | shareholding metrics | **MERGED** (`8f83b04`) |
 | #98 K1 | capital reconciliation (paid-up capital vs balance sheet) | **PR #99 open** |
-| #97 | corporate event timeline (new portal tab, bypasses `DossierModel`/`DossierAssembler`) | **CLAIMED**, starting now |
+| #97 | corporate event timeline (new portal tab, bypasses `DossierModel`/`DossierAssembler`) | **PR #101 open** |
 
 ### Antigravity — render-audit + metrics-compute lane (no schema changes)
 Razor + view-model-load only, or pure computation over entities that already exist. **No migrations.**
@@ -100,8 +100,7 @@ Razor + view-model-load only, or pure computation over entities that already exi
 | visual | before/after screenshots on every render PR; keep `E:\Downloads\VTION\ROC_JSON_Reports` current | — | ongoing |
 
 ### Sequencing
-- Claude: D2/#57 **MERGED** → D4/#59 **MERGED** → K1/#98 (**PR #99 open**) → #97 (corporate event
-  timeline, starting now).
+- Claude: D2/#57 **MERGED** → D4/#59 **MERGED** → K1/#98 (**PR #99 open**) → #97 (**PR #101 open**).
 - Antigravity: D6/#61 **MERGED** → D7/#62 **MERGED** → D8/#63 (in progress, per shared-directory branch
   `feature/d8-peer-comparison-metrics`) → D9/D10/D11 (#64–#66) in any order.
 
@@ -173,6 +172,29 @@ Linux subset fonts break PdfPig's ToUnicode → those are `[SkippableFact]`, ski
 ---
 
 ## Log  <!-- newest first. Prefix: NEEDS / BLOCKED / DONE / DECISION / FYI -->
+
+### 2026-09-12 — Claude session (#97 corporate timeline PR open; runner crash note)
+- **DONE — #97 implemented, PR #101 open.** New 8th portal tab, a unified corporate event timeline.
+  Built `CorporateTimelineBuilder` as a standalone DB-driven service — deliberately NOT routed through
+  `DossierModel`/`DossierAssembler`, for two reasons confirmed by reading the actual code before writing
+  any: (1) `DossierModel` never queried `CompanyNameHistory`/`CreditRating`/`FinancialDisputeCase`
+  anywhere (DbSets exist, unused), so it would have silently dropped 3 of the 10 event categories; (2)
+  `DossierAssembler.BuildAsync` hard-gates on a completed `AnalysisRun`, so a `DossierModel`-based
+  timeline would vanish right after every re-ingest until analysis reruns — the builder is keyed only on
+  `LatestCompletedIngestionRunId` instead, proven by a regression test seeding zero `AnalysisRun` rows.
+  Event provenance is a structured `TimelineEventProvenance` (entity type/id, sheet, row) built from each
+  row's own `ExtractedEntityBase` fields, not free-text — also doubles as the same-day ordering
+  tie-breaker. 15 tests incl. a real-COASTAL-fixture exact-shape test (seeded via direct parser calls,
+  no full ingestion pipeline needed for a DB-driven unit test). Two existing test files that call
+  `RequestsController.Details(...)` needed their controller construction updated for the new
+  `CorporateTimelineBuilder` constructor param.
+- **FYI — the MCAROC_Analysis self-hosted runner crashed last night** (`Exiting after unknown error
+  code: 1073807364`, ~2026-09-11 17:17Z per `runner.log`) but was already restarted by ~04:41Z this
+  morning and is confirmed `online`/`busy` via `gh api repos/.../actions/runners` — no action needed as
+  of this writing. Noting the crash here since it's the exact "if it sits queued, run.cmd is down"
+  scenario the infra note above already warns about. Also confirmed: the *other* runner process visible
+  in a plain `tasklist` (`D:\actions-runner`, Windows-service-registered) is for an unrelated repo
+  (`codepaha-PropertyIntelligence`), not this one — don't restart it thinking it's MCAROC's.
 
 ### 2026-09-12 — Claude session (two new owner-requested issues filed and claimed: #97, #98)
 - **DECISION — owner reviewed an external LLM's feature-suggestion list for this portal.** Verdict: no
