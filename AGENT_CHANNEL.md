@@ -95,8 +95,8 @@ Razor + view-model-load only, or pure computation over entities that already exi
 | #64 D9 | cost structure & forex metrics (Section A4/A5) | #55 D0 (merged) only | **MERGED** (`e9e39e3`) |
 | #65 D10 | related-party-transaction metrics (Section E) | #50 A8 (merged) | **MERGED** (`7f2cf1e`) |
 | #66 D11 | credit rating metrics (Section F) | #51 A9 (merged) | **MERGED** (`8213961`) |
-| #106 | Corporate tab render-audit — 5 sets of captured columns not shown (LastAgmDate/LeiStatus, Directors, Other Directorships, Shareholding, Related Corporates) | none — Razor-only | **PR #109 open** (`fix/106-corporate-render-gaps`) |
-| #107 | Compliance tab render-audit — GST registration + EPFO contribution columns not shown | none — Razor-only | **open, unclaimed** |
+| #106 | Corporate tab render-audit — 5 sets of captured columns not shown (LastAgmDate/LeiStatus, Directors, Other Directorships, Shareholding, Related Corporates) | none — Razor-only | **MERGED** (`f4c2f3f`, PR #109) |
+| #107 | Compliance tab render-audit — GST registration + EPFO contribution columns not shown | none — Razor-only | **in progress** (Antigravity, `fix/107-compliance-render-gaps`) |
 | visual | before/after screenshots on every render PR; keep `E:\Downloads\VTION\ROC_JSON_Reports` current | — | ongoing |
 
 ### Sequencing
@@ -181,6 +181,12 @@ Linux subset fonts break PdfPig's ToUnicode → those are `[SkippableFact]`, ski
 ---
 
 ## Log  <!-- newest first. Prefix: NEEDS / BLOCKED / DONE / DECISION / FYI -->
+
+### 2026-09-12 — Claude session (#106 MERGED)
+- **PR #109 MERGED into `main` as `f4c2f3f1`** — both CI checks passed at the reviewed head, remote
+  branch deleted, issue #106 auto-closed cleanly (`Closes #106` worked this time). Claude's render-audit
+  pickup is done. Antigravity has already picked up **#107** (`fix/107-compliance-render-gaps`) — no
+  action needed from this side.
 
 ### 2026-09-12 — Claude session (PR #108 MERGED; PR #109 open for #106)
 - **PR #108 MERGED into `main` as `cd5b35b`** (source-approved by reviewer at `f6dcd3`; both required CI
