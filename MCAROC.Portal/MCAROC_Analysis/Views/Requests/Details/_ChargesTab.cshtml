@@ -130,7 +130,7 @@
                     var secCount = RequestDetailsViewModel.SecurityTypeLabels(c).Count;
                     <tr>
                         <td class="report-id">@c.RocChargeNumber</td>
-                        <td>@c.LatestChargeHolderRaw</td>
+                        <td>@(string.IsNullOrWhiteSpace(c.LatestChargeHolderRaw) ? Html.Raw("<span class=\"mca-badge sev-watch\">Unknown Charge Holder</span>") : Html.Raw(System.Net.WebUtility.HtmlEncode(c.LatestChargeHolderRaw)))</td>
                         <td>@D(c.CreationDate)</td>
                         <td class="text-end">@Money(c.CurrentAmount)</td>
                         <td>@D(c.LatestModificationDate ?? c.CreationDate)</td>
@@ -164,7 +164,7 @@
                         : "—";
                     <tr>
                         <td class="report-id">@c.RocChargeNumber</td>
-                        <td>@c.LatestChargeHolderRaw</td>
+                        <td>@(string.IsNullOrWhiteSpace(c.LatestChargeHolderRaw) ? Html.Raw("<span class=\"mca-badge sev-watch\">Unknown Charge Holder</span>") : Html.Raw(System.Net.WebUtility.HtmlEncode(c.LatestChargeHolderRaw)))</td>
                         <td class="text-end">@Money(c.CurrentAmount)</td>
                         <td>@D(c.CreationDate)</td>
                         <td>@D(c.SatisfactionDate)</td>

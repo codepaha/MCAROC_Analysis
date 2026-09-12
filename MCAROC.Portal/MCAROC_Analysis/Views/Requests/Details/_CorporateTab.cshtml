@@ -6,6 +6,9 @@
     var formerDirectors = Model.Directors.Where(d => d.CessationDate is not null).ToList();
     var relByType = Model.RelatedCorporates.GroupBy(x => x.RelationshipType).ToList();
 
+    static bool IsValidEmailFormat(string address) =>
+        System.Net.Mail.MailAddress.TryCreate(address, out _);
+
     var sections = new (string Label, string Id, int? Count)[]
     {
         ("Overview", "overview", null),
@@ -95,6 +98,7 @@
                             @foreach (var em in Model.CompanyEmails)
                             {
                                 <span>@em.EmailAddress</span>
+                                @if (!IsValidEmailFormat(em.EmailAddress)) { <span class="pi-status-pill pi-status-failed" title="This address is not a valid email format">invalid format</span> }
                                 @if (em.IsReachable == false) { <span class="pi-status-pill pi-status-failed" title="The data source could not reach this address">unreachable</span> }
                                 <br />
                             }

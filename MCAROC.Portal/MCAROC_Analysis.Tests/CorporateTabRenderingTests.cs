@@ -346,4 +346,46 @@ public class CorporateTabRenderingTests
         Assert.Contains("Average board tenure", html);
         Assert.Contains("0 active directors on record", html);
     }
+
+    // ── #114 (C4) — invalid-format email flagged distinctly from "unreachable" ──
+
+    [Fact]
+    public async Task Malformed_email_shows_invalid_format_badge()
+    {
+        var vm = CreateViewModel();
+        vm.CompanyProfile = new CompanyProfile();
+        vm.CompanyEmails = [new CompanyEmail { EmailAddress = "not-an-email", IsReachable = null }];
+
+        var html = await RenderCorporateTabAsync(vm);
+
+        Assert.Contains("invalid format", html);
+        Assert.DoesNotContain("unreachable", html);
+    }
+
+    [Fact]
+    public async Task Well_formed_but_unreachable_email_shows_only_the_unreachable_badge()
+    {
+        var vm = CreateViewModel();
+        vm.CompanyProfile = new CompanyProfile();
+        vm.CompanyEmails = [new CompanyEmail { EmailAddress = "info@example.com", IsReachable = false }];
+
+        var html = await RenderCorporateTabAsync(vm);
+
+        Assert.Contains("unreachable", html);
+        Assert.DoesNotContain("invalid format", html);
+    }
+
+    [Fact]
+    public async Task Well_formed_and_reachable_email_shows_neither_badge()
+    {
+        var vm = CreateViewModel();
+        vm.CompanyProfile = new CompanyProfile();
+        vm.CompanyEmails = [new CompanyEmail { EmailAddress = "info@example.com", IsReachable = true }];
+
+        var html = await RenderCorporateTabAsync(vm);
+
+        Assert.Contains("info@example.com", html);
+        Assert.DoesNotContain("invalid format", html);
+        Assert.DoesNotContain("unreachable", html);
+    }
 }
