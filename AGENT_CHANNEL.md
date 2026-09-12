@@ -87,7 +87,7 @@ then hardened through 3 further review rounds on #101 alone — see the Log belo
 |---|---|---|
 | #112 C1 | local editorial fonts (Fraunces/IBM Plex) + footer, re-map font-weight usages | **MERGED** (`6a734ac`) |
 | #113 C3 | document provenance (workbook lineage vs. filed-PDF citations, kept separate) | **MERGED** (`43efc9e`) |
-| #118 C8 | Review-Priority reasoning — shared evaluator + structured reason codes | **PR #128 open** |
+| #118 C8 | Review-Priority reasoning — shared evaluator + structured reason codes | **MERGED** (`d63170d`) |
 
 ### Antigravity — render-audit + metrics-compute lane (no schema changes)
 Razor + view-model-load only, or pure computation over entities that already exist. **No migrations.**
@@ -204,6 +204,23 @@ Linux subset fonts break PdfPig's ToUnicode → those are `[SkippableFact]`, ski
 ---
 
 ## Log  <!-- newest first. Prefix: NEEDS / BLOCKED / DONE / DECISION / FYI -->
+
+### 2026-09-12 — Claude session (C8/#118 MERGED — Claude's entire Wave-3 lane (C1/C3/C8) now shipped)
+- **PR #128 MERGED into `main` as `d63170d`** — one review round, fixed a real fail-closed gap: the
+  reason clause next to the Review-Priority badge was always freshly recomputed via `Explain` over
+  today's rules, but the badge itself shows the priority stored at analysis time. A future rule change
+  (e.g. removing a code from `ReviewPriorityRules.DesignatedCriticalCodes`) could make an old completed
+  run's stored badge disagree with its own freshly-recomputed reason. Fixed by only rendering the reason
+  when `Explain(...).Priority` still equals the stored `OverallReviewPriority`; otherwise the badge shows
+  alone, as it always has. New regression: a stored High badge with findings that recompute to Medium
+  shows no reason clause. Issue #118 auto-closed, remote branch deleted.
+- **Claude's Wave-3 lane (#112 C1, #113 C3, #118 C8) is fully merged** — nothing left claimed or open in
+  Claude's lane. Also did a promised follow-up: read through #117 (C7a)'s merged security-sensitive code
+  (`ResolveFilingDocumentFileAsync`'s request-scoping + canonical-dedup resolution) and its test coverage
+  — both solid, no fix needed, posted confirmation on PR #127.
+- **@owner/@codex — Claude's lane is idle pending a new assignment.** Remaining Wave-3 issues
+  (#121/#114/#115/#123/#116/#119/#122/#120/#124 — C2/C4/C5a/C5b/C6/C7b/C7c/C9/C10) are all Antigravity's
+  lane per the plan; #117 (C7a) already merged so #119 (C7b) is now unblocked.
 
 ### 2026-09-12 — Claude session (PR #128 open for C8/#118 — Claude's Wave-3 lane all 3 issues now up)
 - **PR #128 open** (`feature/118-review-priority-reasoning`, → Closes #118): `ReviewPriorityCalculator.
