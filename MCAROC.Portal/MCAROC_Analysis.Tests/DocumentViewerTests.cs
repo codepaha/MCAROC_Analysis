@@ -2,9 +2,19 @@ using MCAROC_Analysis.Controllers;
 using MCAROC_Analysis.Data;
 using MCAROC_Analysis.Data.Entities;
 using MCAROC_Analysis.Models;
+using MCAROC_Analysis.Services;
+using MCAROC_Analysis.Services.Analysis;
+using MCAROC_Analysis.Services.Dashboard;
+using MCAROC_Analysis.Services.Dossier;
+using MCAROC_Analysis.Services.McaFilings;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.TestHost;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 
 namespace MCAROC_Analysis.Tests;
 
@@ -24,6 +34,35 @@ public class DocumentViewerTests : IAsyncLifetime
             HttpContext = new DefaultHttpContext()
         };
         return controller;
+    }
+
+    private static async Task<IHost> CreateTestHostAsync()
+    {
+        var host = new HostBuilder()
+            .ConfigureWebHost(webBuilder =>
+            {
+                webBuilder
+                    .UseTestServer()
+                    .ConfigureServices(services =>
+                    {
+                        services.AddDbContext<AppDbContext>(options => options.UseSqlServer(ConnectionString));
+                        services.AddRouting();
+                        services.AddTransient<RequestsController>(sp => NewController(sp.GetRequiredService<AppDbContext>()));
+                        services.AddControllers()
+                            .AddApplicationPart(typeof(RequestsController).Assembly)
+                            .AddControllersAsServices();
+                    })
+                    .Configure(app =>
+                    {
+                        app.UseRouting();
+                        app.UseEndpoints(endpoints =>
+                        {
+                            endpoints.MapControllers();
+                        });
+                    });
+            });
+
+        return await host.StartAsync();
     }
 
     public async Task InitializeAsync()
@@ -439,5 +478,107 @@ public class DocumentViewerTests : IAsyncLifetime
         var wasmDir = Path.Combine(pdfjsDir, "wasm");
         Assert.True(Directory.Exists(wasmDir));
         Assert.True(Directory.GetFiles(wasmDir, "*.wasm").Length >= 1);
+    }
+
+    [Fact]
+    public async Task Http_Range_request_returns_206_PartialContent_with_exact_byte_slice_and_content_range()
+    {
+        await using var db = CreateContext();
+        var (req, batch, filing) = await SeedRequestAndBatchAsync(db);
+
+        // Create a 16-byte PDF file: %PDF-1.7\n12345\n%
+        var pdfBytes = new byte[] { 0x25, 0x50, 0x44, 0x46, 0x2D, 0x31, 0x2E, 0x37, 0x0A, 0x31, 0x32, 0x33, 0x34, 0x35, 0x0A, 0x25 };
+        var tempPath = Path.Combine(Path.GetTempPath(), $"mcaroc_range_{Guid.NewGuid():N}.pdf");
+        await File.WriteAllBytesAsync(tempPath, pdfBytes);
+        _tempFiles.Add(tempPath);
+
+        var doc = new McaFilingDocument
+        {
+            RequestId = req,
+            BatchId = batch,
+            FilingId = filing,
+            OriginalFileName = "range_test.pdf",
+            StoragePath = tempPath,
+            Category = FilingCategory.Compliance
+        };
+        db.McaFilingDocuments.Add(doc);
+        await db.SaveChangesAsync();
+
+        using var host = await CreateTestHostAsync();
+        using var client = host.GetTestClient();
+
+        // 1. Request byte slice 0-4 (first 5 bytes "%PDF-")
+        using var request1 = new HttpRequestMessage(HttpMethod.Get, $"/Requests/{req}/documents/{doc.FilingDocumentId}.pdf");
+        request1.Headers.Range = new System.Net.Http.Headers.RangeHeaderValue(0, 4);
+
+        using var response1 = await client.SendAsync(request1);
+        Assert.Equal(System.Net.HttpStatusCode.PartialContent, response1.StatusCode);
+        Assert.Equal("application/pdf", response1.Content.Headers.ContentType?.MediaType);
+        Assert.NotNull(response1.Content.Headers.ContentRange);
+        Assert.Equal(0, response1.Content.Headers.ContentRange.From);
+        Assert.Equal(4, response1.Content.Headers.ContentRange.To);
+        Assert.Equal(pdfBytes.Length, response1.Content.Headers.ContentRange.Length);
+        Assert.Equal(5, response1.Content.Headers.ContentLength);
+
+        var body1 = await response1.Content.ReadAsByteArrayAsync();
+        Assert.Equal(pdfBytes[..5], body1);
+
+        // Security headers survive result execution
+        Assert.Equal("no-store, private", response1.Headers.CacheControl?.ToString());
+        Assert.Equal("nosniff", response1.Headers.GetValues("X-Content-Type-Options").FirstOrDefault());
+        var cd1 = response1.Content.Headers.ContentDisposition?.ToString()
+            ?? (response1.Headers.TryGetValues("Content-Disposition", out var cdVals) ? cdVals.FirstOrDefault() : null);
+        Assert.Contains("inline", cd1);
+
+        // 2. Request middle slice 5-10
+        using var request2 = new HttpRequestMessage(HttpMethod.Get, $"/Requests/{req}/documents/{doc.FilingDocumentId}.pdf");
+        request2.Headers.Range = new System.Net.Http.Headers.RangeHeaderValue(5, 10);
+
+        using var response2 = await client.SendAsync(request2);
+        Assert.Equal(System.Net.HttpStatusCode.PartialContent, response2.StatusCode);
+        Assert.Equal("bytes 5-10/16", response2.Content.Headers.ContentRange?.ToString());
+        Assert.Equal(6, response2.Content.Headers.ContentLength);
+
+        var body2 = await response2.Content.ReadAsByteArrayAsync();
+        Assert.Equal(pdfBytes[5..11], body2);
+    }
+
+    [Fact]
+    public async Task Http_Full_request_returns_200_OK_with_entire_file_and_headers()
+    {
+        await using var db = CreateContext();
+        var (req, batch, filing) = await SeedRequestAndBatchAsync(db);
+
+        var pdfBytes = new byte[] { 0x25, 0x50, 0x44, 0x46, 0x2D, 0x31, 0x2E, 0x37, 0x0A, 0x25, 0x45, 0x4F, 0x46 };
+        var tempPath = Path.Combine(Path.GetTempPath(), $"mcaroc_full_{Guid.NewGuid():N}.pdf");
+        await File.WriteAllBytesAsync(tempPath, pdfBytes);
+        _tempFiles.Add(tempPath);
+
+        var doc = new McaFilingDocument
+        {
+            RequestId = req,
+            BatchId = batch,
+            FilingId = filing,
+            OriginalFileName = "full_test.pdf",
+            StoragePath = tempPath,
+            Category = FilingCategory.Financial
+        };
+        db.McaFilingDocuments.Add(doc);
+        await db.SaveChangesAsync();
+
+        using var host = await CreateTestHostAsync();
+        using var client = host.GetTestClient();
+
+        using var response = await client.GetAsync($"/Requests/{req}/documents/{doc.FilingDocumentId}.pdf");
+        Assert.Equal(System.Net.HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal("application/pdf", response.Content.Headers.ContentType?.MediaType);
+        Assert.Equal(pdfBytes.Length, response.Content.Headers.ContentLength);
+
+        var body = await response.Content.ReadAsByteArrayAsync();
+        Assert.Equal(pdfBytes, body);
+
+        // Security headers
+        Assert.Equal("no-store, private", response.Headers.CacheControl?.ToString());
+        Assert.Equal("nosniff", response.Headers.GetValues("X-Content-Type-Options").FirstOrDefault());
     }
 }
