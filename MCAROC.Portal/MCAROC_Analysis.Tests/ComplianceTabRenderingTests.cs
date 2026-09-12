@@ -594,6 +594,22 @@ public class ComplianceTabRenderingTests
         Assert.DoesNotContain("<span class=\"badge bg-light text-dark\">-</span>", html);
     }
 
+    // ── #113 (C3) — workbook-lineage provenance column ──
+
+    [Fact]
+    public async Task Gst_registration_row_shows_its_source_sheet_and_row()
+    {
+        var vm = CreateViewModel();
+        vm.GstRegistrations =
+        [
+            new GstRegistration { Gstin = "29AABCC1907E1ZK", SourceSheetName = "GST Registration Details", SourceRowNumber = 2 }
+        ];
+
+        var html = await RenderComplianceTabAsync(vm);
+
+        Assert.Contains("Source: GST Registration Details, row 2", html);
+    }
+
     // ── G25 / #107 — EPFO Contribution table columns ──
 
     [Fact]

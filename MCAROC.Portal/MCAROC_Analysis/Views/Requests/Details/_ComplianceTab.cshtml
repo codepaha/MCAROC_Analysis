@@ -327,7 +327,7 @@
             @if (Model.GstRegistrations.Count > 0)
             {
                 <div class="pi-table-wrap"><table class="pi-results-table">
-                    <thead><tr><th>GSTIN</th><th>Trade Name</th><th>Taxpayer Type</th><th>State</th><th>Jurisdiction</th><th>Status</th><th>Registered</th><th>Cancelled</th><th>Nature of Business</th><th>Flags</th><th class="text-end">Returns on file</th></tr></thead>
+                    <thead><tr><th>GSTIN</th><th>Trade Name</th><th>Taxpayer Type</th><th>State</th><th>Jurisdiction</th><th>Status</th><th>Registered</th><th>Cancelled</th><th>Nature of Business</th><th>Flags</th><th class="text-end">Returns on file</th><th>Source</th></tr></thead>
                     <tbody>
                     @foreach (var g in Model.GstRegistrations)
                     {
@@ -355,6 +355,7 @@
                                 }
                             </td>
                             <td class="text-end">@g.Filings.Count</td>
+                            <td>@await Html.PartialAsync("Details/_WorkbookProvenance", g)</td>
                         </tr>
                     }
                     </tbody>

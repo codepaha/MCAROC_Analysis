@@ -1,0 +1,13 @@
+@* Workbook-lineage provenance for a single directly-parsed entity row (ExtractedEntityBase). Never used
+   for a computed/aggregate value (see _AiAnalysisTab.cshtml's FindingSourceReference) or an AI/PDF
+   citation (see _DocumentsTab.cshtml) — those are different provenance sources and must stay visually
+   and textually distinct from this one. *@
+@model MCAROC_Analysis.Data.Entities.ExtractedEntityBase
+@if (!string.IsNullOrWhiteSpace(Model.SourceSheetName))
+{
+    <small class="text-muted mca-provenance">Source: @Model.SourceSheetName@(Model.SourceRowNumber is { } row ? $", row {row}" : "")</small>
+}
+else
+{
+    <small class="text-muted mca-provenance">Source not recorded</small>
+}

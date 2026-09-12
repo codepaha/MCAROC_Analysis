@@ -133,8 +133,27 @@
                                 Sources:
                                 @foreach (var cit in citations.EnumerateArray())
                                 {
+                                    var sourceType = cit.TryGetProperty("SourceType", out var st) ? st.GetString() : null;
                                     var label = cit.TryGetProperty("Label", out var l) ? l.GetString() : null;
-                                    <span>&nbsp;@label</span>
+                                    string display;
+                                    if (sourceType == "DocumentChunk"
+                                        && cit.TryGetProperty("DocumentName", out var dn) && dn.ValueKind == System.Text.Json.JsonValueKind.String
+                                        && cit.TryGetProperty("PageNumber", out var pn) && pn.ValueKind == System.Text.Json.JsonValueKind.Number)
+                                    {
+                                        @* Filed-PDF citation — a real page in an uploaded MCA filing, never a workbook row. *@
+                                        display = $"Source: {dn.GetString()}, page {pn.GetInt32()}";
+                                    }
+                                    else if (sourceType == "StructuredFact"
+                                        && cit.TryGetProperty("EntityType", out var et) && et.ValueKind == System.Text.Json.JsonValueKind.String)
+                                    {
+                                        @* Parsed workbook data, not a PDF page — must not claim a page number it doesn't have. *@
+                                        display = $"Computed from parsed data ({et.GetString()})";
+                                    }
+                                    else
+                                    {
+                                        display = label ?? "Source not recorded";
+                                    }
+                                    <span class="mca-citation">&nbsp;@display</span>
                                 }
                             </div>
                         }

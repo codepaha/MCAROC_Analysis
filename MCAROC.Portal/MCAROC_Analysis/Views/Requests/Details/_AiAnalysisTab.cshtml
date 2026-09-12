@@ -122,6 +122,9 @@ else
                             @if (!string.IsNullOrEmpty(f.WhyThisMatters)) { <p><span class="mca-finding-label">Why this matters:</span> @f.WhyThisMatters</p> }
                             @if (!string.IsNullOrEmpty(f.RecommendedReview)) { <p><span class="mca-finding-label">Recommended review:</span> @f.RecommendedReview</p> }
                             @if (related.Count > 0) { <div class="mca-related">Related: @string.Join(", ", related)</div> }
+                            <div class="text-muted mt-1">
+                                <small>@(FindingSourceReference.TryParse(f.SourceReferenceJson)?.DisplayText() ?? "Computed value")</small>
+                            </div>
                         </div>
                     }
                 }
