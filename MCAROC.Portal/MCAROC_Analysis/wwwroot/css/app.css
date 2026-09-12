@@ -136,6 +136,13 @@ body {
 a { color: var(--brand); text-decoration: none; }
 a:hover { color: var(--brand-strong); }
 
+/* Cap every native/Bootstrap "bold" element at the heaviest weight actually bundled (600) — otherwise
+   <b>/<strong>/<th> compute to the browser's default "bolder" (700) with no matching @font-face, and
+   Bootstrap's own .fw-bold/.fw-bolder utilities request 700 outright. The !important pair is required
+   only to beat Bootstrap's own !important on those two utility classes. */
+b, strong, th { font-weight: 600; }
+.fw-bold, .fw-bolder { font-weight: 600 !important; }
+
 ::selection { background: rgba(58, 93, 153, 0.16); }
 
 /* Scrollbars */

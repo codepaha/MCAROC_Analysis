@@ -4,7 +4,7 @@
     var action = (ViewContext.RouteData.Values["action"]?.ToString() ?? "").ToLowerInvariant();
     string Active(string ctrl, string? act = null) =>
         controller == ctrl.ToLowerInvariant() && (act is null || action == act.ToLowerInvariant()) ? "active" : "";
-    var appVersion = System.Reflection.Assembly.GetEntryAssembly()?.GetName().Version?.ToString(3) ?? "dev";
+    var appVersion = MCAROC_Analysis.Models.BuildInfo.Version;
 }
 <!DOCTYPE html>
 <html lang="en">
