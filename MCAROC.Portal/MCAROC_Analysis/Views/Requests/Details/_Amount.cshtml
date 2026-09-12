@@ -1,0 +1,16 @@
+@* Typed amount renderer (#123, C5b) — the only place a crore amount's markup is produced, so the
+   Crore/Lakh/₹ client toggle has exactly one selector (`[data-amount-crore]`) to find every value. The
+   visible fallback text always calls DetailsFormat.Money() directly (never a second, parallel
+   implementation of "₹{v:N2} Cr") so it can never drift from what every other unwrapped Money() call in
+   this app renders, under whatever culture the server happens to run — the data-amount-crore attribute
+   is the one deliberate exception, explicitly InvariantCulture, because it's a new machine-only value a
+   BigInt parser must be able to rely on regardless of server locale. *@
+@using System.Globalization
+@model AmountViewModel
+@* No leading/trailing whitespace around either <span> — this partial is invoked inline (inside
+   <strong>/<td>/beside a "*" marker) at all 43 call sites, so any stray whitespace here would show up
+   as an extra space or line break at every one of them. *@
+@if (Model.ValueCrore is null)
+{<span class="mca-amount">@DetailsFormat.Or(null)</span>}
+else
+{<span class="mca-amount" data-amount-crore="@Model.ValueCrore.Value.ToString(CultureInfo.InvariantCulture)">@DetailsFormat.Money(Model.ValueCrore)</span>}

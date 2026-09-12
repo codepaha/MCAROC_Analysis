@@ -64,6 +64,14 @@
                     <a href="/Requests/@r.RequestId/dossier?variant=source" class="btn btn-sm btn-outline-secondary ms-1" title="Verbatim source record only — no synthesised analysis">Source record</a>
                 </div>
             }
+            @* Crore/Lakh/₹ amount unit toggle (#123) — only this page renders any amount, so the
+               control lives here, not in _Layout.cshtml. The dossier PDF above always shows Crore
+               regardless of this toggle: it's a fixed generated document, not the live page. *@
+            <div class="mca-unit-toggle mt-1" role="radiogroup" aria-label="Amount unit">
+                <label><input type="radio" name="mca-amount-unit" value="crore" checked><span>Cr</span></label>
+                <label><input type="radio" name="mca-amount-unit" value="lakh"><span>Lakh</span></label>
+                <label><input type="radio" name="mca-amount-unit" value="rupee"><span>₹</span></label>
+            </div>
         </div>
     </div>
 
@@ -132,6 +140,7 @@
 @await Html.PartialAsync("Details/_ChatPanel", Model)
 
 @section Scripts {
+    <script type="module" src="~/js/amount-unit.js"></script>
     <script>
         (function () {
             var reqId = '@r.RequestId';

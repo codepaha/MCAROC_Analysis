@@ -46,8 +46,8 @@
                 <div><dt>Compliance Status</dt><dd>@Or(cp.ComplianceStatus)</dd></div>
                 <div><dt>Incorporated</dt><dd>@D(cp.IncorporationDate)</dd></div>
                 <div><dt>Date of Last AGM</dt><dd>@D(cp.LastAgmDate)</dd></div>
-                <div><dt>Authorised Capital</dt><dd>@Money(cp.AuthorisedCapital)</dd></div>
-                <div><dt>Paid-up Capital</dt><dd>@Money(cp.PaidUpCapital)</dd></div>
+                <div><dt>Authorised Capital</dt><dd><partial name="Details/_Amount" model="new AmountViewModel(cp.AuthorisedCapital)" /></dd></div>
+                <div><dt>Paid-up Capital</dt><dd><partial name="Details/_Amount" model="new AmountViewModel(cp.PaidUpCapital)" /></dd></div>
                 <div><dt>Type of Entity</dt><dd>@Or(cp.EntityType)</dd></div>
                 <div><dt>Listing Status</dt><dd>@Or(cp.ListingStatus)</dd></div>
                 <div><dt>LEI Status</dt><dd>@Or(cp.LeiStatus)</dd></div>
@@ -55,7 +55,7 @@
                 <div>
                     <dt>MCA Sum of Charges</dt>
                     <dd>
-                        @Money(cp.McaSumOfChargesCrore)
+                        <partial name="Details/_Amount" model="new AmountViewModel(cp.McaSumOfChargesCrore)" />
                         @{
                             var openCharges = Model.Charges.Where(DossierComputations.IsOpenCharge).ToList();
                             var anyMissingAmounts = openCharges.Any(c => c.CurrentAmount is null);
@@ -79,8 +79,8 @@
                                 var compCr = openCharges.Sum(c => c.CurrentAmount!.Value);
                                 if (Math.Abs(mcaCr - compCr) > 0.05m)
                                 {
-                                    <span class="mca-badge sev-watch ms-1" title="MCA stated sum of charges (@Money(mcaCr)) differs from computed open charges total (@Money(compCr))">
-                                        Divergence (Computed Open: @Money(compCr))
+                                    <span class="mca-badge sev-watch ms-1" title="MCA-stated sum of charges differs from the computed open-charges total">
+                                        Divergence (Computed Open: <partial name="Details/_Amount" model="new AmountViewModel(compCr)" />)
                                     </span>
                                 }
                             }
@@ -273,7 +273,7 @@
             @if (Model.DirectorAssociations.Count > 0)
             {
                 <div class="pi-table-wrap"><table class="pi-results-table">
-                    <thead><tr><th>Director</th><th>Connected Company</th><th>CIN</th><th>Type</th><th class="text-end">Paid-up (Cr)</th><th class="text-end">Charges (Cr)</th><th>Status</th><th>Active Compliance</th><th>Incorporated</th><th>Appointed</th><th>Ceased</th></tr></thead>
+                    <thead><tr><th>Director</th><th>Connected Company</th><th>CIN</th><th>Type</th><th class="text-end">Paid-up (<span data-amount-unit-label="suffix">Cr</span>)</th><th class="text-end">Charges (<span data-amount-unit-label="suffix">Cr</span>)</th><th>Status</th><th>Active Compliance</th><th>Incorporated</th><th>Appointed</th><th>Ceased</th></tr></thead>
                     <tbody>
                     @foreach (var a in Model.DirectorAssociations.OrderBy(a => a.ConnectedCompanyRaw))
                     {
@@ -282,8 +282,8 @@
                             <td>@a.ConnectedCompanyRaw</td>
                             <td class="report-id">@Or(a.ConnectedCin)</td>
                             <td>@Or(a.CorporateType)</td>
-                            <td class="text-end">@Num(a.PaidUpCapitalCrore)</td>
-                            <td class="text-end">@Num(a.SumOfChargesCrore)</td>
+                            <td class="text-end"><partial name="Details/_Amount" model="new AmountViewModel(a.PaidUpCapitalCrore)" /></td>
+                            <td class="text-end"><partial name="Details/_Amount" model="new AmountViewModel(a.SumOfChargesCrore)" /></td>
                             <td>@Or(a.CompanyStatus)</td>
                             <td>@Or(a.ActiveCompliance)</td>
                             <td>@D(a.DateOfIncorporation)</td>
@@ -345,7 +345,7 @@
             @if (Model.Shareholdings.Count > 0)
             {
                 <div class="pi-table-wrap"><table class="pi-results-table">
-                    <thead><tr><th>Year</th><th>Shareholder</th><th>Type</th><th>Designation</th><th>Promoter</th><th class="text-end">% Held</th><th class="text-end">Shares</th><th>Status</th><th>Location</th><th class="text-end">Paid-up (Cr)</th><th class="text-end">Charges (Cr)</th><th>Incorporated</th><th>Source</th></tr></thead>
+                    <thead><tr><th>Year</th><th>Shareholder</th><th>Type</th><th>Designation</th><th>Promoter</th><th class="text-end">% Held</th><th class="text-end">Shares</th><th>Status</th><th>Location</th><th class="text-end">Paid-up (<span data-amount-unit-label="suffix">Cr</span>)</th><th class="text-end">Charges (<span data-amount-unit-label="suffix">Cr</span>)</th><th>Incorporated</th><th>Source</th></tr></thead>
                     <tbody>
                     @foreach (var s in Model.Shareholdings)
                     {
@@ -365,8 +365,8 @@
                                 else { @Or(s.CompanyStatus ?? s.ActiveCompliance) }
                             </td>
                             <td>@Or(s.Location)</td>
-                            <td class="text-end">@Num(s.PaidUpCapitalCrore)</td>
-                            <td class="text-end">@Num(s.SumOfChargesCrore)</td>
+                            <td class="text-end"><partial name="Details/_Amount" model="new AmountViewModel(s.PaidUpCapitalCrore)" /></td>
+                            <td class="text-end"><partial name="Details/_Amount" model="new AmountViewModel(s.SumOfChargesCrore)" /></td>
                             <td>@D(s.DateOfIncorporation)</td>
                             <td>@s.SourceType</td>
                         </tr>
@@ -423,7 +423,7 @@
                 <div class="mca-section">
                     <h3>@grp.Key <span class="mca-count">@grp.Count()</span></h3>
                     <div class="pi-table-wrap"><table class="pi-results-table">
-                        <thead><tr><th>FY Ending</th><th>Entity</th><th>CIN</th><th>Type</th><th class="text-end">Holding %</th><th class="text-end">Paid-up (Cr)</th><th class="text-end">Charges (Cr)</th><th>Status</th><th>Location</th><th>Compliance</th><th>Incorporated</th></tr></thead>
+                        <thead><tr><th>FY Ending</th><th>Entity</th><th>CIN</th><th>Type</th><th class="text-end">Holding %</th><th class="text-end">Paid-up (<span data-amount-unit-label="suffix">Cr</span>)</th><th class="text-end">Charges (<span data-amount-unit-label="suffix">Cr</span>)</th><th>Status</th><th>Location</th><th>Compliance</th><th>Incorporated</th></tr></thead>
                         <tbody>
                         @foreach (var rc in grp.OrderBy(x => x.EntityNameNormalized))
                         {
@@ -436,8 +436,8 @@
                                 <td class="report-id">@Or(rc.Cin)</td>
                                 <td>@Or(rc.CorporateType)</td>
                                 <td class="text-end">@Num(rc.HoldingPercent)</td>
-                                <td class="text-end">@Num(rc.PaidUpCapitalCrore)</td>
-                                <td class="text-end">@Num(rc.SumOfChargesCrore)</td>
+                                <td class="text-end"><partial name="Details/_Amount" model="new AmountViewModel(rc.PaidUpCapitalCrore)" /></td>
+                                <td class="text-end"><partial name="Details/_Amount" model="new AmountViewModel(rc.SumOfChargesCrore)" /></td>
                                 <td>@Or(rc.CompanyStatus)</td>
                                 <td>@Or(rc.Location)</td>
                                 <td>@Or(rc.ActiveCompliance)</td>
@@ -459,7 +459,7 @@
             @if (Model.RelatedPartyTransactions.Count > 0)
             {
                 <div class="pi-table-wrap"><table class="pi-results-table">
-                    <thead><tr><th>FY Ending</th><th>Entity</th><th>Type</th><th>Relationship</th><th>Transaction Type</th><th class="text-end">Amount (Cr)</th></tr></thead>
+                    <thead><tr><th>FY Ending</th><th>Entity</th><th>Type</th><th>Relationship</th><th>Transaction Type</th><th class="text-end">Amount (<span data-amount-unit-label="suffix">Cr</span>)</th></tr></thead>
                     <tbody>
                     @foreach (var rpt in Model.RelatedPartyTransactions)
                     {
@@ -469,7 +469,7 @@
                             <td>@Or(rpt.EntityType)</td>
                             <td>@Or(rpt.RelationshipRaw)</td>
                             <td>@Or(rpt.TransactionType)</td>
-                            <td class="text-end">@Num(rpt.AmountCrore)</td>
+                            <td class="text-end"><partial name="Details/_Amount" model="new AmountViewModel(rpt.AmountCrore)" /></td>
                         </tr>
                     }
                     </tbody>
@@ -486,7 +486,7 @@
             @if (Model.SecurityAllotments.Count > 0)
             {
                 <div class="pi-table-wrap"><table class="pi-results-table">
-                    <thead><tr><th>Date</th><th>Type</th><th>Instrument</th><th class="text-end">Amount (Cr)</th><th class="text-end">Count</th><th class="text-end">Nominal / Share</th><th class="text-end">Premium / Share</th></tr></thead>
+                    <thead><tr><th>Date</th><th>Type</th><th>Instrument</th><th class="text-end">Amount (<span data-amount-unit-label="suffix">Cr</span>)</th><th class="text-end">Count</th><th class="text-end">Nominal / Share</th><th class="text-end">Premium / Share</th></tr></thead>
                     <tbody>
                     @foreach (var a in Model.SecurityAllotments)
                     {
@@ -494,7 +494,7 @@
                             <td>@D(a.AllotmentDate)</td>
                             <td>@Or(a.AllotmentType)</td>
                             <td>@Or(a.InstrumentType)</td>
-                            <td class="text-end">@Num(a.AmountCrore)</td>
+                            <td class="text-end"><partial name="Details/_Amount" model="new AmountViewModel(a.AmountCrore)" /></td>
                             <td class="text-end">@(a.NumberOfSecurities?.ToString("N0") ?? "—")</td>
                             <td class="text-end">@Num(a.NominalValuePerShare)</td>
                             <td class="text-end">@Num(a.PremiumValuePerShare)</td>

@@ -1,6 +1,6 @@
 @model FinancialStatementViewModel
 @{
-    void RenderTable(FinancialStatementViewData data)
+    async Task RenderTable(FinancialStatementViewData data)
     {
         var years = data.Years;
         <div class="pi-table-wrap">
@@ -26,7 +26,14 @@
                             <td class="text-end @(line.IsSubtotal ? "fw-semibold" : "")">
                                 @if (num is not null)
                                 {
-                                    @Num(num)
+                                    @if (data.Unit == "₹ Crore")
+                                    {
+                                        <partial name="Details/_Amount" model="new AmountViewModel(num)" />
+                                    }
+                                    else
+                                    {
+                                        @Num(num)
+                                    }
                                     @if (inferred)
                                     {
                                         <span class="badge bg-warning text-dark ms-1" title="Year inferred by column alignment">*</span>
@@ -80,7 +87,7 @@ else
     <div data-basis-panel="@groupId" data-basis="Standalone">
         @if (Model.Standalone.HasData)
         {
-            RenderTable(Model.Standalone);
+            await RenderTable(Model.Standalone);
         }
         else
         {
@@ -92,7 +99,7 @@ else
         <div data-basis-panel="@groupId" data-basis="Consolidated" hidden>
             @if (Model.Consolidated.HasData)
             {
-                RenderTable(Model.Consolidated);
+                await RenderTable(Model.Consolidated);
             }
             else
             {
@@ -101,7 +108,11 @@ else
         </div>
     }
     <p class="text-muted mt-2 mb-0">
-        @if (!string.IsNullOrEmpty(Model.Standalone.Unit))
+        @if (Model.Standalone.Unit == "₹ Crore")
+        {
+            <span>All figures in <span data-amount-unit-label="long">₹ Crore</span>.</span>
+        }
+        else if (!string.IsNullOrEmpty(Model.Standalone.Unit))
         {
             <span>All figures in @Model.Standalone.Unit.</span>
         }

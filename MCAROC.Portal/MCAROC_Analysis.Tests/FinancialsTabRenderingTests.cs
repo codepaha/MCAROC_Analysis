@@ -179,5 +179,41 @@ public class FinancialsTabRenderingTests
         Assert.DoesNotContain("Rank in source closest-peer list", summarySection);
         Assert.DoesNotContain("EBITDA Margin (%) vs peer median", summarySection);
     }
+
+    // ── #123 (C5b) — the amount-unit toggle applies to P&L/BS/CF (₹ Crore), never to Ratios ──
+
+    [Fact]
+    public async Task Pnl_panel_amounts_are_toggle_aware_but_the_ratios_panel_never_is()
+    {
+        var vm = CreateViewModel();
+        vm.FinancialYears = [new FinancialYearData { FinancialYear = 2026, Revenue = 123.45m }];
+        vm.FinancialFacts =
+        [
+            new FinancialFact
+            {
+                Basis = FinancialBasis.Standalone,
+                Section = FinancialStatementSection.Ratios,
+                Label = "Debt / Equity",
+                FinancialYear = 2026,
+                NumericValue = 1.5m,
+                RawValue = "1.5"
+            }
+        ];
+
+        var html = await RenderFinancialsTabAsync(vm);
+
+        var plIdx = html.IndexOf("id=\"sec-financials-pl\"", StringComparison.Ordinal);
+        var ratiosIdx = html.IndexOf("id=\"sec-financials-ratios\"", StringComparison.Ordinal);
+        Assert.True(plIdx >= 0 && ratiosIdx >= 0 && plIdx < ratiosIdx);
+
+        var plSection = html[plIdx..ratiosIdx];
+        var ratiosSection = html[ratiosIdx..];
+
+        Assert.Contains("data-amount-crore", plSection);
+        Assert.Contains("₹123.45 Cr", plSection);
+        Assert.DoesNotContain("data-amount-crore", ratiosSection);
+        Assert.Contains("Debt / Equity", ratiosSection);
+        Assert.Contains("1.50", ratiosSection); // Num()'s own N2 formatting, no ₹/Cr decoration
+    }
 }
 
