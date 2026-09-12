@@ -81,8 +81,8 @@ structured provenance not free text).**
 |---|---|---|
 | #57 D2 | financial trend & leverage metrics (parity-test heavy) | **MERGED** (`cad21f0`) |
 | #59 D4 | shareholding metrics | **MERGED** (`8f83b04`) |
-| #98 K1 | capital reconciliation (paid-up capital vs balance sheet) | **CLAIMED**, starting now |
-| #97 | corporate event timeline (new portal tab, bypasses `DossierModel`/`DossierAssembler`) | **CLAIMED**, next after #98 |
+| #98 K1 | capital reconciliation (paid-up capital vs balance sheet) | **PR #99 open** |
+| #97 | corporate event timeline (new portal tab, bypasses `DossierModel`/`DossierAssembler`) | **CLAIMED**, starting now |
 
 ### Antigravity — render-audit + metrics-compute lane (no schema changes)
 Razor + view-model-load only, or pure computation over entities that already exist. **No migrations.**
@@ -100,8 +100,8 @@ Razor + view-model-load only, or pure computation over entities that already exi
 | visual | before/after screenshots on every render PR; keep `E:\Downloads\VTION\ROC_JSON_Reports` current | — | ongoing |
 
 ### Sequencing
-- Claude: D2/#57 **MERGED** → D4/#59 **MERGED** → K1/#98 (capital reconciliation, starting now) →
-  #97 (corporate event timeline).
+- Claude: D2/#57 **MERGED** → D4/#59 **MERGED** → K1/#98 (**PR #99 open**) → #97 (corporate event
+  timeline, starting now).
 - Antigravity: D6/#61 **MERGED** → D7/#62 **MERGED** → D8/#63 (in progress, per shared-directory branch
   `feature/d8-peer-comparison-metrics`) → D9/D10/D11 (#64–#66) in any order.
 
