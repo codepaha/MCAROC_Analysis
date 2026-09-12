@@ -1,8 +1,10 @@
+@inject Microsoft.Extensions.Hosting.IHostEnvironment HostEnvironment
 @{
     var controller = (ViewContext.RouteData.Values["controller"]?.ToString() ?? "").ToLowerInvariant();
     var action = (ViewContext.RouteData.Values["action"]?.ToString() ?? "").ToLowerInvariant();
     string Active(string ctrl, string? act = null) =>
         controller == ctrl.ToLowerInvariant() && (act is null || action == act.ToLowerInvariant()) ? "active" : "";
+    var appVersion = MCAROC_Analysis.Models.BuildInfo.Version;
 }
 <!DOCTYPE html>
 <html lang="en">
@@ -95,6 +97,13 @@
                     &copy; @DateTime.UtcNow.Year Cubictree (a Gaba Projects Private Limited company)
                     &nbsp;&bull;&nbsp; CIN: U45201DL2012PTC239728
                     &nbsp;&bull;&nbsp; <a href="https://www.cubictree.com" rel="noopener" target="_blank">www.cubictree.com</a>
+                </span>
+                <span class="pi-app-footer-meta">
+                    v@(appVersion)
+                    @if (!HostEnvironment.IsProduction())
+                    {
+                        <text>&nbsp;&bull;&nbsp; @HostEnvironment.EnvironmentName</text>
+                    }
                 </span>
             </footer>
         </div>

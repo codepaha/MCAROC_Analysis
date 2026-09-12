@@ -4,7 +4,19 @@
    Light + dark themes via [data-theme]. Reuses existing .pi-* classes.
    ===================================================================== */
 
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500&display=swap');
+/* Local editorial fonts — the same files QuestPDF registers for the client dossier PDF
+   (Services/Dossier/DossierFonts.cs), so the portal and the PDF are pixel-matched with zero
+   external network dependency. Only Regular/Medium/SemiBold ship for Fraunces and IBM Plex Sans,
+   and only Regular/Medium for IBM Plex Mono — every font-weight declaration below is capped at
+   600 so the browser never has to synthesize a bold that doesn't exist in these files. */
+@font-face { font-family: 'Fraunces'; src: url('../fonts/Fraunces-Regular.ttf') format('truetype'); font-weight: 400; font-style: normal; font-display: swap; }
+@font-face { font-family: 'Fraunces'; src: url('../fonts/Fraunces-Medium.ttf') format('truetype'); font-weight: 500; font-style: normal; font-display: swap; }
+@font-face { font-family: 'Fraunces'; src: url('../fonts/Fraunces-SemiBold.ttf') format('truetype'); font-weight: 600; font-style: normal; font-display: swap; }
+@font-face { font-family: 'IBM Plex Sans'; src: url('../fonts/IBMPlexSans-Regular.ttf') format('truetype'); font-weight: 400; font-style: normal; font-display: swap; }
+@font-face { font-family: 'IBM Plex Sans'; src: url('../fonts/IBMPlexSans-Medium.ttf') format('truetype'); font-weight: 500; font-style: normal; font-display: swap; }
+@font-face { font-family: 'IBM Plex Sans'; src: url('../fonts/IBMPlexSans-SemiBold.ttf') format('truetype'); font-weight: 600; font-style: normal; font-display: swap; }
+@font-face { font-family: 'IBM Plex Mono'; src: url('../fonts/IBMPlexMono-Regular.ttf') format('truetype'); font-weight: 400; font-style: normal; font-display: swap; }
+@font-face { font-family: 'IBM Plex Mono'; src: url('../fonts/IBMPlexMono-Medium.ttf') format('truetype'); font-weight: 500; font-style: normal; font-display: swap; }
 
 /* ---------------------------------------------------------------------
    1. Design tokens
@@ -61,9 +73,11 @@
     --r-lg: 12px;
     --r-pill: 999px;
 
-    /* Type — Manrope: soft, calm, professional humanist sans */
-    --font: 'Inter', Aptos, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-    --num: 'Inter', Aptos, sans-serif;                  /* big stat numbers (tabular) */
+    /* Type — the same editorial pairing as the client dossier PDF (DossierTheme.cs): Fraunces for
+       display/headings, IBM Plex Sans for body, IBM Plex Mono for identifiers/data. */
+    --font: 'IBM Plex Sans', Aptos, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    --font-display: 'Fraunces', Georgia, 'Times New Roman', serif;  /* headings, kickers, page titles */
+    --num: 'IBM Plex Sans', Aptos, sans-serif;          /* big stat numbers (tabular) */
     --mono: 'IBM Plex Mono', Consolas, monospace;  /* IDs / codes */
 
     --ring: 0 0 0 3px rgba(47, 125, 246, 0.18);
@@ -122,6 +136,13 @@ body {
 a { color: var(--brand); text-decoration: none; }
 a:hover { color: var(--brand-strong); }
 
+/* Cap every native/Bootstrap "bold" element at the heaviest weight actually bundled (600) — otherwise
+   <b>/<strong>/<th> compute to the browser's default "bolder" (700) with no matching @font-face, and
+   Bootstrap's own .fw-bold/.fw-bolder utilities request 700 outright. The !important pair is required
+   only to beat Bootstrap's own !important on those two utility classes. */
+b, strong, th { font-weight: 600; }
+.fw-bold, .fw-bolder { font-weight: 600 !important; }
+
 ::selection { background: rgba(58, 93, 153, 0.16); }
 
 /* Scrollbars */
@@ -174,7 +195,7 @@ a:hover { color: var(--brand-strong); }
     background: #fff;
     color: #1d4ed8;
     font-size: 15px;
-    font-weight: 800;
+    font-weight: 600;
     letter-spacing: -0.04em;
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
 }
@@ -185,7 +206,7 @@ a:hover { color: var(--brand-strong); }
     object-fit: contain;
 }
 
-.pi-side-brand strong { display: block; color: #fff; font-size: 15.5px; font-weight: 700; line-height: 1.2; }
+.pi-side-brand strong { display: block; color: #fff; font-size: 15.5px; font-weight: 600; line-height: 1.2; }
 .pi-side-brand small { display: block; margin-top: 2px; color: #7d92b4; font-size: 11px; font-weight: 600; letter-spacing: 0.3px; }
 
 .pi-side-nav {
@@ -259,7 +280,7 @@ a:hover { color: var(--brand-strong); }
     background: transparent;
     color: #93acce;
     font-size: 14px;
-    font-weight: 700;
+    font-weight: 600;
     transition: color .16s ease, background .16s ease;
 }
 .pi-side-link:hover .pi-side-icon,
@@ -300,7 +321,7 @@ a:hover { color: var(--brand-strong); }
 
 .pi-topbar-titles { display: flex; flex-direction: column; min-width: 0; }
 .pi-topbar-titles span { color: var(--muted); font-size: 12px; font-weight: 500; }
-.pi-topbar-titles strong { color: var(--text); font-size: 17px; font-weight: 700; letter-spacing: -0.01em; }
+.pi-topbar-titles strong { color: var(--text); font-family: var(--font-display); font-size: 17px; font-weight: 600; letter-spacing: -0.01em; }
 
 /* Command bar — the AI-first front door */
 .pi-cmd {
@@ -412,7 +433,7 @@ a:hover { color: var(--brand-strong); }
 }
 .pi-cmd-modal-input::placeholder { color: var(--muted); }
 .pi-cmd-hints { padding: 10px; max-height: 46vh; overflow-y: auto; }
-.pi-cmd-hint-label { padding: 8px 12px 4px; color: var(--muted); font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.6px; }
+.pi-cmd-hint-label { padding: 8px 12px 4px; color: var(--muted); font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.6px; }
 .pi-cmd-item {
     display: flex;
     align-items: center;
@@ -441,15 +462,16 @@ a:hover { color: var(--brand-strong); }
 .pi-kicker, .section-label {
     color: var(--brand);
     font-size: 12px;
-    font-weight: 700;
+    font-weight: 600;
     letter-spacing: 0.8px;
     text-transform: uppercase;
 }
 .pi-page-head h1 {
     margin: 6px 0 6px;
     color: var(--text);
+    font-family: var(--font-display);
     font-size: 30px;
-    font-weight: 750;
+    font-weight: 600;
     line-height: 1.15;
     letter-spacing: -0.02em;
 }
@@ -466,7 +488,7 @@ a:hover { color: var(--brand-strong); }
     box-shadow: var(--shadow-xs);
 }
 .pi-page-status span { color: var(--muted); font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.4px; }
-.pi-page-status strong { margin-top: 4px; color: var(--brand); font-size: 26px; font-family: var(--num); font-weight: 700; letter-spacing: -0.02em; }
+.pi-page-status strong { margin-top: 4px; color: var(--brand); font-size: 26px; font-family: var(--num); font-weight: 600; letter-spacing: -0.02em; }
 
 /* ---------------------------------------------------------------------
    7. Module switch (segmented)
@@ -519,13 +541,14 @@ a:hover { color: var(--brand-strong); }
     background: var(--brand-soft);
     color: var(--brand);
     font-size: 14px;
-    font-weight: 700;
+    font-weight: 600;
 }
 .pi-section-title h2, .pi-panel-heading h2, .pi-filter-title {
     margin: 0;
     color: var(--text);
+    font-family: var(--font-display);
     font-size: 19px;
-    font-weight: 700;
+    font-weight: 600;
     letter-spacing: -0.01em;
 }
 .pi-section-title p, .pi-panel-heading p { margin: 3px 0 0; color: var(--muted); font-size: 13.5px; }
@@ -617,8 +640,8 @@ textarea.form-control, .pi-address-box { min-height: 120px; line-height: 1.55; r
     opacity: 0.07;
 }
 .pi-metric::before { content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; background: var(--accent); }
-.pi-metric span { display: block; color: var(--muted); font-size: 11.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.6px; }
-.pi-metric strong { display: block; margin-top: 12px; color: var(--text); font-size: 40px; font-weight: 700; line-height: 1; font-family: var(--num); letter-spacing: -0.03em; font-feature-settings: "tnum"; }
+.pi-metric span { display: block; color: var(--muted); font-size: 11.5px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.6px; }
+.pi-metric strong { display: block; margin-top: 12px; color: var(--text); font-size: 40px; font-weight: 600; line-height: 1; font-family: var(--num); letter-spacing: -0.03em; font-feature-settings: "tnum"; }
 .pi-metric small { display: block; margin-top: 11px; color: var(--muted); font-size: 12.5px; }
 /* rotating accent palette across the grid — calm, harmonious tones */
 .pi-metric:nth-child(4n+1) { --accent: #3a5d99; }  /* steel blue   */
@@ -646,8 +669,8 @@ textarea.form-control, .pi-address-box { min-height: 120px; line-height: 1.55; r
     transition: transform .16s, border-color .16s, background .16s, box-shadow .16s;
 }
 .pi-module-tile:hover { transform: translateY(-3px); border-color: var(--brand); background: var(--surface); box-shadow: var(--shadow-md); color: var(--text); }
-.pi-module-tile > span { width: fit-content; padding: 3px 10px; border-radius: var(--r-pill); background: var(--brand-soft); color: var(--brand-strong); font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.3px; }
-.pi-module-tile strong { display: block; margin-top: 16px; font-size: 18px; font-weight: 700; }
+.pi-module-tile > span { width: fit-content; padding: 3px 10px; border-radius: var(--r-pill); background: var(--brand-soft); color: var(--brand-strong); font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.3px; }
+.pi-module-tile strong { display: block; margin-top: 16px; font-size: 18px; font-weight: 600; }
 .pi-module-tile small { display: block; margin-top: 7px; color: var(--muted); font-size: 13px; line-height: 1.45; }
 
 .pi-signal-list { display: grid; gap: 10px; }
@@ -673,7 +696,7 @@ textarea.form-control, .pi-address-box { min-height: 120px; line-height: 1.55; r
 .pi-mini-row { display: grid; grid-template-columns: 150px minmax(0, 1fr) 110px; gap: 20px; align-items: center; padding: 15px 18px; background: var(--surface); transition: background .12s; }
 .pi-mini-row:hover { background: var(--surface-2); }
 .pi-mini-row > div { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-.pi-mini-row strong { display: block; color: var(--text); font-size: 14px; font-weight: 700; letter-spacing: -0.01em; }
+.pi-mini-row strong { display: block; color: var(--text); font-size: 14px; font-weight: 600; letter-spacing: -0.01em; }
 .pi-mini-row div span { display: block; color: var(--muted); font-size: 11.5px; font-weight: 500; }
 .pi-mini-row > span { color: var(--muted); font-size: 12.5px; font-weight: 600; text-align: right; white-space: nowrap; }
 .pi-mini-row p { margin: 0; overflow: hidden; color: var(--text); text-overflow: ellipsis; white-space: nowrap; font-size: 14px; font-weight: 500; }
@@ -703,7 +726,7 @@ textarea.form-control, .pi-address-box { min-height: 120px; line-height: 1.55; r
     border-radius: 50%;
     background: radial-gradient(circle, rgba(255,255,255,0.18), transparent 70%);
 }
-.pi-welcome-banner h2 { margin: 0 0 5px; color: #fff; font-size: 23px; font-weight: 750; letter-spacing: -0.02em; }
+.pi-welcome-banner h2 { margin: 0 0 5px; color: #fff; font-family: var(--font-display); font-size: 23px; font-weight: 600; letter-spacing: -0.02em; }
 .pi-welcome-banner p { margin: 0; color: rgba(255,255,255,0.82); font-size: 14px; }
 .pi-welcome-stats { display: flex; gap: 12px; flex-wrap: wrap; position: relative; }
 .pi-welcome-stat {
@@ -715,7 +738,7 @@ textarea.form-control, .pi-address-box { min-height: 120px; line-height: 1.55; r
     border-radius: var(--r-md);
     backdrop-filter: blur(6px);
 }
-.pi-welcome-stat strong { display: block; font-size: 26px; font-weight: 700; color: #fff; font-family: var(--num); line-height: 1.1; letter-spacing: -0.02em; }
+.pi-welcome-stat strong { display: block; font-size: 26px; font-weight: 600; color: #fff; font-family: var(--num); line-height: 1.1; letter-spacing: -0.02em; }
 .pi-welcome-stat span { display: block; margin-top: 4px; font-size: 10.5px; font-weight: 600; color: rgba(255,255,255,0.72); text-transform: uppercase; letter-spacing: 0.7px; }
 
 .pi-action-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin-bottom: 22px; }
@@ -760,7 +783,7 @@ textarea.form-control, .pi-address-box { min-height: 120px; line-height: 1.55; r
     border-bottom: 1px solid var(--border-strong);
     color: var(--muted);
     font-size: 11.5px;
-    font-weight: 700;
+    font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.5px;
     white-space: nowrap;
@@ -778,7 +801,7 @@ textarea.form-control, .pi-address-box { min-height: 120px; line-height: 1.55; r
 .report-id, .pi-page-number { font-family: var(--mono); color: var(--brand); font-weight: 500; }
 
 /* Scores */
-.pi-score { display: inline-grid; place-items: center; min-width: 44px; height: 30px; border-radius: var(--r-pill); font-weight: 700; font-family: var(--mono); font-size: 13px; }
+.pi-score { display: inline-grid; place-items: center; min-width: 44px; height: 30px; border-radius: var(--r-pill); font-weight: 600; font-family: var(--mono); font-size: 13px; }
 .pi-score-high { color: var(--success); background: var(--success-soft); }
 .pi-score-medium { color: var(--warning); background: var(--warning-soft); }
 .pi-score-low { color: var(--danger); background: var(--danger-soft); }
@@ -825,8 +848,8 @@ textarea.form-control, .pi-address-box { min-height: 120px; line-height: 1.55; r
 .stat-inprocess { border-top-color: var(--warning); }
 .stat-completed { border-top-color: var(--success); }
 .stat-failed { border-top-color: var(--danger); }
-.stat-label { color: var(--muted); font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.4px; }
-.stat-number { margin-top: 6px; font-family: var(--num); font-size: 32px; font-weight: 700; letter-spacing: -0.02em; color: var(--text); }
+.stat-label { color: var(--muted); font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.4px; }
+.stat-number { margin-top: 6px; font-family: var(--num); font-size: 32px; font-weight: 600; letter-spacing: -0.02em; color: var(--text); }
 .stat-pending .stat-number { color: var(--muted); }
 .stat-inprocess .stat-number { color: var(--warning); }
 .stat-completed .stat-number { color: var(--success); }
@@ -848,7 +871,7 @@ textarea.form-control, .pi-address-box { min-height: 120px; line-height: 1.55; r
 .pi-ai-summary::before { content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 4px; background: var(--brand-grad); }
 .pi-ai-summary-head { display: flex; align-items: center; gap: 9px; margin-bottom: 10px; }
 .pi-ai-summary-head .bi { color: var(--brand); font-size: 18px; }
-.pi-ai-summary-head strong { font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: var(--brand-strong); }
+.pi-ai-summary-head strong { font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: var(--brand-strong); }
 .pi-ai-summary p { margin: 0; color: var(--text); font-size: 15px; line-height: 1.6; }
 
 /* ---------------------------------------------------------------------
@@ -954,7 +977,7 @@ textarea.form-control, .pi-address-box { min-height: 120px; line-height: 1.55; r
     padding: 13px 18px;
     border-bottom: 1px solid var(--border);
     color: var(--muted);
-    font-size: 12px; font-weight: 700; letter-spacing: 0.6px; text-transform: uppercase;
+    font-size: 12px; font-weight: 600; letter-spacing: 0.6px; text-transform: uppercase;
 }
 .filter-card form { padding: 18px; }
 .pi-filter-checks { display: flex; flex-wrap: wrap; gap: 14px; padding-bottom: 4px; }
@@ -963,7 +986,7 @@ textarea.form-control, .pi-address-box { min-height: 120px; line-height: 1.55; r
 .pi-filter-actions, .pi-batch-actions, .pi-page-actions, .pi-action-row {
     display: flex; align-items: center; flex-wrap: wrap; gap: 10px;
 }
-.pi-filter-title { margin: 0 0 14px; color: var(--text); font-size: 18px; font-weight: 700; }
+.pi-filter-title { margin: 0 0 14px; color: var(--text); font-size: 18px; font-weight: 600; }
 .stat-card-row { margin-bottom: 4px; }
 
 /* Result stats / heading */
@@ -976,14 +999,14 @@ textarea.form-control, .pi-address-box { min-height: 120px; line-height: 1.55; r
 .pi-result-stats > div { min-width: 74px; padding-right: 14px; border-right: 1px solid var(--border); }
 .pi-result-stats > div:last-child { border-right: 0; padding-right: 0; }
 .pi-result-stats span, .pi-muted-count { color: var(--muted); font-size: 12.5px; font-weight: 600; }
-.pi-result-stats strong { color: var(--brand); font-size: 24px; font-family: var(--num); font-weight: 700; }
+.pi-result-stats strong { color: var(--brand); font-size: 24px; font-family: var(--num); font-weight: 600; }
 .pi-results-head { margin-top: 0; }
 
 /* Result-table cells */
 .pi-address-cell { min-width: 420px; max-width: 720px; white-space: normal !important; line-height: 1.45; }
 .pi-party-cell { max-width: 220px; white-space: normal !important; line-height: 1.4; color: var(--text-2); }
 .pi-owner-cell { font-weight: 600; }
-.pi-confidence { color: var(--text); font-weight: 700; }
+.pi-confidence { color: var(--text); font-weight: 600; }
 .pi-row-actions { display: flex; align-items: center; gap: 8px; white-space: nowrap; }
 .pi-row-actions .btn { padding: 5px 10px; }
 .pi-risk-badge {
@@ -1011,7 +1034,7 @@ textarea.form-control, .pi-address-box { min-height: 120px; line-height: 1.55; r
     background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--r-sm);
 }
 .pi-field-grid-focus > div { border-color: var(--brand); background: var(--brand-soft); }
-.pi-field-grid span { display: block; color: var(--muted); font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.4px; }
+.pi-field-grid span { display: block; color: var(--muted); font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.4px; }
 .pi-field-grid strong { display: block; margin-top: 8px; color: var(--text); font-size: 16px; overflow-wrap: anywhere; }
 
 /* KPI grid / info tiles */
@@ -1020,7 +1043,7 @@ textarea.form-control, .pi-address-box { min-height: 120px; line-height: 1.55; r
     min-height: 90px; padding: 16px 18px;
     background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--r-md);
 }
-.pi-info-tile span { display: block; margin-bottom: 8px; color: var(--muted); font-size: 12.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.4px; }
+.pi-info-tile span { display: block; margin-bottom: 8px; color: var(--muted); font-size: 12.5px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.4px; }
 .pi-info-tile strong { display: block; color: var(--text); font-size: 16px; line-height: 1.45; word-break: break-word; }
 .pi-info-tile-wide { grid-column: span 3; }
 
@@ -1039,7 +1062,7 @@ textarea.form-control, .pi-address-box { min-height: 120px; line-height: 1.55; r
 .pi-candidate-table thead th {
     padding: 13px 14px;
     background: var(--surface-2); border-bottom: 1px solid var(--border-strong);
-    color: var(--muted); font-size: 12px; font-weight: 700;
+    color: var(--muted); font-size: 12px; font-weight: 600;
     text-align: center; vertical-align: middle; white-space: nowrap;
 }
 .pi-candidate-table tbody td {
@@ -1079,7 +1102,7 @@ textarea.form-control, .pi-address-box { min-height: 120px; line-height: 1.55; r
 }
 .pi-document-meta h2 { margin-bottom: 16px; color: var(--text); font-size: 20px; }
 .pi-document-meta dl { display: grid; grid-template-columns: 128px minmax(0, 1fr); gap: 10px 12px; margin: 0; }
-.pi-document-meta dt { color: var(--muted); font-size: 12.5px; font-weight: 700; text-transform: uppercase; }
+.pi-document-meta dt { color: var(--muted); font-size: 12.5px; font-weight: 600; text-transform: uppercase; }
 .pi-document-meta dd { margin: 0; color: var(--text); font-size: 14.5px; overflow-wrap: anywhere; }
 .pi-document-text-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; margin-bottom: 18px; }
 .pi-document-text {
@@ -1102,7 +1125,7 @@ textarea.form-control, .pi-address-box { min-height: 120px; line-height: 1.55; r
     border-left: 4px solid var(--success); border-radius: var(--r-md);
     background: var(--success-soft); box-shadow: var(--shadow-xs);
 }
-.pi-success-mark { display: grid; place-items: center; width: 42px; height: 42px; border-radius: 50%; background: var(--success); color: #fff; font-weight: 700; font-size: 22px; }
+.pi-success-mark { display: grid; place-items: center; width: 42px; height: 42px; border-radius: 50%; background: var(--success); color: #fff; font-weight: 600; font-size: 22px; }
 .pi-assignment-success-body h2 { margin: 3px 0 4px; color: var(--text); font-size: 20px; line-height: 1.2; }
 .pi-assignment-success-body p { margin: 0; color: var(--text-2); }
 .pi-assignment-actions { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
@@ -1111,8 +1134,8 @@ textarea.form-control, .pi-address-box { min-height: 120px; line-height: 1.55; r
     border-left: 4px solid var(--brand); background: var(--brand-soft); border-radius: var(--r-md);
 }
 .pi-assignment-progress-head, .pi-assignment-progress-meta { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
-.pi-assignment-progress-head h2 { margin: 3px 0 0; color: var(--text); font-size: 20px; line-height: 1.2; }
-.pi-assignment-progress-head strong { color: var(--brand); font-family: var(--num); font-size: 24px; font-weight: 700; }
+.pi-assignment-progress-head h2 { margin: 3px 0 0; color: var(--text); font-family: var(--font-display); font-size: 20px; font-weight: 600; line-height: 1.2; }
+.pi-assignment-progress-head strong { color: var(--brand); font-family: var(--num); font-size: 24px; font-weight: 600; }
 .pi-progress-track { height: 10px; margin: 14px 0 10px; overflow: hidden; border-radius: var(--r-pill); background: var(--surface-3); }
 .pi-progress-fill { height: 100%; border-radius: inherit; background: var(--brand-grad); transition: width 0.35s ease; }
 .pi-assignment-progress-meta { color: var(--text-2); font-size: 13.5px; }
@@ -1129,7 +1152,7 @@ textarea.form-control, .pi-address-box { min-height: 120px; line-height: 1.55; r
     background: var(--surface); border: 1px solid var(--border);
     border-radius: var(--r-md); box-shadow: var(--shadow-xs);
 }
-.pi-bulk-addressbar span { display: block; color: var(--muted); font-size: 12.5px; font-weight: 700; }
+.pi-bulk-addressbar span { display: block; color: var(--muted); font-size: 12.5px; font-weight: 600; }
 .pi-bulk-addressbar strong { display: block; margin-top: 4px; color: var(--text); font-size: 16px; }
 
 /* Search busy overlay */
@@ -1154,11 +1177,11 @@ textarea.form-control, .pi-address-box { min-height: 120px; line-height: 1.55; r
 .pi-intake-main { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
 .pi-intake-aside { position: sticky; top: 84px; }
 .pi-intake-tips { padding: 20px 22px; }
-.pi-intake-tips-head { display: flex; align-items: center; gap: 9px; margin-bottom: 14px; color: var(--text); font-weight: 700; font-size: 14px; }
+.pi-intake-tips-head { display: flex; align-items: center; gap: 9px; margin-bottom: 14px; color: var(--text); font-weight: 600; font-size: 14px; }
 .pi-intake-tips-head .bi { color: var(--brand); font-size: 17px; }
 .pi-intake-steps { margin: 0; padding-left: 20px; display: grid; gap: 11px; }
 .pi-intake-steps li { color: var(--text-2); font-size: 13.5px; line-height: 1.5; }
-.pi-intake-steps strong { color: var(--text); font-weight: 700; }
+.pi-intake-steps strong { color: var(--text); font-weight: 600; }
 .pi-intake-hint {
     display: flex; align-items: flex-start; gap: 9px; margin-top: 18px; padding: 13px 14px;
     background: var(--brand-soft); border: 1px solid var(--border); border-radius: var(--r-sm);
@@ -1182,19 +1205,19 @@ textarea.form-control, .pi-address-box { min-height: 120px; line-height: 1.55; r
 .pi-breadcrumb a:hover { color: var(--brand); }
 .pi-breadcrumb .bi { font-size: 14px; }
 .pi-breadcrumb .sep { color: var(--border-strong); }
-.pi-breadcrumb .current { color: var(--text); font-weight: 700; }
+.pi-breadcrumb .current { color: var(--text); font-weight: 600; }
 
 /* Analytics donut */
 .pi-donut-wrap { display: flex; align-items: center; gap: 30px; flex-wrap: wrap; }
 .pi-donut-canvas { position: relative; width: 200px; height: 200px; flex: 0 0 auto; }
 .pi-donut-center { position: absolute; inset: 0; display: grid; place-content: center; text-align: center; pointer-events: none; }
-.pi-donut-center strong { display: block; font-family: var(--num); font-size: 30px; font-weight: 700; color: var(--text); letter-spacing: -0.02em; }
-.pi-donut-center span { display: block; margin-top: 2px; color: var(--muted); font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; }
+.pi-donut-center strong { display: block; font-family: var(--num); font-size: 30px; font-weight: 600; color: var(--text); letter-spacing: -0.02em; }
+.pi-donut-center span { display: block; margin-top: 2px; color: var(--muted); font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; }
 .pi-donut-legend { display: grid; gap: 12px; flex: 1 1 200px; }
 .pi-donut-legend-item { display: flex; align-items: center; gap: 10px; }
 .pi-donut-dot { width: 11px; height: 11px; border-radius: 3px; flex: 0 0 auto; }
 .pi-donut-legend-item span { flex: 1 1 auto; color: var(--text-2); font-size: 13.5px; font-weight: 600; }
-.pi-donut-legend-item strong { color: var(--text); font-family: var(--num); font-weight: 700; font-size: 15px; }
+.pi-donut-legend-item strong { color: var(--text); font-family: var(--num); font-weight: 600; font-size: 15px; }
 
 /* Lean dashboard */
 .pi-dashboard-masthead {
@@ -1208,8 +1231,9 @@ textarea.form-control, .pi-address-box { min-height: 120px; line-height: 1.55; r
 .pi-dashboard-masthead h1 {
     margin: 5px 0 6px;
     color: var(--brand);
+    font-family: var(--font-display);
     font-size: clamp(42px, 6vw, 72px);
-    font-weight: 800;
+    font-weight: 600;
     line-height: 0.96;
     letter-spacing: 0;
 }
@@ -1250,7 +1274,7 @@ textarea.form-control, .pi-address-box { min-height: 120px; line-height: 1.55; r
     display: block;
     color: var(--muted);
     font-size: 11.5px;
-    font-weight: 800;
+    font-weight: 600;
     letter-spacing: 0.55px;
     text-transform: uppercase;
 }
@@ -1260,7 +1284,7 @@ textarea.form-control, .pi-address-box { min-height: 120px; line-height: 1.55; r
     color: var(--text);
     font-family: var(--num);
     font-size: 38px;
-    font-weight: 800;
+    font-weight: 600;
     line-height: 1;
     font-feature-settings: "tnum";
 }
@@ -1291,7 +1315,7 @@ textarea.form-control, .pi-address-box { min-height: 120px; line-height: 1.55; r
     margin: 5px 0 0;
     color: var(--text);
     font-size: 15px;
-    font-weight: 650;
+    font-weight: 600;
     line-height: 1.45;
 }
 
@@ -1353,7 +1377,7 @@ textarea.form-control, .pi-address-box { min-height: 120px; line-height: 1.55; r
     background: #f8fafc;
     color: var(--muted);
     font-size: 11px;
-    font-weight: 800;
+    font-weight: 600;
     letter-spacing: 0.6px;
     text-transform: uppercase;
 }
@@ -1393,7 +1417,7 @@ textarea.form-control, .pi-address-box { min-height: 120px; line-height: 1.55; r
     color: var(--text-2);
     font-size: 11.5px;
     font-style: normal;
-    font-weight: 750;
+    font-weight: 600;
     line-height: 1.2;
     white-space: nowrap;
 }
@@ -1425,7 +1449,7 @@ textarea.form-control, .pi-address-box { min-height: 120px; line-height: 1.55; r
     margin-bottom: 8px;
     color: var(--text-2);
     font-size: 13px;
-    font-weight: 700;
+    font-weight: 600;
 }
 .pi-evidence-item strong {
     color: var(--text);
@@ -1463,7 +1487,7 @@ textarea.form-control, .pi-address-box { min-height: 120px; line-height: 1.55; r
     background: var(--surface);
     color: var(--text);
     font-size: 13px;
-    font-weight: 700;
+    font-weight: 600;
 }
 .pi-quick-actions a:hover {
     border-color: var(--brand);
@@ -1498,7 +1522,7 @@ textarea.form-control, .pi-address-box { min-height: 120px; line-height: 1.55; r
     background: var(--surface);
     color: var(--text-2);
     font-size: 13px;
-    font-weight: 650;
+    font-weight: 600;
 }
 .pi-geo-row strong {
     color: var(--text);
@@ -1520,7 +1544,7 @@ textarea.form-control, .pi-address-box { min-height: 120px; line-height: 1.55; r
     display: block;
     color: var(--muted);
     font-size: 11px;
-    font-weight: 800;
+    font-weight: 600;
     letter-spacing: 0.55px;
     text-transform: uppercase;
 }
@@ -1530,7 +1554,7 @@ textarea.form-control, .pi-address-box { min-height: 120px; line-height: 1.55; r
     color: var(--text);
     font-family: var(--num);
     font-size: 24px;
-    font-weight: 750;
+    font-weight: 600;
 }
 .pi-trend-item small {
     display: block;
@@ -1575,7 +1599,7 @@ textarea.form-control, .pi-address-box { min-height: 120px; line-height: 1.55; r
     }
     .pi-priority-row span:last-child {
         color: var(--text);
-        font-weight: 700;
+        font-weight: 600;
     }
     .pi-geo-row {
         grid-template-columns: 1fr;
@@ -1656,7 +1680,7 @@ textarea.form-control, .pi-address-box { min-height: 120px; line-height: 1.55; r
     display: grid; place-items: center; width: 36px; height: 36px; border-radius: 10px;
     background: rgba(255,255,255,0.18); border: 1px solid rgba(255,255,255,0.25); font-size: 17px;
 }
-.pi-jarvis-brand strong { display: block; font-size: 15px; font-weight: 800; letter-spacing: 0; }
+.pi-jarvis-brand strong { display: block; font-size: 15px; font-weight: 600; letter-spacing: 0; }
 .pi-jarvis-brand small { display: block; font-size: 11px; color: rgba(255,255,255,0.8); }
 .pi-jarvis-close { border: 0; background: rgba(255,255,255,0.14); color: #fff; width: 30px; height: 30px; border-radius: 8px; cursor: pointer; }
 .pi-jarvis-close:hover { background: rgba(255,255,255,0.26); }
@@ -1685,7 +1709,7 @@ textarea.form-control, .pi-address-box { min-height: 120px; line-height: 1.55; r
     align-items: center;
 }
 .pi-jarvis-thinking .pi-jarvis-dots { grid-row: span 2; }
-.pi-jarvis-thinking strong { color: var(--text); font-size: 13px; font-weight: 750; }
+.pi-jarvis-thinking strong { color: var(--text); font-size: 13px; font-weight: 600; }
 .pi-jarvis-thinking small { color: var(--muted); font-size: 12px; }
 
 .pi-jarvis-answer {
@@ -1701,7 +1725,7 @@ textarea.form-control, .pi-address-box { min-height: 120px; line-height: 1.55; r
     margin: 0;
     color: var(--text);
     font-size: 13px;
-    font-weight: 800;
+    font-weight: 600;
     line-height: 1.3;
 }
 .pi-jarvis-answer ul {
@@ -1727,13 +1751,13 @@ textarea.form-control, .pi-address-box { min-height: 120px; line-height: 1.55; r
 .pi-jarvis-fact span {
     color: var(--muted);
     font-size: 11px;
-    font-weight: 750;
+    font-weight: 600;
     text-transform: uppercase;
 }
 .pi-jarvis-fact strong {
     color: var(--text);
     font-size: 12.5px;
-    font-weight: 650;
+    font-weight: 600;
     line-height: 1.45;
     overflow-wrap: anywhere;
 }
@@ -1757,14 +1781,14 @@ textarea.form-control, .pi-address-box { min-height: 120px; line-height: 1.55; r
 .pi-jarvis-answer-head span {
     color: var(--brand);
     font-size: 10.5px;
-    font-weight: 800;
+    font-weight: 600;
     letter-spacing: .7px;
     text-transform: uppercase;
 }
 .pi-jarvis-answer-head strong {
     color: var(--text);
     font-size: 14px;
-    font-weight: 800;
+    font-weight: 600;
 }
 .pi-jarvis-result-list {
     display: grid;
@@ -1798,7 +1822,7 @@ textarea.form-control, .pi-address-box { min-height: 120px; line-height: 1.55; r
 .pi-jarvis-result-main strong {
     color: var(--text);
     font-size: 12.5px;
-    font-weight: 750;
+    font-weight: 600;
 }
 .pi-jarvis-result-main span {
     color: var(--text-2);
@@ -1819,7 +1843,7 @@ textarea.form-control, .pi-address-box { min-height: 120px; line-height: 1.55; r
     background: var(--success-soft);
     color: var(--success);
     font-size: 10.5px;
-    font-weight: 800;
+    font-weight: 600;
     line-height: 1;
     white-space: nowrap;
 }
@@ -1835,7 +1859,7 @@ textarea.form-control, .pi-address-box { min-height: 120px; line-height: 1.55; r
     color: var(--muted);
     font-family: var(--num);
     font-size: 11.5px;
-    font-weight: 650;
+    font-weight: 600;
 }
 .pi-jarvis-ref {
     font-family: var(--mono);
@@ -1973,7 +1997,7 @@ textarea.form-control, .pi-address-box { min-height: 120px; line-height: 1.55; r
     display: block;
     color: var(--text);
     font-size: 13.5px;
-    font-weight: 750;
+    font-weight: 600;
 }
 .pi-check-row small {
     display: block;
@@ -1993,7 +2017,7 @@ textarea.form-control, .pi-address-box { min-height: 120px; line-height: 1.55; r
     color: var(--success);
     font-size: 11px;
     font-style: normal;
-    font-weight: 800;
+    font-weight: 600;
     white-space: nowrap;
 }
 .pi-check-row em.is-warn,
@@ -2053,7 +2077,7 @@ textarea.form-control, .pi-address-box { min-height: 120px; line-height: 1.55; r
     gap: 9px;
     color: var(--text-2);
     font-size: 13px;
-    font-weight: 650;
+    font-weight: 600;
 }
 .pi-readiness-item i {
     color: var(--muted);
@@ -2118,7 +2142,7 @@ textarea.form-control, .pi-address-box { min-height: 120px; line-height: 1.55; r
 .pi-jarvis-confirm > strong {
     color: var(--text);
     font-size: 12.5px;
-    font-weight: 800;
+    font-weight: 600;
 }
 .pi-jarvis-confirm > small {
     color: var(--text-2);
@@ -2135,7 +2159,7 @@ textarea.form-control, .pi-address-box { min-height: 120px; line-height: 1.55; r
     padding: 6px 11px;
     border-radius: var(--r-pill);
     font-size: 12px;
-    font-weight: 750;
+    font-weight: 600;
     cursor: pointer;
 }
 .pi-jarvis-confirm-primary {
@@ -2270,13 +2294,13 @@ textarea.form-control, .pi-address-box { min-height: 120px; line-height: 1.55; r
     display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap;
     padding: 10px 12px; background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px;
 }
-.pi-field-label { min-width: 90px; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.4px; color: var(--muted); }
+.pi-field-label { min-width: 90px; font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.4px; color: var(--muted); }
 .pi-field-value { font-size: 14px; color: var(--text); }
 .pi-match-cell { white-space: nowrap; }
 .pi-mb {
     display: inline-flex; align-items: center; justify-content: center;
     width: 20px; height: 20px; margin-right: 3px; border-radius: 5px;
-    font-size: 10.5px; font-weight: 700; letter-spacing: 0;
+    font-size: 10.5px; font-weight: 600; letter-spacing: 0;
     border: 1px solid transparent;
 }
 .pi-mb-yes { background: rgba(63, 147, 116, 0.15); color: var(--success, #3f9374); border-color: rgba(63, 147, 116, 0.35); }
@@ -2286,7 +2310,7 @@ textarea.form-control, .pi-address-box { min-height: 120px; line-height: 1.55; r
 
 .pi-recommend-pill {
     display: inline-flex; align-items: center; margin-left: 6px;
-    padding: 2px 8px; border-radius: 999px; font-size: 10.5px; font-weight: 700;
+    padding: 2px 8px; border-radius: 999px; font-size: 10.5px; font-weight: 600;
     border: 1px solid transparent; white-space: nowrap;
 }
 .pi-recommend-yes    { background: rgba(63, 147, 116, 0.15); color: var(--success, #3f9374); border-color: rgba(63, 147, 116, 0.35); }
@@ -2316,7 +2340,7 @@ textarea.form-control, .pi-address-box { min-height: 120px; line-height: 1.55; r
     display: grid; grid-template-columns: max-content 1fr; column-gap: 16px; row-gap: 10px;
 }
 .pi-json-fields dt {
-    font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.4px;
+    font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.4px;
     color: var(--muted); white-space: nowrap;
 }
 .pi-json-fields dd {

@@ -17,13 +17,13 @@
                 <tbody>
                 @foreach (var line in data.Rows)
                 {
-                    var rowClass = line.IsSubtotal ? "fw-bold table-light" : (line.IsHeader ? "fw-semibold text-muted bg-light" : "");
+                    var rowClass = line.IsSubtotal ? "fw-semibold table-light" : (line.IsHeader ? "fw-semibold text-muted bg-light" : "");
                     <tr class="@rowClass">
-                        <td class="@(line.IsSubtotal ? "fw-bold" : "")">@line.Label</td>
+                        <td class="@(line.IsSubtotal ? "fw-semibold" : "")">@line.Label</td>
                         @foreach (var y in years)
                         {
                             var (num, raw, inferred) = line.GetValue(y);
-                            <td class="text-end @(line.IsSubtotal ? "fw-bold" : "")">
+                            <td class="text-end @(line.IsSubtotal ? "fw-semibold" : "")">
                                 @if (num is not null)
                                 {
                                     @Num(num)
