@@ -24,7 +24,10 @@ public class FinancialTrendMetricsTests
         return File.Exists(roc) ? roc : null;
     }
 
-    private static DossierModel CreateMinimalDossier(List<FinancialYearData> standalone)
+    private static DossierModel CreateMinimalDossier(
+        List<FinancialYearData> standalone,
+        List<FinancialFact>? facts = null,
+        List<FinancialParameter>? parameters = null)
     {
         var reportDate = new DateTime(2022, 10, 28, 0, 0, 0, DateTimeKind.Utc);
         return new DossierModel(
@@ -34,7 +37,7 @@ public class FinancialTrendMetricsTests
             Cover: new DossierCover("Test Company", "U12345AB2020PTC123456", "ABCDE1234F",
                 new DateOnly(2020, 1, 1), "Active", "Client", reportDate, reportDate),
             Corporate: new DossierCorporate([], [], [], [], [], [], [], null, null, []),
-            Financials: new DossierFinancials(standalone, [], [], [], [], []),
+            Financials: new DossierFinancials(standalone, [], facts ?? [], parameters ?? [], [], []),
             Charges: new DossierCharges([], [], [], [], 0),
             Compliance: new DossierCompliance([], [], [], [], [], []),
             Litigation: new DossierLitigation([], [], new Dictionary<long, LitigationRole>()),
@@ -341,5 +344,417 @@ public class FinancialTrendMetricsTests
         // A3.5: debt growth (2.6%) doesn't clear the 20% floor -> not flagged
         var a35 = M(group, "Debt-funded-growth flag");
         Assert.Equal(0m, a35.Value);
+    }
+
+    private static string? UploadFixture(params string[] pathSegments)
+    {
+        var parts = new List<string> { RepoRoot(), "MCAROC.Portal", "MCAROC_Analysis", "App_Data", "Uploads" };
+        parts.AddRange(pathSegments);
+        var path = Path.Combine(parts.ToArray());
+        return File.Exists(path) ? path : null;
+    }
+
+    [SkippableFact]
+    public void Roc_fixture_cost_structure_and_forex_control_totals()
+    {
+        System.Text.Encoding.RegisterProvider(System.Text.CodePagesEncodingProvider.Instance);
+        var roc = RocFixture();
+        Skip.If(roc is null, "roc.xls not found");
+
+        var sheets = new ExcelSheetReader().ReadWorkbook(roc!);
+        var standaloneSheet = sheets.Single(s => s.Name == "Standalone Financial Data");
+        var parsed = StandaloneFinancialDataParser.Parse(standaloneSheet, 1, 1, 1, out var facts);
+        var highlightsSheet = sheets.FirstOrDefault(s => s.Name == "Highlights");
+        var annexureSheet = sheets.FirstOrDefault(s => s.Name == "Annexure - Financial Parameters");
+        var parsedParams = FinancialParametersParser.Parse(highlightsSheet, annexureSheet, 1, 1, 1);
+
+        var group = DossierComputations.FinancialTrendMetrics(CreateMinimalDossier(parsed.Items, facts, parsedParams.Items));
+
+        // Latest standalone FY is FY2017 with Revenue = 1284.20 Cr
+        // A4.1: Employee cost % of revenue (Employee benefits expense = 96.22 Cr, unrounded = 7.4925985...%, displayed = 7.49%)
+        var a41 = M(group, "Employee cost % of revenue");
+        Assert.True(a41.HasValue);
+        Assert.Equal(96.22m / 1284.20m * 100m, a41.Value);
+        Assert.Equal("7.49%", a41.DisplayValue());
+        Assert.Equal(MetricUnit.Percent, a41.Unit);
+        Assert.Equal("FY2017", a41.Period);
+
+        // A4.2: Material cost % of revenue (Cost of Materials Consumed = 395.13 Cr, unrounded = 30.76857...%, displayed = 30.77%)
+        var a42 = M(group, "Material cost % of revenue");
+        Assert.True(a42.HasValue);
+        Assert.Equal(395.13m / 1284.20m * 100m, a42.Value);
+        Assert.Equal("30.77%", a42.DisplayValue());
+        Assert.Equal(MetricUnit.Percent, a42.Unit);
+        Assert.Equal("FY2017", a42.Period);
+
+        // A4.3: Other expenses % of revenue (Other Expenses = 457.15 Cr, unrounded = 35.59803...%, displayed = 35.60%)
+        var a43 = M(group, "Other expenses % of revenue");
+        Assert.True(a43.HasValue);
+        Assert.Equal(457.15m / 1284.20m * 100m, a43.Value);
+        Assert.Equal("35.60%", a43.DisplayValue());
+        Assert.Equal(MetricUnit.Percent, a43.Unit);
+        Assert.Equal("FY2017", a43.Period);
+
+        // A4.4: Auditor fee % of revenue (Payment to Auditors = 0.0 Cr -> 0.0%, displayed = 0%)
+        var a44 = M(group, "Auditor fee % of revenue");
+        Assert.True(a44.HasValue);
+        Assert.Equal(0.0m, a44.Value);
+        Assert.Equal("0%", a44.DisplayValue());
+        Assert.Equal(MetricUnit.Percent, a44.Unit);
+        Assert.Equal("FY2017", a44.Period);
+
+        // A5.1: Export income % of revenue (Income in foreign currency = '-' -> Insufficient)
+        var a51 = M(group, "Export income % of revenue");
+        Assert.False(a51.HasValue);
+        Assert.Contains("explicitly reported as '-'", a51.InsufficiencyReason);
+        Assert.Equal(MetricUnit.Percent, a51.Unit);
+
+        // A5.2: Net forex exposure (Both income and expense are '-' -> Insufficient)
+        var a52 = M(group, "Net forex exposure");
+        Assert.False(a52.HasValue);
+        Assert.Contains("explicitly reported as '-'", a52.InsufficiencyReason);
+        Assert.Equal(MetricUnit.Crore, a52.Unit);
+    }
+
+    [SkippableFact]
+    public void Upload_1_fixture_cost_structure_and_forex_control_totals()
+    {
+        System.Text.Encoding.RegisterProvider(System.Text.CodePagesEncodingProvider.Instance);
+        var f1 = UploadFixture("1", "original", "1.xls");
+        Skip.If(f1 is null, "1.xls not found");
+
+        var sheets = new ExcelSheetReader().ReadWorkbook(f1!);
+        var standaloneSheet = sheets.Single(s => s.Name == "Standalone Financial Data");
+        var parsed = StandaloneFinancialDataParser.Parse(standaloneSheet, 1, 1, 1, out var facts);
+        var highlightsSheet = sheets.FirstOrDefault(s => s.Name == "Highlights");
+        var annexureSheet = sheets.FirstOrDefault(s => s.Name == "Annexure - Financial Parameters");
+        var parsedParams = FinancialParametersParser.Parse(highlightsSheet, annexureSheet, 1, 1, 1);
+
+        var group = DossierComputations.FinancialTrendMetrics(CreateMinimalDossier(parsed.Items, facts, parsedParams.Items));
+
+        // Latest standalone FY is FY2025 with Revenue = 20.25 Cr
+        // A4.1: Employee cost % of revenue (Employee benefits expense = 41.0 Cr, unrounded = 202.4691...%, displayed = 202.47%)
+        var a41 = M(group, "Employee cost % of revenue");
+        Assert.True(a41.HasValue);
+        Assert.Equal(41.0m / 20.25m * 100m, a41.Value);
+        Assert.Equal("202.47%", a41.DisplayValue());
+        Assert.Equal(MetricUnit.Percent, a41.Unit);
+        Assert.Equal("FY2025", a41.Period);
+
+        // A4.2: Material cost % of revenue (Cost of Materials Consumed = 15.48 Cr, unrounded = 76.4444...%, displayed = 76.44%)
+        var a42 = M(group, "Material cost % of revenue");
+        Assert.True(a42.HasValue);
+        Assert.Equal(15.48m / 20.25m * 100m, a42.Value);
+        Assert.Equal("76.44%", a42.DisplayValue());
+        Assert.Equal(MetricUnit.Percent, a42.Unit);
+        Assert.Equal("FY2025", a42.Period);
+
+        // A4.3: Other expenses % of revenue (Other Expenses = 21.28 Cr, unrounded = 105.0864...%, displayed = 105.09%)
+        var a43 = M(group, "Other expenses % of revenue");
+        Assert.True(a43.HasValue);
+        Assert.Equal(21.28m / 20.25m * 100m, a43.Value);
+        Assert.Equal("105.09%", a43.DisplayValue());
+        Assert.Equal(MetricUnit.Percent, a43.Unit);
+        Assert.Equal("FY2025", a43.Period);
+
+        // A4.4: Auditor fee % of revenue (Payment to Auditors = 0.12 Cr, unrounded = 0.59259...%, displayed = 0.59%)
+        var a44 = M(group, "Auditor fee % of revenue");
+        Assert.True(a44.HasValue);
+        Assert.Equal(0.12m / 20.25m * 100m, a44.Value);
+        Assert.Equal("0.59%", a44.DisplayValue());
+        Assert.Equal(MetricUnit.Percent, a44.Unit);
+        Assert.Equal("FY2025", a44.Period);
+
+        // A5.1 / A5.2: foreign currency reported as '-'
+        var a51 = M(group, "Export income % of revenue");
+        Assert.False(a51.HasValue);
+        Assert.Contains("explicitly reported as '-'", a51.InsufficiencyReason);
+
+        var a52 = M(group, "Net forex exposure");
+        Assert.False(a52.HasValue);
+        Assert.Contains("explicitly reported as '-'", a52.InsufficiencyReason);
+    }
+
+    [Fact]
+    public void Synthetic_cost_and_forex_happy_path_and_unrounded_storage()
+    {
+        var years = new List<FinancialYearData>
+        {
+            new() { FinancialYear = 2024, Revenue = 300.0m, Basis = FinancialBasis.Standalone }
+        };
+
+        var facts = new List<FinancialFact>
+        {
+            new() { FinancialYear = 2024, Basis = FinancialBasis.Standalone, Section = FinancialStatementSection.ProfitAndLoss, Label = "Cost of Materials Consumed", NumericValue = 100.0m },
+            new() { FinancialYear = 2024, Basis = FinancialBasis.Standalone, Section = FinancialStatementSection.ProfitAndLoss, Label = "Other Expenses", NumericValue = 45.0m },
+            new() { FinancialYear = 2024, Basis = FinancialBasis.Standalone, Section = FinancialStatementSection.ProfitAndLoss, Label = "Payment to Auditors", NumericValue = 1.5m }
+        };
+
+        var parameters = new List<FinancialParameter>
+        {
+            new() { FinancialYear = 2024, ParameterName = "Employee benefits expense", NumericValue = 60.0m, Unit = "Rs. Crore" },
+            new() { FinancialYear = 2024, ParameterName = "Income in foreign currency", NumericValue = 75.0m, Unit = "Rs. Crore" },
+            new() { FinancialYear = 2024, ParameterName = "Expense in foreign currency", NumericValue = 25.0m, Unit = "Rs. Crore" }
+        };
+
+        var group = DossierComputations.FinancialTrendMetrics(CreateMinimalDossier(years, facts, parameters));
+
+        // A4.1: 60 / 300 = 20.0%
+        var a41 = M(group, "Employee cost % of revenue");
+        Assert.True(a41.HasValue);
+        Assert.Equal(20.0m, a41.Value);
+        Assert.Equal("20%", a41.DisplayValue());
+
+        // A4.2: 100 / 300 = 33.33333333333333333333333333% (unrounded in Value, displayed as 33.33%)
+        var a42 = M(group, "Material cost % of revenue");
+        Assert.True(a42.HasValue);
+        Assert.Equal(100.0m / 300.0m * 100m, a42.Value);
+        Assert.Equal("33.33%", a42.DisplayValue());
+
+        // A4.3: 45 / 300 = 15.0%
+        var a43 = M(group, "Other expenses % of revenue");
+        Assert.True(a43.HasValue);
+        Assert.Equal(15.0m, a43.Value);
+        Assert.Equal("15%", a43.DisplayValue());
+
+        // A4.4: 1.5 / 300 = 0.5%
+        var a44 = M(group, "Auditor fee % of revenue");
+        Assert.True(a44.HasValue);
+        Assert.Equal(0.5m, a44.Value);
+        Assert.Equal("0.50%", a44.DisplayValue());
+
+        // A5.1: 75 / 300 = 25.0%
+        var a51 = M(group, "Export income % of revenue");
+        Assert.True(a51.HasValue);
+        Assert.Equal(25.0m, a51.Value);
+        Assert.Equal("25%", a51.DisplayValue());
+
+        // A5.2: 75 - 25 = 50.0 Cr
+        var a52 = M(group, "Net forex exposure");
+        Assert.True(a52.HasValue);
+        Assert.Equal(50.0m, a52.Value);
+        Assert.Equal("₹50 Cr", a52.DisplayValue());
+    }
+
+    [Fact]
+    public void Negative_net_forex_exposure()
+    {
+        var years = new List<FinancialYearData>
+        {
+            new() { FinancialYear = 2024, Revenue = 100.0m, Basis = FinancialBasis.Standalone }
+        };
+
+        var parameters = new List<FinancialParameter>
+        {
+            new() { FinancialYear = 2024, ParameterName = "Income in foreign currency", NumericValue = 10.0m, Unit = "Rs. Crore" },
+            new() { FinancialYear = 2024, ParameterName = "Expense in foreign currency", NumericValue = 45.5m, Unit = "Rs. Crore" }
+        };
+
+        var group = DossierComputations.FinancialTrendMetrics(CreateMinimalDossier(years, [], parameters));
+
+        var a52 = M(group, "Net forex exposure");
+        Assert.True(a52.HasValue);
+        Assert.Equal(-35.5m, a52.Value);
+        Assert.Equal("₹-35.50 Cr", a52.DisplayValue());
+    }
+
+    [Fact]
+    public void Zero_or_negative_revenue_makes_all_percent_metrics_insufficient()
+    {
+        var zeroRevYears = new List<FinancialYearData>
+        {
+            new() { FinancialYear = 2024, Revenue = 0m, Basis = FinancialBasis.Standalone }
+        };
+
+        var facts = new List<FinancialFact>
+        {
+            new() { FinancialYear = 2024, Basis = FinancialBasis.Standalone, Section = FinancialStatementSection.ProfitAndLoss, Label = "Cost of Materials Consumed", NumericValue = 50.0m }
+        };
+        var parameters = new List<FinancialParameter>
+        {
+            new() { FinancialYear = 2024, ParameterName = "Employee benefits expense", NumericValue = 20.0m, Unit = "Rs. Crore" },
+            new() { FinancialYear = 2024, ParameterName = "Income in foreign currency", NumericValue = 30.0m, Unit = "Rs. Crore" },
+            new() { FinancialYear = 2024, ParameterName = "Expense in foreign currency", NumericValue = 10.0m, Unit = "Rs. Crore" }
+        };
+
+        var group = DossierComputations.FinancialTrendMetrics(CreateMinimalDossier(zeroRevYears, facts, parameters));
+
+        Assert.False(M(group, "Employee cost % of revenue").HasValue);
+        Assert.Contains("revenue is zero, negative, or not reported", M(group, "Employee cost % of revenue").InsufficiencyReason);
+
+        Assert.False(M(group, "Material cost % of revenue").HasValue);
+        Assert.Contains("revenue is zero, negative, or not reported", M(group, "Material cost % of revenue").InsufficiencyReason);
+
+        Assert.False(M(group, "Export income % of revenue").HasValue);
+        Assert.Contains("revenue is zero, negative, or not reported", M(group, "Export income % of revenue").InsufficiencyReason);
+
+        // Net forex exposure does NOT depend on revenue -> still computes
+        var a52 = M(group, "Net forex exposure");
+        Assert.True(a52.HasValue);
+        Assert.Equal(20.0m, a52.Value);
+    }
+
+    [Fact]
+    public void Parameter_unit_safety_rejects_non_crore_scale()
+    {
+        var years = new List<FinancialYearData>
+        {
+            new() { FinancialYear = 2024, Revenue = 100.0m, Basis = FinancialBasis.Standalone }
+        };
+
+        var parameters = new List<FinancialParameter>
+        {
+            new() { FinancialYear = 2024, ParameterName = "Employee benefits expense", NumericValue = 50.0m, Unit = "Rs. Lacs" },
+            new() { FinancialYear = 2024, ParameterName = "Income in foreign currency", NumericValue = 10.0m, Unit = "USD" },
+            new() { FinancialYear = 2024, ParameterName = "Expense in foreign currency", NumericValue = 5.0m, Unit = null }
+        };
+
+        var group = DossierComputations.FinancialTrendMetrics(CreateMinimalDossier(years, [], parameters));
+
+        var a41 = M(group, "Employee cost % of revenue");
+        Assert.False(a41.HasValue);
+        Assert.Contains("unit is 'Rs. Lacs' (expected Rs. Crore)", a41.InsufficiencyReason);
+
+        var a51 = M(group, "Export income % of revenue");
+        Assert.False(a51.HasValue);
+        Assert.Contains("unit is 'USD' (expected Rs. Crore)", a51.InsufficiencyReason);
+
+        var a52 = M(group, "Net forex exposure");
+        Assert.False(a52.HasValue);
+        Assert.Contains("expected Rs. Crore", a52.InsufficiencyReason);
+    }
+
+    [Fact]
+    public void Fact_section_safety_rejects_non_pnl_facts()
+    {
+        var years = new List<FinancialYearData>
+        {
+            new() { FinancialYear = 2024, Revenue = 100.0m, Basis = FinancialBasis.Standalone }
+        };
+
+        var facts = new List<FinancialFact>
+        {
+            // Placed in BalanceSheet instead of ProfitAndLoss
+            new() { FinancialYear = 2024, Basis = FinancialBasis.Standalone, Section = FinancialStatementSection.BalanceSheet, Label = "Cost of Materials Consumed", NumericValue = 50.0m }
+        };
+
+        var group = DossierComputations.FinancialTrendMetrics(CreateMinimalDossier(years, facts, []));
+
+        var a42 = M(group, "Material cost % of revenue");
+        Assert.False(a42.HasValue);
+        Assert.Contains("not reported in ProfitAndLoss", a42.InsufficiencyReason);
+    }
+
+    [Fact]
+    public void Competing_duplicate_facts_with_differing_values_fail_closed()
+    {
+        var years = new List<FinancialYearData>
+        {
+            new() { FinancialYear = 2024, Revenue = 100.0m, Basis = FinancialBasis.Standalone }
+        };
+
+        var facts = new List<FinancialFact>
+        {
+            new() { FinancialYear = 2024, Basis = FinancialBasis.Standalone, Section = FinancialStatementSection.ProfitAndLoss, Label = "Cost of Materials Consumed", NumericValue = 30.0m },
+            new() { FinancialYear = 2024, Basis = FinancialBasis.Standalone, Section = FinancialStatementSection.ProfitAndLoss, Label = "Cost of materials consumed", NumericValue = 35.0m }
+        };
+
+        var group = DossierComputations.FinancialTrendMetrics(CreateMinimalDossier(years, facts, []));
+
+        var a42 = M(group, "Material cost % of revenue");
+        Assert.False(a42.HasValue);
+        Assert.Contains("conflicting values reported for 'Cost of Materials Consumed' in ProfitAndLoss", a42.InsufficiencyReason);
+        Assert.Contains("30.0", a42.InsufficiencyReason);
+        Assert.Contains("35.0", a42.InsufficiencyReason);
+    }
+
+    [Fact]
+    public void Duplicate_identical_facts_succeed()
+    {
+        var years = new List<FinancialYearData>
+        {
+            new() { FinancialYear = 2024, Revenue = 100.0m, Basis = FinancialBasis.Standalone }
+        };
+
+        var facts = new List<FinancialFact>
+        {
+            new() { FinancialYear = 2024, Basis = FinancialBasis.Standalone, Section = FinancialStatementSection.ProfitAndLoss, Label = "Cost of Materials Consumed", NumericValue = 30.0m },
+            new() { FinancialYear = 2024, Basis = FinancialBasis.Standalone, Section = FinancialStatementSection.ProfitAndLoss, Label = "Cost of materials consumed", NumericValue = 30.0m }
+        };
+
+        var group = DossierComputations.FinancialTrendMetrics(CreateMinimalDossier(years, facts, []));
+
+        var a42 = M(group, "Material cost % of revenue");
+        Assert.True(a42.HasValue);
+        Assert.Equal(30.0m, a42.Value);
+        Assert.Equal("30%", a42.DisplayValue());
+    }
+
+    [Fact]
+    public void Competing_duplicate_parameters_with_differing_values_fail_closed()
+    {
+        var years = new List<FinancialYearData>
+        {
+            new() { FinancialYear = 2024, Revenue = 100.0m, Basis = FinancialBasis.Standalone }
+        };
+
+        var parameters = new List<FinancialParameter>
+        {
+            new() { FinancialYear = 2024, ParameterName = "Employee benefits expense", NumericValue = 20.0m, Unit = "Rs. Crore" },
+            new() { FinancialYear = 2024, ParameterName = "Employee Benefits Expense", NumericValue = 25.0m, Unit = "Rs. Crore" }
+        };
+
+        var group = DossierComputations.FinancialTrendMetrics(CreateMinimalDossier(years, [], parameters));
+
+        var a41 = M(group, "Employee cost % of revenue");
+        Assert.False(a41.HasValue);
+        Assert.Contains("conflicting values reported for 'Employee benefits expense'", a41.InsufficiencyReason);
+    }
+
+    [Fact]
+    public void Dash_parameter_distinguished_from_unreported_parameter()
+    {
+        var years = new List<FinancialYearData>
+        {
+            new() { FinancialYear = 2024, Revenue = 100.0m, Basis = FinancialBasis.Standalone }
+        };
+
+        // Explicit dash parameter
+        var dashParams = new List<FinancialParameter>
+        {
+            new() { FinancialYear = 2024, ParameterName = "Income in foreign currency", RawValue = "-", TextValue = "-", NumericValue = null, Unit = "Rs. Crore" }
+        };
+        var dashGroup = DossierComputations.FinancialTrendMetrics(CreateMinimalDossier(years, [], dashParams));
+        var a51Dash = M(dashGroup, "Export income % of revenue");
+        Assert.False(a51Dash.HasValue);
+        Assert.Contains("explicitly reported as '-'", a51Dash.InsufficiencyReason);
+
+        // Completely unreported parameter
+        var emptyGroup = DossierComputations.FinancialTrendMetrics(CreateMinimalDossier(years, [], []));
+        var a51Missing = M(emptyGroup, "Export income % of revenue");
+        Assert.False(a51Missing.HasValue);
+        Assert.Equal("FY2024: 'Income in foreign currency' not reported", a51Missing.InsufficiencyReason);
+    }
+
+    [Fact]
+    public void Strict_latest_fy_alignment_no_backfilling()
+    {
+        var years = new List<FinancialYearData>
+        {
+            new() { FinancialYear = 2023, Revenue = 100.0m, Basis = FinancialBasis.Standalone },
+            new() { FinancialYear = 2024, Revenue = 200.0m, Basis = FinancialBasis.Standalone }
+        };
+
+        // Parameters only for 2023, none for 2024
+        var parameters = new List<FinancialParameter>
+        {
+            new() { FinancialYear = 2023, ParameterName = "Employee benefits expense", NumericValue = 20.0m, Unit = "Rs. Crore" }
+        };
+
+        var group = DossierComputations.FinancialTrendMetrics(CreateMinimalDossier(years, [], parameters));
+
+        var a41 = M(group, "Employee cost % of revenue");
+        Assert.False(a41.HasValue);
+        Assert.Equal("FY2024: 'Employee benefits expense' not reported", a41.InsufficiencyReason);
     }
 }

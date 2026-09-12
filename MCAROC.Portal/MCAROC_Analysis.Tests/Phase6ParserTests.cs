@@ -273,7 +273,33 @@ public class FinancialParametersParserTests
         Assert.Null(div.NumericValue);
         Assert.Equal("No", div.TextValue);
 
-        Assert.DoesNotContain(r.Items, x => x.ParameterName == "Prescribed CSR expenditure"); // all "-" -> nothing
+        // '-' is preserved as a row with NumericValue = null and TextValue = "-" (not silently dropped)
+        var csr = Assert.Single(r.Items, x => x.ParameterName == "Prescribed CSR expenditure" && x.FinancialYear == 2017);
+        Assert.Null(csr.NumericValue);
+        Assert.Equal("-", csr.TextValue);
+        Assert.Equal("-", csr.RawValue);
+    }
+
+    [Fact]
+    public void Retains_both_sheets_and_emits_warning_on_conflicting_values()
+    {
+        var annexure = Sheet("Annexure - Financial Parameters",
+            Row("Parameter (Rs. Crore)", "31 Mar, 2017"),
+            Row("Employee benefits expense", 96.22));
+        var highlights = Sheet("Highlights",
+            Row("Parameter (Rs. Crore)", "31 Mar, 2017"),
+            Row("Employee benefits expense", 105.00));
+
+        var r = FinancialParametersParser.Parse(highlights, annexure, 1, 1, 10);
+
+        // Both rows are retained
+        var items = r.Items.Where(x => x.ParameterName == "Employee benefits expense" && x.FinancialYear == 2017).ToList();
+        Assert.Equal(2, items.Count);
+        Assert.Contains(items, x => x.NumericValue == 96.22m);
+        Assert.Contains(items, x => x.NumericValue == 105.00m);
+
+        // Warning emitted for conflicting values
+        Assert.Contains(r.Warnings, w => w.IssueCode == "DUPLICATE_PARAMETER_CONFLICT");
     }
 }
 

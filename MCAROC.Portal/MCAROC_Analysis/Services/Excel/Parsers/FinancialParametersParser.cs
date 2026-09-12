@@ -17,21 +17,20 @@ public static class FinancialParametersParser
         long requestId, long ingestionRunId, long? sourceDocumentId)
     {
         var result = new ParseResult<FinancialParameter>();
-        var byKey = new Dictionary<(string Name, int? Year), FinancialParameter>();
+        var seen = new Dictionary<(string Name, int? Year), (string Raw, string Sheet)>();
 
         foreach (var sheet in new[] { annexureSheet, highlightsSheet })
         {
             if (sheet is null) continue;
-            ParseSheet(sheet, requestId, ingestionRunId, sourceDocumentId, byKey, result);
+            ParseSheet(sheet, requestId, ingestionRunId, sourceDocumentId, seen, result);
         }
 
-        result.Items.AddRange(byKey.Values);
         return result;
     }
 
     private static void ParseSheet(
         SheetData sheet, long requestId, long ingestionRunId, long? sourceDocumentId,
-        Dictionary<(string, int?), FinancialParameter> byKey, ParseResult<FinancialParameter> result)
+        Dictionary<(string Name, int? Year), (string Raw, string Sheet)> seen, ParseResult<FinancialParameter> result)
     {
         var headerRow = -1;
         for (var r = 0; r < Math.Min(sheet.Rows.Count, 4); r++)
@@ -62,11 +61,18 @@ public static class FinancialParametersParser
                 if (c >= row.Count) continue;
                 var cell = row[c];
                 var raw = cell?.ToString()?.Trim() ?? "";
-                if (raw.Length == 0 || raw == "-") continue;   // not reported for this year
+                if (raw.Length == 0) continue;   // skip blank cells, but keep "-"
 
                 int? year = yearByCol.TryGetValue(c, out var y) ? y : null;
                 var key = (name, year);
-                if (byKey.ContainsKey(key)) continue;
+                if (seen.TryGetValue(key, out var prev) && !string.Equals(prev.Raw, raw, StringComparison.OrdinalIgnoreCase))
+                {
+                    result.AddWarning(new ParseIssue(IssueSeverity.Warning, ParserName, name, raw,
+                        "DUPLICATE_PARAMETER_CONFLICT",
+                        $"Parameter '{name}' FY{year} has conflicting values: '{prev.Raw}' ({prev.Sheet}) vs '{raw}' ({sheet.Name})",
+                        r + 1));
+                }
+                seen[key] = (raw, sheet.Name);
 
                 var fp = new FinancialParameter
                 {
@@ -86,7 +92,7 @@ public static class FinancialParametersParser
                 else
                     fp.TextValue = raw;
 
-                byKey[key] = fp;
+                result.Items.Add(fp);
             }
         }
     }

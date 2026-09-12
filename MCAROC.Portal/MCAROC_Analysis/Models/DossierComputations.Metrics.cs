@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text.RegularExpressions;
 using MCAROC_Analysis.Data.Entities;
 using MCAROC_Analysis.Models.Dossier;
 using MCAROC_Analysis.Services.Analysis;
@@ -1081,11 +1082,10 @@ public static partial class DossierComputations
         return "Other";
     }
 
-    /// <summary>Section A — Financial trend &amp; leverage analytics (Issue #57 / D2,
-    /// docs/analytics-catalogue.json §A, A2/A3). A1.x (the 16 source-reported ratios) is already
+    /// <summary>Section A — Financial trend &amp; leverage analytics (Issues #57 / D2 and #64 / D9,
+    /// docs/analytics-catalogue.json §A, A2–A5). A1.x (the 16 source-reported ratios) is already
     /// surfaced verbatim by B1/#39's Ratios sub-tab — not re-modelled here, since <c>MetricResult</c>
     /// is for DERIVED values and the catalogue is explicit that those 16 are never recomputed.
-    /// A4/A5 (cost structure, forex) are D9/#64's scope, not this one's.
     /// Pure computation over <paramref name="model"/>.</summary>
     public static MetricGroup FinancialTrendMetrics(Dossier.DossierModel model)
     {
@@ -1262,6 +1262,100 @@ public static partial class DossierComputations
                 "FinancialYearData.Revenue", "FinancialYearData.TotalDebt", "FinancialYearData.LongTermBorrowings", "FinancialYearData.ShortTermBorrowings"));
         }
 
+        // ── Section A4: Cost structure analytics (Issue #64 / D9, docs/analytics-catalogue.json §A4) ──
+        // ── Section A5: Forex analytics (Issue #64 / D9, docs/analytics-catalogue.json §A5) ──
+        if (latest is null)
+        {
+            list.Add(MetricResult.Insufficient("Employee cost % of revenue", MetricUnit.Percent, "No financial year data on file", "FinancialParameter['Employee benefits expense']", "FinancialYearData.Revenue"));
+            list.Add(MetricResult.Insufficient("Material cost % of revenue", MetricUnit.Percent, "No financial year data on file", "FinancialFact['Cost of materials consumed']", "FinancialYearData.Revenue"));
+            list.Add(MetricResult.Insufficient("Other expenses % of revenue", MetricUnit.Percent, "No financial year data on file", "FinancialFact['Other expenses']", "FinancialYearData.Revenue"));
+            list.Add(MetricResult.Insufficient("Auditor fee % of revenue", MetricUnit.Percent, "No financial year data on file", "FinancialFact['Payment to auditors']", "FinancialYearData.Revenue"));
+            list.Add(MetricResult.Insufficient("Export income % of revenue", MetricUnit.Percent, "No financial year data on file", "FinancialParameter['Income in foreign currency']", "FinancialYearData.Revenue"));
+            list.Add(MetricResult.Insufficient("Net forex exposure", MetricUnit.Crore, "No financial year data on file", "FinancialParameter['Income in foreign currency']", "FinancialParameter['Expense in foreign currency']"));
+        }
+        else
+        {
+            var fy = latest.FinancialYear;
+            var fyPeriod = $"FY{fy}";
+            var revenueOk = latest.Revenue is not null && latest.Revenue.Value > 0m;
+            var revInputs = "FinancialYearData.Revenue";
+            var nonPositiveRevReason = $"FY{fy}: revenue is zero, negative, or not reported";
+
+            // A4.1: Employee cost % of revenue = EmployeeBenefitsExpense / Revenue
+            var (empVal, empInsuff) = LookupParameter(model, "Employee cost % of revenue", "Employee benefits expense", MetricUnit.Percent, fy, "FinancialParameter['Employee benefits expense']", revInputs);
+            if (!revenueOk)
+                list.Add(MetricResult.Insufficient("Employee cost % of revenue", MetricUnit.Percent, nonPositiveRevReason, "FinancialParameter['Employee benefits expense']", revInputs));
+            else if (empInsuff is not null)
+                list.Add(empInsuff);
+            else
+                list.Add(MetricResult.Ok("Employee cost % of revenue", (empVal!.Value / latest.Revenue!.Value) * 100m, MetricUnit.Percent, fyPeriod, "FinancialParameter['Employee benefits expense']", revInputs));
+
+            // A4.2: Material cost % of revenue = CostOfMaterialsConsumed / Revenue (P&L section)
+            var (matVal, matInsuff) = LookupFact(model, "Material cost % of revenue", "Cost of Materials Consumed", FinancialStatementSection.ProfitAndLoss, fy, "FinancialFact['Cost of materials consumed']", revInputs);
+            if (!revenueOk)
+                list.Add(MetricResult.Insufficient("Material cost % of revenue", MetricUnit.Percent, nonPositiveRevReason, "FinancialFact['Cost of materials consumed']", revInputs));
+            else if (matInsuff is not null)
+                list.Add(matInsuff);
+            else
+                list.Add(MetricResult.Ok("Material cost % of revenue", (matVal!.Value / latest.Revenue!.Value) * 100m, MetricUnit.Percent, fyPeriod, "FinancialFact['Cost of materials consumed']", revInputs));
+
+            // A4.3: Other expenses % of revenue = OtherExpenses / Revenue (P&L section)
+            var (othVal, othInsuff) = LookupFact(model, "Other expenses % of revenue", "Other Expenses", FinancialStatementSection.ProfitAndLoss, fy, "FinancialFact['Other expenses']", revInputs);
+            if (!revenueOk)
+                list.Add(MetricResult.Insufficient("Other expenses % of revenue", MetricUnit.Percent, nonPositiveRevReason, "FinancialFact['Other expenses']", revInputs));
+            else if (othInsuff is not null)
+                list.Add(othInsuff);
+            else
+                list.Add(MetricResult.Ok("Other expenses % of revenue", (othVal!.Value / latest.Revenue!.Value) * 100m, MetricUnit.Percent, fyPeriod, "FinancialFact['Other expenses']", revInputs));
+
+            // A4.4: Auditor fee % of revenue = PaymentToAuditors / Revenue (P&L section)
+            var (audVal, audInsuff) = LookupFact(model, "Auditor fee % of revenue", "Payment to Auditors", FinancialStatementSection.ProfitAndLoss, fy, "FinancialFact['Payment to auditors']", revInputs);
+            if (!revenueOk)
+                list.Add(MetricResult.Insufficient("Auditor fee % of revenue", MetricUnit.Percent, nonPositiveRevReason, "FinancialFact['Payment to auditors']", revInputs));
+            else if (audInsuff is not null)
+                list.Add(audInsuff);
+            else
+                list.Add(MetricResult.Ok("Auditor fee % of revenue", (audVal!.Value / latest.Revenue!.Value) * 100m, MetricUnit.Percent, fyPeriod, "FinancialFact['Payment to auditors']", revInputs));
+
+            // A5.1: Export income % of revenue = IncomeInForeignCurrency / Revenue
+            var (expIncVal, expIncInsuff) = LookupParameter(model, "Export income % of revenue", "Income in foreign currency", MetricUnit.Percent, fy, "FinancialParameter['Income in foreign currency']", revInputs);
+            if (!revenueOk)
+                list.Add(MetricResult.Insufficient("Export income % of revenue", MetricUnit.Percent, nonPositiveRevReason, "FinancialParameter['Income in foreign currency']", revInputs));
+            else if (expIncInsuff is not null)
+                list.Add(expIncInsuff);
+            else
+                list.Add(MetricResult.Ok("Export income % of revenue", (expIncVal!.Value / latest.Revenue!.Value) * 100m, MetricUnit.Percent, fyPeriod, "FinancialParameter['Income in foreign currency']", revInputs));
+
+            // A5.2: Net forex exposure = IncomeInForeignCurrency - ExpenseInForeignCurrency
+            var (forexIncVal, forexIncInsuff) = LookupParameter(model, "Net forex exposure", "Income in foreign currency", MetricUnit.Crore, fy, "FinancialParameter['Income in foreign currency']", "FinancialParameter['Expense in foreign currency']");
+            var (forexExpVal, forexExpInsuff) = LookupParameter(model, "Net forex exposure", "Expense in foreign currency", MetricUnit.Crore, fy, "FinancialParameter['Income in foreign currency']", "FinancialParameter['Expense in foreign currency']");
+            if (forexIncInsuff is not null && forexExpInsuff is not null)
+            {
+                if (forexIncInsuff.InsufficiencyReason?.Contains("explicitly reported as '-'") == true &&
+                    forexExpInsuff.InsufficiencyReason?.Contains("explicitly reported as '-'") == true)
+                {
+                    list.Add(MetricResult.Insufficient("Net forex exposure", MetricUnit.Crore,
+                        $"FY{fy}: 'Income in foreign currency' and 'Expense in foreign currency' explicitly reported as '-'",
+                        "FinancialParameter['Income in foreign currency']", "FinancialParameter['Expense in foreign currency']"));
+                }
+                else
+                {
+                    list.Add(MetricResult.Insufficient("Net forex exposure", MetricUnit.Crore,
+                        $"FY{fy}: 'Income in foreign currency' and 'Expense in foreign currency' unavailable ({forexIncInsuff.InsufficiencyReason}; {forexExpInsuff.InsufficiencyReason})",
+                        "FinancialParameter['Income in foreign currency']", "FinancialParameter['Expense in foreign currency']"));
+                }
+            }
+            else if (forexIncInsuff is not null)
+                list.Add(forexIncInsuff);
+            else if (forexExpInsuff is not null)
+                list.Add(forexExpInsuff);
+            else
+            {
+                var netForex = forexIncVal!.Value - forexExpVal!.Value;
+                list.Add(MetricResult.Ok("Net forex exposure", netForex, MetricUnit.Crore, fyPeriod, "FinancialParameter['Income in foreign currency']", "FinancialParameter['Expense in foreign currency']"));
+            }
+        }
+
         return new MetricGroup("Financial trend & leverage", list);
     }
 
@@ -1403,6 +1497,112 @@ public static partial class DossierComputations
         var cagr = Math.Round((decimal)(Math.Pow(ratio, 1.0 / yearsElapsed) - 1) * 100m, 1);
         list.Add(MetricResult.Ok(label, cagr, MetricUnit.Percent, period, input));
         return cagr;
+    }
+
+    private static string NormalizeFinancialLabel(string label) =>
+        Regex.Replace(label.Trim(), @"\s+", " ").ToLowerInvariant();
+
+    private static bool IsCroreUnit(string? unit)
+    {
+        if (string.IsNullOrWhiteSpace(unit)) return false;
+        var norm = new string(unit.Where(char.IsLetter).ToArray()).ToLowerInvariant();
+        return norm is "rscrore" or "crore" or "crores" or "inrcrore";
+    }
+
+    private static (decimal? Value, MetricResult? Insufficient) LookupFact(
+        Dossier.DossierModel model,
+        string targetConcept,
+        string approvedLabel,
+        FinancialStatementSection expectedSection,
+        int fy,
+        params string[] inputs)
+    {
+        var normApproved = NormalizeFinancialLabel(approvedLabel);
+        var matches = model.Financials.Facts
+            .Where(f => f.Basis == FinancialBasis.Standalone
+                     && f.FinancialYear == fy
+                     && f.Section == expectedSection
+                     && NormalizeFinancialLabel(f.Label) == normApproved)
+            .ToList();
+
+        if (matches.Count == 0)
+        {
+            return (null, MetricResult.Insufficient(targetConcept, MetricUnit.Percent,
+                $"FY{fy}: '{approvedLabel}' not reported in {expectedSection}", inputs));
+        }
+
+        var distinctNumeric = matches.Select(f => f.NumericValue).Where(v => v is not null).Select(v => v!.Value).Distinct().ToList();
+        if (distinctNumeric.Count > 1)
+        {
+            return (null, MetricResult.Insufficient(targetConcept, MetricUnit.Percent,
+                $"FY{fy}: conflicting values reported for '{approvedLabel}' in {expectedSection} ({string.Join(", ", distinctNumeric)})", inputs));
+        }
+
+        if (distinctNumeric.Count == 0)
+        {
+            return (null, MetricResult.Insufficient(targetConcept, MetricUnit.Percent,
+                $"FY{fy}: '{approvedLabel}' in {expectedSection} is not numeric ({matches[0].RawValue})", inputs));
+        }
+
+        return (distinctNumeric[0], null);
+    }
+
+    private static (decimal? Value, MetricResult? Insufficient) LookupParameter(
+        Dossier.DossierModel model,
+        string targetConcept,
+        string approvedLabel,
+        MetricUnit resultUnit,
+        int fy,
+        params string[] inputs)
+    {
+        var normApproved = NormalizeFinancialLabel(approvedLabel);
+        var matches = model.Financials.Parameters
+            .Where(p => p.FinancialYear == fy && NormalizeFinancialLabel(p.ParameterName) == normApproved)
+            .ToList();
+
+        if (matches.Count == 0)
+        {
+            return (null, MetricResult.Insufficient(targetConcept, resultUnit,
+                $"FY{fy}: '{approvedLabel}' not reported", inputs));
+        }
+
+        // Check if any row was reported as "-"
+        var hasDash = matches.Any(p => p.RawValue.Trim() == "-" || p.TextValue?.Trim() == "-");
+        var distinctNumeric = matches.Select(p => p.NumericValue).Where(v => v is not null).Select(v => v!.Value).Distinct().ToList();
+
+        if (hasDash && distinctNumeric.Count > 0)
+        {
+            return (null, MetricResult.Insufficient(targetConcept, resultUnit,
+                $"FY{fy}: conflicting values reported for '{approvedLabel}' (- vs numeric)", inputs));
+        }
+
+        if (hasDash)
+        {
+            return (null, MetricResult.Insufficient(targetConcept, resultUnit,
+                $"FY{fy}: '{approvedLabel}' explicitly reported as '-'", inputs));
+        }
+
+        // Unit safety: must be Crore
+        var invalidUnitParam = matches.FirstOrDefault(p => !IsCroreUnit(p.Unit));
+        if (invalidUnitParam is not null)
+        {
+            return (null, MetricResult.Insufficient(targetConcept, resultUnit,
+                $"FY{fy}: '{approvedLabel}' unit is '{invalidUnitParam.Unit}' (expected Rs. Crore)", inputs));
+        }
+
+        if (distinctNumeric.Count > 1)
+        {
+            return (null, MetricResult.Insufficient(targetConcept, resultUnit,
+                $"FY{fy}: conflicting values reported for '{approvedLabel}' ({string.Join(", ", distinctNumeric)})", inputs));
+        }
+
+        if (distinctNumeric.Count == 0)
+        {
+            return (null, MetricResult.Insufficient(targetConcept, resultUnit,
+                $"FY{fy}: '{approvedLabel}' is not numeric ({matches[0].RawValue})", inputs));
+        }
+
+        return (distinctNumeric[0], null);
     }
 
     /// <summary>Section C — Shareholding analytics (Issue #59 / D4, docs/analytics-catalogue.json §C).
