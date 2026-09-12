@@ -164,6 +164,121 @@ public class CorporateTabRenderingTests
         Assert.Contains("Group holding company", html);
     }
 
+    // ── #106 — render-audit: fields already captured but dropped from the UI ──
+
+    [Fact]
+    public async Task About_section_shows_last_agm_date_and_lei_status()
+    {
+        var vm = CreateViewModel();
+        vm.CompanyProfile = new CompanyProfile
+        {
+            CompanyName = "Test Co",
+            LastAgmDate = new DateOnly(2023, 8, 30),
+            LeiStatus = "ISSUED"
+        };
+
+        var html = await RenderCorporateTabAsync(vm);
+
+        Assert.Contains("Date of Last AGM", html);
+        Assert.Contains("30 Aug 2023", html);
+        Assert.Contains("LEI Status", html);
+        Assert.Contains("ISSUED", html);
+    }
+
+    [Fact]
+    public async Task Director_row_shows_present_role_since_and_flags()
+    {
+        var vm = CreateViewModel();
+        vm.Directors =
+        [
+            new Director
+            {
+                NameRaw = "A DIRECTOR",
+                Din = "00415231",
+                Designation = "Managing Director",
+                DesignationAppointmentDate = new DateOnly(2020, 6, 1),
+                OriginalAppointmentDate = new DateOnly(2015, 1, 1),
+                Flags = "Disqualified"
+            }
+        ];
+
+        var html = await RenderCorporateTabAsync(vm);
+
+        Assert.Contains("Present Role Since", html);
+        Assert.Contains("1 Jun 2020", html);
+        Assert.Contains("Disqualified", html);
+    }
+
+    [Fact]
+    public async Task Other_directorship_row_shows_date_of_incorporation_and_active_compliance()
+    {
+        var vm = CreateViewModel();
+        vm.DirectorAssociations =
+        [
+            new DirectorAssociation
+            {
+                DirectorNameRaw = "A DIRECTOR",
+                ConnectedCompanyRaw = "OTHER CO LIMITED",
+                ConnectedCompanyNormalized = "OTHER CO LIMITED",
+                DateOfIncorporation = new DateOnly(2010, 4, 12),
+                ActiveCompliance = "Active Compliant"
+            }
+        ];
+
+        var html = await RenderCorporateTabAsync(vm);
+
+        Assert.Contains("12 Apr 2010", html);
+        Assert.Contains("Active Compliant", html);
+    }
+
+    [Fact]
+    public async Task Major_shareholder_row_shows_location_capital_charges_and_incorporation_date()
+    {
+        var vm = CreateViewModel();
+        vm.Shareholdings =
+        [
+            new Shareholding
+            {
+                FinancialYear = 2017,
+                ShareholderNameRaw = "A CORPORATE SHAREHOLDER",
+                SourceType = ShareholdingSourceType.MajorShareholding,
+                Location = "MUMBAI, MAHARASHTRA",
+                PaidUpCapitalCrore = 12.5m,
+                SumOfChargesCrore = 3.2m,
+                DateOfIncorporation = new DateOnly(2005, 8, 20)
+            }
+        ];
+
+        var html = await RenderCorporateTabAsync(vm);
+
+        Assert.Contains("MUMBAI, MAHARASHTRA", html);
+        Assert.Contains("12.50", html);
+        Assert.Contains("3.20", html);
+        Assert.Contains("20 Aug 2005", html);
+    }
+
+    [Fact]
+    public async Task Related_corporate_row_shows_financial_year_ending_and_date_of_incorporation()
+    {
+        var vm = CreateViewModel();
+        vm.RelatedCorporates =
+        [
+            new RelatedCorporate
+            {
+                FinancialYearEnding = new DateOnly(2017, 3, 31),
+                EntityNameRaw = "JALPOWER CORPORATION LIMITED",
+                EntityNameNormalized = "JALPOWER CORPORATION LIMITED",
+                RelationshipType = RelationshipType.Subsidiary,
+                DateOfIncorporation = new DateOnly(2008, 11, 3)
+            }
+        ];
+
+        var html = await RenderCorporateTabAsync(vm);
+
+        Assert.Contains("31 Mar 2017", html);
+        Assert.Contains("3 Nov 2008", html);
+    }
+
     // ── A8 / #50 — Related Party Transactions ──
 
     [Fact]

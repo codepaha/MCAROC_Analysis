@@ -42,10 +42,12 @@
                 <div><dt>PAN</dt><dd>@(cp.Pan ?? r.Pan ?? "—")</dd></div>
                 <div><dt>Compliance Status</dt><dd>@Or(cp.ComplianceStatus)</dd></div>
                 <div><dt>Incorporated</dt><dd>@D(cp.IncorporationDate)</dd></div>
+                <div><dt>Date of Last AGM</dt><dd>@D(cp.LastAgmDate)</dd></div>
                 <div><dt>Authorised Capital</dt><dd>@Money(cp.AuthorisedCapital)</dd></div>
                 <div><dt>Paid-up Capital</dt><dd>@Money(cp.PaidUpCapital)</dd></div>
                 <div><dt>Type of Entity</dt><dd>@Or(cp.EntityType)</dd></div>
                 <div><dt>Listing Status</dt><dd>@Or(cp.ListingStatus)</dd></div>
+                <div><dt>LEI Status</dt><dd>@Or(cp.LeiStatus)</dd></div>
                 <div><dt>Industry / Segment</dt><dd>@Or(cp.Industry)@(string.IsNullOrEmpty(cp.Segment) ? "" : $" · {cp.Segment}")</dd></div>
                 <div>
                     <dt>MCA Sum of Charges</dt>
@@ -267,7 +269,7 @@
             @if (Model.DirectorAssociations.Count > 0)
             {
                 <div class="pi-table-wrap"><table class="pi-results-table">
-                    <thead><tr><th>Director</th><th>Connected Company</th><th>CIN</th><th>Type</th><th class="text-end">Paid-up (Cr)</th><th class="text-end">Charges (Cr)</th><th>Status</th><th>Appointed</th><th>Ceased</th></tr></thead>
+                    <thead><tr><th>Director</th><th>Connected Company</th><th>CIN</th><th>Type</th><th class="text-end">Paid-up (Cr)</th><th class="text-end">Charges (Cr)</th><th>Status</th><th>Active Compliance</th><th>Incorporated</th><th>Appointed</th><th>Ceased</th></tr></thead>
                     <tbody>
                     @foreach (var a in Model.DirectorAssociations.OrderBy(a => a.ConnectedCompanyRaw))
                     {
@@ -279,6 +281,8 @@
                             <td class="text-end">@Num(a.PaidUpCapitalCrore)</td>
                             <td class="text-end">@Num(a.SumOfChargesCrore)</td>
                             <td>@Or(a.CompanyStatus)</td>
+                            <td>@Or(a.ActiveCompliance)</td>
+                            <td>@D(a.DateOfIncorporation)</td>
                             <td>@D(a.AppointmentDate)</td>
                             <td>@D(a.CessationDate)</td>
                         </tr>
@@ -337,7 +341,7 @@
             @if (Model.Shareholdings.Count > 0)
             {
                 <div class="pi-table-wrap"><table class="pi-results-table">
-                    <thead><tr><th>Year</th><th>Shareholder</th><th>Type</th><th>Designation</th><th>Promoter</th><th class="text-end">% Held</th><th class="text-end">Shares</th><th>Status</th><th>Source</th></tr></thead>
+                    <thead><tr><th>Year</th><th>Shareholder</th><th>Type</th><th>Designation</th><th>Promoter</th><th class="text-end">% Held</th><th class="text-end">Shares</th><th>Status</th><th>Location</th><th class="text-end">Paid-up (Cr)</th><th class="text-end">Charges (Cr)</th><th>Incorporated</th><th>Source</th></tr></thead>
                     <tbody>
                     @foreach (var s in Model.Shareholdings)
                     {
@@ -356,6 +360,10 @@
                                 @if (s.CessationDate is { } cd) { <span>Ceased @D(cd)</span> }
                                 else { @Or(s.CompanyStatus ?? s.ActiveCompliance) }
                             </td>
+                            <td>@Or(s.Location)</td>
+                            <td class="text-end">@Num(s.PaidUpCapitalCrore)</td>
+                            <td class="text-end">@Num(s.SumOfChargesCrore)</td>
+                            <td>@D(s.DateOfIncorporation)</td>
                             <td>@s.SourceType</td>
                         </tr>
                     }
@@ -411,11 +419,12 @@
                 <div class="mca-section">
                     <h3>@grp.Key <span class="mca-count">@grp.Count()</span></h3>
                     <div class="pi-table-wrap"><table class="pi-results-table">
-                        <thead><tr><th>Entity</th><th>CIN</th><th>Type</th><th class="text-end">Holding %</th><th class="text-end">Paid-up (Cr)</th><th class="text-end">Charges (Cr)</th><th>Status</th><th>Location</th><th>Compliance</th></tr></thead>
+                        <thead><tr><th>FY Ending</th><th>Entity</th><th>CIN</th><th>Type</th><th class="text-end">Holding %</th><th class="text-end">Paid-up (Cr)</th><th class="text-end">Charges (Cr)</th><th>Status</th><th>Location</th><th>Compliance</th><th>Incorporated</th></tr></thead>
                         <tbody>
                         @foreach (var rc in grp.OrderBy(x => x.EntityNameNormalized))
                         {
                             <tr>
+                                <td>@D(rc.FinancialYearEnding)</td>
                                 <td>
                                     @rc.EntityNameRaw
                                     @if (!string.IsNullOrWhiteSpace(rc.Remarks)) { <br /><small class="text-muted">@rc.Remarks</small> }
@@ -428,6 +437,7 @@
                                 <td>@Or(rc.CompanyStatus)</td>
                                 <td>@Or(rc.Location)</td>
                                 <td>@Or(rc.ActiveCompliance)</td>
+                                <td>@D(rc.DateOfIncorporation)</td>
                             </tr>
                         }
                         </tbody>
