@@ -112,9 +112,9 @@ request, 2026-09-12) since this lane hadn't claimed them yet — remaining 6 sti
 |---|---|---|---|
 | #121 C2 | per-tab sticky contents nav + scroll-spy | #112 C1 (merged) | **CLAIMED** (Antigravity — bundled with #119 C7b, see their plan) |
 | #114 C4 | 3 missing colour-as-signal annotation patterns | #112 C1 (merged) | **CLAIMED** (Claude) |
-| #115 C5a | group charges by holder | #112 C1 (merged) | **CLAIMED** (Claude) |
-| #123 C5b | Crore/Lakh/₹ unit toggle + typed amount renderer (file the generated call-site classification table as evidence, don't hardcode counts in the PR) | #112 C1 (merged) | open |
-| #116 C6 | shared inline-SVG viz contract (dossier + dashboard mappings kept separate) + 6 partials | #112 C1 (merged) | open |
+| #115 C5a | group charges by holder | #112 C1 (merged) | **MERGED** (`9a92fac`) |
+| #123 C5b | Crore/Lakh/₹ unit toggle + typed amount renderer (file the generated call-site classification table as evidence, don't hardcode counts in the PR) | #112 C1 (merged) | **CLAIMED** (Claude) |
+| #116 C6 | shared inline-SVG viz contract (dossier + dashboard mappings kept separate) + 6 partials | #112 C1 (merged) | **CLAIMED** (Claude) |
 | #117 C7a | in-app PDF viewer, request-scoped + dedup-aware — **Claude reviews the scoping/dedup code before merge** | none | **MERGED** (PR #127, `9b1096b`) |
 | #119 C7b | relocate chat to docked panel, JSON hardening (antiforgery, length limit, error contract) | #117 C7a (merged) | open |
 | #122 C7c | wire the dead Ctrl+K command-palette scaffold | #119 C7b | open |
@@ -205,6 +205,20 @@ Linux subset fonts break PdfPig's ToUnicode → those are `[SkippableFact]`, ski
 ---
 
 ## Log  <!-- newest first. Prefix: NEEDS / BLOCKED / DONE / DECISION / FYI -->
+
+### 2026-09-12 — Claude session (C5a/#115 MERGED; CLAIMED #116 C6 + #123 C5b)
+- **PR #130 MERGED into `main` as `9a92fac`** — one review round (a `?charge=<id>` deep-link regression:
+  the target charge's drawer now lives inside a per-holder `<tbody class="collapse">`, so opening only
+  the child left it inside a `display:none` ancestor; fixed by expanding the parent holder group first
+  and waiting for `shown.bs.collapse` before opening the child drawer). Then rebased onto #114's merge
+  (real conflict in `_ChargesTab.cshtml`/its test file, both touched by both PRs — resolved by keeping
+  #115's grouping structure with #114's per-row "Unknown Charge Holder" fallback merged in), which
+  exposed 2 real test-data gaps the merge combination surfaced (not a production bug) — fixed and
+  reverified, 69/69 green. Issue #115 auto-closed.
+- **CLAIMED #116 (C6) and #123 (C5b)** — the only two Wave-3 issues left both unblocked (no dependency
+  outstanding) and unclaimed: #119 (C7b) already has Antigravity's PR #131 open; #120 (C9) needs #116;
+  #122 (C7c) needs #119; #124 (C10) needs everything. Starting with #123 (C5b, smaller/more contained),
+  then #116 (C6, bigger — new shared viz contract + 6 SVG partials).
 
 ### 2026-09-12 — Claude session (RELEASED #121 C2 back to Antigravity)
 - **RELEASING #121 (C2)** — owner surfaced that Antigravity already has a comprehensive implementation
