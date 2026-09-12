@@ -36,7 +36,7 @@ public class ShareholdingMetricsTests
             AnalysisRunId: 1,
             Cover: new DossierCover("Test Company", "U12345AB2020PTC123456", "ABCDE1234F",
                 new DateOnly(2020, 1, 1), "Active", "Client", reportDate, reportDate),
-            Corporate: new DossierCorporate([], [], shareholders ?? [], [], [], [], [], structure, null, pattern ?? []),
+            Corporate: new DossierCorporate([], [], shareholders ?? [], [], [], [], [], structure, null, pattern ?? [], []),
             Financials: new DossierFinancials([], [], [], [], [], []),
             Charges: new DossierCharges([], [], [], [], 0),
             Compliance: new DossierCompliance([], [], [], [], [], []),

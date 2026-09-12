@@ -45,7 +45,7 @@ public class DirectorsMetricsTests
             Cover: new DossierCover(
                 "Test Company", "U12345AB2020PTC123456", "ABCDE1234F",
                 new DateOnly(2020, 1, 1), "Active", "Client", rDate, mcaDataAsOf, sourceSnapshotDate),
-            Corporate: new DossierCorporate(directors, [], [], [], [], [], [], null, null, []),
+            Corporate: new DossierCorporate(directors, [], [], [], [], [], [], null, null, [], []),
             Financials: new DossierFinancials([], [], [], [], [], []),
             Charges: new DossierCharges([], [], [], [], 0),
             Compliance: new DossierCompliance([], [], [], [], [], []),

@@ -354,7 +354,7 @@ public class IngestionOrchestratorIntegrationTests : IAsyncLifetime
             IngestionRunId: run.IngestionRunId,
             AnalysisRunId: null,
             Cover: new DossierCover("Test Company", request.Cin, "ABCDE1234F", new DateOnly(2020, 1, 1), "Active", "Client", DateTime.UtcNow, null),
-            Corporate: new DossierCorporate([], [], [], [], [], [], [], null, null, []),
+            Corporate: new DossierCorporate([], [], [], [], [], [], [], null, null, [], []),
             Financials: new DossierFinancials(years, [], facts, paramsInDb, [], []),
             Charges: new DossierCharges([], [], [], [], 0),
             Compliance: new DossierCompliance([], [], [], [], [], []),
