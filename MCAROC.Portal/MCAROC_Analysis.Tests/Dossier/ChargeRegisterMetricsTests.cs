@@ -79,7 +79,7 @@ public class ChargeRegisterMetricsTests
             RequestId: 1, IngestionRunId: 1, AnalysisRunId: 1,
             Cover: new DossierCover("COASTAL PROJECTS LIMITED", "U45203OR1995PLC003982", "AAACC4128F",
                 new DateOnly(1995, 5, 2), "Active", "TestClient", asOf, asOf),
-            Corporate: new DossierCorporate([], [], [], [], [], [], [], null, profile.PaidUpCapital, []),
+            Corporate: new DossierCorporate([], [], [], [], [], [], [], null, profile.PaidUpCapital, [], []),
             Financials: new DossierFinancials(standalone, [], [], [], [], []),
             Charges: new DossierCharges(charges, open, satisfied, DossierComputations.LenderConcentration(charges), 0),
             Compliance: new DossierCompliance([], [], [], [], [], [], []),
@@ -197,7 +197,7 @@ public class ChargeRegisterMetricsTests
         var emptyModel = new DossierModel(
             RequestId: 1, IngestionRunId: 1, AnalysisRunId: 1,
             Cover: new DossierCover("Zero Charges Co", null, null, null, null, "Test", DateTime.UtcNow, null),
-            Corporate: new DossierCorporate([], [], [], [], [], [], [], null, null, []),
+            Corporate: new DossierCorporate([], [], [], [], [], [], [], null, null, [], []),
             Financials: new DossierFinancials([], [], [], [], [], []),
             Charges: new DossierCharges([], [], [], [], 0),
             Compliance: new DossierCompliance([], [], [], [], [], [], []),
@@ -233,7 +233,7 @@ public class ChargeRegisterMetricsTests
         return new DossierModel(
             RequestId: 1, IngestionRunId: 1, AnalysisRunId: 1,
             Cover: new DossierCover("Test Co", "U12345AB2020PTC123456", "ABCDE1234F", new DateOnly(2020, 1, 1), "Active", "TestClient", dt, dt),
-            Corporate: new DossierCorporate([], [], [], [], [], [], [], null, paidUpCapital, []),
+            Corporate: new DossierCorporate([], [], [], [], [], [], [], null, paidUpCapital, [], []),
             Financials: new DossierFinancials([], [], [], [], [], []),
             Charges: new DossierCharges(all, openList, satList, concentration, 0),
             Compliance: new DossierCompliance([], [], [], [], [], [], []),

@@ -20,7 +20,7 @@ public class CreditRatingMetricsTests
             AnalysisRunId: 1,
             Cover: new DossierCover("Test Company", "U12345AB2020PTC123456", "ABCDE1234F",
                 new DateOnly(2020, 1, 1), "Active", "Client", DateTime.UtcNow, DateTime.UtcNow),
-            Corporate: new DossierCorporate([], [], [], [], [], [], [], null, null, []),
+            Corporate: new DossierCorporate([], [], [], [], [], [], [], null, null, [], []),
             Financials: new DossierFinancials([], [], [], [], [], []),
             Charges: new DossierCharges(charges, charges, [], [], 0),
             Compliance: new DossierCompliance([], [], [], [], [], [], ratings),

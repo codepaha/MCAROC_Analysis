@@ -39,7 +39,7 @@ public class PeerComparisonMetricsTests
             Cover: new DossierCover(
                 companyName, coverCin, "ABCDE1234F",
                 new DateOnly(2020, 1, 1), "Active", "Client", rDate, null, null),
-            Corporate: new DossierCorporate([], [], [], [], [], [], [], null, null, []),
+            Corporate: new DossierCorporate([], [], [], [], [], [], [], null, null, [], []),
             Financials: new DossierFinancials([], [], [], [], [], metrics ?? [], closestPeers),
             Charges: new DossierCharges([], [], [], [], 0),
             Compliance: new DossierCompliance([], [], [], [], [], [], []),
@@ -77,7 +77,7 @@ public class PeerComparisonMetricsTests
             Cover: new DossierCover(
                 "COASTAL PROJECTS LIMITED", "U45203OR1995PLC003982", "AACCC0000A",
                 new DateOnly(1995, 1, 1), "Active", "Client", new DateTime(2026, 9, 11, 0, 0, 0, DateTimeKind.Utc), null, null),
-            Corporate: new DossierCorporate([], [], [], [], [], [], [], null, null, []),
+            Corporate: new DossierCorporate([], [], [], [], [], [], [], null, null, [], []),
             Financials: new DossierFinancials([], [], [], [], [], r.Items, peers),
             Charges: new DossierCharges([], [], [], [], 0),
             Compliance: new DossierCompliance([], [], [], [], [], [], []),

@@ -37,6 +37,7 @@ public static partial class DossierComputations
             EpfoMetrics(model),
             PeerComparisonMetrics(model),
             CapitalReconciliationMetrics(model),
+            RelatedPartyTransactionMetrics(model),
             CreditRatingMetrics(model)
         };
 
@@ -1439,7 +1440,17 @@ public static partial class DossierComputations
     {
         var series = years.Where(y => selector(y) is not null)
             .Select(y => (Year: y.FinancialYear, Value: selector(y)!.Value)).ToList();
+        return AddCagrCore(list, series, label, allowNegativeBaseFallback, input);
+    }
 
+    /// <summary>The CAGR algorithm itself, over any (Year, Value) series — extracted from
+    /// <see cref="AddCagr"/> so a metric keyed on something other than <see cref="FinancialYearData"/>
+    /// (e.g. E6's related-party-transaction totals per FY) can reuse the exact same window-selection and
+    /// negative-base handling without re-deriving it.</summary>
+    private static decimal? AddCagrCore(
+        List<MetricResult> list, List<(int Year, decimal Value)> series,
+        string label, bool allowNegativeBaseFallback, string input)
+    {
         if (series.Count < 2)
         {
             list.Add(MetricResult.Insufficient(label, MetricUnit.Percent,
@@ -2889,5 +2900,256 @@ public static partial class DossierComputations
         }
 
         return new MetricGroup("Credit ratings", list);
+    }
+
+    /// <summary>Section E — Related-party-transaction analytics (Issue #65 / D10, docs/analytics-catalogue.json §E).
+    /// The "Related Party Transactions" sheet is a <see cref="Excel.SheetAliases.TrackedOptionalSheets"/> entry
+    /// (absent from a large share of the wider portfolio — see <see cref="Excel.Parsers.RelatedPartyTransactionsParser"/>'s
+    /// doc comment), so an empty result is worded as "sheet not in this upload" only when
+    /// <see cref="SheetCoverage.WasAbsent"/> confirms that; a present-but-empty sheet is a distinct, legitimate
+    /// outcome ("no related-party dealings that period"). E1/E5 bucket by the row's own
+    /// <see cref="RelatedPartyTransaction.FinancialYearEnding"/> year; rows with no reported year cannot be
+    /// placed in a year bucket and are excluded (noted in each bucket's period text), mirroring
+    /// <c>ShareholdingMetrics</c>' handling of undated pattern rows. E3/E4 are scoped to the latest reported FY
+    /// only, matching the established C3/C4/C6/K1 "latest-period-only" convention — summing a transaction-type
+    /// or subsidiary total across multiple years would misrepresent a single period's concentration as a
+    /// multi-year one. E6 first intersects E1's clean per-FY RPT totals with reported Revenue years, then
+    /// runs both series through <see cref="AddCagrCore"/> (the same calendar-bounded window/negative-base
+    /// algorithm A2.1 uses) restricted to that shared year set — since the window it picks depends only on
+    /// which years are present, giving both calls the identical year set guarantees the identical (base,
+    /// end) pair, so the two CAGRs are always compared over the same span (never independently-windowed).
+    /// Pure computation over <paramref name="model"/>.</summary>
+    public static MetricGroup RelatedPartyTransactionMetrics(Dossier.DossierModel model)
+    {
+        var list = new List<MetricResult>();
+        var rpts = model.Corporate.RelatedPartyTransactions;
+
+        string AbsentOrEmptyReason() => model.SourceCoverage.WasAbsent(SheetAliases.RelatedPartyTransactions)
+            ? "Related Party Transactions sheet not in this upload"
+            : "No related-party-transaction rows reported";
+
+        if (rpts.Count == 0)
+        {
+            var reason = AbsentOrEmptyReason();
+            list.Add(MetricResult.Insufficient("Total RPT value per FY", MetricUnit.Crore, reason,
+                "RelatedPartyTransaction.AmountCrore", "RelatedPartyTransaction.FinancialYearEnding"));
+            list.Add(MetricResult.Insufficient("RPT as % of revenue", MetricUnit.Percent, reason,
+                "RelatedPartyTransaction.AmountCrore", "FinancialYearData.Revenue"));
+            list.Add(MetricResult.Insufficient("RPT by transaction type", MetricUnit.Crore, reason,
+                "RelatedPartyTransaction.TransactionType", "RelatedPartyTransaction.AmountCrore"));
+            list.Add(MetricResult.Insufficient("RPT to subsidiaries", MetricUnit.Crore, reason,
+                "RelatedPartyTransaction.RelationshipRaw", "RelatedPartyTransaction.AmountCrore"));
+            list.Add(MetricResult.Insufficient("Distinct related entities transacted per FY", MetricUnit.Count, reason,
+                "RelatedPartyTransaction.EntityNameNormalized", "RelatedPartyTransaction.FinancialYearEnding"));
+            list.Add(MetricResult.Insufficient("RPT growing faster than revenue", MetricUnit.Count, reason,
+                "RelatedPartyTransaction.AmountCrore", "FinancialYearData.Revenue"));
+            return new MetricGroup("Related-party transactions", list);
+        }
+
+        var dated = rpts.Where(r => r.FinancialYearEnding is not null).ToList();
+        var undatedCount = rpts.Count - dated.Count;
+        var undatedNote = undatedCount > 0 ? $" ({undatedCount} row(s) with no reported Financial Year Ending excluded)" : "";
+        const string noFyReason = "No related-party-transaction row has a reported Financial Year Ending";
+
+        // E1: Total RPT value per FY — fails closed per-FY on any missing Amount in that FY's population
+        // (the "component sum requires EVERY component" gate, per C3/C6).
+        var rptByYear = new Dictionary<int, decimal>();
+        if (dated.Count == 0)
+        {
+            list.Add(MetricResult.Insufficient("Total RPT value per FY", MetricUnit.Crore, noFyReason,
+                "RelatedPartyTransaction.AmountCrore", "RelatedPartyTransaction.FinancialYearEnding"));
+        }
+        else
+        {
+            foreach (var g in dated.GroupBy(r => r.FinancialYearEnding!.Value.Year).OrderBy(g => g.Key))
+            {
+                var rows = g.ToList();
+                var missing = rows.Count(r => r.AmountCrore is null);
+                if (missing > 0)
+                {
+                    list.Add(MetricResult.Insufficient($"Total RPT value per FY (FY{g.Key})", MetricUnit.Crore,
+                        $"FY{g.Key}: {missing} of {rows.Count} transaction(s) have no reported Amount — the sum would be incomplete",
+                        "RelatedPartyTransaction.AmountCrore", "RelatedPartyTransaction.FinancialYearEnding"));
+                }
+                else
+                {
+                    var sum = rows.Sum(r => r.AmountCrore!.Value);
+                    rptByYear[g.Key] = sum;
+                    list.Add(MetricResult.Ok($"Total RPT value per FY (FY{g.Key})", sum, MetricUnit.Crore,
+                        $"FY{g.Key} — {rows.Count} transaction(s){undatedNote}",
+                        "RelatedPartyTransaction.AmountCrore", "RelatedPartyTransaction.FinancialYearEnding"));
+                }
+            }
+        }
+
+        // E2: RPT as % of revenue — matched by calendar year (FinancialYearEnding.Year == FinancialYearData.FinancialYear);
+        // only computed for years with both a clean E1 total and a non-zero reported Revenue.
+        if (dated.Count == 0)
+        {
+            list.Add(MetricResult.Insufficient("RPT as % of revenue", MetricUnit.Percent, noFyReason,
+                "RelatedPartyTransaction.AmountCrore", "FinancialYearData.Revenue"));
+        }
+        else
+        {
+            foreach (var year in dated.Select(r => r.FinancialYearEnding!.Value.Year).Distinct().OrderBy(y => y))
+            {
+                if (!rptByYear.TryGetValue(year, out var rptTotal))
+                {
+                    list.Add(MetricResult.Insufficient($"RPT as % of revenue (FY{year})", MetricUnit.Percent,
+                        $"FY{year}: total RPT value could not be computed (see 'Total RPT value per FY')",
+                        "RelatedPartyTransaction.AmountCrore", "FinancialYearData.Revenue"));
+                    continue;
+                }
+                var fy = model.Financials.Standalone.FirstOrDefault(f => f.FinancialYear == year);
+                if (fy?.Revenue is null)
+                {
+                    list.Add(MetricResult.Insufficient($"RPT as % of revenue (FY{year})", MetricUnit.Percent,
+                        $"FY{year}: Revenue not reported on the Standalone Financial Data sheet",
+                        "RelatedPartyTransaction.AmountCrore", "FinancialYearData.Revenue"));
+                }
+                else if (fy.Revenue.Value == 0m)
+                {
+                    list.Add(MetricResult.Insufficient($"RPT as % of revenue (FY{year})", MetricUnit.Percent,
+                        $"FY{year}: Revenue is zero — percentage undefined",
+                        "RelatedPartyTransaction.AmountCrore", "FinancialYearData.Revenue"));
+                }
+                else
+                {
+                    var pct = Math.Round(rptTotal / fy.Revenue.Value * 100m, 1);
+                    list.Add(MetricResult.Ok($"RPT as % of revenue (FY{year})", pct, MetricUnit.Percent,
+                        $"FY{year} — RPT ₹{rptTotal:0.##} Cr / Revenue ₹{fy.Revenue.Value:0.##} Cr",
+                        "RelatedPartyTransaction.AmountCrore", "FinancialYearData.Revenue"));
+                }
+            }
+        }
+
+        // E3 / E4: point-in-time splits, scoped to the latest reported Financial Year Ending.
+        if (dated.Count == 0)
+        {
+            list.Add(MetricResult.Insufficient("RPT by transaction type", MetricUnit.Crore, noFyReason,
+                "RelatedPartyTransaction.TransactionType", "RelatedPartyTransaction.AmountCrore"));
+            list.Add(MetricResult.Insufficient("RPT to subsidiaries", MetricUnit.Crore, noFyReason,
+                "RelatedPartyTransaction.RelationshipRaw", "RelatedPartyTransaction.AmountCrore"));
+        }
+        else
+        {
+            var latestYear = dated.Max(r => r.FinancialYearEnding!.Value.Year);
+            var latestRows = dated.Where(r => r.FinancialYearEnding!.Value.Year == latestYear).ToList();
+            var missingAmt = latestRows.Count(r => r.AmountCrore is null);
+
+            if (missingAmt > 0)
+            {
+                var reason = $"FY{latestYear}: {missingAmt} of {latestRows.Count} transaction(s) have no reported Amount — the sum would be incomplete";
+                list.Add(MetricResult.Insufficient("RPT by transaction type", MetricUnit.Crore, reason,
+                    "RelatedPartyTransaction.TransactionType", "RelatedPartyTransaction.AmountCrore"));
+                list.Add(MetricResult.Insufficient("RPT to subsidiaries", MetricUnit.Crore, reason,
+                    "RelatedPartyTransaction.RelationshipRaw", "RelatedPartyTransaction.AmountCrore"));
+            }
+            else
+            {
+                // E3: grouped by the sheet's own TransactionType. A blank type is excluded from the split
+                // rather than given a fake "Unspecified" bucket (C4's convention); insufficient only when
+                // EVERY row in the FY lacks a type.
+                var typed = latestRows.Where(r => !string.IsNullOrWhiteSpace(r.TransactionType)).ToList();
+                if (typed.Count == 0)
+                {
+                    list.Add(MetricResult.Insufficient("RPT by transaction type", MetricUnit.Crore,
+                        $"FY{latestYear}: {latestRows.Count} transaction(s), none with a reported TransactionType",
+                        "RelatedPartyTransaction.TransactionType", "RelatedPartyTransaction.AmountCrore"));
+                }
+                else
+                {
+                    var untyped = latestRows.Count - typed.Count;
+                    var exclusionNote = untyped > 0 ? $" ({untyped} with no reported type excluded)" : "";
+                    foreach (var g in typed.GroupBy(r => r.TransactionType!.Trim())
+                        .OrderByDescending(g => g.Sum(r => r.AmountCrore!.Value)).ThenBy(g => g.Key, StringComparer.OrdinalIgnoreCase))
+                    {
+                        var sum = g.Sum(r => r.AmountCrore!.Value);
+                        list.Add(MetricResult.Ok($"RPT by transaction type ({g.Key})", sum, MetricUnit.Crore,
+                            $"FY{latestYear} — {g.Count()} of {latestRows.Count} transaction(s){exclusionNote}",
+                            "RelatedPartyTransaction.TransactionType", "RelatedPartyTransaction.AmountCrore"));
+                    }
+                }
+
+                // E4: RPT to subsidiaries — RelationshipRaw containing "Subsidiary" (case-insensitive
+                // substring match against this free-text MCA-sourced column, e.g. "Subsidiary",
+                // "Wholly-owned Subsidiary"). Every row in latestRows already has a known Amount (the
+                // missingAmt gate above), so a zero-match result is a genuine Ok(0), not "insufficient."
+                var subsidiaryRows = latestRows.Where(r => r.RelationshipRaw?.Contains("Subsidiary", StringComparison.OrdinalIgnoreCase) == true).ToList();
+                if (subsidiaryRows.Count == 0)
+                {
+                    list.Add(MetricResult.Ok("RPT to subsidiaries", 0m, MetricUnit.Crore,
+                        $"FY{latestYear} — no transactions with a subsidiary-labelled relationship",
+                        "RelatedPartyTransaction.RelationshipRaw", "RelatedPartyTransaction.AmountCrore"));
+                }
+                else
+                {
+                    var sum = subsidiaryRows.Sum(r => r.AmountCrore!.Value);
+                    list.Add(MetricResult.Ok("RPT to subsidiaries", sum, MetricUnit.Crore,
+                        $"FY{latestYear} — {subsidiaryRows.Count} of {latestRows.Count} transaction(s) with a subsidiary-labelled relationship",
+                        "RelatedPartyTransaction.RelationshipRaw", "RelatedPartyTransaction.AmountCrore"));
+                }
+            }
+        }
+
+        // E5: Distinct related entities transacted per FY. EntityNameNormalized is always populated by the
+        // parser (derived from the required EntityName column), so no missing-value gate applies here.
+        if (dated.Count == 0)
+        {
+            list.Add(MetricResult.Insufficient("Distinct related entities transacted per FY", MetricUnit.Count, noFyReason,
+                "RelatedPartyTransaction.EntityNameNormalized", "RelatedPartyTransaction.FinancialYearEnding"));
+        }
+        else
+        {
+            foreach (var g in dated.GroupBy(r => r.FinancialYearEnding!.Value.Year).OrderBy(g => g.Key))
+            {
+                var distinctCount = g.Select(r => r.EntityNameNormalized).Distinct(StringComparer.OrdinalIgnoreCase).Count();
+                list.Add(MetricResult.Ok($"Distinct related entities transacted per FY (FY{g.Key})", distinctCount, MetricUnit.Count,
+                    $"FY{g.Key} — {g.Count()} transaction(s){undatedNote}",
+                    "RelatedPartyTransaction.EntityNameNormalized", "RelatedPartyTransaction.FinancialYearEnding"));
+            }
+        }
+
+        // E6: RPT growing faster than revenue — both CAGRs MUST be computed over the exact same (base,
+        // end) FY pair, or the flag compares two unrelated spans (e.g. RPT's most recent 1-year jump
+        // against revenue's full 3-year run) and can assert the wrong direction entirely (PR #103 review).
+        // Fix: build the shared "clean RPT total (E1) AND reported Revenue" FY intersection first, then
+        // hand AddCagrCore two series restricted to that IDENTICAL set of years — its calendar-bounded
+        // window selection is then guaranteed to resolve to the same (base, end) pair for both, since it
+        // depends only on which years are present, not on their values.
+        var revenueByYear = model.Financials.Standalone.Where(f => f.Revenue is not null)
+            .ToDictionary(f => f.FinancialYear, f => f.Revenue!.Value);
+        var commonYears = rptByYear.Keys.Where(revenueByYear.ContainsKey).OrderBy(y => y).ToList();
+
+        if (commonYears.Count < 2)
+        {
+            list.Add(MetricResult.Insufficient("RPT growing faster than revenue", MetricUnit.Count,
+                "Fewer than 2 financial years have both a clean RPT total and a reported Revenue figure — a CAGR comparison requires a shared FY window",
+                "RelatedPartyTransaction.AmountCrore", "FinancialYearData.Revenue"));
+        }
+        else
+        {
+            var scratch = new List<MetricResult>();
+            var rptSeries = commonYears.Select(y => (Year: y, Value: rptByYear[y])).ToList();
+            var revenueSeries = commonYears.Select(y => (Year: y, Value: revenueByYear[y])).ToList();
+            var rptCagr = AddCagrCore(scratch, rptSeries, "RPT CAGR (internal)", allowNegativeBaseFallback: false, "RelatedPartyTransaction.AmountCrore");
+            var revenueCagr = AddCagrCore(scratch, revenueSeries, "Revenue CAGR (internal)", allowNegativeBaseFallback: false, "FinancialYearData.Revenue");
+
+            if (rptCagr is null || revenueCagr is null)
+            {
+                list.Add(MetricResult.Insufficient("RPT growing faster than revenue", MetricUnit.Count,
+                    "RPT CAGR or Revenue CAGR could not be computed within the shared FY window (no base year within 3 calendar years of the latest shared FY, or a zero/negative base or end value)",
+                    "RelatedPartyTransaction.AmountCrore", "FinancialYearData.Revenue"));
+            }
+            else
+            {
+                var flag = rptCagr.Value > revenueCagr.Value;
+                list.Add(MetricResult.Ok("RPT growing faster than revenue", flag ? 1m : 0m, MetricUnit.Count,
+                    $"RPT CAGR {rptCagr.Value:0.#}% vs Revenue CAGR {revenueCagr.Value:0.#}% (shared FY window)",
+                    "RelatedPartyTransaction.AmountCrore", "FinancialYearData.Revenue"));
+            }
+        }
+
+        return new MetricGroup("Related-party transactions", list);
     }
 }

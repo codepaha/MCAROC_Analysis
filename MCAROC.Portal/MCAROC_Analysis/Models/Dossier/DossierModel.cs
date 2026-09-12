@@ -36,7 +36,8 @@ public sealed record DossierCorporate(
     IReadOnlyList<DirectorAssociation> OtherDirectorships,
     CompanyStructure? Structure,
     decimal? PaidUpCapital,
-    IReadOnlyList<ShareholdingPatternRow> ShareholdingPattern)
+    IReadOnlyList<ShareholdingPatternRow> ShareholdingPattern,
+    IReadOnlyList<RelatedPartyTransaction> RelatedPartyTransactions)
 {
     public int ActiveDirectorCount => Directors.Count(d => d.CessationDate is null);
 }
