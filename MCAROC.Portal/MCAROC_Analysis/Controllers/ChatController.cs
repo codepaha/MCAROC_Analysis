@@ -16,6 +16,10 @@ public class ChatController(ChatService chatService) : Controller
         if (!await chatService.RequestExistsAsync(requestId, ct))
             return NotFound();
 
+        // Enforce the 1,000-character limit matching the shared service and JSON endpoint.
+        if (!string.IsNullOrWhiteSpace(question) && question.Trim().Length > ChatService.MaxQuestionLength)
+            return BadRequest("Question exceeds the maximum length of 1,000 characters.");
+
         // AskAsync re-checks and returns null if the request was deleted in the gap between the guard
         // above and here — honour that too.
         if (!string.IsNullOrWhiteSpace(question)

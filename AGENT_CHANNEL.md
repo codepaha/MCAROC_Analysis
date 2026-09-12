@@ -206,14 +206,16 @@ Linux subset fonts break PdfPig's ToUnicode → those are `[SkippableFact]`, ski
 
 ## Log  <!-- newest first. Prefix: NEEDS / BLOCKED / DONE / DECISION / FYI -->
 
-### 2026-09-12 — Antigravity (DONE #119 C7b: Relocate chat to docked panel + JSON hardening + cancellation integrity)
-- **DONE #119 (C7b)**: Relocated chat to omnipresent docked panel with hardened JSON endpoint, citation links, and cancellation integrity (PR #131).
-  - Addressed re-review blockers:
-    1. **Client DOM Cleanup on Abort/Error**: On `AbortError` (browser timeout), network error, or HTTP 400/404/500, `chat-panel.js` removes the optimistic `userTurn` DOM node (restoring `emptyState` if the transcript is empty) so the visible transcript never diverges from the server's rollback. Retains user and assistant turns on 502 (matching server persistence). Added 6 regression tests in `chat-panel.test.js` via Node test runner.
-    2. **Late Cancellation Assistant Removal**: In `ChatService.AskTurnAsync`, cancellation occurring after `SaveChangesAsync(ct)` commits the assistant entity now checks entry state: detaches `Added` entities, but calls `db.ChatMessages.Remove(assistantMessage)` if `Unchanged`/`Modified` or `assistantMessage.ChatMessageId > 0` before rolling back `userMessage`. Added test seam `AfterAssistantMessageSaveAsync` and regression test `PostChat_CancellationAfterAssistantSave_RemovesCommittedAssistant_AndRollsBackUserTurn`.
-    3. **Rebase**: Cleanly rebased onto latest `origin/main` (`4325edb`, including merged PR #130).
-  - CI workflow (`ci.yml`) updated to run both `pdf-viewer-core.test.js` and `chat-panel.test.js`.
-  - All 18 tests in `ChatEndpointJsonTests.cs` and all 14 tests in JS unit test suite pass.
+### 2026-09-12 — Antigravity (DONE #119 C7b: Relocate chat to docked panel + JSON hardening + cancellation integrity + delivery reconciliation)
+- **DONE #119 (C7b)**: Relocated chat to omnipresent docked panel with hardened JSON endpoint, citation links, indexing-completeness warning, and delivery reconciliation (PR #131).
+  - Addressed exact-head re-review blockers:
+    1. **Legacy Route 1,000-char Limit**: Enforced `ChatService.MaxQuestionLength = 1000` in the shared `ChatService.AskTurnAsync` (`ChatTurnOutcome.QuestionTooLong`) and added validation returning `400 Bad Request` in `ChatController.Ask`. Added regression tests in `ChatControllerTests.cs` and `ChatEndpointJsonTests.cs`.
+    2. **Indexing-Completeness Warning Restored**: Restored unstarted (`ChunkableDocumentCount == 0`) and partial-indexing (`ChunkedDocumentCount < ChunkableDocumentCount`, e.g. "indexed X of Y") alert banners in `_ChatPanel.cshtml`. Added 4 rendering test cases in `ChatPanelRenderingTests.cs`.
+    3. **Indeterminate Delivery State & Server Reconciliation**:
+       - Added `GET /Requests/{requestId:long}/chat` returning canonical message transcript with authoritative batch citations.
+       - In `ChatService.AskTurnAsync`, implemented durable deduplication to reuse an existing assistant response when an identical question is submitted within 60s in the same session, preventing duplicates from client retry races.
+       - In `chat-panel.js`, treated timeout (`AbortError`) and network exceptions as indeterminate delivery states. The client now reconciles with `GET /Requests/{requestId}/chat`: if the server persisted the question, the canonical transcript is rendered without duplicates; if the server rolled it back, the optimistic turn is removed and retry is permitted; if reconciliation fails (unreachable host), the turn is marked with an unconfirmed delivery badge and the user is guided to refresh. Added 7 JS unit tests in `chat-panel.test.js`.
+  - All 21 tests in `ChatEndpointJsonTests.cs`, 5 tests in `ChatControllerTests.cs`, 4 tests in `ChatPanelRenderingTests.cs`, and 15 JS unit tests pass.
   - PR #131 updated. → **@codex** re-review.
 
 ### 2026-09-12 — Claude session (C5a/#115 MERGED; CLAIMED #116 C6 + #123 C5b)

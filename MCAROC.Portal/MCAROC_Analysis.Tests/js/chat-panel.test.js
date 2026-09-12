@@ -60,7 +60,8 @@ function createMockElement(tagName = 'div', initialAttrs = {}) {
             if (selector === 'input[name="__RequestVerificationToken"]') {
                 return this.children.find(c => c.attributes && c.attributes.name === '__RequestVerificationToken') || null;
             }
-            return null;
+            const all = this.querySelectorAll(selector);
+            return all.length > 0 ? all[0] : null;
         },
         querySelectorAll(selector) {
             const results = [];
@@ -146,12 +147,22 @@ function setupFixture() {
     };
 }
 
-test('chat-panel: timeout/abort removes optimistic userTurn, restores emptyState, and shows error banner', async () => {
+test('chat-panel: timeout/abort with server confirming rollback removes userTurn, restores emptyState, and shows retry error banner', async () => {
     const fixture = setupFixture();
-    const mockFetch = async () => {
-        const err = new Error('The operation was aborted');
-        err.name = 'AbortError';
-        throw err;
+    let callCount = 0;
+    const mockFetch = async (url, options) => {
+        callCount++;
+        if (options && options.method === 'POST') {
+            const err = new Error('The operation was aborted');
+            err.name = 'AbortError';
+            throw err;
+        }
+        // Reconciliation GET /Requests/42/chat confirms server rolled back (empty messages)
+        return {
+            ok: true,
+            status: 200,
+            json: async () => ({ success: true, messages: [] })
+        };
     };
 
     const controller = initChatPanel(fixture.doc, mockFetch);
@@ -160,24 +171,51 @@ test('chat-panel: timeout/abort removes optimistic userTurn, restores emptyState
     fixture.input.value = 'Who are the current directors?';
     await controller.handleSubmit();
 
-    // The optimistic user bubble must have been removed from DOM so client matches server rollback
+    assert.equal(callCount, 2, 'POST followed by reconciliation GET');
     const turns = fixture.messagesContainer.querySelectorAll('.mca-chat-turn');
-    assert.equal(turns.length, 0, 'No user turns must remain in DOM after timeout/abort');
-
-    // Empty state should be restored
+    assert.equal(turns.length, 0, 'No user turns must remain in DOM after server-confirmed rollback');
     assert.equal(fixture.messagesContainer.children.includes(fixture.emptyState), true, 'Empty state must be restored');
-
-    // Error banner should display timeout message
     assert.match(fixture.errorBanner.textContent, /timed out after 45 seconds/i);
-    assert.equal(fixture.errorBanner.style.display, 'block');
-
-    // Input must be re-enabled and still contain question for retry
     assert.equal(fixture.input.disabled, false);
     assert.equal(fixture.submitBtn.disabled, false);
     assert.equal(fixture.input.value, 'Who are the current directors?');
 });
 
-test('chat-panel: network error removes optimistic userTurn and shows network error banner', async () => {
+test('chat-panel: timeout/abort where server actually committed the turn (race condition) renders canonical transcript without duplicates', async () => {
+    const fixture = setupFixture();
+    const mockFetch = async (url, options) => {
+        if (options && options.method === 'POST') {
+            const err = new Error('The operation was aborted');
+            err.name = 'AbortError';
+            throw err;
+        }
+        // Reconciliation GET reveals the server committed both turns before client timeout
+        return {
+            ok: true,
+            status: 200,
+            json: async () => ({
+                success: true,
+                messages: [
+                    { role: 'User', text: 'Who are the current directors?', status: 'Success' },
+                    { role: 'Assistant', text: 'There are 3 active directors.', status: 'Success' }
+                ]
+            })
+        };
+    };
+
+    const controller = initChatPanel(fixture.doc, mockFetch);
+    fixture.input.value = 'Who are the current directors?';
+    await controller.handleSubmit();
+
+    const turns = fixture.messagesContainer.querySelectorAll('.mca-chat-turn');
+    assert.equal(turns.length, 2, 'Canonical turns from server rendered');
+    assert.ok(turns[0].className.includes('user'));
+    assert.ok(turns[1].className.includes('assistant'));
+    assert.equal(fixture.input.value, '', 'Input cleared to prevent duplicate submission');
+    assert.equal(fixture.badge.textContent, '2');
+});
+
+test('chat-panel: network error with reconciliation failure marks turn as Delivery Unconfirmed without claiming rollback', async () => {
     const fixture = setupFixture();
     const mockFetch = async () => {
         throw new TypeError('Failed to fetch');
@@ -187,9 +225,12 @@ test('chat-panel: network error removes optimistic userTurn and shows network er
     fixture.input.value = 'What is the share capital?';
     await controller.handleSubmit();
 
+    // Turn must NOT be deleted because rollback could not be confirmed
     const turns = fixture.messagesContainer.querySelectorAll('.mca-chat-turn');
-    assert.equal(turns.length, 0, 'User turn must be removed on network failure');
-    assert.match(fixture.errorBanner.textContent, /network error connecting to assistant/i);
+    assert.equal(turns.length, 1, 'Optimistic turn preserved when delivery state cannot be verified');
+    const unconfirmedPill = turns[0].querySelectorAll('.mca-delivery-unconfirmed');
+    assert.equal(unconfirmedPill.length, 1, 'Marked with Delivery Unconfirmed pill');
+    assert.match(fixture.errorBanner.textContent, /delivery status could not be verified/i);
     assert.equal(fixture.input.disabled, false);
 });
 

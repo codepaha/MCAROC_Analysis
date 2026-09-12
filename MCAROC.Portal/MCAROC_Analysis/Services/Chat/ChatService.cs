@@ -14,6 +14,8 @@ public enum ChatTurnOutcome
 {
     Success,
     RequestNotFound,
+    QuestionEmpty,
+    QuestionTooLong,
     UpstreamFailure
 }
 
@@ -25,6 +27,7 @@ public class ChatService(
     ChatCompletionService completionService,
     ILogger<ChatService> logger)
 {
+    public const int MaxQuestionLength = 1000;
     private static readonly ChatRetrievalOptions Options = ChatRetrievalOptions.Default;
 
     public virtual Task<bool> RequestExistsAsync(long requestId, CancellationToken ct) =>
@@ -41,15 +44,45 @@ public class ChatService(
     /// cleanly without leaking exception details.</summary>
     public virtual async Task<ChatTurnResult> AskTurnAsync(long requestId, string question, CancellationToken ct)
     {
+        if (string.IsNullOrWhiteSpace(question))
+            return new ChatTurnResult(ChatTurnOutcome.QuestionEmpty);
+
+        var trimmed = question.Trim();
+        if (trimmed.Length > MaxQuestionLength)
+            return new ChatTurnResult(ChatTurnOutcome.QuestionTooLong);
+
         var request = await db.Requests.FirstOrDefaultAsync(r => r.RequestId == requestId, ct);
         if (request is null)
             return new ChatTurnResult(ChatTurnOutcome.RequestNotFound);
 
         var session = await GetOrCreateSessionAsync(requestId, ct);
 
+        // Durable deduplication: If a completed turn with the identical question was persisted
+        // in this session within the last 60 seconds, return that existing turn to prevent duplicates from retry races.
+        var recentTurns = await db.ChatMessages
+            .Where(m => m.ChatSessionId == session.ChatSessionId)
+            .OrderByDescending(m => m.CreatedDate)
+            .Take(2)
+            .ToListAsync(ct);
+
+        var existingUserMsg = recentTurns.FirstOrDefault(m => m.Role == ChatRole.User);
+        var existingAssistantMsg = recentTurns.FirstOrDefault(m => m.Role == ChatRole.Assistant);
+        if (existingUserMsg is not null
+            && string.Equals(existingUserMsg.MessageText.Trim(), trimmed, StringComparison.OrdinalIgnoreCase)
+            && (DateTime.UtcNow - existingUserMsg.CreatedDate) < TimeSpan.FromSeconds(60))
+        {
+            if (existingAssistantMsg is not null)
+            {
+                var existingOutcome = existingAssistantMsg.Status == ChatMessageStatus.Failed
+                    ? ChatTurnOutcome.UpstreamFailure
+                    : ChatTurnOutcome.Success;
+                return new ChatTurnResult(existingOutcome, existingAssistantMsg);
+            }
+        }
+
         var userMessage = new ChatMessage
         {
-            ChatSessionId = session.ChatSessionId, Role = ChatRole.User, MessageText = question, CreatedDate = DateTime.UtcNow
+            ChatSessionId = session.ChatSessionId, Role = ChatRole.User, MessageText = trimmed, CreatedDate = DateTime.UtcNow
         };
         db.ChatMessages.Add(userMessage);
         session.LastActivityDate = DateTime.UtcNow;

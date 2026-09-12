@@ -201,6 +201,50 @@
             errorBanner.textContent = '';
         }
 
+        function renderTranscript(messages) {
+            const existingTurns = messagesContainer.querySelectorAll ? messagesContainer.querySelectorAll('.mca-chat-turn') : [];
+            if (existingTurns && existingTurns.forEach) {
+                existingTurns.forEach(function (t) { if (t.remove) t.remove(); });
+            } else if (existingTurns) {
+                for (let i = existingTurns.length - 1; i >= 0; i--) {
+                    if (existingTurns[i].remove) existingTurns[i].remove();
+                }
+            }
+            if (emptyState && emptyState.remove) emptyState.remove();
+
+            if (!messages || messages.length === 0) {
+                if (emptyState) messagesContainer.appendChild(emptyState);
+            } else {
+                messages.forEach(function (msg) {
+                    const bubble = createBubbleElement(
+                        msg.role || 'Assistant',
+                        msg.text || '',
+                        msg.status || 'Success',
+                        msg.citations || [],
+                        msg.createdDate,
+                        d
+                    );
+                    if (bubble) messagesContainer.appendChild(bubble);
+                });
+            }
+
+            if (badge) {
+                badge.textContent = (messages ? messages.length : 0).toString();
+            }
+            scrollToBottom();
+        }
+
+        function markTurnIndeterminate(turnEl) {
+            if (!turnEl) return;
+            const header = turnEl.querySelector ? turnEl.querySelector('.mca-chat-bubble-header') : null;
+            if (header) {
+                const badgeSpan = d.createElement('span');
+                badgeSpan.className = 'badge bg-warning text-dark ms-1 mca-delivery-unconfirmed';
+                badgeSpan.textContent = 'Delivery Unconfirmed';
+                header.appendChild(badgeSpan);
+            }
+        }
+
         // ── Form Submission ──
         async function handleSubmit(e) {
             if (e && e.preventDefault) e.preventDefault();
@@ -282,7 +326,7 @@
                     messagesContainer.appendChild(assistantTurn);
                     showError(data.error && data.error.message ? data.error.message : 'Upstream AI completion failed.');
                 } else {
-                    // Server did not persist this turn (400, 404, 500, etc.).
+                    // Server returned an explicit error response (400, 404, 500, etc.) confirming rejection.
                     // Remove optimistic userTurn so visible UI never diverges from the database.
                     if (userTurn && userTurn.remove) {
                         userTurn.remove();
@@ -303,18 +347,56 @@
                 }
             } catch (err) {
                 clearTimeout(timeoutId);
-                // On abort or network failure, server rolled back any pending turn. Remove optimistic bubble.
-                if (userTurn && userTurn.remove) {
-                    userTurn.remove();
-                }
-                if (emptyState && messagesContainer.querySelectorAll && messagesContainer.querySelectorAll('.mca-chat-turn').length === 0) {
-                    messagesContainer.appendChild(emptyState);
+
+                // Indeterminate delivery state: client timeout or transport error can race a turn
+                // that the server actually committed. Reconcile with the server before assuming rollback.
+                let reconciled = false;
+                try {
+                    const reconcileRes = await fetchImpl('/Requests/' + encodeURIComponent(requestId) + '/chat', {
+                        method: 'GET',
+                        headers: {
+                            'X-Requested-With': 'XMLHttpRequest'
+                        }
+                    });
+
+                    if (reconcileRes && reconcileRes.ok) {
+                        const history = await reconcileRes.json().catch(function () { return null; });
+                        if (history && history.success && Array.isArray(history.messages)) {
+                            reconciled = true;
+                            const persistedUserTurn = history.messages.find(function (m) {
+                                return (m.role || '').toLowerCase() === 'user' && m.text === question;
+                            });
+
+                            if (persistedUserTurn) {
+                                // Server committed the turn! Render canonical transcript to prevent duplicates.
+                                renderTranscript(history.messages);
+                                hideError();
+                                input.value = '';
+                                if (charCount) charCount.textContent = '0';
+                            } else {
+                                // Server confirmed the question was NOT persisted (it was cancelled / rolled back).
+                                if (userTurn && userTurn.remove) {
+                                    userTurn.remove();
+                                }
+                                if (emptyState && messagesContainer.querySelectorAll && messagesContainer.querySelectorAll('.mca-chat-turn').length === 0) {
+                                    messagesContainer.appendChild(emptyState);
+                                }
+                                if (err && err.name === 'AbortError') {
+                                    showError('Request timed out after 45 seconds. Delivery was not completed; please try again.');
+                                } else {
+                                    showError('Network error connecting to assistant. Delivery was not completed; please try again.');
+                                }
+                            }
+                        }
+                    }
+                } catch (reconErr) {
+                    // Reconcile attempt failed (true offline / unreachable host)
                 }
 
-                if (err && err.name === 'AbortError') {
-                    showError('Request timed out after 45 seconds. Please try again.');
-                } else {
-                    showError('Network error connecting to assistant.');
+                if (!reconciled) {
+                    // Server state could not be verified. Do NOT claim rollback or DB alignment.
+                    markTurnIndeterminate(userTurn);
+                    showError('Network error. Delivery status could not be verified with server. Please refresh before retrying.');
                 }
             } finally {
                 isSubmitting = false;

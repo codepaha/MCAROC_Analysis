@@ -751,6 +751,40 @@ public class RequestsController(
         return Ok(ChatApiResponse.Ok(messageDto));
     }
 
+    [HttpGet("/Requests/{requestId:long}/chat")]
+    public async Task<IActionResult> GetChatHistory(
+        long requestId,
+        [FromServices] ChatService chatService,
+        CancellationToken ct)
+    {
+        if (!await chatService.RequestExistsAsync(requestId, ct))
+        {
+            return NotFound(ChatApiResponse.Fail("REQUEST_NOT_FOUND", "Request was not found."));
+        }
+
+        var authoritativeBatch = await McaFilingBatchResolver.GetAuthoritativeBatchAsync(db, requestId, ct);
+        var validDocIds = authoritativeBatch is null
+            ? new HashSet<long>()
+            : (await db.McaFilingDocuments
+                .Where(d => d.BatchId == authoritativeBatch.BatchId && d.RequestId == requestId)
+                .Select(d => d.FilingDocumentId)
+                .ToListAsync(ct)).ToHashSet();
+
+        var session = await db.ChatSessions.FirstOrDefaultAsync(s => s.RequestId == requestId, ct);
+        if (session is null)
+        {
+            return Ok(new { success = true, messages = Array.Empty<ChatMessageDto>() });
+        }
+
+        var messages = await db.ChatMessages
+            .Where(m => m.ChatSessionId == session.ChatSessionId)
+            .OrderBy(m => m.CreatedDate)
+            .ToListAsync(ct);
+
+        var dtos = messages.Select(m => MapMessageDto(m, requestId, validDocIds)).ToList();
+        return Ok(new { success = true, messages = dtos });
+    }
+
     private static ChatMessageDto MapMessageDto(ChatMessage m, long requestId, HashSet<long> validDocIds)
     {
         var dto = new ChatMessageDto

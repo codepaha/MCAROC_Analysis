@@ -689,4 +689,114 @@ public class ChatEndpointJsonTests : IAsyncLifetime
         var c4 = apiRes.Message.Citations[3];
         Assert.Null(c4.ViewerUrl);
     }
+
+    [Fact]
+    public async Task GetChatHistory_ReturnsPersistedMessages_WithAuthoritativeCitations()
+    {
+        await using var db = CreateContext();
+        var requestId = await SeedRequestAsync("History Corp");
+        var authoritativeBatch = new McaFilingBatch
+        {
+            RequestId = requestId,
+            Status = FilingBatchStatus.Completed,
+            StartedDate = DateTime.UtcNow.AddHours(-1),
+            CompletedDate = DateTime.UtcNow
+        };
+        db.McaFilingBatches.Add(authoritativeBatch);
+        await db.SaveChangesAsync();
+
+        var filing = new McaFiling { RequestId = requestId, BatchId = authoritativeBatch.BatchId, Srn = "SRN-HIST" };
+        db.McaFilings.Add(filing);
+        await db.SaveChangesAsync();
+
+        var doc = new McaFilingDocument
+        {
+            RequestId = requestId,
+            BatchId = authoritativeBatch.BatchId,
+            FilingId = filing.FilingId,
+            OriginalFileName = "auth_doc.pdf",
+            FileHash = Guid.NewGuid().ToString("N")
+        };
+        db.McaFilingDocuments.Add(doc);
+        await db.SaveChangesAsync();
+
+        var session = new ChatSession { RequestId = requestId, CreatedDate = DateTime.UtcNow, LastActivityDate = DateTime.UtcNow };
+        db.ChatSessions.Add(session);
+        await db.SaveChangesAsync();
+
+        var citationsJson = JsonSerializer.Serialize(new[]
+        {
+            new { SourceType = "DocumentChunk", DocumentId = doc.FilingDocumentId, DocumentName = "auth_doc.pdf", PageNumber = 2 }
+        });
+
+        db.ChatMessages.AddRange(
+            new ChatMessage { ChatSessionId = session.ChatSessionId, Role = ChatRole.User, MessageText = "Question 1?", CreatedDate = DateTime.UtcNow.AddMinutes(-1) },
+            new ChatMessage { ChatSessionId = session.ChatSessionId, Role = ChatRole.Assistant, MessageText = "Answer 1.", CitedSourcesJson = citationsJson, Status = ChatMessageStatus.Success, CreatedDate = DateTime.UtcNow.AddSeconds(-30) }
+        );
+        await db.SaveChangesAsync();
+
+        var controller = NewController(db);
+        var chatService = new FakeSuccessfulChatService(db);
+
+        var result = await controller.GetChatHistory(requestId, chatService, CancellationToken.None);
+        var okResult = Assert.IsType<OkObjectResult>(result);
+        dynamic resData = okResult.Value!;
+        Assert.True((bool)resData.success);
+
+        var messages = (List<ChatMessageDto>)resData.messages;
+        Assert.Equal(2, messages.Count);
+        Assert.Equal("Question 1?", messages[0].Text);
+        Assert.Equal("Answer 1.", messages[1].Text);
+        Assert.Single(messages[1].Citations);
+        Assert.Equal($"/Requests/{requestId}/documents/{doc.FilingDocumentId}/view#page=2", messages[1].Citations[0].ViewerUrl);
+    }
+
+    [Fact]
+    public async Task PostChat_Deduplication_ReturnsExistingAnswer_WithoutCreatingDuplicateTurns()
+    {
+        await using var db = CreateContext();
+        var requestId = await SeedRequestAsync("Dedup Corp");
+        var contextBuilder = new StubRetrievalContextBuilder();
+        var completionService = new SuccessfulMockCompletionService();
+        var realChatService = new ChatService(db, contextBuilder, completionService, NullLogger<ChatService>.Instance);
+
+        // First ask
+        var turn1 = await realChatService.AskTurnAsync(requestId, "Who is the managing director?", CancellationToken.None);
+        Assert.Equal(ChatTurnOutcome.Success, turn1.Outcome);
+
+        // Immediate retry with identical question
+        var turn2 = await realChatService.AskTurnAsync(requestId, "Who is the managing director?", CancellationToken.None);
+        Assert.Equal(ChatTurnOutcome.Success, turn2.Outcome);
+        Assert.Equal(turn1.Message?.ChatMessageId, turn2.Message?.ChatMessageId);
+
+        // Verify that database has only 2 messages (1 user, 1 assistant), not 4
+        await using var verifyDb = CreateContext();
+        var messages = await verifyDb.ChatMessages
+            .Where(m => verifyDb.ChatSessions.Any(s => s.ChatSessionId == m.ChatSessionId && s.RequestId == requestId))
+            .ToListAsync();
+
+        Assert.Equal(2, messages.Count);
+    }
+
+    [Fact]
+    public async Task AskTurnAsync_QuestionOver1000Chars_SharedServiceRejectsWithQuestionTooLong()
+    {
+        await using var db = CreateContext();
+        var requestId = await SeedRequestAsync("OverLimit Corp");
+        var contextBuilder = new StubRetrievalContextBuilder();
+        var completionService = new SuccessfulMockCompletionService();
+        var realChatService = new ChatService(db, contextBuilder, completionService, NullLogger<ChatService>.Instance);
+
+        var longQuestion = new string('a', ChatService.MaxQuestionLength + 1);
+        var result = await realChatService.AskTurnAsync(requestId, longQuestion, CancellationToken.None);
+
+        Assert.Equal(ChatTurnOutcome.QuestionTooLong, result.Outcome);
+        Assert.Null(result.Message);
+
+        await using var verifyDb = CreateContext();
+        var messages = await verifyDb.ChatMessages
+            .Where(m => verifyDb.ChatSessions.Any(s => s.ChatSessionId == m.ChatSessionId && s.RequestId == requestId))
+            .ToListAsync();
+        Assert.Empty(messages);
+    }
 }
