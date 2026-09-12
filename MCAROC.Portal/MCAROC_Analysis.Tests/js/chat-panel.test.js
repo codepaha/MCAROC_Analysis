@@ -183,8 +183,10 @@ test('chat-panel: timeout/abort with server confirming rollback removes userTurn
 
 test('chat-panel: timeout/abort where server actually committed the turn (race condition) renders canonical transcript without duplicates', async () => {
     const fixture = setupFixture();
+    let capturedTurnId = null;
     const mockFetch = async (url, options) => {
         if (options && options.method === 'POST') {
+            capturedTurnId = JSON.parse(options.body).clientTurnId;
             const err = new Error('The operation was aborted');
             err.name = 'AbortError';
             throw err;
@@ -196,8 +198,8 @@ test('chat-panel: timeout/abort where server actually committed the turn (race c
             json: async () => ({
                 success: true,
                 messages: [
-                    { role: 'User', text: 'Who are the current directors?', status: 'Success' },
-                    { role: 'Assistant', text: 'There are 3 active directors.', status: 'Success' }
+                    { id: 10, clientTurnId: capturedTurnId, role: 'User', text: 'Who are the current directors?', status: 'Success' },
+                    { id: 11, inReplyToChatMessageId: 10, clientTurnId: capturedTurnId, role: 'Assistant', text: 'There are 3 active directors.', status: 'Success' }
                 ]
             })
         };
@@ -367,8 +369,10 @@ test('chat-panel: submission sends a clientTurnId UUID in the request payload', 
 test('chat-panel: reconciliation observing user-only pending turn enters pending state and polls until assistant arrives', async () => {
     const fixture = setupFixture();
     let getCallCount = 0;
+    let capturedTurnId = null;
     const mockFetch = async (url, options) => {
         if (options && options.method === 'POST') {
+            capturedTurnId = JSON.parse(options.body).clientTurnId;
             const err = new Error('Client timeout');
             err.name = 'AbortError';
             throw err;
@@ -384,7 +388,7 @@ test('chat-panel: reconciliation observing user-only pending turn enters pending
                 json: async () => ({
                     success: true,
                     messages: [
-                        { role: 'User', text: 'Tell me about charges.', status: 'Success' }
+                        { id: 101, clientTurnId: capturedTurnId, role: 'User', text: 'Tell me about charges.', status: 'Success' }
                     ]
                 })
             };
@@ -397,8 +401,8 @@ test('chat-panel: reconciliation observing user-only pending turn enters pending
             json: async () => ({
                 success: true,
                 messages: [
-                    { role: 'User', text: 'Tell me about charges.', status: 'Success' },
-                    { role: 'Assistant', text: 'Here are the charges details.', status: 'Success' }
+                    { id: 101, clientTurnId: capturedTurnId, role: 'User', text: 'Tell me about charges.', status: 'Success' },
+                    { id: 102, inReplyToChatMessageId: 101, clientTurnId: capturedTurnId, role: 'Assistant', text: 'Here are the charges details.', status: 'Success' }
                 ]
             })
         };
@@ -423,8 +427,10 @@ test('chat-panel: reconciliation observing user-only pending turn enters pending
 test('chat-panel: polling for pending turn cleans up optimistic turn if server cancels/rolls back during polling', async () => {
     const fixture = setupFixture();
     let getCallCount = 0;
+    let capturedTurnId = null;
     const mockFetch = async (url, options) => {
         if (options && options.method === 'POST') {
+            capturedTurnId = JSON.parse(options.body).clientTurnId;
             const err = new Error('Client timeout');
             err.name = 'AbortError';
             throw err;
@@ -439,7 +445,7 @@ test('chat-panel: polling for pending turn cleans up optimistic turn if server c
                 json: async () => ({
                     success: true,
                     messages: [
-                        { role: 'User', text: 'Tell me about charges.', status: 'Success' }
+                        { id: 201, clientTurnId: capturedTurnId, role: 'User', text: 'Tell me about charges.', status: 'Success' }
                     ]
                 })
             };
@@ -466,4 +472,39 @@ test('chat-panel: polling for pending turn cleans up optimistic turn if server c
     assert.match(fixture.errorBanner.textContent, /cancelled or rolled back/i);
     assert.equal(fixture.input.disabled, false, 'Input re-enabled for retry');
     assert.equal(fixture.submitBtn.disabled, false, 'Submit button re-enabled');
+});
+
+test('chat-panel: reconciliation does not match on question text if clientTurnId differs (strict ID matching)', async () => {
+    const fixture = setupFixture();
+    let getCalled = false;
+    const mockFetch = async (url, options) => {
+        if (options && options.method === 'POST') {
+            const err = new Error('Client timeout');
+            err.name = 'AbortError';
+            throw err;
+        }
+        getCalled = true;
+        // Server has identical question text from an earlier turn or another session, but with a different clientTurnId
+        return {
+            ok: true,
+            status: 200,
+            json: async () => ({
+                success: true,
+                messages: [
+                    { id: 999, clientTurnId: '00000000-0000-0000-0000-000000000001', role: 'User', text: 'Repeated question?', status: 'Success' },
+                    { id: 1000, inReplyToChatMessageId: 999, clientTurnId: '00000000-0000-0000-0000-000000000001', role: 'Assistant', text: 'Old answer.', status: 'Success' }
+                ]
+            })
+        };
+    };
+
+    const controller = initChatPanel(fixture.doc, mockFetch);
+    fixture.input.value = 'Repeated question?';
+    await controller.handleSubmit();
+
+    assert.equal(getCalled, true);
+    // Since clientTurnId did not match, it treats the current turn as uncommitted/rolled back and removes the optimistic turn
+    const turns = fixture.messagesContainer.querySelectorAll('.mca-chat-turn');
+    assert.equal(turns.length, 0, 'Optimistic turn removed because this specific turn ID was not persisted');
+    assert.match(fixture.errorBanner.textContent, /timed out after 45 seconds/i);
 });

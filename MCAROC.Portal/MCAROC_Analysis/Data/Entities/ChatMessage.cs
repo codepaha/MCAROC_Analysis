@@ -25,6 +25,10 @@ public class ChatMessage
     /// <summary>Client-generated turn identifier for idempotent submission, deduplication, and reconciliation.</summary>
     public Guid? ClientTurnId { get; set; }
 
+    /// <summary>Assistant messages only. The ChatMessageId of the user turn this message answers,
+    /// ensuring concurrent turns in the same session never cross-deliver answers.</summary>
+    public long? InReplyToChatMessageId { get; set; }
+
     public ChatRole Role { get; set; }
     public string MessageText { get; set; } = string.Empty;
 

@@ -79,13 +79,12 @@ public class ChatEndpointJsonTests : IAsyncLifetime
             _db = db;
         }
 
-        public override async Task<ChatTurnResult> AskTurnAsync(long requestId, string question, Guid? clientTurnId, CancellationToken ct)
+        public override async Task<ChatTurnResult> AskTurnAsync(long requestId, string question, Guid clientTurnId, CancellationToken ct)
         {
             var session = await GetOrCreateSessionAsync(requestId, ct);
             var assistantMsg = new ChatMessage
             {
                 ChatSessionId = session.ChatSessionId,
-                ClientTurnId = clientTurnId,
                 Role = ChatRole.Assistant,
                 MessageText = "Here is the verified answer.",
                 Status = ChatMessageStatus.Success,
@@ -97,7 +96,7 @@ public class ChatEndpointJsonTests : IAsyncLifetime
         }
 
         public override Task<ChatTurnResult> AskTurnAsync(long requestId, string question, CancellationToken ct) =>
-            AskTurnAsync(requestId, question, null, ct);
+            AskTurnAsync(requestId, question, Guid.NewGuid(), ct);
     }
 
     private static async Task<IHost> CreateTestHostAsync(Action<IServiceCollection>? configureServices = null)
@@ -173,10 +172,11 @@ public class ChatEndpointJsonTests : IAsyncLifetime
         Assert.NotNull(requestToken);
 
         // 2. Post with RequestVerificationToken header and cookie
+        var clientTurnId = Guid.NewGuid();
         var requestMessage = new HttpRequestMessage(HttpMethod.Post, $"/Requests/{requestId}/chat");
         requestMessage.Headers.Add("RequestVerificationToken", requestToken);
         requestMessage.Headers.Add("Cookie", cookie);
-        requestMessage.Content = new StringContent(JsonSerializer.Serialize(new { question = "Who are the directors?" }), Encoding.UTF8, "application/json");
+        requestMessage.Content = new StringContent(JsonSerializer.Serialize(new { question = "Who are the directors?", clientTurnId }), Encoding.UTF8, "application/json");
 
         var response = await client.SendAsync(requestMessage);
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
@@ -193,6 +193,25 @@ public class ChatEndpointJsonTests : IAsyncLifetime
 
     [Theory]
     [InlineData(null)]
+    [InlineData("00000000-0000-0000-0000-000000000000")]
+    public async Task PostChat_MissingOrEmptyClientTurnId_ReturnsBadRequest_ClientTurnIdRequired(string? rawGuid)
+    {
+        await using var db = CreateContext();
+        var controller = NewController(db);
+        var requestId = await SeedRequestAsync();
+        var chatService = new FakeSuccessfulChatService(db);
+
+        Guid? turnId = rawGuid is null ? null : Guid.Parse(rawGuid);
+        var result = await controller.AskChat(requestId, new AskChatJsonRequest { Question = "Valid question", ClientTurnId = turnId }, chatService, CancellationToken.None);
+
+        var badRequest = Assert.IsType<BadRequestObjectResult>(result);
+        var apiRes = Assert.IsType<ChatApiResponse>(badRequest.Value);
+        Assert.False(apiRes.Success);
+        Assert.Equal("CLIENT_TURN_ID_REQUIRED", apiRes.Error?.Code);
+    }
+
+    [Theory]
+    [InlineData(null)]
     [InlineData("")]
     [InlineData("   ")]
     public async Task PostChat_EmptyQuestion_ReturnsBadRequest_QuestionEmpty(string? question)
@@ -202,7 +221,7 @@ public class ChatEndpointJsonTests : IAsyncLifetime
         var requestId = await SeedRequestAsync();
         var chatService = new FakeSuccessfulChatService(db);
 
-        var result = await controller.AskChat(requestId, new AskChatJsonRequest { Question = question }, chatService, CancellationToken.None);
+        var result = await controller.AskChat(requestId, new AskChatJsonRequest { Question = question, ClientTurnId = Guid.NewGuid() }, chatService, CancellationToken.None);
 
         var badRequest = Assert.IsType<BadRequestObjectResult>(result);
         var apiRes = Assert.IsType<ChatApiResponse>(badRequest.Value);
@@ -219,7 +238,7 @@ public class ChatEndpointJsonTests : IAsyncLifetime
         var chatService = new FakeSuccessfulChatService(db);
         var longQuestion = new string('x', 1001);
 
-        var result = await controller.AskChat(requestId, new AskChatJsonRequest { Question = longQuestion }, chatService, CancellationToken.None);
+        var result = await controller.AskChat(requestId, new AskChatJsonRequest { Question = longQuestion, ClientTurnId = Guid.NewGuid() }, chatService, CancellationToken.None);
 
         var badRequest = Assert.IsType<BadRequestObjectResult>(result);
         var apiRes = Assert.IsType<ChatApiResponse>(badRequest.Value);
@@ -235,7 +254,7 @@ public class ChatEndpointJsonTests : IAsyncLifetime
         var missingRequestId = -99999L;
         var chatService = new FakeSuccessfulChatService(db);
 
-        var result = await controller.AskChat(missingRequestId, new AskChatJsonRequest { Question = "Valid question?" }, chatService, CancellationToken.None);
+        var result = await controller.AskChat(missingRequestId, new AskChatJsonRequest { Question = "Valid question?", ClientTurnId = Guid.NewGuid() }, chatService, CancellationToken.None);
 
         var notFound = Assert.IsType<NotFoundObjectResult>(result);
         var apiRes = Assert.IsType<ChatApiResponse>(notFound.Value);
@@ -272,7 +291,7 @@ public class ChatEndpointJsonTests : IAsyncLifetime
         var realChatService = new ChatService(db, contextBuilder, completionService, NullLogger<ChatService>.Instance);
 
         var controller = NewController(db);
-        var result = await controller.AskChat(requestId, new AskChatJsonRequest { Question = "What is the turnover?" }, realChatService, CancellationToken.None);
+        var result = await controller.AskChat(requestId, new AskChatJsonRequest { Question = "What is the turnover?", ClientTurnId = Guid.NewGuid() }, realChatService, CancellationToken.None);
 
         var statusResult = Assert.IsType<ObjectResult>(result);
         Assert.Equal(502, statusResult.StatusCode);
@@ -461,13 +480,12 @@ public class ChatEndpointJsonTests : IAsyncLifetime
             _rawCitationsJson = rawCitationsJson;
         }
 
-        public override async Task<ChatTurnResult> AskTurnAsync(long requestId, string question, Guid? clientTurnId, CancellationToken ct)
+        public override async Task<ChatTurnResult> AskTurnAsync(long requestId, string question, Guid clientTurnId, CancellationToken ct)
         {
             var session = await GetOrCreateSessionAsync(requestId, ct);
             var assistantMsg = new ChatMessage
             {
                 ChatSessionId = session.ChatSessionId,
-                ClientTurnId = clientTurnId,
                 Role = ChatRole.Assistant,
                 MessageText = "Answer with strange citations",
                 CitedSourcesJson = _rawCitationsJson,
@@ -480,7 +498,7 @@ public class ChatEndpointJsonTests : IAsyncLifetime
         }
 
         public override Task<ChatTurnResult> AskTurnAsync(long requestId, string question, CancellationToken ct) =>
-            AskTurnAsync(requestId, question, null, ct);
+            AskTurnAsync(requestId, question, Guid.NewGuid(), ct);
     }
 
     [Theory]
@@ -496,7 +514,7 @@ public class ChatEndpointJsonTests : IAsyncLifetime
         var controller = NewController(db);
         var chatService = new RawCitationsChatService(db, malformedCitationsJson);
 
-        var result = await controller.AskChat(requestId, new AskChatJsonRequest { Question = "Safe question" }, chatService, CancellationToken.None);
+        var result = await controller.AskChat(requestId, new AskChatJsonRequest { Question = "Safe question", ClientTurnId = Guid.NewGuid() }, chatService, CancellationToken.None);
 
         var okResult = Assert.IsType<OkObjectResult>(result);
         var apiRes = Assert.IsType<ChatApiResponse>(okResult.Value);
@@ -568,13 +586,12 @@ public class ChatEndpointJsonTests : IAsyncLifetime
             _citations = citations;
         }
 
-        public override async Task<ChatTurnResult> AskTurnAsync(long requestId, string question, Guid? clientTurnId, CancellationToken ct)
+        public override async Task<ChatTurnResult> AskTurnAsync(long requestId, string question, Guid clientTurnId, CancellationToken ct)
         {
             var session = await GetOrCreateSessionAsync(requestId, ct);
             var assistantMsg = new ChatMessage
             {
                 ChatSessionId = session.ChatSessionId,
-                ClientTurnId = clientTurnId,
                 Role = ChatRole.Assistant,
                 MessageText = "Answer with citations.",
                 CitedSourcesJson = JsonSerializer.Serialize(_citations),
@@ -587,7 +604,7 @@ public class ChatEndpointJsonTests : IAsyncLifetime
         }
 
         public override Task<ChatTurnResult> AskTurnAsync(long requestId, string question, CancellationToken ct) =>
-            AskTurnAsync(requestId, question, null, ct);
+            AskTurnAsync(requestId, question, Guid.NewGuid(), ct);
     }
 
     [Fact]
@@ -674,7 +691,7 @@ public class ChatEndpointJsonTests : IAsyncLifetime
         var controller = NewController(db);
         var chatService = new CitationInjectingChatService(db, citations);
 
-        var result = await controller.AskChat(requestId, new AskChatJsonRequest { Question = "Show sources" }, chatService, CancellationToken.None);
+        var result = await controller.AskChat(requestId, new AskChatJsonRequest { Question = "Show sources", ClientTurnId = Guid.NewGuid() }, chatService, CancellationToken.None);
 
         var okResult = Assert.IsType<OkObjectResult>(result);
         var apiRes = Assert.IsType<ChatApiResponse>(okResult.Value);
@@ -934,5 +951,104 @@ public class ChatEndpointJsonTests : IAsyncLifetime
         Assert.Equal("What are the latest filings?", messages[0].Text);
         Assert.Equal("User", messages[0].Role);
         Assert.Equal(clientTurnId, messages[0].ClientTurnId);
+    }
+
+    [Fact]
+    public async Task PostChat_ConcurrentInterleavedQuestions_EachReceivesOwnLinkedAssistantReply()
+    {
+        await using var db = CreateContext();
+        var requestId = await SeedRequestAsync("Interleaved Corp");
+
+        var session = new ChatSession { RequestId = requestId, CreatedDate = DateTime.UtcNow, LastActivityDate = DateTime.UtcNow };
+        db.ChatSessions.Add(session);
+        await db.SaveChangesAsync();
+
+        var clientTurnIdA = Guid.NewGuid();
+        var clientTurnIdB = Guid.NewGuid();
+
+        // Simulate Question A user message submitted first
+        var userA = new ChatMessage
+        {
+            ChatSessionId = session.ChatSessionId,
+            ClientTurnId = clientTurnIdA,
+            Role = ChatRole.User,
+            MessageText = "Question A: Who are the shareholders?",
+            CreatedDate = DateTime.UtcNow.AddSeconds(-2)
+        };
+        db.ChatMessages.Add(userA);
+
+        // Question B user message submitted second
+        var userB = new ChatMessage
+        {
+            ChatSessionId = session.ChatSessionId,
+            ClientTurnId = clientTurnIdB,
+            Role = ChatRole.User,
+            MessageText = "Question B: What is the registered capital?",
+            CreatedDate = DateTime.UtcNow.AddSeconds(-1)
+        };
+        db.ChatMessages.Add(userB);
+        await db.SaveChangesAsync();
+
+        // Question B finishes FIRST: commits assistant reply B linked to user B
+        var assistantB = new ChatMessage
+        {
+            ChatSessionId = session.ChatSessionId,
+            InReplyToChatMessageId = userB.ChatMessageId,
+            Role = ChatRole.Assistant,
+            MessageText = "Answer B: Registered capital is 50 Lakhs.",
+            Status = ChatMessageStatus.Success,
+            CreatedDate = DateTime.UtcNow.AddMilliseconds(-500)
+        };
+        db.ChatMessages.Add(assistantB);
+        await db.SaveChangesAsync();
+
+        // Question A finishes SECOND: commits assistant reply A linked to user A
+        var assistantA = new ChatMessage
+        {
+            ChatSessionId = session.ChatSessionId,
+            InReplyToChatMessageId = userA.ChatMessageId,
+            Role = ChatRole.Assistant,
+            MessageText = "Answer A: Top shareholders are Alice and Bob.",
+            Status = ChatMessageStatus.Success,
+            CreatedDate = DateTime.UtcNow
+        };
+        db.ChatMessages.Add(assistantA);
+        await db.SaveChangesAsync();
+
+        // Now, retry Question A using AskTurnAsync with clientTurnIdA
+        var chatService = new ChatService(db, new StubRetrievalContextBuilder(), new SuccessfulMockCompletionService(), NullLogger<ChatService>.Instance);
+        var retryTurnA = await chatService.AskTurnAsync(requestId, "Question A: Who are the shareholders?", clientTurnIdA, CancellationToken.None);
+
+        Assert.Equal(ChatTurnOutcome.Success, retryTurnA.Outcome);
+        Assert.NotNull(retryTurnA.Message);
+        // CRITICAL: retry for A must return Answer A, NOT Answer B (even though B committed earlier than A)
+        Assert.Equal("Answer A: Top shareholders are Alice and Bob.", retryTurnA.Message!.MessageText);
+        Assert.Equal(assistantA.ChatMessageId, retryTurnA.Message.ChatMessageId);
+        Assert.Equal(userA.ChatMessageId, retryTurnA.Message.InReplyToChatMessageId);
+
+        // Verify GetChatHistory correctly projects ClientTurnId and InReplyToChatMessageId onto assistant DTOs
+        var controller = NewController(db);
+        var historyResult = await controller.GetChatHistory(requestId, chatService, CancellationToken.None);
+        var okResult = Assert.IsType<OkObjectResult>(historyResult);
+        dynamic historyData = okResult.Value!;
+        var historyMessages = (List<ChatMessageDto>)historyData.messages;
+
+        Assert.Equal(4, historyMessages.Count);
+
+        var dtoUserA = historyMessages.First(m => m.Id == userA.ChatMessageId);
+        var dtoUserB = historyMessages.First(m => m.Id == userB.ChatMessageId);
+        var dtoAsstA = historyMessages.First(m => m.Id == assistantA.ChatMessageId);
+        var dtoAsstB = historyMessages.First(m => m.Id == assistantB.ChatMessageId);
+
+        Assert.Equal(clientTurnIdA, dtoUserA.ClientTurnId);
+        Assert.Equal(clientTurnIdB, dtoUserB.ClientTurnId);
+
+        Assert.Equal(userA.ChatMessageId, dtoAsstA.InReplyToChatMessageId);
+        Assert.Equal(clientTurnIdA, dtoAsstA.ClientTurnId);
+        Assert.Equal("Answer A: Top shareholders are Alice and Bob.", dtoAsstA.Text);
+
+        Assert.Equal(userB.ChatMessageId, dtoAsstB.InReplyToChatMessageId);
+        Assert.Equal(clientTurnIdB, dtoAsstB.ClientTurnId);
+        Assert.Equal("Answer B: Registered capital is 50 Lakhs.", dtoAsstB.Text);
     }
 }

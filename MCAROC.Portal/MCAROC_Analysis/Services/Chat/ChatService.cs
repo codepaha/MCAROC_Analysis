@@ -40,7 +40,7 @@ public class ChatService(
     }
 
     public virtual Task<ChatTurnResult> AskTurnAsync(long requestId, string question, CancellationToken ct) =>
-        AskTurnAsync(requestId, question, null, ct);
+        AskTurnAsync(requestId, question, Guid.NewGuid(), ct);
 
     /// <summary>Drives one chat turn with typed outcomes for the API layer: persists the question,
     /// calls completion, and handles cancellation (rollback) vs upstream failure (audit persistence)
@@ -49,7 +49,7 @@ public class ChatService(
     public virtual async Task<ChatTurnResult> AskTurnAsync(
         long requestId,
         string question,
-        Guid? clientTurnId,
+        Guid clientTurnId,
         CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(question))
@@ -80,14 +80,14 @@ public class ChatService(
         {
             await db.SaveChangesAsync(ct);
         }
-        catch (DbUpdateException ex) when (clientTurnId.HasValue &&
+        catch (DbUpdateException ex) when (
             (ex.InnerException is SqlException { Number: SqlUniqueIndexViolation or SqlUniqueConstraintViolation }
              || ex.InnerException?.Message.Contains("IX_ChatMessages_ChatSessionId_ClientTurnId") == true
              || ex.Message.Contains("IX_ChatMessages_ChatSessionId_ClientTurnId")))
         {
             // Concurrent retry with identical ClientTurnId: return existing turn
             db.Entry(userMessage).State = EntityState.Detached;
-            return await AwaitOrGetExistingTurnAsync(session.ChatSessionId, clientTurnId.Value, ct);
+            return await AwaitOrGetExistingTurnAsync(session.ChatSessionId, clientTurnId, ct);
         }
 
         // Fresh retrieval every turn — prior assistant messages are conversational context only, never
@@ -110,6 +110,7 @@ public class ChatService(
             assistantMessage = new ChatMessage
             {
                 ChatSessionId = session.ChatSessionId,
+                InReplyToChatMessageId = userMessage.ChatMessageId,
                 Role = ChatRole.Assistant,
                 MessageText = completion.Answer,
                 RetrievedSourcesJson = JsonSerializer.Serialize(context.Sources.Select(s => new
@@ -171,6 +172,7 @@ public class ChatService(
             var failedAssistantMessage = new ChatMessage
             {
                 ChatSessionId = session.ChatSessionId,
+                InReplyToChatMessageId = userMessage.ChatMessageId,
                 Role = ChatRole.Assistant,
                 MessageText = "Sorry, something went wrong answering that question. Please try again.",
                 Status = ChatMessageStatus.Failed,
@@ -245,9 +247,7 @@ public class ChatService(
         {
             var assistant = await db.ChatMessages
                 .AsNoTracking()
-                .Where(m => m.ChatSessionId == sessionId && m.ChatMessageId > existingUser.ChatMessageId && m.Role == ChatRole.Assistant)
-                .OrderBy(m => m.ChatMessageId)
-                .FirstOrDefaultAsync(ct);
+                .FirstOrDefaultAsync(m => m.ChatSessionId == sessionId && m.InReplyToChatMessageId == existingUser.ChatMessageId && m.Role == ChatRole.Assistant, ct);
 
             if (assistant is not null)
             {

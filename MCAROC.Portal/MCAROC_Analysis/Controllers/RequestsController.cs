@@ -710,7 +710,12 @@ public class RequestsController(
         [FromServices] ChatService chatService,
         CancellationToken ct)
     {
-        if (string.IsNullOrWhiteSpace(model?.Question))
+        if (model is null || !model.ClientTurnId.HasValue || model.ClientTurnId.Value == Guid.Empty)
+        {
+            return BadRequest(ChatApiResponse.Fail("CLIENT_TURN_ID_REQUIRED", "Client turn ID is required."));
+        }
+
+        if (string.IsNullOrWhiteSpace(model.Question))
         {
             return BadRequest(ChatApiResponse.Fail("QUESTION_EMPTY", "Question cannot be empty."));
         }
@@ -734,7 +739,7 @@ public class RequestsController(
                 .Select(d => d.FilingDocumentId)
                 .ToListAsync(ct)).ToHashSet();
 
-        var result = await chatService.AskTurnAsync(requestId, trimmed, model.ClientTurnId, ct);
+        var result = await chatService.AskTurnAsync(requestId, trimmed, model.ClientTurnId.Value, ct);
 
         if (result.Outcome == ChatTurnOutcome.RequestNotFound)
         {
@@ -743,11 +748,11 @@ public class RequestsController(
 
         if (result.Outcome == ChatTurnOutcome.UpstreamFailure)
         {
-            var failedDto = result.Message is not null ? MapMessageDto(result.Message, requestId, validDocIds) : null;
+            var failedDto = result.Message is not null ? MapMessageDto(result.Message, requestId, validDocIds, model.ClientTurnId.Value) : null;
             return StatusCode(502, ChatApiResponse.Fail("AI_FAILURE", "Sorry, something went wrong answering that question. Please try again.", failedDto));
         }
 
-        var messageDto = MapMessageDto(result.Message!, requestId, validDocIds);
+        var messageDto = MapMessageDto(result.Message!, requestId, validDocIds, model.ClientTurnId.Value);
         return Ok(ChatApiResponse.Ok(messageDto));
     }
 
@@ -781,16 +786,26 @@ public class RequestsController(
             .OrderBy(m => m.CreatedDate)
             .ToListAsync(ct);
 
-        var dtos = messages.Select(m => MapMessageDto(m, requestId, validDocIds)).ToList();
+        var userTurnIdsByMsgId = messages
+            .Where(m => m.Role == ChatRole.User && m.ClientTurnId.HasValue)
+            .ToDictionary(m => m.ChatMessageId, m => m.ClientTurnId!.Value);
+
+        var dtos = messages.Select(m =>
+        {
+            var turnId = m.ClientTurnId ?? (m.InReplyToChatMessageId.HasValue ? userTurnIdsByMsgId.GetValueOrDefault(m.InReplyToChatMessageId.Value) : null);
+            return MapMessageDto(m, requestId, validDocIds, turnId);
+        }).ToList();
+
         return Ok(new { success = true, messages = dtos });
     }
 
-    private static ChatMessageDto MapMessageDto(ChatMessage m, long requestId, HashSet<long> validDocIds)
+    private static ChatMessageDto MapMessageDto(ChatMessage m, long requestId, HashSet<long> validDocIds, Guid? resolvedClientTurnId = null)
     {
         var dto = new ChatMessageDto
         {
             Id = m.ChatMessageId,
-            ClientTurnId = m.ClientTurnId,
+            ClientTurnId = m.ClientTurnId ?? resolvedClientTurnId,
+            InReplyToChatMessageId = m.InReplyToChatMessageId,
             Role = m.Role.ToString(),
             Text = m.MessageText,
             Status = m.Status?.ToString() ?? string.Empty,

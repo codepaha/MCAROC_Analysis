@@ -206,6 +206,25 @@ Linux subset fonts break PdfPig's ToUnicode → those are `[SkippableFact]`, ski
 
 ## Log  <!-- newest first. Prefix: NEEDS / BLOCKED / DONE / DECISION / FYI -->
 
+### 2026-09-12 — Antigravity (DONE #119 C7b: Required ClientTurnId + Durable InReplyToChatMessageId Linkage)
+- **DONE #119 (C7b)**: Resolved re-review blockers regarding optional client IDs and unlinked assistant turns (PR #131).
+  - Addressed owner review blockers:
+    1. **Required ClientTurnId**:
+       - `POST /Requests/{requestId}/chat` strictly validates `ClientTurnId.HasValue && ClientTurnId.Value != Guid.Empty`, returning `400 Bad Request` with `CLIENT_TURN_ID_REQUIRED` if missing.
+       - Removed all fallback question-text matching in `chat-panel.js` reconciliation; turns are matched strictly by `clientTurnId`.
+    2. **Durable Assistant Linkage via InReplyToChatMessageId**:
+       - Added `InReplyToChatMessageId` (`long?`) on `ChatMessage` with DB index `IX_ChatMessages_InReplyToChatMessageId`.
+       - Generated EF Core migration `20260912141827_AddChatMessageInReplyToId`.
+       - Assistant messages (both success and failed turns) explicitly set `InReplyToChatMessageId = userMessage.ChatMessageId`.
+       - `ChatService.AwaitOrGetExistingTurnAsync` queries assistant reply by `m.InReplyToChatMessageId == existingUser.ChatMessageId`.
+       - `RequestsController.GetChatHistory` projects `ClientTurnId` onto assistant message DTOs from linked user messages and populates `InReplyToChatMessageId`.
+       - In `chat-panel.js`, pending polling and reconciliation match assistant turns by `m.clientTurnId === clientTurnId` or `m.inReplyToChatMessageId === userMsg.id`.
+    3. **Automated Tests**:
+       - Added `PostChat_MissingOrEmptyClientTurnId_ReturnsBadRequest_ClientTurnIdRequired` and `PostChat_ConcurrentInterleavedQuestions_EachReceivesOwnLinkedAssistantReply` in `ChatEndpointJsonTests.cs`.
+       - Added strict non-text-matching unit test in `chat-panel.test.js`.
+  - All 49 Chat tests pass in .NET test runner; all 19 JS tests pass in Node runner.
+  - PR #131 updated. → **@codex** re-review.
+
 ### 2026-09-12 — Antigravity (DONE #119 C7b: Persisted ClientTurnId unique constraint + in-flight pending reconciliation)
 - **DONE #119 (C7b)**: Hardened chat idempotency and in-flight delivery reconciliation (PR #131).
   - Addressed owner review blocker on exact head `f161152d`:

@@ -257,7 +257,7 @@
             }
         }
 
-        async function pollPendingTurn(turnId, questionText, userTurnEl) {
+        async function pollPendingTurn(turnId, userMsgId, userTurnEl) {
             const pendingTurn = d.createElement('div');
             pendingTurn.className = 'mca-chat-turn assistant mca-chat-turn-pending';
 
@@ -301,14 +301,16 @@
                     if (pollRes && pollRes.ok) {
                         const pollHistory = await pollRes.json().catch(function () { return null; });
                         if (pollHistory && pollHistory.success && Array.isArray(pollHistory.messages)) {
-                            const uIdx = pollHistory.messages.findIndex(function (m) {
-                                return (m.clientTurnId && m.clientTurnId.toLowerCase() === turnId.toLowerCase())
-                                    || ((m.role || '').toLowerCase() === 'user' && m.text === questionText);
+                            const uMsg = pollHistory.messages.find(function (m) {
+                                return m.clientTurnId && m.clientTurnId.toLowerCase() === turnId.toLowerCase();
                             });
 
-                            if (uIdx !== -1) {
-                                const asst = pollHistory.messages.slice(uIdx + 1).find(function (m) {
-                                    return (m.role || '').toLowerCase() === 'assistant';
+                            if (uMsg) {
+                                const targetUserMsgId = uMsg.id || userMsgId;
+                                const asst = pollHistory.messages.find(function (m) {
+                                    return (m.role || '').toLowerCase() === 'assistant'
+                                        && ((m.clientTurnId && m.clientTurnId.toLowerCase() === turnId.toLowerCase())
+                                            || (targetUserMsgId && m.inReplyToChatMessageId === targetUserMsgId));
                                 });
 
                                 if (asst) {
@@ -470,14 +472,15 @@
                         const history = await reconcileRes.json().catch(function () { return null; });
                         if (history && history.success && Array.isArray(history.messages)) {
                             reconciled = true;
-                            const userIndex = history.messages.findIndex(function (m) {
-                                return (m.clientTurnId && m.clientTurnId.toLowerCase() === clientTurnId.toLowerCase())
-                                    || ((m.role || '').toLowerCase() === 'user' && m.text === question);
+                            const userMsg = history.messages.find(function (m) {
+                                return m.clientTurnId && m.clientTurnId.toLowerCase() === clientTurnId.toLowerCase();
                             });
 
-                            if (userIndex !== -1) {
-                                const assistantMsg = history.messages.slice(userIndex + 1).find(function (m) {
-                                    return (m.role || '').toLowerCase() === 'assistant';
+                            if (userMsg) {
+                                const assistantMsg = history.messages.find(function (m) {
+                                    return (m.role || '').toLowerCase() === 'assistant'
+                                        && ((m.clientTurnId && m.clientTurnId.toLowerCase() === clientTurnId.toLowerCase())
+                                            || (userMsg.id && m.inReplyToChatMessageId === userMsg.id));
                                 });
 
                                 if (assistantMsg) {
@@ -488,7 +491,7 @@
                                     if (charCount) charCount.textContent = '0';
                                 } else {
                                     // Server committed user question, but assistant is still generating (in-flight pending turn)
-                                    await pollPendingTurn(clientTurnId, question, userTurn);
+                                    await pollPendingTurn(clientTurnId, userMsg.id, userTurn);
                                     return;
                                 }
                             } else {
