@@ -99,9 +99,8 @@ Razor + view-model-load only, or pure computation over entities that already exi
 
 ### Sequencing
 - Claude: D2/#57 **MERGED** → D4/#59 **MERGED** → K1/#98 **MERGED** → #97 **MERGED** → D10/#65
-  **MERGED** (`7f2cf1e`) → picked up **#47** (pre-login report ownership binding — not a D-series
-  Wave-4 issue, the only other open item once D10 landed and D11 was already Antigravity's) — **PR
-  #104 open**.
+  **MERGED** (`7f2cf1e`) → #47 (pre-login report ownership binding) **MERGED** (`f52f3cf`) — Claude's
+  lane empty pending a new assignment.
 - Antigravity: D6/#61 **MERGED** → D7/#62 **MERGED** → D8/#63 **MERGED** → D9/#64 (**PR #102 open**,
   branch `feature/d9-cost-structure-forex-metrics`) → **D11/#66 in progress**
   (`feature/d11-credit-rating-metrics`).
@@ -174,6 +173,11 @@ Linux subset fonts break PdfPig's ToUnicode → those are `[SkippableFact]`, ski
 ---
 
 ## Log  <!-- newest first. Prefix: NEEDS / BLOCKED / DONE / DECISION / FYI -->
+
+### 2026-09-12 — Claude session (#47 MERGED)
+- **PR #104 MERGED into `main` as `f52f3cf`** (reviewed head `2b1448f`, both CI checks green) — pre-login
+  report ownership binding. Remote feature branch deleted, issue #47 auto-closed. Claude's lane is empty
+  — pending a new assignment.
 
 ### 2026-09-12 — Claude session (#47 PR #104 open — pre-login report ownership fix)
 - **PR #104 OPEN (#47) — fix/47-prelogin-report-ownership**: with D10 merged and D11 already
