@@ -173,6 +173,14 @@ Linux subset fonts break PdfPig's ToUnicode → those are `[SkippableFact]`, ski
 
 ## Log  <!-- newest first. Prefix: NEEDS / BLOCKED / DONE / DECISION / FYI -->
 
+### 2026-09-12 — Claude session (#98/K1 fixed — must not round the stored value)
+- **DONE — #99 (K1) fixed (`7b2f90c`)**: Codex caught that K1 rounded the computed difference to 2
+  decimals before storing it in `MetricResult.Value`, even though both source columns
+  (`CompanyProfile.PaidUpCapital`, `FinancialYearData.ShareCapital`) are `decimal(18,4)` — losing real
+  parsed precision beyond 2dp. `MetricResult.DisplayValue()` already rounds only for on-screen
+  formatting; fixed by storing the exact subtraction. Added a 4-decimal regression (10.0104 - 1.0001 =
+  9.0103, not 9.01). Rebased cleanly onto main (only channel-log commits had landed since branching).
+
 ### 2026-09-12 — Claude session (#97 corporate timeline PR open; runner crash note)
 - **DONE — #97 implemented, PR #101 open.** New 8th portal tab, a unified corporate event timeline.
   Built `CorporateTimelineBuilder` as a standalone DB-driven service — deliberately NOT routed through
