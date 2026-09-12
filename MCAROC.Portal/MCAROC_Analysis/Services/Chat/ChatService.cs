@@ -92,25 +92,46 @@ public class ChatService(
             db.ChatMessages.Add(assistantMessage);
             await BeforeAssistantMessageSaveAsync(ct);
             await db.SaveChangesAsync(ct);
+            await AfterAssistantMessageSaveAsync(ct);
             return new ChatTurnResult(ChatTurnOutcome.Success, assistantMessage);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
-            // Client aborted or timeout: detach pending assistant entity and roll back user message so no orphaned turn remains
+            // Client aborted or timeout: detach pending assistant entity if not yet saved,
+            // or remove it if already committed, and roll back user message so no orphaned turn remains
             if (assistantMessage is not null)
             {
-                db.Entry(assistantMessage).State = EntityState.Detached;
+                var entry = db.Entry(assistantMessage);
+                if (entry.State == EntityState.Added)
+                {
+                    entry.State = EntityState.Detached;
+                }
+                else if (entry.State is EntityState.Unchanged or EntityState.Modified || assistantMessage.ChatMessageId > 0)
+                {
+                    db.ChatMessages.Remove(assistantMessage);
+                }
             }
-            db.ChatMessages.Remove(userMessage);
+            if (db.Entry(userMessage).State != EntityState.Detached)
+            {
+                db.ChatMessages.Remove(userMessage);
+            }
             await db.SaveChangesAsync(CancellationToken.None);
             throw;
         }
         catch (Exception ex)
         {
             logger.LogWarning(ex, "Chat completion failed for request {RequestId}", requestId);
-            if (assistantMessage is not null && db.Entry(assistantMessage).State != EntityState.Detached)
+            if (assistantMessage is not null)
             {
-                db.Entry(assistantMessage).State = EntityState.Detached;
+                var entry = db.Entry(assistantMessage);
+                if (entry.State == EntityState.Added)
+                {
+                    entry.State = EntityState.Detached;
+                }
+                else if (entry.State is EntityState.Unchanged or EntityState.Modified || assistantMessage.ChatMessageId > 0)
+                {
+                    db.ChatMessages.Remove(assistantMessage);
+                }
             }
             var failedAssistantMessage = new ChatMessage
             {
@@ -130,6 +151,11 @@ public class ChatService(
     /// tracker but immediately before awaiting SaveChangesAsync(ct), allowing tests to force cancellation
     /// during the save step. No-op in production.</summary>
     internal virtual Task BeforeAssistantMessageSaveAsync(CancellationToken ct) => Task.CompletedTask;
+
+    /// <summary>Test seam: runs in AskTurnAsync after assistantMessage is committed via SaveChangesAsync(ct),
+    /// allowing tests to force cancellation when assistantMessage is already in the database and in Unchanged state.
+    /// No-op in production.</summary>
+    internal virtual Task AfterAssistantMessageSaveAsync(CancellationToken ct) => Task.CompletedTask;
 
     // 2601 = duplicate key in a unique index; 2627 = unique/primary-key constraint violation.
     private const int SqlUniqueIndexViolation = 2601;

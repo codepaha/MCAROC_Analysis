@@ -396,6 +396,53 @@ public class ChatEndpointJsonTests : IAsyncLifetime
         Assert.Empty(messages);
     }
 
+    private sealed class AfterSaveCancelingChatService : ChatService
+    {
+        private readonly CancellationTokenSource _cts;
+
+        public AfterSaveCancelingChatService(
+            AppDbContext db,
+            RetrievalContextBuilder contextBuilder,
+            ChatCompletionService completionService,
+            CancellationTokenSource cts)
+            : base(db, contextBuilder, completionService, NullLogger<ChatService>.Instance)
+        {
+            _cts = cts;
+        }
+
+        internal override Task AfterAssistantMessageSaveAsync(CancellationToken ct)
+        {
+            _cts.Cancel();
+            _cts.Token.ThrowIfCancellationRequested();
+            return Task.CompletedTask;
+        }
+    }
+
+    [Fact]
+    public async Task PostChat_CancellationAfterAssistantSave_RemovesCommittedAssistant_AndRollsBackUserTurn()
+    {
+        await using var db = CreateContext();
+        var requestId = await SeedRequestAsync("After Save Cancel Corp");
+        var contextBuilder = new StubRetrievalContextBuilder();
+        var completionService = new SuccessfulMockCompletionService();
+
+        using var cts = new CancellationTokenSource();
+        var realChatService = new AfterSaveCancelingChatService(db, contextBuilder, completionService, cts);
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(async () =>
+        {
+            await realChatService.AskTurnAsync(requestId, "Will committed assistant be removed if cancelled right after save?", cts.Token);
+        });
+
+        // Assert that committed assistant was deleted from DB and user message was rolled back
+        await using var verifyDb = CreateContext();
+        var messages = await verifyDb.ChatMessages
+            .Where(m => verifyDb.ChatSessions.Any(s => s.ChatSessionId == m.ChatSessionId && s.RequestId == requestId))
+            .ToListAsync();
+
+        Assert.Empty(messages);
+    }
+
     // ── 5. Malformed Citations Resilience Tests ──
 
     private sealed class RawCitationsChatService : ChatService
