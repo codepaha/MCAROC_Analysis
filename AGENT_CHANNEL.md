@@ -82,6 +82,13 @@ then hardened through 3 further review rounds on #101 alone — see the Log belo
 | #98 K1 | capital reconciliation (paid-up capital vs balance sheet) | **MERGED** (`73f7ea5`) |
 | #97 | corporate event timeline (new portal tab, bypasses `DossierModel`/`DossierAssembler`) | **MERGED** (`d7e5854`) |
 
+**Wave 3 (2026-09-12): #112 C1, #113 C3, #118 C8 claimed — starting with C1/C3, C8 after.**
+| Issue | What | Status |
+|---|---|---|
+| #112 C1 | local editorial fonts (Fraunces/IBM Plex) + footer, re-map font-weight usages | in progress |
+| #113 C3 | document provenance (workbook lineage vs. filed-PDF citations, kept separate) | in progress |
+| #118 C8 | Review-Priority reasoning — shared evaluator + structured reason codes | not started |
+
 ### Antigravity — render-audit + metrics-compute lane (no schema changes)
 Razor + view-model-load only, or pure computation over entities that already exist. **No migrations.**
 
@@ -99,14 +106,29 @@ Razor + view-model-load only, or pure computation over entities that already exi
 | #107 | Compliance tab render-audit — GST registration + EPFO contribution columns not shown | none — Razor-only | **MERGED** (`7b74f11`, PR #110) |
 | visual | before/after screenshots on every render PR; keep `E:\Downloads\VTION\ROC_JSON_Reports` current | — | ongoing |
 
+**Wave 3 (2026-09-12, filed as #112–#124 under EPIC #31) — 10 issues, this lane, unclaimed. Suggested order below (dependency order from the EPIC).**
+| Issue | What | Needs | Status |
+|---|---|---|---|
+| #121 C2 | per-tab sticky contents nav + scroll-spy | #112 C1 (Claude, in progress) | open |
+| #114 C4 | 3 missing colour-as-signal annotation patterns | #112 C1 | open |
+| #115 C5a | group charges by holder | #112 C1 | open |
+| #123 C5b | Crore/Lakh/₹ unit toggle + typed amount renderer (file the generated call-site classification table as evidence, don't hardcode counts in the PR) | #112 C1 | open |
+| #116 C6 | shared inline-SVG viz contract (dossier + dashboard mappings kept separate) + 6 partials | #112 C1 | open |
+| #117 C7a | in-app PDF viewer, request-scoped + dedup-aware — **Claude reviews the scoping/dedup code before merge** | none | open |
+| #119 C7b | relocate chat to docked panel, JSON hardening (antiforgery, length limit, error contract) | #117 C7a | open |
+| #122 C7c | wire the dead Ctrl+K command-palette scaffold | #119 C7b | open |
+| #120 C9 | dashboard restyle — retire Chart.js for #116's SVG partials | #116 C6 | open |
+| #124 C10 | print stylesheet — deliberately last | all of the above | open |
+
 ### Sequencing
 - Claude: D2/#57 **MERGED** → D4/#59 **MERGED** → K1/#98 **MERGED** → #97 **MERGED** → D10/#65 **MERGED** (`7f2cf1e`) → #47 (pre-login report ownership binding) **MERGED** (`f52f3cf`) — Claude's lane empty pending a new assignment.
 - Antigravity: D6/#61 **MERGED** → D7/#62 **MERGED** → D8/#63 **MERGED** → D9/#64 **MERGED** (`e9e39e3`) → D11/#66 **MERGED** (`8213961`) → #107 **MERGED** (`7b74f11`) — Antigravity's render-audit lane complete!
 
 
 ### Not in either lane (Codex or owner)
-Rule engine, analysis orchestration, Phase-4 retrieval, Wave 3 restyle (not split into issues yet).
-Phase 4 retrieval (A0) needs an Azure subscription + OpenAI endpoint that are not yet provisioned.
+Rule engine, analysis orchestration, Phase-4 retrieval. Phase 4 retrieval (A0) needs an Azure
+subscription + OpenAI endpoint that are not yet provisioned. (Wave 3 restyle is now split into issues
+#112–#124, split across the Claude and Antigravity lanes above — no longer unassigned.)
 
 ### Testing note for agents
 Running `dotnet test` takes **6+ minutes locally** because of the multi-file ingestion integration
@@ -151,9 +173,10 @@ portal+PDF, `GET /Requests/{id}/analytics.json`).
 | #68–#73 | Antigravity B1–B6 render audit | awaiting review |
 | #78 | Codex — channel-verdict doc | awaits **@owner** merge |
 
-**Phase 8:** EPIC #31. Wave 1 #32–#38 + #50–#52 + **#75 A11**: A1/A2/A3 done, A4–A11 open (Claude).
-Wave 2 #39–#44 all PR'd. **Wave 4**: **D0 done**, #76 D12 in review, **D1–D11 (#56–#66) now
-unblocked** — Antigravity picks up #56/#58/#60/#61.
+**Phase 8:** EPIC #31. Waves 1, 2, 2b, and 4 all fully merged. **Wave 3 (2026-09-12): split into 13
+issues #112–#124** after 4 rounds of owner review (see plan file `serene-whistling-wave.md` and the Log
+entry above) — Claude building #112 C1 + #113 C3 now, #118 C8 next; #121/#114/#115/#123/#116/#117/#119/
+#122/#120/#124 (C2/C4/C5a/C5b/C6/C7a/C7b/C7c/C9/C10) open for Antigravity.
 Catalogue G1, G3, G4, G5 → DONE.
 
 **Degenerate-data audit (2026-09-10):** ingestion + views + calcs handle no-charge-report /
@@ -181,6 +204,35 @@ Linux subset fonts break PdfPig's ToUnicode → those are `[SkippableFact]`, ski
 ---
 
 ## Log  <!-- newest first. Prefix: NEEDS / BLOCKED / DONE / DECISION / FYI -->
+
+### 2026-09-12 — Claude session (Wave 3 split into 13 issues #112–#124; EPIC #31 updated)
+- **DONE — filed all 13 Wave-3 issues** (#112–#124) under EPIC #31 and rewrote its Wave 3 section
+  (checklist + lane assignment), replacing the "NOT STARTED, no issues filed" note. Went through 4 review
+  rounds with the owner before filing (plan file `serene-whistling-wave.md` has the full history) —
+  worth reading before touching any of these, several items differ materially from the plan doc's
+  original ask:
+  - **#112 C1** (fonts+footer) and **#113 C3** (provenance) — Claude lane, starting now.
+  - **#118 C8** (Review-Priority reasoning) — Claude lane, picked up after C1/C3.
+  - **#121 C2, #114 C4, #115 C5a, #123 C5b, #116 C6, #117 C7a, #119 C7b, #122 C7c, #120 C9, #124 C10** —
+    Antigravity lane, in the dependency order listed on the EPIC. **#117 (C7a)'s request-scoping and
+    dedup-resolution code needs a Claude review before merge** (security-sensitive, not itself a
+    migration).
+  - Key corrections from review, worth knowing before starting any of these: **C3** splits into 4
+    distinct provenance treatments (direct entity row / aggregate-or-computed / lineage genuinely
+    missing / AI-PDF-citation) — never fabricate a citation. **C5b**'s call-site counts must NOT be
+    hardcoded in an issue body (they drift) — file a generated classification table as evidence instead,
+    and only crore/native-currency-amount rows are in scope (`Num()` also serves percentages/counts/
+    per-share and stays untouched). **C7a** has no "non-PDF FormType" case to test (every
+    `McaFilingDocument` is a PDF by construction, confirmed in `FilingBatchProcessor.cs:165`) and its
+    page-bounds check must live client-side in PDF.js (a `#page=N` URL fragment is never sent to the
+    server) — never as a server-side check on the byte-serving PDF endpoint. **C7a/C7b's request-id
+    matching prevents cross-request substitution (IDOR) — it is explicitly NOT authorization**; this app
+    has no identity layer at all, and that's called out as a separate unresolved product decision in
+    both issue bodies, not silently implied as solved. **C8** shares one internal evaluator between
+    `Calculate` (pre-persist) and the new `Explain` (post-persist) over a common minimal projection —
+    no second hand-written copy of the branching logic. **C1**'s font-weight remap matters: only
+    400/500/600 weight files are bundled, but `app.css` requests 700/750/800 in many places — left as-is
+    the browser fakes a bold that breaks the PDF pixel-match this issue exists for.
 
 ### 2026-09-12 — Antigravity (#107 MERGED)
 - **PR #110 MERGED into `main` as `7b74f11`** (reviewed head `725224c`, both CI jobs green).
