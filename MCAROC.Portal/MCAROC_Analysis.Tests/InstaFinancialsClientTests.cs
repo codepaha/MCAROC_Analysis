@@ -86,7 +86,7 @@ public class InstaFinancialsClientTests
         var service = new PreLoginReportService(NewClient(HttpStatusCode.OK, payload, "configured-key"), new TestEnvironment(ProjectRoot()));
 
         var data = await service.FetchDataAsync("U12345DL2025PTC123456", null, CancellationToken.None);
-        var draft = PreLoginReportService.ToDraft(1, "U12345DL2025PTC123456", PreLoginReportFormat.Sbi, data);
+        var draft = PreLoginReportService.ToDraft(1, Guid.NewGuid(), "U12345DL2025PTC123456", PreLoginReportFormat.Sbi, data);
         Assert.NotEmpty(draft.Directors);
         draft.Directors.Clear();
 
@@ -104,7 +104,7 @@ public class InstaFinancialsClientTests
         var service = new PreLoginReportService(NewClient(HttpStatusCode.OK, payload, "configured-key"), new TestEnvironment(ProjectRoot()));
 
         var data = await service.FetchDataAsync("U12345DL2025PTC123456", null, CancellationToken.None);
-        var draft = PreLoginReportService.ToDraft(1, "U12345DL2025PTC123456", format, data);
+        var draft = PreLoginReportService.ToDraft(1, Guid.NewGuid(), "U12345DL2025PTC123456", format, data);
         draft.Company.Name = "Reviewed Example Private Limited";
         var result = await service.GenerateFromDataAsync(draft.Cin, draft.Format, PreLoginReportService.ApplyEdits(draft), CancellationToken.None);
 
@@ -124,7 +124,7 @@ public class InstaFinancialsClientTests
         var service = new PreLoginReportService(NewClient(HttpStatusCode.OK, payload, "configured-key"), new TestEnvironment(ProjectRoot()));
 
         var data = await service.FetchDataAsync("U12345DL2025PTC123456", null, CancellationToken.None);
-        var draft = PreLoginReportService.ToDraft(1, "U12345DL2025PTC123456", PreLoginReportFormat.Sbi, data);
+        var draft = PreLoginReportService.ToDraft(1, Guid.NewGuid(), "U12345DL2025PTC123456", PreLoginReportFormat.Sbi, data);
         draft.Company.ActiveCompliance = "Yes";
         draft.Company.BooksOfAccountAddress = "10 Main Road, Delhi";
         var result = await service.GenerateFromDataAsync(draft.Cin, draft.Format, PreLoginReportService.ApplyEdits(draft), CancellationToken.None);
@@ -164,7 +164,7 @@ public class InstaFinancialsClientTests
         var service = new PreLoginReportService(NewClient(HttpStatusCode.OK, payload, "configured-key"), new TestEnvironment(ProjectRoot()));
 
         var data = await service.FetchDataAsync("U12345DL2025PTC123456", null, CancellationToken.None);
-        var draft = PreLoginReportService.ToDraft(1, "U12345DL2025PTC123456", PreLoginReportFormat.Sbi, data);
+        var draft = PreLoginReportService.ToDraft(1, Guid.NewGuid(), "U12345DL2025PTC123456", PreLoginReportFormat.Sbi, data);
         var result = await service.GenerateFromDataAsync(draft.Cin, draft.Format, PreLoginReportService.ApplyEdits(draft), CancellationToken.None);
 
         using var document = WordprocessingDocument.Open(new MemoryStream(result.Bytes), false);
@@ -188,7 +188,7 @@ public class InstaFinancialsClientTests
         var service = new PreLoginReportService(NewClient(HttpStatusCode.OK, payload, "configured-key"), new TestEnvironment(ProjectRoot()));
 
         var data = await service.FetchDataAsync("U12345DL2025PTC123456", null, CancellationToken.None);
-        var draft = PreLoginReportService.ToDraft(1, "U12345DL2025PTC123456", PreLoginReportFormat.Sbi, data);
+        var draft = PreLoginReportService.ToDraft(1, Guid.NewGuid(), "U12345DL2025PTC123456", PreLoginReportFormat.Sbi, data);
         Assert.Single(draft.Charges);
         draft.Charges.Add(new EditableChargeViewModel { Id = "999", Holder = "Manually Added Bank", Created = "2025-06-01", Amount = "500000", IsOpen = true });
 

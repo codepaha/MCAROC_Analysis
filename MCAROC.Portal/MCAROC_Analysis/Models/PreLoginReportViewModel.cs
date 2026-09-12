@@ -32,6 +32,9 @@ public sealed class PreLoginReportViewModel
 public sealed class PreLoginReportDraftViewModel
 {
     public long JobId { get; set; }
+    /// <summary>The unguessable access token for this request (#47) — carried through the Edit round-trip
+    /// so a re-rendered form (validation failure) keeps posting to the same batch-scoped route.</summary>
+    public Guid BatchId { get; set; }
     [Required] public string Cin { get; set; } = string.Empty;
     [Required] public PreLoginReportFormat Format { get; set; }
     [Required] public EditableCompanyViewModel Company { get; set; } = new();
