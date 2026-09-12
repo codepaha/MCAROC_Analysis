@@ -7,7 +7,9 @@ namespace MCAROC_Analysis.Controllers;
 
 /// <summary>Public, credential-free entry point for the two MCA report formats. Single-CIN and batch
 /// requests share one pipeline (both just queue a job) — editing is an optional, post-hoc action from
-/// History, not a mandatory gate before generation.</summary>
+/// History, not a mandatory gate before generation. There is no login here, so every action past initial
+/// submission (History/Edit/Rerun/Download) is scoped to a <c>batch</c> Guid route segment, which serves
+/// as this pipeline's only access credential (#47) — see <see cref="PreLoginReportJobService.FindInBatchAsync"/>.</summary>
 [AllowAnonymous]
 [Route("pre-login-reports")]
 public sealed class PreLoginReportsController(PreLoginReportJobService jobs) : Controller
@@ -46,29 +48,34 @@ public sealed class PreLoginReportsController(PreLoginReportJobService jobs) : C
         catch (PreLoginReportException ex) { ModelState.AddModelError(string.Empty, ex.Message); return View("Index", model); }
     }
 
-    [HttpGet("history")]
-    public async Task<IActionResult> History([FromQuery] Guid? batch, CancellationToken cancellationToken)
+    /// <summary>There is no login on this pipeline, so <paramref name="batch"/> (an unguessable Guid, never
+    /// listed anywhere) IS the access credential — the only way to reach this page is the redirect right
+    /// after submitting, or a bookmarked/shared link. #47: this used to be a bare, unscoped "every job in
+    /// the system" list reachable by anyone.</summary>
+    [HttpGet("{batch:guid}/history")]
+    public async Task<IActionResult> History(Guid batch, CancellationToken cancellationToken)
     {
         ViewBag.Batch = batch;
-        return View(await jobs.HistoryAsync(cancellationToken));
+        return View(await jobs.HistoryAsync(batch, cancellationToken));
     }
 
-    [HttpGet("{id:long}/edit")]
-    public async Task<IActionResult> Edit(long id, CancellationToken cancellationToken)
+    [HttpGet("{batch:guid}/{id:long}/edit")]
+    public async Task<IActionResult> Edit(Guid batch, long id, CancellationToken cancellationToken)
     {
-        try { return View(await jobs.GetEditableDraftAsync(id, cancellationToken)); }
-        catch (PreLoginReportException ex) { TempData["ReportError"] = ex.Message; return RedirectToAction(nameof(History)); }
+        try { return View(await jobs.GetEditableDraftAsync(batch, id, cancellationToken)); }
+        catch (PreLoginReportException ex) { TempData["ReportError"] = ex.Message; return RedirectToAction(nameof(History), new { batch }); }
     }
 
-    [HttpPost("{id:long}/edit")]
+    [HttpPost("{batch:guid}/{id:long}/edit")]
     [ValidateAntiForgeryToken]
-    public async Task<IActionResult> Edit(long id, PreLoginReportDraftViewModel model, CancellationToken cancellationToken)
+    public async Task<IActionResult> Edit(Guid batch, long id, PreLoginReportDraftViewModel model, CancellationToken cancellationToken)
     {
+        model.BatchId = batch; // the route (not the posted form) is the trusted source of the access token
         if (!ModelState.IsValid) return View(model);
         try
         {
-            await jobs.ApplyEditAndRegenerateAsync(id, model, cancellationToken);
-            return RedirectToAction(nameof(History));
+            await jobs.ApplyEditAndRegenerateAsync(batch, id, model, cancellationToken);
+            return RedirectToAction(nameof(History), new { batch });
         }
         catch (PreLoginReportException ex)
         {
@@ -77,19 +84,19 @@ public sealed class PreLoginReportsController(PreLoginReportJobService jobs) : C
         }
     }
 
-    [HttpPost("{id:long}/rerun")]
+    [HttpPost("{batch:guid}/{id:long}/rerun")]
     [ValidateAntiForgeryToken]
-    public async Task<IActionResult> Rerun(long id, CancellationToken cancellationToken)
+    public async Task<IActionResult> Rerun(Guid batch, long id, CancellationToken cancellationToken)
     {
-        try { await jobs.RerunAsync(id, cancellationToken); }
+        try { await jobs.RerunAsync(batch, id, cancellationToken); }
         catch (PreLoginReportException ex) { TempData["ReportError"] = ex.Message; }
-        return RedirectToAction(nameof(History));
+        return RedirectToAction(nameof(History), new { batch });
     }
 
-    [HttpGet("{id:long}/download")]
-    public async Task<IActionResult> Download(long id, CancellationToken cancellationToken)
+    [HttpGet("{batch:guid}/{id:long}/download")]
+    public async Task<IActionResult> Download(Guid batch, long id, CancellationToken cancellationToken)
     {
-        var job = await jobs.FindAsync(id, cancellationToken);
+        var job = await jobs.FindInBatchAsync(batch, id, cancellationToken);
         if (job is null || job.Status != MCAROC_Analysis.Data.Entities.PreLoginReportJobStatus.Completed || string.IsNullOrWhiteSpace(job.ReportStoragePath) || !System.IO.File.Exists(job.ReportStoragePath)) return NotFound();
         return File(await System.IO.File.ReadAllBytesAsync(job.ReportStoragePath, cancellationToken), "application/vnd.openxmlformats-officedocument.wordprocessingml.document", Path.GetFileName(job.ReportStoragePath).Split('-', 2).Last());
     }
