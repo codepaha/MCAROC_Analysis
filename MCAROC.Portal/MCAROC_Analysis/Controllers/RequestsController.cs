@@ -21,7 +21,8 @@ public class RequestsController(
     RequestListQueryService requestListQueryService,
     DossierCache dossierCache,
     IWebHostEnvironment env,
-    CorporateTimelineBuilder corporateTimelineBuilder) : Controller
+    CorporateTimelineBuilder corporateTimelineBuilder,
+    ILogger<RequestsController>? logger = null) : Controller
 {
     [HttpGet("/Requests")]
     public async Task<IActionResult> Index([FromQuery] RequestListFilterCriteria filters)
@@ -535,5 +536,166 @@ public class RequestsController(
 
         await db.SaveChangesAsync();
         return document;
+    }
+
+    /// <summary>
+    /// Deterministically resolves a safe download file name from docId and the original file name,
+    /// preventing header injection, path traversal, or malformed attachment names.
+    /// </summary>
+    public static string GetSafeDownloadFileName(long docId, string? originalFileName)
+    {
+        if (string.IsNullOrWhiteSpace(originalFileName))
+            return $"document-{docId}.pdf";
+
+        var fileName = Path.GetFileName(originalFileName);
+        var cleanChars = fileName.Where(c => !char.IsControl(c) && c != '"' && c != '\\' && c != '/' && c != ':' && c != ';' && c != '\r' && c != '\n').ToArray();
+        var clean = new string(cleanChars).Trim();
+
+        if (string.IsNullOrWhiteSpace(clean) || clean.Equals(".pdf", StringComparison.OrdinalIgnoreCase))
+            return $"document-{docId}.pdf";
+
+        if (!clean.EndsWith(".pdf", StringComparison.OrdinalIgnoreCase))
+            clean += ".pdf";
+
+        return clean;
+    }
+
+    /// <summary>
+    /// Shared resolver invoked by /view, .pdf, and /download endpoints.
+    /// Verifies request-scoping (IDOR guard), resolves canonical deduplication pointers,
+    /// verifies storage path on disk, and validates the exact 5-byte %PDF- file signature.
+    /// Note: Request-scoping is an IDOR prevention measure ensuring documents can only be accessed
+    /// under their associated RequestId; it is not an application-level identity/auth layer.
+    /// </summary>
+    private async Task<(McaFilingDocument? Document, string? PhysicalPath)> ResolveFilingDocumentFileAsync(long requestId, long docId, CancellationToken ct)
+    {
+        var doc = await db.McaFilingDocuments.AsNoTracking().FirstOrDefaultAsync(d => d.FilingDocumentId == docId, ct);
+        if (doc == null)
+        {
+            logger?.LogWarning("Document {DocId} not found.", docId);
+            return (null, null);
+        }
+
+        if (doc.RequestId != requestId)
+        {
+            logger?.LogWarning("Request scoping mismatch: Doc {DocId} RequestId={DocRequestId} != requested {RequestId}", docId, doc.RequestId, requestId);
+            return (null, null);
+        }
+
+        var targetDoc = doc;
+        if (doc.DuplicateOfDocumentId.HasValue)
+        {
+            var canonical = await db.McaFilingDocuments.AsNoTracking().FirstOrDefaultAsync(d => d.FilingDocumentId == doc.DuplicateOfDocumentId.Value, ct);
+            if (canonical == null)
+            {
+                logger?.LogWarning("Duplicate pointer broken: Doc {DocId} points to non-existent {CanonicalDocId}", docId, doc.DuplicateOfDocumentId.Value);
+                return (null, null);
+            }
+
+            // Canonical invariants: same RequestId, same BatchId, and canonical itself (no chaining allowed)
+            if (canonical.RequestId != doc.RequestId || canonical.BatchId != doc.BatchId || canonical.DuplicateOfDocumentId.HasValue)
+            {
+                logger?.LogWarning("Invalid duplicate pointer: Doc {DocId} -> Canonical {CanonicalDocId} violated same-request, same-batch, or non-chained invariant.", docId, canonical.FilingDocumentId);
+                return (null, null);
+            }
+
+            targetDoc = canonical;
+        }
+
+        if (string.IsNullOrWhiteSpace(targetDoc.StoragePath) || !System.IO.File.Exists(targetDoc.StoragePath))
+        {
+            logger?.LogError("Storage path missing or file not found on disk for Doc {DocId}.", targetDoc.FilingDocumentId);
+            return (null, null);
+        }
+
+        try
+        {
+            await using var stream = new FileStream(targetDoc.StoragePath, FileMode.Open, FileAccess.Read, FileShare.Read, 4096, useAsync: true);
+            var buffer = new byte[5];
+            var bytesRead = await stream.ReadAsync(buffer.AsMemory(0, 5), ct);
+            // 0x25, 0x50, 0x44, 0x46, 0x2D == "%PDF-"
+            if (bytesRead < 5 || buffer[0] != 0x25 || buffer[1] != 0x50 || buffer[2] != 0x44 || buffer[3] != 0x46 || buffer[4] != 0x2D)
+            {
+                logger?.LogError("Document {DocId} failed 5-byte %PDF- signature validation.", targetDoc.FilingDocumentId);
+                return (null, null);
+            }
+        }
+        catch (Exception ex)
+        {
+            logger?.LogError(ex, "Failed to read file signature for document {DocId}.", targetDoc.FilingDocumentId);
+            return (null, null);
+        }
+
+        return (doc, targetDoc.StoragePath);
+    }
+
+    [HttpGet("/Requests/{requestId:long}/documents/{docId:long}/view")]
+    public async Task<IActionResult> DocumentView(long requestId, long docId, CancellationToken ct)
+    {
+        var (doc, physicalPath) = await ResolveFilingDocumentFileAsync(requestId, docId, ct);
+        if (doc == null || physicalPath == null)
+        {
+            return NotFound();
+        }
+
+        Response.Headers.CacheControl = "no-store, private";
+        Response.Headers["X-Content-Type-Options"] = "nosniff";
+        Response.Headers["Content-Security-Policy"] = "default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self' blob:; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data: blob:; connect-src 'self'; object-src 'none'; frame-ancestors 'none';";
+
+        var filing = await db.McaFilings.AsNoTracking().FirstOrDefaultAsync(f => f.FilingId == doc.FilingId, ct);
+
+        var vm = new DocumentViewerViewModel
+        {
+            RequestId = requestId,
+            DocumentId = docId,
+            OriginalFileName = doc.OriginalFileName,
+            Category = doc.Category.ToString(),
+            FormType = doc.FormType,
+            PageCount = doc.PageCount,
+            Srn = filing?.Srn,
+            RawPdfUrl = $"/Requests/{requestId}/documents/{docId}.pdf",
+            DownloadUrl = $"/Requests/{requestId}/documents/{docId}/download"
+        };
+
+        return View("DocumentViewer", vm);
+    }
+
+    [HttpGet("/Requests/{requestId:long}/documents/{docId:long}.pdf")]
+    public async Task<IActionResult> DocumentRaw(long requestId, long docId, CancellationToken ct)
+    {
+        var (doc, physicalPath) = await ResolveFilingDocumentFileAsync(requestId, docId, ct);
+        if (doc == null || physicalPath == null)
+        {
+            return NotFound();
+        }
+
+        Response.Headers.CacheControl = "no-store, private";
+        Response.Headers["X-Content-Type-Options"] = "nosniff";
+
+        var cd = new Microsoft.Net.Http.Headers.ContentDispositionHeaderValue("inline");
+        cd.SetHttpFileName($"document-{docId}.pdf");
+        Response.Headers.ContentDisposition = cd.ToString();
+
+        return PhysicalFile(physicalPath, "application/pdf", enableRangeProcessing: true);
+    }
+
+    [HttpGet("/Requests/{requestId:long}/documents/{docId:long}/download")]
+    public async Task<IActionResult> DocumentDownload(long requestId, long docId, CancellationToken ct)
+    {
+        var (doc, physicalPath) = await ResolveFilingDocumentFileAsync(requestId, docId, ct);
+        if (doc == null || physicalPath == null)
+        {
+            return NotFound();
+        }
+
+        Response.Headers.CacheControl = "no-store, private";
+        Response.Headers["X-Content-Type-Options"] = "nosniff";
+
+        var safeFileName = GetSafeDownloadFileName(docId, doc.OriginalFileName);
+        var cd = new Microsoft.Net.Http.Headers.ContentDispositionHeaderValue("attachment");
+        cd.SetHttpFileName(safeFileName);
+        Response.Headers.ContentDisposition = cd.ToString();
+
+        return PhysicalFile(physicalPath, "application/pdf", enableRangeProcessing: true);
     }
 }

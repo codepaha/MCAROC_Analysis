@@ -1,0 +1,292 @@
+@model MCAROC_Analysis.Models.DocumentViewerViewModel
+@{
+    Layout = null;
+}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>@Model.OriginalFileName - Document Viewer</title>
+    <link rel="stylesheet" href="~/lib/bootstrap/dist/css/bootstrap.min.css" />
+    <link rel="stylesheet" href="~/lib/pdfjs/pdf_viewer.css" />
+    <style>
+        :root {
+            --viewer-bg: #525659;
+            --toolbar-bg: #323639;
+            --toolbar-color: #f1f3f4;
+            --toolbar-border: #444746;
+        }
+        body, html {
+            margin: 0;
+            padding: 0;
+            height: 100%;
+            overflow: hidden;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            background-color: var(--viewer-bg);
+        }
+        .viewer-shell {
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+        }
+        .viewer-header {
+            background-color: var(--toolbar-bg);
+            color: var(--toolbar-color);
+            padding: 8px 16px;
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            border-bottom: 1px solid var(--toolbar-border);
+            z-index: 10;
+        }
+        .header-meta {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            min-width: 0;
+        }
+        .doc-title {
+            font-size: 0.95rem;
+            font-weight: 600;
+            color: #fff;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            max-width: 320px;
+        }
+        .badge-meta {
+            font-size: 0.75rem;
+            padding: 3px 8px;
+            border-radius: 4px;
+            background: #444746;
+            color: #e3e3e3;
+        }
+        .viewer-toolbar {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .toolbar-btn {
+            background-color: transparent;
+            color: var(--toolbar-color);
+            border: 1px solid #555;
+            border-radius: 4px;
+            padding: 4px 10px;
+            font-size: 0.85rem;
+            cursor: pointer;
+            text-decoration: none;
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+        }
+        .toolbar-btn:hover:not(:disabled) {
+            background-color: #484c4f;
+            color: #fff;
+        }
+        .toolbar-btn:disabled {
+            opacity: 0.4;
+            cursor: not-allowed;
+        }
+        .toolbar-btn.btn-primary-action {
+            background-color: #0d6efd;
+            border-color: #0d6efd;
+            color: #fff;
+        }
+        .toolbar-btn.btn-primary-action:hover {
+            background-color: #0b5ed7;
+        }
+        .page-input {
+            width: 48px;
+            background-color: #202124;
+            color: #fff;
+            border: 1px solid #555;
+            border-radius: 4px;
+            text-align: center;
+            font-size: 0.85rem;
+            padding: 3px 0;
+        }
+        .page-count {
+            font-size: 0.85rem;
+            color: #c4c7c5;
+        }
+        .zoom-select {
+            background-color: #202124;
+            color: #fff;
+            border: 1px solid #555;
+            border-radius: 4px;
+            padding: 4px 6px;
+            font-size: 0.85rem;
+        }
+        .warning-banner {
+            display: none;
+            background-color: #fff3cd;
+            color: #664d03;
+            padding: 6px 16px;
+            font-size: 0.85rem;
+            border-bottom: 1px solid #ffecb5;
+            text-align: center;
+        }
+        .viewer-content {
+            flex: 1;
+            overflow: auto;
+            position: relative;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 24px;
+        }
+        .pdf-page-wrapper {
+            position: relative;
+            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+            background-color: #fff;
+            margin-bottom: 24px;
+        }
+        #pdfCanvas {
+            display: block;
+        }
+        .textLayer {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            overflow: hidden;
+            line-height: 1.0;
+        }
+        .loading-spinner {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 12px;
+            color: #fff;
+            font-size: 0.9rem;
+        }
+        .spinner {
+            width: 40px;
+            height: 40px;
+            border: 4px solid rgba(255, 255, 255, 0.2);
+            border-top-color: #fff;
+            border-radius: 50%;
+            animation: spin 1s infinite linear;
+        }
+        @@keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        .error-card {
+            display: none;
+            background-color: #fff;
+            border-radius: 8px;
+            padding: 24px;
+            max-width: 480px;
+            margin-top: 40px;
+            text-align: center;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.25);
+        }
+        .visually-hidden {
+            position: absolute;
+            width: 1px;
+            height: 1px;
+            padding: 0;
+            margin: -1px;
+            overflow: hidden;
+            clip: rect(0, 0, 0, 0);
+            white-space: nowrap;
+            border: 0;
+        }
+    </style>
+</head>
+<body>
+    <div class="viewer-shell">
+        <div class="viewer-header" role="region" aria-label="Document viewer toolbar">
+            <div class="header-meta">
+                <a href="/Requests/@Model.RequestId#documents" class="toolbar-btn" title="Back to request details" aria-label="Back to request details">
+                    &larr; Back
+                </a>
+                <span class="doc-title" title="@Model.OriginalFileName">@Model.OriginalFileName</span>
+                @if (!string.IsNullOrEmpty(Model.Srn))
+                {
+                    <span class="badge-meta">SRN: @Model.Srn</span>
+                }
+                @if (!string.IsNullOrEmpty(Model.Category))
+                {
+                    <span class="badge-meta">@Model.Category</span>
+                }
+                @if (!string.IsNullOrEmpty(Model.FormType))
+                {
+                    <span class="badge-meta">@Model.FormType</span>
+                }
+            </div>
+
+            <div class="viewer-toolbar">
+                <button type="button" id="prevPageBtn" class="toolbar-btn" aria-label="Previous Page" title="Previous Page (Left Arrow)">
+                    &lsaquo; Prev
+                </button>
+                <div class="d-flex align-items-center gap-1">
+                    <input type="number" id="pageNumberInput" class="page-input" value="1" min="1" aria-label="Current page number" />
+                    <span id="pageCountLabel" class="page-count"> / &hellip;</span>
+                </div>
+                <button type="button" id="nextPageBtn" class="toolbar-btn" aria-label="Next Page" title="Next Page (Right Arrow)">
+                    Next &rsaquo;
+                </button>
+
+                <div class="vr mx-1" style="height: 24px; background-color: #555;"></div>
+
+                <button type="button" id="zoomOutBtn" class="toolbar-btn" aria-label="Zoom Out" title="Zoom Out">
+                    &minus;
+                </button>
+                <select id="zoomSelect" class="zoom-select" aria-label="Zoom scale">
+                    <option value="0.75">75%</option>
+                    <option value="1.0">100%</option>
+                    <option value="1.25" selected>125%</option>
+                    <option value="1.5">150%</option>
+                    <option value="2.0">200%</option>
+                </select>
+                <button type="button" id="zoomInBtn" class="toolbar-btn" aria-label="Zoom In" title="Zoom In">
+                    +
+                </button>
+
+                <div class="vr mx-1" style="height: 24px; background-color: #555;"></div>
+
+                <a href="@Model.DownloadUrl" id="downloadDocBtn" class="toolbar-btn btn-primary-action" download title="Download original PDF">
+                    Download
+                </a>
+                <a href="@Model.RawPdfUrl" class="toolbar-btn" target="_blank" rel="noopener" title="Open raw PDF in new browser tab">
+                    Raw
+                </a>
+            </div>
+        </div>
+
+        <div id="pageWarningBanner" class="warning-banner" role="alert" aria-live="polite"></div>
+
+        <div id="pdfViewerContainer" class="viewer-content" data-pdf-url="@Model.RawPdfUrl" data-download-url="@Model.DownloadUrl">
+            <div id="pdfLoadingSpinner" class="loading-spinner">
+                <div class="spinner"></div>
+                <div>Loading PDF&hellip;</div>
+            </div>
+
+            <div id="pdfErrorContainer" class="error-card">
+                <h5 class="text-danger mb-2">Unable to Load Document</h5>
+                <p id="pdfErrorMessage" class="text-muted mb-3">An error occurred while rendering this document.</p>
+                <a href="@Model.DownloadUrl" class="btn btn-primary btn-sm" download>Download File Instead</a>
+            </div>
+
+            <div class="pdf-page-wrapper" id="pdfPageWrapper">
+                <canvas id="pdfCanvas"></canvas>
+                <div id="textLayer" class="textLayer"></div>
+            </div>
+        </div>
+
+        <div id="pdfStatusAnnouncer" class="visually-hidden" aria-live="polite"></div>
+    </div>
+
+    <script type="module" src="~/js/pdf-viewer.js"></script>
+</body>
+</html>

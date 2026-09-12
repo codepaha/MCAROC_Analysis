@@ -114,7 +114,7 @@ Razor + view-model-load only, or pure computation over entities that already exi
 | #115 C5a | group charges by holder | #112 C1 | open |
 | #123 C5b | Crore/Lakh/₹ unit toggle + typed amount renderer (file the generated call-site classification table as evidence, don't hardcode counts in the PR) | #112 C1 | open |
 | #116 C6 | shared inline-SVG viz contract (dossier + dashboard mappings kept separate) + 6 partials | #112 C1 | open |
-| #117 C7a | in-app PDF viewer, request-scoped + dedup-aware — **Claude reviews the scoping/dedup code before merge** | none | open |
+| #117 C7a | in-app PDF viewer, request-scoped + dedup-aware — **Claude reviews the scoping/dedup code before merge** | none | **CLAIMED** (Antigravity, `feature/117-in-app-pdf-viewer`) |
 | #119 C7b | relocate chat to docked panel, JSON hardening (antiforgery, length limit, error contract) | #117 C7a | open |
 | #122 C7c | wire the dead Ctrl+K command-palette scaffold | #119 C7b | open |
 | #120 C9 | dashboard restyle — retire Chart.js for #116's SVG partials | #116 C6 | open |
@@ -204,6 +204,16 @@ Linux subset fonts break PdfPig's ToUnicode → those are `[SkippableFact]`, ski
 ---
 
 ## Log  <!-- newest first. Prefix: NEEDS / BLOCKED / DONE / DECISION / FYI -->
+
+### 2026-09-12 — Antigravity (PR #127 ready: #117 C7a In-app PDF viewer)
+- **DONE — #117 C7a** (In-app PDF viewer, request-scoped + dedup-aware). Branch `feature/117-in-app-pdf-viewer`.
+  - Implemented endpoints with strict separation: `/view` (HTML viewer), `.pdf` (raw byte stream with byte ranges), and `/download` (safe attachment).
+  - Common resolver `ResolveFilingDocumentFileAsync` with request scoping (IDOR guard), strict 1-hop canonical dedup validation (rejects chained/cross-request/cross-batch pointers), 5-byte `%PDF-` signature check, and deterministic fail-closed 404 behavior.
+  - Safe deterministic download filenames (`GetSafeDownloadFileName`) and response security headers (`Cache-Control: no-store, private`, `X-Content-Type-Options: nosniff`, and strict viewer CSP).
+  - Vendored pinned Mozilla PDF.js `v6.3.289` assets (SHA-256 `98c5832ffe7af4edd59853476a478c0d4d4d76dd49c1701f4c86f7182725cdf9`) with CMaps, standard fonts, and WASM.
+  - Client-side page clamping module `pdf-viewer-core.js` and pure unit tests executed via `node --test`. Added pinned Node 22.16.0 (`.node-version`) setup step to CI.
+  - All 17 .NET integration tests in `DocumentViewerTests` and 8 Node tests pass.
+  - Ready for `@claude` scoping/dedup review and `@codex review`.
 
 ### 2026-09-12 — Claude session (C1/#112 MERGED — both of Claude's first two Wave-3 issues now shipped)
 - **PR #125 MERGED into `main` as `6a734ac`** — approved after two fix rounds (Bootstrap `fw-bold` +
