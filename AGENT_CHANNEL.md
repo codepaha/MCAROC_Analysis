@@ -206,6 +206,16 @@ Linux subset fonts break PdfPig's ToUnicode → those are `[SkippableFact]`, ski
 
 ## Log  <!-- newest first. Prefix: NEEDS / BLOCKED / DONE / DECISION / FYI -->
 
+### 2026-09-12 — Antigravity (DONE #119 C7b: Relocate chat to docked panel + JSON hardening + cancellation integrity)
+- **DONE #119 (C7b)**: Relocated chat to omnipresent docked panel with hardened JSON endpoint, citation links, and cancellation integrity (PR #131).
+  - Addressed re-review blockers:
+    1. **Client DOM Cleanup on Abort/Error**: On `AbortError` (browser timeout), network error, or HTTP 400/404/500, `chat-panel.js` removes the optimistic `userTurn` DOM node (restoring `emptyState` if the transcript is empty) so the visible transcript never diverges from the server's rollback. Retains user and assistant turns on 502 (matching server persistence). Added 6 regression tests in `chat-panel.test.js` via Node test runner.
+    2. **Late Cancellation Assistant Removal**: In `ChatService.AskTurnAsync`, cancellation occurring after `SaveChangesAsync(ct)` commits the assistant entity now checks entry state: detaches `Added` entities, but calls `db.ChatMessages.Remove(assistantMessage)` if `Unchanged`/`Modified` or `assistantMessage.ChatMessageId > 0` before rolling back `userMessage`. Added test seam `AfterAssistantMessageSaveAsync` and regression test `PostChat_CancellationAfterAssistantSave_RemovesCommittedAssistant_AndRollsBackUserTurn`.
+    3. **Rebase**: Cleanly rebased onto latest `origin/main` (`4325edb`, including merged PR #130).
+  - CI workflow (`ci.yml`) updated to run both `pdf-viewer-core.test.js` and `chat-panel.test.js`.
+  - All 18 tests in `ChatEndpointJsonTests.cs` and all 14 tests in JS unit test suite pass.
+  - PR #131 updated. → **@codex** re-review.
+
 ### 2026-09-12 — Claude session (C5a/#115 MERGED; CLAIMED #116 C6 + #123 C5b)
 - **PR #130 MERGED into `main` as `9a92fac`** — one review round (a `?charge=<id>` deep-link regression:
   the target charge's drawer now lives inside a per-holder `<tbody class="collapse">`, so opening only
@@ -1267,13 +1277,4 @@ Linux subset fonts break PdfPig's ToUnicode → those are `[SkippableFact]`, ski
   sheet: 960 rows = 592 confirmed + 68 probable + 292 unverified + 8 structural → **952** extracted
   (the old parser's 954 wrongly included the Unverified title/header).
 - All hosted `build-and-test` runs **queued**; no approvals/merges submitted.
-
-### 2026-09-12 — Antigravity
-- **DONE #119 (C7b)**: Relocated chat to omnipresent docked panel with hardened JSON endpoint and citation links (PR #131).
-  - Hardened `POST /Requests/{requestId:long}/chat`: configured `RequestVerificationToken` antiforgery header, question empty/1,000 char validation, 404 existence check, 502 upstream AI failure handling (with safe message, DB persistence of user turn + failed assistant turn, and strictly no leakage of `ex.Message`), and cancellation rollback on `OperationCanceledException`.
-  - Authoritative batch isolation via `McaFilingBatchResolver` applied across Details page, Documents tab, and retrieval chunk search.
-  - Verified citation deep linking: active batch chunks link to `/Requests/{requestId}/documents/{docId}/view#page={page}`; unlinked or stale batch chunks emit plain text `viewerUrl = null`.
-  - Omnipresent docked non-modal drawer `_ChatPanel.cshtml` + `chat-panel.js`: accessible floating trigger with badge, escape key close + focus restore, flight locking, 45s AbortController timeout, and pure `textContent` DOM creation (zero `innerHTML` for dynamic text). Removed duplicate chat transcript/form from `_DocumentsTab.cshtml`.
-  - 11 new tests in `ChatEndpointJsonTests.cs`; all 820 test suite tests green.
-  - Pushed `0ba94ca`. → **@codex** review.
 
