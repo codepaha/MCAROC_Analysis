@@ -95,6 +95,8 @@ Razor + view-model-load only, or pure computation over entities that already exi
 | #64 D9 | cost structure & forex metrics (Section A4/A5) | #55 D0 (merged) only | **MERGED** (`e9e39e3`) |
 | #65 D10 | related-party-transaction metrics (Section E) | #50 A8 (merged) | **MERGED** (`7f2cf1e`) |
 | #66 D11 | credit rating metrics (Section F) | #51 A9 (merged) | **MERGED** (`8213961`) |
+| #106 | Corporate tab render-audit — 5 sets of captured columns not shown (LastAgmDate/LeiStatus, Directors, Other Directorships, Shareholding, Related Corporates) | none — Razor-only | **open, unclaimed** |
+| #107 | Compliance tab render-audit — GST registration + EPFO contribution columns not shown | none — Razor-only | **open, unclaimed** |
 | visual | before/after screenshots on every render PR; keep `E:\Downloads\VTION\ROC_JSON_Reports` current | — | ongoing |
 
 ### Sequencing
@@ -179,6 +181,37 @@ Linux subset fonts break PdfPig's ToUnicode → those are `[SkippableFact]`, ski
 ---
 
 ## Log  <!-- newest first. Prefix: NEEDS / BLOCKED / DONE / DECISION / FYI -->
+
+### 2026-09-12 — Claude session (full render-audit pass — issues #106/#107, PR #108)
+- **Owner asked for a UI test plan covering "every data on Excel shows on UI" — did a real code-level
+  audit, not just a document.** Read every one of the 34 sheets in `docs/data-coverage-catalogue.json`
+  against the actual `_CorporateTab`/`_FinancialsTab`/`_FinancialStatement`/`_ChargesTab`/`_ChargeDrawer`/
+  `_ComplianceTab`/`_LitigationTab.cshtml` view code and each entity's real C# fields — the catalogue's own
+  "live" status had drifted in several places.
+- **Found 7 real, previously-undocumented render gaps** (data parsed and stored, never shown anywhere):
+  `CompanyProfile.LastAgmDate`/`LeiStatus`; `Director.DesignationAppointmentDate`/`Flags` (Flags feeds the
+  I5 metric's count but the text itself is invisible); `DirectorAssociation`/`Shareholding`(>5% sheet)/
+  `RelatedCorporate` all silently drop `ObligationOfContribution` (not parsed at all) plus
+  `DateOfIncorporation`/`ActiveCompliance`/`FinancialYearEnding`/location fields (parsed, not rendered);
+  `GstRegistration.TaxpayerType`/`TradeName`/`NatureOfBusinessActivities`/`Flags`; `EpfoContribution.
+  PaymentDate`/`PaymentDueDate` (both drive H1/H2 internally but aren't visible per row). Filed as **#106**
+  (Corporate tab) and **#107** (Compliance tab), label `render-audit`.
+- **Also confirmed 2 catalogue-tracked gaps are already fixed** and the catalogue just never caught up:
+  **G8** (FinancialFacts/Parameters/CompanyOfficers/CashFlowYearInferred — all render) and **G12**
+  (Litigation Uncertain rows — already has its own Unverified sub-tab + disclaimer, done by B3/#41).
+- **PR #108 open** (`docs/render-audit-corporate-compliance`) — closes G8/G12 in the gaps list, adds
+  G19–G25 for the new findings, splits the affected sheet rows so each has a proper `not-parsed`/
+  `parsed-not-shown` entry with a gap id (required by `CatalogueCoverageTests`, A7/#38). Both the
+  always-run gap-reference check and the real-workbook `SkippableFact` pass; full suite 735/736 (1
+  unrelated skip). Docs-only — the actual UI fixes are #106/#107's own work.
+- **FYI — D11/#66 merged while this was in progress** (PR #105, `8213961`): F1/F2/F5 shipped, F3/F4
+  deliberately blocked on an AMOUNT-scale gate (no stored crore/denomination in the real export). Confirmed
+  the raw Ratings/Unaccepted-Ratings tables and F1/F2/F5 Key Indicators are wired into Compliance → Credit
+  Ratings as part of this same audit.
+- Built a working [MCAROC end-to-end test plan](https://claude.ai/code/artifact/1e07517b-a19d-48b0-9a43-e68b81a9d029)
+  (Claude Artifact, private) covering all 34 sheets/89 field groups, all 78+ catalogue metrics (§A–K, F now
+  shipped), all 8 portal tabs, the 3 dossier PDF variants, and the pre-login pipeline — with a persistent
+  per-browser checklist. Share the link with whoever runs the actual pass.
 
 ### 2026-09-12 — Antigravity (D11/#66 MERGED)
 - **DONE — #105 (#66 D11) MERGED (`8213961`)**: credit rating analytics (Section F).
