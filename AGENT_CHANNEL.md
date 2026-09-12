@@ -68,13 +68,21 @@ Everything that adds an entity + EF migration, plus the metrics scaffold and the
 **One migration branch in flight at a time** — Claude serialises this lane.
 
 **Wave 1 (A1–A11) + A7 CI enforcement: all DONE, all merged.** D0 DONE (`572d8bf`).
-**Wave 4 D2/#57 and D4/#59 (Claude's full assignment): both DONE, both merged. Claude's lane has
-nothing outstanding — see the owner/Codex for what's next.**
+**Wave 4 D2/#57 and D4/#59 (Claude's full assignment): both DONE, both merged.**
+**New work (owner-requested, 2026-09-12): #97 corporate event timeline + #98 K1 capital reconciliation
+— both CLAIMED, following the owner's feedback on an external LLM's feature proposal (score idea
+rejected; timeline + one discrepancy-engine extension approved). See the plan file
+`serene-whistling-wave.md` for the full design (revised once after a rigorous pre-build review — real
+gaps caught: `DossierModel` was missing 3 needed entities, `DossierAssembler` requires a completed
+`AnalysisRun` so a `DossierModel`-based timeline would vanish mid-analysis, and `Inputs` needed to be
+structured provenance not free text).**
 
 | Issue | What | Status |
 |---|---|---|
 | #57 D2 | financial trend & leverage metrics (parity-test heavy) | **MERGED** (`cad21f0`) |
 | #59 D4 | shareholding metrics | **MERGED** (`8f83b04`) |
+| #98 K1 | capital reconciliation (paid-up capital vs balance sheet) | **CLAIMED**, starting now |
+| #97 | corporate event timeline (new portal tab, bypasses `DossierModel`/`DossierAssembler`) | **CLAIMED**, next after #98 |
 
 ### Antigravity — render-audit + metrics-compute lane (no schema changes)
 Razor + view-model-load only, or pure computation over entities that already exist. **No migrations.**
@@ -84,7 +92,7 @@ Razor + view-model-load only, or pure computation over entities that already exi
 | Issue | What | Needs | Status |
 |---|---|---|---|
 | #61 D6 | directors metrics (pure compute) | **#55 D0** (merged) | **MERGED** (`3eafe94`) |
-| #62 D7 | EPFO / labour metrics (Section H; H7 needed #36) | #36 (merged) | **PR #96 open** |
+| #62 D7 | EPFO / labour metrics (Section H; H7 needed #36) | #36 (merged) | **MERGED** (`1587889`) |
 | #63 D8 | peer comparison metrics (Section J; J2 needed #35) | #35 (merged) | unblocked |
 | #64 D9 | cost structure & forex metrics (Section A4/A5) | #55 D0 (merged) only | unblocked |
 | #65 D10 | related-party-transaction metrics (Section E) | #50 A8 (merged) | **newly unblocked** |
@@ -92,9 +100,10 @@ Razor + view-model-load only, or pure computation over entities that already exi
 | visual | before/after screenshots on every render PR; keep `E:\Downloads\VTION\ROC_JSON_Reports` current | — | ongoing |
 
 ### Sequencing
-- Claude: D2/#57 **MERGED** → D4/#59 **MERGED** — both of Claude's Wave-4 issues done. Lane is empty
-  pending a new assignment.
-- Antigravity: D6/#61 **MERGED** → D7/#62 (PR #96 open) → D8/D9/D10/D11 (#63–#66) in any order.
+- Claude: D2/#57 **MERGED** → D4/#59 **MERGED** → K1/#98 (capital reconciliation, starting now) →
+  #97 (corporate event timeline).
+- Antigravity: D6/#61 **MERGED** → D7/#62 **MERGED** → D8/#63 (in progress, per shared-directory branch
+  `feature/d8-peer-comparison-metrics`) → D9/D10/D11 (#64–#66) in any order.
 
 ### Not in either lane (Codex or owner)
 Rule engine, analysis orchestration, Phase-4 retrieval, Wave 3 restyle (not split into issues yet).
@@ -164,6 +173,28 @@ Linux subset fonts break PdfPig's ToUnicode → those are `[SkippableFact]`, ski
 ---
 
 ## Log  <!-- newest first. Prefix: NEEDS / BLOCKED / DONE / DECISION / FYI -->
+
+### 2026-09-12 — Claude session (two new owner-requested issues filed and claimed: #97, #98)
+- **DECISION — owner reviewed an external LLM's feature-suggestion list for this portal.** Verdict: no
+  composite risk score (correctly conflicts with the standing NOT-A-SCORE principle — most of the rest
+  of the list already exists in some shape across the D-wave work). Two things approved to build:
+  a unified corporate event timeline, and extending the B10-style discrepancy-engine pattern to paid-up
+  capital (registered-office was considered too but rejected — only one source for that field exists in
+  this pipeline, nothing to compare against).
+- **DONE — planned, reviewed, and revised the design before writing any code.** First plan draft had
+  three real defects, caught in review: (1) it assumed `DossierModel` already carried
+  `CompanyNameHistory`/`CreditRating`/`FinancialDisputeCase` — it doesn't, none of the three are queried
+  anywhere in `DossierAssembler`; (2) it would have built the timeline off `DossierModel`, but
+  `DossierAssembler.BuildAsync` hard-gates on a completed `AnalysisRun` before loading anything, so the
+  timeline would vanish right after a re-ingest until analysis reruns — fixed by giving the timeline its
+  own path (`CorporateTimelineBuilder`) keyed only on `LatestCompletedIngestionRunId`, no `AnalysisRun`
+  dependency at all; (3) `Inputs` as free-text field-path strings (the `MetricResult` convention) is
+  wrong for a timeline event, which traces to one specific row — switched to a structured
+  `TimelineEventProvenance` built from each row's own `ExtractedEntityBase` fields, also used as the
+  same-day ordering tie-breaker.
+- **CLAIMED #98 (K1 capital reconciliation)** and **#97 (corporate event timeline)** — filed as separate
+  issues/PRs per the one-PR-one-concern rule. Full design in both issue bodies and in the session's plan
+  file. Starting with #98 (smaller, fully specified, no architecture changes needed) then #97.
 
 ### 2026-09-11 — Antigravity (D7/#62 Codex review fixes pushed)
 - **DONE — #96 review findings addressed**:
