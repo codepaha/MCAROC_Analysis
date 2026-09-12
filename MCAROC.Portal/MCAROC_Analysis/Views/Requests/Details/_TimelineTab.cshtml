@@ -66,10 +66,7 @@
                 @if (!string.IsNullOrWhiteSpace(e.Provenance.SourceSheetName))
                 {
                     <div class="text-muted mt-1">
-                        <small>
-                            Source: @e.Provenance.SourceSheetName
-                            @if (e.Provenance.SourceRowNumber is { } row) { <text>, row @row</text> }
-                        </small>
+                        <small>Source: @e.Provenance.SourceSheetName@(e.Provenance.SourceRowNumber is { } row ? $", row {row}" : "")</small>
                     </div>
                 }
             </li>
