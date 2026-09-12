@@ -39,7 +39,12 @@ else
         {
             <span class="pi-status-pill @PriorityPill(aiPr)">
                 Review Priority: @aiPr
-                @if (priorityExplanation.PrimaryReason is not null)
+                @* Fail-closed: only show the recomputed reason when it still agrees with the priority
+                   stored at analysis time. If a rule change later alters what Explain would compute for
+                   an old run's findings, the stored badge and a freshly-recomputed reason could otherwise
+                   contradict each other on screen — showing neither the wrong reason nor no reason at all
+                   is safer than showing a reason that doesn't match the badge next to it. *@
+                @if (priorityExplanation.Priority == aiPr && priorityExplanation.PrimaryReason is not null)
                 {
                     <text> — @priorityExplanation.DescribeAll()</text>
                 }

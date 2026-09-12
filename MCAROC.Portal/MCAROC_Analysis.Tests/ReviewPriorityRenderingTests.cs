@@ -176,4 +176,33 @@ public class ReviewPriorityRenderingTests
         Assert.Contains("Review Priority: Low", html);
         Assert.DoesNotContain("a cross-section Critical finding", html);
     }
+
+    [Fact]
+    public async Task Stored_priority_disagreeing_with_a_freshly_recomputed_reason_shows_no_reason_clause()
+    {
+        // Simulates a future rule-version drift: the badge still shows whatever priority was stored at
+        // analysis time (High here), but re-evaluating today's findings with today's rules would no
+        // longer reach that priority (e.g. a designated-critical code was later removed from the list).
+        // Showing the recomputed reason next to a badge it doesn't actually justify would be more
+        // misleading than showing no reason at all.
+        var vm = CreateViewModel();
+        vm.LatestAnalysisRun = new AnalysisRun { Status = AnalysisRunStatus.Completed, RunNumber = 1, OverallReviewPriority = ReviewPriority.High };
+        vm.AnalysisFindings =
+        [
+            new AnalysisFinding
+            {
+                Section = FindingSection.Financial, Severity = FindingSeverity.Critical, TemporalStatus = TemporalStatus.Current,
+                Code = "FIN_NO_LONGER_DESIGNATED", Title = "Finding X", SummaryText = "..."
+            }
+        ];
+
+        var html = await RenderAiAnalysisTabAsync(vm);
+
+        // The stored badge still renders...
+        Assert.Contains("Review Priority: High", html);
+        // ...but since Explain over these findings recomputes Medium (a single, non-designated Critical
+        // finding), not High, no reason clause is shown alongside a priority it no longer agrees with.
+        Assert.DoesNotContain(" — ", html);
+        Assert.DoesNotContain("a Critical finding", html);
+    }
 }
