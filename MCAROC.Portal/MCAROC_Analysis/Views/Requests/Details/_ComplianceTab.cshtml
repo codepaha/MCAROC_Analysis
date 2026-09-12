@@ -327,7 +327,7 @@
             @if (Model.GstRegistrations.Count > 0)
             {
                 <div class="pi-table-wrap"><table class="pi-results-table">
-                    <thead><tr><th>GSTIN</th><th>State</th><th>Jurisdiction</th><th>Status</th><th>Registered</th><th>Cancelled</th><th class="text-end">Returns on file</th></tr></thead>
+                    <thead><tr><th>GSTIN</th><th>Trade Name</th><th>Taxpayer Type</th><th>State</th><th>Jurisdiction</th><th>Status</th><th>Registered</th><th>Cancelled</th><th>Nature of Business</th><th>Flags</th><th class="text-end">Returns on file</th></tr></thead>
                     <tbody>
                     @foreach (var g in Model.GstRegistrations)
                     {
@@ -336,11 +336,24 @@
                                 @g.Gstin
                                 @if (!string.IsNullOrWhiteSpace(g.LegalNameOfBusiness)) { <br /><small class="text-muted">@g.LegalNameOfBusiness</small> }
                             </td>
+                            <td>@Or(g.TradeName)</td>
+                            <td>@Or(g.TaxpayerType)</td>
                             <td>@Or(g.State)</td>
                             <td>@Or(g.CentreJurisdiction)@(string.IsNullOrWhiteSpace(g.StateJurisdiction) ? "" : $" / {g.StateJurisdiction}")</td>
                             <td>@Or(g.Status)</td>
                             <td>@D(g.RegistrationDate)</td>
                             <td>@D(g.CancellationDate)</td>
+                            <td>@Or(g.NatureOfBusinessActivities)</td>
+                            <td>
+                                @if (!string.IsNullOrWhiteSpace(g.Flags) && g.Flags.Trim() != "-")
+                                {
+                                    <span class="badge bg-light text-dark">@g.Flags</span>
+                                }
+                                else
+                                {
+                                    @("—")
+                                }
+                            </td>
                             <td class="text-end">@g.Filings.Count</td>
                         </tr>
                     }
@@ -489,11 +502,20 @@
                 @if (Model.EpfoContributions.Count > 0)
                 {
                     <div class="pi-table-wrap"><table class="pi-results-table">
-                        <thead><tr><th>Establishment</th><th>Wage Month</th><th>TRRN</th><th class="text-end">Employees</th><th class="text-end">Amount (Cr)</th><th>Status</th></tr></thead>
+                        <thead><tr><th>Establishment</th><th>Wage Month</th><th>TRRN</th><th class="text-end">Employees</th><th class="text-end">Amount (Cr)</th><th>Due Date</th><th>Payment Date</th><th>Status</th></tr></thead>
                         <tbody>
                         @foreach (var e in Model.EpfoContributions)
                         {
-                            <tr><td>@e.EstablishmentName</td><td>@e.WageMonth</td><td class="report-id">@Or(e.Trrn)</td><td class="text-end">@(e.EmployeeCount?.ToString() ?? "—")</td><td class="text-end">@(e.ContributionAmountCrore is { } ca ? Num(ca) : "—")</td><td>@Or(e.PaymentStatus)</td></tr>
+                            <tr>
+                                <td>@e.EstablishmentName</td>
+                                <td>@e.WageMonth</td>
+                                <td class="report-id">@Or(e.Trrn)</td>
+                                <td class="text-end">@(e.EmployeeCount?.ToString() ?? "—")</td>
+                                <td class="text-end">@(e.ContributionAmountCrore is { } ca ? Num(ca) : "—")</td>
+                                <td>@D(e.PaymentDueDate)</td>
+                                <td>@D(e.PaymentDate)</td>
+                                <td>@Or(e.PaymentStatus)</td>
+                            </tr>
                         }
                         </tbody>
                     </table></div>
