@@ -263,7 +263,7 @@ public class ChargesTabRenderingTests
         var vm = CreateViewModel();
         vm.Charges =
         [
-            new RocCharge { RocChargeNumber = "CHG-502", LatestChargeHolderRaw = "State Bank of India", CurrentAmount = 10m, SatisfactionDate = null }
+            new RocCharge { RocChargeNumber = "CHG-502", LatestChargeHolderRaw = "State Bank of India", LatestChargeHolderNormalized = "STATE BANK OF INDIA", CurrentAmount = 10m, SatisfactionDate = null }
         ];
 
         var html = await RenderChargesTabAsync(vm);
@@ -362,8 +362,10 @@ public class ChargesTabRenderingTests
 
         var html = await RenderChargesTabAsync(vm);
 
-        // The group header badge appears exactly once for the blank-holder group.
-        Assert.Single(System.Text.RegularExpressions.Regex.Matches(html, "mca-badge sev-watch\">Unknown Charge Holder</span>"));
+        // One "Unknown Charge Holder" badge for the group header, plus one per blank-holder row's own
+        // Holder cell AND one more inside that row's _ChargeDrawer "Charge Holder" field (#114's two
+        // per-charge fallbacks) - 1 (header) + 2 charges x 2 renders each = 5 total.
+        Assert.Equal(5, System.Text.RegularExpressions.Regex.Matches(html, "mca-badge sev-watch\">Unknown Charge Holder</span>").Count);
         Assert.Contains("2 charge(s)", html); // the unknown-holder group
         Assert.Contains("1 charge(s)", html); // Axis Bank's group
     }
