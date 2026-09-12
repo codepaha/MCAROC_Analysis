@@ -10,34 +10,85 @@ namespace MCAROC_Analysis.Services.Chat;
 /// <summary>Drives one chat turn: persist the question, build retrieval context, call Gemini, validate,
 /// persist the answer. Runs synchronously within the HTTP request — a chat question needs an answer now,
 /// unlike Phase 2/3's fire-and-forget background pipelines.</summary>
+public enum ChatTurnOutcome
+{
+    Success,
+    RequestNotFound,
+    QuestionEmpty,
+    QuestionTooLong,
+    UpstreamFailure
+}
+
+public record ChatTurnResult(ChatTurnOutcome Outcome, ChatMessage? Message = null);
+
 public class ChatService(
     AppDbContext db,
     RetrievalContextBuilder contextBuilder,
     ChatCompletionService completionService,
     ILogger<ChatService> logger)
 {
+    public const int MaxQuestionLength = 1000;
     private static readonly ChatRetrievalOptions Options = ChatRetrievalOptions.Default;
 
     public virtual Task<bool> RequestExistsAsync(long requestId, CancellationToken ct) =>
         db.Requests.AnyAsync(r => r.RequestId == requestId, ct);
 
-    /// <summary>Returns the persisted assistant message, or <c>null</c> if <paramref name="requestId"/>
-    /// matches no request. The existence check runs before any write, so a bad id never creates an
-    /// orphan session (the controller also guards up front, unconditionally).</summary>
     public virtual async Task<ChatMessage?> AskAsync(long requestId, string question, CancellationToken ct)
     {
+        var result = await AskTurnAsync(requestId, question, ct);
+        return result.Message;
+    }
+
+    public virtual Task<ChatTurnResult> AskTurnAsync(long requestId, string question, CancellationToken ct) =>
+        AskTurnAsync(requestId, question, Guid.NewGuid(), ct);
+
+    /// <summary>Drives one chat turn with typed outcomes for the API layer: persists the question,
+    /// calls completion, and handles cancellation (rollback) vs upstream failure (audit persistence)
+    /// cleanly without leaking exception details. Enforces unique clientTurnId per session to ensure
+    /// atomic, durable deduplication across retry races.</summary>
+    public virtual async Task<ChatTurnResult> AskTurnAsync(
+        long requestId,
+        string question,
+        Guid clientTurnId,
+        CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(question))
+            return new ChatTurnResult(ChatTurnOutcome.QuestionEmpty);
+
+        var trimmed = question.Trim();
+        if (trimmed.Length > MaxQuestionLength)
+            return new ChatTurnResult(ChatTurnOutcome.QuestionTooLong);
+
         var request = await db.Requests.FirstOrDefaultAsync(r => r.RequestId == requestId, ct);
         if (request is null)
-            return null;
+            return new ChatTurnResult(ChatTurnOutcome.RequestNotFound);
 
         var session = await GetOrCreateSessionAsync(requestId, ct);
 
-        db.ChatMessages.Add(new ChatMessage
+        var userMessage = new ChatMessage
         {
-            ChatSessionId = session.ChatSessionId, Role = ChatRole.User, MessageText = question, CreatedDate = DateTime.UtcNow
-        });
+            ChatSessionId = session.ChatSessionId,
+            ClientTurnId = clientTurnId,
+            Role = ChatRole.User,
+            MessageText = trimmed,
+            CreatedDate = DateTime.UtcNow
+        };
+        db.ChatMessages.Add(userMessage);
         session.LastActivityDate = DateTime.UtcNow;
-        await db.SaveChangesAsync(ct);
+
+        try
+        {
+            await db.SaveChangesAsync(ct);
+        }
+        catch (DbUpdateException ex) when (
+            (ex.InnerException is SqlException { Number: SqlUniqueIndexViolation or SqlUniqueConstraintViolation }
+             || ex.InnerException?.Message.Contains("IX_ChatMessages_ChatSessionId_ClientTurnId") == true
+             || ex.Message.Contains("IX_ChatMessages_ChatSessionId_ClientTurnId")))
+        {
+            // Concurrent retry with identical ClientTurnId: return existing turn
+            db.Entry(userMessage).State = EntityState.Detached;
+            return await AwaitOrGetExistingTurnAsync(session.ChatSessionId, clientTurnId, ct);
+        }
 
         // Fresh retrieval every turn — prior assistant messages are conversational context only, never
         // treated as evidence, so history is loaded purely to help the model interpret a follow-up like
@@ -50,7 +101,7 @@ public class ChatService(
             .ToListAsync(ct);
         priorHistory.Reverse();
 
-        ChatMessage assistantMessage;
+        ChatMessage? assistantMessage = null;
         try
         {
             var context = await contextBuilder.BuildAsync(requestId, question, ct);
@@ -59,6 +110,7 @@ public class ChatService(
             assistantMessage = new ChatMessage
             {
                 ChatSessionId = session.ChatSessionId,
+                InReplyToChatMessageId = userMessage.ChatMessageId,
                 Role = ChatRole.Assistant,
                 MessageText = completion.Answer,
                 RetrievedSourcesJson = JsonSerializer.Serialize(context.Sources.Select(s => new
@@ -73,24 +125,74 @@ public class ChatService(
                 Status = ChatMessageStatus.Success,
                 CreatedDate = DateTime.UtcNow
             };
+            db.ChatMessages.Add(assistantMessage);
+            await BeforeAssistantMessageSaveAsync(ct);
+            await db.SaveChangesAsync(ct);
+            await AfterAssistantMessageSaveAsync(ct);
+            return new ChatTurnResult(ChatTurnOutcome.Success, assistantMessage);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            // Client aborted or timeout: detach pending assistant entity if not yet saved,
+            // or remove it if already committed, and roll back user message so no orphaned turn remains
+            if (assistantMessage is not null)
+            {
+                var entry = db.Entry(assistantMessage);
+                if (entry.State == EntityState.Added)
+                {
+                    entry.State = EntityState.Detached;
+                }
+                else if (entry.State is EntityState.Unchanged or EntityState.Modified || assistantMessage.ChatMessageId > 0)
+                {
+                    db.ChatMessages.Remove(assistantMessage);
+                }
+            }
+            if (db.Entry(userMessage).State != EntityState.Detached)
+            {
+                db.ChatMessages.Remove(userMessage);
+            }
+            await db.SaveChangesAsync(CancellationToken.None);
+            throw;
         }
         catch (Exception ex)
         {
             logger.LogWarning(ex, "Chat completion failed for request {RequestId}", requestId);
-            assistantMessage = new ChatMessage
+            if (assistantMessage is not null)
+            {
+                var entry = db.Entry(assistantMessage);
+                if (entry.State == EntityState.Added)
+                {
+                    entry.State = EntityState.Detached;
+                }
+                else if (entry.State is EntityState.Unchanged or EntityState.Modified || assistantMessage.ChatMessageId > 0)
+                {
+                    db.ChatMessages.Remove(assistantMessage);
+                }
+            }
+            var failedAssistantMessage = new ChatMessage
             {
                 ChatSessionId = session.ChatSessionId,
+                InReplyToChatMessageId = userMessage.ChatMessageId,
                 Role = ChatRole.Assistant,
                 MessageText = "Sorry, something went wrong answering that question. Please try again.",
                 Status = ChatMessageStatus.Failed,
                 CreatedDate = DateTime.UtcNow
             };
+            db.ChatMessages.Add(failedAssistantMessage);
+            await db.SaveChangesAsync(CancellationToken.None);
+            return new ChatTurnResult(ChatTurnOutcome.UpstreamFailure, failedAssistantMessage);
         }
-
-        db.ChatMessages.Add(assistantMessage);
-        await db.SaveChangesAsync(ct);
-        return assistantMessage;
     }
+
+    /// <summary>Test seam: runs in AskTurnAsync after assistantMessage is added to the DbContext change
+    /// tracker but immediately before awaiting SaveChangesAsync(ct), allowing tests to force cancellation
+    /// during the save step. No-op in production.</summary>
+    internal virtual Task BeforeAssistantMessageSaveAsync(CancellationToken ct) => Task.CompletedTask;
+
+    /// <summary>Test seam: runs in AskTurnAsync after assistantMessage is committed via SaveChangesAsync(ct),
+    /// allowing tests to force cancellation when assistantMessage is already in the database and in Unchanged state.
+    /// No-op in production.</summary>
+    internal virtual Task AfterAssistantMessageSaveAsync(CancellationToken ct) => Task.CompletedTask;
 
     // 2601 = duplicate key in a unique index; 2627 = unique/primary-key constraint violation.
     private const int SqlUniqueIndexViolation = 2601;
@@ -125,5 +227,48 @@ public class ChatService(
             db.Entry(session).State = EntityState.Detached;
             return await db.ChatSessions.FirstAsync(s => s.RequestId == requestId, ct);
         }
+    }
+
+    internal virtual async Task<ChatTurnResult> AwaitOrGetExistingTurnAsync(
+        long sessionId,
+        Guid clientTurnId,
+        CancellationToken ct)
+    {
+        var existingUser = await db.ChatMessages
+            .AsNoTracking()
+            .FirstOrDefaultAsync(m => m.ChatSessionId == sessionId && m.ClientTurnId == clientTurnId, ct);
+
+        if (existingUser is null)
+        {
+            return new ChatTurnResult(ChatTurnOutcome.UpstreamFailure);
+        }
+
+        for (var attempt = 0; attempt < 60 && !ct.IsCancellationRequested; attempt++)
+        {
+            var assistant = await db.ChatMessages
+                .AsNoTracking()
+                .FirstOrDefaultAsync(m => m.ChatSessionId == sessionId && m.InReplyToChatMessageId == existingUser.ChatMessageId && m.Role == ChatRole.Assistant, ct);
+
+            if (assistant is not null)
+            {
+                var outcome = assistant.Status == ChatMessageStatus.Failed
+                    ? ChatTurnOutcome.UpstreamFailure
+                    : ChatTurnOutcome.Success;
+                return new ChatTurnResult(outcome, assistant);
+            }
+
+            var userStillExists = await db.ChatMessages
+                .AsNoTracking()
+                .AnyAsync(m => m.ChatMessageId == existingUser.ChatMessageId, ct);
+
+            if (!userStillExists)
+            {
+                break;
+            }
+
+            await Task.Delay(250, ct);
+        }
+
+        return new ChatTurnResult(ChatTurnOutcome.UpstreamFailure);
     }
 }

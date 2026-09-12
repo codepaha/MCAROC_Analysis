@@ -5,6 +5,7 @@ using Microsoft.Data.SqlTypes;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 #nullable disable
@@ -12,9 +13,11 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace MCAROC_Analysis.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260912140113_AddChatMessageClientTurnId")]
+    partial class AddChatMessageClientTurnId
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -296,9 +299,6 @@ namespace MCAROC_Analysis.Migrations
                     b.Property<string>("EmbeddingModel")
                         .HasColumnType("nvarchar(max)");
 
-                    b.Property<long?>("InReplyToChatMessageId")
-                        .HasColumnType("bigint");
-
                     b.Property<string>("MessageText")
                         .IsRequired()
                         .HasColumnType("nvarchar(max)");
@@ -327,8 +327,6 @@ namespace MCAROC_Analysis.Migrations
                     b.HasKey("ChatMessageId");
 
                     b.HasIndex("ChatSessionId");
-
-                    b.HasIndex("InReplyToChatMessageId");
 
                     b.HasIndex("ChatSessionId", "ClientTurnId")
                         .IsUnique()

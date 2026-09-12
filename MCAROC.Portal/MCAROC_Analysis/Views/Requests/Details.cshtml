@@ -129,6 +129,8 @@
     <div class="tab-pane fade" id="tab-documents" role="tabpanel">@await Html.PartialAsync("Details/_DocumentsTab", Model)</div>
 </div>
 
+@await Html.PartialAsync("Details/_ChatPanel", Model)
+
 @section Scripts {
     <script>
         (function () {
@@ -233,4 +235,5 @@
             }
         })();
     </script>
+    <script src="~/js/chat-panel.js" asp-append-version="true"></script>
 }

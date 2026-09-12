@@ -83,91 +83,13 @@
     @* ── Ask Documents ── *@
     <div class="tab-pane fade mca-subtab-panel" id="sec-documents-ask" role="tabpanel">
         <p class="text-muted">Answers are grounded only in the documents and structured data uploaded for <strong>@r.CompanyName</strong>.</p>
-
-        @if (Model.FilingBatch is not null)
-        {
-            if (Model.ChunkableDocumentCount == 0)
-            {
-                <div class="alert alert-info">Document indexing has not started yet — questions can still be answered from structured data.</div>
-            }
-            else if (Model.ChunkedDocumentCount < Model.ChunkableDocumentCount)
-            {
-                <div class="alert alert-info">
-                    Document search is still indexing (@Model.ChunkedDocumentCount / @Model.ChunkableDocumentCount documents) —
-                    answers may not yet cover all uploaded filings.
-                </div>
-            }
-        }
-
-        <p class="mb-1"><small class="text-muted">Try asking:</small></p>
-        <div class="mb-3 d-flex flex-wrap gap-1">
-            @foreach (var suggestion in chatSuggestions)
-            {
-                <button type="button" class="btn btn-sm btn-outline-secondary"
-                        onclick="var q=document.getElementById('chat-question');q.value=this.textContent.trim();q.focus();">
-                    @suggestion
-                </button>
-            }
+        <div class="mca-empty">
+            <i class="bi bi-chat-dots"></i>
+            <p>Document assistant is available in the docked panel from any tab.</p>
+            <button type="button" class="btn btn-sm btn-primary mt-2" onclick="document.getElementById('mcaChatTrigger')?.click();">
+                <i class="bi bi-chat-text me-1"></i>Open Assistant Panel
+            </button>
         </div>
-
-        <div class="mb-3">
-            @if (Model.ChatMessages.Count == 0)
-            {
-                <div class="mca-empty"><i class="bi bi-chat-dots"></i><p>No questions yet — ask something about this company's records below.</p></div>
-            }
-            @foreach (var m in Model.ChatMessages)
-            {
-                var isUser = m.Role == ChatRole.User;
-                <div class="mca-finding @(isUser ? "sev-watch" : "sev-positive")">
-                    <h4>
-                        <span class="mca-sev-dot"></span>@(isUser ? "You" : "Assistant")
-                        @if (m.Status == ChatMessageStatus.Failed) { <span class="pi-status-pill pi-status-failed">Error</span> }
-                    </h4>
-                    <p>@m.MessageText</p>
-                    @if (!isUser && !string.IsNullOrEmpty(m.CitedSourcesJson))
-                    {
-                        var citations = System.Text.Json.JsonSerializer.Deserialize<System.Text.Json.JsonElement>(m.CitedSourcesJson);
-                        if (citations.ValueKind == System.Text.Json.JsonValueKind.Array && citations.GetArrayLength() > 0)
-                        {
-                            <div class="mca-related">
-                                Sources:
-                                @foreach (var cit in citations.EnumerateArray())
-                                {
-                                    var sourceType = cit.TryGetProperty("SourceType", out var st) ? st.GetString() : null;
-                                    var label = cit.TryGetProperty("Label", out var l) ? l.GetString() : null;
-                                    string display;
-                                    if (sourceType == "DocumentChunk"
-                                        && cit.TryGetProperty("DocumentName", out var dn) && dn.ValueKind == System.Text.Json.JsonValueKind.String
-                                        && cit.TryGetProperty("PageNumber", out var pn) && pn.ValueKind == System.Text.Json.JsonValueKind.Number)
-                                    {
-                                        @* Filed-PDF citation — a real page in an uploaded MCA filing, never a workbook row. *@
-                                        display = $"Source: {dn.GetString()}, page {pn.GetInt32()}";
-                                    }
-                                    else if (sourceType == "StructuredFact"
-                                        && cit.TryGetProperty("EntityType", out var et) && et.ValueKind == System.Text.Json.JsonValueKind.String)
-                                    {
-                                        @* Parsed workbook data, not a PDF page — must not claim a page number it doesn't have. *@
-                                        display = $"Computed from parsed data ({et.GetString()})";
-                                    }
-                                    else
-                                    {
-                                        display = label ?? "Source not recorded";
-                                    }
-                                    <span class="mca-citation">&nbsp;@display</span>
-                                }
-                            </div>
-                        }
-                    }
-                </div>
-            }
-        </div>
-
-        <form asp-controller="Chat" asp-action="Ask" method="post" class="d-flex gap-2">
-            @Html.AntiForgeryToken()
-            <input type="hidden" name="requestId" value="@r.RequestId" />
-            <input type="text" id="chat-question" name="question" class="form-control" placeholder="Ask a question about this company's records…" required />
-            <button type="submit" class="btn btn-primary">Ask</button>
-        </form>
     </div>
 
 </div>

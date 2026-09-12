@@ -47,7 +47,7 @@ jobs:
           node-version-file: '.node-version'
 
       - name: Run JavaScript unit tests
-        run: node --test MCAROC.Portal/MCAROC_Analysis.Tests/js/pdf-viewer-core.test.js
+        run: node --test MCAROC.Portal/MCAROC_Analysis.Tests/js/pdf-viewer-core.test.js MCAROC.Portal/MCAROC_Analysis.Tests/js/chat-panel.test.js
 
       - name: QuestPDF native dependency
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libfontconfig1

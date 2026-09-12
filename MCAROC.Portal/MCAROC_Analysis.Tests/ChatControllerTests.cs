@@ -100,4 +100,20 @@ public class ChatControllerTests : IAsyncLifetime
         await using var verify = CreateContext();
         Assert.False(await verify.ChatSessions.AnyAsync(s => s.RequestId == requestId));
     }
+
+    [Fact]
+    public async Task Known_request_with_question_exceeding_1000_chars_returns_BadRequest()
+    {
+        var requestId = await SeedRequestAsync();
+        await using var db = CreateContext();
+
+        var overLimitQuestion = new string('x', ChatService.MaxQuestionLength + 1);
+        var result = await NewController(db).Ask(requestId, overLimitQuestion, CancellationToken.None);
+
+        var badRequest = Assert.IsType<BadRequestObjectResult>(result);
+        Assert.Equal("Question exceeds the maximum length of 1,000 characters.", badRequest.Value);
+
+        await using var verify = CreateContext();
+        Assert.False(await verify.ChatSessions.AnyAsync(s => s.RequestId == requestId));
+    }
 }

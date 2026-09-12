@@ -9,6 +9,9 @@ using MCAROC_Analysis.Services.Dossier;
 using MCAROC_Analysis.Services.McaFilings;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using System.Text.Json;
+using MCAROC_Analysis.Models.Chat;
+using MCAROC_Analysis.Services.Chat;
 
 namespace MCAROC_Analysis.Controllers;
 
@@ -320,8 +323,7 @@ public class RequestsController(
             }
         }
 
-        vm.FilingBatch = await db.McaFilingBatches.Where(b => b.RequestId == id)
-            .OrderByDescending(b => b.StartedDate).FirstOrDefaultAsync();
+        vm.FilingBatch = await McaFilingBatchResolver.GetAuthoritativeBatchAsync(db, id);
         if (vm.FilingBatch is { } batch)
         {
             var filings = await db.McaFilings.Include(f => f.Documents)
@@ -431,8 +433,7 @@ public class RequestsController(
 
         var vm = new DocumentsPageViewModel { RequestId = id, Category = category, PageSize = pageSize };
 
-        var batch = await db.McaFilingBatches.Where(b => b.RequestId == id)
-            .OrderByDescending(b => b.StartedDate).FirstOrDefaultAsync();
+        var batch = await McaFilingBatchResolver.GetAuthoritativeBatchAsync(db, id);
         if (batch is null)
             return PartialView("Details/_DocumentsList", vm);
 
@@ -699,5 +700,174 @@ public class RequestsController(
         Response.Headers.ContentDisposition = cd.ToString();
 
         return PhysicalFile(physicalPath, "application/pdf", enableRangeProcessing: true);
+    }
+
+    [HttpPost("/Requests/{requestId:long}/chat")]
+    [ValidateAntiForgeryToken]
+    public async Task<IActionResult> AskChat(
+        long requestId,
+        [FromBody] AskChatJsonRequest model,
+        [FromServices] ChatService chatService,
+        CancellationToken ct)
+    {
+        if (model is null || !model.ClientTurnId.HasValue || model.ClientTurnId.Value == Guid.Empty)
+        {
+            return BadRequest(ChatApiResponse.Fail("CLIENT_TURN_ID_REQUIRED", "Client turn ID is required."));
+        }
+
+        if (string.IsNullOrWhiteSpace(model.Question))
+        {
+            return BadRequest(ChatApiResponse.Fail("QUESTION_EMPTY", "Question cannot be empty."));
+        }
+
+        var trimmed = model.Question.Trim();
+        if (trimmed.Length > 1000)
+        {
+            return BadRequest(ChatApiResponse.Fail("QUESTION_TOO_LONG", "Question exceeds the maximum length of 1,000 characters."));
+        }
+
+        if (!await chatService.RequestExistsAsync(requestId, ct))
+        {
+            return NotFound(ChatApiResponse.Fail("REQUEST_NOT_FOUND", "Request was not found."));
+        }
+
+        var authoritativeBatch = await McaFilingBatchResolver.GetAuthoritativeBatchAsync(db, requestId, ct);
+        var validDocIds = authoritativeBatch is null
+            ? new HashSet<long>()
+            : (await db.McaFilingDocuments
+                .Where(d => d.BatchId == authoritativeBatch.BatchId && d.RequestId == requestId)
+                .Select(d => d.FilingDocumentId)
+                .ToListAsync(ct)).ToHashSet();
+
+        var result = await chatService.AskTurnAsync(requestId, trimmed, model.ClientTurnId.Value, ct);
+
+        if (result.Outcome == ChatTurnOutcome.RequestNotFound)
+        {
+            return NotFound(ChatApiResponse.Fail("REQUEST_NOT_FOUND", "Request was not found."));
+        }
+
+        if (result.Outcome == ChatTurnOutcome.UpstreamFailure)
+        {
+            var failedDto = result.Message is not null ? MapMessageDto(result.Message, requestId, validDocIds, model.ClientTurnId.Value) : null;
+            return StatusCode(502, ChatApiResponse.Fail("AI_FAILURE", "Sorry, something went wrong answering that question. Please try again.", failedDto));
+        }
+
+        var messageDto = MapMessageDto(result.Message!, requestId, validDocIds, model.ClientTurnId.Value);
+        return Ok(ChatApiResponse.Ok(messageDto));
+    }
+
+    [HttpGet("/Requests/{requestId:long}/chat")]
+    public async Task<IActionResult> GetChatHistory(
+        long requestId,
+        [FromServices] ChatService chatService,
+        CancellationToken ct)
+    {
+        if (!await chatService.RequestExistsAsync(requestId, ct))
+        {
+            return NotFound(ChatApiResponse.Fail("REQUEST_NOT_FOUND", "Request was not found."));
+        }
+
+        var authoritativeBatch = await McaFilingBatchResolver.GetAuthoritativeBatchAsync(db, requestId, ct);
+        var validDocIds = authoritativeBatch is null
+            ? new HashSet<long>()
+            : (await db.McaFilingDocuments
+                .Where(d => d.BatchId == authoritativeBatch.BatchId && d.RequestId == requestId)
+                .Select(d => d.FilingDocumentId)
+                .ToListAsync(ct)).ToHashSet();
+
+        var session = await db.ChatSessions.FirstOrDefaultAsync(s => s.RequestId == requestId, ct);
+        if (session is null)
+        {
+            return Ok(new { success = true, messages = Array.Empty<ChatMessageDto>() });
+        }
+
+        var messages = await db.ChatMessages
+            .Where(m => m.ChatSessionId == session.ChatSessionId)
+            .OrderBy(m => m.CreatedDate)
+            .ToListAsync(ct);
+
+        var userTurnIdsByMsgId = messages
+            .Where(m => m.Role == ChatRole.User && m.ClientTurnId.HasValue)
+            .ToDictionary(m => m.ChatMessageId, m => m.ClientTurnId!.Value);
+
+        var dtos = messages.Select(m =>
+        {
+            var turnId = m.ClientTurnId ?? (m.InReplyToChatMessageId.HasValue ? userTurnIdsByMsgId.GetValueOrDefault(m.InReplyToChatMessageId.Value) : null);
+            return MapMessageDto(m, requestId, validDocIds, turnId);
+        }).ToList();
+
+        return Ok(new { success = true, messages = dtos });
+    }
+
+    private static ChatMessageDto MapMessageDto(ChatMessage m, long requestId, HashSet<long> validDocIds, Guid? resolvedClientTurnId = null)
+    {
+        var dto = new ChatMessageDto
+        {
+            Id = m.ChatMessageId,
+            ClientTurnId = m.ClientTurnId ?? resolvedClientTurnId,
+            InReplyToChatMessageId = m.InReplyToChatMessageId,
+            Role = m.Role.ToString(),
+            Text = m.MessageText,
+            Status = m.Status?.ToString() ?? string.Empty,
+            CreatedDate = m.CreatedDate
+        };
+
+        if (!string.IsNullOrEmpty(m.CitedSourcesJson))
+        {
+            try
+            {
+                using var doc = JsonDocument.Parse(m.CitedSourcesJson);
+                if (doc.RootElement.ValueKind == JsonValueKind.Array)
+                {
+                    foreach (var cit in doc.RootElement.EnumerateArray())
+                    {
+                        try
+                        {
+                            if (cit.ValueKind != JsonValueKind.Object)
+                                continue;
+
+                            var sourceType = cit.TryGetProperty("SourceType", out var st) && st.ValueKind == JsonValueKind.String
+                                ? st.GetString() ?? "" : "";
+                            var label = cit.TryGetProperty("Label", out var l) && l.ValueKind == JsonValueKind.String
+                                ? l.GetString() ?? "" : "";
+                            var docName = cit.TryGetProperty("DocumentName", out var dn) && dn.ValueKind == JsonValueKind.String
+                                ? dn.GetString() : null;
+
+                            int? pageNumber = cit.TryGetProperty("PageNumber", out var pn) && pn.ValueKind == JsonValueKind.Number && pn.TryGetInt32(out var pVal) && pVal > 0
+                                ? pVal : null;
+                            long? docId = cit.TryGetProperty("DocumentId", out var di) && di.ValueKind == JsonValueKind.Number && di.TryGetInt64(out var dVal) && dVal > 0
+                                ? dVal : null;
+
+                            string? viewerUrl = null;
+                            if (sourceType == "DocumentChunk" && docId.HasValue && validDocIds.Contains(docId.Value))
+                            {
+                                var p = pageNumber.GetValueOrDefault(1);
+                                viewerUrl = $"/Requests/{requestId}/documents/{docId.Value}/view#page={p}";
+                            }
+
+                            dto.Citations.Add(new ChatCitationDto
+                            {
+                                SourceType = sourceType,
+                                Label = label,
+                                DocumentName = docName,
+                                PageNumber = pageNumber,
+                                DocumentId = docId,
+                                ViewerUrl = viewerUrl
+                            });
+                        }
+                        catch (Exception ex) when (ex is FormatException or InvalidOperationException)
+                        {
+                            // Skip individually malformed citation record without dropping the others
+                        }
+                    }
+                }
+            }
+            catch (Exception ex) when (ex is JsonException or FormatException or InvalidOperationException)
+            {
+                // Fallback on corrupt top-level JSON: keep citations list safe
+            }
+        }
+
+        return dto;
     }
 }

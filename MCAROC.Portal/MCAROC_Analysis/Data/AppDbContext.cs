@@ -455,6 +455,8 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             e.HasKey(x => x.ChatMessageId);
             e.HasOne<ChatSession>().WithMany(s => s.Messages).HasForeignKey(x => x.ChatSessionId).OnDelete(DeleteBehavior.Cascade);
             e.HasIndex(x => x.ChatSessionId);
+            e.HasIndex(x => new { x.ChatSessionId, x.ClientTurnId }).IsUnique().HasFilter("[ClientTurnId] IS NOT NULL");
+            e.HasIndex(x => x.InReplyToChatMessageId);
             e.Property(x => x.Role).HasConversion<string>().HasMaxLength(10);
             e.Property(x => x.Status).HasConversion<string>().HasMaxLength(10);
         });

@@ -117,6 +117,9 @@ public class DocumentProvenanceRenderingTests
     private static Task<string> RenderDocumentsTabAsync(RequestDetailsViewModel model) =>
         RenderAsync("/Views/Requests/Details/_DocumentsTab.cshtml", "Details/_DocumentsTab", model);
 
+    private static Task<string> RenderChatPanelAsync(RequestDetailsViewModel model) =>
+        RenderAsync("/Views/Requests/Details/_ChatPanel.cshtml", "Details/_ChatPanel", model);
+
     private static RequestDetailsViewModel CreateViewModel() => new()
     {
         Request = new McaRequest { CompanyName = "Test Co", RequestNumber = "REQ-1" },
@@ -244,7 +247,7 @@ public class DocumentProvenanceRenderingTests
             }
         ];
 
-        var html = await RenderDocumentsTabAsync(vm);
+        var html = await RenderChatPanelAsync(vm);
 
         Assert.Contains("Source: MGT-7_2023.pdf, page 3", html);
     }
@@ -263,7 +266,7 @@ public class DocumentProvenanceRenderingTests
             }
         ];
 
-        var html = await RenderDocumentsTabAsync(vm);
+        var html = await RenderChatPanelAsync(vm);
 
         Assert.Contains("Computed from parsed data (RocCharge)", html);
         Assert.DoesNotContain("page", html);
@@ -278,7 +281,7 @@ public class DocumentProvenanceRenderingTests
             new ChatMessage { Role = ChatRole.Assistant, MessageText = "I could not verify this from the uploaded records.", CitedSourcesJson = null }
         ];
 
-        var html = await RenderDocumentsTabAsync(vm);
+        var html = await RenderChatPanelAsync(vm);
 
         Assert.DoesNotContain("Sources:", html);
     }

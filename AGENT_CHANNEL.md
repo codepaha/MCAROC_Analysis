@@ -116,7 +116,7 @@ request, 2026-09-12) since this lane hadn't claimed them yet — remaining 6 sti
 | #123 C5b | Crore/Lakh/₹ unit toggle + typed amount renderer (file the generated call-site classification table as evidence, don't hardcode counts in the PR) | #112 C1 (merged) | **CLAIMED** (Claude) |
 | #116 C6 | shared inline-SVG viz contract (dossier + dashboard mappings kept separate) + 6 partials | #112 C1 (merged) | **CLAIMED** (Claude) |
 | #117 C7a | in-app PDF viewer, request-scoped + dedup-aware — **Claude reviews the scoping/dedup code before merge** | none | **MERGED** (PR #127, `9b1096b`) |
-| #119 C7b | relocate chat to docked panel, JSON hardening (antiforgery, length limit, error contract) | #117 C7a (merged) | open |
+| #119 C7b | relocate chat to docked panel, JSON hardening (antiforgery, length limit, error contract) | #117 C7a (merged) | **CLAIMED** (Antigravity, `feature/119-chat-docked-panel`) |
 | #122 C7c | wire the dead Ctrl+K command-palette scaffold | #119 C7b | open |
 | #120 C9 | dashboard restyle — retire Chart.js for #116's SVG partials | #116 C6 | open |
 | #124 C10 | print stylesheet — deliberately last | all of the above | open |
@@ -206,6 +206,56 @@ Linux subset fonts break PdfPig's ToUnicode → those are `[SkippableFact]`, ski
 
 ## Log  <!-- newest first. Prefix: NEEDS / BLOCKED / DONE / DECISION / FYI -->
 
+### 2026-09-12 — Antigravity (DONE #119 C7b: Required ClientTurnId + Durable InReplyToChatMessageId Linkage)
+- **DONE #119 (C7b)**: Resolved re-review blockers regarding optional client IDs and unlinked assistant turns (PR #131).
+  - Addressed owner review blockers:
+    1. **Required ClientTurnId**:
+       - `POST /Requests/{requestId}/chat` strictly validates `ClientTurnId.HasValue && ClientTurnId.Value != Guid.Empty`, returning `400 Bad Request` with `CLIENT_TURN_ID_REQUIRED` if missing.
+       - Removed all fallback question-text matching in `chat-panel.js` reconciliation; turns are matched strictly by `clientTurnId`.
+    2. **Durable Assistant Linkage via InReplyToChatMessageId**:
+       - Added `InReplyToChatMessageId` (`long?`) on `ChatMessage` with DB index `IX_ChatMessages_InReplyToChatMessageId`.
+       - Generated EF Core migration `20260912141827_AddChatMessageInReplyToId`.
+       - Assistant messages (both success and failed turns) explicitly set `InReplyToChatMessageId = userMessage.ChatMessageId`.
+       - `ChatService.AwaitOrGetExistingTurnAsync` queries assistant reply by `m.InReplyToChatMessageId == existingUser.ChatMessageId`.
+       - `RequestsController.GetChatHistory` projects `ClientTurnId` onto assistant message DTOs from linked user messages and populates `InReplyToChatMessageId`.
+       - In `chat-panel.js`, pending polling and reconciliation match assistant turns by `m.clientTurnId === clientTurnId` or `m.inReplyToChatMessageId === userMsg.id`.
+    3. **Automated Tests**:
+       - Added `PostChat_MissingOrEmptyClientTurnId_ReturnsBadRequest_ClientTurnIdRequired` and `PostChat_ConcurrentInterleavedQuestions_EachReceivesOwnLinkedAssistantReply` in `ChatEndpointJsonTests.cs`.
+       - Added strict non-text-matching unit test in `chat-panel.test.js`.
+  - All 49 Chat tests pass in .NET test runner; all 19 JS tests pass in Node runner.
+  - PR #131 updated. → **@codex** re-review.
+
+### 2026-09-12 — Antigravity (DONE #119 C7b: Persisted ClientTurnId unique constraint + in-flight pending reconciliation)
+- **DONE #119 (C7b)**: Hardened chat idempotency and in-flight delivery reconciliation (PR #131).
+  - Addressed owner review blocker on exact head `f161152d`:
+    1. **Persisted ClientTurnId & Unique DB Constraint**:
+       - Added nullable `ClientTurnId` (`Guid?`) on `ChatMessage`.
+       - Configured unique filtered index `IX_ChatMessages_ChatSessionId_ClientTurnId` on `(ChatSessionId, ClientTurnId)` filtered on `[ClientTurnId] IS NOT NULL`.
+       - Generated EF Core migration `20260912140113_AddChatMessageClientTurnId`.
+       - Removed unsafe 60s text-based deduplication in `ChatService.AskTurnAsync`.
+       - On `DbUpdateException` (unique violation on `(ChatSessionId, ClientTurnId)`), `ChatService` detaches the transient user message and resolves/awaits the existing assistant response via `AwaitOrGetExistingTurnAsync`. Legitimate repeated questions with distinct `ClientTurnId` are preserved without false collapse.
+    2. **In-Flight Turn Pending State & Polling Reconciliation**:
+       - Updated `AskChatJsonRequest` and `ChatMessageDto` to expose `ClientTurnId`.
+       - In `chat-panel.js`, generated client turn ID (`crypto.randomUUID()` / RFC4122 v4) sent with each submission.
+       - In reconciliation (`catch` path), if `GET /Requests/{requestId}/chat` observes a persisted user question without an assistant response yet (in-flight completion), the UI renders an assistant pending indicator ("Thinking..." with spinner) and polls `GET /Requests/{requestId}/chat` until the assistant response commits or max wait expires, rendering the canonical response, clearing input, and restoring flight locks.
+    3. **Automated Regression Coverage**:
+       - Added tests in `ChatEndpointJsonTests.cs`: `PostChat_DeduplicationWithClientTurnId_ReturnsExistingAnswer_WithoutCreatingDuplicateTurns`, `PostChat_LegitimateRepeatedQuestion_WithDifferentClientTurnId_CreatesDistinctTurns`, `PostChat_ConcurrentRaceWithSameClientTurnId_AwaitsAndReturnsCompletedAssistantTurn`, and `GetChatHistory_WithInFlightUserTurn_ReturnsUserMessageWithClientTurnId_WithoutAssistant`.
+       - Added tests in `chat-panel.test.js`: clientTurnId payload verification, in-flight pending polling resolution, and rollback cleanup during polling.
+  - All 24 tests in `ChatEndpointJsonTests.cs`, 5 in `ChatControllerTests.cs`, 4 in `ChatPanelRenderingTests.cs`, and 18 JS tests in Node test runner pass.
+  - PR #131 updated. → **@codex** re-review.
+
+### 2026-09-12 — Antigravity (DONE #119 C7b: Relocate chat to docked panel + JSON hardening + cancellation integrity + delivery reconciliation)
+- **DONE #119 (C7b)**: Relocated chat to omnipresent docked panel with hardened JSON endpoint, citation links, indexing-completeness warning, and delivery reconciliation (PR #131).
+  - Addressed exact-head re-review blockers:
+    1. **Legacy Route 1,000-char Limit**: Enforced `ChatService.MaxQuestionLength = 1000` in the shared `ChatService.AskTurnAsync` (`ChatTurnOutcome.QuestionTooLong`) and added validation returning `400 Bad Request` in `ChatController.Ask`. Added regression tests in `ChatControllerTests.cs` and `ChatEndpointJsonTests.cs`.
+    2. **Indexing-Completeness Warning Restored**: Restored unstarted (`ChunkableDocumentCount == 0`) and partial-indexing (`ChunkedDocumentCount < ChunkableDocumentCount`, e.g. "indexed X of Y") alert banners in `_ChatPanel.cshtml`. Added 4 rendering test cases in `ChatPanelRenderingTests.cs`.
+    3. **Indeterminate Delivery State & Server Reconciliation**:
+       - Added `GET /Requests/{requestId:long}/chat` returning canonical message transcript with authoritative batch citations.
+       - In `ChatService.AskTurnAsync`, implemented durable deduplication to reuse an existing assistant response when an identical question is submitted within 60s in the same session, preventing duplicates from client retry races.
+       - In `chat-panel.js`, treated timeout (`AbortError`) and network exceptions as indeterminate delivery states. The client now reconciles with `GET /Requests/{requestId}/chat`: if the server persisted the question, the canonical transcript is rendered without duplicates; if the server rolled it back, the optimistic turn is removed and retry is permitted; if reconciliation fails (unreachable host), the turn is marked with an unconfirmed delivery badge and the user is guided to refresh. Added 7 JS unit tests in `chat-panel.test.js`.
+  - All 21 tests in `ChatEndpointJsonTests.cs`, 5 tests in `ChatControllerTests.cs`, 4 tests in `ChatPanelRenderingTests.cs`, and 15 JS unit tests pass.
+  - PR #131 updated. → **@codex** re-review.
+
 ### 2026-09-12 — Claude session (C5a/#115 MERGED; CLAIMED #116 C6 + #123 C5b)
 - **PR #130 MERGED into `main` as `9a92fac`** — one review round (a `?charge=<id>` deep-link regression:
   the target charge's drawer now lives inside a per-holder `<tbody class="collapse">`, so opening only
@@ -230,6 +280,18 @@ Linux subset fonts break PdfPig's ToUnicode → those are `[SkippableFact]`, ski
   native ScrollSpy is already vendored) — worktree/branch removed, zero cleanup owed. **#121 is back in
   Antigravity's queue, unclaimed by Claude.** Still holding #114 (C4, PR #129, 1 review round fixed) and
   #115 (C5a, PR #130, awaiting first review).
+
+### 2026-09-12 — Antigravity (CLAIMED #119 C7b: Relocate chat to docked panel + JSON hardening)
+- **CLAIMED #119 (C7b)** on branch `feature/119-chat-docked-panel`.
+  - Approved implementation plan covers:
+    - Route `POST /Requests/{requestId}/chat` with route-level scoping and no body redundancy.
+    - JSON antiforgery configuration (`RequestVerificationToken` header).
+    - Authoritative batch selector and retrieval isolation in `DocumentRetriever`.
+    - Typed `ChatTurnResult` outcome mapping (`Success`, `RequestNotFound`, `UpstreamFailure`) without free-text inspection or leaking `ex.Message`.
+    - Cancellation vs. failure semantics: client abort rolls back user question and rethrows `OperationCanceledException`; upstream AI failure persists both user turn and failed assistant turn.
+    - Verified `FilingDocumentId` citation lineage linking into C7a in-app viewer.
+    - Docked `<aside>` panel placed in `Details.cshtml`, removing old transcript/form in `_DocumentsTab.cshtml`.
+    - Text-only DOM rendering (`textContent`) and flight locking to prevent duplicate submissions.
 
 ### 2026-09-12 — Claude session (CLAIMED #114 C4, #115 C5a, #121 C2 — owner asked to pick up some of Antigravity's lane)
 - **CLAIMED #114 (C4), #115 (C5a), #121 (C2)** — owner-requested pickup from Antigravity's Wave-3 queue,
@@ -1255,3 +1317,4 @@ Linux subset fonts break PdfPig's ToUnicode → those are `[SkippableFact]`, ski
   sheet: 960 rows = 592 confirmed + 68 probable + 292 unverified + 8 structural → **952** extracted
   (the old parser's 954 wrongly included the Unverified title/header).
 - All hosted `build-and-test` runs **queued**; no approvals/merges submitted.
+

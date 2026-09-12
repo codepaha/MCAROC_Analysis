@@ -1,0 +1,164 @@
+@model RequestDetailsViewModel
+@{
+    var r = Model.Request;
+    var chatSuggestions = new[]
+    {
+        "Who are the current directors?",
+        "Which directors have resigned?",
+        "List all open charges.",
+        "Are there any delayed EPFO payments?",
+        "What is the company's main object per the MoA?"
+    };
+
+    var authoritativeBatchId = Model.FilingBatch?.BatchId;
+    var validDocIds = authoritativeBatchId is null
+        ? new HashSet<long>()
+        : Model.FilingSummaries
+            .Where(s => s.Filing.BatchId == authoritativeBatchId.Value)
+            .SelectMany(s => s.Filing.Documents)
+            .Select(d => d.FilingDocumentId)
+            .ToHashSet();
+}
+
+<!-- Floating Trigger Button -->
+<button type="button" class="mca-chat-trigger" id="mcaChatTrigger" aria-controls="mcaChatPanel" aria-expanded="false" title="Ask Document Assistant">
+    <i class="bi bi-chat-dots-fill"></i>
+    <span class="mca-chat-trigger-label">Ask Documents</span>
+    @if (Model.ChatMessages.Count > 0)
+    {
+        <span class="mca-chat-badge" id="mcaChatBadge">@Model.ChatMessages.Count</span>
+    }
+</button>
+
+<!-- Docked Assistant Panel (Non-Modal Aside) -->
+<aside class="mca-chat-panel" id="mcaChatPanel" aria-label="Ask Documents Assistant" hidden>
+    <div class="mca-chat-header">
+        <div class="mca-chat-title">
+            <i class="bi bi-robot me-1"></i>
+            <strong>Document Assistant</strong>
+            <small class="text-muted d-block">Grounded strictly in @r.CompanyName records</small>
+        </div>
+        <button type="button" class="mca-chat-close btn-close" id="mcaChatClose" aria-label="Close assistant"></button>
+    </div>
+
+    @if (Model.FilingBatch is not null)
+    {
+        if (Model.ChunkableDocumentCount == 0)
+        {
+            <div class="alert alert-info py-2 px-3 m-2 small mca-chat-indexing-warning" id="mcaChatIndexingWarning" role="status">
+                <i class="bi bi-info-circle me-1"></i>Document indexing has not started yet — questions can still be answered from structured data.
+            </div>
+        }
+        else if (Model.ChunkedDocumentCount < Model.ChunkableDocumentCount)
+        {
+            <div class="alert alert-warning py-2 px-3 m-2 small mca-chat-indexing-warning" id="mcaChatIndexingWarning" role="status">
+                <i class="bi bi-exclamation-triangle me-1"></i>Document search is still indexing (indexed @Model.ChunkedDocumentCount of @Model.ChunkableDocumentCount documents) — answers may not yet cover all uploaded filings.
+            </div>
+        }
+    }
+
+    <div class="mca-chat-body" id="mcaChatBody">
+        <div class="mca-chat-messages" id="mcaChatMessages">
+            @if (Model.ChatMessages.Count == 0)
+            {
+                <div class="mca-empty mca-chat-empty" id="mcaChatEmpty">
+                    <i class="bi bi-chat-dots"></i>
+                    <p>No questions yet — ask anything about this company's filed documents and records.</p>
+                </div>
+            }
+            @foreach (var m in Model.ChatMessages)
+            {
+                var isUser = m.Role == ChatRole.User;
+                <div class="mca-chat-turn @(isUser ? "user" : "assistant")" data-id="@m.ChatMessageId">
+                    <div class="mca-chat-bubble">
+                        <div class="mca-chat-bubble-header">
+                            <strong>@(isUser ? "You" : "Assistant")</strong>
+                            <small class="text-muted ms-2">@m.CreatedDate.ToString("HH:mm")</small>
+                            @if (m.Status == ChatMessageStatus.Failed)
+                            {
+                                <span class="badge bg-danger ms-1">Failed</span>
+                            }
+                        </div>
+                        <div class="mca-chat-text">@m.MessageText</div>
+                        @if (!isUser && !string.IsNullOrEmpty(m.CitedSourcesJson))
+                        {
+                            try
+                            {
+                                using var citDoc = System.Text.Json.JsonDocument.Parse(m.CitedSourcesJson);
+                                if (citDoc.RootElement.ValueKind == System.Text.Json.JsonValueKind.Array && citDoc.RootElement.GetArrayLength() > 0)
+                                {
+                                    <div class="mca-chat-citations">
+                                        <small class="text-muted d-block mb-1">Sources:</small>
+                                        @foreach (var cit in citDoc.RootElement.EnumerateArray())
+                                        {
+                                            if (cit.ValueKind != System.Text.Json.JsonValueKind.Object) continue;
+                                            var sourceType = cit.TryGetProperty("SourceType", out var st) && st.ValueKind == System.Text.Json.JsonValueKind.String ? st.GetString() : null;
+                                            var label = cit.TryGetProperty("Label", out var l) && l.ValueKind == System.Text.Json.JsonValueKind.String ? l.GetString() : null;
+                                            var docName = cit.TryGetProperty("DocumentName", out var dn) && dn.ValueKind == System.Text.Json.JsonValueKind.String ? dn.GetString() : null;
+                                            int? pageNumber = cit.TryGetProperty("PageNumber", out var pn) && pn.ValueKind == System.Text.Json.JsonValueKind.Number && pn.TryGetInt32(out var pVal) && pVal > 0 ? pVal : null;
+                                            long? docId = cit.TryGetProperty("DocumentId", out var di) && di.ValueKind == System.Text.Json.JsonValueKind.Number && di.TryGetInt64(out var dVal) && dVal > 0 ? dVal : null;
+
+                                            string display;
+                                            if (sourceType == "DocumentChunk" && !string.IsNullOrEmpty(docName) && pageNumber.HasValue)
+                                            {
+                                                display = $"Source: {docName}, page {pageNumber.Value}";
+                                            }
+                                            else if (sourceType == "StructuredFact" && cit.TryGetProperty("EntityType", out var et) && et.ValueKind == System.Text.Json.JsonValueKind.String)
+                                            {
+                                                display = $"Computed from parsed data ({et.GetString()})";
+                                            }
+                                            else
+                                            {
+                                                display = label ?? "Source not recorded";
+                                            }
+
+                                            if (sourceType == "DocumentChunk" && docId.HasValue && validDocIds.Contains(docId.Value))
+                                            {
+                                                var p = pageNumber.GetValueOrDefault(1);
+                                                <a class="mca-citation" href="/Requests/@r.RequestId/documents/@docId.Value/view#page=@p" target="_blank" rel="noopener">
+                                                    <i class="bi bi-file-earmark-pdf me-1"></i>@display
+                                                </a>
+                                            }
+                                            else
+                                            {
+                                                <span class="mca-citation-plain">@display</span>
+                                            }
+                                        }
+                                    </div>
+                                }
+                            }
+                            catch (Exception ex) when (ex is System.Text.Json.JsonException or FormatException or InvalidOperationException)
+                            {
+                            }
+                        }
+                    </div>
+                </div>
+            }
+        </div>
+
+        <div class="mca-chat-error-banner alert alert-danger mt-2 mx-3" id="mcaChatError" role="alert" style="display:none;"></div>
+    </div>
+
+    <div class="mca-chat-footer">
+        <div class="mca-chat-suggestions" id="mcaChatSuggestions">
+            @foreach (var s in chatSuggestions)
+            {
+                <button type="button" class="btn btn-sm btn-outline-secondary mca-suggestion-btn">@s</button>
+            }
+        </div>
+
+        <form id="mcaChatForm" data-request-id="@r.RequestId" autocomplete="off">
+            @Html.AntiForgeryToken()
+            <div class="mca-chat-input-row">
+                <textarea id="mcaChatInput" class="form-control" rows="2" placeholder="Ask a question (max 1,000 chars)…" maxlength="1000" required></textarea>
+                <button type="submit" id="mcaChatSubmit" class="btn btn-primary" title="Send question" aria-label="Send question">
+                    <i class="bi bi-send-fill"></i>
+                </button>
+            </div>
+            <div class="d-flex justify-content-between align-items-center mt-1 px-1">
+                <small class="text-muted"><span id="mcaCharCount">0</span>/1000</small>
+                <small class="text-muted">Enter to send &middot; Shift+Enter for newline</small>
+            </div>
+        </form>
+    </div>
+</aside>
