@@ -94,24 +94,13 @@ Razor + view-model-load only, or pure computation over entities that already exi
 | #63 D8 | peer comparison metrics (Section J; J2 needed #35) | #35 (merged) | **MERGED** (`a6b9535`) |
 | #64 D9 | cost structure & forex metrics (Section A4/A5) | #55 D0 (merged) only | **MERGED** (`e9e39e3`) |
 | #65 D10 | related-party-transaction metrics (Section E) | #50 A8 (merged) | **MERGED** (`7f2cf1e`) |
-| #66 D11 | credit rating metrics (Section F) | #51 A9 (merged) | **PR #105 open** (`feature/d11-credit-rating-metrics`) |
+| #66 D11 | credit rating metrics (Section F) | #51 A9 (merged) | **MERGED** (`8213961`) |
 | visual | before/after screenshots on every render PR; keep `E:\Downloads\VTION\ROC_JSON_Reports` current | — | ongoing |
 
 ### Sequencing
-- Claude: D2/#57 **MERGED** → D4/#59 **MERGED** → K1/#98 **MERGED** → #97 **MERGED** → D10/#65
-<<<<<<< HEAD
-  **MERGED** (`7f2cf1e`) → picked up **#47** (pre-login report ownership binding — not a D-series
-  Wave-4 issue, the only other open item once D10 landed and D11 was already Antigravity's) — **PR
-  #104 open**.
-- Antigravity: D6/#61 **MERGED** → D7/#62 **MERGED** → D8/#63 **MERGED** → D9/#64 **MERGED** (`e9e39e3`)
-  → D11/#66 (**PR #105 open**, branch `feature/d11-credit-rating-metrics`).
-=======
-  **MERGED** (`7f2cf1e`) → #47 (pre-login report ownership binding) **MERGED** (`f52f3cf`) — Claude's
-  lane empty pending a new assignment.
-- Antigravity: D6/#61 **MERGED** → D7/#62 **MERGED** → D8/#63 **MERGED** → D9/#64 (**PR #102 open**,
-  branch `feature/d9-cost-structure-forex-metrics`) → **D11/#66 in progress**
-  (`feature/d11-credit-rating-metrics`).
->>>>>>> origin/main
+- Claude: D2/#57 **MERGED** → D4/#59 **MERGED** → K1/#98 **MERGED** → #97 **MERGED** → D10/#65 **MERGED** (`7f2cf1e`) → #47 (pre-login report ownership binding) **MERGED** (`f52f3cf`) — Claude's lane empty pending a new assignment.
+- Antigravity: D6/#61 **MERGED** → D7/#62 **MERGED** → D8/#63 **MERGED** → D9/#64 **MERGED** (`e9e39e3`) → D11/#66 **MERGED** (`8213961`) — Antigravity's Wave-4 lane complete!
+
 
 ### Not in either lane (Codex or owner)
 Rule engine, analysis orchestration, Phase-4 retrieval, Wave 3 restyle (not split into issues yet).
@@ -191,11 +180,11 @@ Linux subset fonts break PdfPig's ToUnicode → those are `[SkippableFact]`, ski
 
 ## Log  <!-- newest first. Prefix: NEEDS / BLOCKED / DONE / DECISION / FYI -->
 
-### 2026-09-12 — Antigravity (D11/#66 PR #105 open — CI green)
-- **PR #105 OPEN (#66) — feature/d11-credit-rating-metrics**: credit rating metrics (Section F).
+### 2026-09-12 — Antigravity (D11/#66 MERGED)
+- **DONE — #105 (#66 D11) MERGED (`8213961`)**: credit rating analytics (Section F).
   Delivered F1 (`Latest rating per instrument`), F2 (`Rating action summary`), and F5 (`Accepted vs unaccepted rating gap`)
-  with strict fail-closed BFSI semantics. F3/F4 scale gate safely blocked citing unscaled source amount metadata.
-  Rebased on merged D10 (#103) and #47 (#104). Both CI checks green (`build-and-test` & `windows-tests`). Ready for review.
+  with strict fail-closed BFSI semantics. Prevalidated accepted records before date filtering in F5. F3/F4 scale gate safely blocked
+  citing unscaled source amount metadata. Antigravity's Wave-4 metric delivery complete.
 
 ### 2026-09-12 — Claude session (#47 MERGED)
 - **PR #104 MERGED into `main` as `f52f3cf`** (reviewed head `2b1448f`, both CI checks green) — pre-login
