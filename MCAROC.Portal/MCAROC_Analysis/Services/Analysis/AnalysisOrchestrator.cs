@@ -12,6 +12,11 @@ public class AnalysisOrchestrator(AppDbContext db, AiCrossSectionAnalysisService
     private static readonly RuleThresholds Thresholds = RuleThresholds.Default;
     public const string RuleEngineVersion = "1.0";
 
+    /// <summary>Code prefix for cross-section findings the AI synthesis pass adds after
+    /// OverallReviewPriority is already computed and stored — ReviewPriorityCalculator.Explain excludes
+    /// any finding with this prefix so it never disagrees with the stored priority.</summary>
+    public const string AiCrossSectionCodePrefix = "AI_CROSS_";
+
     public async Task RunAnalysisAsync(long requestId, CancellationToken ct)
     {
         // Atomic claim, mirroring Phase 2's exact ExecuteUpdateAsync-based claim pattern: only the caller
@@ -107,7 +112,7 @@ public class AnalysisOrchestrator(AppDbContext db, AiCrossSectionAnalysisService
                         Section = FindingSection.CrossSection,
                         Severity = cross.Severity,
                         TemporalStatus = TemporalStatus.Current,
-                        Code = $"AI_CROSS_{Guid.NewGuid():N}",
+                        Code = $"{AiCrossSectionCodePrefix}{Guid.NewGuid():N}",
                         Title = cross.Title,
                         SummaryText = cross.Narrative,
                         SupportingSignalsJson = JsonSerializer.Serialize(cross.RelatedCodes)
