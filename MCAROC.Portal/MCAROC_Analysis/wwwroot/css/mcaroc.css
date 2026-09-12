@@ -425,6 +425,19 @@ details > summary.mca-json-toggle {
 .mca-unit-toggle input:checked ~ span { background: var(--surface); color: var(--brand-strong); box-shadow: var(--shadow-xs); }
 .mca-unit-toggle input:focus-visible ~ span { outline: 2px solid var(--brand-strong); outline-offset: 2px; }
 
+/* Shown only if a unit switch fails and is refused (amount-unit.js) — role="alert" so it's announced,
+   never a silent console-only failure while the page quietly keeps the previous unit. */
+.mca-amount-unit-error {
+    margin-top: 6px;
+    padding: 6px 10px;
+    max-width: 320px;
+    border-radius: var(--r-sm);
+    background: var(--danger-soft, #fdecea);
+    color: var(--danger-strong, #9a2a22);
+    font-size: 12px;
+    text-align: right;
+}
+
 /* Structured classification badge */
 .mca-badge {
     display: inline-block;
