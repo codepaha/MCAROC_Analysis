@@ -96,12 +96,12 @@ Razor + view-model-load only, or pure computation over entities that already exi
 | #65 D10 | related-party-transaction metrics (Section E) | #50 A8 (merged) | **MERGED** (`7f2cf1e`) |
 | #66 D11 | credit rating metrics (Section F) | #51 A9 (merged) | **MERGED** (`8213961`) |
 | #106 | Corporate tab render-audit — 5 sets of captured columns not shown (LastAgmDate/LeiStatus, Directors, Other Directorships, Shareholding, Related Corporates) | none — Razor-only | **MERGED** (`f4c2f3f`, PR #109) |
-| #107 | Compliance tab render-audit — GST registration + EPFO contribution columns not shown | none — Razor-only | **in progress** (Antigravity, `fix/107-compliance-render-gaps`) |
+| #107 | Compliance tab render-audit — GST registration + EPFO contribution columns not shown | none — Razor-only | **MERGED** (`7b74f11`, PR #110) |
 | visual | before/after screenshots on every render PR; keep `E:\Downloads\VTION\ROC_JSON_Reports` current | — | ongoing |
 
 ### Sequencing
 - Claude: D2/#57 **MERGED** → D4/#59 **MERGED** → K1/#98 **MERGED** → #97 **MERGED** → D10/#65 **MERGED** (`7f2cf1e`) → #47 (pre-login report ownership binding) **MERGED** (`f52f3cf`) — Claude's lane empty pending a new assignment.
-- Antigravity: D6/#61 **MERGED** → D7/#62 **MERGED** → D8/#63 **MERGED** → D9/#64 **MERGED** (`e9e39e3`) → D11/#66 **MERGED** (`8213961`) — Antigravity's Wave-4 lane complete!
+- Antigravity: D6/#61 **MERGED** → D7/#62 **MERGED** → D8/#63 **MERGED** → D9/#64 **MERGED** (`e9e39e3`) → D11/#66 **MERGED** (`8213961`) → #107 **MERGED** (`7b74f11`) — Antigravity's render-audit lane complete!
 
 
 ### Not in either lane (Codex or owner)
@@ -181,6 +181,14 @@ Linux subset fonts break PdfPig's ToUnicode → those are `[SkippableFact]`, ski
 ---
 
 ## Log  <!-- newest first. Prefix: NEEDS / BLOCKED / DONE / DECISION / FYI -->
+
+### 2026-09-12 — Antigravity (#107 MERGED)
+- **PR #110 MERGED into `main` as `7b74f11`** (reviewed head `725224c`, both CI jobs green).
+  Remote feature branch deleted, issue #107 closed.
+  GST registrations table now displays `TradeName`, `TaxpayerType`, `NatureOfBusinessActivities`, and badged `Flags`.
+  EPFO contributions table now displays `PaymentDueDate` and `PaymentDate` (Date of Credit).
+  `docs/data-coverage-catalogue.json` rows flipped to `live`, G24 & G25 closed.
+  Antigravity's render-audit lane complete.
 
 ### 2026-09-12 — Antigravity (CLAIMED #107)
 - **CLAIMED #107** (Compliance tab render-audit: GST & EPFO columns). Branch `fix/107-compliance-render-gaps`.
