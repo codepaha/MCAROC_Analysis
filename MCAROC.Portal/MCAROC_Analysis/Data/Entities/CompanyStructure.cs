@@ -12,7 +12,4 @@ public class CompanyStructure : ExtractedEntityBase
     public int? PromoterShareholders { get; set; }
     public long? TotalEquityShares { get; set; }
     public long? TotalPreferenceShares { get; set; }
-
-    [System.ComponentModel.DataAnnotations.Schema.NotMapped]
-    public string? Cin { get; set; }
 }

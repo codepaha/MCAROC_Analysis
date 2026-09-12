@@ -29,14 +29,9 @@ public class PeerComparisonMetricsTests
         List<PeerComparisonMetric>? metrics = null,
         List<PeerCompany>? closestPeers = null,
         string companyName = "Test Company",
-        string? coverCin = "U12345AB2020PTC123456",
-        string? structureCin = null)
+        string? coverCin = "U12345AB2020PTC123456")
     {
         var rDate = new DateTime(2026, 9, 11, 0, 0, 0, DateTimeKind.Utc);
-        var structure = structureCin is not null
-            ? new CompanyStructure { Cin = structureCin }
-            : null;
-
         return new DossierModel(
             RequestId: 1,
             IngestionRunId: 1,
@@ -44,7 +39,7 @@ public class PeerComparisonMetricsTests
             Cover: new DossierCover(
                 companyName, coverCin, "ABCDE1234F",
                 new DateOnly(2020, 1, 1), "Active", "Client", rDate, null, null),
-            Corporate: new DossierCorporate([], [], [], [], [], [], [], structure, null, []),
+            Corporate: new DossierCorporate([], [], [], [], [], [], [], null, null, []),
             Financials: new DossierFinancials([], [], [], [], [], metrics ?? [], closestPeers),
             Charges: new DossierCharges([], [], [], [], 0),
             Compliance: new DossierCompliance([], [], [], [], [], []),
@@ -203,20 +198,6 @@ public class PeerComparisonMetricsTests
         Assert.Contains("Closest peers block has invalid or duplicate ranks", j2.InsufficiencyReason);
     }
 
-    [Fact]
-    public void J2_IdentityConflictBetweenCoverAndStructureCin_FailsClosed()
-    {
-        var peers = new List<PeerCompany>
-        {
-            new() { Rank = 1, LegalName = "This Co", Cin = "U12345AB2020PTC123456", RevenueCrore = 150m, FinancialYear = 2024 }
-        };
-        var model = CreateMinimalDossier(closestPeers: peers, coverCin: "U12345AB2020PTC123456", structureCin: "U99999XX2020PTC999999");
-        var group = DossierComputations.PeerComparisonMetrics(model);
-        var j2 = M(group, "Rank in source closest-peer list");
-
-        Assert.False(j2.HasValue);
-        Assert.Equal("Identity conflict: Cover CIN and Structure CIN mismatch", j2.InsufficiencyReason);
-    }
 
     [Fact]
     public void J2_CinMatching_IgnoresWhitespaceAndCasing()
@@ -462,6 +443,25 @@ public class PeerComparisonMetricsTests
         Assert.False(m.HasValue);
         Assert.Equal(MetricUnit.Ratio, m.Unit);
         Assert.Contains("Duplicate peer comparison records on file for 'Current Ratio' in FY2024", m.InsufficiencyReason);
+    }
+
+    [Fact]
+    public void J1_AliasDuplicateMetricAndYear_EmitsExactlyOneInsufficientPerGroup()
+    {
+        // "Debt / Equity" and "Debt/Equity" are allow-list aliases for CanonicalName "Debt / Equity"
+        var metrics = new List<PeerComparisonMetric>
+        {
+            new() { MetricName = "Debt / Equity", FinancialYear = 2024, CompanyValue = 0.5m, PeerMedianValue = 0.8m },
+            new() { MetricName = "Debt/Equity", FinancialYear = 2024, CompanyValue = 0.6m, PeerMedianValue = 0.8m }
+        };
+        var model = CreateMinimalDossier(metrics: metrics);
+        var group = DossierComputations.PeerComparisonMetrics(model);
+
+        // Exactly one result for "Debt / Equity vs peer median", not two!
+        var m = Assert.Single(group.Metrics, x => x.Label == "Debt / Equity vs peer median");
+        Assert.False(m.HasValue);
+        Assert.Equal(MetricUnit.Ratio, m.Unit);
+        Assert.Contains("Duplicate peer comparison records on file for 'Debt / Equity' in FY2024", m.InsufficiencyReason);
     }
 
     [Fact]

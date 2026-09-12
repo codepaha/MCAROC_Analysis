@@ -2074,115 +2074,105 @@ public static partial class DossierComputations
     {
         var list = new List<MetricResult>();
         var coverCin = NormalizeCin(model.Cover.Cin);
-        var structCin = NormalizeCin(model.Corporate.Structure?.Cin);
 
         // ── J2: Rank in source closest-peer list ──
-        if (!string.IsNullOrEmpty(coverCin) && !string.IsNullOrEmpty(structCin) && !string.Equals(coverCin, structCin, StringComparison.Ordinal))
+        var closest = model.Financials.ClosestPeersList;
+        if (closest.Count == 0)
         {
             list.Add(MetricResult.Insufficient("Rank in source closest-peer list", MetricUnit.Count,
-                "Identity conflict: Cover CIN and Structure CIN mismatch",
-                "DossierCover.Cin", "CompanyStructure.Cin"));
+                "Closest peers block not reported in workbook",
+                "PeerCompany.Rank", "PeerCompany.RevenueCrore"));
+        }
+        else if (closest.Any(p => !p.FinancialYear.HasValue))
+        {
+            list.Add(MetricResult.Insufficient("Rank in source closest-peer list", MetricUnit.Count,
+                "Closest peers block contains missing financial year(s)",
+                "PeerCompany.FinancialYear"));
         }
         else
         {
-            var closest = model.Financials.ClosestPeersList;
-            if (closest.Count == 0)
+            var distinctFys = closest.Select(p => p.FinancialYear!.Value).Distinct().ToList();
+            if (distinctFys.Count > 1)
             {
                 list.Add(MetricResult.Insufficient("Rank in source closest-peer list", MetricUnit.Count,
-                    "Closest peers block not reported in workbook",
-                    "PeerCompany.Rank", "PeerCompany.RevenueCrore"));
-            }
-            else if (closest.Any(p => !p.FinancialYear.HasValue))
-            {
-                list.Add(MetricResult.Insufficient("Rank in source closest-peer list", MetricUnit.Count,
-                    "Closest peers block contains missing financial year(s)",
+                    $"Closest peers block contains inconsistent financial years ({string.Join(", ", distinctFys)})",
                     "PeerCompany.FinancialYear"));
             }
             else
             {
-                var distinctFys = closest.Select(p => p.FinancialYear!.Value).Distinct().ToList();
-                if (distinctFys.Count > 1)
+                var peerFy = distinctFys[0];
+                var n = closest.Count;
+                var ranks = closest.Select(p => p.Rank).ToList();
+                if (ranks.Any(r => r < 1 || r > n) || ranks.Distinct().Count() != n)
                 {
                     list.Add(MetricResult.Insufficient("Rank in source closest-peer list", MetricUnit.Count,
-                        $"Closest peers block contains inconsistent financial years ({string.Join(", ", distinctFys)})",
-                        "PeerCompany.FinancialYear"));
+                        $"Closest peers block has invalid or duplicate ranks (expected 1..{n})",
+                        "PeerCompany.Rank"));
                 }
                 else
                 {
-                    var peerFy = distinctFys[0];
-                    var n = closest.Count;
-                    var ranks = closest.Select(p => p.Rank).ToList();
-                    if (ranks.Any(r => r < 1 || r > n) || ranks.Distinct().Count() != n)
+                    var companyCin = coverCin;
+                    PeerCompany? matchedSelf = null;
+                    string? matchFailure = null;
+
+                    if (!string.IsNullOrEmpty(companyCin))
                     {
-                        list.Add(MetricResult.Insufficient("Rank in source closest-peer list", MetricUnit.Count,
-                            $"Closest peers block has invalid or duplicate ranks (expected 1..{n})",
-                            "PeerCompany.Rank"));
+                        var matches = closest.Where(p => NormalizeCin(p.Cin) == companyCin).ToList();
+                        if (matches.Count == 1)
+                        {
+                            matchedSelf = matches[0];
+                        }
+                        else if (matches.Count > 1)
+                        {
+                            matchFailure = $"Duplicate CIN matches in closest peers list ({companyCin})";
+                        }
+                        else
+                        {
+                            matchFailure = "Company CIN not found in closest peers list";
+                        }
                     }
                     else
                     {
-                        var companyCin = !string.IsNullOrEmpty(coverCin) ? coverCin : structCin;
-                        PeerCompany? matchedSelf = null;
-                        string? matchFailure = null;
-
-                        if (!string.IsNullOrEmpty(companyCin))
+                        var companyName = NormalizeLegalName(model.Cover.CompanyName);
+                        if (string.IsNullOrEmpty(companyName))
                         {
-                            var matches = closest.Where(p => NormalizeCin(p.Cin) == companyCin).ToList();
+                            matchFailure = "Company CIN and legal name are unavailable for matching";
+                        }
+                        else
+                        {
+                            var matches = closest.Where(p => NormalizeLegalName(p.LegalName) == companyName).ToList();
                             if (matches.Count == 1)
                             {
                                 matchedSelf = matches[0];
                             }
                             else if (matches.Count > 1)
                             {
-                                matchFailure = $"Duplicate CIN matches in closest peers list ({companyCin})";
+                                matchFailure = $"Duplicate company name matches in closest peers list ({companyName})";
                             }
                             else
                             {
-                                matchFailure = "Company CIN not found in closest peers list";
+                                matchFailure = "Company name not found in closest peers list";
                             }
                         }
-                        else
-                        {
-                            var companyName = NormalizeLegalName(model.Cover.CompanyName);
-                            if (string.IsNullOrEmpty(companyName))
-                            {
-                                matchFailure = "Company CIN and legal name are unavailable for matching";
-                            }
-                            else
-                            {
-                                var matches = closest.Where(p => NormalizeLegalName(p.LegalName) == companyName).ToList();
-                                if (matches.Count == 1)
-                                {
-                                    matchedSelf = matches[0];
-                                }
-                                else if (matches.Count > 1)
-                                {
-                                    matchFailure = $"Duplicate company name matches in closest peers list ({companyName})";
-                                }
-                                else
-                                {
-                                    matchFailure = "Company name not found in closest peers list";
-                                }
-                            }
-                        }
+                    }
 
-                        if (matchFailure is not null)
-                        {
-                            list.Add(MetricResult.Insufficient("Rank in source closest-peer list", MetricUnit.Count,
-                                matchFailure,
-                                "PeerCompany.Cin", "PeerCompany.LegalName", "DossierCover.Cin", "DossierCover.CompanyName"));
-                        }
-                        else if (matchedSelf!.RevenueCrore is null)
-                        {
-                            list.Add(MetricResult.Insufficient("Rank in source closest-peer list", MetricUnit.Count,
-                                "Company revenue not reported in closest peers list",
-                                "PeerCompany.RevenueCrore"));
-                        }
-                        else
-                        {
-                            list.Add(MetricResult.Ok("Rank in source closest-peer list", (decimal)matchedSelf.Rank, MetricUnit.Count,
-                                $"Rank {matchedSelf.Rank} of {n} closest peers by revenue (₹{matchedSelf.RevenueCrore:0.##} Cr, FY{peerFy})",
-                                "PeerCompany.Cin", "PeerCompany.LegalName", "PeerCompany.Rank", "PeerCompany.RevenueCrore", "PeerCompany.FinancialYear"));
-                        }
+                    if (matchFailure is not null)
+                    {
+                        list.Add(MetricResult.Insufficient("Rank in source closest-peer list", MetricUnit.Count,
+                            matchFailure,
+                            "PeerCompany.Cin", "PeerCompany.LegalName", "DossierCover.Cin", "DossierCover.CompanyName"));
+                    }
+                    else if (matchedSelf!.RevenueCrore is null)
+                    {
+                        list.Add(MetricResult.Insufficient("Rank in source closest-peer list", MetricUnit.Count,
+                            "Company revenue not reported in closest peers list",
+                            "PeerCompany.RevenueCrore"));
+                    }
+                    else
+                    {
+                        list.Add(MetricResult.Ok("Rank in source closest-peer list", (decimal)matchedSelf.Rank, MetricUnit.Count,
+                            $"Rank {matchedSelf.Rank} of {n} closest peers by revenue (₹{matchedSelf.RevenueCrore:0.##} Cr, FY{peerFy})",
+                            "PeerCompany.Cin", "PeerCompany.LegalName", "PeerCompany.Rank", "PeerCompany.RevenueCrore", "PeerCompany.FinancialYear"));
                     }
                 }
             }
@@ -2243,33 +2233,47 @@ public static partial class DossierComputations
         }
         else
         {
-            var grouped = peerMetrics
-                .GroupBy(m => (Normalized: NormalizePeerMetricName(m.MetricName), Year: m.FinancialYear))
-                .OrderByDescending(g => g.Key.Year)
-                .ThenBy(g =>
+            var items = peerMetrics.Select(m =>
+            {
+                var isKnown = TryGetPeerMetricDefinition(m.MetricName, out var def);
+                var groupKey = isKnown ? def.CanonicalName : NormalizePeerMetricName(m.MetricName);
+                var rawTrimmed = m.MetricName?.Trim() ?? "";
+                return new
                 {
-                    if (TryGetPeerMetricDefinition(g.First().MetricName, out var def)) return def.CanonicalName;
-                    return g.First().MetricName?.Trim() ?? "";
-                })
+                    Raw = m,
+                    IsKnown = isKnown,
+                    Definition = def,
+                    GroupKey = groupKey,
+                    RawTrimmed = rawTrimmed,
+                    Year = m.FinancialYear
+                };
+            });
+
+            var grouped = items
+                .GroupBy(x => (x.GroupKey, x.Year))
+                .OrderByDescending(g => g.Key.Year)
+                .ThenBy(g => g.Key.GroupKey, StringComparer.OrdinalIgnoreCase)
                 .ToList();
 
             foreach (var g in grouped)
             {
-                var sample = g.First();
-                var rawName = sample.MetricName?.Trim() ?? "";
+                var groupItems = g.ToList();
+                var first = groupItems[0];
                 var year = g.Key.Year;
 
-                if (!TryGetPeerMetricDefinition(rawName, out var def))
+                if (!first.IsKnown)
                 {
+                    var rawName = first.RawTrimmed;
                     list.Add(MetricResult.Insufficient($"{rawName} vs peer median", MetricUnit.Unspecified,
                         $"Unknown peer metric '{rawName}' — unit and direction not defined in catalogue allow-list",
                         "PeerComparisonMetric.CompanyValue", "PeerComparisonMetric.PeerMedianValue"));
                     continue;
                 }
 
+                var def = first.Definition!;
                 var canonicalLabel = $"{def.CanonicalName} vs peer median";
 
-                if (g.Count() > 1)
+                if (groupItems.Count > 1)
                 {
                     list.Add(MetricResult.Insufficient(canonicalLabel, def.Unit,
                         $"Duplicate peer comparison records on file for '{def.CanonicalName}' in FY{year}",
@@ -2277,6 +2281,7 @@ public static partial class DossierComputations
                     continue;
                 }
 
+                var sample = groupItems[0].Raw;
                 if (sample.CompanyValue is null)
                 {
                     list.Add(MetricResult.Insufficient(canonicalLabel, def.Unit,
