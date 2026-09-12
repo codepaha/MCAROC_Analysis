@@ -169,14 +169,15 @@
 
     {
       "id": "F", "title": "Credit rating analytics",
-      "source_entities": ["CreditRating (#51 — not parsed yet)"],
-      "issue": "D11", "status": "blocked", "depends_on_issue": "#51",
+      "source_entities": ["CreditRating"],
+      "issue": "D11", "status": "shipped",
+      "notes": "Partial delivery: F1, F2, and F5 are shipped; F3 and F4 are blocked on the AMOUNT scale gate. Grouping is normalized per (instrument, agency) to avoid conflating concurrent ratings from different rating agencies. F5 is date-aware and all-or-nothing fail-closed, matching only against accepted ratings dated on or before the unaccepted rating date.",
       "metrics": [
-        {"id": "F1", "name": "Latest rating per instrument", "unit": "text", "formula": "most recent RatingDate per Instrument", "status": "blocked", "depends_on_issue": "#51"},
-        {"id": "F2", "name": "Rating action summary", "unit": "count by action", "formula": "group by Action (Assigned/Reaffirmed/Upgraded/Downgraded/Withdrawn)", "status": "blocked", "depends_on_issue": "#51"},
-        {"id": "F3", "name": "Total rated amount", "unit": "INR Crore", "formula": "Σ Amount over accepted ratings (latest per instrument)", "status": "blocked", "depends_on_issue": "#51"},
-        {"id": "F4", "name": "Rated amount vs open charge coverage", "unit": "x (times)", "formula": "ratedAmount / totalOpenChargeAmount (B1)", "inputs": ["F3", "B1"], "status": "blocked", "depends_on_issue": "#51"},
-        {"id": "F5", "name": "Accepted vs unaccepted rating gap", "unit": "flag", "formula": "unaccepted rating exists AND differs from the accepted one for the same instrument", "status": "blocked", "depends_on_issue": "#51", "feeds_rule": "candidate lender flag"},
+        {"id": "F1", "name": "Latest rating per instrument", "unit": "text", "formula": "most recent RatingDate per Instrument and Agency", "inputs": ["CreditRating.Rating", "CreditRating.Instrument", "CreditRating.Agency", "CreditRating.RatingDate"], "status": "shipped", "surfaced_in": ["portal:Compliance"]},
+        {"id": "F2", "name": "Rating action summary", "unit": "count by action", "formula": "group by Action (Assigned/Reaffirmed/Upgraded/Downgraded/Withdrawn/Suspended/Other); discloses excluded unclassified row count in every result", "inputs": ["CreditRating.Action"], "status": "shipped", "surfaced_in": ["portal:Compliance"]},
+        {"id": "F3", "name": "Total rated amount", "unit": "INR Crore", "formula": "Σ Amount over accepted ratings (latest per instrument)", "inputs": ["CreditRating.Amount", "CreditRating.Currency"], "status": "blocked", "reason": "CreditRating.Amount is an unscaled numeric field under source headers AMOUNT and CURRENCY with no stored denomination or crore conversion; cross-source crore aggregation blocked until scale/control total is established."},
+        {"id": "F4", "name": "Rated amount vs open charge coverage", "unit": "x (times)", "formula": "ratedAmount / totalOpenChargeAmount (B1)", "inputs": ["F3", "B1"], "status": "blocked", "reason": "Blocked on F3 scale gate; cannot divide unscaled rated amount by open charges in crore."},
+        {"id": "F5", "name": "Accepted vs unaccepted rating gap", "unit": "flag", "formula": "unaccepted rating exists AND differs from the latest accepted rating for the same instrument and agency as of that date", "inputs": ["CreditRating.IsAccepted", "CreditRating.Rating", "CreditRating.Agency", "CreditRating.Instrument", "CreditRating.RatingDate"], "status": "shipped", "surfaced_in": ["portal:Compliance"], "feeds_rule": "candidate lender flag"},
         {"id": "F.rej", "name": "Historical rating timeline", "status": "rejected", "reason": "Only the latest event per instrument is reliably captured; a timeline needs history depth the export does not guarantee."}
       ]
     },

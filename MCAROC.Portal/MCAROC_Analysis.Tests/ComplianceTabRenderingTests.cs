@@ -477,4 +477,58 @@ public class ComplianceTabRenderingTests
         Assert.Contains("No EPFO contribution records on file", html);
         Assert.Contains("No EPFO establishment records on file", html);
     }
+
+    [Fact]
+    public async Task Credit_ratings_key_indicators_render_with_text_metrics()
+    {
+        var vm = CreateViewModel();
+        vm.CreditRatings =
+        [
+            new CreditRating
+            {
+                Agency = "CRISIL",
+                Instrument = "Term Loan",
+                Rating = "CRISIL AA+",
+                RatingDate = new DateOnly(2026, 9, 10),
+                IsAccepted = true
+            }
+        ];
+
+        var metrics = new List<MetricResult>
+        {
+            MetricResult.Ok("Latest rating (Term Loan - CRISIL)", "CRISIL AA+", "as of 10 Sep 2026",
+                "CreditRating.Rating", "CreditRating.Instrument", "CreditRating.Agency")
+        };
+
+        vm.KeyMetrics = [new MetricGroup("Credit ratings", metrics)];
+
+        var html = await RenderComplianceTabAsync(vm);
+
+        Assert.Contains("sec-compliance-credit-ratings", html);
+        Assert.Contains("Latest rating (Term Loan - CRISIL)", html);
+        Assert.Contains("CRISIL AA&#x2B;", html);
+        Assert.Contains("<strong>CRISIL AA&#x2B;</strong>", html); // Assert it is rendered as strong (HasValue is true)
+        Assert.Contains("CRISIL AA+", System.Net.WebUtility.HtmlDecode(html));
+    }
+
+    [Fact]
+    public async Task Credit_ratings_key_indicators_render_when_ratings_are_empty()
+    {
+        var vm = CreateViewModel();
+        vm.CreditRatings = [];
+
+        var metrics = new List<MetricResult>
+        {
+            MetricResult.Insufficient("Latest rating per instrument", MetricUnit.Text,
+                "No credit rating records on file", "CreditRating.Rating", "CreditRating.Instrument", "CreditRating.RatingDate")
+        };
+
+        vm.KeyMetrics = [new MetricGroup("Credit ratings", metrics)];
+
+        var html = await RenderComplianceTabAsync(vm);
+
+        Assert.Contains("sec-compliance-credit-ratings", html);
+        Assert.Contains("Latest rating per instrument", html);
+        Assert.Contains("No credit rating records on file", html);
+    }
 }

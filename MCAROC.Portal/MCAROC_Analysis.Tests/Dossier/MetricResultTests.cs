@@ -93,4 +93,35 @@ public class MetricResultTests
         Assert.True(new MetricGroup("Charges",
             [MetricResult.Ok("Open charge amount", 1240m, MetricUnit.Crore, "as at 10 Sep 2026", "RocCharge.CurrentAmount")]).HasAny);
     }
+
+    [Fact]
+    public void Ok_text_metric_carries_TextValue_HasValue_true_and_DisplayValue_renders_text()
+    {
+        var m = MetricResult.Ok("Latest rating (Term loan - CRISIL)", "CRISIL AA+", "as of 10 Sep 2026",
+            "CreditRating.Rating", "CreditRating.Instrument", "CreditRating.Agency");
+
+        Assert.True(m.HasValue);
+        Assert.Null(m.Value);
+        Assert.Equal("CRISIL AA+", m.TextValue);
+        Assert.Equal("CRISIL AA+", m.DisplayValue());
+        Assert.Equal(MetricUnit.Text, m.Unit);
+        Assert.Equal("as of 10 Sep 2026", m.Period);
+        Assert.Equal(3, m.Inputs.Count);
+    }
+
+    [Theory]
+    [InlineData(10.0, "SomeText", null)] // both numeric and text
+    [InlineData(null, "SomeText", "Some reason")] // text and reason
+    [InlineData(null, null, null)] // neither
+    public void The_private_7arg_constructor_rejects_conflicting_or_missing_value_configurations(double? value, string? text, string? reason)
+    {
+        var ctor = typeof(MetricResult).GetConstructors(BindingFlags.Instance | BindingFlags.NonPublic)
+            .Single(c => c.GetParameters().Length == 7);
+        var ex = Assert.Throws<TargetInvocationException>(() => ctor.Invoke(
+        [
+            "Label", (decimal?)(value is { } v ? (decimal)v : null), text, MetricUnit.Text, "FY2017",
+            (IReadOnlyList<string>)new[] { "Entity.Field" }, reason
+        ]));
+        Assert.IsType<ArgumentException>(ex.InnerException);
+    }
 }

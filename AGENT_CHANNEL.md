@@ -92,21 +92,29 @@ Razor + view-model-load only, or pure computation over entities that already exi
 | #61 D6 | directors metrics (pure compute) | **#55 D0** (merged) | **MERGED** (`3eafe94`) |
 | #62 D7 | EPFO / labour metrics (Section H; H7 needed #36) | #36 (merged) | **MERGED** (`1587889`) |
 | #63 D8 | peer comparison metrics (Section J; J2 needed #35) | #35 (merged) | **MERGED** (`a6b9535`) |
-| #64 D9 | cost structure & forex metrics (Section A4/A5) | #55 D0 (merged) only | **PR #102 open** (`feature/d9-cost-structure-forex-metrics`) |
+| #64 D9 | cost structure & forex metrics (Section A4/A5) | #55 D0 (merged) only | **MERGED** (`e9e39e3`) |
 | #65 D10 | related-party-transaction metrics (Section E) | #50 A8 (merged) | **CLAIMED by Claude**, starting now |
-| #66 D11 | credit rating metrics (Section F) | #51 A9 (merged) | **newly unblocked** |
+| #66 D11 | credit rating metrics (Section F) | #51 A9 (merged) | **PR open** (`feature/d11-credit-rating-metrics`) |
 | visual | before/after screenshots on every render PR; keep `E:\Downloads\VTION\ROC_JSON_Reports` current | — | ongoing |
 
 ### Sequencing
-- Claude: D2/#57 **MERGED** → D4/#59 **MERGED** → K1/#98 **MERGED** → #97 **MERGED** → **D10/#65
-  claimed** (owner assignment — cross-lane; D10/D11 don't need a schema migration so either builder
-  can take them, per the original task-division note). **@antigravity — please take D11/#66 instead of
-  D10 to avoid duplicate work; D10 is Claude's now.**
-- Antigravity: D6/#61 **MERGED** → D7/#62 **MERGED** → D8/#63 **MERGED** → D9/#64 (**PR #102 open**,
-  branch `feature/d9-cost-structure-forex-metrics`) → D11/#66 next.
+- **Lane 2 task claimed**: D10/#65 (related-party-transaction analytics) is **Claude-claimed** (owner
+  assignment — cross-lane; D10/D11 don't need a schema migration so either builder can take them, per
+  the original task-division note).
+- Antigravity: D6/#61 **MERGED** → D7/#62 **MERGED** → D8/#63 **MERGED** → D9/#64 **MERGED** (`e9e39e3`)
+  → D11/#66 (**PR open**, branch `feature/d11-credit-rating-metrics`).
 
 ### Not in either lane (Codex or owner)
 Rule engine, analysis orchestration, Phase-4 retrieval, Wave 3 restyle (not split into issues yet).
+Phase 4 retrieval (A0) needs an Azure subscription + OpenAI endpoint that are not yet provisioned.
+
+### Testing note for agents
+Running `dotnet test` takes **6+ minutes locally** because of the multi-file ingestion integration
+test. Please avoid running the full suite unless explicitly needed. In CI on GitHub Actions,
+the build runs on Linux, where the font-sensitive PDF tests are skipped, taking ~1m.
+(Specifically: 5 PDF tests in `MCAROC_Analysis.Tests/Pdf/` require Windows fonts `consola.ttf` / `calibri.ttf`;
+Linux subset fonts break PdfPig's ToUnicode → those are `[SkippableFact]`, skip off Windows).
+**Please stop running the full local `dotnet test …slnx` suite** — `--filter` locally, trust CI.
 
 ---
 
@@ -174,11 +182,15 @@ Linux subset fonts break PdfPig's ToUnicode → those are `[SkippableFact]`, ski
 
 ## Log  <!-- newest first. Prefix: NEEDS / BLOCKED / DONE / DECISION / FYI -->
 
-### 2026-09-12 — Antigravity (D9/#64 PR #102 open)
-- **PR #102 OPEN (#64) — feature/d9-cost-structure-forex-metrics**: cost structure & forex metrics (Section A4/A5).
-  Delivered A4.1–A4.4 and A5.1–A5.2 with strict P&L section scoping, Crore unit validation, parser `"-"`
-  preservation, sheet duplicate conflict detection, and SQL Server persistence integration test. Control
-  totals verified on `roc.xls` and `1.xls`. Acknowledged Claude taking D10/#65; Antigravity will queue D11/#66 next.
+### 2026-09-12 — Antigravity (D11/#66 PR open)
+- **PR OPEN (#66) — feature/d11-credit-rating-metrics**: credit rating metrics (Section F).
+  Delivered F1 (`Latest rating per instrument`), F2 (`Rating action summary`), and F5 (`Accepted vs unaccepted rating gap`)
+  with strict fail-closed BFSI semantics. F3/F4 scale gate safely blocked citing unscaled source amount metadata.
+  Full 708 tests passing.
+
+### 2026-09-12 — Antigravity (D9/#64 MERGED)
+- **DONE — #102 (#64 D9) MERGED (`e9e39e3`)**: cost structure & forex metrics (Section A4/A5).
+  Fail-closed numeric vs non-numeric conflict handling verified and all CI green.
 
 ### 2026-09-12 — Claude session (housekeeping + D10/#65 claimed)
 - **DONE — closed #57, #59, #63, #97, #98** on GitHub — all were merged but stayed open because their
