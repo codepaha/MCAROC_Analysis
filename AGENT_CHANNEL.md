@@ -91,8 +91,8 @@ Razor + view-model-load only, or pure computation over entities that already exi
 |---|---|---|---|
 | #61 D6 | directors metrics (pure compute) | **#55 D0** (merged) | **MERGED** (`3eafe94`) |
 | #62 D7 | EPFO / labour metrics (Section H; H7 needed #36) | #36 (merged) | **MERGED** (`1587889`) |
-| #63 D8 | peer comparison metrics (Section J; J2 needed #35) | #35 (merged) | **MERGED** |
-| #64 D9 | cost structure & forex metrics (Section A4/A5) | #55 D0 (merged) only | unblocked |
+| #63 D8 | peer comparison metrics (Section J; J2 needed #35) | #35 (merged) | **MERGED** (`a6b9535`) |
+| #64 D9 | cost structure & forex metrics (Section A4/A5) | #55 D0 (merged) only | **PR #102 open** (`feature/d9-cost-structure-forex-metrics`) |
 | #65 D10 | related-party-transaction metrics (Section E) | #50 A8 (merged) | **CLAIMED by Claude**, starting now |
 | #66 D11 | credit rating metrics (Section F) | #51 A9 (merged) | **newly unblocked** |
 | visual | before/after screenshots on every render PR; keep `E:\Downloads\VTION\ROC_JSON_Reports` current | — | ongoing |
@@ -102,8 +102,8 @@ Razor + view-model-load only, or pure computation over entities that already exi
   claimed** (owner assignment — cross-lane; D10/D11 don't need a schema migration so either builder
   can take them, per the original task-division note). **@antigravity — please take D11/#66 instead of
   D10 to avoid duplicate work; D10 is Claude's now.**
-- Antigravity: D6/#61 **MERGED** → D7/#62 **MERGED** → D8/#63 **MERGED** → D9/#64 (in progress, per
-  shared-directory branch `feature/d9-cost-structure-forex-metrics`) → D11/#66 next.
+- Antigravity: D6/#61 **MERGED** → D7/#62 **MERGED** → D8/#63 **MERGED** → D9/#64 (**PR #102 open**,
+  branch `feature/d9-cost-structure-forex-metrics`) → D11/#66 next.
 
 ### Not in either lane (Codex or owner)
 Rule engine, analysis orchestration, Phase-4 retrieval, Wave 3 restyle (not split into issues yet).
@@ -173,6 +173,12 @@ Linux subset fonts break PdfPig's ToUnicode → those are `[SkippableFact]`, ski
 ---
 
 ## Log  <!-- newest first. Prefix: NEEDS / BLOCKED / DONE / DECISION / FYI -->
+
+### 2026-09-12 — Antigravity (D9/#64 PR #102 open)
+- **PR #102 OPEN (#64) — feature/d9-cost-structure-forex-metrics**: cost structure & forex metrics (Section A4/A5).
+  Delivered A4.1–A4.4 and A5.1–A5.2 with strict P&L section scoping, Crore unit validation, parser `"-"`
+  preservation, sheet duplicate conflict detection, and SQL Server persistence integration test. Control
+  totals verified on `roc.xls` and `1.xls`. Acknowledged Claude taking D10/#65; Antigravity will queue D11/#66 next.
 
 ### 2026-09-12 — Claude session (housekeeping + D10/#65 claimed)
 - **DONE — closed #57, #59, #63, #97, #98** on GitHub — all were merged but stayed open because their

@@ -1,5 +1,7 @@
 using MCAROC_Analysis.Data;
 using MCAROC_Analysis.Data.Entities;
+using MCAROC_Analysis.Models;
+using MCAROC_Analysis.Models.Dossier;
 using MCAROC_Analysis.Services;
 using MCAROC_Analysis.Services.Excel;
 using Microsoft.EntityFrameworkCore;
@@ -294,6 +296,82 @@ public class IngestionOrchestratorIntegrationTests : IAsyncLifetime
         var reloaded = await verifyDb.IngestionRuns.FirstAsync(x => x.IngestionRunId == run.IngestionRunId);
         Assert.True(await verifyDb.RocCharges.AnyAsync(c => c.IngestionRunId == run.IngestionRunId));
         Assert.True(reloaded.ChargeReportMissing);
+    }
+
+    [Fact]
+    public async Task DashParameterIsPersistedWithLineageAndYieldsExplicitDashInsufficiencyInMetrics()
+    {
+        await using var db = CreateContext();
+        var storagePath = $@"C:\fake\roc_{Guid.NewGuid():N}.xls";
+        var (request, rocDoc) = await SeedRequestWithRoc(db, storagePath);
+
+        var paramSheet = Sheet("Annexure - Financial Parameters",
+            Row("Parameter (Rs. Crore)", "31 Mar, 2024"),
+            Row("Income in foreign currency", "-"),
+            Row("Expense in foreign currency", "-"),
+            Row("Employee benefits expense", 50.0));
+
+        var pnlSheet = Sheet("Standalone Financial Data",
+            Row("BALANCE SHEET - AOC-4 (Rs. Crore)", "", "31 Mar, 2024"),
+            Row("Share Capital", "", 10.0),
+            Row("STATEMENT OF PROFIT & LOSS", "", ""),
+            Row("Net Revenue", "", 200.0),
+            Row("Cost of Materials Consumed", "", 50.0),
+            Row("Other Expenses", "", 20.0),
+            Row("Payment to Auditors", "", 1.0));
+
+        var sheetReader = new FakeExcelSheetReader(new Dictionary<string, IReadOnlyList<SheetData>>
+        {
+            [rocDoc.StoragePath] = [CompanyProfileSheet(request.Cin!), paramSheet, pnlSheet]
+        });
+
+        var orchestrator = new IngestionOrchestrator(db, sheetReader, NullLogger<IngestionOrchestrator>.Instance);
+        var run = await orchestrator.RunAsync(request.RequestId, rocDoc.DocumentId, chargeDocumentId: null);
+
+        Assert.Equal(IngestionRunStatus.CompletedClean, run.Status);
+
+        // Verify database persistence and lineage
+        await using var verifyDb = CreateContext();
+        var paramsInDb = await verifyDb.FinancialParameters
+            .Where(p => p.IngestionRunId == run.IngestionRunId)
+            .ToListAsync();
+
+        var incomeParam = Assert.Single(paramsInDb, p => p.ParameterName == "Income in foreign currency");
+        Assert.Equal("-", incomeParam.RawValue);
+        Assert.Equal("-", incomeParam.TextValue);
+        Assert.Null(incomeParam.NumericValue);
+        Assert.Equal("Annexure - Financial Parameters", incomeParam.SourceSheetName);
+        Assert.Equal(2, incomeParam.SourceRowNumber);
+        Assert.Equal(2024, incomeParam.FinancialYear);
+        Assert.Equal("Rs. Crore", incomeParam.Unit);
+
+        // Verify metrics computation yields explicit-dash insufficiency
+        var facts = await verifyDb.FinancialFacts.Where(f => f.IngestionRunId == run.IngestionRunId).ToListAsync();
+        var years = await verifyDb.FinancialYearData.Where(y => y.IngestionRunId == run.IngestionRunId).ToListAsync();
+
+        var dossier = new DossierModel(
+            RequestId: request.RequestId,
+            IngestionRunId: run.IngestionRunId,
+            AnalysisRunId: null,
+            Cover: new DossierCover("Test Company", request.Cin, "ABCDE1234F", new DateOnly(2020, 1, 1), "Active", "Client", DateTime.UtcNow, null),
+            Corporate: new DossierCorporate([], [], [], [], [], [], [], null, null, []),
+            Financials: new DossierFinancials(years, [], facts, paramsInDb, [], []),
+            Charges: new DossierCharges([], [], [], [], 0),
+            Compliance: new DossierCompliance([], [], [], [], [], []),
+            Litigation: new DossierLitigation([], [], new Dictionary<long, LitigationRole>()),
+            ExecSummary: new DossierExecSummary(ReviewPriority.Medium, 0, 0, 0, 0, [], null, []),
+            SourceSheets: [],
+            SourceCoverage: SheetCoverage.Empty,
+            Metrics: []);
+
+        var metricsGroup = DossierComputations.FinancialTrendMetrics(dossier);
+        var exportInc = Assert.Single(metricsGroup.Metrics, m => m.Label == "Export income % of revenue");
+        Assert.False(exportInc.HasValue);
+        Assert.Contains("explicitly reported as '-'", exportInc.InsufficiencyReason);
+
+        var netForex = Assert.Single(metricsGroup.Metrics, m => m.Label == "Net forex exposure");
+        Assert.False(netForex.HasValue);
+        Assert.Contains("explicitly reported as '-'", netForex.InsufficiencyReason);
     }
 
     private static async Task<(McaRequest Request, RequestDocument RocDoc)> SeedRequestWithRoc(AppDbContext db, string rocStoragePath)
