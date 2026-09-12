@@ -36,7 +36,7 @@
     @* ── A. Identity ── *@
     <div class="mca-kv">
         <div><dt>Charge ID</dt><dd class="report-id">@c.RocChargeNumber</dd></div>
-        <div><dt>Charge Holder</dt><dd>@c.LatestChargeHolderRaw</dd></div>
+        <div><dt>Charge Holder</dt><dd>@(string.IsNullOrWhiteSpace(c.LatestChargeHolderRaw) ? Html.Raw("<span class=\"mca-badge sev-watch\">Unknown Charge Holder</span>") : Html.Raw(System.Net.WebUtility.HtmlEncode(c.LatestChargeHolderRaw)))</dd></div>
         <div><dt>Status</dt><dd>@Or(c.ChargeStatus) @(c.SatisfactionDate is null ? "(Current / Open)" : "(Historical / Satisfied)")</dd></div>
         <div><dt>Property Type</dt><dd>@Or(narrativeEvent?.PropertyType ?? creation?.PropertyType)</dd></div>
         <div><dt>No. of Holders</dt><dd>@(narrativeEvent?.NumberOfHolders?.ToString() ?? creation?.NumberOfHolders?.ToString() ?? "not available")</dd></div>
@@ -83,7 +83,15 @@
                     @if (!string.IsNullOrWhiteSpace(e.SerialNumber)) { <span class="text-muted">&middot; SRN-ref @e.SerialNumber</span> }
                     @if (!string.IsNullOrWhiteSpace(e.HolderNameRaw) && e.HolderNameRaw != c.LatestChargeHolderRaw)
                     {
-                        <span class="text-muted">&middot; @e.HolderNameRaw</span>
+                        <text>&middot;</text>
+                        if (!string.IsNullOrWhiteSpace(c.LatestChargeHolderRaw))
+                        {
+                            <span class="mca-badge sev-watch">@e.HolderNameRaw (now @c.LatestChargeHolderRaw)</span>
+                        }
+                        else
+                        {
+                            <span class="text-muted">@e.HolderNameRaw</span>
+                        }
                     }
                 </div>
                 @if (!string.IsNullOrWhiteSpace(e.ModificationParticulars))

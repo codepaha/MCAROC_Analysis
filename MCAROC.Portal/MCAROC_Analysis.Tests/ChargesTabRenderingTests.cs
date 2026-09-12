@@ -240,4 +240,53 @@ public class ChargesTabRenderingTests
         Assert.False(vm.AnyOpenChargeMissingAmount);
         Assert.Equal(300m, vm.TotalOpenChargeAmount);
     }
+
+    // ── #114 (C4) — colour-as-signal annotations ──
+
+    [Fact]
+    public async Task Blank_charge_holder_renders_the_unknown_holder_badge_not_a_blank_cell()
+    {
+        var vm = CreateViewModel();
+        vm.Charges =
+        [
+            new RocCharge { RocChargeNumber = "CHG-501", LatestChargeHolderRaw = "", CurrentAmount = 10m, SatisfactionDate = null }
+        ];
+
+        var html = await RenderChargesTabAsync(vm);
+
+        Assert.Contains("<span class=\"mca-badge sev-watch\">Unknown Charge Holder</span>", html);
+    }
+
+    [Fact]
+    public async Task Known_charge_holder_never_shows_the_unknown_holder_badge()
+    {
+        var vm = CreateViewModel();
+        vm.Charges =
+        [
+            new RocCharge { RocChargeNumber = "CHG-502", LatestChargeHolderRaw = "State Bank of India", CurrentAmount = 10m, SatisfactionDate = null }
+        ];
+
+        var html = await RenderChargesTabAsync(vm);
+
+        Assert.Contains("State Bank of India", html);
+        Assert.DoesNotContain("Unknown Charge Holder", html);
+    }
+
+    [Fact]
+    public async Task Renamed_charge_holder_shows_the_old_name_now_new_name_badge_in_the_drawer()
+    {
+        var vm = CreateViewModel();
+        var charge = new RocCharge { ChargeId = 1, RocChargeNumber = "CHG-503", LatestChargeHolderRaw = "New Bank Ltd", CurrentAmount = 10m, SatisfactionDate = null };
+        charge.Events.Add(new RocChargeEvent
+        {
+            RocChargeId = 1,
+            EventType = ChargeEventType.Creation,
+            HolderNameRaw = "Old Bank Ltd"
+        });
+        vm.Charges = [charge];
+
+        var html = await RenderChargesTabAsync(vm);
+
+        Assert.Contains("<span class=\"mca-badge sev-watch\">Old Bank Ltd (now New Bank Ltd)</span>", html);
+    }
 }
