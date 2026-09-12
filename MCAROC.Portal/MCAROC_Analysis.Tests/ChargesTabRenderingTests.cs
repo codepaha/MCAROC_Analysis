@@ -263,7 +263,7 @@ public class ChargesTabRenderingTests
         var vm = CreateViewModel();
         vm.Charges =
         [
-            new RocCharge { RocChargeNumber = "CHG-502", LatestChargeHolderRaw = "State Bank of India", CurrentAmount = 10m, SatisfactionDate = null }
+            new RocCharge { RocChargeNumber = "CHG-502", LatestChargeHolderRaw = "State Bank of India", LatestChargeHolderNormalized = "STATE BANK OF INDIA", CurrentAmount = 10m, SatisfactionDate = null }
         ];
 
         var html = await RenderChargesTabAsync(vm);
@@ -309,5 +309,142 @@ public class ChargesTabRenderingTests
 
         Assert.Contains("Recorded holder: First Bank Ltd; latest recorded holder: Third Bank Ltd", html);
         Assert.Contains("Recorded holder: Second Bank Ltd; latest recorded holder: Third Bank Ltd", html);
+    }
+
+    // ── #115 (C5a) — group charges by holder ──
+
+    [Fact]
+    public async Task Two_charges_for_the_same_holder_render_as_one_group_with_a_count_of_two()
+    {
+        var vm = CreateViewModel();
+        vm.Charges =
+        [
+            new RocCharge { RocChargeNumber = "CHG-601", LatestChargeHolderRaw = "State Bank of India", LatestChargeHolderNormalized = "STATE BANK OF INDIA", CurrentAmount = 10m, SatisfactionDate = null },
+            new RocCharge { RocChargeNumber = "CHG-602", LatestChargeHolderRaw = "State Bank of India", LatestChargeHolderNormalized = "STATE BANK OF INDIA", CurrentAmount = 20m, SatisfactionDate = null }
+        ];
+
+        var html = await RenderChargesTabAsync(vm);
+
+        Assert.Contains("<strong>State Bank of India</strong>", html);
+        Assert.Contains("2 charge(s)", html);
+        Assert.Contains("CHG-601", html);
+        Assert.Contains("CHG-602", html);
+    }
+
+    [Fact]
+    public async Task Two_charges_for_different_holders_render_as_two_separate_groups()
+    {
+        var vm = CreateViewModel();
+        vm.Charges =
+        [
+            new RocCharge { RocChargeNumber = "CHG-611", LatestChargeHolderRaw = "Axis Bank", LatestChargeHolderNormalized = "AXIS BANK", CurrentAmount = 10m, SatisfactionDate = null },
+            new RocCharge { RocChargeNumber = "CHG-612", LatestChargeHolderRaw = "HDFC Bank", LatestChargeHolderNormalized = "HDFC BANK", CurrentAmount = 20m, SatisfactionDate = null }
+        ];
+
+        var html = await RenderChargesTabAsync(vm);
+
+        Assert.Contains("<strong>Axis Bank</strong>", html);
+        Assert.Contains("<strong>HDFC Bank</strong>", html);
+        // Each its own single-charge group.
+        Assert.Equal(2, System.Text.RegularExpressions.Regex.Matches(html, "1 charge\\(s\\)").Count);
+    }
+
+    [Fact]
+    public async Task Blank_holder_charges_group_together_under_unknown_charge_holder()
+    {
+        var vm = CreateViewModel();
+        vm.Charges =
+        [
+            new RocCharge { RocChargeNumber = "CHG-621", LatestChargeHolderRaw = "", LatestChargeHolderNormalized = "", CurrentAmount = 10m, SatisfactionDate = null },
+            new RocCharge { RocChargeNumber = "CHG-622", LatestChargeHolderRaw = "", LatestChargeHolderNormalized = "", CurrentAmount = 20m, SatisfactionDate = null },
+            new RocCharge { RocChargeNumber = "CHG-623", LatestChargeHolderRaw = "Axis Bank", LatestChargeHolderNormalized = "AXIS BANK", CurrentAmount = 30m, SatisfactionDate = null }
+        ];
+
+        var html = await RenderChargesTabAsync(vm);
+
+        // One "Unknown Charge Holder" badge for the group header, plus one per blank-holder row's own
+        // Holder cell AND one more inside that row's _ChargeDrawer "Charge Holder" field (#114's two
+        // per-charge fallbacks) - 1 (header) + 2 charges x 2 renders each = 5 total.
+        Assert.Equal(5, System.Text.RegularExpressions.Regex.Matches(html, "mca-badge sev-watch\">Unknown Charge Holder</span>").Count);
+        Assert.Contains("2 charge(s)", html); // the unknown-holder group
+        Assert.Contains("1 charge(s)", html); // Axis Bank's group
+    }
+
+    [Fact]
+    public async Task Group_toggle_is_a_keyboard_focusable_accessible_control()
+    {
+        var vm = CreateViewModel();
+        vm.Charges = [new RocCharge { RocChargeNumber = "CHG-631", LatestChargeHolderRaw = "Axis Bank", LatestChargeHolderNormalized = "AXIS BANK", CurrentAmount = 10m, SatisfactionDate = null }];
+
+        var html = await RenderChargesTabAsync(vm);
+
+        // A real <a> (natively focusable + Enter-activatable), not a non-interactive element with only a
+        // click handler, and wired for Bootstrap's collapse + assistive-tech state.
+        Assert.Contains("<a class=\"mca-holder-group-toggle\" data-bs-toggle=\"collapse\" href=\"#open-holder-0\" role=\"button\" aria-expanded=\"false\" aria-controls=\"open-holder-0\">", html);
+    }
+
+    [Fact]
+    public async Task Charge_drawer_still_opens_correctly_from_within_a_holder_group()
+    {
+        var vm = CreateViewModel();
+        var charge = new RocCharge { ChargeId = 42, RocChargeNumber = "CHG-641", LatestChargeHolderRaw = "Axis Bank", LatestChargeHolderNormalized = "AXIS BANK", CurrentAmount = 10m, SatisfactionDate = null };
+        vm.Charges = [charge];
+
+        var html = await RenderChargesTabAsync(vm);
+
+        Assert.Contains("href=\"#charge-42\"", html);
+        Assert.Contains("id=\"charge-42\"", html);
+    }
+
+    [Fact]
+    public async Task Satisfied_charges_are_also_grouped_by_holder()
+    {
+        var vm = CreateViewModel();
+        vm.Charges =
+        [
+            new RocCharge { RocChargeNumber = "CHG-651", LatestChargeHolderRaw = "Canara Bank", LatestChargeHolderNormalized = "CANARA BANK", CurrentAmount = 5m, SatisfactionDate = new DateOnly(2021, 1, 1) },
+            new RocCharge { RocChargeNumber = "CHG-652", LatestChargeHolderRaw = "Canara Bank", LatestChargeHolderNormalized = "CANARA BANK", CurrentAmount = 7m, SatisfactionDate = new DateOnly(2021, 6, 1) }
+        ];
+
+        var html = await RenderChargesTabAsync(vm);
+
+        Assert.Contains("satisfied-holder-0", html);
+        Assert.Contains("<strong>Canara Bank</strong>", html);
+        Assert.Contains("2 charge(s)", html);
+    }
+
+    [Fact]
+    public async Task Open_charge_drawer_row_is_nested_inside_its_holder_groups_collapsible_tbody()
+    {
+        // The ?charge=<id> deep link (Details.cshtml) walks up from the drawer row via
+        // row.closest('tbody.collapse') to find and expand its holder group before opening the drawer
+        // itself - this pins the markup contract that lookup depends on.
+        var vm = CreateViewModel();
+        vm.Charges = [new RocCharge { ChargeId = 71, RocChargeNumber = "CHG-701", LatestChargeHolderRaw = "Axis Bank", LatestChargeHolderNormalized = "AXIS BANK", CurrentAmount = 10m, SatisfactionDate = null }];
+
+        var html = await RenderChargesTabAsync(vm);
+
+        var groupOpenIdx = html.IndexOf("<tbody class=\"collapse\" id=\"open-holder-0\">");
+        var rowIdx = html.IndexOf("id=\"charge-71\"");
+        var groupCloseIdx = html.IndexOf("</tbody>", rowIdx);
+
+        Assert.True(groupOpenIdx >= 0 && groupOpenIdx < rowIdx && rowIdx < groupCloseIdx,
+            "Expected the charge's drawer row to be nested inside its holder group's collapsible <tbody>.");
+    }
+
+    [Fact]
+    public async Task Satisfied_charge_drawer_row_is_nested_inside_its_holder_groups_collapsible_tbody()
+    {
+        var vm = CreateViewModel();
+        vm.Charges = [new RocCharge { ChargeId = 72, RocChargeNumber = "CHG-702", LatestChargeHolderRaw = "Axis Bank", LatestChargeHolderNormalized = "AXIS BANK", CurrentAmount = 10m, SatisfactionDate = new DateOnly(2022, 1, 1) }];
+
+        var html = await RenderChargesTabAsync(vm);
+
+        var groupOpenIdx = html.IndexOf("<tbody class=\"collapse\" id=\"satisfied-holder-0\">");
+        var rowIdx = html.IndexOf("id=\"charge-72\"");
+        var groupCloseIdx = html.IndexOf("</tbody>", rowIdx);
+
+        Assert.True(groupOpenIdx >= 0 && groupOpenIdx < rowIdx && rowIdx < groupCloseIdx,
+            "Expected the charge's drawer row to be nested inside its holder group's collapsible <tbody>.");
     }
 }

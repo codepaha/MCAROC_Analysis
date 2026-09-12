@@ -189,15 +189,29 @@
                 });
             });
 
-            // ── ?charge=<id>: open the Charges tab, right section, expand + scroll ──
+            // ── ?charge=<id>: open the Charges tab, right section, expand the charge's holder group
+            //    (charges are now grouped by holder — #115), wait for that to finish opening, then
+            //    expand + scroll to the charge's own drawer. ──
             if (focusCharge) {
                 var row = document.getElementById('charge-' + focusCharge);
                 if (row) {
                     var inSatisfied = row.closest('#sec-charges-satisfied') !== null;
                     var secBtn = document.querySelector('[data-mca-sections="charges"] button[data-bs-target="#sec-charges-' + (inSatisfied ? 'satisfied' : 'open') + '"]');
                     activate(secBtn);
-                    try { new bootstrap.Collapse(row, { show: true }); } catch (e) { row.classList.add('show'); }
-                    setTimeout(function () { row.scrollIntoView({ behavior: 'smooth', block: 'center' }); }, 250);
+
+                    var openChargeDrawer = function () {
+                        try { new bootstrap.Collapse(row, { show: true }); } catch (e) { row.classList.add('show'); }
+                        setTimeout(function () { row.scrollIntoView({ behavior: 'smooth', block: 'center' }); }, 250);
+                    };
+
+                    var holderGroup = row.closest('tbody.collapse');
+                    if (holderGroup && !holderGroup.classList.contains('show')) {
+                        holderGroup.addEventListener('shown.bs.collapse', openChargeDrawer, { once: true });
+                        try { new bootstrap.Collapse(holderGroup, { show: true }); }
+                        catch (e) { holderGroup.classList.add('show'); openChargeDrawer(); }
+                    } else {
+                        openChargeDrawer();
+                    }
                 }
             }
 
