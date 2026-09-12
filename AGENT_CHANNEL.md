@@ -113,10 +113,10 @@ request, 2026-09-12) since this lane hadn't claimed them yet — remaining 6 sti
 | #121 C2 | per-tab sticky contents nav + scroll-spy | #112 C1 (merged) | **CLAIMED** (Antigravity — bundled with #119 C7b, see their plan) |
 | #114 C4 | 3 missing colour-as-signal annotation patterns | #112 C1 (merged) | **CLAIMED** (Claude) |
 | #115 C5a | group charges by holder | #112 C1 (merged) | **MERGED** (`9a92fac`) |
-| #123 C5b | Crore/Lakh/₹ unit toggle + typed amount renderer (file the generated call-site classification table as evidence, don't hardcode counts in the PR) | #112 C1 (merged) | **CLAIMED** (Claude) |
+| #123 C5b | Crore/Lakh/₹ unit toggle + typed amount renderer (file the generated call-site classification table as evidence, don't hardcode counts in the PR) | #112 C1 (merged) | **PR #132 open** (`feature/123-amount-unit-toggle`) → `@codex review` |
 | #116 C6 | shared inline-SVG viz contract (dossier + dashboard mappings kept separate) + 6 partials | #112 C1 (merged) | **CLAIMED** (Claude) |
 | #117 C7a | in-app PDF viewer, request-scoped + dedup-aware — **Claude reviews the scoping/dedup code before merge** | none | **MERGED** (PR #127, `9b1096b`) |
-| #119 C7b | relocate chat to docked panel, JSON hardening (antiforgery, length limit, error contract) | #117 C7a (merged) | **CLAIMED** (Antigravity, `feature/119-chat-docked-panel`) |
+| #119 C7b | relocate chat to docked panel, JSON hardening (antiforgery, length limit, error contract) | #117 C7a (merged) | **MERGED** (PR #131, `dd33f22`) |
 | #122 C7c | wire the dead Ctrl+K command-palette scaffold | #119 C7b | open |
 | #120 C9 | dashboard restyle — retire Chart.js for #116's SVG partials | #116 C6 | open |
 | #124 C10 | print stylesheet — deliberately last | all of the above | open |
@@ -205,6 +205,53 @@ Linux subset fonts break PdfPig's ToUnicode → those are `[SkippableFact]`, ski
 ---
 
 ## Log  <!-- newest first. Prefix: NEEDS / BLOCKED / DONE / DECISION / FYI -->
+
+### 2026-09-12 — Claude session (PR #132 open for #123 C5b — amount unit toggle)
+- **PR #132 open** (`feature/123-amount-unit-toggle`, → Closes #123): built exactly to the plan approved
+  after 3 rounds of BFSI-domain review (plan file `serene-whistling-wave.md`). New `Details/_Amount.cshtml`
+  partial is the one place a crore amount's markup is produced — 43 value sites + 21 unit-label sites
+  across all 6 domain-tab views (audited line-by-line, not by keyword grep; committed as
+  `docs/c5b-amount-call-site-inventory.md`). The plan's own draft estimate was 44/20 — the real,
+  implemented total came out 43/21 once every site was actually converted (one fewer value site in
+  `_CorporateTab.cshtml` than first estimated; one extra unit-label caught mid-implementation in
+  `_FinancialStatement.cshtml`'s "All figures in ₹ Crore." caption, which the original draft missed
+  since it's shared by the Ratios variant of the same `RenderTable`). `AmountToggleCoverageTests` makes
+  this inventory executable: it source-scans the 6 views and fails the build if the `_Amount` invocation
+  count or `data-amount-unit-label` count drifts from the audited per-file totals — not just an aggregate
+  check.
+  - Conversion is exact-decimal `BigInt` arithmetic (`amount-unit-core.js`, mirroring the
+    `pdf-viewer-core.js`/`.test.js` pure-module split) — no `float`/`parseFloat` anywhere in the money
+    path, one named rounding rule (half-away-from-zero on the `BigInt` remainder), and `toScaledBigInt`
+    **throws** rather than silently truncating past its 12-fractional-digit precision guard.
+  - Toggle is a native `<input type="radio">` group (`role="radiogroup"`) for real accessible-selection
+    semantics, scoped to `Requests/Details.cshtml`'s header only — confirmed via a full `Views/` grep
+    that no other page renders an amount at all.
+  - `_FinancialStatement.cshtml`'s shared `RenderTable` local function had to become `async Task` (was
+    `void`) — the `<partial>` tag helper requires an awaitable caller; a synchronous local function with
+    a Razor `<partial>` tag inside it is a compile error (`MVC1006`).
+  - `_Amount.cshtml` itself needed care: its `@if/else` blocks originally had normal source indentation,
+    which the `<partial>` tag helper renders as literal leading whitespace + a trailing newline at every
+    one of the 43 call sites — caught via a failing pre-existing test (`ComplianceTabRenderingTests`
+    expected `"₹42.50 Cr*"` adjacent with no whitespace) before it shipped. Fixed by writing both
+    branches as single-line `{<span>...</span>}` blocks with zero stray whitespace.
+  - Several pre-existing rendering tests needed updating for the new markup shape, not because of a
+    behavior regression: bare-`Num()`/`.ToString()` KPI values now render through `_Amount` (visible text
+    gains `₹`/`Cr` and moves from `N1` to `Money()`'s own `N2`), and null cells now render inside a
+    `<span class="mca-amount">` wrapper rather than bare `<td>` text. Fixed in `ChargesTabRenderingTests`,
+    `ComplianceTabRenderingTests`, and added new coverage in `CorporateTabRenderingTests` (the divergence
+    badge's `title=` no longer embeds a dynamic amount — it can't hold markup) and
+    `FinancialsTabRenderingTests` (P&L panel is toggle-aware, Ratios panel never is).
+  - Dossier PDF (`DossierPdfComposer.Money()`) is explicitly untouched and always Crore — it's a static
+    generated document, not a live page; called out in both the plan and the PR body so it doesn't read
+    as an oversight. The portal page's own future print stylesheet (C10) is the separate, already-tracked
+    concern for what unit a *browser-printed* Details page shows.
+  - `node --test` 21/21 (13 new), full `dotnet test` 818 passed / 18 skipped (fixture-dependent,
+    pre-existing) / 0 failed, full Release solution build clean.
+  - Also updated `.github/workflows/ci.yml`'s JS test step from a single hardcoded file to a glob
+    (`js/*.test.js`) so the new test file actually runs in CI — the old step would have silently never
+    executed it otherwise.
+- **FYI — #119 (C7b) merged while this was in flight** (PR #131, `dd33f22`) — picked up from `origin/main`
+  when creating this channel-update worktree; Task division table above updated to match.
 
 ### 2026-09-12 — Antigravity (DONE #119 C7b: Required ClientTurnId + Durable InReplyToChatMessageId Linkage)
 - **DONE #119 (C7b)**: Resolved re-review blockers regarding optional client IDs and unlinked assistant turns (PR #131).
