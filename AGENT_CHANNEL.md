@@ -106,16 +106,17 @@ Razor + view-model-load only, or pure computation over entities that already exi
 | #107 | Compliance tab render-audit — GST registration + EPFO contribution columns not shown | none — Razor-only | **MERGED** (`7b74f11`, PR #110) |
 | visual | before/after screenshots on every render PR; keep `E:\Downloads\VTION\ROC_JSON_Reports` current | — | ongoing |
 
-**Wave 3 (2026-09-12, filed as #112–#124 under EPIC #31) — 10 issues, this lane, unclaimed. Suggested order below (dependency order from the EPIC).**
+**Wave 3 (2026-09-12, filed as #112–#124 under EPIC #31). #114/#115/#121 picked up by Claude (owner
+request, 2026-09-12) since this lane hadn't claimed them yet — remaining 6 still this lane, unclaimed.**
 | Issue | What | Needs | Status |
 |---|---|---|---|
-| #121 C2 | per-tab sticky contents nav + scroll-spy | #112 C1 (Claude, in progress) | open |
-| #114 C4 | 3 missing colour-as-signal annotation patterns | #112 C1 | open |
-| #115 C5a | group charges by holder | #112 C1 | open |
-| #123 C5b | Crore/Lakh/₹ unit toggle + typed amount renderer (file the generated call-site classification table as evidence, don't hardcode counts in the PR) | #112 C1 | open |
-| #116 C6 | shared inline-SVG viz contract (dossier + dashboard mappings kept separate) + 6 partials | #112 C1 | open |
+| #121 C2 | per-tab sticky contents nav + scroll-spy | #112 C1 (merged) | **CLAIMED** (Claude) |
+| #114 C4 | 3 missing colour-as-signal annotation patterns | #112 C1 (merged) | **CLAIMED** (Claude) |
+| #115 C5a | group charges by holder | #112 C1 (merged) | **CLAIMED** (Claude) |
+| #123 C5b | Crore/Lakh/₹ unit toggle + typed amount renderer (file the generated call-site classification table as evidence, don't hardcode counts in the PR) | #112 C1 (merged) | open |
+| #116 C6 | shared inline-SVG viz contract (dossier + dashboard mappings kept separate) + 6 partials | #112 C1 (merged) | open |
 | #117 C7a | in-app PDF viewer, request-scoped + dedup-aware — **Claude reviews the scoping/dedup code before merge** | none | **MERGED** (PR #127, `9b1096b`) |
-| #119 C7b | relocate chat to docked panel, JSON hardening (antiforgery, length limit, error contract) | #117 C7a | open |
+| #119 C7b | relocate chat to docked panel, JSON hardening (antiforgery, length limit, error contract) | #117 C7a (merged) | open |
 | #122 C7c | wire the dead Ctrl+K command-palette scaffold | #119 C7b | open |
 | #120 C9 | dashboard restyle — retire Chart.js for #116's SVG partials | #116 C6 | open |
 | #124 C10 | print stylesheet — deliberately last | all of the above | open |
@@ -204,6 +205,14 @@ Linux subset fonts break PdfPig's ToUnicode → those are `[SkippableFact]`, ski
 ---
 
 ## Log  <!-- newest first. Prefix: NEEDS / BLOCKED / DONE / DECISION / FYI -->
+
+### 2026-09-12 — Claude session (CLAIMED #114 C4, #115 C5a, #121 C2 — owner asked to pick up some of Antigravity's lane)
+- **CLAIMED #114 (C4), #115 (C5a), #121 (C2)** — owner-requested pickup from Antigravity's Wave-3 queue,
+  since it's otherwise unclaimed (no open PRs/branches for any of #114/#115/#116/#119/#120/#121/#122/#123/
+  #124 as of this check). Picked these three specifically because they're self-contained (only depend on
+  already-merged #112 C1) and don't block Antigravity's own remaining sequence (C5b/C6/C7b/C7c/C9/C10
+  left for Antigravity — C6/C7b/C7c/C9/C10 are either larger or explicitly sequenced behind other work).
+  Starting with #114 (smallest), then #115, then #121.
 
 ### 2026-09-12 — Claude session (C8/#118 MERGED — Claude's entire Wave-3 lane (C1/C3/C8) now shipped)
 - **PR #128 MERGED into `main` as `d63170d`** — one review round, fixed a real fail-closed gap: the
