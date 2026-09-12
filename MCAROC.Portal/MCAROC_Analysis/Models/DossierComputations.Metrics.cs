@@ -2596,9 +2596,12 @@ public static partial class DossierComputations
     /// <c>ShareholdingMetrics</c>' handling of undated pattern rows. E3/E4 are scoped to the latest reported FY
     /// only, matching the established C3/C4/C6/K1 "latest-period-only" convention — summing a transaction-type
     /// or subsidiary total across multiple years would misrepresent a single period's concentration as a
-    /// multi-year one. E6 reuses <see cref="AddCagrCore"/> (the same calendar-bounded window/negative-base
-    /// algorithm A2.1 uses for Revenue CAGR) on the RPT per-FY totals so the two CAGR figures are directly
-    /// comparable. Pure computation over <paramref name="model"/>.</summary>
+    /// multi-year one. E6 first intersects E1's clean per-FY RPT totals with reported Revenue years, then
+    /// runs both series through <see cref="AddCagrCore"/> (the same calendar-bounded window/negative-base
+    /// algorithm A2.1 uses) restricted to that shared year set — since the window it picks depends only on
+    /// which years are present, giving both calls the identical year set guarantees the identical (base,
+    /// end) pair, so the two CAGRs are always compared over the same span (never independently-windowed).
+    /// Pure computation over <paramref name="model"/>.</summary>
     public static MetricGroup RelatedPartyTransactionMetrics(Dossier.DossierModel model)
     {
         var list = new List<MetricResult>();
@@ -2790,29 +2793,44 @@ public static partial class DossierComputations
             }
         }
 
-        // E6: RPT growing faster than revenue — compares the RPT total's own CAGR (over the clean, FY-keyed
-        // totals from E1) against Revenue CAGR, both via the identical calendar-bounded AddCagrCore algorithm
-        // A2.1 uses, so the two figures are directly comparable. Computed independently of A2.1's own
-        // published value since the two series can have different reported-year coverage.
-        var scratch = new List<MetricResult>();
-        var rptSeries = rptByYear.Select(kv => (Year: kv.Key, Value: kv.Value)).OrderBy(p => p.Year).ToList();
-        var rptCagr = AddCagrCore(scratch, rptSeries, "RPT CAGR (internal)", allowNegativeBaseFallback: false, "RelatedPartyTransaction.AmountCrore");
-        var revenueSeries = model.Financials.Standalone.Where(f => f.Revenue is not null)
-            .Select(f => (Year: f.FinancialYear, Value: f.Revenue!.Value)).ToList();
-        var revenueCagr = AddCagrCore(scratch, revenueSeries, "Revenue CAGR (internal)", allowNegativeBaseFallback: false, "FinancialYearData.Revenue");
+        // E6: RPT growing faster than revenue — both CAGRs MUST be computed over the exact same (base,
+        // end) FY pair, or the flag compares two unrelated spans (e.g. RPT's most recent 1-year jump
+        // against revenue's full 3-year run) and can assert the wrong direction entirely (PR #103 review).
+        // Fix: build the shared "clean RPT total (E1) AND reported Revenue" FY intersection first, then
+        // hand AddCagrCore two series restricted to that IDENTICAL set of years — its calendar-bounded
+        // window selection is then guaranteed to resolve to the same (base, end) pair for both, since it
+        // depends only on which years are present, not on their values.
+        var revenueByYear = model.Financials.Standalone.Where(f => f.Revenue is not null)
+            .ToDictionary(f => f.FinancialYear, f => f.Revenue!.Value);
+        var commonYears = rptByYear.Keys.Where(revenueByYear.ContainsKey).OrderBy(y => y).ToList();
 
-        if (rptCagr is null || revenueCagr is null)
+        if (commonYears.Count < 2)
         {
             list.Add(MetricResult.Insufficient("RPT growing faster than revenue", MetricUnit.Count,
-                "RPT CAGR or Revenue CAGR could not be computed (fewer than 2 comparable years, or no base year within the 3-FY window)",
+                "Fewer than 2 financial years have both a clean RPT total and a reported Revenue figure — a CAGR comparison requires a shared FY window",
                 "RelatedPartyTransaction.AmountCrore", "FinancialYearData.Revenue"));
         }
         else
         {
-            var flag = rptCagr.Value > revenueCagr.Value;
-            list.Add(MetricResult.Ok("RPT growing faster than revenue", flag ? 1m : 0m, MetricUnit.Count,
-                $"RPT CAGR {rptCagr.Value:0.#}% vs Revenue CAGR {revenueCagr.Value:0.#}%",
-                "RelatedPartyTransaction.AmountCrore", "FinancialYearData.Revenue"));
+            var scratch = new List<MetricResult>();
+            var rptSeries = commonYears.Select(y => (Year: y, Value: rptByYear[y])).ToList();
+            var revenueSeries = commonYears.Select(y => (Year: y, Value: revenueByYear[y])).ToList();
+            var rptCagr = AddCagrCore(scratch, rptSeries, "RPT CAGR (internal)", allowNegativeBaseFallback: false, "RelatedPartyTransaction.AmountCrore");
+            var revenueCagr = AddCagrCore(scratch, revenueSeries, "Revenue CAGR (internal)", allowNegativeBaseFallback: false, "FinancialYearData.Revenue");
+
+            if (rptCagr is null || revenueCagr is null)
+            {
+                list.Add(MetricResult.Insufficient("RPT growing faster than revenue", MetricUnit.Count,
+                    "RPT CAGR or Revenue CAGR could not be computed within the shared FY window (no base year within 3 calendar years of the latest shared FY, or a zero/negative base or end value)",
+                    "RelatedPartyTransaction.AmountCrore", "FinancialYearData.Revenue"));
+            }
+            else
+            {
+                var flag = rptCagr.Value > revenueCagr.Value;
+                list.Add(MetricResult.Ok("RPT growing faster than revenue", flag ? 1m : 0m, MetricUnit.Count,
+                    $"RPT CAGR {rptCagr.Value:0.#}% vs Revenue CAGR {revenueCagr.Value:0.#}% (shared FY window)",
+                    "RelatedPartyTransaction.AmountCrore", "FinancialYearData.Revenue"));
+            }
         }
 
         return new MetricGroup("Related-party transactions", list);

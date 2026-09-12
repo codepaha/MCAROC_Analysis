@@ -346,6 +346,52 @@ public class RelatedPartyTransactionMetricsTests
     }
 
     [Fact]
+    public void E6_compares_both_CAGRs_over_the_same_shared_FY_window_not_each_series_own_full_history()
+    {
+        // PR #103 review counterexample: clean RPT totals exist only for FY2023/FY2024, but revenue is
+        // also reported for FY2021. Computing each CAGR independently would compare RPT's FY23-24 100%
+        // jump against revenue's FY21-24 ~44.2% CAGR and wrongly flag true — the comparable revenue
+        // growth over the SAME FY23-24 window RPT actually has data for is 200%, so the flag must be false.
+        var rpts = new List<RelatedPartyTransaction>
+        {
+            Rpt(2023, "A", amount: 10m),
+            Rpt(2024, "B", amount: 20m),
+        };
+        var standalone = new List<FinancialYearData>
+        {
+            new() { FinancialYear = 2021, Revenue = 100m }, // no matching RPT year — must be excluded from the window
+            new() { FinancialYear = 2023, Revenue = 100m },
+            new() { FinancialYear = 2024, Revenue = 300m },
+        };
+        var m = Single(DossierComputations.RelatedPartyTransactionMetrics(CreateMinimalDossier(rpts, standalone)),
+            "RPT growing faster than revenue");
+        Assert.True(m.HasValue);
+        Assert.Equal(0m, m.Value); // RPT CAGR 100% (FY23-24) is NOT faster than Revenue CAGR 200% (FY23-24)
+        Assert.Contains("RPT CAGR 100", m.Period);
+        Assert.Contains("Revenue CAGR 200", m.Period);
+        Assert.Contains("shared FY window", m.Period);
+    }
+
+    [Fact]
+    public void E6_is_insufficient_when_RPT_and_revenue_share_no_common_FY()
+    {
+        var rpts = new List<RelatedPartyTransaction>
+        {
+            Rpt(2016, "A", amount: 10m),
+            Rpt(2017, "B", amount: 20m),
+        };
+        var standalone = new List<FinancialYearData>
+        {
+            new() { FinancialYear = 2010, Revenue = 100m },
+            new() { FinancialYear = 2020, Revenue = 200m },
+        };
+        var m = Single(DossierComputations.RelatedPartyTransactionMetrics(CreateMinimalDossier(rpts, standalone)),
+            "RPT growing faster than revenue");
+        Assert.False(m.HasValue);
+        Assert.Contains("shared FY window", m.InsufficiencyReason);
+    }
+
+    [Fact]
     public void E6_does_not_mutate_the_published_group_with_its_internal_scratch_labels()
     {
         var rpts = new List<RelatedPartyTransaction>
