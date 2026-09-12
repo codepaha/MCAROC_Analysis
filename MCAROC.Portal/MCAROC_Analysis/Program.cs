@@ -120,6 +120,7 @@ builder.Services.AddScoped<ChatService>();
 builder.Services.AddMemoryCache(o => o.SizeLimit = 256);
 builder.Services.AddScoped<DossierAssembler>();
 builder.Services.AddScoped<DossierCache>();
+builder.Services.AddScoped<CorporateTimelineBuilder>();
 builder.Services.AddSingleton<DossierPdfRenderer>();
 
 var app = builder.Build();

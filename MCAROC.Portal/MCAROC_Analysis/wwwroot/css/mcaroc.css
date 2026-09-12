@@ -445,6 +445,12 @@ details > summary.mca-json-toggle {
 }
 .mca-timeline-head { font-size: 13px; }
 .mca-timeline-head span { color: var(--muted); }
+.mca-timeline-head .mca-badge { color: var(--brand-strong); margin: 0 6px; }
+
+/* Corporate event timeline (#97) — category filter chips above the shared .mca-timeline list */
+.mca-timeline-filters { display: flex; flex-wrap: wrap; gap: 6px 14px; margin: 10px 0 16px; }
+.mca-timeline-filter { display: inline-flex; align-items: center; gap: 5px; font-size: 13px; cursor: pointer; }
+.mca-timeline-filter-input { cursor: pointer; }
 
 /* Modification comparison table */
 .mca-compare td.mca-compare-change { font-weight: 600; }

@@ -1,0 +1,103 @@
+@model RequestDetailsViewModel
+@using MCAROC_Analysis.Models.Dossier
+@{
+    var events = Model.Timeline;
+    var categories = events.Select(e => e.Category).Distinct()
+        .OrderBy(c => c.ToString()).ToList();
+
+    static string CategoryLabel(TimelineEventCategory c) => c switch
+    {
+        TimelineEventCategory.Corporate => "Corporate",
+        TimelineEventCategory.Directors => "Directors",
+        TimelineEventCategory.Charges => "Charges",
+        TimelineEventCategory.Capital => "Capital",
+        TimelineEventCategory.CreditRatings => "Credit Ratings",
+        TimelineEventCategory.Gst => "GST",
+        TimelineEventCategory.Epfo => "EPFO",
+        TimelineEventCategory.Compliance => "Compliance",
+        TimelineEventCategory.FinancialDisputes => "Financial Disputes",
+        _ => c.ToString()
+    };
+}
+
+<div class="mca-section">
+    <h3>Corporate Event Timeline <span class="mca-count">@events.Count event(s)</span></h3>
+    <p class="text-muted">
+        Incorporation, name changes, director moves, charge events, capital raises, credit-rating
+        actions, financial disputes, GST and EPFO registration, and material compliance records —
+        merged into one chronological view. Litigation, related-party transactions, auditor changes,
+        and registered-office history are not included (see the Litigation, Corporate, and Compliance
+        tabs for those).
+    </p>
+
+    @if (events.Count == 0)
+    {
+        <div class="mca-empty"><i class="bi bi-clock-history"></i><p>No dated corporate events were found for this request.</p></div>
+    }
+    else
+    {
+        <div class="mca-timeline-filters" role="group" aria-label="Filter timeline by category">
+            <label class="mca-timeline-filter">
+                <input type="checkbox" class="mca-timeline-filter-input" data-timeline-filter-all checked />
+                All
+            </label>
+            @foreach (var cat in categories)
+            {
+                <label class="mca-timeline-filter">
+                    <input type="checkbox" class="mca-timeline-filter-input" data-timeline-filter="@cat" checked />
+                    @CategoryLabel(cat) <span class="mca-count">@events.Count(e => e.Category == cat)</span>
+                </label>
+            }
+        </div>
+
+        <ul class="mca-timeline" data-timeline-list>
+        @foreach (var e in events)
+        {
+            <li data-timeline-category="@e.Category">
+                <div class="mca-timeline-head">
+                    <b>@DetailsFormat.D(e.Date)</b>
+                    <span class="mca-badge">@CategoryLabel(e.Category)</span>
+                    @e.Title
+                </div>
+                @if (!string.IsNullOrWhiteSpace(e.Detail))
+                {
+                    <div class="text-muted mt-1">@e.Detail</div>
+                }
+                @if (!string.IsNullOrWhiteSpace(e.Provenance.SourceSheetName))
+                {
+                    <div class="text-muted mt-1">
+                        <small>Source: @e.Provenance.SourceSheetName@(e.Provenance.SourceRowNumber is { } row ? $", row {row}" : "")</small>
+                    </div>
+                }
+            </li>
+        }
+        </ul>
+    }
+</div>
+
+@if (events.Count > 0)
+{
+    <script>
+        (function () {
+            var allBox = document.querySelector('[data-timeline-filter-all]');
+            var boxes = Array.prototype.slice.call(document.querySelectorAll('[data-timeline-filter]'));
+            var items = Array.prototype.slice.call(document.querySelectorAll('[data-timeline-category]'));
+            if (!allBox || boxes.length === 0) { return; }
+
+            function apply() {
+                var active = boxes.filter(function (b) { return b.checked; })
+                    .map(function (b) { return b.getAttribute('data-timeline-filter'); });
+                items.forEach(function (li) {
+                    li.hidden = active.indexOf(li.getAttribute('data-timeline-category')) === -1;
+                });
+                allBox.checked = boxes.every(function (b) { return b.checked; });
+            }
+
+            allBox.addEventListener('change', function () {
+                boxes.forEach(function (b) { b.checked = allBox.checked; });
+                apply();
+            });
+            boxes.forEach(function (b) { b.addEventListener('change', apply); });
+        })();
+    </script>
+}

@@ -49,7 +49,7 @@ public class DossierGoldenMasterTests : IAsyncLifetime
 
     internal static async Task<RequestDetailsViewModel> LoadViewModelAsync(AppDbContext db, long requestId)
     {
-        var controller = new RequestsController(db, null!, null!, null!, null!, null!, CreateCache(), null!);
+        var controller = new RequestsController(db, null!, null!, null!, null!, null!, CreateCache(), null!, new CorporateTimelineBuilder(db));
         var result = await controller.Details(requestId, charge: null);
         return (RequestDetailsViewModel)Assert.IsType<ViewResult>(result).Model!;
     }

@@ -17,7 +17,7 @@ public class RequestsControllerDocumentsTests : IAsyncLifetime
         new(new DbContextOptionsBuilder<AppDbContext>().UseSqlServer(ConnectionString).Options);
 
     private static RequestsController NewController(AppDbContext db) =>
-        new(db, null!, null!, null!, null!, null!, Dossier.DossierGoldenMasterTests.CreateCache(), null!);
+        new(db, null!, null!, null!, null!, null!, Dossier.DossierGoldenMasterTests.CreateCache(), null!, null!);
 
     public async Task InitializeAsync()
     {

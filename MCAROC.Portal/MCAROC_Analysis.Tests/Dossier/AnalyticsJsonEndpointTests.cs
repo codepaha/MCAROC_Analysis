@@ -1,5 +1,6 @@
 using MCAROC_Analysis.Controllers;
 using MCAROC_Analysis.Models.Dossier;
+using MCAROC_Analysis.Services.Dossier;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 
@@ -19,7 +20,7 @@ public class AnalyticsJsonEndpointTests : IAsyncLifetime
     public Task DisposeAsync() => Task.CompletedTask;
 
     private static RequestsController NewController(Data.AppDbContext db) =>
-        new(db, null!, null!, null!, null!, null!, DossierGoldenMasterTests.CreateCache(), null!);
+        new(db, null!, null!, null!, null!, null!, DossierGoldenMasterTests.CreateCache(), null!, new CorporateTimelineBuilder(db));
 
     [Fact]
     public async Task Unknown_request_is_404()
