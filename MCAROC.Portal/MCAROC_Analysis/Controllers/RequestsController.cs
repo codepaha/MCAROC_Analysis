@@ -20,7 +20,8 @@ public class RequestsController(
     FilingProcessingQueue filingQueue,
     RequestListQueryService requestListQueryService,
     DossierCache dossierCache,
-    IWebHostEnvironment env) : Controller
+    IWebHostEnvironment env,
+    CorporateTimelineBuilder corporateTimelineBuilder) : Controller
 {
     [HttpGet("/Requests")]
     public async Task<IActionResult> Index([FromQuery] RequestListFilterCriteria filters)
@@ -372,6 +373,11 @@ public class RequestsController(
         var dossier = await dossierCache.GetAsync(id);
         vm.KeyMetrics = dossier?.Metrics.ToList() ?? [];
         vm.DataSufficiencyNotes = dossier?.ExecSummary.NotAssessed.ToList() ?? [];
+
+        // The corporate event timeline is intentionally NOT part of DossierModel/DossierCache — it needs
+        // none of the analysis-derived data those require, and must stay populated the moment ingestion
+        // completes even while a fresh re-ingest's analysis is still queued or running.
+        vm.Timeline = (await corporateTimelineBuilder.BuildAsync(id) ?? []).ToList();
 
         var chatSession = await db.ChatSessions.FirstOrDefaultAsync(s => s.RequestId == id);
         if (chatSession is not null)

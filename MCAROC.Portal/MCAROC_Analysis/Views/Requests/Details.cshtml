@@ -6,7 +6,7 @@
     var run = Model.LatestAnalysisRun;
     var coverage = Model.SheetCoverage;
 
-    // The 7 lender-oriented business domains. AI Analysis is first and default.
+    // The lender-oriented business domains + the cross-domain Timeline synthesis view. AI Analysis is first and default.
     var tabs = new (string Label, string Id, string? Badge)[]
     {
         ("AI Analysis",        "ai",         null),
@@ -15,6 +15,7 @@
         ("Charges & Security", "charges",    Model.OpenChargeCount > 0 ? Model.OpenChargeCount.ToString() : null),
         ("Compliance",         "compliance", null),
         ("Litigation",         "litigation", Model.LitigationCount > 0 ? Model.LitigationCount.ToString() : null),
+        ("Timeline",           "timeline",   Model.Timeline.Count > 0 ? Model.Timeline.Count.ToString() : null),
         ("Documents",          "documents",  null),
     };
 }
@@ -124,6 +125,7 @@
     <div class="tab-pane fade" id="tab-charges" role="tabpanel">@await Html.PartialAsync("Details/_ChargesTab", Model)</div>
     <div class="tab-pane fade" id="tab-compliance" role="tabpanel">@await Html.PartialAsync("Details/_ComplianceTab", Model)</div>
     <div class="tab-pane fade" id="tab-litigation" role="tabpanel">@await Html.PartialAsync("Details/_LitigationTab", Model)</div>
+    <div class="tab-pane fade" id="tab-timeline" role="tabpanel">@await Html.PartialAsync("Details/_TimelineTab", Model)</div>
     <div class="tab-pane fade" id="tab-documents" role="tabpanel">@await Html.PartialAsync("Details/_DocumentsTab", Model)</div>
 </div>
 

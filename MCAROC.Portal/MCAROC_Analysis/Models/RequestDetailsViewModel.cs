@@ -52,6 +52,12 @@ public class RequestDetailsViewModel
     // D-wave issues; the _KeyIndicators partial renders whichever groups a tab passes it.
     public List<MCAROC_Analysis.Models.Dossier.MetricGroup> KeyMetrics { get; set; } = [];
 
+    /// <summary>Issue #97 — the unified corporate event timeline. Built by
+    /// <see cref="MCAROC_Analysis.Services.Dossier.CorporateTimelineBuilder"/>, independent of
+    /// <see cref="MCAROC_Analysis.Services.Dossier.DossierAssembler"/>/<c>DossierCache</c> so it stays
+    /// populated even while a fresh re-ingest's analysis is still queued or running.</summary>
+    public List<MCAROC_Analysis.Models.Dossier.CorporateTimelineEvent> Timeline { get; set; } = [];
+
     /// <summary>Deterministic checks the rule engine could not run, and why — same source
     /// (<c>DossierModel.ExecSummary.NotAssessed</c>) the dossier renders, so a "verified clean" result
     /// is never mistaken for "not checked". AI-independent.</summary>

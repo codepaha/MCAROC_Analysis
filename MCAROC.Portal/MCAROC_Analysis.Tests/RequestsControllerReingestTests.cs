@@ -2,6 +2,7 @@ using MCAROC_Analysis.Controllers;
 using MCAROC_Analysis.Data;
 using MCAROC_Analysis.Data.Entities;
 using MCAROC_Analysis.Models;
+using MCAROC_Analysis.Services.Dossier;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -20,7 +21,7 @@ public class RequestsControllerReingestTests : IAsyncLifetime
         new(new DbContextOptionsBuilder<AppDbContext>().UseSqlServer(ConnectionString).Options);
 
     private static RequestsController NewController(AppDbContext db, string environment) =>
-        new(db, null!, null!, null!, null!, null!, Dossier.DossierGoldenMasterTests.CreateCache(), new FakeEnv(environment));
+        new(db, null!, null!, null!, null!, null!, Dossier.DossierGoldenMasterTests.CreateCache(), new FakeEnv(environment), new CorporateTimelineBuilder(db));
 
     public async Task InitializeAsync()
     {
