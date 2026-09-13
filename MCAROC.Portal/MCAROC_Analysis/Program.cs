@@ -87,9 +87,10 @@ builder.Services.AddSingleton(sp =>
 builder.Services.AddScoped<AnalysisOrchestrator>();
 builder.Services.AddHostedService<AnalysisWorker>();
 
-// #164 Calculation assurance — ledger persistence only in PR1 (deterministic checks/AI worker/delivery
-// gate land in later PRs). A no-op at runtime while CalculationAssurance:Mode is Off (the default).
+// #164 Calculation assurance — ledger persistence + deterministic checks (AI worker/delivery gate land
+// in later PRs). A no-op at runtime while CalculationAssurance:Mode is Off (the default).
 builder.Services.AddScoped<MCAROC_Analysis.Services.CalculationAssurance.CalculationLedgerService>();
+builder.Services.AddScoped<MCAROC_Analysis.Services.CalculationAssurance.CalculationCheckRunnerService>();
 
 // Phase 5: operations & risk intelligence dashboard + Search History
 builder.Services.AddScoped<DashboardQueryService>();

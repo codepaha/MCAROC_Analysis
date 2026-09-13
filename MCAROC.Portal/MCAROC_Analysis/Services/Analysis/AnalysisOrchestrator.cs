@@ -13,6 +13,7 @@ public class AnalysisOrchestrator(
     AiCrossSectionAnalysisService aiService,
     AnalysisQueue queue,
     CalculationLedgerService calculationLedgerService,
+    CalculationCheckRunnerService calculationCheckRunnerService,
     ILogger<AnalysisOrchestrator> logger)
 {
     private static readonly RuleThresholds Thresholds = RuleThresholds.Default;
@@ -105,10 +106,11 @@ public class AnalysisOrchestrator(
             try
             {
                 await calculationLedgerService.PersistSnapshotAsync(requestId, ingestionRunId, run.AnalysisRunId, ct);
+                await calculationCheckRunnerService.RunChecksAsync(requestId, ingestionRunId, run.AnalysisRunId, ct);
             }
             catch (Exception ex)
             {
-                logger.LogError(ex, "Calculation-assurance ledger persistence failed for request {RequestId}, analysis run {AnalysisRunId} — analysis itself still proceeding.",
+                logger.LogError(ex, "Calculation-assurance ledger/check persistence failed for request {RequestId}, analysis run {AnalysisRunId} — analysis itself still proceeding.",
                     requestId, run.AnalysisRunId);
             }
 
