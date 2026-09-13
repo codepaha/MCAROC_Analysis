@@ -179,9 +179,11 @@ portal+PDF, `GET /Requests/{id}/analytics.json`).
 | #68–#73 | Antigravity B1–B6 render audit | awaiting review |
 | #78 | Codex — channel-verdict doc | awaits **@owner** merge |
 
-**Phase 8:** EPIC #31. Waves 1, 2, 2b, and 4 all fully merged. **Wave 3 (2026-09-12): split into 13
-issues #112–#124** after 4 rounds of owner review (see plan file `serene-whistling-wave.md`) — **as of
-2026-09-13, all 13 are merged (#120/C9 last, PR #139, `2ae87fd`). Wave 3 is fully closed.**
+**Phase 8:** EPIC #31 — **CLOSED** (2026-09-13). Waves 1, 2, 2b, and 4 all fully merged. **Wave 3
+(2026-09-12): split into 13 issues #112–#124** after 4 rounds of owner review (see plan file
+`serene-whistling-wave.md`) — **as of 2026-09-13, all 13 are merged (#120/C9 last, PR #139, `2ae87fd`).
+Wave 3 is fully closed.** The EPIC's own body had said "complete" since Wave 3 finished, but nobody had
+run `gh issue close 31` — closed by hand once the owner asked whether it was resolved.
 Catalogue G1, G3, G4, G5 → DONE.
 
 **Degenerate-data audit (2026-09-10):** ingestion + views + calcs handle no-charge-report /
@@ -209,6 +211,12 @@ Linux subset fonts break PdfPig's ToUnicode → those are `[SkippableFact]`, ski
 ---
 
 ## Log  <!-- newest first. Prefix: NEEDS / BLOCKED / DONE / DECISION / FYI -->
+
+### 2026-09-13 — Claude session (CLOSED EPIC #31)
+- Owner asked whether #31 was resolved. Its own body had said "EPIC #31 is complete" since Wave 3
+  finished (#120/C9, PR #139), but the tracking issue itself was still `OPEN` — nobody had run
+  `gh issue close`, the same gap that's hit #123/#116/#120 individually. Closed with a comment
+  summarizing all 43 sub-issues across Waves 1/2/2b/3/4.
 
 ### 2026-09-13 — Claude session (#142 MERGED — pre-login "My Reports" history)
 - **PR #141 MERGED into `main` as `965578e`.** Issue #142 auto-closed (this PR's title used no closing
