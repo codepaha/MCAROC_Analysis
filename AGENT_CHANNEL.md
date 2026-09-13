@@ -290,6 +290,18 @@ Linux subset fonts break PdfPig's ToUnicode → those are `[SkippableFact]`, ski
   and round 5 just proved that instinct right again. PR3 stays paused per the standing decision; #171 still
   needs its own rebase-onto-`main` + independent re-review once #170 actually merges.
 
+### 2026-09-13 — Claude session (DECISION — #164 PR3 paused; PR1/PR2 review-merge sequencing set)
+- **Owner/reviewer call: PR3 (AI worker) is paused, not started.** PR #171 (PR2) is stacked on PR #170
+  (PR1)'s branch, and #170's head has already moved once (review round 3's 3-bug fix, `fe13d23`) since
+  #171 branched from it — #170's *revised* head needs its own re-review before either PR moves further.
+  **Sequencing going forward**: #170 re-reviewed and merged to `main` first → #171 then rebased onto
+  `main` (not #170's branch), re-run through both CI jobs, and reviewed independently on its own merits →
+  only then does PR3 start. Reason given: stacking a third PR on top of two unmerged, audit-critical-
+  persistence PRs would make a future failure much harder to isolate to the right layer.
+- **No code changes in this entry.** Claude's lane is idle on #164 until #170 merges; will rebase #171 and
+  resume with PR3 once that happens. #170 and #171 both remain open, awaiting `@codex` review at their
+  current heads (`fe13d23`+`876882a` for #170, `ddabbb8` for #171).
+
 ### 2026-09-13 — Claude session (PR #171 open — #164 PR2, deterministic checks + auto-hold creation)
 - **PR #171 open** (`feature/164-deterministic-checks` → `feature/164-calculation-assurance`, i.e. stacked
   on PR1/#170 rather than `main` — #170 hasn't merged yet, and PR2's checks need PR1's ledger schema).
