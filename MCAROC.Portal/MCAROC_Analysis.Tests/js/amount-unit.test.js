@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { SCALE } from '../../MCAROC_Analysis/wwwroot/js/amount-unit-core.js';
-import { planUnitSwitch, applyPlan, switchUnit } from '../../MCAROC_Analysis/wwwroot/js/amount-unit.js';
+import { planUnitSwitch, applyPlan, switchUnit, handleBeforePrint, handleAfterPrint } from '../../MCAROC_Analysis/wwwroot/js/amount-unit.js';
 
 // A value with one fractional digit more than amount-unit-core.js's precision guard supports —
 // toScaledBigInt throws on this, which is exactly the failure mode the atomic-switch guarantee exists
@@ -23,13 +23,33 @@ function mockLabelEl(variant, initialText) {
   };
 }
 
-function mockDoc(amountEls, labelEls) {
+function mockRadioEl(value, checked = false) {
+  return {
+    value,
+    checked,
+    setAttribute(k, v) { this[k] = v; },
+    getAttribute(k) { return this[k]; }
+  };
+}
+
+function mockDoc(amountEls, labelEls, radios = []) {
   return {
     querySelectorAll(selector) {
       if (selector === '[data-amount-crore]') return amountEls;
       if (selector === '[data-amount-unit-label]') return labelEls;
+      if (selector.includes('input[name="mca-amount-unit"]')) return radios;
       throw new Error(`Unexpected selector in test double: ${selector}`);
     },
+    querySelector(selector) {
+      if (selector === 'input[name="mca-amount-unit"]:checked') {
+        return radios.find(r => r.checked) || null;
+      }
+      const match = selector.match(/input\[name="mca-amount-unit"\]\[value="([^"]+)"\]/);
+      if (match) {
+        return radios.find(r => r.value === match[1]) || null;
+      }
+      return null;
+    }
   };
 }
 
@@ -92,3 +112,46 @@ test('switchUnit leaves everything untouched when a label variant is unknown, ev
   assert.equal(amount.textContent, '₹12.50 Cr');
   assert.equal(badLabel.textContent, 'Cr');
 });
+
+test('handleBeforePrint snapshots active unit, switches to crore, and handleAfterPrint restores unit', () => {
+  const amount = mockAmountEl('12.5', '₹1,250.00 L');
+  const label = mockLabelEl('long', '₹ Lakh');
+  const radioCrore = mockRadioEl('crore', false);
+  const radioLakh = mockRadioEl('lakh', true);
+  const radioRupee = mockRadioEl('rupee', false);
+  const doc = mockDoc([amount], [label], [radioCrore, radioLakh, radioRupee]);
+
+  // Trigger beforeprint
+  handleBeforePrint(doc);
+
+  assert.equal(amount.textContent, '₹12.50 Cr', 'Amount switched to canonical ₹ Crore for printing');
+  assert.equal(label.textContent, '₹ Crore', 'Label switched to canonical ₹ Crore for printing');
+  assert.equal(radioCrore.checked, true, 'Crore radio marked checked');
+
+  // Trigger afterprint
+  handleAfterPrint(doc);
+
+  assert.equal(amount.textContent, '₹1,250.00 L', 'Amount restored to ₹ Lakh after printing');
+  assert.equal(label.textContent, '₹ Lakh', 'Label restored to ₹ Lakh after printing');
+  assert.equal(radioLakh.checked, true, 'Lakh radio restored to checked');
+});
+
+test('handleBeforePrint does nothing when unit is already crore', () => {
+  const amount = mockAmountEl('12.5', '₹12.50 Cr');
+  const label = mockLabelEl('long', '₹ Crore');
+  const radioCrore = mockRadioEl('crore', true);
+  const radioLakh = mockRadioEl('lakh', false);
+  const doc = mockDoc([amount], [label], [radioCrore, radioLakh]);
+
+  handleBeforePrint(doc);
+
+  assert.equal(amount.textContent, '₹12.50 Cr');
+  assert.equal(label.textContent, '₹ Crore');
+  assert.equal(radioCrore.checked, true);
+
+  handleAfterPrint(doc);
+
+  assert.equal(amount.textContent, '₹12.50 Cr');
+  assert.equal(label.textContent, '₹ Crore');
+});
+

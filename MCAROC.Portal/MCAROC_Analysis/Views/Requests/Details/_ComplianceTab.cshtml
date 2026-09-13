@@ -571,8 +571,14 @@
                     <button type="button" class="active" data-basis="Standalone">Standalone</button>
                     <button type="button" data-basis="Consolidated">Consolidated</button>
                 </div>
-                <div data-basis-panel="basis-auditor" data-basis="Standalone">@{ AuditorTable(std); }</div>
-                <div data-basis-panel="basis-auditor" data-basis="Consolidated" hidden>@{ AuditorTable(con); }</div>
+                <div data-basis-panel="basis-auditor" data-basis="Standalone">
+                    <h5 class="mca-basis-print-heading d-none d-print-block">Standalone Basis</h5>
+                    @{ AuditorTable(std); }
+                </div>
+                <div data-basis-panel="basis-auditor" data-basis="Consolidated" hidden>
+                    <h5 class="mca-basis-print-heading d-none d-print-block">Consolidated Basis</h5>
+                    @{ AuditorTable(con); }
+                </div>
             }
             else
             {
