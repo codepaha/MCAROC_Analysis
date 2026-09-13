@@ -416,19 +416,32 @@ public static partial class DossierComputations
         // 4 before it) are reported individually, any earlier activity is rolled into one "before <year>"
         // bucket per series, and an explicit coverage fact states the full observed year range so a
         // reader never mistakes "not shown" for "zero".
-        var creationYears = all.SelectMany(c => c.Events)
+        // A future-dated EventDate (year beyond asOfDate.Year — malformed data or a forward-dated
+        // filing) is isolated as its own anomaly, mirroring B11's negative-lag-anomaly treatment:
+        // excluded from the series/coverage/window entirely, so it can never push the reported range
+        // beyond asOfDate's year (unbounded), but its count is surfaced explicitly, never silently
+        // dropped — same "always show the check, even at 0" convention as B8/B11's anomaly counts.
+        var allCreationEventYears = all.SelectMany(c => c.Events)
             .Where(e => e.EventType == ChargeEventType.Creation && e.EventDate is not null)
             .Select(e => e.EventDate!.Value.Year)
             .ToList();
-        var satisfactionYears = all.SelectMany(c => c.Events)
+        var allSatisfactionEventYears = all.SelectMany(c => c.Events)
             .Where(e => e.EventType == ChargeEventType.Satisfaction && e.EventDate is not null)
             .Select(e => e.EventDate!.Value.Year)
             .ToList();
 
+        var futureAnomalyCount = allCreationEventYears.Count(y => y > asOfDate.Year)
+            + allSatisfactionEventYears.Count(y => y > asOfDate.Year);
+        list.Add(MetricResult.Ok("Future-dated charge event anomalies", futureAnomalyCount,
+            MetricUnit.Count, asOfStr, "RocChargeEvent.EventType", "RocChargeEvent.EventDate"));
+
+        var creationYears = allCreationEventYears.Where(y => y <= asOfDate.Year).ToList();
+        var satisfactionYears = allSatisfactionEventYears.Where(y => y <= asOfDate.Year).ToList();
+
         if (creationYears.Count == 0 && satisfactionYears.Count == 0)
         {
             list.Add(MetricResult.Insufficient("Charge activity by year", MetricUnit.Count,
-                "No Creation or Satisfaction events with a dated EventDate",
+                "No Creation or Satisfaction events with a dated EventDate at or before the as-of date",
                 "RocChargeEvent.EventType", "RocChargeEvent.EventDate"));
         }
         else
