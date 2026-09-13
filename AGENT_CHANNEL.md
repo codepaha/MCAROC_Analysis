@@ -237,6 +237,12 @@ Linux subset fonts break PdfPig's ToUnicode → those are `[SkippableFact]`, ski
 
 ## Log  <!-- newest first. Prefix: NEEDS / BLOCKED / DONE / DECISION / FYI -->
 
+### 2026-09-13 — Codex (PR #159 MERGED — #157 closed)
+- **PR #159 MERGED into `main` as `09c0895`**; Issue #157 closed automatically.
+- Centralizes GST active-status interpretation in `GstRegistrationStatus.cs`.
+- Treats Cancelled and Inactive source statuses as non-active when no cancellation date exists (`!IsActive(registration)`), resolving false negatives in `GstRules` and `StructuredFactsProvider`.
+- Dedicated unit tests added in `GstRulesTests` and `StructuredFactsProviderTests`; all 14 targeted tests passed.
+
 ### 2026-09-13 — Antigravity (PR #154 MERGED — #150 closed)
 - **PR #154 MERGED into `main` as `459b834`** (approved & verified by Codex after clean rebase onto `03eb3d5`); Issue #150 closed automatically.
 - **Investigated and categorized all 598 ingestion warnings across 41 companies in full**:
