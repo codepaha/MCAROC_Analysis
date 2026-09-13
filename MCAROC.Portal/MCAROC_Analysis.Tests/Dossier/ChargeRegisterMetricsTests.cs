@@ -211,7 +211,7 @@ public class ChargeRegisterMetricsTests
         Assert.Equal("Charge register", group.Title);
         Assert.All(group.Metrics, m =>
         {
-            if (m.Label is "Joint / consortium charge count" or "Negative filing-lag anomalies")
+            if (m.Label is "Joint / consortium charge count" or "Negative filing-lag anomalies" or "Future-dated charge event anomalies")
             {
                 Assert.True(m.HasValue);
                 Assert.Equal(0m, m.Value);
@@ -386,5 +386,170 @@ public class ChargeRegisterMetricsTests
         var bGt90 = Assert.Single(group.Metrics, m => m.Label == "Charge filing lag >90 days");
         Assert.True(bGt90.HasValue);
         Assert.Equal(1m, bGt90.Value);
+    }
+
+    [Fact]
+    public void B12_no_dated_events_is_a_single_insufficient_metric()
+    {
+        var c1 = new RocCharge { ChargeId = 1, ChargeStatus = "Open", CurrentAmount = 10m };
+        c1.Events.Add(new RocChargeEvent { EventType = ChargeEventType.Creation, EventDate = null });
+        var model = CreateMinimalDossierWithCharges([c1]);
+
+        var group = DossierComputations.ChargeRegisterMetrics(model);
+
+        var activity = Assert.Single(group.Metrics, m => m.Label == "Charge activity by year");
+        Assert.False(activity.HasValue);
+        Assert.Contains("No Creation or Satisfaction events with a dated EventDate", activity.InsufficiencyReason);
+        Assert.DoesNotContain(group.Metrics, m => m.Label == "Charge event history coverage");
+        // A plain "Charges created in" prefix check would false-positive against B7's own
+        // "Charges created in last 12/24 months" labels, so match B12's specific "...in <year>" shape.
+        var yearRowPattern = new System.Text.RegularExpressions.Regex(@"^Charges (created|satisfied) in \d{4}$");
+        Assert.DoesNotContain(group.Metrics, m => yearRowPattern.IsMatch(m.Label));
+    }
+
+    [Fact]
+    public void B12_reports_per_year_counts_within_the_recent_5_year_window_and_a_range_coverage_note()
+    {
+        var asOf = new DateTime(2023, 6, 30, 0, 0, 0, DateTimeKind.Utc);
+
+        var c1 = new RocCharge { ChargeId = 1, ChargeStatus = "Open", CurrentAmount = 10m };
+        c1.Events.Add(new RocChargeEvent { EventType = ChargeEventType.Creation, EventDate = new DateOnly(2021, 3, 1) });
+        var c2 = new RocCharge { ChargeId = 2, ChargeStatus = "Open", CurrentAmount = 10m };
+        c2.Events.Add(new RocChargeEvent { EventType = ChargeEventType.Creation, EventDate = new DateOnly(2021, 9, 1) });
+        var c3 = new RocCharge { ChargeId = 3, ChargeStatus = "Satisfied", CurrentAmount = 10m };
+        c3.Events.Add(new RocChargeEvent { EventType = ChargeEventType.Satisfaction, EventDate = new DateOnly(2022, 5, 1) });
+
+        var model = CreateMinimalDossierWithCharges([c1, c2, c3], asOf: asOf);
+        var group = DossierComputations.ChargeRegisterMetrics(model);
+
+        // asOf 2023 -> recent window is 2019..2023, both years fall inside it, so no "before" rollup.
+        Assert.DoesNotContain(group.Metrics, m => m.Label.StartsWith("Charges created before"));
+        Assert.DoesNotContain(group.Metrics, m => m.Label.StartsWith("Charges satisfied before"));
+
+        var created2021 = Assert.Single(group.Metrics, m => m.Label == "Charges created in 2021");
+        Assert.True(created2021.HasValue);
+        Assert.Equal(2m, created2021.Value);
+        Assert.Equal(MetricUnit.Count, created2021.Unit);
+        Assert.Equal("2021", created2021.Period);
+
+        var satisfied2022 = Assert.Single(group.Metrics, m => m.Label == "Charges satisfied in 2022");
+        Assert.True(satisfied2022.HasValue);
+        Assert.Equal(1m, satisfied2022.Value);
+
+        // A year with no activity on one series still gets an explicit 0, not an omitted row.
+        var satisfied2021 = Assert.Single(group.Metrics, m => m.Label == "Charges satisfied in 2021");
+        Assert.True(satisfied2021.HasValue);
+        Assert.Equal(0m, satisfied2021.Value);
+
+        var coverage = Assert.Single(group.Metrics, m => m.Label == "Charge event history coverage");
+        Assert.True(coverage.HasValue);
+        Assert.Equal("2021–2022 (2 years)", coverage.DisplayValue());
+    }
+
+    [Fact]
+    public void B12_rolls_up_activity_older_than_the_recent_window_into_a_before_bucket()
+    {
+        var asOf = new DateTime(2023, 6, 30, 0, 0, 0, DateTimeKind.Utc);
+        // recentCutoff = 2023 - 4 = 2019, so 2015 falls outside the individually-reported window.
+        var c1 = new RocCharge { ChargeId = 1, ChargeStatus = "Open", CurrentAmount = 10m };
+        c1.Events.Add(new RocChargeEvent { EventType = ChargeEventType.Creation, EventDate = new DateOnly(2015, 1, 1) });
+        var c2 = new RocCharge { ChargeId = 2, ChargeStatus = "Satisfied", CurrentAmount = 10m };
+        c2.Events.Add(new RocChargeEvent { EventType = ChargeEventType.Satisfaction, EventDate = new DateOnly(2015, 6, 1) });
+        var c3 = new RocCharge { ChargeId = 3, ChargeStatus = "Open", CurrentAmount = 10m };
+        c3.Events.Add(new RocChargeEvent { EventType = ChargeEventType.Creation, EventDate = new DateOnly(2021, 1, 1) });
+
+        var model = CreateMinimalDossierWithCharges([c1, c2, c3], asOf: asOf);
+        var group = DossierComputations.ChargeRegisterMetrics(model);
+
+        var createdBefore = Assert.Single(group.Metrics, m => m.Label == "Charges created before 2019");
+        Assert.True(createdBefore.HasValue);
+        Assert.Equal(1m, createdBefore.Value);
+
+        var satisfiedBefore = Assert.Single(group.Metrics, m => m.Label == "Charges satisfied before 2019");
+        Assert.True(satisfiedBefore.HasValue);
+        Assert.Equal(1m, satisfiedBefore.Value);
+
+        // The recent-window loop starts at max(minYear, recentCutoff) = 2019, not at the true minYear
+        // (2015) - 2015/2015 events must not also appear as individually-labelled year rows.
+        Assert.DoesNotContain(group.Metrics, m => m.Label == "Charges created in 2015");
+        Assert.DoesNotContain(group.Metrics, m => m.Label == "Charges satisfied in 2015");
+
+        var created2021 = Assert.Single(group.Metrics, m => m.Label == "Charges created in 2021");
+        Assert.True(created2021.HasValue);
+        Assert.Equal(1m, created2021.Value);
+
+        var coverage = Assert.Single(group.Metrics, m => m.Label == "Charge event history coverage");
+        Assert.Equal("2015–2021 (7 years)", coverage.DisplayValue());
+    }
+
+    [Fact]
+    public void B12_single_year_of_history_reports_coverage_as_year_only()
+    {
+        var asOf = new DateTime(2023, 6, 30, 0, 0, 0, DateTimeKind.Utc);
+        var c1 = new RocCharge { ChargeId = 1, ChargeStatus = "Open", CurrentAmount = 10m };
+        c1.Events.Add(new RocChargeEvent { EventType = ChargeEventType.Creation, EventDate = new DateOnly(2023, 2, 1) });
+
+        var model = CreateMinimalDossierWithCharges([c1], asOf: asOf);
+        var group = DossierComputations.ChargeRegisterMetrics(model);
+
+        var coverage = Assert.Single(group.Metrics, m => m.Label == "Charge event history coverage");
+        Assert.Equal("2023 only", coverage.DisplayValue());
+    }
+
+    [Fact]
+    public void B12_future_dated_events_are_isolated_as_anomalies_and_never_expand_the_reported_window()
+    {
+        var asOf = new DateTime(2023, 6, 30, 0, 0, 0, DateTimeKind.Utc);
+
+        var c1 = new RocCharge { ChargeId = 1, ChargeStatus = "Open", CurrentAmount = 10m };
+        c1.Events.Add(new RocChargeEvent { EventType = ChargeEventType.Creation, EventDate = new DateOnly(2021, 1, 1) });
+        // Malformed/forward-dated data: a Creation event dated well beyond the as-of date.
+        var c2 = new RocCharge { ChargeId = 2, ChargeStatus = "Open", CurrentAmount = 10m };
+        c2.Events.Add(new RocChargeEvent { EventType = ChargeEventType.Creation, EventDate = new DateOnly(2099, 1, 1) });
+        var c3 = new RocCharge { ChargeId = 3, ChargeStatus = "Satisfied", CurrentAmount = 10m };
+        c3.Events.Add(new RocChargeEvent { EventType = ChargeEventType.Satisfaction, EventDate = new DateOnly(2050, 1, 1) });
+
+        var model = CreateMinimalDossierWithCharges([c1, c2, c3], asOf: asOf);
+        var group = DossierComputations.ChargeRegisterMetrics(model);
+
+        var anomalies = Assert.Single(group.Metrics, m => m.Label == "Future-dated charge event anomalies");
+        Assert.True(anomalies.HasValue);
+        Assert.Equal(2m, anomalies.Value); // one future Creation + one future Satisfaction
+
+        // The reported window/coverage must never reach 2099 or 2050 - only the in-range 2021 event counts.
+        var coverage = Assert.Single(group.Metrics, m => m.Label == "Charge event history coverage");
+        Assert.Equal("2021 only", coverage.DisplayValue());
+
+        Assert.DoesNotContain(group.Metrics, m => m.Label == "Charges created in 2099");
+        Assert.DoesNotContain(group.Metrics, m => m.Label == "Charges satisfied in 2050");
+        Assert.All(group.Metrics.Where(m => System.Text.RegularExpressions.Regex.IsMatch(m.Label, @"^Charges (created|satisfied) in (\d{4})$")),
+            m =>
+            {
+                var year = int.Parse(System.Text.RegularExpressions.Regex.Match(m.Label, @"\d{4}$").Value);
+                Assert.True(year <= asOf.Year, $"{m.Label} exceeds the as-of year");
+            });
+
+        var created2021 = Assert.Single(group.Metrics, m => m.Label == "Charges created in 2021");
+        Assert.True(created2021.HasValue);
+        Assert.Equal(1m, created2021.Value);
+    }
+
+    [Fact]
+    public void B12_only_future_dated_events_is_insufficient_not_a_future_coverage_range()
+    {
+        var asOf = new DateTime(2023, 6, 30, 0, 0, 0, DateTimeKind.Utc);
+        var c1 = new RocCharge { ChargeId = 1, ChargeStatus = "Open", CurrentAmount = 10m };
+        c1.Events.Add(new RocChargeEvent { EventType = ChargeEventType.Creation, EventDate = new DateOnly(2099, 1, 1) });
+
+        var model = CreateMinimalDossierWithCharges([c1], asOf: asOf);
+        var group = DossierComputations.ChargeRegisterMetrics(model);
+
+        var anomalies = Assert.Single(group.Metrics, m => m.Label == "Future-dated charge event anomalies");
+        Assert.Equal(1m, anomalies.Value);
+
+        var activity = Assert.Single(group.Metrics, m => m.Label == "Charge activity by year");
+        Assert.False(activity.HasValue);
+        Assert.DoesNotContain(group.Metrics, m => m.Label == "Charge event history coverage");
+        Assert.DoesNotContain(group.Metrics, m => m.Label == "Charges created in 2099");
     }
 }
