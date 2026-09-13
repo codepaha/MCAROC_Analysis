@@ -131,7 +131,7 @@ request, 2026-09-12) since this lane hadn't claimed them yet — remaining 6 sti
 |---|---|---|
 | #144 | analytics catalogue: confirm A1.x (source-reported ratios) + B12 (charge discharge velocity) — marked `"planned"` but their parent issues (#57, #56) are closed; either stale catalogue rows or a real gap | **CLOSED** (2026-09-13, by owner, right after B12/PR #149 merged) — B12 half done. A1.x's product decision was closed along with it without being resolved; **split out to #152** so it isn't lost |
 | #152 | A1.x follow-up (split from #144): dossier PDF gets only a generic fallback table for the 16 source-reported ratios, not the catalogued multi-year sparkline treatment | **Deferred entirely** (owner, 2026-09-13, revised) — the dossier PDF is getting a full redesign later (more calculations being added); building elaborate layout now risked being throwaway. No work scheduled until the redesign's scope is known |
-| #145 | portal never loads `dossier-tokens.css` — no proven visual parity between portal and PDF | **Owner decision: build real parity** (wire the portal to the shared palette, or generate both from one source). **CLAIMED by Antigravity** — branch `feature/145-portal-dossier-tokens-parity` |
+| #145 | portal never loads `dossier-tokens.css` — no proven visual parity between portal and PDF | **Owner decision: build real parity** (wire the portal to the shared palette, or generate both from one source). **PR #165 open / pending review** — branch `feature/145-portal-dossier-tokens-parity` |
 | #146 | two catalogue rows with no disposition: `GstRegistration.CancellationDate` (vestigial, G17) and Auditors' Comments detail columns (unparsed, G18) | **CLOSED** — both halves resolved/tracked. G17 → `dropped-by-design`, **MERGED** (PR #155, `0c0268d`; surfaced a real bug, fixed via **#157**/PR #159, `09c0895`); G18 → **split to #161** (scoped, unclaimed) |
 
 **Ad hoc, outside EPIC #31 (2026-09-13): correctness bug found while closing #146a, filed as #157.**
@@ -147,7 +147,7 @@ request, 2026-09-12) since this lane hadn't claimed them yet — remaining 6 sti
 
 ### Sequencing
 - Claude: D2/#57 **MERGED** → D4/#59 **MERGED** → K1/#98 **MERGED** → #97 **MERGED** → D10/#65 **MERGED** (`7f2cf1e`) → #47 (pre-login report ownership binding) **MERGED** (`f52f3cf`) → #142 (pre-login "My Reports" history) **MERGED** (PR #141, `965578e`) → #144/B12 (charge discharge velocity) **MERGED** (PR #149, `4be34db`) — Claude's lane empty pending a new assignment; #144 stays open for its A1.x half.
-- Antigravity: D6/#61 **MERGED** → D7/#62 **MERGED** → D8/#63 **MERGED** → D9/#64 **MERGED** (`e9e39e3`) → D11/#66 **MERGED** (`8213961`) → #107 **MERGED** (`7b74f11`) → #150 **MERGED** (`459b834`) → #145 (portal dossier token parity) **IN PROGRESS** (`feature/145-portal-dossier-tokens-parity`).
+- Antigravity: D6/#61 **MERGED** → D7/#62 **MERGED** → D8/#63 **MERGED** → D9/#64 **MERGED** (`e9e39e3`) → D11/#66 **MERGED** (`8213961`) → #107 **MERGED** (`7b74f11`) → #150 **MERGED** (`459b834`) → #145 (portal dossier token parity) **PR #165 open / pending review** (`feature/145-portal-dossier-tokens-parity`).
 
 
 ### Not in either lane (Codex or owner)
@@ -1784,6 +1784,6 @@ Linux subset fonts break PdfPig's ToUnicode → those are `[SkippableFact]`, ski
   3. Sanitized tab hash resolution against `KNOWN_TABS` and replaced querySelector string interpolations with safe attribute-equality iteration (`findTabButton`, `findSubtabButton`) to prevent selector injection / `DOMException`.
   4. Node test suite expanded (50/50 passing) and .NET tests passing.
   5. Rebased cleanly onto `origin/main` (`98816af`). Pushed to `feature/121-tab-contents-nav`. → **@codex** review.
-- **CLAIMED** #145: wiring `dossier-tokens.css` to portal `_Layout.cshtml` and mapping `app.css` tokens to the shared editorial palette (`--paper`, `--paper-raised`, `--ink`, `--ink-soft`, `--ink-faint`, `--maroon`, `--maroon-deep`, `--maroon-wash`, `--sage`, `--sage-wash`, `--amber`, `--amber-wash`, `--line`, `--line-soft`). Automated parity tests in `DossierThemeSyncTests.cs`. Branch `feature/145-portal-dossier-tokens-parity`.
+- **PR #165 OPEN / PENDING REVIEW** #145: wired `dossier-tokens.css` into `_Layout.cshtml` and `app.css`, mapped light theme `:root` design tokens to the shared editorial palette (`--paper`, `--paper-raised`, `--ink`, `--ink-soft`, `--ink-faint`, `--maroon`, `--maroon-deep`, `--maroon-wash`, `--sage`, `--sage-wash`, `--amber`, `--amber-wash`, `--line`, `--line-soft`), and extended `DossierThemeSyncTests.cs` to test the wiring and token mappings. Branch `feature/145-portal-dossier-tokens-parity`. → **@codex** review.
 
 
