@@ -4,6 +4,8 @@
 
 :root {
     --mca-topbar-h: 64px;
+    --mca-detail-head-h: 180px;
+    --mca-contents-nav-h: 56px;
 }
 
 /* ---------------------------------------------------------------------
@@ -159,6 +161,102 @@
     font-size: 10px;
     font-weight: 600;
 }
+
+/* Sticky contents navigation inside long tabs */
+.mca-contents-nav {
+    position: sticky;
+    top: calc(var(--mca-topbar-h) + var(--mca-detail-head-h));
+    z-index: 12;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin: 0 0 24px;
+    padding: 6px 14px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--r-md);
+    box-shadow: var(--shadow-xs);
+    backdrop-filter: blur(8px);
+}
+
+.mca-contents-label {
+    display: inline-flex;
+    align-items: center;
+    padding: 3px 8px;
+    border-radius: var(--r-xs);
+    background: var(--surface-2);
+    color: var(--muted);
+    font-family: var(--mono);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    user-select: none;
+    flex-shrink: 0;
+}
+
+.mca-contents-links {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+
+.mca-contents-links .nav-link {
+    display: inline-flex;
+    align-items: center;
+    padding: 5px 12px;
+    border-radius: var(--r-sm);
+    background: transparent;
+    color: var(--text-2);
+    font-size: 13px;
+    font-weight: 600;
+    text-decoration: none;
+    transition: background-color 0.15s ease, color 0.15s ease;
+    cursor: pointer;
+}
+
+.mca-contents-links .nav-link:hover:not(.active) {
+    color: var(--text);
+    background: var(--surface-2);
+}
+
+.mca-contents-links .nav-link.active {
+    background: var(--brand-soft);
+    color: var(--brand-strong);
+    font-weight: 700;
+}
+
+.mca-contents-links .nav-link .badge {
+    margin-left: 5px;
+    padding: 1px 6px;
+    border-radius: var(--r-pill);
+    background: var(--surface-3);
+    color: var(--muted);
+    font-size: 10px;
+    font-weight: 600;
+}
+
+.mca-contents-links .nav-link.active .badge {
+    background: var(--brand);
+    color: #fff;
+}
+
+/* Stacked contents sections within long tabs */
+.mca-contents-section {
+    scroll-margin-top: calc(var(--mca-topbar-h) + var(--mca-detail-head-h) + var(--mca-contents-nav-h) + 24px);
+    margin-bottom: 32px;
+}
+.mca-contents-section:last-child {
+    margin-bottom: 0;
+}
+.mca-contents-section:focus {
+    outline: none;
+}
+
 
 /* ---------------------------------------------------------------------
    Section blocks inside a tab pane

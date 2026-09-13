@@ -21,7 +21,9 @@
 }
 
 @* ─────────────────────────  Fixed company header + domain tabs  ───────────────────────── *@
-<div class="mca-detail-head">
+<div class="mca-detail-head" id="mcaDetailHead"
+     data-request-id="@r.RequestId"
+     data-focus-charge="@(Model.FocusChargeId?.ToString() ?? "")">
     <div class="mca-company-head">
         <div class="mca-company-id">
             <h1>@r.CompanyName</h1>
@@ -141,108 +143,6 @@
 
 @section Scripts {
     <script type="module" src="~/js/amount-unit.js"></script>
-    <script>
-        (function () {
-            var reqId = '@r.RequestId';
-            var tabKey = 'mca-v2-' + reqId + '-tab';
-            var secKey = function (domain) { return 'mca-v2-' + reqId + '-sec-' + domain; };
-            var focusCharge = '@(Model.FocusChargeId?.ToString() ?? "")';
-
-            function activate(btn) { if (btn) { try { new bootstrap.Tab(btn).show(); } catch (e) {} } }
-            function byTarget(scope, target) { return scope.querySelector('[data-bs-toggle="tab"][data-bs-target="' + target + '"]'); }
-
-            // ── deep-link hash: #tab-<domain> or #tab-<domain>/<section> ──
-            var hashDomain = null, hashSection = null;
-            if (location.hash && location.hash.indexOf('#tab-') === 0) {
-                var parts = location.hash.substring(5).split('/');
-                hashDomain = 'tab-' + parts[0];
-                if (parts[1]) hashSection = 'sec-' + parts[0] + '-' + parts[1];
-                try { history.replaceState(null, '', location.pathname + location.search); } catch (e) {}
-            }
-
-            // ── main tab ──
-            var mainTabs = document.querySelectorAll('#mcaTabs button[data-bs-toggle="tab"]');
-            var target = hashDomain ? ('#' + hashDomain) : null;
-            if (!target && focusCharge) target = '#tab-charges';
-            try { if (!target) target = sessionStorage.getItem(tabKey); } catch (e) {}
-            if (target) activate(document.querySelector('#mcaTabs button[data-bs-target="' + target + '"]'));
-            mainTabs.forEach(function (b) {
-                b.addEventListener('shown.bs.tab', function (e) {
-                    try { sessionStorage.setItem(tabKey, e.target.getAttribute('data-bs-target')); } catch (err) {}
-                });
-            });
-
-            // ── per-domain section sub-tabs ──
-            document.querySelectorAll('[data-mca-sections]').forEach(function (nav) {
-                var domain = nav.getAttribute('data-mca-sections');
-                var wanted = null;
-                if (hashSection && byTarget(nav, '#' + hashSection)) wanted = '#' + hashSection;
-                if (!wanted) { try { wanted = sessionStorage.getItem(secKey(domain)); } catch (e) {} }
-                if (wanted && byTarget(nav, wanted)) activate(byTarget(nav, wanted));
-                nav.querySelectorAll('button[data-bs-toggle="tab"]').forEach(function (b) {
-                    b.addEventListener('shown.bs.tab', function (e) {
-                        try { sessionStorage.setItem(secKey(domain), e.target.getAttribute('data-bs-target')); } catch (err) {}
-                    });
-                });
-            });
-
-            // ── Standalone / Consolidated (and similar) segmented toggles ──
-            document.querySelectorAll('[data-basis-group]').forEach(function (grp) {
-                var id = grp.getAttribute('data-basis-group');
-                grp.querySelectorAll('button[data-basis]').forEach(function (btn) {
-                    btn.addEventListener('click', function () {
-                        var basis = btn.getAttribute('data-basis');
-                        grp.querySelectorAll('button[data-basis]').forEach(function (b) { b.classList.toggle('active', b === btn); });
-                        document.querySelectorAll('[data-basis-panel="' + id + '"]').forEach(function (p) {
-                            p.hidden = p.getAttribute('data-basis') !== basis;
-                        });
-                    });
-                });
-            });
-
-            // ── ?charge=<id>: open the Charges tab, right section, expand the charge's holder group
-            //    (charges are now grouped by holder — #115), wait for that to finish opening, then
-            //    expand + scroll to the charge's own drawer. ──
-            if (focusCharge) {
-                var row = document.getElementById('charge-' + focusCharge);
-                if (row) {
-                    var inSatisfied = row.closest('#sec-charges-satisfied') !== null;
-                    var secBtn = document.querySelector('[data-mca-sections="charges"] button[data-bs-target="#sec-charges-' + (inSatisfied ? 'satisfied' : 'open') + '"]');
-                    activate(secBtn);
-
-                    var openChargeDrawer = function () {
-                        try { new bootstrap.Collapse(row, { show: true }); } catch (e) { row.classList.add('show'); }
-                        setTimeout(function () { row.scrollIntoView({ behavior: 'smooth', block: 'center' }); }, 250);
-                    };
-
-                    var holderGroup = row.closest('tbody.collapse');
-                    if (holderGroup && !holderGroup.classList.contains('show')) {
-                        holderGroup.addEventListener('shown.bs.collapse', openChargeDrawer, { once: true });
-                        try { new bootstrap.Collapse(holderGroup, { show: true }); }
-                        catch (e) { holderGroup.classList.add('show'); openChargeDrawer(); }
-                    } else {
-                        openChargeDrawer();
-                    }
-                }
-            }
-
-            // ── Documents tab: fetch-swap the paged filing list (progressive enhancement) ──
-            var panel = document.getElementById('mca-docs-panel');
-            if (panel) {
-                panel.addEventListener('click', function (e) {
-                    var a = e.target.closest('a');
-                    if (!a || !a.getAttribute('href')) return;
-                    var href = a.getAttribute('href');
-                    if (href.indexOf('/Requests/') === -1 || href.indexOf('/Documents') === -1) return;
-                    e.preventDefault();
-                    panel.classList.add('mca-loading');
-                    fetch(href, { headers: { 'X-Requested-With': 'fetch' } })
-                        .then(function (res) { return res.text(); })
-                        .then(function (html) { panel.innerHTML = html; panel.classList.remove('mca-loading'); })
-                        .catch(function () { panel.classList.remove('mca-loading'); window.location = href; });
-                });
-            }
-        })();
-    </script>
+    <script src="~/js/contents-nav.js" asp-append-version="true"></script>
     <script src="~/js/chat-panel.js" asp-append-version="true"></script>
 }

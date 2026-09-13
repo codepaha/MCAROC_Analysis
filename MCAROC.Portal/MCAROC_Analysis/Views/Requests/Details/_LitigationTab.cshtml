@@ -79,201 +79,205 @@
     }
 }
 
-<ul class="nav mca-subtabs" data-mca-sections="litigation" role="tablist">
-    <li class="nav-item" role="presentation">
-        <button class="nav-link active" data-bs-toggle="tab" data-bs-target="#sec-litigation-summary" type="button" role="tab">Summary</button>
-    </li>
-    <li class="nav-item" role="presentation">
-        <button class="nav-link" data-bs-toggle="tab" data-bs-target="#sec-litigation-confirmed" type="button" role="tab">
-            Confirmed <span class="badge">@confirmed.Count</span>
-        </button>
-    </li>
-    <li class="nav-item" role="presentation">
-        <button class="nav-link" data-bs-toggle="tab" data-bs-target="#sec-litigation-probable" type="button" role="tab">
-            Probable <span class="badge">@probable.Count</span>
-        </button>
-    </li>
-    <li class="nav-item" role="presentation">
-        <button class="nav-link" data-bs-toggle="tab" data-bs-target="#sec-litigation-unverified" type="button" role="tab">
-            Unverified <span class="badge">@unverified.Count</span>
-        </button>
-    </li>
-    <li class="nav-item" role="presentation">
-        <button class="nav-link" data-bs-toggle="tab" data-bs-target="#sec-litigation-financial-disputes" type="button" role="tab">
-            Financial Disputes <span class="badge">@Model.FinancialDisputeCases.Count</span>
-        </button>
-    </li>
-</ul>
+<nav class="mca-contents-nav" id="contents-nav-litigation" aria-label="Litigation contents">
+    <span class="mca-contents-label" aria-hidden="true">CONTENTS</span>
+    <ul class="nav mca-contents-links">
+        <li class="nav-item">
+            <a class="nav-link active" href="#sec-litigation-summary">Summary</a>
+        </li>
+        <li class="nav-item">
+            <a class="nav-link" href="#sec-litigation-confirmed">
+                Confirmed <span class="badge">@confirmed.Count</span>
+            </a>
+        </li>
+        <li class="nav-item">
+            <a class="nav-link" href="#sec-litigation-probable">
+                Probable <span class="badge">@probable.Count</span>
+            </a>
+        </li>
+        <li class="nav-item">
+            <a class="nav-link" href="#sec-litigation-unverified">
+                Unverified <span class="badge">@unverified.Count</span>
+            </a>
+        </li>
+        <li class="nav-item">
+            <a class="nav-link" href="#sec-litigation-financial-disputes">
+                Financial Disputes <span class="badge">@Model.FinancialDisputeCases.Count</span>
+            </a>
+        </li>
+    </ul>
+</nav>
 
-<div class="tab-content">
+<!-- 1. SUMMARY TAB -->
+<section class="mca-contents-section" id="sec-litigation-summary" aria-labelledby="head-litigation-summary" tabindex="-1">
+    <h3 id="head-litigation-summary">Summary</h3>
+    @if (Model.LitigationCount == 0)
+    {
+        <div class="mca-empty"><i class="bi bi-bank"></i><p>@Model.SheetCoverage.EmptyState("No litigation was matched to this entity.", SheetAliases.LegalHistory)</p></div>
+    }
+    else
+    {
+        <div class="mca-highlight-grid">
+            <div class="pi-metric">
+                <span>Total Litigations</span>
+                <strong>@Model.LitigationCount</strong>
+                <small>@confirmed.Count confirmed · @probable.Count probable · @unverified.Count unverified</small>
+            </div>
+            <div class="pi-metric">
+                <span>Confirmed Cases</span>
+                <strong>@confirmed.Count</strong>
+                <small>@confirmed.Count(IsPendingRow) pending · @confirmed.Count(l => !IsPendingRow(l)) disposed</small>
+            </div>
+            <div class="pi-metric">
+                <span>Filed Against Company</span>
+                <strong>@Model.LitigationFiledAgainstCount</strong>
+                <small>from Phase 3 rule attribution</small>
+            </div>
+            <div class="pi-metric">
+                <span>Filed By Company</span>
+                <strong>@Model.LitigationFiledByCount</strong>
+                <small>company as petitioner</small>
+            </div>
+        </div>
+    }
 
-    <!-- 1. SUMMARY TAB -->
-    <div class="tab-pane fade show active mca-subtab-panel" id="sec-litigation-summary" role="tabpanel">
-        @if (Model.LitigationCount == 0)
+    @await Html.PartialAsync("~/Views/Requests/Details/_KeyIndicators.cshtml", Model.KeyMetrics.Where(g => g.Title == "Legal history").ToList())
+
+    @if (Model.LitigationCount > 0)
+    {
+        @if (cats.Count > 0)
         {
-            <div class="mca-empty"><i class="bi bi-bank"></i><p>@Model.SheetCoverage.EmptyState("No litigation was matched to this entity.", SheetAliases.LegalHistory)</p></div>
-        }
-        else
-        {
-            <div class="mca-highlight-grid">
-                <div class="pi-metric">
-                    <span>Total Litigations</span>
-                    <strong>@Model.LitigationCount</strong>
-                    <small>@confirmed.Count confirmed · @probable.Count probable · @unverified.Count unverified</small>
-                </div>
-                <div class="pi-metric">
-                    <span>Confirmed Cases</span>
-                    <strong>@confirmed.Count</strong>
-                    <small>@confirmed.Count(IsPendingRow) pending · @confirmed.Count(l => !IsPendingRow(l)) disposed</small>
-                </div>
-                <div class="pi-metric">
-                    <span>Filed Against Company</span>
-                    <strong>@Model.LitigationFiledAgainstCount</strong>
-                    <small>from Phase 3 rule attribution</small>
-                </div>
-                <div class="pi-metric">
-                    <span>Filed By Company</span>
-                    <strong>@Model.LitigationFiledByCount</strong>
-                    <small>company as petitioner</small>
+            <div class="mca-section" style="margin-top:22px;">
+                <h4>By Category (Confirmed &amp; Probable)</h4>
+                <div class="pi-table-wrap">
+                    <table class="pi-results-table">
+                        <thead>
+                            <tr>
+                                <th>Category</th>
+                                <th class="text-end">Total Cases</th>
+                                <th class="text-end">Pending</th>
+                                <th class="text-end">Disposed</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                        @foreach (var g in cats)
+                        {
+                            var pending = g.Count(IsPendingRow);
+                            var disposed = g.Count() - pending;
+                            <tr>
+                                <td><strong>@g.Key</strong></td>
+                                <td class="text-end">@g.Count()</td>
+                                <td class="text-end">@pending</td>
+                                <td class="text-end">@disposed</td>
+                            </tr>
+                        }
+                        </tbody>
+                    </table>
                 </div>
             </div>
         }
+        <p class="text-muted mt-2 mb-0">Role is only assigned when a Phase 3 finding maps to that exact case; a company filing suit is not treated the same as a suit filed against it.</p>
+    }
+</section>
 
-        @await Html.PartialAsync("~/Views/Requests/Details/_KeyIndicators.cshtml", Model.KeyMetrics.Where(g => g.Title == "Legal history").ToList())
+<!-- 2. CONFIRMED CASES TAB -->
+<section class="mca-contents-section" id="sec-litigation-confirmed" aria-labelledby="head-litigation-confirmed" tabindex="-1">
+    <h3 id="head-litigation-confirmed">Confirmed Cases</h3>
+    @if (confirmed.Count > 0)
+    {
+        <div class="d-flex align-items-center justify-content-between mb-3">
+            <div>
+                <span class="badge bg-primary text-white me-2">@confirmed.Count Total</span>
+                <span class="badge bg-warning text-dark me-2">@confirmed.Count(IsPendingRow) Pending</span>
+                <span class="badge bg-success text-white">@confirmed.Count(l => !IsPendingRow(l)) Disposed</span>
+            </div>
+        </div>
+        RenderCasesTable(confirmed);
+    }
+    else
+    {
+        <div class="mca-empty"><i class="bi bi-bank"></i><p>@Model.SheetCoverage.EmptyState("No confirmed litigation records were found.", SheetAliases.LegalHistory)</p></div>
+    }
+</section>
 
-        @if (Model.LitigationCount > 0)
-        {
-            @if (cats.Count > 0)
+<!-- 3. PROBABLE CASES TAB -->
+<section class="mca-contents-section" id="sec-litigation-probable" aria-labelledby="head-litigation-probable" tabindex="-1">
+    <h3 id="head-litigation-probable">Probable Cases</h3>
+    <div class="alert alert-warning py-2 px-3 mb-3 d-flex align-items-center gap-2 small">
+        <i class="bi bi-exclamation-triangle-fill text-warning"></i>
+        <span><strong>Probable Match Notice:</strong> A name resembling the company appears as a party — spelling variants or multiple similarly-named entities; verify before relying on these.</span>
+    </div>
+    @if (probable.Count > 0)
+    {
+        <div class="d-flex align-items-center justify-content-between mb-3">
+            <div>
+                <span class="badge bg-secondary text-white me-2">@probable.Count Total</span>
+                <span class="badge bg-warning text-dark me-2">@probable.Count(IsPendingRow) Pending</span>
+                <span class="badge bg-success text-white">@probable.Count(l => !IsPendingRow(l)) Disposed</span>
+            </div>
+        </div>
+        RenderCasesTable(probable);
+    }
+    else
+    {
+        <div class="mca-empty"><i class="bi bi-bank"></i><p>@Model.SheetCoverage.EmptyState("No probable litigation matches were found.", SheetAliases.LegalHistory)</p></div>
+    }
+</section>
+
+<!-- 4. UNVERIFIED COURT RECORDS TAB -->
+<section class="mca-contents-section" id="sec-litigation-unverified" aria-labelledby="head-litigation-unverified" tabindex="-1">
+    <h3 id="head-litigation-unverified">Unverified Cases</h3>
+    <div class="alert alert-info py-2 px-3 mb-3 d-flex align-items-center gap-2 small">
+        <i class="bi bi-info-circle-fill text-info"></i>
+        <span><strong>Provisional Court Records:</strong> The court website could not be reached when this data was processed; these records are provisional.</span>
+    </div>
+    @if (unverified.Count > 0)
+    {
+        <div class="d-flex align-items-center justify-content-between mb-3">
+            <div>
+                <span class="badge bg-secondary text-white">@unverified.Count Provisional Records</span>
+            </div>
+        </div>
+        RenderCasesTable(unverified, isUnverified: true);
+    }
+    else
+    {
+        <div class="mca-empty"><i class="bi bi-bank"></i><p>@Model.SheetCoverage.EmptyState("No unverified court records were reported.", SheetAliases.LegalHistory)</p></div>
+    }
+</section>
+
+<!-- 5. FINANCIAL DISPUTES TAB -->
+<section class="mca-contents-section" id="sec-litigation-financial-disputes" aria-labelledby="head-litigation-financial-disputes" tabindex="-1">
+    <h3 id="head-litigation-financial-disputes">Financial Disputes</h3>
+    <p class="text-muted">Money-claim disputes with an amount under default — a separate register from Legal History above, not litigation role/status cases.</p>
+    @if (Model.FinancialDisputeCases.Count > 0)
+    {
+        <div class="pi-table-wrap"><table class="pi-results-table">
+            <thead><tr><th>Direction</th><th>Type</th><th class="text-end">Amount Under Default</th><th>Currency</th><th>Verdict</th><th>Court</th><th>Parties</th><th>Case No.</th><th>Date of Default</th><th>Date of Judgement</th></tr></thead>
+            <tbody>
+            @foreach (var fd in Model.FinancialDisputeCases)
             {
-                <div class="mca-section" style="margin-top:22px;">
-                    <h3>By Category (Confirmed &amp; Probable)</h3>
-                    <div class="pi-table-wrap">
-                        <table class="pi-results-table">
-                            <thead>
-                                <tr>
-                                    <th>Category</th>
-                                    <th class="text-end">Total Cases</th>
-                                    <th class="text-end">Pending</th>
-                                    <th class="text-end">Disposed</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                            @foreach (var g in cats)
-                            {
-                                var pending = g.Count(IsPendingRow);
-                                var disposed = g.Count() - pending;
-                                <tr>
-                                    <td><strong>@g.Key</strong></td>
-                                    <td class="text-end">@g.Count()</td>
-                                    <td class="text-end">@pending</td>
-                                    <td class="text-end">@disposed</td>
-                                </tr>
-                            }
-                            </tbody>
-                        </table>
-                    </div>
-                </div>
+                <tr>
+                    <td>@Or(fd.Direction)</td>
+                    <td>@Or(fd.DisputeType)</td>
+                    <td class="text-end"><strong>@Num(fd.AmountUnderDefault)</strong></td>
+                    <td>@Or(fd.Currency)</td>
+                    <td><strong>@Or(fd.Verdict)</strong></td>
+                    <td>@Or(fd.Court)</td>
+                    <td>@Or(fd.Litigants)</td>
+                    <td class="report-id">@Or(fd.CaseNumber)</td>
+                    <td>@D(fd.DateOfDefault)</td>
+                    <td>@D(fd.DateOfJudgement)</td>
+                </tr>
             }
-            <p class="text-muted mt-2 mb-0">Role is only assigned when a Phase 3 finding maps to that exact case; a company filing suit is not treated the same as a suit filed against it.</p>
-        }
-    </div>
-
-    <!-- 2. CONFIRMED CASES TAB -->
-    <div class="tab-pane fade mca-subtab-panel" id="sec-litigation-confirmed" role="tabpanel">
-        @if (confirmed.Count > 0)
-        {
-            <div class="d-flex align-items-center justify-content-between mb-3">
-                <div>
-                    <span class="badge bg-primary text-white me-2">@confirmed.Count Total</span>
-                    <span class="badge bg-warning text-dark me-2">@confirmed.Count(IsPendingRow) Pending</span>
-                    <span class="badge bg-success text-white">@confirmed.Count(l => !IsPendingRow(l)) Disposed</span>
-                </div>
-            </div>
-            RenderCasesTable(confirmed);
-        }
-        else
-        {
-            <div class="mca-empty"><i class="bi bi-bank"></i><p>@Model.SheetCoverage.EmptyState("No confirmed litigation records were found.", SheetAliases.LegalHistory)</p></div>
-        }
-    </div>
-
-    <!-- 3. PROBABLE CASES TAB -->
-    <div class="tab-pane fade mca-subtab-panel" id="sec-litigation-probable" role="tabpanel">
-        <div class="alert alert-warning py-2 px-3 mb-3 d-flex align-items-center gap-2 small">
-            <i class="bi bi-exclamation-triangle-fill text-warning"></i>
-            <span><strong>Probable Match Notice:</strong> A name resembling the company appears as a party — spelling variants or multiple similarly-named entities; verify before relying on these.</span>
-        </div>
-        @if (probable.Count > 0)
-        {
-            <div class="d-flex align-items-center justify-content-between mb-3">
-                <div>
-                    <span class="badge bg-secondary text-white me-2">@probable.Count Total</span>
-                    <span class="badge bg-warning text-dark me-2">@probable.Count(IsPendingRow) Pending</span>
-                    <span class="badge bg-success text-white">@probable.Count(l => !IsPendingRow(l)) Disposed</span>
-                </div>
-            </div>
-            RenderCasesTable(probable);
-        }
-        else
-        {
-            <div class="mca-empty"><i class="bi bi-bank"></i><p>@Model.SheetCoverage.EmptyState("No probable litigation matches were found.", SheetAliases.LegalHistory)</p></div>
-        }
-    </div>
-
-    <!-- 4. UNVERIFIED COURT RECORDS TAB -->
-    <div class="tab-pane fade mca-subtab-panel" id="sec-litigation-unverified" role="tabpanel">
-        <div class="alert alert-info py-2 px-3 mb-3 d-flex align-items-center gap-2 small">
-            <i class="bi bi-info-circle-fill text-info"></i>
-            <span><strong>Provisional Court Records:</strong> The court website could not be reached when this data was processed; these records are provisional.</span>
-        </div>
-        @if (unverified.Count > 0)
-        {
-            <div class="d-flex align-items-center justify-content-between mb-3">
-                <div>
-                    <span class="badge bg-secondary text-white">@unverified.Count Provisional Records</span>
-                </div>
-            </div>
-            RenderCasesTable(unverified, isUnverified: true);
-        }
-        else
-        {
-            <div class="mca-empty"><i class="bi bi-bank"></i><p>@Model.SheetCoverage.EmptyState("No unverified court records were reported.", SheetAliases.LegalHistory)</p></div>
-        }
-    </div>
-
-    <!-- 5. FINANCIAL DISPUTES TAB -->
-    <div class="tab-pane fade mca-subtab-panel" id="sec-litigation-financial-disputes" role="tabpanel">
-        <p class="text-muted">Money-claim disputes with an amount under default — a separate register from Legal History above, not litigation role/status cases.</p>
-        @if (Model.FinancialDisputeCases.Count > 0)
-        {
-            <div class="pi-table-wrap"><table class="pi-results-table">
-                <thead><tr><th>Direction</th><th>Type</th><th class="text-end">Amount Under Default</th><th>Currency</th><th>Verdict</th><th>Court</th><th>Parties</th><th>Case No.</th><th>Date of Default</th><th>Date of Judgement</th></tr></thead>
-                <tbody>
-                @foreach (var fd in Model.FinancialDisputeCases)
-                {
-                    <tr>
-                        <td>@Or(fd.Direction)</td>
-                        <td>@Or(fd.DisputeType)</td>
-                        <td class="text-end"><strong>@Num(fd.AmountUnderDefault)</strong></td>
-                        <td>@Or(fd.Currency)</td>
-                        <td><strong>@Or(fd.Verdict)</strong></td>
-                        <td>@Or(fd.Court)</td>
-                        <td>@Or(fd.Litigants)</td>
-                        <td class="report-id">@Or(fd.CaseNumber)</td>
-                        <td>@D(fd.DateOfDefault)</td>
-                        <td>@D(fd.DateOfJudgement)</td>
-                    </tr>
-                }
-                </tbody>
-            </table></div>
-        }
-        else
-        {
-            <div class="mca-empty"><i class="bi bi-bank"></i><p>@Model.SheetCoverage.EmptyState("No financial dispute cases were reported in this workbook.", SheetAliases.LegalCasesFinancialDispute)</p></div>
-        }
-    </div>
-
-</div>
+            </tbody>
+        </table></div>
+    }
+    else
+    {
+        <div class="mca-empty"><i class="bi bi-bank"></i><p>@Model.SheetCoverage.EmptyState("No financial dispute cases were reported in this workbook.", SheetAliases.LegalCasesFinancialDispute)</p></div>
+    }
+</section>
 
 @functions {
     static bool IsPendingRow(Litigation l)

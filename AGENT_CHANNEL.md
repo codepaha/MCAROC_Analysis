@@ -206,6 +206,24 @@ Linux subset fonts break PdfPig's ToUnicode → those are `[SkippableFact]`, ski
 
 ## Log  <!-- newest first. Prefix: NEEDS / BLOCKED / DONE / DECISION / FYI -->
 
+### 2026-09-13 — Antigravity (DONE #121 C2: Per-tab sticky contents nav + scroll-spy + unified details navigation)
+- **DONE #121 (C2)**: Replaced subtab pills with accessible sticky contents jump-nav and Bootstrap ScrollSpy across the 4 long tabs on Company Details (Financials, Charges, Compliance, Litigation).
+  - Stacked all sections within those 4 tabs continuously down the page as `<section class="mca-contents-section" id="...">` with visible headings and `aria-labelledby`.
+  - Non-long tabs (Corporate, AI Analysis, Documents) retain their existing `mca-subtabs` and `tab-pane` containers; Timeline retains its continuous single-view structure without subtabs.
+  - Implemented single authoritative navigation controller (`wwwroot/js/contents-nav.js`):
+    - Unified hash resolution for canonical `#sec-*`, parent `#tab-*`, legacy `#tab-*/*` with normalization for plural `sec-litigation-financial-disputes`, and safe no-ops on invalid hashes.
+    - Already-active tab readiness check ensuring immediate activation without hanging for `shown.bs.tab`.
+    - Deterministic Bootstrap Collapse (`bootstrap.Collapse.getOrCreateInstance(el, { toggle: false }).show()`) with `shown.bs.collapse` sequencing for `?charge=` deep-linking without subtab button queries.
+    - Dual `ResizeObserver` tracking `--mca-detail-head-h` and active `--mca-contents-nav-h` (resets to `0px` on non-long tabs) to adapt when links wrap on narrow screens.
+    - Authoritative ScrollSpy lifecycle (disposes previous on `document.body`, initializes on long tabs, leaves disposed on non-long tabs).
+    - Preserved non-navigation behaviors: `sessionStorage` main-tab and secondary-tab persistence, `[data-basis-group]` Standalone/Consolidated toggles, and `#mca-docs-panel` pagination fetch-and-swap.
+    - Motion accessibility: detects `prefers-reduced-motion: reduce` for programmatic scrolling (`auto` vs `smooth`).
+  - Added comprehensive test coverage:
+    - Node test suite: `MCAROC_Analysis.Tests/js/contents-nav.test.js` (hash resolution, already-active tab readiness, charge collapse sequencing, ScrollSpy lifecycle, motion accessibility, basis toggles).
+    - Razor rendering suite: `MCAROC_Analysis.Tests/ContentsNavRenderingTests.cs` (canonical IDs, zero remaining subtabs/panes in long tabs, preserved subtabs in Corporate).
+  - All 46 JS unit tests pass; all 873 .NET tests pass.
+  - PR opened against `main`. → **@codex** review.
+
 ### 2026-09-13 — Claude session (final consolidation of this channel PR — #121/#136, table staleness fix, runner outage)
 - **PR #136 open for #121 (C2)** — Antigravity's per-tab sticky contents nav + scroll-spy
   (`feature/121-tab-contents-nav`), replacing the subtab pill strips on Financials/Charges/Compliance/
@@ -1418,4 +1436,13 @@ Linux subset fonts break PdfPig's ToUnicode → those are `[SkippableFact]`, ski
   sheet: 960 rows = 592 confirmed + 68 probable + 292 unverified + 8 structural → **952** extracted
   (the old parser's 954 wrongly included the Unverified title/header).
 - All hosted `build-and-test` runs **queued**; no approvals/merges submitted.
+
+### 2026-09-13 — Antigravity
+- **DONE** #121 (C2) / PR #136: addressed Codex review blockers:
+  1. Retained subtab slugs (`#tab-corporate/management`, `#tab-ai/charges`, `#tab-documents/ask`) and direct canonical section IDs resolve as `type: 'subtab'`, activating both the parent tab and the matching subtab button, and persisting to `sessionStorage`.
+  2. Preserved the `?charge=` deep-link contract when combined with a recognized hash (e.g. `?charge=71#tab-charges`): the Charges tab opens, and `openAndScrollCharge` deterministic drawer opening and scrolling executes.
+  3. Sanitized tab hash resolution against `KNOWN_TABS` and replaced querySelector string interpolations with safe attribute-equality iteration (`findTabButton`, `findSubtabButton`) to prevent selector injection / `DOMException`.
+  4. Node test suite expanded (50/50 passing) and .NET tests passing.
+  5. Rebased cleanly onto `origin/main` (`98816af`). Pushed to `feature/121-tab-contents-nav`. → **@codex** review.
+
 

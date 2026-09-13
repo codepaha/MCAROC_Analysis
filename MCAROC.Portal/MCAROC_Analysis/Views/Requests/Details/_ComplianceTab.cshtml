@@ -134,22 +134,24 @@
     }
 }
 
-<ul class="nav mca-subtabs" data-mca-sections="compliance" role="tablist">
-    @for (var i = 0; i < sections.Length; i++)
-    {
-        var s = sections[i];
-        <li class="nav-item" role="presentation">
-            <button class="nav-link @(i == 0 ? "active" : "")" data-bs-toggle="tab" data-bs-target="#sec-compliance-@s.Id" type="button" role="tab">
-                @s.Label @if (s.Count is { } c) { <span class="badge">@c</span> }
-            </button>
-        </li>
-    }
-</ul>
+<nav class="mca-contents-nav" id="contents-nav-compliance" aria-label="Compliance contents">
+    <span class="mca-contents-label" aria-hidden="true">CONTENTS</span>
+    <ul class="nav mca-contents-links">
+        @for (var i = 0; i < sections.Length; i++)
+        {
+            var s = sections[i];
+            <li class="nav-item">
+                <a class="nav-link @(i == 0 ? "active" : "")" href="#sec-compliance-@s.Id">
+                    @s.Label @if (s.Count is { } c) { <span class="badge">@c</span> }
+                </a>
+            </li>
+        }
+    </ul>
+</nav>
 
-<div class="tab-content">
-
-    @* ── MCA / Regulatory & CIBIL Suit-Filed ── *@
-    <div class="tab-pane fade show active mca-subtab-panel" id="sec-compliance-mca" role="tabpanel">
+@* ── MCA / Regulatory & CIBIL Suit-Filed ── *@
+<section class="mca-contents-section" id="sec-compliance-mca" aria-labelledby="head-compliance-mca" tabindex="-1">
+    <h3 id="head-compliance-mca">MCA / Regulatory</h3>
         @if (Model.CompanyProfile?.ComplianceStatus is { } cs)
         {
             <p class="mb-3"><span class="mca-finding-label">MCA compliance status (source):</span> @cs</p>
@@ -318,10 +320,11 @@
         {
             <div class="mca-empty"><i class="bi bi-shield-check"></i><p>@Model.SheetCoverage.EmptyState("No MCA / regulatory compliance events (name removal, BIFR, CDR, suit-filed) were reported in this workbook.", SheetAliases.Compliance)</p></div>
         }
-    </div>
+</section>
 
-    @* ── GST ── *@
-    <div class="tab-pane fade mca-subtab-panel" id="sec-compliance-gst" role="tabpanel">
+@* ── GST ── *@
+<section class="mca-contents-section" id="sec-compliance-gst" aria-labelledby="head-compliance-gst" tabindex="-1">
+    <h3 id="head-compliance-gst">GST</h3>
         <div class="mca-section">
             <h3>Registrations <span class="mca-count">@Model.GstRegistrations.Count</span></h3>
             @if (Model.GstRegistrations.Count > 0)
@@ -398,10 +401,11 @@
         }
 
         @await Html.PartialAsync("~/Views/Requests/Details/_KeyIndicators.cshtml", Model.KeyMetrics.Where(g => g.Title == "GST compliance").ToList())
-    </div>
+</section>
 
-    @* ── EPFO ── *@
-    <div class="tab-pane fade mca-subtab-panel" id="sec-compliance-epfo" role="tabpanel">
+@* ── EPFO ── *@
+<section class="mca-contents-section" id="sec-compliance-epfo" aria-labelledby="head-compliance-epfo" tabindex="-1">
+    <h3 id="head-compliance-epfo">EPFO</h3>
         @{
             // A card per establishment id present in EITHER the "EPFO Establishments" summary metadata
             // OR the monthly "Annexure - EPFO Establishments" — an upload with only one of the two sheets
@@ -533,10 +537,11 @@
             Model.KeyMetrics.Where(g => g.Title == "EPFO / labour")
                 .Select(g => new MCAROC_Analysis.Models.Dossier.MetricGroup(g.Title, g.Metrics.Where(m => m.Label != "Revenue per EPFO employee").ToList()))
                 .Where(g => g.HasAny).ToList())
-    </div>
+</section>
 
-    @* ── MSME ── *@
-    <div class="tab-pane fade mca-subtab-panel" id="sec-compliance-msme" role="tabpanel">
+@* ── MSME ── *@
+<section class="mca-contents-section" id="sec-compliance-msme" aria-labelledby="head-compliance-msme" tabindex="-1">
+    <h3 id="head-compliance-msme">MSME</h3>
         @if (Model.MsmePayments.Count > 0)
         {
             var total = Model.MsmePayments.Sum(m => m.AmountDueCrore ?? 0m);
@@ -553,10 +558,11 @@
             <p class="text-muted mt-2 mb-0">MSME dues feed the Phase 3 supplier-payment-pressure logic — surfaced separately, not buried under general compliance.</p>
         }
         else { <div class="mca-empty"><i class="bi bi-truck"></i><p>@Model.SheetCoverage.EmptyState("No outstanding MSME supplier dues were reported.", SheetAliases.Msme)</p></div> }
-    </div>
+</section>
 
-    @* ── Auditor ── *@
-    <div class="tab-pane fade mca-subtab-panel" id="sec-compliance-auditor" role="tabpanel">
+@* ── Auditor ── *@
+<section class="mca-contents-section" id="sec-compliance-auditor" aria-labelledby="head-compliance-auditor" tabindex="-1">
+    <h3 id="head-compliance-auditor">Auditor Observations</h3>
         @if (Model.AuditorObservations.Count > 0)
         {
             if (con.Count > 0)
@@ -574,57 +580,56 @@
             }
         }
         else { <div class="mca-empty"><i class="bi bi-clipboard-check"></i><p>@Model.SheetCoverage.EmptyState("No auditor observations were extracted.", SheetAliases.Auditors, SheetAliases.AuditorsConsolidated)</p></div> }
-    </div>
+</section>
 
-    @* ── Credit Ratings ── *@
-    <div class="tab-pane fade mca-subtab-panel" id="sec-compliance-credit-ratings" role="tabpanel">
-        @{ var accepted = Model.CreditRatings.Where(c => c.IsAccepted).ToList(); var unaccepted = Model.CreditRatings.Where(c => !c.IsAccepted).ToList(); }
-        @if (Model.CreditRatings.Count > 0)
+@* ── Credit Ratings ── *@
+<section class="mca-contents-section" id="sec-compliance-credit-ratings" aria-labelledby="head-compliance-credit-ratings" tabindex="-1">
+    <h3 id="head-compliance-credit-ratings">Credit Ratings</h3>
+    @{ var accepted = Model.CreditRatings.Where(c => c.IsAccepted).ToList(); var unaccepted = Model.CreditRatings.Where(c => !c.IsAccepted).ToList(); }
+    @if (Model.CreditRatings.Count > 0)
+    {
+        @if (accepted.Count > 0)
         {
-            @if (accepted.Count > 0)
-            {
-                <div class="mca-section">
-                    <h3>Ratings <span class="mca-count">@accepted.Count</span></h3>
-                    <div class="pi-table-wrap"><table class="pi-results-table">
-                        <thead><tr><th>Agency</th><th>Date</th><th>Instrument</th><th class="text-end">Amount</th><th>Currency</th><th>Rating</th><th>Action</th><th>Outlook</th><th>Remarks</th></tr></thead>
-                        <tbody>
-                        @foreach (var c in accepted.OrderByDescending(x => x.RatingDate))
-                        {
-                            <tr>
-                                <td>@c.Agency</td><td>@D(c.RatingDate)</td><td>@Or(c.Instrument)</td>
-                                <td class="text-end">@Num(c.Amount)</td><td>@Or(c.Currency)</td>
-                                <td>@Or(c.Rating)</td><td>@Or(c.Action)</td><td>@Or(c.Outlook)</td><td>@Or(c.Remarks)</td>
-                            </tr>
-                        }
-                        </tbody>
-                    </table></div>
-                </div>
-            }
-            @if (unaccepted.Count > 0)
-            {
-                <div class="mca-section">
-                    <h3>Unaccepted Ratings <span class="mca-count">@unaccepted.Count</span></h3>
-                    <p class="text-muted">The issuer did not accept or participate in these rating exercises.</p>
-                    <div class="pi-table-wrap"><table class="pi-results-table">
-                        <thead><tr><th>Agency</th><th>Instrument</th><th class="text-end">Amount</th><th>Currency</th><th>Rating</th><th>Date of Non-Acceptance</th><th>Remarks</th></tr></thead>
-                        <tbody>
-                        @foreach (var c in unaccepted.OrderByDescending(x => x.RatingDate))
-                        {
-                            <tr>
-                                <td>@c.Agency</td><td>@Or(c.Instrument)</td>
-                                <td class="text-end">@Num(c.Amount)</td><td>@Or(c.Currency)</td>
-                                <td>@Or(c.Rating)</td><td>@D(c.RatingDate)</td><td>@Or(c.Remarks)</td>
-                            </tr>
-                        }
-                        </tbody>
-                    </table></div>
-                </div>
-            }
+            <div class="mca-section">
+                <h4>Ratings <span class="mca-count">@accepted.Count</span></h4>
+                <div class="pi-table-wrap"><table class="pi-results-table">
+                    <thead><tr><th>Agency</th><th>Date</th><th>Instrument</th><th class="text-end">Amount</th><th>Currency</th><th>Rating</th><th>Action</th><th>Outlook</th><th>Remarks</th></tr></thead>
+                    <tbody>
+                    @foreach (var c in accepted.OrderByDescending(x => x.RatingDate))
+                    {
+                        <tr>
+                            <td>@c.Agency</td><td>@D(c.RatingDate)</td><td>@Or(c.Instrument)</td>
+                            <td class="text-end">@Num(c.Amount)</td><td>@Or(c.Currency)</td>
+                            <td>@Or(c.Rating)</td><td>@Or(c.Action)</td><td>@Or(c.Outlook)</td><td>@Or(c.Remarks)</td>
+                        </tr>
+                    }
+                    </tbody>
+                </table></div>
+            </div>
         }
-        else { <div class="mca-empty"><i class="bi bi-award"></i><p>@Model.SheetCoverage.EmptyState("No credit rating history was reported in this workbook.", SheetAliases.CreditRatings, SheetAliases.UnacceptedRatings)</p></div> }
+        @if (unaccepted.Count > 0)
+        {
+            <div class="mca-section">
+                <h4>Unaccepted Ratings <span class="mca-count">@unaccepted.Count</span></h4>
+                <p class="text-muted">The issuer did not accept or participate in these rating exercises.</p>
+                <div class="pi-table-wrap"><table class="pi-results-table">
+                    <thead><tr><th>Agency</th><th>Instrument</th><th class="text-end">Amount</th><th>Currency</th><th>Rating</th><th>Date of Non-Acceptance</th><th>Remarks</th></tr></thead>
+                    <tbody>
+                    @foreach (var c in unaccepted.OrderByDescending(x => x.RatingDate))
+                    {
+                        <tr>
+                            <td>@c.Agency</td><td>@Or(c.Instrument)</td>
+                            <td class="text-end">@Num(c.Amount)</td><td>@Or(c.Currency)</td>
+                            <td>@Or(c.Rating)</td><td>@D(c.RatingDate)</td><td>@Or(c.Remarks)</td>
+                        </tr>
+                    }
+                    </tbody>
+                </table></div>
+            </div>
+        }
+    }
+    else { <div class="mca-empty"><i class="bi bi-award"></i><p>@Model.SheetCoverage.EmptyState("No credit rating history was reported in this workbook.", SheetAliases.CreditRatings, SheetAliases.UnacceptedRatings)</p></div> }
 
-        @await Html.PartialAsync("~/Views/Requests/Details/_KeyIndicators.cshtml",
-            Model.KeyMetrics.Where(g => g.Title == "Credit ratings").ToList())
-    </div>
-
-</div>
+    @await Html.PartialAsync("~/Views/Requests/Details/_KeyIndicators.cshtml",
+        Model.KeyMetrics.Where(g => g.Title == "Credit ratings").ToList())
+</section>
