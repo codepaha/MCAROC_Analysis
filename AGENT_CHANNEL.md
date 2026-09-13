@@ -146,7 +146,7 @@ request, 2026-09-12) since this lane hadn't claimed them yet — remaining 6 sti
 | #150 | 598 unexamined ingestion warnings from a real 41-company batch run — reported as "0 Errors" without categorizing what the warnings actually are | **MERGED** (`459b834`, PR #154) — closed |
 
 ### Sequencing
-- Claude: D2/#57 **MERGED** → D4/#59 **MERGED** → K1/#98 **MERGED** → #97 **MERGED** → D10/#65 **MERGED** (`7f2cf1e`) → #47 (pre-login report ownership binding) **MERGED** (`f52f3cf`) → #142 (pre-login "My Reports" history) **MERGED** (PR #141, `965578e`) → #144/B12 (charge discharge velocity) **MERGED** (PR #149, `4be34db`) → #161/G18 (Auditors' Comments detail-table columns) **MERGED** (PR #166, `7786be4`) → **#164 (calculation assurance) — owner decisions resolved, plan approved, PR1 (entities + migration + ledger persistence) PR #170 open** (see Log above); #144 stays open for its A1.x half.
+- Claude: D2/#57 **MERGED** → D4/#59 **MERGED** → K1/#98 **MERGED** → #97 **MERGED** → D10/#65 **MERGED** (`7f2cf1e`) → #47 (pre-login report ownership binding) **MERGED** (`f52f3cf`) → #142 (pre-login "My Reports" history) **MERGED** (PR #141, `965578e`) → #144/B12 (charge discharge velocity) **MERGED** (PR #149, `4be34db`) → #161/G18 (Auditors' Comments detail-table columns) **MERGED** (PR #166, `7786be4`) → **#164 (calculation assurance) — PR1 #170 open (review round 3 fixes pushed), PR2 #171 open (deterministic checks, stacked on #170's branch)** (see Log above); #144 stays open for its A1.x half.
 - Antigravity: D6/#61 **MERGED** → D7/#62 **MERGED** → D8/#63 **MERGED** → D9/#64 **MERGED** (`e9e39e3`) → D11/#66 **MERGED** (`8213961`) → #107 **MERGED** (`7b74f11`) → #150 **MERGED** (`459b834`) → #145 **MERGED** (`b563072`, PR #165) — Antigravity's lane clear!
 
 
@@ -289,6 +289,26 @@ Linux subset fonts break PdfPig's ToUnicode → those are `[SkippableFact]`, ski
   reviewer's own framing, CI-green has never been treated as equivalent to review-complete on this feature,
   and round 5 just proved that instinct right again. PR3 stays paused per the standing decision; #171 still
   needs its own rebase-onto-`main` + independent re-review once #170 actually merges.
+
+### 2026-09-13 — Claude session (PR #171 open — #164 PR2, deterministic checks + auto-hold creation)
+- **PR #171 open** (`feature/164-deterministic-checks` → `feature/164-calculation-assurance`, i.e. stacked
+  on PR1/#170 rather than `main` — #170 hasn't merged yet, and PR2's checks need PR1's ledger schema).
+  Built the deterministic check registry (`Services/CalculationAssurance/Checks/`) covering the 3
+  MetricGroups PR1 ledgers (YoY trend, capital reconciliation ×2 checks, charge/lender totals) plus 2
+  cross-cutting guards (provenance completeness, data-sufficiency), and `CalculationCheckRunnerService`
+  which persists results and auto-creates a Confirmed `CalculationDiscrepancy` (+ an active
+  `CalculationArtifactHold` for Critical/Material) for any Triggered outcome — wired into
+  `AnalysisOrchestrator` right after ledger persistence, same pre-AI/try-catch placement PR1's review
+  settled.
+- Extracted `CalculationKeySlug`/`CalculationAssuranceConfig` as shared helpers while building this (folded
+  into PR1/#170 directly, since both ledger persistence and these checks need to compute the exact same
+  calculation key and parse the same mode flag) — no drift risk between the two PRs' key-generation logic.
+- 19 new tests (per-check matrices, unit-level — no DB — plus an integration test proving a clean seeded
+  run creates zero holds and a forced Critical mismatch creates exactly one active hold citing the right
+  discrepancy). Full `Dossier`/`Analysis`/`Calculation` regression sweep: 1041 passed, 19 skipped
+  (unchanged).
+- Claude's lane continues to PR3 (AI worker) next, per the plan's 5-PR sequencing
+  (`curious-launching-cupcake.md`) — PR1 and PR2 are both awaiting `@codex` review.
 
 ### 2026-09-13 — Claude session (PR #170 changes requested — 3 real bugs, all fixed in `fe13d23`)
 - **PR #170's own reviewer caught 3 correctness bugs review rounds 1-2 (design-level) had missed**,
