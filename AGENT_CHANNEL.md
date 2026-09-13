@@ -126,6 +126,13 @@ request, 2026-09-12) since this lane hadn't claimed them yet — remaining 6 sti
 |---|---|---|
 | #142 | pre-login reports have no way to find a report again after leaving the page — client-remembered "My Reports" (localStorage-only, no server-side listing, keeps #47's IDOR fix intact) | **MERGED** (PR #141, `965578e`) — one review round fixed (ineffective JSON-island test) |
 
+**Ad hoc, outside EPIC #31 (2026-09-13): post-EPIC gap audit, filed as #144–#146. Unclaimed.**
+| Issue | What | Status |
+|---|---|---|
+| #144 | analytics catalogue: confirm A1.x (source-reported ratios) + B12 (charge discharge velocity) — marked `"planned"` but their parent issues (#57, #56) are closed; either stale catalogue rows or a real gap | open, unclaimed |
+| #145 | portal never loads `dossier-tokens.css` — `DossierThemeSyncTests` proves the C# constants match a CSS file the browser never fetches, not that the live portal and PDF actually share a palette | open, unclaimed — product-decision, low urgency |
+| #146 | two catalogue rows with no disposition: `GstRegistration.CancellationDate` (vestigial, G17) and Auditors' Comments detail columns (unparsed, G18) — need an owner call: scope as real work, or mark `dropped-by-design` | open, unclaimed |
+
 ### Sequencing
 - Claude: D2/#57 **MERGED** → D4/#59 **MERGED** → K1/#98 **MERGED** → #97 **MERGED** → D10/#65 **MERGED** (`7f2cf1e`) → #47 (pre-login report ownership binding) **MERGED** (`f52f3cf`) → #142 (pre-login "My Reports" history) **MERGED** (PR #141, `965578e`) — Claude's lane empty pending a new assignment.
 - Antigravity: D6/#61 **MERGED** → D7/#62 **MERGED** → D8/#63 **MERGED** → D9/#64 **MERGED** (`e9e39e3`) → D11/#66 **MERGED** (`8213961`) → #107 **MERGED** (`7b74f11`) — Antigravity's render-audit lane complete!
@@ -188,12 +195,15 @@ Catalogue G1, G3, G4, G5 → DONE.
 
 **Degenerate-data audit (2026-09-10):** ingestion + views + calcs handle no-charge-report /
 no-documents / fewer-sheets cleanly (sheet null-guards, empty states, `MetricResult.Insufficient`).
-Two gaps filed: **#74 D12** (surface `DataSufficiencyNotes` — done, #76) and **#75 A11** (distinguish
-"sheet absent" from "sheet present, zero" + a charge-report-missing prompt — open, Claude lane).
+Two gaps filed, **both DONE**: **#74 D12** (surface `DataSufficiencyNotes` — #76, merged) and **#75
+A11** (distinguish "sheet absent" from "sheet present, zero" — closed 2026-09-10, shipped as
+`SheetCoverage`/`WasAbsent`/`TrackedOptionalSheets`, covered by `SourceReconciliationTests.cs`). This
+board had drifted — corrected 2026-09-13 during a post-EPIC audit.
 
-**Owner TODO (still open):** apply migrations locally before running the portal —
-`AddPreLoginReportJobs` (#45), `AddCompanyIdentityAndContact` (#48), `AddShareholdingPattern` (#49).
-Rebuild the local `demo-coastal` (now: merged `main` + a re-ingest).
+**Owner TODO migration notes below this line are historical** (2026-09-10 and earlier) — dozens of PRs
+since have shipped against that exact schema (e.g. everything catalogued `live` under G1/G3/G4/G5,
+Company Identity, Shareholding), so those migrations are self-evidently applied. Not re-verified line by
+line; flagging so nobody re-reads this as current-state.
 
 **Infra note (2026-09-10, updated):** CI now runs the **full suite on GitHub-hosted `ubuntu-latest`**
 (`build-and-test` job) against a **SQL Server 2025 service container** (`mcr.microsoft.com/mssql/
@@ -211,6 +221,31 @@ Linux subset fonts break PdfPig's ToUnicode → those are `[SkippableFact]`, ski
 ---
 
 ## Log  <!-- newest first. Prefix: NEEDS / BLOCKED / DONE / DECISION / FYI -->
+
+### 2026-09-13 — Claude session (post-EPIC #31 gap audit — filed #144/#145/#146, fixed a stale board)
+- **Owner asked for an audit** of what else might be worth fixing now that EPIC #31 is fully closed.
+  Covered 3 angles: catalogue completeness (`data-coverage-catalogue.json` /
+  `analytics-catalogue.json`), a security re-check for anything shaped like #47 (a second unscoped
+  listing endpoint, a second JSON-island script-breakout risk), and loose ends already called out
+  in-repo (TODOs, this channel's own Status board).
+- **No new #47-shaped security gap found**: `[AllowAnonymous]` appears exactly once repo-wide
+  (`PreLoginReportsController`), every other listing query is properly scoped, and the JSON island added
+  for #142 is the only one in the app — no relaxed `JavaScriptEncoder` used anywhere.
+- **Filed 3 follow-ups, all unclaimed**: **#144** (2 analytics-catalogue rows marked `"planned"` under
+  already-closed parent issues — stale row or real gap, needs a check), **#145** (portal never actually
+  loads `dossier-tokens.css` — the sync test proves internal C#/CSS-file consistency, not real portal/PDF
+  visual parity — product decision, low urgency), **#146** (2 catalogue rows with no disposition:
+  vestigial `GstRegistration.CancellationDate` and unparsed Auditors' Comments columns — needs an owner
+  call on scope vs. `dropped-by-design`).
+- **Fixed a stale board entry directly** (not worth a separate issue): this file's own "Status board"
+  said **#75 (A11)** was still "open, Claude lane" — it's actually been `CLOSED` since 2026-09-10 and
+  shipped (`SheetCoverage`/`WasAbsent`/`TrackedOptionalSheets`, tested in
+  `SourceReconciliationTests.cs`). Also flagged (without individually re-verifying) that the "Owner
+  TODO: apply migrations locally" notes dated 2026-09-10 and earlier are self-evidently obsolete —
+  dozens of PRs have since shipped against that exact schema.
+- Confirmed via `gh issue list --state open` / `gh pr list --state open`: before this audit's 3 new
+  filings, the repo genuinely had zero open issues and zero open PRs — the "everything's done" read was
+  accurate, this audit's findings are all *new*, not previously-tracked-and-forgotten work.
 
 ### 2026-09-13 — Claude session (CLOSED EPIC #31)
 - Owner asked whether #31 was resolved. Its own body had said "EPIC #31 is complete" since Wave 3
