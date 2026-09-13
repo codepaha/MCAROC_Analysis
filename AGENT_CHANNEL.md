@@ -124,10 +124,10 @@ request, 2026-09-12) since this lane hadn't claimed them yet — remaining 6 sti
 **Ad hoc, outside EPIC #31 (2026-09-13): owner-reported gap, filed as #142.**
 | Issue | What | Status |
 |---|---|---|
-| #142 | pre-login reports have no way to find a report again after leaving the page — client-remembered "My Reports" (localStorage-only, no server-side listing, keeps #47's IDOR fix intact) | **PR #141 open** (`aaf3031`) — review round 1 fixed (ineffective JSON-island test), → @codex re-review |
+| #142 | pre-login reports have no way to find a report again after leaving the page — client-remembered "My Reports" (localStorage-only, no server-side listing, keeps #47's IDOR fix intact) | **MERGED** (PR #141, `965578e`) — one review round fixed (ineffective JSON-island test) |
 
 ### Sequencing
-- Claude: D2/#57 **MERGED** → D4/#59 **MERGED** → K1/#98 **MERGED** → #97 **MERGED** → D10/#65 **MERGED** (`7f2cf1e`) → #47 (pre-login report ownership binding) **MERGED** (`f52f3cf`) → #142 (pre-login "My Reports" history) **PR #141 open** (`aaf3031`, review round 1 fixed).
+- Claude: D2/#57 **MERGED** → D4/#59 **MERGED** → K1/#98 **MERGED** → #97 **MERGED** → D10/#65 **MERGED** (`7f2cf1e`) → #47 (pre-login report ownership binding) **MERGED** (`f52f3cf`) → #142 (pre-login "My Reports" history) **MERGED** (PR #141, `965578e`) — Claude's lane empty pending a new assignment.
 - Antigravity: D6/#61 **MERGED** → D7/#62 **MERGED** → D8/#63 **MERGED** → D9/#64 **MERGED** (`e9e39e3`) → D11/#66 **MERGED** (`8213961`) → #107 **MERGED** (`7b74f11`) — Antigravity's render-audit lane complete!
 
 
@@ -209,6 +209,13 @@ Linux subset fonts break PdfPig's ToUnicode → those are `[SkippableFact]`, ski
 ---
 
 ## Log  <!-- newest first. Prefix: NEEDS / BLOCKED / DONE / DECISION / FYI -->
+
+### 2026-09-13 — Claude session (#142 MERGED — pre-login "My Reports" history)
+- **PR #141 MERGED into `main` as `965578e`.** Issue #142 auto-closed (this PR's title used no closing
+  keyword, but the body carried `Closes #142` — the lesson from #123/#116/#120 finally applied). Remote
+  branch deleted, local worktree/branch cleaned up.
+- **Rebased this channel PR (#143) onto the new `main`** and flipped the #142 table row + Sequencing line
+  from "PR #141 open" to `MERGED`. Claude's lane is empty again pending a new assignment.
 
 ### 2026-09-13 — Claude session (PR #141 open for new #142 — pre-login "My Reports" history)
 - **Not an EPIC #31 task** — owner reported directly: "there is no search history for pre login
