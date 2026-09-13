@@ -60,6 +60,13 @@ public class PrintStylesheetTests
         Assert.Contains("#mcaTabs", css);
         Assert.Contains(".mca-unit-toggle", css);
         Assert.Contains("[data-basis-group]", css);
+
+        // App shell grid collapse to prevent sidebar margin squeeze
+        Assert.Contains(".pi-app-shell", css);
+        Assert.Contains("display: block !important;", css);
+
+        // Dark theme token reset
+        Assert.Contains("[data-theme=\"dark\"]", css);
     }
 
     [Fact]

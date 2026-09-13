@@ -771,6 +771,20 @@ details > summary.mca-json-toggle {
 }
 
 @media print {
+    /* ── Reset Theme Tokens for Print (Light Palette) ── */
+    :root, [data-theme="dark"] {
+        --bg: #ffffff !important;
+        --surface: #ffffff !important;
+        --surface-2: #ffffff !important;
+        --surface-3: #f7f9fc !important;
+        --border: #e1e7ef !important;
+        --border-strong: #cfd8e3 !important;
+
+        --text: #111827 !important;
+        --text-2: #374151 !important;
+        --muted: #4b5563 !important;
+    }
+
     /* ── Chrome Suppression ── */
     .pi-sidebar,
     .pi-sidebar-scrim,
@@ -795,12 +809,13 @@ details > summary.mca-json-toggle {
 
     body, html {
         background: #fff !important;
-        color: #000 !important;
+        color: #111827 !important;
         font-size: 10pt;
     }
 
-    .pi-app {
+    .pi-app-shell {
         display: block !important;
+        min-height: auto !important;
     }
 
     .pi-main {
