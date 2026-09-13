@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.RegularExpressions;
 using MCAROC_Analysis.Data.Entities;
 
@@ -83,8 +84,33 @@ public static class AuditorsParser
             var row = sheet.Rows[r];
             if (!AmountNormalizer.TryParse(Cell(row, 1), out var yearValue, out _) || yearValue is null) continue;
 
-            var text = Cell(row, 4)?.ToString()?.Trim();
-            if (string.IsNullOrEmpty(text) || text == "-" || text.Equals("NIL", StringComparison.OrdinalIgnoreCase)) continue;
+            var observationText = NormalizeDetailText(Cell(row, 4));
+            var directorsComments = NormalizeDetailText(Cell(row, 5));
+            var footnotes = NormalizeDetailText(Cell(row, 6));
+            if (observationText is null && directorsComments is null && footnotes is null) continue; // nothing on this row at all
+
+            int? serialNumber = null;
+            if (AmountNormalizer.TryParse(Cell(row, 0), out var serial, out _) && serial is not null)
+            {
+                if (serial.Value != decimal.Truncate(serial.Value))
+                {
+                    result.AddWarning(new ParseIssue(IssueSeverity.Warning, nameof(AuditorsParser), "SerialNumber",
+                        serial.Value.ToString(CultureInfo.InvariantCulture), "AUDITOR_SERIAL_NUMBER_NOT_INTEGRAL",
+                        $"Serial Number '{serial.Value}' is not a whole number — left unset rather than truncated.", r + 1));
+                }
+                else if (serial.Value is < int.MinValue or > int.MaxValue)
+                {
+                    // Integral but outside Int32's range — a bare (int) cast throws OverflowException in
+                    // checked-by-default contexts and would abort the whole ingestion for one bad cell.
+                    result.AddWarning(new ParseIssue(IssueSeverity.Warning, nameof(AuditorsParser), "SerialNumber",
+                        serial.Value.ToString(CultureInfo.InvariantCulture), "AUDITOR_SERIAL_NUMBER_OUT_OF_RANGE",
+                        $"Serial Number '{serial.Value}' is outside the supported range — left unset rather than overflowing.", r + 1));
+                }
+                else
+                {
+                    serialNumber = (int)serial.Value;
+                }
+            }
 
             result.Items.Add(new AuditorObservation
             {
@@ -95,11 +121,27 @@ public static class AuditorsParser
                 SourceRowNumber = r + 1,
                 FinancialYear = (int)yearValue.Value,
                 Basis = basis,
-                ObservationText = text
+                ObservationText = observationText,
+                IsDetailRow = true,
+                SerialNumber = serialNumber,
+                SectionCode = NormalizeDetailText(Cell(row, 2)),
+                SectionName = NormalizeDetailText(Cell(row, 3)),
+                DirectorsComments = directorsComments,
+                Footnotes = footnotes
             });
         }
 
         return result;
+    }
+
+    /// <summary>Shared "blank / "-" / NIL means null" normalization for every free-text detail-table
+    /// column (Section, Section Name, Auditors' Comments, Directors' Comments, Footnotes) — applied
+    /// uniformly so no column gets a bespoke rule.</summary>
+    private static string? NormalizeDetailText(object? cell)
+    {
+        var text = cell?.ToString()?.Trim();
+        return string.IsNullOrEmpty(text) || text == "-" || text.Equals("NIL", StringComparison.OrdinalIgnoreCase)
+            ? null : text;
     }
 
     private static object? Cell(IReadOnlyList<object?> row, int index) => index < row.Count ? row[index] : null;

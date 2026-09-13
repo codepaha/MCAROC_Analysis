@@ -388,6 +388,90 @@ public class ComplianceTabRenderingTests
         Assert.Contains("300113", html);
     }
 
+    // ── G18 / #161 — Auditor detail-table columns (Section, Directors' Comments, Footnotes) ──
+
+    [Fact]
+    public async Task Auditor_observation_shows_section_code_and_name_together()
+    {
+        var vm = CreateViewModel();
+        vm.AuditorObservations =
+        [
+            new AuditorObservation
+            {
+                FinancialYear = 2025,
+                Basis = FinancialBasis.Standalone,
+                ObservationText = "The real observation text",
+                SectionCode = "700600",
+                SectionName = "Disclosures - Directors' Report"
+            }
+        ];
+
+        var html = await RenderComplianceTabAsync(vm);
+
+        Assert.Contains("700600", html);
+        Assert.Contains("Disclosures - Directors&#x27; Report", html);
+    }
+
+    [Fact]
+    public async Task Auditor_observation_section_column_is_blank_when_no_section_data()
+    {
+        var vm = CreateViewModel();
+        vm.AuditorObservations =
+        [
+            new AuditorObservation { FinancialYear = 2025, Basis = FinancialBasis.Standalone, ObservationText = "Plain comment, no section." }
+        ];
+
+        var html = await RenderComplianceTabAsync(vm);
+
+        Assert.Contains("—", html); // the Or() em-dash fallback renders for the empty Section cell
+    }
+
+    [Fact]
+    public async Task Auditor_observation_shows_directors_comments_and_footnote_sublines_when_present()
+    {
+        var vm = CreateViewModel();
+        vm.AuditorObservations =
+        [
+            new AuditorObservation
+            {
+                FinancialYear = 2025,
+                Basis = FinancialBasis.Standalone,
+                ObservationText = "Primary comment",
+                DirectorsComments = "Board noted the delay",
+                Footnotes = "Refer note 12"
+            }
+        ];
+
+        var html = await RenderComplianceTabAsync(vm);
+
+        // The label text itself ("Directors' comments:") is literal Razor markup, not an @-expression
+        // value, so it renders with a plain apostrophe — only interpolated data values get HTML-encoded.
+        Assert.Contains("Directors' comments: Board noted the delay", html);
+        Assert.Contains("Footnote: Refer note 12", html);
+    }
+
+    [Fact]
+    public async Task Auditor_observation_renders_directors_comments_sensibly_when_observation_text_is_null()
+    {
+        var vm = CreateViewModel();
+        vm.AuditorObservations =
+        [
+            new AuditorObservation
+            {
+                FinancialYear = 2025,
+                Basis = FinancialBasis.Standalone,
+                ObservationText = null,
+                DirectorsComments = "Only a directors' comment on this row"
+            }
+        ];
+
+        var html = await RenderComplianceTabAsync(vm);
+
+        // Label text unencoded (literal markup); the data value's own apostrophe is HTML-encoded since
+        // it comes through an @-expression.
+        Assert.Contains("Directors' comments: Only a directors&#x27; comment on this row", html);
+    }
+
     // ── A9 / #51 — Credit Ratings + Unaccepted Ratings ──
 
     [Fact]

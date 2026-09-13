@@ -22,7 +22,12 @@ public static class AuditorRules
 
     public static List<RuleEvaluationOutcome> Evaluate(AnalysisContext ctx)
     {
-        var latest = ctx.AuditorObservations.OrderByDescending(a => a.FinancialYear).FirstOrDefault();
+        // G18/#161 added detail-table rows (IsDetailRow = true) to AuditorObservations — those never
+        // carry a meaningful HasQualificationOrAdverseRemark (it's always false, the struct default) and
+        // can have a null ObservationText. Picking one arbitrarily instead of the year-summary row (table
+        // 1, IsDetailRow = false) could silently downgrade a real qualified/adverse opinion to "Clean" —
+        // the authoritative opinion for a year can only ever come from the summary row.
+        var latest = ctx.AuditorObservations.Where(a => !a.IsDetailRow).OrderByDescending(a => a.FinancialYear).FirstOrDefault();
         if (latest is null)
             return [RuleEvaluationOutcome.NotEvaluated(AdverseOpinionCode, "No AuditorObservation records available.")];
 
