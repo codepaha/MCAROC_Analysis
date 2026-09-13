@@ -1,7 +1,7 @@
+using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
-using System.Text.RegularExpressions;
 using MCAROC_Analysis.Data;
 using MCAROC_Analysis.Data.Entities;
 using MCAROC_Analysis.Models;
@@ -12,10 +12,11 @@ using Microsoft.EntityFrameworkCore;
 namespace MCAROC_Analysis.Services.CalculationAssurance;
 
 /// <summary>Persists an immutable CalculationLedgerEntry per MetricResult for one analysis snapshot.
-/// Called once from AnalysisOrchestrator.RunAnalysisAsync, right after the AnalysisRun itself is saved as
-/// Completed/CompletedWithErrors — a crash after that point still leaves a durable AnalysisRun the next
-/// request to this request can build on, matching the save-before-further-work discipline already used
-/// for the rule-engine findings.
+/// Called from AnalysisOrchestrator.RunAnalysisAsync right after the rule engine's own findings/counts
+/// save — <em>before</em> the AI cross-section call — via
+/// <see cref="DossierAssembler.BuildForInFlightAnalysisAsync"/> (the AnalysisRun is still `Running` at
+/// that point; ledger persistence must not depend on it already being `Completed`, or an AI timeout/crash
+/// would leave a "completed" analysis with no audit ledger at all — PR #170 review round 3).
 ///
 /// PR1 covers exactly the three MetricGroups the deterministic checks (built in PR2) need first:
 /// FinancialTrend, CapitalReconciliation, ChargeRegister. Full coverage of every MetricGroup is a
@@ -31,43 +32,52 @@ public class CalculationLedgerService(
 {
     public async Task PersistSnapshotAsync(long requestId, long ingestionRunId, long analysisRunId, CancellationToken ct)
     {
-        var mode = ParseMode(config["CalculationAssurance:Mode"]);
+        var mode = CalculationAssuranceConfig.ParseMode(config);
         if (mode == CalculationAssuranceMode.Off)
             return;
 
-        var existing = await db.CalculationAuditSnapshots
-            .AnyAsync(s => s.RequestId == requestId && s.IngestionRunId == ingestionRunId && s.AnalysisRunId == analysisRunId, ct);
-        if (existing)
+        var snapshot = await db.CalculationAuditSnapshots.FirstOrDefaultAsync(
+            s => s.RequestId == requestId && s.IngestionRunId == ingestionRunId && s.AnalysisRunId == analysisRunId, ct);
+
+        if (snapshot is not null)
         {
-            // Ledger rows are write-once — a correction always produces a new (IngestionRunId,
-            // AnalysisRunId) tuple, so an existing snapshot for this exact tuple means this method
-            // already ran for it (e.g. a retried call after a partial failure further down the pipeline).
-            logger.LogInformation(
-                "Calculation-assurance snapshot already exists for request {RequestId} run ({IngestionRunId},{AnalysisRunId}) — skipping.",
-                requestId, ingestionRunId, analysisRunId);
-            return;
+            // A snapshot row existing on its own does not mean the ledger is complete — under the old
+            // two-save implementation a crash between them could leave an empty snapshot forever
+            // "already there" to a check like this. Completeness is judged by whether it has ledger
+            // entries; an incomplete one is finished here, not skipped (PR #170 review round 3, point 2).
+            var hasEntries = await db.CalculationLedgerEntries.AnyAsync(e => e.CalculationAuditSnapshotId == snapshot.CalculationAuditSnapshotId, ct);
+            if (hasEntries)
+            {
+                logger.LogInformation(
+                    "Calculation-assurance snapshot already complete for request {RequestId} run ({IngestionRunId},{AnalysisRunId}) — skipping.",
+                    requestId, ingestionRunId, analysisRunId);
+                return;
+            }
+
+            logger.LogWarning(
+                "Calculation-assurance snapshot {SnapshotId} exists with no ledger entries — a prior attempt was interrupted before completing. Completing it now.",
+                snapshot.CalculationAuditSnapshotId);
         }
 
-        var model = await assembler.BuildAsync(requestId, ct);
+        var model = await assembler.BuildForInFlightAnalysisAsync(requestId, ingestionRunId, analysisRunId, ct);
         if (model is null)
         {
             logger.LogWarning(
-                "Calculation-assurance ledger requested for request {RequestId} but DossierAssembler returned no model — skipping.",
-                requestId);
+                "Calculation-assurance ledger requested for request {RequestId} run ({IngestionRunId},{AnalysisRunId}) but no matching in-flight analysis was found — skipping.",
+                requestId, ingestionRunId, analysisRunId);
             return;
         }
 
         var companyProfile = await db.CompanyProfiles.FirstOrDefaultAsync(x => x.IngestionRunId == ingestionRunId, ct);
 
-        var snapshot = new CalculationAuditSnapshot
+        var isNewSnapshot = snapshot is null;
+        snapshot ??= new CalculationAuditSnapshot
         {
             RequestId = requestId,
             IngestionRunId = ingestionRunId,
             AnalysisRunId = analysisRunId,
             CreatedUtc = DateTime.UtcNow
         };
-        db.CalculationAuditSnapshots.Add(snapshot);
-        await db.SaveChangesAsync(ct); // need CalculationAuditSnapshotId for the ledger rows below
 
         var groups = new (string KeyPrefix, MetricGroup Group)[]
         {
@@ -79,10 +89,31 @@ public class CalculationLedgerService(
         var entries = new List<CalculationLedgerEntry>();
         foreach (var (keyPrefix, group) in groups)
         foreach (var metric in group.Metrics)
-            entries.Add(BuildEntry(keyPrefix, metric, snapshot.CalculationAuditSnapshotId, model, companyProfile));
+            entries.Add(BuildEntry(keyPrefix, metric, snapshot, model, companyProfile));
 
+        // One SaveChangesAsync call for the whole graph (snapshot + every entry, linked by navigation
+        // rather than a pre-known id) — EF Core wraps this in a single transaction, so either the entire
+        // ledger commits or none of it does. This makes the earlier two-step "snapshot, then entries"
+        // failure mode structurally impossible rather than merely unlikely: there is no window left where
+        // a snapshot row can exist without its entries (PR #170 review round 3, point 2).
+        if (isNewSnapshot)
+            db.CalculationAuditSnapshots.Add(snapshot);
         db.CalculationLedgerEntries.AddRange(entries);
-        await db.SaveChangesAsync(ct);
+
+        try
+        {
+            await db.SaveChangesAsync(ct);
+        }
+        catch (DbUpdateException ex) when (IsUniqueConstraintViolation(ex))
+        {
+            // Lost a race with a concurrent attempt at the exact same snapshot tuple (or, on the resume
+            // path, the exact same ledger-entry keys) — its SaveChangesAsync is just as atomic as ours,
+            // so its ledger is complete and ours rolled back cleanly. Nothing to do.
+            logger.LogInformation(
+                "Lost a race persisting the calculation-assurance ledger for request {RequestId} run ({IngestionRunId},{AnalysisRunId}) — another attempt already completed it.",
+                requestId, ingestionRunId, analysisRunId);
+            return;
+        }
 
         logger.LogInformation(
             "Persisted {Count} calculation-ledger entries for request {RequestId} run ({IngestionRunId},{AnalysisRunId}).",
@@ -90,7 +121,7 @@ public class CalculationLedgerService(
     }
 
     private static CalculationLedgerEntry BuildEntry(
-        string keyPrefix, MetricResult metric, long snapshotId, DossierModel model, CompanyProfile? companyProfile)
+        string keyPrefix, MetricResult metric, CalculationAuditSnapshot snapshot, DossierModel model, CompanyProfile? companyProfile)
     {
         var sourceRefs = CalculationSourceRowRefResolver.Resolve(metric.Inputs, model, companyProfile);
         // A metric that produced a real value but resolved to zero source rows is untraceable — flagged
@@ -98,16 +129,26 @@ public class CalculationLedgerService(
         // Insufficient (no value) is not "unresolved provenance" — there is nothing to trace.
         var hasUnresolvedProvenance = metric.Value is not null && sourceRefs.Count == 0;
 
-        var calculationKey = $"{keyPrefix}.{Slugify(metric.Label)}";
+        const string calcVersion = "1.0";
+        var calculationKey = CalculationKeySlug.For(keyPrefix, metric.Label);
         var inputsJson = JsonSerializer.Serialize(metric.Inputs);
         var sourceRefsJson = JsonSerializer.Serialize(sourceRefs);
-        var outputFingerprint = $"{calculationKey}|{metric.Period}|{metric.Value}|{metric.TextValue}";
+
+        // Hashes the actual resolved VALUES behind the input names (and the full output shape), not just
+        // which fields were used — two different companies' revenue figures computed via the same
+        // formula must never collide on InputHash (PR #170 review round 3, point 1).
+        var canonicalInputPayload = CalculationInputCanonicalizer.BuildCanonicalInputPayload(metric.Inputs, model, companyProfile);
+        var canonicalOutputPayload = string.Join('|',
+            calculationKey, calcVersion, metric.Period, metric.Unit.ToString(),
+            metric.Value?.ToString(CultureInfo.InvariantCulture) ?? "null",
+            metric.TextValue ?? "null",
+            metric.InsufficiencyReason ?? "null");
 
         return new CalculationLedgerEntry
         {
-            CalculationAuditSnapshotId = snapshotId,
+            Snapshot = snapshot,
             CalculationKey = calculationKey,
-            CalcVersion = "1.0",
+            CalcVersion = calcVersion,
             MetricLabel = metric.Label,
             Period = metric.Period,
             Unit = metric.Unit,
@@ -115,8 +156,8 @@ public class CalculationLedgerService(
             ValueText = metric.TextValue,
             InsufficiencyReason = metric.InsufficiencyReason,
             InputsJson = inputsJson,
-            InputHash = ComputeHash(inputsJson),
-            OutputHash = ComputeHash(outputFingerprint),
+            InputHash = ComputeHash(canonicalInputPayload),
+            OutputHash = ComputeHash(canonicalOutputPayload),
             SourceRowRefsJson = sourceRefsJson,
             HasUnresolvedProvenance = hasUnresolvedProvenance,
             CreatedUtc = DateTime.UtcNow
@@ -126,18 +167,6 @@ public class CalculationLedgerService(
     private static string ComputeHash(string input) =>
         Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(input)));
 
-    /// <summary>Derives a stable-ish machine key from a metric's human label, e.g. "Net debt / EBITDA"
-    /// -&gt; "NetDebtEbitda". Good enough for v1: these labels change only when someone deliberately edits
-    /// DossierComputations.Metrics.cs, at which point CalcVersion is the intended place to record an
-    /// intentional formula change anyway.</summary>
-    private static string Slugify(string label)
-    {
-        var sb = new StringBuilder();
-        foreach (Match m in Regex.Matches(label, "[A-Za-z0-9]+"))
-            sb.Append(char.ToUpperInvariant(m.Value[0])).Append(m.Value[1..].ToLowerInvariant());
-        return sb.Length > 0 ? sb.ToString() : "Metric";
-    }
-
-    private static CalculationAssuranceMode ParseMode(string? raw) =>
-        Enum.TryParse<CalculationAssuranceMode>(raw, ignoreCase: true, out var mode) ? mode : CalculationAssuranceMode.Off;
+    private static bool IsUniqueConstraintViolation(DbUpdateException ex) =>
+        ex.InnerException is Microsoft.Data.SqlClient.SqlException { Number: 2601 or 2627 };
 }

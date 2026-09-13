@@ -97,6 +97,21 @@ public class AnalysisOrchestrator(
             // lost by persisting early).
             await db.SaveChangesAsync(ct);
 
+            // Calculation-assurance ledger persistence (#164) — deliberately BEFORE the AI call, for the
+            // exact same reason as the findings save just above: an AI timeout/crash must never leave a
+            // "completed" analysis with no audit ledger at all. Isolated in its own try/catch so a bug in
+            // this second-line guardrail can never fail an otherwise-successful analysis pass. A no-op
+            // entirely when CalculationAssurance:Mode is Off (see CalculationLedgerService).
+            try
+            {
+                await calculationLedgerService.PersistSnapshotAsync(requestId, ingestionRunId, run.AnalysisRunId, ct);
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(ex, "Calculation-assurance ledger persistence failed for request {RequestId}, analysis run {AnalysisRunId} — analysis itself still proceeding.",
+                    requestId, run.AnalysisRunId);
+            }
+
             var aiOutcome = await aiService.SynthesizeAsync(findingEntities, result.OverallReviewPriority, result.DataSufficiencyNotes, ct);
 
             if (aiOutcome.Success)
@@ -138,19 +153,6 @@ public class AnalysisOrchestrator(
 
             run.CompletedDate = DateTime.UtcNow;
             await db.SaveChangesAsync(ct);
-
-            // Calculation-assurance ledger persistence (#164) — isolated in its own try/catch so a bug
-            // in this second-line guardrail can never fail an otherwise-successful analysis pass. A
-            // no-op entirely when CalculationAssurance:Mode is Off (see CalculationLedgerService).
-            try
-            {
-                await calculationLedgerService.PersistSnapshotAsync(requestId, ingestionRunId, run.AnalysisRunId, ct);
-            }
-            catch (Exception ex)
-            {
-                logger.LogError(ex, "Calculation-assurance ledger persistence failed for request {RequestId}, analysis run {AnalysisRunId} — analysis itself still completed.",
-                    requestId, run.AnalysisRunId);
-            }
 
             await db.Requests.Where(r => r.RequestId == requestId)
                 .ExecuteUpdateAsync(s => s.SetProperty(r => r.RequestStatus, RequestStatus.AnalysisCompleted), ct);

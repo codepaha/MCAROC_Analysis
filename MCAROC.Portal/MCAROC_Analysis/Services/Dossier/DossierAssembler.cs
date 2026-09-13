@@ -20,8 +20,6 @@ public class DossierAssembler(AppDbContext db)
         var request = await db.Requests.Include(r => r.Client).FirstOrDefaultAsync(r => r.RequestId == requestId, ct);
         if (request?.LatestCompletedIngestionRunId is not { } runId) return null;
 
-        var run = await db.IngestionRuns.FirstOrDefaultAsync(x => x.IngestionRunId == runId, ct);
-
         // The analysis MUST belong to the ingestion run we are about to render — otherwise a fresh
         // re-ingest paired with a not-yet-re-run analysis would present stale findings over new data.
         // No terminal analysis for this exact ingestion run ⇒ the dossier is not ready (controller → 409).
@@ -31,6 +29,36 @@ public class DossierAssembler(AppDbContext db)
             .OrderByDescending(a => a.RunNumber)
             .FirstOrDefaultAsync(ct);
         if (analysis is null) return null;
+
+        return await BuildCoreAsync(request, runId, analysis, ct);
+    }
+
+    /// <summary>#164 calculation assurance — builds a model for an AnalysisRun that is still
+    /// <see cref="AnalysisRunStatus.Running"/>, deliberately skipping <see cref="BuildAsync"/>'s
+    /// "already Completed/CompletedWithErrors" gate. Used only by
+    /// <c>CalculationLedgerService</c>, called from <c>AnalysisOrchestrator.RunAnalysisAsync</c> right
+    /// after the rule engine's own findings/counts save (mirroring that same "persist before the AI
+    /// call" discipline) — at that point every field <see cref="BuildCoreAsync"/> reads off
+    /// <paramref name="analysisRunId"/> (finding counts, OverallReviewPriority, DataSufficiencyNotesJson)
+    /// is already populated; only ExecutiveSummaryJson/Status/CompletedDate are not, and the ledger's
+    /// three covered MetricGroups never read those. The caller is the one authority that knows this
+    /// exact (request, ingestion run, analysis run) triple is the correct in-flight one — no "latest"
+    /// re-derivation happens here, unlike <see cref="BuildAsync"/>.</summary>
+    public async Task<DossierModel?> BuildForInFlightAnalysisAsync(long requestId, long ingestionRunId, long analysisRunId, CancellationToken ct = default)
+    {
+        var request = await db.Requests.Include(r => r.Client).FirstOrDefaultAsync(r => r.RequestId == requestId, ct);
+        if (request is null) return null;
+
+        var analysis = await db.AnalysisRuns.FirstOrDefaultAsync(
+            a => a.AnalysisRunId == analysisRunId && a.RequestId == requestId && a.IngestionRunId == ingestionRunId, ct);
+        if (analysis is null) return null;
+
+        return await BuildCoreAsync(request, ingestionRunId, analysis, ct);
+    }
+
+    private async Task<DossierModel> BuildCoreAsync(McaRequest request, long runId, AnalysisRun analysis, CancellationToken ct)
+    {
+        var run = await db.IngestionRuns.FirstOrDefaultAsync(x => x.IngestionRunId == runId, ct);
 
         // ── Corporate ──
         var directors = await db.Directors.Where(x => x.IngestionRunId == runId).OrderBy(x => x.NameRaw).ToListAsync(ct);
@@ -103,7 +131,7 @@ public class DossierAssembler(AppDbContext db)
         var roles = DossierComputations.LitigationRoles(litigations, findings);
 
         var model = new DossierModel(
-            requestId, runId, analysis.AnalysisRunId,
+            request.RequestId, runId, analysis.AnalysisRunId,
             new DossierCover(
                 request.CompanyName, request.Cin ?? profile?.Cin, request.Pan ?? profile?.Pan,
                 profile?.IncorporationDate, profile?.CompanyStatus,

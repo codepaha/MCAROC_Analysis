@@ -93,4 +93,51 @@ public class CalculationLedgerServiceTests : IAsyncLifetime
         await using var verify = DossierGoldenMasterTests.CreateContext();
         Assert.Equal(1, await verify.CalculationAuditSnapshots.CountAsync(s => s.RequestId == requestId));
     }
+
+    [Fact]
+    public async Task An_orphaned_snapshot_with_no_ledger_entries_is_detected_and_completed_on_retry()
+    {
+        // Simulates the exact failure PR #170 review round 3 (point 2) flagged: the old two-step
+        // implementation could leave a snapshot row with zero ledger entries if the process died between
+        // the two saves, and every later retry saw "a snapshot already exists" and skipped forever. A
+        // retry must now detect the incomplete snapshot and complete it, not silently give up on it.
+        await using var seedDb = DossierGoldenMasterTests.CreateContext();
+        var (requestId, ingestionRunId, analysisRunId) = await DossierTestSeed.SeedAsync(seedDb);
+
+        await using var orphan = DossierGoldenMasterTests.CreateContext();
+        orphan.CalculationAuditSnapshots.Add(new CalculationAuditSnapshot
+        {
+            RequestId = requestId, IngestionRunId = ingestionRunId, AnalysisRunId = analysisRunId, CreatedUtc = DateTime.UtcNow
+        });
+        await orphan.SaveChangesAsync();
+
+        await using var db = DossierGoldenMasterTests.CreateContext();
+        await CreateService(db).PersistSnapshotAsync(requestId, ingestionRunId, analysisRunId, default);
+
+        await using var verify = DossierGoldenMasterTests.CreateContext();
+        var snapshot = await verify.CalculationAuditSnapshots.SingleAsync(s => s.RequestId == requestId);
+        var entryCount = await verify.CalculationLedgerEntries.CountAsync(e => e.CalculationAuditSnapshotId == snapshot.CalculationAuditSnapshotId);
+        Assert.True(entryCount > 0, "The orphaned snapshot should have been completed with ledger entries, not left empty forever.");
+    }
+
+    [Fact]
+    public async Task Concurrent_calls_for_the_same_snapshot_produce_exactly_one_complete_ledger()
+    {
+        // PR #170 review round 3 (point 2): two callers racing to persist the same brand-new snapshot
+        // must not both succeed, corrupt each other, or crash unhandled — one wins atomically, the other
+        // loses cleanly to the unique-index violation and treats that as "already done."
+        await using var seedDb = DossierGoldenMasterTests.CreateContext();
+        var (requestId, ingestionRunId, analysisRunId) = await DossierTestSeed.SeedAsync(seedDb);
+
+        await using var dbA = DossierGoldenMasterTests.CreateContext();
+        await using var dbB = DossierGoldenMasterTests.CreateContext();
+        var taskA = CreateService(dbA).PersistSnapshotAsync(requestId, ingestionRunId, analysisRunId, default);
+        var taskB = CreateService(dbB).PersistSnapshotAsync(requestId, ingestionRunId, analysisRunId, default);
+        await Task.WhenAll(taskA, taskB);
+
+        await using var verify = DossierGoldenMasterTests.CreateContext();
+        var snapshot = await verify.CalculationAuditSnapshots.SingleAsync(s => s.RequestId == requestId);
+        var entryCount = await verify.CalculationLedgerEntries.CountAsync(e => e.CalculationAuditSnapshotId == snapshot.CalculationAuditSnapshotId);
+        Assert.True(entryCount > 0);
+    }
 }
