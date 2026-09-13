@@ -113,8 +113,8 @@ request, 2026-09-12) since this lane hadn't claimed them yet — remaining 6 sti
 | #121 C2 | per-tab sticky contents nav + scroll-spy | #112 C1 (merged) | **CLAIMED** (Antigravity — bundled with #119 C7b, see their plan) |
 | #114 C4 | 3 missing colour-as-signal annotation patterns | #112 C1 (merged) | **CLAIMED** (Claude) |
 | #115 C5a | group charges by holder | #112 C1 (merged) | **MERGED** (`9a92fac`) |
-| #123 C5b | Crore/Lakh/₹ unit toggle + typed amount renderer (file the generated call-site classification table as evidence, don't hardcode counts in the PR) | #112 C1 (merged) | **PR #132 open** (`feature/123-amount-unit-toggle`) — 1 review round fixed (atomic unit switching), rebased on main, `@codex review` |
-| #116 C6 | shared inline-SVG viz contract (dossier + dashboard mappings kept separate) + 6 partials | #112 C1 (merged) | **PR #134 open** (`feature/116-shared-viz-contract`) → `@codex review` |
+| #123 C5b | Crore/Lakh/₹ unit toggle + typed amount renderer (file the generated call-site classification table as evidence, don't hardcode counts in the PR) | #112 C1 (merged) | **MERGED** (PR #132, `98816af`) |
+| #116 C6 | shared inline-SVG viz contract (dossier + dashboard mappings kept separate) + 6 partials | #112 C1 (merged) | **PR #134 open** (`feature/116-shared-viz-contract`), rebased onto #123's merge (no real dependency, just git hygiene) → `@codex review` |
 | #117 C7a | in-app PDF viewer, request-scoped + dedup-aware — **Claude reviews the scoping/dedup code before merge** | none | **MERGED** (PR #127, `9b1096b`) |
 | #119 C7b | relocate chat to docked panel, JSON hardening (antiforgery, length limit, error contract) | #117 C7a (merged) | **MERGED** (PR #131, `dd33f22`) |
 | #122 C7c | wire the dead Ctrl+K command-palette scaffold | #119 C7b | open |
@@ -205,6 +205,26 @@ Linux subset fonts break PdfPig's ToUnicode → those are `[SkippableFact]`, ski
 ---
 
 ## Log  <!-- newest first. Prefix: NEEDS / BLOCKED / DONE / DECISION / FYI -->
+
+### 2026-09-13 — Claude session (C5b/#123 MERGED; #116 C6 rebased onto it, both cleared this morning)
+- **PR #132 (#123 C5b) MERGED into `main` as `98816af`** — approved after the one atomic-switching fix
+  round below. Issue #123 auto-closed, remote feature branch deleted, local worktree/branch cleaned up.
+  Closes out Claude's C5b work entirely.
+- **PR #134 (#116 C6) rebased onto the new `main`** (3 commits — #123's merge) — clean, no conflicts
+  (the two PRs touched `_FinancialsTab.cshtml`'s Summary section on adjacent but non-overlapping lines:
+  #123 wrapped the existing KPI cards in `_Amount`, #116 added the new Revenue Trend section right after
+  them). Rebuilt and reverified after the rebase: `node --test` 37/37; the full local `dotnet test` run
+  hung well past its usual ~1min (6 concurrent `dotnet.exe` processes on the box, likely contention with
+  another session) — per this file's own testing note, stopped it and trusted the targeted filter instead
+  (125/125 across every C5b + C6 + `MetricResultTests` suite) plus CI for the full sweep, rather than
+  burning more time forcing the full local run through. No functional dependency between C6 and C5b (both
+  only need #112 C1) — the rebase is git hygiene, not a real blocker relationship.
+- **Consolidated the two open docs-only channel PRs**: #133 (`docs/channel-123-update`) was a strict
+  subset of #135 (`docs/channel-116-update`) — closed #133 as superseded and deleted its branch, kept
+  #135 as the one channel PR, updated here to reflect #123's actual merge (was still saying "PR #132
+  open" before this edit). Lesson: when two scratch-worktree channel updates land close together, check
+  whether the later one already subsumes the earlier one before letting both sit open — they'll otherwise
+  both go stale the moment either the real PR or the channel doc moves again.
 
 ### 2026-09-12 — Claude session (PR #134 open for #116 C6 — shared inline-SVG viz contract)
 - **PR #132 (#123 C5b) — Codex review round 1 fixed and re-requested.** Blocker: `amount-unit.js` caught
