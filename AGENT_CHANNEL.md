@@ -129,7 +129,7 @@ request, 2026-09-12) since this lane hadn't claimed them yet — remaining 6 sti
 **Ad hoc, outside EPIC #31 (2026-09-13): post-EPIC gap audit, filed as #144–#146. Unclaimed.**
 | Issue | What | Status |
 |---|---|---|
-| #144 | analytics catalogue: confirm A1.x (source-reported ratios) + B12 (charge discharge velocity) — marked `"planned"` but their parent issues (#57, #56) are closed; either stale catalogue rows or a real gap | **B12 half: PR #149 open**, → @codex review. A1.x confirmed nuanced (portal-side done via B1/#39, dossier-side only gets a generic fallback table, not the catalogued sparkline treatment) — left open pending a product call, not folded into #149 |
+| #144 | analytics catalogue: confirm A1.x (source-reported ratios) + B12 (charge discharge velocity) — marked `"planned"` but their parent issues (#57, #56) are closed; either stale catalogue rows or a real gap | **B12 half: MERGED** (PR #149, `4be34db`). Issue stays **open** for its A1.x half — confirmed nuanced (portal-side done via B1/#39, dossier-side only gets a generic fallback table, not the catalogued sparkline treatment) — pending a product call, not a code fix |
 | #145 | portal never loads `dossier-tokens.css` — `DossierThemeSyncTests` proves the C# constants match a CSS file the browser never fetches, not that the live portal and PDF actually share a palette | open, unclaimed — product-decision, low urgency |
 | #146 | two catalogue rows with no disposition: `GstRegistration.CancellationDate` (vestigial, G17) and Auditors' Comments detail columns (unparsed, G18) — need an owner call: scope as real work, or mark `dropped-by-design` | open, unclaimed |
 
@@ -139,7 +139,7 @@ request, 2026-09-12) since this lane hadn't claimed them yet — remaining 6 sti
 | #150 | 598 unexamined ingestion warnings from a real 41-company batch run — reported as "0 Errors" without categorizing what the warnings actually are | open, unclaimed |
 
 ### Sequencing
-- Claude: D2/#57 **MERGED** → D4/#59 **MERGED** → K1/#98 **MERGED** → #97 **MERGED** → D10/#65 **MERGED** (`7f2cf1e`) → #47 (pre-login report ownership binding) **MERGED** (`f52f3cf`) → #142 (pre-login "My Reports" history) **MERGED** (PR #141, `965578e`) → #144/B12 (charge discharge velocity) **PR #149 open**, → @codex review.
+- Claude: D2/#57 **MERGED** → D4/#59 **MERGED** → K1/#98 **MERGED** → #97 **MERGED** → D10/#65 **MERGED** (`7f2cf1e`) → #47 (pre-login report ownership binding) **MERGED** (`f52f3cf`) → #142 (pre-login "My Reports" history) **MERGED** (PR #141, `965578e`) → #144/B12 (charge discharge velocity) **MERGED** (PR #149, `4be34db`) — Claude's lane empty pending a new assignment; #144 stays open for its A1.x half.
 - Antigravity: D6/#61 **MERGED** → D7/#62 **MERGED** → D8/#63 **MERGED** → D9/#64 **MERGED** (`e9e39e3`) → D11/#66 **MERGED** (`8213961`) → #107 **MERGED** (`7b74f11`) — Antigravity's render-audit lane complete!
 
 
@@ -235,6 +235,22 @@ Linux subset fonts break PdfPig's ToUnicode → those are `[SkippableFact]`, ski
 ---
 
 ## Log  <!-- newest first. Prefix: NEEDS / BLOCKED / DONE / DECISION / FYI -->
+
+### 2026-09-13 — Claude session (PR #149 MERGED — #144's B12 half closed)
+- **PR #149 MERGED into `main` as `4be34db`** (approved at `844d79c` after one review round: capped the
+  per-year loop at `asOfDate.Year` and isolated future-dated events into an always-present "Future-dated
+  charge event anomalies" count, mirroring B11's negative-lag-anomaly treatment, with 2 new regression
+  tests proving a future event can't produce a future year row or expand the coverage range).
+- **Worth recording for next time**: GitHub returned `502 Bad Gateway` on the owner's first two merge
+  attempts, but one of them actually succeeded server-side — `main` already had the merge commit
+  (confirmed via `git log`, second parent = the approved head `844d79c`) while the PR's own `state`/
+  `mergedAt` fields still showed `OPEN` via the API (a caching/replication lag). A third merge attempt
+  correctly failed as "not mergeable" since there was nothing left to merge. If a merge 502s, check
+  `git log origin/main` for the merge commit before assuming it didn't go through and retrying.
+- Issue #144 correctly stayed **open** — only its B12 half closed here; its A1.x half remains a real,
+  separate product decision (see the table above), and the PR's "Closes #144" reference (with trailing
+  parenthetical text) didn't trip GitHub's auto-close keyword parser anyway, which was the right outcome.
+- **Claude's lane is empty again pending a new assignment.**
 
 ### 2026-09-13 — Claude session (reviewed Antigravity's Senior-QA-persona report)
 - Owner asked for a critical read of a "Senior QA Release Report" Antigravity produced (running the
