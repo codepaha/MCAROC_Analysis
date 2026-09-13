@@ -137,11 +137,11 @@ request, 2026-09-12) since this lane hadn't claimed them yet — remaining 6 sti
 **Ad hoc, outside EPIC #31 (2026-09-13): follow-up from reviewing Antigravity's QA report, filed as #150.**
 | Issue | What | Status |
 |---|---|---|
-| #150 | 598 unexamined ingestion warnings from a real 41-company batch run — reported as "0 Errors" without categorizing what the warnings actually are | open, unclaimed |
+| #150 | 598 unexamined ingestion warnings from a real 41-company batch run — reported as "0 Errors" without categorizing what the warnings actually are | PR #154 open / pending review (`feature/150-ingestion-warnings-review`) |
 
 ### Sequencing
 - Claude: D2/#57 **MERGED** → D4/#59 **MERGED** → K1/#98 **MERGED** → #97 **MERGED** → D10/#65 **MERGED** (`7f2cf1e`) → #47 (pre-login report ownership binding) **MERGED** (`f52f3cf`) → #142 (pre-login "My Reports" history) **MERGED** (PR #141, `965578e`) → #144/B12 (charge discharge velocity) **MERGED** (PR #149, `4be34db`) — Claude's lane empty pending a new assignment; #144 stays open for its A1.x half.
-- Antigravity: D6/#61 **MERGED** → D7/#62 **MERGED** → D8/#63 **MERGED** → D9/#64 **MERGED** (`e9e39e3`) → D11/#66 **MERGED** (`8213961`) → #107 **MERGED** (`7b74f11`) — Antigravity's render-audit lane complete!
+- Antigravity: D6/#61 **MERGED** → D7/#62 **MERGED** → D8/#63 **MERGED** → D9/#64 **MERGED** (`e9e39e3`) → D11/#66 **MERGED** (`8213961`) → #107 **MERGED** (`7b74f11`) → #150 **PR OPEN** — Antigravity's render-audit & #150 review complete!
 
 
 ### Not in either lane (Codex or owner)
@@ -236,6 +236,20 @@ Linux subset fonts break PdfPig's ToUnicode → those are `[SkippableFact]`, ski
 ---
 
 ## Log  <!-- newest first. Prefix: NEEDS / BLOCKED / DONE / DECISION / FYI -->
+
+### 2026-09-13 — Antigravity (PR open for #150 — review 598 ingestion warnings & enhance IngestionValidationRunner)
+- **Investigated and categorized all 598 ingestion warnings across 41 companies in full**:
+  - Exactly 3 distinct, deterministic, intentional categories account for 100% of all 598 warnings (0 errors, 0 exceptions, 0 unmapped columns):
+    1. `GstParser:GST_ADDITIONAL_REGISTRATION_ROW` (520 warnings across 39 companies, 87.0%): source `GST` sheet repeats each GSTIN per return type (GSTR-1, GSTR-3B) with latest filing dates. Registration identity is per-GSTIN, so the parser stores one `GstRegistration` and flags extra source rows to preserve provenance rather than silently swallowing them; all actual filing records are parsed cleanly from the `Annexure - GST` sheet.
+    2. `DirectorsParser:OFFICER_NO_DIN` (59 warnings across 18 companies, 9.9%): Company Secretaries and Managers without DINs (`"-"`) on the Directors sheet. Captured cleanly into `CompanyOfficer` entities (`officers.Add(...)`) and persisted to `CompanyOfficers` (100% data retention), with an explicit warning distinguishing them from malformed DINs (`BAD_DIN` count = 0).
+    3. `StandaloneFinancialDataParser:CASH_FLOW_YEAR_ALIGNMENT_ASSUMED` (19 warnings across 19 companies, 3.2%): Cash flow section reports fewer years (e.g. 2–9 years) than balance sheet/P&L (10–12 years) without a separate year header. Mapped to most recent years by right-aligned column position with `yearInferred = true`.
+  - **Verdict**: None of the warnings indicate a data-quality gap, parsing bug, or lost data. All 3 are working as intended and already guarded by dedicated unit tests (`GstParserTests`, `DirectorsParserTests`, `StandaloneFinancialDataParserTests`).
+- **Enhanced `IngestionValidationRunner`**:
+  - Added an `Officers` column to the company matrix (accounting for the 59 officers extracted).
+  - Added structured warning categorization tables (Parser, IssueCode, Field, Count, Affected Companies, Sample RawValues, Sample Messages).
+  - Added automated export of `warnings-report.json` for audit records.
+- All 1004 .NET tests and 77 Node JS tests pass cleanly.
+- PR open (`feature/150-ingestion-warnings-review` → Closes #150) → `@codex review`.
 
 ### 2026-09-13 — Claude session (FYI: shared-checkout collision on `E:\MCAROC_Analysis`)
 - **A concurrent process (branch `feature/150-ingestion-warnings-review` — likely Antigravity picking up
