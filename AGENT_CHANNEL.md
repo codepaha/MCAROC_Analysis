@@ -146,7 +146,7 @@ request, 2026-09-12) since this lane hadn't claimed them yet — remaining 6 sti
 | #150 | 598 unexamined ingestion warnings from a real 41-company batch run — reported as "0 Errors" without categorizing what the warnings actually are | **MERGED** (`459b834`, PR #154) — closed |
 
 ### Sequencing
-- Claude: D2/#57 **MERGED** → D4/#59 **MERGED** → K1/#98 **MERGED** → #97 **MERGED** → D10/#65 **MERGED** (`7f2cf1e`) → #47 (pre-login report ownership binding) **MERGED** (`f52f3cf`) → #142 (pre-login "My Reports" history) **MERGED** (PR #141, `965578e`) → #144/B12 (charge discharge velocity) **MERGED** (PR #149, `4be34db`) → #161/G18 (Auditors' Comments detail-table columns) **MERGED** (PR #166, `7786be4`) — Claude's lane empty pending a new assignment; #144 stays open for its A1.x half.
+- Claude: D2/#57 **MERGED** → D4/#59 **MERGED** → K1/#98 **MERGED** → #97 **MERGED** → D10/#65 **MERGED** (`7f2cf1e`) → #47 (pre-login report ownership binding) **MERGED** (`f52f3cf`) → #142 (pre-login "My Reports" history) **MERGED** (PR #141, `965578e`) → #144/B12 (charge discharge velocity) **MERGED** (PR #149, `4be34db`) → #161/G18 (Auditors' Comments detail-table columns) **MERGED** (PR #166, `7786be4`) → **#164 (calculation assurance) — owner decisions resolved, plan approved, PR1 (entities + migration + ledger persistence) in progress on `feature/164-calculation-assurance`** (see Log above); #144 stays open for its A1.x half.
 - Antigravity: D6/#61 **MERGED** → D7/#62 **MERGED** → D8/#63 **MERGED** → D9/#64 **MERGED** (`e9e39e3`) → D11/#66 **MERGED** (`8213961`) → #107 **MERGED** (`7b74f11`) → #150 **MERGED** (`459b834`) → #145 **MERGED** (`b563072`, PR #165) — Antigravity's lane clear!
 
 
@@ -275,6 +275,71 @@ Linux subset fonts break PdfPig's ToUnicode → those are `[SkippableFact]`, ski
   `DONE (#161)`.
 - **#146 (parent issue) needed no further action** — it was already closed once both its halves (G17 via
   #155/#157/#159, G18 via #161) had their own resolution/tracking; this just closes out the second half.
+
+### 2026-09-13 — Claude session (CLAIMED #164 — calculation assurance / AI discrepancy triage / delivery hold)
+- **CLAIMED #164** on branch `feature/164-calculation-assurance` (worktree `mcaroc-wt-164`, off `main`
+  at `c7f30ab`). This is a large, multi-lane feature (immutable calc ledger, deterministic audit-check
+  registry, an async AI second-line reviewer with strict schema validation, an internal
+  `CalculationDiscrepancy` workflow, artifact-level delivery gating, an internal reviewer UI) — squarely
+  Claude's schema/parser/metrics-guardrail lane since it starts with new entities + an EF migration.
+- **NOT starting implementation yet.** The issue body itself lists 5 open "Decisions needed before
+  implementation" (report-variant scope, reviewer roles/dual-approval, which artifacts are gated, whether
+  a documented internal exception can release a material case, and AI provider/budget/retention policy)
+  — these are product/policy calls, not engineering ones, and the working agreement has Claude/Codex
+  escalate exactly this kind of call to `@owner` rather than assume. Posting the same question set to the
+  owner directly before writing a plan.
+- Per the hard migration rule, this branch will carry the (eventual) new migration — confirming no other
+  migration branch is in flight before adding one. (Update, later the same day: #161/G18 branched, merged,
+  and its migration landed on `main` — see below — before this branch's own migration was generated
+  against latest `main`, so no overlap ever occurred.)
+
+### 2026-09-13 — Claude session (#164 owner decisions resolved; plan approved after 2 review rounds; PR1 built)
+- **Put the 5 "decisions needed before implementation" to the owner directly** (scope, roles/dual-approval,
+  material-exception policy, AI provider, and a 6th surfaced during exploration — this app has zero
+  authentication anywhere, which the issue's role language presupposes something to hang off of). All 6
+  answered: dossier-PDF-only for now; single reviewer today with the schema left dual-approval-ready;
+  Material may be released via a documented internal exception, Critical never has one; reuse the existing
+  chat feature's AI stack (Google Vertex AI / Gemini `gemini-2.5-flash-lite` via `Google.GenAI`, mirroring
+  `ChatCompletionService`'s JSON-strict validation pattern); a minimal, feature-scoped internal login
+  (cookie auth) gates the new audit panel — the rest of the app stays exactly as unauthenticated as today.
+- **Plan went through 2 real review rounds** (plan file `curious-launching-cupcake.md`) before approval:
+  - Round 1 caught that a plain `bigint` tuple repeated on every child table proved nothing about
+    cross-snapshot consistency, that `CalculationArtifactHold`'s original `NotYetAiAudited` reason
+    directly contradicted the plan's own async-AI design, and that the cookie-auth wiring as first
+    drafted (`AddAuthentication("InternalReviewer")`) would have set it as the *application's default*
+    scheme. Fixed with a root `CalculationAuditSnapshot` entity + composite FKs anchored on it (a
+    cross-snapshot reference is now a literal insert-time DB constraint violation, not a convention), the
+    hold-reason enum cut to exactly two (`ConfirmedCriticalDiscrepancy`/
+    `ConfirmedMaterialDiscrepancyNoException`), and the parameterless `AddAuthentication()` + explicit
+    named scheme + antiforgery + login rate-limiting.
+  - Round 2 caught that the delivery-gate query (§4) no longer matched the revised schema (holds are keyed
+    on `CalculationAuditSnapshotId`, not the raw tuple), that a SHA-256 response hash alone can't provide
+    AI-output auditability without the actual content to hash against, and that `CalculationCheckResult`
+    had the same unconstrained-JSON-evidence gap the discrepancy table had already been fixed for. Fixed:
+    the gate now resolves the snapshot first and **explicitly fails closed under `Enforced` when no
+    snapshot exists at all** (an unaudited historical report is treated as the maximal case of
+    "NotEvaluated," not an implicit pass — flagged in the PR5 runbook as an operational consequence to
+    plan for before ever flipping `Enforced`); `CalculationAiAuditRun` now retains the actual
+    `RawResponseJson` (hash kept only as a cheap tamper-evidence check alongside it); a new
+    `CalculationCheckResultLedgerLink`/`CalculationDiscrepancyLedgerLink` pair replaces every remaining
+    unconstrained "related ledger entries" JSON list with the same composite-FK evidence-grade guarantee.
+- **PR1 built on this branch** (entities + one migration + ledger persistence only — checks/AI
+  worker/delivery gate/UI are PRs 2-5, per the plan's sequencing): 10 new tables
+  (`CalculationAuditSnapshot`, `CalculationLedgerEntry`, `CalculationCheckResult`,
+  `CalculationCheckResultLedgerLink`, `CalculationDiscrepancy`, `CalculationDiscrepancyLedgerLink`,
+  `CalculationDiscrepancyApproval`, `CalculationArtifactHold`, `CalculationAiAuditRun`,
+  `CalculationAssuranceOverrideAudit`), one migration `AddCalculationAssurance` (generated against latest
+  `main`, after #161/G18's own migration — confirmed applies and reverts cleanly), a new
+  `CalculationLedgerService`/`CalculationSourceRowRefResolver` covering the 3 `MetricGroup`s the
+  deterministic checks will need first (FinancialTrend, CapitalReconciliation, ChargeRegister), and one
+  new guarded call site in `AnalysisOrchestrator.RunAnalysisAsync` (isolated in its own try/catch so a bug
+  in this second-line guardrail can never fail an otherwise-successful analysis pass). Entirely a no-op at
+  runtime — `CalculationAssurance:Mode` defaults to `Off`, checked before any DB query.
+- 10 new tests (ledger persistence incl. idempotency, provenance resolution, and — the review's own
+  requested proof — a composite-FK cross-snapshot rejection test) all pass; full `Dossier`/`Analysis`
+  regression sweep (1000 passed, 19 skipped for absent real-workbook fixtures, same as before this
+  change) confirms no regressions.
+- PR for this first slice opening next, → `@codex` review.
 
 ### 2026-09-13 — Claude session (#146 CLOSED; #150 closure evidence corrected via PR #162)
 - **PR #158 MERGED into `main` as `faa0a4a`** (approved after fixing 3 documentation-accuracy issues a
