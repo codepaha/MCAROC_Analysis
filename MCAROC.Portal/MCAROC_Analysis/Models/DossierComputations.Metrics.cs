@@ -408,6 +408,64 @@ public static partial class DossierComputations
         list.Add(MetricResult.Ok("Negative filing-lag anomalies", negLagEvents.Count,
             MetricUnit.Count, asOfStr, "RocChargeEvent.EventDate", "RocChargeEvent.FilingDate"));
 
+        // B12: Charge discharge velocity — count Creation and Satisfaction events by calendar year.
+        // Never a ratio (created vs. satisfied has no meaningful denominator — both are cumulative
+        // counts, not a rate). A literal per-year breakdown has unbounded cardinality for an old
+        // company, which doesn't fit MetricResult's one-fact-per-instance shape well, so this mirrors
+        // B7's trailing-window philosophy: the most recent 5 calendar years (asOfDate's year and the
+        // 4 before it) are reported individually, any earlier activity is rolled into one "before <year>"
+        // bucket per series, and an explicit coverage fact states the full observed year range so a
+        // reader never mistakes "not shown" for "zero".
+        var creationYears = all.SelectMany(c => c.Events)
+            .Where(e => e.EventType == ChargeEventType.Creation && e.EventDate is not null)
+            .Select(e => e.EventDate!.Value.Year)
+            .ToList();
+        var satisfactionYears = all.SelectMany(c => c.Events)
+            .Where(e => e.EventType == ChargeEventType.Satisfaction && e.EventDate is not null)
+            .Select(e => e.EventDate!.Value.Year)
+            .ToList();
+
+        if (creationYears.Count == 0 && satisfactionYears.Count == 0)
+        {
+            list.Add(MetricResult.Insufficient("Charge activity by year", MetricUnit.Count,
+                "No Creation or Satisfaction events with a dated EventDate",
+                "RocChargeEvent.EventType", "RocChargeEvent.EventDate"));
+        }
+        else
+        {
+            var minYear = Math.Min(
+                creationYears.Count > 0 ? creationYears.Min() : int.MaxValue,
+                satisfactionYears.Count > 0 ? satisfactionYears.Min() : int.MaxValue);
+            var maxYear = Math.Max(
+                creationYears.Count > 0 ? creationYears.Max() : int.MinValue,
+                satisfactionYears.Count > 0 ? satisfactionYears.Max() : int.MinValue);
+            var recentCutoff = asOfDate.Year - 4; // last 5 calendar years, individually, inclusive
+
+            list.Add(MetricResult.Ok("Charge event history coverage",
+                minYear == maxYear ? $"{minYear} only" : $"{minYear}–{maxYear} ({maxYear - minYear + 1} years)",
+                asOfStr, "RocChargeEvent.EventType", "RocChargeEvent.EventDate"));
+
+            if (minYear < recentCutoff)
+            {
+                var earlierCreated = creationYears.Count(y => y < recentCutoff);
+                var earlierSatisfied = satisfactionYears.Count(y => y < recentCutoff);
+                list.Add(MetricResult.Ok($"Charges created before {recentCutoff}", earlierCreated,
+                    MetricUnit.Count, $"before {recentCutoff}", "RocChargeEvent.EventType", "RocChargeEvent.EventDate"));
+                list.Add(MetricResult.Ok($"Charges satisfied before {recentCutoff}", earlierSatisfied,
+                    MetricUnit.Count, $"before {recentCutoff}", "RocChargeEvent.EventType", "RocChargeEvent.EventDate"));
+            }
+
+            for (var year = Math.Max(minYear, recentCutoff); year <= maxYear; year++)
+            {
+                var createdInYear = creationYears.Count(y => y == year);
+                var satisfiedInYear = satisfactionYears.Count(y => y == year);
+                list.Add(MetricResult.Ok($"Charges created in {year}", createdInYear,
+                    MetricUnit.Count, year.ToString(), "RocChargeEvent.EventType", "RocChargeEvent.EventDate"));
+                list.Add(MetricResult.Ok($"Charges satisfied in {year}", satisfiedInYear,
+                    MetricUnit.Count, year.ToString(), "RocChargeEvent.EventType", "RocChargeEvent.EventDate"));
+            }
+        }
+
         return new MetricGroup("Charge register", list);
     }
 
