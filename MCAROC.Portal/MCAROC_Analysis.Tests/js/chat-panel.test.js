@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
-const { initChatPanel, createBubbleElement } = require('../../MCAROC_Analysis/wwwroot/js/chat-panel.js');
+const { initChatPanel, createBubbleElement, submitPrompt } = require('../../MCAROC_Analysis/wwwroot/js/chat-panel.js');
 
 function createMockElement(tagName = 'div', initialAttrs = {}) {
     const el = {
@@ -507,4 +507,43 @@ test('chat-panel: reconciliation does not match on question text if clientTurnId
     const turns = fixture.messagesContainer.querySelectorAll('.mca-chat-turn');
     assert.equal(turns.length, 0, 'Optimistic turn removed because this specific turn ID was not persisted');
     assert.match(fixture.errorBanner.textContent, /timed out after 45 seconds/i);
+});
+
+test('chat-panel: submitPrompt returns false if no panel is initialized or elements are missing', () => {
+    // When called without an initialized panel or elements, it must safely return false
+    const dummyDoc = { getElementById: () => null };
+    assert.equal(submitPrompt('Hello world', dummyDoc), false);
+});
+
+test('chat-panel: submitPrompt opens panel, updates charCount, populates input, and submits', async () => {
+    const fixture = setupFixture();
+    let submittedBody = null;
+    const mockFetch = async (url, options) => {
+        if (options && options.method === 'POST') {
+            submittedBody = JSON.parse(options.body);
+            return {
+                ok: true,
+                status: 200,
+                json: async () => ({
+                    success: true,
+                    messages: [
+                        { id: 1, role: 'User', text: submittedBody.question, status: 'Success' },
+                        { id: 2, inReplyToChatMessageId: 1, role: 'Assistant', text: 'Answer for prompt.', status: 'Success' }
+                    ]
+                })
+            };
+        }
+        return { ok: true, status: 200, json: async () => ({ success: true, messages: [] }) };
+    };
+
+    initChatPanel(fixture.doc, mockFetch);
+    const result = submitPrompt('What are the director liabilities?', fixture.doc);
+
+    assert.equal(result, true);
+    assert.equal(fixture.panel.classList.contains('mca-panel-open'), true, 'Panel must be opened');
+    assert.equal(fixture.panel.hidden, false, 'Panel must not be hidden');
+    assert.equal(fixture.trigger.getAttribute('aria-expanded'), 'true', 'Trigger must have aria-expanded true');
+    // Wait microtask for async handleSubmit
+    await new Promise(r => setImmediate(r));
+    assert.equal(submittedBody.question, 'What are the director liabilities?');
 });
