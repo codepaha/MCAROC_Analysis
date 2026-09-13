@@ -65,8 +65,8 @@
         <div><dt>Created</dt><dd>@D(c.CreationDate)</dd></div>
         <div><dt>Latest Modification</dt><dd>@D(c.LatestModificationDate)</dd></div>
         <div><dt>Satisfied</dt><dd>@D(c.SatisfactionDate)</dd></div>
-        <div><dt>Registered Amount (latest)</dt><dd>@Money(c.CurrentAmount)</dd></div>
-        <div><dt>Registered Amount (original)</dt><dd>@(creation?.ChargeAmount is { } oa ? Money(oa) : "not available")</dd></div>
+        <div><dt>Registered Amount (latest)</dt><dd><partial name="Details/_Amount" model="new AmountViewModel(c.CurrentAmount)" /></dd></div>
+        <div><dt>Registered Amount (original)</dt><dd>@if (creation?.ChargeAmount is { } oa) { <partial name="Details/_Amount" model="new AmountViewModel(oa)" /> } else { <text>not available</text> }</dd></div>
     </div>
 
     @* ── B. Lifecycle ── *@
@@ -79,7 +79,7 @@
                 <div class="mca-timeline-head">
                     <b>@e.EventType</b> &middot; Event: @D(e.EventDate)
                     @if (e.FilingDate is not null) { <span class="text-muted">&middot; Filing: @D(e.FilingDate)</span> }
-                    @if (e.ChargeAmount is { } amt) { <span>&middot; @Money(amt)</span> }
+                    @if (e.ChargeAmount is { } amt) { <span>&middot; <partial name="Details/_Amount" model="new AmountViewModel(amt)" /></span> }
                     @if (!string.IsNullOrWhiteSpace(e.SerialNumber)) { <span class="text-muted">&middot; SRN-ref @e.SerialNumber</span> }
                     @if (!string.IsNullOrWhiteSpace(e.HolderNameRaw) && e.HolderNameRaw != c.LatestChargeHolderRaw)
                     {
@@ -106,14 +106,25 @@
         }
         </ul>
         <p class="text-muted mb-0">
-            Original: @(creation?.ChargeAmount is { } o ? Money(o) : "not available") ·
-            Latest: @Money(c.CurrentAmount) ·
+            Original: @if (creation?.ChargeAmount is { } o) { <partial name="Details/_Amount" model="new AmountViewModel(o)" /> } else { <text>not available</text> } ·
+            Latest: <partial name="Details/_Amount" model="new AmountViewModel(c.CurrentAmount)" /> ·
             Registered Charge Enhancement:
             @{
                 var enh = (creation?.ChargeAmount is { } oo && c.CurrentAmount is { } ll)
                     ? (decimal?)(ll - oo) : null;
             }
-            @(enh is { } d ? $"{Money(d)}{(creation!.ChargeAmount!.Value != 0 ? $" ({d / creation.ChargeAmount.Value * 100:0.#}%)" : "")}" : "Not available")
+            @if (enh is { } d)
+            {
+                <partial name="Details/_Amount" model="new AmountViewModel(d)" />
+                @if (creation!.ChargeAmount!.Value != 0)
+                {
+                    <text> (@($"{d / creation.ChargeAmount.Value * 100:0.#}%"))</text>
+                }
+            }
+            else
+            {
+                <text>Not available</text>
+            }
         </p>
     </div>
 
@@ -209,10 +220,10 @@
                 <tbody>
                 <tr>
                     <td>Registered amount</td>
-                    <td>@(creation.ChargeAmount is { } a1 ? Money(a1) : "not available")</td>
-                    <td>@(compareTarget.ChargeAmount is { } a2 ? Money(a2) : "not available")</td>
+                    <td>@if (creation.ChargeAmount is { } a1) { <partial name="Details/_Amount" model="new AmountViewModel(a1)" /> } else { <text>not available</text> }</td>
+                    <td>@if (compareTarget.ChargeAmount is { } a2) { <partial name="Details/_Amount" model="new AmountViewModel(a2)" /> } else { <text>not available</text> }</td>
                     <td class="mca-compare-change @(creation.ChargeAmount is { } b1 && compareTarget.ChargeAmount is { } b2 ? (b2 > b1 ? "mca-compare-up" : b2 < b1 ? "mca-compare-down" : "") : "")">
-                        @(creation.ChargeAmount is { } d1 && compareTarget.ChargeAmount is { } d2 ? Money(d2 - d1) : "Not available")
+                        @if (creation.ChargeAmount is { } d1 && compareTarget.ChargeAmount is { } d2) { <partial name="Details/_Amount" model="new AmountViewModel(d2 - d1)" /> } else { <text>Not available</text> }
                     </td>
                 </tr>
                 <tr>

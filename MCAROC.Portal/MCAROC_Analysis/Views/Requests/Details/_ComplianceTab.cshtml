@@ -191,12 +191,12 @@
                         <span>Total Peak Exposure</span>
                         @if (totalPeakExposure is { } exp && !anyFilingMissingAmount)
                         {
-                            <strong>₹@Num(exp) Cr</strong>
+                            <strong><partial name="Details/_Amount" model="new AmountViewModel(exp)" /></strong>
                             <small>sum of peak amounts across @uniqueBanksCount institutions</small>
                         }
                         else if (totalPeakExposure is { } partialExp)
                         {
-                            <strong>₹@Num(partialExp) Cr*</strong>
+                            <strong><partial name="Details/_Amount" model="new AmountViewModel(partialExp)" />*</strong>
                             <small class="text-warning">incomplete coverage (*unstated filings)</small>
                         }
                         else
@@ -228,7 +228,7 @@
                         <tr>
                             <th>Bank / Financial Institution</th>
                             <th>Defaulter Classification</th>
-                            <th class="text-end">Peak Exposure (₹ Cr)</th>
+                            <th class="text-end">Peak Exposure (<span data-amount-unit-label="suffix-symbol">₹ Cr</span>)</th>
                             <th>Latest Filing</th>
                             <th class="text-end">Quarters on File</th>
                             <th>Reporting Period</th>
@@ -243,7 +243,7 @@
                             <td class="text-end">
                                 @if (b.PeakAmount is { } pa)
                                 {
-                                    <strong>@Num(pa)</strong>
+                                    <strong><partial name="Details/_Amount" model="new AmountViewModel(pa)" /></strong>
                                     @if (b.HasMissingAmounts)
                                     {
                                         <span class="text-warning small" title="One or more reported quarters have unstated amounts">*</span>
@@ -267,11 +267,11 @@
                             <td class="text-end">
                                 @if (totalPeakExposure is { } tot && !anyFilingMissingAmount)
                                 {
-                                    <strong>₹@Num(tot) Cr</strong>
+                                    <strong><partial name="Details/_Amount" model="new AmountViewModel(tot)" /></strong>
                                 }
                                 else if (totalPeakExposure is { } pTot)
                                 {
-                                    <strong>₹@Num(pTot) Cr*</strong>
+                                    <strong><partial name="Details/_Amount" model="new AmountViewModel(pTot)" />*</strong>
                                     <div class="text-muted" style="font-size:0.75rem;">*coverage incomplete (unstated amounts)</div>
                                 }
                                 else
@@ -292,7 +292,7 @@
                     </summary>
                     <div class="pt-3">
                         <div class="pi-table-wrap"><table class="pi-results-table">
-                            <thead><tr><th>#</th><th>Bank / Institution</th><th>Report Date</th><th class="text-end">Amount (Cr)</th><th>Defaulter Classification</th><th>Source</th></tr></thead>
+                            <thead><tr><th>#</th><th>Bank / Institution</th><th>Report Date</th><th class="text-end">Amount (<span data-amount-unit-label="suffix">Cr</span>)</th><th>Defaulter Classification</th><th>Source</th></tr></thead>
                             <tbody>
                             @{ var rowIdx = 1; }
                             @foreach (var c in suitFiledRecords.OrderByDescending(x => x.RecordDate).ThenByDescending(x => x.AmountCrore))
@@ -301,7 +301,7 @@
                                     <td class="text-muted small">@(rowIdx++)</td>
                                     <td><strong>@Or(c.Bank)</strong></td>
                                     <td>@D(c.RecordDate)</td>
-                                    <td class="text-end">@Num(c.AmountCrore)</td>
+                                    <td class="text-end"><partial name="Details/_Amount" model="new AmountViewModel(c.AmountCrore)" /></td>
                                     <td><span class="mca-badge">@Or(c.DefaulterType)</span></td>
                                     <td class="text-muted small">@Or(c.Source)</td>
                                 </tr>
@@ -476,7 +476,7 @@
                                                 <div class="text-muted small">Total Paid</div>
                                                 @if (agg.TotalContributions is { } tc)
                                                 {
-                                                    <strong>₹@Num(tc) Cr</strong>
+                                                    <strong><partial name="Details/_Amount" model="new AmountViewModel(tc)" /></strong>
                                                     <div class="text-muted" style="font-size:0.75rem;">aggregate</div>
                                                 }
                                                 else
@@ -503,7 +503,7 @@
                 @if (Model.EpfoContributions.Count > 0)
                 {
                     <div class="pi-table-wrap"><table class="pi-results-table">
-                        <thead><tr><th>Establishment</th><th>Wage Month</th><th>TRRN</th><th class="text-end">Employees</th><th class="text-end">Amount (Cr)</th><th>Due Date</th><th>Payment Date</th><th>Status</th></tr></thead>
+                        <thead><tr><th>Establishment</th><th>Wage Month</th><th>TRRN</th><th class="text-end">Employees</th><th class="text-end">Amount (<span data-amount-unit-label="suffix">Cr</span>)</th><th>Due Date</th><th>Payment Date</th><th>Status</th></tr></thead>
                         <tbody>
                         @foreach (var e in Model.EpfoContributions)
                         {
@@ -512,7 +512,7 @@
                                 <td>@e.WageMonth</td>
                                 <td class="report-id">@Or(e.Trrn)</td>
                                 <td class="text-end">@(e.EmployeeCount?.ToString() ?? "—")</td>
-                                <td class="text-end">@(e.ContributionAmountCrore is { } ca ? Num(ca) : "—")</td>
+                                <td class="text-end"><partial name="Details/_Amount" model="new AmountViewModel(e.ContributionAmountCrore)" /></td>
                                 <td>@D(e.PaymentDueDate)</td>
                                 <td>@D(e.PaymentDate)</td>
                                 <td>@Or(e.PaymentStatus)</td>
@@ -541,14 +541,14 @@
         {
             var total = Model.MsmePayments.Sum(m => m.AmountDueCrore ?? 0m);
             <div class="pi-table-wrap"><table class="pi-results-table">
-                <thead><tr><th>Supplier</th><th>PAN</th><th class="text-end">Amount Due (Cr)</th><th>Period</th></tr></thead>
+                <thead><tr><th>Supplier</th><th>PAN</th><th class="text-end">Amount Due (<span data-amount-unit-label="suffix">Cr</span>)</th><th>Period</th></tr></thead>
                 <tbody>
                 @foreach (var m in Model.MsmePayments)
                 {
-                    <tr><td>@m.SupplierNameRaw</td><td class="report-id">@Or(m.SupplierPan)</td><td class="text-end">@Num(m.AmountDueCrore)</td><td>@m.ReportingPeriod</td></tr>
+                    <tr><td>@m.SupplierNameRaw</td><td class="report-id">@Or(m.SupplierPan)</td><td class="text-end"><partial name="Details/_Amount" model="new AmountViewModel(m.AmountDueCrore)" /></td><td>@m.ReportingPeriod</td></tr>
                 }
                 </tbody>
-                <tfoot><tr><td colspan="2"><b>Total outstanding to MSME suppliers</b></td><td class="text-end"><b>@Num(total)</b></td><td></td></tr></tfoot>
+                <tfoot><tr><td colspan="2"><b>Total outstanding to MSME suppliers</b></td><td class="text-end"><b><partial name="Details/_Amount" model="new AmountViewModel(total)" /></b></td><td></td></tr></tfoot>
             </table></div>
             <p class="text-muted mt-2 mb-0">MSME dues feed the Phase 3 supplier-payment-pressure logic — surfaced separately, not buried under general compliance.</p>
         }

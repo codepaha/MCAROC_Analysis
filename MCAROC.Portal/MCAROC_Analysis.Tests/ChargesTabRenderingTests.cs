@@ -210,7 +210,9 @@ public class ChargesTabRenderingTests
 
         var html = await RenderChargesTabAsync(vm);
 
-        Assert.Contains("<strong>750.0</strong>", html);
+        // Registered Open Amount now renders via the _Amount partial (#123, C5b), which delegates to
+        // DetailsFormat.Money() — "₹750.00 Cr", not the old bare "750.0".
+        Assert.Contains("₹750.00 Cr", html);
         Assert.DoesNotContain("Not reported / reconciliation incomplete", html);
         Assert.DoesNotContain("(recon incomplete)", html);
     }

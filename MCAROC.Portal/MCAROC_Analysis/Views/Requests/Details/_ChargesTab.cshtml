@@ -76,7 +76,7 @@
                     <span>Registered Open Amount</span>
                     @if (Model.TotalOpenChargeAmount is { } openAmount)
                     {
-                        <strong>@openAmount.ToString("N1")</strong>
+                        <strong><partial name="Details/_Amount" model="new AmountViewModel(openAmount)" /></strong>
                     }
                     else
                     {
@@ -86,16 +86,16 @@
                     {
                         if (Model.AnyOpenChargeMissingAmount)
                         {
-                            <small>₹ Crore · MCA stated: @Money(mca) <span class="text-warning" title="One or more open charges have unstated amounts; reconciliation incomplete">(recon incomplete)</span></small>
+                            <small><span data-amount-unit-label="long">₹ Crore</span> · MCA stated: <partial name="Details/_Amount" model="new AmountViewModel(mca)" /> <span class="text-warning" title="One or more open charges have unstated amounts; reconciliation incomplete">(recon incomplete)</span></small>
                         }
                         else
                         {
-                            <small>₹ Crore · MCA stated: @Money(mca)</small>
+                            <small><span data-amount-unit-label="long">₹ Crore</span> · MCA stated: <partial name="Details/_Amount" model="new AmountViewModel(mca)" /></small>
                         }
                     }
                     else
                     {
-                        <small>₹ Crore · MCA stated: —</small>
+                        <small><span data-amount-unit-label="long">₹ Crore</span> · MCA stated: —</small>
                     }
                 </div>
                 <div class="pi-metric"><span>Charge Holders</span><strong>@Model.ChargeHolderCount</strong><small>distinct lenders</small></div>
@@ -111,14 +111,14 @@
                 @if (Model.LenderConcentration.Count > 0)
                 {
                     <div class="pi-table-wrap"><table class="pi-results-table">
-                        <thead><tr><th>Charge Holder</th><th class="text-end">Open Charges</th><th class="text-end">Registered Amount (Cr)</th><th class="text-end">% of Open Registered</th></tr></thead>
+                        <thead><tr><th>Charge Holder</th><th class="text-end">Open Charges</th><th class="text-end">Registered Amount (<span data-amount-unit-label="suffix">Cr</span>)</th><th class="text-end">% of Open Registered</th></tr></thead>
                         <tbody>
                         @foreach (var row in Model.LenderConcentration)
                         {
                             <tr>
                                 <td>@row.Holder</td>
                                 <td class="text-end">@row.OpenCount</td>
-                                <td class="text-end">@row.RegisteredAmount.ToString("N2")</td>
+                                <td class="text-end"><partial name="Details/_Amount" model="new AmountViewModel(row.RegisteredAmount)" /></td>
                                 <td class="text-end">@(row.PctOfOpenAmount is { } p ? $"{p:0.#}%" : "—")</td>
                             </tr>
                         }
@@ -168,7 +168,7 @@
                             <td class="report-id">@c.RocChargeNumber</td>
                             <td>@(string.IsNullOrWhiteSpace(c.LatestChargeHolderRaw) ? Html.Raw("<span class=\"mca-badge sev-watch\">Unknown Charge Holder</span>") : Html.Raw(System.Net.WebUtility.HtmlEncode(c.LatestChargeHolderRaw)))</td>
                             <td>@D(c.CreationDate)</td>
-                            <td class="text-end">@Money(c.CurrentAmount)</td>
+                            <td class="text-end"><partial name="Details/_Amount" model="new AmountViewModel(c.CurrentAmount)" /></td>
                             <td>@D(c.LatestModificationDate ?? c.CreationDate)</td>
                             <td>@(facility ?? "—")</td>
                             <td>@if (secCount > 0) { SecurityBadges(c); } else { <text>—</text> }</td>
@@ -225,7 +225,7 @@
                         <tr>
                             <td class="report-id">@c.RocChargeNumber</td>
                             <td>@(string.IsNullOrWhiteSpace(c.LatestChargeHolderRaw) ? Html.Raw("<span class=\"mca-badge sev-watch\">Unknown Charge Holder</span>") : Html.Raw(System.Net.WebUtility.HtmlEncode(c.LatestChargeHolderRaw)))</td>
-                            <td class="text-end">@Money(c.CurrentAmount)</td>
+                            <td class="text-end"><partial name="Details/_Amount" model="new AmountViewModel(c.CurrentAmount)" /></td>
                             <td>@D(c.CreationDate)</td>
                             <td>@D(c.SatisfactionDate)</td>
                             <td>@dur</td>

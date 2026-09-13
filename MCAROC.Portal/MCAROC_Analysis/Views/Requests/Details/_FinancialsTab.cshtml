@@ -49,10 +49,10 @@
         @if (std.Count > 0 || run is not null)
         {
             <div class="mca-highlight-grid">
-                <div class="pi-metric"><span>Latest Revenue</span><strong>@(Model.LatestRevenue?.ToString("N1") ?? "—")</strong><small>@(Model.LatestFinancialYear is { } fy ? $"FY{fy}" : "no financials")@(Model.RevenueYoYPercent is { } yoy ? $" · {(yoy >= 0 ? "▲" : "▼")} {Math.Abs(yoy)}% YoY" : "")</small></div>
-                <div class="pi-metric"><span>Net Worth</span><strong>@(Model.LatestNetWorth?.ToString("N1") ?? "—")</strong><small>₹ Crore@(Model.LatestFinancialYear is { } fy2 ? $" · FY{fy2}" : "")</small></div>
-                <div class="pi-metric"><span>PAT</span><strong>@(Model.LatestPat?.ToString("N1") ?? "—")</strong><small>₹ Crore@(Model.LatestFinancialYear is { } fy3 ? $" · FY{fy3}" : "")</small></div>
-                <div class="pi-metric"><span>Total Debt</span><strong>@(Model.LatestTotalDebt?.ToString("N1") ?? "—")</strong><small>₹ Crore@(Model.LatestFinancialYear is { } fy4 ? $" · FY{fy4}" : "")</small></div>
+                <div class="pi-metric"><span>Latest Revenue</span><strong><partial name="Details/_Amount" model="new AmountViewModel(Model.LatestRevenue)" /></strong><small>@(Model.LatestFinancialYear is { } fy ? $"FY{fy}" : "no financials")@(Model.RevenueYoYPercent is { } yoy ? $" · {(yoy >= 0 ? "▲" : "▼")} {Math.Abs(yoy)}% YoY" : "")</small></div>
+                <div class="pi-metric"><span>Net Worth</span><strong><partial name="Details/_Amount" model="new AmountViewModel(Model.LatestNetWorth)" /></strong><small><span data-amount-unit-label="long">₹ Crore</span>@(Model.LatestFinancialYear is { } fy2 ? $" · FY{fy2}" : "")</small></div>
+                <div class="pi-metric"><span>PAT</span><strong><partial name="Details/_Amount" model="new AmountViewModel(Model.LatestPat)" /></strong><small><span data-amount-unit-label="long">₹ Crore</span>@(Model.LatestFinancialYear is { } fy3 ? $" · FY{fy3}" : "")</small></div>
+                <div class="pi-metric"><span>Total Debt</span><strong><partial name="Details/_Amount" model="new AmountViewModel(Model.LatestTotalDebt)" /></strong><small><span data-amount-unit-label="long">₹ Crore</span>@(Model.LatestFinancialYear is { } fy4 ? $" · FY{fy4}" : "")</small></div>
                 <div class="pi-metric"><span>Reporting Bases</span><strong>@(con.Count > 0 ? "S + C" : "S")</strong><small>@std.Count standalone · @con.Count consolidated year(s)</small></div>
             </div>
             <p class="text-muted mt-3 mb-0">Standalone is the primary basis (rule engine + default answers). Use the toggle on each statement to view consolidated where available.</p>
@@ -160,7 +160,7 @@
                 <h3>Closest Peers by Revenue <span class="mca-count">@Model.PeerCompanies.Count</span></h3>
                 <p class="text-muted">Named companies with revenue closest to this one@(peerFy is { } fy ? $", FY{fy}" : "") — the list includes the company itself.</p>
                 <div class="pi-table-wrap"><table class="pi-results-table">
-                    <thead><tr><th>#</th><th>Legal name</th><th>CIN</th><th>City</th><th class="text-end">Revenue (₹ Cr)</th></tr></thead>
+                    <thead><tr><th>#</th><th>Legal name</th><th>CIN</th><th>City</th><th class="text-end">Revenue (<span data-amount-unit-label="suffix-symbol">₹ Cr</span>)</th></tr></thead>
                     <tbody>
                     @foreach (var p in Model.PeerCompanies)
                     {
@@ -170,7 +170,7 @@
                             <td>@p.LegalName @if (isSelf) { <span class="mca-badge">this company</span> }</td>
                             <td class="report-id">@Or(p.Cin)</td>
                             <td>@Or(p.City)</td>
-                            <td class="text-end">@Num(p.RevenueCrore)</td>
+                            <td class="text-end"><partial name="Details/_Amount" model="new AmountViewModel(p.RevenueCrore)" /></td>
                         </tr>
                     }
                     </tbody>

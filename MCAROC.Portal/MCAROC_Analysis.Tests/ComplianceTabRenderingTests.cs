@@ -175,7 +175,8 @@ public class ComplianceTabRenderingTests
 
         var html = await RenderComplianceTabAsync(vm);
 
-        Assert.Contains("₹42.50 Cr*", html);
+        // The "*" sits immediately outside the _Amount partial's <span> (#123, C5b).
+        Assert.Contains("₹42.50 Cr</span>*", html);
         Assert.Contains("incomplete coverage (*unstated filings)", html);
         Assert.Contains("*coverage incomplete (unstated amounts)", html);
     }
@@ -214,8 +215,10 @@ public class ComplianceTabRenderingTests
 
         var html = await RenderComplianceTabAsync(vm);
 
-        // Neither EST001 nor EST002 should show a fabricated sum
-        Assert.DoesNotContain("₹1.25 Cr", html);
+        // The legitimate January contribution (1.25) is shown exactly once — a fabricated aggregate
+        // for EST001 (which has an unstated February amount) would show it a second time.
+        var occurrences = System.Text.RegularExpressions.Regex.Matches(html, System.Text.RegularExpressions.Regex.Escape("₹1.25 Cr")).Count;
+        Assert.Equal(1, occurrences);
         Assert.DoesNotContain("₹0", html);
         Assert.Contains("Not reported", html);
         Assert.Contains("incomplete coverage", html);
@@ -240,10 +243,12 @@ public class ComplianceTabRenderingTests
 
         var html = await RenderComplianceTabAsync(vm);
 
-        // Individual missing contribution amount renders as em-dash "—"
+        // Individual missing contribution amount renders as em-dash "—", via the _Amount partial's own
+        // null fallback (#123, C5b) — now inside a <span class="mca-amount">, not bare <td> text.
         Assert.True(
-            html.Contains("<td class=\"text-end\">—</td>") || html.Contains("<td class=\"text-end\">&#x2014;</td>"),
-            "Expected individual missing contribution amount to render as em-dash '—' in <td class=\"text-end\">");
+            html.Contains("<td class=\"text-end\"><span class=\"mca-amount\">—</span></td>") ||
+            html.Contains("<td class=\"text-end\"><span class=\"mca-amount\">&#x2014;</span></td>"),
+            "Expected individual missing contribution amount to render as em-dash inside the _Amount partial's <td class=\"text-end\">");
     }
 
     [Fact]
@@ -272,7 +277,7 @@ public class ComplianceTabRenderingTests
 
         var html = await RenderComplianceTabAsync(vm);
 
-        Assert.Contains("₹42.50 Cr*", html);
+        Assert.Contains("₹42.50 Cr</span>*", html);
         Assert.Contains("incomplete coverage (*unstated filings)", html);
         Assert.Contains("*coverage incomplete (unstated amounts)", html);
     }

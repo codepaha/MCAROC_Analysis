@@ -388,4 +388,34 @@ public class CorporateTabRenderingTests
         Assert.DoesNotContain("invalid format", html);
         Assert.DoesNotContain("unreachable", html);
     }
+
+    // ── #123 (C5b) — the divergence badge's title= can't hold markup, so its dynamic amounts
+    //    were dropped entirely; the badge's own visible text (already _Amount-wrapped) repeats the value ──
+
+    [Fact]
+    public async Task Charge_register_divergence_tooltip_names_no_dynamic_amount_but_the_visible_badge_still_does()
+    {
+        var vm = CreateViewModel();
+        vm.CompanyProfile = new CompanyProfile { McaSumOfChargesCrore = 100m };
+        vm.Charges =
+        [
+            new RocCharge { RocChargeNumber = "CHG-801", CurrentAmount = 80m, SatisfactionDate = null }
+        ];
+
+        var html = await RenderCorporateTabAsync(vm);
+
+        Assert.Contains("Divergence (Computed Open:", html);
+        Assert.Contains("₹80.00 Cr", html); // the visible, _Amount-wrapped computed total
+        // The tooltip itself must name no specific figure — a title attribute can't hold markup, so it
+        // can't stay toggle-consistent; the fix drops the dynamic amounts rather than leaving a stale one.
+        const string titlePrefix = "title=\"";
+        var titleStart = html.IndexOf(titlePrefix + "MCA-stated", StringComparison.Ordinal);
+        Assert.True(titleStart >= 0, "Expected the static divergence tooltip text to be present.");
+        var valueStart = titleStart + titlePrefix.Length;
+        var titleEnd = html.IndexOf('"', valueStart);
+        var titleValue = html[valueStart..titleEnd];
+        Assert.DoesNotContain("80", titleValue);
+        Assert.DoesNotContain("100", titleValue);
+        Assert.DoesNotContain("₹", titleValue);
+    }
 }
