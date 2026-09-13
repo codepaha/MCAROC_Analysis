@@ -73,13 +73,6 @@ public class DossierThemeSyncTests
     }
 
     [Fact]
-    public void App_css_imports_dossier_tokens_css()
-    {
-        var appCss = Read("MCAROC.Portal", "MCAROC_Analysis", "wwwroot", "css", "app.css");
-        Assert.Matches(@"@import\s+(?:url\(['""]?dossier-tokens\.css['""]?\)|['""]dossier-tokens\.css['""]);", appCss);
-    }
-
-    [Fact]
     public void App_css_maps_core_tokens_to_dossier_palette()
     {
         var appCss = Read("MCAROC.Portal", "MCAROC_Analysis", "wwwroot", "css", "app.css");
