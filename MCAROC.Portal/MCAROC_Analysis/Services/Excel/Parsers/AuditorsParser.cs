@@ -92,15 +92,23 @@ public static class AuditorsParser
             int? serialNumber = null;
             if (AmountNormalizer.TryParse(Cell(row, 0), out var serial, out _) && serial is not null)
             {
-                if (serial.Value == decimal.Truncate(serial.Value))
-                {
-                    serialNumber = (int)serial.Value;
-                }
-                else
+                if (serial.Value != decimal.Truncate(serial.Value))
                 {
                     result.AddWarning(new ParseIssue(IssueSeverity.Warning, nameof(AuditorsParser), "SerialNumber",
                         serial.Value.ToString(CultureInfo.InvariantCulture), "AUDITOR_SERIAL_NUMBER_NOT_INTEGRAL",
                         $"Serial Number '{serial.Value}' is not a whole number — left unset rather than truncated.", r + 1));
+                }
+                else if (serial.Value is < int.MinValue or > int.MaxValue)
+                {
+                    // Integral but outside Int32's range — a bare (int) cast throws OverflowException in
+                    // checked-by-default contexts and would abort the whole ingestion for one bad cell.
+                    result.AddWarning(new ParseIssue(IssueSeverity.Warning, nameof(AuditorsParser), "SerialNumber",
+                        serial.Value.ToString(CultureInfo.InvariantCulture), "AUDITOR_SERIAL_NUMBER_OUT_OF_RANGE",
+                        $"Serial Number '{serial.Value}' is outside the supported range — left unset rather than overflowing.", r + 1));
+                }
+                else
+                {
+                    serialNumber = (int)serial.Value;
                 }
             }
 
@@ -114,6 +122,7 @@ public static class AuditorsParser
                 FinancialYear = (int)yearValue.Value,
                 Basis = basis,
                 ObservationText = observationText,
+                IsDetailRow = true,
                 SerialNumber = serialNumber,
                 SectionCode = NormalizeDetailText(Cell(row, 2)),
                 SectionName = NormalizeDetailText(Cell(row, 3)),

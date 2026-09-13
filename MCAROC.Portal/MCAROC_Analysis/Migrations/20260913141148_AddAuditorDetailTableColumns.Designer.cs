@@ -13,7 +13,7 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace MCAROC_Analysis.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    [Migration("20260913124552_AddAuditorDetailTableColumns")]
+    [Migration("20260913141148_AddAuditorDetailTableColumns")]
     partial class AddAuditorDetailTableColumns
     {
         /// <inheritdoc />
@@ -206,6 +206,9 @@ namespace MCAROC_Analysis.Migrations
 
                     b.Property<long>("IngestionRunId")
                         .HasColumnType("bigint");
+
+                    b.Property<bool>("IsDetailRow")
+                        .HasColumnType("bit");
 
                     b.Property<string>("MembershipNumber")
                         .HasColumnType("nvarchar(max)");

@@ -91,4 +91,53 @@ public class AuditorRulesTests
 
         Assert.Equal(RuleEvaluationStatus.NotEvaluated, Assert.Single(result).Status);
     }
+
+    /// <summary>Regression for a real bug found in review: G18 added detail-table rows
+    /// (IsDetailRow = true) to AuditorObservations. A same-year detail row with a null ObservationText
+    /// and the default HasQualificationOrAdverseRemark=false must never be picked over the year-summary
+    /// row (IsDetailRow = false) — doing so would silently downgrade a qualified/adverse opinion to
+    /// "Clean" just because the detail row happened to come first in enumeration order.</summary>
+    [Fact]
+    public void DetailRowForTheSameYearNeverOverridesTheYearSummaryOpinion()
+    {
+        var ctx = BuildContext(auditorObservations:
+        [
+            // A G18 detail-table row for the same year, carrying no opinion of its own (as real
+            // Directors' Comments/Footnotes-only detail rows now can).
+            new AuditorObservation
+            {
+                FinancialYear = 2025, IsDetailRow = true, ObservationText = null,
+                DirectorsComments = "Board noted the delay", HasQualificationOrAdverseRemark = false
+            },
+            // The year-summary row (table 1) — the actual qualified opinion for FY2025.
+            new AuditorObservation
+            {
+                FinancialYear = 2025, IsDetailRow = false, HasQualificationOrAdverseRemark = true,
+                ObservationText = "The auditor issued an adverse opinion on the financial statements."
+            }
+        ]);
+
+        var result = AuditorRules.Evaluate(ctx);
+
+        var outcome = Assert.Single(result);
+        Assert.Equal(FindingSeverity.Critical, outcome.Finding!.Severity);
+        Assert.Equal(AuditorRules.AdverseOpinionCode, outcome.Finding.Code);
+        Assert.NotEqual(AuditorRules.CleanOpinionCode, outcome.Finding.Code);
+    }
+
+    [Fact]
+    public void OnlyDetailRowsAvailable_IsNotEvaluated()
+    {
+        // No year-summary row exists at all (e.g. a company whose detail table has rows but whose
+        // year-summary table is missing/blank) — must fail closed to NotEvaluated, never fall back to
+        // treating a detail row as the opinion.
+        var ctx = BuildContext(auditorObservations:
+        [
+            new AuditorObservation { FinancialYear = 2025, IsDetailRow = true, DirectorsComments = "Some note" }
+        ]);
+
+        var result = AuditorRules.Evaluate(ctx);
+
+        Assert.Equal(RuleEvaluationStatus.NotEvaluated, Assert.Single(result).Status);
+    }
 }

@@ -22,6 +22,13 @@ namespace MCAROC_Analysis.Migrations
                 type: "nvarchar(max)",
                 nullable: true);
 
+            migrationBuilder.AddColumn<bool>(
+                name: "IsDetailRow",
+                table: "AuditorObservations",
+                type: "bit",
+                nullable: false,
+                defaultValue: false);
+
             migrationBuilder.AddColumn<string>(
                 name: "SectionCode",
                 table: "AuditorObservations",
@@ -50,6 +57,10 @@ namespace MCAROC_Analysis.Migrations
 
             migrationBuilder.DropColumn(
                 name: "Footnotes",
+                table: "AuditorObservations");
+
+            migrationBuilder.DropColumn(
+                name: "IsDetailRow",
                 table: "AuditorObservations");
 
             migrationBuilder.DropColumn(

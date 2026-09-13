@@ -29,4 +29,11 @@ public class AuditorObservation : ExtractedEntityBase
     public string? SectionName { get; set; }
     public string? DirectorsComments { get; set; }
     public string? Footnotes { get; set; }
+
+    /// <summary>True only for rows parsed from the sheet's second, per-note detail table (Serial Number
+    /// | ... | Footnotes). False (the default, including for every row that predates G18) means "table 1,
+    /// the year-summary row" — the only kind AuditorRules may treat as the authoritative audit opinion
+    /// for a year, since detail rows never carry a meaningful HasQualificationOrAdverseRemark and can now
+    /// have a null ObservationText.</summary>
+    public bool IsDetailRow { get; set; }
 }

@@ -204,6 +204,9 @@ namespace MCAROC_Analysis.Migrations
                     b.Property<long>("IngestionRunId")
                         .HasColumnType("bigint");
 
+                    b.Property<bool>("IsDetailRow")
+                        .HasColumnType("bit");
+
                     b.Property<string>("MembershipNumber")
                         .HasColumnType("nvarchar(max)");
 

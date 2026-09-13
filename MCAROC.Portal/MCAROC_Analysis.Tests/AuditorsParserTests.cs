@@ -181,4 +181,29 @@ public class AuditorsParserTests
         Assert.Equal(2, row.SerialNumber);
         Assert.Empty(result.Warnings);
     }
+
+    /// <summary>Regression for a real bug found in review: an integral Serial Number value above
+    /// Int32.MaxValue was cast directly to int, which throws OverflowException (decimal-to-int
+    /// conversions are checked unconditionally in .NET) and would abort ingestion for one bad cell
+    /// instead of leaving the field unset with a warning.</summary>
+    [Fact]
+    public void IntegralSerialNumberAboveInt32MaxValueIsRejectedNotOverflowed()
+    {
+        var sheet = Sheet("Auditors' Comments-Standalone",
+            Row("AUDITORS' COMMENTS - STANDALONE"),
+            Row("Financial Year", "Qualified?", "", "", "Comments Given By"),
+            Row("", "", "", "", ""),
+            Row("Serial Number", "Financial Year", "Section", "Section Name", "Auditors' Comments", "Directors' Comments", "Footnotes"),
+            Row(2147483648.0, 2025.0, 700600.0, "Disclosures", "A real comment", "-", "-"));
+
+        // Must not throw — this is the actual bug: a bare (int) cast on this value throws OverflowException.
+        var result = AuditorsParser.Parse(sheet, 1, 1, 10);
+
+        var row = Assert.Single(result.Items);
+        Assert.Null(row.SerialNumber); // left unset, never overflowed
+        Assert.Equal("A real comment", row.ObservationText); // the rest of the row still parses fine
+        var warning = Assert.Single(result.Warnings);
+        Assert.Equal("AUDITOR_SERIAL_NUMBER_OUT_OF_RANGE", warning.IssueCode);
+        Assert.Contains("2147483648", warning.Message);
+    }
 }
