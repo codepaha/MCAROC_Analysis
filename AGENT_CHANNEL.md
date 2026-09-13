@@ -200,10 +200,14 @@ A11** (distinguish "sheet absent" from "sheet present, zero" — closed 2026-09-
 `SheetCoverage`/`WasAbsent`/`TrackedOptionalSheets`, covered by `SourceReconciliationTests.cs`). This
 board had drifted — corrected 2026-09-13 during a post-EPIC audit.
 
-**Owner TODO migration notes below this line are historical** (2026-09-10 and earlier) — dozens of PRs
-since have shipped against that exact schema (e.g. everything catalogued `live` under G1/G3/G4/G5,
-Company Identity, Shareholding), so those migrations are self-evidently applied. Not re-verified line by
-line; flagging so nobody re-reads this as current-state.
+**Owner TODO migration notes below this line are dated** (2026-09-10 and earlier) and their apply-status
+is **unverified, not confirmed applied** — that dozens of PRs have since shipped code against that schema
+proves the migrations exist and compile against CI's own ephemeral SQL Server 2025 container, not that
+any particular local or deployed database has actually run `AddPreLoginReportJobs`,
+`AddCompanyIdentityAndContact`, `AddShareholdingPattern`, or the others listed below. Anyone about to run
+the portal against a real database should confirm via that database's own EF migrations history
+(`SELECT * FROM __EFMigrationsHistory` or `dotnet ef migrations list`) rather than trusting this note
+either way.
 
 **Infra note (2026-09-10, updated):** CI now runs the **full suite on GitHub-hosted `ubuntu-latest`**
 (`build-and-test` job) against a **SQL Server 2025 service container** (`mcr.microsoft.com/mssql/
