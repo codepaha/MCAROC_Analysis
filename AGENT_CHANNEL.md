@@ -110,16 +110,16 @@ Razor + view-model-load only, or pure computation over entities that already exi
 request, 2026-09-12) since this lane hadn't claimed them yet — remaining 6 still this lane, unclaimed.**
 | Issue | What | Needs | Status |
 |---|---|---|---|
-| #121 C2 | per-tab sticky contents nav + scroll-spy | #112 C1 (merged) | **PR #136 open** (`feature/121-tab-contents-nav`) → `@codex review` |
+| #121 C2 | per-tab sticky contents nav + scroll-spy | #112 C1 (merged) | **MERGED** (PR #136, `3508992`) |
 | #114 C4 | 3 missing colour-as-signal annotation patterns | #112 C1 (merged) | **MERGED** (PR #129, `354b1fc`) |
 | #115 C5a | group charges by holder | #112 C1 (merged) | **MERGED** (`9a92fac`) |
 | #123 C5b | Crore/Lakh/₹ unit toggle + typed amount renderer (file the generated call-site classification table as evidence, don't hardcode counts in the PR) | #112 C1 (merged) | **MERGED** (PR #132, `98816af`) |
 | #116 C6 | shared inline-SVG viz contract (dossier + dashboard mappings kept separate) + 6 partials | #112 C1 (merged) | **MERGED** (PR #134, `7a430ab`) |
 | #117 C7a | in-app PDF viewer, request-scoped + dedup-aware — **Claude reviews the scoping/dedup code before merge** | none | **MERGED** (PR #127, `9b1096b`) |
 | #119 C7b | relocate chat to docked panel, JSON hardening (antiforgery, length limit, error contract) | #117 C7a (merged) | **MERGED** (PR #131, `dd33f22`) |
-| #122 C7c | wire the dead Ctrl+K command-palette scaffold | #119 C7b | open |
-| #120 C9 | dashboard restyle — retire Chart.js for #116's SVG partials | #116 C6 (merged) | open — now fully unblocked |
-| #124 C10 | print stylesheet — deliberately last | all of the above | open |
+| #122 C7c | wire the dead Ctrl+K command-palette scaffold | #119 C7b (merged) | **MERGED** (PR #137, `f3e6afb`) |
+| #120 C9 | dashboard restyle — retire Chart.js for #116's SVG partials | #116 C6 (merged) | **PR #139 open** (`feature/120-dashboard-svg-charts`) → `@codex review` |
+| #124 C10 | print stylesheet — deliberately last | all of the above | **MERGED** (PR #138, `6b07f3e`) — merged ahead of #120/C9; scoped to the Requests Details page only, no Dashboard/Chart.js overlap, confirmed no conflict on rebase |
 
 ### Sequencing
 - Claude: D2/#57 **MERGED** → D4/#59 **MERGED** → K1/#98 **MERGED** → #97 **MERGED** → D10/#65 **MERGED** (`7f2cf1e`) → #47 (pre-login report ownership binding) **MERGED** (`f52f3cf`) — Claude's lane empty pending a new assignment.
@@ -205,6 +205,46 @@ Linux subset fonts break PdfPig's ToUnicode → those are `[SkippableFact]`, ski
 ---
 
 ## Log  <!-- newest first. Prefix: NEEDS / BLOCKED / DONE / DECISION / FYI -->
+
+### 2026-09-13 — Claude session (PR #139 open for #120 C9 — Dashboard Chart.js retirement; #121/#122/#124 caught up)
+- **PR #139 open** (`feature/120-dashboard-svg-charts`, → Closes #120): migrates the Dashboard's 3
+  Chart.js canvases to #116 (C6)'s SVG contract. Only the request-trend line fit C6's shipped shape —
+  the other two (a plain horizontal bar for priority distribution, a stacked horizontal bar for findings
+  by section) needed new contract pieces built here:
+  - A closed `ChartAccent` enum (`Brand`/`Danger`/`Warning`/`Success`/`Muted`) + `ChartAccentCss`
+    resolver — a generic bar partial writes `fill="var(...)"` from this, never a raw caller string.
+    `ChartCategoryPoint` gets an additive `Accent` field.
+  - A new `ChartStackedCategorySeries` (with `ChartStackedSegment`/`ChartStackedCategoryPoint`) — the
+    stacked-bar shape C6 never defined, same fail-closed discipline (every point must carry exactly the
+    series' declared segment set, a missing bucket must be an explicit 0; segment values enforced
+    non-negative).
+  - Two new reference partials, `Views/Shared/_HorizontalBars.cshtml` and `_StackedBars.cshtml`, both
+    zero-safe (no `NaN`/`Infinity` from a `0/0` division); `_HorizontalBars` also rejects a negative
+    `Value` outright.
+  - `_Sparkline.cshtml` relocated from `Views/Requests/Details/` to `Views/Shared/` — the Dashboard is
+    now a genuine second consumer, not reaching into another page's folder. Its size is now a validated
+    `ViewData` API (finite positive `Width`/`Height` only) since two pages share it now.
+  - A shared `SvgNumberFormat.N` (InvariantCulture) replaces three separate private copies of the same
+    coordinate-formatting logic.
+  - `wwwroot/lib/chart.js/` and `wwwroot/js/dashboard.js` deleted — confirmed via full-repo grep no other
+    consumer existed.
+  - **Did the live browser check for real, not waived**: launched the dev server against the populated
+    dev DB, screenshotted the Dashboard in light theme, dark theme, and 390px mobile width via a
+    puppeteer-core + already-installed Edge headless pass (no chromium-cli/Playwright available on this
+    machine, so this was assembled ad hoc — worth turning into a proper `/run-skill-generator` project
+    skill if this comes up again). All 3 charts render with real data, colors resolve from CSS custom
+    properties (confirmed both in the rendered SVG `fill` attributes and visually in both themes), no
+    horizontal overflow at mobile width, zero `<canvas>`/Chart.js remnants anywhere on the page.
+  - Rebased onto `main` after #121/#122/#124 all merged ahead of this branch — clean, no conflicts (#124's
+    print stylesheet turned out scoped entirely to the Requests Details page, never touching Dashboard or
+    Chart.js, despite the original plan text saying C10 "depends on all of the above" including C9).
+  - 129 C# tests + 62 JS tests, full Release build clean.
+- **Caught up 3 stale table rows while consolidating**: #121 (C2) was PR #136/open in the table but had
+  already merged (`3508992`); #122 (C7c) and #124 (C10) were both still marked "open" but had also
+  already merged (PR #137 `f3e6afb`, PR #138 `6b07f3e`) while this session was heads-down on #120's
+  design/implementation. Same lesson as the earlier "check every row, not just the flagged one" note —
+  worth building a habit of a quick `gh issue list --state closed` sweep before any channel update from
+  now on, rather than trusting the table's own last-known state.
 
 ### 2026-09-13 — Antigravity (DONE #121 C2: Per-tab sticky contents nav + scroll-spy + unified details navigation)
 - **DONE #121 (C2)**: Replaced subtab pills with accessible sticky contents jump-nav and Bootstrap ScrollSpy across the 4 long tabs on Company Details (Financials, Charges, Compliance, Litigation).
