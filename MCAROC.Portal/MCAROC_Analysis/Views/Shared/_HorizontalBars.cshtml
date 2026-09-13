@@ -1,0 +1,60 @@
+@* Shared chart contract's first ChartCategorySeries consumer (#120, C9) — one horizontal bar per
+   category, each row labelled and value-annotated so nothing is left for the reader to infer from bar
+   length alone (matches _Sparkline.cshtml's paired-table convention). All coordinates go through
+   SvgNumberFormat.N (InvariantCulture — see that type's own doc comment for why).
+   Note: SVG <text> elements below are emitted via Html.Raw because Razor's parser reserves the literal
+   tag name "text" as its own text-transition marker and refuses attributes on it (RZ1023) — every
+   interpolated value is still explicitly HTML-encoded by hand before being placed in that raw string,
+   so this is not a departure from "never Html.Raw data-derived text": the encoding still happens, just
+   not via Razor's own auto-encoding machinery. *@
+@using System.Net
+@using MCAROC_Analysis.Models.Dossier
+@using MCAROC_Analysis.Models.Viz
+@model ChartCategorySeries
+@{
+    // Non-negative by construction, explicitly: this partial's bar-width math has no meaningful
+    // interpretation for a negative magnitude — a signed/diverging bar chart would be a different,
+    // future partial. Checked before any markup is written.
+    if (Model.Points.Any(p => p.Value < 0))
+        throw new InvalidOperationException("_HorizontalBars renders non-negative magnitude bars only — a negative Value was supplied.");
+
+    const double width = 320;
+    const double rowHeight = 28;
+    const double barHeight = 14;
+    const double labelWidth = 92;
+    const double valueGap = 8;
+    var height = Model.Points.Count * rowHeight;
+    var trackWidth = width - labelWidth - 60; // reserve ~60px for the value text column
+
+    // Zero-safe: an all-zero series (every point present, every value 0) must render real zero-width
+    // bars, never NaN/Infinity from a 0/0 division.
+    var maxValue = Model.Points.Max(p => p.Value);
+    var scale = maxValue > 0 ? trackWidth / (double)maxValue : 0;
+
+    string SvgText(double x, double y, string fill, string weight, string content) =>
+        $"<text x=\"{SvgNumberFormat.N(x)}\" y=\"{SvgNumberFormat.N(y)}\" dominant-baseline=\"middle\" fill=\"{fill}\" font-size=\"12\" font-weight=\"{weight}\">{WebUtility.HtmlEncode(content)}</text>";
+}
+<div class="mca-hbars">
+    <svg viewBox="0 0 @SvgNumberFormat.N(width) @SvgNumberFormat.N(height)" width="100%" height="@SvgNumberFormat.N(height)" aria-hidden="true" focusable="false">
+        @for (var i = 0; i < Model.Points.Count; i++)
+        {
+            var point = Model.Points[i];
+            var rowCenterY = i * rowHeight + rowHeight / 2;
+            var barY = i * rowHeight + (rowHeight - barHeight) / 2;
+            var barWidth = (double)point.Value * scale;
+            @Html.Raw(SvgText(0, rowCenterY, "var(--text-2)", "400", point.Category))
+            <rect x="@SvgNumberFormat.N(labelWidth)" y="@SvgNumberFormat.N(barY)" width="@SvgNumberFormat.N(barWidth)" height="@SvgNumberFormat.N(barHeight)" rx="2" fill="@ChartAccentCss.CssVariable(point.Accent)" />
+            @Html.Raw(SvgText(labelWidth + barWidth + valueGap, rowCenterY, "var(--text)", "600", MetricUnitFormat.Format(point.Value, Model.Unit)))
+        }
+    </svg>
+</div>
+<table class="visually-hidden">
+    <caption>@Model.Label</caption>
+    <thead><tr><th>Category</th><th>Value</th></tr></thead>
+    <tbody>
+    @foreach (var point in Model.Points)
+    {
+        <tr><td>@point.Category</td><td>@MetricUnitFormat.Format(point.Value, Model.Unit)</td></tr>
+    }
+    </tbody>
+</table>

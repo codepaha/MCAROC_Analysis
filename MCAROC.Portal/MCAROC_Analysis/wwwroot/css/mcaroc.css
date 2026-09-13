@@ -280,6 +280,17 @@
     padding: 4px 0;
 }
 .mca-sparkline svg { display: block; width: 100%; height: auto; }
+/* A second, larger context for the same partial (#120, C9 — the Dashboard's primary trend chart card,
+   not a KPI-corner accent) needs more than the 340px cap sized for the original corner-accent context. */
+.mca-sparkline--wide { max-width: none; }
+
+/* _HorizontalBars.cshtml / _StackedBars.cshtml (#120, C9) — same decorative-SVG + accessible-table
+   convention as .mca-sparkline above. */
+.mca-hbars, .mca-sbars { padding: 4px 0; }
+.mca-hbars svg, .mca-sbars svg { display: block; width: 100%; height: auto; }
+.mca-sbars-legend { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-bottom: 8px; font-size: 12px; color: var(--text-2); }
+.mca-sbars-legend-item { display: inline-flex; align-items: center; gap: 5px; }
+.mca-sbars-swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px; }
 
 /* Key/value grid (About the Corporate) */
 .mca-kv {

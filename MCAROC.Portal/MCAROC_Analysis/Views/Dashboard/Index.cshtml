@@ -1,4 +1,5 @@
 @model DashboardViewModel
+@using MCAROC_Analysis.Models.Viz
 @using MCAROC_Analysis.Services.Dashboard
 @{
     ViewData["Title"] = "Dashboard";
@@ -8,6 +9,15 @@
         ReviewPriority.Medium => "pi-status-processing",
         _ => "pi-status-completed"
     };
+
+    // #120 (C9): the 3 Chart.js canvases' data, mapped into the shared SVG chart contract. A null
+    // series *is* the "no data" guard — replacing the old Razor Count/All(==0) checks plus, for
+    // priority/findings, the old JS's own separate zero-filtered-to-nothing checks.
+    var trendSeries = Model.RequestTrend.All(t => t.Created == 0)
+        ? null
+        : DashboardChartMapping.ToChartSeries(Model.RequestTrend, Model.TrendGranularity);
+    var prioritySeries = DashboardChartMapping.ToPriorityDistributionSeries(Model.PriorityDistribution);
+    var findingsSeries = DashboardChartMapping.ToFindingsBySectionSeries(Model.FindingsBySection);
 }
 
 <div class="pi-page-head">
@@ -140,8 +150,8 @@
         <div class="card h-100">
             <div class="card-header">Requests Created</div>
             <div class="card-body">
-                @if (Model.RequestTrend.All(t => t.Created == 0)) { <p class="text-muted mb-0">No data for the selected filters.</p> }
-                else { <canvas id="requestTrendChart" height="90"></canvas> }
+                @if (trendSeries is null) { <p class="text-muted mb-0">No data for the selected filters.</p> }
+                else { @await Html.PartialAsync("_Sparkline", trendSeries, new ViewDataDictionary(ViewData) { ["Width"] = 640d, ["Height"] = 140d, ["ExtraClass"] = "mca-sparkline--wide" }) }
             </div>
         </div>
     </div>
@@ -149,8 +159,8 @@
         <div class="card h-100">
             <div class="card-header">Review Priority Distribution</div>
             <div class="card-body">
-                @if (Model.PriorityDistribution.Count == 0) { <p class="text-muted mb-0">No data for the selected filters.</p> }
-                else { <canvas id="priorityDistributionChart" height="90"></canvas> }
+                @if (prioritySeries is null) { <p class="text-muted mb-0">No data for the selected filters.</p> }
+                else { @await Html.PartialAsync("_HorizontalBars", prioritySeries) }
             </div>
         </div>
     </div>
@@ -161,8 +171,8 @@
         <div class="card h-100">
             <div class="card-header">Findings by Risk Category</div>
             <div class="card-body">
-                @if (Model.FindingsBySection.Count == 0) { <p class="text-muted mb-0">No data for the selected filters.</p> }
-                else { <canvas id="findingsBySectionChart" height="120"></canvas> }
+                @if (findingsSeries is null) { <p class="text-muted mb-0">No data for the selected filters.</p> }
+                else { @await Html.PartialAsync("_StackedBars", findingsSeries) }
             </div>
         </div>
     </div>
@@ -227,43 +237,3 @@
     </div>
 </div>
 
-@section Scripts {
-    <script src="~/lib/chart.js/dist/chart.umd.min.js"></script>
-    <script src="~/js/dashboard.js"></script>
-    <script>
-        const trendLabels = @Html.Raw(System.Text.Json.JsonSerializer.Serialize(Model.RequestTrend.Select(t => TrendBucketBuilder.FormatLabel(t.BucketStart, Model.TrendGranularity))));
-        const trendCreated = @Html.Raw(System.Text.Json.JsonSerializer.Serialize(Model.RequestTrend.Select(t => t.Created)));
-        if (trendCreated.some(v => v > 0)) {
-            renderRequestTrendChart('requestTrendChart', trendLabels, trendCreated);
-        }
-
-        const priorityOrder = ['High', 'Medium', 'Low'];
-        const priorityCounts = @Html.Raw(System.Text.Json.JsonSerializer.Serialize(Model.PriorityDistribution.ToDictionary(kv => kv.Key.ToString(), kv => kv.Value)));
-        const priorityLabels = priorityOrder.filter(p => priorityCounts[p]);
-        const priorityValues = priorityLabels.map(p => priorityCounts[p]);
-        const priorityColors = priorityLabels.map(p => p === 'High' ? MCAROC_CHART.danger : p === 'Medium' ? MCAROC_CHART.warning : MCAROC_CHART.success);
-        if (priorityLabels.length > 0) {
-            renderPriorityDistributionChart('priorityDistributionChart', priorityLabels, priorityValues, priorityColors);
-        }
-
-        const sectionOrder = ['CompanyProfile', 'Directors', 'DirectorNetwork', 'Ownership', 'Financial', 'Charges', 'Msme', 'Gst', 'Epfo', 'Auditor', 'Litigation', 'CrossSection'];
-        const severityOrder = [
-            { key: 'Critical', color: MCAROC_CHART.danger },
-            { key: 'Review', color: MCAROC_CHART.warning },
-            { key: 'Watch', color: MCAROC_CHART.muted }
-        ];
-        const findingsBySection = @Html.Raw(System.Text.Json.JsonSerializer.Serialize(
-            Model.FindingsBySection.GroupBy(f => f.Section.ToString()).ToDictionary(
-                g => g.Key,
-                g => g.ToDictionary(f => f.Severity.ToString(), f => f.Count))));
-        const sectionLabels = sectionOrder.filter(s => findingsBySection[s]);
-        const findingsDatasets = severityOrder.map(sev => ({
-            label: sev.key,
-            backgroundColor: sev.color,
-            data: sectionLabels.map(s => (findingsBySection[s] && findingsBySection[s][sev.key]) || 0)
-        }));
-        if (sectionLabels.length > 0) {
-            renderFindingsBySectionChart('findingsBySectionChart', sectionLabels, findingsDatasets);
-        }
-    </script>
-}

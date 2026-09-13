@@ -1,0 +1,90 @@
+@* Shared chart contract's ChartStackedCategorySeries reference partial (#120, C9) — one stacked
+   horizontal bar per category, a legend row for what each segment color means (the one piece of
+   context a stacked bar needs that a single-series bar chart doesn't), and a paired accessible table.
+   All coordinates go through SvgNumberFormat.N (InvariantCulture). Segment values are already
+   guaranteed non-negative by ChartStackedCategorySeries.Create — no separate guard needed here (unlike
+   _HorizontalBars, which consumes the un-guarded ChartCategoryPoint.Value).
+   Note: SVG <text> elements below are emitted via Html.Raw because Razor's parser reserves the literal
+   tag name "text" as its own text-transition marker and refuses attributes on it (RZ1023) — every
+   interpolated value is still explicitly HTML-encoded by hand before being placed in that raw string,
+   so this is not a departure from "never Html.Raw data-derived text": the encoding still happens, just
+   not via Razor's own auto-encoding machinery. *@
+@using System.Net
+@using MCAROC_Analysis.Models.Dossier
+@using MCAROC_Analysis.Models.Viz
+@model ChartStackedCategorySeries
+@{
+    const double width = 340;
+    const double rowHeight = 28;
+    const double barHeight = 14;
+    const double labelWidth = 92;
+    const double totalGap = 8;
+    var height = Model.Points.Count * rowHeight;
+    var trackWidth = width - labelWidth - 60; // reserve ~60px for the running total text
+
+    // Zero-safe, two levels: the series-wide scale (a point whose OWN total is 0 gets a zero-width bar,
+    // never a divide-by-zero against maxTotal), and, within one point's bar, its own total (a point
+    // whose every segment is 0 must not divide by its own zero total either).
+    var maxTotal = Model.Points.Max(p => Model.TotalFor(p));
+
+    // Every point is guaranteed (by Create()) to carry exactly Model.SegmentLabels' set — look each up
+    // by the series' own canonical order so the stack order is consistent across every row regardless of
+    // the order a point's own Segments list happens to be in.
+    IReadOnlyList<ChartStackedSegment> InOrder(ChartStackedCategoryPoint point) =>
+        Model.SegmentLabels.Select(label => point.Segments.First(s => string.Equals(s.Label, label, StringComparison.OrdinalIgnoreCase))).ToList();
+
+    // One representative accent per segment label for the legend — both of #120's own mappings assign a
+    // fixed accent per label across every point by convention (not a Create()-enforced invariant), so the
+    // first point's segments are a safe, always-present source (Create() guarantees at least one point).
+    var legendAccents = InOrder(Model.Points[0]).ToDictionary(s => s.Label, s => s.Accent, StringComparer.OrdinalIgnoreCase);
+
+    string SvgText(double x, double y, string fill, string weight, string content) =>
+        $"<text x=\"{SvgNumberFormat.N(x)}\" y=\"{SvgNumberFormat.N(y)}\" dominant-baseline=\"middle\" fill=\"{fill}\" font-size=\"12\" font-weight=\"{weight}\">{WebUtility.HtmlEncode(content)}</text>";
+}
+<div class="mca-sbars-legend">
+    @foreach (var label in Model.SegmentLabels)
+    {
+        <span class="mca-sbars-legend-item"><span class="mca-sbars-swatch" style="background:@ChartAccentCss.CssVariable(legendAccents[label])"></span>@label</span>
+    }
+</div>
+<div class="mca-sbars">
+    <svg viewBox="0 0 @SvgNumberFormat.N(width) @SvgNumberFormat.N(height)" width="100%" height="@SvgNumberFormat.N(height)" aria-hidden="true" focusable="false">
+        @for (var i = 0; i < Model.Points.Count; i++)
+        {
+            var point = Model.Points[i];
+            var pointTotal = Model.TotalFor(point);
+            var rowCenterY = i * rowHeight + rowHeight / 2;
+            var barY = i * rowHeight + (rowHeight - barHeight) / 2;
+            var barWidth = maxTotal > 0 ? (double)(pointTotal / maxTotal) * trackWidth : 0;
+            var x = labelWidth;
+            @Html.Raw(SvgText(0, rowCenterY, "var(--text-2)", "400", point.Category))
+            @foreach (var segment in InOrder(point))
+            {
+                var segWidth = pointTotal > 0 ? (double)(segment.Value / pointTotal) * barWidth : 0;
+                <rect x="@SvgNumberFormat.N(x)" y="@SvgNumberFormat.N(barY)" width="@SvgNumberFormat.N(segWidth)" height="@SvgNumberFormat.N(barHeight)" fill="@ChartAccentCss.CssVariable(segment.Accent)" />
+                x += segWidth;
+            }
+            @Html.Raw(SvgText(labelWidth + barWidth + totalGap, rowCenterY, "var(--text)", "600", MetricUnitFormat.Format(pointTotal, Model.Unit)))
+        }
+    </svg>
+</div>
+<table class="visually-hidden">
+    <caption>@Model.Label</caption>
+    <thead>
+        <tr>
+            <th>Category</th>
+            @foreach (var label in Model.SegmentLabels) { <th>@label</th> }
+            <th>Total</th>
+        </tr>
+    </thead>
+    <tbody>
+    @foreach (var point in Model.Points)
+    {
+        <tr>
+            <td>@point.Category</td>
+            @foreach (var segment in InOrder(point)) { <td>@MetricUnitFormat.Format(segment.Value, Model.Unit)</td> }
+            <td>@MetricUnitFormat.Format(Model.TotalFor(point), Model.Unit)</td>
+        </tr>
+    }
+    </tbody>
+</table>
