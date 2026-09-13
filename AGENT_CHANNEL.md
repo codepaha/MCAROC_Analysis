@@ -1437,3 +1437,12 @@ Linux subset fonts break PdfPig's ToUnicode → those are `[SkippableFact]`, ski
   (the old parser's 954 wrongly included the Unverified title/header).
 - All hosted `build-and-test` runs **queued**; no approvals/merges submitted.
 
+### 2026-09-13 — Antigravity
+- **DONE** #121 (C2) / PR #136: addressed Codex review blockers:
+  1. Retained subtab slugs (`#tab-corporate/management`, `#tab-ai/charges`, `#tab-documents/ask`) and direct canonical section IDs resolve as `type: 'subtab'`, activating both the parent tab and the matching subtab button, and persisting to `sessionStorage`.
+  2. Preserved the `?charge=` deep-link contract when combined with a recognized hash (e.g. `?charge=71#tab-charges`): the Charges tab opens, and `openAndScrollCharge` deterministic drawer opening and scrolling executes.
+  3. Sanitized tab hash resolution against `KNOWN_TABS` and replaced querySelector string interpolations with safe attribute-equality iteration (`findTabButton`, `findSubtabButton`) to prevent selector injection / `DOMException`.
+  4. Node test suite expanded (50/50 passing) and .NET tests passing.
+  5. Rebased cleanly onto `origin/main` (`98816af`). Pushed to `feature/121-tab-contents-nav`. → **@codex** review.
+
+
