@@ -121,8 +121,13 @@ request, 2026-09-12) since this lane hadn't claimed them yet — remaining 6 sti
 | #120 C9 | dashboard restyle — retire Chart.js for #116's SVG partials | #116 C6 (merged) | **MERGED** (PR #139, `2ae87fd`) |
 | #124 C10 | print stylesheet — deliberately last | all of the above | **MERGED** (PR #138, `6b07f3e`) — merged ahead of #120/C9; scoped to the Requests Details page only, no Dashboard/Chart.js overlap, confirmed no conflict on rebase |
 
+**Ad hoc, outside EPIC #31 (2026-09-13): owner-reported gap, filed as #142.**
+| Issue | What | Status |
+|---|---|---|
+| #142 | pre-login reports have no way to find a report again after leaving the page — client-remembered "My Reports" (localStorage-only, no server-side listing, keeps #47's IDOR fix intact) | **MERGED** (PR #141, `965578e`) — one review round fixed (ineffective JSON-island test) |
+
 ### Sequencing
-- Claude: D2/#57 **MERGED** → D4/#59 **MERGED** → K1/#98 **MERGED** → #97 **MERGED** → D10/#65 **MERGED** (`7f2cf1e`) → #47 (pre-login report ownership binding) **MERGED** (`f52f3cf`) — Claude's lane empty pending a new assignment.
+- Claude: D2/#57 **MERGED** → D4/#59 **MERGED** → K1/#98 **MERGED** → #97 **MERGED** → D10/#65 **MERGED** (`7f2cf1e`) → #47 (pre-login report ownership binding) **MERGED** (`f52f3cf`) → #142 (pre-login "My Reports" history) **MERGED** (PR #141, `965578e`) — Claude's lane empty pending a new assignment.
 - Antigravity: D6/#61 **MERGED** → D7/#62 **MERGED** → D8/#63 **MERGED** → D9/#64 **MERGED** (`e9e39e3`) → D11/#66 **MERGED** (`8213961`) → #107 **MERGED** (`7b74f11`) — Antigravity's render-audit lane complete!
 
 
@@ -174,9 +179,11 @@ portal+PDF, `GET /Requests/{id}/analytics.json`).
 | #68–#73 | Antigravity B1–B6 render audit | awaiting review |
 | #78 | Codex — channel-verdict doc | awaits **@owner** merge |
 
-**Phase 8:** EPIC #31. Waves 1, 2, 2b, and 4 all fully merged. **Wave 3 (2026-09-12): split into 13
-issues #112–#124** after 4 rounds of owner review (see plan file `serene-whistling-wave.md`) — **as of
-2026-09-13, all 13 are merged (#120/C9 last, PR #139, `2ae87fd`). Wave 3 is fully closed.**
+**Phase 8:** EPIC #31 — **CLOSED** (2026-09-13). Waves 1, 2, 2b, and 4 all fully merged. **Wave 3
+(2026-09-12): split into 13 issues #112–#124** after 4 rounds of owner review (see plan file
+`serene-whistling-wave.md`) — **as of 2026-09-13, all 13 are merged (#120/C9 last, PR #139, `2ae87fd`).
+Wave 3 is fully closed.** The EPIC's own body had said "complete" since Wave 3 finished, but nobody had
+run `gh issue close 31` — closed by hand once the owner asked whether it was resolved.
 Catalogue G1, G3, G4, G5 → DONE.
 
 **Degenerate-data audit (2026-09-10):** ingestion + views + calcs handle no-charge-report /
@@ -204,6 +211,65 @@ Linux subset fonts break PdfPig's ToUnicode → those are `[SkippableFact]`, ski
 ---
 
 ## Log  <!-- newest first. Prefix: NEEDS / BLOCKED / DONE / DECISION / FYI -->
+
+### 2026-09-13 — Claude session (CLOSED EPIC #31)
+- Owner asked whether #31 was resolved. Its own body had said "EPIC #31 is complete" since Wave 3
+  finished (#120/C9, PR #139), but the tracking issue itself was still `OPEN` — nobody had run
+  `gh issue close`, the same gap that's hit #123/#116/#120 individually. Closed with a comment
+  summarizing all 43 sub-issues across Waves 1/2/2b/3/4.
+
+### 2026-09-13 — Claude session (#142 MERGED — pre-login "My Reports" history)
+- **PR #141 MERGED into `main` as `965578e`.** Issue #142 auto-closed (this PR's title used no closing
+  keyword, but the body carried `Closes #142` — the lesson from #123/#116/#120 finally applied). Remote
+  branch deleted, local worktree/branch cleaned up.
+- **Rebased this channel PR (#143) onto the new `main`** and flipped the #142 table row + Sequencing line
+  from "PR #141 open" to `MERGED`. Claude's lane is empty again pending a new assignment.
+
+### 2026-09-13 — Claude session (PR #141 open for new #142 — pre-login "My Reports" history)
+- **Not an EPIC #31 task** — owner reported directly: "there is no search history for pre login
+  reports." Investigation confirmed this is deliberate: the pre-login pipeline (`/pre-login-reports`)
+  has no login anywhere in the app, so a `batch` Guid is its only access credential — #47 already
+  removed a global, unscoped "list every report" page because it was a real IDOR. Filed as **#142** for
+  traceability, then built and opened **PR #141** (→ Closes #142).
+- **Owner clarified intent** when asked: "i want to keep them. these are two separate reports type. so
+  each should have their own history and reports" — i.e. keep the main portal's existing, unrelated
+  Search History untouched, and give the pre-login pipeline its own equivalent without reintroducing
+  #47's IDOR.
+- **Design: client-remembered "My Reports", never a server-side query.** `History.cshtml` (only when
+  the batch resolves to ≥1 job — a nonexistent/emptied batch must never look like a real submitted
+  report) emits a small JSON data island; a new `prelogin-reports-mine.js`/`-core.js` pair records the
+  batch into this browser's own `localStorage` (`mcaroc-prelogin-reports`, capped at 20 entries). A new
+  `GET pre-login-reports/mine` action (`Mine()`, zero service calls) renders that list purely
+  client-side. No new server-side enumeration endpoint exists anywhere.
+- **Plan went through one review round** (plan file `serene-whistling-wave.md`, fully rewritten for this
+  task): `loadEntries()` had to become a real schema validator (GUID-shaped `batch`, parseable
+  `createdUtc`, bounded `count`/label/format length — drops and self-heals invalid entries rather than
+  trusting stored JSON), all entry-derived text renders via `textContent` (never `innerHTML`), the
+  history link is built with `encodeURIComponent`, the JSON island keeps the default (non-relaxed)
+  `JsonSerializer` encoder with a test intended to cover a hostile `Cin` breaking out of its `<script>`
+  tag (see the PR review round below — this test was not actually effective as first written), the
+  batch's `Format`(s) are shown as their own column (not folded into a count), the "Clear this list"
+  button is `type="button"`, and a real controller test (route-attribute + `ViewResult` check) was added
+  alongside the markup-assertion rendering tests.
+- **Verified for real, not just unit-tested**: live dev-server + Puppeteer/Edge pass confirming — submit
+  → appears in My Reports with a working link back; a fresh incognito-equivalent context sees nothing
+  (the actual proof there's no server-side listing); a syntactically-valid-but-nonexistent batch never
+  gets recorded; "Clear this list" empties the view without touching the server (the original History
+  URL still works after); a 25-CIN batch shows as one summarized row; `<noscript>` fallback renders with
+  JS disabled; light theme, dark theme, and 400px mobile width all render cleanly.
+- Full suite: 980 passed / 18 skipped (pre-existing) / 0 failed; 77/77 JS tests (`node --test`).
+- **PR review round 1 (Codex): the hostile-CIN JSON-island test was a false guarantee, fixed.** The IDOR
+  boundary itself (no server-side batch listing) was confirmed correct, but the regression test for the
+  JSON-island escaping was flagged as ineffective: it found the *first* `</script>` after the island's
+  opening tag and asserted nothing before it contained one — except if the encoder ever emitted the
+  hostile CIN's own literal `</script>` unescaped, that injected tag would simply *be* the first
+  occurrence found, so the test's own slice would end right there and it would trivially pass on the
+  exact vulnerable output. Rewritten to assert against the whole rendered page directly (raw breakout
+  sequence never appears anywhere; the value's escaped form, computed via the same
+  `JsonSerializer.Serialize` the view calls, must appear) and manually verified it actually discriminates
+  — passes against the real default encoder, fails against `JavaScriptEncoder.UnsafeRelaxedJsonEscaping`
+  (checked both directly before committing). New head `aaf3031`, both CI checks green. → `@codex`
+  re-review.
 
 ### 2026-09-13 — Claude session (C9/#120 MERGED — Wave 3 fully closed, all 13 issues shipped)
 - **PR #139 MERGED into `main` as `2ae87fd`.** Issue #120 stayed open after merge (same PR-title-without-
