@@ -138,7 +138,7 @@ request, 2026-09-12) since this lane hadn't claimed them yet — remaining 6 sti
 | Issue | What | Status |
 |---|---|---|
 | #157 | `GstRules.cs:21` + `StructuredFactsProvider.cs:111` treat `CancellationDate == null` as "active/not cancelled" — now a permanent false negative since that field is dropped-by-design and will never populate. Rule-engine + chat-facts scope, reserved for Codex/owner | **MERGED** (PR #159, `09c0895`) — new shared `GstRegistrationStatus.IsActive`/`IsActiveStatus` helper centralizes the fallback across findings, dossier metrics, and chat facts |
-| #161 | #146b split into its own scoped issue: parse Auditors' Comments detail-table columns (Serial Number/Section/Section Name/Directors' Comments/Footnotes) — extends `AuditorObservation`, follows the `AddShareholdingGstAuditorColumns` precedent | open, unclaimed — plan written, not started |
+| #161 | #146b split into its own scoped issue: parse Auditors' Comments detail-table columns (Serial Number/Section/Section Name/Directors' Comments/Footnotes) — extends `AuditorObservation`, follows the `AddShareholdingGstAuditorColumns` precedent | **MERGED** (`7786be4`, PR #166) — closed |
 
 **Ad hoc, outside EPIC #31 (2026-09-13): follow-up from reviewing Antigravity's QA report, filed as #150.**
 | Issue | What | Status |
@@ -146,7 +146,7 @@ request, 2026-09-12) since this lane hadn't claimed them yet — remaining 6 sti
 | #150 | 598 unexamined ingestion warnings from a real 41-company batch run — reported as "0 Errors" without categorizing what the warnings actually are | **MERGED** (`459b834`, PR #154) — closed |
 
 ### Sequencing
-- Claude: D2/#57 **MERGED** → D4/#59 **MERGED** → K1/#98 **MERGED** → #97 **MERGED** → D10/#65 **MERGED** (`7f2cf1e`) → #47 (pre-login report ownership binding) **MERGED** (`f52f3cf`) → #142 (pre-login "My Reports" history) **MERGED** (PR #141, `965578e`) → #144/B12 (charge discharge velocity) **MERGED** (PR #149, `4be34db`) — Claude's lane empty pending a new assignment; #144 stays open for its A1.x half.
+- Claude: D2/#57 **MERGED** → D4/#59 **MERGED** → K1/#98 **MERGED** → #97 **MERGED** → D10/#65 **MERGED** (`7f2cf1e`) → #47 (pre-login report ownership binding) **MERGED** (`f52f3cf`) → #142 (pre-login "My Reports" history) **MERGED** (PR #141, `965578e`) → #144/B12 (charge discharge velocity) **MERGED** (PR #149, `4be34db`) → #161/G18 (Auditors' Comments detail-table columns) **MERGED** (PR #166, `7786be4`) — Claude's lane empty pending a new assignment; #144 stays open for its A1.x half.
 - Antigravity: D6/#61 **MERGED** → D7/#62 **MERGED** → D8/#63 **MERGED** → D9/#64 **MERGED** (`e9e39e3`) → D11/#66 **MERGED** (`8213961`) → #107 **MERGED** (`7b74f11`) → #150 **MERGED** (`459b834`) → #145 **MERGED** (`b563072`, PR #165) — Antigravity's lane clear!
 
 
@@ -242,6 +242,39 @@ Linux subset fonts break PdfPig's ToUnicode → those are `[SkippableFact]`, ski
 ---
 
 ## Log  <!-- newest first. Prefix: NEEDS / BLOCKED / DONE / DECISION / FYI -->
+
+### 2026-09-13 — Claude session (#161/G18 MERGED — Auditors' Comments detail-table columns)
+- **PR #166 MERGED into `main` as `7786be4`**; issue #161 (G18, the last open half of #146) closed
+  automatically. Both hosted CI jobs (Linux `build-and-test`, Windows `windows-tests`) passed;
+  `mergeStateStatus: CLEAN` confirmed before merge.
+- Extends `AuditorObservation` with the detail table's remaining 5 columns (SerialNumber, SectionCode,
+  SectionName, DirectorsComments, Footnotes) plus a new `IsDetailRow` discriminator; `AuditorsParser.cs`
+  now keeps a detail row if *any* of ObservationText/DirectorsComments/Footnotes has content (closing a
+  data-loss gap that mirrored G18 itself), with one shared blank/`-`/NIL→null normalization applied to
+  every free-text detail column, and a range-checked Serial Number parse (rejects, never truncates or
+  overflows, an out-of-range value).
+- **Two Critical review blockers were caught and fixed before merge** (both root-caused precisely, not
+  guessed):
+  1. **P1** — `AuditorRules.Evaluate()` picked "the latest `AuditorObservation` by FinancialYear" with no
+     regard for which of the sheet's two sub-tables it came from; a same-year G18 detail row (which never
+     carries a meaningful `HasQualificationOrAdverseRemark` and can have a null `ObservationText`) could
+     be selected over the real year-summary row, silently downgrading a qualified/adverse opinion to
+     "Clean". Fixed via `IsDetailRow` (defaults `false`, so every pre-existing row/test stays correct)
+     + `Where(a => !a.IsDetailRow)` before the latest-year selection. Two new regression tests.
+  2. **P2** — an integral Serial Number above `Int32.MaxValue` (e.g. `2147483648`) threw
+     `OverflowException` on the explicit `(int)` cast — checked unconditionally in .NET regardless of
+     `checked`/`unchecked` context — aborting ingestion for the whole sheet. Fixed with an explicit
+     range guard before the cast, emitting a new `AUDITOR_SERIAL_NUMBER_OUT_OF_RANGE` warning instead of
+     crashing. One new regression test.
+- Portal (`_ComplianceTab.cshtml`) gets a Section column and Directors'-comments/Footnote sub-lines,
+  handling a null `ObservationText` gracefully. Dossier PDF (`DossierPdfComposer.Annexures.cs`) folds the
+  new fields inline into the existing Comment cell (build-full-string-then-clip-once), deliberately not
+  adding new Annexure B columns — consistent with the owner's note that the whole dossier PDF layout is
+  getting redesigned later once more calculations are added.
+- Catalogue (`docs/data-coverage-catalogue.json`) G18 rows moved to `"live"`; gap-list entry marked
+  `DONE (#161)`.
+- **#146 (parent issue) needed no further action** — it was already closed once both its halves (G17 via
+  #155/#157/#159, G18 via #161) had their own resolution/tracking; this just closes out the second half.
 
 ### 2026-09-13 — Claude session (#146 CLOSED; #150 closure evidence corrected via PR #162)
 - **PR #158 MERGED into `main` as `faa0a4a`** (approved after fixing 3 documentation-accuracy issues a
