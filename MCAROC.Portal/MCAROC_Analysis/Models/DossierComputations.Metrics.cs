@@ -498,7 +498,7 @@ public static partial class DossierComputations
         }
         else
         {
-            var activeCount = gstRegs.Count(g => IsActiveGstStatus(g.Status));
+            var activeCount = gstRegs.Count(GstRegistrationStatus.IsActive);
             list.Add(MetricResult.Ok("Active GSTIN count", activeCount, MetricUnit.Count,
                 asOfStr, "GstRegistration.Status"));
         }
@@ -734,11 +734,6 @@ public static partial class DossierComputations
 
         return new MetricGroup("GST compliance", list);
     }
-
-    private static bool IsActiveGstStatus(string? status) =>
-        status is not null
-        && status.Contains("active", StringComparison.OrdinalIgnoreCase)
-        && !status.Contains("inactive", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>Court type normalisation according to precedence rules:
     /// 1. NCLT: "NCLT" or "NATIONAL COMPANY LAW"

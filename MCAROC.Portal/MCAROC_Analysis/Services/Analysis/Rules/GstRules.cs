@@ -18,7 +18,10 @@ public static class GstRules
         }
         else
         {
-            var cancelled = ctx.GstRegistrations.Where(g => g.CancellationDate is not null).ToList();
+            // GST source sheets normally provide Status but no cancellation-date column. Treat a
+            // registration as cancelled/inactive whenever it is not affirmatively active, while a
+            // date remains authoritative when one is available.
+            var cancelled = ctx.GstRegistrations.Where(g => !GstRegistrationStatus.IsActive(g)).ToList();
             if (cancelled.Count == 0)
             {
                 outcomes.Add(RuleEvaluationOutcome.NotTriggered());
@@ -29,7 +32,7 @@ public static class GstRules
                 // (whether the company currently has no active GST registration at all, vs. an active
                 // replacement exists) — a single cancelled registration among otherwise-active ones is a
                 // low-severity historical note, not a current compliance gap.
-                var activeExists = ctx.GstRegistrations.Any(g => g.CancellationDate is null && IsActiveStatus(g.Status));
+                var activeExists = ctx.GstRegistrations.Any(GstRegistrationStatus.IsActive);
                 outcomes.Add(RuleEvaluationOutcome.Triggered(new FindingDraft(
                     FindingSection.Gst,
                     activeExists ? FindingSeverity.Watch : FindingSeverity.Review,
@@ -62,9 +65,4 @@ public static class GstRules
 
         return outcomes;
     }
-
-    private static bool IsActiveStatus(string? status) =>
-        status is not null
-        && status.Contains("active", StringComparison.OrdinalIgnoreCase)
-        && !status.Contains("inactive", StringComparison.OrdinalIgnoreCase);
 }
