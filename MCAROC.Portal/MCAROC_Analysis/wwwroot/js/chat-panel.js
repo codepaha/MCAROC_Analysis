@@ -16,6 +16,8 @@
 }(typeof self !== 'undefined' ? self : this, function () {
     'use strict';
 
+    let activePanelInstance = null;
+
     function createBubbleElement(role, text, status, citations, createdDate, doc) {
         const d = doc || (typeof document !== 'undefined' ? document : null);
         if (!d) return null;
@@ -531,16 +533,40 @@
 
         form.addEventListener('submit', handleSubmit);
 
-        return {
+        const instance = {
             openPanel,
             closePanel,
             handleSubmit,
             getIsSubmitting: () => isSubmitting
         };
+        activePanelInstance = instance;
+        return instance;
+    }
+
+    function submitPrompt(promptText, doc) {
+        const d = doc || (typeof document !== 'undefined' ? document : null);
+        if (!activePanelInstance || !d) {
+            return false;
+        }
+        const input = d.getElementById('mcaChatInput');
+        const form = d.getElementById('mcaChatForm');
+        if (!input || !form) {
+            return false;
+        }
+        activePanelInstance.openPanel();
+        input.value = (promptText || '').trim();
+        const charCount = d.getElementById('mcaCharCount');
+        if (charCount) {
+            charCount.textContent = input.value.length.toString();
+        }
+        const evt = (typeof Event !== 'undefined') ? new Event('submit', { cancelable: true }) : { preventDefault: () => {} };
+        activePanelInstance.handleSubmit(evt);
+        return true;
     }
 
     return {
         initChatPanel,
-        createBubbleElement
+        createBubbleElement,
+        submitPrompt
     };
 }));

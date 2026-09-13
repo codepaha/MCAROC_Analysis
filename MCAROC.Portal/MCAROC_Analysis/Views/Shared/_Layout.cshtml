@@ -71,6 +71,14 @@
                     <span>MCA ROC operations</span>
                 </div>
 
+                <div class="pi-cmd">
+                    <button type="button" class="pi-cmd-btn" id="piCmdBtn" aria-label="Open command palette" aria-haspopup="dialog" aria-expanded="false" aria-controls="piCmdModal">
+                        <i class="bi bi-stars" aria-hidden="true"></i>
+                        <span class="pi-cmd-text">Ask AI or search...</span>
+                        <kbd class="pi-cmd-kbd">Ctrl K</kbd>
+                    </button>
+                </div>
+
                 <div class="pi-topbar-actions">
                     <button type="button" class="pi-icon-btn" id="piThemeToggle" title="Toggle theme" aria-label="Toggle dark mode">
                         <i class="bi bi-moon-stars"></i>
@@ -150,5 +158,20 @@
             });
         })();
     </script>
+
+    <div class="pi-cmd-overlay" id="piCmdOverlay" role="dialog" aria-modal="true" aria-label="Command palette" hidden>
+        <div class="pi-cmd-modal" id="piCmdModal">
+            <div class="pi-cmd-modal-head">
+                <i class="bi bi-search" aria-hidden="true"></i>
+                <input type="text" class="pi-cmd-modal-input" id="piCmdInput"
+                       role="combobox" aria-autocomplete="list" aria-expanded="false"
+                       aria-controls="piCmdHints" placeholder="Type a prompt or search..." autocomplete="off" />
+                <kbd class="pi-cmd-kbd">Esc</kbd>
+            </div>
+            <div class="pi-cmd-hints" id="piCmdHints" role="listbox" aria-label="Suggested commands"></div>
+        </div>
+    </div>
+
+    <script src="~/js/command-palette.js" asp-append-version="true"></script>
 </body>
 </html>
