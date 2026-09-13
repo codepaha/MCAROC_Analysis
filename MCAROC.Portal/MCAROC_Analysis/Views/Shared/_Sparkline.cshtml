@@ -1,0 +1,63 @@
+@* Reference partial for the shared chart contract (#116, C6) — one ChartSeries, one inline <svg>
+   sparkline, one paired accessible table. Lives in Views/Shared (relocated from Views/Requests/Details
+   in #120, C9) so any page can reference it as plain "_Sparkline" via ASP.NET Core's default partial
+   lookup — proof this is a genuinely shared partial, not something borrowed from one page's folder.
+   All coordinate numbers go through SvgNumberFormat.N: SVG attribute syntax requires '.' as the decimal
+   separator regardless of the server's ambient culture (the same culture pitfall #123/C5b hit with
+   DetailsFormat.Money's un-pinned N2 format). *@
+@using MCAROC_Analysis.Models.Dossier
+@using MCAROC_Analysis.Models.Viz
+@model ChartSeries
+@{
+    // Sizing is a ViewData-driven API now that a second page (the Dashboard) consumes this partial at a
+    // different scale than the original Financials-tab KPI-corner accent — defaults reproduce that
+    // original 280x56/pad-6 box exactly, so the existing caller's output is byte-for-byte unchanged.
+    var width = ViewData["Width"] as double? ?? 280;
+    var height = ViewData["Height"] as double? ?? 56;
+    var extraClass = ViewData["ExtraClass"] as string ?? "";
+
+    if (!double.IsFinite(width) || width <= 0)
+        throw new InvalidOperationException($"_Sparkline ViewData[\"Width\"] must be a finite positive number, got {width}.");
+    if (!double.IsFinite(height) || height <= 0)
+        throw new InvalidOperationException($"_Sparkline ViewData[\"Height\"] must be a finite positive number, got {height}.");
+
+    var padX = width * (6.0 / 280.0);
+    var padY = height * (6.0 / 56.0);
+    var layout = SparklineGeometry.Compute(Model, width, height, padX, padY);
+}
+@if (layout is null)
+{
+    <p class="text-muted mb-0 small">Not enough data.</p>
+}
+else
+{
+    <div class="mca-sparkline @extraClass">
+        <svg viewBox="0 0 @SvgNumberFormat.N(width) @SvgNumberFormat.N(height)" width="100%" height="@SvgNumberFormat.N(height)" preserveAspectRatio="none" aria-hidden="true" focusable="false">
+            @if (layout.BaselineY is { } baselineY)
+            {
+                <line x1="@SvgNumberFormat.N(padX)" y1="@SvgNumberFormat.N(baselineY)" x2="@SvgNumberFormat.N(width - padX)" y2="@SvgNumberFormat.N(baselineY)" stroke="var(--border-strong)" stroke-width="1" stroke-dasharray="2,2" />
+            }
+            @foreach (var segment in layout.Segments)
+            {
+                @if (segment.Points.Count >= 2)
+                {
+                    <polyline points="@string.Join(" ", segment.Points.Select(p => $"{SvgNumberFormat.N(p.X)},{SvgNumberFormat.N(p.Y)}"))" fill="none" stroke="var(--brand)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+                }
+                @foreach (var point in segment.Points)
+                {
+                    <circle cx="@SvgNumberFormat.N(point.X)" cy="@SvgNumberFormat.N(point.Y)" r="2.5" fill="var(--brand)"><title>@point.Label: @MetricUnitFormat.Format(point.Value, Model.Unit)</title></circle>
+                }
+            }
+        </svg>
+    </div>
+    <table class="visually-hidden">
+        <caption>@Model.Label</caption>
+        <thead><tr><th>Period</th><th>Value</th></tr></thead>
+        <tbody>
+        @foreach (var p in Model.Points)
+        {
+            <tr><td>@p.Period.Label</td><td>@Model.FormatPoint(p)</td></tr>
+        }
+        </tbody>
+    </table>
+}

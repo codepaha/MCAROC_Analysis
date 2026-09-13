@@ -63,7 +63,7 @@
         {
             <div class="mca-section mt-3">
                 <h3>Revenue Trend <span class="mca-count">standalone, ₹ Crore</span></h3>
-                @await Html.PartialAsync("Details/_Sparkline", DossierComputations.BuildRevenueTrendSeries(std))
+                @await Html.PartialAsync("_Sparkline", DossierComputations.BuildRevenueTrendSeries(std))
             </div>
         }
 

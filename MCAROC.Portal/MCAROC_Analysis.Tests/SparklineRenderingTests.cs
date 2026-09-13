@@ -18,10 +18,11 @@ using Xunit;
 
 namespace MCAROC_Analysis.Tests;
 
-/// <summary>#116 (C6): rendering coverage for <c>Details/_Sparkline.cshtml</c> — one per edge case
-/// named in the plan's review (all-null, one point, mixed-null gaps, zero as a real value, negative
-/// values with a baseline, positive-only with none, HTML-escaped hostile labels, and the paired
-/// fallback table matching the SVG's own values).</summary>
+/// <summary>#116 (C6) + #120 (C9): rendering coverage for the shared <c>Views/Shared/_Sparkline.cshtml</c>
+/// (relocated from <c>Details/_Sparkline.cshtml</c> in #120 so a second page, the Dashboard, can consume
+/// it) — one per edge case named in the plan's review (all-null, one point, mixed-null gaps, zero as a
+/// real value, negative values with a baseline, positive-only with none, HTML-escaped hostile labels,
+/// the paired fallback table matching the SVG's own values), plus #120's ViewData size-validation cases.</summary>
 public class SparklineRenderingTests
 {
     private static string FindRepoRoot()
@@ -58,7 +59,7 @@ public class SparklineRenderingTests
         return services.BuildServiceProvider();
     }
 
-    private static async Task<string> RenderSparklineAsync(ChartSeries model)
+    private static async Task<string> RenderSparklineAsync(ChartSeries model, IDictionary<string, object?>? viewData = null)
     {
         var sp = CreateServices();
         var viewEngine = sp.GetRequiredService<IRazorViewEngine>();
@@ -69,11 +70,11 @@ public class SparklineRenderingTests
         routeData.Values["controller"] = "Requests";
         var actionContext = new ActionContext(httpContext, routeData, new ActionDescriptor());
 
-        var viewPath = "/Views/Requests/Details/_Sparkline.cshtml";
+        var viewPath = "/Views/Shared/_Sparkline.cshtml";
         var viewResult = viewEngine.GetView(executingFilePath: null, viewPath: viewPath, isMainPage: false);
         if (!viewResult.Success)
         {
-            viewResult = viewEngine.FindView(actionContext, "Details/_Sparkline", isMainPage: false);
+            viewResult = viewEngine.FindView(actionContext, "_Sparkline", isMainPage: false);
         }
 
         if (!viewResult.Success)
@@ -89,6 +90,10 @@ public class SparklineRenderingTests
         {
             Model = model
         };
+        if (viewData is not null)
+        {
+            foreach (var (key, value) in viewData) viewDictionary[key] = value;
+        }
 
         var tempData = new TempDataDictionary(actionContext.HttpContext, tempDataProvider);
         var viewContext = new ViewContext(
@@ -194,5 +199,49 @@ public class SparklineRenderingTests
         Assert.Contains("<td>—</td>", html); // the null point
         Assert.Contains($"<td>{MetricUnitFormat.Format(7m, MetricUnit.Crore)}</td>", html);
         Assert.Contains("visually-hidden", html);
+    }
+
+    // ── #120 (C9): this is now a shared partial API (a second page, the Dashboard, passes its own
+    //    Width/Height via ViewData) — bad input must fail loudly, never silently produce broken geometry.
+
+    [Theory]
+    [InlineData(0d)]
+    [InlineData(-1d)]
+    [InlineData(double.NaN)]
+    [InlineData(double.PositiveInfinity)]
+    [InlineData(double.NegativeInfinity)]
+    public async Task Non_finite_or_non_positive_Width_throws_rather_than_rendering(double width)
+    {
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            RenderSparklineAsync(Series(1m), new Dictionary<string, object?> { ["Width"] = width }));
+    }
+
+    [Theory]
+    [InlineData(0d)]
+    [InlineData(-1d)]
+    [InlineData(double.NaN)]
+    [InlineData(double.PositiveInfinity)]
+    [InlineData(double.NegativeInfinity)]
+    public async Task Non_finite_or_non_positive_Height_throws_rather_than_rendering(double height)
+    {
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            RenderSparklineAsync(Series(1m), new Dictionary<string, object?> { ["Height"] = height }));
+    }
+
+    [Fact]
+    public async Task A_larger_explicit_size_renders_with_that_viewBox_the_dashboards_use_case()
+    {
+        var html = await RenderSparklineAsync(Series(1m, 2m, 3m),
+            new Dictionary<string, object?> { ["Width"] = 640d, ["Height"] = 140d, ["ExtraClass"] = "mca-sparkline--wide" });
+
+        Assert.Contains("viewBox=\"0 0 640 140\"", html);
+        Assert.Contains("mca-sparkline--wide", html);
+    }
+
+    [Fact]
+    public async Task Default_size_is_unchanged_for_the_existing_Financials_tab_caller()
+    {
+        var html = await RenderSparklineAsync(Series(1m, 2m, 3m));
+        Assert.Contains("viewBox=\"0 0 280 56\"", html);
     }
 }

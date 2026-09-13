@@ -5,13 +5,16 @@ namespace MCAROC_Analysis.Models.Viz;
 /// <summary>One category's bar/comparison values — the company's own value plus optional peer-median
 /// and peer-max reference lines. <see cref="Median"/>/<see cref="Max"/> are independently nullable:
 /// a category can have a company value with no peer reference data at all (not every metric has peers
-/// reported), which must render as a bar with no reference marks, never a fabricated 0 reference.</summary>
-public readonly record struct ChartCategoryPoint(string Category, decimal Value, decimal? Median, decimal? Max);
+/// reported), which must render as a bar with no reference marks, never a fabricated 0 reference.
+/// <see cref="Accent"/> (#120, C9) lets a caller that knows the category's business meaning (e.g. "High
+/// priority") pick a semantic bar color — always one of the closed <see cref="ChartAccent"/> values,
+/// never a raw string a generic partial would have to trust.</summary>
+public readonly record struct ChartCategoryPoint(string Category, decimal Value, decimal? Median, decimal? Max, ChartAccent Accent = ChartAccent.Brand);
 
 /// <summary>The bar/comparison sibling of <see cref="ChartSeries"/> — same fail-closed <see cref="Create"/>
 /// discipline, defined here as part of "the contract" for #116's five deferred partials
 /// (<c>_MiniBars</c>, <c>_SplitBar</c>, <c>_RateBar</c>, <c>_PeerCompare</c>, <c>_ClosestPeers</c>) to
-/// consume later. Not built or wired to a partial in this PR.</summary>
+/// consume later, and #120's first real consumer (<c>_HorizontalBars.cshtml</c>).</summary>
 public sealed class ChartCategorySeries
 {
     public string Label { get; }
