@@ -108,7 +108,7 @@ public class StructuredFactsProvider(AppDbContext db)
                     facts.Add(new StructuredFact("Gst", $"GSTIN {g.Gstin} ({g.State}): {g.Status}", "GstRegistration", g.GstId));
             else
                 facts.Add(new StructuredFact("Gst",
-                    $"{gstRegs.Count(g => g.CancellationDate is null)} active GST registration(s) of {gstRegs.Count} on record.", null, null));
+                    $"{gstRegs.Count(GstRegistrationStatus.IsActive)} active GST registration(s) of {gstRegs.Count} on record.", null, null));
         }
 
         var epfo = await db.EpfoContributions.Where(x => x.IngestionRunId == ingestionRunId)

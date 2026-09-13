@@ -122,4 +122,25 @@ public class StructuredFactsProviderTests : IAsyncLifetime
         Assert.Contains(facts, f => f.DomainKey == "Financial" && f.Text.Contains("(Standalone)") && f.Text.Contains("1284.2"));
         Assert.Contains(facts, f => f.DomainKey == "Financial" && f.Text.Contains("(Consolidated)") && f.Text.Contains("1500.0"));
     }
+
+    [Fact]
+    public async Task Gst_headline_counts_only_explicitly_active_registrations()
+    {
+        await using var db = CreateContext();
+        var (requestId, runId) = await SeedRequestAsync(db);
+
+        db.GstRegistrations.AddRange(
+            new GstRegistration { RequestId = requestId, IngestionRunId = runId, Gstin = "29AAAAA0000A1Z5", Status = "Active" },
+            new GstRegistration { RequestId = requestId, IngestionRunId = runId, Gstin = "27AAAAA0000A1Z4", Status = "Cancelled" },
+            new GstRegistration { RequestId = requestId, IngestionRunId = runId, Gstin = "07AAAAA0000A1Z2", Status = "Active", CancellationDate = new DateOnly(2025, 1, 1) });
+        await db.SaveChangesAsync();
+
+        var provider = new StructuredFactsProvider(db);
+        // A non-GST soft hint yields GST's concise headline rather than per-row detail.
+        var facts = await provider.BuildDigestAsync(requestId,
+            new QuestionHints(FilingCategory.Charge, null, null, null, null), CancellationToken.None);
+
+        Assert.Contains(facts, f => f.DomainKey == "Gst"
+            && f.Text == "1 active GST registration(s) of 3 on record.");
+    }
 }

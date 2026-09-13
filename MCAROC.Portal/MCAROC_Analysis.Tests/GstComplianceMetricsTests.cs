@@ -148,6 +148,22 @@ public class GstComplianceMetricsTests
     }
 
     [Fact]
+    public void Active_gstin_count_uses_status_and_cancellation_date_together()
+    {
+        var model = CreateMinimalDossier(
+        [
+            new GstRegistration { Gstin = "29AAAAA0000A1Z5", Status = "Active" },
+            new GstRegistration { Gstin = "27AAAAA0000A1Z4", Status = "Cancelled" },
+            new GstRegistration { Gstin = "07AAAAA0000A1Z2", Status = "Active", CancellationDate = new DateOnly(2025, 1, 1) }
+        ]);
+
+        var group = DossierComputations.GstComplianceMetrics(model);
+        var activeCount = Assert.Single(group.Metrics, m => m.Label == "Active GSTIN count");
+
+        Assert.Equal(1m, activeCount.Value);
+    }
+
+    [Fact]
     public void Degenerate_indeterminate_filings_only_returns_insufficient_for_rates()
     {
         var reg = new GstRegistration
