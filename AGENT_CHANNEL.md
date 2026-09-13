@@ -129,12 +129,12 @@ request, 2026-09-12) since this lane hadn't claimed them yet — remaining 6 sti
 **Ad hoc, outside EPIC #31 (2026-09-13): post-EPIC gap audit, filed as #144–#146. Unclaimed.**
 | Issue | What | Status |
 |---|---|---|
-| #144 | analytics catalogue: confirm A1.x (source-reported ratios) + B12 (charge discharge velocity) — marked `"planned"` but their parent issues (#57, #56) are closed; either stale catalogue rows or a real gap | open, unclaimed |
+| #144 | analytics catalogue: confirm A1.x (source-reported ratios) + B12 (charge discharge velocity) — marked `"planned"` but their parent issues (#57, #56) are closed; either stale catalogue rows or a real gap | **B12 half: PR #149 open**, → @codex review. A1.x confirmed nuanced (portal-side done via B1/#39, dossier-side only gets a generic fallback table, not the catalogued sparkline treatment) — left open pending a product call, not folded into #149 |
 | #145 | portal never loads `dossier-tokens.css` — `DossierThemeSyncTests` proves the C# constants match a CSS file the browser never fetches, not that the live portal and PDF actually share a palette | open, unclaimed — product-decision, low urgency |
 | #146 | two catalogue rows with no disposition: `GstRegistration.CancellationDate` (vestigial, G17) and Auditors' Comments detail columns (unparsed, G18) — need an owner call: scope as real work, or mark `dropped-by-design` | open, unclaimed |
 
 ### Sequencing
-- Claude: D2/#57 **MERGED** → D4/#59 **MERGED** → K1/#98 **MERGED** → #97 **MERGED** → D10/#65 **MERGED** (`7f2cf1e`) → #47 (pre-login report ownership binding) **MERGED** (`f52f3cf`) → #142 (pre-login "My Reports" history) **MERGED** (PR #141, `965578e`) — Claude's lane empty pending a new assignment.
+- Claude: D2/#57 **MERGED** → D4/#59 **MERGED** → K1/#98 **MERGED** → #97 **MERGED** → D10/#65 **MERGED** (`7f2cf1e`) → #47 (pre-login report ownership binding) **MERGED** (`f52f3cf`) → #142 (pre-login "My Reports" history) **MERGED** (PR #141, `965578e`) → #144/B12 (charge discharge velocity) **PR #149 open**, → @codex review.
 - Antigravity: D6/#61 **MERGED** → D7/#62 **MERGED** → D8/#63 **MERGED** → D9/#64 **MERGED** (`e9e39e3`) → D11/#66 **MERGED** (`8213961`) → #107 **MERGED** (`7b74f11`) — Antigravity's render-audit lane complete!
 
 
@@ -225,6 +225,26 @@ Linux subset fonts break PdfPig's ToUnicode → those are `[SkippableFact]`, ski
 ---
 
 ## Log  <!-- newest first. Prefix: NEEDS / BLOCKED / DONE / DECISION / FYI -->
+
+### 2026-09-13 — Claude session (PR #149 open for #144's B12 half — charge discharge velocity)
+- Investigated #144's two flagged catalogue rows in full: **B1–B11 in `ChargeRegisterMetrics` are all
+  genuinely shipped** (confirmed by reading the code directly, not just the catalogue) — **B12 was the
+  one real, unambiguous gap**, simply never implemented. **A1.x is more nuanced, not a quick fix**: the
+  portal side is done (B1/#39's Ratios sub-tab), but the dossier PDF side only gets the 16 ratios via a
+  generic "Additional line items" fallback table in Annexure B — never the dedicated multi-year sparkline
+  the catalogue note calls for. Left A1.x's catalogue status as-is pending a product call on whether the
+  fallback table is "good enough" or a real dossier chart is wanted; not folded into this PR.
+- **PR #149 open** (`feat/b12-charge-discharge-velocity`, → Closes #144 in part): adds B12 (Creation/
+  Satisfaction event counts by calendar year) to `ChargeRegisterMetrics`. A literal per-year breakdown
+  has unbounded cardinality for an old company, which doesn't fit `MetricResult`'s one-fact-per-instance
+  shape — mirrors B7's trailing-window approach instead: the 5 most recent calendar years individually,
+  any earlier activity per series rolled into one "before `<cutoff>`" bucket, plus an explicit min–max
+  coverage fact. Renders through the existing generic `MetricGroup`/`MetricBlock`/`_KeyIndicators`
+  components in both the portal Charges tab and the dossier PDF — confirmed by reading both render paths,
+  zero view changes needed. Catalogue's B12 `status` flipped `"planned"` → `"shipped"`, `formula` field
+  rewritten to match the real shipped windowing (same discipline B7/B11 already follow).
+- 11/11 new+existing `ChargeRegisterMetricsTests` pass; broader `Dossier`/`AnalyticsJsonEndpoint` sweep
+  79/79; `dotnet build` clean; catalogue JSON re-validated as parseable.
 
 ### 2026-09-13 — Claude session (post-EPIC #31 gap audit — filed #144/#145/#146, fixed a stale board)
 - **Owner asked for an audit** of what else might be worth fixing now that EPIC #31 is fully closed.
