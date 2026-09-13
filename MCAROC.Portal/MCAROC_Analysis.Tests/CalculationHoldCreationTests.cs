@@ -83,4 +83,34 @@ public class CalculationHoldCreationTests : IAsyncLifetime
         Assert.Equal(CalculationArtifactHoldReason.ConfirmedCriticalDiscrepancy, hold.HoldReason);
         Assert.Equal(discrepancy.CalculationDiscrepancyId, hold.SourceDiscrepancyId);
     }
+
+    [Fact]
+    public async Task Concurrent_check_runs_for_the_same_snapshot_produce_exactly_one_set_of_results()
+    {
+        // Proves the unique (CalculationAuditSnapshotId, CheckKey) index (fixed alongside PR #170's own
+        // ledger-concurrency fix) actually backs the runner's "already ran" guard: two simultaneous
+        // RunChecksAsync calls for the same snapshot must not both pass it and persist duplicate
+        // check results/discrepancies/holds.
+        await using var seedDb = DossierGoldenMasterTests.CreateContext();
+        var (requestId, ingestionRunId, analysisRunId) = await DossierTestSeed.SeedAsync(seedDb);
+
+        await using var ledgerDb = DossierGoldenMasterTests.CreateContext();
+        await LedgerService(ledgerDb).PersistSnapshotAsync(requestId, ingestionRunId, analysisRunId, default);
+
+        await using var dbA = DossierGoldenMasterTests.CreateContext();
+        await using var dbB = DossierGoldenMasterTests.CreateContext();
+        var taskA = CheckRunner(dbA).RunChecksAsync(requestId, ingestionRunId, analysisRunId, default);
+        var taskB = CheckRunner(dbB).RunChecksAsync(requestId, ingestionRunId, analysisRunId, default);
+        await Task.WhenAll(taskA, taskB);
+
+        await using var verify = DossierGoldenMasterTests.CreateContext();
+        var snapshot = await verify.CalculationAuditSnapshots.SingleAsync(s => s.RequestId == requestId);
+
+        var checkKeys = await verify.CalculationCheckResults
+            .Where(c => c.CalculationAuditSnapshotId == snapshot.CalculationAuditSnapshotId)
+            .Select(c => c.CheckKey)
+            .ToListAsync();
+        Assert.NotEmpty(checkKeys);
+        Assert.Equal(checkKeys.Count, checkKeys.Distinct().Count()); // no duplicate CheckKey rows
+    }
 }
