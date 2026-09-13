@@ -130,7 +130,7 @@ request, 2026-09-12) since this lane hadn't claimed them yet — remaining 6 sti
 | Issue | What | Status |
 |---|---|---|
 | #144 | analytics catalogue: confirm A1.x (source-reported ratios) + B12 (charge discharge velocity) — marked `"planned"` but their parent issues (#57, #56) are closed; either stale catalogue rows or a real gap | **CLOSED** (2026-09-13, by owner, right after B12/PR #149 merged) — B12 half done. A1.x's product decision was closed along with it without being resolved; **split out to #152** so it isn't lost |
-| #152 | A1.x follow-up (split from #144): dossier PDF gets only a generic fallback table for the 16 source-reported ratios, not the catalogued multi-year sparkline treatment | **Owner decision: build a real dossier-side treatment.** Claimed, queued after #146b |
+| #152 | A1.x follow-up (split from #144): dossier PDF gets only a generic fallback table for the 16 source-reported ratios, not the catalogued multi-year sparkline treatment | **Deferred entirely** (owner, 2026-09-13, revised) — the dossier PDF is getting a full redesign later (more calculations being added); building elaborate layout now risked being throwaway. No work scheduled until the redesign's scope is known |
 | #145 | portal never loads `dossier-tokens.css` — no proven visual parity between portal and PDF | **Owner decision: build real parity** (wire the portal to the shared palette, or generate both from one source). Claimed, queued after #146b |
 | #146 | two catalogue rows with no disposition: `GstRegistration.CancellationDate` (vestigial, G17) and Auditors' Comments detail columns (unparsed, G18) | **Decided and recorded directly on #146**: G17 → `dropped-by-design` (**PR #155 open**, → @codex review; surfaced a real bug, see **#157**); G18 → scope as real work (planning in progress, extends `AuditorObservation`) |
 
@@ -247,6 +247,15 @@ Linux subset fonts break PdfPig's ToUnicode → those are `[SkippableFact]`, ski
 - Centralizes GST active-status interpretation in `GstRegistrationStatus.cs`.
 - Treats Cancelled and Inactive source statuses as non-active when no cancellation date exists (`!IsActive(registration)`), resolving false negatives in `GstRules` and `StructuredFactsProvider`.
 - Dedicated unit tests added in `GstRulesTests` and `StructuredFactsProviderTests`; all 14 targeted tests passed.
+
+### 2026-09-13 — Claude session (#152 deferred — a full dossier PDF redesign is coming later)
+- **Owner, verbatim**: "we will later redesign the final pdf report too as we will be adding various
+  calculations." **How to apply going forward**: before investing significant new dossier PDF
+  layout/visual work, weigh whether it survives that redesign — favor the smallest correct fix, or check
+  scope first, over an elaborate QuestPDF addition the redesign might discard. Does **not** apply to
+  non-visual work (parser/entity/metrics additions like #146b or B12/#144) — those feed the redesign too.
+- **#152 revised from "build a real dossier treatment" to deferred entirely** as a direct consequence —
+  recorded on the issue itself. No work scheduled until the redesign's scope is known.
 
 ### 2026-09-13 — Claude session (#146 decision recorded; found + filed #157 — GST cancellation false negative)
 - **Owner walked through the 3 pending product calls (#145, #146a, #146b, #152) and decided all four**:
