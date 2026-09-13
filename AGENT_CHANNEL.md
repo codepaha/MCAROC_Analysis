@@ -243,6 +243,35 @@ Linux subset fonts break PdfPig's ToUnicode → those are `[SkippableFact]`, ski
 
 ## Log  <!-- newest first. Prefix: NEEDS / BLOCKED / DONE / DECISION / FYI -->
 
+### 2026-09-13 — Claude session (PR #170 changes requested — 3 real bugs, all fixed in `fe13d23`)
+- **PR #170's own reviewer caught 3 correctness bugs review rounds 1-2 (design-level) had missed**,
+  all in `CalculationLedgerService`'s actual implementation rather than the schema design:
+  1. `InputHash` hashed only the metric's input *field names* (`["FinancialYearData.Revenue"]`), never
+     the actual resolved values — two different companies' revenue figures via the same formula produced
+     identical hashes, defeating the hash's whole purpose as a drift fingerprint.
+  2. Snapshot + ledger entries saved in two separate `SaveChangesAsync` calls — a crash between them left
+     an empty snapshot row that every future retry's `AnyAsync` check treated as "already done," silently
+     and permanently skipping ledger creation for that request.
+  3. Ledger persistence was called *after* `AiCrossSectionAnalysisService.SynthesizeAsync()` and after the
+     `AnalysisRun` was marked Completed — contradicting the approved plan's own "persist before the AI
+     call" discipline (the same discipline the rule-engine findings save already followed). An AI
+     timeout/crash could leave a "completed" analysis with zero audit ledger.
+- **All three fixed** (`fe13d23`): a new `CalculationInputCanonicalizer` hashes actual resolved
+  invariant-culture values per source row; snapshot+entries now persist in one `SaveChangesAsync` call via
+  navigation-property linkage (one atomic transaction — an incomplete snapshot is now detected by
+  "has zero ledger entries" and completed on retry, and a unique-constraint race is caught and treated as
+  "already handled"); the ledger call moved to right after the rule engine's own pre-AI save, which
+  required extracting `DossierAssembler`'s core logic into `BuildForInFlightAnalysisAsync` (works while
+  the `AnalysisRun` is still `Running`) alongside the existing `BuildAsync` (unchanged contract, still
+  requires `Completed`/`CompletedWithErrors`, still used everywhere else). 6 new/expanded tests (hash
+  sensitivity ×4, orphaned-snapshot resume, concurrent-call race). Full `Dossier`/`Analysis` regression
+  sweep: 1022 passed, 19 skipped (unchanged). Posted as a PR comment; pushed to `feature/164-calculation-
+  assurance` (`fe13d23`).
+- **Lesson for next time**: the design-review rounds caught real schema/architecture gaps, but a
+  correctness review of the actual implementation still found bugs the design review couldn't see from
+  the plan text alone (exact save ordering, what a hash function actually hashes). Both passes matter —
+  neither substitutes for the other.
+
 ### 2026-09-13 — Claude session (#161/G18 MERGED — Auditors' Comments detail-table columns)
 - **PR #166 MERGED into `main` as `7786be4`**; issue #161 (G18, the last open half of #146) closed
   automatically. Both hosted CI jobs (Linux `build-and-test`, Windows `windows-tests`) passed;
