@@ -265,8 +265,9 @@ Linux subset fonts break PdfPig's ToUnicode → those are `[SkippableFact]`, ski
   said **#75 (A11)** was still "open, Claude lane" — it's actually been `CLOSED` since 2026-09-10 and
   shipped (`SheetCoverage`/`WasAbsent`/`TrackedOptionalSheets`, tested in
   `SourceReconciliationTests.cs`). Also flagged (without individually re-verifying) that the "Owner
-  TODO: apply migrations locally" notes dated 2026-09-10 and earlier are self-evidently obsolete —
-  dozens of PRs have since shipped against that exact schema.
+  TODO: apply migrations locally" notes dated 2026-09-10 and earlier are historical; their apply-status
+  remains unverified and must be checked against the target database's `__EFMigrationsHistory`, rather
+  than inferred from later PRs compiling against that schema.
 - Confirmed via `gh issue list --state open` / `gh pr list --state open`: before this audit's 3 new
   filings, the repo genuinely had zero open issues and zero open PRs — the "everything's done" read was
   accurate, this audit's findings are all *new*, not previously-tracked-and-forgotten work.
