@@ -40,9 +40,13 @@
                     <span class="pi-side-icon"><i class="bi bi-grid-1x2"></i></span>
                     <span>Dashboard</span>
                 </a>
-                <a class="pi-side-link @Active("PreLoginReports")" asp-controller="PreLoginReports" asp-action="Index">
+                <a class="pi-side-link @Active("PreLoginReports", "Index")" asp-controller="PreLoginReports" asp-action="Index">
                     <span class="pi-side-icon"><i class="bi bi-file-earmark-word"></i></span>
                     <span>New Pre-login Report</span>
+                </a>
+                <a class="pi-side-link @Active("PreLoginReports", "Mine")" asp-controller="PreLoginReports" asp-action="Mine">
+                    <span class="pi-side-icon"><i class="bi bi-bookmark-check"></i></span>
+                    <span>My Reports</span>
                 </a>
                 <a class="pi-side-link @Active("Requests", "New")" asp-controller="Requests" asp-action="New">
                     <span class="pi-side-icon"><i class="bi bi-plus-circle"></i></span>

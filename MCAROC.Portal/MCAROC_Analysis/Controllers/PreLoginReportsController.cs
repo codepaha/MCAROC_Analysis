@@ -9,13 +9,19 @@ namespace MCAROC_Analysis.Controllers;
 /// requests share one pipeline (both just queue a job) — editing is an optional, post-hoc action from
 /// History, not a mandatory gate before generation. There is no login here, so every action past initial
 /// submission (History/Edit/Rerun/Download) is scoped to a <c>batch</c> Guid route segment, which serves
-/// as this pipeline's only access credential (#47) — see <see cref="PreLoginReportJobService.FindInBatchAsync"/>.</summary>
+/// as this pipeline's only access credential (#47) — see <see cref="PreLoginReportJobService.FindInBatchAsync"/>.
+/// <see cref="Mine"/> is the one exception worth calling out explicitly: it renders a static shell over
+/// the browser's own <c>localStorage</c> and performs no server-side batch lookup at all, so "my past
+/// reports" stays a per-browser client concern rather than reintroducing a server-side listing.</summary>
 [AllowAnonymous]
 [Route("pre-login-reports")]
 public sealed class PreLoginReportsController(PreLoginReportJobService jobs) : Controller
 {
     [HttpGet("")]
     public IActionResult Index() => View(new PreLoginReportViewModel());
+
+    [HttpGet("mine")]
+    public IActionResult Mine() => View();
 
     [HttpPost("")]
     [ValidateAntiForgeryToken]

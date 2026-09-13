@@ -1,0 +1,42 @@
+@{
+    ViewData["Title"] = "My Reports";
+}
+
+<div class="pi-page-head">
+    <div>
+        <div class="pi-kicker">Public report generation</div>
+        <h1>My Reports</h1>
+        <p>This list is remembered only by this browser — it is not a server record. There is no login on
+        this pipeline, so nobody but you can see it, and clearing it does not delete any report; a report
+        stays reachable at its own bookmarked link either way.</p>
+    </div>
+</div>
+
+<noscript>
+    <div class="alert alert-warning">This page needs JavaScript to show your locally remembered reports.
+    If you have a report link — from the page you landed on right after submitting, or a bookmark/email —
+    use that instead.</div>
+</noscript>
+
+<div id="pi-mine-empty" class="mca-empty" hidden>
+    <i class="bi bi-clock-history"></i>
+    <p>You have not opened any pre-login reports on this browser yet.</p>
+</div>
+
+<div id="pi-mine-table-wrap" class="pi-table-wrap" hidden>
+    <table class="pi-results-table">
+        <thead>
+            <tr><th>Reports</th><th>Format</th><th>Count</th><th>Submitted</th><th></th></tr>
+        </thead>
+        <tbody id="pi-mine-rows"></tbody>
+    </table>
+</div>
+
+<p class="mt-3">
+    <button type="button" id="pi-mine-clear" class="btn btn-sm btn-outline-secondary">Clear this list</button>
+    <br /><small class="text-muted">This only forgets this browser's local bookmark list — it does not delete any report or its data.</small>
+</p>
+
+@section Scripts {
+    <script src="~/js/prelogin-reports-mine.js" type="module" asp-append-version="true"></script>
+}
