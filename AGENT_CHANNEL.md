@@ -118,7 +118,7 @@ request, 2026-09-12) since this lane hadn't claimed them yet — remaining 6 sti
 | #117 C7a | in-app PDF viewer, request-scoped + dedup-aware — **Claude reviews the scoping/dedup code before merge** | none | **MERGED** (PR #127, `9b1096b`) |
 | #119 C7b | relocate chat to docked panel, JSON hardening (antiforgery, length limit, error contract) | #117 C7a (merged) | **MERGED** (PR #131, `dd33f22`) |
 | #122 C7c | wire the dead Ctrl+K command-palette scaffold | #119 C7b (merged) | **MERGED** (PR #137, `f3e6afb`) |
-| #120 C9 | dashboard restyle — retire Chart.js for #116's SVG partials | #116 C6 (merged) | **PR #139 open** (`feature/120-dashboard-svg-charts`) → `@codex review` |
+| #120 C9 | dashboard restyle — retire Chart.js for #116's SVG partials | #116 C6 (merged) | **MERGED** (PR #139, `2ae87fd`) |
 | #124 C10 | print stylesheet — deliberately last | all of the above | **MERGED** (PR #138, `6b07f3e`) — merged ahead of #120/C9; scoped to the Requests Details page only, no Dashboard/Chart.js overlap, confirmed no conflict on rebase |
 
 ### Sequencing
@@ -175,9 +175,8 @@ portal+PDF, `GET /Requests/{id}/analytics.json`).
 | #78 | Codex — channel-verdict doc | awaits **@owner** merge |
 
 **Phase 8:** EPIC #31. Waves 1, 2, 2b, and 4 all fully merged. **Wave 3 (2026-09-12): split into 13
-issues #112–#124** after 4 rounds of owner review (see plan file `serene-whistling-wave.md` and the Log
-entry above) — Claude building #112 C1 + #113 C3 now, #118 C8 next; #121/#114/#115/#123/#116/#117/#119/
-#122/#120/#124 (C2/C4/C5a/C5b/C6/C7a/C7b/C7c/C9/C10) open for Antigravity.
+issues #112–#124** after 4 rounds of owner review (see plan file `serene-whistling-wave.md`) — **as of
+2026-09-13, all 13 are merged (#120/C9 last, PR #139, `2ae87fd`). Wave 3 is fully closed.**
 Catalogue G1, G3, G4, G5 → DONE.
 
 **Degenerate-data audit (2026-09-10):** ingestion + views + calcs handle no-charge-report /
@@ -205,6 +204,14 @@ Linux subset fonts break PdfPig's ToUnicode → those are `[SkippableFact]`, ski
 ---
 
 ## Log  <!-- newest first. Prefix: NEEDS / BLOCKED / DONE / DECISION / FYI -->
+
+### 2026-09-13 — Claude session (C9/#120 MERGED — Wave 3 fully closed, all 13 issues shipped)
+- **PR #139 MERGED into `main` as `2ae87fd`.** Issue #120 stayed open after merge (same PR-title-without-
+  closing-keyword gap as #123/#116 before it) — closed by hand. Remote branch deleted, local
+  worktree/branch cleaned up.
+- **This closes out Wave 3 (#112–#124) entirely — all 13 scoped issues merged.** Rebased this channel PR
+  (#140) onto the new `main` and flipped #120's table row from "PR #139 open" to `MERGED`.
+- **Nothing currently claimed in Claude's lane.** Next assignment TBD.
 
 ### 2026-09-13 — Claude session (PR #139 open for #120 C9 — Dashboard Chart.js retirement; #121/#122/#124 caught up)
 - **PR #139 open** (`feature/120-dashboard-svg-charts`, → Closes #120): migrates the Dashboard's 3
