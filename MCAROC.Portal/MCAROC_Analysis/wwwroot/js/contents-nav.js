@@ -603,35 +603,41 @@
         // ── Initial Navigation on Page Load ──
         const initialHash = (w && w.location && w.location.hash) || '';
         const parsed = parseHash(initialHash);
-        const navigated = resolveAndNavigateHash(initialHash);
 
-        if (focusCharge && (!navigated || (parsed && parsed.domain === 'charges'))) {
+        if (focusCharge && (!parsed || parsed.domain === 'charges')) {
             openAndScrollCharge(focusCharge, d, w, bLib);
-        } else if (!navigated) {
-            let savedTab = null;
-            try {
-                if (w && w.sessionStorage) savedTab = w.sessionStorage.getItem(tabKey);
-            } catch (e) {}
+        } else {
+            const navigated = resolveAndNavigateHash(initialHash);
+            if (!navigated) {
+                if (focusCharge) {
+                    openAndScrollCharge(focusCharge, d, w, bLib);
+                } else {
+                    let savedTab = null;
+                    try {
+                        if (w && w.sessionStorage) savedTab = w.sessionStorage.getItem(tabKey);
+                    } catch (e) {}
 
-            if (savedTab) {
-                const savedDomain = savedTab.replace('#tab-', '').toLowerCase();
-                if (KNOWN_TABS.includes(savedDomain)) {
-                    const savedBtn = findTabButton('tab-' + savedDomain);
-                    if (savedBtn) {
-                        ensureTabActive(savedBtn, function () {
-                            onMainTabActivated(savedDomain);
-                        }, bLib);
-                    }
-                }
-            } else {
-                // Default active tab (AI Analysis)
-                const activeBtn = (d.querySelector && d.querySelector('#mcaTabs button[data-bs-toggle="tab"].active'))
-                    || (d.querySelector && d.querySelector('#mcaTabs button[data-bs-toggle="tab"]'));
-                if (activeBtn) {
-                    const targetSelector = activeBtn.getAttribute('data-bs-target') || '';
-                    const domain = targetSelector.replace('#tab-', '').toLowerCase();
-                    if (KNOWN_TABS.includes(domain)) {
-                        onMainTabActivated(domain);
+                    if (savedTab) {
+                        const savedDomain = savedTab.replace('#tab-', '').toLowerCase();
+                        if (KNOWN_TABS.includes(savedDomain)) {
+                            const savedBtn = findTabButton('tab-' + savedDomain);
+                            if (savedBtn) {
+                                ensureTabActive(savedBtn, function () {
+                                    onMainTabActivated(savedDomain);
+                                }, bLib);
+                            }
+                        }
+                    } else {
+                        // Default active tab (AI Analysis)
+                        const activeBtn = (d.querySelector && d.querySelector('#mcaTabs button[data-bs-toggle="tab"].active'))
+                            || (d.querySelector && d.querySelector('#mcaTabs button[data-bs-toggle="tab"]'));
+                        if (activeBtn) {
+                            const targetSelector = activeBtn.getAttribute('data-bs-target') || '';
+                            const domain = targetSelector.replace('#tab-', '').toLowerCase();
+                            if (KNOWN_TABS.includes(domain)) {
+                                onMainTabActivated(domain);
+                            }
+                        }
                     }
                 }
             }

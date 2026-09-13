@@ -635,8 +635,11 @@ test('focusCharge contract: ?charge=71 with compatible hash #tab-charges runs op
         Tab: {
             getOrCreateInstance: (el) => ({
                 show: () => {
+                    // Simulates real Bootstrap: button gets .active, but shown.bs.tab fires asynchronously
                     el.classList.add('active');
-                    el.dispatchEvent({ type: 'shown.bs.tab', target: el });
+                    setTimeout(() => {
+                        el.dispatchEvent({ type: 'shown.bs.tab', target: el });
+                    }, 20);
                 }
             })
         },
@@ -663,13 +666,76 @@ test('focusCharge contract: ?charge=71 with compatible hash #tab-charges runs op
             bootstrap: mockBootstrap
         });
 
-        // Give collapse event chain time to settle
+        // Check early (before shown.bs.tab fires at 20ms): holder and row must NOT be shown yet
+        setTimeout(() => {
+            assert.equal(holderGroup.classList.contains('show'), false, 'Holder group must not expand before shown.bs.tab');
+            assert.equal(row.classList.contains('show'), false, 'Charge drawer must not expand before shown.bs.tab');
+            assert.equal(chargeScrolled, false, 'Row must not scroll before shown.bs.tab');
+        }, 5);
+
+        // Give collapse event chain time to settle after shown.bs.tab
         setTimeout(() => {
             assert.equal(chargesTabBtn.classList.contains('active'), true, 'Charges tab activated');
-            assert.equal(chargeScrolled, true, 'Charge 71 was scrolled into view despite #tab-charges hash');
+            assert.equal(holderGroup.classList.contains('show'), true, 'Holder group expanded after shown.bs.tab');
+            assert.equal(row.classList.contains('show'), true, 'Charge drawer expanded after shown.bs.tab');
+            assert.equal(chargeScrolled, true, 'Charge 71 was scrolled into view after shown.bs.tab');
             resolve();
-        }, 50);
+        }, 60);
     });
 });
+
+test('focusCharge contract: ?charge=71 with non-charges hash #tab-financials navigates to Financials', () => {
+    const finTabBtn = createMockElement('button', { 'data-bs-target': '#tab-financials', 'data-bs-toggle': 'tab' });
+    const chargesTabBtn = createMockElement('button', { 'data-bs-target': '#tab-charges', 'data-bs-toggle': 'tab' });
+
+    const mockWin = {
+        location: { hash: '#tab-financials' },
+        matchMedia: () => ({ matches: false }),
+        addEventListener: () => {}
+    };
+
+    const mockDoc = {
+        documentElement: { style: { setProperty() {} } },
+        body: createMockElement('body'),
+        getElementById: (id) => {
+            if (id === 'mcaDetailHead') return createMockElement('div', { id: 'mcaDetailHead', 'data-request-id': 'req-1', 'data-focus-charge-id': '71' });
+            return null;
+        },
+        querySelector: (sel) => {
+            if (sel.includes('#tab-financials')) return finTabBtn;
+            if (sel.includes('#tab-charges')) return chargesTabBtn;
+            return null;
+        },
+        querySelectorAll: (sel) => {
+            if (sel === '#mcaTabs button[data-bs-toggle="tab"]') return [finTabBtn, chargesTabBtn];
+            return [];
+        }
+    };
+
+    const mockBootstrap = {
+        Tab: {
+            getOrCreateInstance: (el) => ({
+                show: () => {
+                    el.classList.add('active');
+                    el.dispatchEvent({ type: 'shown.bs.tab', target: el });
+                }
+            })
+        },
+        ScrollSpy: class {
+            static getInstance() { return null; }
+            dispose() {}
+        }
+    };
+
+    McaContentsNav.initDetailsNav({
+        doc: mockDoc,
+        window: mockWin,
+        bootstrap: mockBootstrap
+    });
+
+    assert.equal(finTabBtn.classList.contains('active'), true, 'Financials tab activated');
+    assert.equal(chargesTabBtn.classList.contains('active'), false, 'Charges tab not activated when hash explicitly requested financials');
+});
+
 
 
