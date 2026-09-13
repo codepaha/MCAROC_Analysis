@@ -114,11 +114,11 @@ request, 2026-09-12) since this lane hadn't claimed them yet — remaining 6 sti
 | #114 C4 | 3 missing colour-as-signal annotation patterns | #112 C1 (merged) | **MERGED** (PR #129, `354b1fc`) |
 | #115 C5a | group charges by holder | #112 C1 (merged) | **MERGED** (`9a92fac`) |
 | #123 C5b | Crore/Lakh/₹ unit toggle + typed amount renderer (file the generated call-site classification table as evidence, don't hardcode counts in the PR) | #112 C1 (merged) | **MERGED** (PR #132, `98816af`) |
-| #116 C6 | shared inline-SVG viz contract (dossier + dashboard mappings kept separate) + 6 partials | #112 C1 (merged) | **PR #134 open** (`feature/116-shared-viz-contract`), rebased onto #123's merge (no real dependency, just git hygiene) → `@codex review` |
+| #116 C6 | shared inline-SVG viz contract (dossier + dashboard mappings kept separate) + 6 partials | #112 C1 (merged) | **MERGED** (PR #134, `7a430ab`) |
 | #117 C7a | in-app PDF viewer, request-scoped + dedup-aware — **Claude reviews the scoping/dedup code before merge** | none | **MERGED** (PR #127, `9b1096b`) |
 | #119 C7b | relocate chat to docked panel, JSON hardening (antiforgery, length limit, error contract) | #117 C7a (merged) | **MERGED** (PR #131, `dd33f22`) |
 | #122 C7c | wire the dead Ctrl+K command-palette scaffold | #119 C7b | open |
-| #120 C9 | dashboard restyle — retire Chart.js for #116's SVG partials | #116 C6 | open |
+| #120 C9 | dashboard restyle — retire Chart.js for #116's SVG partials | #116 C6 (merged) | open — now fully unblocked |
 | #124 C10 | print stylesheet — deliberately last | all of the above | open |
 
 ### Sequencing
@@ -235,6 +235,19 @@ Linux subset fonts break PdfPig's ToUnicode → those are `[SkippableFact]`, ski
   remembering next time `windows-tests` sits queued: check `gh api repos/codepaha/MCAROC_Analysis/
   actions/runners` for `"status"` — `offline` means someone needs to physically run `run.cmd` on that
   machine again, it will not restart itself.
+
+### 2026-09-13 — Claude session (C6/#116 MERGED — both of Claude's remaining Wave-3 issues now shipped)
+- **PR #134 (#116 C6) MERGED into `main` as `7a430ab`** — the manual browser sparkline check (the one
+  unchecked box in the PR's test plan) was explicitly waived by the reviewer rather than blocking on it.
+  Issue #116 stayed open after merge (title referenced the issue number but used no closing keyword —
+  same gap as #123 the day before) — closed by hand; `Closes #NNN` in the PR body going forward would
+  save this step. Remote branch deleted, local worktree/branch cleaned up.
+- **Claude's entire remaining Wave-3 lane (C5b/#123 + C6/#116) is now fully merged.** Rebased this
+  channel PR (#135) onto the new `main` and #120 (C9)'s row updated to "now fully unblocked" — it was the
+  one issue waiting specifically on #116.
+- **#135 and #136 both need a fresh exact-head CI/status check before either merges** — both PRs' heads
+  moved (this channel PR was just rebased again; #136 sits behind two more merges than when it was
+  opened) — per owner instruction, checking status is not the same as clearing it for merge.
 
 ### 2026-09-13 — Claude session (C5b/#123 MERGED; #116 C6 rebased onto it, both cleared this morning)
 - **PR #132 (#123 C5b) MERGED into `main` as `98816af`** — approved after the one atomic-switching fix
