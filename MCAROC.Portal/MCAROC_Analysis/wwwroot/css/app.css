@@ -1,7 +1,12 @@
+@import url('dossier-tokens.css');
+
 /* =====================================================================
    Property Intelligence — Design System  (app.css)
    One coherent, token-based system. Replaces the layered portal.css.
    Light + dark themes via [data-theme]. Reuses existing .pi-* classes.
+   Light theme bridges directly to the dossier editorial palette
+   (wwwroot/css/dossier-tokens.css) for 1:1 visual parity with the
+   client Due Diligence Dossier PDF (Services/Dossier/DossierTheme.cs).
    ===================================================================== */
 
 /* Local editorial fonts — the same files QuestPDF registers for the client dossier PDF
@@ -22,50 +27,50 @@
    1. Design tokens
    --------------------------------------------------------------------- */
 :root {
-    /* Brand — calm, soothing steel-blue (BFSI trust, low saturation) */
-    --brand: #2f7df6;
-    --brand-strong: #1d4ed8;
-    --brand-soft: #edf4ff;
-    --brand-grad: linear-gradient(135deg, #2f7df6 0%, #1d4ed8 60%, #1e3a8a 100%);
+    /* Brand — editorial warm maroon (shared palette with client PDF dossier & dossier-tokens.css) */
+    --brand: var(--maroon, #7A2331);
+    --brand-strong: var(--maroon-deep, #5C1A23);
+    --brand-soft: var(--maroon-wash, #F4E6E8);
+    --brand-grad: linear-gradient(135deg, var(--maroon, #7A2331) 0%, var(--maroon-deep, #5C1A23) 100%);
 
-    /* Neutral ramp (light) — soft cool greys, gentle contrast */
-    --bg: #f2f4f7;
-    --surface: #ffffff;
-    --surface-2: #f7f9fc;
-    --surface-3: #eef3f8;
-    --border: #e1e7ef;
-    --border-strong: #cfd8e3;
+    /* Neutral ramp (light) — warm editorial paper ground, raised cards and hairline rules */
+    --bg: var(--paper, #F6F3EC);
+    --surface: var(--paper-raised, #FCFAF5);
+    --surface-2: #EFECE3;
+    --surface-3: #E4E0D5;
+    --border: var(--line-soft, #E4E1D6);
+    --border-strong: var(--line, #C4C0B4);
 
-    /* Text — softened (not pure black) for an easy-on-the-eyes read */
-    --text: #111827;
-    --text-2: #374151;
-    --muted: #667085;
+    /* Text — shared editorial ink */
+    --text: var(--ink, #1B2430);
+    --text-2: var(--ink-soft, #5B6472);
+    --muted: var(--ink-faint, #8B93A0);
     --on-brand: #ffffff;
 
-    /* Semantic — muted, harmonious (calm not loud) */
-    --success: #3f9374;
-    --success-soft: #eaf5f0;
-    --warning: #c98a3c;
-    --warning-soft: #faf2e6;
+    /* Semantic — shared editorial palette (sage, amber) */
+    --success: var(--sage, #3F6B52);
+    --success-soft: var(--sage-wash, #E7EFE9);
+    --warning: var(--amber, #A66A1E);
+    --warning-soft: var(--amber-wash, #F5E9D8);
     --danger: #cf6063;
     --danger-soft: #fbeded;
     --info: #4a8fb5;
     --info-soft: #ecf4f9;
 
-    /* Sidebar — soft deep slate-blue (desaturated, restful) */
-    --side-bg: #142033;
-    --side-bg-2: #1b2d49;
-    --side-text: #a8b7cb;
+    /* Sidebar — editorial ink ground (identity band) */
+    --side-bg: var(--ink, #1B2430);
+    --side-bg-2: #242F3E;
+    --side-text: #A8B7CB;
     --side-text-strong: #ffffff;
-    --side-active-bg: rgba(99, 138, 196, 0.28);
+    --side-active-bg: rgba(122, 35, 49, 0.35);
     --side-hover-bg: rgba(255, 255, 255, 0.06);
     --side-border: rgba(255, 255, 255, 0.08);
 
     /* Elevation */
-    --shadow-xs: 0 1px 2px rgba(16, 24, 40, 0.04);
-    --shadow-sm: 0 1px 3px rgba(16, 24, 40, 0.06);
-    --shadow-md: 0 10px 24px rgba(16, 24, 40, 0.08);
-    --shadow-lg: 0 20px 48px rgba(16, 24, 40, 0.14);
+    --shadow-xs: 0 1px 2px rgba(27, 36, 48, 0.04);
+    --shadow-sm: 0 1px 3px rgba(27, 36, 48, 0.06);
+    --shadow-md: 0 10px 24px rgba(27, 36, 48, 0.08);
+    --shadow-lg: 0 20px 48px rgba(27, 36, 48, 0.14);
 
     /* Geometry */
     --r-sm: 8px;
@@ -80,14 +85,14 @@
     --num: 'IBM Plex Sans', Aptos, sans-serif;          /* big stat numbers (tabular) */
     --mono: 'IBM Plex Mono', Consolas, monospace;  /* IDs / codes */
 
-    --ring: 0 0 0 3px rgba(47, 125, 246, 0.18);
+    --ring: 0 0 0 3px rgba(122, 35, 49, 0.18);
     --sidebar-w: 264px;
 }
 
 [data-theme="dark"] {
-    --brand: #5b8dff;
-    --brand-strong: #7aa3ff;
-    --brand-soft: rgba(91, 141, 255, 0.14);
+    --brand: #d47382;
+    --brand-strong: #e594a1;
+    --brand-soft: rgba(212, 115, 130, 0.18);
 
     --bg: #0b1220;
     --surface: #121c2e;
@@ -99,6 +104,8 @@
     --text: #e8eef8;
     --text-2: #b3c0d4;
     --muted: #8497b0;
+
+    --ring: 0 0 0 3px rgba(212, 115, 130, 0.25);
 
     --success-soft: rgba(15, 157, 88, 0.16);
     --warning-soft: rgba(224, 138, 11, 0.16);
@@ -193,7 +200,7 @@ b, strong, th { font-weight: 600; }
        var(--brand-grad) blue badge behind it left the letters nearly invisible against a
        similarly-blue background. White gives the actual mark contrast on the dark sidebar. */
     background: #fff;
-    color: #1d4ed8;
+    color: var(--brand-strong);
     font-size: 15px;
     font-weight: 600;
     letter-spacing: -0.04em;
@@ -286,7 +293,7 @@ b, strong, th { font-weight: 600; }
 .pi-side-link:hover .pi-side-icon,
 .pi-side-group-title:hover .pi-side-icon { color: #dce8f8; }
 .pi-side-link.active .pi-side-icon,
-.pi-side-group.active .pi-side-group-title .pi-side-icon { background: rgba(99, 138, 196, 0.5); color: #fff; }
+.pi-side-group.active .pi-side-group-title .pi-side-icon { background: var(--brand); color: #fff; }
 .pi-side-icon .bi { font-size: 16px; }
 
 .pi-side-footer {
@@ -598,8 +605,8 @@ textarea.form-control, .pi-address-box { min-height: 120px; line-height: 1.55; r
 .btn-sm { min-height: 34px; padding: 6px 13px; font-size: 12.5px; }
 .btn-lg { min-height: 48px; padding: 12px 24px; font-size: 15px; }
 
-.btn-primary { background: var(--brand); border-color: var(--brand); color: #fff; box-shadow: 0 2px 7px rgba(58, 93, 153, 0.26); }
-.btn-primary:hover, .btn-primary:focus { background: var(--brand-strong); border-color: var(--brand-strong); color: #fff; box-shadow: 0 4px 12px rgba(58, 93, 153, 0.34); }
+.btn-primary { background: var(--brand); border-color: var(--brand); color: #fff; box-shadow: 0 2px 7px rgba(122, 35, 49, 0.26); }
+.btn-primary:hover, .btn-primary:focus { background: var(--brand-strong); border-color: var(--brand-strong); color: #fff; box-shadow: 0 4px 12px rgba(122, 35, 49, 0.34); }
 
 .btn-outline-primary, .btn-view { color: var(--brand); border: 1px solid var(--border-strong); background: var(--surface); }
 .btn-outline-primary:hover, .btn-view:hover { background: var(--brand-soft); border-color: var(--brand); color: var(--brand-strong); }
@@ -644,10 +651,10 @@ textarea.form-control, .pi-address-box { min-height: 120px; line-height: 1.55; r
 .pi-metric strong { display: block; margin-top: 12px; color: var(--text); font-size: 40px; font-weight: 600; line-height: 1; font-family: var(--num); letter-spacing: -0.03em; font-feature-settings: "tnum"; }
 .pi-metric small { display: block; margin-top: 11px; color: var(--muted); font-size: 12.5px; }
 /* rotating accent palette across the grid — calm, harmonious tones */
-.pi-metric:nth-child(4n+1) { --accent: #3a5d99; }  /* steel blue   */
-.pi-metric:nth-child(4n+2) { --accent: #3f9374; }  /* sage green   */
-.pi-metric:nth-child(4n+3) { --accent: #c98a3c; }  /* soft amber   */
-.pi-metric:nth-child(4n+4) { --accent: #7a7fc0; }  /* muted indigo */
+.pi-metric:nth-child(4n+1) { --accent: var(--brand); }     /* editorial maroon */
+.pi-metric:nth-child(4n+2) { --accent: var(--success); }   /* sage green       */
+.pi-metric:nth-child(4n+3) { --accent: var(--warning); }   /* soft amber       */
+.pi-metric:nth-child(4n+4) { --accent: var(--ink-soft); }  /* editorial slate  */
 
 /* ---------------------------------------------------------------------
    12. Dashboard grid / modules / signals
