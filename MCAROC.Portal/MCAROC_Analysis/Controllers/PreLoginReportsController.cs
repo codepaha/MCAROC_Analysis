@@ -5,9 +5,13 @@ using Microsoft.AspNetCore.Mvc;
 
 namespace MCAROC_Analysis.Controllers;
 
-/// <summary>Public, credential-free entry point for the two MCA report formats. Single-CIN and batch
-/// requests share one pipeline (both just queue a job) — editing is an optional, post-hoc action from
-/// History, not a mandatory gate before generation. There is no login here, so every action past initial
+/// <summary>Public, credential-free entry point for the two MCA report formats. "Pre-login" names a
+/// REPORT TIER (a limited-detail report — company profile, open charges, director names — analogous to
+/// a reference tool's free/unlocked tabs), not an authentication checkpoint: this application has no
+/// user-login system anywhere, for this pipeline or the main portal's own (fuller, "post-login"-tier)
+/// reports. Single-CIN and batch requests share one pipeline (both just queue a job) — editing is an
+/// optional, post-hoc action from History, not a mandatory gate before generation. Because there is no
+/// login ANYWHERE in this app (not because this is "the part before login"), every action past initial
 /// submission (History/Edit/Rerun/Download) is scoped to a <c>batch</c> Guid route segment, which serves
 /// as this pipeline's only access credential (#47) — see <see cref="PreLoginReportJobService.FindInBatchAsync"/>.
 /// <see cref="Mine"/> is the one exception worth calling out explicitly: it renders a static shell over
