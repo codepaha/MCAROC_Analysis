@@ -125,4 +125,34 @@ public class DossierPdfComposerTests : IAsyncLifetime
         Assert.DoesNotContain("/100", lower);
         Assert.DoesNotContain("documents index", lower);
     }
+
+    /// <summary>G18/#161: the Auditor's-comments Annexure B cell folds Section/Directors' Comments/
+    /// Footnotes into the existing Comment column as inline text (deliberately no new dense-table
+    /// columns — see the issue's plan for why). Real render-and-extract, not manual PDF inspection.</summary>
+    [SkippableFact]
+    public async Task Auditor_comment_cell_includes_section_directors_comments_and_footnote_inline()
+    {
+        Skip.IfNot(OperatingSystem.IsWindows(),
+            "PdfPig text extraction from SkiaSharp subset fonts is unreliable on Linux; covered by the windows-tests job.");
+
+        await using var seed = DossierGoldenMasterTests.CreateContext();
+        var (requestId, _, _) = await DossierTestSeed.SeedAsync(seed);
+
+        await using var db = DossierGoldenMasterTests.CreateContext();
+        var model = await new DossierAssembler(db).BuildAsync(requestId);
+        Assert.NotNull(model);
+
+        var pdf = new DossierPdfRenderer(WebRoot()).Render(model!, DossierVariant.Executive);
+        var text = TextOf(pdf);
+
+        // PdfPig's raw glyph-concatenation extraction can drop a space at certain punctuation
+        // boundaries (e.g. "700600(Disclosures)", "Footnote:See annexure") even though the rendered PDF
+        // itself is correctly spaced — this file's own existing tests already work around the same
+        // extraction quirk elsewhere. Assert on the pieces independently rather than one exact string.
+        Assert.Contains("Section: 700600", text);
+        Assert.Contains("Disclosures", text);
+        Assert.Contains("Directors' comments: Self explanatory", text);
+        Assert.Contains("Footnote:", text);
+        Assert.Contains("See annexure", text);
+    }
 }

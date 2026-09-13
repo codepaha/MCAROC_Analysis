@@ -159,7 +159,7 @@ public partial class DossierPdfComposer
             new Col<AuditorObservation>("FY", 0.7f, a => a.FinancialYear.ToString()),
             new Col<AuditorObservation>("Basis", 1f, a => a.Basis.ToString()),
             new Col<AuditorObservation>("Qualified / adverse", 1.4f, a => a.HasQualificationOrAdverseRemark ? "Yes" : "No"),
-            new Col<AuditorObservation>("Comment", 4f, a => Clip(a.ObservationText, 160)));
+            new Col<AuditorObservation>("Comment", 4f, AuditorComment));
 
         Item(col, ref n, "B", "Peer comparison", f.PeerComparison,
             new Col<PeerComparisonMetric>("Metric", 2.6f, p => p.MetricName),
@@ -357,6 +357,21 @@ public partial class DossierPdfComposer
 
     private static string Clip(string? s, int max) =>
         string.IsNullOrWhiteSpace(s) ? "-" : s!.Length <= max ? s : s[..max] + "…";
+
+    /// <summary>G18: builds the full Auditor's-comments cell text — the base comment plus Section/
+    /// Directors' Comments/Footnote when present — and clips the WHOLE assembled string once, so an
+    /// appended field can never run past the column's intended width (clip must happen last, not on
+    /// ObservationText alone before the other parts are appended).</summary>
+    private static string AuditorComment(AuditorObservation a)
+    {
+        var parts = new List<string?> { a.ObservationText };
+        if (a.SectionCode is not null)
+            parts.Add(a.SectionName is not null ? $"Section: {a.SectionCode} ({a.SectionName})" : $"Section: {a.SectionCode}");
+        else if (a.SectionName is not null) parts.Add($"Section: {a.SectionName}");
+        if (a.DirectorsComments is not null) parts.Add($"Directors' comments: {a.DirectorsComments}");
+        if (a.Footnotes is not null) parts.Add($"Footnote: {a.Footnotes}");
+        return Clip(string.Join(" — ", parts.Where(p => p is not null)), 160);
+    }
 
     // ── Source Records — verbatim Layer-0 rows (Full source / Source record variants) ──────────
     //
