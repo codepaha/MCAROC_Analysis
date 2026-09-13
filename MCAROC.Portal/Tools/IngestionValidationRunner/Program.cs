@@ -21,8 +21,11 @@ if (!Directory.Exists(rootPath))
 var reader = new ExcelSheetReader();
 List<string[]> rows =
 [
-    ["Company", "Profile", "Directors", "Assoc.", "Sharehold.", "FinYears", "Charges", "ChgEvents", "MSME", "GST", "EPFO", "Auditor", "Litig.", "Warnings", "Errors"]
+    ["Company", "Profile", "Directors", "Officers", "Assoc.", "Sharehold.", "FinYears", "Charges", "ChgEvents", "MSME", "GST", "EPFO", "Auditor", "Litig.", "Warnings", "Errors"]
 ];
+
+var allWarnings = new List<CompanyIssue>();
+var allErrors = new List<CompanyIssue>();
 
 var companyDirs = Directory.GetDirectories(rootPath).OrderBy(d => d).ToList();
 foreach (var dir in companyDirs)
@@ -34,13 +37,19 @@ foreach (var dir in companyDirs)
     var companyName = Path.GetFileName(dir);
     if (rocFile is null)
     {
-        rows.Add([companyName, "NO ROC FILE", "", "", "", "", "", "", "", "", "", "", "", "", "1"]);
+        rows.Add([companyName, "NO ROC FILE", "", "", "", "", "", "", "", "", "", "", "", "", "", "1"]);
         continue;
     }
 
     var warnings = 0;
     var errors = 0;
-    void Tally<T>(ParseResult<T> r) { warnings += r.Warnings.Count; errors += r.Errors.Count; }
+    void Tally<T>(ParseResult<T> r)
+    {
+        warnings += r.Warnings.Count;
+        errors += r.Errors.Count;
+        foreach (var w in r.Warnings) allWarnings.Add(new(companyName, w));
+        foreach (var e in r.Errors) allErrors.Add(new(companyName, e));
+    }
 
     try
     {
@@ -52,7 +61,8 @@ foreach (var dir in companyDirs)
         Tally(companyResult);
 
         var directorsSheet = SheetAliases.Find(rocWorkbook, SheetAliases.Directors);
-        var directorsResult = directorsSheet is not null ? DirectorsParser.Parse(directorsSheet, 0, 0, null, out _) : new ParseResult<MCAROC_Analysis.Data.Entities.Director>();
+        List<MCAROC_Analysis.Data.Entities.CompanyOfficer> officers = [];
+        var directorsResult = directorsSheet is not null ? DirectorsParser.Parse(directorsSheet, 0, 0, null, out officers) : new ParseResult<MCAROC_Analysis.Data.Entities.Director>();
         Tally(directorsResult);
 
         var otherDirSheet = SheetAliases.Find(rocWorkbook, SheetAliases.OtherDirectorships);
@@ -98,6 +108,7 @@ foreach (var dir in companyDirs)
             companyName,
             companyResult.Items.Count > 0 ? "OK" : "MISSING",
             directorsResult.Items.Count.ToString(),
+            officers.Count.ToString(),
             assocResult.Items.Count.ToString(),
             shResult.Items.Count.ToString(),
             finResult.Items.Count.ToString(),
@@ -114,7 +125,7 @@ foreach (var dir in companyDirs)
     }
     catch (Exception ex)
     {
-        rows.Add([companyName, $"EXCEPTION: {ex.GetType().Name}: {ex.Message}", "", "", "", "", "", "", "", "", "", "", "", "", "1"]);
+        rows.Add([companyName, $"EXCEPTION: {ex.GetType().Name}: {ex.Message}", "", "", "", "", "", "", "", "", "", "", "", "", "", "1"]);
     }
 }
 
@@ -130,6 +141,80 @@ foreach (var row in rows)
 var totalErrors = rows.Skip(1).Sum(r => int.TryParse(r[^1], out var e) ? e : 1);
 var totalWarnings = rows.Skip(1).Sum(r => int.TryParse(r[^2], out var w) ? w : 0);
 Console.WriteLine();
+if (allWarnings.Count > 0)
+{
+    Console.WriteLine();
+    Console.WriteLine("================================================================================");
+    Console.WriteLine("WARNING BREAKDOWN BY CATEGORY");
+    Console.WriteLine("================================================================================");
+
+    var grouped = allWarnings
+        .GroupBy(w => new { w.Issue.ParserName, w.Issue.IssueCode, Field = w.Issue.FieldName ?? "(none)" })
+        .OrderByDescending(g => g.Count())
+        .ThenBy(g => g.Key.ParserName)
+        .ToList();
+
+    List<string[]> warnSummaryRows =
+    [
+        ["Parser", "IssueCode", "Field", "Count", "Companies", "Sample RawValue", "Sample Message"]
+    ];
+
+    foreach (var g in grouped)
+    {
+        var sample = g.First();
+        var distinctCompanies = g.Select(x => x.Company).Distinct().Count();
+        var sampleRaw = sample.Issue.RawValue ?? "";
+        if (sampleRaw.Length > 25) sampleRaw = sampleRaw[..22] + "...";
+        var sampleMsg = sample.Issue.Message;
+        if (sampleMsg.Length > 60) sampleMsg = sampleMsg[..57] + "...";
+
+        warnSummaryRows.Add([
+            g.Key.ParserName,
+            g.Key.IssueCode,
+            g.Key.Field,
+            g.Count().ToString(),
+            distinctCompanies.ToString(),
+            sampleRaw,
+            sampleMsg
+        ]);
+    }
+
+    var warnWidths = Enumerable.Range(0, warnSummaryRows[0].Length)
+        .Select(i => warnSummaryRows.Max(r => r[i].Length))
+        .ToArray();
+
+    foreach (var row in warnSummaryRows)
+    {
+        Console.WriteLine(string.Join(" | ", row.Select((cell, i) => cell.PadRight(warnWidths[i]))));
+    }
+
+    Console.WriteLine();
+    Console.WriteLine("================================================================================");
+    Console.WriteLine("DETAILED BREAKDOWN BY GROUP (with companies & messages)");
+    Console.WriteLine("================================================================================");
+    foreach (var g in grouped)
+    {
+        var distinctCompanies = g.Select(x => x.Company).Distinct().ToList();
+        var distinctMessages = g.Select(x => x.Issue.Message).Distinct().Take(5).ToList();
+        var sampleRawValues = g.Select(x => x.Issue.RawValue).Where(x => !string.IsNullOrEmpty(x)).Distinct().Take(5).ToList();
+
+        Console.WriteLine($"\n[{g.Key.ParserName}] {g.Key.IssueCode} (Field: {g.Key.Field}) -> {g.Count()} occurrences across {distinctCompanies.Count} companies");
+        Console.WriteLine($"  Companies: {string.Join(", ", distinctCompanies)}");
+        Console.WriteLine($"  Messages: {string.Join(" | ", distinctMessages)}");
+        if (sampleRawValues.Count > 0)
+        {
+            Console.WriteLine($"  Raw values: {string.Join(", ", sampleRawValues)}");
+        }
+    }
+
+    var jsonPath = Path.Combine(AppContext.BaseDirectory, "warnings-report.json");
+    File.WriteAllText(jsonPath, System.Text.Json.JsonSerializer.Serialize(allWarnings, new System.Text.Json.JsonSerializerOptions { WriteIndented = true }));
+    Console.WriteLine($"\nFull warnings JSON written to: {jsonPath}");
+}
+
+Console.WriteLine();
 Console.WriteLine($"{companyDirs.Count} companies processed. Total warnings: {totalWarnings}. Total errors: {totalErrors}.");
 
 return totalErrors > 0 ? 1 : 0;
+
+record CompanyIssue(string Company, ParseIssue Issue);
