@@ -144,16 +144,30 @@ public class PreLoginReportsMineRenderingTests
     [Fact]
     public async Task History_batch_summary_island_cannot_be_broken_out_of_by_a_hostile_cin_value()
     {
-        var html = await RenderHistoryAsync([Job("</script><script>alert(1)</script>")], Guid.NewGuid());
+        // Deliberately NOT scanning for the first "</script>" after the island's opening tag: if the
+        // encoder ever regressed to emitting the hostile value's OWN literal "</script>" unescaped,
+        // that would BE the first occurrence found, so a test that stops there and asserts "no
+        // </script> in between" would trivially pass on the exact vulnerable output (this is the bug a
+        // review caught in an earlier version of this test). Instead assert directly against the whole
+        // page: the raw breakout sequence must never appear anywhere, and the value must still have
+        // made it into the island, just safely escaped.
+        const string hostileCin = "</script><script>alert(1)</script>";
+        var html = await RenderHistoryAsync([Job(hostileCin)], Guid.NewGuid());
 
-        var islandStart = html.IndexOf("id=\"pi-batch-summary\"", StringComparison.Ordinal);
-        Assert.True(islandStart >= 0);
-        var islandEnd = html.IndexOf("</script>", islandStart, StringComparison.Ordinal);
-        Assert.True(islandEnd >= 0);
-        var islandContent = html[islandStart..islandEnd];
+        Assert.Contains("id=\"pi-batch-summary\"", html);
 
-        Assert.DoesNotContain("</script>", islandContent);
-        Assert.DoesNotContain("<script>alert(1)", islandContent);
+        // The raw sequence that would terminate the surrounding <script type="application/json">
+        // element early must not appear anywhere in the rendered page.
+        Assert.DoesNotContain(hostileCin, html);
+        Assert.DoesNotContain("</script><script>alert(1)", html);
+
+        // Confirm the value was actually serialized into the island (not silently dropped/filtered),
+        // just escaped — computed from the same JsonSerializer.Serialize the view itself calls, so this
+        // assertion tracks whatever the current default encoder actually produces rather than a
+        // hand-typed guess at its escape sequences.
+        var serializedHostileCin = System.Text.Json.JsonSerializer.Serialize(hostileCin);
+        var escapedInner = serializedHostileCin[1..^1]; // strip the surrounding JSON quotes
+        Assert.Contains(escapedInner, html);
     }
 
     [Fact]
