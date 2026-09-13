@@ -132,7 +132,7 @@ request, 2026-09-12) since this lane hadn't claimed them yet — remaining 6 sti
 | #144 | analytics catalogue: confirm A1.x (source-reported ratios) + B12 (charge discharge velocity) — marked `"planned"` but their parent issues (#57, #56) are closed; either stale catalogue rows or a real gap | **CLOSED** (2026-09-13, by owner, right after B12/PR #149 merged) — B12 half done. A1.x's product decision was closed along with it without being resolved; **split out to #152** so it isn't lost |
 | #152 | A1.x follow-up (split from #144): dossier PDF gets only a generic fallback table for the 16 source-reported ratios, not the catalogued multi-year sparkline treatment | **Deferred entirely** (owner, 2026-09-13, revised) — the dossier PDF is getting a full redesign later (more calculations being added); building elaborate layout now risked being throwaway. No work scheduled until the redesign's scope is known |
 | #145 | portal never loads `dossier-tokens.css` — no proven visual parity between portal and PDF | **Owner decision: build real parity** (wire the portal to the shared palette, or generate both from one source). **Unclaimed** — no branch/owner assigned yet |
-| #146 | two catalogue rows with no disposition: `GstRegistration.CancellationDate` (vestigial, G17) and Auditors' Comments detail columns (unparsed, G18) | **Decided and recorded directly on #146**: G17 → `dropped-by-design`, **MERGED** (PR #155, `0c0268d`; surfaced a real bug, see **#157**, also MERGED via PR #159); G18 → scope as real work, **split to #161** (scoped, unclaimed) |
+| #146 | two catalogue rows with no disposition: `GstRegistration.CancellationDate` (vestigial, G17) and Auditors' Comments detail columns (unparsed, G18) | **CLOSED** — both halves resolved/tracked. G17 → `dropped-by-design`, **MERGED** (PR #155, `0c0268d`; surfaced a real bug, fixed via **#157**/PR #159, `09c0895`); G18 → **split to #161** (scoped, unclaimed) |
 
 **Ad hoc, outside EPIC #31 (2026-09-13): correctness bug found while closing #146a, filed as #157.**
 | Issue | What | Status |
@@ -242,6 +242,27 @@ Linux subset fonts break PdfPig's ToUnicode → those are `[SkippableFact]`, ski
 ---
 
 ## Log  <!-- newest first. Prefix: NEEDS / BLOCKED / DONE / DECISION / FYI -->
+
+### 2026-09-13 — Claude session (#146 CLOSED; #150 closure evidence corrected via PR #162)
+- **PR #158 MERGED into `main` as `faa0a4a`** (approved after fixing 3 documentation-accuracy issues a
+  review caught: a stale "PR #155 still open" line, an unclaimed issue marked "Claimed" with no
+  branch/owner, and a "planning in progress" claim with no linked issue — see the entry below for detail).
+- **#146 CLOSED** — both halves now have their own resolution/tracking (G17 merged via #155/#157+#159;
+  G18 split to #161), so the parent issue no longer needs to stay open.
+- **PR #162 MERGED into `main` as `a16d167`** — a review of the #150/PR #154 closure evidence (598
+  ingestion warnings, 41-company corpus) found it overstated certainty in 3 places:
+  1. `GstParserTests.cs` had **zero** coverage for `GST_ADDITIONAL_REGISTRATION_ROW` despite being
+     described as unit-tested — added a real regression test (second row for the same GSTIN is flagged,
+     not silently duplicated/dropped, and doesn't corrupt the first row's data).
+  2. `CASH_FLOW_YEAR_ALIGNMENT_ASSUMED` is a heuristic (contiguous, right-aligned newest-years
+     assumption) — the existing unit test proves only one synthetic layout, not all 19 real corpus
+     occurrences. Corrected wording: **inferred, not confirmed.**
+  3. The GST "no data loss" claim needed qualification — the parser keeps only the first row per GSTIN;
+     later rows are recoverable only via Layer-0 source-row staging in a full ingestion run, which
+     `IngestionValidationRunner` (parser-only) never exercises.
+  - **Evidence-retention question flagged, not decided unilaterally**: the generated
+    `warnings-report.json` names real external companies from a corpus that (unlike COASTAL) hasn't been
+    cleared for this public repo — not committed; left for the owner to decide where it should live.
 
 ### 2026-09-13 — Codex (PR #159 MERGED — #157 closed)
 - **PR #159 MERGED into `main` as `09c0895`**; Issue #157 closed automatically.
