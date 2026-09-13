@@ -102,7 +102,7 @@
     void AuditorTable(List<AuditorObservation> rows)
     {
         <div class="pi-table-wrap"><table class="pi-results-table">
-            <thead><tr><th>Year</th><th>Auditor</th><th>Qualified / Adverse</th><th>Observation</th></tr></thead>
+            <thead><tr><th>Year</th><th>Auditor</th><th>Qualified / Adverse</th><th>Section</th><th>Observation</th></tr></thead>
             <tbody>
             @foreach (var a in rows.OrderByDescending(a => a.FinancialYear))
             {
@@ -121,11 +121,37 @@
                     </td>
                     <td>@(a.HasQualificationOrAdverseRemark ? "Yes" : "No")</td>
                     <td>
-                        @if (!string.IsNullOrWhiteSpace(a.ObservationText) && a.ObservationText.Length > 240)
-                        {
-                            <details><summary class="mca-json-toggle">@a.ObservationText[..240]…</summary><div>@a.ObservationText</div></details>
+                        @{
+                            var section = a.SectionCode is not null && a.SectionName is not null
+                                ? $"{a.SectionCode} — {a.SectionName}"
+                                : a.SectionCode ?? a.SectionName;
                         }
-                        else { @Or(a.ObservationText) }
+                        @Or(section)
+                    </td>
+                    <td>
+                        @if (!string.IsNullOrWhiteSpace(a.ObservationText))
+                        {
+                            if (a.ObservationText.Length > 240)
+                            {
+                                <details><summary class="mca-json-toggle">@a.ObservationText[..240]…</summary><div>@a.ObservationText</div></details>
+                            }
+                            else
+                            {
+                                @a.ObservationText
+                            }
+                        }
+                        else if (a.DirectorsComments is null && a.Footnotes is null)
+                        {
+                            @Or(a.ObservationText)
+                        }
+                        @if (a.DirectorsComments is not null)
+                        {
+                            <div class="text-muted"><small>Directors' comments: @a.DirectorsComments</small></div>
+                        }
+                        @if (a.Footnotes is not null)
+                        {
+                            <div class="text-muted"><small>Footnote: @a.Footnotes</small></div>
+                        }
                     </td>
                 </tr>
             }

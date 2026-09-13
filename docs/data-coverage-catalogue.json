@@ -197,8 +197,8 @@
       "portal_tab": "Compliance", "dossier": "Annexure B",
       "fields": [
         {"source": "Financial Year / Whether Auditors' Report has been Qualified or has any Reservations or Contains Adverse Remarks / Comments Given By (auditor name + membership no + firm + firm reg no)", "entityField": "FinancialYear / HasQualificationOrAdverseRemark / AuditorName+MembershipNumber+FirmName+FirmRegistrationNumber", "status": "live", "note": "A6/#37 — split from the 'NAME (Membership Number: X) of FIRM (Registration Number: Y)' text; falls back to the raw string when the format doesn't match"},
-        {"source": "detail table: Financial Year / Auditors' Comments (CARO-style clause text, under a 'Serial Number | Financial Year | Section | Section Name | Auditors' Comments | Directors' Comments | Footnotes' header)", "entityField": "FinancialYear / ObservationText", "status": "live", "note": "A7/#38 — the detail table's own header carries more columns than are captured; see G18"},
-        {"source": "detail table: Serial Number / Section / Section Name / Directors' Comments / Footnotes", "entityField": null, "status": "not-parsed", "gap": "G18"}
+        {"source": "detail table: Financial Year / Auditors' Comments (CARO-style clause text, under a 'Serial Number | Financial Year | Section | Section Name | Auditors' Comments | Directors' Comments | Footnotes' header)", "entityField": "FinancialYear / ObservationText", "status": "live", "note": "A7/#38 — the detail table's own header carries more columns than are captured; the rest now live via G18/#161"},
+        {"source": "detail table: Serial Number / Section / Section Name / Directors' Comments / Footnotes", "entityField": "SerialNumber / SectionCode / SectionName / DirectorsComments / Footnotes", "status": "live", "note": "G18/#161 — a row is kept if ANY of Auditors' Comments/Directors' Comments/Footnotes has content, not only when Auditors' Comments does"}
       ]
     },
     {
@@ -207,7 +207,7 @@
       "portal_tab": "Compliance", "dossier": "Annexure B", "fields": [
         {"source": "Financial Year / Whether Auditors' Report has been Qualified or has any Reservations or Contains Adverse Remarks / Comments Given By (same layout as Auditors' Comments-Standalone)", "entityField": "AuditorObservation(Basis=Consolidated)", "status": "live", "note": "A6/#37"},
         {"source": "detail table: Financial Year / Auditors' Comments (same layout as Auditors' Comments-Standalone)", "entityField": "FinancialYear / ObservationText", "status": "live", "note": "A7/#38"},
-        {"source": "detail table: Serial Number / Section / Section Name / Directors' Comments / Footnotes", "entityField": null, "status": "not-parsed", "gap": "G18"}
+        {"source": "detail table: Serial Number / Section / Section Name / Directors' Comments / Footnotes", "entityField": "SerialNumber / SectionCode / SectionName / DirectorsComments / Footnotes", "status": "live", "note": "G18/#161"}
       ]
     },
     {
@@ -410,10 +410,10 @@
      "detail": "A6/#37 review (Codex, PR #87): the real GST sheet (16 cols, verified against the COASTAL fixture) has no CANCELLATION DATE column at all, so GstParser never looks for or sets this field. Not a dropped column — the entity property doesn't correspond to any real source data.",
      "fix": "Owner decision 2026-09-13: dropped-by-design. The CancellationDate property stays on the entity for a possible future GST-status feed, but is not sourced from the current workbooks and is not scheduled for parsing.",
      "issue": null},
-    {"id": "G18", "title": "Auditors' Comments detail-table columns dropped", "severity": "low",
-     "detail": "A7/#38 discovery: the sheet's second stacked table (Serial Number | Financial Year | Section | Section Name | Auditors' Comments | Directors' Comments | Footnotes — see AuditorsParser's own doc comment) only reads Financial Year and Auditors' Comments (-> ObservationText). Serial Number, Section (a numeric code, e.g. 700600), Section Name, Directors' Comments, and Footnotes are read nowhere.",
-     "fix": "Decide whether Directors' Comments / Section Name are worth a dedicated field on AuditorObservation, or explicitly dropped-by-design (Section is a redundant numeric code for Section Name; Serial Number/Footnotes look structural).",
-     "issue": null},
+    {"id": "G18", "title": "Auditors' Comments detail-table columns dropped", "severity": "low", "status": "DONE (#161)",
+     "detail": "A7/#38 discovery: the sheet's second stacked table (Serial Number | Financial Year | Section | Section Name | Auditors' Comments | Directors' Comments | Footnotes — see AuditorsParser's own doc comment) only read Financial Year and Auditors' Comments (-> ObservationText). Serial Number, Section (a numeric code, e.g. 700600), Section Name, Directors' Comments, and Footnotes were read nowhere.",
+     "fix": "#161: extended AuditorObservation with SerialNumber/SectionCode/SectionName/DirectorsComments/Footnotes (nullable, migration AddAuditorDetailTableColumns, same precedent as AddShareholdingGstAuditorColumns). A row is now kept if ANY of Auditors' Comments/Directors' Comments/Footnotes has content, not only when Auditors' Comments does — fixes a real data-loss case the original gap description didn't call out. One shared NormalizeDetailText helper handles blank/-/NIL for every detail-text column.",
+     "issue": "#161"},
     {"id": "G19", "title": "CompanyProfile.LastAgmDate / LeiStatus never rendered", "severity": "low",
      "status": "DONE (#106, PR #109)",
      "detail": "Found by render audit 2026-09-12: both fields are parsed and stored (LastAgmDate since A1/#32, LeiStatus alongside Lei). Lei itself renders in the fixed page header; LastAgmDate and LeiStatus render nowhere — not the Corporate tab, not the dossier PDF.",

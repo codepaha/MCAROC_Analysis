@@ -101,7 +101,14 @@ public static class DossierTestSeed
         gst.Filings.Add(Tag(new GstFiling { Gstin = gst.Gstin, ReturnType = "GSTR3B", TaxPeriod = "Jun", DueDate = new DateOnly(2025, 7, 20), FilingDate = new DateOnly(2025, 7, 25), DelayDays = 5, FilingStatus = "Filed" }));
         db.GstRegistrations.Add(gst);
         db.EpfoContributions.Add(Tag(new EpfoContribution { EstablishmentId = "KABLR0001", EstablishmentName = "Golden Master Ltd", WageMonth = "Jun, 2025", EmployeeCount = 200, PaymentStatus = "Paid on Time" }));
-        db.AuditorObservations.Add(Tag(new AuditorObservation { FinancialYear = 2025, Basis = FinancialBasis.Standalone, HasQualificationOrAdverseRemark = true, ObservationText = "Material uncertainty on going concern." }));
+        db.AuditorObservations.Add(Tag(new AuditorObservation
+        {
+            FinancialYear = 2025, Basis = FinancialBasis.Standalone, HasQualificationOrAdverseRemark = true,
+            ObservationText = "Material uncertainty on going concern.",
+            // G18/#161 — kept short so the combined comment stays well under the dossier PDF's 160-char clip.
+            SerialNumber = 1, SectionCode = "700600", SectionName = "Disclosures",
+            DirectorsComments = "Self explanatory", Footnotes = "See annexure"
+        }));
         db.ComplianceRecords.AddRange(
             Tag(new ComplianceRecord { RecordType = ComplianceRecordType.Cdr, Description = "Debt restructured under CDR", RecordDate = new DateOnly(2014, 4, 28) }),
             Tag(new ComplianceRecord { RecordType = ComplianceRecordType.SuitFiled, Bank = "IDBI BANK", AmountCrore = 12m, DefaulterType = "Defaulter - Suit Filed", RecordDate = new DateOnly(2014, 3, 31) }),

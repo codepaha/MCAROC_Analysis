@@ -67,5 +67,118 @@ public class AuditorsParserTests
         var detailRow = result.Items[1];
         Assert.Equal(2025, detailRow.FinancialYear); // not 700600, and not the serial number 1
         Assert.Equal("The real observation text", detailRow.ObservationText);
+
+        // G18: the remaining detail-table columns now land on the same row.
+        Assert.Equal(1, detailRow.SerialNumber);
+        Assert.Equal("700600", detailRow.SectionCode);
+        Assert.Equal("Disclosures - Directors' Report", detailRow.SectionName);
+        Assert.Equal("Self explanatory", detailRow.DirectorsComments);
+        Assert.Null(detailRow.Footnotes); // "-" normalizes to null
+    }
+
+    [Fact]
+    public void RowWithBlankAuditorsCommentsButRealDirectorsCommentsIsStillKept()
+    {
+        var sheet = Sheet("Auditors' Comments-Standalone",
+            Row("AUDITORS' COMMENTS - STANDALONE"),
+            Row("Financial Year", "Qualified?", "", "", "Comments Given By"),
+            Row("", "", "", "", ""),
+            Row("Serial Number", "Financial Year", "Section", "Section Name", "Auditors' Comments", "Directors' Comments", "Footnotes"),
+            Row(1.0, 2025.0, 700600.0, "Disclosures", "NIL", "Board noted the delay", "-"));
+
+        var result = AuditorsParser.Parse(sheet, 1, 1, 10);
+
+        // Auditors' Comments is NIL, but Directors' Comments has real content — must not be dropped.
+        var row = Assert.Single(result.Items);
+        Assert.Null(row.ObservationText);
+        Assert.Equal("Board noted the delay", row.DirectorsComments);
+        Assert.Equal("700600", row.SectionCode);
+    }
+
+    [Fact]
+    public void RowWithBlankAuditorsCommentsButRealFootnoteIsStillKept()
+    {
+        var sheet = Sheet("Auditors' Comments-Standalone",
+            Row("AUDITORS' COMMENTS - STANDALONE"),
+            Row("Financial Year", "Qualified?", "", "", "Comments Given By"),
+            Row("", "", "", "", ""),
+            Row("Serial Number", "Financial Year", "Section", "Section Name", "Auditors' Comments", "Directors' Comments", "Footnotes"),
+            Row(1.0, 2025.0, 700600.0, "Disclosures", "-", "-", "Refer note 12"));
+
+        var result = AuditorsParser.Parse(sheet, 1, 1, 10);
+
+        var row = Assert.Single(result.Items);
+        Assert.Null(row.ObservationText);
+        Assert.Null(row.DirectorsComments);
+        Assert.Equal("Refer note 12", row.Footnotes);
+    }
+
+    [Fact]
+    public void RowWithAllThreeTextFieldsBlankIsStillSkipped()
+    {
+        var sheet = Sheet("Auditors' Comments-Standalone",
+            Row("AUDITORS' COMMENTS - STANDALONE"),
+            Row("Financial Year", "Qualified?", "", "", "Comments Given By"),
+            Row("", "", "", "", ""),
+            Row("Serial Number", "Financial Year", "Section", "Section Name", "Auditors' Comments", "Directors' Comments", "Footnotes"),
+            Row(1.0, 2025.0, 700600.0, "Disclosures", "NIL", "-", ""));
+
+        var result = AuditorsParser.Parse(sheet, 1, 1, 10);
+
+        Assert.Empty(result.Items);
+    }
+
+    [Fact]
+    public void SectionNameAndFootnotesNormalizeDashAndNilToNullJustLikeDirectorsComments()
+    {
+        var sheet = Sheet("Auditors' Comments-Standalone",
+            Row("AUDITORS' COMMENTS - STANDALONE"),
+            Row("Financial Year", "Qualified?", "", "", "Comments Given By"),
+            Row("", "", "", "", ""),
+            Row("Serial Number", "Financial Year", "Section", "Section Name", "Auditors' Comments", "Directors' Comments", "Footnotes"),
+            Row(1.0, 2025.0, 700600.0, "-", "A real comment", "-", "NIL"));
+
+        var result = AuditorsParser.Parse(sheet, 1, 1, 10);
+
+        var row = Assert.Single(result.Items);
+        Assert.Null(row.SectionName); // "-" normalizes, same rule as DirectorsComments
+        Assert.Null(row.Footnotes);   // "NIL" normalizes, same rule as DirectorsComments
+        Assert.Equal("A real comment", row.ObservationText);
+    }
+
+    [Fact]
+    public void NonIntegralSerialNumberIsRejectedNotTruncated()
+    {
+        var sheet = Sheet("Auditors' Comments-Standalone",
+            Row("AUDITORS' COMMENTS - STANDALONE"),
+            Row("Financial Year", "Qualified?", "", "", "Comments Given By"),
+            Row("", "", "", "", ""),
+            Row("Serial Number", "Financial Year", "Section", "Section Name", "Auditors' Comments", "Directors' Comments", "Footnotes"),
+            Row(1.5, 2025.0, 700600.0, "Disclosures", "A real comment", "-", "-"));
+
+        var result = AuditorsParser.Parse(sheet, 1, 1, 10);
+
+        var row = Assert.Single(result.Items);
+        Assert.Null(row.SerialNumber); // left unset, never silently truncated to 1
+        var warning = Assert.Single(result.Warnings);
+        Assert.Equal("AUDITOR_SERIAL_NUMBER_NOT_INTEGRAL", warning.IssueCode);
+        Assert.Contains("1.5", warning.Message);
+    }
+
+    [Fact]
+    public void WholeNumberSerialNumberParsesCleanlyWithNoWarning()
+    {
+        var sheet = Sheet("Auditors' Comments-Standalone",
+            Row("AUDITORS' COMMENTS - STANDALONE"),
+            Row("Financial Year", "Qualified?", "", "", "Comments Given By"),
+            Row("", "", "", "", ""),
+            Row("Serial Number", "Financial Year", "Section", "Section Name", "Auditors' Comments", "Directors' Comments", "Footnotes"),
+            Row(2.0, 2025.0, 700600.0, "Disclosures", "A real comment", "-", "-"));
+
+        var result = AuditorsParser.Parse(sheet, 1, 1, 10);
+
+        var row = Assert.Single(result.Items);
+        Assert.Equal(2, row.SerialNumber);
+        Assert.Empty(result.Warnings);
     }
 }
