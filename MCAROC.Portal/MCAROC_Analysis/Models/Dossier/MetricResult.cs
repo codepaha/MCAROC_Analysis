@@ -1,5 +1,3 @@
-using System.Globalization;
-
 namespace MCAROC_Analysis.Models.Dossier;
 
 /// <summary>One computed metric, always carrying its provenance. Constructed only through
@@ -84,19 +82,7 @@ public sealed record MetricResult
         if (InsufficiencyReason is not null) return InsufficiencyReason;
         if (TextValue is not null) return TextValue;
         if (Value is not { } v) return "n/a";
-        var n = v.ToString(v == Math.Truncate(v) ? "N0" : "N2", CultureInfo.InvariantCulture);
-        return Unit switch
-        {
-            MetricUnit.Percent => $"{n}%",
-            MetricUnit.Ratio => n,
-            MetricUnit.Times => $"{n}x",
-            MetricUnit.Crore => $"₹{n} Cr",
-            MetricUnit.Rupees => $"₹{n}",
-            MetricUnit.Days => $"{n} days",
-            MetricUnit.Years => $"{n} yrs",
-            MetricUnit.Count => n,
-            _ => n
-        };
+        return MetricUnitFormat.Format(v, Unit);
     }
 }
 

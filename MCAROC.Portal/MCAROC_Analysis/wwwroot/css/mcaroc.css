@@ -175,6 +175,14 @@
 }
 .mca-section > h3 .mca-count { margin-left: 6px; color: var(--muted); font-weight: 500; font-size: 13px; }
 
+/* Shared inline-SVG chart contract reference partial (#116, C6) — decorative only, aria-hidden; the
+   paired .visually-hidden <table> in the same partial is the accessible representation. */
+.mca-sparkline {
+    max-width: 340px;
+    padding: 4px 0;
+}
+.mca-sparkline svg { display: block; width: 100%; height: auto; }
+
 /* Key/value grid (About the Corporate) */
 .mca-kv {
     display: grid;
