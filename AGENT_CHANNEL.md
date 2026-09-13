@@ -146,7 +146,7 @@ request, 2026-09-12) since this lane hadn't claimed them yet — remaining 6 sti
 | #150 | 598 unexamined ingestion warnings from a real 41-company batch run — reported as "0 Errors" without categorizing what the warnings actually are | **MERGED** (`459b834`, PR #154) — closed |
 
 ### Sequencing
-- Claude: D2/#57 **MERGED** → D4/#59 **MERGED** → K1/#98 **MERGED** → #97 **MERGED** → D10/#65 **MERGED** (`7f2cf1e`) → #47 (pre-login report ownership binding) **MERGED** (`f52f3cf`) → #142 (pre-login "My Reports" history) **MERGED** (PR #141, `965578e`) → #144/B12 (charge discharge velocity) **MERGED** (PR #149, `4be34db`) → #161/G18 (Auditors' Comments detail-table columns) **MERGED** (PR #166, `7786be4`) → **#164 (calculation assurance) — owner decisions resolved, plan approved, PR1 (entities + migration + ledger persistence) in progress on `feature/164-calculation-assurance`** (see Log above); #144 stays open for its A1.x half.
+- Claude: D2/#57 **MERGED** → D4/#59 **MERGED** → K1/#98 **MERGED** → #97 **MERGED** → D10/#65 **MERGED** (`7f2cf1e`) → #47 (pre-login report ownership binding) **MERGED** (`f52f3cf`) → #142 (pre-login "My Reports" history) **MERGED** (PR #141, `965578e`) → #144/B12 (charge discharge velocity) **MERGED** (PR #149, `4be34db`) → #161/G18 (Auditors' Comments detail-table columns) **MERGED** (PR #166, `7786be4`) → **#164 (calculation assurance) — owner decisions resolved, plan approved, PR1 (entities + migration + ledger persistence) PR #170 open** (see Log above); #144 stays open for its A1.x half.
 - Antigravity: D6/#61 **MERGED** → D7/#62 **MERGED** → D8/#63 **MERGED** → D9/#64 **MERGED** (`e9e39e3`) → D11/#66 **MERGED** (`8213961`) → #107 **MERGED** (`7b74f11`) → #150 **MERGED** (`459b834`) → #145 **MERGED** (`b563072`, PR #165) — Antigravity's lane clear!
 
 
@@ -339,7 +339,10 @@ Linux subset fonts break PdfPig's ToUnicode → those are `[SkippableFact]`, ski
   requested proof — a composite-FK cross-snapshot rejection test) all pass; full `Dossier`/`Analysis`
   regression sweep (1000 passed, 19 skipped for absent real-workbook fixtures, same as before this
   change) confirms no regressions.
-- PR for this first slice opening next, → `@codex` review.
+- **PR #170 open** (`feature/164-calculation-assurance`, → Closes #164 in part — this is PR1 of 5), rebased
+  onto `main` past #161/G18's own migration before this branch's migration was generated (confirmed no
+  overlap: `AddCalculationAssurance` sorts after `AddAuditorDetailTableColumns`,
+  `dotnet ef migrations has-pending-model-changes` reports none post-rebase). → `@codex` review.
 
 ### 2026-09-13 — Claude session (#146 CLOSED; #150 closure evidence corrected via PR #162)
 - **PR #158 MERGED into `main` as `faa0a4a`** (approved after fixing 3 documentation-accuracy issues a
