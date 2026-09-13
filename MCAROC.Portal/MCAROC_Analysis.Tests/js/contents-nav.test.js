@@ -466,3 +466,210 @@ test('basis toggle wires Standalone and Consolidated panels', () => {
     assert.equal(panelCon.hidden, false);
 });
 
+test('parseHash correctly resolves retained subtab slugs for corporate, ai, and documents', () => {
+    // Retained subtab legacy slugs
+    const p1 = McaContentsNav.parseHash('#tab-corporate/management');
+    assert.deepEqual(p1, {
+        type: 'subtab',
+        domain: 'corporate',
+        sectionId: 'sec-corporate-management',
+        targetTab: 'tab-corporate'
+    });
+
+    const p2 = McaContentsNav.parseHash('#tab-ai/charges');
+    assert.deepEqual(p2, {
+        type: 'subtab',
+        domain: 'ai',
+        sectionId: 'sec-ai-charges',
+        targetTab: 'tab-ai'
+    });
+
+    const p3 = McaContentsNav.parseHash('#tab-documents/ask');
+    assert.deepEqual(p3, {
+        type: 'subtab',
+        domain: 'documents',
+        sectionId: 'sec-documents-ask',
+        targetTab: 'tab-documents'
+    });
+
+    // Direct canonical subtab IDs
+    const p4 = McaContentsNav.parseHash('#sec-corporate-overview');
+    assert.deepEqual(p4, {
+        type: 'subtab',
+        domain: 'corporate',
+        sectionId: 'sec-corporate-overview',
+        targetTab: 'tab-corporate'
+    });
+
+    const p5 = McaContentsNav.parseHash('#sec-ai-xsec');
+    assert.deepEqual(p5, {
+        type: 'subtab',
+        domain: 'ai',
+        sectionId: 'sec-ai-xsec',
+        targetTab: 'tab-ai'
+    });
+});
+
+test('hash resolution and tab selector injection safety', () => {
+    // Unrecognized or malicious selectors
+    assert.equal(McaContentsNav.parseHash('#tab-foo\\'), null);
+    assert.equal(McaContentsNav.parseHash('#tab-unknown'), null);
+    assert.equal(McaContentsNav.parseHash('#sec-unknown-foo'), null);
+
+    const mockDoc = {
+        documentElement: { style: { setProperty() {} } },
+        body: createMockElement('body'),
+        getElementById: () => null,
+        querySelector: (sel) => {
+            // If an unescaped raw selector is passed to querySelector, in real DOM it throws DOMException
+            if (sel.includes('\\')) throw new Error('DOMException: Invalid selector');
+            return null;
+        },
+        querySelectorAll: () => []
+    };
+
+    const mockWin = {
+        location: { hash: '#tab-foo\\' }
+    };
+
+    // initDetailsNav must not throw when facing malicious or malformed hash
+    assert.doesNotThrow(() => {
+        McaContentsNav.initDetailsNav({ doc: mockDoc, window: mockWin });
+    });
+});
+
+test('retained subtab hash activates both parent tab and subtab button, and persists to sessionStorage', () => {
+    const parentTabBtn = createMockElement('button', { 'data-bs-target': '#tab-corporate', 'data-bs-toggle': 'tab' });
+    const subtabBtnOverview = createMockElement('button', { 'data-bs-target': '#sec-corporate-overview', 'data-bs-toggle': 'tab', class: 'active' });
+    const subtabBtnMgmt = createMockElement('button', { 'data-bs-target': '#sec-corporate-management', 'data-bs-toggle': 'tab' });
+
+    const corporateSubnav = createMockElement('nav', { 'data-mca-sections': 'corporate' });
+    corporateSubnav.children.push(subtabBtnOverview, subtabBtnMgmt);
+
+    const storage = {};
+    const mockWin = {
+        location: { hash: '#tab-corporate/management' },
+        sessionStorage: {
+            setItem: (k, v) => { storage[k] = v; },
+            getItem: (k) => storage[k] || null
+        },
+        addEventListener: () => {}
+    };
+
+    const mockDoc = {
+        documentElement: { style: { setProperty() {} } },
+        body: createMockElement('body'),
+        getElementById: (id) => {
+            if (id === 'mcaDetailHead') return createMockElement('div', { id: 'mcaDetailHead', 'data-request-id': 'req-1' });
+            return null;
+        },
+        querySelector: () => null,
+        querySelectorAll: (sel) => {
+            if (sel === '#mcaTabs button[data-bs-toggle="tab"]') return [parentTabBtn];
+            if (sel === '[data-mca-sections]') return [corporateSubnav];
+            return [];
+        }
+    };
+
+    const mockBootstrap = {
+        Tab: {
+            getOrCreateInstance: (el) => ({
+                show: () => {
+                    el.classList.add('active');
+                    el.dispatchEvent({ type: 'shown.bs.tab', target: el });
+                }
+            })
+        },
+        ScrollSpy: class {
+            static getInstance() { return null; }
+            dispose() {}
+        }
+    };
+
+    McaContentsNav.initDetailsNav({
+        doc: mockDoc,
+        window: mockWin,
+        bootstrap: mockBootstrap
+    });
+
+    assert.equal(parentTabBtn.classList.contains('active'), true, 'Parent tab must be active');
+    assert.equal(subtabBtnMgmt.classList.contains('active'), true, 'Management subtab must be active');
+    assert.equal(storage['mca-v2-req-1-sec-corporate'], '#sec-corporate-management', 'Subtab must be persisted to sessionStorage');
+});
+
+test('focusCharge contract: ?charge=71 with compatible hash #tab-charges runs openAndScrollCharge', () => {
+    const chargesTabBtn = createMockElement('button', { 'data-bs-target': '#tab-charges', 'data-bs-toggle': 'tab' });
+    const row = createMockElement('tr', { id: 'charge-71', class: 'collapse' });
+    const holderGroup = createMockElement('tbody', { class: 'collapse' });
+    holderGroup.children.push(row);
+    row.parentNode = holderGroup;
+
+    let chargeScrolled = false;
+    row.scrollIntoView = () => { chargeScrolled = true; };
+
+    const mockWin = {
+        location: { hash: '#tab-charges' },
+        matchMedia: () => ({ matches: false }),
+        addEventListener: () => {}
+    };
+
+    const mockDoc = {
+        documentElement: { style: { setProperty() {} } },
+        body: createMockElement('body'),
+        getElementById: (id) => {
+            if (id === 'mcaDetailHead') return createMockElement('div', { id: 'mcaDetailHead', 'data-request-id': 'req-1', 'data-focus-charge-id': '71' });
+            if (id === 'charge-71') return row;
+            return null;
+        },
+        querySelector: (sel) => {
+            if (sel.includes('#tab-charges')) return chargesTabBtn;
+            return null;
+        },
+        querySelectorAll: (sel) => {
+            if (sel === '#mcaTabs button[data-bs-toggle="tab"]') return [chargesTabBtn];
+            return [];
+        }
+    };
+
+    const mockBootstrap = {
+        Tab: {
+            getOrCreateInstance: (el) => ({
+                show: () => {
+                    el.classList.add('active');
+                    el.dispatchEvent({ type: 'shown.bs.tab', target: el });
+                }
+            })
+        },
+        Collapse: {
+            getOrCreateInstance: (el) => ({
+                show: () => {
+                    el.classList.add('show');
+                    setTimeout(() => {
+                        el.dispatchEvent({ type: 'shown.bs.collapse', target: el });
+                    }, 5);
+                }
+            })
+        },
+        ScrollSpy: class {
+            static getInstance() { return null; }
+            dispose() {}
+        }
+    };
+
+    return new Promise((resolve) => {
+        McaContentsNav.initDetailsNav({
+            doc: mockDoc,
+            window: mockWin,
+            bootstrap: mockBootstrap
+        });
+
+        // Give collapse event chain time to settle
+        setTimeout(() => {
+            assert.equal(chargesTabBtn.classList.contains('active'), true, 'Charges tab activated');
+            assert.equal(chargeScrolled, true, 'Charge 71 was scrolled into view despite #tab-charges hash');
+            resolve();
+        }, 50);
+    });
+});
+
+

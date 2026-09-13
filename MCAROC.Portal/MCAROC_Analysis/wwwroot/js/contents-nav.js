@@ -24,7 +24,9 @@
 }(typeof self !== 'undefined' ? self : this, function () {
     'use strict';
 
+    const KNOWN_TABS = ['ai', 'financials', 'charges', 'compliance', 'litigation', 'timeline', 'corporate', 'documents'];
     const LONG_DOMAINS = ['financials', 'charges', 'compliance', 'litigation'];
+    const RETAINED_SUBTAB_DOMAINS = ['corporate', 'ai', 'documents'];
 
     // Known canonical section IDs mapped by domain
     const CANONICAL_SECTIONS = {
@@ -59,6 +61,30 @@
         ]
     };
 
+    // Retained subtab section IDs for non-long domains
+    const RETAINED_SUBTABS = {
+        corporate: [
+            'sec-corporate-overview',
+            'sec-corporate-management',
+            'sec-corporate-network',
+            'sec-corporate-ownership',
+            'sec-corporate-group',
+            'sec-corporate-capital'
+        ],
+        ai: [
+            'sec-ai-corporate',
+            'sec-ai-financial',
+            'sec-ai-charges',
+            'sec-ai-compliance',
+            'sec-ai-litigation',
+            'sec-ai-xsec'
+        ],
+        documents: [
+            'sec-documents-filed',
+            'sec-documents-ask'
+        ]
+    };
+
     // Legacy subtab slug mappings to canonical section ID
     const LEGACY_SLUG_MAP = {
         financials: {
@@ -90,6 +116,28 @@
             unverified: 'sec-litigation-unverified',
             'financial-disputes': 'sec-litigation-financial-disputes',
             'financial-dispute': 'sec-litigation-financial-disputes' // normalization
+        },
+        corporate: {
+            overview: 'sec-corporate-overview',
+            management: 'sec-corporate-management',
+            network: 'sec-corporate-network',
+            ownership: 'sec-corporate-ownership',
+            group: 'sec-corporate-group',
+            capital: 'sec-corporate-capital'
+        },
+        ai: {
+            corporate: 'sec-ai-corporate',
+            financial: 'sec-ai-financial',
+            charges: 'sec-ai-charges',
+            compliance: 'sec-ai-compliance',
+            litigation: 'sec-ai-litigation',
+            xsec: 'sec-ai-xsec',
+            'cross-section': 'sec-ai-xsec',
+            crosssection: 'sec-ai-xsec'
+        },
+        documents: {
+            filed: 'sec-documents-filed',
+            ask: 'sec-documents-ask'
         }
     };
 
@@ -107,6 +155,7 @@
             const parts = clean.split('-');
             if (parts.length >= 3) {
                 const domain = parts[1].toLowerCase();
+                if (!KNOWN_TABS.includes(domain)) return null;
                 if (CANONICAL_SECTIONS[domain] && CANONICAL_SECTIONS[domain].includes(clean)) {
                     return {
                         type: 'section',
@@ -115,7 +164,16 @@
                         targetTab: 'tab-' + domain
                     };
                 }
+                if (RETAINED_SUBTABS[domain] && RETAINED_SUBTABS[domain].includes(clean)) {
+                    return {
+                        type: 'subtab',
+                        domain: domain,
+                        sectionId: clean,
+                        targetTab: 'tab-' + domain
+                    };
+                }
             }
+            return null;
         }
 
         // 2. Tab or legacy slash: tab-{domain} or tab-{domain}/{section}
@@ -124,6 +182,7 @@
             const slashIdx = afterTab.indexOf('/');
             if (slashIdx === -1) {
                 const domain = afterTab.toLowerCase();
+                if (!KNOWN_TABS.includes(domain)) return null;
                 return {
                     type: 'tab',
                     domain: domain,
@@ -132,13 +191,23 @@
                 };
             } else {
                 const domain = afterTab.substring(0, slashIdx).toLowerCase();
+                if (!KNOWN_TABS.includes(domain)) return null;
                 const slug = afterTab.substring(slashIdx + 1).toLowerCase();
                 const mappedSection = LEGACY_SLUG_MAP[domain] && LEGACY_SLUG_MAP[domain][slug];
                 if (mappedSection) {
                     return {
-                        type: 'section',
+                        type: LONG_DOMAINS.includes(domain) ? 'section' : 'subtab',
                         domain: domain,
                         sectionId: mappedSection,
+                        targetTab: 'tab-' + domain
+                    };
+                }
+                const directSec = 'sec-' + domain + '-' + slug;
+                if (RETAINED_SUBTABS[domain] && RETAINED_SUBTABS[domain].includes(directSec)) {
+                    return {
+                        type: 'subtab',
+                        domain: domain,
+                        sectionId: directSec,
                         targetTab: 'tab-' + domain
                     };
                 }
@@ -264,8 +333,14 @@
         if (!d) return null;
 
         const head = d.getElementById('mcaDetailHead');
-        const reqId = (options && options.requestId) || (head && head.dataset && head.dataset.requestId) || '';
-        const focusCharge = (options && options.focusCharge) || (head && head.dataset && head.dataset.focusCharge) || '';
+        const reqId = (options && options.requestId)
+            || (head && head.dataset && (head.dataset.requestId || head.dataset.requestid))
+            || (head && head.getAttribute && head.getAttribute('data-request-id'))
+            || '';
+        const focusCharge = (options && options.focusCharge)
+            || (head && head.dataset && (head.dataset.focusCharge || head.dataset.focusChargeId))
+            || (head && head.getAttribute && (head.getAttribute('data-focus-charge') || head.getAttribute('data-focus-charge-id')))
+            || '';
 
         const tabKey = 'mca-v2-' + reqId + '-tab';
         const secKey = function (domain) { return 'mca-v2-' + reqId + '-sec-' + domain; };
@@ -452,20 +527,61 @@
             });
         });
 
+        function findTabButton(targetTab) {
+            if (!d) return null;
+            const target = '#' + targetTab;
+            const buttons = d.querySelectorAll ? d.querySelectorAll('#mcaTabs button[data-bs-toggle="tab"]') : [];
+            for (let i = 0; i < buttons.length; i++) {
+                if (buttons[i].getAttribute('data-bs-target') === target) {
+                    return buttons[i];
+                }
+            }
+            return null;
+        }
+
+        function findSubtabButton(domain, sectionId) {
+            if (!d) return null;
+            const target = '#' + sectionId;
+            const navs = d.querySelectorAll ? d.querySelectorAll('[data-mca-sections]') : [];
+            for (let i = 0; i < navs.length; i++) {
+                if (navs[i].getAttribute('data-mca-sections') === domain) {
+                    const buttons = navs[i].querySelectorAll ? navs[i].querySelectorAll('button[data-bs-toggle="tab"]') : [];
+                    for (let j = 0; j < buttons.length; j++) {
+                        if (buttons[j].getAttribute('data-bs-target') === target) {
+                            return buttons[j];
+                        }
+                    }
+                }
+            }
+            return null;
+        }
+
         // ── Navigation Resolution from Hash ──
         function resolveAndNavigateHash(hashStr) {
             const parsed = parseHash(hashStr);
-            if (!parsed) return false;
+            if (!parsed || !KNOWN_TABS.includes(parsed.domain)) return false;
 
-            const tabBtn = d.querySelector('#mcaTabs button[data-bs-target="#' + parsed.targetTab + '"]');
+            const tabBtn = findTabButton(parsed.targetTab);
             if (!tabBtn) return false;
 
             ensureTabActive(tabBtn, function () {
                 onMainTabActivated(parsed.domain);
                 if (parsed.sectionId) {
-                    const sectionEl = d.getElementById(parsed.sectionId);
-                    if (sectionEl) {
-                        scrollToSection(sectionEl, w);
+                    if (parsed.type === 'subtab') {
+                        const subBtn = findSubtabButton(parsed.domain, parsed.sectionId);
+                        if (subBtn) {
+                            ensureTabActive(subBtn, null, bLib);
+                            try {
+                                if (w && w.sessionStorage) {
+                                    w.sessionStorage.setItem(secKey(parsed.domain), '#' + parsed.sectionId);
+                                }
+                            } catch (e) {}
+                        }
+                    } else {
+                        const sectionEl = d.getElementById(parsed.sectionId);
+                        if (sectionEl) {
+                            scrollToSection(sectionEl, w);
+                        }
                     }
                 }
             }, bLib);
@@ -486,32 +602,35 @@
 
         // ── Initial Navigation on Page Load ──
         const initialHash = (w && w.location && w.location.hash) || '';
+        const parsed = parseHash(initialHash);
         const navigated = resolveAndNavigateHash(initialHash);
 
-        if (!navigated) {
-            if (focusCharge) {
-                openAndScrollCharge(focusCharge, d, w, bLib);
-            } else {
-                let savedTab = null;
-                try {
-                    if (w && w.sessionStorage) savedTab = w.sessionStorage.getItem(tabKey);
-                } catch (e) {}
+        if (focusCharge && (!navigated || (parsed && parsed.domain === 'charges'))) {
+            openAndScrollCharge(focusCharge, d, w, bLib);
+        } else if (!navigated) {
+            let savedTab = null;
+            try {
+                if (w && w.sessionStorage) savedTab = w.sessionStorage.getItem(tabKey);
+            } catch (e) {}
 
-                if (savedTab) {
-                    const savedBtn = d.querySelector('#mcaTabs button[data-bs-target="' + savedTab + '"]');
+            if (savedTab) {
+                const savedDomain = savedTab.replace('#tab-', '').toLowerCase();
+                if (KNOWN_TABS.includes(savedDomain)) {
+                    const savedBtn = findTabButton('tab-' + savedDomain);
                     if (savedBtn) {
                         ensureTabActive(savedBtn, function () {
-                            const domain = savedTab.replace('#tab-', '').toLowerCase();
-                            onMainTabActivated(domain);
+                            onMainTabActivated(savedDomain);
                         }, bLib);
                     }
-                } else {
-                    // Default active tab (AI Analysis)
-                    const activeBtn = d.querySelector('#mcaTabs button[data-bs-toggle="tab"].active')
-                        || d.querySelector('#mcaTabs button[data-bs-toggle="tab"]');
-                    if (activeBtn) {
-                        const targetSelector = activeBtn.getAttribute('data-bs-target') || '';
-                        const domain = targetSelector.replace('#tab-', '').toLowerCase();
+                }
+            } else {
+                // Default active tab (AI Analysis)
+                const activeBtn = (d.querySelector && d.querySelector('#mcaTabs button[data-bs-toggle="tab"].active'))
+                    || (d.querySelector && d.querySelector('#mcaTabs button[data-bs-toggle="tab"]'));
+                if (activeBtn) {
+                    const targetSelector = activeBtn.getAttribute('data-bs-target') || '';
+                    const domain = targetSelector.replace('#tab-', '').toLowerCase();
+                    if (KNOWN_TABS.includes(domain)) {
                         onMainTabActivated(domain);
                     }
                 }
