@@ -507,7 +507,11 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             e.HasKey(x => x.CalculationCheckResultId);
             e.HasAlternateKey(x => new { x.CalculationCheckResultId, x.CalculationAuditSnapshotId });
             e.HasOne(x => x.Snapshot).WithMany().HasForeignKey(x => x.CalculationAuditSnapshotId).OnDelete(DeleteBehavior.Restrict);
-            e.HasIndex(x => new { x.CalculationAuditSnapshotId, x.CheckKey });
+            // Unique, not just an index: a check runs exactly once per snapshot (CalculationCheckRunnerService's
+            // own "alreadyRan" guard), so two rows for the same (snapshot, check) can only mean a
+            // concurrent-run race — this constraint is what makes that race fail loudly at the database
+            // instead of silently persisting duplicate discrepancies/holds.
+            e.HasIndex(x => new { x.CalculationAuditSnapshotId, x.CheckKey }).IsUnique();
             e.Property(x => x.CheckKey).HasMaxLength(150);
             e.Property(x => x.CheckVersion).HasMaxLength(20);
             e.Property(x => x.Status).HasConversion<string>().HasMaxLength(20);

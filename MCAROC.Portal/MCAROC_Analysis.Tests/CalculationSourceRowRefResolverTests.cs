@@ -72,6 +72,22 @@ public class CalculationSourceRowRefResolverTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Resolves_a_bracketed_FinancialFact_label_input_to_the_matching_row()
+    {
+        // The seed carries a real FinancialFact row for FY2025: "Reserves and Surplus" = -186.2.
+        await using var seedDb = DossierGoldenMasterTests.CreateContext();
+        var (requestId, _, _) = await DossierTestSeed.SeedAsync(seedDb);
+
+        await using var db = DossierGoldenMasterTests.CreateContext();
+        var model = await new DossierAssembler(db).BuildAsync(requestId);
+
+        var refs = CalculationSourceRowRefResolver.Resolve(["FinancialFact['Reserves and Surplus']"], model!, null);
+
+        var single = Assert.Single(refs);
+        Assert.Equal("FinancialFact", single.EntityType);
+    }
+
+    [Fact]
     public async Task Unknown_entity_type_resolves_to_nothing_rather_than_throwing()
     {
         await using var seedDb = DossierGoldenMasterTests.CreateContext();

@@ -353,7 +353,8 @@ namespace MCAROC_Analysis.Migrations
             migrationBuilder.CreateIndex(
                 name: "IX_CalculationCheckResults_CalculationAuditSnapshotId_CheckKey",
                 table: "CalculationCheckResults",
-                columns: new[] { "CalculationAuditSnapshotId", "CheckKey" });
+                columns: new[] { "CalculationAuditSnapshotId", "CheckKey" },
+                unique: true);
 
             migrationBuilder.CreateIndex(
                 name: "IX_CalculationDiscrepancies_AiAuditRunId_CalculationAuditSnapshotId",

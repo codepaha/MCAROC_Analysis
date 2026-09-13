@@ -468,7 +468,8 @@ namespace MCAROC_Analysis.Migrations
 
                     b.HasKey("CalculationCheckResultId");
 
-                    b.HasIndex("CalculationAuditSnapshotId", "CheckKey");
+                    b.HasIndex("CalculationAuditSnapshotId", "CheckKey")
+                        .IsUnique();
 
                     b.ToTable("CalculationCheckResults");
                 });
