@@ -219,7 +219,7 @@
         {"source": "TAXPAYER TYPE / TRADE NAME / NATURE OF BUSINESS ACTIVITIES / FLAGS", "entityField": "TaxpayerType / TradeName / NatureOfBusinessActivities / Flags", "status": "live", "gap": "G24", "note": "#107 (Compliance tab render audit: all four columns rendered in GST Registrations table)"},
         {"source": "RETURN TYPE / LATEST FILING(S) / FINANCIAL YEAR / TAX PERIOD (latest-filing summary)", "entityField": "(via GstFiling)", "status": "live"},
         {"source": "CENTRE JURISDICTION / STATE JURISDICTION / LEGAL NAME OF BUSINESS", "entityField": "CentreJurisdiction / StateJurisdiction / LegalNameOfBusiness", "status": "live", "note": "A6/#37"},
-        {"source": "CancellationDate (for Inactive GSTINs)", "entityField": "CancellationDate", "status": "not-parsed", "gap": "G17", "note": "no CANCELLATION DATE column exists in the real GST sheet (16 cols, verified against the COASTAL fixture) and GstParser never sets this field — the entity property is vestigial; not fixed here, out of A6's scope"},
+        {"source": "CancellationDate (for Inactive GSTINs)", "entityField": "CancellationDate", "status": "dropped-by-design", "gap": "G17", "note": "no CANCELLATION DATE column exists in the real GST sheet (16 cols, verified against the COASTAL fixture); GstParser never looks for or sets this field. The entity property is kept for a possible future GST-status feed but is not sourced from the current workbooks. Owner decision 2026-09-13: dropped-by-design, not scheduled for parsing. CAVEAT: two consumers (GstRules.cs, StructuredFactsProvider.cs) currently treat CancellationDate==null as 'active/not cancelled', which is now a permanent false negative since this field is never populated — tracked separately as #157, not resolved by this dropped-by-design disposition."},
         {"source": "FILING DETAILS", "entityField": null, "status": "dropped-by-design", "note": "A7/#38 — boilerplate redirect text ('See Annexure - GST for Filing Details'), not data; the actual per-period filing history is fully parsed from the Annexure - GST sheet"}
       ]
     },
@@ -406,9 +406,9 @@
      "detail": "Money-claim disputes with amount-under-default + verdict — 12/41 companies. Separate register from Legal History; directly material to a lender.",
      "fix": "New FinancialDisputeCase entity + parser (flat 10-col table) + Litigation-tab section.",
      "issue": "#52"},
-    {"id": "G17", "title": "GstRegistration.CancellationDate is vestigial — no matching source column", "severity": "low",
-     "detail": "A6/#37 review (Codex, PR #87): the real GST sheet (16 cols, verified against the COASTAL fixture) has no CANCELLATION DATE column at all, so GstParser never sets this field. Not a dropped column — the entity property doesn't correspond to any real source data.",
-     "fix": "Either remove the unused CancellationDate property, or confirm against a wider company sample whether any real GST sheet ever carries a cancellation date and parse it if so.",
+    {"id": "G17", "title": "GstRegistration.CancellationDate is vestigial — no matching source column", "severity": "low", "status": "DROPPED-BY-DESIGN (2026-09-13)",
+     "detail": "A6/#37 review (Codex, PR #87): the real GST sheet (16 cols, verified against the COASTAL fixture) has no CANCELLATION DATE column at all, so GstParser never looks for or sets this field. Not a dropped column — the entity property doesn't correspond to any real source data.",
+     "fix": "Owner decision 2026-09-13: dropped-by-design. The CancellationDate property stays on the entity for a possible future GST-status feed, but is not sourced from the current workbooks and is not scheduled for parsing.",
      "issue": null},
     {"id": "G18", "title": "Auditors' Comments detail-table columns dropped", "severity": "low",
      "detail": "A7/#38 discovery: the sheet's second stacked table (Serial Number | Financial Year | Section | Section Name | Auditors' Comments | Directors' Comments | Footnotes — see AuditorsParser's own doc comment) only reads Financial Year and Auditors' Comments (-> ObservationText). Serial Number, Section (a numeric code, e.g. 700600), Section Name, Directors' Comments, and Footnotes are read nowhere.",
