@@ -131,13 +131,14 @@ request, 2026-09-12) since this lane hadn't claimed them yet — remaining 6 sti
 |---|---|---|
 | #144 | analytics catalogue: confirm A1.x (source-reported ratios) + B12 (charge discharge velocity) — marked `"planned"` but their parent issues (#57, #56) are closed; either stale catalogue rows or a real gap | **CLOSED** (2026-09-13, by owner, right after B12/PR #149 merged) — B12 half done. A1.x's product decision was closed along with it without being resolved; **split out to #152** so it isn't lost |
 | #152 | A1.x follow-up (split from #144): dossier PDF gets only a generic fallback table for the 16 source-reported ratios, not the catalogued multi-year sparkline treatment | **Deferred entirely** (owner, 2026-09-13, revised) — the dossier PDF is getting a full redesign later (more calculations being added); building elaborate layout now risked being throwaway. No work scheduled until the redesign's scope is known |
-| #145 | portal never loads `dossier-tokens.css` — no proven visual parity between portal and PDF | **Owner decision: build real parity** (wire the portal to the shared palette, or generate both from one source). Claimed, queued after #146b |
-| #146 | two catalogue rows with no disposition: `GstRegistration.CancellationDate` (vestigial, G17) and Auditors' Comments detail columns (unparsed, G18) | **Decided and recorded directly on #146**: G17 → `dropped-by-design` (**PR #155 open**, → @codex review; surfaced a real bug, see **#157**); G18 → scope as real work (planning in progress, extends `AuditorObservation`) |
+| #145 | portal never loads `dossier-tokens.css` — no proven visual parity between portal and PDF | **Owner decision: build real parity** (wire the portal to the shared palette, or generate both from one source). **Unclaimed** — no branch/owner assigned yet |
+| #146 | two catalogue rows with no disposition: `GstRegistration.CancellationDate` (vestigial, G17) and Auditors' Comments detail columns (unparsed, G18) | **Decided and recorded directly on #146**: G17 → `dropped-by-design`, **MERGED** (PR #155, `0c0268d`; surfaced a real bug, see **#157**, also MERGED via PR #159); G18 → scope as real work, **split to #161** (scoped, unclaimed) |
 
 **Ad hoc, outside EPIC #31 (2026-09-13): correctness bug found while closing #146a, filed as #157.**
 | Issue | What | Status |
 |---|---|---|
-| #157 | `GstRules.cs:21` + `StructuredFactsProvider.cs:111` treat `CancellationDate == null` as "active/not cancelled" — now a permanent false negative since that field is dropped-by-design and will never populate. Rule-engine + chat-facts scope, reserved for Codex/owner | open, unclaimed |
+| #157 | `GstRules.cs:21` + `StructuredFactsProvider.cs:111` treat `CancellationDate == null` as "active/not cancelled" — now a permanent false negative since that field is dropped-by-design and will never populate. Rule-engine + chat-facts scope, reserved for Codex/owner | **MERGED** (PR #159, `09c0895`) — new shared `GstRegistrationStatus.IsActive`/`IsActiveStatus` helper centralizes the fallback across findings, dossier metrics, and chat facts |
+| #161 | #146b split into its own scoped issue: parse Auditors' Comments detail-table columns (Serial Number/Section/Section Name/Directors' Comments/Footnotes) — extends `AuditorObservation`, follows the `AddShareholdingGstAuditorColumns` precedent | open, unclaimed — plan written, not started |
 
 **Ad hoc, outside EPIC #31 (2026-09-13): follow-up from reviewing Antigravity's QA report, filed as #150.**
 | Issue | What | Status |
