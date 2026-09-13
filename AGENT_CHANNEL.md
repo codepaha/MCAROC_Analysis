@@ -290,6 +290,45 @@ Linux subset fonts break PdfPig's ToUnicode → those are `[SkippableFact]`, ski
   and round 5 just proved that instinct right again. PR3 stays paused per the standing decision; #171 still
   needs its own rebase-onto-`main` + independent re-review once #170 actually merges.
 
+### 2026-09-13 — Claude session (PR #170/#171 review round 4 — 2 more real gaps found and fixed)
+- **Despite clean merge state and green CI on both, the reviewer found 2 more real correctness gaps** —
+  confirming the working agreement's own instinct that CI-green and mergeable never substitute for a real
+  review:
+  1. **#170**: `CalculationInputCanonicalizer`/`CalculationSourceRowRefResolver` only handled 4 of the 6
+     entity types the ledgered `FinancialTrendMetrics` group actually uses — `FinancialParameter['...']`/
+     `FinancialFact['...']` inputs (employee cost, material cost, other expenses, auditor fee, forex
+     exposure) hashed as a fixed `"unresolved"` string regardless of their real value, and a metric mixing
+     one of these with an already-resolved `FinancialYearData` input could look fully provenance-resolved
+     while silently ignoring the unresolved half.
+  2. **#171**: `CalculationCheckResults`' `(CalculationAuditSnapshotId, CheckKey)` index was non-unique —
+     the check-runner's own race-handling code (added for the ledger service in the previous round) had
+     no constraint to actually fire against, so two concurrent runs could both pass "already ran" and
+     persist duplicate checks/discrepancies/holds.
+- **Both fixed.** #170 (`a85a1a0`): consolidated the resolver and canonicalizer onto one shared resolution
+  pass (`CalculationInputResolver.ResolveOne` + a new `CalculationResolvedInput` type) so citation and
+  hashing structurally cannot drift apart on what they resolve again — the root cause of gap 1 was two
+  independent implementations covering the same 4 entity types, each *consistently* missing the same 2.
+  Added real `FinancialParameter`/`FinancialFact` support via the same label-normalized matching
+  `DossierComputations.Metrics.LookupParameter`/`LookupFact` use. #171 (`dad66f1`, rebased onto #170's new
+  head): made the index unique, regenerated the migration+snapshot to match (confirmed via `dotnet ef
+  migrations has-pending-model-changes`), added the concurrent-run regression test.
+- **A genuine local-only trap surfaced while verifying #171's fix**: the shared local `MCAROC_Analysis_Test`
+  database (fixed connection string in `TestDatabase.cs`, same DB across every worktree) had already
+  applied the *original* non-unique version of #170's migration, under the same migration id, from earlier
+  test runs before the fix. Hand-editing that already-applied migration file afterward does not
+  retroactively alter the schema already on disk — `MigrateAsync()` just sees "this id is already applied"
+  and skips it, silently leaving the stale non-unique index in place. The new concurrent-run test passed
+  against this stale DB on the first try (14 rows, 7 duplicated pairs — the "fix" wasn't actually
+  enforcing anything), which is what caught it. **Fix: dropped the local test DB and let the next test run
+  recreate it from scratch** — not a CI/production concern, since a real environment only ever sees the
+  corrected migration once, under one id, applied to a schema that has never seen the old version.
+  **Lesson for every agent in this repo**: editing an EF migration file that has *already been applied*
+  anywhere (even a disposable local test DB) doesn't undo what's already on disk — either add a new
+  migration for the correction, or (for an unmerged, not-yet-shared migration like this one) drop and
+  recreate the local DB after hand-editing it, and don't trust a green test run against a DB you haven't
+  confirmed is on the corrected schema.
+- Both PRs pushed, awaiting the next review round. PR3 stays paused per the standing decision above.
+
 ### 2026-09-13 — Claude session (DECISION — #164 PR3 paused; PR1/PR2 review-merge sequencing set)
 - **Owner/reviewer call: PR3 (AI worker) is paused, not started.** PR #171 (PR2) is stacked on PR #170
   (PR1)'s branch, and #170's head has already moved once (review round 3's 3-bug fix, `fe13d23`) since
