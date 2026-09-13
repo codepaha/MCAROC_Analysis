@@ -1,13 +1,19 @@
 using System.Text.Json;
 using MCAROC_Analysis.Data;
 using MCAROC_Analysis.Data.Entities;
+using MCAROC_Analysis.Services.CalculationAssurance;
 using Microsoft.EntityFrameworkCore;
 
 namespace MCAROC_Analysis.Services.Analysis;
 
 /// <summary>Drives one analysis pass for a request: atomic claim, rule engine, AI synthesis, persistence.
 /// Mirrors IngestionOrchestrator's structure and Phase 2's FilingBatchProcessor's claim/recovery patterns.</summary>
-public class AnalysisOrchestrator(AppDbContext db, AiCrossSectionAnalysisService aiService, AnalysisQueue queue, ILogger<AnalysisOrchestrator> logger)
+public class AnalysisOrchestrator(
+    AppDbContext db,
+    AiCrossSectionAnalysisService aiService,
+    AnalysisQueue queue,
+    CalculationLedgerService calculationLedgerService,
+    ILogger<AnalysisOrchestrator> logger)
 {
     private static readonly RuleThresholds Thresholds = RuleThresholds.Default;
     public const string RuleEngineVersion = "1.0";
@@ -132,6 +138,19 @@ public class AnalysisOrchestrator(AppDbContext db, AiCrossSectionAnalysisService
 
             run.CompletedDate = DateTime.UtcNow;
             await db.SaveChangesAsync(ct);
+
+            // Calculation-assurance ledger persistence (#164) — isolated in its own try/catch so a bug
+            // in this second-line guardrail can never fail an otherwise-successful analysis pass. A
+            // no-op entirely when CalculationAssurance:Mode is Off (see CalculationLedgerService).
+            try
+            {
+                await calculationLedgerService.PersistSnapshotAsync(requestId, ingestionRunId, run.AnalysisRunId, ct);
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(ex, "Calculation-assurance ledger persistence failed for request {RequestId}, analysis run {AnalysisRunId} — analysis itself still completed.",
+                    requestId, run.AnalysisRunId);
+            }
 
             await db.Requests.Where(r => r.RequestId == requestId)
                 .ExecuteUpdateAsync(s => s.SetProperty(r => r.RequestStatus, RequestStatus.AnalysisCompleted), ct);

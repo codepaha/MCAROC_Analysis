@@ -66,6 +66,18 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<CompanyEmail> CompanyEmails => Set<CompanyEmail>();
     public DbSet<PreLoginReportJob> PreLoginReportJobs => Set<PreLoginReportJob>();
 
+    // #164 Calculation assurance
+    public DbSet<CalculationAuditSnapshot> CalculationAuditSnapshots => Set<CalculationAuditSnapshot>();
+    public DbSet<CalculationLedgerEntry> CalculationLedgerEntries => Set<CalculationLedgerEntry>();
+    public DbSet<CalculationCheckResult> CalculationCheckResults => Set<CalculationCheckResult>();
+    public DbSet<CalculationCheckResultLedgerLink> CalculationCheckResultLedgerLinks => Set<CalculationCheckResultLedgerLink>();
+    public DbSet<CalculationDiscrepancy> CalculationDiscrepancies => Set<CalculationDiscrepancy>();
+    public DbSet<CalculationDiscrepancyLedgerLink> CalculationDiscrepancyLedgerLinks => Set<CalculationDiscrepancyLedgerLink>();
+    public DbSet<CalculationDiscrepancyApproval> CalculationDiscrepancyApprovals => Set<CalculationDiscrepancyApproval>();
+    public DbSet<CalculationArtifactHold> CalculationArtifactHolds => Set<CalculationArtifactHold>();
+    public DbSet<CalculationAiAuditRun> CalculationAiAuditRuns => Set<CalculationAiAuditRun>();
+    public DbSet<CalculationAssuranceOverrideAudit> CalculationAssuranceOverrideAudits => Set<CalculationAssuranceOverrideAudit>();
+
     protected override void ConfigureConventions(ModelConfigurationBuilder configurationBuilder)
     {
         // Default precision for monetary/count decimals (mostly Rs. Crore values); percentages override below.
@@ -459,6 +471,147 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             e.HasIndex(x => x.InReplyToChatMessageId);
             e.Property(x => x.Role).HasConversion<string>().HasMaxLength(10);
             e.Property(x => x.Status).HasConversion<string>().HasMaxLength(10);
+        });
+
+        // ── #164 Calculation assurance ──
+        // CalculationAuditSnapshot is the one place the (Request, IngestionRun, AnalysisRun) tuple
+        // lives. Every child table below carries a CalculationAuditSnapshotId FK, and several also
+        // carry it as one half of a composite FK to another child table's alternate key — this is what
+        // makes a cross-snapshot reference a literal insert-time constraint violation rather than a bug
+        // someone could write (see each entity's own doc comment). DeleteBehavior.Restrict everywhere:
+        // this audit trail is never cascade-deleted.
+        modelBuilder.Entity<CalculationAuditSnapshot>(e =>
+        {
+            e.HasKey(x => x.CalculationAuditSnapshotId);
+            e.HasIndex(x => new { x.RequestId, x.IngestionRunId, x.AnalysisRunId }).IsUnique();
+        });
+
+        modelBuilder.Entity<CalculationLedgerEntry>(e =>
+        {
+            e.HasKey(x => x.CalculationLedgerEntryId);
+            e.HasAlternateKey(x => new { x.CalculationLedgerEntryId, x.CalculationAuditSnapshotId });
+            e.HasOne(x => x.Snapshot).WithMany().HasForeignKey(x => x.CalculationAuditSnapshotId).OnDelete(DeleteBehavior.Restrict);
+            e.HasIndex(x => new { x.CalculationAuditSnapshotId, x.CalculationKey, x.Period }).IsUnique();
+            e.Property(x => x.CalculationKey).HasMaxLength(150);
+            e.Property(x => x.CalcVersion).HasMaxLength(20);
+            e.Property(x => x.MetricLabel).HasMaxLength(300);
+            e.Property(x => x.Period).HasMaxLength(150);
+            e.Property(x => x.Unit).HasConversion<string>().HasMaxLength(20);
+            e.Property(x => x.InputHash).HasMaxLength(64).IsFixedLength();
+            e.Property(x => x.OutputHash).HasMaxLength(64).IsFixedLength();
+            e.Property(x => x.TolerancePercent).HasPrecision(9, 4);
+        });
+
+        modelBuilder.Entity<CalculationCheckResult>(e =>
+        {
+            e.HasKey(x => x.CalculationCheckResultId);
+            e.HasAlternateKey(x => new { x.CalculationCheckResultId, x.CalculationAuditSnapshotId });
+            e.HasOne(x => x.Snapshot).WithMany().HasForeignKey(x => x.CalculationAuditSnapshotId).OnDelete(DeleteBehavior.Restrict);
+            e.HasIndex(x => new { x.CalculationAuditSnapshotId, x.CheckKey });
+            e.Property(x => x.CheckKey).HasMaxLength(150);
+            e.Property(x => x.CheckVersion).HasMaxLength(20);
+            e.Property(x => x.Status).HasConversion<string>().HasMaxLength(20);
+            e.Property(x => x.Severity).HasConversion<string>().HasMaxLength(10);
+        });
+
+        modelBuilder.Entity<CalculationCheckResultLedgerLink>(e =>
+        {
+            e.HasKey(x => x.CalculationCheckResultLedgerLinkId);
+            e.HasOne(x => x.CheckResult).WithMany()
+                .HasForeignKey(x => new { x.CalculationCheckResultId, x.CalculationAuditSnapshotId })
+                .HasPrincipalKey(cr => new { cr.CalculationCheckResultId, cr.CalculationAuditSnapshotId })
+                .OnDelete(DeleteBehavior.Restrict);
+            e.HasOne(x => x.LedgerEntry).WithMany()
+                .HasForeignKey(x => new { x.CalculationLedgerEntryId, x.CalculationAuditSnapshotId })
+                .HasPrincipalKey(le => new { le.CalculationLedgerEntryId, le.CalculationAuditSnapshotId })
+                .OnDelete(DeleteBehavior.Restrict);
+            e.HasIndex(x => x.CalculationCheckResultId);
+            e.HasIndex(x => x.CalculationLedgerEntryId);
+        });
+
+        modelBuilder.Entity<CalculationAiAuditRun>(e =>
+        {
+            e.HasKey(x => x.CalculationAiAuditRunId);
+            e.HasAlternateKey(x => new { x.CalculationAiAuditRunId, x.CalculationAuditSnapshotId });
+            e.HasOne(x => x.Snapshot).WithMany().HasForeignKey(x => x.CalculationAuditSnapshotId).OnDelete(DeleteBehavior.Restrict);
+            e.HasIndex(x => x.CalculationAuditSnapshotId).IsUnique(); // exactly one AI audit run per snapshot
+            e.Property(x => x.Status).HasConversion<string>().HasMaxLength(20);
+            e.Property(x => x.ModelId).HasMaxLength(100);
+            e.Property(x => x.PromptVersion).HasMaxLength(20);
+            e.Property(x => x.ResponseHash).HasMaxLength(64).IsFixedLength();
+        });
+
+        modelBuilder.Entity<CalculationDiscrepancy>(e =>
+        {
+            e.HasKey(x => x.CalculationDiscrepancyId);
+            e.HasAlternateKey(x => new { x.CalculationDiscrepancyId, x.CalculationAuditSnapshotId });
+            e.HasOne(x => x.Snapshot).WithMany().HasForeignKey(x => x.CalculationAuditSnapshotId).OnDelete(DeleteBehavior.Restrict);
+            e.HasOne(x => x.PrimaryLedgerEntry).WithMany()
+                .HasForeignKey(x => new { x.PrimaryLedgerEntryId, x.CalculationAuditSnapshotId })
+                .HasPrincipalKey(le => new { le.CalculationLedgerEntryId, le.CalculationAuditSnapshotId })
+                .OnDelete(DeleteBehavior.Restrict);
+            e.HasOne(x => x.AiAuditRun).WithMany()
+                .HasForeignKey(x => new { x.AiAuditRunId, x.CalculationAuditSnapshotId })
+                .HasPrincipalKey(a => new { a.CalculationAiAuditRunId, a.CalculationAuditSnapshotId })
+                .OnDelete(DeleteBehavior.Restrict);
+            e.HasIndex(x => x.CalculationAuditSnapshotId);
+            e.HasIndex(x => x.PrimaryLedgerEntryId);
+            e.Property(x => x.Variant).HasMaxLength(20);
+            e.Property(x => x.SourceType).HasConversion<string>().HasMaxLength(20);
+            e.Property(x => x.OriginCheckKey).HasMaxLength(150);
+            e.Property(x => x.Status).HasConversion<string>().HasMaxLength(30);
+            e.Property(x => x.Severity).HasConversion<string>().HasMaxLength(10);
+        });
+
+        modelBuilder.Entity<CalculationDiscrepancyLedgerLink>(e =>
+        {
+            e.HasKey(x => x.CalculationDiscrepancyLedgerLinkId);
+            e.HasOne(x => x.Discrepancy).WithMany()
+                .HasForeignKey(x => new { x.CalculationDiscrepancyId, x.CalculationAuditSnapshotId })
+                .HasPrincipalKey(d => new { d.CalculationDiscrepancyId, d.CalculationAuditSnapshotId })
+                .OnDelete(DeleteBehavior.Restrict);
+            e.HasOne(x => x.LedgerEntry).WithMany()
+                .HasForeignKey(x => new { x.CalculationLedgerEntryId, x.CalculationAuditSnapshotId })
+                .HasPrincipalKey(le => new { le.CalculationLedgerEntryId, le.CalculationAuditSnapshotId })
+                .OnDelete(DeleteBehavior.Restrict);
+            e.HasIndex(x => x.CalculationDiscrepancyId);
+            e.HasIndex(x => x.CalculationLedgerEntryId);
+        });
+
+        modelBuilder.Entity<CalculationDiscrepancyApproval>(e =>
+        {
+            e.HasKey(x => x.CalculationDiscrepancyApprovalId);
+            // Single FK, no snapshot component — an approval only ever points at the one discrepancy it
+            // belongs to, so there is no cross-snapshot risk to guard against here.
+            e.HasOne(x => x.Discrepancy).WithMany().HasForeignKey(x => x.CalculationDiscrepancyId).OnDelete(DeleteBehavior.Restrict);
+            e.HasIndex(x => x.CalculationDiscrepancyId);
+            e.Property(x => x.DecisionAction).HasConversion<string>().HasMaxLength(30);
+            e.Property(x => x.ReviewerName).HasMaxLength(200);
+            e.Property(x => x.ModelIdUsed).HasMaxLength(100);
+            e.Property(x => x.PromptVersionUsed).HasMaxLength(20);
+        });
+
+        modelBuilder.Entity<CalculationArtifactHold>(e =>
+        {
+            e.HasKey(x => x.CalculationArtifactHoldId);
+            e.HasOne(x => x.Snapshot).WithMany().HasForeignKey(x => x.CalculationAuditSnapshotId).OnDelete(DeleteBehavior.Restrict);
+            e.HasOne(x => x.SourceDiscrepancy).WithMany()
+                .HasForeignKey(x => new { x.SourceDiscrepancyId, x.CalculationAuditSnapshotId })
+                .HasPrincipalKey(d => new { d.CalculationDiscrepancyId, d.CalculationAuditSnapshotId })
+                .OnDelete(DeleteBehavior.Restrict);
+            e.HasIndex(x => new { x.CalculationAuditSnapshotId, x.Variant });
+            e.HasIndex(x => x.IsActive).HasFilter("[IsActive] = 1");
+            e.Property(x => x.Variant).HasMaxLength(20);
+            e.Property(x => x.HoldReason).HasConversion<string>().HasMaxLength(40);
+            e.Property(x => x.ReleasedByReviewerName).HasMaxLength(200);
+        });
+
+        modelBuilder.Entity<CalculationAssuranceOverrideAudit>(e =>
+        {
+            e.HasKey(x => x.CalculationAssuranceOverrideAuditId);
+            e.Property(x => x.PreviousMode).HasMaxLength(20);
+            e.Property(x => x.NewMode).HasMaxLength(20);
+            e.Property(x => x.ChangedByReviewerName).HasMaxLength(200);
         });
 
         modelBuilder.Entity<Client>().HasData(
