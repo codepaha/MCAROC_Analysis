@@ -764,3 +764,120 @@ details > summary.mca-json-toggle {
         border-radius: 0;
     }
 }
+
+/* ── Print Stylesheet (#124, C10) ── */
+.mca-basis-print-heading {
+    display: none;
+}
+
+@media print {
+    /* ── Chrome Suppression ── */
+    .pi-sidebar,
+    .pi-sidebar-scrim,
+    .pi-topbar,
+    .pi-cmd,
+    .pi-cmd-overlay,
+    .pi-breadcrumb,
+    .pi-mobile-nav-toggle,
+    .pi-icon-btn,
+    .mca-chat-trigger,
+    .mca-chat-panel,
+    .mca-chat-backdrop,
+    .mca-contents-nav,
+    #mcaTabs,
+    .mca-unit-toggle,
+    [data-basis-group],
+    .mca-scroll-top,
+    .mca-coverage-strip a,
+    .btn:not(.btn-print-keep) {
+        display: none !important;
+    }
+
+    body, html {
+        background: #fff !important;
+        color: #000 !important;
+        font-size: 10pt;
+    }
+
+    .pi-app {
+        display: block !important;
+    }
+
+    .pi-main {
+        margin: 0 !important;
+        padding: 0 !important;
+        max-width: 100% !important;
+        width: 100% !important;
+    }
+
+    .pi-shell {
+        padding: 0 !important;
+        margin: 0 !important;
+        max-width: 100% !important;
+    }
+
+    /* ── Pane Visibility & Forced Expansion ── */
+    .tab-content > .tab-pane,
+    .tab-content > .tab-pane.fade {
+        display: block !important;
+        opacity: 1 !important;
+        visibility: visible !important;
+        transition: none !important;
+    }
+
+    /* Override hidden consolidated basis panels so both Standalone and Consolidated print */
+    [data-basis-panel][hidden] {
+        display: block !important;
+    }
+
+    /* Show print headings for basis panels */
+    .mca-basis-print-heading {
+        display: block !important;
+        margin-top: 1rem;
+        margin-bottom: 0.5rem;
+        font-size: 1.1rem;
+        font-weight: 600;
+        color: #000;
+        border-bottom: 1px solid #ccc;
+        padding-bottom: 0.25rem;
+    }
+
+    /* Expand collapsed charge holders in the Charges tab */
+    tbody.collapse {
+        display: table-row-group !important;
+    }
+
+    /* ── Page Break Discipline ── */
+    /* Scope page breaks to the eight main domain panes only */
+    #mcaMainTabContent > .tab-pane {
+        page-break-before: always;
+        break-before: page;
+    }
+
+    #mcaMainTabContent > .tab-pane:first-child {
+        page-break-before: avoid;
+        break-before: avoid;
+    }
+
+    /* Nested subtabs in Corporate, AI, and Documents must NOT get forced page breaks */
+    #mcaMainTabContent .tab-pane .tab-pane {
+        page-break-before: auto !important;
+        break-before: auto !important;
+    }
+
+    /* Prevent orphan table rows and split cards */
+    table, .table, .card, .mca-metric-card, .mca-data-card, .mca-financial-table {
+        break-inside: avoid;
+        page-break-inside: avoid;
+    }
+
+    tr {
+        break-inside: avoid;
+        page-break-inside: avoid;
+    }
+
+    thead {
+        display: table-header-group;
+    }
+}
+

@@ -128,7 +128,7 @@
     <div class="alert alert-danger">Extraction failed: @r.FailureReason</div>
 }
 
-<div class="tab-content">
+<div class="tab-content" id="mcaMainTabContent">
     <div class="tab-pane fade show active" id="tab-ai" role="tabpanel">@await Html.PartialAsync("Details/_AiAnalysisTab", Model)</div>
     <div class="tab-pane fade" id="tab-corporate" role="tabpanel">@await Html.PartialAsync("Details/_CorporateTab", Model)</div>
     <div class="tab-pane fade" id="tab-financials" role="tabpanel">@await Html.PartialAsync("Details/_FinancialsTab", Model)</div>

@@ -161,10 +161,37 @@ function init() {
   });
 }
 
+let prePrintUnit = null;
+
+export function handleBeforePrint(doc = (typeof document !== 'undefined' ? document : null)) {
+  if (!doc) return;
+  const checkedRadio = doc.querySelector?.(`input[name="${RADIO_GROUP_NAME}"]:checked`);
+  prePrintUnit = checkedRadio?.value || 'crore';
+  if (prePrintUnit !== 'crore') {
+    switchUnit(doc, 'crore');
+    checkRadio(doc, 'crore');
+  }
+}
+
+export function handleAfterPrint(doc = (typeof document !== 'undefined' ? document : null)) {
+  if (!doc) return;
+  const unitToRestore = prePrintUnit;
+  prePrintUnit = null;
+  if (unitToRestore && unitToRestore !== 'crore') {
+    switchUnit(doc, unitToRestore);
+    checkRadio(doc, unitToRestore);
+  }
+}
+
 if (typeof document !== 'undefined') {
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', init);
   } else {
     init();
   }
+}
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('beforeprint', () => handleBeforePrint(typeof document !== 'undefined' ? document : null));
+  window.addEventListener('afterprint', () => handleAfterPrint(typeof document !== 'undefined' ? document : null));
 }

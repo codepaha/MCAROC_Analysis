@@ -85,6 +85,10 @@ else
     }
 
     <div data-basis-panel="@groupId" data-basis="Standalone">
+        @if (Model.HasConsolidated)
+        {
+            <h5 class="mca-basis-print-heading d-none d-print-block">Standalone Basis</h5>
+        }
         @if (Model.Standalone.HasData)
         {
             await RenderTable(Model.Standalone);
@@ -97,6 +101,7 @@ else
     @if (Model.HasConsolidated)
     {
         <div data-basis-panel="@groupId" data-basis="Consolidated" hidden>
+            <h5 class="mca-basis-print-heading d-none d-print-block">Consolidated Basis</h5>
             @if (Model.Consolidated.HasData)
             {
                 await RenderTable(Model.Consolidated);
