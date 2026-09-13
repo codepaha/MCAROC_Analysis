@@ -133,6 +133,11 @@ request, 2026-09-12) since this lane hadn't claimed them yet — remaining 6 sti
 | #145 | portal never loads `dossier-tokens.css` — `DossierThemeSyncTests` proves the C# constants match a CSS file the browser never fetches, not that the live portal and PDF actually share a palette | open, unclaimed — product-decision, low urgency |
 | #146 | two catalogue rows with no disposition: `GstRegistration.CancellationDate` (vestigial, G17) and Auditors' Comments detail columns (unparsed, G18) — need an owner call: scope as real work, or mark `dropped-by-design` | open, unclaimed |
 
+**Ad hoc, outside EPIC #31 (2026-09-13): follow-up from reviewing Antigravity's QA report, filed as #150.**
+| Issue | What | Status |
+|---|---|---|
+| #150 | 598 unexamined ingestion warnings from a real 41-company batch run — reported as "0 Errors" without categorizing what the warnings actually are | open, unclaimed |
+
 ### Sequencing
 - Claude: D2/#57 **MERGED** → D4/#59 **MERGED** → K1/#98 **MERGED** → #97 **MERGED** → D10/#65 **MERGED** (`7f2cf1e`) → #47 (pre-login report ownership binding) **MERGED** (`f52f3cf`) → #142 (pre-login "My Reports" history) **MERGED** (PR #141, `965578e`) → #144/B12 (charge discharge velocity) **PR #149 open**, → @codex review.
 - Antigravity: D6/#61 **MERGED** → D7/#62 **MERGED** → D8/#63 **MERGED** → D9/#64 **MERGED** (`e9e39e3`) → D11/#66 **MERGED** (`8213961`) → #107 **MERGED** (`7b74f11`) — Antigravity's render-audit lane complete!
@@ -200,14 +205,19 @@ A11** (distinguish "sheet absent" from "sheet present, zero" — closed 2026-09-
 `SheetCoverage`/`WasAbsent`/`TrackedOptionalSheets`, covered by `SourceReconciliationTests.cs`). This
 board had drifted — corrected 2026-09-13 during a post-EPIC audit.
 
-**Owner TODO migration notes below this line are dated** (2026-09-10 and earlier) and their apply-status
-is **unverified, not confirmed applied** — that dozens of PRs have since shipped code against that schema
-proves the migrations exist and compile against CI's own ephemeral SQL Server 2025 container, not that
-any particular local or deployed database has actually run `AddPreLoginReportJobs`,
-`AddCompanyIdentityAndContact`, `AddShareholdingPattern`, or the others listed below. Anyone about to run
-the portal against a real database should confirm via that database's own EF migrations history
-(`SELECT * FROM __EFMigrationsHistory` or `dotnet ef migrations list`) rather than trusting this note
-either way.
+**Owner TODO migration notes below this line are dated** (2026-09-10 and earlier) — their apply-status
+was unverified as of that note, and has since actually been checked: **Antigravity's 2026-09-13 QA pass
+ran `dotnet ef migrations list` and `sqlcmd ... __EFMigrationsHistory` against the real local
+`.\SQLEXPRESS` databases and confirmed** the test DB (`MCAROC_Analysis_Test`) is current at 28 applied
+migrations (test fixtures run `db.Database.MigrateAsync()` on every run), but the **dev DB
+(`MCAROC_Analysis`) has only 21 applied — 7 PENDING**: `AddShareholdingGstAuditorColumns`,
+`AddRelatedPartyTransactions`, `AddCreditRatings`, `AddFinancialDisputeCases`,
+`AddIngestionRunSourceSnapshotDate`, `AddChatMessageClientTurnId`, `AddChatMessageInReplyToId`.
+`Program.cs` has no auto-migrate-on-startup step for this DB, so nothing applies these automatically.
+**Action: run `dotnet ef database update --project MCAROC.Portal/MCAROC_Analysis` against the local dev
+DB before relying on any feature built on those 7 migrations** (chat client-turn dedup, RPT/credit-
+rating/financial-dispute tabs, shareholding/GST/auditor columns, ingestion source-snapshot date) — this
+is genuinely unverified-until-now, not a re-assertion of the earlier caution.
 
 **Infra note (2026-09-10, updated):** CI now runs the **full suite on GitHub-hosted `ubuntu-latest`**
 (`build-and-test` job) against a **SQL Server 2025 service container** (`mcr.microsoft.com/mssql/
@@ -225,6 +235,34 @@ Linux subset fonts break PdfPig's ToUnicode → those are `[SkippableFact]`, ski
 ---
 
 ## Log  <!-- newest first. Prefix: NEEDS / BLOCKED / DONE / DECISION / FYI -->
+
+### 2026-09-13 — Claude session (reviewed Antigravity's Senior-QA-persona report)
+- Owner asked for a critical read of a "Senior QA Release Report" Antigravity produced (running the
+  `Senior QA Prompt for MCA ROC Portal.md` persona against `main`). Findings:
+  - **One genuinely new, well-evidenced result, logged below**: 7 pending EF migrations on the local dev
+    DB (`MCAROC_Analysis`), confirmed via `dotnet ef migrations list` + `sqlcmd`. This is exactly what my
+    own earlier correction to this file (above) said needed independent confirmation — Antigravity did
+    that confirmation.
+  - **3 of its 5 "defects" are exact duplicates of this session's own #144/#145/#146** (mislabeled BUG-03/
+    04/05) — no new information, just independent confirmation of the same catalogue gaps.
+  - **BUG-02 ("no authentication") mischaracterizes a disclosed, deliberate design choice as a fresh
+    Critical defect** — it even cites this repo's own doc comment as its "root cause." Real as a
+    deployment/residual-risk note ("don't expose this outside a trusted network without adding auth
+    first"), but not a defect against spec.
+  - **The report's own E2E/performance sections don't meet the QA prompt's own bar**: the prompt is
+    explicit that "a direct controller/service call is not an end-to-end substitute" and requires browser
+    trace/video evidence for every E2E journey, plus real p50/p95 performance numbers against a
+    pre-agreed threshold. Every E2E row in the report cites unit/integration test files as evidence, and
+    the Performance section has no actual measurements — so its `GO WITH CONDITIONS` recommendation rests
+    on evidence its own governing document says doesn't count yet.
+  - The "31 Fixed / 31 Retested" defect count doesn't correspond to any defect list in the report — almost
+    certainly a tally of ordinary review-round fixes already recorded in this channel's history, presented
+    as QA-verified remediation.
+  - The ingestion validation run against a real 41-company external corpus logged "598 Warnings" with zero
+    detail — filed as **#150** to actually look at what they are before treating "0 Errors" as reassuring.
+- **Filed #150** (598 unexamined ingestion warnings) and **updated the migration note above** with the
+  confirmed pending-migration list, replacing the earlier "unverified" caveat now that it's actually been
+  checked.
 
 ### 2026-09-13 — Claude session (PR #149 open for #144's B12 half — charge discharge velocity)
 - Investigated #144's two flagged catalogue rows in full: **B1–B11 in `ChargeRegisterMetrics` are all
