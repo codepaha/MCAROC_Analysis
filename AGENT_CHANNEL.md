@@ -124,10 +124,10 @@ request, 2026-09-12) since this lane hadn't claimed them yet — remaining 6 sti
 **Ad hoc, outside EPIC #31 (2026-09-13): owner-reported gap, filed as #142.**
 | Issue | What | Status |
 |---|---|---|
-| #142 | pre-login reports have no way to find a report again after leaving the page — client-remembered "My Reports" (localStorage-only, no server-side listing, keeps #47's IDOR fix intact) | **PR #141 open**, → @codex review |
+| #142 | pre-login reports have no way to find a report again after leaving the page — client-remembered "My Reports" (localStorage-only, no server-side listing, keeps #47's IDOR fix intact) | **PR #141 open** (`aaf3031`) — review round 1 fixed (ineffective JSON-island test), → @codex re-review |
 
 ### Sequencing
-- Claude: D2/#57 **MERGED** → D4/#59 **MERGED** → K1/#98 **MERGED** → #97 **MERGED** → D10/#65 **MERGED** (`7f2cf1e`) → #47 (pre-login report ownership binding) **MERGED** (`f52f3cf`) → #142 (pre-login "My Reports" history) **PR #141 open**.
+- Claude: D2/#57 **MERGED** → D4/#59 **MERGED** → K1/#98 **MERGED** → #97 **MERGED** → D10/#65 **MERGED** (`7f2cf1e`) → #47 (pre-login report ownership binding) **MERGED** (`f52f3cf`) → #142 (pre-login "My Reports" history) **PR #141 open** (`aaf3031`, review round 1 fixed).
 - Antigravity: D6/#61 **MERGED** → D7/#62 **MERGED** → D8/#63 **MERGED** → D9/#64 **MERGED** (`e9e39e3`) → D11/#66 **MERGED** (`8213961`) → #107 **MERGED** (`7b74f11`) — Antigravity's render-audit lane complete!
 
 
@@ -231,10 +231,11 @@ Linux subset fonts break PdfPig's ToUnicode → those are `[SkippableFact]`, ski
   `createdUtc`, bounded `count`/label/format length — drops and self-heals invalid entries rather than
   trusting stored JSON), all entry-derived text renders via `textContent` (never `innerHTML`), the
   history link is built with `encodeURIComponent`, the JSON island keeps the default (non-relaxed)
-  `JsonSerializer` encoder with a regression test proving a hostile `Cin` can't break out of its
-  `<script>` tag, the batch's `Format`(s) are shown as their own column (not folded into a count), the
-  "Clear this list" button is `type="button"`, and a real controller test (route-attribute + `ViewResult`
-  check) was added alongside the markup-assertion rendering tests.
+  `JsonSerializer` encoder with a test intended to cover a hostile `Cin` breaking out of its `<script>`
+  tag (see the PR review round below — this test was not actually effective as first written), the
+  batch's `Format`(s) are shown as their own column (not folded into a count), the "Clear this list"
+  button is `type="button"`, and a real controller test (route-attribute + `ViewResult` check) was added
+  alongside the markup-assertion rendering tests.
 - **Verified for real, not just unit-tested**: live dev-server + Puppeteer/Edge pass confirming — submit
   → appears in My Reports with a working link back; a fresh incognito-equivalent context sees nothing
   (the actual proof there's no server-side listing); a syntactically-valid-but-nonexistent batch never
@@ -242,7 +243,18 @@ Linux subset fonts break PdfPig's ToUnicode → those are `[SkippableFact]`, ski
   URL still works after); a 25-CIN batch shows as one summarized row; `<noscript>` fallback renders with
   JS disabled; light theme, dark theme, and 400px mobile width all render cleanly.
 - Full suite: 980 passed / 18 skipped (pre-existing) / 0 failed; 77/77 JS tests (`node --test`).
-- → `@codex review`.
+- **PR review round 1 (Codex): the hostile-CIN JSON-island test was a false guarantee, fixed.** The IDOR
+  boundary itself (no server-side batch listing) was confirmed correct, but the regression test for the
+  JSON-island escaping was flagged as ineffective: it found the *first* `</script>` after the island's
+  opening tag and asserted nothing before it contained one — except if the encoder ever emitted the
+  hostile CIN's own literal `</script>` unescaped, that injected tag would simply *be* the first
+  occurrence found, so the test's own slice would end right there and it would trivially pass on the
+  exact vulnerable output. Rewritten to assert against the whole rendered page directly (raw breakout
+  sequence never appears anywhere; the value's escaped form, computed via the same
+  `JsonSerializer.Serialize` the view calls, must appear) and manually verified it actually discriminates
+  — passes against the real default encoder, fails against `JavaScriptEncoder.UnsafeRelaxedJsonEscaping`
+  (checked both directly before committing). New head `aaf3031`, both CI checks green. → `@codex`
+  re-review.
 
 ### 2026-09-13 — Claude session (C9/#120 MERGED — Wave 3 fully closed, all 13 issues shipped)
 - **PR #139 MERGED into `main` as `2ae87fd`.** Issue #120 stayed open after merge (same PR-title-without-
