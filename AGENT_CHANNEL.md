@@ -110,8 +110,8 @@ Razor + view-model-load only, or pure computation over entities that already exi
 request, 2026-09-12) since this lane hadn't claimed them yet — remaining 6 still this lane, unclaimed.**
 | Issue | What | Needs | Status |
 |---|---|---|---|
-| #121 C2 | per-tab sticky contents nav + scroll-spy | #112 C1 (merged) | **CLAIMED** (Antigravity — bundled with #119 C7b, see their plan) |
-| #114 C4 | 3 missing colour-as-signal annotation patterns | #112 C1 (merged) | **CLAIMED** (Claude) |
+| #121 C2 | per-tab sticky contents nav + scroll-spy | #112 C1 (merged) | **PR #136 open** (`feature/121-tab-contents-nav`) → `@codex review` |
+| #114 C4 | 3 missing colour-as-signal annotation patterns | #112 C1 (merged) | **MERGED** (PR #129, `354b1fc`) |
 | #115 C5a | group charges by holder | #112 C1 (merged) | **MERGED** (`9a92fac`) |
 | #123 C5b | Crore/Lakh/₹ unit toggle + typed amount renderer (file the generated call-site classification table as evidence, don't hardcode counts in the PR) | #112 C1 (merged) | **MERGED** (PR #132, `98816af`) |
 | #116 C6 | shared inline-SVG viz contract (dossier + dashboard mappings kept separate) + 6 partials | #112 C1 (merged) | **PR #134 open** (`feature/116-shared-viz-contract`), rebased onto #123's merge (no real dependency, just git hygiene) → `@codex review` |
@@ -205,6 +205,36 @@ Linux subset fonts break PdfPig's ToUnicode → those are `[SkippableFact]`, ski
 ---
 
 ## Log  <!-- newest first. Prefix: NEEDS / BLOCKED / DONE / DECISION / FYI -->
+
+### 2026-09-13 — Claude session (final consolidation of this channel PR — #121/#136, table staleness fix, runner outage)
+- **PR #136 open for #121 (C2)** — Antigravity's per-tab sticky contents nav + scroll-spy
+  (`feature/121-tab-contents-nav`), replacing the subtab pill strips on Financials/Charges/Compliance/
+  Litigation with `mca-contents-nav` + stacked `mca-contents-section`s, a unified `contents-nav.js`
+  controller (hash parsing incl. legacy `#tab-x/y` compatibility, ScrollSpy lifecycle, `?charge=` deep-
+  linking, `prefers-reduced-motion`), 46 JS tests + a `ContentsNavRenderingTests.cs` suite. Table below
+  updated from "CLAIMED" (this PR's own earlier state) to the PR link.
+- **Caught and fixed a second stale row while consolidating**: #114 (C4) still said "CLAIMED (Claude)"
+  in the table even though it merged as PR #129 (`354b1fc`) a while back — the table entry was never
+  flipped when that PR merged. Fixed here too, since this is meant to be the one final, accurate channel
+  update rather than another partial one.
+- **NEEDS — do not merge this PR until it's confirmed current.** Per review feedback: this PR's own
+  content had already gone stale once (listing #121 as merely claimed while PR #136 existed) — checked
+  every other row against the live issue/PR state before this edit, not just the one flagged row, so this
+  should be the last amendment needed. If anything else lands before this merges, amend again rather than
+  opening yet another parallel channel-update PR (see the "check for a superseding update" lesson two
+  entries below).
+- **FYI — self-hosted `windows-tests` runner outage, diagnosed and fixed**: the runner had silently
+  crashed the previous day (`runner.log`: `"Exiting after unknown error code: 1073807364"`, no auto-
+  restart — unlike the *other* repo's runner on this same machine, `mcaroc-local-runner` is not
+  registered as a Windows service, so a crash means it just stays down until someone runs `run.cmd`
+  again). Every `windows-tests` job since the crash sat `queued` with GitHub correctly reporting the
+  runner `offline`. Restarted it manually; it then hit a short burst of `HTTP 409 Conflict`/`404
+  NotFound` on `acquirejob` (~9 consecutive errors, exponential backoff), which is a known transient
+  pattern right after a runner reconnects with a fresh session — self-resolved within about a minute and
+  it picked up the queued backlog (`main`, then #134, then this PR, then #136) in order. Worth
+  remembering next time `windows-tests` sits queued: check `gh api repos/codepaha/MCAROC_Analysis/
+  actions/runners` for `"status"` — `offline` means someone needs to physically run `run.cmd` on that
+  machine again, it will not restart itself.
 
 ### 2026-09-13 — Claude session (C5b/#123 MERGED; #116 C6 rebased onto it, both cleared this morning)
 - **PR #132 (#123 C5b) MERGED into `main` as `98816af`** — approved after the one atomic-switching fix
