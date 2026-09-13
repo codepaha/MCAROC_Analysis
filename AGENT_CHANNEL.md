@@ -130,9 +130,14 @@ request, 2026-09-12) since this lane hadn't claimed them yet — remaining 6 sti
 | Issue | What | Status |
 |---|---|---|
 | #144 | analytics catalogue: confirm A1.x (source-reported ratios) + B12 (charge discharge velocity) — marked `"planned"` but their parent issues (#57, #56) are closed; either stale catalogue rows or a real gap | **CLOSED** (2026-09-13, by owner, right after B12/PR #149 merged) — B12 half done. A1.x's product decision was closed along with it without being resolved; **split out to #152** so it isn't lost |
-| #152 | A1.x follow-up (split from #144): dossier PDF gets only a generic fallback table for the 16 source-reported ratios, not the catalogued multi-year sparkline treatment (portal side is fine, via B1/#39) — owner call needed: accept the fallback as sufficient, or build a real dossier-side treatment | open, unclaimed |
-| #145 | portal never loads `dossier-tokens.css` — `DossierThemeSyncTests` proves the C# constants match a CSS file the browser never fetches, not that the live portal and PDF actually share a palette | open, unclaimed — product-decision, low urgency |
-| #146 | two catalogue rows with no disposition: `GstRegistration.CancellationDate` (vestigial, G17) and Auditors' Comments detail columns (unparsed, G18) — need an owner call: scope as real work, or mark `dropped-by-design` | open, unclaimed |
+| #152 | A1.x follow-up (split from #144): dossier PDF gets only a generic fallback table for the 16 source-reported ratios, not the catalogued multi-year sparkline treatment | **Owner decision: build a real dossier-side treatment.** Claimed, queued after #146b |
+| #145 | portal never loads `dossier-tokens.css` — no proven visual parity between portal and PDF | **Owner decision: build real parity** (wire the portal to the shared palette, or generate both from one source). Claimed, queued after #146b |
+| #146 | two catalogue rows with no disposition: `GstRegistration.CancellationDate` (vestigial, G17) and Auditors' Comments detail columns (unparsed, G18) | **Decided and recorded directly on #146**: G17 → `dropped-by-design` (**PR #155 open**, → @codex review; surfaced a real bug, see **#157**); G18 → scope as real work (planning in progress, extends `AuditorObservation`) |
+
+**Ad hoc, outside EPIC #31 (2026-09-13): correctness bug found while closing #146a, filed as #157.**
+| Issue | What | Status |
+|---|---|---|
+| #157 | `GstRules.cs:21` + `StructuredFactsProvider.cs:111` treat `CancellationDate == null` as "active/not cancelled" — now a permanent false negative since that field is dropped-by-design and will never populate. Rule-engine + chat-facts scope, reserved for Codex/owner | open, unclaimed |
 
 **Ad hoc, outside EPIC #31 (2026-09-13): follow-up from reviewing Antigravity's QA report, filed as #150.**
 | Issue | What | Status |
@@ -242,6 +247,36 @@ Linux subset fonts break PdfPig's ToUnicode → those are `[SkippableFact]`, ski
 - Centralizes GST active-status interpretation in `GstRegistrationStatus.cs`.
 - Treats Cancelled and Inactive source statuses as non-active when no cancellation date exists (`!IsActive(registration)`), resolving false negatives in `GstRules` and `StructuredFactsProvider`.
 - Dedicated unit tests added in `GstRulesTests` and `StructuredFactsProviderTests`; all 14 targeted tests passed.
+
+### 2026-09-13 — Claude session (#146 decision recorded; found + filed #157 — GST cancellation false negative)
+- **Owner walked through the 3 pending product calls (#145, #146a, #146b, #152) and decided all four**:
+  #145 → build real portal/dossier palette parity; #146a (G17) → dropped-by-design; #146b (G18) →
+  scope as real work (entity extension + migration, planning started); #152 (A1.x) → build a real
+  dossier-side multi-year ratio treatment.
+- **Review caught a real gap before #146a could close cleanly**: PR #155's catalogue note said "Owner
+  decision: dropped-by-design" but issue **#146 itself carried no such comment** — still read as
+  awaiting a call. **Fixed**: posted the decision directly on #146 (both halves, #146a and #146b) for
+  traceability independent of any PR body.
+- **That same review surfaced a real, pre-existing correctness bug**, not just a docs gap: marking
+  `GstRegistration.CancellationDate` dropped-by-design means it will *permanently* stay `null` — but
+  `GstRules.cs:21` (`cancelled = ... Where(g => g.CancellationDate is not null)`) and
+  `StructuredFactsProvider.cs:111` (`Count(g => g.CancellationDate is null)` reported as "active") both
+  already assumed this field would eventually be populated. Concretely: the deterministic
+  `GST_REGISTRATION_CANCELLED` rule can **never trigger**, and the chat/RAG GST summary fact always
+  reports 100% of registrations as active, regardless of a registration's real `Status`. **Filed #157**
+  (rule-engine + chat-facts scope, reserved for Codex/owner per the working agreement — not fixed here).
+  Bonus finding while investigating: the same "is this GST status active?" string check already exists
+  as two separate private, byte-identical helpers (`GstRules.IsActiveStatus`,
+  `DossierComputations.IsActiveGstStatus`) — #157's fix should extract one shared helper rather than
+  writing a third copy for `StructuredFactsProvider.cs`.
+- **PR #155 updated** (now `6bfa6de`, rebased past #156): catalogue note itself now states the #157
+  caveat explicitly, so the catalogue's own text doesn't read as "consequence-free."
+- **PR #155 (G17) MERGED into `main` as `0c0268d`.** **#157 also MERGED** (PR #159, `09c0895`, by
+  Codex/owner, logged above) — a shared `GstRegistrationStatus.IsActive`/`IsActiveStatus` helper now
+  centralizes the active/cancelled fallback across findings, dossier metrics, and chat facts.
+  **#146b split out to its own scoped issue, #161** (plan written, not yet claimed/started — follows the
+  exact `AddShareholdingGstAuditorColumns` precedent). **#145 is unclaimed** (no branch/owner assigned)
+  and **#152 is deferred** (a full dossier PDF redesign is coming later, see the entry above).
 
 ### 2026-09-13 — Antigravity (PR #154 MERGED — #150 closed)
 - **PR #154 MERGED into `main` as `459b834`** (approved & verified by Codex after clean rebase onto `03eb3d5`); Issue #150 closed automatically.
