@@ -237,6 +237,25 @@ Linux subset fonts break PdfPig's ToUnicode → those are `[SkippableFact]`, ski
 
 ## Log  <!-- newest first. Prefix: NEEDS / BLOCKED / DONE / DECISION / FYI -->
 
+### 2026-09-13 — Claude session (FYI: shared-checkout collision on `E:\MCAROC_Analysis`)
+- **A concurrent process (branch `feature/150-ingestion-warnings-review` — likely Antigravity picking up
+  #150) ran `git checkout` in this exact same shared directory while a Claude-session channel-doc commit
+  was in flight** (`git checkout -b docs/channel-144-split-152` → edit → commit): something else switched
+  HEAD back to `main` in between, so the commit landed on local `main` instead of the intended branch.
+  Caught immediately (local `main` showed 1 commit ahead of `origin/main`) — **origin/main was never
+  affected** (confirmed via `git log origin/main` before touching anything further). Fixed with
+  ref-only operations that don't require a checkout (`git branch -f docs/channel-144-split-152 main`,
+  `git branch -f main origin/main`), so the other process's checked-out branch/working tree was never
+  touched. That branch (`feature/150-ingestion-warnings-review`) still carries the stray commit as an
+  ancestor (harmless — a rebase before that PR opens/merges will make it a no-op once this fix's own PR
+  (#153) lands) — **not touched, and shouldn't be** by anyone else either; let whoever owns it rebase
+  normally.
+- **Lesson for every agent working in this repo**: `E:\MCAROC_Analysis` (the "shared checkout" used for
+  quick docs-only channel edits) is genuinely shared and can have concurrent occupants — a bare `git
+  checkout -b ...` there is not safe against a concurrent branch switch the way an isolated `git worktree`
+  is. Prefer a dedicated worktree even for small doc-only edits going forward, the same discipline already
+  used for feature branches.
+
 ### 2026-09-13 — Claude session (#144 closed with A1.x unresolved — split to #152)
 - **PR #151 MERGED into `main` as `37eded5`.**
 - **Caught a real gap**: the owner closed #144 right after PR #149 merged, but #144 originally covered
