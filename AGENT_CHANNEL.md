@@ -129,7 +129,8 @@ request, 2026-09-12) since this lane hadn't claimed them yet — remaining 6 sti
 **Ad hoc, outside EPIC #31 (2026-09-13): post-EPIC gap audit, filed as #144–#146. Unclaimed.**
 | Issue | What | Status |
 |---|---|---|
-| #144 | analytics catalogue: confirm A1.x (source-reported ratios) + B12 (charge discharge velocity) — marked `"planned"` but their parent issues (#57, #56) are closed; either stale catalogue rows or a real gap | **B12 half: MERGED** (PR #149, `4be34db`). Issue stays **open** for its A1.x half — confirmed nuanced (portal-side done via B1/#39, dossier-side only gets a generic fallback table, not the catalogued sparkline treatment) — pending a product call, not a code fix |
+| #144 | analytics catalogue: confirm A1.x (source-reported ratios) + B12 (charge discharge velocity) — marked `"planned"` but their parent issues (#57, #56) are closed; either stale catalogue rows or a real gap | **CLOSED** (2026-09-13, by owner, right after B12/PR #149 merged) — B12 half done. A1.x's product decision was closed along with it without being resolved; **split out to #152** so it isn't lost |
+| #152 | A1.x follow-up (split from #144): dossier PDF gets only a generic fallback table for the 16 source-reported ratios, not the catalogued multi-year sparkline treatment (portal side is fine, via B1/#39) — owner call needed: accept the fallback as sufficient, or build a real dossier-side treatment | open, unclaimed |
 | #145 | portal never loads `dossier-tokens.css` — `DossierThemeSyncTests` proves the C# constants match a CSS file the browser never fetches, not that the live portal and PDF actually share a palette | open, unclaimed — product-decision, low urgency |
 | #146 | two catalogue rows with no disposition: `GstRegistration.CancellationDate` (vestigial, G17) and Auditors' Comments detail columns (unparsed, G18) — need an owner call: scope as real work, or mark `dropped-by-design` | open, unclaimed |
 
@@ -235,6 +236,13 @@ Linux subset fonts break PdfPig's ToUnicode → those are `[SkippableFact]`, ski
 ---
 
 ## Log  <!-- newest first. Prefix: NEEDS / BLOCKED / DONE / DECISION / FYI -->
+
+### 2026-09-13 — Claude session (#144 closed with A1.x unresolved — split to #152)
+- **PR #151 MERGED into `main` as `37eded5`.**
+- **Caught a real gap**: the owner closed #144 right after PR #149 merged, but #144 originally covered
+  *two* things (B12, done; A1.x, a genuine open product decision — fallback table vs. a real dossier
+  sparkline). Closing #144 left A1.x untracked. **Filed #152** to carry that decision forward on its own,
+  referencing #144/#149 for context. No code changes — still awaiting the same product call as before.
 
 ### 2026-09-13 — Claude session (PR #149 MERGED — #144's B12 half closed)
 - **PR #149 MERGED into `main` as `4be34db`** (approved at `844d79c` after one review round: capped the
