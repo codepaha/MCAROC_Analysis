@@ -110,15 +110,15 @@ Razor + view-model-load only, or pure computation over entities that already exi
 request, 2026-09-12) since this lane hadn't claimed them yet — remaining 6 still this lane, unclaimed.**
 | Issue | What | Needs | Status |
 |---|---|---|---|
-| #121 C2 | per-tab sticky contents nav + scroll-spy | #112 C1 (merged) | **CLAIMED** (Antigravity — bundled with #119 C7b, see their plan) |
-| #114 C4 | 3 missing colour-as-signal annotation patterns | #112 C1 (merged) | **CLAIMED** (Claude) |
+| #121 C2 | per-tab sticky contents nav + scroll-spy | #112 C1 (merged) | **PR #136 open** (`feature/121-tab-contents-nav`) → `@codex review` |
+| #114 C4 | 3 missing colour-as-signal annotation patterns | #112 C1 (merged) | **MERGED** (PR #129, `354b1fc`) |
 | #115 C5a | group charges by holder | #112 C1 (merged) | **MERGED** (`9a92fac`) |
-| #123 C5b | Crore/Lakh/₹ unit toggle + typed amount renderer (file the generated call-site classification table as evidence, don't hardcode counts in the PR) | #112 C1 (merged) | **CLAIMED** (Claude) |
-| #116 C6 | shared inline-SVG viz contract (dossier + dashboard mappings kept separate) + 6 partials | #112 C1 (merged) | **CLAIMED** (Claude) |
+| #123 C5b | Crore/Lakh/₹ unit toggle + typed amount renderer (file the generated call-site classification table as evidence, don't hardcode counts in the PR) | #112 C1 (merged) | **MERGED** (PR #132, `98816af`) |
+| #116 C6 | shared inline-SVG viz contract (dossier + dashboard mappings kept separate) + 6 partials | #112 C1 (merged) | **MERGED** (PR #134, `7a430ab`) |
 | #117 C7a | in-app PDF viewer, request-scoped + dedup-aware — **Claude reviews the scoping/dedup code before merge** | none | **MERGED** (PR #127, `9b1096b`) |
-| #119 C7b | relocate chat to docked panel, JSON hardening (antiforgery, length limit, error contract) | #117 C7a (merged) | **CLAIMED** (Antigravity, `feature/119-chat-docked-panel`) |
+| #119 C7b | relocate chat to docked panel, JSON hardening (antiforgery, length limit, error contract) | #117 C7a (merged) | **MERGED** (PR #131, `dd33f22`) |
 | #122 C7c | wire the dead Ctrl+K command-palette scaffold | #119 C7b | open |
-| #120 C9 | dashboard restyle — retire Chart.js for #116's SVG partials | #116 C6 | open |
+| #120 C9 | dashboard restyle — retire Chart.js for #116's SVG partials | #116 C6 (merged) | open — now fully unblocked |
 | #124 C10 | print stylesheet — deliberately last | all of the above | open |
 
 ### Sequencing
@@ -205,6 +205,107 @@ Linux subset fonts break PdfPig's ToUnicode → those are `[SkippableFact]`, ski
 ---
 
 ## Log  <!-- newest first. Prefix: NEEDS / BLOCKED / DONE / DECISION / FYI -->
+
+### 2026-09-13 — Claude session (final consolidation of this channel PR — #121/#136, table staleness fix, runner outage)
+- **PR #136 open for #121 (C2)** — Antigravity's per-tab sticky contents nav + scroll-spy
+  (`feature/121-tab-contents-nav`), replacing the subtab pill strips on Financials/Charges/Compliance/
+  Litigation with `mca-contents-nav` + stacked `mca-contents-section`s, a unified `contents-nav.js`
+  controller (hash parsing incl. legacy `#tab-x/y` compatibility, ScrollSpy lifecycle, `?charge=` deep-
+  linking, `prefers-reduced-motion`), 46 JS tests + a `ContentsNavRenderingTests.cs` suite. Table below
+  updated from "CLAIMED" (this PR's own earlier state) to the PR link.
+- **Caught and fixed a second stale row while consolidating**: #114 (C4) still said "CLAIMED (Claude)"
+  in the table even though it merged as PR #129 (`354b1fc`) a while back — the table entry was never
+  flipped when that PR merged. Fixed here too, since this is meant to be the one final, accurate channel
+  update rather than another partial one.
+- **NEEDS — do not merge this PR until it's confirmed current.** Per review feedback: this PR's own
+  content had already gone stale once (listing #121 as merely claimed while PR #136 existed) — checked
+  every other row against the live issue/PR state before this edit, not just the one flagged row, so this
+  should be the last amendment needed. If anything else lands before this merges, amend again rather than
+  opening yet another parallel channel-update PR (see the "check for a superseding update" lesson two
+  entries below).
+- **FYI — self-hosted `windows-tests` runner outage, diagnosed and fixed**: the runner had silently
+  crashed the previous day (`runner.log`: `"Exiting after unknown error code: 1073807364"`, no auto-
+  restart — unlike the *other* repo's runner on this same machine, `mcaroc-local-runner` is not
+  registered as a Windows service, so a crash means it just stays down until someone runs `run.cmd`
+  again). Every `windows-tests` job since the crash sat `queued` with GitHub correctly reporting the
+  runner `offline`. Restarted it manually; it then hit a short burst of `HTTP 409 Conflict`/`404
+  NotFound` on `acquirejob` (~9 consecutive errors, exponential backoff), which is a known transient
+  pattern right after a runner reconnects with a fresh session — self-resolved within about a minute and
+  it picked up the queued backlog (`main`, then #134, then this PR, then #136) in order. Worth
+  remembering next time `windows-tests` sits queued: check `gh api repos/codepaha/MCAROC_Analysis/
+  actions/runners` for `"status"` — `offline` means someone needs to physically run `run.cmd` on that
+  machine again, it will not restart itself.
+
+### 2026-09-13 — Claude session (C6/#116 MERGED — both of Claude's remaining Wave-3 issues now shipped)
+- **PR #134 (#116 C6) MERGED into `main` as `7a430ab`** — the manual browser sparkline check (the one
+  unchecked box in the PR's test plan) was explicitly waived by the reviewer rather than blocking on it.
+  Issue #116 stayed open after merge (title referenced the issue number but used no closing keyword —
+  same gap as #123 the day before) — closed by hand; `Closes #NNN` in the PR body going forward would
+  save this step. Remote branch deleted, local worktree/branch cleaned up.
+- **Claude's entire remaining Wave-3 lane (C5b/#123 + C6/#116) is now fully merged.** Rebased this
+  channel PR (#135) onto the new `main` and #120 (C9)'s row updated to "now fully unblocked" — it was the
+  one issue waiting specifically on #116.
+- **#135 and #136 both need a fresh exact-head CI/status check before either merges** — both PRs' heads
+  moved (this channel PR was just rebased again; #136 sits behind two more merges than when it was
+  opened) — per owner instruction, checking status is not the same as clearing it for merge.
+
+### 2026-09-13 — Claude session (C5b/#123 MERGED; #116 C6 rebased onto it, both cleared this morning)
+- **PR #132 (#123 C5b) MERGED into `main` as `98816af`** — approved after the one atomic-switching fix
+  round below. Issue #123 auto-closed, remote feature branch deleted, local worktree/branch cleaned up.
+  Closes out Claude's C5b work entirely.
+- **PR #134 (#116 C6) rebased onto the new `main`** (3 commits — #123's merge) — clean, no conflicts
+  (the two PRs touched `_FinancialsTab.cshtml`'s Summary section on adjacent but non-overlapping lines:
+  #123 wrapped the existing KPI cards in `_Amount`, #116 added the new Revenue Trend section right after
+  them). Rebuilt and reverified after the rebase: `node --test` 37/37; the full local `dotnet test` run
+  hung well past its usual ~1min (6 concurrent `dotnet.exe` processes on the box, likely contention with
+  another session) — per this file's own testing note, stopped it and trusted the targeted filter instead
+  (125/125 across every C5b + C6 + `MetricResultTests` suite) plus CI for the full sweep, rather than
+  burning more time forcing the full local run through. No functional dependency between C6 and C5b (both
+  only need #112 C1) — the rebase is git hygiene, not a real blocker relationship.
+- **Consolidated the two open docs-only channel PRs**: #133 (`docs/channel-123-update`) was a strict
+  subset of #135 (`docs/channel-116-update`) — closed #133 as superseded and deleted its branch, kept
+  #135 as the one channel PR, updated here to reflect #123's actual merge (was still saying "PR #132
+  open" before this edit). Lesson: when two scratch-worktree channel updates land close together, check
+  whether the later one already subsumes the earlier one before letting both sit open — they'll otherwise
+  both go stale the moment either the real PR or the channel doc moves again.
+
+### 2026-09-12 — Claude session (PR #134 open for #116 C6 — shared inline-SVG viz contract)
+- **PR #132 (#123 C5b) — Codex review round 1 fixed and re-requested.** Blocker: `amount-unit.js` caught
+  a per-element conversion failure but only `console.error`'d it, leaving that element's stale Crore
+  text in place while every `[data-amount-unit-label]` still flipped to the new unit — a page could show
+  "₹… Cr" next to a header already saying "₹ Lakh". Fixed by splitting the switch into a pure planning
+  step (`planUnitSwitch` — computes every element's new text, throws before touching the DOM if even one
+  value fails) and a commit step (`applyPlan`) that only runs once planning fully succeeds. On failure:
+  the radio reverts to the previous unit, a `role="alert"` banner appears, and — the actual fix — every
+  element (including ones that would have converted fine) stays untouched. New `amount-unit.test.js` (5
+  cases) proves this for an over-precision value and an unknown label variant. Also rebased onto `main`
+  (10 commits behind — #112/#113/#114/#118/#119/#127 all landed since this branch's base); only real
+  conflict was `ci.yml`'s JS test-runner line, kept the glob. Head is now `19e7011`, both CI jobs green,
+  re-requested `@codex review`.
+- **PR #134 open** (`feature/116-shared-viz-contract`, → Closes #116): built to the same approved plan
+  (`serene-whistling-wave.md`) as #123. New `Models/Viz/ChartPeriod` (factory-only: `ForFinancialYear`/
+  `ForDate`, no public constructor to bypass them — a blank label or a SortKey/ActualDate mismatch is not
+  constructible), `ChartTimePoint`, `ChartSeries` (fail-closed `Create()`, mirrors `MetricResult`'s own
+  constructor discipline — rejects a blank label, no provenance, zero points, duplicate periods,
+  `MetricUnit.Text`/`Unspecified`). Reference implementation: `DossierComputations.BuildRevenueTrendSeries`
+  → a new `Details/_Sparkline.cshtml` partial wired into `_FinancialsTab.cshtml`'s Summary — a real,
+  used feature. The SVG geometry (index-based x-positions, y-scale from the series' own actual range,
+  segments broken at null gaps, a sign-crossing baseline) lives in a separate pure `SparklineGeometry`
+  helper, independently unit-tested. Extracted `MetricUnitFormat` out of `MetricResult.DisplayValue()` so
+  it and the sparkline's fallback table share one formatter, per the plan's review requirement.
+  `DashboardChartMapping.ToChartSeries` proves the contract serves the Dashboard's real weekly/monthly
+  dates too (unit-tested only, `Index.cshtml` untouched — that's C9/#120). A sibling
+  `ChartCategorySeries`/`ChartCategoryPoint` shape is defined for the 5 deferred partials, not wired to
+  anything yet, per the issue's own scope.
+  - **Self-caught bug, fixed before it shipped**: `DashboardChartMapping`'s date labels used
+    `.ToString("MMM yyyy")` with no explicit culture — non-deterministic across machines (renders "Sept"
+    instead of "Sep" under some cultures' calendar data), the exact same ambient-culture pitfall #123/C5b
+    hit with `DetailsFormat.Money()`. A test caught it immediately; fixed with explicit
+    `CultureInfo.InvariantCulture`.
+  - Full suite (Release): 881 passed / 18 skipped (fixture-dependent) / 0 failed. `@codex review`
+    requested.
+- **Both C5b and C6 (Claude's remaining Wave-3 lane) are now in review in parallel** — #123 mid-fix-cycle,
+  #116 freshly opened. Next up once either clears: nothing else is currently claimed in Claude's lane.
 
 ### 2026-09-12 — Antigravity (DONE #119 C7b: Required ClientTurnId + Durable InReplyToChatMessageId Linkage)
 - **DONE #119 (C7b)**: Resolved re-review blockers regarding optional client IDs and unlinked assistant turns (PR #131).
