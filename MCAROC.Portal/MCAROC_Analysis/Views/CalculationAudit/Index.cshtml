@@ -1,0 +1,277 @@
+@model MCAROC_Analysis.Models.CalculationAssurance.CalculationAuditPageModel
+@using MCAROC_Analysis.Data.Entities
+@{
+    ViewData["Title"] = "Calculation Audit";
+}
+
+<div class="d-flex flex-wrap justify-content-between align-items-start gap-3 mb-3">
+    <div>
+        <h1 class="h4 mb-0">Internal calculation audit</h1>
+        <div class="text-muted">@Model.CompanyName &middot; @Model.RequestNumber &middot; Request #@Model.RequestId</div>
+    </div>
+    <a class="btn btn-outline-secondary btn-sm" asp-controller="Requests" asp-action="Details" asp-route-id="@Model.RequestId">
+        <i class="bi bi-arrow-left me-1"></i>Back to request
+    </a>
+</div>
+
+@if (TempData["CalcAuditError"] is string err)
+{
+    <div class="alert alert-danger">@err</div>
+}
+
+@if (Model.Snapshots.Count == 0)
+{
+    <div class="alert alert-secondary">No calculation-assurance snapshot exists yet for this request — either the feature was Off when this request was last analyzed, or analysis hasn't completed.</div>
+    return;
+}
+
+@if (Model.Snapshots.Count > 1)
+{
+    <form method="get" class="d-flex align-items-center gap-2 mb-3">
+        <label class="form-label mb-0 small text-muted">Snapshot</label>
+        <select name="snapshotId" class="form-select form-select-sm w-auto" onchange="this.form.submit()">
+            @foreach (var s in Model.Snapshots)
+            {
+                <option value="@s.CalculationAuditSnapshotId" selected="@(s.CalculationAuditSnapshotId == Model.Selected!.CalculationAuditSnapshotId)">
+                    @s.CreatedUtc.ToString("yyyy-MM-dd HH:mm") UTC (ingestion #@s.IngestionRunId, analysis #@s.AnalysisRunId)@(s.IsCurrent ? " — current" : "")
+                </option>
+            }
+        </select>
+    </form>
+}
+else
+{
+    <div class="text-muted small mb-3">Snapshot: @Model.Selected!.CreatedUtc.ToString("yyyy-MM-dd HH:mm") UTC (ingestion #@Model.Selected.IngestionRunId, analysis #@Model.Selected.AnalysisRunId)</div>
+}
+
+@functions {
+    string SeverityBadge(CalculationDiscrepancySeverity? severity) => severity switch
+    {
+        CalculationDiscrepancySeverity.Critical => "bg-danger",
+        CalculationDiscrepancySeverity.Material => "bg-warning text-dark",
+        CalculationDiscrepancySeverity.Minor => "bg-secondary",
+        _ => "bg-light text-dark border"
+    };
+
+    string StatusBadge(CalculationDiscrepancyStatus status) => status switch
+    {
+        CalculationDiscrepancyStatus.Confirmed => "bg-danger",
+        CalculationDiscrepancyStatus.Open or CalculationDiscrepancyStatus.Triaged => "bg-warning text-dark",
+        CalculationDiscrepancyStatus.Rejected => "bg-secondary",
+        CalculationDiscrepancyStatus.AcceptedAsSourceException => "bg-info text-dark",
+        CalculationDiscrepancyStatus.FixedPendingReaudit => "bg-primary",
+        CalculationDiscrepancyStatus.Resolved => "bg-success",
+        _ => "bg-light text-dark border"
+    };
+}
+
+<div class="card mb-3">
+    <div class="card-header">Calculation ledger (@Model.LedgerEntries.Count entries)</div>
+    <div class="card-body p-0" style="max-height: 320px; overflow-y: auto;">
+        <table class="table table-sm table-striped mb-0">
+            <thead><tr><th>Key</th><th>Period</th><th>Value</th><th>Provenance</th></tr></thead>
+            <tbody>
+                @foreach (var e in Model.LedgerEntries)
+                {
+                    <tr>
+                        <td><code class="small">@e.CalculationKey</code><div class="small text-muted">@e.MetricLabel</div></td>
+                        <td>@e.Period</td>
+                        <td>
+                            @if (e.InsufficiencyReason is not null)
+                            {
+                                <span class="text-muted fst-italic">Not evaluated — @e.InsufficiencyReason</span>
+                            }
+                            else
+                            {
+                                @(e.ValueNumeric?.ToString("N2") ?? e.ValueText ?? "—")
+                            }
+                        </td>
+                        <td>
+                            @if (e.HasUnresolvedProvenance)
+                            {
+                                <span class="badge bg-warning text-dark">Unresolved</span>
+                            }
+                            else
+                            {
+                                <span class="badge bg-success">Traced</span>
+                            }
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<div class="card mb-3">
+    <div class="card-header">Deterministic checks (@Model.CheckResults.Count)</div>
+    <div class="card-body p-0">
+        <table class="table table-sm mb-0">
+            <thead><tr><th>Check</th><th>Status</th><th>Severity</th><th>Detail</th></tr></thead>
+            <tbody>
+                @foreach (var c in Model.CheckResults)
+                {
+                    <tr>
+                        <td><code class="small">@c.CheckKey</code></td>
+                        <td>
+                            @{
+                                var badge = c.Status switch
+                                {
+                                    CalculationCheckStatus.Triggered => "bg-danger",
+                                    CalculationCheckStatus.NotTriggered => "bg-success",
+                                    _ => "bg-secondary"
+                                };
+                            }
+                            <span class="badge @badge">@c.Status</span>
+                        </td>
+                        <td>@if (c.Severity is { } sev) { <span class="badge @SeverityBadge(sev)">@sev</span> }</td>
+                        <td class="small text-muted">@(c.NotEvaluatedReason ?? c.DetailJson)</td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+</div>
+
+@if (Model.AiAuditRun is { } run)
+{
+    <div class="card mb-3">
+        <div class="card-header">AI second-line review</div>
+        <div class="card-body small">
+            <span class="badge bg-light text-dark border me-2">@run.Status</span>
+            Sent @run.LedgerEntryCountSent row(s) &middot;
+            @run.RawCandidateCountReturned candidate(s) returned, @run.ValidatedCandidateCountAccepted accepted
+            @if (run.FailureReason is not null)
+            {
+                <div class="text-danger mt-1">@run.FailureReason</div>
+            }
+        </div>
+    </div>
+}
+
+<div class="card">
+    <div class="card-header">Discrepancies (@Model.Discrepancies.Count)</div>
+    <div class="card-body">
+        @if (Model.Discrepancies.Count == 0)
+        {
+            <p class="text-muted mb-0">No discrepancies recorded for this snapshot.</p>
+        }
+        @foreach (var row in Model.Discrepancies)
+        {
+            var d = row.Discrepancy;
+            <div class="border rounded p-3 mb-3">
+                <div class="d-flex flex-wrap justify-content-between align-items-start gap-2 mb-2">
+                    <div>
+                        <span class="badge @StatusBadge(d.Status) me-1">@d.Status</span>
+                        <span class="badge bg-light text-dark border me-1">@d.SourceType</span>
+                        @if (d.Severity is { } severity) { <span class="badge @SeverityBadge(severity) me-1">@severity</span> }
+                        @if (row.HasActiveHold) { <span class="badge bg-dark">HOLDING DELIVERY</span> }
+                    </div>
+                    <div class="small text-muted">
+                        @(d.OriginCheckKey ?? "AI candidate") &middot; ledger:
+                        <code>@(row.PrimaryLedgerEntry?.CalculationKey ?? $"#{d.PrimaryLedgerEntryId}")</code>
+                    </div>
+                </div>
+                <p class="mb-2">@d.ClaimSummary</p>
+                @if (d.ClaimedExpectedValue is not null || d.ClaimedActualValue is not null)
+                {
+                    <p class="small text-muted mb-2">Expected: @(d.ClaimedExpectedValue?.ToString("N2") ?? "—") &middot; Actual: @(d.ClaimedActualValue?.ToString("N2") ?? "—")</p>
+                }
+                @if (d.ExceptionReason is not null)
+                {
+                    <p class="small mb-2"><strong>Exception reason:</strong> @d.ExceptionReason</p>
+                }
+
+                @if (row.Approvals.Count > 0)
+                {
+                    <details class="mb-2">
+                        <summary class="small text-muted">Approval history (@row.Approvals.Count)</summary>
+                        <table class="table table-sm mt-2">
+                            <thead><tr><th>When</th><th>Reviewer</th><th>Decision</th><th>Notes</th></tr></thead>
+                            <tbody>
+                                @foreach (var a in row.Approvals)
+                                {
+                                    <tr>
+                                        <td class="small">@a.DecidedUtc.ToString("yyyy-MM-dd HH:mm")</td>
+                                        <td class="small">@a.ReviewerName</td>
+                                        <td class="small">@a.DecisionAction@(a.ProposedSeverity is { } ps ? $" ({ps})" : "")</td>
+                                        <td class="small text-muted">@a.ReviewerNotes</td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </details>
+                }
+
+                @{
+                    var isAiOpenOrTriaged = d.SourceType == CalculationDiscrepancySourceType.AiCandidate
+                        && d.Status is CalculationDiscrepancyStatus.Open or CalculationDiscrepancyStatus.Triaged;
+                }
+                @if (isAiOpenOrTriaged)
+                {
+                    <div class="d-flex flex-wrap gap-2">
+                        @if (d.Status == CalculationDiscrepancyStatus.Open)
+                        {
+                            <form method="post" action="@Url.Action("Triage", "CalculationAudit", new { id = d.CalculationDiscrepancyId })" class="d-flex gap-1 align-items-center">
+                                @Html.AntiForgeryToken()
+                                <input type="hidden" name="requestId" value="@Model.RequestId" />
+                                <input type="text" name="reviewerName" class="form-control form-control-sm" placeholder="Your name" required style="width:120px" />
+                                <button type="submit" class="btn btn-sm btn-outline-secondary">Triage</button>
+                            </form>
+                        }
+                        <form method="post" action="@Url.Action("Confirm", "CalculationAudit", new { id = d.CalculationDiscrepancyId })" class="d-flex gap-1 align-items-center">
+                            @Html.AntiForgeryToken()
+                            <input type="hidden" name="requestId" value="@Model.RequestId" />
+                            <input type="text" name="reviewerName" class="form-control form-control-sm" placeholder="Your name" required style="width:120px" />
+                            <select name="severity" class="form-select form-select-sm" style="width:110px">
+                                <option value="@CalculationDiscrepancySeverity.Minor">Minor</option>
+                                <option value="@CalculationDiscrepancySeverity.Material">Material</option>
+                                <option value="@CalculationDiscrepancySeverity.Critical">Critical</option>
+                            </select>
+                            <button type="submit" class="btn btn-sm btn-danger">Confirm</button>
+                        </form>
+                        <form method="post" action="@Url.Action("Reject", "CalculationAudit", new { id = d.CalculationDiscrepancyId })" class="d-flex gap-1 align-items-center">
+                            @Html.AntiForgeryToken()
+                            <input type="hidden" name="requestId" value="@Model.RequestId" />
+                            <input type="text" name="reviewerName" class="form-control form-control-sm" placeholder="Your name" required style="width:120px" />
+                            <input type="text" name="reason" class="form-control form-control-sm" placeholder="Reason" required style="width:160px" />
+                            <button type="submit" class="btn btn-sm btn-outline-secondary">Reject</button>
+                        </form>
+                    </div>
+                }
+                @if (d.Status == CalculationDiscrepancyStatus.Confirmed)
+                {
+                    <div class="d-flex flex-wrap gap-2">
+                        @if (d.Severity == CalculationDiscrepancySeverity.Material)
+                        {
+                            <form method="post" action="@Url.Action("AcceptException", "CalculationAudit", new { id = d.CalculationDiscrepancyId })" class="d-flex gap-1 align-items-center">
+                                @Html.AntiForgeryToken()
+                                <input type="hidden" name="requestId" value="@Model.RequestId" />
+                                <input type="text" name="reviewerName" class="form-control form-control-sm" placeholder="Your name" required style="width:120px" />
+                                <input type="text" name="exceptionReason" class="form-control form-control-sm" placeholder="Documented exception reason" required style="width:220px" />
+                                <button type="submit" class="btn btn-sm btn-info">Accept exception</button>
+                            </form>
+                        }
+                        <form method="post" action="@Url.Action("MarkFixedPendingReaudit", "CalculationAudit", new { id = d.CalculationDiscrepancyId })" class="d-flex gap-1 align-items-center">
+                            @Html.AntiForgeryToken()
+                            <input type="hidden" name="requestId" value="@Model.RequestId" />
+                            <input type="text" name="reviewerName" class="form-control form-control-sm" placeholder="Your name" required style="width:120px" />
+                            <input type="text" name="notes" class="form-control form-control-sm" placeholder="Notes (optional)" style="width:180px" />
+                            <button type="submit" class="btn btn-sm btn-primary">Mark fixed, pending re-audit</button>
+                        </form>
+                    </div>
+                }
+                @if (d.Status == CalculationDiscrepancyStatus.FixedPendingReaudit)
+                {
+                    <form method="post" action="@Url.Action("Resolve", "CalculationAudit", new { id = d.CalculationDiscrepancyId })" class="d-flex gap-1 align-items-center">
+                        @Html.AntiForgeryToken()
+                        <input type="hidden" name="requestId" value="@Model.RequestId" />
+                        <input type="text" name="reviewerName" class="form-control form-control-sm" placeholder="Your name" required style="width:120px" />
+                        <input type="text" name="notes" class="form-control form-control-sm" placeholder="Notes (optional)" style="width:220px" />
+                        <button type="submit" class="btn btn-sm btn-success">Resolve</button>
+                    </form>
+                }
+            </div>
+        }
+    </div>
+</div>
