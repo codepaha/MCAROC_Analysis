@@ -37,12 +37,26 @@ public class ChunkStreamingAndRecoveryTests : IAsyncLifetime
 
         var token = "token123";
         var hashedToken = ChunkStreamingService.ComputeTokenHash(token);
-        var sessionId = Guid.NewGuid();
+        var req = await db.Requests.FirstOrDefaultAsync();
+        if (req == null)
+        {
+            req = new McaRequest
+            {
+                RequestNumber = "REQ-" + Guid.NewGuid().ToString("N")[..8],
+                CompanyName = "Chunk Test Co",
+                Cin = "U12345MH2026PTC888888",
+                RequestStatus = RequestStatus.Created,
+                CreatedDate = DateTime.UtcNow
+            };
+            db.Requests.Add(req);
+            await db.SaveChangesAsync();
+        }
 
+        var sessionId = Guid.NewGuid();
         var session = new LargeArchiveUploadSession
         {
             SessionId = sessionId,
-            RequestId = 1,
+            RequestId = req.RequestId,
             HashedCapabilityToken = hashedToken,
             OriginalFileName = "archive.zip",
             TotalExpectedSizeBytes = 200,

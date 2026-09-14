@@ -50,6 +50,12 @@ public class LargeArchiveUploadOptions
     /// <summary>Heartbeat renewal interval for active workers / uploaders.</summary>
     public TimeSpan HeartbeatInterval { get; set; } = TimeSpan.FromSeconds(60);
 
+    /// <summary>Base delay before re-enqueueing an unpack batch when the operational slot is busy.</summary>
+    public TimeSpan SlotRetryDelay { get; set; } = TimeSpan.FromSeconds(5);
+
+    /// <summary>Maximum capped delay before re-enqueueing an unpack batch during slot contention.</summary>
+    public TimeSpan MaxSlotRetryDelay { get; set; } = TimeSpan.FromSeconds(30);
+
     /// <summary>Calculates the worst-case space budget required on the destination volume for an archive of the given declared size.</summary>
     public long CalculateDestinationVolumeWorstCaseBytes(long declaredArchiveSizeBytes)
     {

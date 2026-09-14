@@ -30,6 +30,7 @@ public class FilingBatchProcessor(
     {
         var holderId = batchId.ToString();
         var leaseDuration = TimeSpan.FromMinutes(5);
+        bool slotAcquired = false;
 
         // 1. Acquire LargeUnpackSlot before unpack begins
         if (slotLeaseService is not null)
@@ -43,8 +44,12 @@ public class FilingBatchProcessor(
             if (!leaseResult.Success)
             {
                 logger.LogWarning("Cannot begin unpack for batch {BatchId}: {Error}", batchId, leaseResult.Error);
-                throw new InvalidOperationException($"Cannot acquire '{OperationalSlotLeaseService.LargeUnpackSlot}' slot lease: {leaseResult.Error}");
+                throw new OperationalSlotBusyException(
+                    OperationalSlotLeaseService.LargeUnpackSlot,
+                    leaseResult.HolderId,
+                    $"Cannot acquire '{OperationalSlotLeaseService.LargeUnpackSlot}' slot lease: {leaseResult.Error}");
             }
+            slotAcquired = true;
         }
 
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
@@ -153,7 +158,7 @@ public class FilingBatchProcessor(
             }
 
             // 3. Release LargeUnpackSlot in all terminal paths
-            if (slotLeaseService is not null)
+            if (slotAcquired && slotLeaseService is not null)
             {
                 try
                 {

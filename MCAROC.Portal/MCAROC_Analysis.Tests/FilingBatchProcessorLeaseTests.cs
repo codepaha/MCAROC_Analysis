@@ -5,7 +5,9 @@ using MCAROC_Analysis.Data.Entities;
 using MCAROC_Analysis.Services.Chat;
 using MCAROC_Analysis.Services.McaFilings;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 using Xunit;
 
 namespace MCAROC_Analysis.Tests;
@@ -152,10 +154,12 @@ public class FilingBatchProcessorLeaseTests : IAsyncLifetime
             Assert.True(lease1.Success, lease1.Error);
 
             // 2. Batch 2 attempts UnpackBatchAsync while Batch 1 holds the lease
-            var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            var ex = await Assert.ThrowsAsync<OperationalSlotBusyException>(() =>
                 processor.UnpackBatchAsync(batch2.BatchId, CancellationToken.None));
 
             Assert.Contains("Cannot acquire 'LargeUnpack' slot lease", ex.Message);
+            Assert.Equal("LargeUnpack", ex.SlotType);
+            Assert.Equal(holder1, ex.ActiveHolderId);
 
             // 3. Prove Batch 2 did NOT begin unpack: status remains Uploaded (not Unpacking)
             var updatedBatch2 = await db.McaFilingBatches.AsNoTracking().FirstAsync(b => b.BatchId == batch2.BatchId);
@@ -239,6 +243,140 @@ public class FilingBatchProcessorLeaseTests : IAsyncLifetime
         }
         finally
         {
+            try { Directory.Delete(tempDir, recursive: true); } catch { }
+            await db.McaFilingBatches.Where(b => b.BatchId == batch.BatchId).ExecuteDeleteAsync();
+            await db.RequestDocuments.Where(d => d.DocumentId == doc.DocumentId).ExecuteDeleteAsync();
+            await db.OperationalSlotLeases.Where(s => s.SlotType == OperationalSlotLeaseService.LargeUnpackSlot).ExecuteDeleteAsync();
+        }
+    }
+
+    [Fact]
+    public async Task Worker_BlockedBatch_ProceedsAfterHolderReleasesSlot_WithoutRestart()
+    {
+        await using var db = CreateContext();
+        var requestId = await EnsureTestRequestAsync(db);
+
+        var tempDir = Path.Combine(Path.GetTempPath(), "unpack-worker-lease-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tempDir);
+
+        var zipPath = Path.Combine(tempDir, "worker-batch.zip");
+        var sha = CreateValidOuterZip(zipPath);
+
+        var doc = new RequestDocument
+        {
+            RequestId = requestId,
+            DocumentType = DocumentType.McaFilingsArchive,
+            OriginalFileName = "worker-batch.zip",
+            StoredFileName = "worker-batch.zip",
+            StoragePath = zipPath,
+            FileSize = new FileInfo(zipPath).Length,
+            FileHash = sha,
+            UploadStatus = DocumentUploadStatus.Uploaded,
+            UploadedDate = DateTime.UtcNow,
+            IsActiveSource = false
+        };
+        db.RequestDocuments.Add(doc);
+        await db.SaveChangesAsync();
+
+        var batch = new McaFilingBatch
+        {
+            RequestId = requestId,
+            SourceDocumentId = doc.DocumentId,
+            Status = FilingBatchStatus.Uploaded,
+            StartedDate = DateTime.UtcNow
+        };
+        db.McaFilingBatches.Add(batch);
+        await db.SaveChangesAsync();
+
+        // 1. Initial holder acquires the LargeUnpackSlot, simulating another active unpack in progress
+        const string initialHolder = "active-unpack-worker-1";
+        await using (var setupDb = CreateContext())
+        {
+            var setupSlotService = new OperationalSlotLeaseService(setupDb, NullLogger<OperationalSlotLeaseService>.Instance);
+            var initialLease = await setupSlotService.TryAcquireSlotAsync(
+                OperationalSlotLeaseService.LargeUnpackSlot,
+                initialHolder,
+                TimeSpan.FromMinutes(5));
+            Assert.True(initialLease.Success, initialLease.Error);
+        }
+
+        // 2. Set up worker with DI scope, shared queue, and bounded 150ms retry delay
+        var queue = new FilingProcessingQueue();
+        var chunkQueue = new DocumentChunkingQueue();
+
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddDbContext<AppDbContext>(o => o.UseSqlServer(ConnectionString));
+        services.AddSingleton(queue);
+        services.AddSingleton(chunkQueue);
+        services.AddScoped<IOperationalSlotLeaseService, OperationalSlotLeaseService>();
+        services.AddScoped(sp => new FilingBatchProcessor(
+            sp.GetRequiredService<AppDbContext>(),
+            tempDir,
+            null,
+            null,
+            sp.GetRequiredService<FilingProcessingQueue>(),
+            sp.GetRequiredService<DocumentChunkingQueue>(),
+            NullLogger<FilingBatchProcessor>.Instance,
+            sp.GetRequiredService<IOperationalSlotLeaseService>()));
+        services.AddScoped<IStorageReservationManager, StorageReservationManager>();
+        services.AddScoped<FinalizationRecoveryService>();
+        services.AddSingleton(Options.Create(new LargeArchiveUploadOptions
+        {
+            SlotRetryDelay = TimeSpan.FromMilliseconds(150),
+            MaxSlotRetryDelay = TimeSpan.FromSeconds(1)
+        }));
+
+        var serviceProvider = services.BuildServiceProvider();
+        var scopeFactory = serviceProvider.GetRequiredService<IServiceScopeFactory>();
+
+        var worker = new FilingProcessingWorker(
+            scopeFactory,
+            queue,
+            NullLogger<FilingProcessingWorker>.Instance,
+            serviceProvider.GetRequiredService<IOptions<LargeArchiveUploadOptions>>());
+
+        using var workerCts = new CancellationTokenSource();
+        await worker.StartAsync(workerCts.Token);
+
+        try
+        {
+            // 3. Enqueue the batch while slot is held
+            queue.Enqueue(new UnpackBatchWorkItem(batch.BatchId));
+
+            // Wait for worker to dequeue, hit slot contention, and stand down
+            await Task.Delay(500);
+
+            // 4. Batch must retain Uploaded state in DB (not Failed, not Unpacking)
+            var batchAfterContention = await db.McaFilingBatches.AsNoTracking().FirstAsync(b => b.BatchId == batch.BatchId);
+            Assert.Equal(FilingBatchStatus.Uploaded, batchAfterContention.Status);
+
+            // 5. Release the slot from the initial holder
+            await using (var releaseDb = CreateContext())
+            {
+                var releaseSlotService = new OperationalSlotLeaseService(releaseDb, NullLogger<OperationalSlotLeaseService>.Instance);
+                await releaseSlotService.ReleaseSlotAsync(OperationalSlotLeaseService.LargeUnpackSlot, initialHolder);
+            }
+
+            // 6. Prove the blocked batch automatically resumes and proceeds without restarting the application
+            var deadline = DateTime.UtcNow.AddSeconds(20);
+            FilingBatchStatus finalStatus = FilingBatchStatus.Uploaded;
+            while (DateTime.UtcNow < deadline)
+            {
+                await Task.Delay(100);
+                var current = await db.McaFilingBatches.AsNoTracking().FirstAsync(b => b.BatchId == batch.BatchId);
+                finalStatus = current.Status;
+                if (finalStatus == FilingBatchStatus.Processing || finalStatus == FilingBatchStatus.Completed)
+                    break;
+            }
+
+            Assert.True(
+                finalStatus == FilingBatchStatus.Processing || finalStatus == FilingBatchStatus.Completed,
+                $"Expected batch {batch.BatchId} to proceed to Processing or Completed after slot release, but status was {finalStatus}");
+        }
+        finally
+        {
+            await worker.StopAsync(CancellationToken.None);
             try { Directory.Delete(tempDir, recursive: true); } catch { }
             await db.McaFilingBatches.Where(b => b.BatchId == batch.BatchId).ExecuteDeleteAsync();
             await db.RequestDocuments.Where(d => d.DocumentId == doc.DocumentId).ExecuteDeleteAsync();
