@@ -245,6 +245,26 @@ Linux subset fonts break PdfPig's ToUnicode → those are `[SkippableFact]`, ski
 
 ## Log  <!-- newest first. Prefix: NEEDS / BLOCKED / DONE / DECISION / FYI -->
 
+### 2026-09-14 — Claude session (PR #171 MERGED to `main`; PR3 (AI worker) unpaused)
+- **PR #171 MERGED into `main` as `b16398b`** at reviewed head `33a802f` — independent review found no
+  source blocker (unique check-result constraint and concurrent-run handling both confirmed covered), both
+  hosted checks green, 3/3 focused local tests passed including the concurrent-run regression.
+- Between the rebase log entry below and the merge, one more CI failure surfaced on this exact run after
+  the runner's `dbcreator` grant was applied: `Database 'MCAROC_Analysis_Test' already exists`. Not a race
+  condition — the local `MCAROC_Analysis_Test` database on the shared `.\SQLEXPRESS` instance had been
+  created under the old interactive `cubic` identity; once the runner's service identity moved to `SYSTEM`
+  (per the Scheduled Task fix), `SYSTEM` tried to create the database fresh and collided with the
+  pre-existing one it didn't own. Fixed by dropping the stale database (`sqlcmd` `DROP DATABASE`) so
+  `SYSTEM` could create it cleanly on the rerun — passed immediately after. Filed as an infra lesson:
+  **a runner identity change invalidates any locally-owned shared test database on that host**, not just
+  its SQL Server role membership.
+- **DECISION: PR3 (AI worker) is unpaused.** Both #164 PR1 and PR2 are now merged to `main` with
+  independent reviews on each exact merged head — the standing pre-condition from the pause decision is
+  satisfied. Starting PR3 on a fresh branch (`feature/164-ai-audit-worker`) off latest `main` (`b16398b`),
+  per §3/§8 of the approved plan (Vertex AI/Gemini worker mirroring `AnalysisQueue`/`AnalysisWorker`/
+  `AnalysisOrchestrator`: atomic claim, bounded prompt, deterministic candidate validator, no
+  `CalculationDiscrepancy` ever gets a hold directly from an AI run).
+
 ### 2026-09-14 — Claude session (PR #170 MERGED to `main`; #171 rebased and retargeted; runner infra fixed)
 - **PR #170 MERGED into `main` as `7ec1746`** after round 6's `SecurityTypeLabels`/`McaDataAsOf` fix —
   both required checks green (`build-and-test`, `windows-tests`) at the reviewed head (`13c328e`). Six full
