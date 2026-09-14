@@ -154,6 +154,34 @@ builder.Services.AddAntiforgery(options =>
     options.HeaderName = "RequestVerificationToken";
 });
 
+// #164 internal calculation-audit access gate — a feature-scoped cookie scheme, deliberately NOT the
+// application's default authentication scheme (AddAuthentication() with no scheme name argument). Every
+// existing endpoint in this app stays exactly as unauthenticated as it is today; only
+// [Authorize(AuthenticationSchemes = "InternalReviewer")] on CalculationAuditController is affected.
+builder.Services.AddAuthentication()
+    .AddCookie("InternalReviewer", o =>
+    {
+        o.LoginPath = "/internal/login";
+        o.Cookie.Name = "mcaroc_internal_auth";
+        o.Cookie.HttpOnly = true;
+        o.Cookie.SecurePolicy = CookieSecurePolicy.Always;
+        o.Cookie.SameSite = SameSiteMode.Strict;
+        o.ExpireTimeSpan = TimeSpan.FromHours(8);
+        o.SlidingExpiration = true;
+    });
+builder.Services.AddRateLimiter(options =>
+{
+    options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+    options.AddPolicy("InternalLogin", httpContext => System.Threading.RateLimiting.RateLimitPartition.GetFixedWindowLimiter(
+        httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+        _ => new System.Threading.RateLimiting.FixedWindowRateLimiterOptions
+        {
+            PermitLimit = 5,
+            Window = TimeSpan.FromMinutes(5),
+            QueueLimit = 0
+        }));
+});
+
 var app = builder.Build();
 
 // Register the bundled Fraunces / IBM Plex fonts with QuestPDF so the dossier renders identically
@@ -170,7 +198,9 @@ if (!app.Environment.IsDevelopment())
 
 app.UseHttpsRedirection();
 app.UseRouting();
+app.UseRateLimiter();
 
+app.UseAuthentication();
 app.UseAuthorization();
 
 var staticFileContentTypeProvider = new Microsoft.AspNetCore.StaticFiles.FileExtensionContentTypeProvider();

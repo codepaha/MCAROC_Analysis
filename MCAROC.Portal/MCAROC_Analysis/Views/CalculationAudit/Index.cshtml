@@ -9,9 +9,16 @@
         <h1 class="h4 mb-0">Internal calculation audit</h1>
         <div class="text-muted">@Model.CompanyName &middot; @Model.RequestNumber &middot; Request #@Model.RequestId</div>
     </div>
-    <a class="btn btn-outline-secondary btn-sm" asp-controller="Requests" asp-action="Details" asp-route-id="@Model.RequestId">
-        <i class="bi bi-arrow-left me-1"></i>Back to request
-    </a>
+    <div class="d-flex align-items-center gap-2">
+        <span class="small text-muted">Signed in as @(User.Identity?.Name)</span>
+        <a class="btn btn-outline-secondary btn-sm" asp-controller="Requests" asp-action="Details" asp-route-id="@Model.RequestId">
+            <i class="bi bi-arrow-left me-1"></i>Back to request
+        </a>
+        <form method="post" action="@Url.Action("Logout", "InternalAuth")" class="d-inline">
+            @Html.AntiForgeryToken()
+            <button type="submit" class="btn btn-outline-dark btn-sm">Sign out</button>
+        </form>
+    </div>
 </div>
 
 @if (TempData["CalcAuditError"] is string err)
@@ -25,24 +32,36 @@
     return;
 }
 
-@if (Model.Snapshots.Count > 1)
+<form method="get" class="d-flex align-items-center gap-2 mb-3">
+    <label class="form-label mb-0 small text-muted">Snapshot</label>
+    <select name="snapshotId" class="form-select form-select-sm w-auto" onchange="this.form.submit()">
+        @if (Model.Selected is null)
+        {
+            <option value="" selected>— select a snapshot to review —</option>
+        }
+        @foreach (var s in Model.Snapshots)
+        {
+            <option value="@s.CalculationAuditSnapshotId" selected="@(Model.Selected is not null && s.CalculationAuditSnapshotId == Model.Selected.CalculationAuditSnapshotId)">
+                @s.CreatedUtc.ToString("yyyy-MM-dd HH:mm") UTC (ingestion #@s.IngestionRunId, analysis #@s.AnalysisRunId)@(s.IsCurrent ? " — current" : "")
+            </option>
+        }
+    </select>
+</form>
+
+@if (Model.Selected is null)
 {
-    <form method="get" class="d-flex align-items-center gap-2 mb-3">
-        <label class="form-label mb-0 small text-muted">Snapshot</label>
-        <select name="snapshotId" class="form-select form-select-sm w-auto" onchange="this.form.submit()">
-            @foreach (var s in Model.Snapshots)
-            {
-                <option value="@s.CalculationAuditSnapshotId" selected="@(s.CalculationAuditSnapshotId == Model.Selected!.CalculationAuditSnapshotId)">
-                    @s.CreatedUtc.ToString("yyyy-MM-dd HH:mm") UTC (ingestion #@s.IngestionRunId, analysis #@s.AnalysisRunId)@(s.IsCurrent ? " — current" : "")
-                </option>
-            }
-        </select>
-    </form>
+    <div class="alert alert-warning">
+        No snapshot matches this request's current completed ingestion run — there is nothing here that
+        represents the live, currently-deliverable audit state. Select a snapshot above to review its
+        history, or re-run analysis to produce a current one.
+    </div>
+    return;
 }
-else
-{
-    <div class="text-muted small mb-3">Snapshot: @Model.Selected!.CreatedUtc.ToString("yyyy-MM-dd HH:mm") UTC (ingestion #@Model.Selected.IngestionRunId, analysis #@Model.Selected.AnalysisRunId)</div>
-}
+
+<div class="text-muted small mb-3">
+    Snapshot: @Model.Selected.CreatedUtc.ToString("yyyy-MM-dd HH:mm") UTC (ingestion #@Model.Selected.IngestionRunId, analysis #@Model.Selected.AnalysisRunId)
+    @if (!Model.Selected.IsCurrent) { <span class="badge bg-secondary ms-1">Historical — not the current snapshot</span> }
+</div>
 
 @functions {
     string SeverityBadge(CalculationDiscrepancySeverity? severity) => severity switch

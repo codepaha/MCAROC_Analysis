@@ -127,6 +127,69 @@ public class CalculationAuditControllerTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Index_NullLatestCompletedIngestionRunId_FailsClosed_NeverFallsBackToTheNewestSnapshot()
+    {
+        await using var seedDb = CreateContext();
+        var (requestId, _, _) = await DossierTestSeed.SeedAsync(seedDb);
+        // Simulate a request whose completed-ingestion pointer was cleared (e.g. mid re-ingest) while an
+        // old, now-abandoned snapshot still exists — that snapshot must never be silently treated as current.
+        await seedDb.Requests.Where(r => r.RequestId == requestId)
+            .ExecuteUpdateAsync(s => s.SetProperty(r => r.LatestCompletedIngestionRunId, (long?)null));
+        seedDb.CalculationAuditSnapshots.Add(new CalculationAuditSnapshot { RequestId = requestId, IngestionRunId = 111, AnalysisRunId = 111, CreatedUtc = DateTime.UtcNow });
+        await seedDb.SaveChangesAsync();
+
+        await using var db = CreateContext();
+        var result = await NewController(db).Index(requestId, null, CancellationToken.None);
+
+        var model = Assert.IsType<CalculationAuditPageModel>(Assert.IsType<ViewResult>(result).Model);
+        Assert.Null(model.Selected);
+        Assert.Single(model.Snapshots); // still listed for historical browsing
+        Assert.Empty(model.LedgerEntries);
+        Assert.Empty(model.Discrepancies);
+    }
+
+    [Fact]
+    public async Task Index_UnmatchedLatestCompletedIngestionRunId_FailsClosed_NeverFallsBackToTheNewestSnapshot()
+    {
+        await using var seedDb = CreateContext();
+        var (requestId, ingestionRunId, _) = await DossierTestSeed.SeedAsync(seedDb);
+        // A snapshot exists, but for a DIFFERENT ingestion run than the request's current one (e.g. an
+        // abandoned re-ingest attempt that got its own snapshot before being superseded).
+        seedDb.CalculationAuditSnapshots.Add(new CalculationAuditSnapshot
+        {
+            RequestId = requestId, IngestionRunId = ingestionRunId + 1000, AnalysisRunId = ingestionRunId + 1000, CreatedUtc = DateTime.UtcNow
+        });
+        await seedDb.SaveChangesAsync();
+
+        await using var db = CreateContext();
+        var result = await NewController(db).Index(requestId, null, CancellationToken.None);
+
+        var model = Assert.IsType<CalculationAuditPageModel>(Assert.IsType<ViewResult>(result).Model);
+        Assert.Null(model.Selected);
+        Assert.Single(model.Snapshots);
+    }
+
+    [Fact]
+    public async Task Index_ExplicitSnapshotId_StillShowsAHistoricalNonCurrentSnapshot()
+    {
+        // Fail-closed applies only to the DEFAULT resolution — a reviewer deliberately browsing an old
+        // snapshot by id must still see its data, just clearly marked as not current.
+        await using var seedDb = CreateContext();
+        var (requestId, _, _) = await DossierTestSeed.SeedAsync(seedDb);
+        var oldSnapshot = new CalculationAuditSnapshot { RequestId = requestId, IngestionRunId = 555, AnalysisRunId = 555, CreatedUtc = DateTime.UtcNow };
+        seedDb.CalculationAuditSnapshots.Add(oldSnapshot);
+        await seedDb.SaveChangesAsync();
+
+        await using var db = CreateContext();
+        var result = await NewController(db).Index(requestId, oldSnapshot.CalculationAuditSnapshotId, CancellationToken.None);
+
+        var model = Assert.IsType<CalculationAuditPageModel>(Assert.IsType<ViewResult>(result).Model);
+        Assert.NotNull(model.Selected);
+        Assert.Equal(oldSnapshot.CalculationAuditSnapshotId, model.Selected!.CalculationAuditSnapshotId);
+        Assert.False(model.Selected.IsCurrent);
+    }
+
+    [Fact]
     public async Task Confirm_Success_RedirectsToIndex_NoTempDataError()
     {
         await using var seedDb = CreateContext();
