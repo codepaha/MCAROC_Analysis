@@ -53,6 +53,8 @@ public sealed record CoastalChargeLinkResultEntry
     public required PilotLinkReason Reason { get; init; }
     public long? MatchedRocChargeId { get; init; }
     public long? MatchedRocChargeEventId { get; init; }
+    public string? MatchedEventSerialNumber { get; init; }
+    public ChargeEventType? MatchedEventType { get; init; }
     public ChargeDateMatchMode DateMatchMode { get; init; } = ChargeDateMatchMode.None;
     public ChargeMatchFailureReason? MatchFailureReason { get; init; }
     public required bool IsCanonical { get; init; }

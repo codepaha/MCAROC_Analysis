@@ -36,6 +36,10 @@ public class ChargeMatchResult
     public ChargeMatchFailureReason FailureReasonCode { get; set; } = ChargeMatchFailureReason.None;
     public long? TargetChargeId { get; set; }
     public long? TargetChargeEventId { get; set; }
+    public string? MatchedEventSerialNumber { get; set; }
+    public ChargeEventType? MatchedEventType { get; set; }
+    public RocCharge? MatchedCharge { get; set; }
+    public RocChargeEvent? MatchedEvent { get; set; }
     public ChargeDateMatchMode DateMatchMode { get; set; } = ChargeDateMatchMode.None;
     public DocumentLinkConfidence Confidence { get; set; } = DocumentLinkConfidence.Low;
     public string EvidenceJson { get; set; } = "{}";
@@ -287,6 +291,8 @@ public class ChargeCompositeKeyMatcher
         {
             RocChargeNumber = normalizedCandidateChargeId,
             EventType = candidate.EventType?.ToString(),
+            MatchedEventType = matchedEvent.EventType.ToString(),
+            MatchedEventSerialNumber = matchedEvent.SerialNumber,
             MatchedChargeEventId = matchedEvent.ChargeEventId,
             DateMatchMode = dateMode.ToString(),
             CandidateEventDate = candidate.EventDate?.ToString("yyyy-MM-dd"),
@@ -302,8 +308,12 @@ public class ChargeCompositeKeyMatcher
         return new ChargeMatchResult
         {
             IsMatched = true,
-            TargetChargeId = parentCharge?.ChargeId,
-            TargetChargeEventId = matchedEvent.ChargeEventId,
+            TargetChargeId = parentCharge?.ChargeId != 0 ? parentCharge?.ChargeId : null,
+            TargetChargeEventId = matchedEvent.ChargeEventId != 0 ? matchedEvent.ChargeEventId : null,
+            MatchedEventSerialNumber = matchedEvent.SerialNumber,
+            MatchedEventType = matchedEvent.EventType,
+            MatchedCharge = parentCharge,
+            MatchedEvent = matchedEvent,
             DateMatchMode = dateMode,
             Confidence = confidence,
             EvidenceJson = JsonSerializer.Serialize(evidence)

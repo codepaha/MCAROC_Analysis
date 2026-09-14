@@ -30,33 +30,54 @@ public static class CoastalChargeLinkService
         var inventory = prebuiltInventory ?? CoastalCorpusInventoryService.BuildManifest(outerZipStream);
         var matcher = new ChargeCompositeKeyMatcher();
 
-        // Ensure unpersisted in-memory entities have consistent positive identifiers
-        long chargeIdSeq = 1;
-        long eventIdSeq = 1;
+        // Find existing maximum IDs so synthetic IDs are guaranteed collision-proof
+        long maxExistingChargeId = 0;
         foreach (var c in charges)
         {
-            if (c.ChargeId == 0)
-            {
-                c.ChargeId = chargeIdSeq++;
-            }
+            if (c.ChargeId > maxExistingChargeId) maxExistingChargeId = c.ChargeId;
+        }
+
+        long maxExistingEventId = 0;
+        foreach (var c in charges)
+        {
             foreach (var ev in c.Events)
             {
-                if (ev.RocChargeId == 0)
+                if (ev.ChargeEventId > maxExistingEventId) maxExistingEventId = ev.ChargeEventId;
+            }
+        }
+        foreach (var ev in events)
+        {
+            if (ev.ChargeEventId > maxExistingEventId) maxExistingEventId = ev.ChargeEventId;
+        }
+
+        // Build non-mutating reference maps for charge and event identifiers
+        var chargeIdMap = new Dictionary<RocCharge, long>(ReferenceEqualityComparer.Instance);
+        long nextChargeId = maxExistingChargeId;
+        foreach (var c in charges)
+        {
+            if (!chargeIdMap.ContainsKey(c))
+            {
+                chargeIdMap[c] = c.ChargeId != 0 ? c.ChargeId : ++nextChargeId;
+            }
+        }
+
+        var eventIdMap = new Dictionary<RocChargeEvent, long>(ReferenceEqualityComparer.Instance);
+        long nextEventId = maxExistingEventId;
+        foreach (var c in charges)
+        {
+            foreach (var ev in c.Events)
+            {
+                if (!eventIdMap.ContainsKey(ev))
                 {
-                    ev.RocChargeId = c.ChargeId;
-                    ev.RocCharge = c;
-                }
-                if (ev.ChargeEventId == 0)
-                {
-                    ev.ChargeEventId = eventIdSeq++;
+                    eventIdMap[ev] = ev.ChargeEventId != 0 ? ev.ChargeEventId : ++nextEventId;
                 }
             }
         }
         foreach (var ev in events)
         {
-            if (ev.ChargeEventId == 0)
+            if (!eventIdMap.ContainsKey(ev))
             {
-                ev.ChargeEventId = eventIdSeq++;
+                eventIdMap[ev] = ev.ChargeEventId != 0 ? ev.ChargeEventId : ++nextEventId;
             }
         }
 
@@ -246,10 +267,32 @@ public static class CoastalChargeLinkService
                     _ => PilotLinkReason.ExactMatchBothDates
                 };
 
+                long? matchedChargeId = null;
+                if (matchResult.MatchedCharge != null && chargeIdMap.TryGetValue(matchResult.MatchedCharge, out var cid))
+                {
+                    matchedChargeId = cid;
+                }
+                else if (matchResult.TargetChargeId is { } tid and > 0)
+                {
+                    matchedChargeId = tid;
+                }
+
+                long? matchedEventId = null;
+                if (matchResult.MatchedEvent != null && eventIdMap.TryGetValue(matchResult.MatchedEvent, out var eid))
+                {
+                    matchedEventId = eid;
+                }
+                else if (matchResult.TargetChargeEventId is { } teid and > 0)
+                {
+                    matchedEventId = teid;
+                }
+
                 var acceptedEvidence = new EvidencePayload
                 {
                     CandidateChargeId = candidate.ExtractedChargeId,
                     InferredEventType = candidate.InferredEventType?.ToString(),
+                    MatchedEventType = matchResult.MatchedEventType?.ToString(),
+                    MatchedEventSerialNumber = matchResult.MatchedEventSerialNumber,
                     FilingDate = candidate.FilingDate?.ToString("yyyy-MM-dd"),
                     EventDate = candidate.EventDate?.ToString("yyyy-MM-dd"),
                     HasMalformedDate = false,
@@ -270,8 +313,10 @@ public static class CoastalChargeLinkService
                     Sha256Hex = entry.Sha256Hex,
                     Outcome = PilotLinkOutcome.AutoAccepted,
                     Reason = acceptedReason,
-                    MatchedRocChargeId = matchResult.TargetChargeId,
-                    MatchedRocChargeEventId = matchResult.TargetChargeEventId,
+                    MatchedRocChargeId = matchedChargeId,
+                    MatchedRocChargeEventId = matchedEventId,
+                    MatchedEventSerialNumber = matchResult.MatchedEventSerialNumber,
+                    MatchedEventType = matchResult.MatchedEventType,
                     DateMatchMode = matchResult.DateMatchMode,
                     MatchFailureReason = null,
                     IsCanonical = true,
@@ -313,6 +358,8 @@ public static class CoastalChargeLinkService
                 {
                     CandidateChargeId = candidate.ExtractedChargeId,
                     InferredEventType = candidate.InferredEventType?.ToString(),
+                    MatchedEventType = null,
+                    MatchedEventSerialNumber = null,
                     FilingDate = candidate.FilingDate?.ToString("yyyy-MM-dd"),
                     EventDate = candidate.EventDate?.ToString("yyyy-MM-dd"),
                     HasMalformedDate = false,
@@ -326,6 +373,26 @@ public static class CoastalChargeLinkService
                     FailureReasonText = matchResult.FailureReason
                 };
 
+                long? matchedChargeId = null;
+                if (matchResult.MatchedCharge != null && chargeIdMap.TryGetValue(matchResult.MatchedCharge, out var cid))
+                {
+                    matchedChargeId = cid;
+                }
+                else if (matchResult.TargetChargeId is { } tid and > 0)
+                {
+                    matchedChargeId = tid;
+                }
+
+                long? matchedEventId = null;
+                if (matchResult.MatchedEvent != null && eventIdMap.TryGetValue(matchResult.MatchedEvent, out var eid))
+                {
+                    matchedEventId = eid;
+                }
+                else if (matchResult.TargetChargeEventId is { } teid and > 0)
+                {
+                    matchedEventId = teid;
+                }
+
                 resultEntries.Add(new CoastalChargeLinkResultEntry
                 {
                     OuterEntryFullPath = entry.OuterEntryFullPath,
@@ -333,8 +400,10 @@ public static class CoastalChargeLinkService
                     Sha256Hex = entry.Sha256Hex,
                     Outcome = outcome,
                     Reason = reason,
-                    MatchedRocChargeId = matchResult.TargetChargeId,
-                    MatchedRocChargeEventId = matchResult.TargetChargeEventId,
+                    MatchedRocChargeId = matchedChargeId,
+                    MatchedRocChargeEventId = matchedEventId,
+                    MatchedEventSerialNumber = matchResult.MatchedEventSerialNumber,
+                    MatchedEventType = matchResult.MatchedEventType,
                     DateMatchMode = matchResult.DateMatchMode,
                     MatchFailureReason = matchResult.FailureReasonCode,
                     IsCanonical = true,
@@ -352,6 +421,8 @@ public static class CoastalChargeLinkService
     {
         public string? CandidateChargeId { get; init; }
         public string? InferredEventType { get; init; }
+        public string? MatchedEventType { get; init; }
+        public string? MatchedEventSerialNumber { get; init; }
         public string? FilingDate { get; init; }
         public string? EventDate { get; init; }
         public bool HasMalformedDate { get; init; }

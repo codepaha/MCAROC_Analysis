@@ -88,7 +88,8 @@ public class CalculationDiscrepancyWorkflowService(AppDbContext db, ILogger<Calc
         if (discrepancy is null) return WorkflowResult.Fail("Discrepancy not found.");
         if (discrepancy.SourceType != CalculationDiscrepancySourceType.AiCandidate)
             return WorkflowResult.Fail("A deterministic check's discrepancy is already confirmed at creation — there is nothing to confirm here.");
-        if (discrepancy.Status is not (CalculationDiscrepancyStatus.Open or CalculationDiscrepancyStatus.Triaged))
+        if (discrepancy.Status is not (CalculationDiscrepancyStatus.Open or CalculationDiscrepancyStatus.Triaged)
+            && !(discrepancy.Status == CalculationDiscrepancyStatus.Confirmed && discrepancy.PendingConfirmSeverity == severity))
             return WorkflowResult.Fail($"Cannot confirm from status {discrepancy.Status}.");
 
         var ledgerEntry = await db.CalculationLedgerEntries.AsNoTracking().FirstOrDefaultAsync(e => e.CalculationLedgerEntryId == discrepancy.PrimaryLedgerEntryId, ct);

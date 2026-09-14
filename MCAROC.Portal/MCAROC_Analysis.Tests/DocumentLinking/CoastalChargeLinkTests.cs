@@ -14,7 +14,7 @@ public class CoastalChargeLinkTests
     private const string RocPath = @"E:\Downloads\Coastal data\U45203OR1995PLC003982.xls";
     private const string ChargePath = @"E:\Downloads\Coastal data\U45203OR1995PLC003982-charge.xls";
 
-    private const string CommittedBaselineSha256 = "2C438F392A01251599799F2384073A29DE27D50D19C3515798F7D87113A6BC9A";
+    private const string CommittedBaselineSha256 = "BD1381111BF64CDA15B3FB7E35398EE8FB2405D5904CFF94B77EEE929D1F8542";
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -144,6 +144,21 @@ public class CoastalChargeLinkTests
         Assert.Equal(14, reviewCount);
         Assert.Equal(366, unlinkedCount);
         Assert.Equal(814, dupCount + outOfScopeCount + autoCount + reviewCount + unlinkedCount);
+
+        // 5. Assert event identity invariants
+        foreach (var autoEntry in entries.Where(e => e.Outcome == PilotLinkOutcome.AutoAccepted))
+        {
+            Assert.False(string.IsNullOrWhiteSpace(autoEntry.MatchedEventSerialNumber),
+                $"AutoAccepted entry missing MatchedEventSerialNumber: {autoEntry.NestedEntryRelativePath}");
+            Assert.NotNull(autoEntry.MatchedEventType);
+            Assert.NotNull(autoEntry.MatchedRocChargeId);
+            Assert.NotNull(autoEntry.MatchedRocChargeEventId);
+        }
+        foreach (var nonAuto in entries.Where(e => e.Outcome != PilotLinkOutcome.AutoAccepted))
+        {
+            Assert.Null(nonAuto.MatchedEventSerialNumber);
+            Assert.Null(nonAuto.MatchedEventType);
+        }
     }
 
     [SkippableFact]
@@ -176,6 +191,8 @@ public class CoastalChargeLinkTests
             Assert.Equal(expected.Reason, actual.Reason);
             Assert.Equal(expected.MatchedRocChargeId, actual.MatchedRocChargeId);
             Assert.Equal(expected.MatchedRocChargeEventId, actual.MatchedRocChargeEventId);
+            Assert.Equal(expected.MatchedEventSerialNumber, actual.MatchedEventSerialNumber);
+            Assert.Equal(expected.MatchedEventType, actual.MatchedEventType);
             Assert.Equal(expected.DateMatchMode, actual.DateMatchMode);
             Assert.Equal(expected.MatchFailureReason, actual.MatchFailureReason);
             Assert.Equal(expected.IsCanonical, actual.IsCanonical);
@@ -208,20 +225,31 @@ public class CoastalChargeLinkTests
         Assert.Equal(10, dateMismatches.Count);
         Assert.Equal(4, dateContradictions.Count);
 
-        // Verify the 10 DateMismatch files
-        var expectedMismatchCids = new HashSet<string> { "10365759", "10307966", "10063252", "10063253", "10081297", "10078342", "10097112", "10153553" };
-        foreach (var entry in dateMismatches)
-        {
-            var fileName = Path.GetFileName(entry.NestedEntryRelativePath);
-            Assert.True(expectedMismatchCids.Any(cid => fileName.Contains(cid)), $"Unexpected CID in DateMismatch: {fileName}");
-        }
+        // Exhaustive assertion of all 14 PendingReview entries in exact ordinal sorted order
+        (string Outer, string Nested, PilotLinkReason Reason)[] expectedReviewEntries =
+        [
+            ("COASTAL PROJECTS LIMITED Documents/Charge Documents Financial Documets/70912_COASTAL_PROJECTS_U45203OR1995PLC003982.zip", "70912_COASTAL_PROJECTS_U45203OR1995PLC003982/Charge Documents/ee0ce4b44acb7f00276dd4494bec1b70v1-Form CHG-1-050315-110814-ChargeId-10215822.pdf", PilotLinkReason.DateContradiction),
+            ("COASTAL PROJECTS LIMITED Documents/Charge Documents Financial Documets/70916_COASTAL_PROJECTS_U45203OR1995PLC003982.zip", "70916_COASTAL_PROJECTS_U45203OR1995PLC003982/Charge Documents/72537cb1efb1a36686723d8867ef50d3v1-Form 8-210712-ChargeId-10365759.pdf", PilotLinkReason.DateMismatch),
+            ("COASTAL PROJECTS LIMITED Documents/Charge Documents Financial Documets/70917_COASTAL_PROJECTS_U45203OR1995PLC003982.zip", "70917_COASTAL_PROJECTS_U45203OR1995PLC003982/Charge Documents/756bdb5ad9edc1696f46094cf3dbb13fv1-Form 8-270911-ChargeId-10307966.pdf", PilotLinkReason.DateMismatch),
+            ("COASTAL PROJECTS LIMITED Documents/Charge Documents Financial Documets/70927_COASTAL_PROJECTS_U45203OR1995PLC003982.zip", "70927_COASTAL_PROJECTS_U45203OR1995PLC003982/Charge Documents/715292c61e2799fd200d720521d44a3dv1-Form 8-260810-300610-ChargeId-10234873.pdf", PilotLinkReason.DateContradiction),
+            ("COASTAL PROJECTS LIMITED Documents/Charge Documents Financial Documets/70927_COASTAL_PROJECTS_U45203OR1995PLC003982.zip", "70927_COASTAL_PROJECTS_U45203OR1995PLC003982/Charge Documents/f8a9cc65ec91010a41210959a1c2b8edv1-Form 17-011110-180910-ChargeId-10063252.pdf", PilotLinkReason.DateMismatch),
+            ("COASTAL PROJECTS LIMITED Documents/Charge Documents Financial Documets/70927_COASTAL_PROJECTS_U45203OR1995PLC003982.zip", "70927_COASTAL_PROJECTS_U45203OR1995PLC003982/Charge Documents/fb3a5de14c793f992cad97b025732054v1-Form 17-191010-180907-ChargeId-10063252.pdf", PilotLinkReason.DateMismatch),
+            ("COASTAL PROJECTS LIMITED Documents/Charge Documents Financial Documets/70928_COASTAL_PROJECTS_U45203OR1995PLC003982.zip", "70928_COASTAL_PROJECTS_U45203OR1995PLC003982/Charge Documents/cbbc6e6caac8272496c1dc80f98db69bv1-Form 8-300410-260410-ChargeId-10158037.pdf", PilotLinkReason.DateContradiction),
+            ("COASTAL PROJECTS LIMITED Documents/Charge Documents Financial Documets/70928_COASTAL_PROJECTS_U45203OR1995PLC003982.zip", "70928_COASTAL_PROJECTS_U45203OR1995PLC003982/Charge Documents/d6e43786704b7bf513b6287edb431069v1-Form 8-050510-190310-ChargeId-10215822.pdf", PilotLinkReason.DateContradiction),
+            ("COASTAL PROJECTS LIMITED Documents/Charge Documents Financial Documets/70933_COASTAL_PROJECTS_U45203OR1995PLC003982.zip", "70933_COASTAL_PROJECTS_U45203OR1995PLC003982/Charge Documents/3d6ca100d50a9cd9d4f716f22ee2362cv1-Form 8-190707-ChargeId-10063253.pdf", PilotLinkReason.DateMismatch),
+            ("COASTAL PROJECTS LIMITED Documents/Charge Documents Financial Documets/70933_COASTAL_PROJECTS_U45203OR1995PLC003982.zip", "70933_COASTAL_PROJECTS_U45203OR1995PLC003982/Charge Documents/b725b6a83c0763aba58c561f94816b7cv1-Form 8-100108-ChargeId-10081297.pdf", PilotLinkReason.DateMismatch),
+            ("COASTAL PROJECTS LIMITED Documents/Charge Documents Financial Documets/70933_COASTAL_PROJECTS_U45203OR1995PLC003982.zip", "70933_COASTAL_PROJECTS_U45203OR1995PLC003982/Charge Documents/bbdb71804d7674dfc7a1fe49023a3bd8v1-Form 8-201207-ChargeId-10078342.pdf", PilotLinkReason.DateMismatch),
+            ("COASTAL PROJECTS LIMITED Documents/Charge Documents Financial Documets/70933_COASTAL_PROJECTS_U45203OR1995PLC003982.zip", "70933_COASTAL_PROJECTS_U45203OR1995PLC003982/Charge Documents/eca3917700791845f877db659021fe79v1-Form 8-190707-ChargeId-10063252.pdf", PilotLinkReason.DateMismatch),
+            ("COASTAL PROJECTS LIMITED Documents/Charge Documents Financial Documets/70933_COASTAL_PROJECTS_U45203OR1995PLC003982.zip", "70933_COASTAL_PROJECTS_U45203OR1995PLC003982/Charge Documents/edf38de8252cac778ebc9c85fa0666f2v1-Form 8-220408-ChargeId-10097112.pdf", PilotLinkReason.DateMismatch),
+            ("COASTAL PROJECTS LIMITED Documents/Charge Documents Financial Documets/70933_COASTAL_PROJECTS_U45203OR1995PLC003982.zip", "70933_COASTAL_PROJECTS_U45203OR1995PLC003982/Charge Documents/f7495b0c6aa716119b21f12d02a346b7v1-Form 8-151107-ChargeId-10153553.pdf", PilotLinkReason.DateMismatch)
+        ];
 
-        // Verify the 4 DateContradiction files
-        var expectedContradictionCids = new HashSet<string> { "10215822", "10234873", "10158037" };
-        foreach (var entry in dateContradictions)
+        Assert.Equal(expectedReviewEntries.Length, reviewEntries.Count);
+        for (int i = 0; i < expectedReviewEntries.Length; i++)
         {
-            var fileName = Path.GetFileName(entry.NestedEntryRelativePath);
-            Assert.True(expectedContradictionCids.Any(cid => fileName.Contains(cid)), $"Unexpected CID in DateContradiction: {fileName}");
+            Assert.Equal(expectedReviewEntries[i].Outer, reviewEntries[i].OuterEntryFullPath);
+            Assert.Equal(expectedReviewEntries[i].Nested, reviewEntries[i].NestedEntryRelativePath);
+            Assert.Equal(expectedReviewEntries[i].Reason, reviewEntries[i].Reason);
         }
     }
 
