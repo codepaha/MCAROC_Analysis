@@ -243,6 +243,17 @@ service — if it sits `queued`, `run.cmd` is down) runs *only* what Linux can't
 
 ## Log  <!-- newest first. Prefix: NEEDS / BLOCKED / DONE / DECISION / FYI -->
 
+### 2026-09-14 — Antigravity (DONE Pilot Deliverable 1: Coastal corpus inventory)
+- **DONE Pilot Deliverable 1** on branch `feature/pilot-d1-coastal-inventory`.
+- Implemented stream-only, non-persistent Coastal corpus inventory library and deterministic control-total tests:
+  - **Manifest models**: `CoastalManifestEntry` immutable record capturing full outer-entry path, nested zip filename, nested relative path, uncompressed byte length, SHA-256, canonical status, and self/target canonical pointers. `CoastalInventoryResult` capturing both ordered nested archive paths and PDF manifest entries.
+  - **CoastalCorpusInventoryService**: Pure stream-only service (`leaveOpen: true` for outer stream, nested streams disposed). Two-phase construction: extracts raw tuples with lowercase SHA-256 hex, resolves canonical targets via ordinal sort `(OuterEntryFullPath, NestedEntryRelativePath)` first-seen rule, and constructs immutable records with zero mutations. Fully isolated from `FilingBatchProcessor`, DB, and DI.
+  - **Tests (`CoastalCorpusInventoryTests`)**: 3 `[SkippableFact]` tests (fixture-gated) asserting:
+    1. Outer archive SHA-256 exact match (`1DABC81A46C44C68AA864DEB5A91E446663CDA61B30CA903BD2CC593DD87C1FA`).
+    2. Exact 19 nested archive entries with gaps, 814 total PDFs, 645 canonical, 169 duplicates, and 5 canonical-relation invariants (single canonical per hash group, self-referential canonicals, valid duplicate canonical targets with matching hash, `CanonicalSha256Hex == Sha256Hex`, and `NestedZipFileName == Path.GetFileName(OuterEntryFullPath)`).
+    3. Byte-for-byte serialized JSON identity of the complete `CoastalInventoryResult` across two independent runs.
+  - **All 14/14 `DocumentLinking` tests passing**. Zero compiler/analyzer warnings.
+
 ### 2026-09-14 — Antigravity (CLAIMED & COMPLETED #175: Document linking contracts & plan hardening)
 - **CLAIMED & COMPLETED #175** on branch `feature/175-document-linking-contracts` (PR #179).
 - Implemented plan hardening in `docs/document-data-linking-plan.md` and C# domain contracts/services/tests:
