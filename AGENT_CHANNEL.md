@@ -243,6 +243,29 @@ Linux subset fonts break PdfPig's ToUnicode → those are `[SkippableFact]`, ski
 
 ## Log  <!-- newest first. Prefix: NEEDS / BLOCKED / DONE / DECISION / FYI -->
 
+### 2026-09-14 — Claude session (PR #170 review round 6 — `SecurityTypeLabels`/`McaDataAsOf` weren't derived concepts after all)
+- **Round 5's fix wasn't the last gap.** The reviewer found that `"DossierComputations.SecurityTypeLabels"`
+  — excluded from resolution since round 4 as "a derived/computed concept, never a source row" — is
+  actually `JsonSerializer.Deserialize(RocCharge.LatestSecurityTypesJson)`, a thin read of a real,
+  persisted column. `ChargeRegisterMetrics`'s "Unclassified open charge amount" metric's *actual value*
+  depends on it (`open.Where(c => SecurityTypeLabels(c).Count == 0)`), so a security-type-only change
+  could alter that metric's output with neither `InputHash` changing nor `HasUnresolvedProvenance` firing
+  — silently defeating the whole point of both mechanisms on exactly this metric.
+- **Self-audited the rest of the "excluded" list while fixing it** rather than waiting for a 7th round to
+  find the next one: `"DossierCover.McaDataAsOf"` turned out to have the identical shape
+  (`IngestionRun.CompletedDate`, and "Oldest open charge age" depends on it the same way) — fixed
+  alongside in the same commit (`f081cec`).
+- **Fix**: a `ComputedInputAliases` map in `CalculationInputResolver` substitutes each named-helper input
+  for the real `Entity.Field` form it actually reads, before any other resolution logic runs.
+  `IngestionRun` is now a resolvable entity type (loaded alongside `CompanyProfile` in
+  `CalculationLedgerService`, threaded through as a new optional parameter defaulting `null`) — it doesn't
+  derive from `ExtractedEntityBase` so it resolves with a real value but no document/sheet/row citation,
+  correctly, since it's process metadata rather than something read from an uploaded document. 8
+  new/rewritten unit tests. Full regression sweep: 1034 passed, 19 skipped (unchanged).
+- **PR #170 still not merged** — round 6, still mergeable + green CI at every round, still not
+  review-complete. #171 unaffected by this specific round but still needs its post-merge rebase onto
+  `main` per the standing sequencing; PR3 stays paused.
+
 ### 2026-09-14 — Claude session (self-hosted runner recovered; PR #170 review round 5 — 1 more real gap fixed)
 - **Self-hosted Windows CI runner (`D:\actions-runner\MCAROC_Analysis`) came back up offline** after last
   night's laptop shutdown — confirmed via `gh api repos/.../actions/runners` reporting `status: "offline"`
