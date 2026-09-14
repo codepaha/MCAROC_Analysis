@@ -16,6 +16,18 @@ public class CalculationAiAuditRun
     public CalculationAiAuditRunStatus Status { get; set; } = CalculationAiAuditRunStatus.Pending;
     public int AttemptCount { get; set; }
 
+    /// <summary>Durable worker lease, not just an in-memory queue claim. Startup recovery only resets an
+    /// InProgress row back to Pending once LeaseExpiresUtc has actually passed (or is null, e.g. a row
+    /// from before this column existed) — a still-genuinely-running call's lease has not expired, so
+    /// recovery leaves it alone instead of requeuing a duplicate Vertex AI call for the same run.
+    /// LeaseOwner ("machine:pid") is diagnostic only; the expiry is what enforces correctness.</summary>
+    public string? LeaseOwner { get; set; }
+    public DateTime? LeaseExpiresUtc { get; set; }
+
+    /// <summary>Set on a retry after a failed attempt — recovery/dispatch must not re-claim this row until
+    /// this time has passed, so three failed attempts don't all fire back-to-back in a tight loop.</summary>
+    public DateTime? NextAttemptUtc { get; set; }
+
     public string ModelId { get; set; } = string.Empty;
     public string PromptVersion { get; set; } = "1.0";
 
