@@ -245,6 +245,25 @@ Linux subset fonts break PdfPig's ToUnicode → those are `[SkippableFact]`, ski
 
 ## Log  <!-- newest first. Prefix: NEEDS / BLOCKED / DONE / DECISION / FYI -->
 
+### 2026-09-14 — Claude session (#164 PR3 opened — AI second-line review worker)
+- **PR #173 opened** (`feature/164-ai-audit-worker` → `main`), branched off latest `main` (`b16398b`, which
+  already includes both merged PR #170/#171). Implements §3/§8 of the approved plan:
+  `CalculationAiAuditQueue`/`Worker`/`Orchestrator` mirror `AnalysisQueue`/`Worker`/`Orchestrator`'s
+  atomic-claim + startup-recovery shape exactly; `CalculationAiAuditService` reuses the existing Vertex
+  AI/Gemini construction pattern (`gemini-2.5-flash-lite`, no new package, no new shared interface, per
+  decision #4). `CalculationAiAuditValidator` mirrors `AiCrossSectionAnalysisService.Validate`'s "drop the
+  candidate, not the whole run" discipline: a fabricated tag or an `actualValue` that doesn't match the
+  ledger row's own stored value gets that one candidate rejected, never the whole response. Every surviving
+  candidate persists as `Open`/`Severity=null` — the AI's `suggestedSeverity` only ever reaches
+  `ClaimSummary` text, never the `Severity` column — so no status this worker can reach, including the
+  terminal `SkippedAiUnavailable` after exhausting retries, can ever create or extend a
+  `CalculationArtifactHold`. Enqueued from `AnalysisOrchestrator` right after ledger/checks persist, never
+  awaited — an AI failure must never block analysis completion.
+- No schema change (`dotnet ef migrations has-pending-model-changes`: none) — PR1's migration already
+  covers everything this worker writes. 14 new focused tests + full regression sweep (1068 passed, 0
+  failed, 19 skipped, up from 1054 pre-PR3) all green locally before opening.
+- `@codex review` requested on the PR.
+
 ### 2026-09-14 — Claude session (PR #171 MERGED to `main`; PR3 (AI worker) unpaused)
 - **PR #171 MERGED into `main` as `b16398b`** at reviewed head `33a802f` — independent review found no
   source blocker (unique check-result constraint and concurrent-run handling both confirmed covered), both
