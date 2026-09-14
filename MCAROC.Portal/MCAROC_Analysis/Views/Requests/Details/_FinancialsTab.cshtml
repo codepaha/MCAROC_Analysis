@@ -111,7 +111,13 @@
             <tbody>
             @foreach (var grp in paramsByName)
             {
-                var byYear = grp.Where(p => p.FinancialYear is not null).ToDictionary(p => p.FinancialYear!.Value);
+                // GroupBy+First, not ToDictionary: FinancialParametersParser deliberately keeps two rows
+                // for the same (ParameterName, FinancialYear) when the source sheets genuinely disagree
+                // (see DUPLICATE_PARAMETER_CONFLICT), so this table shows the first-parsed (Annexure) value
+                // rather than crashing on the duplicate key.
+                var byYear = grp.Where(p => p.FinancialYear is not null)
+                    .GroupBy(p => p.FinancialYear!.Value)
+                    .ToDictionary(g => g.Key, g => g.First());
                 var noYear = grp.FirstOrDefault(p => p.FinancialYear is null);
                 <tr>
                     <td>@grp.Key</td>

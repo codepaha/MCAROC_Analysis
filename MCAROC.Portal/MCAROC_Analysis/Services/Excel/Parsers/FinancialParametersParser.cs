@@ -65,12 +65,17 @@ public static class FinancialParametersParser
 
                 int? year = yearByCol.TryGetValue(c, out var y) ? y : null;
                 var key = (name, year);
-                if (seen.TryGetValue(key, out var prev) && !string.Equals(prev.Raw, raw, StringComparison.OrdinalIgnoreCase))
+                if (seen.TryGetValue(key, out var prev))
                 {
+                    if (string.Equals(prev.Raw, raw, StringComparison.OrdinalIgnoreCase))
+                        continue; // identical restatement in the other sheet — keep exactly one row per (name, year)
+
                     result.AddWarning(new ParseIssue(IssueSeverity.Warning, ParserName, name, raw,
                         "DUPLICATE_PARAMETER_CONFLICT",
                         $"Parameter '{name}' FY{year} has conflicting values: '{prev.Raw}' ({prev.Sheet}) vs '{raw}' ({sheet.Name})",
                         r + 1));
+                    // A genuine conflict is deliberately kept as two rows (both sides of the discrepancy stay
+                    // visible for review) rather than silently picking one — see FinancialParametersParserTests.
                 }
                 seen[key] = (raw, sheet.Name);
 
