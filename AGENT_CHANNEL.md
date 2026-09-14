@@ -146,7 +146,7 @@ request, 2026-09-12) since this lane hadn't claimed them yet — remaining 6 sti
 | #150 | 598 unexamined ingestion warnings from a real 41-company batch run — reported as "0 Errors" without categorizing what the warnings actually are | **MERGED** (`459b834`, PR #154) — closed |
 
 ### Sequencing
-- Claude: D2/#57 **MERGED** → D4/#59 **MERGED** → K1/#98 **MERGED** → #97 **MERGED** → D10/#65 **MERGED** (`7f2cf1e`) → #47 (pre-login report ownership binding) **MERGED** (`f52f3cf`) → #142 (pre-login "My Reports" history) **MERGED** (PR #141, `965578e`) → #144/B12 (charge discharge velocity) **MERGED** (PR #149, `4be34db`) → #161/G18 (Auditors' Comments detail-table columns) **MERGED** (PR #166, `7786be4`) — Claude's lane empty pending a new assignment; #144 stays open for its A1.x half.
+- Claude: D2/#57 **MERGED** → D4/#59 **MERGED** → K1/#98 **MERGED** → #97 **MERGED** → D10/#65 **MERGED** (`7f2cf1e`) → #47 (pre-login report ownership binding) **MERGED** (`f52f3cf`) → #142 (pre-login "My Reports" history) **MERGED** (PR #141, `965578e`) → #144/B12 (charge discharge velocity) **MERGED** (PR #149, `4be34db`) → #161/G18 (Auditors' Comments detail-table columns) **MERGED** (PR #166, `7786be4`) → **#164 (calculation assurance) — owner decisions resolved, plan approved, PR1 (entities + migration + ledger persistence) PR #170 open** (see Log above); #144 stays open for its A1.x half.
 - Antigravity: D6/#61 **MERGED** → D7/#62 **MERGED** → D8/#63 **MERGED** → D9/#64 **MERGED** (`e9e39e3`) → D11/#66 **MERGED** (`8213961`) → #107 **MERGED** (`7b74f11`) → #150 **MERGED** (`459b834`) → #145 **MERGED** (`b563072`, PR #165) — Antigravity's lane clear!
 
 
@@ -243,6 +243,82 @@ Linux subset fonts break PdfPig's ToUnicode → those are `[SkippableFact]`, ski
 
 ## Log  <!-- newest first. Prefix: NEEDS / BLOCKED / DONE / DECISION / FYI -->
 
+### 2026-09-14 — Claude session (PR #170 review round 6 — `SecurityTypeLabels`/`McaDataAsOf` weren't derived concepts after all)
+- **Round 5's fix wasn't the last gap.** The reviewer found that `"DossierComputations.SecurityTypeLabels"`
+  — excluded from resolution since round 4 as "a derived/computed concept, never a source row" — is
+  actually `JsonSerializer.Deserialize(RocCharge.LatestSecurityTypesJson)`, a thin read of a real,
+  persisted column. `ChargeRegisterMetrics`'s "Unclassified open charge amount" metric's *actual value*
+  depends on it (`open.Where(c => SecurityTypeLabels(c).Count == 0)`), so a security-type-only change
+  could alter that metric's output with neither `InputHash` changing nor `HasUnresolvedProvenance` firing
+  — silently defeating the whole point of both mechanisms on exactly this metric.
+- **Self-audited the rest of the "excluded" list while fixing it** rather than waiting for a 7th round to
+  find the next one: `"DossierCover.McaDataAsOf"` turned out to have the identical shape
+  (`IngestionRun.CompletedDate`, and "Oldest open charge age" depends on it the same way) — fixed
+  alongside in the same commit (`f081cec`).
+- **Fix**: a `ComputedInputAliases` map in `CalculationInputResolver` substitutes each named-helper input
+  for the real `Entity.Field` form it actually reads, before any other resolution logic runs.
+  `IngestionRun` is now a resolvable entity type (loaded alongside `CompanyProfile` in
+  `CalculationLedgerService`, threaded through as a new optional parameter defaulting `null`) — it doesn't
+  derive from `ExtractedEntityBase` so it resolves with a real value but no document/sheet/row citation,
+  correctly, since it's process metadata rather than something read from an uploaded document. 8
+  new/rewritten unit tests. Full regression sweep: 1034 passed, 19 skipped (unchanged).
+- **PR #170 still not merged** — round 6, still mergeable + green CI at every round, still not
+  review-complete. #171 unaffected by this specific round but still needs its post-merge rebase onto
+  `main` per the standing sequencing; PR3 stays paused.
+
+### 2026-09-14 — Claude session (self-hosted runner recovered; PR #170 review round 5 — 1 more real gap fixed)
+- **Self-hosted Windows CI runner (`D:\actions-runner\MCAROC_Analysis`) came back up offline** after last
+  night's laptop shutdown — confirmed via `gh api repos/.../actions/runners` reporting `status: "offline"`
+  despite a stale `Runner.Listener.exe`/`RunnerService.exe` process pair still sitting on the machine.
+  Started fresh via `run.cmd` (still not a registered Windows service, per the existing infra note); GitHub
+  now reports it `online` and idle, confirmed stable after a 20s recheck.
+- **PR #170 review round 5 caught one more real gap**, distinct from round 4's InputHash fix:
+  `CalculationLedgerEntry.HasUnresolvedProvenance` itself was still computed as `sourceRefs.Count == 0` —
+  true only when **every** input failed to resolve, not "any." A metric mixing one resolved input (e.g.
+  `FinancialYearData.Revenue`) with one genuinely-unresolved known-entity input (e.g. a
+  `FinancialParameter` not on file this year) kept a non-empty `sourceRefs` list from the resolved half,
+  so the flag stayed `false` — bypassing PR #171's `ProvenanceCompleteness` check entirely on exactly this
+  mixed case, even after round 4's hash-level fix.
+- **Fixed** (`b2bdf76`): new `CalculationInputResolver.AllKnownInputsResolved` — true only when every input
+  either isn't a known source-entity concept (a derived/computed reference like
+  `DossierComputations.SecurityTypeLabels` was never a source row to begin with, and correctly must not
+  count against completeness) or resolved to at least one real row. `HasUnresolvedProvenance` now uses
+  this instead of the `sourceRefs.Count` check. 4 new unit tests covering the resolved/unresolved matrix
+  directly, including the exclusion case. Full regression sweep: 1030 passed, 19 skipped (unchanged).
+- **No PRs merged yet** — both #170 and #171 remain mergeable with green CI at every round, but per the
+  reviewer's own framing, CI-green has never been treated as equivalent to review-complete on this feature,
+  and round 5 just proved that instinct right again. PR3 stays paused per the standing decision; #171 still
+  needs its own rebase-onto-`main` + independent re-review once #170 actually merges.
+
+### 2026-09-13 — Claude session (PR #170 changes requested — 3 real bugs, all fixed in `fe13d23`)
+- **PR #170's own reviewer caught 3 correctness bugs review rounds 1-2 (design-level) had missed**,
+  all in `CalculationLedgerService`'s actual implementation rather than the schema design:
+  1. `InputHash` hashed only the metric's input *field names* (`["FinancialYearData.Revenue"]`), never
+     the actual resolved values — two different companies' revenue figures via the same formula produced
+     identical hashes, defeating the hash's whole purpose as a drift fingerprint.
+  2. Snapshot + ledger entries saved in two separate `SaveChangesAsync` calls — a crash between them left
+     an empty snapshot row that every future retry's `AnyAsync` check treated as "already done," silently
+     and permanently skipping ledger creation for that request.
+  3. Ledger persistence was called *after* `AiCrossSectionAnalysisService.SynthesizeAsync()` and after the
+     `AnalysisRun` was marked Completed — contradicting the approved plan's own "persist before the AI
+     call" discipline (the same discipline the rule-engine findings save already followed). An AI
+     timeout/crash could leave a "completed" analysis with zero audit ledger.
+- **All three fixed** (`fe13d23`): a new `CalculationInputCanonicalizer` hashes actual resolved
+  invariant-culture values per source row; snapshot+entries now persist in one `SaveChangesAsync` call via
+  navigation-property linkage (one atomic transaction — an incomplete snapshot is now detected by
+  "has zero ledger entries" and completed on retry, and a unique-constraint race is caught and treated as
+  "already handled"); the ledger call moved to right after the rule engine's own pre-AI save, which
+  required extracting `DossierAssembler`'s core logic into `BuildForInFlightAnalysisAsync` (works while
+  the `AnalysisRun` is still `Running`) alongside the existing `BuildAsync` (unchanged contract, still
+  requires `Completed`/`CompletedWithErrors`, still used everywhere else). 6 new/expanded tests (hash
+  sensitivity ×4, orphaned-snapshot resume, concurrent-call race). Full `Dossier`/`Analysis` regression
+  sweep: 1022 passed, 19 skipped (unchanged). Posted as a PR comment; pushed to `feature/164-calculation-
+  assurance` (`fe13d23`).
+- **Lesson for next time**: the design-review rounds caught real schema/architecture gaps, but a
+  correctness review of the actual implementation still found bugs the design review couldn't see from
+  the plan text alone (exact save ordering, what a hash function actually hashes). Both passes matter —
+  neither substitutes for the other.
+
 ### 2026-09-13 — Claude session (#161/G18 MERGED — Auditors' Comments detail-table columns)
 - **PR #166 MERGED into `main` as `7786be4`**; issue #161 (G18, the last open half of #146) closed
   automatically. Both hosted CI jobs (Linux `build-and-test`, Windows `windows-tests`) passed;
@@ -275,6 +351,74 @@ Linux subset fonts break PdfPig's ToUnicode → those are `[SkippableFact]`, ski
   `DONE (#161)`.
 - **#146 (parent issue) needed no further action** — it was already closed once both its halves (G17 via
   #155/#157/#159, G18 via #161) had their own resolution/tracking; this just closes out the second half.
+
+### 2026-09-13 — Claude session (CLAIMED #164 — calculation assurance / AI discrepancy triage / delivery hold)
+- **CLAIMED #164** on branch `feature/164-calculation-assurance` (worktree `mcaroc-wt-164`, off `main`
+  at `c7f30ab`). This is a large, multi-lane feature (immutable calc ledger, deterministic audit-check
+  registry, an async AI second-line reviewer with strict schema validation, an internal
+  `CalculationDiscrepancy` workflow, artifact-level delivery gating, an internal reviewer UI) — squarely
+  Claude's schema/parser/metrics-guardrail lane since it starts with new entities + an EF migration.
+- **NOT starting implementation yet.** The issue body itself lists 5 open "Decisions needed before
+  implementation" (report-variant scope, reviewer roles/dual-approval, which artifacts are gated, whether
+  a documented internal exception can release a material case, and AI provider/budget/retention policy)
+  — these are product/policy calls, not engineering ones, and the working agreement has Claude/Codex
+  escalate exactly this kind of call to `@owner` rather than assume. Posting the same question set to the
+  owner directly before writing a plan.
+- Per the hard migration rule, this branch will carry the (eventual) new migration — confirming no other
+  migration branch is in flight before adding one. (Update, later the same day: #161/G18 branched, merged,
+  and its migration landed on `main` — see below — before this branch's own migration was generated
+  against latest `main`, so no overlap ever occurred.)
+
+### 2026-09-13 — Claude session (#164 owner decisions resolved; plan approved after 2 review rounds; PR1 built)
+- **Put the 5 "decisions needed before implementation" to the owner directly** (scope, roles/dual-approval,
+  material-exception policy, AI provider, and a 6th surfaced during exploration — this app has zero
+  authentication anywhere, which the issue's role language presupposes something to hang off of). All 6
+  answered: dossier-PDF-only for now; single reviewer today with the schema left dual-approval-ready;
+  Material may be released via a documented internal exception, Critical never has one; reuse the existing
+  chat feature's AI stack (Google Vertex AI / Gemini `gemini-2.5-flash-lite` via `Google.GenAI`, mirroring
+  `ChatCompletionService`'s JSON-strict validation pattern); a minimal, feature-scoped internal login
+  (cookie auth) gates the new audit panel — the rest of the app stays exactly as unauthenticated as today.
+- **Plan went through 2 real review rounds** (plan file `curious-launching-cupcake.md`) before approval:
+  - Round 1 caught that a plain `bigint` tuple repeated on every child table proved nothing about
+    cross-snapshot consistency, that `CalculationArtifactHold`'s original `NotYetAiAudited` reason
+    directly contradicted the plan's own async-AI design, and that the cookie-auth wiring as first
+    drafted (`AddAuthentication("InternalReviewer")`) would have set it as the *application's default*
+    scheme. Fixed with a root `CalculationAuditSnapshot` entity + composite FKs anchored on it (a
+    cross-snapshot reference is now a literal insert-time DB constraint violation, not a convention), the
+    hold-reason enum cut to exactly two (`ConfirmedCriticalDiscrepancy`/
+    `ConfirmedMaterialDiscrepancyNoException`), and the parameterless `AddAuthentication()` + explicit
+    named scheme + antiforgery + login rate-limiting.
+  - Round 2 caught that the delivery-gate query (§4) no longer matched the revised schema (holds are keyed
+    on `CalculationAuditSnapshotId`, not the raw tuple), that a SHA-256 response hash alone can't provide
+    AI-output auditability without the actual content to hash against, and that `CalculationCheckResult`
+    had the same unconstrained-JSON-evidence gap the discrepancy table had already been fixed for. Fixed:
+    the gate now resolves the snapshot first and **explicitly fails closed under `Enforced` when no
+    snapshot exists at all** (an unaudited historical report is treated as the maximal case of
+    "NotEvaluated," not an implicit pass — flagged in the PR5 runbook as an operational consequence to
+    plan for before ever flipping `Enforced`); `CalculationAiAuditRun` now retains the actual
+    `RawResponseJson` (hash kept only as a cheap tamper-evidence check alongside it); a new
+    `CalculationCheckResultLedgerLink`/`CalculationDiscrepancyLedgerLink` pair replaces every remaining
+    unconstrained "related ledger entries" JSON list with the same composite-FK evidence-grade guarantee.
+- **PR1 built on this branch** (entities + one migration + ledger persistence only — checks/AI
+  worker/delivery gate/UI are PRs 2-5, per the plan's sequencing): 10 new tables
+  (`CalculationAuditSnapshot`, `CalculationLedgerEntry`, `CalculationCheckResult`,
+  `CalculationCheckResultLedgerLink`, `CalculationDiscrepancy`, `CalculationDiscrepancyLedgerLink`,
+  `CalculationDiscrepancyApproval`, `CalculationArtifactHold`, `CalculationAiAuditRun`,
+  `CalculationAssuranceOverrideAudit`), one migration `AddCalculationAssurance` (generated against latest
+  `main`, after #161/G18's own migration — confirmed applies and reverts cleanly), a new
+  `CalculationLedgerService`/`CalculationSourceRowRefResolver` covering the 3 `MetricGroup`s the
+  deterministic checks will need first (FinancialTrend, CapitalReconciliation, ChargeRegister), and one
+  new guarded call site in `AnalysisOrchestrator.RunAnalysisAsync` (isolated in its own try/catch so a bug
+  in this second-line guardrail can never fail an otherwise-successful analysis pass). Entirely a no-op at
+  runtime — `CalculationAssurance:Mode` defaults to `Off`, checked before any DB query.
+- 10 new tests (ledger persistence incl. idempotency, provenance resolution, and — the review's own
+  requested proof — a composite-FK cross-snapshot rejection test) all pass; full `Dossier`/`Analysis`
+  regression sweep (1000 passed, 19 skipped for absent real-workbook fixtures, same as before this
+  change) confirms no regressions.
+- **PR #170 open** (`feature/164-calculation-assurance`, → Closes #164 in part — this is PR1 of 5), rebased
+  onto `main` past #161/G18's own migration before this branch's migration was generated (confirmed no
+  overlap: `AddCalculationAssurance` sorts after `AddAuditorDetailTableColumns`,
+  `dotnet ef migrations has-pending-model-changes` reports none post-rebase). → `@codex` review.
 
 ### 2026-09-13 — Claude session (#146 CLOSED; #150 closure evidence corrected via PR #162)
 - **PR #158 MERGED into `main` as `faa0a4a`** (approved after fixing 3 documentation-accuracy issues a

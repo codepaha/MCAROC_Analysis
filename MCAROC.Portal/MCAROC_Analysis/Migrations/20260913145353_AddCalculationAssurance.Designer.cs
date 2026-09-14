@@ -5,6 +5,7 @@ using Microsoft.Data.SqlTypes;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 #nullable disable
@@ -12,9 +13,11 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace MCAROC_Analysis.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260913145353_AddCalculationAssurance")]
+    partial class AddCalculationAssurance
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -183,9 +186,6 @@ namespace MCAROC_Analysis.Migrations
                         .HasMaxLength(15)
                         .HasColumnType("nvarchar(15)");
 
-                    b.Property<string>("DirectorsComments")
-                        .HasColumnType("nvarchar(max)");
-
                     b.Property<int>("FinancialYear")
                         .HasColumnType("int");
 
@@ -195,17 +195,11 @@ namespace MCAROC_Analysis.Migrations
                     b.Property<string>("FirmRegistrationNumber")
                         .HasColumnType("nvarchar(max)");
 
-                    b.Property<string>("Footnotes")
-                        .HasColumnType("nvarchar(max)");
-
                     b.Property<bool>("HasQualificationOrAdverseRemark")
                         .HasColumnType("bit");
 
                     b.Property<long>("IngestionRunId")
                         .HasColumnType("bigint");
-
-                    b.Property<bool>("IsDetailRow")
-                        .HasColumnType("bit");
 
                     b.Property<string>("MembershipNumber")
                         .HasColumnType("nvarchar(max)");
@@ -215,15 +209,6 @@ namespace MCAROC_Analysis.Migrations
 
                     b.Property<long>("RequestId")
                         .HasColumnType("bigint");
-
-                    b.Property<string>("SectionCode")
-                        .HasColumnType("nvarchar(max)");
-
-                    b.Property<string>("SectionName")
-                        .HasColumnType("nvarchar(max)");
-
-                    b.Property<int?>("SerialNumber")
-                        .HasColumnType("int");
 
                     b.Property<long?>("SourceDocumentId")
                         .HasColumnType("bigint");

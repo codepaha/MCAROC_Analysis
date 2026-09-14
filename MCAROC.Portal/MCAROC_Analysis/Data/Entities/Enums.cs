@@ -249,3 +249,88 @@ public enum LitigationSource
     RocReport,
     DataLake
 }
+
+// ── #164 Calculation assurance ───────────────────────────────────────────────────
+
+/// <summary>Deterministic check outcome. Mirrors <c>RuleEvaluationOutcome</c>'s shape deliberately —
+/// <see cref="NotEvaluated"/> is never a passing result and must never be conflated with
+/// <see cref="NotTriggered"/>.</summary>
+public enum CalculationCheckStatus
+{
+    Triggered,
+    NotTriggered,
+    NotEvaluated
+}
+
+/// <summary>Where a <see cref="CalculationDiscrepancy"/> originated. A deterministic check is
+/// authoritative and self-confirms; an AI candidate always starts <see cref="CalculationDiscrepancyStatus.Open"/>
+/// with no severity until a human triages it.</summary>
+public enum CalculationDiscrepancySourceType
+{
+    Deterministic,
+    AiCandidate
+}
+
+/// <summary>Severity of a confirmed calculation discrepancy. Critical never has an exception path;
+/// Material may be released via a documented internal exception; Minor is record-only (no hold).</summary>
+public enum CalculationDiscrepancySeverity
+{
+    Minor,
+    Material,
+    Critical
+}
+
+public enum CalculationDiscrepancyStatus
+{
+    Open,
+    Triaged,
+    Confirmed,
+    Rejected,
+    AcceptedAsSourceException,
+    FixedPendingReaudit,
+    Resolved
+}
+
+/// <summary>One reviewer decision on a <see cref="CalculationDiscrepancy"/>, recorded as an append-only
+/// <see cref="CalculationDiscrepancyApproval"/> row rather than an in-place status edit.</summary>
+public enum CalculationDiscrepancyDecisionAction
+{
+    Triage,
+    Confirm,
+    Reject,
+    AcceptException,
+    MarkFixedPendingReaudit,
+    Resolve
+}
+
+/// <summary>Exactly two reasons a report artifact can be held — never "AI hasn't finished yet"
+/// (see <c>CalculationAiAuditRunStatus</c>): the AI worker is asynchronous by design and must never
+/// block otherwise-safe delivery just because it hasn't completed.</summary>
+public enum CalculationArtifactHoldReason
+{
+    ConfirmedCriticalDiscrepancy,
+    ConfirmedMaterialDiscrepancyNoException
+}
+
+/// <summary><see cref="SkippedAiUnavailable"/> is a distinct terminal state from <see cref="Completed"/> —
+/// AI unavailability is recorded as not-AI-audited, never silently treated as a successful review, and
+/// (like every other AI-run status) never itself creates or extends a hold.</summary>
+public enum CalculationAiAuditRunStatus
+{
+    Pending,
+    InProgress,
+    Completed,
+    CompletedWithErrors,
+    Failed,
+    SkippedAiUnavailable
+}
+
+/// <summary>Rollout gate for the whole calculation-assurance feature. Off = zero DB queries anywhere.
+/// ObserveOnly = real checks run and are recorded, but delivery is never blocked. Enforced = a
+/// confirmed hold (including a missing/unaudited snapshot) actually blocks the dossier download.</summary>
+public enum CalculationAssuranceMode
+{
+    Off,
+    ObserveOnly,
+    Enforced
+}
