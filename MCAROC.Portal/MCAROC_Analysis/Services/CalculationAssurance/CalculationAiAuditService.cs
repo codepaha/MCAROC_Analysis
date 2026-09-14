@@ -24,14 +24,28 @@ public class CalculationAiAuditService
         _client = new GenAiClient(vertexAI: true, project: projectId, location: location, credential: credential);
     }
 
-    public async Task<CalculationAiAuditCallResult> CallAsync(string prompt, CancellationToken ct)
+    /// <summary>Bounded to timeoutSeconds regardless of how long-lived `ct` is (the worker's ambient token
+    /// is a BackgroundService shutdown token, which does not fire on its own until the app stops) — this
+    /// is what guarantees the call ends before CalculationAiAuditOrchestrator's derived lease can expire,
+    /// so recovery can never reclaim a genuinely-still-running run and issue a duplicate call.</summary>
+    public async Task<CalculationAiAuditCallResult> CallAsync(string prompt, int timeoutSeconds, CancellationToken ct)
     {
         try
         {
-            var config = new GenerateContentConfig { ResponseMimeType = "application/json" };
-            var response = await _client.Models.GenerateContentAsync(ModelId, prompt, config, ct);
-            var rawResponse = response.Candidates?.FirstOrDefault()?.Content?.Parts?.FirstOrDefault()?.Text ?? "";
-            return new CalculationAiAuditCallResult(true, rawResponse, null);
+            var (_, rawResponse, timedOut) = await CalculationAiAuditTimeoutRunner.RunAsync(async innerCt =>
+            {
+                var config = new GenerateContentConfig { ResponseMimeType = "application/json" };
+                var response = await _client.Models.GenerateContentAsync(ModelId, prompt, config, innerCt);
+                return response.Candidates?.FirstOrDefault()?.Content?.Parts?.FirstOrDefault()?.Text ?? "";
+            }, TimeSpan.FromSeconds(timeoutSeconds), ct);
+
+            if (timedOut)
+            {
+                _logger.LogWarning("Vertex AI calculation-assurance audit call timed out after {TimeoutSeconds}s", timeoutSeconds);
+                return new CalculationAiAuditCallResult(false, "", $"Vertex AI call timed out after {timeoutSeconds}s.");
+            }
+
+            return new CalculationAiAuditCallResult(true, rawResponse ?? "", null);
         }
         catch (Exception ex)
         {

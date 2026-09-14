@@ -30,11 +30,19 @@ public class CalculationAiAuditOrchestrator(
 
     private int MaxAttempts => config.GetValue("CalculationAssurance:AiAuditMaxAttempts", 3);
     private int MaxLedgerRowsPerCall => config.GetValue("CalculationAssurance:AiAuditMaxLedgerRowsPerCall", 150);
+    private int AiAuditTimeoutSeconds => config.GetValue("CalculationAssurance:AiAuditTimeoutSeconds", 60);
 
-    /// <summary>Generous margin beyond AiAuditTimeoutSeconds — the lease must comfortably outlive one
-    /// genuine (slow) Vertex AI call, since a lease reclaimed too early is exactly the duplicate-call bug
-    /// this field exists to prevent.</summary>
-    private int LeaseSeconds => config.GetValue("CalculationAssurance:AiAuditLeaseSeconds", 300);
+    /// <summary>Margin added on top of AiAuditTimeoutSeconds to get the lease duration. Deliberately
+    /// derived from the enforced call timeout rather than its own independent config value — two
+    /// separately-configured numbers can silently drift out of sync (e.g. someone raises the timeout for a
+    /// slower model without also raising the lease), which is exactly how the lease-vs-call-duration gap
+    /// this class exists to close would reopen. Covers DB round-trip + validation + persistence time after
+    /// CalculationAiAuditTimeoutRunner returns, not just the network call itself.</summary>
+    private const int LeaseMarginSeconds = 60;
+
+    private int LeaseSeconds => ComputeLeaseSeconds(AiAuditTimeoutSeconds);
+
+    internal static int ComputeLeaseSeconds(int timeoutSeconds) => timeoutSeconds + LeaseMarginSeconds;
 
     /// <summary>Get-or-create the single CalculationAiAuditRun for this snapshot and enqueue it. A no-op
     /// with zero DB queries when Mode is Off or AiAuditEnabled is false, matching the sibling
@@ -127,7 +135,7 @@ public class CalculationAiAuditOrchestrator(
                 .ToListAsync(ct);
 
             var prompt = CalculationAiAuditPromptBuilder.Build(ledgerEntries, MaxLedgerRowsPerCall);
-            var callResult = await aiService.CallAsync(prompt.PromptText, ct);
+            var callResult = await aiService.CallAsync(prompt.PromptText, AiAuditTimeoutSeconds, ct);
             if (!callResult.Success)
                 throw new InvalidOperationException(callResult.FailureReason ?? "Vertex AI call failed with no reason given.");
 
