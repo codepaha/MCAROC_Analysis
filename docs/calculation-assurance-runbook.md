@@ -26,7 +26,11 @@ download while you're still learning what the checks actually find on your real 
 1. **Never set `Mode` in the committed `appsettings.json`.** Set it in that one environment's own config
    layer (environment variable `CalculationAssurance__Mode`, an App Service / container app setting, or
    equivalent) — the repo default must stay `Off`.
-2. Set `CalculationAssurance:Mode` to `ObserveOnly` in that environment.
+2. Set `CalculationAssurance:Mode` to `ObserveOnly` in that environment. **This generally requires an
+   application restart/recycle to take effect** — environment variables and App Service settings are read
+   once at process startup, not watched for changes (see the restart-dependency note under "Rotating the
+   credential" in §3, which applies identically here). Don't assume the flip is live; verify it (a quick
+   test request, or watching for the mode-specific log lines in §4) before relying on it.
 3. Set up the reviewer credential (§3 below) so someone can actually sign in and see what's happening —
    `ObserveOnly` still needs a human looking at the panel, it just doesn't block delivery on its own.
 4. Let it run for a real analysis cycle or two. Watch the signals in §4.
@@ -72,7 +76,28 @@ hash could leak into source control).
 ### Rotating the credential
 
 Generate a new hash (step 2 above) and update `ReviewerPasswordHash` in that environment's config. No code
-change, no migration, no restart-order dependency — the config is read fresh on each login attempt.
+change and no migration — but **whether it takes effect without a restart depends entirely on which config
+provider holds it**, not on anything this app does at login time:
+
+- **Environment variables** (`InternalAuth__ReviewerPasswordHash` set directly on the process/container) are
+  read once when the host starts. ASP.NET Core's environment-variable provider does not watch for changes —
+  a rotated value has no effect until the app process restarts.
+- **Azure App Service Application Settings** are also environment variables under the hood, with the same
+  no-reload behavior in the app itself — but changing a setting in the Azure portal/CLI triggers App
+  Service to recycle the app for you, so it works, just because Azure restarts the process, not because
+  the app noticed the change.
+- **User secrets** (local development) are likewise read once at startup — restart `dotnet run` after
+  changing them.
+- The only way a rotation would apply live, with no restart, is a config source that explicitly supports
+  reload (e.g. Azure App Configuration or Key Vault wired up with its reload-on-change provider) — this app
+  does not currently use one for `InternalAuth`.
+
+**After rotating, always verify with a fresh sign-in attempt** (confirm the old password now fails and the
+new one succeeds) rather than assuming the change is live — if the environment needs an explicit
+restart/recycle and it wasn't done, the old credential will silently keep working. The same restart
+dependency applies to changing `CalculationAssurance:Mode` (§2) — after flipping it, verify with a quick
+check (e.g. confirm a fresh `ObserveOnly`/`Enforced`-only log line appears, or that the delivery gate's
+behavior actually changed on a test request) rather than assuming the flip took effect immediately.
 
 ## 4. What to check in `ObserveOnly` before ever proposing `Enforced`
 
