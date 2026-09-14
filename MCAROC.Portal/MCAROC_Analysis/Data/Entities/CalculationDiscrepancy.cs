@@ -48,6 +48,15 @@ public class CalculationDiscrepancy
 
     public int RequiredApprovals { get; set; } = 1;
 
+    /// <summary>The severity the first Confirm approval proposed, claimed atomically (an
+    /// ExecuteUpdateAsync compare-and-set from null, never a load-then-check-then-write race) by
+    /// CalculationDiscrepancyWorkflowService.ConfirmAsync. Every subsequent Confirm approval must match
+    /// this value or is refused outright — never persisted — which is what makes a severity disagreement
+    /// always recoverable: only ever one severity is ever actually recorded for this discrepancy's
+    /// Confirm action, so a later reviewer can always still complete the transition by agreeing with it.
+    /// Set once, never cleared; equals Severity once Status reaches Confirmed.</summary>
+    public CalculationDiscrepancySeverity? PendingConfirmSeverity { get; set; }
+
     /// <summary>Populated only for Status == AcceptedAsSourceException. Enforced Material-only in code —
     /// there is no route or code path that lets a Critical discrepancy reach this status.</summary>
     public string? ExceptionReason { get; set; }

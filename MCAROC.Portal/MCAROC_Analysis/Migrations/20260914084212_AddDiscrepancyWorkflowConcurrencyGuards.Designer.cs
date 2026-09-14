@@ -5,6 +5,7 @@ using Microsoft.Data.SqlTypes;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 #nullable disable
@@ -12,9 +13,11 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace MCAROC_Analysis.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260914084212_AddDiscrepancyWorkflowConcurrencyGuards")]
+    partial class AddDiscrepancyWorkflowConcurrencyGuards
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -599,12 +602,7 @@ namespace MCAROC_Analysis.Migrations
 
                     b.HasIndex("PrimaryLedgerEntryId", "CalculationAuditSnapshotId");
 
-                    b.ToTable("CalculationDiscrepancies", t =>
-                        {
-                            t.HasCheckConstraint("CK_CalculationDiscrepancies_PendingConfirmSeverity", "[PendingConfirmSeverity] IS NULL OR [PendingConfirmSeverity] IN ('Minor', 'Material', 'Critical')");
-
-                            t.HasCheckConstraint("CK_CalculationDiscrepancies_Severity", "[Severity] IS NULL OR [Severity] IN ('Minor', 'Material', 'Critical')");
-                        });
+                    b.ToTable("CalculationDiscrepancies");
                 });
 
             modelBuilder.Entity("MCAROC_Analysis.Data.Entities.CalculationDiscrepancyApproval", b =>
@@ -662,10 +660,7 @@ namespace MCAROC_Analysis.Migrations
                     b.HasIndex("CalculationDiscrepancyId", "DecisionAction", "ReviewerName")
                         .IsUnique();
 
-                    b.ToTable("CalculationDiscrepancyApprovals", t =>
-                        {
-                            t.HasCheckConstraint("CK_CalculationDiscrepancyApprovals_ProposedSeverity", "[ProposedSeverity] IS NULL OR [ProposedSeverity] IN ('Minor', 'Material', 'Critical')");
-                        });
+                    b.ToTable("CalculationDiscrepancyApprovals");
                 });
 
             modelBuilder.Entity("MCAROC_Analysis.Data.Entities.CalculationDiscrepancyLedgerLink", b =>
