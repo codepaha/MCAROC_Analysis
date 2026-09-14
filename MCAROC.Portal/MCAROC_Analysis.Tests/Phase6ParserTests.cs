@@ -301,6 +301,31 @@ public class FinancialParametersParserTests
         // Warning emitted for conflicting values
         Assert.Contains(r.Warnings, w => w.IssueCode == "DUPLICATE_PARAMETER_CONFLICT");
     }
+
+    // Regression for a real crash found during real-file E2E testing (2026-09-14): a source workbook
+    // restating the identical value for the same parameter/year in both sheets produced two
+    // FinancialParameter rows, which crashed _FinancialsTab.cshtml's ToDictionary(p => p.FinancialYear)
+    // with "An item with the same key has already been added." This is exactly the case the class doc
+    // comment already promised was deduplicated ("the Annexure and Highlights don't produce duplicates
+    // for a shared year") — unlike a genuine conflict (previous test), there's nothing here worth
+    // keeping two rows for.
+    [Fact]
+    public void Identical_value_repeated_in_both_sheets_produces_exactly_one_row_and_no_warning()
+    {
+        var annexure = Sheet("Annexure - Financial Parameters",
+            Row("Parameter (Rs. Crore)", "31 Mar, 2017"),
+            Row("Employee benefits expense", 96.22));
+        var highlights = Sheet("Highlights",
+            Row("Parameter (Rs. Crore)", "31 Mar, 2017"),
+            Row("Employee benefits expense", 96.22));
+
+        var r = FinancialParametersParser.Parse(highlights, annexure, 1, 1, 10);
+
+        var items = r.Items.Where(x => x.ParameterName == "Employee benefits expense" && x.FinancialYear == 2017).ToList();
+        var item = Assert.Single(items);
+        Assert.Equal("Annexure - Financial Parameters", item.SourceSheetName); // Annexure parsed first, wins
+        Assert.Empty(r.Warnings);
+    }
 }
 
 public class SecuritiesAllotmentParserTests
