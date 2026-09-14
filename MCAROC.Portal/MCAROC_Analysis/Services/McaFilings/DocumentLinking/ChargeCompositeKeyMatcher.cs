@@ -18,9 +18,22 @@ public class ChargeDocumentCandidate
     public string? TextQuote { get; set; }
 }
 
+public enum ChargeMatchFailureReason
+{
+    None,
+    MissingChargeId,
+    ChargeNotFound,
+    EventTypeMismatch,
+    DateMismatch,
+    DateContradiction,
+    AmbiguousMultipleEvents,
+    ConflictingCorroboration
+}
+
 public class ChargeMatchResult
 {
     public bool IsMatched { get; set; }
+    public ChargeMatchFailureReason FailureReasonCode { get; set; } = ChargeMatchFailureReason.None;
     public long? TargetChargeId { get; set; }
     public long? TargetChargeEventId { get; set; }
     public ChargeDateMatchMode DateMatchMode { get; set; } = ChargeDateMatchMode.None;
@@ -46,6 +59,7 @@ public class ChargeCompositeKeyMatcher
             return new ChargeMatchResult
             {
                 IsMatched = false,
+                FailureReasonCode = ChargeMatchFailureReason.MissingChargeId,
                 FailureReason = "Charge ID is missing or empty."
             };
         }
@@ -62,17 +76,35 @@ public class ChargeCompositeKeyMatcher
             return new ChargeMatchResult
             {
                 IsMatched = false,
+                FailureReasonCode = ChargeMatchFailureReason.ChargeNotFound,
                 FailureReason = $"No RocCharge found with charge number '{normalizedCandidateChargeId}'."
             };
         }
 
-        var chargeIds = matchingCharges.Select(c => c.ChargeId).ToHashSet();
-        var relevantEvents = existingEvents.Where(e => chargeIds.Contains(e.RocChargeId)).ToList();
+        var chargeIds = matchingCharges.Where(c => c.ChargeId != 0).Select(c => c.ChargeId).ToHashSet();
+        var relevantEvents = matchingCharges.SelectMany(c => c.Events).ToList();
+        if (relevantEvents.Count == 0)
+        {
+            relevantEvents = existingEvents.Where(e =>
+                (e.RocChargeId != 0 && chargeIds.Contains(e.RocChargeId)) ||
+                (e.RocCharge != null && matchingCharges.Contains(e.RocCharge))
+            ).ToList();
+        }
 
         // 2. Filter by EventType if specified
         if (candidate.EventType.HasValue)
         {
-            relevantEvents = relevantEvents.Where(e => e.EventType == candidate.EventType.Value).ToList();
+            var filtered = relevantEvents.Where(e => e.EventType == candidate.EventType.Value).ToList();
+            if (filtered.Count == 0 && relevantEvents.Count > 0)
+            {
+                return new ChargeMatchResult
+                {
+                    IsMatched = false,
+                    FailureReasonCode = ChargeMatchFailureReason.EventTypeMismatch,
+                    FailureReason = $"No event of type '{candidate.EventType.Value}' exists for charge '{normalizedCandidateChargeId}'."
+                };
+            }
+            relevantEvents = filtered;
         }
 
         // 3. Match against EventDate or FilingDate.
@@ -136,12 +168,41 @@ public class ChargeCompositeKeyMatcher
 
         if (eventMatches.Count == 0)
         {
+            if (encounteredDateContradiction)
+            {
+                return new ChargeMatchResult
+                {
+                    IsMatched = false,
+                    FailureReasonCode = ChargeMatchFailureReason.DateContradiction,
+                    FailureReason = "Contradictory date pair: candidate supplied multiple dates, but one or more conflicted with the charge event."
+                };
+            }
+
+            // Check if an event of a different type for this charge matched the date
+            var allEventsForCharge = matchingCharges.SelectMany(c => c.Events).ToList();
+            var otherTypeEvents = (allEventsForCharge.Count > 0 ? allEventsForCharge : existingEvents)
+                .Where(e => (allEventsForCharge.Contains(e) || (e.RocChargeId != 0 && chargeIds.Contains(e.RocChargeId)) || (e.RocCharge != null && matchingCharges.Contains(e.RocCharge))) &&
+                            (!candidate.EventType.HasValue || e.EventType != candidate.EventType.Value))
+                .ToList();
+            bool otherTypeMatchedDate = otherTypeEvents.Any(e =>
+                (candidate.EventDate.HasValue && e.EventDate == candidate.EventDate) ||
+                (candidate.FilingDate.HasValue && e.FilingDate == candidate.FilingDate));
+
+            if (otherTypeMatchedDate)
+            {
+                return new ChargeMatchResult
+                {
+                    IsMatched = false,
+                    FailureReasonCode = ChargeMatchFailureReason.EventTypeMismatch,
+                    FailureReason = $"An event exists on the specified date, but its event type does not match requested '{candidate.EventType}'."
+                };
+            }
+
             return new ChargeMatchResult
             {
                 IsMatched = false,
-                FailureReason = encounteredDateContradiction
-                    ? "Contradictory date pair: candidate supplied multiple dates, but one or more conflicted with the charge event."
-                    : "No matching RocChargeEvent found for the specified event type and date(s)."
+                FailureReasonCode = ChargeMatchFailureReason.DateMismatch,
+                FailureReason = "No matching RocChargeEvent found for the specified event type and date(s)."
             };
         }
 
@@ -151,24 +212,35 @@ public class ChargeCompositeKeyMatcher
             return new ChargeMatchResult
             {
                 IsMatched = false,
+                FailureReasonCode = ChargeMatchFailureReason.AmbiguousMultipleEvents,
                 FailureReason = $"Ambiguous: found {eventMatches.Count} matching charge events."
             };
         }
 
         var (matchedEvent, dateMode) = eventMatches[0];
-        var parentCharge = matchingCharges.FirstOrDefault(c => c.ChargeId == matchedEvent.RocChargeId);
+        var parentCharge = matchingCharges.FirstOrDefault(c => c.Events.Contains(matchedEvent) || (c.ChargeId != 0 && c.ChargeId == matchedEvent.RocChargeId));
 
-        // Corroborate amount and holder
+        // Corroborate amount and holder with strict conflict checking
         bool amountCorroborated = false;
         if (candidate.Amount.HasValue)
         {
-            if (matchedEvent.ChargeAmount.HasValue && matchedEvent.ChargeAmount.Value == candidate.Amount.Value)
+            bool hasEventAmount = matchedEvent.ChargeAmount.HasValue;
+            bool matchesEvent = hasEventAmount && matchedEvent.ChargeAmount == candidate.Amount.Value;
+            bool hasParentAmount = parentCharge?.CurrentAmount.HasValue == true;
+            bool matchesParent = hasParentAmount && parentCharge?.CurrentAmount == candidate.Amount.Value;
+
+            if (matchesEvent || matchesParent)
             {
                 amountCorroborated = true;
             }
-            else if (parentCharge?.CurrentAmount.HasValue == true && parentCharge.CurrentAmount.Value == candidate.Amount.Value)
+            else if (hasEventAmount || hasParentAmount)
             {
-                amountCorroborated = true;
+                return new ChargeMatchResult
+                {
+                    IsMatched = false,
+                    FailureReasonCode = ChargeMatchFailureReason.ConflictingCorroboration,
+                    FailureReason = "Supplied amount conflicts with all available charge event amounts."
+                };
             }
         }
 
@@ -176,15 +248,23 @@ public class ChargeCompositeKeyMatcher
         if (!string.IsNullOrWhiteSpace(candidate.HolderName))
         {
             var candHolder = candidate.HolderName.Trim();
-            if (!string.IsNullOrWhiteSpace(matchedEvent.HolderNameNormalized) &&
-                matchedEvent.HolderNameNormalized.Contains(candHolder, StringComparison.OrdinalIgnoreCase))
+            bool hasEventHolder = !string.IsNullOrWhiteSpace(matchedEvent.HolderNameNormalized);
+            bool matchesEvent = hasEventHolder && matchedEvent.HolderNameNormalized.Contains(candHolder, StringComparison.OrdinalIgnoreCase);
+            bool hasParentHolder = !string.IsNullOrWhiteSpace(parentCharge?.LatestChargeHolderNormalized);
+            bool matchesParent = hasParentHolder && parentCharge!.LatestChargeHolderNormalized.Contains(candHolder, StringComparison.OrdinalIgnoreCase);
+
+            if (matchesEvent || matchesParent)
             {
                 holderCorroborated = true;
             }
-            else if (!string.IsNullOrWhiteSpace(parentCharge?.LatestChargeHolderNormalized) &&
-                     parentCharge.LatestChargeHolderNormalized.Contains(candHolder, StringComparison.OrdinalIgnoreCase))
+            else if (hasEventHolder || hasParentHolder)
             {
-                holderCorroborated = true;
+                return new ChargeMatchResult
+                {
+                    IsMatched = false,
+                    FailureReasonCode = ChargeMatchFailureReason.ConflictingCorroboration,
+                    FailureReason = "Supplied holder name conflicts with all available charge event holders."
+                };
             }
         }
 

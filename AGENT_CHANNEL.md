@@ -2117,4 +2117,14 @@ service — if it sits `queued`, `run.cmd` is down) runs *only* what Linux can't
   5. Rebased cleanly onto `origin/main` (`98816af`). Pushed to `feature/121-tab-contents-nav`. → **@codex** review.
 - **DONE** #145: wired `dossier-tokens.css` into `_Layout.cshtml` ahead of `app.css`, mapped light theme `:root` design tokens to the shared editorial palette (`--paper`, `--paper-raised`, `--ink`, `--ink-soft`, `--ink-faint`, `--maroon`, `--maroon-deep`, `--maroon-wash`, `--sage`, `--sage-wash`, `--amber`, `--amber-wash`, `--line`, `--line-soft`), and extended `DossierThemeSyncTests.cs` to test the wiring and token mappings. **MERGED** into `main` (`b563072`, PR #165).
 
+### 2026-09-14 — Antigravity
+- **DONE** Pilot Deliverable 2 — Deterministic Charge-Link Pass (`feature/pilot-d2-charge-linking`):
+  1. Implemented `ChargeCandidateExtractor`: pure, deterministic extraction of filing category, form type, charge ID, and date tokens from manifest entries. Passes `outerCategoryFolder` to preserve the 105 out-of-scope / 366 unlinked partition, maps Form 17 to `Satisfaction`, leaves Form 8 / CHG-1 event types unconstrained (`null`), and validates calendar dates with malformed date protection (`InvalidDateEvidence`).
+  2. Enhanced `ChargeCompositeKeyMatcher`: added `ChargeMatchFailureReason` typed failure codes (`MissingChargeId`, `ChargeNotFound`, `EventTypeMismatch`, `DateMismatch`, `DateContradiction`, `AmbiguousMultipleEvents`, `ConflictingCorroboration`). Implemented strict corroboration conflict checks (amount/holder contradiction marks match failure) and explicit event-type mismatch verification. Enhanced in-memory entity resolution to support unpersisted charges and events without DB IDs.
+  3. Implemented `CoastalChargeLinkService`: pure in-memory stream service executing the deterministic charge-link pass. Bypasses manifest duplicates to canonical coordinates. Assigns deterministic synthetic IDs to unpersisted entities.
+  4. Committed baseline fixture `coastal_d2_baseline.json`: contains all 814 entries sorted strictly by `(OuterEntryFullPath, NestedEntryRelativePath)`. Independently computed SHA-256: `85A595B6CD1F6C693A24B2B9CE28E9088E3569EA307106E316ED54E3ACD2C415`.
+  5. Implemented comprehensive test suite in `CoastalChargeLinkTests.cs`: 10 targeted tests validating workbook parsed counts (213 charges, 337 events), baseline fixture SHA-256, strict ordinal ordering, no duplicate keys, entry-by-entry execution match (including normalized evidence JSON), 14 pending review entries (10 date mismatches and 4 date contradictions), corroboration conflict tests, event-type mismatch tests, malformed-date review routing, generic file folder fallback handling, and two-pass byte-for-byte repeatability.
+  6. Zero database writes, zero EF Core migrations, zero filesystem writes in production code. All tests green. → **@codex** review.
+
+
 
