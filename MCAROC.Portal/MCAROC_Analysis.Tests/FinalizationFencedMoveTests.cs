@@ -26,10 +26,43 @@ public class FinalizationFencedMoveTests : IAsyncLifetime
 
     public Task DisposeAsync() => Task.CompletedTask;
 
+    private static async Task<long> EnsureTestRequestAsync(AppDbContext db)
+    {
+        var existing = await db.Requests.FirstOrDefaultAsync();
+        if (existing != null) return existing.RequestId;
+
+        var client = await db.Clients.FirstOrDefaultAsync();
+        if (client == null)
+        {
+            client = new Client
+            {
+                ClientCode = "LOCK_" + Guid.NewGuid().ToString("N")[..6],
+                ClientName = "AppLock Test Client",
+                CreatedDate = DateTime.UtcNow
+            };
+            db.Clients.Add(client);
+            await db.SaveChangesAsync();
+        }
+
+        var req = new McaRequest
+        {
+            ClientId = client.ClientId,
+            RequestNumber = "REQ-" + Guid.NewGuid().ToString("N")[..8],
+            CompanyName = "Test AppLock Co",
+            Cin = "U12345MH2026PTC777777",
+            RequestStatus = RequestStatus.Created,
+            CreatedDate = DateTime.UtcNow
+        };
+        db.Requests.Add(req);
+        await db.SaveChangesAsync();
+        return req.RequestId;
+    }
+
     [Fact]
     public async Task FinalizationMove_ProtectsCriticalSection_WithSqlAppLock()
     {
         await using var db = CreateContext();
+        var requestId = await EnsureTestRequestAsync(db);
 
         var sessionId = Guid.NewGuid();
         var tempDir = Path.Combine(Path.GetTempPath(), "applock-test-" + Guid.NewGuid().ToString("N"));
@@ -51,7 +84,7 @@ public class FinalizationFencedMoveTests : IAsyncLifetime
         var session = new LargeArchiveUploadSession
         {
             SessionId = sessionId,
-            RequestId = 1,
+            RequestId = requestId,
             HashedCapabilityToken = ChunkStreamingService.ComputeTokenHash("token"),
             OriginalFileName = "archive.zip",
             TotalExpectedSizeBytes = fullBytes.Length,

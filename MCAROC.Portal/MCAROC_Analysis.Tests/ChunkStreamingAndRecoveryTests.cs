@@ -40,8 +40,22 @@ public class ChunkStreamingAndRecoveryTests : IAsyncLifetime
         var req = await db.Requests.FirstOrDefaultAsync();
         if (req == null)
         {
+            var client = await db.Clients.FirstOrDefaultAsync();
+            if (client == null)
+            {
+                client = new Client
+                {
+                    ClientCode = "CHUNK_" + Guid.NewGuid().ToString("N")[..6],
+                    ClientName = "Chunk Test Client",
+                    CreatedDate = DateTime.UtcNow
+                };
+                db.Clients.Add(client);
+                await db.SaveChangesAsync();
+            }
+
             req = new McaRequest
             {
+                ClientId = client.ClientId,
                 RequestNumber = "REQ-" + Guid.NewGuid().ToString("N")[..8],
                 CompanyName = "Chunk Test Co",
                 Cin = "U12345MH2026PTC888888",

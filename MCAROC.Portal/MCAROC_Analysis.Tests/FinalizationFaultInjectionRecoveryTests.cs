@@ -30,8 +30,22 @@ public class FinalizationFaultInjectionRecoveryTests : IAsyncLifetime
         var existing = await db.Requests.FirstOrDefaultAsync();
         if (existing != null) return existing.RequestId;
 
+        var client = await db.Clients.FirstOrDefaultAsync();
+        if (client == null)
+        {
+            client = new Client
+            {
+                ClientCode = "FAULT_" + Guid.NewGuid().ToString("N")[..6],
+                ClientName = "Fault Recovery Client",
+                CreatedDate = DateTime.UtcNow
+            };
+            db.Clients.Add(client);
+            await db.SaveChangesAsync();
+        }
+
         var req = new McaRequest
         {
+            ClientId = client.ClientId,
             RequestNumber = "REQ-" + Guid.NewGuid().ToString("N")[..8],
             CompanyName = "Test Fault Recovery Co",
             Cin = "U12345MH2026PTC123456",
