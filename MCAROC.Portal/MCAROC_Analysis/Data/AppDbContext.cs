@@ -78,6 +78,12 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<CalculationAiAuditRun> CalculationAiAuditRuns => Set<CalculationAiAuditRun>();
     public DbSet<CalculationAssuranceOverrideAudit> CalculationAssuranceOverrideAudits => Set<CalculationAssuranceOverrideAudit>();
 
+    // Large Archive Upload & Storage Admission
+    public DbSet<LargeArchiveUploadSession> LargeArchiveUploadSessions => Set<LargeArchiveUploadSession>();
+    public DbSet<StorageCapacityReservation> StorageCapacityReservations => Set<StorageCapacityReservation>();
+    public DbSet<StorageVolumeLease> StorageVolumeLeases => Set<StorageVolumeLease>();
+    public DbSet<OperationalSlotLease> OperationalSlotLeases => Set<OperationalSlotLease>();
+
     protected override void ConfigureConventions(ModelConfigurationBuilder configurationBuilder)
     {
         // Default precision for monetary/count decimals (mostly Rs. Crore values); percentages override below.
@@ -109,14 +115,76 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             e.HasOne(x => x.Client).WithMany().HasForeignKey(x => x.ClientId).OnDelete(DeleteBehavior.Restrict);
             e.Property(x => x.EntityType).HasConversion<string>().HasMaxLength(20);
             e.Property(x => x.RequestStatus).HasConversion<string>().HasMaxLength(30);
+            e.Property(x => x.RowVersion).IsRowVersion();
         });
 
         modelBuilder.Entity<RequestDocument>(e =>
         {
             e.HasKey(x => x.DocumentId);
             e.HasOne(x => x.Request).WithMany(r => r.Documents).HasForeignKey(x => x.RequestId).OnDelete(DeleteBehavior.Cascade);
+            e.HasOne(x => x.SupersededByDocument).WithMany().HasForeignKey(x => x.SupersededByDocumentId).OnDelete(DeleteBehavior.Restrict);
             e.Property(x => x.DocumentType).HasConversion<string>().HasMaxLength(20);
             e.Property(x => x.UploadStatus).HasConversion<string>().HasMaxLength(20);
+            e.Property(x => x.IsActiveSource).HasDefaultValue(false);
+
+            e.HasIndex(x => new { x.RequestId, x.DocumentType })
+                .HasDatabaseName("UX_RequestDocuments_ActiveSource")
+                .IsUnique()
+                .HasFilter("[IsActiveSource] = 1");
+
+            e.HasIndex(x => x.UploadSessionId)
+                .IsUnique()
+                .HasFilter("[UploadSessionId] IS NOT NULL");
+        });
+
+        modelBuilder.Entity<McaFilingBatch>(e =>
+        {
+            e.HasKey(x => x.BatchId);
+            e.HasOne(x => x.Request).WithMany().HasForeignKey(x => x.RequestId).OnDelete(DeleteBehavior.Cascade);
+            e.HasIndex(x => x.UploadSessionId)
+                .IsUnique()
+                .HasFilter("[UploadSessionId] IS NOT NULL");
+        });
+
+        modelBuilder.Entity<LargeArchiveUploadSession>(e =>
+        {
+            e.HasKey(x => x.SessionId);
+            e.HasOne(x => x.Request).WithMany().HasForeignKey(x => x.RequestId).OnDelete(DeleteBehavior.Cascade);
+            e.HasIndex(x => x.RequestId);
+            e.HasIndex(x => x.HashedCapabilityToken);
+            e.HasIndex(x => new { x.Status, x.ExpiresUtc });
+            e.Property(x => x.Status).HasConversion<string>().HasMaxLength(30);
+            e.Property(x => x.HashedCapabilityToken).HasMaxLength(64);
+            e.Property(x => x.ExpectedFullSha256).HasMaxLength(64);
+            e.Property(x => x.OriginalFileName).HasMaxLength(260);
+            e.Property(x => x.StagingFilePath).HasMaxLength(500);
+            e.Property(x => x.DestinationStoragePath).HasMaxLength(500);
+            e.Property(x => x.RowVersion).IsRowVersion();
+        });
+
+        modelBuilder.Entity<StorageCapacityReservation>(e =>
+        {
+            e.HasKey(x => x.ReservationId);
+            e.HasIndex(x => new { x.OwnerType, x.OwnerId });
+            e.HasIndex(x => new { x.VolumeRoot, x.State, x.ExpiresUtc });
+            e.Property(x => x.OwnerType).HasMaxLength(30);
+            e.Property(x => x.OwnerId).HasMaxLength(100);
+            e.Property(x => x.VolumeRoot).HasMaxLength(50);
+            e.Property(x => x.State).HasConversion<string>().HasMaxLength(20);
+        });
+
+        modelBuilder.Entity<StorageVolumeLease>(e =>
+        {
+            e.HasKey(x => x.VolumeRoot);
+            e.Property(x => x.VolumeRoot).HasMaxLength(50);
+            e.Property(x => x.RowVersion).IsRowVersion();
+        });
+
+        modelBuilder.Entity<OperationalSlotLease>(e =>
+        {
+            e.HasKey(x => x.SlotType);
+            e.Property(x => x.SlotType).HasMaxLength(30);
+            e.Property(x => x.ActiveHolderId).HasMaxLength(100);
         });
 
         modelBuilder.Entity<IngestionRun>(e =>

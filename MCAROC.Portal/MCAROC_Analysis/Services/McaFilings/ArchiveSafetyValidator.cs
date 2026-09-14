@@ -12,6 +12,14 @@ public record ArchiveSafetyLimits(
     long MaxIndividualPdfSizeBytes = 200_000_000)
 {
     public static readonly ArchiveSafetyLimits Default = new();
+
+    public static ArchiveSafetyLimits FromOptions(LargeArchiveUploadOptions options) =>
+        new(
+            MaxArchiveSizeBytes: options.MaxArchiveSizeBytes,
+            MaxUncompressedSizeBytes: options.MaxUncompressedSizeBytes,
+            MaxNestedDepth: 2,
+            MaxPdfCount: options.MaxPdfCount,
+            MaxIndividualPdfSizeBytes: options.MaxIndividualPdfSizeBytes);
 }
 
 /// <summary>Accumulates uncompressed-size and PDF-count totals across every nested zip processed while
@@ -42,6 +50,39 @@ public class CumulativeArchiveStats(long initialUncompressedBytes = 0, int initi
 /// Applied at every archive level — the outer zip and each nested per-filing zip.</summary>
 public static class ArchiveSafetyValidator
 {
+    private static readonly byte[] ZipMagicBytes = [0x50, 0x4B, 0x03, 0x04]; // PK\x03\x04
+    private static readonly byte[] EmptyZipMagicBytes = [0x50, 0x4B, 0x05, 0x06]; // PK\x05\x06 (empty zip)
+    private static readonly byte[] SpannedZipMagicBytes = [0x50, 0x4B, 0x07, 0x08]; // PK\x07\x08
+
+    /// <summary>Fast magic byte signature validation confirming file begins with standard ZIP signatures.</summary>
+    public static ArchiveSafetyResult ValidateZipHeader(string zipPath)
+    {
+        try
+        {
+            using var fs = new FileStream(zipPath, FileMode.Open, FileAccess.Read, FileShare.Read);
+            if (fs.Length < 4)
+                return new ArchiveSafetyResult(false, "File is too small to be a valid ZIP archive.");
+
+            Span<byte> header = stackalloc byte[4];
+            var read = fs.Read(header);
+            if (read < 4)
+                return new ArchiveSafetyResult(false, "Could not read ZIP header.");
+
+            var isStandardZip = header.SequenceEqual(ZipMagicBytes);
+            var isEmptyZip = header.SequenceEqual(EmptyZipMagicBytes);
+            var isSpannedZip = header.SequenceEqual(SpannedZipMagicBytes);
+
+            if (!isStandardZip && !isEmptyZip && !isSpannedZip)
+                return new ArchiveSafetyResult(false, "File does not match a valid ZIP archive signature.");
+
+            return new ArchiveSafetyResult(true, null);
+        }
+        catch (Exception ex)
+        {
+            return new ArchiveSafetyResult(false, $"Failed to inspect archive header: {ex.Message}");
+        }
+    }
+
     public static ArchiveSafetyResult ValidateOuterArchive(string zipPath, ArchiveSafetyLimits limits)
     {
         var fileInfo = new FileInfo(zipPath);
@@ -49,6 +90,10 @@ public static class ArchiveSafetyValidator
             return new ArchiveSafetyResult(false, "Archive file not found.");
         if (fileInfo.Length > limits.MaxArchiveSizeBytes)
             return new ArchiveSafetyResult(false, $"Archive exceeds the {limits.MaxArchiveSizeBytes / 1_000_000} MB limit.");
+
+        var headerCheck = ValidateZipHeader(zipPath);
+        if (!headerCheck.IsValid)
+            return headerCheck;
 
         // The outer zip's own entries are just the nested zip files as opaque blobs — their declared
         // "Length" here is the nested zip's own size, not what's uncompressed inside it. That recursive

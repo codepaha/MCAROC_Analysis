@@ -28,6 +28,14 @@ public class FilingProcessingWorker(
         try
         {
             using var scope = scopeFactory.CreateScope();
+            var finalizationService = scope.ServiceProvider.GetRequiredService<FinalizationRecoveryService>();
+            var recoveredFinalizations = await finalizationService.ReconcileIncompleteFinalizationsAsync(ct);
+            if (recoveredFinalizations > 0)
+                logger.LogInformation("Reconciled {Count} interrupted large archive finalizations on startup", recoveredFinalizations);
+
+            var reservationManager = scope.ServiceProvider.GetRequiredService<IStorageReservationManager>();
+            await reservationManager.SweepExpiredReservationsAsync(ct);
+
             var processor = scope.ServiceProvider.GetRequiredService<FilingBatchProcessor>();
             var recovered = await processor.RecoverStaleWorkAsync(ct);
             if (recovered > 0)

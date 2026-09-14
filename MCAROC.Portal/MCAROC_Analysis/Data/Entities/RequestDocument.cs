@@ -22,4 +22,14 @@ public class RequestDocument
 
     public string? UploadedBy { get; set; }
     public DateTime UploadedDate { get; set; }
+
+    /// <summary>True if this document is the authoritative source for this RequestId and DocumentType.</summary>
+    public bool IsActiveSource { get; set; }
+
+    /// <summary>Self-reference linking to the document that superseded this one.</summary>
+    public long? SupersededByDocumentId { get; set; }
+    public RequestDocument? SupersededByDocument { get; set; }
+
+    /// <summary>Upload session ID if created via resumable large archive upload.</summary>
+    public Guid? UploadSessionId { get; set; }
 }

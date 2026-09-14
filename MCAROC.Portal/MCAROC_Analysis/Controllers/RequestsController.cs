@@ -218,6 +218,212 @@ public class RequestsController(
         return RedirectToAction(nameof(Details), new { id });
     }
 
+    [HttpPost("/Requests/{id:long}/sources/workbooks")]
+    [ValidateAntiForgeryToken]
+    [RequestSizeLimit(2_000_000_000)]
+    [RequestFormLimits(MultipartBodyLengthLimit = 2_000_000_000)]
+    public async Task<IActionResult> AddSourceWorkbooks(long id, IFormFile? rocFile, IFormFile? chargeFile, [FromForm] byte[]? rowVersion, CancellationToken ct)
+    {
+        var request = await db.Requests.FirstOrDefaultAsync(r => r.RequestId == id, ct);
+        if (request is null) return NotFound();
+
+        if ((rocFile is null || rocFile.Length == 0) && (chargeFile is null || chargeFile.Length == 0))
+        {
+            TempData["SourceError"] = "Please select at least one workbook (ROC report or Detailed Charge report) to add.";
+            return RedirectToAction(nameof(Details), new { id });
+        }
+
+        // Validate uploaded workbook signatures
+        if (rocFile is { Length: > 0 })
+        {
+            await using var rocStream = rocFile.OpenReadStream();
+            var check = fileValidation.ValidateUpload(rocFile.FileName, rocFile.Length, rocStream);
+            if (!check.IsValid)
+            {
+                TempData["SourceError"] = $"MCA / ROC Report: {check.Error}";
+                return RedirectToAction(nameof(Details), new { id });
+            }
+        }
+
+        if (chargeFile is { Length: > 0 })
+        {
+            await using var chargeStream = chargeFile.OpenReadStream();
+            var check = fileValidation.ValidateUpload(chargeFile.FileName, chargeFile.Length, chargeStream);
+            if (!check.IsValid)
+            {
+                TempData["SourceError"] = $"Detailed Charge Report: {check.Error}";
+                return RedirectToAction(nameof(Details), new { id });
+            }
+        }
+
+        // 1. Phase 1: Isolated Outer Transaction — save candidate document(s) with IsActiveSource = false
+        RequestDocument? candidateRoc = null;
+        if (rocFile is { Length: > 0 })
+        {
+            candidateRoc = await SaveCandidateDocumentAsync(id, rocFile, DocumentType.McaRocReport);
+        }
+
+        RequestDocument? candidateCharge = null;
+        if (chargeFile is { Length: > 0 })
+        {
+            candidateCharge = await SaveCandidateDocumentAsync(id, chargeFile, DocumentType.ChargeReport);
+        }
+
+        // Resolve active sources: new candidate if provided, else keep existing active
+        var activeRoc = await db.RequestDocuments.FirstOrDefaultAsync(d => d.RequestId == id && d.DocumentType == DocumentType.McaRocReport && d.IsActiveSource, ct);
+        var activeCharge = await db.RequestDocuments.FirstOrDefaultAsync(d => d.RequestId == id && d.DocumentType == DocumentType.ChargeReport && d.IsActiveSource, ct);
+
+        var targetRocId = candidateRoc?.DocumentId ?? activeRoc?.DocumentId;
+        if (targetRocId is null)
+        {
+            TempData["SourceError"] = "Cannot run ingestion without an active MCA / ROC report.";
+            return RedirectToAction(nameof(Details), new { id });
+        }
+
+        var targetChargeId = candidateCharge?.DocumentId ?? activeCharge?.DocumentId;
+
+        // 2. Phase 2: Inner Ingestion Transaction with direct RowVersion write guard
+        await using var swapTx = await db.Database.BeginTransactionAsync(System.Data.IsolationLevel.ReadCommitted, ct);
+        try
+        {
+            // Direct RowVersion update guard
+            if (rowVersion is not null && rowVersion.Length > 0)
+            {
+                var rowsUpdated = await db.Database.ExecuteSqlInterpolatedAsync(
+                    $"UPDATE Requests SET AnalysisStartedDate = SYSUTCDATETIME() WHERE RequestId = {id} AND RowVersion = {rowVersion}", ct);
+
+                if (rowsUpdated == 0)
+                {
+                    await swapTx.RollbackAsync(ct);
+                    TempData["SourceError"] = "The request was modified by another operator. Please refresh and try again.";
+                    return RedirectToAction(nameof(Details), new { id });
+                }
+            }
+
+            // Run ingestion orchestrator against target candidate/active source pair
+            var run = await orchestrator.RunAsync(id, targetRocId.Value, targetChargeId, ct);
+
+            if (run.Status == IngestionRunStatus.Failed)
+            {
+                await swapTx.RollbackAsync(ct);
+
+                // Persist quarantine status for candidate documents in isolated update
+                if (candidateRoc is not null)
+                {
+                    await db.RequestDocuments
+                        .Where(d => d.DocumentId == candidateRoc.DocumentId)
+                        .ExecuteUpdateAsync(u => u
+                            .SetProperty(d => d.UploadStatus, DocumentUploadStatus.Quarantined)
+                            .SetProperty(d => d.QuarantineReason, run.FailureReason ?? "Identity check failed"), CancellationToken.None);
+                }
+                if (candidateCharge is not null)
+                {
+                    await db.RequestDocuments
+                        .Where(d => d.DocumentId == candidateCharge.DocumentId)
+                        .ExecuteUpdateAsync(u => u
+                            .SetProperty(d => d.UploadStatus, DocumentUploadStatus.Quarantined)
+                            .SetProperty(d => d.QuarantineReason, run.FailureReason ?? "Identity check failed"), CancellationToken.None);
+                }
+
+                TempData["SourceError"] = $"Ingestion validation failed: {run.FailureReason}. The uploaded file has been quarantined; prior sources remain active.";
+                return RedirectToAction(nameof(Details), new { id });
+            }
+
+            // Ingestion succeeded: perform atomic active-source supersession
+            if (candidateRoc is not null)
+            {
+                if (activeRoc is not null)
+                {
+                    await db.RequestDocuments
+                        .Where(d => d.DocumentId == activeRoc.DocumentId)
+                        .ExecuteUpdateAsync(u => u
+                            .SetProperty(d => d.IsActiveSource, false)
+                            .SetProperty(d => d.SupersededByDocumentId, candidateRoc.DocumentId), ct);
+                }
+
+                await db.RequestDocuments
+                    .Where(d => d.DocumentId == candidateRoc.DocumentId)
+                    .ExecuteUpdateAsync(u => u
+                        .SetProperty(d => d.IsActiveSource, true)
+                        .SetProperty(d => d.UploadStatus, DocumentUploadStatus.Processed), ct);
+            }
+
+            if (candidateCharge is not null)
+            {
+                if (activeCharge is not null)
+                {
+                    await db.RequestDocuments
+                        .Where(d => d.DocumentId == activeCharge.DocumentId)
+                        .ExecuteUpdateAsync(u => u
+                            .SetProperty(d => d.IsActiveSource, false)
+                            .SetProperty(d => d.SupersededByDocumentId, candidateCharge.DocumentId), ct);
+                }
+
+                await db.RequestDocuments
+                    .Where(d => d.DocumentId == candidateCharge.DocumentId)
+                    .ExecuteUpdateAsync(u => u
+                        .SetProperty(d => d.IsActiveSource, true)
+                        .SetProperty(d => d.UploadStatus, DocumentUploadStatus.Processed), ct);
+            }
+
+            await swapTx.CommitAsync(ct);
+
+            // Auto-enqueue downstream analysis
+            if (request.RequestStatus == RequestStatus.DataExtracted && !request.IsManualReviewRequired)
+                analysisQueue.Enqueue(id);
+
+            TempData["SourceOk"] = "New source workbook attached and ingested successfully. Downstream analysis queued.";
+            return RedirectToAction(nameof(Details), new { id });
+        }
+        catch (Exception ex)
+        {
+            await swapTx.RollbackAsync(ct);
+            logger.LogError(ex, "Failed to attach and ingest post-creation sources for request {RequestId}", id);
+            TempData["SourceError"] = $"Failed to process sources: {ex.Message}";
+            return RedirectToAction(nameof(Details), new { id });
+        }
+    }
+
+    private async Task<RequestDocument> SaveCandidateDocumentAsync(long requestId, IFormFile file, DocumentType documentType)
+    {
+        var doc = new RequestDocument
+        {
+            RequestId = requestId,
+            DocumentType = documentType,
+            OriginalFileName = file.FileName,
+            FileSize = file.Length,
+            UploadStatus = DocumentUploadStatus.Uploaded,
+            UploadedDate = DateTime.UtcNow,
+            IsActiveSource = false // Always false until ingestion succeeds
+        };
+        db.RequestDocuments.Add(doc);
+        await db.SaveChangesAsync();
+
+        var ext = Path.GetExtension(file.FileName);
+        var storedFileName = $"{doc.DocumentId}{ext}";
+        var uploadsDir = Path.Combine(env.ContentRootPath, "App_Data", "Uploads", requestId.ToString(), "original");
+        Directory.CreateDirectory(uploadsDir);
+        var fullPath = Path.Combine(uploadsDir, storedFileName);
+
+        await using (var fileStream = new FileStream(fullPath, FileMode.Create))
+        {
+            await file.CopyToAsync(fileStream);
+        }
+
+        using (var sha256 = SHA256.Create())
+        await using (var hashStream = new FileStream(fullPath, FileMode.Open, FileAccess.Read))
+        {
+            var hashBytes = await sha256.ComputeHashAsync(hashStream);
+            doc.FileHash = Convert.ToHexString(hashBytes);
+        }
+
+        doc.StoredFileName = storedFileName;
+        doc.StoragePath = fullPath;
+        await db.SaveChangesAsync();
+
+        return doc;
+    }
+
     [HttpGet("/Requests/{id:long}")]
     public async Task<IActionResult> Details(long id, [FromQuery] long? charge)
     {
