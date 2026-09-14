@@ -36,6 +36,7 @@ public class McaRequest
 
     /// <summary>Derived from the latest completed run's WarningsCount; kept separate from RequestStatus.</summary>
     public bool HasIngestionWarnings { get; set; }
+    public byte[]? RowVersion { get; set; }
 
     public List<RequestDocument> Documents { get; set; } = [];
     public List<IngestionRun> IngestionRuns { get; set; } = [];

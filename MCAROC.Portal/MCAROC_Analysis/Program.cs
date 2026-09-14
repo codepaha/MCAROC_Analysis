@@ -35,6 +35,11 @@ builder.Services.AddControllersWithViews();
 builder.Services.AddMemoryCache();
 builder.Services.AddHttpClient<InstaFinancialsClient>(client => client.Timeout = TimeSpan.FromMinutes(10));
 builder.Services.Configure<InstaFinancialsOptions>(builder.Configuration.GetSection(InstaFinancialsOptions.SectionName));
+builder.Services.Configure<LargeArchiveUploadOptions>(builder.Configuration.GetSection(LargeArchiveUploadOptions.SectionName));
+builder.Services.AddScoped<IStorageReservationManager, StorageReservationManager>();
+builder.Services.AddScoped<IOperationalSlotLeaseService, OperationalSlotLeaseService>();
+builder.Services.AddScoped<ChunkStreamingService>();
+builder.Services.AddScoped<FinalizationRecoveryService>();
 builder.Services.AddScoped<PreLoginReportService>();
 builder.Services.AddSingleton<PreLoginReportQueue>();
 builder.Services.AddScoped<PreLoginReportJobService>();
@@ -71,7 +76,8 @@ builder.Services.AddScoped(sp => new FilingBatchProcessor(
     sp.GetRequiredService<VertexAiExtractionService>(),
     sp.GetRequiredService<FilingProcessingQueue>(),
     sp.GetRequiredService<DocumentChunkingQueue>(),
-    sp.GetRequiredService<ILogger<FilingBatchProcessor>>()));
+    sp.GetRequiredService<ILogger<FilingBatchProcessor>>(),
+    sp.GetRequiredService<IOperationalSlotLeaseService>()));
 builder.Services.AddHostedService<FilingProcessingWorker>();
 
 // Rule engine + AI cross-section analysis pipeline

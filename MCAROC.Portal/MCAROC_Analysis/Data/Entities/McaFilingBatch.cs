@@ -11,6 +11,9 @@ public class McaFilingBatch
     /// <summary>The outer zip's RequestDocument (DocumentType.McaFilingsArchive).</summary>
     public long SourceDocumentId { get; set; }
 
+    /// <summary>Upload session ID if created via resumable large archive upload.</summary>
+    public Guid? UploadSessionId { get; set; }
+
     public FilingBatchStatus Status { get; set; } = FilingBatchStatus.Uploaded;
     public string? FailureReason { get; set; }
 

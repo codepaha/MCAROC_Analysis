@@ -245,6 +245,17 @@ Linux subset fonts break PdfPig's ToUnicode → those are `[SkippableFact]`, ski
 
 ## Log  <!-- newest first. Prefix: NEEDS / BLOCKED / DONE / DECISION / FYI -->
 
+### 2026-09-14 — Antigravity (CLAIMED #169: Resumable MCA-filings archive upload >2 GB & post-creation source additions)
+- **CLAIMED #169** on branch `feature/169-large-archive-upload`.
+- Implementing approved, production-hardened design:
+  - 64 MiB sequential chunk streaming directly to attempt-specific temp files (`chunk_{offset}_{attemptId}.tmp`), zero full-chunk/file memory buffering, strictly non-multipart route.
+  - Durable pre-write chunk write leases with uncommitted append tail truncation under lease on recovery.
+  - Granular `StorageCapacityReservations` owner rows with atomic canonical multi-volume locking (`ORDER BY VolumeRoot ASC`) and worst-case expansion envelope (33.1 GiB for 1 GiB archive, 41.1 GiB for 5 GiB archive).
+  - Durable SQL-backed `OperationalSlotLeases` enforcing 1 upload and 1 unpack globally with 60-second sliding renewals and fail-closed cancellation.
+  - Contradiction-free finalization state machine with dedicated `sp_getapplock` critical section enclosing `File.Move` and `ArchiveMoved` transition.
+  - Versioned post-creation source manifest contract with isolated outer candidate document persistence, quarantine on validation failure, atomic source swap under `McaRequest.RowVersion` write guard, and filtered unique index `UX_RequestDocuments_ActiveSource` on `(RequestId, DocumentType) WHERE IsActiveSource = 1`.
+  - Rebased onto latest `origin/main` (`3b69cb8`, past PR #170, #171, and #172).
+
 ### 2026-09-14 — Claude session (PR #171 MERGED to `main`; PR3 (AI worker) unpaused)
 - **PR #171 MERGED into `main` as `b16398b`** at reviewed head `33a802f` — independent review found no
   source blocker (unique check-result constraint and concurrent-run handling both confirmed covered), both
@@ -441,6 +452,7 @@ Linux subset fonts break PdfPig's ToUnicode → those are `[SkippableFact]`, ski
   correctness review of the actual implementation still found bugs the design review couldn't see from
   the plan text alone (exact save ordering, what a hash function actually hashes). Both passes matter —
   neither substitutes for the other.
+
 
 ### 2026-09-13 — Claude session (#161/G18 MERGED — Auditors' Comments detail-table columns)
 - **PR #166 MERGED into `main` as `7786be4`**; issue #161 (G18, the last open half of #146) closed

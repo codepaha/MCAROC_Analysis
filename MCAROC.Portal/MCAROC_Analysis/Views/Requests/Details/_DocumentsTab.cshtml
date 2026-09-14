@@ -30,9 +30,9 @@
         <div class="mca-section">
             <h3>Uploaded Reference Files <span class="mca-count">@Model.Documents.Count</span></h3>
             <div class="pi-table-wrap"><table class="pi-results-table">
-                <thead><tr><th>File</th><th>Type</th><th>Status</th><th>Uploaded</th></tr></thead>
+                <thead><tr><th>File</th><th>Type</th><th>Status</th><th>Source Role</th><th>Uploaded</th></tr></thead>
                 <tbody>
-                @foreach (var doc in Model.Documents)
+                @foreach (var doc in Model.Documents.OrderByDescending(d => d.UploadedDate))
                 {
                     <tr>
                         <td>@doc.OriginalFileName</td>
@@ -41,11 +41,54 @@
                             @doc.UploadStatus
                             @if (doc.UploadStatus == DocumentUploadStatus.Quarantined) { <span class="text-danger">— @doc.QuarantineReason</span> }
                         </td>
+                        <td>
+                            @if (doc.IsActiveSource)
+                            {
+                                <span class="badge bg-success">Active Source</span>
+                            }
+                            else if (doc.SupersededByDocumentId is not null)
+                            {
+                                <span class="badge bg-secondary">Superseded</span>
+                            }
+                            else
+                            {
+                                <span class="text-muted">—</span>
+                            }
+                        </td>
                         <td>@doc.UploadedDate.ToString("d MMM yyyy HH:mm")</td>
                     </tr>
                 }
                 </tbody>
             </table></div>
+
+            <div class="card mt-3">
+                <div class="card-header bg-light">
+                    <strong>Attach / Supersede Source Workbooks</strong>
+                </div>
+                <div class="card-body">
+                    <form method="post" action="@Url.Action("AddSourceWorkbooks", "Requests", new { id = r.RequestId })" enctype="multipart/form-data">
+                        @Html.AntiForgeryToken()
+                        <input type="hidden" name="rowVersion" value="@(r.RowVersion is not null ? Convert.ToBase64String(r.RowVersion) : "")" />
+                        <div class="row g-3">
+                            <div class="col-md-6">
+                                <label class="form-label">New MCA / ROC Report (Excel)</label>
+                                <input type="file" name="rocFile" class="form-control" accept=".xlsx,.xls" />
+                                <small class="text-muted">Upload a new ROC workbook to supersede the current active report.</small>
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label">New Detailed Charge Report (Excel, Optional)</label>
+                                <input type="file" name="chargeFile" class="form-control" accept=".xlsx,.xls" />
+                                <small class="text-muted">Upload a new charge workbook or leave blank to retain existing.</small>
+                            </div>
+                            <div class="col-12 text-end">
+                                <button type="submit" class="btn btn-sm btn-primary">
+                                    <i class="bi bi-cloud-arrow-up me-1"></i> Upload & Re-Ingest
+                                </button>
+                            </div>
+                        </div>
+                    </form>
+                </div>
+            </div>
         </div>
 
         <div class="mca-section">

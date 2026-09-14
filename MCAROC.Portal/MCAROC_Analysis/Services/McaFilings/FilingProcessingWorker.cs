@@ -1,4 +1,5 @@
 using System.Threading;
+using Microsoft.Extensions.Options;
 
 namespace MCAROC_Analysis.Services.McaFilings;
 
@@ -8,7 +9,8 @@ namespace MCAROC_Analysis.Services.McaFilings;
 public class FilingProcessingWorker(
     IServiceScopeFactory scopeFactory,
     FilingProcessingQueue queue,
-    ILogger<FilingProcessingWorker> logger) : BackgroundService
+    ILogger<FilingProcessingWorker> logger,
+    IOptions<LargeArchiveUploadOptions>? options = null) : BackgroundService
 {
     private readonly SemaphoreSlim _documentConcurrency = new(4);
     private readonly SemaphoreSlim _extractionConcurrency = new(2);
@@ -28,6 +30,14 @@ public class FilingProcessingWorker(
         try
         {
             using var scope = scopeFactory.CreateScope();
+            var finalizationService = scope.ServiceProvider.GetRequiredService<FinalizationRecoveryService>();
+            var recoveredFinalizations = await finalizationService.ReconcileIncompleteFinalizationsAsync(ct);
+            if (recoveredFinalizations > 0)
+                logger.LogInformation("Reconciled {Count} interrupted large archive finalizations on startup", recoveredFinalizations);
+
+            var reservationManager = scope.ServiceProvider.GetRequiredService<IStorageReservationManager>();
+            await reservationManager.SweepExpiredReservationsAsync(ct);
+
             var processor = scope.ServiceProvider.GetRequiredService<FilingBatchProcessor>();
             var recovered = await processor.RecoverStaleWorkAsync(ct);
             if (recovered > 0)
@@ -53,6 +63,20 @@ public class FilingProcessingWorker(
                 case ProcessDocumentWorkItem p: await processor.ProcessDocumentAsync(p.FilingDocumentId, ct); break;
                 case ExtractFilingWorkItem e: await processor.ExtractFilingAsync(e.FilingId, ct); break;
             }
+        }
+        catch (OperationalSlotBusyException busyEx) when (item is UnpackBatchWorkItem unpackItem)
+        {
+            var baseDelay = options?.Value?.SlotRetryDelay ?? TimeSpan.FromSeconds(5);
+            var maxDelay = options?.Value?.MaxSlotRetryDelay ?? TimeSpan.FromSeconds(30);
+            var nextRetry = unpackItem.RetryCount + 1;
+            var delayMs = Math.Min(baseDelay.TotalMilliseconds * Math.Pow(1.5, Math.Min(unpackItem.RetryCount, 6)), maxDelay.TotalMilliseconds);
+            var delay = TimeSpan.FromMilliseconds(delayMs);
+
+            logger.LogInformation(
+                "Operational slot '{SlotType}' is busy (held by {HolderId}); standing down unpack for batch {BatchId} (attempt {Attempt}), re-scheduling in {DelayMs}ms",
+                busyEx.SlotType, busyEx.ActiveHolderId, unpackItem.BatchId, nextRetry, (int)delay.TotalMilliseconds);
+
+            queue.EnqueueDelayed(new UnpackBatchWorkItem(unpackItem.BatchId, nextRetry), delay, ct);
         }
         catch (Exception ex)
         {
