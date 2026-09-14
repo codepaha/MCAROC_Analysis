@@ -1,13 +1,16 @@
 using MCAROC_Analysis.Controllers;
 using MCAROC_Analysis.Data;
 using MCAROC_Analysis.Data.Entities;
+using MCAROC_Analysis.Services.CalculationAssurance;
 using MCAROC_Analysis.Services.Dossier;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Memory;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.FileProviders;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Primitives;
 
 namespace MCAROC_Analysis.Tests.Dossier;
@@ -30,13 +33,18 @@ public class DossierControllerTests : IAsyncLifetime
         return Task.CompletedTask;
     }
 
-    private DossierController NewController(AppDbContext db)
+    private DossierController NewController(AppDbContext db, IConfiguration? calculationAssuranceConfig = null)
     {
         var cacheDb = DossierGoldenMasterTests.CreateContext();
         var cache = new DossierCache(cacheDb, new DossierAssembler(cacheDb),
             new MemoryCache(new MemoryCacheOptions { SizeLimit = 256 }));
         var webRoot = Path.Combine(FindRepoRoot(), "MCAROC.Portal", "MCAROC_Analysis", "wwwroot");
-        return new DossierController(db, cache, new DossierPdfRenderer(webRoot), new FakeEnv(_contentRoot, webRoot));
+        // Default (no override) config has no CalculationAssurance:Mode key at all, which
+        // CalculationAssuranceConfig.ParseMode treats as Off — a behavioral no-op for every pre-existing
+        // test in this file, none of which are about #164.
+        var gate = new CalculationArtifactGateService(db, calculationAssuranceConfig ?? new ConfigurationBuilder().Build(),
+            NullLogger<CalculationArtifactGateService>.Instance);
+        return new DossierController(db, cache, new DossierPdfRenderer(webRoot), gate, new FakeEnv(_contentRoot, webRoot));
     }
 
     private static string FindRepoRoot()
