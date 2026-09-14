@@ -44,6 +44,7 @@ public class StorageReservationManager(
         await using var tx = await db.Database.BeginTransactionAsync(System.Data.IsolationLevel.ReadCommitted, ct);
         try
         {
+            db.ChangeTracker.Clear();
             // Lock and synchronize volume lease rows
             foreach (var vol in orderedVolumes)
             {
@@ -161,26 +162,30 @@ public class StorageReservationManager(
 
     public async Task ReleaseReservationsAsync(string ownerType, string ownerId, CancellationToken ct = default)
     {
-        var reservations = await db.StorageCapacityReservations
-            .Where(r => r.OwnerType == ownerType && r.OwnerId == ownerId && r.State == StorageCapacityReservationState.Active)
-            .ToListAsync(ct);
-
-        if (reservations.Count == 0) return;
-
-        var volumeRoots = reservations.Select(r => r.VolumeRoot).Distinct().OrderBy(v => v, StringComparer.OrdinalIgnoreCase).ToList();
-
         await using var tx = await db.Database.BeginTransactionAsync(System.Data.IsolationLevel.ReadCommitted, ct);
         try
         {
-            foreach (var r in reservations)
+            var volumeRoots = await db.StorageCapacityReservations
+                .Where(r => r.OwnerType == ownerType && r.OwnerId == ownerId && r.State == StorageCapacityReservationState.Active)
+                .Select(r => r.VolumeRoot)
+                .Distinct()
+                .OrderBy(v => v)
+                .ToListAsync(ct);
+
+            if (volumeRoots.Count == 0)
             {
-                r.State = StorageCapacityReservationState.Released;
-                r.LastHeartbeatUtc = DateTime.UtcNow;
+                await tx.CommitAsync(ct);
+                return;
             }
-            await db.SaveChangesAsync(ct);
+
+            var now = DateTime.UtcNow;
+            await db.StorageCapacityReservations
+                .Where(r => r.OwnerType == ownerType && r.OwnerId == ownerId && r.State == StorageCapacityReservationState.Active)
+                .ExecuteUpdateAsync(s => s
+                    .SetProperty(r => r.State, StorageCapacityReservationState.Released)
+                    .SetProperty(r => r.LastHeartbeatUtc, now), ct);
 
             // Re-sync volume aggregate totals
-            var now = DateTime.UtcNow;
             foreach (var vol in volumeRoots)
             {
                 var trueActive = await db.StorageCapacityReservations
@@ -204,23 +209,27 @@ public class StorageReservationManager(
     public async Task<int> SweepExpiredReservationsAsync(CancellationToken ct = default)
     {
         var now = DateTime.UtcNow;
-        var expired = await db.StorageCapacityReservations
-            .Where(r => r.State == StorageCapacityReservationState.Active && r.ExpiresUtc < now)
-            .ToListAsync(ct);
-
-        if (expired.Count == 0) return 0;
-
-        var volumeRoots = expired.Select(r => r.VolumeRoot).Distinct().OrderBy(v => v, StringComparer.OrdinalIgnoreCase).ToList();
-
         await using var tx = await db.Database.BeginTransactionAsync(System.Data.IsolationLevel.ReadCommitted, ct);
         try
         {
-            foreach (var r in expired)
+            var volumeRoots = await db.StorageCapacityReservations
+                .Where(r => r.State == StorageCapacityReservationState.Active && r.ExpiresUtc < now)
+                .Select(r => r.VolumeRoot)
+                .Distinct()
+                .OrderBy(v => v)
+                .ToListAsync(ct);
+
+            if (volumeRoots.Count == 0)
             {
-                r.State = StorageCapacityReservationState.Expired;
-                r.LastHeartbeatUtc = now;
+                await tx.CommitAsync(ct);
+                return 0;
             }
-            await db.SaveChangesAsync(ct);
+
+            var count = await db.StorageCapacityReservations
+                .Where(r => r.State == StorageCapacityReservationState.Active && r.ExpiresUtc < now)
+                .ExecuteUpdateAsync(s => s
+                    .SetProperty(r => r.State, StorageCapacityReservationState.Expired)
+                    .SetProperty(r => r.LastHeartbeatUtc, now), ct);
 
             foreach (var vol in volumeRoots)
             {
@@ -234,8 +243,8 @@ public class StorageReservationManager(
             }
 
             await tx.CommitAsync(ct);
-            logger.LogInformation("Swept {Count} expired storage reservation(s)", expired.Count);
-            return expired.Count;
+            logger.LogInformation("Swept {Count} expired storage reservation(s)", count);
+            return count;
         }
         catch (Exception ex)
         {

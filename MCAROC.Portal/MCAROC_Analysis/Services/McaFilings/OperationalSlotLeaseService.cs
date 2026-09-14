@@ -15,6 +15,7 @@ public class OperationalSlotLeaseService(AppDbContext db, ILogger<OperationalSlo
         await using var tx = await db.Database.BeginTransactionAsync(System.Data.IsolationLevel.ReadCommitted, ct);
         try
         {
+            db.ChangeTracker.Clear();
             var lease = await db.OperationalSlotLeases
                 .FromSqlInterpolated($"SELECT SlotType, ActiveHolderId, AcquiredUtc, ExpiresUtc, LastHeartbeatUtc FROM OperationalSlotLeases WITH (UPDLOCK, HOLDLOCK) WHERE SlotType = {slotType}")
                 .FirstOrDefaultAsync(ct);

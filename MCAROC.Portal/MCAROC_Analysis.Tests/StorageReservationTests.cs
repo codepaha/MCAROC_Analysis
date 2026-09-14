@@ -8,18 +8,31 @@ using Xunit;
 
 namespace MCAROC_Analysis.Tests;
 
-public class StorageReservationTests
+public class StorageReservationTests : IAsyncLifetime
 {
     private static readonly string ConnectionString = TestDatabase.ConnectionString;
 
     private static AppDbContext CreateContext() =>
         new(new DbContextOptionsBuilder<AppDbContext>().UseSqlServer(ConnectionString).Options);
 
+    public async Task InitializeAsync()
+    {
+        await using var db = CreateContext();
+        await db.Database.MigrateAsync();
+    }
+
+    public Task DisposeAsync() => Task.CompletedTask;
+
     [Fact]
     public async Task CanReserve_TransitionsOwnershipToBatch_AndReleasesCleanly()
     {
         await using var db = CreateContext();
-        var options = Options.Create(new LargeArchiveUploadOptions());
+        var options = Options.Create(new LargeArchiveUploadOptions
+        {
+            MaxUncompressedSizeBytes = 10_000_000,
+            MaxNestedTempBytes = 1_000_000,
+            MinFreeDiskHeadroomBytes = 5_000_000
+        });
         var mgr = new StorageReservationManager(db, options, NullLogger<StorageReservationManager>.Instance);
 
         var sessionId = Guid.NewGuid();
@@ -31,31 +44,41 @@ public class StorageReservationTests
             Directory.CreateDirectory(tempStaging);
             Directory.CreateDirectory(tempDest);
 
-            // 1. TryReserve
-            var result = await mgr.TryReserveUploadCapacityAsync(sessionId, 100_000_000, tempStaging, tempDest);
+            // 1. TryReserve refusal for impossible size (e.g. 500 TB)
+            var refusal = await mgr.TryReserveUploadCapacityAsync(sessionId, 500_000_000_000_000L, tempStaging, tempDest);
+            Assert.False(refusal.Success);
+            Assert.Contains("Insufficient storage", refusal.Error);
+
+            // 2. TryReserve success for realistic test size
+            var result = await mgr.TryReserveUploadCapacityAsync(sessionId, 10_000_000, tempStaging, tempDest);
             Assert.True(result.Success, result.Error);
             Assert.NotNull(result.ReservationId);
 
             // Verify active reservation exists
             var res = await db.StorageCapacityReservations
+                .AsNoTracking()
                 .FirstOrDefaultAsync(r => r.OwnerType == "UploadSession" && r.OwnerId == sessionId.ToString());
             Assert.NotNull(res);
             Assert.Equal(StorageCapacityReservationState.Active, res.State);
 
             // 2. Transition to batch
-            var transitioned = await mgr.TransitionReservationToBatchAsync(sessionId, 99999);
+            var batchId = Random.Shared.Next(100_000, 999_999);
+            var batchIdStr = batchId.ToString();
+            var transitioned = await mgr.TransitionReservationToBatchAsync(sessionId, batchId);
             Assert.True(transitioned);
 
             var batchRes = await db.StorageCapacityReservations
-                .FirstOrDefaultAsync(r => r.OwnerType == "FilingBatch" && r.OwnerId == "99999");
+                .AsNoTracking()
+                .FirstOrDefaultAsync(r => r.OwnerType == "FilingBatch" && r.OwnerId == batchIdStr);
             Assert.NotNull(batchRes);
             Assert.Equal(StorageCapacityReservationState.Active, batchRes.State);
 
             // 3. Release
-            await mgr.ReleaseReservationsAsync("FilingBatch", "99999");
+            await mgr.ReleaseReservationsAsync("FilingBatch", batchIdStr);
 
             var releasedRes = await db.StorageCapacityReservations
-                .FirstOrDefaultAsync(r => r.OwnerType == "FilingBatch" && r.OwnerId == "99999");
+                .AsNoTracking()
+                .FirstOrDefaultAsync(r => r.OwnerType == "FilingBatch" && r.OwnerId == batchIdStr);
             Assert.NotNull(releasedRes);
             Assert.Equal(StorageCapacityReservationState.Released, releasedRes.State);
         }
@@ -63,8 +86,9 @@ public class StorageReservationTests
         {
             try { Directory.Delete(tempStaging, recursive: true); } catch { }
             try { Directory.Delete(tempDest, recursive: true); } catch { }
-            await mgr.ReleaseReservationsAsync("UploadSession", sessionId.ToString());
-            await mgr.ReleaseReservationsAsync("FilingBatch", "99999");
+            await db.StorageCapacityReservations
+                .Where(r => r.OwnerId == sessionId.ToString() || r.OwnerType == "FilingBatch")
+                .ExecuteDeleteAsync();
         }
     }
 }

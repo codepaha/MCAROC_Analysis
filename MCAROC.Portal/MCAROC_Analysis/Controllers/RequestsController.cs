@@ -378,7 +378,7 @@ public class RequestsController(
         catch (Exception ex)
         {
             await swapTx.RollbackAsync(ct);
-            logger.LogError(ex, "Failed to attach and ingest post-creation sources for request {RequestId}", id);
+            logger?.LogError(ex, "Failed to attach and ingest post-creation sources for request {RequestId}", id);
             TempData["SourceError"] = $"Failed to process sources: {ex.Message}";
             return RedirectToAction(nameof(Details), new { id });
         }

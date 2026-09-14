@@ -11,12 +11,20 @@ using Xunit;
 
 namespace MCAROC_Analysis.Tests;
 
-public class FinalizationFencedMoveTests
+public class FinalizationFencedMoveTests : IAsyncLifetime
 {
     private static readonly string ConnectionString = TestDatabase.ConnectionString;
 
     private static AppDbContext CreateContext() =>
         new(new DbContextOptionsBuilder<AppDbContext>().UseSqlServer(ConnectionString).Options);
+
+    public async Task InitializeAsync()
+    {
+        await using var db = CreateContext();
+        await db.Database.MigrateAsync();
+    }
+
+    public Task DisposeAsync() => Task.CompletedTask;
 
     [Fact]
     public async Task FinalizationMove_ProtectsCriticalSection_WithSqlAppLock()
@@ -109,9 +117,7 @@ public class FinalizationFencedMoveTests
         finally
         {
             try { Directory.Delete(tempDir, recursive: true); } catch { }
-            var s = await db.LargeArchiveUploadSessions.FirstOrDefaultAsync(x => x.SessionId == sessionId);
-            if (s is not null) db.LargeArchiveUploadSessions.Remove(s);
-            await db.SaveChangesAsync();
+            await db.LargeArchiveUploadSessions.Where(x => x.SessionId == sessionId).ExecuteDeleteAsync();
         }
     }
 }

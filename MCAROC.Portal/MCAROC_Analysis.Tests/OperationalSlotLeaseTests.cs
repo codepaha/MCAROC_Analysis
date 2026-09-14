@@ -6,12 +6,20 @@ using Xunit;
 
 namespace MCAROC_Analysis.Tests;
 
-public class OperationalSlotLeaseTests
+public class OperationalSlotLeaseTests : IAsyncLifetime
 {
     private static readonly string ConnectionString = TestDatabase.ConnectionString;
 
     private static AppDbContext CreateContext() =>
         new(new DbContextOptionsBuilder<AppDbContext>().UseSqlServer(ConnectionString).Options);
+
+    public async Task InitializeAsync()
+    {
+        await using var db = CreateContext();
+        await db.Database.MigrateAsync();
+    }
+
+    public Task DisposeAsync() => Task.CompletedTask;
 
     [Fact]
     public async Task EnforcesSingleSlot_WithRenewalAndRelease()
