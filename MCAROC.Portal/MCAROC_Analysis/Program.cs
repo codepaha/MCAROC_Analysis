@@ -87,10 +87,23 @@ builder.Services.AddSingleton(sp =>
 builder.Services.AddScoped<AnalysisOrchestrator>();
 builder.Services.AddHostedService<AnalysisWorker>();
 
-// #164 Calculation assurance — ledger persistence + deterministic checks (AI worker/delivery gate land
-// in later PRs). A no-op at runtime while CalculationAssurance:Mode is Off (the default).
+// #164 Calculation assurance — ledger persistence + deterministic checks + AI second-line review worker
+// (delivery gate/reviewer UI land in PR4). A no-op at runtime while CalculationAssurance:Mode is Off
+// (the default) or, for the AI worker specifically, while AiAuditEnabled is false.
 builder.Services.AddScoped<MCAROC_Analysis.Services.CalculationAssurance.CalculationLedgerService>();
 builder.Services.AddScoped<MCAROC_Analysis.Services.CalculationAssurance.CalculationCheckRunnerService>();
+builder.Services.AddSingleton<MCAROC_Analysis.Services.CalculationAssurance.CalculationAiAuditQueue>();
+builder.Services.AddSingleton(sp =>
+{
+    var config = sp.GetRequiredService<IConfiguration>();
+    var projectId = config["GoogleCloud:ProjectId"] ?? throw new InvalidOperationException("GoogleCloud:ProjectId is not configured.");
+    var location = config["GoogleCloud:Location"] ?? "us-central1";
+    var credentialsPath = config["GoogleCloud:CredentialsPath"] ?? throw new InvalidOperationException("GoogleCloud:CredentialsPath is not configured.");
+    return new MCAROC_Analysis.Services.CalculationAssurance.CalculationAiAuditService(
+        projectId, location, credentialsPath, sp.GetRequiredService<ILogger<MCAROC_Analysis.Services.CalculationAssurance.CalculationAiAuditService>>());
+});
+builder.Services.AddScoped<MCAROC_Analysis.Services.CalculationAssurance.CalculationAiAuditOrchestrator>();
+builder.Services.AddHostedService<MCAROC_Analysis.Services.CalculationAssurance.CalculationAiAuditWorker>();
 
 // Phase 5: operations & risk intelligence dashboard + Search History
 builder.Services.AddScoped<DashboardQueryService>();

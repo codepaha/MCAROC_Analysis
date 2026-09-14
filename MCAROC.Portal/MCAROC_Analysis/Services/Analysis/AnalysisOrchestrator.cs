@@ -14,6 +14,7 @@ public class AnalysisOrchestrator(
     AnalysisQueue queue,
     CalculationLedgerService calculationLedgerService,
     CalculationCheckRunnerService calculationCheckRunnerService,
+    CalculationAiAuditOrchestrator calculationAiAuditOrchestrator,
     ILogger<AnalysisOrchestrator> logger)
 {
     private static readonly RuleThresholds Thresholds = RuleThresholds.Default;
@@ -107,10 +108,14 @@ public class AnalysisOrchestrator(
             {
                 await calculationLedgerService.PersistSnapshotAsync(requestId, ingestionRunId, run.AnalysisRunId, ct);
                 await calculationCheckRunnerService.RunChecksAsync(requestId, ingestionRunId, run.AnalysisRunId, ct);
+                // AI second-line review (#164 PR3) is enqueued, never awaited-to-completion, here — it must
+                // never block analysis completion the way the deterministic ledger/checks above correctly
+                // do run synchronously. A no-op when Mode is Off or AiAuditEnabled is false.
+                await calculationAiAuditOrchestrator.EnqueueForSnapshotAsync(requestId, ingestionRunId, run.AnalysisRunId, ct);
             }
             catch (Exception ex)
             {
-                logger.LogError(ex, "Calculation-assurance ledger/check persistence failed for request {RequestId}, analysis run {AnalysisRunId} — analysis itself still proceeding.",
+                logger.LogError(ex, "Calculation-assurance ledger/check/AI-audit-enqueue persistence failed for request {RequestId}, analysis run {AnalysisRunId} — analysis itself still proceeding.",
                     requestId, run.AnalysisRunId);
             }
 
