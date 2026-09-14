@@ -26,6 +26,35 @@ public static class CalculationInputResolver
 {
     private static readonly Regex BracketInputPattern = new(@"^(?<type>[A-Za-z]+)\['(?<label>.*)'\]$", RegexOptions.Compiled);
 
+    /// <summary>Entity types this lane actually knows how to resolve to a source row. An input naming one
+    /// of these that still resolves to zero rows is a genuine provenance gap (the data should be
+    /// traceable but wasn't found) — see <see cref="IsKnownSourceEntityInput"/> and
+    /// CalculationLedgerService's use of it for HasUnresolvedProvenance. An input naming anything else
+    /// (a derived/computed concept like "DossierComputations.SecurityTypeLabels" or "DossierCover.
+    /// McaDataAsOf" — never a source row to begin with) is excluded from that completeness check entirely,
+    /// not treated as a gap merely because it was never resolvable.</summary>
+    private static readonly HashSet<string> KnownSourceEntityTypes =
+        ["CompanyProfile", "FinancialYearData", "RocCharge", "RocChargeEvent", "FinancialParameter", "FinancialFact"];
+
+    /// <summary>True when <paramref name="input"/> names one of the entity types this lane resolves —
+    /// regardless of whether resolution actually found a matching row this time.</summary>
+    public static bool IsKnownSourceEntityInput(string input)
+    {
+        var bracketMatch = BracketInputPattern.Match(input);
+        if (bracketMatch.Success)
+            return KnownSourceEntityTypes.Contains(bracketMatch.Groups["type"].Value);
+
+        var parts = input.Split('.', 2);
+        return parts.Length == 2 && KnownSourceEntityTypes.Contains(parts[0]);
+    }
+
+    /// <summary>True when every input either isn't a known source-entity concept (excluded from this
+    /// check — see <see cref="IsKnownSourceEntityInput"/>) or resolved to at least one real row. A metric
+    /// mixing one resolved and one genuinely-unresolved KNOWN-entity input must not read as fully
+    /// traceable just because part of it resolved.</summary>
+    public static bool AllKnownInputsResolved(IReadOnlyList<string> inputs, DossierModel model, CompanyProfile? companyProfile) =>
+        inputs.All(input => !IsKnownSourceEntityInput(input) || ResolveOne(input, model, companyProfile).Count > 0);
+
     public static IReadOnlyList<CalculationResolvedInput> ResolveOne(string input, DossierModel model, CompanyProfile? companyProfile)
     {
         var bracketMatch = BracketInputPattern.Match(input);

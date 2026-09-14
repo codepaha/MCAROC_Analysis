@@ -124,10 +124,18 @@ public class CalculationLedgerService(
         string keyPrefix, MetricResult metric, CalculationAuditSnapshot snapshot, DossierModel model, CompanyProfile? companyProfile)
     {
         var sourceRefs = CalculationSourceRowRefResolver.Resolve(metric.Inputs, model, companyProfile);
-        // A metric that produced a real value but resolved to zero source rows is untraceable — flagged
-        // for PR2's ProvenanceCompleteness check, never silently treated as fine. A metric that is itself
+        // A metric that produced a real value but has ANY known-source-entity input that failed to
+        // resolve is untraceable — flagged for PR2's ProvenanceCompleteness check, never silently treated
+        // as fine. This is deliberately "any", not "all zero": a metric mixing one resolved input (e.g.
+        // FinancialYearData.Revenue) with one genuinely-unresolved one (e.g. a FinancialParameter that
+        // isn't on file this year) must not read as fully traceable just because part of it resolved —
+        // sourceRefs being non-empty from the resolved half must never mask the unresolved half. An input
+        // naming something that was never a source-row concept to begin with (a derived/computed
+        // reference like "DossierComputations.SecurityTypeLabels") is excluded from this check entirely,
+        // not counted as a gap merely because it was never resolvable. A metric that is itself
         // Insufficient (no value) is not "unresolved provenance" — there is nothing to trace.
-        var hasUnresolvedProvenance = metric.Value is not null && sourceRefs.Count == 0;
+        var hasUnresolvedProvenance = metric.Value is not null
+            && !CalculationInputResolver.AllKnownInputsResolved(metric.Inputs, model, companyProfile);
 
         const string calcVersion = "1.0";
         var calculationKey = CalculationKeySlug.For(keyPrefix, metric.Label);
