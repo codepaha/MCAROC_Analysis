@@ -4,15 +4,16 @@
     var r = Model.Request;
     var run = Model.LatestAnalysisRun;
 
-    // Finding groups mapped onto the 7 domains (+ a Cross-Section group).
-    var groups = new (string Label, string Id, FindingSection[] Sections)[]
+    // Finding groups mapped onto the 7 domains (+ a Cross-Section group), each paired with the
+    // computed MetricGroup titles (Models/DossierComputations.Metrics.cs) shown alongside them.
+    var groups = new (string Label, string Id, FindingSection[] Sections, string[] MetricGroupTitles)[]
     {
-        ("Corporate",   "corporate",  new[] { FindingSection.CompanyProfile, FindingSection.Directors, FindingSection.DirectorNetwork, FindingSection.Ownership }),
-        ("Financial",   "financial",  new[] { FindingSection.Financial }),
-        ("Charges & Security", "charges", new[] { FindingSection.Charges }),
-        ("Compliance",  "compliance", new[] { FindingSection.Msme, FindingSection.Gst, FindingSection.Epfo, FindingSection.Auditor }),
-        ("Litigation",  "litigation", new[] { FindingSection.Litigation }),
-        ("Cross-Section", "xsec",     new[] { FindingSection.CrossSection }),
+        ("Corporate",   "corporate",  new[] { FindingSection.CompanyProfile, FindingSection.Directors, FindingSection.DirectorNetwork, FindingSection.Ownership }, new[] { "Directors", "Shareholding" }),
+        ("Financial",   "financial",  new[] { FindingSection.Financial }, new[] { "Financial trend & leverage", "Peer comparison", "Capital reconciliation", "Related-party transactions" }),
+        ("Charges & Security", "charges", new[] { FindingSection.Charges }, new[] { "Charge register" }),
+        ("Compliance",  "compliance", new[] { FindingSection.Msme, FindingSection.Gst, FindingSection.Epfo, FindingSection.Auditor }, new[] { "GST compliance", "EPFO / labour", "Credit ratings" }),
+        ("Litigation",  "litigation", new[] { FindingSection.Litigation }, new[] { "Legal history" }),
+        ("Cross-Section", "xsec",     new[] { FindingSection.CrossSection }, Array.Empty<string>()),
     };
 }
 
@@ -115,6 +116,10 @@ else
                 .Concat(sectionFindings.Where(f => f.Severity == FindingSeverity.Positive).Take(5))
                 .ToList();
             <div class="tab-pane fade @(i == 0 ? "show active" : "") mca-subtab-panel" id="sec-ai-@g.Id" role="tabpanel">
+                @await Html.PartialAsync(
+                    "Details/_KeyIndicators",
+                    Model.KeyMetrics.Where(metricGroup =>
+                        g.MetricGroupTitles.Contains(metricGroup.Title)).ToList())
                 @if (display.Count == 0)
                 {
                     <p class="text-muted mb-0">No findings in this section.</p>
