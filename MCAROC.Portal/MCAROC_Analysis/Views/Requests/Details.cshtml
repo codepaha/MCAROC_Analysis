@@ -64,6 +64,12 @@
                     <a href="/Requests/@r.RequestId/dossier?variant=executive" class="btn btn-sm btn-outline-primary">Download dossier — Executive</a>
                     <a href="/Requests/@r.RequestId/dossier?variant=full" class="btn btn-sm btn-outline-secondary ms-1" title="Section 1 plus the verbatim source record">Full source</a>
                     <a href="/Requests/@r.RequestId/dossier?variant=source" class="btn btn-sm btn-outline-secondary ms-1" title="Verbatim source record only — no synthesised analysis">Source record</a>
+                    @* #164 internal calculation-assurance review panel — never part of the customer deliverable
+                       above. Plain link, not a tab: it lives on its own page at /internal/calc-audit so this
+                       page's own tab markup never has to branch on whether audit data is present. *@
+                    <a href="/internal/calc-audit/@r.RequestId" class="btn btn-sm btn-outline-dark ms-1" title="Internal calculation-assurance review — ledger, deterministic checks, discrepancy workflow">
+                        <i class="bi bi-shield-check"></i> Calculation audit
+                    </a>
                 </div>
             }
             @* Crore/Lakh/₹ amount unit toggle (#123) — only this page renders any amount, so the
