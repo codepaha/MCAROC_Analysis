@@ -1,5 +1,6 @@
 using MCAROC_Analysis.Data;
 using MCAROC_Analysis.Data.Entities;
+using MCAROC_Analysis.Services.CalculationAssurance;
 using Microsoft.EntityFrameworkCore;
 
 namespace MCAROC_Analysis.Tests;
@@ -126,6 +127,147 @@ public class CalculationAiAuditClaimAndRecoveryTests : IAsyncLifetime
         // Proves the idempotency guarantee CalculationAiAuditOrchestrator.EnqueueForSnapshotAsync relies
         // on is a real database constraint, not just a service-layer AnyAsync check that a race could slip
         // past.
+        await Assert.ThrowsAsync<DbUpdateException>(() => db.SaveChangesAsync());
+    }
+
+    [Fact]
+    public void BackoffDelay_IsIncreasingAndNeverNearZero()
+    {
+        // Regression test for the tight-loop bug: three failed attempts must not fire back-to-back within
+        // milliseconds of each other. Each successive attempt's delay must be meaningfully larger, and the
+        // very first retry must already wait at least a few seconds.
+        var first = CalculationAiAuditOrchestrator.BackoffDelay(1);
+        var second = CalculationAiAuditOrchestrator.BackoffDelay(2);
+        var third = CalculationAiAuditOrchestrator.BackoffDelay(3);
+
+        Assert.True(first >= TimeSpan.FromSeconds(1), $"First retry delay was only {first} — the tight-loop bug this guards against.");
+        Assert.True(second > first);
+        Assert.True(third > second);
+    }
+
+    [Fact]
+    public void BackoffDelay_IsCappedAtFiveMinutes()
+    {
+        var farOut = CalculationAiAuditOrchestrator.BackoffDelay(20);
+
+        Assert.True(farOut <= TimeSpan.FromMinutes(5));
+    }
+
+    [Fact]
+    public async Task RecoverStaleWork_LeavesUnexpiredLeaseAlone_SoAStillRunningCallIsNeverDuplicated()
+    {
+        // Regression test for the duplicate-call bug: an InProgress run whose lease has NOT expired
+        // represents a call that may genuinely still be in flight. Recovery must not touch it.
+        await using var db = CreateContext();
+        var snapshot = await SeedSnapshotAsync(db);
+        var run = new CalculationAiAuditRun
+        {
+            CalculationAuditSnapshotId = snapshot.CalculationAuditSnapshotId,
+            Status = CalculationAiAuditRunStatus.InProgress, AttemptCount = 1, ModelId = "test-model",
+            StartedUtc = DateTime.UtcNow, LeaseOwner = "other-host:1234", LeaseExpiresUtc = DateTime.UtcNow.AddMinutes(5)
+        };
+        db.CalculationAiAuditRuns.Add(run);
+        await db.SaveChangesAsync();
+
+        // Mirrors CalculationAiAuditOrchestrator.RecoverStaleWorkAsync's lease-aware predicate exactly.
+        var now = DateTime.UtcNow;
+        await db.CalculationAiAuditRuns
+            .Where(r => r.Status == CalculationAiAuditRunStatus.InProgress && (r.LeaseExpiresUtc == null || r.LeaseExpiresUtc < now))
+            .ExecuteUpdateAsync(s => s.SetProperty(r => r.Status, CalculationAiAuditRunStatus.Pending));
+
+        await using var verifyDb = CreateContext();
+        var reloaded = await verifyDb.CalculationAiAuditRuns.FirstAsync(r => r.CalculationAiAuditRunId == run.CalculationAiAuditRunId);
+        Assert.Equal(CalculationAiAuditRunStatus.InProgress, reloaded.Status);
+    }
+
+    [Fact]
+    public async Task RecoverStaleWork_ResetsExpiredLease()
+    {
+        await using var db = CreateContext();
+        var snapshot = await SeedSnapshotAsync(db);
+        var run = new CalculationAiAuditRun
+        {
+            CalculationAuditSnapshotId = snapshot.CalculationAuditSnapshotId,
+            Status = CalculationAiAuditRunStatus.InProgress, AttemptCount = 1, ModelId = "test-model",
+            StartedUtc = DateTime.UtcNow.AddMinutes(-10), LeaseOwner = "crashed-host:1234", LeaseExpiresUtc = DateTime.UtcNow.AddMinutes(-5)
+        };
+        db.CalculationAiAuditRuns.Add(run);
+        await db.SaveChangesAsync();
+
+        var now = DateTime.UtcNow;
+        await db.CalculationAiAuditRuns
+            .Where(r => r.Status == CalculationAiAuditRunStatus.InProgress && (r.LeaseExpiresUtc == null || r.LeaseExpiresUtc < now))
+            .ExecuteUpdateAsync(s => s.SetProperty(r => r.Status, CalculationAiAuditRunStatus.Pending));
+
+        await using var verifyDb = CreateContext();
+        var reloaded = await verifyDb.CalculationAiAuditRuns.FirstAsync(r => r.CalculationAiAuditRunId == run.CalculationAiAuditRunId);
+        Assert.Equal(CalculationAiAuditRunStatus.Pending, reloaded.Status);
+    }
+
+    [Fact]
+    public async Task AiAuditClaim_DeclinesWhenNextAttemptUtcInFuture_ButSucceedsOnceItPasses()
+    {
+        // Regression test for the tight-loop bug at the claim boundary: a Pending row whose backoff window
+        // hasn't elapsed yet must not be claimable, even if something enqueues it early.
+        await using var db = CreateContext();
+        var snapshot = await SeedSnapshotAsync(db);
+        var run = new CalculationAiAuditRun
+        {
+            CalculationAuditSnapshotId = snapshot.CalculationAuditSnapshotId,
+            Status = CalculationAiAuditRunStatus.Pending, ModelId = "test-model",
+            NextAttemptUtc = DateTime.UtcNow.AddMinutes(5)
+        };
+        db.CalculationAiAuditRuns.Add(run);
+        await db.SaveChangesAsync();
+
+        Task<int> Claim() => db.CalculationAiAuditRuns
+            .Where(r => r.CalculationAiAuditRunId == run.CalculationAiAuditRunId && r.Status == CalculationAiAuditRunStatus.Pending
+                && (r.NextAttemptUtc == null || r.NextAttemptUtc <= DateTime.UtcNow))
+            .ExecuteUpdateAsync(s => s.SetProperty(r => r.Status, CalculationAiAuditRunStatus.InProgress));
+
+        Assert.Equal(0, await Claim());
+
+        await db.CalculationAiAuditRuns.Where(r => r.CalculationAiAuditRunId == run.CalculationAiAuditRunId)
+            .ExecuteUpdateAsync(s => s.SetProperty(r => r.NextAttemptUtc, DateTime.UtcNow.AddSeconds(-1)));
+
+        Assert.Equal(1, await Claim());
+    }
+
+    [Fact]
+    public async Task DuplicateAiCandidateForSameRunAndLedgerEntry_RejectsADuplicateInsert()
+    {
+        // Proves the (AiAuditRunId, PrimaryLedgerEntryId) unique index is a real database constraint — the
+        // last-resort guard against a genuine double-execution race persisting the same AI candidate twice.
+        await using var db = CreateContext();
+        var snapshot = await SeedSnapshotAsync(db);
+        var ledgerEntry = new CalculationLedgerEntry
+        {
+            CalculationAuditSnapshotId = snapshot.CalculationAuditSnapshotId,
+            CalculationKey = "Test.Key", MetricLabel = "Test", Period = "FY2025", CreatedUtc = DateTime.UtcNow
+        };
+        db.CalculationLedgerEntries.Add(ledgerEntry);
+        var auditRun = new CalculationAiAuditRun
+        {
+            CalculationAuditSnapshotId = snapshot.CalculationAuditSnapshotId,
+            Status = CalculationAiAuditRunStatus.InProgress, ModelId = "test-model"
+        };
+        db.CalculationAiAuditRuns.Add(auditRun);
+        await db.SaveChangesAsync();
+
+        CalculationDiscrepancy MakeCandidate(string claim) => new()
+        {
+            CalculationAuditSnapshotId = snapshot.CalculationAuditSnapshotId,
+            SourceType = CalculationDiscrepancySourceType.AiCandidate,
+            AiAuditRunId = auditRun.CalculationAiAuditRunId,
+            PrimaryLedgerEntryId = ledgerEntry.CalculationLedgerEntryId,
+            ClaimSummary = claim, Status = CalculationDiscrepancyStatus.Open,
+            CreatedUtc = DateTime.UtcNow, LastUpdatedUtc = DateTime.UtcNow
+        };
+
+        db.CalculationDiscrepancies.Add(MakeCandidate("first"));
+        await db.SaveChangesAsync();
+
+        db.CalculationDiscrepancies.Add(MakeCandidate("duplicate from a losing concurrent execution"));
         await Assert.ThrowsAsync<DbUpdateException>(() => db.SaveChangesAsync());
     }
 

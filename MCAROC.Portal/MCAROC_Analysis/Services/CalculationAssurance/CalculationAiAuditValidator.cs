@@ -102,14 +102,20 @@ public static class CalculationAiAuditValidator
     }
 
     /// <summary>A row with no stored numeric value (text-only or NotEvaluated) supports no numeric
-    /// "actualValue" claim at all. Rounded to 0/1 decimal, same tolerance trick as
-    /// AiCrossSectionAnalysisService.BuildAllowedNumbers/ContainsUnsupportedFinancialNumber.</summary>
+    /// "actualValue" claim at all. Deliberately exact decimal equality, NOT the 0/1-decimal rounding
+    /// tolerance AiCrossSectionAnalysisService.BuildAllowedNumbers uses — that tolerance exists there for a
+    /// genuinely different problem (free-form prose paraphrasing a number, e.g. writing "25%" for a stored
+    /// 24.97). Here "actualValue" is supposed to be a verbatim echo of the ledger row's own stored value,
+    /// which is the whole proof the model actually read it rather than guessing a plausible nearby number —
+    /// a rounding tolerance would let a hallucinated-but-close value (e.g. 99.96 against a stored 100.04,
+    /// both rounding to "100.0") pass as if it were a real read. `decimal == decimal` compares by numeric
+    /// value regardless of trailing-zero scale (100m == 100.0000m), so exact equality is also safe against
+    /// a client that omits trailing zeros the DB's decimal(18,4) column stores.</summary>
     private static bool ActualValueMatches(decimal? claimedActual, decimal? ledgerValue)
     {
         if (claimedActual is null) return true; // no numeric claim made — nothing to contradict
         if (ledgerValue is null) return false;
-        return Math.Round(claimedActual.Value, 0) == Math.Round(ledgerValue.Value, 0)
-            || Math.Round(claimedActual.Value, 1) == Math.Round(ledgerValue.Value, 1);
+        return claimedActual.Value == ledgerValue.Value;
     }
 
     private static RejectedCandidate ToRejected(CandidateDto c, string reason) =>

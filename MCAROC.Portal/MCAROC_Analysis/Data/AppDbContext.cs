@@ -543,6 +543,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             e.Property(x => x.ModelId).HasMaxLength(100);
             e.Property(x => x.PromptVersion).HasMaxLength(20);
             e.Property(x => x.ResponseHash).HasMaxLength(64).IsFixedLength();
+            e.Property(x => x.LeaseOwner).HasMaxLength(100);
         });
 
         modelBuilder.Entity<CalculationDiscrepancy>(e =>
@@ -560,6 +561,14 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
                 .OnDelete(DeleteBehavior.Restrict);
             e.HasIndex(x => x.CalculationAuditSnapshotId);
             e.HasIndex(x => x.PrimaryLedgerEntryId);
+            // One AI candidate per (audit run, ledger entry) — a genuine double-execution race (e.g. a
+            // lease-recovery edge case) loses via this DB constraint, not just an in-memory dedupe the
+            // orchestrator could get wrong. Filtered to AiAuditRunId != null: deterministic discrepancies
+            // (AiAuditRunId always null) are unaffected and can legitimately repeat a ledger entry across
+            // different OriginCheckKeys.
+            e.HasIndex(x => new { x.AiAuditRunId, x.PrimaryLedgerEntryId })
+                .IsUnique()
+                .HasFilter("[AiAuditRunId] IS NOT NULL");
             e.Property(x => x.Variant).HasMaxLength(20);
             e.Property(x => x.SourceType).HasConversion<string>().HasMaxLength(20);
             e.Property(x => x.OriginCheckKey).HasMaxLength(150);

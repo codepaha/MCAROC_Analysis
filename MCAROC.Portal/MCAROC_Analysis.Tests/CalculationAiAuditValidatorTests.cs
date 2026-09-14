@@ -113,6 +113,41 @@ public class CalculationAiAuditValidatorTests
     }
 
     [Fact]
+    public void NearButNotEqualActualValue_IsRejectedNotToleranceMatched()
+    {
+        // Regression test: a rounding tolerance (0/1 decimal) would let 99.96 and 100.04 collide on
+        // "100.0" and pass as if the model had read the exact stored value. actualValue must prove a
+        // verbatim read, not a plausible-looking nearby number — so this must be rejected exactly.
+        var tagMap = TagMap(Entry(1, 100.04m));
+        var response = """
+            { "candidates": [{ "ledgerTag": "L1", "claimType": "Other", "actualValue": 99.96,
+              "explanation": "close to the real value but not an exact read" }], "noIssuesFound": false }
+            """;
+
+        var result = CalculationAiAuditValidator.Validate(response, tagMap);
+
+        Assert.Empty(result.Accepted);
+        Assert.Equal(CalculationAiAuditValidator.UnsupportedActualValue, Assert.Single(result.Rejected).RejectReason);
+    }
+
+    [Fact]
+    public void ActualValueDifferingOnlyByTrailingZeroScale_IsAccepted()
+    {
+        // decimal(18,4) in the DB vs a client that omits trailing zeros in JSON — 100 vs 100.0000 must
+        // still be treated as the same value; this is not a rounding tolerance, just scale-insensitive
+        // decimal equality.
+        var tagMap = TagMap(Entry(1, 100.0000m));
+        var response = """
+            { "candidates": [{ "ledgerTag": "L1", "claimType": "Other", "actualValue": 100,
+              "explanation": "exact value, different trailing zero scale" }], "noIssuesFound": false }
+            """;
+
+        var result = CalculationAiAuditValidator.Validate(response, tagMap);
+
+        Assert.Single(result.Accepted);
+    }
+
+    [Fact]
     public void ActualValueClaimedAgainstTextOnlyRow_IsDropped()
     {
         // The ledger row has no numeric value at all (text-only) — any numeric "actualValue" claim
