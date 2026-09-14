@@ -146,7 +146,9 @@ request, 2026-09-12) since this lane hadn't claimed them yet — remaining 6 sti
 | #150 | 598 unexamined ingestion warnings from a real 41-company batch run — reported as "0 Errors" without categorizing what the warnings actually are | **MERGED** (`459b834`, PR #154) — closed |
 
 ### Sequencing
-- Claude: D2/#57 **MERGED** → D4/#59 **MERGED** → K1/#98 **MERGED** → #97 **MERGED** → D10/#65 **MERGED** (`7f2cf1e`) → #47 (pre-login report ownership binding) **MERGED** (`f52f3cf`) → #142 (pre-login "My Reports" history) **MERGED** (PR #141, `965578e`) → #144/B12 (charge discharge velocity) **MERGED** (PR #149, `4be34db`) → #161/G18 (Auditors' Comments detail-table columns) **MERGED** (PR #166, `7786be4`) → **#164 (calculation assurance) — PR1 #170 open (review round 3 fixes pushed), PR2 #171 open (deterministic checks, stacked on #170's branch)** (see Log above); #144 stays open for its A1.x half.
+- Claude: D2/#57 **MERGED** → D4/#59 **MERGED** → K1/#98 **MERGED** → #97 **MERGED** → D10/#65 **MERGED** (`7f2cf1e`) → #47 (pre-login report ownership binding) **MERGED** (`f52f3cf`) → #142 (pre-login "My Reports" history) **MERGED** (PR #141, `965578e`) → #144/B12 (charge discharge velocity) **MERGED** (PR #149, `4be34db`) → #161/G18 (Auditors' Comments detail-table columns) **MERGED** (PR #166, `7786be4`) → #164 PR1/#170 (entities + migration + ledger persistence) **MERGED** (`7ec1746`, after 6 review rounds) →
+  **#164 PR2/#171 (deterministic checks) rebased onto `main`, retargeted, CI re-running — not yet
+  independently reviewed on the new base** (see Log above); #144 stays open for its A1.x half.
 - Antigravity: D6/#61 **MERGED** → D7/#62 **MERGED** → D8/#63 **MERGED** → D9/#64 **MERGED** (`e9e39e3`) → D11/#66 **MERGED** (`8213961`) → #107 **MERGED** (`7b74f11`) → #150 **MERGED** (`459b834`) → #145 **MERGED** (`b563072`, PR #165) — Antigravity's lane clear!
 
 
@@ -242,6 +244,36 @@ Linux subset fonts break PdfPig's ToUnicode → those are `[SkippableFact]`, ski
 ---
 
 ## Log  <!-- newest first. Prefix: NEEDS / BLOCKED / DONE / DECISION / FYI -->
+
+### 2026-09-14 — Claude session (PR #170 MERGED to `main`; #171 rebased and retargeted; runner infra fixed)
+- **PR #170 MERGED into `main` as `7ec1746`** after round 6's `SecurityTypeLabels`/`McaDataAsOf` fix —
+  both required checks green (`build-and-test`, `windows-tests`) at the reviewed head (`13c328e`). Six full
+  review rounds on this one PR (see the log entries below) — every round found a real, distinct
+  correctness gap despite the PR staying `MERGEABLE`/`CLEAN` and CI-green throughout, which is exactly the
+  point the reviewer kept making: neither signal has ever meant "review-complete" on this feature.
+- **PR #171 rebased onto `main` and retargeted** (`gh pr edit --base main`) per the standing sequencing —
+  was stacked on #170's branch, now based directly on `main` now that #170 is in it. Rebase needed 3
+  successive `AGENT_CHANNEL.md` conflicts (same newest-first-reconciliation pattern as every prior rebase
+  on this file) — resolved, no code conflicts at all. New head `9c6535d`; diff against `main` is now
+  correctly scoped to just PR2's own content (19 files, +972/-4), confirmed via `dotnet ef migrations
+  has-pending-model-changes` (none) and a full regression sweep (1054 passed, 19 skipped, unchanged). CI
+  re-running fresh on the new base.
+- **Self-hosted runner infra actually fixed, not just restarted again.** Today's repeated "runner shows
+  offline" turned out to be two compounding problems:
+  1. What looked like a "stuck MCAROC runner process" all day was actually a **different runner
+     entirely** — `D:\actions-runner\` (root, not the `MCAROC_Analysis` subfolder) hosts a separate,
+     already-working Windows-service-based runner for an unrelated repo (`PropertyIntelligence`).
+     Identical process names (`Runner.Listener.exe`, `RunnerService.exe`) in both installations caused a
+     misdiagnosis — MCAROC's own runner had *zero* processes running most of the day, not a zombie one.
+  2. Every `run.cmd`-started instance was getting killed shortly after starting
+     (`STATUS_CONTROL_C_EXIT` in the runner's own diagnostic log) — consistent with it being tied to a
+     transient shell session's process/job lifetime rather than surviving independently.
+  **Fixed with the owner's help** (their elevated PowerShell could do what a non-admin session couldn't):
+  registered a proper Scheduled Task (`MCAROC-ActionsRunner`, runs `run.cmd` as `SYSTEM` at every startup,
+  auto-restarts up to 5 times) — decoupled from any interactive session going forward. Confirmed picking
+  up and completing #170's queued `windows-tests` job right after registration.
+- PR3 (AI worker) stays paused until #171 clears its own independent review on the new `main`-based diff,
+  per the standing decision.
 
 ### 2026-09-14 — Claude session (PR #170 review round 6 — `SecurityTypeLabels`/`McaDataAsOf` weren't derived concepts after all)
 - **Round 5's fix wasn't the last gap.** The reviewer found that `"DossierComputations.SecurityTypeLabels"`
