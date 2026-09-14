@@ -670,6 +670,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             e.Property(x => x.ReviewerName).HasMaxLength(200);
             e.Property(x => x.ModelIdUsed).HasMaxLength(100);
             e.Property(x => x.PromptVersionUsed).HasMaxLength(20);
+            e.Property(x => x.ProposedSeverity).HasConversion<string>().HasMaxLength(10);
         });
 
         modelBuilder.Entity<CalculationArtifactHold>(e =>

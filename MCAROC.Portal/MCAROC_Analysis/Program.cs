@@ -112,6 +112,7 @@ builder.Services.AddSingleton(sp =>
 builder.Services.AddScoped<MCAROC_Analysis.Services.CalculationAssurance.CalculationAiAuditOrchestrator>();
 builder.Services.AddHostedService<MCAROC_Analysis.Services.CalculationAssurance.CalculationAiAuditWorker>();
 builder.Services.AddScoped<MCAROC_Analysis.Services.CalculationAssurance.CalculationArtifactGateService>();
+builder.Services.AddScoped<MCAROC_Analysis.Services.CalculationAssurance.CalculationDiscrepancyWorkflowService>();
 
 // Phase 5: operations & risk intelligence dashboard + Search History
 builder.Services.AddScoped<DashboardQueryService>();

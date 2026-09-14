@@ -5,6 +5,7 @@ using Microsoft.Data.SqlTypes;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 #nullable disable
@@ -12,9 +13,11 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace MCAROC_Analysis.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260914074405_AddDiscrepancyApprovalProposedSeverity")]
+    partial class AddDiscrepancyApprovalProposedSeverity
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -2323,103 +2326,6 @@ namespace MCAROC_Analysis.Migrations
                     b.ToTable("IngestionRuns");
                 });
 
-            modelBuilder.Entity("MCAROC_Analysis.Data.Entities.LargeArchiveUploadSession", b =>
-                {
-                    b.Property<Guid>("SessionId")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uniqueidentifier");
-
-                    b.Property<DateTime?>("ActiveFinalizationExpiresUtc")
-                        .HasColumnType("datetime2");
-
-                    b.Property<Guid?>("ActiveWriteAttemptId")
-                        .HasColumnType("uniqueidentifier");
-
-                    b.Property<DateTime?>("ActiveWriteExpiresUtc")
-                        .HasColumnType("datetime2");
-
-                    b.Property<long?>("ActiveWriteOffset")
-                        .HasColumnType("bigint");
-
-                    b.Property<DateTime?>("CompletedUtc")
-                        .HasColumnType("datetime2");
-
-                    b.Property<long?>("CreatedBatchId")
-                        .HasColumnType("bigint");
-
-                    b.Property<long?>("CreatedDocumentId")
-                        .HasColumnType("bigint");
-
-                    b.Property<DateTime>("CreatedUtc")
-                        .HasColumnType("datetime2");
-
-                    b.Property<string>("DestinationStoragePath")
-                        .IsRequired()
-                        .HasMaxLength(500)
-                        .HasColumnType("nvarchar(500)");
-
-                    b.Property<string>("ExpectedFullSha256")
-                        .IsRequired()
-                        .HasMaxLength(64)
-                        .HasColumnType("nvarchar(64)");
-
-                    b.Property<DateTime>("ExpiresUtc")
-                        .HasColumnType("datetime2");
-
-                    b.Property<string>("FailureReason")
-                        .HasColumnType("nvarchar(max)");
-
-                    b.Property<Guid?>("FinalizationAttemptId")
-                        .HasColumnType("uniqueidentifier");
-
-                    b.Property<string>("HashedCapabilityToken")
-                        .IsRequired()
-                        .HasMaxLength(64)
-                        .HasColumnType("nvarchar(64)");
-
-                    b.Property<DateTime>("LastHeartbeatUtc")
-                        .HasColumnType("datetime2");
-
-                    b.Property<long>("NextExpectedOffset")
-                        .HasColumnType("bigint");
-
-                    b.Property<string>("OriginalFileName")
-                        .IsRequired()
-                        .HasMaxLength(260)
-                        .HasColumnType("nvarchar(260)");
-
-                    b.Property<long>("RequestId")
-                        .HasColumnType("bigint");
-
-                    b.Property<byte[]>("RowVersion")
-                        .IsConcurrencyToken()
-                        .ValueGeneratedOnAddOrUpdate()
-                        .HasColumnType("rowversion");
-
-                    b.Property<string>("StagingFilePath")
-                        .IsRequired()
-                        .HasMaxLength(500)
-                        .HasColumnType("nvarchar(500)");
-
-                    b.Property<string>("Status")
-                        .IsRequired()
-                        .HasMaxLength(30)
-                        .HasColumnType("nvarchar(30)");
-
-                    b.Property<long>("TotalExpectedSizeBytes")
-                        .HasColumnType("bigint");
-
-                    b.HasKey("SessionId");
-
-                    b.HasIndex("HashedCapabilityToken");
-
-                    b.HasIndex("RequestId");
-
-                    b.HasIndex("Status", "ExpiresUtc");
-
-                    b.ToTable("LargeArchiveUploadSessions");
-                });
-
             modelBuilder.Entity("MCAROC_Analysis.Data.Entities.Litigation", b =>
                 {
                     b.Property<long>("LitigationId")
@@ -2565,16 +2471,9 @@ namespace MCAROC_Analysis.Migrations
                         .HasMaxLength(30)
                         .HasColumnType("nvarchar(30)");
 
-                    b.Property<Guid?>("UploadSessionId")
-                        .HasColumnType("uniqueidentifier");
-
                     b.HasKey("BatchId");
 
                     b.HasIndex("RequestId");
-
-                    b.HasIndex("UploadSessionId")
-                        .IsUnique()
-                        .HasFilter("[UploadSessionId] IS NOT NULL");
 
                     b.ToTable("McaFilingBatches");
                 });
@@ -2835,11 +2734,6 @@ namespace MCAROC_Analysis.Migrations
                         .HasMaxLength(30)
                         .HasColumnType("nvarchar(30)");
 
-                    b.Property<byte[]>("RowVersion")
-                        .IsConcurrencyToken()
-                        .ValueGeneratedOnAddOrUpdate()
-                        .HasColumnType("rowversion");
-
                     b.Property<string>("UpdatedBy")
                         .HasColumnType("nvarchar(max)");
 
@@ -2899,30 +2793,6 @@ namespace MCAROC_Analysis.Migrations
                     b.HasIndex("RequestId", "IngestionRunId");
 
                     b.ToTable("MsmePayments");
-                });
-
-            modelBuilder.Entity("MCAROC_Analysis.Data.Entities.OperationalSlotLease", b =>
-                {
-                    b.Property<string>("SlotType")
-                        .HasMaxLength(30)
-                        .HasColumnType("nvarchar(30)");
-
-                    b.Property<DateTime?>("AcquiredUtc")
-                        .HasColumnType("datetime2");
-
-                    b.Property<string>("ActiveHolderId")
-                        .HasMaxLength(100)
-                        .HasColumnType("nvarchar(100)");
-
-                    b.Property<DateTime?>("ExpiresUtc")
-                        .HasColumnType("datetime2");
-
-                    b.Property<DateTime?>("LastHeartbeatUtc")
-                        .HasColumnType("datetime2");
-
-                    b.HasKey("SlotType");
-
-                    b.ToTable("OperationalSlotLeases");
                 });
 
             modelBuilder.Entity("MCAROC_Analysis.Data.Entities.PeerCompany", b =>
@@ -3366,11 +3236,6 @@ namespace MCAROC_Analysis.Migrations
                     b.Property<long>("FileSize")
                         .HasColumnType("bigint");
 
-                    b.Property<bool>("IsActiveSource")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("bit")
-                        .HasDefaultValue(false);
-
                     b.Property<string>("OriginalFileName")
                         .IsRequired()
                         .HasColumnType("nvarchar(max)");
@@ -3389,12 +3254,6 @@ namespace MCAROC_Analysis.Migrations
                         .IsRequired()
                         .HasColumnType("nvarchar(max)");
 
-                    b.Property<long?>("SupersededByDocumentId")
-                        .HasColumnType("bigint");
-
-                    b.Property<Guid?>("UploadSessionId")
-                        .HasColumnType("uniqueidentifier");
-
                     b.Property<string>("UploadStatus")
                         .IsRequired()
                         .HasMaxLength(20)
@@ -3408,16 +3267,7 @@ namespace MCAROC_Analysis.Migrations
 
                     b.HasKey("DocumentId");
 
-                    b.HasIndex("SupersededByDocumentId");
-
-                    b.HasIndex("UploadSessionId")
-                        .IsUnique()
-                        .HasFilter("[UploadSessionId] IS NOT NULL");
-
-                    b.HasIndex("RequestId", "DocumentType")
-                        .IsUnique()
-                        .HasDatabaseName("UX_RequestDocuments_ActiveSource")
-                        .HasFilter("[IsActiveSource] = 1");
+                    b.HasIndex("RequestId");
 
                     b.ToTable("RequestDocuments");
                 });
@@ -3888,72 +3738,6 @@ namespace MCAROC_Analysis.Migrations
                     b.ToTable("SourceRows");
                 });
 
-            modelBuilder.Entity("MCAROC_Analysis.Data.Entities.StorageCapacityReservation", b =>
-                {
-                    b.Property<Guid>("ReservationId")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uniqueidentifier");
-
-                    b.Property<DateTime>("CreatedUtc")
-                        .HasColumnType("datetime2");
-
-                    b.Property<DateTime>("ExpiresUtc")
-                        .HasColumnType("datetime2");
-
-                    b.Property<DateTime>("LastHeartbeatUtc")
-                        .HasColumnType("datetime2");
-
-                    b.Property<string>("OwnerId")
-                        .IsRequired()
-                        .HasMaxLength(100)
-                        .HasColumnType("nvarchar(100)");
-
-                    b.Property<string>("OwnerType")
-                        .IsRequired()
-                        .HasMaxLength(30)
-                        .HasColumnType("nvarchar(30)");
-
-                    b.Property<long>("ReservedBytes")
-                        .HasColumnType("bigint");
-
-                    b.Property<string>("State")
-                        .IsRequired()
-                        .HasMaxLength(20)
-                        .HasColumnType("nvarchar(20)");
-
-                    b.Property<string>("VolumeRoot")
-                        .IsRequired()
-                        .HasMaxLength(50)
-                        .HasColumnType("nvarchar(50)");
-
-                    b.HasKey("ReservationId");
-
-                    b.HasIndex("OwnerType", "OwnerId");
-
-                    b.HasIndex("VolumeRoot", "State", "ExpiresUtc");
-
-                    b.ToTable("StorageCapacityReservations");
-                });
-
-            modelBuilder.Entity("MCAROC_Analysis.Data.Entities.StorageVolumeLease", b =>
-                {
-                    b.Property<string>("VolumeRoot")
-                        .HasMaxLength(50)
-                        .HasColumnType("nvarchar(50)");
-
-                    b.Property<long>("ActiveReservedBytes")
-                        .HasColumnType("bigint");
-
-                    b.Property<byte[]>("RowVersion")
-                        .IsConcurrencyToken()
-                        .ValueGeneratedOnAddOrUpdate()
-                        .HasColumnType("rowversion");
-
-                    b.HasKey("VolumeRoot");
-
-                    b.ToTable("StorageVolumeLeases");
-                });
-
             modelBuilder.Entity("MCAROC_Analysis.Data.Entities.AnalysisFinding", b =>
                 {
                     b.HasOne("MCAROC_Analysis.Data.Entities.AnalysisRun", null)
@@ -4167,17 +3951,6 @@ namespace MCAROC_Analysis.Migrations
                     b.Navigation("Request");
                 });
 
-            modelBuilder.Entity("MCAROC_Analysis.Data.Entities.LargeArchiveUploadSession", b =>
-                {
-                    b.HasOne("MCAROC_Analysis.Data.Entities.McaRequest", "Request")
-                        .WithMany()
-                        .HasForeignKey("RequestId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("Request");
-                });
-
             modelBuilder.Entity("MCAROC_Analysis.Data.Entities.McaFiling", b =>
                 {
                     b.HasOne("MCAROC_Analysis.Data.Entities.McaFilingBatch", "Batch")
@@ -4252,14 +4025,7 @@ namespace MCAROC_Analysis.Migrations
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
 
-                    b.HasOne("MCAROC_Analysis.Data.Entities.RequestDocument", "SupersededByDocument")
-                        .WithMany()
-                        .HasForeignKey("SupersededByDocumentId")
-                        .OnDelete(DeleteBehavior.Restrict);
-
                     b.Navigation("Request");
-
-                    b.Navigation("SupersededByDocument");
                 });
 
             modelBuilder.Entity("MCAROC_Analysis.Data.Entities.RocChargeEvent", b =>

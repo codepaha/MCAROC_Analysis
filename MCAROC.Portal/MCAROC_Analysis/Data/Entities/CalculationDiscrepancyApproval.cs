@@ -17,7 +17,9 @@ public class CalculationDiscrepancyApproval
 
     public CalculationDiscrepancyDecisionAction DecisionAction { get; set; }
 
-    /// <summary>From the internal reviewer login's display-name claim.</summary>
+    /// <summary>Reviewer-supplied name (the login gate is deferred — see AGENT_CHANNEL.md — so this is a
+    /// plain reviewer-entered field today, not a claim; trivially swappable to a login claim later with no
+    /// schema change).</summary>
     public string ReviewerName { get; set; } = string.Empty;
 
     public string? ReviewerNotes { get; set; }
@@ -31,4 +33,11 @@ public class CalculationDiscrepancyApproval
 
     public string? ModelIdUsed { get; set; }
     public string? PromptVersionUsed { get; set; }
+
+    /// <summary>Set only for DecisionAction == Confirm — the severity this specific reviewer assigned.
+    /// CalculationDiscrepancy.Severity is only the current-state read model; this is what makes a future
+    /// dual-approval Confirm's consensus check (do all approving reviewers agree on severity?) verifiable
+    /// against the durable audit trail rather than trusting whichever caller happened to complete the
+    /// transition last.</summary>
+    public CalculationDiscrepancySeverity? ProposedSeverity { get; set; }
 }
