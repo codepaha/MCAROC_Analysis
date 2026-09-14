@@ -36,7 +36,7 @@ public class AnalysisOrchestrator(
         if (claimed == 0)
             return;
 
-        var request = await db.Requests.FirstAsync(r => r.RequestId == requestId, ct);
+        var request = await db.Requests.Include(r => r.Client).FirstAsync(r => r.RequestId == requestId, ct);
         var runNumber = await db.AnalysisRuns.CountAsync(a => a.RequestId == requestId, ct) + 1;
 
         if (request.LatestCompletedIngestionRunId is not { } ingestionRunId)

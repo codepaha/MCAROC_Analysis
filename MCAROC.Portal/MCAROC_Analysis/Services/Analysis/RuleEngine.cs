@@ -26,6 +26,7 @@ public static class RuleEngine
         allOutcomes.AddRange(EpfoRules.Evaluate(ctx, thresholds));
         allOutcomes.AddRange(AuditorRules.Evaluate(ctx));
         allOutcomes.AddRange(LitigationRules.Evaluate(ctx));
+        allOutcomes.AddRange(EntityCrossReferenceRules.Evaluate(ctx));
 
         var rawFindings = allOutcomes.Where(o => o.Status == RuleEvaluationStatus.Triggered).Select(o => o.Finding!).ToList();
         var dataSufficiencyNotes = allOutcomes
