@@ -63,18 +63,66 @@ process startup, not watched for changes.
 
 ## Configuration reference
 
+Every key the app actually reads, grouped by section — not a curated subset. Sizes are converted to
+human-readable units alongside the raw byte value actually in `appsettings.json`, so you can sanity-check
+either.
+
+### Database
+
 | Key | Required? | Default | What it's for |
 |---|---|---|---|
 | `ConnectionStrings:Default` | **Yes**, in every environment except local dev (already set in `appsettings.Development.json`) | none | The SQL Server connection string |
+
+### Google Cloud / Vertex AI
+
+| Key | Required? | Default | What it's for |
+|---|---|---|---|
 | `GoogleCloud:ProjectId` | **Yes**, once any AI-backed feature is actually used (chat, extraction, analysis, #164) | none — throws at first use if missing | Vertex AI project |
 | `GoogleCloud:CredentialsPath` | **Yes**, same trigger as above | none — throws at first use if missing | Path to the GCP service-account key file |
 | `GoogleCloud:Location` | No | `us-central1` | Vertex AI region |
+
+### InstaFinancials (pre-login reports)
+
+| Key | Required? | Default | What it's for |
+|---|---|---|---|
 | `InstaFinancials:ApiKey` | **Yes**, only for pre-login reports | none — throws when a report is actually requested | InstaFinancials API auth |
 | `InstaFinancials:BaseUrl` | No | already set to the real endpoint | InstaFinancials API base URL |
+| `InstaFinancials:DaysToIgnore` | No | `888` | How many days old a company's InstaFinancials record can be before it's treated as stale and re-fetched |
+
+### MCA filings (OCR)
+
+| Key | Required? | Default | What it's for |
+|---|---|---|---|
 | `McaFilings:TesseractExePath` | No | `C:\Program Files\Tesseract-OCR\tesseract.exe` | OCR fallback for scanned PDF pages |
-| `CalculationAssurance:Mode` | No | `Off` (fully inert) | #164 calculation assurance — see `docs/calculation-assurance-runbook.md` before ever changing this |
-| `InternalAuth:ReviewerUsername`/`ReviewerPasswordHash`/`ReviewerDisplayName` | No, until you want anyone to be able to sign in to `/internal/calc-audit` | empty — nobody can sign in | #164 reviewer login — see the runbook above for how to generate the password hash |
-| `LargeArchiveUpload:Enabled` | No | `false` | Resumable >2GB MCA filing archive upload |
+| `McaFilings:MinCharsPerPageForNativeText` | No | `80` | Below this many extracted characters, a PDF page is treated as scanned/unreadable and sent to OCR instead of trusted as native text |
+
+### #164 Calculation assurance
+
+See `docs/calculation-assurance-runbook.md` before changing any of these in a real environment — flipping
+`Mode` has real consequences (it can start holding report downloads).
+
+| Key | Required? | Default | What it's for |
+|---|---|---|---|
+| `CalculationAssurance:Mode` | No | `Off` (fully inert) | `Off` / `ObserveOnly` / `Enforced` — see the runbook |
+| `CalculationAssurance:AiAuditEnabled` | No | `true` | Whether the AI second-line review worker runs at all (independent of `Mode`, as long as `Mode` isn't `Off`) |
+| `CalculationAssurance:AiAuditMaxAttempts` | No | `3` | Retries before an AI audit run is marked `SkippedAiUnavailable` |
+| `CalculationAssurance:AiAuditTimeoutSeconds` | No | `60` | Hard timeout on a single Vertex AI call for this feature — the worker's lease duration is derived from this, so raising it also raises the lease automatically |
+| `CalculationAssurance:AiAuditMaxLedgerRowsPerCall` | No | `150` | Caps how many ledger rows are sent to the model in one prompt |
+| `InternalAuth:ReviewerUsername` / `ReviewerPasswordHash` / `ReviewerDisplayName` | No, until you want anyone to be able to sign in to `/internal/calc-audit` | all empty — nobody can sign in | Reviewer login — see the runbook for how to generate the password hash |
+
+### Large archive upload (#169)
+
+| Key | Required? | Default | What it's for |
+|---|---|---|---|
+| `LargeArchiveUpload:Enabled` | No | `false` | Master switch — resumable >2GB MCA filing archive upload |
+| `LargeArchiveUpload:MaxArchiveSizeBytes` | No | `5368709120` (5 GiB) | Largest accepted uploaded archive |
+| `LargeArchiveUpload:ChunkSizeBytes` | No | `67108864` (64 MiB) | Upload chunk size |
+| `LargeArchiveUpload:MaxConcurrentUploads` | No | `1` | Global concurrent-upload limit |
+| `LargeArchiveUpload:MaxConcurrentUnpacks` | No | `1` | Global concurrent-unpack limit |
+| `LargeArchiveUpload:MaxUncompressedSizeBytes` | No | `21474836480` (20 GiB) | Largest accepted uncompressed archive contents |
+| `LargeArchiveUpload:MaxPdfCount` | No | `10000` | Largest accepted number of PDFs in one archive |
+| `LargeArchiveUpload:MaxIndividualPdfSizeBytes` | No | `250000000` (~238 MiB) | Largest accepted single PDF within an archive |
+| `LargeArchiveUpload:MinFreeDiskHeadroomBytes` | No | `10737418240` (10 GiB) | An upload is refused if less than this much disk space is free — check this against your actual disk before enabling on a real machine |
 
 ## Running locally
 
