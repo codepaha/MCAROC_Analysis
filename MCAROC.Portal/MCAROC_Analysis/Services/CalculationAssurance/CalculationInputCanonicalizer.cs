@@ -13,13 +13,14 @@ namespace MCAROC_Analysis.Services.CalculationAssurance;
 /// because ONE of its inputs happened to resolve).</summary>
 public static class CalculationInputCanonicalizer
 {
-    public static string BuildCanonicalInputPayload(IReadOnlyList<string> inputs, DossierModel model, CompanyProfile? companyProfile)
+    public static string BuildCanonicalInputPayload(
+        IReadOnlyList<string> inputs, DossierModel model, CompanyProfile? companyProfile, IngestionRun? ingestionRun = null)
     {
         var facts = new List<string>();
 
         foreach (var input in inputs.OrderBy(i => i, StringComparer.Ordinal))
         {
-            var resolved = CalculationInputResolver.ResolveOne(input, model, companyProfile);
+            var resolved = CalculationInputResolver.ResolveOne(input, model, companyProfile, ingestionRun);
             if (resolved.Count == 0)
             {
                 facts.Add($"{input}=unresolved");

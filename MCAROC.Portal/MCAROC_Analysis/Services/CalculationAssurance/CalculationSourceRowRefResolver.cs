@@ -11,9 +11,9 @@ namespace MCAROC_Analysis.Services.CalculationAssurance;
 public static class CalculationSourceRowRefResolver
 {
     public static IReadOnlyList<CalculationSourceRowRef> Resolve(
-        IReadOnlyList<string> inputs, DossierModel model, CompanyProfile? companyProfile) =>
+        IReadOnlyList<string> inputs, DossierModel model, CompanyProfile? companyProfile, IngestionRun? ingestionRun = null) =>
         inputs
-            .SelectMany(input => CalculationInputResolver.ResolveOne(input, model, companyProfile))
+            .SelectMany(input => CalculationInputResolver.ResolveOne(input, model, companyProfile, ingestionRun))
             .Select(r => new CalculationSourceRowRef(r.EntityType, r.EntityId, r.SourceDocumentId, r.SourceSheetName, r.SourceRowNumber))
             .DistinctBy(r => (r.EntityType, r.EntityId))
             .ToList();

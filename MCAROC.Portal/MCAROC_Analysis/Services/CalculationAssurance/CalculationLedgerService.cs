@@ -69,6 +69,7 @@ public class CalculationLedgerService(
         }
 
         var companyProfile = await db.CompanyProfiles.FirstOrDefaultAsync(x => x.IngestionRunId == ingestionRunId, ct);
+        var ingestionRun = await db.IngestionRuns.FirstOrDefaultAsync(x => x.IngestionRunId == ingestionRunId, ct);
 
         var isNewSnapshot = snapshot is null;
         snapshot ??= new CalculationAuditSnapshot
@@ -89,7 +90,7 @@ public class CalculationLedgerService(
         var entries = new List<CalculationLedgerEntry>();
         foreach (var (keyPrefix, group) in groups)
         foreach (var metric in group.Metrics)
-            entries.Add(BuildEntry(keyPrefix, metric, snapshot, model, companyProfile));
+            entries.Add(BuildEntry(keyPrefix, metric, snapshot, model, companyProfile, ingestionRun));
 
         // One SaveChangesAsync call for the whole graph (snapshot + every entry, linked by navigation
         // rather than a pre-known id) — EF Core wraps this in a single transaction, so either the entire
@@ -121,9 +122,10 @@ public class CalculationLedgerService(
     }
 
     private static CalculationLedgerEntry BuildEntry(
-        string keyPrefix, MetricResult metric, CalculationAuditSnapshot snapshot, DossierModel model, CompanyProfile? companyProfile)
+        string keyPrefix, MetricResult metric, CalculationAuditSnapshot snapshot, DossierModel model,
+        CompanyProfile? companyProfile, IngestionRun? ingestionRun)
     {
-        var sourceRefs = CalculationSourceRowRefResolver.Resolve(metric.Inputs, model, companyProfile);
+        var sourceRefs = CalculationSourceRowRefResolver.Resolve(metric.Inputs, model, companyProfile, ingestionRun);
         // A metric that produced a real value but has ANY known-source-entity input that failed to
         // resolve is untraceable — flagged for PR2's ProvenanceCompleteness check, never silently treated
         // as fine. This is deliberately "any", not "all zero": a metric mixing one resolved input (e.g.
@@ -135,7 +137,7 @@ public class CalculationLedgerService(
         // not counted as a gap merely because it was never resolvable. A metric that is itself
         // Insufficient (no value) is not "unresolved provenance" — there is nothing to trace.
         var hasUnresolvedProvenance = metric.Value is not null
-            && !CalculationInputResolver.AllKnownInputsResolved(metric.Inputs, model, companyProfile);
+            && !CalculationInputResolver.AllKnownInputsResolved(metric.Inputs, model, companyProfile, ingestionRun);
 
         const string calcVersion = "1.0";
         var calculationKey = CalculationKeySlug.For(keyPrefix, metric.Label);
@@ -145,7 +147,7 @@ public class CalculationLedgerService(
         // Hashes the actual resolved VALUES behind the input names (and the full output shape), not just
         // which fields were used — two different companies' revenue figures computed via the same
         // formula must never collide on InputHash (PR #170 review round 3, point 1).
-        var canonicalInputPayload = CalculationInputCanonicalizer.BuildCanonicalInputPayload(metric.Inputs, model, companyProfile);
+        var canonicalInputPayload = CalculationInputCanonicalizer.BuildCanonicalInputPayload(metric.Inputs, model, companyProfile, ingestionRun);
         var canonicalOutputPayload = string.Join('|',
             calculationKey, calcVersion, metric.Period, metric.Unit.ToString(),
             metric.Value?.ToString(CultureInfo.InvariantCulture) ?? "null",
