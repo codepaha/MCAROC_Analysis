@@ -305,6 +305,29 @@ Integrity rules:
 5. A reviewer sample of at least 20 auto-accepted links, 20 unlinked results, and
    every ambiguous/contradictory result before broad backfill.
 
+### Pilot Deliverable 2: Coastal Corpus Deterministic Charge Linking Reconciliation
+
+The deterministic charge-link pass over the canonical Coastal Projects Limited corpus (`COASTAL PROJECTS LIMITED Documents.zip`) against ingested ROC charge events (`U45203OR1995PLC003982.xls` and `U45203OR1995PLC003982-charge.xls`, representing 213 charges and 337 events) produces the following immutable partition across all 814 manifest entries:
+
+| Outcome | Reason | Count | Notes |
+|---|---|---|---|
+| `ManifestDuplicateBypassed` | `ManifestDuplicate` | 169 | Byte-identical duplicate PDFs bypassing matcher hierarchy to canonical entries |
+| `UnlinkedOutOfScope` | `NonChargeDocument` | 105 | Classified as constitutional, annual return, or non-charge filing |
+| `AutoAccepted` | `ExactMatchBothDates` (41)<br>`ExactMatchEventDate` (82)<br>`ExactMatchFilingDate` (37) | 160 | Deterministic composite key matches with zero date contradictions |
+| `PendingReview` | `DateMismatch` (10)<br>`DateContradiction` (4) | 14 | Candidates requiring reviewer adjudication |
+| `UnlinkedNoCandidate` | `MissingChargeId` (359)<br>`ChargeNotFoundInWorkbook` (7) | 366 | 359 lack CID token; 7 generic files in mixed folder fallback |
+| **Total** | | **814** | Complete partition of Coastal corpus |
+
+#### 160/14 Reconciliation & Strict Date Contradiction Rule
+
+Under strict date contradiction prevention, if a candidate filename supplies both an event date and a filing date, and one matches a charge event row in the workbook while the other contradicts the charge event row, the match is rejected as `DateContradiction` and routed to `PendingReview`.
+
+This strict rule shifted exactly 4 entries from `AutoAccepted` to `PendingReview` (reconciling the earlier 164 Auto / 10 Review distribution to 160 Auto / 14 Review):
+1. `70912_.../Charge Documents/ee0ce4b44acb7f00276dd4494bec1b70v1-Form CHG-1-050315-110814-ChargeId-10215822.pdf`: EventDate 11-08-2014 matches Modification event, but FilingDate 05-03-2015 contradicts workbook FilingDate 20-04-2015.
+2. `70927_.../Charge Documents/715292c61e2799fd200d720521d44a3dv1-Form 8-260810-300610-ChargeId-10234873.pdf`: EventDate 30-06-2010 matches Creation event, but FilingDate 26-08-2010 contradicts workbook FilingDate 27-08-2010 (1 day delta).
+3. `70928_.../Charge Documents/cbbc6e6caac8272496c1dc80f98db69bv1-Form 8-300410-260410-ChargeId-10158037.pdf`: EventDate 26-04-2010 matches Modification event, but FilingDate 30-04-2010 contradicts workbook FilingDate 03-05-2010 (3 days delta).
+4. `70928_.../Charge Documents/d6e43786704b7bf513b6287edb431069v1-Form 8-050510-190310-ChargeId-10215822.pdf`: EventDate 19-03-2010 matches Creation event, but FilingDate 05-05-2010 contradicts workbook FilingDate 07-05-2010 (2 days delta).
+
 ## Acceptance criteria
 
 - Every canonical PDF has exactly one current processing classification; duplicate
