@@ -243,6 +243,177 @@ service — if it sits `queued`, `run.cmd` is down) runs *only* what Linux can't
 
 ## Log  <!-- newest first. Prefix: NEEDS / BLOCKED / DONE / DECISION / FYI -->
 
+### 2026-09-14 — Claude session (PR #183 MERGED to `main` — #164 fully complete)
+- **PR #183 MERGED into `main` as `6d06182`** at reviewed head `f6575d0` — both hosted checks green. Round 1
+  caught a real factual error in the runbook: "config is read fresh on each login attempt" doesn't mean a
+  rotated credential or a `Mode` change takes effect without a restart — environment variables, App Service
+  settings, and user-secrets are all loaded once at process startup and never watched for changes (App
+  Service's portal/CLI happens to work anyway only because Azure recycles the app on a setting change, not
+  because the app notices). Fixed in both the credential-rotation section and the `Mode` flip step, with a
+  "verify via a fresh login/test request" instruction added to both.
+- **This closes out every item from #164's original plan (§8) — schema, deterministic checks, AI worker,
+  delivery gate, reviewer workflow, login gate, reviewer UI, and now the rollout runbook.** Still fully
+  inert everywhere (`Mode: Off`, `InternalAuth:*` empty) until an owner deliberately configures one real
+  environment.
+
+### 2026-09-14 — Claude session (#164 rollout runbook opened — PR #183, the plan's last item)
+- **PR #183 opened** (`docs/164-calculation-assurance-runbook` → `main`), branched off latest `main`
+  (`29a5684`). `docs/calculation-assurance-runbook.md` — what each `Mode` does, the flip procedure,
+  reviewer-credential setup/rotation, what to check in `ObserveOnly` before proposing `Enforced`, and an
+  explicit callout that `Enforced` holds every currently-live report with no snapshot (predates the
+  feature), no grandfathering, no exception route. Also documents three known deferred gaps: `ReviewerName`
+  isn't derived from the login, no in-UI override-mode action, no admin UI for dual-approval. Docs-only.
+- **With this, every item from the original plan's §8 sequencing is either merged or in review.** #164 is
+  functionally complete end to end, still fully inert by default (`Mode: Off`) until an owner deliberately
+  configures one real environment per this runbook.
+
+### 2026-09-14 — Claude session (PR #181 MERGED to `main` — #164's original v1 scope is now fully in)
+- **PR #181 MERGED into `main` as `29a5684`** at reviewed head `19fd7ba` — both hosted checks green, no
+  further blocker found after the login-gate and fail-closed-snapshot fixes.
+- **This completes #164's original plan scope end to end**: schema + ledger persistence (PR #170),
+  deterministic check registry (PR #171), AI second-line review worker (PR #173), dossier delivery gate
+  (PR #177), discrepancy reviewer workflow service (PR #178), and the reviewer UI + access gate (PR #181) —
+  six PRs, each independently reviewed, several needing 2-3 real-bug-finding rounds apiece. `Mode` still
+  defaults to `Off` everywhere, so all of this ships fully inert until an environment's config is
+  deliberately flipped to `ObserveOnly`/`Enforced` — matching the plan's own rollout discipline (§6/§8).
+- **Remaining, not yet done**: the plan's §8 PR5 ("Docs/rollout") — a runbook covering the flag-flip
+  procedure, reviewer-credential setup (`InternalAuth:*` is still empty in every committed config; an
+  operator must set real values via user-secrets/environment before anyone can sign in at all), and what to
+  check in `ObserveOnly` telemetry before ever proposing `Enforced` for a real environment. Not started this
+  session — next up if requested.
+
+### 2026-09-14 — Claude session (DECISION: login gate un-deferred — PR #181 review round 1)
+- **DECISION: the login gate deferred earlier today is un-deferred**, per the owner. The reviewer flagged
+  that `CalculationAuditController` — both viewing and all six discrepancy-mutating actions, including ones
+  that can release a delivery hold — had zero access control, reachable by anyone who could reach the app.
+  That's a materially different risk than the rest of the app's read-mostly unauthenticated surface (which
+  has no comparable mutation capability), so "match the app's existing posture" no longer applied once the
+  mutation risk was concrete. Implemented exactly as the original plan's decision #5 described: a
+  feature-scoped `"InternalReviewer"` cookie scheme (never the app's default — `AddAuthentication()` with
+  no scheme name), `InternalAuthController` (`/internal/login`/`/internal/logout`, generic failure message,
+  rate-limited 5/5min per IP), config-based PBKDF2 credential (`InternalReviewerCredentialChecker`) left
+  empty in committed `appsettings.json` so the feature fails closed until an operator sets real values.
+  `[Authorize(AuthenticationSchemes = "InternalReviewer")]` now gates the whole controller.
+- Also fixed in the same round: the "current snapshot" fallback silently defaulted to the newest snapshot
+  by `CreatedUtc` whenever `LatestCompletedIngestionRunId` was null/unmatched — exactly the
+  abandoned/superseded-re-ingest case `DossierCache`/the delivery gate are built to never do. Now fails
+  closed to an explicit "no current snapshot" state; explicit historical browsing by snapshot id still
+  works, clearly marked non-current.
+- 19 new tests, 8 of them genuine `WebApplicationFactory<Program>` HTTP-pipeline integration tests (first
+  use of this project's existing-but-unused `Microsoft.AspNetCore.Mvc.Testing` package) — proving the real
+  pipeline challenges an unauthenticated request, not just that `[Authorize]` is present as an attribute
+  (a direct controller-call unit test, the style every other test in this project uses, cannot exercise
+  that layer at all). Full local suite: 1172 passed, 0 failed, 19 skipped (up from 1161). No schema change.
+  `@codex review` requested on the round-1 fix push to PR #181.
+
+### 2026-09-14 — Claude session (#164 reviewer UI opened — PR #181, the last major piece)
+- **PR #181 opened** (`feature/164-calc-audit-controller` → `main`), branched off latest `main` (`c83188b`).
+  `CalculationAuditController` at `/internal/calc-audit/{requestId}` — ledger, deterministic checks, AI
+  second-line summary, and the full discrepancy workflow, with a selector across every snapshot a request
+  has ever had (none hidden/deleted). The controller has no workflow logic of its own: every action is a
+  one-line delegation to `CalculationDiscrepancyWorkflowService` (PR #178) + post-redirect-get, errors
+  surfaced via TempData rather than a second copy of already-tested rules. "Current" snapshot resolution
+  mirrors `DossierCache`'s own logic exactly (matches `LatestCompletedIngestionRunId`, not just the newest
+  row). Reachable only via a plain link on Request Details next to the dossier download buttons — never a
+  tab, `/internal/*` still appears in no other nav.
+- No schema change — pure controller/view work over PR #178's service. 7 new tests + full regression sweep
+  (1161 passed, 0 failed, 19 skipped, up from 1154) green locally before opening. Manual browser smoke test
+  explicitly flagged as **not done** in the PR body — no running dev server available in this session; the
+  full triage→confirm→hold→accept-exception flow should be exercised by hand before this is considered
+  production-ready.
+- `@codex review` requested on PR #181. This is the last major piece of #164's original scope (the login
+  gate stays deferred per the earlier decision).
+
+### 2026-09-14 — Claude session (PR #178 MERGED to `main` — workflow service in; starting reviewer UI)
+- **PR #178 MERGED into `main` as `c83188b`** at reviewed head `7ae4726`, after three review rounds:
+  1. Deadlock (a dual-reviewer severity disagreement persisted before the mismatch was even detected, with
+     no way back in) + concurrency (check-then-act everywhere) — fixed with an atomic CAS on
+     `PendingConfirmSeverity`, three new unique DB constraints, and `ExecuteUpdateAsync`-gated transitions.
+  2. The winning transition and its hold create/release were still two separate, non-atomic operations — a
+     hold-insert failure for any reason (not just the round-1 race) could leave a Confirmed Critical/Material
+     discrepancy with no active hold, permanently. Fixed by wrapping each pair in one explicit DB
+     transaction, made retry-safe for the same reviewer without weakening `RequiredApprovals`.
+  3. An undefined severity enum value could confirm while silently skipping the hold branch; an
+     exception-retry could apply a different reason than the one durably recorded in the audit trail. Fixed
+     with an `Enum.IsDefined` guard (+ a defense-in-depth DB check constraint) and a reason-equality check
+     on retry.
+  Three real, distinct correctness gaps in three rounds, on top of the six PR #170 needed and the two each
+  PR #173/#177 needed — same pattern holding all the way through this feature: CI-green and
+  `MERGEABLE`/`CLEAN` have never once meant "no more bugs" on #164.
+- **Next: the reviewer UI/controller** (`CalculationAuditController` + views, still without the deferred
+  login gate) — the last major piece of #164's original scope. Branching off latest `main` (`c83188b`), not
+  stacked on anything unmerged.
+
+### 2026-09-14 — Claude session (#164 discrepancy reviewer workflow service opened — PR #178)
+- **PR #178 opened** (`feature/164-discrepancy-workflow-service` → `main`), branched off latest `main`
+  (`c78b2f8`, includes all of PR1-PR4). The workflow-logic half of the reviewer UI, split from the
+  controller/views the same way PR4 split the delivery gate from the reviewer UI — each independently
+  reviewable rather than one large PR.
+- `CalculationDiscrepancyWorkflowService`: Triage/Confirm/Reject/AcceptException/MarkFixedPendingReaudit/
+  Resolve, each an append-only `CalculationDiscrepancyApproval` row first, `Status`/`Severity` only
+  advancing once `RequiredApprovals` distinct reviewers agree. `Confirm` is where a human assigns severity
+  to an AI candidate (never taken from the AI's own suggestion) and requires the cited ledger entry's
+  current value to still match the original claim — a stale claim is refused, not silently confirmed.
+  `AcceptException` has no code path for `Severity == Critical`, ever. `MarkFixedPendingReaudit` never
+  releases the current (genuinely-defective) snapshot's hold — only a new snapshot's own fresh audit does
+  that implicitly, since the customer's next download resolves to the newest run.
+- New additive column `CalculationDiscrepancyApproval.ProposedSeverity` — records what each reviewer
+  proposed at Confirm time, so a future dual-approval's severity-consensus check is verifiable against the
+  durable audit trail. Migration confirmed via `dotnet ef migrations has-pending-model-changes` (clean
+  beyond that one column).
+- 18 new tests + full regression sweep (1113 passed, 0 failed, 19 skipped, up from 1095) green locally
+  before opening. `@codex review` requested on PR #178.
+- The controller/views/Request-Details-tab (still without the deferred login gate) is next, once #178
+  clears review and merges — not stacked on it, per the standing sequencing lesson.
+
+### 2026-09-14 — Claude session (PR #177 MERGED to `main` — #164 PR1-PR4 all in; starting reviewer UI)
+- **PR #177 MERGED into `main` as `c78b2f8`** at reviewed head `73c73ec` — both hosted checks green, no
+  blocker found. All four #164 PRs to date (schema+ledger, deterministic checks, AI worker, delivery gate)
+  are now merged.
+- Starting the reviewer UI/workflow service next: `CalculationAuditController`, `CalculationDiscrepancyWorkflowService`,
+  the ledger/check/discrepancy views, and the new Request Details tab — **without** the login gate, per the
+  standing decision to defer it (logged below). Branching off latest `main` (`c78b2f8`), not stacked on any
+  unmerged branch, per the sequencing lesson from PR #170/#171.
+
+### 2026-09-14 — Claude session (#164 PR4 opened — dossier delivery gate; login gate deferred)
+- **DECISION: the login gate from the original plan's decision #5 is deferred**, per the owner. The app has
+  zero authentication anywhere else today; gating just the calc-audit review UI would make it *more*
+  restrictive than the rest of the app, working against letting the internal team see everything freely
+  during pilot testing. Revisit before any `Enforced`-mode or customer-facing rollout — someone will need
+  to remember to add real access control before this panel (once built) is ever exposed more broadly.
+- **PR #177 opened** (`feature/164-delivery-gate-and-review-ui` → `main`), branched off latest `main`
+  (`b558207`). Ships only the delivery-gate half of the original PR4 scope: `CalculationArtifactGateService`
+  wired into `DossierController.Download` right before the file-cache read (not just before the render) —
+  proven by a test that renders and caches a real PDF under `Mode=Off`, then creates a hold, then confirms
+  `Mode=Enforced` still blocks rather than serving the stale cached file. Fails closed on a missing
+  `CalculationAuditSnapshot` under `Enforced` (per the issue's "NotEvaluated is not a pass" policy), never
+  under `ObserveOnly`. A held artifact returns byte-for-byte the same `NotFound()` as a missing request.
+- No schema change (`dotnet ef migrations has-pending-model-changes`: none) — reads only tables PR1 already
+  created. 12 new tests + full regression sweep (1095 passed, 0 failed, 19 skipped, up from 1083) all green
+  locally before opening.
+- The reviewer UI/workflow service (`CalculationAuditController`, `CalculationDiscrepancyWorkflowService`,
+  the new Request Details tab) — now without the login gate — is the next PR.
+- `@codex review` requested on PR #177.
+
+### 2026-09-14 — Claude session (PR #173 MERGED to `main` — #164 PR1/PR2/PR3 all in; starting PR4)
+- **PR #173 MERGED into `main` as `b558207`** at reviewed head `453dd04`, after two review rounds:
+  1. Lease/backoff/exact-value fixes (durable `LeaseOwner`/`LeaseExpiresUtc` so startup recovery only
+     reclaims a run whose lease has actually expired, `NextAttemptUtc` exponential backoff so failed
+     attempts don't tight-loop, a filtered unique index on `(AiAuditRunId, PrimaryLedgerEntryId)` as a
+     last-resort duplicate-candidate guard, and exact — not rounded — decimal equality for the
+     `actualValue` evidence check).
+  2. A real bounded timeout on the Vertex AI call itself (`CalculationAiAuditTimeoutRunner`) — the round-1
+     lease fix bounded the claim, but nothing had bounded the call, so a still-running call could outlive
+     even the lease. The lease duration is now *derived* from the call timeout (`timeout + 60s margin`)
+     rather than configured independently, so the two can't drift apart the way they did before.
+  Both rounds each found a real, distinct correctness gap despite clean/green CI throughout — same pattern
+  as PR #170/#171.
+- **All three #164 PRs (schema+ledger, deterministic checks, AI worker) are now merged to `main`.** Starting
+  PR4 next per the plan's §5/§8: delivery gate (`DossierController` hold check), minimal feature-scoped
+  cookie login (`InternalAuthController`/`CalculationAuditController`, no app-wide default auth scheme),
+  `CalculationDiscrepancyWorkflowService`, and the new Request Details tab. Branching
+  `feature/164-delivery-gate-and-review-ui` off latest `main` (`b558207`).
+
 ### 2026-09-14 — Antigravity (DONE Pilot Deliverable 1: Coastal corpus inventory)
 - **DONE Pilot Deliverable 1** on branch `feature/pilot-d1-coastal-inventory`.
 - Implemented stream-only, non-persistent Coastal corpus inventory library and deterministic control-total tests:
