@@ -642,6 +642,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             e.Property(x => x.OriginCheckKey).HasMaxLength(150);
             e.Property(x => x.Status).HasConversion<string>().HasMaxLength(30);
             e.Property(x => x.Severity).HasConversion<string>().HasMaxLength(10);
+            e.Property(x => x.PendingConfirmSeverity).HasConversion<string>().HasMaxLength(10);
         });
 
         modelBuilder.Entity<CalculationDiscrepancyLedgerLink>(e =>
@@ -666,6 +667,14 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             // belongs to, so there is no cross-snapshot risk to guard against here.
             e.HasOne(x => x.Discrepancy).WithMany().HasForeignKey(x => x.CalculationDiscrepancyId).OnDelete(DeleteBehavior.Restrict);
             e.HasIndex(x => x.CalculationDiscrepancyId);
+            // A reviewer can never have two rows for the same decision on the same discrepancy — the DB
+            // constraint the "already recorded this decision" check relies on, closing the
+            // check-then-insert race a concurrent double-click/double-submit could otherwise slip through.
+            e.HasIndex(x => new { x.CalculationDiscrepancyId, x.DecisionAction, x.ReviewerName }).IsUnique();
+            // ApprovalSequence must be a real per-(discrepancy, action) ordinal, not just usually-correct —
+            // two concurrent different reviewers racing to be "sequence 1" must never both succeed;
+            // RecordApprovalAsync retries with a fresh count on a collision here.
+            e.HasIndex(x => new { x.CalculationDiscrepancyId, x.DecisionAction, x.ApprovalSequence }).IsUnique();
             e.Property(x => x.DecisionAction).HasConversion<string>().HasMaxLength(30);
             e.Property(x => x.ReviewerName).HasMaxLength(200);
             e.Property(x => x.ModelIdUsed).HasMaxLength(100);
@@ -683,6 +692,12 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
                 .OnDelete(DeleteBehavior.Restrict);
             e.HasIndex(x => new { x.CalculationAuditSnapshotId, x.Variant });
             e.HasIndex(x => x.IsActive).HasFilter("[IsActive] = 1");
+            // At most one ACTIVE hold per discrepancy — the DB-enforced backstop against two concurrent
+            // Confirm calls (or any other path) each creating their own hold for the same discrepancy. The
+            // state machine never re-holds a discrepancy after its one hold is released (AcceptException is
+            // the only release path, and Confirm never runs again afterward), so filtering to IsActive=1
+            // never blocks a legitimate later hold.
+            e.HasIndex(x => x.SourceDiscrepancyId).IsUnique().HasFilter("[IsActive] = 1 AND [SourceDiscrepancyId] IS NOT NULL");
             e.Property(x => x.Variant).HasMaxLength(20);
             e.Property(x => x.HoldReason).HasConversion<string>().HasMaxLength(40);
             e.Property(x => x.ReleasedByReviewerName).HasMaxLength(200);

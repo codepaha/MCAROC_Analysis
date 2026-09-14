@@ -25,12 +25,19 @@ public record WorkflowResult(bool Success, string? Error)
 ///
 /// Severity is never taken from the AI's own suggestion (CalculationDiscrepancy.ClaimSummary text only) —
 /// a human reviewer supplies it explicitly at Confirm time, which is what makes "AI never imposes a hold"
-/// hold structurally: nothing before this service ever writes a non-null Severity on an AiCandidate row.</summary>
+/// hold structurally: nothing before this service ever writes a non-null Severity on an AiCandidate row.
+///
+/// Every status transition below is a WHERE-gated ExecuteUpdateAsync keyed on the expected prior status —
+/// the same atomic-claim idiom AnalysisOrchestrator/CalculationAiAuditOrchestrator use — never a
+/// load-then-mutate-then-SaveChangesAsync, so two concurrent callers reaching "enough approvals"
+/// simultaneously can never both apply the same transition or its side effects (a hold, a hold release)
+/// twice. A unique filtered index on CalculationArtifactHold.SourceDiscrepancyId is the DB-level backstop
+/// behind that in case any future path ever bypasses this service.</summary>
 public class CalculationDiscrepancyWorkflowService(AppDbContext db, ILogger<CalculationDiscrepancyWorkflowService> logger)
 {
     public async Task<WorkflowResult> TriageAsync(long discrepancyId, string reviewerName, string? notes, CancellationToken ct)
     {
-        var discrepancy = await db.CalculationDiscrepancies.FirstOrDefaultAsync(d => d.CalculationDiscrepancyId == discrepancyId, ct);
+        var discrepancy = await db.CalculationDiscrepancies.AsNoTracking().FirstOrDefaultAsync(d => d.CalculationDiscrepancyId == discrepancyId, ct);
         if (discrepancy is null) return WorkflowResult.Fail("Discrepancy not found.");
         if (discrepancy.SourceType != CalculationDiscrepancySourceType.AiCandidate)
             return WorkflowResult.Fail("Only an AI-sourced candidate can be triaged — a deterministic check's discrepancy is already confirmed at creation.");
@@ -42,9 +49,11 @@ public class CalculationDiscrepancyWorkflowService(AppDbContext db, ILogger<Calc
 
         if (await HasEnoughApprovalsAsync(discrepancy, CalculationDiscrepancyDecisionAction.Triage, ct))
         {
-            discrepancy.Status = CalculationDiscrepancyStatus.Triaged;
-            discrepancy.LastUpdatedUtc = DateTime.UtcNow;
-            await db.SaveChangesAsync(ct);
+            await db.CalculationDiscrepancies
+                .Where(d => d.CalculationDiscrepancyId == discrepancy.CalculationDiscrepancyId && d.Status == CalculationDiscrepancyStatus.Open)
+                .ExecuteUpdateAsync(s => s
+                    .SetProperty(d => d.Status, CalculationDiscrepancyStatus.Triaged)
+                    .SetProperty(d => d.LastUpdatedUtc, DateTime.UtcNow), ct);
         }
         return WorkflowResult.Ok();
     }
@@ -53,19 +62,30 @@ public class CalculationDiscrepancyWorkflowService(AppDbContext db, ILogger<Calc
     /// fresh deterministic reproduction first: the primary ledger entry's currently-stored value must still
     /// match what the candidate originally claimed as "actual" — if the underlying data has since changed
     /// (e.g. a re-ingest), the claim may no longer be live, and Confirm is refused rather than silently
-    /// confirming a stale claim. Reaching RequiredApprovals with matching severity creates the matching
-    /// CalculationArtifactHold for Critical/Material — the same auto-hold side effect a deterministic
-    /// check's Triggered outcome gets, applied here at the human-decision step instead.</summary>
+    /// confirming a stale claim.
+    ///
+    /// The discrepancy's own PendingConfirmSeverity is claimed atomically (compare-and-set from null) by
+    /// whichever reviewer confirms first — every later Confirm approval must match that value or is
+    /// refused outright, before it is ever persisted. This is what makes a severity disagreement always
+    /// recoverable rather than a permanent deadlock: only ever one severity is actually recorded for this
+    /// discrepancy's Confirm action, so any later reviewer can still complete the transition by agreeing
+    /// with it (or the group can fall back to Reject if they decide the candidate isn't real after all).
+    ///
+    /// Reaching RequiredApprovals creates the matching CalculationArtifactHold for Critical/Material — the
+    /// same auto-hold side effect a deterministic check's Triggered outcome gets, applied here at the
+    /// human-decision step instead. The hold is only created by whichever concurrent call actually wins the
+    /// atomic Open/Triaged→Confirmed transition, and the unique filtered index on SourceDiscrepancyId is
+    /// the DB-level backstop even if that ever weren't enough.</summary>
     public async Task<WorkflowResult> ConfirmAsync(long discrepancyId, string reviewerName, CalculationDiscrepancySeverity severity, string? notes, CancellationToken ct)
     {
-        var discrepancy = await db.CalculationDiscrepancies.FirstOrDefaultAsync(d => d.CalculationDiscrepancyId == discrepancyId, ct);
+        var discrepancy = await db.CalculationDiscrepancies.AsNoTracking().FirstOrDefaultAsync(d => d.CalculationDiscrepancyId == discrepancyId, ct);
         if (discrepancy is null) return WorkflowResult.Fail("Discrepancy not found.");
         if (discrepancy.SourceType != CalculationDiscrepancySourceType.AiCandidate)
             return WorkflowResult.Fail("A deterministic check's discrepancy is already confirmed at creation — there is nothing to confirm here.");
         if (discrepancy.Status is not (CalculationDiscrepancyStatus.Open or CalculationDiscrepancyStatus.Triaged))
             return WorkflowResult.Fail($"Cannot confirm from status {discrepancy.Status}.");
 
-        var ledgerEntry = await db.CalculationLedgerEntries.FirstOrDefaultAsync(e => e.CalculationLedgerEntryId == discrepancy.PrimaryLedgerEntryId, ct);
+        var ledgerEntry = await db.CalculationLedgerEntries.AsNoTracking().FirstOrDefaultAsync(e => e.CalculationLedgerEntryId == discrepancy.PrimaryLedgerEntryId, ct);
         if (ledgerEntry is null) return WorkflowResult.Fail("The cited ledger entry no longer exists.");
 
         var stillMatches = ledgerEntry.ValueNumeric == discrepancy.ClaimedActualValue;
@@ -81,19 +101,39 @@ public class CalculationDiscrepancyWorkflowService(AppDbContext db, ILogger<Calc
             return WorkflowResult.Fail(
                 "The ledger value has changed since this candidate was raised — the claim is no longer live. Reject this candidate instead (a fresh audit pass will raise a new one if the issue still exists).");
 
+        // Atomic compare-and-set: only the first caller to reach this line for this discrepancy actually
+        // changes PendingConfirmSeverity from null; every other caller (racing or sequential) reads back
+        // whichever value won, deterministically. This closes the race a plain "query existing severities,
+        // then insert if they match" check-then-act sequence could not.
+        var claimedSeverity = await db.CalculationDiscrepancies
+            .Where(d => d.CalculationDiscrepancyId == discrepancy.CalculationDiscrepancyId && d.PendingConfirmSeverity == null)
+            .ExecuteUpdateAsync(s => s.SetProperty(d => d.PendingConfirmSeverity, severity), ct) == 1
+            ? severity
+            : await db.CalculationDiscrepancies.Where(d => d.CalculationDiscrepancyId == discrepancy.CalculationDiscrepancyId)
+                .Select(d => d.PendingConfirmSeverity).FirstAsync(ct);
+
+        if (claimedSeverity != severity)
+            return WorkflowResult.Fail(
+                $"A prior reviewer already confirmed this discrepancy at severity {claimedSeverity} — your {severity} assignment conflicts and was not recorded. " +
+                "Agree with the existing severity to add your approval, or use Reject to send this candidate back instead.");
+
         var recorded = await RecordApprovalAsync(discrepancy, CalculationDiscrepancyDecisionAction.Confirm, reviewerName, notes, reproductionJson, severity, ct);
         if (!recorded.Success) return recorded;
 
-        if (!await ConfirmApprovalsAgreeOnSeverityAsync(discrepancy, severity, ct))
-            return WorkflowResult.Fail("Your assigned severity does not match a prior reviewer's on this same discrepancy — Confirm was recorded, but not yet applied. Resolve the disagreement before this transition can complete.");
-
         if (await HasEnoughApprovalsAsync(discrepancy, CalculationDiscrepancyDecisionAction.Confirm, ct))
         {
-            discrepancy.Status = CalculationDiscrepancyStatus.Confirmed;
-            discrepancy.Severity = severity;
-            discrepancy.LastUpdatedUtc = DateTime.UtcNow;
+            var transitioned = await db.CalculationDiscrepancies
+                .Where(d => d.CalculationDiscrepancyId == discrepancy.CalculationDiscrepancyId
+                    && (d.Status == CalculationDiscrepancyStatus.Open || d.Status == CalculationDiscrepancyStatus.Triaged))
+                .ExecuteUpdateAsync(s => s
+                    .SetProperty(d => d.Status, CalculationDiscrepancyStatus.Confirmed)
+                    .SetProperty(d => d.Severity, severity)
+                    .SetProperty(d => d.LastUpdatedUtc, DateTime.UtcNow), ct);
 
-            if (severity is CalculationDiscrepancySeverity.Critical or CalculationDiscrepancySeverity.Material)
+            // Only the caller that actually won the transition creates the hold — a concurrent second
+            // caller that also observed "enough approvals" sees transitioned == 0 here and does nothing
+            // further, so exactly one hold is ever created per discrepancy.
+            if (transitioned == 1 && severity is CalculationDiscrepancySeverity.Critical or CalculationDiscrepancySeverity.Material)
             {
                 db.CalculationArtifactHolds.Add(new CalculationArtifactHold
                 {
@@ -102,13 +142,24 @@ public class CalculationDiscrepancyWorkflowService(AppDbContext db, ILogger<Calc
                         ? CalculationArtifactHoldReason.ConfirmedCriticalDiscrepancy
                         : CalculationArtifactHoldReason.ConfirmedMaterialDiscrepancyNoException,
                     IsActive = true,
-                    SourceDiscrepancy = discrepancy,
+                    SourceDiscrepancyId = discrepancy.CalculationDiscrepancyId,
                     CreatedUtc = DateTime.UtcNow
                 });
-            }
 
-            await db.SaveChangesAsync(ct);
-            logger.LogInformation("Discrepancy {DiscrepancyId} confirmed at severity {Severity} by {Reviewer}.", discrepancyId, severity, reviewerName);
+                try
+                {
+                    await db.SaveChangesAsync(ct);
+                }
+                catch (DbUpdateException ex) when (IsUniqueConstraintViolation(ex))
+                {
+                    // Belt-and-suspenders: the unique filtered index on SourceDiscrepancyId caught a
+                    // duplicate hold even though the atomic transition above should already have made this
+                    // unreachable. Another attempt's hold stands; nothing to do.
+                    logger.LogInformation("Lost a race creating the hold for discrepancy {DiscrepancyId} — another attempt already created it.", discrepancyId);
+                }
+
+                logger.LogInformation("Discrepancy {DiscrepancyId} confirmed at severity {Severity} by {Reviewer}.", discrepancyId, severity, reviewerName);
+            }
         }
         return WorkflowResult.Ok();
     }
@@ -117,7 +168,7 @@ public class CalculationDiscrepancyWorkflowService(AppDbContext db, ILogger<Calc
     {
         if (string.IsNullOrWhiteSpace(reason)) return WorkflowResult.Fail("A rejection reason is required.");
 
-        var discrepancy = await db.CalculationDiscrepancies.FirstOrDefaultAsync(d => d.CalculationDiscrepancyId == discrepancyId, ct);
+        var discrepancy = await db.CalculationDiscrepancies.AsNoTracking().FirstOrDefaultAsync(d => d.CalculationDiscrepancyId == discrepancyId, ct);
         if (discrepancy is null) return WorkflowResult.Fail("Discrepancy not found.");
         if (discrepancy.SourceType != CalculationDiscrepancySourceType.AiCandidate)
             return WorkflowResult.Fail("A deterministic check's discrepancy is authoritative and cannot be rejected.");
@@ -129,9 +180,12 @@ public class CalculationDiscrepancyWorkflowService(AppDbContext db, ILogger<Calc
 
         if (await HasEnoughApprovalsAsync(discrepancy, CalculationDiscrepancyDecisionAction.Reject, ct))
         {
-            discrepancy.Status = CalculationDiscrepancyStatus.Rejected;
-            discrepancy.LastUpdatedUtc = DateTime.UtcNow;
-            await db.SaveChangesAsync(ct);
+            await db.CalculationDiscrepancies
+                .Where(d => d.CalculationDiscrepancyId == discrepancy.CalculationDiscrepancyId
+                    && (d.Status == CalculationDiscrepancyStatus.Open || d.Status == CalculationDiscrepancyStatus.Triaged))
+                .ExecuteUpdateAsync(s => s
+                    .SetProperty(d => d.Status, CalculationDiscrepancyStatus.Rejected)
+                    .SetProperty(d => d.LastUpdatedUtc, DateTime.UtcNow), ct);
         }
         return WorkflowResult.Ok();
     }
@@ -144,7 +198,7 @@ public class CalculationDiscrepancyWorkflowService(AppDbContext db, ILogger<Calc
     {
         if (string.IsNullOrWhiteSpace(exceptionReason)) return WorkflowResult.Fail("An exception reason is required.");
 
-        var discrepancy = await db.CalculationDiscrepancies.FirstOrDefaultAsync(d => d.CalculationDiscrepancyId == discrepancyId, ct);
+        var discrepancy = await db.CalculationDiscrepancies.AsNoTracking().FirstOrDefaultAsync(d => d.CalculationDiscrepancyId == discrepancyId, ct);
         if (discrepancy is null) return WorkflowResult.Fail("Discrepancy not found.");
         if (discrepancy.Status != CalculationDiscrepancyStatus.Confirmed)
             return WorkflowResult.Fail($"Cannot accept an exception from status {discrepancy.Status}.");
@@ -156,20 +210,27 @@ public class CalculationDiscrepancyWorkflowService(AppDbContext db, ILogger<Calc
 
         if (await HasEnoughApprovalsAsync(discrepancy, CalculationDiscrepancyDecisionAction.AcceptException, ct))
         {
-            discrepancy.Status = CalculationDiscrepancyStatus.AcceptedAsSourceException;
-            discrepancy.ExceptionReason = exceptionReason;
-            discrepancy.LastUpdatedUtc = DateTime.UtcNow;
-
-            await db.CalculationArtifactHolds
-                .Where(h => h.SourceDiscrepancyId == discrepancy.CalculationDiscrepancyId && h.IsActive)
+            var transitioned = await db.CalculationDiscrepancies
+                .Where(d => d.CalculationDiscrepancyId == discrepancy.CalculationDiscrepancyId && d.Status == CalculationDiscrepancyStatus.Confirmed)
                 .ExecuteUpdateAsync(s => s
-                    .SetProperty(h => h.IsActive, false)
-                    .SetProperty(h => h.ReleasedUtc, DateTime.UtcNow)
-                    .SetProperty(h => h.ReleasedByReviewerName, reviewerName)
-                    .SetProperty(h => h.ReleaseNote, exceptionReason), ct);
+                    .SetProperty(d => d.Status, CalculationDiscrepancyStatus.AcceptedAsSourceException)
+                    .SetProperty(d => d.ExceptionReason, exceptionReason)
+                    .SetProperty(d => d.LastUpdatedUtc, DateTime.UtcNow), ct);
 
-            await db.SaveChangesAsync(ct);
-            logger.LogInformation("Discrepancy {DiscrepancyId} released via documented Material exception by {Reviewer}.", discrepancyId, reviewerName);
+            if (transitioned == 1)
+            {
+                // Already idempotent on its own (WHERE IsActive gates it) — harmless even if somehow
+                // reached twice.
+                await db.CalculationArtifactHolds
+                    .Where(h => h.SourceDiscrepancyId == discrepancy.CalculationDiscrepancyId && h.IsActive)
+                    .ExecuteUpdateAsync(s => s
+                        .SetProperty(h => h.IsActive, false)
+                        .SetProperty(h => h.ReleasedUtc, DateTime.UtcNow)
+                        .SetProperty(h => h.ReleasedByReviewerName, reviewerName)
+                        .SetProperty(h => h.ReleaseNote, exceptionReason), ct);
+
+                logger.LogInformation("Discrepancy {DiscrepancyId} released via documented Material exception by {Reviewer}.", discrepancyId, reviewerName);
+            }
         }
         return WorkflowResult.Ok();
     }
@@ -181,7 +242,7 @@ public class CalculationDiscrepancyWorkflowService(AppDbContext db, ILogger<Calc
     /// resolves the latest completed run).</summary>
     public async Task<WorkflowResult> MarkFixedPendingReauditAsync(long discrepancyId, string reviewerName, string? notes, CancellationToken ct)
     {
-        var discrepancy = await db.CalculationDiscrepancies.FirstOrDefaultAsync(d => d.CalculationDiscrepancyId == discrepancyId, ct);
+        var discrepancy = await db.CalculationDiscrepancies.AsNoTracking().FirstOrDefaultAsync(d => d.CalculationDiscrepancyId == discrepancyId, ct);
         if (discrepancy is null) return WorkflowResult.Fail("Discrepancy not found.");
         if (discrepancy.Status != CalculationDiscrepancyStatus.Confirmed)
             return WorkflowResult.Fail($"Cannot mark fixed-pending-reaudit from status {discrepancy.Status}.");
@@ -191,16 +252,18 @@ public class CalculationDiscrepancyWorkflowService(AppDbContext db, ILogger<Calc
 
         if (await HasEnoughApprovalsAsync(discrepancy, CalculationDiscrepancyDecisionAction.MarkFixedPendingReaudit, ct))
         {
-            discrepancy.Status = CalculationDiscrepancyStatus.FixedPendingReaudit;
-            discrepancy.LastUpdatedUtc = DateTime.UtcNow;
-            await db.SaveChangesAsync(ct);
+            await db.CalculationDiscrepancies
+                .Where(d => d.CalculationDiscrepancyId == discrepancy.CalculationDiscrepancyId && d.Status == CalculationDiscrepancyStatus.Confirmed)
+                .ExecuteUpdateAsync(s => s
+                    .SetProperty(d => d.Status, CalculationDiscrepancyStatus.FixedPendingReaudit)
+                    .SetProperty(d => d.LastUpdatedUtc, DateTime.UtcNow), ct);
         }
         return WorkflowResult.Ok();
     }
 
     public async Task<WorkflowResult> ResolveAsync(long discrepancyId, string reviewerName, string? notes, CancellationToken ct)
     {
-        var discrepancy = await db.CalculationDiscrepancies.FirstOrDefaultAsync(d => d.CalculationDiscrepancyId == discrepancyId, ct);
+        var discrepancy = await db.CalculationDiscrepancies.AsNoTracking().FirstOrDefaultAsync(d => d.CalculationDiscrepancyId == discrepancyId, ct);
         if (discrepancy is null) return WorkflowResult.Fail("Discrepancy not found.");
         if (discrepancy.Status != CalculationDiscrepancyStatus.FixedPendingReaudit)
             return WorkflowResult.Fail($"Cannot resolve from status {discrepancy.Status}.");
@@ -210,16 +273,22 @@ public class CalculationDiscrepancyWorkflowService(AppDbContext db, ILogger<Calc
 
         if (await HasEnoughApprovalsAsync(discrepancy, CalculationDiscrepancyDecisionAction.Resolve, ct))
         {
-            discrepancy.Status = CalculationDiscrepancyStatus.Resolved;
-            discrepancy.LastUpdatedUtc = DateTime.UtcNow;
-            await db.SaveChangesAsync(ct);
+            await db.CalculationDiscrepancies
+                .Where(d => d.CalculationDiscrepancyId == discrepancy.CalculationDiscrepancyId && d.Status == CalculationDiscrepancyStatus.FixedPendingReaudit)
+                .ExecuteUpdateAsync(s => s
+                    .SetProperty(d => d.Status, CalculationDiscrepancyStatus.Resolved)
+                    .SetProperty(d => d.LastUpdatedUtc, DateTime.UtcNow), ct);
         }
         return WorkflowResult.Ok();
     }
 
-    /// <summary>Records one reviewer's decision as a new append-only approval row. Refuses a second
-    /// approval of the same action by the same reviewer — self-approval could otherwise trivially satisfy
-    /// a future RequiredApprovals=2 gate by one person submitting twice.</summary>
+    /// <summary>Records one reviewer's decision as a new append-only approval row. A unique index on
+    /// (CalculationDiscrepancyId, DecisionAction, ReviewerName) is the actual DB-enforced guarantee behind
+    /// "a reviewer can't approve the same decision twice" — the upfront AnyAsync check below is only a
+    /// fast, friendly path for the overwhelmingly common non-racing case; a concurrent double-submit is
+    /// caught by the constraint in the catch block instead. ApprovalSequence is retried on a collision
+    /// (two different reviewers racing to be "sequence 1"), bounded to a handful of attempts since a
+    /// genuine collision this many times in a row is not a realistic contention level for this feature.</summary>
     private async Task<WorkflowResult> RecordApprovalAsync(
         CalculationDiscrepancy discrepancy, CalculationDiscrepancyDecisionAction action, string reviewerName,
         string? notes, string? reproductionJson, CalculationDiscrepancySeverity? proposedSeverity, CancellationToken ct)
@@ -231,22 +300,43 @@ public class CalculationDiscrepancyWorkflowService(AppDbContext db, ILogger<Calc
         if (alreadyDecidedByThisReviewer)
             return WorkflowResult.Fail("You have already recorded this decision for this discrepancy.");
 
-        var sequence = await db.CalculationDiscrepancyApprovals
-            .CountAsync(a => a.CalculationDiscrepancyId == discrepancy.CalculationDiscrepancyId && a.DecisionAction == action, ct) + 1;
-
-        db.CalculationDiscrepancyApprovals.Add(new CalculationDiscrepancyApproval
+        const int maxAttempts = 5;
+        for (var attempt = 1; attempt <= maxAttempts; attempt++)
         {
-            CalculationDiscrepancyId = discrepancy.CalculationDiscrepancyId,
-            ApprovalSequence = sequence,
-            DecisionAction = action,
-            ReviewerName = reviewerName,
-            ReviewerNotes = notes,
-            DecidedUtc = DateTime.UtcNow,
-            DeterministicReproductionResultJson = reproductionJson,
-            ProposedSeverity = proposedSeverity
-        });
-        await db.SaveChangesAsync(ct);
-        return WorkflowResult.Ok();
+            var sequence = await db.CalculationDiscrepancyApprovals
+                .CountAsync(a => a.CalculationDiscrepancyId == discrepancy.CalculationDiscrepancyId && a.DecisionAction == action, ct) + 1;
+
+            db.CalculationDiscrepancyApprovals.Add(new CalculationDiscrepancyApproval
+            {
+                CalculationDiscrepancyId = discrepancy.CalculationDiscrepancyId,
+                ApprovalSequence = sequence,
+                DecisionAction = action,
+                ReviewerName = reviewerName,
+                ReviewerNotes = notes,
+                DecidedUtc = DateTime.UtcNow,
+                DeterministicReproductionResultJson = reproductionJson,
+                ProposedSeverity = proposedSeverity
+            });
+
+            try
+            {
+                await db.SaveChangesAsync(ct);
+                return WorkflowResult.Ok();
+            }
+            catch (DbUpdateException ex) when (IsUniqueConstraintViolation(ex))
+            {
+                db.ChangeTracker.Clear();
+
+                // Distinguish which constraint fired: a genuine repeat by this same reviewer (stop
+                // retrying, report clearly) vs. a transient ApprovalSequence collision with a different,
+                // concurrently-racing reviewer (retry with a freshly recomputed sequence).
+                var stillAlreadyDecided = await db.CalculationDiscrepancyApprovals.AnyAsync(a =>
+                    a.CalculationDiscrepancyId == discrepancy.CalculationDiscrepancyId && a.DecisionAction == action && a.ReviewerName == reviewerName, ct);
+                if (stillAlreadyDecided)
+                    return WorkflowResult.Fail("You have already recorded this decision for this discrepancy.");
+            }
+        }
+        return WorkflowResult.Fail("Could not record your decision due to concurrent activity — please try again.");
     }
 
     private async Task<bool> HasEnoughApprovalsAsync(CalculationDiscrepancy discrepancy, CalculationDiscrepancyDecisionAction action, CancellationToken ct)
@@ -259,18 +349,6 @@ public class CalculationDiscrepancyWorkflowService(AppDbContext db, ILogger<Calc
         return distinctReviewers >= discrepancy.RequiredApprovals;
     }
 
-    /// <summary>Every Confirm approval recorded so far for this discrepancy must agree on severity — a
-    /// future dual-approval Confirm where two reviewers assign different severities must never silently
-    /// pick one; it must withhold the transition instead. A no-op check today (RequiredApprovals=1 means
-    /// this only ever compares one approval against itself).</summary>
-    private async Task<bool> ConfirmApprovalsAgreeOnSeverityAsync(CalculationDiscrepancy discrepancy, CalculationDiscrepancySeverity severity, CancellationToken ct)
-    {
-        var distinctSeverities = await db.CalculationDiscrepancyApprovals
-            .Where(a => a.CalculationDiscrepancyId == discrepancy.CalculationDiscrepancyId
-                && a.DecisionAction == CalculationDiscrepancyDecisionAction.Confirm)
-            .Select(a => a.ProposedSeverity)
-            .Distinct()
-            .CountAsync(ct);
-        return distinctSeverities <= 1;
-    }
+    private static bool IsUniqueConstraintViolation(DbUpdateException ex) =>
+        ex.InnerException is Microsoft.Data.SqlClient.SqlException { Number: 2601 or 2627 };
 }
