@@ -185,6 +185,8 @@ public static class CoastalFinancialLinkService
                 targetCoordinates = match.TargetCoordinates,
                 targetLineItem = match.TargetLineItem,
                 matchedValue = match.MatchedValue,
+                corroboratedAmount = candidate.CorroboratedAmount,
+                corroboratedUnit = candidate.CorroboratedUnit,
                 evidencePageNumber = match.EvidencePageNumber,
                 evidenceTextQuote = match.EvidenceTextQuote,
                 isXfaPlaceholder = candidate.IsXfaPlaceholder

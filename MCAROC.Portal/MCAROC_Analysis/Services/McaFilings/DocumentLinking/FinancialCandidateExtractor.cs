@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.RegularExpressions;
 using MCAROC_Analysis.Data.Entities;
 using UglyToad.PdfPig;
@@ -12,13 +13,15 @@ public class ExtractedFinancialCandidate
     public string Method { get; init; } = string.Empty;
 
     public int? FinancialYear { get; init; }
-    public FinancialBasis Basis { get; init; } = FinancialBasis.Standalone;
+    public FinancialBasis? Basis { get; init; } = FinancialBasis.Standalone;
+    public bool HasConflictingBasis { get; init; }
     public bool IsXfaPlaceholder { get; init; }
 
     public int? StatementPageNumber { get; init; }
     public string? StatementTextQuote { get; init; }
     public string? CorroboratedField { get; init; }
     public decimal? CorroboratedAmount { get; init; }
+    public string? CorroboratedUnit { get; init; }
 }
 
 public static class FinancialCandidateExtractor
@@ -33,6 +36,30 @@ public static class FinancialCandidateExtractor
 
     private static readonly Regex FyFilenamePattern2 = new(
         @"31[-/.]?03[-/.]?(\d{2,4})",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
+    private static readonly Regex RunningHeaderPattern = new(
+        @"COASTAL\s+PROJECTS\s+LIMITED\s+(Standalone|Consolidated)\s+Financial\s+Statements\s+for\s+period\s+\d{2}/\d{2}/\d{4}\s+to\s+\d{2}/\d{2}/(\d{4})",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
+    private static readonly Regex MillionsUnitPattern = new(
+        @"all\s+monetary\s+values\s+are\s+in\s+millions\s+of\s+inr|millions\s+of\s+inr|\(in\s+millions?\)|rs\.\s*in\s*millions?",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
+    private static readonly Regex LakhsUnitPattern = new(
+        @"all\s+monetary\s+values\s+are\s+in\s+lakhs\s+of\s+inr|lakhs\s+of\s+inr|\(in\s+lakhs?\)|rs\.\s*in\s*lakhs?",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
+    private static readonly Regex CroresUnitPattern = new(
+        @"all\s+monetary\s+values\s+are\s+in\s+crores\s+of\s+inr|crores\s+of\s+inr|\(in\s+crores?\)|rs\.\s*in\s*crores?",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
+    private static readonly Regex ShareCapitalPattern = new(
+        @"(?:Equity\s+share\s+capital|Share\s+capital)\s*[:\-]?\s*(\d{1,3}(?:,\d{2,3})*(?:\.\d{1,2})|\d{1,3}(?:,\d{2})*,\d{3})",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
+    private static readonly Regex RevenuePattern = new(
+        @"(?:Revenue\s+from\s+operations|Net\s+Revenue|Income\s+from\s+operations)\s*(?:\[Abstract\])?\s*[:\-]?\s*(\d{1,3}(?:,\d{2,3})*(?:\.\d{1,2})|\d{1,3}(?:,\d{2})*,\d{3})",
         RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
     public static ExtractedFinancialCandidate Extract(
@@ -57,11 +84,8 @@ public static class FinancialCandidateExtractor
         }
 
         int? extractedFy = null;
-        var basis = FinancialBasis.Standalone;
-        if (fileName.Contains("Consolidated", StringComparison.OrdinalIgnoreCase))
-        {
-            basis = FinancialBasis.Consolidated;
-        }
+        var filenameConsolidated = fileName.Contains("Consolidated", StringComparison.OrdinalIgnoreCase);
+        var filenameStandalone = fileName.Contains("Standalone", StringComparison.OrdinalIgnoreCase);
 
         // Try extracting FY from filename
         var m1 = FyFilenamePattern1.Match(fileName);
@@ -89,7 +113,7 @@ public static class FinancialCandidateExtractor
                 Confidence = initialClassification.Confidence,
                 Method = initialClassification.Method,
                 FinancialYear = extractedFy,
-                Basis = basis,
+                Basis = filenameConsolidated ? FinancialBasis.Consolidated : FinancialBasis.Standalone,
                 IsXfaPlaceholder = false
             };
         }
@@ -105,7 +129,7 @@ public static class FinancialCandidateExtractor
                 {
                     IsFinancial = initialClassification.Category == FilingCategory.Financial,
                     FinancialYear = extractedFy,
-                    Basis = basis
+                    Basis = filenameConsolidated ? FinancialBasis.Consolidated : FinancialBasis.Standalone
                 };
             }
 
@@ -126,58 +150,169 @@ public static class FinancialCandidateExtractor
 
             var isXfa = page1Text.Contains("Please wait...", StringComparison.OrdinalIgnoreCase);
 
-            if (page1Text.Contains("Consolidated", StringComparison.OrdinalIgnoreCase))
-            {
-                basis = FinancialBasis.Consolidated;
-            }
-
             var periodMatch = PeriodPattern.Match(page1Text);
             if (periodMatch.Success)
             {
                 extractedFy = int.Parse(periodMatch.Groups[2].Value);
             }
 
+            // Check running headers across first few pages for explicit basis and period
+            FinancialBasis? docDeclaredBasis = null;
+            for (var p = 1; p <= Math.Min(5, pageCount); p++)
+            {
+                var text = doc.GetPage(p).Text ?? string.Empty;
+                var hm = RunningHeaderPattern.Match(text);
+                if (hm.Success)
+                {
+                    docDeclaredBasis = hm.Groups[1].Value.Equals("Consolidated", StringComparison.OrdinalIgnoreCase)
+                        ? FinancialBasis.Consolidated
+                        : FinancialBasis.Standalone;
+                    extractedFy = int.Parse(hm.Groups[2].Value);
+                    break;
+                }
+            }
+
+            // Resolve basis & conflict
+            bool hasConflictingBasis = false;
+            FinancialBasis? basis = null;
+
+            if (docDeclaredBasis.HasValue)
+            {
+                if (docDeclaredBasis == FinancialBasis.Standalone && filenameConsolidated)
+                {
+                    hasConflictingBasis = true;
+                    basis = FinancialBasis.Standalone;
+                }
+                else if (docDeclaredBasis == FinancialBasis.Consolidated && filenameStandalone)
+                {
+                    hasConflictingBasis = true;
+                    basis = FinancialBasis.Consolidated;
+                }
+                else
+                {
+                    basis = docDeclaredBasis.Value;
+                }
+            }
+            else
+            {
+                if (filenameConsolidated && !filenameStandalone)
+                {
+                    basis = FinancialBasis.Consolidated;
+                }
+                else
+                {
+                    basis = FinancialBasis.Standalone;
+                }
+            }
+
             int? statementPage = null;
             string? statementQuote = null;
             string? corroboratedField = null;
             decimal? corroboratedAmount = null;
+            string? corroboratedUnit = null;
 
             if (!isXfa && pageCount > 1)
             {
                 // Multi-page native statements: locate statement pages
-                for (var p = 1; p <= Math.Min(50, pageCount); p++)
+                // 1. Search for Share Capital in Balance Sheet pages
+                for (var p = 1; p <= Math.Min(80, pageCount); p++)
                 {
                     var page = doc.GetPage(p);
                     var text = page.Text ?? string.Empty;
 
-                    // Look for Share Capital
-                    var scIdx = text.IndexOf("Equity share capital", StringComparison.OrdinalIgnoreCase);
-                    if (scIdx < 0) scIdx = text.IndexOf("Share capital", StringComparison.OrdinalIgnoreCase);
-
-                    if (scIdx >= 0)
+                    if (text.Contains("Balance sheet", StringComparison.OrdinalIgnoreCase) ||
+                        text.Contains("[100100]", StringComparison.OrdinalIgnoreCase) ||
+                        text.Contains("[110000]", StringComparison.OrdinalIgnoreCase))
                     {
-                        statementPage = p;
-                        var len = Math.Min(80, text.Length - scIdx);
-                        var snippet = text.Substring(scIdx, len).Trim();
-                        var nl = snippet.IndexOfAny(['\r', '\n']);
-                        if (nl > 0) snippet = snippet.Substring(0, nl).Trim();
-                        statementQuote = snippet;
-                        corroboratedField = nameof(FinancialYearData.ShareCapital);
-                        break;
+                        var scMatch = ShareCapitalPattern.Match(text);
+                        if (scMatch.Success)
+                        {
+                            var cleanStr = scMatch.Groups[1].Value.Replace(",", "").Trim();
+                            if (decimal.TryParse(cleanStr, NumberStyles.Number, CultureInfo.InvariantCulture, out var rawAmount))
+                            {
+                                decimal unitMultiplier = 0.0000001m; // default INR
+                                string unitName = "INR";
+
+                                if (MillionsUnitPattern.IsMatch(text))
+                                {
+                                    unitMultiplier = 0.1m;
+                                    unitName = "Millions";
+                                }
+                                else if (LakhsUnitPattern.IsMatch(text))
+                                {
+                                    unitMultiplier = 0.01m;
+                                    unitName = "Lakhs";
+                                }
+                                else if (CroresUnitPattern.IsMatch(text))
+                                {
+                                    unitMultiplier = 1.0m;
+                                    unitName = "Crores";
+                                }
+
+                                statementPage = p;
+                                var len = Math.Min(80, text.Length - scMatch.Index);
+                                var snippet = text.Substring(scMatch.Index, len).Trim();
+                                var nl = snippet.IndexOfAny(['\r', '\n']);
+                                if (nl > 0) snippet = snippet.Substring(0, nl).Trim();
+                                statementQuote = snippet;
+                                corroboratedField = nameof(FinancialYearData.ShareCapital);
+                                corroboratedAmount = Math.Round(rawAmount * unitMultiplier, 2);
+                                corroboratedUnit = unitName;
+                                break;
+                            }
+                        }
                     }
+                }
 
-                    // Fallback to revenue if share capital not yet found
-                    var revIdx = text.IndexOf("revenue from operations", StringComparison.OrdinalIgnoreCase);
-                    if (revIdx >= 0)
+                // 2. If Share Capital not found, search for Revenue in Profit & Loss pages
+                if (!statementPage.HasValue)
+                {
+                    for (var p = 1; p <= Math.Min(80, pageCount); p++)
                     {
-                        statementPage = p;
-                        var len = Math.Min(80, text.Length - revIdx);
-                        var snippet = text.Substring(revIdx, len).Trim();
-                        var nl = snippet.IndexOfAny(['\r', '\n']);
-                        if (nl > 0) snippet = snippet.Substring(0, nl).Trim();
-                        statementQuote = snippet;
-                        corroboratedField = nameof(FinancialYearData.Revenue);
-                        break;
+                        var page = doc.GetPage(p);
+                        var text = page.Text ?? string.Empty;
+
+                        if (text.Contains("profit and loss", StringComparison.OrdinalIgnoreCase) ||
+                            text.Contains("[120000]", StringComparison.OrdinalIgnoreCase))
+                        {
+                            var revMatch = RevenuePattern.Match(text);
+                            if (revMatch.Success)
+                            {
+                                var cleanStr = revMatch.Groups[1].Value.Replace(",", "").Trim();
+                                if (decimal.TryParse(cleanStr, NumberStyles.Number, CultureInfo.InvariantCulture, out var rawAmount))
+                                {
+                                    decimal unitMultiplier = 0.0000001m;
+                                    string unitName = "INR";
+
+                                    if (MillionsUnitPattern.IsMatch(text))
+                                    {
+                                        unitMultiplier = 0.1m;
+                                        unitName = "Millions";
+                                    }
+                                    else if (LakhsUnitPattern.IsMatch(text))
+                                    {
+                                        unitMultiplier = 0.01m;
+                                        unitName = "Lakhs";
+                                    }
+                                    else if (CroresUnitPattern.IsMatch(text))
+                                    {
+                                        unitMultiplier = 1.0m;
+                                        unitName = "Crores";
+                                    }
+
+                                    statementPage = p;
+                                    var len = Math.Min(80, text.Length - revMatch.Index);
+                                    var snippet = text.Substring(revMatch.Index, len).Trim();
+                                    var nl = snippet.IndexOfAny(['\r', '\n']);
+                                    if (nl > 0) snippet = snippet.Substring(0, nl).Trim();
+                                    statementQuote = snippet;
+                                    corroboratedField = nameof(FinancialYearData.Revenue);
+                                    corroboratedAmount = Math.Round(rawAmount * unitMultiplier, 2);
+                                    corroboratedUnit = unitName;
+                                    break;
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -190,11 +325,13 @@ public static class FinancialCandidateExtractor
                 Method = classification.Method,
                 FinancialYear = extractedFy,
                 Basis = basis,
+                HasConflictingBasis = hasConflictingBasis,
                 IsXfaPlaceholder = isXfa,
                 StatementPageNumber = statementPage,
                 StatementTextQuote = statementQuote,
                 CorroboratedField = corroboratedField,
-                CorroboratedAmount = corroboratedAmount
+                CorroboratedAmount = corroboratedAmount,
+                CorroboratedUnit = corroboratedUnit
             };
         }
         catch
@@ -203,7 +340,7 @@ public static class FinancialCandidateExtractor
             {
                 IsFinancial = initialClassification.Category == FilingCategory.Financial,
                 FinancialYear = extractedFy,
-                Basis = basis
+                Basis = filenameConsolidated ? FinancialBasis.Consolidated : FinancialBasis.Standalone
             };
         }
     }

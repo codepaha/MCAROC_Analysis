@@ -20,7 +20,10 @@ public enum PilotFinancialLinkReason
     MissingReportingPeriod,
     NonFinancialDocument,
     ManifestDuplicate,
-    AmbiguousFinancialYear
+    AmbiguousFinancialYear,
+    ConflictingBasisEvidence,
+    MissingBasisEvidence,
+    StatementValueMismatch
 }
 
 public class CoastalFinancialLinkResultEntry

@@ -47,19 +47,32 @@ public static class FinancialPeriodMatcher
         }
 
         var year = candidate.FinancialYear.Value;
-        var basis = candidate.Basis;
-        var targets = targetCatalog.GetTargets(year, basis);
 
-        // If not found in primary basis, check if Standalone targets exist for this year as fallback
-        if (targets.Count == 0 && basis == FinancialBasis.Consolidated)
+        if (candidate.HasConflictingBasis)
         {
-            targets = targetCatalog.GetTargets(year, FinancialBasis.Standalone);
-            if (targets.Count > 0)
+            return new FinancialMatchResult
             {
-                basis = FinancialBasis.Standalone;
-            }
+                Outcome = PilotFinancialLinkOutcome.PendingReview,
+                Reason = PilotFinancialLinkReason.ConflictingBasisEvidence,
+                MatchedFinancialYear = year,
+                MatchedBasis = candidate.Basis
+            };
         }
 
+        if (!candidate.Basis.HasValue)
+        {
+            return new FinancialMatchResult
+            {
+                Outcome = PilotFinancialLinkOutcome.PendingReview,
+                Reason = PilotFinancialLinkReason.MissingBasisEvidence,
+                MatchedFinancialYear = year
+            };
+        }
+
+        var basis = candidate.Basis.Value;
+        var targets = targetCatalog.GetTargets(year, basis);
+
+        // Strict basis: zero cross-basis fallback between Consolidated and Standalone
         if (targets.Count == 0)
         {
             return new FinancialMatchResult
@@ -82,11 +95,22 @@ public static class FinancialPeriodMatcher
             };
         }
 
-        // Check value corroboration
+        // Value corroboration: require exact declared comparison of normalized amount
         if (candidate.StatementPageNumber.HasValue && !string.IsNullOrEmpty(candidate.CorroboratedField))
         {
+            if (!candidate.CorroboratedAmount.HasValue)
+            {
+                return new FinancialMatchResult
+                {
+                    Outcome = PilotFinancialLinkOutcome.PendingReview,
+                    Reason = PilotFinancialLinkReason.ExactMatchReportingPeriod,
+                    MatchedFinancialYear = year,
+                    MatchedBasis = basis
+                };
+            }
+
             var target = targetCatalog.GetTarget(year, basis, candidate.CorroboratedField);
-            if (target is not null)
+            if (target is not null && target.NumericValue.HasValue)
             {
                 long targetEntityId = target.TargetKind switch
                 {
@@ -95,13 +119,34 @@ public static class FinancialPeriodMatcher
                     _ => 0
                 };
 
-                // Cash-flow inferred year guard: never auto-accept inferred periods
-                if (target.YearInferred)
+                var targetVal = Math.Round(target.NumericValue.Value, 2);
+                var pdfVal = Math.Round(candidate.CorroboratedAmount.Value, 2);
+
+                if (targetVal == pdfVal)
                 {
+                    // Cash-flow inferred year guard: never auto-accept inferred periods
+                    if (target.YearInferred)
+                    {
+                        return new FinancialMatchResult
+                        {
+                            Outcome = PilotFinancialLinkOutcome.PendingReview,
+                            Reason = PilotFinancialLinkReason.InferredCashFlowPeriod,
+                            MatchedFinancialYear = year,
+                            MatchedBasis = basis,
+                            TargetKind = target.TargetKind,
+                            TargetEntityId = targetEntityId,
+                            TargetCoordinates = target.Coordinates,
+                            TargetLineItem = target.TargetField,
+                            MatchedValue = target.NumericValue,
+                            EvidencePageNumber = candidate.StatementPageNumber,
+                            EvidenceTextQuote = candidate.StatementTextQuote
+                        };
+                    }
+
                     return new FinancialMatchResult
                     {
-                        Outcome = PilotFinancialLinkOutcome.PendingReview,
-                        Reason = PilotFinancialLinkReason.InferredCashFlowPeriod,
+                        Outcome = PilotFinancialLinkOutcome.AutoAccepted,
+                        Reason = PilotFinancialLinkReason.ExactMatchReportingPeriodAndStatementValue,
                         MatchedFinancialYear = year,
                         MatchedBasis = basis,
                         TargetKind = target.TargetKind,
@@ -113,25 +158,28 @@ public static class FinancialPeriodMatcher
                         EvidenceTextQuote = candidate.StatementTextQuote
                     };
                 }
-
-                return new FinancialMatchResult
+                else
                 {
-                    Outcome = PilotFinancialLinkOutcome.AutoAccepted,
-                    Reason = PilotFinancialLinkReason.ExactMatchReportingPeriodAndStatementValue,
-                    MatchedFinancialYear = year,
-                    MatchedBasis = basis,
-                    TargetKind = target.TargetKind,
-                    TargetEntityId = targetEntityId,
-                    TargetCoordinates = target.Coordinates,
-                    TargetLineItem = target.TargetField,
-                    MatchedValue = target.NumericValue,
-                    EvidencePageNumber = candidate.StatementPageNumber,
-                    EvidenceTextQuote = candidate.StatementTextQuote
-                };
+                    // Value mismatch: route to review
+                    return new FinancialMatchResult
+                    {
+                        Outcome = PilotFinancialLinkOutcome.PendingReview,
+                        Reason = PilotFinancialLinkReason.StatementValueMismatch,
+                        MatchedFinancialYear = year,
+                        MatchedBasis = basis,
+                        TargetKind = target.TargetKind,
+                        TargetEntityId = targetEntityId,
+                        TargetCoordinates = target.Coordinates,
+                        TargetLineItem = target.TargetField,
+                        MatchedValue = target.NumericValue,
+                        EvidencePageNumber = candidate.StatementPageNumber,
+                        EvidenceTextQuote = candidate.StatementTextQuote
+                    };
+                }
             }
         }
 
-        // If year matches workbook but statement line item could not corroborate, route to PendingReview
+        // If year matches workbook but statement value could not be corroborated, route to PendingReview
         return new FinancialMatchResult
         {
             Outcome = PilotFinancialLinkOutcome.PendingReview,
