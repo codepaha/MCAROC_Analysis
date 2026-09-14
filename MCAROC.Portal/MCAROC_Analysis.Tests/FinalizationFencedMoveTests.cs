@@ -78,10 +78,10 @@ public class FinalizationFencedMoveTests : IAsyncLifetime
             var lockAcquired = false;
             await db.Database.ExecuteSqlInterpolatedAsync($@"
                 DECLARE @res INT;
-                EXEC @res = sp_getapplock 
-                    @Resource = {lockResource}, 
-                    @LockMode = 'Exclusive', 
-                    @LockOwner = 'Transaction', 
+                EXEC @res = sp_getapplock
+                    @Resource = {lockResource},
+                    @LockMode = 'Exclusive',
+                    @LockOwner = 'Transaction',
                     @LockTimeout = 1000;
                 IF (@res >= 0) SELECT 1; ELSE THROW 50001, 'Lock timeout', 1;");
             lockAcquired = true;
@@ -97,10 +97,10 @@ public class FinalizationFencedMoveTests : IAsyncLifetime
             {
                 await db2.Database.ExecuteSqlInterpolatedAsync($@"
                     DECLARE @res INT;
-                    EXEC @res = sp_getapplock 
-                        @Resource = {lockResource}, 
-                        @LockMode = 'Exclusive', 
-                        @LockOwner = 'Transaction', 
+                    EXEC @res = sp_getapplock
+                        @Resource = {lockResource},
+                        @LockMode = 'Exclusive',
+                        @LockOwner = 'Transaction',
                         @LockTimeout = 500;
                     IF (@res < 0) THROW 50002, 'Lock timeout', 1;");
             }

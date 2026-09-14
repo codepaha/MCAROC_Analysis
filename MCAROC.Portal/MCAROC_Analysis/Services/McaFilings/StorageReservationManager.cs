@@ -203,6 +203,7 @@ public class StorageReservationManager(
         {
             await tx.RollbackAsync(ct);
             logger.LogError(ex, "Failed to release reservations for {OwnerType} {OwnerId}", ownerType, ownerId);
+            throw;
         }
     }
 

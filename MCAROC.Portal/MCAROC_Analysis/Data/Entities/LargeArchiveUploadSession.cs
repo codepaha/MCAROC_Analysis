@@ -7,6 +7,7 @@ public enum LargeArchiveUploadSessionStatus
     ArchiveMoved,
     DocumentCommitted,
     BatchCreated,
+    Queued,
     Completed,
     Failed,
     Expired,
