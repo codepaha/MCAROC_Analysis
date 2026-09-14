@@ -243,6 +243,30 @@ Linux subset fonts break PdfPig's ToUnicode → those are `[SkippableFact]`, ski
 
 ## Log  <!-- newest first. Prefix: NEEDS / BLOCKED / DONE / DECISION / FYI -->
 
+### 2026-09-14 — Claude session (self-hosted runner recovered; PR #170 review round 5 — 1 more real gap fixed)
+- **Self-hosted Windows CI runner (`D:\actions-runner\MCAROC_Analysis`) came back up offline** after last
+  night's laptop shutdown — confirmed via `gh api repos/.../actions/runners` reporting `status: "offline"`
+  despite a stale `Runner.Listener.exe`/`RunnerService.exe` process pair still sitting on the machine.
+  Started fresh via `run.cmd` (still not a registered Windows service, per the existing infra note); GitHub
+  now reports it `online` and idle, confirmed stable after a 20s recheck.
+- **PR #170 review round 5 caught one more real gap**, distinct from round 4's InputHash fix:
+  `CalculationLedgerEntry.HasUnresolvedProvenance` itself was still computed as `sourceRefs.Count == 0` —
+  true only when **every** input failed to resolve, not "any." A metric mixing one resolved input (e.g.
+  `FinancialYearData.Revenue`) with one genuinely-unresolved known-entity input (e.g. a
+  `FinancialParameter` not on file this year) kept a non-empty `sourceRefs` list from the resolved half,
+  so the flag stayed `false` — bypassing PR #171's `ProvenanceCompleteness` check entirely on exactly this
+  mixed case, even after round 4's hash-level fix.
+- **Fixed** (`b2bdf76`): new `CalculationInputResolver.AllKnownInputsResolved` — true only when every input
+  either isn't a known source-entity concept (a derived/computed reference like
+  `DossierComputations.SecurityTypeLabels` was never a source row to begin with, and correctly must not
+  count against completeness) or resolved to at least one real row. `HasUnresolvedProvenance` now uses
+  this instead of the `sourceRefs.Count` check. 4 new unit tests covering the resolved/unresolved matrix
+  directly, including the exclusion case. Full regression sweep: 1030 passed, 19 skipped (unchanged).
+- **No PRs merged yet** — both #170 and #171 remain mergeable with green CI at every round, but per the
+  reviewer's own framing, CI-green has never been treated as equivalent to review-complete on this feature,
+  and round 5 just proved that instinct right again. PR3 stays paused per the standing decision; #171 still
+  needs its own rebase-onto-`main` + independent re-review once #170 actually merges.
+
 ### 2026-09-13 — Claude session (PR #170 changes requested — 3 real bugs, all fixed in `fe13d23`)
 - **PR #170's own reviewer caught 3 correctness bugs review rounds 1-2 (design-level) had missed**,
   all in `CalculationLedgerService`'s actual implementation rather than the schema design:
