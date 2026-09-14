@@ -75,9 +75,17 @@ public class DocumentDataLinkSupersessionTests
         Assert.Equal("System.Canonicalization", supersession.Actor);
         Assert.Contains("Late duplicate discovery", supersession.Reason);
 
-        // Prove evidence preservation
+        // Prove evidence preservation of pre-supersession state
         Assert.Contains("DuplicateDoc", supersession.EvidencePreservationJson);
         Assert.Contains("Initial auto-link", supersession.EvidencePreservationJson);
+
+        using var doc = System.Text.Json.JsonDocument.Parse(supersession.EvidencePreservationJson);
+        var root = doc.RootElement;
+        Assert.Equal("AutoAccepted", root.GetProperty("Status").GetString());
+        Assert.Equal(duplicateDocId, root.GetProperty("CanonicalFilingDocumentId").GetInt64());
+        Assert.Equal(duplicateDocId, root.GetProperty("FilingDocumentId").GetInt64());
+        Assert.Equal(requestId, root.GetProperty("RequestId").GetInt64());
+        Assert.Equal(ingestionRunId, root.GetProperty("IngestionRunId").GetInt64());
 
         // Prove duplicate link status transitioned to SupersededByDuplicate
         Assert.Equal(DocumentDataLinkStatus.SupersededByDuplicate, collidingDuplicateLink.Status);

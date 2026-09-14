@@ -75,24 +75,52 @@ public class ChargeCompositeKeyMatcher
             relevantEvents = relevantEvents.Where(e => e.EventType == candidate.EventType.Value).ToList();
         }
 
-        // 3. Match against EventDate or FilingDate
+        // 3. Match against EventDate or FilingDate.
+        // If a candidate supplies both dates, all supplied dates must be consistent (no contradictory date).
         var eventMatches = new List<(RocChargeEvent Event, ChargeDateMatchMode Mode)>();
+        bool encounteredDateContradiction = false;
 
         foreach (var ev in relevantEvents)
         {
-            bool matchesEventDate = candidate.EventDate.HasValue && ev.EventDate.HasValue && candidate.EventDate.Value == ev.EventDate.Value;
-            bool matchesFilingDate = candidate.FilingDate.HasValue && ev.FilingDate.HasValue && candidate.FilingDate.Value == ev.FilingDate.Value;
+            bool hasCandEventDate = candidate.EventDate.HasValue;
+            bool hasCandFilingDate = candidate.FilingDate.HasValue;
+
+            bool matchesEventDate = candidate.EventDate is { } candEv && ev.EventDate is { } dbEv && candEv == dbEv;
+            bool matchesFilingDate = candidate.FilingDate is { } candFl && ev.FilingDate is { } dbFl && candFl == dbFl;
+
+            bool conflictsEventDate = candidate.EventDate is { } candEvC && ev.EventDate is { } dbEvC && candEvC != dbEvC;
+            bool conflictsFilingDate = candidate.FilingDate is { } candFlC && ev.FilingDate is { } dbFlC && candFlC != dbFlC;
+
+            // If the candidate supplies both dates, but one conflicts with the charge event row,
+            // this is a contradictory date pair and must NOT be accepted as a match.
+            if ((matchesEventDate && conflictsFilingDate) || (matchesFilingDate && conflictsEventDate))
+            {
+                encounteredDateContradiction = true;
+                continue;
+            }
 
             if (matchesEventDate && matchesFilingDate)
             {
                 eventMatches.Add((ev, ChargeDateMatchMode.BothDatesMatched));
             }
-            else if (matchesEventDate)
+            else if (matchesEventDate && !hasCandFilingDate)
             {
+                // Only EventDate was supplied by candidate
                 eventMatches.Add((ev, ChargeDateMatchMode.EventDateMatched));
             }
-            else if (matchesFilingDate)
+            else if (matchesFilingDate && !hasCandEventDate)
             {
+                // Only FilingDate was supplied by candidate
+                eventMatches.Add((ev, ChargeDateMatchMode.FilingDateMatched));
+            }
+            else if (matchesEventDate && hasCandFilingDate && !ev.FilingDate.HasValue)
+            {
+                // Candidate supplied both dates, EventDate matched, and FilingDate is not recorded in DB (no contradiction)
+                eventMatches.Add((ev, ChargeDateMatchMode.EventDateMatched));
+            }
+            else if (matchesFilingDate && hasCandEventDate && !ev.EventDate.HasValue)
+            {
+                // Candidate supplied both dates, FilingDate matched, and EventDate is not recorded in DB (no contradiction)
                 eventMatches.Add((ev, ChargeDateMatchMode.FilingDateMatched));
             }
         }
@@ -111,7 +139,9 @@ public class ChargeCompositeKeyMatcher
             return new ChargeMatchResult
             {
                 IsMatched = false,
-                FailureReason = "No matching RocChargeEvent found for the specified event type and date(s)."
+                FailureReason = encounteredDateContradiction
+                    ? "Contradictory date pair: candidate supplied multiple dates, but one or more conflicted with the charge event."
+                    : "No matching RocChargeEvent found for the specified event type and date(s)."
             };
         }
 

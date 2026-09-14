@@ -16,6 +16,10 @@ public class LateDuplicateCanonicalizationResult
 /// <summary>
 /// Service managing manifest-time duplicate bypassing and late duplicate canonicalization
 /// with DocumentDataLinkSupersession audit preservation.
+/// NOTE: In accordance with the Single Migration Lane rule, this contract PR establishes
+/// the domain models, invariants, and evidence preservation semantics in memory.
+/// The subsequent schema/persistence implementation will wrap these operations in a serializable
+/// database transaction with row-level locks and concurrent collision tests.
 /// </summary>
 public class DocumentLinkCanonicalizationService
 {
@@ -87,21 +91,21 @@ public class DocumentLinkCanonicalizationService
 
             if (matchingCanonicalLink != null)
             {
-                // Collision: duplicate link must be superseded by the surviving canonical link
-                dupLink.Status = DocumentDataLinkStatus.SupersededByDuplicate;
-                dupLink.CanonicalFilingDocumentId = canonicalDocumentId;
-
+                // Capture immutable snapshot BEFORE mutating status or canonical document ID
                 var snapshot = new
                 {
                     dupLink.DocumentDataLinkId,
+                    dupLink.RequestId,
+                    dupLink.IngestionRunId,
                     dupLink.FilingDocumentId,
                     dupLink.CanonicalFilingDocumentId,
+                    Status = dupLink.Status.ToString(),
                     dupLink.TargetEntityType,
                     dupLink.TargetEntityId,
                     dupLink.TargetField,
-                    dupLink.LinkKind,
-                    dupLink.MatchMethod,
-                    dupLink.Confidence,
+                    LinkKind = dupLink.LinkKind.ToString(),
+                    MatchMethod = dupLink.MatchMethod.ToString(),
+                    Confidence = dupLink.Confidence.ToString(),
                     dupLink.EvidenceJson,
                     dupLink.RuleVersion,
                     dupLink.InputHash,
@@ -110,6 +114,10 @@ public class DocumentLinkCanonicalizationService
                     dupLink.ReviewedBy,
                     dupLink.ReviewReason
                 };
+
+                // Collision: duplicate link must be superseded by the surviving canonical link
+                dupLink.Status = DocumentDataLinkStatus.SupersededByDuplicate;
+                dupLink.CanonicalFilingDocumentId = canonicalDocumentId;
 
                 var supersession = new DocumentDataLinkSupersession
                 {

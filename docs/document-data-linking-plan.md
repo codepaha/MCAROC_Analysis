@@ -139,6 +139,7 @@ Matching key specification:
 `ChargeId + EventType + (EventDate OR FilingDate) + [Amount, Holder corroboration]`
 
 The matcher distinguishes between date match modes (`EventDateMatched`, `FilingDateMatched`, or `BothDatesMatched`) and records this distinction in `EvidenceJson`.
+When a candidate supplies both dates, all supplied dates must match without contradiction. A match on one date cannot override a conflict on the other; any contradictory date pair prevents an exact deterministic link.
 
 A composite key match is sufficient only when it resolves to a single same-request
 charge event row. If it resolves to zero or more than one row, leave the document
@@ -273,7 +274,8 @@ Integrity rules:
 - Foreign keys: Both `SupersededLinkId` and `SurvivingLinkId` reference `DocumentDataLinks` with `ON DELETE NO ACTION` (cascading deletes are forbidden).
 - Self-reference check constraint: `SupersededLinkId <> SurvivingLinkId`.
 - Referential immutability: Supersession records are permanent; deletion is disabled.
-- Evidence preservation: The superseded link's complete evidence, confidence, review metadata, and match parameters are snapshotted into `EvidencePreservationJson` at the moment of supersession.
+- Evidence preservation: The superseded link's complete evidence, confidence, review metadata, and match parameters—including its original pre-supersession status and canonical document ID—are snapshotted into `EvidencePreservationJson` strictly before mutating the entity.
+- Transactional scope: The database implementation wraps canonicalization in a serializable transaction with row-level locks, validated by concurrent collision tests.
 
 ## Security and integrity controls
 

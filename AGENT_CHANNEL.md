@@ -244,14 +244,14 @@ service — if it sits `queued`, `run.cmd` is down) runs *only* what Linux can't
 ## Log  <!-- newest first. Prefix: NEEDS / BLOCKED / DONE / DECISION / FYI -->
 
 ### 2026-09-14 — Antigravity (CLAIMED & COMPLETED #175: Document linking contracts & plan hardening)
-- **CLAIMED & COMPLETED #175** on branch `feature/175-document-linking-contracts`.
+- **CLAIMED & COMPLETED #175** on branch `feature/175-document-linking-contracts` (PR #179).
 - Implemented plan hardening in `docs/document-data-linking-plan.md` and C# domain contracts/services/tests:
-  - **Charge composite key**: Grounded with `U45203OR1995PLC003982.xls` (Open Charges Sequence); distinguished `EventDate` (instrument execution) from `FilingDate` (MCA registration); restored `FilingDate` to composite key (`ChargeId + EventType + (EventDate OR FilingDate)`); recorded date match mode in `EvidenceJson`; strictly excluded `SRN` from charge-side matching.
-  - **DocumentDataLinkSupersession**: Created first-class schema contract preserving immutable evidence snapshot, actor, reason, timestamps, and surviving link linkage during late deduplication without cascading deletes (`SupersededLinkId <> SurvivingLinkId`).
+  - **Charge composite key**: Grounded with `U45203OR1995PLC003982.xls` (Open Charges Sequence); distinguished `EventDate` (instrument execution) from `FilingDate` (MCA registration); restored `FilingDate` to composite key (`ChargeId + EventType + (EventDate OR FilingDate)`); recorded date match mode in `EvidenceJson`; strictly excluded `SRN` from charge-side matching. Rejects contradictory date pairs when a candidate supplies both dates and one conflicts with the charge event.
+  - **DocumentDataLinkSupersession**: Created first-class schema contract preserving immutable evidence snapshot of pre-supersession status and canonical identity, actor, reason, timestamps, and surviving link linkage during late deduplication without cascading deletes (`SupersededLinkId <> SurvivingLinkId`).
   - **DocumentLinkDecisionService**: Implemented reviewer rejection persistence inspecting prior decisions by canonical document, run, target, field, link kind, rule version, and input hash. Same-version rerun suppresses recreation; updated rule version or input hash allows recreation for independent review.
   - **Manifest-time duplicate bypass**: Specified and verified that documents marked `DuplicateOfDocumentId != null` completely bypass the matching hierarchy.
-  - **Single Migration Rule Compliance**: Implemented domain entities and engine services without checking in an EF migration while PR #178 is in flight in the schema lane.
-  - **Tests**: 9 targeted tests passing in `MCAROC_Analysis.Tests` (`ChargeCompositeKeyMatcherTests`, `DocumentLinkDecisionServiceTests`, `DocumentLinkManifestBypassTests`, `DocumentDataLinkSupersessionTests`). Zero whitespace errors (`git diff --check`).
+  - **Single Migration Rule Compliance**: PR explicitly limited to contracts and domain invariants; subsequent persistence lane will provide serializable DB transactions and concurrent collision tests.
+  - **Tests**: 11 targeted tests passing in `MCAROC_Analysis.Tests` (`ChargeCompositeKeyMatcherTests`, `DocumentLinkDecisionServiceTests`, `DocumentLinkManifestBypassTests`, `DocumentDataLinkSupersessionTests`). Zero whitespace errors (`git diff --check`).
 
 ### 2026-09-14 — Antigravity (CLAIMED #169: Resumable MCA-filings archive upload >2 GB & post-creation source additions)
 - **CLAIMED #169** on branch `feature/169-large-archive-upload`.

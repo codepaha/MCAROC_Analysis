@@ -177,4 +177,88 @@ public class ChargeCompositeKeyMatcherTests
         Assert.False(result.IsMatched);
         Assert.Contains("No matching RocChargeEvent found", result.FailureReason);
     }
+
+    [Fact]
+    public void Match_Rejects_When_Candidate_Supplies_Matching_EventDate_But_Conflicting_FilingDate()
+    {
+        // Arrange: Candidate supplies both dates. EventDate matches DB, but FilingDate conflicts.
+        // Even though EventDate matches, supplying a contradictory FilingDate prevents an exact link.
+        var charge = new RocCharge
+        {
+            ChargeId = 104,
+            RocChargeNumber = "10999000",
+            LatestChargeHolderNormalized = "CANARA BANK",
+            CurrentAmount = 15000000m
+        };
+
+        var chargeEvent = new RocChargeEvent
+        {
+            ChargeEventId = 204,
+            RocChargeId = 104,
+            EventType = ChargeEventType.Creation,
+            EventDate = new DateOnly(2017, 4, 10),
+            FilingDate = new DateOnly(2017, 5, 2),
+            ChargeAmount = 15000000m,
+            HolderNameNormalized = "CANARA BANK"
+        };
+
+        var candidateContradictoryFilingDate = new ChargeDocumentCandidate
+        {
+            ChargeId = "10999000",
+            EventType = ChargeEventType.Creation,
+            EventDate = new DateOnly(2017, 4, 10), // Matches EventDate
+            FilingDate = new DateOnly(2017, 8, 20), // Conflicts with FilingDate (2017-05-02)
+            Amount = 15000000m,
+            HolderName = "CANARA BANK"
+        };
+
+        // Act
+        var result = _matcher.Match(candidateContradictoryFilingDate, [charge], [chargeEvent]);
+
+        // Assert
+        Assert.False(result.IsMatched);
+        Assert.Contains("Contradictory date pair", result.FailureReason);
+    }
+
+    [Fact]
+    public void Match_Rejects_When_Candidate_Supplies_Matching_FilingDate_But_Conflicting_EventDate()
+    {
+        // Arrange: Candidate supplies both dates. FilingDate matches DB, but EventDate conflicts.
+        // Even though FilingDate matches, supplying a contradictory EventDate prevents an exact link.
+        var charge = new RocCharge
+        {
+            ChargeId = 105,
+            RocChargeNumber = "10999111",
+            LatestChargeHolderNormalized = "AXIS BANK",
+            CurrentAmount = 8000000m
+        };
+
+        var chargeEvent = new RocChargeEvent
+        {
+            ChargeEventId = 205,
+            RocChargeId = 105,
+            EventType = ChargeEventType.Modification,
+            EventDate = new DateOnly(2018, 6, 12),
+            FilingDate = new DateOnly(2018, 7, 5),
+            ChargeAmount = 8000000m,
+            HolderNameNormalized = "AXIS BANK"
+        };
+
+        var candidateContradictoryEventDate = new ChargeDocumentCandidate
+        {
+            ChargeId = "10999111",
+            EventType = ChargeEventType.Modification,
+            EventDate = new DateOnly(2018, 1, 1), // Conflicts with EventDate (2018-06-12)
+            FilingDate = new DateOnly(2018, 7, 5), // Matches FilingDate
+            Amount = 8000000m,
+            HolderName = "AXIS BANK"
+        };
+
+        // Act
+        var result = _matcher.Match(candidateContradictoryEventDate, [charge], [chargeEvent]);
+
+        // Assert
+        Assert.False(result.IsMatched);
+        Assert.Contains("Contradictory date pair", result.FailureReason);
+    }
 }
