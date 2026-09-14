@@ -1,5 +1,6 @@
 using System.Text.RegularExpressions;
 using MCAROC_Analysis.Data.Entities;
+using MCAROC_Analysis.Services.McaFilings.DocumentLinking;
 
 namespace MCAROC_Analysis.Services.Excel.Parsers;
 
@@ -48,10 +49,30 @@ public static class StandaloneFinancialDataParser
     public static ParseResult<FinancialYearData> Parse(
         SheetData sheet, long requestId, long ingestionRunId, long? sourceDocumentId,
         out List<FinancialFact> facts, FinancialBasis basis = FinancialBasis.Standalone)
+        => Parse(sheet, requestId, ingestionRunId, sourceDocumentId, out facts, out _, basis);
+
+    public static ParseResult<FinancialYearData> Parse(
+        SheetData sheet, long requestId, long ingestionRunId, long? sourceDocumentId,
+        out List<FinancialFact> facts, out FinancialLinkTargetCatalog targetCatalog, FinancialBasis basis = FinancialBasis.Standalone)
     {
         var result = new ParseResult<FinancialYearData>();
         facts = [];
+        targetCatalog = new FinancialLinkTargetCatalog();
+        var targetCatalogSink = targetCatalog;
         var factSink = facts;
+
+        var headerRowIndex = FindRowIndex(sheet, r => Label(r)?.StartsWith("BALANCE SHEET", StringComparison.OrdinalIgnoreCase) == true);
+        if (headerRowIndex is null)
+        {
+            result.AddError(new ParseIssue(IssueSeverity.Error, ParserName, null, null,
+                "MISSING_HEADER", "Could not find 'BALANCE SHEET' header row in Standalone Financial Data"));
+            return result;
+        }
+
+        var headerRow = sheet.Rows[headerRowIndex.Value];
+        var years = new List<int?>();
+        for (var c = 2; c < headerRow.Count; c++)
+            years.Add(ExtractYear(headerRow[c]?.ToString()));
 
         void CaptureFacts(IReadOnlyList<object?> row, string label, IReadOnlyList<int?> factYears,
             FinancialStatementSection section, int rowNumber, int columnOffset, bool yearInferred)
@@ -67,7 +88,8 @@ public static class StandaloneFinancialDataParser
                 if (string.IsNullOrEmpty(raw) || raw == "-") continue;
 
                 AmountNormalizer.TryParse(row[col], out var value, out _);
-                captured.Add(new FinancialFact
+                var colHeader = col < headerRow.Count ? headerRow[col]?.ToString()?.Trim() ?? string.Empty : string.Empty;
+                var fact = new FinancialFact
                 {
                     RequestId = requestId,
                     IngestionRunId = ingestionRunId,
@@ -81,23 +103,34 @@ public static class StandaloneFinancialDataParser
                     RawValue = raw,
                     NumericValue = value,
                     YearInferred = yearInferred
-                });
+                };
+                captured.Add(fact);
+
+                if (factYears[i].HasValue)
+                {
+                    targetCatalogSink.Add(new FinancialLinkTarget
+                    {
+                        TargetKind = FinancialTargetKind.FinancialFact,
+                        TargetEntity = fact,
+                        FinancialYear = factYears[i]!.Value,
+                        Basis = basis,
+                        TargetField = label,
+                        NumericValue = value,
+                        RawValue = raw,
+                        Coordinates = new TargetSourceCoordinates(
+                            SheetName: sheet.Name,
+                            SourceRowNumber: rowNumber + 1,
+                            SourceColumnNumber: col + 1,
+                            SourceColumnHeader: colHeader,
+                            RowLabel: label,
+                            TargetField: label,
+                            FinancialYear: factYears[i]),
+                        YearInferred = yearInferred
+                    });
+                }
             }
             if (captured.Count > 0) factSink.AddRange(captured); // skip header/sub-total-only rows
         }
-
-        var headerRowIndex = FindRowIndex(sheet, r => Label(r)?.StartsWith("BALANCE SHEET", StringComparison.OrdinalIgnoreCase) == true);
-        if (headerRowIndex is null)
-        {
-            result.AddError(new ParseIssue(IssueSeverity.Error, ParserName, null, null,
-                "MISSING_HEADER", "Could not find 'BALANCE SHEET' header row in Standalone Financial Data"));
-            return result;
-        }
-
-        var headerRow = sheet.Rows[headerRowIndex.Value];
-        var years = new List<int?>();
-        for (var c = 2; c < headerRow.Count; c++)
-            years.Add(ExtractYear(headerRow[c]?.ToString()));
 
         var byYear = new Dictionary<int, FinancialYearData>();
         FinancialYearData GetOrCreate(int year)
@@ -137,7 +170,7 @@ public static class StandaloneFinancialDataParser
             }
 
             if (BalanceSheetAndPnlRowToProperty.TryGetValue(label, out var property))
-                ApplyRow(sheet.Rows[r], years, byYear, property, GetOrCreate, result, r);
+                ApplyRow(sheet.Rows[r], years, byYear, property, label, GetOrCreate, result, r, targetCatalogSink, sheet.Name, headerRow, basis, yearInferred: false);
             else
                 CaptureFacts(sheet.Rows[r], label, years, section, r, columnOffset: 2, yearInferred: false);
         }
@@ -179,7 +212,7 @@ public static class StandaloneFinancialDataParser
                         break;
 
                     if (CashFlowRowToProperty.TryGetValue(label, out var property))
-                        ApplyRow(sheet.Rows[r], cashFlowYears, byYear, property, GetOrCreate, result, r, columnOffset: 2);
+                        ApplyRow(sheet.Rows[r], cashFlowYears, byYear, property, label, GetOrCreate, result, r, targetCatalogSink, sheet.Name, headerRow, basis, yearInferred: cashFlowInferred, columnOffset: 2);
                     else
                         CaptureFacts(sheet.Rows[r], label, cashFlowYears, FinancialStatementSection.CashFlow, r,
                             columnOffset: 2, yearInferred: cashFlowInferred);
@@ -214,9 +247,15 @@ public static class StandaloneFinancialDataParser
         IReadOnlyList<int?> years,
         Dictionary<int, FinancialYearData> byYear,
         string property,
+        string label,
         Func<int, FinancialYearData> getOrCreate,
         ParseResult<FinancialYearData> result,
         int rowNumber,
+        FinancialLinkTargetCatalog targetCatalog,
+        string sheetName,
+        IReadOnlyList<object?> headerRow,
+        FinancialBasis basis,
+        bool yearInferred,
         int columnOffset = 2)
     {
         for (var i = 0; i < years.Count; i++)
@@ -238,6 +277,27 @@ public static class StandaloneFinancialDataParser
 
             var entity = getOrCreate(year.Value);
             typeof(FinancialYearData).GetProperty(property)!.SetValue(entity, value);
+
+            var colHeader = col < headerRow.Count ? headerRow[col]?.ToString()?.Trim() ?? string.Empty : string.Empty;
+            targetCatalog.Add(new FinancialLinkTarget
+            {
+                TargetKind = FinancialTargetKind.FinancialYearData,
+                TargetEntity = entity,
+                FinancialYear = year.Value,
+                Basis = basis,
+                TargetField = property,
+                NumericValue = value,
+                RawValue = raw,
+                Coordinates = new TargetSourceCoordinates(
+                    SheetName: sheetName,
+                    SourceRowNumber: rowNumber + 1,
+                    SourceColumnNumber: col + 1,
+                    SourceColumnHeader: colHeader,
+                    RowLabel: label,
+                    TargetField: property,
+                    FinancialYear: year.Value),
+                YearInferred = yearInferred
+            });
         }
     }
 
