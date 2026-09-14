@@ -1,7 +1,9 @@
+using System.Data.Common;
 using MCAROC_Analysis.Data;
 using MCAROC_Analysis.Data.Entities;
 using MCAROC_Analysis.Services.CalculationAssurance;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.Logging.Abstractions;
 
 namespace MCAROC_Analysis.Tests;
@@ -15,8 +17,40 @@ public class CalculationDiscrepancyWorkflowServiceTests : IAsyncLifetime
     private static AppDbContext CreateContext() =>
         new(new DbContextOptionsBuilder<AppDbContext>().UseSqlServer(ConnectionString).Options);
 
+    private static AppDbContext CreateContextWithInterceptor(DbCommandInterceptor interceptor) =>
+        new(new DbContextOptionsBuilder<AppDbContext>().UseSqlServer(ConnectionString).AddInterceptors(interceptor).Options);
+
     private static CalculationDiscrepancyWorkflowService NewService(AppDbContext db) =>
         new(db, NullLogger<CalculationDiscrepancyWorkflowService>.Instance);
+
+    /// <summary>Genuine failure injection at the ADO.NET command level — throws when a command matching
+    /// the given table name and SQL verb is about to execute, regardless of whether it came from
+    /// SaveChangesAsync or ExecuteUpdateAsync (both go through this same interception point). Used to
+    /// prove the transaction wrapping the status transition + hold create/release actually rolls back
+    /// everything on a real failure, not just the one already-covered unique-index race.</summary>
+    private sealed class ThrowOnTableWriteInterceptor(string tableName, string verb) : DbCommandInterceptor
+    {
+        private bool ShouldThrow(DbCommand command) =>
+            command.CommandText.Contains(tableName, StringComparison.OrdinalIgnoreCase)
+            && command.CommandText.Contains(verb, StringComparison.OrdinalIgnoreCase);
+
+        // An INSERT with an identity column reads back the generated key via ExecuteReader (an OUTPUT
+        // clause / SELECT SCOPE_IDENTITY()), not ExecuteNonQuery — both hooks are needed to reliably catch
+        // every write shape EF Core's SaveChangesAsync/ExecuteUpdateAsync might use.
+        public override ValueTask<InterceptionResult<int>> NonQueryExecutingAsync(
+            DbCommand command, CommandEventData eventData, InterceptionResult<int> result, CancellationToken cancellationToken = default)
+        {
+            if (ShouldThrow(command)) throw new InvalidOperationException($"Injected {verb} failure on {tableName} for test.");
+            return base.NonQueryExecutingAsync(command, eventData, result, cancellationToken);
+        }
+
+        public override ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(
+            DbCommand command, CommandEventData eventData, InterceptionResult<DbDataReader> result, CancellationToken cancellationToken = default)
+        {
+            if (ShouldThrow(command)) throw new InvalidOperationException($"Injected {verb} failure on {tableName} for test.");
+            return base.ReaderExecutingAsync(command, eventData, result, cancellationToken);
+        }
+    }
 
     public async Task InitializeAsync()
     {
@@ -183,6 +217,10 @@ public class CalculationDiscrepancyWorkflowServiceTests : IAsyncLifetime
     [Fact]
     public async Task Confirm_WithTwoRequiredApprovals_TheSameReviewerTwiceNeverSatisfiesTheGate()
     {
+        // A second identical call from the same reviewer is now treated as an idempotent retry (it
+        // succeeds, matching the "your approval already stands" reality) rather than a hard failure — but
+        // it must still never record a second approval row or count as a second distinct reviewer, so a
+        // RequiredApprovals=2 gate can never be satisfied by one person calling twice.
         await using var db = CreateContext();
         var (snapshot, ledger) = await SeedSnapshotAndLedgerAsync(db);
         var discrepancy = await SeedAiCandidateAsync(db, snapshot, ledger, requiredApprovals: 2);
@@ -191,9 +229,12 @@ public class CalculationDiscrepancyWorkflowServiceTests : IAsyncLifetime
         await service.ConfirmAsync(discrepancy.CalculationDiscrepancyId, "alice", CalculationDiscrepancySeverity.Material, null, CancellationToken.None);
         var secondAttemptSameReviewer = await service.ConfirmAsync(discrepancy.CalculationDiscrepancyId, "alice", CalculationDiscrepancySeverity.Material, null, CancellationToken.None);
 
-        Assert.False(secondAttemptSameReviewer.Success); // self-approval refused outright
+        Assert.True(secondAttemptSameReviewer.Success); // idempotent no-op, not an error
         await using var verifyDb = CreateContext();
         Assert.Equal(CalculationDiscrepancyStatus.Open, (await Reload(verifyDb, discrepancy.CalculationDiscrepancyId)).Status);
+        var approvalCount = await verifyDb.CalculationDiscrepancyApprovals.CountAsync(a =>
+            a.CalculationDiscrepancyId == discrepancy.CalculationDiscrepancyId && a.DecisionAction == CalculationDiscrepancyDecisionAction.Confirm);
+        Assert.Equal(1, approvalCount); // still only Alice's one approval — no duplicate was recorded
     }
 
     [Fact]
@@ -242,6 +283,69 @@ public class CalculationDiscrepancyWorkflowServiceTests : IAsyncLifetime
         Assert.Equal(CalculationDiscrepancyStatus.Confirmed, reloaded.Status);
         Assert.Equal(CalculationDiscrepancySeverity.Material, reloaded.Severity);
         Assert.True(await verifyDb.CalculationArtifactHolds.AnyAsync(h => h.SourceDiscrepancyId == discrepancy.CalculationDiscrepancyId && h.IsActive));
+    }
+
+    // ── Failure injection: transition + hold create/release must commit atomically ─────────────────
+
+    [Fact]
+    public async Task Confirm_WhenTheHoldInsertFailsForAnyReason_RollsBackTheStatusTransitionToo()
+    {
+        // Real failure injection (not just the already-covered unique-index race): a command interceptor
+        // throws specifically on the hold INSERT. Proves a Confirmed Critical/Material discrepancy can
+        // never exist without its active hold, for ANY failure reason, not only a collision.
+        await using var seedDb = CreateContext();
+        var (snapshot, ledger) = await SeedSnapshotAndLedgerAsync(seedDb);
+        var discrepancy = await SeedAiCandidateAsync(seedDb, snapshot, ledger);
+
+        await using var faultyDb = CreateContextWithInterceptor(new ThrowOnTableWriteInterceptor("CalculationArtifactHolds", "INSERT"));
+        var result = await NewService(faultyDb).ConfirmAsync(discrepancy.CalculationDiscrepancyId, "alice", CalculationDiscrepancySeverity.Critical, null, CancellationToken.None);
+
+        Assert.False(result.Success);
+        await using var verifyDb = CreateContext();
+        Assert.Equal(CalculationDiscrepancyStatus.Open, (await Reload(verifyDb, discrepancy.CalculationDiscrepancyId)).Status);
+        Assert.False(await verifyDb.CalculationArtifactHolds.AnyAsync(h => h.SourceDiscrepancyId == discrepancy.CalculationDiscrepancyId));
+        // The reviewer's own approval survived — it committed in its own, separate, already-successful
+        // transaction before the faulty one ran.
+        Assert.Equal(1, await verifyDb.CalculationDiscrepancyApprovals.CountAsync(a =>
+            a.CalculationDiscrepancyId == discrepancy.CalculationDiscrepancyId && a.DecisionAction == CalculationDiscrepancyDecisionAction.Confirm));
+
+        // Retrying without the injected fault succeeds without re-approving (idempotent retry).
+        await using var retryDb = CreateContext();
+        var retry = await NewService(retryDb).ConfirmAsync(discrepancy.CalculationDiscrepancyId, "alice", CalculationDiscrepancySeverity.Critical, null, CancellationToken.None);
+        Assert.True(retry.Success);
+        await using var finalDb = CreateContext();
+        Assert.Equal(CalculationDiscrepancyStatus.Confirmed, (await Reload(finalDb, discrepancy.CalculationDiscrepancyId)).Status);
+        Assert.True(await finalDb.CalculationArtifactHolds.AnyAsync(h => h.SourceDiscrepancyId == discrepancy.CalculationDiscrepancyId && h.IsActive));
+        Assert.Equal(1, await finalDb.CalculationDiscrepancyApprovals.CountAsync(a =>
+            a.CalculationDiscrepancyId == discrepancy.CalculationDiscrepancyId && a.DecisionAction == CalculationDiscrepancyDecisionAction.Confirm));
+    }
+
+    [Fact]
+    public async Task AcceptException_WhenTheHoldReleaseFailsForAnyReason_RollsBackTheStatusTransitionToo()
+    {
+        // Proves the reverse invariant: an accepted exception can never exist while its hold remains
+        // active. Injects a real failure on the hold-release UPDATE specifically.
+        await using var seedDb = CreateContext();
+        var (snapshot, ledger) = await SeedSnapshotAndLedgerAsync(seedDb);
+        var discrepancy = await SeedAiCandidateAsync(seedDb, snapshot, ledger);
+        await NewService(seedDb).ConfirmAsync(discrepancy.CalculationDiscrepancyId, "alice", CalculationDiscrepancySeverity.Material, null, CancellationToken.None);
+
+        await using var faultyDb = CreateContextWithInterceptor(new ThrowOnTableWriteInterceptor("CalculationArtifactHolds", "UPDATE"));
+        var result = await NewService(faultyDb).AcceptExceptionAsync(discrepancy.CalculationDiscrepancyId, "bob", "Documented internal exception.", CancellationToken.None);
+
+        Assert.False(result.Success);
+        await using var verifyDb = CreateContext();
+        var reloaded = await Reload(verifyDb, discrepancy.CalculationDiscrepancyId);
+        Assert.Equal(CalculationDiscrepancyStatus.Confirmed, reloaded.Status); // unchanged — the transition never committed
+        Assert.True(await verifyDb.CalculationArtifactHolds.AnyAsync(h => h.SourceDiscrepancyId == discrepancy.CalculationDiscrepancyId && h.IsActive));
+
+        await using var retryDb = CreateContext();
+        var retry = await NewService(retryDb).AcceptExceptionAsync(discrepancy.CalculationDiscrepancyId, "bob", "Documented internal exception.", CancellationToken.None);
+        Assert.True(retry.Success);
+        await using var finalDb = CreateContext();
+        var finalReload = await Reload(finalDb, discrepancy.CalculationDiscrepancyId);
+        Assert.Equal(CalculationDiscrepancyStatus.AcceptedAsSourceException, finalReload.Status);
+        Assert.False(await finalDb.CalculationArtifactHolds.AnyAsync(h => h.SourceDiscrepancyId == discrepancy.CalculationDiscrepancyId && h.IsActive));
     }
 
     // ── Concurrency: genuine multi-context races, not sequential awaits ────────────────────────────

@@ -117,48 +117,71 @@ public class CalculationDiscrepancyWorkflowService(AppDbContext db, ILogger<Calc
                 $"A prior reviewer already confirmed this discrepancy at severity {claimedSeverity} — your {severity} assignment conflicts and was not recorded. " +
                 "Agree with the existing severity to add your approval, or use Reject to send this candidate back instead.");
 
-        var recorded = await RecordApprovalAsync(discrepancy, CalculationDiscrepancyDecisionAction.Confirm, reviewerName, notes, reproductionJson, severity, ct);
-        if (!recorded.Success) return recorded;
+        // Idempotent retry: if this reviewer already recorded a matching Confirm approval — most likely
+        // because a prior attempt's transition/hold transaction below failed and rolled back after the
+        // approval had already committed — skip straight to retrying the transition rather than failing
+        // on "already decided". A genuinely different severity from the same reviewer is still refused.
+        var existingApproval = await db.CalculationDiscrepancyApprovals.AsNoTracking().FirstOrDefaultAsync(a =>
+            a.CalculationDiscrepancyId == discrepancy.CalculationDiscrepancyId
+            && a.DecisionAction == CalculationDiscrepancyDecisionAction.Confirm && a.ReviewerName == reviewerName, ct);
+        if (existingApproval is not null)
+        {
+            if (existingApproval.ProposedSeverity != severity)
+                return WorkflowResult.Fail("You have already confirmed this discrepancy at a different severity and cannot change your decision here.");
+        }
+        else
+        {
+            var recorded = await RecordApprovalAsync(discrepancy, CalculationDiscrepancyDecisionAction.Confirm, reviewerName, notes, reproductionJson, severity, ct);
+            if (!recorded.Success) return recorded;
+        }
 
         if (await HasEnoughApprovalsAsync(discrepancy, CalculationDiscrepancyDecisionAction.Confirm, ct))
         {
-            var transitioned = await db.CalculationDiscrepancies
-                .Where(d => d.CalculationDiscrepancyId == discrepancy.CalculationDiscrepancyId
-                    && (d.Status == CalculationDiscrepancyStatus.Open || d.Status == CalculationDiscrepancyStatus.Triaged))
-                .ExecuteUpdateAsync(s => s
-                    .SetProperty(d => d.Status, CalculationDiscrepancyStatus.Confirmed)
-                    .SetProperty(d => d.Severity, severity)
-                    .SetProperty(d => d.LastUpdatedUtc, DateTime.UtcNow), ct);
-
-            // Only the caller that actually won the transition creates the hold — a concurrent second
-            // caller that also observed "enough approvals" sees transitioned == 0 here and does nothing
-            // further, so exactly one hold is ever created per discrepancy.
-            if (transitioned == 1 && severity is CalculationDiscrepancySeverity.Critical or CalculationDiscrepancySeverity.Material)
+            // The status transition and the hold it requires must commit together or not at all — a
+            // Confirmed Critical/Material discrepancy without an active hold would silently defeat the
+            // whole delivery-gate invariant, with no way back in (Confirm can't run again once Status has
+            // already left Open/Triaged). Any failure here — not just a unique-index race — rolls back
+            // both, and since the reviewer's own approval was already committed above (in its own,
+            // separate, already-successful transaction), a plain retry of Confirm with the same
+            // reviewer/severity picks up exactly here again without needing to re-approve.
+            await using var transaction = await db.Database.BeginTransactionAsync(ct);
+            try
             {
-                db.CalculationArtifactHolds.Add(new CalculationArtifactHold
-                {
-                    CalculationAuditSnapshotId = discrepancy.CalculationAuditSnapshotId,
-                    HoldReason = severity == CalculationDiscrepancySeverity.Critical
-                        ? CalculationArtifactHoldReason.ConfirmedCriticalDiscrepancy
-                        : CalculationArtifactHoldReason.ConfirmedMaterialDiscrepancyNoException,
-                    IsActive = true,
-                    SourceDiscrepancyId = discrepancy.CalculationDiscrepancyId,
-                    CreatedUtc = DateTime.UtcNow
-                });
+                var transitioned = await db.CalculationDiscrepancies
+                    .Where(d => d.CalculationDiscrepancyId == discrepancy.CalculationDiscrepancyId
+                        && (d.Status == CalculationDiscrepancyStatus.Open || d.Status == CalculationDiscrepancyStatus.Triaged))
+                    .ExecuteUpdateAsync(s => s
+                        .SetProperty(d => d.Status, CalculationDiscrepancyStatus.Confirmed)
+                        .SetProperty(d => d.Severity, severity)
+                        .SetProperty(d => d.LastUpdatedUtc, DateTime.UtcNow), ct);
 
-                try
+                // Only the caller that actually won the transition creates the hold — a concurrent second
+                // caller that also observed "enough approvals" sees transitioned == 0 here and does
+                // nothing further, so exactly one hold is ever created per discrepancy.
+                if (transitioned == 1 && severity is CalculationDiscrepancySeverity.Critical or CalculationDiscrepancySeverity.Material)
                 {
+                    db.CalculationArtifactHolds.Add(new CalculationArtifactHold
+                    {
+                        CalculationAuditSnapshotId = discrepancy.CalculationAuditSnapshotId,
+                        HoldReason = severity == CalculationDiscrepancySeverity.Critical
+                            ? CalculationArtifactHoldReason.ConfirmedCriticalDiscrepancy
+                            : CalculationArtifactHoldReason.ConfirmedMaterialDiscrepancyNoException,
+                        IsActive = true,
+                        SourceDiscrepancyId = discrepancy.CalculationDiscrepancyId,
+                        CreatedUtc = DateTime.UtcNow
+                    });
                     await db.SaveChangesAsync(ct);
                 }
-                catch (DbUpdateException ex) when (IsUniqueConstraintViolation(ex))
-                {
-                    // Belt-and-suspenders: the unique filtered index on SourceDiscrepancyId caught a
-                    // duplicate hold even though the atomic transition above should already have made this
-                    // unreachable. Another attempt's hold stands; nothing to do.
-                    logger.LogInformation("Lost a race creating the hold for discrepancy {DiscrepancyId} — another attempt already created it.", discrepancyId);
-                }
 
-                logger.LogInformation("Discrepancy {DiscrepancyId} confirmed at severity {Severity} by {Reviewer}.", discrepancyId, severity, reviewerName);
+                await transaction.CommitAsync(ct);
+
+                if (transitioned == 1)
+                    logger.LogInformation("Discrepancy {DiscrepancyId} confirmed at severity {Severity} by {Reviewer}.", discrepancyId, severity, reviewerName);
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(ex, "Failed to commit the Confirm transition/hold for discrepancy {DiscrepancyId} — rolled back.", discrepancyId);
+                return WorkflowResult.Fail("Could not complete the confirmation due to a database error — please retry.");
             }
         }
         return WorkflowResult.Ok();
@@ -205,31 +228,53 @@ public class CalculationDiscrepancyWorkflowService(AppDbContext db, ILogger<Calc
         if (discrepancy.Severity != CalculationDiscrepancySeverity.Material)
             return WorkflowResult.Fail("Only a Material discrepancy may be released via a documented exception. Critical has no exception route.");
 
-        var recorded = await RecordApprovalAsync(discrepancy, CalculationDiscrepancyDecisionAction.AcceptException, reviewerName, exceptionReason, null, null, ct);
-        if (!recorded.Success) return recorded;
+        // Idempotent retry, mirroring Confirm above — a prior attempt's transaction may have already
+        // recorded this reviewer's approval and then failed to commit the transition/hold-release.
+        var existingApproval = await db.CalculationDiscrepancyApprovals.AsNoTracking().AnyAsync(a =>
+            a.CalculationDiscrepancyId == discrepancy.CalculationDiscrepancyId
+            && a.DecisionAction == CalculationDiscrepancyDecisionAction.AcceptException && a.ReviewerName == reviewerName, ct);
+        if (!existingApproval)
+        {
+            var recorded = await RecordApprovalAsync(discrepancy, CalculationDiscrepancyDecisionAction.AcceptException, reviewerName, exceptionReason, null, null, ct);
+            if (!recorded.Success) return recorded;
+        }
 
         if (await HasEnoughApprovalsAsync(discrepancy, CalculationDiscrepancyDecisionAction.AcceptException, ct))
         {
-            var transitioned = await db.CalculationDiscrepancies
-                .Where(d => d.CalculationDiscrepancyId == discrepancy.CalculationDiscrepancyId && d.Status == CalculationDiscrepancyStatus.Confirmed)
-                .ExecuteUpdateAsync(s => s
-                    .SetProperty(d => d.Status, CalculationDiscrepancyStatus.AcceptedAsSourceException)
-                    .SetProperty(d => d.ExceptionReason, exceptionReason)
-                    .SetProperty(d => d.LastUpdatedUtc, DateTime.UtcNow), ct);
-
-            if (transitioned == 1)
+            // Same atomicity requirement as Confirm's transition+hold, in reverse: an accepted exception
+            // must never exist while its hold is still active — the whole point of accepting the exception
+            // is to release delivery. Any failure here rolls back both the status transition and the
+            // (attempted) hold release together.
+            await using var transaction = await db.Database.BeginTransactionAsync(ct);
+            try
             {
-                // Already idempotent on its own (WHERE IsActive gates it) — harmless even if somehow
-                // reached twice.
-                await db.CalculationArtifactHolds
-                    .Where(h => h.SourceDiscrepancyId == discrepancy.CalculationDiscrepancyId && h.IsActive)
+                var transitioned = await db.CalculationDiscrepancies
+                    .Where(d => d.CalculationDiscrepancyId == discrepancy.CalculationDiscrepancyId && d.Status == CalculationDiscrepancyStatus.Confirmed)
                     .ExecuteUpdateAsync(s => s
-                        .SetProperty(h => h.IsActive, false)
-                        .SetProperty(h => h.ReleasedUtc, DateTime.UtcNow)
-                        .SetProperty(h => h.ReleasedByReviewerName, reviewerName)
-                        .SetProperty(h => h.ReleaseNote, exceptionReason), ct);
+                        .SetProperty(d => d.Status, CalculationDiscrepancyStatus.AcceptedAsSourceException)
+                        .SetProperty(d => d.ExceptionReason, exceptionReason)
+                        .SetProperty(d => d.LastUpdatedUtc, DateTime.UtcNow), ct);
 
-                logger.LogInformation("Discrepancy {DiscrepancyId} released via documented Material exception by {Reviewer}.", discrepancyId, reviewerName);
+                if (transitioned == 1)
+                {
+                    await db.CalculationArtifactHolds
+                        .Where(h => h.SourceDiscrepancyId == discrepancy.CalculationDiscrepancyId && h.IsActive)
+                        .ExecuteUpdateAsync(s => s
+                            .SetProperty(h => h.IsActive, false)
+                            .SetProperty(h => h.ReleasedUtc, DateTime.UtcNow)
+                            .SetProperty(h => h.ReleasedByReviewerName, reviewerName)
+                            .SetProperty(h => h.ReleaseNote, exceptionReason), ct);
+                }
+
+                await transaction.CommitAsync(ct);
+
+                if (transitioned == 1)
+                    logger.LogInformation("Discrepancy {DiscrepancyId} released via documented Material exception by {Reviewer}.", discrepancyId, reviewerName);
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(ex, "Failed to commit the AcceptException transition/hold-release for discrepancy {DiscrepancyId} — rolled back.", discrepancyId);
+                return WorkflowResult.Fail("Could not complete the exception acceptance due to a database error — please retry.");
             }
         }
         return WorkflowResult.Ok();
