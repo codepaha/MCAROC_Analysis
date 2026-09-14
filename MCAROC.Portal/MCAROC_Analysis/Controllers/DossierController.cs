@@ -1,4 +1,5 @@
 using MCAROC_Analysis.Data;
+using MCAROC_Analysis.Services.CalculationAssurance;
 using MCAROC_Analysis.Services.Dossier;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -10,7 +11,8 @@ namespace MCAROC_Analysis.Controllers;
 /// (request, ingestion run, analysis run, variant) and written atomically, so a concurrent
 /// double-download never serves a half-written file.</summary>
 public class DossierController(
-    AppDbContext db, DossierCache cache, DossierPdfRenderer renderer, IWebHostEnvironment env) : Controller
+    AppDbContext db, DossierCache cache, DossierPdfRenderer renderer, CalculationArtifactGateService gate,
+    IWebHostEnvironment env) : Controller
 {
     [HttpGet("/Requests/{id:long}/dossier")]
     public async Task<IActionResult> Download(long id, [FromQuery] string? variant, CancellationToken ct)
@@ -30,6 +32,13 @@ public class DossierController(
             return StatusCode(StatusCodes.Status409Conflict,
                 "The dossier is not ready — it needs a completed ingestion and a completed analysis of that " +
                 "same data. Re-run the analysis if the source documents were re-ingested.");
+
+        // #164 calculation-assurance delivery gate — deliberately before any file-cache read below, so a
+        // PDF rendered and cached to disk before a hold existed is still blocked, not served stale from
+        // cache. A held artifact returns the exact same NotFound() as a genuinely-missing request just
+        // above — this never distinguishes "held" from "doesn't exist" to the caller.
+        if (await gate.IsHeldAsync(id, model.IngestionRunId, model.AnalysisRunId, flavour, ct))
+            return NotFound();
 
         var dir = Path.Combine(env.ContentRootPath, "App_Data", "Dossiers", id.ToString());
         Directory.CreateDirectory(dir);

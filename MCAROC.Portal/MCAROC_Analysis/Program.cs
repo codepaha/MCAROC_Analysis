@@ -87,9 +87,10 @@ builder.Services.AddSingleton(sp =>
 builder.Services.AddScoped<AnalysisOrchestrator>();
 builder.Services.AddHostedService<AnalysisWorker>();
 
-// #164 Calculation assurance — ledger persistence + deterministic checks + AI second-line review worker
-// (delivery gate/reviewer UI land in PR4). A no-op at runtime while CalculationAssurance:Mode is Off
-// (the default) or, for the AI worker specifically, while AiAuditEnabled is false.
+// #164 Calculation assurance — ledger persistence + deterministic checks + AI second-line review worker +
+// dossier delivery gate (reviewer UI lands in a later PR). A no-op at runtime while
+// CalculationAssurance:Mode is Off (the default) or, for the AI worker specifically, while AiAuditEnabled
+// is false.
 builder.Services.AddScoped<MCAROC_Analysis.Services.CalculationAssurance.CalculationLedgerService>();
 builder.Services.AddScoped<MCAROC_Analysis.Services.CalculationAssurance.CalculationCheckRunnerService>();
 builder.Services.AddSingleton<MCAROC_Analysis.Services.CalculationAssurance.CalculationAiAuditQueue>();
@@ -104,6 +105,7 @@ builder.Services.AddSingleton(sp =>
 });
 builder.Services.AddScoped<MCAROC_Analysis.Services.CalculationAssurance.CalculationAiAuditOrchestrator>();
 builder.Services.AddHostedService<MCAROC_Analysis.Services.CalculationAssurance.CalculationAiAuditWorker>();
+builder.Services.AddScoped<MCAROC_Analysis.Services.CalculationAssurance.CalculationArtifactGateService>();
 
 // Phase 5: operations & risk intelligence dashboard + Search History
 builder.Services.AddScoped<DashboardQueryService>();
