@@ -109,48 +109,18 @@ public static class CoastalFinancialLinkService
                 continue;
             }
 
-            // 2. Initial classification check
-            var quickCheck = CoastalFinancialClassifier.Classify(outerCategoryFolder, sourceFolder, fileName, firstPageText: null);
-
-            // If not classified as financial from filename, check if it could be out-of-scope without opening PDF
-            if (quickCheck.Category != FilingCategory.Financial)
-            {
-                var outOfScopeEvidence = new
-                {
-                    classificationCategory = quickCheck.Category.ToString(),
-                    classificationMethod = quickCheck.Method,
-                    classificationConfidence = quickCheck.Confidence.ToString(),
-                    outerCategoryFolder = outerCategoryFolder,
-                    sourceFolder = sourceFolder,
-                    fileName = fileName
-                };
-
-                resultEntries.Add(new CoastalFinancialLinkResultEntry
-                {
-                    OuterEntryFullPath = entry.OuterEntryFullPath,
-                    NestedEntryRelativePath = entry.NestedEntryRelativePath,
-                    Sha256Hex = entry.Sha256Hex,
-                    Outcome = PilotFinancialLinkOutcome.UnlinkedOutOfScope,
-                    Reason = PilotFinancialLinkReason.NonFinancialDocument,
-                    IsCanonical = true,
-                    CanonicalOuterEntryFullPath = entry.CanonicalOuterEntryFullPath,
-                    CanonicalNestedEntryRelativePath = entry.CanonicalNestedEntryRelativePath,
-                    EvidenceJson = JsonSerializer.Serialize(outOfScopeEvidence, EvidenceSerializerOptions)
-                });
-                continue;
-            }
-
-            // 3. Extract candidate details by reading PDF text in memory
+            // 2. Extract candidate details by reading PDF text in memory
             using var pdfStream = OpenPdfStream(entry);
             var candidate = FinancialCandidateExtractor.Extract(outerCategoryFolder, sourceFolder, fileName, pdfStream);
 
-            // If text classification determined non-financial
+            // If classification (filename, text header, or folder) determined non-financial
             if (!candidate.IsFinancial)
             {
                 var outOfScopeEvidence = new
                 {
-                    classificationCategory = FilingCategory.Unclassified.ToString(),
+                    classificationCategory = candidate.Category.ToString(),
                     classificationMethod = candidate.Method,
+                    classificationConfidence = candidate.Confidence.ToString(),
                     outerCategoryFolder = outerCategoryFolder,
                     sourceFolder = sourceFolder,
                     fileName = fileName

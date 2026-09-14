@@ -8,12 +8,13 @@ namespace MCAROC_Analysis.Services.McaFilings.DocumentLinking;
 public class ExtractedFinancialCandidate
 {
     public bool IsFinancial { get; init; }
+    public FilingCategory Category { get; init; }
     public string? FormType { get; init; }
     public ClassificationConfidence Confidence { get; init; }
     public string Method { get; init; } = string.Empty;
 
     public int? FinancialYear { get; init; }
-    public FinancialBasis? Basis { get; init; } = FinancialBasis.Standalone;
+    public FinancialBasis? Basis { get; init; }
     public bool HasConflictingBasis { get; init; }
     public bool IsXfaPlaceholder { get; init; }
 
@@ -39,7 +40,15 @@ public static class FinancialCandidateExtractor
         RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
     private static readonly Regex RunningHeaderPattern = new(
-        @"COASTAL\s+PROJECTS\s+LIMITED\s+(Standalone|Consolidated)\s+Financial\s+Statements\s+for\s+period\s+\d{2}/\d{2}/\d{4}\s+to\s+\d{2}/\d{2}/(\d{4})",
+        @"COASTAL\s+PROJECTS\s+LIMITED\s*(Standalone|Consolidated)\s*(?:Financial\s+Statements|Balance\s+Sheet|Profit\s+and\s+Loss(?:\s+account)?|Statement\s+of\s+Profit\s+and\s+Loss)?\s*for\s+(?:the\s+)?period\s+\d{2}/\d{2}/\d{4}\s+to\s+\d{2}/\d{2}/(\d{4})",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
+    private static readonly Regex NatureOfReportPattern = new(
+        @"Nature\s+of\s+report\s+(?:standalone\s+consolidated\s+)?(Standalone|Consolidated)",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
+    private static readonly Regex StatementBasisPattern = new(
+        @"(?:^|\n|\s)(Standalone|Consolidated)\s+(?:Balance\s+Sheet|Financial\s+Statements|Profit\s+and\s+Loss|Statement\s+of\s+Profit\s+and\s+Loss)",
         RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
     private static readonly Regex MillionsUnitPattern = new(
@@ -77,6 +86,7 @@ public static class FinancialCandidateExtractor
             return new ExtractedFinancialCandidate
             {
                 IsFinancial = false,
+                Category = initialClassification.Category,
                 FormType = initialClassification.FormType,
                 Confidence = initialClassification.Confidence,
                 Method = initialClassification.Method
@@ -109,11 +119,12 @@ public static class FinancialCandidateExtractor
             return new ExtractedFinancialCandidate
             {
                 IsFinancial = initialClassification.Category == FilingCategory.Financial,
+                Category = initialClassification.Category,
                 FormType = initialClassification.FormType,
                 Confidence = initialClassification.Confidence,
                 Method = initialClassification.Method,
                 FinancialYear = extractedFy,
-                Basis = filenameConsolidated ? FinancialBasis.Consolidated : FinancialBasis.Standalone,
+                Basis = filenameConsolidated ? FinancialBasis.Consolidated : (filenameStandalone ? FinancialBasis.Standalone : null),
                 IsXfaPlaceholder = false
             };
         }
@@ -128,8 +139,12 @@ public static class FinancialCandidateExtractor
                 return new ExtractedFinancialCandidate
                 {
                     IsFinancial = initialClassification.Category == FilingCategory.Financial,
+                    Category = initialClassification.Category,
+                    FormType = initialClassification.FormType,
+                    Confidence = initialClassification.Confidence,
+                    Method = initialClassification.Method,
                     FinancialYear = extractedFy,
-                    Basis = filenameConsolidated ? FinancialBasis.Consolidated : FinancialBasis.Standalone
+                    Basis = filenameConsolidated ? FinancialBasis.Consolidated : (filenameStandalone ? FinancialBasis.Standalone : null)
                 };
             }
 
@@ -142,6 +157,7 @@ public static class FinancialCandidateExtractor
                 return new ExtractedFinancialCandidate
                 {
                     IsFinancial = false,
+                    Category = classification.Category,
                     FormType = classification.FormType,
                     Confidence = classification.Confidence,
                     Method = classification.Method
@@ -169,6 +185,22 @@ public static class FinancialCandidateExtractor
                         : FinancialBasis.Standalone;
                     extractedFy = int.Parse(hm.Groups[2].Value);
                     break;
+                }
+
+                var nm = NatureOfReportPattern.Match(text);
+                if (nm.Success && !docDeclaredBasis.HasValue)
+                {
+                    docDeclaredBasis = nm.Groups[1].Value.Equals("Consolidated", StringComparison.OrdinalIgnoreCase)
+                        ? FinancialBasis.Consolidated
+                        : FinancialBasis.Standalone;
+                }
+
+                var sm = StatementBasisPattern.Match(text);
+                if (sm.Success && !docDeclaredBasis.HasValue)
+                {
+                    docDeclaredBasis = sm.Groups[1].Value.Equals("Consolidated", StringComparison.OrdinalIgnoreCase)
+                        ? FinancialBasis.Consolidated
+                        : FinancialBasis.Standalone;
                 }
             }
 
@@ -199,9 +231,19 @@ public static class FinancialCandidateExtractor
                 {
                     basis = FinancialBasis.Consolidated;
                 }
-                else
+                else if (filenameStandalone && !filenameConsolidated)
                 {
                     basis = FinancialBasis.Standalone;
+                }
+                else if (filenameStandalone && filenameConsolidated)
+                {
+                    hasConflictingBasis = true;
+                    basis = null;
+                }
+                else
+                {
+                    // Neither filename nor PDF header identifies the basis: preserve null
+                    basis = null;
                 }
             }
 
@@ -339,8 +381,12 @@ public static class FinancialCandidateExtractor
             return new ExtractedFinancialCandidate
             {
                 IsFinancial = initialClassification.Category == FilingCategory.Financial,
+                Category = initialClassification.Category,
+                FormType = initialClassification.FormType,
+                Confidence = initialClassification.Confidence,
+                Method = initialClassification.Method,
                 FinancialYear = extractedFy,
-                Basis = filenameConsolidated ? FinancialBasis.Consolidated : FinancialBasis.Standalone
+                Basis = filenameConsolidated ? FinancialBasis.Consolidated : (filenameStandalone ? FinancialBasis.Standalone : null)
             };
         }
     }

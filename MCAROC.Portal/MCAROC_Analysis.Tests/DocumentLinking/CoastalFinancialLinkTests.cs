@@ -14,7 +14,7 @@ public class CoastalFinancialLinkTests
     private const string ZipPath = @"E:\Downloads\Coastal data\COASTAL PROJECTS LIMITED Documents.zip";
     private const string RocPath = @"E:\Downloads\Coastal data\U45203OR1995PLC003982.xls";
 
-    private const string ExpectedBaselineSha256 = "543b23165b6fee4511b3dd9d109b35ca7b05bbc210a4a74416229383ff97774d";
+    private const string ExpectedBaselineSha256 = "0ec56f51974dcb2ef8ada173361aa25b9b463ffc85fc3cbe3b286c14f282b066";
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -28,11 +28,11 @@ public class CoastalFinancialLinkTests
 
     private static string GetFixturePath()
     {
-        var localBin = Path.Combine(AppContext.BaseDirectory, "Fixtures", "coastal_d3_baseline.json");
-        if (File.Exists(localBin)) return localBin;
-
         var sourceDir = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "Fixtures", "coastal_d3_baseline.json"));
         if (File.Exists(sourceDir)) return sourceDir;
+
+        var localBin = Path.Combine(AppContext.BaseDirectory, "Fixtures", "coastal_d3_baseline.json");
+        if (File.Exists(localBin)) return localBin;
 
         return localBin;
     }
@@ -126,37 +126,44 @@ public class CoastalFinancialLinkTests
         var missingPeriod = entries.Count(e => e.Reason == PilotFinancialLinkReason.MissingReportingPeriod);
         var conflictingBasis = entries.Count(e => e.Reason == PilotFinancialLinkReason.ConflictingBasisEvidence);
         var valueMismatch = entries.Count(e => e.Reason == PilotFinancialLinkReason.StatementValueMismatch);
-        var exactPeriod = entries.Count(e => e.Reason == PilotFinancialLinkReason.ExactMatchReportingPeriod);
+        var missingBasis = entries.Count(e => e.Reason == PilotFinancialLinkReason.MissingBasisEvidence);
 
         Assert.Equal(169, duplicates);
-        Assert.Equal(615, outOfScope);
-        Assert.Equal(8, autoAccepted);
-        Assert.Equal(5, pendingReview);
-        Assert.Equal(17, unlinkedNoCand);
+        Assert.Equal(611, outOfScope);
+        Assert.Equal(12, autoAccepted);
+        Assert.Equal(12, pendingReview);
+        Assert.Equal(10, unlinkedNoCand);
 
-        Assert.Equal(12, periodNotFound);
+        Assert.Equal(5, periodNotFound);
         Assert.Equal(5, missingPeriod);
         Assert.Equal(1, conflictingBasis);
         Assert.Equal(1, valueMismatch);
-        Assert.Equal(3, exactPeriod);
+        Assert.Equal(10, missingBasis);
 
         // Exclusive partition sums
         Assert.Equal(814, duplicates + outOfScope + autoAccepted + pendingReview + unlinkedNoCand);
-        Assert.Equal(17, periodNotFound + missingPeriod);
-        Assert.Equal(5, conflictingBasis + valueMismatch + exactPeriod);
+        Assert.Equal(10, periodNotFound + missingPeriod);
+        Assert.Equal(12, conflictingBasis + valueMismatch + missingBasis);
     }
 
     [Fact]
-    public void VerifyBaselineFixture_30IndependentOracleEntries()
+    public void VerifyBaselineFixture_34IndependentOracleEntries()
     {
         var entries = LoadBaselineEntries();
         var candidates = entries.Where(e => e.Outcome != PilotFinancialLinkOutcome.ManifestDuplicateBypassed &&
                                             e.Outcome != PilotFinancialLinkOutcome.UnlinkedOutOfScope).ToList();
 
-        Assert.Equal(30, candidates.Count);
+        Assert.Equal(34, candidates.Count);
 
         var oracleEntries = new (string OuterPath, string NestedPath, string Sha256, PilotFinancialLinkOutcome Outcome, PilotFinancialLinkReason Reason, int? FinancialYear, FinancialBasis? Basis)[]
         {
+            ("COASTAL PROJECTS LIMITED Documents/Charge Documents Financial Documets/70909_COASTAL_PROJECTS_U45203OR1995PLC003982.zip",
+             "70909_COASTAL_PROJECTS_U45203OR1995PLC003982/Annual Returns and balance sheet Eform/1d618b65e88bfe158f35f35cc0d6d640v1-Optional attachment(s)- if any.pdf",
+             "20e56f51c2ce8be9c74f7724bd721c27cc8c4655209711dd758bda99512c1f7c",
+             PilotFinancialLinkOutcome.AutoAccepted,
+             PilotFinancialLinkReason.ExactMatchReportingPeriodAndStatementValue,
+             2015,
+             FinancialBasis.Standalone),
             ("COASTAL PROJECTS LIMITED Documents/Charge Documents Financial Documets/70909_COASTAL_PROJECTS_U45203OR1995PLC003982.zip",
              "70909_COASTAL_PROJECTS_U45203OR1995PLC003982/Annual Returns and balance sheet Eform/25a87bec0f34edf2d9e851021ac01042v1-Form AOC-4(XBRL)-09032017_signed.pdf",
              "ed104bf5c9ccf3e8b8c4aece82ff6397304050f01fcbcec504cc29fea646b6b9",
@@ -192,6 +199,13 @@ public class CoastalFinancialLinkTests
              PilotFinancialLinkReason.ExactMatchReportingPeriodAndStatementValue,
              2016,
              FinancialBasis.Standalone),
+            ("COASTAL PROJECTS LIMITED Documents/Charge Documents Financial Documets/70909_COASTAL_PROJECTS_U45203OR1995PLC003982.zip",
+             "70909_COASTAL_PROJECTS_U45203OR1995PLC003982/Annual Returns and balance sheet Eform/6367d1ef14743470be398e84293cf983v1-Optional attachment(s)- if any.pdf",
+             "0edf27223dcc03cc248c9f435b1a2e4154cf7119fe2728e082f996bc9e964cb1",
+             PilotFinancialLinkOutcome.AutoAccepted,
+             PilotFinancialLinkReason.ExactMatchReportingPeriodAndStatementValue,
+             2017,
+             FinancialBasis.Consolidated),
             ("COASTAL PROJECTS LIMITED Documents/Charge Documents Financial Documets/70909_COASTAL_PROJECTS_U45203OR1995PLC003982.zip",
              "70909_COASTAL_PROJECTS_U45203OR1995PLC003982/Annual Returns and balance sheet Eform/895cb444d18c37adfb79c951772edc3cv1-XBRL document in respect Consolidated financial statement.pdf",
              "be2de6ccadd7ad26447a55c986ea5b3d6ddefaefcbb4ba11b87d5e387e0223c2",
@@ -235,6 +249,13 @@ public class CoastalFinancialLinkTests
              null,
              null),
             ("COASTAL PROJECTS LIMITED Documents/Charge Documents Financial Documets/70909_COASTAL_PROJECTS_U45203OR1995PLC003982.zip",
+             "70909_COASTAL_PROJECTS_U45203OR1995PLC003982/Annual Returns and balance sheet Eform/eedc95466726ecd0df5ae5157521b218v1-Revised1 Optional attachment(s)- if any.pdf",
+             "eed38f28a539e1a2251b8548ec06ef4abd8a70ca284b2916bb4c3c2fa82fcfc9",
+             PilotFinancialLinkOutcome.AutoAccepted,
+             PilotFinancialLinkReason.ExactMatchReportingPeriodAndStatementValue,
+             2017,
+             FinancialBasis.Standalone),
+            ("COASTAL PROJECTS LIMITED Documents/Charge Documents Financial Documets/70909_COASTAL_PROJECTS_U45203OR1995PLC003982.zip",
              "70909_COASTAL_PROJECTS_U45203OR1995PLC003982/Annual Returns and balance sheet Eform/f63c68237dbfcd112a2451865bdea0ffv1-Form_AOC-4_XBRL_24.05.16_s_COASTALLTD_20160524121500.pdf-13062016-signed.pdf",
              "782f43ff3a9f3438a9fd49290d69319f71b0c2676b43244d33c7d25629507981",
              PilotFinancialLinkOutcome.UnlinkedNoCandidate,
@@ -251,10 +272,10 @@ public class CoastalFinancialLinkTests
             ("COASTAL PROJECTS LIMITED Documents/Charge Documents Financial Documets/70910_COASTAL_PROJECTS_U45203OR1995PLC003982.zip",
              "70910_COASTAL_PROJECTS_U45203OR1995PLC003982/Annual Returns and balance sheet Eform/242fdff3a78f12281efcb4a5099d0525v1-Form 23AC XBRL-161013-150113 for the FY ending on-310312.pdf",
              "443b013d9939a2f0561c56ce7ba71a81bec5e4154722519ac59ca9420f038451",
-             PilotFinancialLinkOutcome.UnlinkedNoCandidate,
-             PilotFinancialLinkReason.PeriodNotFoundInWorkbook,
+             PilotFinancialLinkOutcome.PendingReview,
+             PilotFinancialLinkReason.MissingBasisEvidence,
              2012,
-             FinancialBasis.Standalone),
+             null),
             ("COASTAL PROJECTS LIMITED Documents/Charge Documents Financial Documets/70910_COASTAL_PROJECTS_U45203OR1995PLC003982.zip",
              "70910_COASTAL_PROJECTS_U45203OR1995PLC003982/Annual Returns and balance sheet Eform/514a91f72a3f58ef828ec14dcd4f7b1cv1-XBRL document in respect of profit and loss account 05-05-2015 for the financial year ending on 31-03-2014.pdf.pdf",
              "1348399f2f4cb708ac3e073f5b41a9be6ac29a70fe605a0d5f938c16eb7cf49d",
@@ -265,10 +286,10 @@ public class CoastalFinancialLinkTests
             ("COASTAL PROJECTS LIMITED Documents/Charge Documents Financial Documets/70910_COASTAL_PROJECTS_U45203OR1995PLC003982.zip",
              "70910_COASTAL_PROJECTS_U45203OR1995PLC003982/Annual Returns and balance sheet Eform/55654ee1041d74675f9802b42fed02b4v1-FormSchV-070212 for the FY ending on-310311.pdf",
              "4cc974ac9733a8cdb74622aae8b160768fb9f3facf5c60483270c147885d1395",
-             PilotFinancialLinkOutcome.UnlinkedNoCandidate,
-             PilotFinancialLinkReason.PeriodNotFoundInWorkbook,
+             PilotFinancialLinkOutcome.PendingReview,
+             PilotFinancialLinkReason.MissingBasisEvidence,
              2011,
-             FinancialBasis.Standalone),
+             null),
             ("COASTAL PROJECTS LIMITED Documents/Charge Documents Financial Documets/70910_COASTAL_PROJECTS_U45203OR1995PLC003982.zip",
              "70910_COASTAL_PROJECTS_U45203OR1995PLC003982/Annual Returns and balance sheet Eform/5dcc2f41737c487fbcd456fd738ebf34v1-Form AOC-4(XBRL).pdf",
              "a44c651727fa7bb545726b33a2286537888e244de07de7acce514c437a015593",
@@ -280,16 +301,16 @@ public class CoastalFinancialLinkTests
              "70910_COASTAL_PROJECTS_U45203OR1995PLC003982/Annual Returns and balance sheet Eform/7b039e6218ee542a822a5392cbfa86cbv1-Form 23AC XBRL-070515-050515 for the FY ending on-310314.pdf",
              "56971e59b1efe89d287dc634e86ac56aa79fb460196a5d3f2b5fcd54bbfa6b36",
              PilotFinancialLinkOutcome.PendingReview,
-             PilotFinancialLinkReason.ExactMatchReportingPeriod,
+             PilotFinancialLinkReason.MissingBasisEvidence,
              2014,
-             FinancialBasis.Standalone),
+             null),
             ("COASTAL PROJECTS LIMITED Documents/Charge Documents Financial Documets/70910_COASTAL_PROJECTS_U45203OR1995PLC003982.zip",
              "70910_COASTAL_PROJECTS_U45203OR1995PLC003982/Annual Returns and balance sheet Eform/82d24b8924c07f61e4d6154f38999640v1-Form 23ACA XBRL-160113-150113 for the FY ending on-310312.pdf",
              "476a325781337fc653f2c762a7115ba268b4e0148c6430ab3d3fbf40b2122adc",
-             PilotFinancialLinkOutcome.UnlinkedNoCandidate,
-             PilotFinancialLinkReason.PeriodNotFoundInWorkbook,
+             PilotFinancialLinkOutcome.PendingReview,
+             PilotFinancialLinkReason.MissingBasisEvidence,
              2012,
-             FinancialBasis.Standalone),
+             null),
             ("COASTAL PROJECTS LIMITED Documents/Charge Documents Financial Documets/70910_COASTAL_PROJECTS_U45203OR1995PLC003982.zip",
              "70910_COASTAL_PROJECTS_U45203OR1995PLC003982/Annual Returns and balance sheet Eform/88a318933a223444f08cb3d70647cf78v1-XBRL financial statements duly authenticated as per section 134 (including Board's report,auditor's report and other documents).pdf",
              "837a6ea7e0ad14878bbd74347e9e8181263a3837804151f2d30c4ee3f92b7240",
@@ -300,10 +321,10 @@ public class CoastalFinancialLinkTests
             ("COASTAL PROJECTS LIMITED Documents/Charge Documents Financial Documets/70910_COASTAL_PROJECTS_U45203OR1995PLC003982.zip",
              "70910_COASTAL_PROJECTS_U45203OR1995PLC003982/Annual Returns and balance sheet Eform/8d78607fb6b5e9a8030ec12e2f5f77dcv1-FormSchV-250214 for the FY ending on-310313.pdf",
              "6f48fb33c887a7b769e3939d395472de2b8bde63376a454549be023540d6ef17",
-             PilotFinancialLinkOutcome.UnlinkedNoCandidate,
-             PilotFinancialLinkReason.PeriodNotFoundInWorkbook,
+             PilotFinancialLinkOutcome.PendingReview,
+             PilotFinancialLinkReason.MissingBasisEvidence,
              2013,
-             FinancialBasis.Standalone),
+             null),
             ("COASTAL PROJECTS LIMITED Documents/Charge Documents Financial Documets/70910_COASTAL_PROJECTS_U45203OR1995PLC003982.zip",
              "70910_COASTAL_PROJECTS_U45203OR1995PLC003982/Annual Returns and balance sheet Eform/a0ac3a558067648f43797f9ddd9bb1c6v1-Revised1 XBRL financial statements duly authenticated as per section 134 (including Board's report,auditor's report and other documents).pdf",
              "d1838037a008c264c5180208897d3798648b901cbfb3cf51426930726b10fd85",
@@ -315,9 +336,9 @@ public class CoastalFinancialLinkTests
              "70910_COASTAL_PROJECTS_U45203OR1995PLC003982/Annual Returns and balance sheet Eform/c536cea3f8f45c02c91869cf22c39679v1-Form 23ACA XBRL-060515-050515 for the FY ending on-310314.pdf",
              "3a7d65e5363004c382d85880122d5ab05a2ae78903dd1f2b84824785ffe58b05",
              PilotFinancialLinkOutcome.PendingReview,
-             PilotFinancialLinkReason.ExactMatchReportingPeriod,
+             PilotFinancialLinkReason.MissingBasisEvidence,
              2014,
-             FinancialBasis.Standalone),
+             null),
             ("COASTAL PROJECTS LIMITED Documents/Charge Documents Financial Documets/70910_COASTAL_PROJECTS_U45203OR1995PLC003982.zip",
              "70910_COASTAL_PROJECTS_U45203OR1995PLC003982/Annual Returns and balance sheet Eform/c75d3d0e9428e6724095bb6f4dfb849bv1-XBRL document in respect of balance sheet 03-11-2013 for the financial year ending on 31-03-2013.pdf.pdf",
              "2fdd87ab926779f577c63e2fadbf2b68a002c0db7ca2b511e6758affb6ee6e02",
@@ -329,9 +350,9 @@ public class CoastalFinancialLinkTests
              "70910_COASTAL_PROJECTS_U45203OR1995PLC003982/Annual Returns and balance sheet Eform/d266d4e0a1c98fdab97c0ce5deeb76dav1-FormSchV-230215 for the FY ending on-310314.pdf",
              "b1cd81e602e9f04017e040db8ad631586b73b51d9dc4be39d463921051a48ae9",
              PilotFinancialLinkOutcome.PendingReview,
-             PilotFinancialLinkReason.ExactMatchReportingPeriod,
+             PilotFinancialLinkReason.MissingBasisEvidence,
              2014,
-             FinancialBasis.Standalone),
+             null),
             ("COASTAL PROJECTS LIMITED Documents/Charge Documents Financial Documets/70910_COASTAL_PROJECTS_U45203OR1995PLC003982.zip",
              "70910_COASTAL_PROJECTS_U45203OR1995PLC003982/Annual Returns and balance sheet Eform/d2d78e9ee47934fbf4321af384985fb8v1-XBRL document in respect of profit and loss account 03-11-2013 for the financial year ending on 31-03-2013.pdf.pdf",
              "340db16681e508cb9b264be9e621fd81dc4a73d1bfba8d0619ae41536833f536",
@@ -340,19 +361,26 @@ public class CoastalFinancialLinkTests
              2013,
              FinancialBasis.Standalone),
             ("COASTAL PROJECTS LIMITED Documents/Charge Documents Financial Documets/70910_COASTAL_PROJECTS_U45203OR1995PLC003982.zip",
+             "70910_COASTAL_PROJECTS_U45203OR1995PLC003982/Annual Returns and balance sheet Eform/d81389738534dd3b7db1f276fc650dacv1-Revised1 Optional attachment(s)- if any.pdf",
+             "a76d9f5f0be7533d8ad57baf121e40d2841ec0d878ab4b6e62d9ac9a3d4bab5f",
+             PilotFinancialLinkOutcome.AutoAccepted,
+             PilotFinancialLinkReason.ExactMatchReportingPeriodAndStatementValue,
+             2015,
+             FinancialBasis.Standalone),
+            ("COASTAL PROJECTS LIMITED Documents/Charge Documents Financial Documets/70910_COASTAL_PROJECTS_U45203OR1995PLC003982.zip",
              "70910_COASTAL_PROJECTS_U45203OR1995PLC003982/Annual Returns and balance sheet Eform/e434c5297f9bce28f6d342a647cd1fc7v1-FormSchV-210213 for the FY ending on-310312.pdf",
              "7f3aad19295c06176cfd5708f286915051e843cbb6e18ede0c0f2c71146d1d47",
-             PilotFinancialLinkOutcome.UnlinkedNoCandidate,
-             PilotFinancialLinkReason.PeriodNotFoundInWorkbook,
+             PilotFinancialLinkOutcome.PendingReview,
+             PilotFinancialLinkReason.MissingBasisEvidence,
              2012,
-             FinancialBasis.Standalone),
+             null),
             ("COASTAL PROJECTS LIMITED Documents/Charge Documents Financial Documets/70910_COASTAL_PROJECTS_U45203OR1995PLC003982.zip",
              "70910_COASTAL_PROJECTS_U45203OR1995PLC003982/Annual Returns and balance sheet Eform/e7944bf06eaaf00093d4b6d0d4e35fddv1-Form 23AC XBRL-081113-031113 for the FY ending on-310313.pdf",
              "2d52d2c3b0891d34c4ededd7461e0b5877c3c22363c4da26236c47071a38f313",
-             PilotFinancialLinkOutcome.UnlinkedNoCandidate,
-             PilotFinancialLinkReason.PeriodNotFoundInWorkbook,
+             PilotFinancialLinkOutcome.PendingReview,
+             PilotFinancialLinkReason.MissingBasisEvidence,
              2013,
-             FinancialBasis.Standalone),
+             null),
             ("COASTAL PROJECTS LIMITED Documents/Charge Documents Financial Documets/70910_COASTAL_PROJECTS_U45203OR1995PLC003982.zip",
              "70910_COASTAL_PROJECTS_U45203OR1995PLC003982/Annual Returns and balance sheet Eform/f035f285095bc58da64b6cd6b08acd03v1-XBRL document in respect of balance sheet 05-05-2015 for the financial year ending on 31-03-2014.pdf.pdf",
              "e64ed9fa11871f8cbe1be74d6039111f6b6edbe659689e9353da7a9e09f62799",
@@ -363,10 +391,10 @@ public class CoastalFinancialLinkTests
             ("COASTAL PROJECTS LIMITED Documents/Charge Documents Financial Documets/70910_COASTAL_PROJECTS_U45203OR1995PLC003982.zip",
              "70910_COASTAL_PROJECTS_U45203OR1995PLC003982/Annual Returns and balance sheet Eform/f380463e2c7262c0758660c394beff58v1-Form 23ACA XBRL-081113-031113 for the FY ending on-310313.pdf",
              "613b9a03906329c8927c7bf0055e6d3a4fbb8ad7a1933bf40b6bcf538bbcd1ae",
-             PilotFinancialLinkOutcome.UnlinkedNoCandidate,
-             PilotFinancialLinkReason.PeriodNotFoundInWorkbook,
+             PilotFinancialLinkOutcome.PendingReview,
+             PilotFinancialLinkReason.MissingBasisEvidence,
              2013,
-             FinancialBasis.Standalone),
+             null),
         };
 
         Assert.Equal(oracleEntries.Length, candidates.Count);
@@ -387,16 +415,32 @@ public class CoastalFinancialLinkTests
     }
 
     [Fact]
-    public void VerifyBaselineFixture_8AutoAcceptedExhaustive()
+    public void VerifyBaselineFixture_12AutoAcceptedExhaustive()
     {
         var entries = LoadBaselineEntries();
         var entriesBySha = entries
             .Where(e => e.Outcome == PilotFinancialLinkOutcome.AutoAccepted)
             .ToDictionary(e => e.Sha256Hex, StringComparer.OrdinalIgnoreCase);
 
-        Assert.Equal(8, entriesBySha.Count);
+        Assert.Equal(12, entriesBySha.Count);
 
-        // 1. SHA: 3958cd67
+        // 1. SHA: 20e56f51
+        AssertAutoAccepted(
+            entriesBySha["20e56f51c2ce8be9c74f7724bd721c27cc8c4655209711dd758bda99512c1f7c"],
+            expectedYear: 2015,
+            expectedBasis: FinancialBasis.Standalone,
+            expectedKind: FinancialTargetKind.FinancialYearData,
+            expectedEntityId: 2,
+            expectedLineItem: "ShareCapital",
+            expectedValue: 152.25m,
+            expectedPage: 30,
+            expectedSheet: "Standalone Financial Data",
+            expectedRow: 4,
+            expectedCol: 4,
+            expectedHeader: "31 Mar, 2015",
+            expectedRowLabel: "Share Capital");
+
+        // 2. SHA: 3958cd67
         AssertAutoAccepted(
             entriesBySha["3958cd671cf9a6d2d8ff20d7da7beb187410ba9aa6f3b6aa8f4a782aa9915940"],
             expectedYear: 2017,
@@ -412,7 +456,7 @@ public class CoastalFinancialLinkTests
             expectedHeader: "31 Mar, 2017",
             expectedRowLabel: "Share Capital");
 
-        // 2. SHA: 2dba313f
+        // 3. SHA: 2dba313f
         AssertAutoAccepted(
             entriesBySha["2dba313f9566d49280ac2048e7d6b80e457ac15108b06ae7e094197ccf6a27e2"],
             expectedYear: 2016,
@@ -428,7 +472,23 @@ public class CoastalFinancialLinkTests
             expectedHeader: "31 Mar, 2016",
             expectedRowLabel: "Share Capital");
 
-        // 3. SHA: be2de6cc
+        // 4. SHA: 0edf2722
+        AssertAutoAccepted(
+            entriesBySha["0edf27223dcc03cc248c9f435b1a2e4154cf7119fe2728e082f996bc9e964cb1"],
+            expectedYear: 2017,
+            expectedBasis: FinancialBasis.Consolidated,
+            expectedKind: FinancialTargetKind.FinancialYearData,
+            expectedEntityId: 7,
+            expectedLineItem: "ShareCapital",
+            expectedValue: 330.94m,
+            expectedPage: 15,
+            expectedSheet: "Consolidated Financial Data",
+            expectedRow: 4,
+            expectedCol: 5,
+            expectedHeader: "31 Mar, 2017",
+            expectedRowLabel: "Share Capital");
+
+        // 5. SHA: be2de6cc
         AssertAutoAccepted(
             entriesBySha["be2de6ccadd7ad26447a55c986ea5b3d6ddefaefcbb4ba11b87d5e387e0223c2"],
             expectedYear: 2016,
@@ -444,7 +504,7 @@ public class CoastalFinancialLinkTests
             expectedHeader: "31 Mar, 2016",
             expectedRowLabel: "Share Capital");
 
-        // 4. SHA: c91165d4
+        // 6. SHA: c91165d4
         AssertAutoAccepted(
             entriesBySha["c91165d465ff9f4c3c17a55aaabee3a4c18c8224933abeed8acc535b41a3ca43"],
             expectedYear: 2017,
@@ -460,7 +520,7 @@ public class CoastalFinancialLinkTests
             expectedHeader: "31 Mar, 2017",
             expectedRowLabel: "Share Capital");
 
-        // 5. SHA: 38b77641
+        // 7. SHA: 38b77641
         AssertAutoAccepted(
             entriesBySha["38b776411ce307d886450521a38a8e055bc4b1babe1beb6ac49d3dbb9e73a306"],
             expectedYear: 2016,
@@ -476,7 +536,23 @@ public class CoastalFinancialLinkTests
             expectedHeader: "31 Mar, 2016",
             expectedRowLabel: "Share Capital");
 
-        // 6. SHA: 837a6ea7
+        // 8. SHA: eed38f28
+        AssertAutoAccepted(
+            entriesBySha["eed38f28a539e1a2251b8548ec06ef4abd8a70ca284b2916bb4c3c2fa82fcfc9"],
+            expectedYear: 2017,
+            expectedBasis: FinancialBasis.Standalone,
+            expectedKind: FinancialTargetKind.FinancialYearData,
+            expectedEntityId: 4,
+            expectedLineItem: "ShareCapital",
+            expectedValue: 330.94m,
+            expectedPage: 65,
+            expectedSheet: "Standalone Financial Data",
+            expectedRow: 4,
+            expectedCol: 6,
+            expectedHeader: "31 Mar, 2017",
+            expectedRowLabel: "Share Capital");
+
+        // 9. SHA: 837a6ea7
         AssertAutoAccepted(
             entriesBySha["837a6ea7e0ad14878bbd74347e9e8181263a3837804151f2d30c4ee3f92b7240"],
             expectedYear: 2015,
@@ -492,7 +568,7 @@ public class CoastalFinancialLinkTests
             expectedHeader: "31 Mar, 2015",
             expectedRowLabel: "Share Capital");
 
-        // 7. SHA: d1838037
+        // 10. SHA: d1838037
         AssertAutoAccepted(
             entriesBySha["d1838037a008c264c5180208897d3798648b901cbfb3cf51426930726b10fd85"],
             expectedYear: 2015,
@@ -508,7 +584,23 @@ public class CoastalFinancialLinkTests
             expectedHeader: "31 Mar, 2015",
             expectedRowLabel: "Share Capital");
 
-        // 8. SHA: e64ed9fa
+        // 11. SHA: a76d9f5f
+        AssertAutoAccepted(
+            entriesBySha["a76d9f5f0be7533d8ad57baf121e40d2841ec0d878ab4b6e62d9ac9a3d4bab5f"],
+            expectedYear: 2015,
+            expectedBasis: FinancialBasis.Standalone,
+            expectedKind: FinancialTargetKind.FinancialYearData,
+            expectedEntityId: 2,
+            expectedLineItem: "ShareCapital",
+            expectedValue: 152.25m,
+            expectedPage: 30,
+            expectedSheet: "Standalone Financial Data",
+            expectedRow: 4,
+            expectedCol: 4,
+            expectedHeader: "31 Mar, 2015",
+            expectedRowLabel: "Share Capital");
+
+        // 12. SHA: e64ed9fa
         AssertAutoAccepted(
             entriesBySha["e64ed9fa11871f8cbe1be74d6039111f6b6edbe659689e9353da7a9e09f62799"],
             expectedYear: 2014,
@@ -523,6 +615,7 @@ public class CoastalFinancialLinkTests
             expectedCol: 3,
             expectedHeader: "31 Mar, 2014",
             expectedRowLabel: "Share Capital");
+
     }
 
     private static void AssertAutoAccepted(
