@@ -76,7 +76,8 @@ builder.Services.AddScoped(sp => new FilingBatchProcessor(
     sp.GetRequiredService<VertexAiExtractionService>(),
     sp.GetRequiredService<FilingProcessingQueue>(),
     sp.GetRequiredService<DocumentChunkingQueue>(),
-    sp.GetRequiredService<ILogger<FilingBatchProcessor>>()));
+    sp.GetRequiredService<ILogger<FilingBatchProcessor>>(),
+    sp.GetRequiredService<IOperationalSlotLeaseService>()));
 builder.Services.AddHostedService<FilingProcessingWorker>();
 
 // Rule engine + AI cross-section analysis pipeline

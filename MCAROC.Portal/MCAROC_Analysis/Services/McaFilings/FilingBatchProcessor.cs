@@ -14,11 +14,12 @@ namespace MCAROC_Analysis.Services.McaFilings;
 public class FilingBatchProcessor(
     AppDbContext db,
     string contentRootPath,
-    PdfTextExtractor pdfTextExtractor,
-    VertexAiExtractionService vertexAiService,
+    PdfTextExtractor? pdfTextExtractor,
+    VertexAiExtractionService? vertexAiService,
     FilingProcessingQueue queue,
     DocumentChunkingQueue documentChunkingQueue,
-    ILogger<FilingBatchProcessor> logger)
+    ILogger<FilingBatchProcessor> logger,
+    IOperationalSlotLeaseService? slotLeaseService = null)
 {
     private static readonly ArchiveSafetyLimits Limits = ArchiveSafetyLimits.Default;
     private const int MaxRetryCount = 3;
@@ -27,13 +28,64 @@ public class FilingBatchProcessor(
 
     public async Task UnpackBatchAsync(long batchId, CancellationToken ct)
     {
-        var batch = await db.McaFilingBatches.Include(b => b.Request).FirstAsync(b => b.BatchId == batchId, ct);
-        var outerZipDoc = await db.RequestDocuments.FirstAsync(d => d.DocumentId == batch.SourceDocumentId, ct);
+        var holderId = batchId.ToString();
+        var leaseDuration = TimeSpan.FromMinutes(5);
+
+        // 1. Acquire LargeUnpackSlot before unpack begins
+        if (slotLeaseService is not null)
+        {
+            var leaseResult = await slotLeaseService.TryAcquireSlotAsync(
+                OperationalSlotLeaseService.LargeUnpackSlot,
+                holderId,
+                leaseDuration,
+                ct);
+
+            if (!leaseResult.Success)
+            {
+                logger.LogWarning("Cannot begin unpack for batch {BatchId}: {Error}", batchId, leaseResult.Error);
+                throw new InvalidOperationException($"Cannot acquire '{OperationalSlotLeaseService.LargeUnpackSlot}' slot lease: {leaseResult.Error}");
+            }
+        }
+
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        PeriodicTimer? heartbeatTimer = null;
+        Task? heartbeatTask = null;
+
+        // 2. Renew it every 60 seconds and fail closed if renewal is lost
+        if (slotLeaseService is not null)
+        {
+            heartbeatTimer = new PeriodicTimer(TimeSpan.FromSeconds(60));
+            heartbeatTask = Task.Run(async () =>
+            {
+                try
+                {
+                    while (await heartbeatTimer.WaitForNextTickAsync(cts.Token))
+                    {
+                        var renewed = await slotLeaseService.TryRenewSlotAsync(
+                            OperationalSlotLeaseService.LargeUnpackSlot,
+                            holderId,
+                            leaseDuration,
+                            cts.Token);
+
+                        if (!renewed)
+                        {
+                            logger.LogError("LargeUnpackSlot lease renewal failed for batch {BatchId}; failing closed.", batchId);
+                            cts.Cancel();
+                            break;
+                        }
+                    }
+                }
+                catch (OperationCanceledException) { /* expected on completion */ }
+            }, cts.Token);
+        }
 
         try
         {
+            var batch = await db.McaFilingBatches.Include(b => b.Request).FirstAsync(b => b.BatchId == batchId, cts.Token);
+            var outerZipDoc = await db.RequestDocuments.FirstAsync(d => d.DocumentId == batch.SourceDocumentId, cts.Token);
+
             batch.Status = FilingBatchStatus.Unpacking;
-            await db.SaveChangesAsync(ct);
+            await db.SaveChangesAsync(cts.Token);
 
             var outerSafety = ArchiveSafetyValidator.ValidateOuterArchive(outerZipDoc.StoragePath, Limits);
             if (!outerSafety.IsValid)
@@ -56,13 +108,13 @@ public class FilingBatchProcessor(
                 var nestedZipEntries = outerArchive.Entries.Where(e => e.FullName.EndsWith(".zip", StringComparison.OrdinalIgnoreCase)).ToList();
                 foreach (var nestedEntry in nestedZipEntries)
                 {
-                    ct.ThrowIfCancellationRequested();
-                    await IndexNestedZipAsync(batch, nestedEntry, tempDir, cumulativeStats, ct);
+                    cts.Token.ThrowIfCancellationRequested();
+                    await IndexNestedZipAsync(batch, nestedEntry, tempDir, cumulativeStats, cts.Token);
                 }
             }
 
             batch.Status = FilingBatchStatus.Processing;
-            await db.SaveChangesAsync(ct);
+            await db.SaveChangesAsync(cts.Token);
 
             try { Directory.Delete(tempDir, recursive: true); } catch { /* best effort */ }
 
@@ -73,17 +125,48 @@ public class FilingBatchProcessor(
                 .Where(d => d.BatchId == batchId && d.DuplicateOfDocumentId == null
                     && d.ProcessingStatus == FilingDocumentProcessingStatus.Discovered)
                 .Select(d => d.FilingDocumentId)
-                .ToListAsync(ct);
+                .ToListAsync(cts.Token);
             foreach (var id in documentIds)
                 queue.Enqueue(new ProcessDocumentWorkItem(id));
         }
         catch (Exception ex)
         {
             logger.LogError(ex, "Failed to unpack MCA filings batch {BatchId}", batchId);
-            batch.Status = FilingBatchStatus.Failed;
-            batch.FailureReason = ex.Message;
-            batch.CompletedDate = DateTime.UtcNow;
-            await db.SaveChangesAsync(ct);
+            var batch = await db.McaFilingBatches.FirstOrDefaultAsync(b => b.BatchId == batchId, CancellationToken.None);
+            if (batch is not null)
+            {
+                batch.Status = FilingBatchStatus.Failed;
+                batch.FailureReason = ex is OperationCanceledException && !ct.IsCancellationRequested
+                    ? "Operational slot lease renewal was lost; unpack cancelled."
+                    : ex.Message;
+                batch.CompletedDate = DateTime.UtcNow;
+                try { await db.SaveChangesAsync(CancellationToken.None); } catch { /* best effort */ }
+            }
+        }
+        finally
+        {
+            cts.Cancel();
+            heartbeatTimer?.Dispose();
+            if (heartbeatTask is not null)
+            {
+                try { await heartbeatTask; } catch { /* ignore */ }
+            }
+
+            // 3. Release LargeUnpackSlot in all terminal paths
+            if (slotLeaseService is not null)
+            {
+                try
+                {
+                    await slotLeaseService.ReleaseSlotAsync(
+                        OperationalSlotLeaseService.LargeUnpackSlot,
+                        holderId,
+                        CancellationToken.None);
+                }
+                catch (Exception releaseEx)
+                {
+                    logger.LogError(releaseEx, "Failed to release LargeUnpackSlot for batch {BatchId}", batchId);
+                }
+            }
         }
     }
 
