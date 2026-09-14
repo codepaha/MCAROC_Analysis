@@ -14,7 +14,7 @@ public class CoastalChargeLinkTests
     private const string RocPath = @"E:\Downloads\Coastal data\U45203OR1995PLC003982.xls";
     private const string ChargePath = @"E:\Downloads\Coastal data\U45203OR1995PLC003982-charge.xls";
 
-    private const string CommittedBaselineSha256 = "85A595B6CD1F6C693A24B2B9CE28E9088E3569EA307106E316ED54E3ACD2C415";
+    private const string CommittedBaselineSha256 = "2C438F392A01251599799F2384073A29DE27D50D19C3515798F7D87113A6BC9A";
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -95,14 +95,12 @@ public class CoastalChargeLinkTests
         var fixturePath = GetFixturePath();
         Assert.True(File.Exists(fixturePath), $"Baseline fixture file not found at {fixturePath}");
 
-        // 1. Assert independently recorded SHA-256 hash
-        using (var stream = File.OpenRead(fixturePath))
-        using (var sha256 = SHA256.Create())
-        {
-            var hashBytes = sha256.ComputeHash(stream);
-            var hashHex = Convert.ToHexString(hashBytes);
-            Assert.Equal(CommittedBaselineSha256, hashHex, ignoreCase: true);
-        }
+        // 1. Assert independently recorded SHA-256 hash (LF-normalized for cross-platform determinism)
+        var bytes = File.ReadAllBytes(fixturePath);
+        var normalized = System.Text.Encoding.UTF8.GetString(bytes).Replace("\r\n", "\n");
+        var hashBytes = SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(normalized));
+        var hashHex = Convert.ToHexString(hashBytes);
+        Assert.Equal(CommittedBaselineSha256, hashHex, ignoreCase: true);
 
         // 2. Load and assert structural invariants
         var json = File.ReadAllText(fixturePath);

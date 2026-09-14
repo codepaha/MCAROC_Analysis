@@ -1,0 +1,2 @@
+# Ensure deterministic LF line endings for test fixtures across all platforms
+MCAROC.Portal/MCAROC_Analysis.Tests/Fixtures/*.json text eol=lf
