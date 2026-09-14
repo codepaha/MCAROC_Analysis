@@ -643,6 +643,14 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             e.Property(x => x.Status).HasConversion<string>().HasMaxLength(30);
             e.Property(x => x.Severity).HasConversion<string>().HasMaxLength(10);
             e.Property(x => x.PendingConfirmSeverity).HasConversion<string>().HasMaxLength(10);
+            // Defense in depth beyond CalculationDiscrepancyWorkflowService's Enum.IsDefined guard — a
+            // future direct write (raw SQL, a different code path, a bug) can never persist a severity
+            // outside the three real values, which is what makes the "hold branch only checks
+            // Critical/Material" logic safe: "neither" can only ever mean the real Minor case.
+            e.ToTable(t => t.HasCheckConstraint("CK_CalculationDiscrepancies_Severity",
+                "[Severity] IS NULL OR [Severity] IN ('Minor', 'Material', 'Critical')"));
+            e.ToTable(t => t.HasCheckConstraint("CK_CalculationDiscrepancies_PendingConfirmSeverity",
+                "[PendingConfirmSeverity] IS NULL OR [PendingConfirmSeverity] IN ('Minor', 'Material', 'Critical')"));
         });
 
         modelBuilder.Entity<CalculationDiscrepancyLedgerLink>(e =>
@@ -680,6 +688,8 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             e.Property(x => x.ModelIdUsed).HasMaxLength(100);
             e.Property(x => x.PromptVersionUsed).HasMaxLength(20);
             e.Property(x => x.ProposedSeverity).HasConversion<string>().HasMaxLength(10);
+            e.ToTable(t => t.HasCheckConstraint("CK_CalculationDiscrepancyApprovals_ProposedSeverity",
+                "[ProposedSeverity] IS NULL OR [ProposedSeverity] IN ('Minor', 'Material', 'Critical')"));
         });
 
         modelBuilder.Entity<CalculationArtifactHold>(e =>

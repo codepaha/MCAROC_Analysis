@@ -481,6 +481,47 @@ public class CalculationDiscrepancyWorkflowServiceTests : IAsyncLifetime
         await Assert.ThrowsAsync<DbUpdateException>(() => db.SaveChangesAsync());
     }
 
+    [Fact]
+    public async Task Confirm_UndefinedSeverityValue_IsRefused_LeavesOpen_CreatesNoApprovalNoHold()
+    {
+        // An unvalidated model-bound/cast value outside Minor/Material/Critical must never reach the
+        // hold-branch check ("Critical or Material") — an undefined value would silently fall through as
+        // if it meant Minor, letting a bogus severity confirm without ever creating its hold.
+        await using var db = CreateContext();
+        var (snapshot, ledger) = await SeedSnapshotAndLedgerAsync(db);
+        var discrepancy = await SeedAiCandidateAsync(db, snapshot, ledger);
+        var undefinedSeverity = (CalculationDiscrepancySeverity)999;
+
+        var result = await NewService(db).ConfirmAsync(discrepancy.CalculationDiscrepancyId, "alice", undefinedSeverity, null, CancellationToken.None);
+
+        Assert.False(result.Success);
+        await using var verifyDb = CreateContext();
+        Assert.Equal(CalculationDiscrepancyStatus.Open, (await Reload(verifyDb, discrepancy.CalculationDiscrepancyId)).Status);
+        Assert.Equal(0, await verifyDb.CalculationDiscrepancyApprovals.CountAsync(a => a.CalculationDiscrepancyId == discrepancy.CalculationDiscrepancyId));
+        Assert.False(await verifyDb.CalculationArtifactHolds.AnyAsync(h => h.SourceDiscrepancyId == discrepancy.CalculationDiscrepancyId));
+    }
+
+    [Fact]
+    public async Task DiscrepancySeverity_CheckConstraint_RejectsAnUndefinedValue_EvenBypassingTheService()
+    {
+        // Defense in depth: a direct write (raw SQL, a future code path that doesn't call
+        // Enum.IsDefined) must also be rejected at the database level, not just by the service.
+        await using var db = CreateContext();
+        var (snapshot, ledger) = await SeedSnapshotAndLedgerAsync(db);
+
+        db.CalculationDiscrepancies.Add(new CalculationDiscrepancy
+        {
+            CalculationAuditSnapshotId = snapshot.CalculationAuditSnapshotId,
+            SourceType = CalculationDiscrepancySourceType.AiCandidate,
+            PrimaryLedgerEntryId = ledger.CalculationLedgerEntryId,
+            ClaimSummary = "x", Status = CalculationDiscrepancyStatus.Confirmed,
+            Severity = (CalculationDiscrepancySeverity)999, // bypasses the service's Enum.IsDefined guard entirely
+            CreatedUtc = DateTime.UtcNow, LastUpdatedUtc = DateTime.UtcNow
+        });
+
+        await Assert.ThrowsAsync<DbUpdateException>(() => db.SaveChangesAsync());
+    }
+
     // ── Reject ──────────────────────────────────────────────────────────────────────────────────
 
     [Fact]
@@ -510,6 +551,45 @@ public class CalculationDiscrepancyWorkflowServiceTests : IAsyncLifetime
     }
 
     // ── AcceptException — no route reachable for Critical, ever ────────────────────────────────────
+
+    [Fact]
+    public async Task AcceptException_RetryWithADifferentReason_IsRefused()
+    {
+        // RequiredApprovals=2 so the first AcceptException call records its approval but does not yet
+        // complete the transition — exactly the window where a genuine transactional-failure retry would
+        // also land, and where a reviewer resubmitting with different text must not be allowed to apply a
+        // reason the durable audit trail doesn't actually contain.
+        await using var db = CreateContext();
+        var (snapshot, ledger) = await SeedSnapshotAndLedgerAsync(db);
+        var discrepancy = await SeedAiCandidateAsync(db, snapshot, ledger, requiredApprovals: 2);
+        var service = NewService(db);
+        await service.ConfirmAsync(discrepancy.CalculationDiscrepancyId, "alice", CalculationDiscrepancySeverity.Material, null, CancellationToken.None);
+        await service.ConfirmAsync(discrepancy.CalculationDiscrepancyId, "bob", CalculationDiscrepancySeverity.Material, null, CancellationToken.None);
+
+        var first = await service.AcceptExceptionAsync(discrepancy.CalculationDiscrepancyId, "alice", "Reason A.", CancellationToken.None);
+        Assert.True(first.Success);
+
+        var mismatchedRetry = await service.AcceptExceptionAsync(discrepancy.CalculationDiscrepancyId, "alice", "Reason B — different text.", CancellationToken.None);
+        Assert.False(mismatchedRetry.Success);
+
+        await using var verifyDb = CreateContext();
+        // Still awaiting the second reviewer's approval — the mismatched retry changed nothing.
+        Assert.Equal(CalculationDiscrepancyStatus.Confirmed, (await Reload(verifyDb, discrepancy.CalculationDiscrepancyId)).Status);
+        var approval = await verifyDb.CalculationDiscrepancyApprovals.SingleAsync(a =>
+            a.CalculationDiscrepancyId == discrepancy.CalculationDiscrepancyId && a.DecisionAction == CalculationDiscrepancyDecisionAction.AcceptException);
+        Assert.Equal("Reason A.", approval.ReviewerNotes); // the audit trail was never overwritten with Reason B
+
+        // Retrying with the exact original reason still succeeds (once the second reviewer also agrees).
+        var matchingRetry = await service.AcceptExceptionAsync(discrepancy.CalculationDiscrepancyId, "alice", "Reason A.", CancellationToken.None);
+        Assert.True(matchingRetry.Success);
+        var secondReviewer = await service.AcceptExceptionAsync(discrepancy.CalculationDiscrepancyId, "bob", "Reason A.", CancellationToken.None);
+        Assert.True(secondReviewer.Success);
+
+        await using var finalDb = CreateContext();
+        var finalReload = await Reload(finalDb, discrepancy.CalculationDiscrepancyId);
+        Assert.Equal(CalculationDiscrepancyStatus.AcceptedAsSourceException, finalReload.Status);
+        Assert.Equal("Reason A.", finalReload.ExceptionReason);
+    }
 
     [Fact]
     public async Task AcceptException_OnACriticalDiscrepancy_IsRefused()

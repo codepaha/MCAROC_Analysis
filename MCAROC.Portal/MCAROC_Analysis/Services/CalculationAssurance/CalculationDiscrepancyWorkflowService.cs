@@ -78,6 +78,12 @@ public class CalculationDiscrepancyWorkflowService(AppDbContext db, ILogger<Calc
     /// the DB-level backstop even if that ever weren't enough.</summary>
     public async Task<WorkflowResult> ConfirmAsync(long discrepancyId, string reviewerName, CalculationDiscrepancySeverity severity, string? notes, CancellationToken ct)
     {
+        // An undefined enum value (e.g. an unvalidated model-bound cast) must never reach the hold-branch
+        // check below — Enum.IsDefined is what guarantees severity is exactly Minor/Material/Critical, so
+        // "not Critical or Material" can only ever mean the real, intentional Minor case, never a bypass.
+        if (!Enum.IsDefined(severity))
+            return WorkflowResult.Fail($"'{severity}' is not a recognized severity.");
+
         var discrepancy = await db.CalculationDiscrepancies.AsNoTracking().FirstOrDefaultAsync(d => d.CalculationDiscrepancyId == discrepancyId, ct);
         if (discrepancy is null) return WorkflowResult.Fail("Discrepancy not found.");
         if (discrepancy.SourceType != CalculationDiscrepancySourceType.AiCandidate)
@@ -229,11 +235,20 @@ public class CalculationDiscrepancyWorkflowService(AppDbContext db, ILogger<Calc
             return WorkflowResult.Fail("Only a Material discrepancy may be released via a documented exception. Critical has no exception route.");
 
         // Idempotent retry, mirroring Confirm above — a prior attempt's transaction may have already
-        // recorded this reviewer's approval and then failed to commit the transition/hold-release.
-        var existingApproval = await db.CalculationDiscrepancyApprovals.AsNoTracking().AnyAsync(a =>
+        // recorded this reviewer's approval and then failed to commit the transition/hold-release. The
+        // retry must supply the exact same reason as what was durably recorded: applying a freshly-typed
+        // reason B to a transition while the append-only audit trail still says reason A would let the
+        // current state and its own justification silently disagree.
+        var existingApproval = await db.CalculationDiscrepancyApprovals.AsNoTracking().FirstOrDefaultAsync(a =>
             a.CalculationDiscrepancyId == discrepancy.CalculationDiscrepancyId
             && a.DecisionAction == CalculationDiscrepancyDecisionAction.AcceptException && a.ReviewerName == reviewerName, ct);
-        if (!existingApproval)
+        if (existingApproval is not null)
+        {
+            if (!string.Equals(existingApproval.ReviewerNotes?.Trim(), exceptionReason.Trim(), StringComparison.Ordinal))
+                return WorkflowResult.Fail(
+                    "You already recorded a different exception reason for this discrepancy and cannot change it here. Resubmit with the exact original reason to retry.");
+        }
+        else
         {
             var recorded = await RecordApprovalAsync(discrepancy, CalculationDiscrepancyDecisionAction.AcceptException, reviewerName, exceptionReason, null, null, ct);
             if (!recorded.Success) return recorded;
