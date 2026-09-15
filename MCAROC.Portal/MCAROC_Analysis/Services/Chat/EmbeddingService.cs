@@ -60,7 +60,7 @@ public class EmbeddingService
                 $"Embedding batch returned {returnedCount} vectors for {inputCount} inputs.");
     }
 
-    public async Task<float[]> EmbedQueryAsync(string text, CancellationToken ct)
+    public virtual async Task<float[]> EmbedQueryAsync(string text, CancellationToken ct)
     {
         var config = new EmbedContentConfig { TaskType = "RETRIEVAL_QUERY", OutputDimensionality = Dimensions };
         var response = await _client!.Models.EmbedContentAsync(ModelId, text, config, ct);

@@ -4,7 +4,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace MCAROC_Analysis.Services.Chat;
 
-public record StructuredFact(string DomainKey, string Text, string? EntityType, long? EntityId);
+public record StructuredFact(string DomainKey, string Text, string? EntityType, long? EntityId, long? IngestionRunId = null);
 
 /// <summary>Builds a source-traceable structured-facts digest from Phase 1 entities for one request.
 /// Broadened beyond a single "latest 2 years, current directors" snapshot — includes current AND historical
@@ -134,7 +134,7 @@ public class StructuredFactsProvider(AppDbContext db)
                 facts.Add(new StructuredFact("Litigation", $"{litigations.Count} litigation record(s) on file.", null, null));
         }
 
-        return facts;
+        return facts.Select(f => f with { IngestionRunId = ingestionRunId }).ToList();
     }
 
     private static HashSet<string> DetermineDetailedDomains(QuestionHints hints)
