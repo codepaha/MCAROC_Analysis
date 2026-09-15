@@ -40,7 +40,12 @@ public static class AuditorsParser
                 break; // blank row or non-year row ends table 1
 
             var qualified = Cell(row, 1)?.ToString()?.Trim();
-            var commentsBy = Cell(row, 4)?.ToString()?.Trim();
+            // Same "-"/"NIL"-to-null normalization already applied to the detail table's text columns
+            // below — table 1's "Comments Given By" cell had no such normalization, so a literal "-"
+            // (no comment on file) propagated as a real value into both AuditorName and ObservationText,
+            // producing a stray "— -" tail once the dossier PDF started joining AuditorName-derived
+            // identity text with ObservationText in the same cell.
+            var commentsBy = NormalizeDetailText(Cell(row, 4));
 
             var observation = new AuditorObservation
             {
