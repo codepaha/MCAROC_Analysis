@@ -28,8 +28,8 @@
         <div class="mca-company-id">
             <h1>@r.CompanyName</h1>
             <div class="mca-ids">
-                <span><b>CIN:</b> @(r.Cin ?? r.Llpin ?? "—")</span>
-                <span><b>PAN:</b> @(r.Pan ?? "—")</span>
+                <span><b>CIN:</b> @(Model.CompanyProfile?.Cin ?? r.Cin ?? r.Llpin ?? "—")</span>
+                <span><b>PAN:</b> @(Model.CompanyProfile?.Pan ?? r.Pan ?? "—")</span>
                 @if (!string.IsNullOrEmpty(Model.CompanyProfile?.CompanyStatus))
                 {
                     <span><b>Status:</b> @Model.CompanyProfile.CompanyStatus</span>
