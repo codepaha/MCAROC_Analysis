@@ -4,8 +4,9 @@ namespace MCAROC_Analysis.Services.Excel.Parsers;
 
 /// <summary>Parses the two blocks of the "Highlights" sheet that sit below FINANCIAL PARAMETERS
 /// (which <see cref="FinancialParametersParser"/> handles): PRINCIPAL BUSINESS ACTIVITIES and
-/// NAME HISTORY. Both are small banner-led tables; a "this corporate has not had any name change"
-/// note stands in for an empty NAME HISTORY.</summary>
+/// NAME HISTORY. Both are small banner-led tables; each has its own empty-state note in place of
+/// data rows — "this corporate has not had any name change" for NAME HISTORY, "we did not find
+/// this data in the relevant filing" for PRINCIPAL BUSINESS ACTIVITIES.</summary>
 public static class HighlightsParser
 {
     private const string ParserName = nameof(HighlightsParser);
@@ -35,6 +36,7 @@ public static class HighlightsParser
 
             if (c0.StartsWith("Main Activity Group Code", StringComparison.OrdinalIgnoreCase)) continue; // header
             if (c0.StartsWith("See Annexure", StringComparison.OrdinalIgnoreCase)) continue;
+            if (c0.Contains("did not find this data", StringComparison.OrdinalIgnoreCase)) continue; // empty-state note
 
             var groupDesc = Cell(sheet, r, 1);
             var activityCode = Cell(sheet, r, 2);

@@ -221,6 +221,18 @@ public class HighlightsParserTests
     }
 
     [Fact]
+    public void PrincipalBusinessActivities_EmptyStateNote_ProducesNoRows()
+    {
+        var sheet = Sheet("Highlights",
+            Row("PRINCIPAL BUSINESS ACTIVITIES - 31 Mar, 2025"),
+            Row("Main Activity Group Code", "Description of Main Activity Group", "Business Activity Code", "Description of Business Activity", "% of Turnover"),
+            Row("We did not find this data in the relevant filing.", "", "", "", ""));
+
+        var r = HighlightsParser.ParsePrincipalBusinessActivities(sheet, 1, 1, 10);
+        Assert.Empty(r.Items);
+    }
+
+    [Fact]
     public void NameHistory_EmptyStateNote_ProducesNoRows()
     {
         var sheet = Sheet("Highlights",
