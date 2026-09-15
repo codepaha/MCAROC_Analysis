@@ -119,11 +119,14 @@ public partial class DossierPdfComposer
             box.Item().Background(DossierTheme.Ink).PaddingVertical(6).PaddingHorizontal(11)
                 .Text("Company Profile").FontFamily(DossierTheme.Display).FontSize(11.5f).FontColor("#FFFFFF");
 
+            var rowCount = 0;
             void Row(string label, string? value)
             {
                 if (string.IsNullOrWhiteSpace(value)) return;
-                box.Item().BorderBottom(0.5f).BorderColor(DossierTheme.LineSoft)
-                    .PaddingVertical(5).PaddingHorizontal(11).Row(r =>
+                var shaded = rowCount++ % 2 == 1;
+                var boxed = box.Item().BorderBottom(0.5f).BorderColor(DossierTheme.LineSoft);
+                if (shaded) boxed = boxed.Background(DossierTheme.PaperRaised);
+                boxed.PaddingVertical(7).PaddingHorizontal(11).Row(r =>
                 {
                     r.ConstantItem(150).Text(label).FontSize(DossierTheme.Small).FontColor(DossierTheme.InkSoft);
                     r.RelativeItem().Text(value).FontSize(DossierTheme.Small).SemiBold();
@@ -472,11 +475,13 @@ public partial class DossierPdfComposer
                 foreach (var y in years) HeaderCell(h.Cell(), $"FY{y.FinancialYear}");
                 HeaderCell(h.Cell(), "Trend");
             });
-            foreach (var (label, sel) in rows)
+            for (var ri = 0; ri < rows.Length; ri++)
             {
-                BodyCell(table.Cell(), label);
-                foreach (var y in years) BodyCell(table.Cell(), sel(y)?.ToString("N1") ?? "-", right: true);
-                BodyCell(table.Cell(), Trend(years.Select(sel).ToList()));
+                var (label, sel) = rows[ri];
+                var shaded = ri % 2 == 1;
+                BodyCell(table.Cell(), label, shaded: shaded);
+                foreach (var y in years) BodyCell(table.Cell(), sel(y)?.ToString("N1") ?? "-", right: true, shaded: shaded);
+                BodyCell(table.Cell(), Trend(years.Select(sel).ToList()), shaded: shaded);
             }
         });
     }
@@ -491,12 +496,17 @@ public partial class DossierPdfComposer
     }
 
     private void HeaderCell(IContainer c, string text) => c
-        .BorderBottom(0.75f).BorderColor(DossierTheme.Line).PaddingVertical(5).PaddingHorizontal(6)
+        .BorderBottom(0.75f).BorderColor(DossierTheme.Line).PaddingVertical(7).PaddingHorizontal(7)
         .Text(text).FontSize(DossierTheme.TableHeader).FontColor(DossierTheme.InkFaint);
 
-    private void BodyCell(IContainer c, string text, bool right = false)
+    /// <summary>A source-record table cell. <paramref name="shaded"/> gives every other row a faint tint
+    /// (zebra striping) — pure scan-aid on the long multi-year/register tables, no border/weight change,
+    /// so it reads as a refinement of the existing flat, editorial style rather than a new visual language.</summary>
+    private void BodyCell(IContainer c, string text, bool right = false, bool shaded = false)
     {
-        var cell = c.BorderBottom(0.5f).BorderColor(DossierTheme.LineSoft).PaddingVertical(4).PaddingHorizontal(6);
+        var boxed = c.BorderBottom(0.5f).BorderColor(DossierTheme.LineSoft);
+        if (shaded) boxed = boxed.Background(DossierTheme.PaperRaised);
+        var cell = boxed.PaddingVertical(6).PaddingHorizontal(7);
         var t = (right ? cell.AlignRight() : cell).Text(text).FontSize(DossierTheme.TableCell);
         if (right) t.FontFamily(DossierTheme.Mono);
     }

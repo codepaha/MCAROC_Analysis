@@ -173,7 +173,7 @@ public partial class DossierPdfComposer(DossierModel model, DossierVariant varia
                 .Text(title).FontFamily(DossierTheme.Display).FontSize(11.5f).FontColor("#FFFFFF");
             foreach (var (k, v) in rows)
                 col.Item().BorderBottom(0.5f).BorderColor(DossierTheme.LineSoft)
-                    .PaddingVertical(5).PaddingHorizontal(11).Row(r =>
+                    .PaddingVertical(7).PaddingHorizontal(11).Row(r =>
                 {
                     r.RelativeItem().Text(k).FontSize(DossierTheme.Small).FontColor(DossierTheme.InkSoft);
                     r.ConstantItem(130).AlignRight().Text(v).FontSize(DossierTheme.Small).SemiBold();

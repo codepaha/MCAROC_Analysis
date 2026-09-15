@@ -82,9 +82,13 @@ public partial class DossierPdfComposer
         {
             table.ColumnsDefinition(cd => { foreach (var c in cols) cd.RelativeColumn(c.Weight); });
             table.Header(h => { foreach (var c in cols) HeaderCell(h.Cell(), c.Header); });
-            foreach (var r in rows)
+            for (var ri = 0; ri < rows.Count; ri++)
+            {
+                var r = rows[ri];
+                var shaded = ri % 2 == 1;
                 foreach (var c in cols)
-                    BodyCell(table.Cell(), c.Cell(r), c.Right && c.Cell(r) is not "-" and not "");
+                    BodyCell(table.Cell(), c.Cell(r), c.Right && c.Cell(r) is not "-" and not "", shaded);
+            }
         });
     }
 
@@ -279,10 +283,12 @@ public partial class DossierPdfComposer
                     HeaderCell(h.Cell(), "Line item");
                     foreach (var y in chunk) HeaderCell(h.Cell(), $"FY{y.FinancialYear}");
                 });
-                foreach (var (label, sel) in activeLines)
+                for (var ri = 0; ri < activeLines.Count; ri++)
                 {
-                    BodyCell(table.Cell(), label);
-                    foreach (var y in chunk) BodyCell(table.Cell(), sel(y)?.ToString("N2") ?? "-", right: true);
+                    var (label, sel) = activeLines[ri];
+                    var shaded = ri % 2 == 1;
+                    BodyCell(table.Cell(), label, shaded: shaded);
+                    foreach (var y in chunk) BodyCell(table.Cell(), sel(y)?.ToString("N2") ?? "-", right: true, shaded: shaded);
                 }
             });
         }
@@ -314,15 +320,17 @@ public partial class DossierPdfComposer
                     HeaderCell(h.Cell(), "Ratio");
                     foreach (var y in chunk) HeaderCell(h.Cell(), $"FY{y}");
                 });
-                foreach (var label in labels)
+                for (var ri = 0; ri < labels.Count; ri++)
                 {
-                    BodyCell(table.Cell(), label);
+                    var label = labels[ri];
+                    var shaded = ri % 2 == 1;
+                    BodyCell(table.Cell(), label, shaded: shaded);
                     foreach (var y in chunk)
                     {
                         var value = byLabelYear.TryGetValue((label, y), out var fact)
                             ? fact.NumericValue?.ToString("0.##") ?? fact.RawValue
                             : "-";
-                        BodyCell(table.Cell(), value, right: true);
+                        BodyCell(table.Cell(), value, right: true, shaded: shaded);
                     }
                 }
             });
@@ -385,15 +393,17 @@ public partial class DossierPdfComposer
                             HeaderCell(h.Cell(), "Line item");
                             foreach (var y in chunk) HeaderCell(h.Cell(), $"FY{y}");
                         });
-                        foreach (var label in labels)
+                        for (var ri = 0; ri < labels.Count; ri++)
                         {
-                            BodyCell(table.Cell(), label);
+                            var label = labels[ri];
+                            var shaded = ri % 2 == 1;
+                            BodyCell(table.Cell(), label, shaded: shaded);
                             foreach (var y in chunk)
                             {
                                 var value = byLabelYear.TryGetValue((label, y), out var fact)
                                     ? fact.NumericValue?.ToString("N2") ?? fact.RawValue
                                     : "-";
-                                BodyCell(table.Cell(), value, right: true);
+                                BodyCell(table.Cell(), value, right: true, shaded: shaded);
                             }
                         }
                     });
@@ -409,10 +419,12 @@ public partial class DossierPdfComposer
                 {
                     table.ColumnsDefinition(cd => { cd.RelativeColumn(2.4f); cd.RelativeColumn(); });
                     table.Header(h => { HeaderCell(h.Cell(), "Line item"); HeaderCell(h.Cell(), "Value"); });
-                    foreach (var x in undated)
+                    for (var ri = 0; ri < undated.Count; ri++)
                     {
-                        BodyCell(table.Cell(), x.Label);
-                        BodyCell(table.Cell(), x.NumericValue?.ToString("N2") ?? x.RawValue, right: true);
+                        var x = undated[ri];
+                        var shaded = ri % 2 == 1;
+                        BodyCell(table.Cell(), x.Label, shaded: shaded);
+                        BodyCell(table.Cell(), x.NumericValue?.ToString("N2") ?? x.RawValue, right: true, shaded: shaded);
                     }
                 });
             }
