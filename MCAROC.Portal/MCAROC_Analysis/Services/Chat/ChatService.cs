@@ -105,7 +105,11 @@ public class ChatService(
         try
         {
             var context = await contextBuilder.BuildAsync(requestId, question, ct);
-            var completion = await completionService.CompleteAsync(request.CompanyName, context, priorHistory, question, ct);
+            // No evidence means no model call: an unavailable provider must not replace the required
+            // fail-closed response, and the model cannot turn an empty prompt into verified evidence.
+            var completion = context.Sources.Count == 0
+                ? ChatCompletionService.InsufficientEvidenceResult()
+                : await completionService.CompleteAsync(request.CompanyName, context, priorHistory, question, ct);
 
             assistantMessage = new ChatMessage
             {

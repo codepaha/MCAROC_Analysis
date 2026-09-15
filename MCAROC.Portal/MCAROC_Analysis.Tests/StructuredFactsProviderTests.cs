@@ -23,6 +23,17 @@ public class StructuredFactsProviderTests : IAsyncLifetime
 
     public Task DisposeAsync() => Task.CompletedTask;
 
+    private sealed class ThrowingEmbeddingService : EmbeddingService
+    {
+        public bool Called { get; private set; }
+
+        public override Task<float[]> EmbedQueryAsync(string text, CancellationToken ct)
+        {
+            Called = true;
+            throw new HttpRequestException("Embedding provider unavailable");
+        }
+    }
+
     private static async Task<(long RequestId, long RunId)> SeedRequestAsync(AppDbContext db)
     {
         var request = new McaRequest
@@ -142,5 +153,37 @@ public class StructuredFactsProviderTests : IAsyncLifetime
 
         Assert.Contains(facts, f => f.DomainKey == "Gst"
             && f.Text == "1 active GST registration(s) of 3 on record.");
+    }
+
+    [Fact]
+    public async Task Completed_ingestion_without_indexed_filings_uses_structured_facts_without_calling_embeddings()
+    {
+        await using var db = CreateContext();
+        var (requestId, runId) = await SeedRequestAsync(db);
+        db.RocCharges.Add(new RocCharge
+        {
+            RequestId = requestId,
+            IngestionRunId = runId,
+            RocChargeNumber = "STRUCTURED-ONLY",
+            ChargeStatus = "Open",
+            CurrentAmount = 10m
+        });
+        await db.SaveChangesAsync();
+
+        var embedding = new ThrowingEmbeddingService();
+        var contextBuilder = new RetrievalContextBuilder(
+            db,
+            new StructuredFactsProvider(db),
+            new DocumentRetriever(db, ChatRetrievalOptions.Default),
+            embedding);
+
+        var context = await contextBuilder.BuildAsync(requestId, "What open charges are recorded?", CancellationToken.None);
+
+        Assert.False(embedding.Called);
+        var fact = Assert.Single(context.Sources);
+        Assert.Equal(SourceType.StructuredFact, fact.Type);
+        Assert.Contains($"Ingestion run {runId}", fact.DisplayLabel);
+        Assert.Contains("RocCharge", fact.DisplayLabel);
+        Assert.Equal("NotStarted", context.IndexingStatusLabel);
     }
 }

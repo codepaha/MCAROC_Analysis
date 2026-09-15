@@ -22,6 +22,9 @@ public class ChatCompletionService
     public const string PromptVersion = "1.0";
     private const string InsufficientAnswer = "I could not verify this from the uploaded records.";
 
+    internal static ChatCompletionResult InsufficientEvidenceResult() =>
+        new(InsufficientAnswer, true, []);
+
     private readonly GenAiClient _client;
     private readonly ILogger<ChatCompletionService> _logger;
 

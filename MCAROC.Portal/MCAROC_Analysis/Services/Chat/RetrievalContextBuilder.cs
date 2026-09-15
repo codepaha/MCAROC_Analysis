@@ -37,13 +37,24 @@ public class RetrievalContextBuilder
 
         var authoritativeBatch = await McaFilings.McaFilingBatchResolver.GetAuthoritativeBatchAsync(_db, requestId, ct);
         var facts = await _structuredFacts.BuildDigestAsync(requestId, hints, ct);
-        var queryEmbedding = await _embeddingService.EmbedQueryAsync(question, ct);
-        var chunkMatches = await _documentRetriever.SearchRequestDocumentsAsync(requestId, authoritativeBatch?.BatchId, queryEmbedding, hints, ct);
+
+        // A request without an authoritative batch must never search its historical chunks. Likewise,
+        // there is no reason to call Vertex for an embedding until that batch has indexed a chunk.
+        var chunkMatches = new List<DocumentChunkMatch>();
+        if (authoritativeBatch is { } batch
+            && await _db.DocumentChunks.AnyAsync(c => c.RequestId == requestId && c.BatchId == batch.BatchId, ct))
+        {
+            var queryEmbedding = await _embeddingService.EmbedQueryAsync(question, ct);
+            chunkMatches = await _documentRetriever.SearchRequestDocumentsAsync(requestId, batch.BatchId, queryEmbedding, hints, ct);
+        }
 
         var sources = new List<RetrievedSource>(facts.Count + chunkMatches.Count);
         var factTag = 1;
         foreach (var f in facts)
-            sources.Add(new RetrievedSource($"F{factTag++}", SourceType.StructuredFact, f.Text, f.DomainKey,
+            sources.Add(new RetrievedSource($"F{factTag++}", SourceType.StructuredFact, f.Text,
+                f.EntityType is null
+                    ? $"Computed from parsed data · Ingestion run {f.IngestionRunId} · {f.DomainKey}"
+                    : $"Computed from parsed data · Ingestion run {f.IngestionRunId} · {f.EntityType} #{f.EntityId}",
                 EntityType: f.EntityType, EntityId: f.EntityId));
 
         var chunkTag = 1;

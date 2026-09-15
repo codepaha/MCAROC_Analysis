@@ -277,8 +277,50 @@ public class ChatEndpointJsonTests : IAsyncLifetime
     {
         public override Task<RetrievalContext> BuildAsync(long requestId, string question, CancellationToken ct)
         {
-            return Task.FromResult(new RetrievalContext([], "Complete"));
+            return Task.FromResult(new RetrievalContext(
+                [new RetrievedSource("F1", SourceType.StructuredFact, "Test fact", "Computed from parsed data · test")],
+                "Complete"));
         }
+    }
+
+    private sealed class EmptyRetrievalContextBuilder : RetrievalContextBuilder
+    {
+        public override Task<RetrievalContext> BuildAsync(long requestId, string question, CancellationToken ct) =>
+            Task.FromResult(new RetrievalContext([], "NotStarted"));
+    }
+
+    private sealed class ThrowIfCalledCompletionService : ChatCompletionService
+    {
+        public bool Called { get; private set; }
+
+        public override Task<ChatCompletionResult> CompleteAsync(
+            string companyName, RetrievalContext context, IReadOnlyList<ChatMessage> history, string question, CancellationToken ct)
+        {
+            Called = true;
+            throw new InvalidOperationException("The completion service must not be called without evidence.");
+        }
+    }
+
+    [Fact]
+    public async Task PostChat_EmptyEvidence_PersistsFixedInsufficientEvidenceWithoutCallingCompletion()
+    {
+        await using var db = CreateContext();
+        var requestId = await SeedRequestAsync("No Evidence Corp");
+        var completion = new ThrowIfCalledCompletionService();
+        var chatService = new ChatService(db, new EmptyRetrievalContextBuilder(), completion, NullLogger<ChatService>.Instance);
+        var controller = NewController(db);
+
+        var result = await controller.AskChat(requestId,
+            new AskChatJsonRequest { Question = "What is the revenue?", ClientTurnId = Guid.NewGuid() },
+            chatService, CancellationToken.None);
+
+        var ok = Assert.IsType<OkObjectResult>(result);
+        var response = Assert.IsType<ChatApiResponse>(ok.Value);
+        Assert.True(response.Success);
+        Assert.False(completion.Called);
+        Assert.NotNull(response.Message);
+        Assert.Equal("I could not verify this from the uploaded records.", response.Message.Text);
+        Assert.Empty(response.Message.Citations);
     }
 
     [Fact]
