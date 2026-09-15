@@ -78,7 +78,9 @@ public static partial class LitigationRules
         entityIds = cases.Select(l => l.LitigationId).OrderBy(id => id).ToArray()
     });
 
-    private static bool IsPending(string? caseStatus)
+    /// <summary>Internal (not private) so EntityCrossReferenceRules can apply the exact same
+    /// pending/resolved definition rather than duplicating the closed-keyword list and risking drift.</summary>
+    internal static bool IsPending(string? caseStatus)
     {
         if (string.IsNullOrWhiteSpace(caseStatus)) return false; // unknown status — excluded rather than assumed pending
         var text = caseStatus.ToLowerInvariant();
