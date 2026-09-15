@@ -156,8 +156,12 @@ public partial class DossierPdfComposer(DossierModel model, DossierVariant varia
                 });
         });
 
-    /// <summary>A metric mini-table: value on the right, a small "period · inputs" caption under each
-    /// label, an "insufficient data" reason rendered in place of a number.</summary>
+    /// <summary>A metric mini-table: value on the right, the period it covers as a small caption under
+    /// each label, an "insufficient data" reason rendered in place of a number. Unlike the portal's own
+    /// Key Indicators tab (a properly labeled table with its own "Inputs" column — an intentional
+    /// analyst/audit feature), this client-facing PDF caption never prints the raw `Entity.Field`
+    /// provenance strings from <see cref="Models.Dossier.MetricResult.Inputs"/> — that detail belongs in
+    /// a single Methodology appendix, not repeated under every card.</summary>
     private void MetricBlock(IContainer c, Models.Dossier.MetricGroup group) =>
         c.Border(0.75f).BorderColor(DossierTheme.Line).Column(col =>
         {
@@ -170,7 +174,7 @@ public partial class DossierPdfComposer(DossierModel model, DossierVariant varia
                     r.RelativeItem().Column(lc =>
                     {
                         lc.Item().Text(m.Label).FontSize(DossierTheme.Small).FontColor(DossierTheme.InkSoft);
-                        lc.Item().Text($"{m.Period} · {string.Join(", ", m.Inputs)}")
+                        lc.Item().Text(m.Period)
                             .FontSize(DossierTheme.Small - 1.5f).FontColor(DossierTheme.InkFaint);
                     });
                     r.ConstantItem(130).AlignRight().Text(m.DisplayValue())

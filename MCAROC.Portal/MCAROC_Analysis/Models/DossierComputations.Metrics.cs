@@ -2559,8 +2559,14 @@ public static partial class DossierComputations
                 if (!first.IsKnown)
                 {
                     var rawName = first.RawTrimmed;
+                    // #197: this MetricResult renders in both the client PDF and the portal's Key
+                    // Indicators tab (MetricGroup is shared — see its doc comment), so the reason text
+                    // must read as a data fact to either audience, not an internal catalogue-mapping
+                    // gap. "Unknown peer metric... allow-list" described the engineering cause; this
+                    // describes the same absence the way a "no records in this workbook" line already
+                    // does elsewhere in the dossier.
                     list.Add(MetricResult.Insufficient($"{rawName} vs peer median", MetricUnit.Unspecified,
-                        $"Unknown peer metric '{rawName}' — unit and direction not defined in catalogue allow-list",
+                        "Peer benchmark not available for this metric in the current dataset.",
                         "PeerComparisonMetric.CompanyValue", "PeerComparisonMetric.PeerMedianValue"));
                     continue;
                 }

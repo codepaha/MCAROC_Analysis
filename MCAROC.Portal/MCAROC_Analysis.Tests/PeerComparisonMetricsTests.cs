@@ -424,7 +424,7 @@ public class PeerComparisonMetricsTests
 
         Assert.False(m.HasValue);
         Assert.Equal(MetricUnit.Unspecified, m.Unit);
-        Assert.Contains("Unknown peer metric 'Custom Non-Standard Metric' — unit and direction not defined in catalogue allow-list", m.InsufficiencyReason);
+        Assert.Equal("Peer benchmark not available for this metric in the current dataset.", m.InsufficiencyReason);
     }
 
     [Fact]
