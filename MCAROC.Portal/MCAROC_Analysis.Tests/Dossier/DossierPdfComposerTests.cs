@@ -98,6 +98,13 @@ public class DossierPdfComposerTests : IAsyncLifetime
         Assert.DoesNotContain("risk score", lower);
         Assert.DoesNotContain("/100", lower);
         Assert.DoesNotContain("documents index", lower);
+
+        // Product decision: the client-facing PDF names "CT AI" and nothing more specific — no model
+        // name, no vendor, no generic "AI-assisted" phrasing that isn't the branded term.
+        Assert.Contains("CT AI", text);
+        Assert.DoesNotContain("gemini", lower);
+        Assert.DoesNotContain("ai-assisted", lower);
+        Assert.DoesNotContain("vertex", lower);
     }
 
     /// <summary>#152/#197: the source-reported ratios (catalogue A1.x) get their own "Ratios, as

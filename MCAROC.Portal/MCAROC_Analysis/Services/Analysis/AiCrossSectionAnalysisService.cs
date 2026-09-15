@@ -68,7 +68,7 @@ public partial class AiCrossSectionAnalysisService
         return Validate(rawResponse, findings);
     }
 
-    private static string BuildPrompt(IReadOnlyList<AnalysisFinding> findings, ReviewPriority priority, IReadOnlyList<(string Code, string Reason)> dataSufficiencyNotes)
+    internal static string BuildPrompt(IReadOnlyList<AnalysisFinding> findings, ReviewPriority priority, IReadOnlyList<(string Code, string Reason)> dataSufficiencyNotes)
     {
         var sb = new StringBuilder();
         sb.AppendLine("You are a credit-analysis assistant summarizing an MCA/ROC company review for a BFSI analyst.");
@@ -79,6 +79,7 @@ public partial class AiCrossSectionAnalysisService
         sb.AppendLine("- Never assert an unproven causal fact (e.g. do not say a company 'cannot pay salaries' or 'is insolvent'). Correlate and hedge — use language like 'may indicate potential...'.");
         sb.AppendLine("- Never introduce a number (amount, percentage, ratio, or year) that is not present in the finding data below.");
         sb.AppendLine("- Only propose a cross-section finding when it genuinely combines findings from different domains — not a rephrasing of one finding.");
+        sb.AppendLine("- The reader sees every individual finding below as its own card before reading executiveSummary, so businessPerformance/financialPosition/borrowingSecurity/governanceCompliance/keyReviewItems must not restate a finding's Summary verbatim or near-verbatim. Synthesize: explain what the findings mean together, or what an analyst should conclude — do not re-describe what is already itemized elsewhere.");
         sb.AppendLine("- Respond with ONLY a JSON object matching this exact shape (no markdown fences, no commentary):");
         sb.AppendLine("""
             {

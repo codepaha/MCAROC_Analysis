@@ -11,6 +11,22 @@ public class AiCrossSectionAnalysisServiceValidationTests
     private static AnalysisFinding Finding(string code, FindingSeverity severity, string? metricsJson = null, string? periodLabel = null, string? supportingSignalsJson = null, FindingSection section = FindingSection.Financial) =>
         new() { Code = code, Severity = severity, Section = section, Title = code, SummaryText = code, MetricsJson = metricsJson, PeriodLabel = periodLabel, SupportingSignalsJson = supportingSignalsJson };
 
+    /// <summary>#197: the "Cross-section read" / "Key review items" restatement complaint traces back
+    /// to the prompt never telling the model the reader already saw every finding as its own card — this
+    /// is the actual root-cause fix (not a post-hoc text-similarity filter on the response, which would
+    /// be fragile). Can't verify Gemini actually complies without a live call (out of scope per this
+    /// file's own testing boundary, see the class doc comment), but the instruction reaching the prompt
+    /// is directly testable.</summary>
+    [Fact]
+    public void Prompt_instructs_the_model_not_to_restate_findings_already_shown_as_cards()
+    {
+        var findings = new List<AnalysisFinding> { Finding("FIN_REVENUE_DECLINE_1Y", FindingSeverity.Review) };
+
+        var prompt = AiCrossSectionAnalysisService.BuildPrompt(findings, ReviewPriority.Medium, []);
+
+        Assert.Contains("must not restate a finding's Summary verbatim", prompt);
+    }
+
     [Fact]
     public void GeneralCountingLanguage_IsNeverDropped()
     {
