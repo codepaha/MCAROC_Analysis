@@ -192,7 +192,7 @@ public partial class DossierPdfComposer
         col.Item().Text(t =>
         {
             t.DefaultTextStyle(x => x.FontSize(DossierTheme.Small).FontColor(DossierTheme.InkSoft).LineHeight(1.5f));
-            t.Span($"Built on {cov.PresentOptionalSheets} of {cov.TotalOptionalSheets} optional workbook sheets. ");
+            t.Span($"This dossier includes {cov.PresentOptionalSheets} of {cov.TotalOptionalSheets} optional source categories. ");
             if (notes.Count > 0)
                 t.Span($"{notes.Count} deterministic check{(notes.Count == 1 ? "" : "s")} could not be run against " +
                     "this data set — absence of a flag elsewhere is not itself a clean result. ");
@@ -200,9 +200,12 @@ public partial class DossierPdfComposer
         });
     }
 
-    /// <summary>"Source coverage" — which optional workbook sheets this dossier is and is not built on,
-    /// so an empty annexure section reads as "not in this upload" rather than "verified nil". Called only
-    /// from <see cref="AnnexureF"/>; a no-op only when every tracked optional sheet was present and a
+    /// <summary>"Source coverage" — a one-line disclosure that this dossier is not built on every optional
+    /// data category, so a client is never left assuming full coverage. Deliberately does not itemize
+    /// which internal source categories were absent — that detail (and, distinctly, which check could not
+    /// run because of it) now lives where a reviewer is already looking: as a "Not provided in this
+    /// upload" note right inside the specific section it affects, next to the empty table itself. Called
+    /// only from <see cref="AnnexureF"/>; a no-op when every tracked optional category was present and a
     /// charge report (where charges exist) was supplied.</summary>
     private void ComposeSourceCoverage(ColumnDescriptor col)
     {
@@ -210,33 +213,11 @@ public partial class DossierPdfComposer
         if (!cov.AnySheetAbsent && !cov.ChargeReportMissing) return;
 
         col.Item().Element(c => SubHead(c, "Source coverage"));
-        col.Item().PaddingBottom(8).Text(
-            $"This dossier is built on {cov.PresentOptionalSheets} of {cov.TotalOptionalSheets} optional workbook " +
-            "sheets. A section with no records below was either absent from this upload or present and empty — the " +
-            "list distinguishes the two.")
+        col.Item().Text(
+            $"This dossier includes {cov.PresentOptionalSheets} of {cov.TotalOptionalSheets} optional source " +
+            "categories. Where a category was not provided, the affected section says so directly, next to the " +
+            "empty table it would have filled.")
             .FontSize(DossierTheme.Small).FontColor(DossierTheme.InkSoft).LineHeight(1.5f);
-
-        col.Item().Border(0.75f).BorderColor(DossierTheme.Line).BorderLeft(2.5f).BorderColor(DossierTheme.Amber)
-            .Background(DossierTheme.PaperRaised).Padding(11).Column(inner =>
-        {
-            if (cov.ChargeReportMissing)
-                inner.Item().PaddingBottom(4).Row(r =>
-                {
-                    r.ConstantItem(14).Text("•").FontColor(DossierTheme.Amber);
-                    r.RelativeItem().Text(
-                        "The ROC report lists charges, but the Detailed Charge Report workbook was not provided — " +
-                        "charge detail is limited to the ROC sequence.")
-                        .FontSize(DossierTheme.Small).FontColor(DossierTheme.InkSoft).LineHeight(1.4f);
-                });
-
-            foreach (var sheet in cov.AbsentSheets)
-                inner.Item().PaddingBottom(4).Row(r =>
-                {
-                    r.ConstantItem(14).Text("•").FontColor(DossierTheme.Amber);
-                    r.RelativeItem().Text($"Not in this upload: “{sheet}” sheet.")
-                        .FontSize(DossierTheme.Small).FontColor(DossierTheme.InkSoft).LineHeight(1.4f);
-                });
-        });
     }
 
     /// <summary>The deterministic checks the rule engine could NOT run, and why — so a "verified
