@@ -298,6 +298,9 @@ public class IngestionOrchestrator(AppDbContext db, IExcelSheetReader sheetReade
         if (auditorsSheet is not null)
         {
             var r = AuditorsParser.Parse(auditorsSheet, requestId, runId, rocDocumentId, FinancialBasis.Standalone);
+            if (rocSheets.Find(SheetAliases.StandaloneFinancialData) is { } standaloneFinSheet)
+                itemCount += MergeAuditorIdentities(r.Items, StandaloneFinancialDataParser.ParseAuditorIdentities(standaloneFinSheet),
+                    requestId, runId, rocDocumentId, standaloneFinSheet.Name, FinancialBasis.Standalone);
             db.AuditorObservations.AddRange(r.Items);
             Collect(r, issues, ref itemCount);
         }
@@ -306,6 +309,9 @@ public class IngestionOrchestrator(AppDbContext db, IExcelSheetReader sheetReade
         if (auditorsConsolidatedSheet is not null)
         {
             var r = AuditorsParser.Parse(auditorsConsolidatedSheet, requestId, runId, rocDocumentId, FinancialBasis.Consolidated);
+            if (rocSheets.Find(SheetAliases.ConsolidatedFinancialData) is { } consolidatedFinSheet)
+                itemCount += MergeAuditorIdentities(r.Items, StandaloneFinancialDataParser.ParseAuditorIdentities(consolidatedFinSheet),
+                    requestId, runId, rocDocumentId, consolidatedFinSheet.Name, FinancialBasis.Consolidated);
             db.AuditorObservations.AddRange(r.Items);
             Collect(r, issues, ref itemCount);
         }
@@ -423,6 +429,56 @@ public class IngestionOrchestrator(AppDbContext db, IExcelSheetReader sheetReade
             db.CompanyNameHistories.AddRange(names.Items);
             Collect(names, issues, ref itemCount);
         }
+    }
+
+    /// <summary>Backfills auditor identity (name/membership/firm/FRN) from the AUDITOR(s) block embedded
+    /// in the financial-data sheet into the matching year's AuditorObservation, and adds an identity-only
+    /// row for any year present there but missing from the Auditors' Comments sheet entirely. Real gap
+    /// found via real-file testing: a company's Auditors' Comments sheet can carry rows for only some of
+    /// the audited years while the financial-data sheet's own AUDITOR(s) block covers every year — that
+    /// block is the sole source for the missing years' auditor identity, so it must not be silently
+    /// dropped. Never overwrites an already-populated identity field — this only fills gaps.
+    /// Returns the number of new AuditorObservation rows added, for the ingestion run's row count.</summary>
+    private static int MergeAuditorIdentities(
+        List<AuditorObservation> observations,
+        List<StandaloneFinancialDataParser.AuditorIdentityRow> identities,
+        long requestId, long runId, long sourceDocumentId, string sourceSheetName, FinancialBasis basis)
+    {
+        if (identities.Count == 0) return 0;
+
+        var byYear = observations.Where(o => !o.IsDetailRow).ToDictionary(o => o.FinancialYear);
+        var addedCount = 0;
+
+        foreach (var identity in identities)
+        {
+            if (byYear.TryGetValue(identity.Year, out var existing))
+            {
+                if (string.IsNullOrWhiteSpace(existing.AuditorName) || existing.AuditorName == "-")
+                    existing.AuditorName = identity.AuditorName;
+                existing.MembershipNumber ??= identity.MembershipNumber;
+                existing.FirmName ??= identity.FirmName;
+                existing.FirmRegistrationNumber ??= identity.FirmRegistrationNumber;
+            }
+            else
+            {
+                observations.Add(new AuditorObservation
+                {
+                    RequestId = requestId,
+                    IngestionRunId = runId,
+                    SourceDocumentId = sourceDocumentId,
+                    SourceSheetName = sourceSheetName,
+                    SourceRowNumber = identity.SourceRowNumber,
+                    FinancialYear = identity.Year,
+                    Basis = basis,
+                    AuditorName = identity.AuditorName,
+                    MembershipNumber = identity.MembershipNumber,
+                    FirmName = identity.FirmName,
+                    FirmRegistrationNumber = identity.FirmRegistrationNumber
+                });
+                addedCount++;
+            }
+        }
+        return addedCount;
     }
 
     private static void Collect<T>(ParseResult<T> result, List<IngestionIssue> issues, ref int itemCount)

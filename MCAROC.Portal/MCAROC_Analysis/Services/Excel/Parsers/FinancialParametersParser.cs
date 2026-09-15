@@ -55,6 +55,16 @@ public static class FinancialParametersParser
             var name = row.Count > 0 ? row[0]?.ToString()?.Trim() : null;
             if (string.IsNullOrEmpty(name)) continue;
 
+            // The "Highlights" sheet stacks PRINCIPAL BUSINESS ACTIVITIES and NAME HISTORY below this
+            // block (HighlightsParser's own territory) — without this stop, this loop kept applying the
+            // single-year column mapping straight through them, turning their banner/header/data rows
+            // into bogus FinancialParameter rows (e.g. the company's own name captured as a "parameter"
+            // with its NAME HISTORY till-date as the "value" — a real production data-integrity bug).
+            if (name.StartsWith("PRINCIPAL BUSINESS ACTIVITIES", StringComparison.OrdinalIgnoreCase)
+                || name.Equals("NAME HISTORY", StringComparison.OrdinalIgnoreCase)
+                || name.StartsWith("See Annexure", StringComparison.OrdinalIgnoreCase))
+                break;
+
             var cols = yearByCol.Count > 0 ? yearByCol.Keys.ToList() : Enumerable.Range(1, Math.Max(0, row.Count - 1)).ToList();
             foreach (var c in cols)
             {

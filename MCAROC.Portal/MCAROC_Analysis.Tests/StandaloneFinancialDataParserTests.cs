@@ -73,6 +73,73 @@ public class StandaloneFinancialDataParserTests
     }
 
     [Fact]
+    public void AuditorBlockWithRealDataIsNeverSweptIntoFinancialFacts()
+    {
+        // Real-file E2E testing (PRUKSA INDIA HOUSING PRIVATE LIMITED) found the Balance Sheet/P&L
+        // loop had no stop condition for RATIOS/AUDITOR (unlike the Cash Flow and Ratios loops, which
+        // already guard against both) — so on a workbook with no Cash Flow section, it kept applying
+        // the P&L year-column mapping straight through the AUDITOR(s) block, scrambling auditor firm
+        // name/FRN/PAN/address text into bogus per-year "financial facts" under Section=ProfitAndLoss.
+        var sheet = Sheet("Standalone Financial Data",
+            Row("BALANCE SHEET - AOC-4 (Rs. Crore)", "", "31 Mar, 2024", "31 Mar, 2025"),
+            Row("Share Capital", "", 2.13, 2.11),
+            Row("PROFIT & LOSS - AOC-4 (Rs. Crore)", "", "31 Mar, 2024", "31 Mar, 2025"),
+            Row("Net Revenue", "", 118.74, 20.25),
+            Row("RATIOS - AOC-4", "", "31 Mar, 2024", "31 Mar, 2025"),
+            Row("Current Ratio", "", 4.5, 5.1),
+            Row("AUDITOR(s)"),
+            Row("Year", "Auditor Name", "Auditor Membership Number", "Auditor Firm Name", "Firm Registration Number", "PAN (of firm or auditor)", "Address (of firm or auditor)"),
+            Row("2025", "SANJEEV AGARWAL", "78856", "A S A & COMPANY", "012461C", "AAPFA2499N", "40, EVEREST COLONY, JAIPUR 302051"));
+
+        var result = StandaloneFinancialDataParser.Parse(sheet, 1, 1, 10, out var facts);
+
+        // The typed layer and the real ratio facts (one per year) are unaffected.
+        Assert.Equal(20.25m, result.Items.Single(f => f.FinancialYear == 2025).Revenue);
+        Assert.Contains(facts, f => f.Label == "Current Ratio" && f.FinancialYear == 2025 && f.NumericValue == 5.1m);
+        Assert.Contains(facts, f => f.Label == "Current Ratio" && f.FinancialYear == 2024 && f.NumericValue == 4.5m);
+        Assert.Equal(2, facts.Count(f => f.Label == "Current Ratio"));
+
+        // None of the auditor identity fields leaked into FinancialFacts under any section/year.
+        Assert.DoesNotContain(facts, f => f.RawValue != null && f.RawValue.Contains("A S A & COMPANY"));
+        Assert.DoesNotContain(facts, f => f.RawValue == "012461C");
+        Assert.DoesNotContain(facts, f => f.RawValue == "AAPFA2499N");
+        Assert.DoesNotContain(facts, f => f.RawValue != null && f.RawValue.Contains("EVEREST COLONY"));
+    }
+
+    [Fact]
+    public void ParseAuditorIdentities_ExtractsOneRowPerYear()
+    {
+        var sheet = Sheet("Standalone Financial Data",
+            Row("BALANCE SHEET - AOC-4 (Rs. Crore)", "", "31 Mar, 2024", "31 Mar, 2025"),
+            Row("Share Capital", "", 2.13, 2.11),
+            Row("AUDITOR(s)"),
+            Row("Year", "Auditor Name", "Auditor Membership Number", "Auditor Firm Name", "Firm Registration Number", "PAN (of firm or auditor)", "Address (of firm or auditor)"),
+            Row("2025", "SANJEEV AGARWAL", "78856", "A S A & COMPANY", "012461C", "AAPFA2499N", "40, EVEREST COLONY, JAIPUR 302051"),
+            Row("2018", "UMANG BANKA", "223018", "B S R & CO LLP", "101248W/W100022", "AAAFB9852F", "MARUTHI INFOTECH CENTRE, BANGALORE"));
+
+        var identities = StandaloneFinancialDataParser.ParseAuditorIdentities(sheet);
+
+        Assert.Equal(2, identities.Count);
+        var fy2025 = identities.Single(i => i.Year == 2025);
+        Assert.Equal("SANJEEV AGARWAL", fy2025.AuditorName);
+        Assert.Equal("78856", fy2025.MembershipNumber);
+        Assert.Equal("A S A & COMPANY", fy2025.FirmName);
+        Assert.Equal("012461C", fy2025.FirmRegistrationNumber);
+        var fy2018 = identities.Single(i => i.Year == 2018);
+        Assert.Equal("UMANG BANKA", fy2018.AuditorName);
+    }
+
+    [Fact]
+    public void ParseAuditorIdentities_NoAuditorBanner_ReturnsEmpty()
+    {
+        var sheet = Sheet("Standalone Financial Data",
+            Row("BALANCE SHEET - AOC-4 (Rs. Crore)", "", "31 Mar, 2025"),
+            Row("Share Capital", "", 2.11));
+
+        Assert.Empty(StandaloneFinancialDataParser.ParseAuditorIdentities(sheet));
+    }
+
+    [Fact]
     public void WarnsAndMapsCashFlowToMostRecentYearsWhenItReportsFewerColumns()
     {
         var sheet = Sheet("Standalone Financial Data",

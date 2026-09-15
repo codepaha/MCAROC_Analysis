@@ -161,6 +161,13 @@ public static class StandaloneFinancialDataParser
             if (label.Equals("CASH FLOW - AOC-4 (Rs. Crore)", StringComparison.OrdinalIgnoreCase))
                 break; // switch to the cash-flow handling loop below
 
+            if (label.StartsWith("RATIOS", StringComparison.OrdinalIgnoreCase)
+                || label.StartsWith("AUDITOR", StringComparison.OrdinalIgnoreCase))
+                break; // handled by their own dedicated loops below — not more year-column data for
+                       // this loop's mapping (the AUDITOR(s) block in particular is a differently-shaped
+                       // per-auditor table, not year-per-column; applying this loop's year mapping to it
+                       // scrambled auditor firm/PAN/address text into bogus per-year "financial facts")
+
             if (label.Contains("PROFIT & LOSS", StringComparison.OrdinalIgnoreCase)
                 || label.Contains("PROFIT AND LOSS", StringComparison.OrdinalIgnoreCase)
                 || label.Contains("STATEMENT OF PROFIT", StringComparison.OrdinalIgnoreCase))
@@ -240,6 +247,37 @@ public static class StandaloneFinancialDataParser
 
         result.Items.AddRange(byYear.Values.OrderBy(f => f.FinancialYear));
         return result;
+    }
+
+    /// <summary>One row of the AUDITOR(s) block that sits at the tail of this sheet — a per-year
+    /// auditor-identity table (Year, Auditor Name, Membership Number, Firm Name, Firm Registration
+    /// Number, PAN, Address), structurally unrelated to the year-per-column financial data above it.
+    /// Not merged into <see cref="FinancialFact"/> — the ingestion orchestrator instead merges this into
+    /// <see cref="AuditorObservation"/> rows, since identity (who signed off) belongs there, not in the
+    /// financial-figures catch-all.</summary>
+    public sealed record AuditorIdentityRow(
+        int Year, int SourceRowNumber, string? AuditorName, string? MembershipNumber,
+        string? FirmName, string? FirmRegistrationNumber);
+
+    public static List<AuditorIdentityRow> ParseAuditorIdentities(SheetData sheet)
+    {
+        var results = new List<AuditorIdentityRow>();
+        var auditorHeaderIndex = FindRowIndex(sheet, r => Label(r)?.StartsWith("AUDITOR", StringComparison.OrdinalIgnoreCase) == true);
+        if (auditorHeaderIndex is null) return results;
+
+        for (var r = auditorHeaderIndex.Value + 1; r < sheet.Rows.Count; r++)
+        {
+            var row = sheet.Rows[r];
+            var yearText = row.Count > 0 ? row[0]?.ToString()?.Trim() : null;
+            if (!int.TryParse(yearText, out var year) || year is < 1990 or > 2100) continue; // column header or blank row
+
+            string? Col(int i) => row.Count > i ? row[i]?.ToString()?.Trim() : null;
+            var name = Col(1);
+            if (string.IsNullOrWhiteSpace(name)) continue;
+
+            results.Add(new AuditorIdentityRow(year, r + 1, name, Col(2), Col(3), Col(4)));
+        }
+        return results;
     }
 
     private static void ApplyRow(
