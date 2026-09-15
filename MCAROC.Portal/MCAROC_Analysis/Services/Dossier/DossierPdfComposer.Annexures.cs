@@ -1,6 +1,7 @@
 using MCAROC_Analysis.Data.Entities;
 using MCAROC_Analysis.Models;
 using MCAROC_Analysis.Models.Dossier;
+using MCAROC_Analysis.Services.Excel;
 using QuestPDF.Fluent;
 using QuestPDF.Infrastructure;
 
@@ -65,7 +66,19 @@ public partial class DossierPdfComposer
         groups.FirstOrDefault(g => g.Title == groupTitle)?.Metrics.FirstOrDefault(m => m.Label == label);
 
     private void Item<T>(ColumnDescriptor col, ref int n, string caption,
-        IReadOnlyList<T> rows, params Col<T>[] cols)
+        IReadOnlyList<T> rows, params Col<T>[] cols) =>
+        Item(col, ref n, caption, rows, "No records on file.", cols);
+
+    /// <summary>Overload that names which source sheet(s) feed this table, so an empty result says
+    /// exactly why — "not provided in this upload" (the reviewer needs to go get it) versus the neutral
+    /// default (present and genuinely empty) — right where the reviewer is already looking, instead of a
+    /// separate global list of internal sheet names an addressee-side reader has no context for.</summary>
+    private void Item<T>(ColumnDescriptor col, ref int n, string caption,
+        IReadOnlyList<T> rows, IReadOnlyList<string>[] sheets, params Col<T>[] cols) =>
+        Item(col, ref n, caption, rows, model.SourceCoverage.EmptyState("No records on file.", sheets), cols);
+
+    private void Item<T>(ColumnDescriptor col, ref int n, string caption,
+        IReadOnlyList<T> rows, string emptyText, params Col<T>[] cols)
     {
         n++;
 
@@ -74,17 +87,21 @@ public partial class DossierPdfComposer
 
         if (rows.Count == 0)
         {
-            col.Item().Text("No records in this workbook.").FontSize(DossierTheme.Small).FontColor(DossierTheme.InkFaint);
+            col.Item().Text(emptyText).FontSize(DossierTheme.Small).FontColor(DossierTheme.InkFaint);
             return;
         }
 
         col.Item().Table(table =>
         {
             table.ColumnsDefinition(cd => { foreach (var c in cols) cd.RelativeColumn(c.Weight); });
-            table.Header(h => { foreach (var c in cols) HeaderCell(h.Cell(), c.Header); });
-            foreach (var r in rows)
+            table.Header(h => { foreach (var c in cols) HeaderCell(h.Cell(), c.Header, c.Right); });
+            for (var ri = 0; ri < rows.Count; ri++)
+            {
+                var r = rows[ri];
+                var shaded = ri % 2 == 1;
                 foreach (var c in cols)
-                    BodyCell(table.Cell(), c.Cell(r), c.Right && c.Cell(r) is not "-" and not "");
+                    BodyCell(table.Cell(), c.Cell(r), c.Right && c.Cell(r) is not "-" and not "", shaded);
+            }
         });
     }
 
@@ -107,7 +124,7 @@ public partial class DossierPdfComposer
         }.Where(s => s is not null)));
 
         var n = 0;
-        Item(col, ref n, "Directors register", c.Directors,
+        Item(col, ref n, "Directors register", c.Directors, [SheetAliases.Directors],
             new Col<Director>("Name", 2.2f, d => d.NameRaw),
             new Col<Director>("DIN", 1.1f, d => d.Din),
             new Col<Director>("Present designation", 1.7f, d => d.Designation ?? "-"),
@@ -121,7 +138,7 @@ public partial class DossierPdfComposer
                 new Col<CompanyOfficer>("Appointed", 1.2f, o => D(o.OriginalAppointmentDate), true),
                 new Col<CompanyOfficer>("Cessation", 1.2f, o => D(o.CessationDate), true));
 
-        Item(col, ref n, "Related corporates", c.RelatedCorporates,
+        Item(col, ref n, "Related corporates", c.RelatedCorporates, [SheetAliases.RelatedCorporates],
             new Col<RelatedCorporate>("Entity", 2.4f, r => r.EntityNameRaw),
             new Col<RelatedCorporate>("Relationship", 1.3f, r => r.RelationshipType.ToString()),
             new Col<RelatedCorporate>("Holding %", 1f, r => r.HoldingPercent?.ToString("0.##") ?? "-", true),
@@ -129,13 +146,14 @@ public partial class DossierPdfComposer
             new Col<RelatedCorporate>("Location", 1.4f, r => r.Location ?? "-"));
 
         Item(col, ref n, "Shareholding above 5%", c.Shareholders,
+            [SheetAliases.DirectorShareholding, SheetAliases.MajorShareholding],
             new Col<Shareholding>("FY", 0.7f, s => s.FinancialYear.ToString()),
             new Col<Shareholding>("Shareholder", 2.4f, s => s.ShareholderNameRaw),
             new Col<Shareholding>("Type", 1.1f, s => s.ShareholderType ?? "-"),
             new Col<Shareholding>("Promoter", 0.9f, s => s.IsPromoter ? "Yes" : "-"),
             new Col<Shareholding>("% held", 1f, s => s.HoldingPercentage?.ToString("0.##") ?? "-", true));
 
-        Item(col, ref n, "Securities allotment", c.SecurityAllotments,
+        Item(col, ref n, "Securities allotment", c.SecurityAllotments, [SheetAliases.SecuritiesAllotment],
             new Col<SecurityAllotment>("Date", 1.1f, a => D(a.AllotmentDate), true),
             new Col<SecurityAllotment>("Type", 1.2f, a => a.AllotmentType ?? "-"),
             new Col<SecurityAllotment>("Instrument", 2.2f, a => a.InstrumentType ?? "-"),
@@ -143,12 +161,13 @@ public partial class DossierPdfComposer
             new Col<SecurityAllotment>("Securities", 1.2f, a => a.NumberOfSecurities?.ToString("N0") ?? "-", true));
 
         Item(col, ref n, "Designation history at this company", c.DesignationHistory,
+            [SheetAliases.DirectorAssociationHistory],
             new Col<DirectorAssignmentHistory>("Director", 2.2f, h => h.DirectorNameRaw),
             new Col<DirectorAssignmentHistory>("Designation", 1.8f, h => h.Designation ?? "-"),
             new Col<DirectorAssignmentHistory>("Appointed", 1.2f, h => D(h.AppointmentDate), true),
             new Col<DirectorAssignmentHistory>("Ceased", 1.2f, h => D(h.CessationDate), true));
 
-        Item(col, ref n, "Other directorships", c.OtherDirectorships,
+        Item(col, ref n, "Other directorships", c.OtherDirectorships, [SheetAliases.OtherDirectorships],
             new Col<DirectorAssociation>("Director", 2f, a => a.DirectorNameRaw),
             new Col<DirectorAssociation>("Company", 2.4f, a => a.ConnectedCompanyRaw),
             new Col<DirectorAssociation>("CIN", 1.6f, a => a.ConnectedCin ?? "-"),
@@ -185,15 +204,17 @@ public partial class DossierPdfComposer
         n++;
         col.Item().PaddingTop(14).PaddingBottom(4).Text($"Item {n} — Standalone financial data (₹ Crore)")
             .FontFamily(DossierTheme.Display).FontSize(DossierTheme.Heading);
-        FinancialStatementTable(col, f.Standalone);
+        FinancialStatementTable(col, f.Standalone,
+            model.SourceCoverage.EmptyState("No financial data extracted.", [SheetAliases.StandaloneFinancialData]));
 
-        if (f.Consolidated.Count > 0)
-        {
-            n++;
-            col.Item().PaddingTop(14).PaddingBottom(4).Text($"Item {n} — Consolidated financial data (₹ Crore)")
-                .FontFamily(DossierTheme.Display).FontSize(DossierTheme.Heading);
-            FinancialStatementTable(col, f.Consolidated);
-        }
+        // Always rendered (not just when present) — same reasoning as every other Item below: a
+        // consolidated-data gap needs the same "not provided in this upload" disclosure the rest of the
+        // dossier gives every other absent category, not a silent skip.
+        n++;
+        col.Item().PaddingTop(14).PaddingBottom(4).Text($"Item {n} — Consolidated financial data (₹ Crore)")
+            .FontFamily(DossierTheme.Display).FontSize(DossierTheme.Heading);
+        FinancialStatementTable(col, f.Consolidated,
+            model.SourceCoverage.EmptyState("No consolidated financial data extracted.", [SheetAliases.ConsolidatedFinancialData]));
 
         // #152/#197: the source-reported ratios (catalogue A1.x) get their own multi-year block —
         // "render as-is with a multi-year sparkline; do not recompute" — rather than sitting in the flat
@@ -221,12 +242,13 @@ public partial class DossierPdfComposer
             AdditionalLineItemsTables(col, extraFacts);
 
         Item(col, ref n, "Auditor's comments", f.AuditorObservations,
+            [SheetAliases.Auditors, SheetAliases.AuditorsConsolidated],
             new Col<AuditorObservation>("FY", 0.7f, a => a.FinancialYear.ToString()),
             new Col<AuditorObservation>("Basis", 1f, a => a.Basis.ToString()),
             new Col<AuditorObservation>("Qualified / adverse", 1.4f, a => a.HasQualificationOrAdverseRemark ? "Yes" : "No"),
             new Col<AuditorObservation>("Comment", 4f, AuditorComment));
 
-        Item(col, ref n, "Peer comparison", f.PeerComparison,
+        Item(col, ref n, "Peer comparison", f.PeerComparison, [SheetAliases.PeerComparison],
             new Col<PeerComparisonMetric>("Metric", 2.6f, p => p.MetricName),
             new Col<PeerComparisonMetric>("FY", 0.7f, p => p.FinancialYear.ToString()),
             new Col<PeerComparisonMetric>("Company", 1.1f, p => p.CompanyValue?.ToString("0.##") ?? "-", true),
@@ -241,11 +263,11 @@ public partial class DossierPdfComposer
     /// column: on the actual PDF, 6 columns keep values like "-186.20" on one line; 8+ start wrapping.</summary>
     private const int MaxYearColumnsPerTable = 6;
 
-    private void FinancialStatementTable(ColumnDescriptor col, IReadOnlyList<FinancialYearData> rows)
+    private void FinancialStatementTable(ColumnDescriptor col, IReadOnlyList<FinancialYearData> rows, string emptyText = "No financial data extracted.")
     {
         if (rows.Count == 0)
         {
-            col.Item().Text("No financial data extracted.").FontSize(DossierTheme.Small).FontColor(DossierTheme.InkFaint);
+            col.Item().Text(emptyText).FontSize(DossierTheme.Small).FontColor(DossierTheme.InkFaint);
             return;
         }
         var years = rows.OrderBy(r => r.FinancialYear).ToList();
@@ -277,12 +299,14 @@ public partial class DossierPdfComposer
                 table.Header(h =>
                 {
                     HeaderCell(h.Cell(), "Line item");
-                    foreach (var y in chunk) HeaderCell(h.Cell(), $"FY{y.FinancialYear}");
+                    foreach (var y in chunk) HeaderCell(h.Cell(), $"FY{y.FinancialYear}", right: true);
                 });
-                foreach (var (label, sel) in activeLines)
+                for (var ri = 0; ri < activeLines.Count; ri++)
                 {
-                    BodyCell(table.Cell(), label);
-                    foreach (var y in chunk) BodyCell(table.Cell(), sel(y)?.ToString("N2") ?? "-", right: true);
+                    var (label, sel) = activeLines[ri];
+                    var shaded = ri % 2 == 1;
+                    BodyCell(table.Cell(), label, shaded: shaded);
+                    foreach (var y in chunk) BodyCell(table.Cell(), sel(y)?.ToString("N2") ?? "-", right: true, shaded: shaded);
                 }
             });
         }
@@ -312,17 +336,19 @@ public partial class DossierPdfComposer
                 table.Header(h =>
                 {
                     HeaderCell(h.Cell(), "Ratio");
-                    foreach (var y in chunk) HeaderCell(h.Cell(), $"FY{y}");
+                    foreach (var y in chunk) HeaderCell(h.Cell(), $"FY{y}", right: true);
                 });
-                foreach (var label in labels)
+                for (var ri = 0; ri < labels.Count; ri++)
                 {
-                    BodyCell(table.Cell(), label);
+                    var label = labels[ri];
+                    var shaded = ri % 2 == 1;
+                    BodyCell(table.Cell(), label, shaded: shaded);
                     foreach (var y in chunk)
                     {
                         var value = byLabelYear.TryGetValue((label, y), out var fact)
                             ? fact.NumericValue?.ToString("0.##") ?? fact.RawValue
                             : "-";
-                        BodyCell(table.Cell(), value, right: true);
+                        BodyCell(table.Cell(), value, right: true, shaded: shaded);
                     }
                 }
             });
@@ -383,17 +409,19 @@ public partial class DossierPdfComposer
                         table.Header(h =>
                         {
                             HeaderCell(h.Cell(), "Line item");
-                            foreach (var y in chunk) HeaderCell(h.Cell(), $"FY{y}");
+                            foreach (var y in chunk) HeaderCell(h.Cell(), $"FY{y}", right: true);
                         });
-                        foreach (var label in labels)
+                        for (var ri = 0; ri < labels.Count; ri++)
                         {
-                            BodyCell(table.Cell(), label);
+                            var label = labels[ri];
+                            var shaded = ri % 2 == 1;
+                            BodyCell(table.Cell(), label, shaded: shaded);
                             foreach (var y in chunk)
                             {
                                 var value = byLabelYear.TryGetValue((label, y), out var fact)
                                     ? fact.NumericValue?.ToString("N2") ?? fact.RawValue
                                     : "-";
-                                BodyCell(table.Cell(), value, right: true);
+                                BodyCell(table.Cell(), value, right: true, shaded: shaded);
                             }
                         }
                     });
@@ -408,11 +436,13 @@ public partial class DossierPdfComposer
                 col.Item().PaddingTop(2).Table(table =>
                 {
                     table.ColumnsDefinition(cd => { cd.RelativeColumn(2.4f); cd.RelativeColumn(); });
-                    table.Header(h => { HeaderCell(h.Cell(), "Line item"); HeaderCell(h.Cell(), "Value"); });
-                    foreach (var x in undated)
+                    table.Header(h => { HeaderCell(h.Cell(), "Line item"); HeaderCell(h.Cell(), "Value", right: true); });
+                    for (var ri = 0; ri < undated.Count; ri++)
                     {
-                        BodyCell(table.Cell(), x.Label);
-                        BodyCell(table.Cell(), x.NumericValue?.ToString("N2") ?? x.RawValue, right: true);
+                        var x = undated[ri];
+                        var shaded = ri % 2 == 1;
+                        BodyCell(table.Cell(), x.Label, shaded: shaded);
+                        BodyCell(table.Cell(), x.NumericValue?.ToString("N2") ?? x.RawValue, right: true, shaded: shaded);
                     }
                 });
             }
@@ -443,6 +473,13 @@ public partial class DossierPdfComposer
             chargeRatio is { } r ? $"That is {r:0.00}x FY{model.Financials.LatestYear} net worth." : null,
             created12?.HasValue == true ? $"{created12.DisplayValue()} of that was created in the trailing 12 months." : null,
         }.Where(s => s is not null)));
+
+        if (model.SourceCoverage.ChargeReportMissing)
+            col.Item().PaddingBottom(10).Border(0.75f).BorderColor(DossierTheme.Line).BorderLeft(2.5f)
+                .BorderColor(DossierTheme.Amber).Background(DossierTheme.PaperRaised).Padding(11).Text(
+                "The ROC report lists charges, but the Detailed Charge Report was not provided — charge " +
+                "detail below is limited to the ROC sequence.")
+                .FontSize(DossierTheme.Small).FontColor(DossierTheme.InkSoft).LineHeight(1.4f);
 
         var n = 0;
         n++;
@@ -518,28 +555,28 @@ public partial class DossierPdfComposer
         }.Where(s => s is not null)));
 
         var n = 0;
-        Item(col, ref n, "MCA / regulatory & suit-filed records", d.Records,
+        Item(col, ref n, "MCA / regulatory & suit-filed records", d.Records, [SheetAliases.Compliance],
             new Col<ComplianceRecord>("Type", 1.2f, r => r.RecordType.ToString()),
             new Col<ComplianceRecord>("Date", 1f, r => D(r.RecordDate), true),
             new Col<ComplianceRecord>("Bank / description", 2.6f, r => r.Bank ?? r.Description ?? r.SourceText ?? "-"),
             new Col<ComplianceRecord>("Amount ₹Cr", 1f, r => r.AmountCrore?.ToString("0.##") ?? "-", true),
             new Col<ComplianceRecord>("Defaulter type", 1.6f, r => r.DefaulterType ?? "-"));
 
-        Item(col, ref n, "GST registrations", d.Gst,
+        Item(col, ref n, "GST registrations", d.Gst, [SheetAliases.Gst, SheetAliases.GstAnnexure],
             new Col<GstRegistration>("GSTIN", 1.8f, g => g.Gstin),
             new Col<GstRegistration>("State", 1.4f, g => g.State ?? "-"),
             new Col<GstRegistration>("Status", 1f, g => g.Status ?? "-"),
             new Col<GstRegistration>("Registered", 1.1f, g => D(g.RegistrationDate), true),
             new Col<GstRegistration>("Returns on file", 1.2f, g => g.Filings.Count.ToString(), true));
 
-        Item(col, ref n, "EPFO monthly contributions", d.Epfo,
+        Item(col, ref n, "EPFO monthly contributions", d.Epfo, [SheetAliases.Epfo, SheetAliases.EpfoAnnexure],
             new Col<EpfoContribution>("Establishment", 2.2f, e => e.EstablishmentName ?? e.EstablishmentId),
             new Col<EpfoContribution>("Wage month", 1.2f, e => e.WageMonth),
             new Col<EpfoContribution>("Employees", 1f, e => e.EmployeeCount?.ToString() ?? "-", true),
             new Col<EpfoContribution>("Amount ₹Cr", 1f, e => e.ContributionAmountCrore?.ToString("0.##") ?? "-", true),
             new Col<EpfoContribution>("Status", 1.4f, e => e.PaymentStatus ?? "-"));
 
-        Item(col, ref n, "MSME dues", d.Msme,
+        Item(col, ref n, "MSME dues", d.Msme, [SheetAliases.Msme],
             new Col<MsmePayment>("Supplier", 2.6f, m => m.SupplierNameRaw),
             new Col<MsmePayment>("PAN", 1.4f, m => m.SupplierPan ?? "-"),
             new Col<MsmePayment>("Amount due ₹Cr", 1.3f, m => m.AmountDueCrore?.ToString("0.##") ?? "-", true),
@@ -578,7 +615,7 @@ public partial class DossierPdfComposer
         }
 
         var n = grouped.Count > 0 ? 1 : 0;
-        Item(col, ref n, "Legal history (full register)", lit.All,
+        Item(col, ref n, "Legal history (full register)", lit.All, [SheetAliases.LegalHistory],
             new Col<Litigation>("Role", 1.6f, l => RoleLabel(lit.RoleFor(l))),
             new Col<Litigation>("Status", 1f, l => l.CaseStatus ?? "-"),
             new Col<Litigation>("Category", 1.2f, l => l.CaseCategory ?? "-"),
@@ -596,7 +633,7 @@ public partial class DossierPdfComposer
     private void AnnexureF(IContainer container) => container.Column(col =>
     {
         AnnexureHead(col, "Section 7", "Coverage & Data Sufficiency",
-            "Which optional workbook sheets this dossier is and is not built on, and which deterministic " +
+            "How much of the optional source data this dossier is built on, and which deterministic " +
             "checks could not be run against this data set — so a report with no flags is never mistaken " +
             "for a fully verified one.");
 

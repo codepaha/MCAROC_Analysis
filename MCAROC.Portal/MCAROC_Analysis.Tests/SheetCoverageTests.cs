@@ -38,7 +38,7 @@ public class SheetCoverageTests
         Assert.Equal(cov.TotalOptionalSheets - 1, cov.PresentOptionalSheets);
 
         Assert.Equal(
-            $"This workbook did not include a “{legal}” sheet.",
+            $"This upload did not include “{legal}”.",
             cov.EmptyState("present-but-empty", SheetAliases.LegalHistory));
         Assert.Equal(
             "present-but-empty",

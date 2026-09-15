@@ -16,8 +16,8 @@ public static class DirectorRules
 
         if (directors.Count == 0)
         {
-            outcomes.Add(RuleEvaluationOutcome.NotEvaluated(ZeroActiveDirectorsCode, "No Director records available."));
-            outcomes.Add(RuleEvaluationOutcome.NotEvaluated(DirectorExitCode, "No Director records available."));
+            outcomes.Add(RuleEvaluationOutcome.NotEvaluated(ZeroActiveDirectorsCode, "No director records available."));
+            outcomes.Add(RuleEvaluationOutcome.NotEvaluated(DirectorExitCode, "No director records available."));
             return outcomes;
         }
 

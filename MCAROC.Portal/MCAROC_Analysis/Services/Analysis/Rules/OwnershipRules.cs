@@ -14,7 +14,7 @@ public static class OwnershipRules
 
         if (promoterRows.Count == 0)
         {
-            outcomes.Add(RuleEvaluationOutcome.NotEvaluated(PromoterHoldingDeclineCode, "No promoter Shareholding records available."));
+            outcomes.Add(RuleEvaluationOutcome.NotEvaluated(PromoterHoldingDeclineCode, "No promoter shareholding records available."));
             return outcomes;
         }
 

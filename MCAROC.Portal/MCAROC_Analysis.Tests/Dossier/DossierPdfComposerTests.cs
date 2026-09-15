@@ -2,6 +2,7 @@ using System.Text.Json;
 using MCAROC_Analysis.Data.Entities;
 using MCAROC_Analysis.Models;
 using MCAROC_Analysis.Services.Dossier;
+using MCAROC_Analysis.Services.Excel;
 using Microsoft.EntityFrameworkCore;
 using UglyToad.PdfPig;
 
@@ -419,5 +420,37 @@ public class DossierPdfComposerTests : IAsyncLifetime
         // The chunk boundary itself: an FY from each half of the split must appear as a table header.
         Assert.Contains("FY2018", text);
         Assert.Contains("FY2024", text);
+    }
+
+    /// <summary>#214 review: a handful of tracked optional categories (Credit Ratings, Related Party
+    /// Transactions, Proprietorship, Legal Cases - Financial Dispute, Unaccepted Ratings) have no table
+    /// anywhere in this dossier, present or absent — so unlike every other tracked category, there is no
+    /// in-context section to carry a "not provided in this upload" note for them. Proves Section 7 still
+    /// names one of these explicitly rather than folding it into the aggregate count with no way for a
+    /// client to learn which specific category is missing.</summary>
+    [SkippableFact]
+    public async Task Unmapped_optional_category_with_no_dossier_table_gets_an_explicit_fallback_note()
+    {
+        Skip.IfNot(OperatingSystem.IsWindows(),
+            "PdfPig text extraction from SkiaSharp subset fonts is unreliable on Linux; covered by the windows-tests job.");
+
+        await using var seed = DossierGoldenMasterTests.CreateContext();
+        var (requestId, _, _) = await DossierTestSeed.SeedAsync(seed);
+
+        await using var db = DossierGoldenMasterTests.CreateContext();
+        var model = await new DossierAssembler(db).BuildAsync(requestId);
+        Assert.NotNull(model);
+
+        var creditRatingsName = SheetAliases.CanonicalName(SheetAliases.CreditRatings);
+        var fakeRun = new IngestionRun
+        {
+            AbsentOptionalSheetsJson = JsonSerializer.Serialize(new[] { creditRatingsName })
+        };
+        var forcedModel = model! with { SourceCoverage = SheetCoverage.From(fakeRun) };
+
+        var text = TextOf(new DossierPdfRenderer(WebRoot()).Render(forcedModel, DossierVariant.Executive));
+
+        Assert.Contains("Credit ratings", text);
+        Assert.Contains("no dedicated section in this dossier", text);
     }
 }

@@ -10,7 +10,7 @@ public static class MsmeRules
     public static List<RuleEvaluationOutcome> Evaluate(AnalysisContext ctx, RuleThresholds thresholds)
     {
         if (ctx.MsmePayments.Count == 0)
-            return [RuleEvaluationOutcome.NotEvaluated(MsmeDueMaterialCode, "No MsmePayment records available.")];
+            return [RuleEvaluationOutcome.NotEvaluated(MsmeDueMaterialCode, "No MSME payment records available.")];
 
         // ReportingPeriod is free source text (not a normalized date) — take the lexicographically latest
         // group as a best-effort "most recent period" (typical formats like "FY2024-25" sort sensibly).

@@ -3,6 +3,7 @@ using System.Text.RegularExpressions;
 using MCAROC_Analysis.Data.Entities;
 using MCAROC_Analysis.Models;
 using MCAROC_Analysis.Models.Dossier;
+using MCAROC_Analysis.Services.Excel;
 using QuestPDF.Fluent;
 using QuestPDF.Infrastructure;
 
@@ -119,11 +120,14 @@ public partial class DossierPdfComposer
             box.Item().Background(DossierTheme.Ink).PaddingVertical(6).PaddingHorizontal(11)
                 .Text("Company Profile").FontFamily(DossierTheme.Display).FontSize(11.5f).FontColor("#FFFFFF");
 
+            var rowCount = 0;
             void Row(string label, string? value)
             {
                 if (string.IsNullOrWhiteSpace(value)) return;
-                box.Item().BorderBottom(0.5f).BorderColor(DossierTheme.LineSoft)
-                    .PaddingVertical(5).PaddingHorizontal(11).Row(r =>
+                var shaded = rowCount++ % 2 == 1;
+                var boxed = box.Item().BorderBottom(0.5f).BorderColor(DossierTheme.LineSoft);
+                if (shaded) boxed = boxed.Background(DossierTheme.PaperRaised);
+                boxed.PaddingVertical(7).PaddingHorizontal(11).Row(r =>
                 {
                     r.ConstantItem(150).Text(label).FontSize(DossierTheme.Small).FontColor(DossierTheme.InkSoft);
                     r.RelativeItem().Text(value).FontSize(DossierTheme.Small).SemiBold();
@@ -189,7 +193,7 @@ public partial class DossierPdfComposer
         col.Item().Text(t =>
         {
             t.DefaultTextStyle(x => x.FontSize(DossierTheme.Small).FontColor(DossierTheme.InkSoft).LineHeight(1.5f));
-            t.Span($"Built on {cov.PresentOptionalSheets} of {cov.TotalOptionalSheets} optional workbook sheets. ");
+            t.Span($"This dossier includes {cov.PresentOptionalSheets} of {cov.TotalOptionalSheets} optional source categories. ");
             if (notes.Count > 0)
                 t.Span($"{notes.Count} deterministic check{(notes.Count == 1 ? "" : "s")} could not be run against " +
                     "this data set — absence of a flag elsewhere is not itself a clean result. ");
@@ -197,40 +201,56 @@ public partial class DossierPdfComposer
         });
     }
 
-    /// <summary>"Source coverage" — which optional workbook sheets this dossier is and is not built on,
-    /// so an empty annexure section reads as "not in this upload" rather than "verified nil". Called only
-    /// from <see cref="AnnexureF"/>; a no-op only when every tracked optional sheet was present and a
-    /// charge report (where charges exist) was supplied.</summary>
+    /// <summary>Tracked optional categories with no table anywhere in this dossier, present or absent —
+    /// unlike every other tracked category (directors, GST, EPFO, credit... the rest), these have no
+    /// in-context home for a "not provided in this upload" note, so an absence here would otherwise never
+    /// reach a client at all. Listed explicitly in <see cref="ComposeSourceCoverage"/> instead. Building an
+    /// actual table for each is a separate, larger follow-up (#214 review) — this is the interim,
+    /// client-safe disclosure so nothing is silently lost in the meantime.</summary>
+    private static readonly (IReadOnlyList<string> Sheet, string Label)[] UnmappedOptionalCategories =
+    [
+        (SheetAliases.Structure, "Corporate structure"),
+        (SheetAliases.Proprietorship, "Proprietorship"),
+        (SheetAliases.Highlights, "Highlights"),
+        (SheetAliases.FinancialParametersAnnexure, "Financial parameters (annexure)"),
+        (SheetAliases.RelatedPartyTransactions, "Related party transactions"),
+        (SheetAliases.CreditRatings, "Credit ratings"),
+        (SheetAliases.UnacceptedRatings, "Unaccepted ratings"),
+        (SheetAliases.LegalCasesFinancialDispute, "Legal cases — financial dispute"),
+    ];
+
+    /// <summary>"Source coverage" — the aggregate count, plus an explicit list of any absent category from
+    /// <see cref="UnmappedOptionalCategories"/> (the only ones without an in-context "not provided" note
+    /// elsewhere in this dossier). Every other absent category is disclosed directly beside the empty
+    /// table it affects. Called only from <see cref="AnnexureF"/>; a no-op when every tracked optional
+    /// category was present and a charge report (where charges exist) was supplied.</summary>
     private void ComposeSourceCoverage(ColumnDescriptor col)
     {
         var cov = model.SourceCoverage;
         if (!cov.AnySheetAbsent && !cov.ChargeReportMissing) return;
 
+        var unmappedAbsent = UnmappedOptionalCategories.Where(c => cov.WasAbsent(c.Sheet)).ToList();
+
         col.Item().Element(c => SubHead(c, "Source coverage"));
-        col.Item().PaddingBottom(8).Text(
-            $"This dossier is built on {cov.PresentOptionalSheets} of {cov.TotalOptionalSheets} optional workbook " +
-            "sheets. A section with no records below was either absent from this upload or present and empty — the " +
-            "list distinguishes the two.")
+        col.Item().PaddingBottom(unmappedAbsent.Count > 0 ? 8 : 0).Text(
+            $"This dossier includes {cov.PresentOptionalSheets} of {cov.TotalOptionalSheets} optional source " +
+            "categories. Where a category was not provided, the affected section says so directly, next to the " +
+            "empty table it would have filled.")
             .FontSize(DossierTheme.Small).FontColor(DossierTheme.InkSoft).LineHeight(1.5f);
 
+        if (unmappedAbsent.Count == 0) return;
+
+        col.Item().PaddingBottom(6).Text(
+            "The categories below have no dedicated section in this dossier, so they are listed here instead:")
+            .FontSize(DossierTheme.Small).FontColor(DossierTheme.InkSoft).LineHeight(1.5f);
         col.Item().Border(0.75f).BorderColor(DossierTheme.Line).BorderLeft(2.5f).BorderColor(DossierTheme.Amber)
             .Background(DossierTheme.PaperRaised).Padding(11).Column(inner =>
         {
-            if (cov.ChargeReportMissing)
+            foreach (var c in unmappedAbsent)
                 inner.Item().PaddingBottom(4).Row(r =>
                 {
                     r.ConstantItem(14).Text("•").FontColor(DossierTheme.Amber);
-                    r.RelativeItem().Text(
-                        "The ROC report lists charges, but the Detailed Charge Report workbook was not provided — " +
-                        "charge detail is limited to the ROC sequence.")
-                        .FontSize(DossierTheme.Small).FontColor(DossierTheme.InkSoft).LineHeight(1.4f);
-                });
-
-            foreach (var sheet in cov.AbsentSheets)
-                inner.Item().PaddingBottom(4).Row(r =>
-                {
-                    r.ConstantItem(14).Text("•").FontColor(DossierTheme.Amber);
-                    r.RelativeItem().Text($"Not in this upload: “{sheet}” sheet.")
+                    r.RelativeItem().Text($"Not provided in this upload: {c.Label}.")
                         .FontSize(DossierTheme.Small).FontColor(DossierTheme.InkSoft).LineHeight(1.4f);
                 });
         });
@@ -469,14 +489,16 @@ public partial class DossierPdfComposer
             table.Header(h =>
             {
                 HeaderCell(h.Cell(), "Indicator");
-                foreach (var y in years) HeaderCell(h.Cell(), $"FY{y.FinancialYear}");
+                foreach (var y in years) HeaderCell(h.Cell(), $"FY{y.FinancialYear}", right: true);
                 HeaderCell(h.Cell(), "Trend");
             });
-            foreach (var (label, sel) in rows)
+            for (var ri = 0; ri < rows.Length; ri++)
             {
-                BodyCell(table.Cell(), label);
-                foreach (var y in years) BodyCell(table.Cell(), sel(y)?.ToString("N1") ?? "-", right: true);
-                BodyCell(table.Cell(), Trend(years.Select(sel).ToList()));
+                var (label, sel) = rows[ri];
+                var shaded = ri % 2 == 1;
+                BodyCell(table.Cell(), label, shaded: shaded);
+                foreach (var y in years) BodyCell(table.Cell(), sel(y)?.ToString("N1") ?? "-", right: true, shaded: shaded);
+                BodyCell(table.Cell(), Trend(years.Select(sel).ToList()), shaded: shaded);
             }
         });
     }
@@ -490,13 +512,23 @@ public partial class DossierPdfComposer
         return delta > 0 ? "↑ Rising" : "↓ Declining";
     }
 
-    private void HeaderCell(IContainer c, string text) => c
-        .BorderBottom(0.75f).BorderColor(DossierTheme.Line).PaddingVertical(5).PaddingHorizontal(6)
-        .Text(text).FontSize(DossierTheme.TableHeader).FontColor(DossierTheme.InkFaint);
-
-    private void BodyCell(IContainer c, string text, bool right = false)
+    /// <summary>A table header cell. <paramref name="right"/> must match the <see cref="BodyCell"/> alignment
+    /// of every cell in this column — a right-aligned numeric column (year figures, amounts) with a
+    /// left-aligned header sits visibly off from the values beneath it.</summary>
+    private void HeaderCell(IContainer c, string text, bool right = false)
     {
-        var cell = c.BorderBottom(0.5f).BorderColor(DossierTheme.LineSoft).PaddingVertical(4).PaddingHorizontal(6);
+        var cell = c.BorderBottom(0.75f).BorderColor(DossierTheme.Line).PaddingVertical(7).PaddingHorizontal(7);
+        (right ? cell.AlignRight() : cell).Text(text).FontSize(DossierTheme.TableHeader).FontColor(DossierTheme.InkFaint);
+    }
+
+    /// <summary>A source-record table cell. <paramref name="shaded"/> gives every other row a faint tint
+    /// (zebra striping) — pure scan-aid on the long multi-year/register tables, no border/weight change,
+    /// so it reads as a refinement of the existing flat, editorial style rather than a new visual language.</summary>
+    private void BodyCell(IContainer c, string text, bool right = false, bool shaded = false)
+    {
+        var boxed = c.BorderBottom(0.5f).BorderColor(DossierTheme.LineSoft);
+        if (shaded) boxed = boxed.Background(DossierTheme.PaperRaised);
+        var cell = boxed.PaddingVertical(6).PaddingHorizontal(7);
         var t = (right ? cell.AlignRight() : cell).Text(text).FontSize(DossierTheme.TableCell);
         if (right) t.FontFamily(DossierTheme.Mono);
     }

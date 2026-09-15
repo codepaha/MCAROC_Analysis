@@ -70,15 +70,17 @@ public sealed class SheetCoverage
     /// <summary>The empty-state line for a section: the "not in this upload" note when every named sheet
     /// was absent, otherwise <paramref name="presentButEmptyText"/> (the section was present and
     /// reported nothing). Pass one alias set for a single-sheet section, several for a section fed by
-    /// more than one sheet.</summary>
+    /// more than one sheet. Phrased around "this upload" rather than "workbook"/"sheet" — those are our
+    /// internal ingestion terms, meaningless to a client reading the dossier PDF that also renders this
+    /// text (the portal's own internal reviewer UI reads it the same way, so nothing is lost there).</summary>
     public string EmptyState(string presentButEmptyText, params IReadOnlyList<string>[] aliasSets) =>
         AllAbsent(aliasSets)
-            ? $"This workbook did not include {Humanise([.. aliasSets.Select(SheetAliases.CanonicalName)])}."
+            ? $"This upload did not include {Humanise([.. aliasSets.Select(SheetAliases.CanonicalName)])}."
             : presentButEmptyText;
 
     private static string Humanise(IReadOnlyList<string> names)
     {
-        var quoted = names.Select(n => $"a “{n}” sheet").ToList();
+        var quoted = names.Select(n => $"“{n}”").ToList();
         return quoted.Count switch
         {
             1 => quoted[0],

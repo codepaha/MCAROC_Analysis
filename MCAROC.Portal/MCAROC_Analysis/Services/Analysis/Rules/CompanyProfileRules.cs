@@ -16,8 +16,8 @@ public static class CompanyProfileRules
 
         if (profile is null)
         {
-            outcomes.Add(RuleEvaluationOutcome.NotEvaluated(StatusAdverseCode, "No CompanyProfile record available."));
-            outcomes.Add(RuleEvaluationOutcome.NotEvaluated(ComplianceNonCompliantCode, "No CompanyProfile record available."));
+            outcomes.Add(RuleEvaluationOutcome.NotEvaluated(StatusAdverseCode, "No company profile record available."));
+            outcomes.Add(RuleEvaluationOutcome.NotEvaluated(ComplianceNonCompliantCode, "No company profile record available."));
         }
         else
         {
@@ -52,7 +52,7 @@ public static class CompanyProfileRules
 
         if (ctx.LatestFinancialYear is null)
         {
-            outcomes.Add(RuleEvaluationOutcome.NotEvaluated(StaleFinancialDataCode, "No FinancialYearData available."));
+            outcomes.Add(RuleEvaluationOutcome.NotEvaluated(StaleFinancialDataCode, "No financial year data available."));
         }
         else if (ctx.FinancialDataAgeMonths is { } age && age > thresholds.StaleFinancialDataMonths)
         {
