@@ -1,6 +1,7 @@
 using MCAROC_Analysis.Data;
 using MCAROC_Analysis.Data.Entities;
 using MCAROC_Analysis.Services.Chat;
+using Microsoft.Data.SqlTypes;
 using Microsoft.EntityFrameworkCore;
 
 namespace MCAROC_Analysis.Tests;
@@ -185,5 +186,39 @@ public class StructuredFactsProviderTests : IAsyncLifetime
         Assert.Contains($"Ingestion run {runId}", fact.DisplayLabel);
         Assert.Contains("RocCharge", fact.DisplayLabel);
         Assert.Equal("NotStarted", context.IndexingStatusLabel);
+    }
+
+    [Fact]
+    public async Task Stale_chunk_under_absent_authoritative_batch_is_excluded_from_context()
+    {
+        // Acceptance criterion from #208: a request with no McaFilingBatch row at all (so
+        // McaFilingBatchResolver.GetAuthoritativeBatchAsync resolves to null) must never search or return
+        // a leftover DocumentChunk row — simulating a chunk orphaned by a deleted/superseded batch, not
+        // just the absence of any chunk to begin with (which the prior test above doesn't distinguish).
+        await using var db = CreateContext();
+        var (requestId, _) = await SeedRequestAsync(db);
+
+        const long staleBatchId = 999L;
+        db.DocumentChunks.Add(new DocumentChunk
+        {
+            RequestId = requestId, FilingDocumentId = 1, FilingId = staleBatchId, BatchId = staleBatchId,
+            Srn = "SRN-STALE", Category = FilingCategory.Charge, FormType = null, DocumentName = "stale.pdf",
+            ChunkIndex = 0, PageNumber = 1, ChunkText = "stale chunk text from a deleted batch",
+            Embedding = new SqlVector<float>(new float[768]),
+            EmbeddingModel = "test", EmbeddingDimensions = 768, ChunkingVersion = "1.0", CreatedDate = DateTime.UtcNow
+        });
+        await db.SaveChangesAsync();
+
+        var embedding = new ThrowingEmbeddingService();
+        var contextBuilder = new RetrievalContextBuilder(
+            db,
+            new StructuredFactsProvider(db),
+            new DocumentRetriever(db, ChatRetrievalOptions.Default),
+            embedding);
+
+        var context = await contextBuilder.BuildAsync(requestId, "What charges are recorded?", CancellationToken.None);
+
+        Assert.False(embedding.Called);
+        Assert.DoesNotContain(context.Sources, s => s.Type == SourceType.DocumentChunk);
     }
 }
