@@ -190,7 +190,24 @@ public partial class DossierPdfComposer
             FinancialStatementTable(col, f.Consolidated);
         }
 
-        Item(col, ref n, "Additional line items (not in the summary above)", f.Facts,
+        // #152/#197: the source-reported ratios (catalogue A1.x) get their own multi-year block —
+        // "render as-is with a multi-year sparkline; do not recompute" — rather than sitting in the flat
+        // "Additional line items" catch-all below, which is what #152 flagged as insufficient. Excluded
+        // from that catch-all's rows so the same ratio never appears in both places.
+        var ratioFacts = f.Facts.Where(x => x.Section == FinancialStatementSection.Ratios).ToList();
+        if (ratioFacts.Count > 0)
+        {
+            n++;
+            col.Item().PaddingTop(14).PaddingBottom(4).Text($"Item {n} — Ratios, as reported")
+                .FontFamily(DossierTheme.Display).FontSize(DossierTheme.Heading);
+            col.Item().PaddingBottom(6).Text(
+                "Rendered exactly as filed across every year on record — not recomputed.")
+                .FontSize(DossierTheme.Small).FontColor(DossierTheme.InkFaint);
+            RatiosTable(col, ratioFacts);
+        }
+
+        Item(col, ref n, "Additional line items (not in the summary above)",
+            f.Facts.Where(x => x.Section != FinancialStatementSection.Ratios).ToList(),
             new Col<FinancialFact>("Section", 1.1f, x => x.Section.ToString()),
             new Col<FinancialFact>("Label", 2.6f, x => x.Label),
             new Col<FinancialFact>("FY", 0.7f, x => x.FinancialYear?.ToString() ?? "-"),
@@ -250,6 +267,42 @@ public partial class DossierPdfComposer
 
         if (years.Any(y => y.CashFlowYearInferred))
             col.Item().PaddingTop(3).Text("Cash-flow rows: the source section carries no year header — years inferred by column position, excluded from automated analysis.")
+                .FontSize(DossierTheme.Small).FontColor(DossierTheme.Amber);
+    }
+
+    /// <summary>The A1.x source-reported ratios, pivoted label × year like <see cref="FinancialStatementTable"/> — one row per ratio, one column per year on record, rendered exactly as extracted (numeric where it parsed, the raw text otherwise).</summary>
+    private void RatiosTable(ColumnDescriptor col, IReadOnlyList<FinancialFact> ratioFacts)
+    {
+        var years = ratioFacts.Where(f => f.FinancialYear is not null)
+            .Select(f => f.FinancialYear!.Value).Distinct().OrderBy(y => y).ToList();
+        var labels = ratioFacts.Select(f => f.Label).Distinct().ToList();
+        var byLabelYear = ratioFacts.Where(f => f.FinancialYear is not null)
+            .GroupBy(f => (f.Label, Year: f.FinancialYear!.Value))
+            .ToDictionary(g => g.Key, g => g.First());
+
+        col.Item().Table(table =>
+        {
+            table.ColumnsDefinition(cd => { cd.RelativeColumn(2.4f); foreach (var _ in years) cd.RelativeColumn(); });
+            table.Header(h =>
+            {
+                HeaderCell(h.Cell(), "Ratio");
+                foreach (var y in years) HeaderCell(h.Cell(), $"FY{y}");
+            });
+            foreach (var label in labels)
+            {
+                BodyCell(table.Cell(), label);
+                foreach (var y in years)
+                {
+                    var value = byLabelYear.TryGetValue((label, y), out var fact)
+                        ? fact.NumericValue?.ToString("0.##") ?? fact.RawValue
+                        : "-";
+                    BodyCell(table.Cell(), value, right: true);
+                }
+            }
+        });
+
+        if (ratioFacts.Any(f => f.YearInferred))
+            col.Item().PaddingTop(3).Text("Some ratio rows: the source section carries no year header — years inferred by column position, excluded from automated analysis.")
                 .FontSize(DossierTheme.Small).FontColor(DossierTheme.Amber);
     }
 
