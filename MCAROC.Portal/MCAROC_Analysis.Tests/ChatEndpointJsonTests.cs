@@ -301,6 +301,48 @@ public class ChatEndpointJsonTests : IAsyncLifetime
         }
     }
 
+    private sealed class ThrowingEmbeddingService : EmbeddingService
+    {
+        public bool Called { get; private set; }
+
+        public override Task<float[]> EmbedQueryAsync(string text, CancellationToken ct)
+        {
+            Called = true;
+            throw new HttpRequestException("Embedding provider unavailable");
+        }
+    }
+
+    [Fact]
+    public async Task PostChat_NoCompletedIngestionRun_PersistsFixedInsufficientEvidenceWithoutCallingEmbeddingOrCompletion()
+    {
+        // Acceptance criterion from #208: a request with no LatestCompletedIngestionRunId at all (never
+        // ingested, or ingestion never completed) must produce an empty RetrievalContext and never call
+        // either the embedding service or the completion model — proven end-to-end through the real
+        // RetrievalContextBuilder (not the EmptyRetrievalContextBuilder fake used above), so this exercises
+        // StructuredFactsProvider's own early-return and the chunk-search guard together, not a stand-in.
+        await using var db = CreateContext();
+        var requestId = await SeedRequestAsync("No Ingestion Corp"); // SeedRequestAsync never sets LatestCompletedIngestionRunId
+        var embedding = new ThrowingEmbeddingService();
+        var contextBuilder = new RetrievalContextBuilder(
+            db, new StructuredFactsProvider(db), new DocumentRetriever(db, ChatRetrievalOptions.Default), embedding);
+        var completion = new ThrowIfCalledCompletionService();
+        var chatService = new ChatService(db, contextBuilder, completion, NullLogger<ChatService>.Instance);
+        var controller = NewController(db);
+
+        var result = await controller.AskChat(requestId,
+            new AskChatJsonRequest { Question = "What is the revenue?", ClientTurnId = Guid.NewGuid() },
+            chatService, CancellationToken.None);
+
+        var ok = Assert.IsType<OkObjectResult>(result);
+        var response = Assert.IsType<ChatApiResponse>(ok.Value);
+        Assert.True(response.Success);
+        Assert.False(embedding.Called);
+        Assert.False(completion.Called);
+        Assert.NotNull(response.Message);
+        Assert.Equal("I could not verify this from the uploaded records.", response.Message.Text);
+        Assert.Empty(response.Message.Citations);
+    }
+
     [Fact]
     public async Task PostChat_EmptyEvidence_PersistsFixedInsufficientEvidenceWithoutCallingCompletion()
     {
