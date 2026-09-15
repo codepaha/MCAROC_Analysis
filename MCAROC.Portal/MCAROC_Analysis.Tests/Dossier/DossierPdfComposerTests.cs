@@ -84,9 +84,14 @@ public class DossierPdfComposerTests : IAsyncLifetime
         // New attribution line (cover footer + "Prepared by").
         Assert.Contains("Gaba Projects Private Limited", text);
 
-        Assert.Contains("Annexure A", text);
-        Assert.Contains("Annexure E", text);
+        // #197: "Annexure A-E" lettering is gone from the rendered document; sections carry plain names.
+        Assert.Contains("Financial Profile", text);
+        Assert.Contains("Borrowing & Security", text);
+        Assert.Contains("Directors & Governance", text);
+        Assert.Contains("Statutory Compliance", text);
+        Assert.Contains("Litigation", text);
         Assert.Contains("Executive Summary", text);
+        Assert.DoesNotContain("Annexure", text);
 
         // The hard rule: no score, no gauge, no document index.
         var lower = text.ToLowerInvariant();
@@ -140,7 +145,7 @@ public class DossierPdfComposerTests : IAsyncLifetime
         Assert.Contains("Evidence", text);
         Assert.Contains("Test Component Finding", text);
         Assert.Contains("Component summary text.", text);
-        Assert.Contains("Annexure C", text); // the component's own section cited on its evidence line
+        Assert.Contains("Borrowing & Security", text); // the component's own section cited on its evidence line
 
         // The whole point: the component appears exactly once (nested), never as a second, separate card.
         var occurrences = System.Text.RegularExpressions.Regex.Matches(text, "Test Component Finding").Count;

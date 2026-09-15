@@ -103,7 +103,6 @@ public partial class DossierPdfComposer
             }));
         });
 
-        ComposeKeyIndicators(col);
         ComposeSourceCoverage(col);
         ComposeNotAssessed(col);
     });
@@ -175,31 +174,6 @@ public partial class DossierPdfComposer
                         .FontColor(DossierTheme.InkSoft).LineHeight(1.4f);
                 });
         });
-    }
-
-    /// <summary>The derived-metrics block — deterministic and AI-independent.</summary>
-    private void ComposeKeyIndicators(ColumnDescriptor col)
-    {
-        if (model.Metrics.Count == 0) return;
-
-        col.Item().PaddingTop(8).Element(c => Kicker(c, "Computed"));
-        col.Item().Element(c => SubHead(c, "Key Indicators"));
-        col.Item().PaddingBottom(10).Text(
-            "Figures the system derives from the source records — each shows the period it covers and " +
-            "the fields it is built from. Where the data is insufficient the reason is stated in place " +
-            "of a number.")
-            .FontSize(DossierTheme.Small).FontColor(DossierTheme.InkSoft).LineHeight(1.5f);
-
-        foreach (var pair in model.Metrics.Chunk(2))
-        {
-            col.Item().PaddingTop(10).Row(row =>
-            {
-                row.RelativeItem().Element(c => MetricBlock(c, pair[0]));
-                row.ConstantItem(12);
-                if (pair.Length > 1) row.RelativeItem().Element(c => MetricBlock(c, pair[1]));
-                else row.RelativeItem();
-            });
-        }
     }
 
     private static string NumOrDash(decimal? v) => v is null ? "—" : $"₹{v.Value:N1} Cr";
@@ -424,12 +398,12 @@ public partial class DossierPdfComposer
 
     private static string AnnexureRef(FindingSection s) => s switch
     {
-        FindingSection.CompanyProfile or FindingSection.Directors or FindingSection.DirectorNetwork or FindingSection.Ownership => "Annexure A — Corporate",
-        FindingSection.Financial => "Annexure B — Financials",
-        FindingSection.Charges => "Annexure C — Charges & Security",
-        FindingSection.Msme or FindingSection.Gst or FindingSection.Epfo or FindingSection.Auditor => "Annexure D — Compliance",
-        FindingSection.Litigation => "Annexure E — Litigation",
-        _ => "the annexures"
+        FindingSection.CompanyProfile or FindingSection.Directors or FindingSection.DirectorNetwork or FindingSection.Ownership => "Directors & Governance",
+        FindingSection.Financial => "Financial Profile",
+        FindingSection.Charges => "Borrowing & Security",
+        FindingSection.Msme or FindingSection.Gst or FindingSection.Epfo or FindingSection.Auditor => "Statutory Compliance",
+        FindingSection.Litigation => "Litigation",
+        _ => "the relevant section"
     };
 
     private static string AnnexureSection(FindingSection s) => s switch

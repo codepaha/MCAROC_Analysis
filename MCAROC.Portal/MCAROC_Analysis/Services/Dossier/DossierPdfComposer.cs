@@ -156,34 +156,6 @@ public partial class DossierPdfComposer(DossierModel model, DossierVariant varia
                 });
         });
 
-    /// <summary>A metric mini-table: value on the right, the period it covers as a small caption under
-    /// each label, an "insufficient data" reason rendered in place of a number. Unlike the portal's own
-    /// Key Indicators tab (a properly labeled table with its own "Inputs" column — an intentional
-    /// analyst/audit feature), this client-facing PDF caption never prints the raw `Entity.Field`
-    /// provenance strings from <see cref="Models.Dossier.MetricResult.Inputs"/> — that detail belongs in
-    /// a single Methodology appendix, not repeated under every card.</summary>
-    private void MetricBlock(IContainer c, Models.Dossier.MetricGroup group) =>
-        c.Border(0.75f).BorderColor(DossierTheme.Line).Column(col =>
-        {
-            col.Item().Background(DossierTheme.Ink).PaddingVertical(6).PaddingHorizontal(11)
-                .Text(group.Title).FontFamily(DossierTheme.Display).FontSize(11.5f).FontColor("#FFFFFF");
-            foreach (var m in group.Metrics)
-                col.Item().BorderBottom(0.5f).BorderColor(DossierTheme.LineSoft)
-                    .PaddingVertical(5).PaddingHorizontal(11).Row(r =>
-                {
-                    r.RelativeItem().Column(lc =>
-                    {
-                        lc.Item().Text(m.Label).FontSize(DossierTheme.Small).FontColor(DossierTheme.InkSoft);
-                        lc.Item().Text(m.Period)
-                            .FontSize(DossierTheme.Small - 1.5f).FontColor(DossierTheme.InkFaint);
-                    });
-                    r.ConstantItem(130).AlignRight().Text(m.DisplayValue())
-                        .FontSize(DossierTheme.Small)
-                        .FontColor(m.HasValue ? DossierTheme.Ink : DossierTheme.InkFaint)
-                        .SemiBold();
-                });
-        });
-
     // ── Cover ──────────────────────────────────────────────────────────────
 
     private void ComposeCover(IContainer container)
@@ -225,19 +197,16 @@ public partial class DossierPdfComposer(DossierModel model, DossierVariant varia
             col.Item().Element(c => Kicker(c, "Quick View"));
             col.Item().Element(c => SectionTitle(c, "Contents"));
             col.Item().Element(c => Lead(c,
-                "This dossier pairs a one-page Snapshot and a synthesised Executive Summary with concise " +
-                "source-record annexures — every flag references the annexure and record it was drawn from."));
+                "This dossier pairs a one-page Snapshot and a synthesised Executive Summary with the complete " +
+                "source record, organised by section — every flag references the section and record it was drawn from."));
 
             ContentsLine(col, "Snapshot", "snapshot");
             ContentsLine(col, "1. Executive Summary", "section-1");
-
-            col.Item().PaddingTop(10).PaddingBottom(4).Text("Annexures — source data")
-                .FontFamily(DossierTheme.Display).FontSize(DossierTheme.Heading);
-            ContentsLine(col, "Annexure A — Corporate", "annexure-a");
-            ContentsLine(col, "Annexure B — Financials", "annexure-b");
-            ContentsLine(col, "Annexure C — Charges & Security", "annexure-c");
-            ContentsLine(col, "Annexure D — Compliance", "annexure-d");
-            ContentsLine(col, "Annexure E — Litigation", "annexure-e");
+            ContentsLine(col, "2. Financial Profile", "annexure-b");
+            ContentsLine(col, "3. Borrowing & Security", "annexure-c");
+            ContentsLine(col, "4. Directors & Governance", "annexure-a");
+            ContentsLine(col, "5. Statutory Compliance", "annexure-d");
+            ContentsLine(col, "6. Litigation", "annexure-e");
 
             col.Item().PaddingTop(18).Background(DossierTheme.PaperRaised).Border(0.75f).BorderColor(DossierTheme.Line)
                 .BorderLeft(2.5f).BorderColor(DossierTheme.Maroon).Padding(14).Text(t =>
@@ -245,8 +214,9 @@ public partial class DossierPdfComposer(DossierModel model, DossierVariant varia
                 t.DefaultTextStyle(x => x.FontSize(DossierTheme.Small).FontColor(DossierTheme.InkSoft).LineHeight(1.5f));
                 t.Span("How to read this dossier: ").Bold();
                 t.Span("Snapshot is a 10-second scan of the numbers that matter. Section 1 is a synthesised " +
-                    "view — it draws conclusions across every annexure and is not itself a source record. Each flag " +
-                    "cites the annexure and item it was drawn from; treat the annexures as the system of record.");
+                    "view — it draws conclusions across every later section and is not itself a source record. Each " +
+                    "flag cites the section and item it was drawn from; each section opens with an \"At a glance\" " +
+                    "line before its complete source-record tables.");
             });
         });
     }
