@@ -73,35 +73,34 @@ public class DossierThemeSyncTests
     }
 
     [Fact]
-    public void App_css_maps_core_tokens_to_dossier_palette()
+    public void App_css_uses_an_independent_bfsi_portal_palette()
     {
         var appCss = Read("MCAROC.Portal", "MCAROC_Analysis", "wwwroot", "css", "app.css");
 
-        // The light theme :root must bridge directly to dossier-tokens.css variables.
-        var expectedMappings = new (string Token, string DossierVar)[]
+        // The portal intentionally uses a cool BFSI palette. dossier-tokens.css remains the
+        // separately synchronized source of truth for the client PDF report.
+        var expectedTokens = new (string Token, string Colour)[]
         {
-            ("--bg", "var(--paper"),
-            ("--surface", "var(--paper-raised"),
-            ("--text", "var(--ink"),
-            ("--text-2", "var(--ink-soft"),
-            ("--muted", "var(--ink-faint"),
-            ("--brand", "var(--maroon"),
-            ("--brand-strong", "var(--maroon-deep"),
-            ("--brand-soft", "var(--maroon-wash"),
-            ("--success", "var(--sage"),
-            ("--success-soft", "var(--sage-wash"),
-            ("--warning", "var(--amber"),
-            ("--warning-soft", "var(--amber-wash"),
-            ("--border", "var(--line-soft"),
-            ("--border-strong", "var(--line"),
-            ("--side-bg", "var(--ink"),
+            ("--brand", "#2F7DF6"),
+            ("--brand-strong", "#1D4ED8"),
+            ("--brand-soft", "#EDF4FF"),
+            ("--bg", "#F2F4F7"),
+            ("--surface", "#FFFFFF"),
+            ("--text", "#111827"),
+            ("--text-2", "#374151"),
+            ("--muted", "#667085"),
+            ("--border", "#E1E7EF"),
+            ("--side-bg", "#142033"),
         };
 
-        foreach (var (token, dossierVar) in expectedMappings)
+        foreach (var (token, colour) in expectedTokens)
         {
-            var pattern = $@"{Regex.Escape(token)}\s*:\s*{Regex.Escape(dossierVar)}";
+            var pattern = $@"{Regex.Escape(token)}\s*:\s*{Regex.Escape(colour)}\b";
             Assert.True(Regex.IsMatch(appCss, pattern),
-                $"app.css :root is expected to map '{token}' to '{dossierVar}...' but no match was found.");
+                $"app.css :root is expected to assign '{token}' to '{colour}' but no match was found.");
         }
+
+        Assert.DoesNotContain("var(--maroon", appCss);
+        Assert.DoesNotContain("var(--paper", appCss);
     }
 }

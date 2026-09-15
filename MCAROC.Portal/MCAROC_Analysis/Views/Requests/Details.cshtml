@@ -45,38 +45,42 @@
             </div>
         </div>
         <div class="mca-company-meta">
-            <div class="mca-pills">
-                <span class="pi-status-pill @StatusPill(r.RequestStatus)">@r.RequestStatus</span>
-                @if (run?.OverallReviewPriority is { } hdrPr)
-                {
-                    <span class="pi-status-pill @PriorityPill(hdrPr)">@hdrPr Priority</span>
-                }
-                @if (r.IsManualReviewRequired)
-                {
-                    <span class="pi-status-pill pi-status-processing">Manual Review Required</span>
-                }
-            </div>
-            <small><b>@r.RequestNumber</b> &middot; @(r.Client?.ClientName)</small>
-            <small>Updated @((r.UpdatedDate ?? r.CreatedDate).ToString("d MMM yyyy HH:mm"))</small>
-            @if (r.RequestStatus == RequestStatus.AnalysisCompleted)
-            {
-                <div class="mt-1">
-                    <a href="/Requests/@r.RequestId/dossier" class="btn btn-sm btn-outline-primary">Download dossier</a>
-                    @* #164 internal calculation-assurance review panel — never part of the customer deliverable
-                       above. Plain link, not a tab: it lives on its own page at /internal/calc-audit so this
-                       page's own tab markup never has to branch on whether audit data is present. *@
-                    <a href="/internal/calc-audit/@r.RequestId" class="btn btn-sm btn-outline-dark ms-1" title="Internal calculation-assurance review — ledger, deterministic checks, discrepancy workflow">
-                        <i class="bi bi-shield-check"></i> Calculation audit
-                    </a>
+            <div class="mca-meta-controls">
+                <div class="mca-pills">
+                    <span class="pi-status-pill @StatusPill(r.RequestStatus)">@r.RequestStatus</span>
+                    @if (run?.OverallReviewPriority is { } hdrPr)
+                    {
+                        <span class="pi-status-pill @PriorityPill(hdrPr)">@hdrPr Priority</span>
+                    }
+                    @if (r.IsManualReviewRequired)
+                    {
+                        <span class="pi-status-pill pi-status-processing">Manual Review Required</span>
+                    }
                 </div>
-            }
+                @if (r.RequestStatus == RequestStatus.AnalysisCompleted)
+                {
+                    <div class="mca-head-actions">
+                        <a href="/Requests/@r.RequestId/dossier" class="btn btn-sm btn-outline-primary">Download dossier</a>
+                        @* #164 internal calculation-assurance review panel — never part of the customer deliverable
+                           above. Plain link, not a tab: it lives on its own page at /internal/calc-audit so this
+                           page's own tab markup never has to branch on whether audit data is present. *@
+                        <a href="/internal/calc-audit/@r.RequestId" class="btn btn-sm btn-outline-dark" title="Internal calculation-assurance review — ledger, deterministic checks, discrepancy workflow">
+                            <i class="bi bi-shield-check"></i><span>Calculation audit</span>
+                        </a>
+                    </div>
+                }
             @* Crore/Lakh/₹ amount unit toggle (#123) — only this page renders any amount, so the
                control lives here, not in _Layout.cshtml. The dossier PDF above always shows Crore
                regardless of this toggle: it's a fixed generated document, not the live page. *@
-            <div class="mca-unit-toggle mt-1" role="radiogroup" aria-label="Amount unit">
+            <div class="mca-unit-toggle" role="radiogroup" aria-label="Amount unit">
                 <label><input type="radio" name="mca-amount-unit" value="crore" checked><span>Cr</span></label>
                 <label><input type="radio" name="mca-amount-unit" value="lakh"><span>Lakh</span></label>
                 <label><input type="radio" name="mca-amount-unit" value="rupee"><span>₹</span></label>
+            </div>
+            </div>
+            <div class="mca-meta-detail">
+                <span><b>@r.RequestNumber</b> &middot; @(r.Client?.ClientName)</span>
+                <span>Updated @((r.UpdatedDate ?? r.CreatedDate).ToString("d MMM yyyy HH:mm"))</span>
             </div>
         </div>
     </div>
