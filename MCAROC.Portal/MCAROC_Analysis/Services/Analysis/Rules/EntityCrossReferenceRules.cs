@@ -48,14 +48,17 @@ public static partial class EntityCrossReferenceRules
         if (ctx.Charges.Count == 0 || ctx.Litigations.Count == 0)
             return RuleEvaluationOutcome.NotEvaluated(LitigationByExistingChargeHolderCode, "No charge or litigation records available.");
 
+        // Satisfied charges are historical exposure, not a current holder — describing a lender repaid
+        // years ago as "an existing charge holder" would be a real, present-tense factual error.
         var holderNames = ctx.Charges
+            .Where(c => c.SatisfactionDate is null)
             .Select(c => c.LatestChargeHolderRaw)
             .Where(n => !string.IsNullOrWhiteSpace(n))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
 
         var matches = new List<(Litigation Litigation, string HolderName)>();
-        foreach (var lit in ctx.Litigations)
+        foreach (var lit in ConfirmedPendingLitigations(ctx))
         {
             if (string.IsNullOrWhiteSpace(lit.Litigants)) continue;
             var normLitigants = NormalizeCompanyName(lit.Litigants);
@@ -111,7 +114,7 @@ public static partial class EntityCrossReferenceRules
             return RuleEvaluationOutcome.NotEvaluated(LitigationInvolvesDirectorOrGuarantorCode, "No director or personal-guarantor names available.");
 
         var matches = new List<(Litigation Litigation, string PersonName)>();
-        foreach (var lit in ctx.Litigations)
+        foreach (var lit in ConfirmedPendingLitigations(ctx))
         {
             if (string.IsNullOrWhiteSpace(lit.Litigants)) continue;
             var litigantTokens = Tokenize(lit.Litigants);
@@ -186,8 +189,11 @@ public static partial class EntityCrossReferenceRules
         if (normClient.Length < 4)
             return RuleEvaluationOutcome.NotEvaluated(ChargeHolderIsRequestingClientCode, "Requesting client name too short to match reliably.");
 
+        // Same reasoning as Check 1: a satisfied charge is historical exposure, not a current holding —
+        // "already holds a charge" must not be claimed about a charge repaid years ago.
         var matchingCharges = ctx.Charges
-            .Where(c => !string.IsNullOrWhiteSpace(c.LatestChargeHolderRaw) && NormalizeCompanyName(c.LatestChargeHolderRaw) == normClient)
+            .Where(c => c.SatisfactionDate is null
+                && !string.IsNullOrWhiteSpace(c.LatestChargeHolderRaw) && NormalizeCompanyName(c.LatestChargeHolderRaw) == normClient)
             .ToList();
 
         if (matchingCharges.Count == 0)
@@ -210,6 +216,16 @@ public static partial class EntityCrossReferenceRules
     }
 
     // ── Shared helpers ──────────────────────────────────────────────────────────────────────────────
+
+    /// <summary>The only litigation rows worth cross-referencing as a *current* adverse/informational
+    /// signal: MatchStatus=Probable/Uncertain rows aren't even vendor-confirmed to belong to this company
+    /// (LitigationRules never treats them as a confirmed adverse signal either), and a resolved case
+    /// (LitigationRules.IsPending's own closed-keyword definition — disposed/closed/dismissed/withdrawn/
+    /// settled) describes historical exposure, not something currently true. Excluded rows are simply not
+    /// considered — matching LitigationRules.Evaluate's own precedent of filtering to pending cases up
+    /// front rather than emitting a separate Historical finding for resolved ones.</summary>
+    private static IEnumerable<Litigation> ConfirmedPendingLitigations(AnalysisContext ctx) =>
+        ctx.Litigations.Where(l => l.MatchStatus == LitigationMatchStatus.Confirmed && LitigationRules.IsPending(l.CaseStatus));
 
     private static string LitigationRef(IEnumerable<Litigation> cases) => JsonSerializer.Serialize(new
     {
