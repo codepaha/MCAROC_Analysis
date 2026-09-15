@@ -17,8 +17,8 @@ public partial class DossierPdfComposer
         col.Item().Element(c => SectionTitle(c, "Snapshot"));
         col.Item().Element(c => Lead(c,
             "A factual, deterministic snapshot drawn from the indexed source records — direct figures, totals, " +
-            "counts and selections, plus the rule-engine Review Priority classification. No narrative synthesis." +
-            (variant == DossierVariant.SourceRecord ? "" : " For the reasoning across the annexures, see Section 1.")));
+            "counts and selections, plus the rule-engine Review Priority classification. No narrative synthesis. " +
+            "For the reasoning across the annexures, see Section 1."));
 
         var f = model.Financials;
         var ch = model.Charges;
@@ -176,9 +176,7 @@ public partial class DossierPdfComposer
         });
     }
 
-    /// <summary>The derived-metrics block. Renders in every variant (Executive, FullSource,
-    /// SourceRecord) — it is deterministic and AI-independent. Empty until the Wave-4 D-issues add
-    /// metric groups, so this is a no-op today.</summary>
+    /// <summary>The derived-metrics block — deterministic and AI-independent.</summary>
     private void ComposeKeyIndicators(ColumnDescriptor col)
     {
         if (model.Metrics.Count == 0) return;

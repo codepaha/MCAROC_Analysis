@@ -16,8 +16,7 @@ namespace MCAROC_Analysis.Models;
 ///
 /// Guardrails: not a score (never combine metrics into an index); every metric returns a
 /// <see cref="MetricResult"/> with its inputs, period and — when it cannot be computed — an
-/// insufficiency reason instead of a fake 0; the whole layer renders in ALL dossier variants
-/// including SourceRecord (no-AI).</summary>
+/// insufficiency reason instead of a fake 0.</summary>
 public static partial class DossierComputations
 {
     /// <summary>All metric groups for a dossier, in render order. Empty until the D-wave issues add

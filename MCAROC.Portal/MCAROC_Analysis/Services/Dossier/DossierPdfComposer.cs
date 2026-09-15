@@ -7,7 +7,9 @@ namespace MCAROC_Analysis.Services.Dossier;
 
 /// <summary>Renders a <see cref="DossierModel"/> as the client "Due Diligence Dossier" PDF — the visual
 /// spec is <c>E:\Downloads\kaveri-infra-due-diligence-dossier.pdf</c> minus the risk score. Cover →
-/// Contents → Snapshot → Section 1 (Executive Summary) → Annexures A–E.</summary>
+/// Contents → Snapshot → Section 1 (Executive Summary) → Annexures A–E. <paramref name="variant"/> is
+/// always <see cref="DossierVariant.Executive"/> — the enum now has one member (FullSource/SourceRecord
+/// were removed) but the parameter stays threaded through the controller/renderer to keep that diff small.</summary>
 public partial class DossierPdfComposer(DossierModel model, DossierVariant variant, byte[]? logo = null) : IDocument
 {
     private DossierCover Cover => model.Cover;
@@ -22,12 +24,7 @@ public partial class DossierPdfComposer(DossierModel model, DossierVariant varia
     {
         Title = $"{Cover.CompanyName} — Due Diligence Dossier",
         Author = PreparedBy,
-        Subject = variant switch
-        {
-            DossierVariant.Executive => "Executive dossier",
-            DossierVariant.FullSource => "Full source dossier",
-            _ => "Source record dossier"
-        }
+        Subject = "Executive dossier"
     };
 
     public DocumentSettings GetSettings() => DocumentSettings.Default;
@@ -66,37 +63,12 @@ public partial class DossierPdfComposer(DossierModel model, DossierVariant varia
                 col.Item().Section("contents").Element(ComposeContents);
                 col.Item().PageBreak();
                 col.Item().Section("snapshot").Element(ComposeSnapshot);
-
-                if (variant != DossierVariant.SourceRecord)
-                {
-                    col.Item().PageBreak();
-                    col.Item().Section("section-1").Element(ComposeSection1);
-                }
-
-                if (variant == DossierVariant.Executive)
-                {
-                    col.Item().PageBreak();
-                    col.Item().Element(ComposeAnnexures);
-                }
+                col.Item().PageBreak();
+                col.Item().Section("section-1").Element(ComposeSection1);
+                col.Item().PageBreak();
+                col.Item().Element(ComposeAnnexures);
             });
         });
-
-        // Full source / Source record: the verbatim Layer-0 record replaces the typed annexures.
-        // Landscape — the widest MCA sheets carry ~18 columns and must not be shrunk or clipped.
-        if (variant != DossierVariant.Executive)
-        {
-            container.Page(page =>
-            {
-                page.Size(PageSizes.A4.Landscape());
-                page.MarginVertical(1.6f, Unit.Centimetre);
-                page.MarginHorizontal(1.6f, Unit.Centimetre);
-                page.DefaultTextStyle(BaseText);
-
-                page.Header().Element(RunningHeader);
-                page.Footer().Element(RunningFooter);
-                page.Content().PaddingVertical(10).Section("annexure-source").Element(ComposeSourceRecords);
-            });
-        }
     }
 
     // ── shared text / element helpers ──────────────────────────────────────
@@ -244,63 +216,33 @@ public partial class DossierPdfComposer(DossierModel model, DossierVariant varia
 
     private void ComposeContents(IContainer container)
     {
-        var sourceOnly = variant == DossierVariant.SourceRecord;
-        var raw = variant != DossierVariant.Executive;
-
         container.Column(col =>
         {
             col.Item().Element(c => Kicker(c, "Quick View"));
             col.Item().Element(c => SectionTitle(c, "Contents"));
-            col.Item().Element(c => Lead(c, sourceOnly
-                ? "This dossier pairs a one-page factual Snapshot — deterministic figures, totals, counts and " +
-                  "selections plus the rule-engine Review Priority — with the complete verbatim system of record: " +
-                  "every non-blank row of every worksheet of both MCA workbooks. It carries no synthesised narrative."
-                : raw
-                    ? "This dossier pairs a one-page Snapshot and a synthesised Executive Summary with the complete " +
-                      "verbatim source record — every non-blank row of every worksheet of both MCA workbooks."
-                    : "This dossier pairs a one-page Snapshot and a synthesised Executive Summary with concise " +
-                      "source-record annexures — every flag references the annexure and record it was drawn from."));
+            col.Item().Element(c => Lead(c,
+                "This dossier pairs a one-page Snapshot and a synthesised Executive Summary with concise " +
+                "source-record annexures — every flag references the annexure and record it was drawn from."));
 
             ContentsLine(col, "Snapshot", "snapshot");
-            if (!sourceOnly)
-                ContentsLine(col, "1. Executive Summary", "section-1");
+            ContentsLine(col, "1. Executive Summary", "section-1");
 
-            if (raw)
-            {
-                col.Item().PaddingTop(10).PaddingBottom(4).Text("Annexure — source data")
-                    .FontFamily(DossierTheme.Display).FontSize(DossierTheme.Heading);
-                ContentsLine(col, "Source Records — every workbook row, verbatim", "annexure-source");
-            }
-            else
-            {
-                col.Item().PaddingTop(10).PaddingBottom(4).Text("Annexures — source data")
-                    .FontFamily(DossierTheme.Display).FontSize(DossierTheme.Heading);
-                ContentsLine(col, "Annexure A — Corporate", "annexure-a");
-                ContentsLine(col, "Annexure B — Financials", "annexure-b");
-                ContentsLine(col, "Annexure C — Charges & Security", "annexure-c");
-                ContentsLine(col, "Annexure D — Compliance", "annexure-d");
-                ContentsLine(col, "Annexure E — Litigation", "annexure-e");
-            }
+            col.Item().PaddingTop(10).PaddingBottom(4).Text("Annexures — source data")
+                .FontFamily(DossierTheme.Display).FontSize(DossierTheme.Heading);
+            ContentsLine(col, "Annexure A — Corporate", "annexure-a");
+            ContentsLine(col, "Annexure B — Financials", "annexure-b");
+            ContentsLine(col, "Annexure C — Charges & Security", "annexure-c");
+            ContentsLine(col, "Annexure D — Compliance", "annexure-d");
+            ContentsLine(col, "Annexure E — Litigation", "annexure-e");
 
             col.Item().PaddingTop(18).Background(DossierTheme.PaperRaised).Border(0.75f).BorderColor(DossierTheme.Line)
                 .BorderLeft(2.5f).BorderColor(DossierTheme.Maroon).Padding(14).Text(t =>
             {
                 t.DefaultTextStyle(x => x.FontSize(DossierTheme.Small).FontColor(DossierTheme.InkSoft).LineHeight(1.5f));
                 t.Span("How to read this dossier: ").Bold();
-                if (sourceOnly)
-                    t.Span("Snapshot is a 10-second scan — a factual, deterministic view of the source records " +
-                        "(figures, totals, counts, selections) plus the rule-engine Review Priority classification, " +
-                        "with no narrative synthesis. This variant omits the Section 1 narrative entirely. The Source " +
-                        "Records annexure that follows is the complete verbatim system of record: every non-blank row " +
-                        "of every worksheet, exactly as extracted.");
-                else if (raw)
-                    t.Span("Snapshot is a 10-second scan of the numbers that matter. Section 1 is a synthesised " +
-                        "view — it draws conclusions across the source record and is not itself a source record. " +
-                        "The Source Records annexure reproduces every workbook row verbatim; treat it as the system of record.");
-                else
-                    t.Span("Snapshot is a 10-second scan of the numbers that matter. Section 1 is a synthesised " +
-                        "view — it draws conclusions across every annexure and is not itself a source record. Each flag " +
-                        "cites the annexure and item it was drawn from; treat the annexures as the system of record.");
+                t.Span("Snapshot is a 10-second scan of the numbers that matter. Section 1 is a synthesised " +
+                    "view — it draws conclusions across every annexure and is not itself a source record. Each flag " +
+                    "cites the annexure and item it was drawn from; treat the annexures as the system of record.");
             });
         });
     }
