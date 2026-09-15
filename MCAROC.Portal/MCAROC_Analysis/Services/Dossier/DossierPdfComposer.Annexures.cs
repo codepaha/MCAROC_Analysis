@@ -5,13 +5,11 @@ using QuestPDF.Infrastructure;
 
 namespace MCAROC_Analysis.Services.Dossier;
 
-/// <summary>Annexures A–E — the full source record, trimmed to key rows per table.</summary>
+/// <summary>Annexures A–E — the full source record, every row rendered (no per-table cap — the PDF is
+/// the one downloadable artifact a reviewer can rely on for complete data since the FullSource/
+/// SourceRecord variants were removed).</summary>
 public partial class DossierPdfComposer
 {
-    private const int ExecutiveRowCap = 8;
-
-    private bool Exec => variant == DossierVariant.Executive;
-
     private void ComposeAnnexures(IContainer container) => container.Column(col =>
     {
         col.Item().Section("annexure-a").Element(AnnexureA);
@@ -40,7 +38,6 @@ public partial class DossierPdfComposer
         IReadOnlyList<T> rows, params Col<T>[] cols)
     {
         n++;
-        var shown = Exec ? rows.Take(ExecutiveRowCap).ToList() : rows.ToList();
 
         col.Item().PaddingTop(14).PaddingBottom(4).Text($"Item {n} — {caption}")
             .FontFamily(DossierTheme.Display).FontSize(DossierTheme.Heading);
@@ -55,14 +52,10 @@ public partial class DossierPdfComposer
         {
             table.ColumnsDefinition(cd => { foreach (var c in cols) cd.RelativeColumn(c.Weight); });
             table.Header(h => { foreach (var c in cols) HeaderCell(h.Cell(), c.Header); });
-            foreach (var r in shown)
+            foreach (var r in rows)
                 foreach (var c in cols)
                     BodyCell(table.Cell(), c.Cell(r), c.Right && c.Cell(r) is not "-" and not "");
         });
-
-        if (Exec && rows.Count > ExecutiveRowCap)
-            col.Item().PaddingTop(3).Text($"+ {rows.Count - ExecutiveRowCap} more row(s) not shown in this table.")
-                .FontSize(DossierTheme.Small).FontColor(DossierTheme.InkFaint);
     }
 
     // ── A. Corporate ──────────────────────────────────────────────────────
