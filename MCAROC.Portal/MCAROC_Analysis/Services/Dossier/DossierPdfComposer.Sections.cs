@@ -3,6 +3,7 @@ using System.Text.RegularExpressions;
 using MCAROC_Analysis.Data.Entities;
 using MCAROC_Analysis.Models;
 using MCAROC_Analysis.Models.Dossier;
+using MCAROC_Analysis.Services.Excel;
 using QuestPDF.Fluent;
 using QuestPDF.Infrastructure;
 
@@ -200,24 +201,59 @@ public partial class DossierPdfComposer
         });
     }
 
-    /// <summary>"Source coverage" — a one-line disclosure that this dossier is not built on every optional
-    /// data category, so a client is never left assuming full coverage. Deliberately does not itemize
-    /// which internal source categories were absent — that detail (and, distinctly, which check could not
-    /// run because of it) now lives where a reviewer is already looking: as a "Not provided in this
-    /// upload" note right inside the specific section it affects, next to the empty table itself. Called
-    /// only from <see cref="AnnexureF"/>; a no-op when every tracked optional category was present and a
-    /// charge report (where charges exist) was supplied.</summary>
+    /// <summary>Tracked optional categories with no table anywhere in this dossier, present or absent —
+    /// unlike every other tracked category (directors, GST, EPFO, credit... the rest), these have no
+    /// in-context home for a "not provided in this upload" note, so an absence here would otherwise never
+    /// reach a client at all. Listed explicitly in <see cref="ComposeSourceCoverage"/> instead. Building an
+    /// actual table for each is a separate, larger follow-up (#214 review) — this is the interim,
+    /// client-safe disclosure so nothing is silently lost in the meantime.</summary>
+    private static readonly (IReadOnlyList<string> Sheet, string Label)[] UnmappedOptionalCategories =
+    [
+        (SheetAliases.Structure, "Corporate structure"),
+        (SheetAliases.Proprietorship, "Proprietorship"),
+        (SheetAliases.Highlights, "Highlights"),
+        (SheetAliases.FinancialParametersAnnexure, "Financial parameters (annexure)"),
+        (SheetAliases.RelatedPartyTransactions, "Related party transactions"),
+        (SheetAliases.CreditRatings, "Credit ratings"),
+        (SheetAliases.UnacceptedRatings, "Unaccepted ratings"),
+        (SheetAliases.LegalCasesFinancialDispute, "Legal cases — financial dispute"),
+    ];
+
+    /// <summary>"Source coverage" — the aggregate count, plus an explicit list of any absent category from
+    /// <see cref="UnmappedOptionalCategories"/> (the only ones without an in-context "not provided" note
+    /// elsewhere in this dossier). Every other absent category is disclosed directly beside the empty
+    /// table it affects. Called only from <see cref="AnnexureF"/>; a no-op when every tracked optional
+    /// category was present and a charge report (where charges exist) was supplied.</summary>
     private void ComposeSourceCoverage(ColumnDescriptor col)
     {
         var cov = model.SourceCoverage;
         if (!cov.AnySheetAbsent && !cov.ChargeReportMissing) return;
 
+        var unmappedAbsent = UnmappedOptionalCategories.Where(c => cov.WasAbsent(c.Sheet)).ToList();
+
         col.Item().Element(c => SubHead(c, "Source coverage"));
-        col.Item().Text(
+        col.Item().PaddingBottom(unmappedAbsent.Count > 0 ? 8 : 0).Text(
             $"This dossier includes {cov.PresentOptionalSheets} of {cov.TotalOptionalSheets} optional source " +
             "categories. Where a category was not provided, the affected section says so directly, next to the " +
             "empty table it would have filled.")
             .FontSize(DossierTheme.Small).FontColor(DossierTheme.InkSoft).LineHeight(1.5f);
+
+        if (unmappedAbsent.Count == 0) return;
+
+        col.Item().PaddingBottom(6).Text(
+            "The categories below have no dedicated section in this dossier, so they are listed here instead:")
+            .FontSize(DossierTheme.Small).FontColor(DossierTheme.InkSoft).LineHeight(1.5f);
+        col.Item().Border(0.75f).BorderColor(DossierTheme.Line).BorderLeft(2.5f).BorderColor(DossierTheme.Amber)
+            .Background(DossierTheme.PaperRaised).Padding(11).Column(inner =>
+        {
+            foreach (var c in unmappedAbsent)
+                inner.Item().PaddingBottom(4).Row(r =>
+                {
+                    r.ConstantItem(14).Text("•").FontColor(DossierTheme.Amber);
+                    r.RelativeItem().Text($"Not provided in this upload: {c.Label}.")
+                        .FontSize(DossierTheme.Small).FontColor(DossierTheme.InkSoft).LineHeight(1.4f);
+                });
+        });
     }
 
     /// <summary>The deterministic checks the rule engine could NOT run, and why — so a "verified

@@ -207,13 +207,14 @@ public partial class DossierPdfComposer
         FinancialStatementTable(col, f.Standalone,
             model.SourceCoverage.EmptyState("No financial data extracted.", [SheetAliases.StandaloneFinancialData]));
 
-        if (f.Consolidated.Count > 0)
-        {
-            n++;
-            col.Item().PaddingTop(14).PaddingBottom(4).Text($"Item {n} — Consolidated financial data (₹ Crore)")
-                .FontFamily(DossierTheme.Display).FontSize(DossierTheme.Heading);
-            FinancialStatementTable(col, f.Consolidated);
-        }
+        // Always rendered (not just when present) — same reasoning as every other Item below: a
+        // consolidated-data gap needs the same "not provided in this upload" disclosure the rest of the
+        // dossier gives every other absent category, not a silent skip.
+        n++;
+        col.Item().PaddingTop(14).PaddingBottom(4).Text($"Item {n} — Consolidated financial data (₹ Crore)")
+            .FontFamily(DossierTheme.Display).FontSize(DossierTheme.Heading);
+        FinancialStatementTable(col, f.Consolidated,
+            model.SourceCoverage.EmptyState("No consolidated financial data extracted.", [SheetAliases.ConsolidatedFinancialData]));
 
         // #152/#197: the source-reported ratios (catalogue A1.x) get their own multi-year block —
         // "render as-is with a multi-year sparkline; do not recompute" — rather than sitting in the flat
