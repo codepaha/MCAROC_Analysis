@@ -472,7 +472,7 @@ public partial class DossierPdfComposer
             table.Header(h =>
             {
                 HeaderCell(h.Cell(), "Indicator");
-                foreach (var y in years) HeaderCell(h.Cell(), $"FY{y.FinancialYear}");
+                foreach (var y in years) HeaderCell(h.Cell(), $"FY{y.FinancialYear}", right: true);
                 HeaderCell(h.Cell(), "Trend");
             });
             for (var ri = 0; ri < rows.Length; ri++)
@@ -495,9 +495,14 @@ public partial class DossierPdfComposer
         return delta > 0 ? "↑ Rising" : "↓ Declining";
     }
 
-    private void HeaderCell(IContainer c, string text) => c
-        .BorderBottom(0.75f).BorderColor(DossierTheme.Line).PaddingVertical(7).PaddingHorizontal(7)
-        .Text(text).FontSize(DossierTheme.TableHeader).FontColor(DossierTheme.InkFaint);
+    /// <summary>A table header cell. <paramref name="right"/> must match the <see cref="BodyCell"/> alignment
+    /// of every cell in this column — a right-aligned numeric column (year figures, amounts) with a
+    /// left-aligned header sits visibly off from the values beneath it.</summary>
+    private void HeaderCell(IContainer c, string text, bool right = false)
+    {
+        var cell = c.BorderBottom(0.75f).BorderColor(DossierTheme.Line).PaddingVertical(7).PaddingHorizontal(7);
+        (right ? cell.AlignRight() : cell).Text(text).FontSize(DossierTheme.TableHeader).FontColor(DossierTheme.InkFaint);
+    }
 
     /// <summary>A source-record table cell. <paramref name="shaded"/> gives every other row a faint tint
     /// (zebra striping) — pure scan-aid on the long multi-year/register tables, no border/weight change,

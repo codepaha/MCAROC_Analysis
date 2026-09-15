@@ -81,7 +81,7 @@ public partial class DossierPdfComposer
         col.Item().Table(table =>
         {
             table.ColumnsDefinition(cd => { foreach (var c in cols) cd.RelativeColumn(c.Weight); });
-            table.Header(h => { foreach (var c in cols) HeaderCell(h.Cell(), c.Header); });
+            table.Header(h => { foreach (var c in cols) HeaderCell(h.Cell(), c.Header, c.Right); });
             for (var ri = 0; ri < rows.Count; ri++)
             {
                 var r = rows[ri];
@@ -281,7 +281,7 @@ public partial class DossierPdfComposer
                 table.Header(h =>
                 {
                     HeaderCell(h.Cell(), "Line item");
-                    foreach (var y in chunk) HeaderCell(h.Cell(), $"FY{y.FinancialYear}");
+                    foreach (var y in chunk) HeaderCell(h.Cell(), $"FY{y.FinancialYear}", right: true);
                 });
                 for (var ri = 0; ri < activeLines.Count; ri++)
                 {
@@ -318,7 +318,7 @@ public partial class DossierPdfComposer
                 table.Header(h =>
                 {
                     HeaderCell(h.Cell(), "Ratio");
-                    foreach (var y in chunk) HeaderCell(h.Cell(), $"FY{y}");
+                    foreach (var y in chunk) HeaderCell(h.Cell(), $"FY{y}", right: true);
                 });
                 for (var ri = 0; ri < labels.Count; ri++)
                 {
@@ -391,7 +391,7 @@ public partial class DossierPdfComposer
                         table.Header(h =>
                         {
                             HeaderCell(h.Cell(), "Line item");
-                            foreach (var y in chunk) HeaderCell(h.Cell(), $"FY{y}");
+                            foreach (var y in chunk) HeaderCell(h.Cell(), $"FY{y}", right: true);
                         });
                         for (var ri = 0; ri < labels.Count; ri++)
                         {
@@ -418,7 +418,7 @@ public partial class DossierPdfComposer
                 col.Item().PaddingTop(2).Table(table =>
                 {
                     table.ColumnsDefinition(cd => { cd.RelativeColumn(2.4f); cd.RelativeColumn(); });
-                    table.Header(h => { HeaderCell(h.Cell(), "Line item"); HeaderCell(h.Cell(), "Value"); });
+                    table.Header(h => { HeaderCell(h.Cell(), "Line item"); HeaderCell(h.Cell(), "Value", right: true); });
                     for (var ri = 0; ri < undated.Count; ri++)
                     {
                         var x = undated[ri];
