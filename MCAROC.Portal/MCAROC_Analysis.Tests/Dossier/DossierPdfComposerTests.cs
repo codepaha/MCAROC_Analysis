@@ -219,4 +219,40 @@ public class DossierPdfComposerTests : IAsyncLifetime
         Assert.Contains("Footnote:", text);
         Assert.Contains("See annexure", text);
     }
+
+    /// <summary>Real-file E2E testing (PRUKSA INDIA HOUSING PRIVATE LIMITED) found a workbook where the
+    /// only source of auditor identity (name/firm/FRN/membership) was a block the ingestion orchestrator
+    /// merges into AuditorObservation — for a year with no qualitative remark, ObservationText is null
+    /// and identity is the only real content, so it must not silently disappear from the final report.
+    /// Folded into the existing Comment cell rather than a new column (#161's dense-table-columns note).</summary>
+    [SkippableFact]
+    public async Task Auditor_comment_cell_includes_identity_when_no_qualitative_remark_exists()
+    {
+        Skip.IfNot(OperatingSystem.IsWindows(),
+            "PdfPig text extraction from SkiaSharp subset fonts is unreliable on Linux; covered by the windows-tests job.");
+
+        await using var seed = DossierGoldenMasterTests.CreateContext();
+        var (requestId, ingestionRunId, _) = await DossierTestSeed.SeedAsync(seed);
+
+        seed.AuditorObservations.Add(new AuditorObservation
+        {
+            RequestId = requestId, IngestionRunId = ingestionRunId,
+            FinancialYear = 2018, Basis = FinancialBasis.Standalone,
+            AuditorName = "UMANG BANKA", FirmName = "B S R & CO LLP",
+            FirmRegistrationNumber = "101248W/W100022", MembershipNumber = "223018"
+        });
+        await seed.SaveChangesAsync();
+
+        await using var db = DossierGoldenMasterTests.CreateContext();
+        var model = await new DossierAssembler(db).BuildAsync(requestId);
+        Assert.NotNull(model);
+
+        var pdf = new DossierPdfRenderer(WebRoot()).Render(model!, DossierVariant.Executive);
+        var text = TextOf(pdf);
+
+        Assert.Contains("UMANG BANKA", text);
+        Assert.Contains("B S R & CO LLP", text);
+        Assert.Contains("101248W/W100022", text);
+        Assert.Contains("223018", text);
+    }
 }

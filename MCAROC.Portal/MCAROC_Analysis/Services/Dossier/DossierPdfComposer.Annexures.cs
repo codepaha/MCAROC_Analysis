@@ -481,13 +481,31 @@ public partial class DossierPdfComposer
     private static string Clip(string? s, int max) =>
         string.IsNullOrWhiteSpace(s) ? "-" : s!.Length <= max ? s : s[..max] + "…";
 
-    /// <summary>G18: builds the full Auditor's-comments cell text — the base comment plus Section/
+    /// <summary>Auditor identity (who signed off) — null when unknown, so <see cref="AuditorComment"/>'s
+    /// null-filtered join skips it cleanly rather than inserting a stray placeholder.</summary>
+    private static string? AuditorIdentity(AuditorObservation a)
+    {
+        if (string.IsNullOrWhiteSpace(a.AuditorName) || a.AuditorName == "-") return null;
+        var parts = new List<string> { a.AuditorName! };
+        if (!string.IsNullOrWhiteSpace(a.FirmName)) parts.Add(a.FirmName!);
+        var main = string.Join(" — ", parts);
+
+        var suffix = new List<string>();
+        if (!string.IsNullOrWhiteSpace(a.FirmRegistrationNumber)) suffix.Add($"FRN {a.FirmRegistrationNumber}");
+        if (!string.IsNullOrWhiteSpace(a.MembershipNumber)) suffix.Add($"Memb. {a.MembershipNumber}");
+        return suffix.Count > 0 ? $"{main} ({string.Join(", ", suffix)})" : main;
+    }
+
+    /// <summary>G18: builds the full Auditor's-comments cell text — auditor identity (name/firm, when
+    /// known — e.g. backfilled from the financial-data sheet's own AUDITOR(s) block, which can be the
+    /// only source for a year with no qualitative remark at all) plus the base comment plus Section/
     /// Directors' Comments/Footnote when present — and clips the WHOLE assembled string once, so an
     /// appended field can never run past the column's intended width (clip must happen last, not on
-    /// ObservationText alone before the other parts are appended).</summary>
+    /// ObservationText alone before the other parts are appended). Deliberately folded into this existing
+    /// column rather than a new one — see #161's dense-table-columns note.</summary>
     private static string AuditorComment(AuditorObservation a)
     {
-        var parts = new List<string?> { a.ObservationText };
+        var parts = new List<string?> { AuditorIdentity(a), a.ObservationText };
         if (a.SectionCode is not null)
             parts.Add(a.SectionName is not null ? $"Section: {a.SectionCode} ({a.SectionName})" : $"Section: {a.SectionCode}");
         else if (a.SectionName is not null) parts.Add($"Section: {a.SectionName}");

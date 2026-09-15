@@ -338,6 +338,38 @@ public class FinancialParametersParserTests
         Assert.Equal("Annexure - Financial Parameters", item.SourceSheetName); // Annexure parsed first, wins
         Assert.Empty(r.Warnings);
     }
+
+    // Regression for a real production bug found during real-file E2E testing (PRUKSA INDIA HOUSING
+    // PRIVATE LIMITED): the "Highlights" sheet stacks PRINCIPAL BUSINESS ACTIVITIES and NAME HISTORY
+    // below the FINANCIAL PARAMETERS block this parser reads. With no stop condition, the loop kept
+    // applying the single-year column mapping straight through them — the company's own name (from the
+    // NAME HISTORY table) was captured as a bogus "parameter" with a name-change date as its "value".
+    [Fact]
+    public void StopsBeforePrincipalBusinessActivitiesAndNameHistory_OnHighlightsSheet()
+    {
+        var highlights = Sheet("Highlights",
+            Row("Parameter (Rs. Crore)", "31 Mar, 2025"),
+            Row("Employee benefits expense", 0),
+            Row("See Annexure - Financial Parameters for more...", ""),
+            Row(""),
+            Row("PRINCIPAL BUSINESS ACTIVITIES - 31 Mar, 2025"),
+            Row("Main Activity Group Code", "Description of Main Activity Group", "Business Activity Code", "Description of Business Activity", "% of Turnover"),
+            Row("We did not find this data in the relevant filing.", "", "", "", ""),
+            Row(""),
+            Row("NAME HISTORY"),
+            Row("Name", "Till Date"),
+            Row("PRUKSA INDIA HOUSING PRIVATE LIMITED", "25 Nov, 2010"));
+
+        var r = FinancialParametersParser.Parse(highlights, null, 1, 1, 10);
+
+        Assert.DoesNotContain(r.Items, x => x.ParameterName == "Main Activity Group Code");
+        Assert.DoesNotContain(r.Items, x => x.ParameterName == "Name");
+        Assert.DoesNotContain(r.Items, x => x.ParameterName == "PRUKSA INDIA HOUSING PRIVATE LIMITED");
+        Assert.DoesNotContain(r.Items, x => x.ParameterName.StartsWith("See Annexure"));
+        Assert.DoesNotContain(r.Items, x => x.ParameterName.StartsWith("PRINCIPAL BUSINESS ACTIVITIES"));
+        Assert.DoesNotContain(r.Items, x => x.ParameterName == "NAME HISTORY");
+        Assert.Single(r.Items, x => x.ParameterName == "Employee benefits expense");
+    }
 }
 
 public class SecuritiesAllotmentParserTests
