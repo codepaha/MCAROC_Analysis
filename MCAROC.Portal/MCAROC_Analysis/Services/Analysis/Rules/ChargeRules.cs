@@ -15,9 +15,9 @@ public static class ChargeRules
 
         if (ctx.Charges.Count == 0)
         {
-            outcomes.Add(RuleEvaluationOutcome.NotEvaluated(LenderConcentrationCode, "No RocCharge records available."));
-            outcomes.Add(RuleEvaluationOutcome.NotEvaluated(RegisteredExposureCode, "No RocCharge records available."));
-            outcomes.Add(RuleEvaluationOutcome.NotEvaluated(MaterialEnhancementCode, "No RocCharge records available."));
+            outcomes.Add(RuleEvaluationOutcome.NotEvaluated(LenderConcentrationCode, "No charge records available."));
+            outcomes.Add(RuleEvaluationOutcome.NotEvaluated(RegisteredExposureCode, "No charge records available."));
+            outcomes.Add(RuleEvaluationOutcome.NotEvaluated(MaterialEnhancementCode, "No charge records available."));
             return outcomes;
         }
 

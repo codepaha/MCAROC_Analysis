@@ -33,7 +33,7 @@ public static class EpfoRules
 
         if (entries.Count == 0)
         {
-            var reason = ctx.EpfoContributions.Count == 0 ? "No EpfoContribution records available." : "WageMonth values could not be parsed.";
+            var reason = ctx.EpfoContributions.Count == 0 ? "No EPFO contribution records available." : "Wage-month values could not be parsed.";
             outcomes.Add(RuleEvaluationOutcome.NotEvaluated(WorkforceDeclineCode, reason));
             outcomes.Add(RuleEvaluationOutcome.NotEvaluated(RepeatedPaymentDelayCode, reason));
             outcomes.Add(RuleEvaluationOutcome.NotEvaluated(DelayWorseningCode, reason));

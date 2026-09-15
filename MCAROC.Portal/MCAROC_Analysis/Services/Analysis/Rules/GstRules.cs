@@ -14,7 +14,7 @@ public static class GstRules
 
         if (ctx.GstRegistrations.Count == 0)
         {
-            outcomes.Add(RuleEvaluationOutcome.NotEvaluated(RegistrationCancelledCode, "No GstRegistration records available."));
+            outcomes.Add(RuleEvaluationOutcome.NotEvaluated(RegistrationCancelledCode, "No GST registration records available."));
         }
         else
         {
@@ -49,7 +49,7 @@ public static class GstRules
         var filings = ctx.GstRegistrations.SelectMany(g => g.Filings).ToList();
         if (filings.Count == 0)
         {
-            outcomes.Add(RuleEvaluationOutcome.NotEvaluated(FilingDelaysFrequentCode, "No GstFiling records available."));
+            outcomes.Add(RuleEvaluationOutcome.NotEvaluated(FilingDelaysFrequentCode, "No GST filing records available."));
         }
         else
         {

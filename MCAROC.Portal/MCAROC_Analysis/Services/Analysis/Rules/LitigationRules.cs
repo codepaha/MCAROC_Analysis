@@ -18,7 +18,7 @@ public static partial class LitigationRules
     public static List<RuleEvaluationOutcome> Evaluate(AnalysisContext ctx)
     {
         if (ctx.Litigations.Count == 0)
-            return [RuleEvaluationOutcome.NotEvaluated(PendingAgainstCompanyCode, "No Litigation records available.")];
+            return [RuleEvaluationOutcome.NotEvaluated(PendingAgainstCompanyCode, "No litigation records available.")];
 
         var companyName = ctx.CompanyProfile?.CompanyName;
         var pending = ctx.Litigations.Where(l => IsPending(l.CaseStatus)).ToList();

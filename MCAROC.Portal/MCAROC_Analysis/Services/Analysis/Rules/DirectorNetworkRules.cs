@@ -22,8 +22,8 @@ public static class DirectorNetworkRules
 
         if (associations.Count == 0)
         {
-            outcomes.Add(RuleEvaluationOutcome.NotEvaluated(LargeNetworkCode, "No DirectorAssociation records available."));
-            outcomes.Add(RuleEvaluationOutcome.NotEvaluated(DistressedEntityCurrentCode, "No DirectorAssociation records available."));
+            outcomes.Add(RuleEvaluationOutcome.NotEvaluated(LargeNetworkCode, "No director network records available."));
+            outcomes.Add(RuleEvaluationOutcome.NotEvaluated(DistressedEntityCurrentCode, "No director network records available."));
             return outcomes;
         }
 

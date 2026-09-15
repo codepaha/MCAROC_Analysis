@@ -29,7 +29,7 @@ public static class AuditorRules
         // the authoritative opinion for a year can only ever come from the summary row.
         var latest = ctx.AuditorObservations.Where(a => !a.IsDetailRow).OrderByDescending(a => a.FinancialYear).FirstOrDefault();
         if (latest is null)
-            return [RuleEvaluationOutcome.NotEvaluated(AdverseOpinionCode, "No AuditorObservation records available.")];
+            return [RuleEvaluationOutcome.NotEvaluated(AdverseOpinionCode, "No auditor observation records available.")];
 
         var text = (latest.ObservationText ?? "").ToLowerInvariant();
         var hasNegation = NegationPatterns.Any(p => text.Contains(p, StringComparison.Ordinal));
