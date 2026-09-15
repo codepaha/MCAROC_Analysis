@@ -54,11 +54,14 @@ public class DossierControllerTests : IAsyncLifetime
         return dir!.FullName;
     }
 
+    /// <summary>The FullSource/SourceRecord variants were removed — any variant query value (including
+    /// stale bookmarked ones) now resolves to the one remaining Executive flavour rather than erroring.</summary>
     [Theory]
-    [InlineData("executive", "Executive")]
-    [InlineData("full", "Full source")]
-    [InlineData("source", "Source records")]
-    public async Task Returns_a_pdf_with_a_client_filename(string variant, string label)
+    [InlineData("executive")]
+    [InlineData("full")]
+    [InlineData("source")]
+    [InlineData(null)]
+    public async Task Returns_a_pdf_with_a_client_filename(string? variant)
     {
         await using var seedDb = DossierGoldenMasterTests.CreateContext();
         var (requestId, _, _) = await DossierTestSeed.SeedAsync(seedDb);
@@ -68,7 +71,7 @@ public class DossierControllerTests : IAsyncLifetime
 
         var file = Assert.IsType<PhysicalFileResult>(result);
         Assert.Equal("application/pdf", file.ContentType);
-        Assert.Contains(label, file.FileDownloadName);
+        Assert.Contains("Executive", file.FileDownloadName);
         Assert.True(new FileInfo(file.FileName).Length > 0);
     }
 

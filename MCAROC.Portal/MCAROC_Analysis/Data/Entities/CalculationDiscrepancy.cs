@@ -19,7 +19,7 @@ public class CalculationDiscrepancy
     public CalculationAuditSnapshot? Snapshot { get; set; }
 
     /// <summary>Null = applies to every dossier variant of this snapshot (the v1 default). Stored as the
-    /// enum name (e.g. "SourceRecord") rather than a typed <c>DossierVariant</c> reference — Data.Entities
+    /// enum name (e.g. "Executive") rather than a typed <c>DossierVariant</c> reference — Data.Entities
     /// deliberately never depends on the Services layer, matching every other entity in this project.</summary>
     public string? Variant { get; set; }
 

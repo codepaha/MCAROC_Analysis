@@ -17,12 +17,10 @@ public class DossierController(
     [HttpGet("/Requests/{id:long}/dossier")]
     public async Task<IActionResult> Download(long id, [FromQuery] string? variant, CancellationToken ct)
     {
-        var flavour = variant?.Trim().ToLowerInvariant() switch
-        {
-            "full" => DossierVariant.FullSource,
-            "source" or "sourcerecord" or "source-record" => DossierVariant.SourceRecord,
-            _ => DossierVariant.Executive
-        };
+        // The FullSource/SourceRecord variants were removed (their raw worksheet dump is superseded by
+        // the portal's per-domain tabs) — any variant query value now resolves to the one remaining flavour,
+        // so an old bookmarked link still downloads a PDF instead of erroring.
+        var flavour = DossierVariant.Executive;
 
         var request = await db.Requests.FirstOrDefaultAsync(r => r.RequestId == id, ct);
         if (request is null) return NotFound();
@@ -54,13 +52,7 @@ public class DossierController(
             catch (IOException) { System.IO.File.Delete(tmp); } // another request won the race — its file stands
         }
 
-        var label = flavour switch
-        {
-            DossierVariant.FullSource => "Full source",
-            DossierVariant.SourceRecord => "Source records",
-            _ => "Executive"
-        };
-        var download = $"Due Diligence Dossier - {request.RequestNumber} - {label}.pdf";
+        var download = $"Due Diligence Dossier - {request.RequestNumber} - Executive.pdf";
         return PhysicalFile(path, "application/pdf", download);
     }
 }

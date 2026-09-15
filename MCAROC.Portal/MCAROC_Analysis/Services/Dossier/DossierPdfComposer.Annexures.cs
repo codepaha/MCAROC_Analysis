@@ -1,13 +1,11 @@
 using MCAROC_Analysis.Data.Entities;
 using MCAROC_Analysis.Models;
-using MCAROC_Analysis.Models.Dossier;
 using QuestPDF.Fluent;
 using QuestPDF.Infrastructure;
 
 namespace MCAROC_Analysis.Services.Dossier;
 
-/// <summary>Annexures A–E — the full source record. Executive-variant items are trimmed to key rows
-/// with a pointer to the Full-source dossier.</summary>
+/// <summary>Annexures A–E — the full source record, trimmed to key rows per table.</summary>
 public partial class DossierPdfComposer
 {
     private const int ExecutiveRowCap = 8;
@@ -63,7 +61,7 @@ public partial class DossierPdfComposer
         });
 
         if (Exec && rows.Count > ExecutiveRowCap)
-            col.Item().PaddingTop(3).Text($"+ {rows.Count - ExecutiveRowCap} more row(s) — see the Full-source dossier.")
+            col.Item().PaddingTop(3).Text($"+ {rows.Count - ExecutiveRowCap} more row(s) not shown in this table.")
                 .FontSize(DossierTheme.Small).FontColor(DossierTheme.InkFaint);
     }
 
@@ -372,87 +370,4 @@ public partial class DossierPdfComposer
         if (a.Footnotes is not null) parts.Add($"Footnote: {a.Footnotes}");
         return Clip(string.Join(" — ", parts.Where(p => p is not null)), 160);
     }
-
-    // ── Source Records — verbatim Layer-0 rows (Full source / Source record variants) ──────────
-    //
-    // Codex #27: the "Full source" dossier must render the raw staging rows, not the typed/deduped
-    // entities — ordered workbook → sheet → row, exact cells, nothing clipped. This path replaces
-    // annexures A–E entirely for the FullSource and SourceRecord variants.
-
-    private void ComposeSourceRecords(IContainer container) => container.Column(col =>
-    {
-        AnnexureHead(col, "Annexure", "Source Records",
-            "Every non-blank row of every worksheet of both MCA workbooks, exactly as extracted — the system " +
-            "of record behind the Snapshot" + (variant == DossierVariant.SourceRecord ? "" : " and every flag in Section 1") +
-            ". Rows appear in workbook, sheet and row order; cell values are reproduced verbatim and unabridged. " +
-            "The \"Row\" column is the worksheet row number as it appears in Excel.");
-
-        if (model.SourceSheets.Count == 0)
-        {
-            col.Item().PaddingTop(14).Text(
-                "No Layer-0 source rows were staged for this ingestion run. (Ingestion predates source-row staging — " +
-                "re-ingest the workbooks to populate this annexure.)")
-                .FontSize(DossierTheme.Small).FontColor(DossierTheme.InkFaint);
-            return;
-        }
-
-        var workbookNo = 0;
-        foreach (var workbook in model.SourceSheets.GroupBy(s => (s.WorkbookRole, s.WorkbookLabel)))
-        {
-            workbookNo++;
-            col.Item().PaddingTop(workbookNo == 1 ? 16 : 22)
-                .Text($"Workbook {workbookNo} — {workbook.Key.WorkbookLabel}")
-                .FontFamily(DossierTheme.Display).FontSize(DossierTheme.SectionTitle).FontColor(DossierTheme.Ink);
-
-            foreach (var sheet in workbook)
-                col.Item().Element(c => SourceSheetBlock(c, sheet));
-        }
-    });
-
-    private void SourceSheetBlock(IContainer container, DossierSourceSheet sheet) => container.Column(col =>
-    {
-        col.Item().PaddingTop(13).PaddingBottom(4).Text(t =>
-        {
-            t.Span($"{sheet.SheetName}").FontFamily(DossierTheme.Display).FontSize(DossierTheme.Heading);
-            t.Span($"   {sheet.Rows.Count} row(s) · {sheet.ColumnCount} column(s)")
-                .FontSize(DossierTheme.Small).FontColor(DossierTheme.InkFaint);
-        });
-
-        if (sheet.Rows.Count == 0)
-        {
-            col.Item().Text("No rows on this worksheet.").FontSize(DossierTheme.Small).FontColor(DossierTheme.InkFaint);
-            return;
-        }
-
-        var cols = Math.Max(1, sheet.ColumnCount);
-        col.Item().Table(table =>
-        {
-            table.ColumnsDefinition(cd =>
-            {
-                cd.ConstantColumn(26);
-                for (var i = 0; i < cols; i++) cd.RelativeColumn();
-            });
-            table.Header(h =>
-            {
-                SourceHeaderCell(h.Cell(), "Row");
-                for (var i = 0; i < cols; i++) SourceHeaderCell(h.Cell(), $"C{i + 1}");
-            });
-            foreach (var row in sheet.Rows)
-            {
-                SourceCell(table.Cell(), row.RowNumber.ToString(), muted: true);
-                for (var i = 0; i < cols; i++)
-                    SourceCell(table.Cell(), i < row.Cells.Count ? row.Cells[i] ?? "" : "");
-            }
-        });
-    });
-
-    private void SourceHeaderCell(IContainer c, string text) => c
-        .Background(DossierTheme.Ink).PaddingVertical(3).PaddingHorizontal(4)
-        .Text(text).FontFamily(DossierTheme.Mono).FontSize(6f).FontColor("#FFFFFF");
-
-    private void SourceCell(IContainer c, string text, bool muted = false) => c
-        .BorderBottom(0.5f).BorderColor(DossierTheme.LineSoft).BorderRight(0.5f).BorderColor(DossierTheme.LineSoft)
-        .PaddingVertical(2.5f).PaddingHorizontal(4)
-        .Text(text).FontFamily(DossierTheme.Mono).FontSize(6.5f)
-        .FontColor(muted ? DossierTheme.InkFaint : DossierTheme.Ink);
 }

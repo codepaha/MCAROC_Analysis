@@ -56,12 +56,12 @@ public class DossierDeliveryGateTests : IAsyncLifetime
     }
 
     private static async Task AddHoldAsync(AppDbContext db, CalculationAuditSnapshot snapshot, CalculationDiscrepancy discrepancy,
-        DossierVariant? variant = null, bool isActive = true)
+        string? variant = null, bool isActive = true)
     {
         db.CalculationArtifactHolds.Add(new CalculationArtifactHold
         {
             CalculationAuditSnapshotId = snapshot.CalculationAuditSnapshotId,
-            Variant = variant?.ToString(),
+            Variant = variant,
             HoldReason = CalculationArtifactHoldReason.ConfirmedCriticalDiscrepancy,
             IsActive = isActive,
             SourceDiscrepancy = discrepancy,
@@ -147,7 +147,7 @@ public class DossierDeliveryGateTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Enforced_ActiveHold_NullVariant_BlocksEveryVariant()
+    public async Task Enforced_ActiveHold_NullVariant_BlocksTheOnlyVariant()
     {
         await using var db = DossierGoldenMasterTests.CreateContext();
         var id = NextId();
@@ -157,21 +157,22 @@ public class DossierDeliveryGateTests : IAsyncLifetime
 
         var gate = NewGate(db, CalculationAssuranceMode.Enforced);
         Assert.True(await gate.IsHeldAsync(id, id, id, DossierVariant.Executive, CancellationToken.None));
-        Assert.True(await gate.IsHeldAsync(id, id, id, DossierVariant.FullSource, CancellationToken.None));
-        Assert.True(await gate.IsHeldAsync(id, id, id, DossierVariant.SourceRecord, CancellationToken.None));
     }
 
+    /// <summary>Regression guard for the FullSource/SourceRecord variant removal: a pre-existing hold
+    /// row stamped with one of those now-retired variant names must not leak onto Executive lookups —
+    /// the match is an exact string comparison, not an enum-aware one (see <see cref="CalculationDiscrepancy"/>'s
+    /// <c>Variant</c> doc comment), so a stale value simply never matches anything again.</summary>
     [Fact]
-    public async Task Enforced_ActiveHold_SpecificVariant_OnlyBlocksThatVariant()
+    public async Task Enforced_ActiveHold_OnARetiredVariantName_DoesNotBlockExecutive()
     {
         await using var db = DossierGoldenMasterTests.CreateContext();
         var id = NextId();
         var snapshot = await SeedSnapshotAsync(db, id, id, id);
         var discrepancy = await SeedConfirmedDiscrepancyAsync(db, snapshot);
-        await AddHoldAsync(db, snapshot, discrepancy, variant: DossierVariant.SourceRecord);
+        await AddHoldAsync(db, snapshot, discrepancy, variant: "SourceRecord");
 
         var gate = NewGate(db, CalculationAssuranceMode.Enforced);
-        Assert.True(await gate.IsHeldAsync(id, id, id, DossierVariant.SourceRecord, CancellationToken.None));
         Assert.False(await gate.IsHeldAsync(id, id, id, DossierVariant.Executive, CancellationToken.None));
     }
 
