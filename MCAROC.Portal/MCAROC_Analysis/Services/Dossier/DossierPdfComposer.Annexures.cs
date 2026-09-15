@@ -29,6 +29,11 @@ public partial class DossierPdfComposer
         col.Item().Section("annexure-d").Element(AnnexureD);
         col.Item().PageBreak();
         col.Item().Section("annexure-e").Element(AnnexureE);
+        if (HasCoverageGap)
+        {
+            col.Item().PageBreak();
+            col.Item().Section("annexure-f").Element(AnnexureF);
+        }
     });
 
     // ── generic table ─────────────────────────────────────────────────────
@@ -206,13 +211,14 @@ public partial class DossierPdfComposer
             RatiosTable(col, ratioFacts);
         }
 
-        Item(col, ref n, "Additional line items (not in the summary above)",
-            f.Facts.Where(x => x.Section != FinancialStatementSection.Ratios).ToList(),
-            new Col<FinancialFact>("Section", 1.1f, x => x.Section.ToString()),
-            new Col<FinancialFact>("Label", 2.6f, x => x.Label),
-            new Col<FinancialFact>("FY", 0.7f, x => x.FinancialYear?.ToString() ?? "-"),
-            new Col<FinancialFact>("Value", 1.2f, x => x.RawValue, true),
-            new Col<FinancialFact>("Note", 1.1f, x => x.YearInferred ? "year inferred" : ""));
+        n++;
+        col.Item().PaddingTop(14).PaddingBottom(4).Text($"Item {n} — Additional line items (not in the summary above)")
+            .FontFamily(DossierTheme.Display).FontSize(DossierTheme.Heading);
+        var extraFacts = f.Facts.Where(x => x.Section != FinancialStatementSection.Ratios).ToList();
+        if (extraFacts.Count == 0)
+            col.Item().Text("No additional line items.").FontSize(DossierTheme.Small).FontColor(DossierTheme.InkFaint);
+        else
+            AdditionalLineItemsTables(col, extraFacts);
 
         Item(col, ref n, "Auditor's comments", f.AuditorObservations,
             new Col<AuditorObservation>("FY", 0.7f, a => a.FinancialYear.ToString()),
@@ -227,6 +233,13 @@ public partial class DossierPdfComposer
             new Col<PeerComparisonMetric>("Peer median", 1.2f, p => p.PeerMedianValue?.ToString("0.##") ?? "-", true),
             new Col<PeerComparisonMetric>("Position", 1.1f, p => p.Position.ToString()));
     });
+
+    /// <summary>Years per pivoted table (here and in <see cref="RatiosTable"/>) — a company with a long
+    /// filing history (10+ years is real, not hypothetical: seen on live data) would otherwise squeeze
+    /// every year into one table, narrowing each value column until multi-digit figures wrap mid-number.
+    /// Chosen so a table still fits one A4 page width at the theme's table font size with a readable
+    /// column: on the actual PDF, 6 columns keep values like "-186.20" on one line; 8+ start wrapping.</summary>
+    private const int MaxYearColumnsPerTable = 6;
 
     private void FinancialStatementTable(ColumnDescriptor col, IReadOnlyList<FinancialYearData> rows)
     {
@@ -249,21 +262,30 @@ public partial class DossierPdfComposer
             ("Cash flow — operating", x => x.Cfo), ("Cash flow — investing", x => x.Cfi), ("Cash flow — financing", x => x.Cff),
         ];
 
-        col.Item().Table(table =>
+        // Decided once against the full year range, so the same row set appears in every year-chunk table
+        // below — a line item present in an early year but blank in a later chunk still shows its "-"s
+        // there, rather than the row silently disappearing from just that chunk.
+        var activeLines = lines.Where(l => years.Any(y => l.V(y) is not null)).ToList();
+        var yearChunks = years.Chunk(MaxYearColumnsPerTable).ToList();
+
+        for (var ci = 0; ci < yearChunks.Count; ci++)
         {
-            table.ColumnsDefinition(cd => { cd.RelativeColumn(2.4f); foreach (var _ in years) cd.RelativeColumn(); });
-            table.Header(h =>
+            var chunk = yearChunks[ci];
+            col.Item().PaddingTop(ci == 0 ? 0 : 10).Table(table =>
             {
-                HeaderCell(h.Cell(), "Line item");
-                foreach (var y in years) HeaderCell(h.Cell(), $"FY{y.FinancialYear}");
+                table.ColumnsDefinition(cd => { cd.RelativeColumn(2.4f); foreach (var _ in chunk) cd.RelativeColumn(); });
+                table.Header(h =>
+                {
+                    HeaderCell(h.Cell(), "Line item");
+                    foreach (var y in chunk) HeaderCell(h.Cell(), $"FY{y.FinancialYear}");
+                });
+                foreach (var (label, sel) in activeLines)
+                {
+                    BodyCell(table.Cell(), label);
+                    foreach (var y in chunk) BodyCell(table.Cell(), sel(y)?.ToString("N2") ?? "-", right: true);
+                }
             });
-            foreach (var (label, sel) in lines)
-            {
-                if (years.All(y => sel(y) is null)) continue;
-                BodyCell(table.Cell(), label);
-                foreach (var y in years) BodyCell(table.Cell(), sel(y)?.ToString("N2") ?? "-", right: true);
-            }
-        });
+        }
 
         if (years.Any(y => y.CashFlowYearInferred))
             col.Item().PaddingTop(3).Text("Cash-flow rows: the source section carries no year header — years inferred by column position, excluded from automated analysis.")
@@ -280,30 +302,125 @@ public partial class DossierPdfComposer
             .GroupBy(f => (f.Label, Year: f.FinancialYear!.Value))
             .ToDictionary(g => g.Key, g => g.First());
 
-        col.Item().Table(table =>
+        var yearChunks = years.Chunk(MaxYearColumnsPerTable).ToList();
+        for (var ci = 0; ci < yearChunks.Count; ci++)
         {
-            table.ColumnsDefinition(cd => { cd.RelativeColumn(2.4f); foreach (var _ in years) cd.RelativeColumn(); });
-            table.Header(h =>
+            var chunk = yearChunks[ci];
+            col.Item().PaddingTop(ci == 0 ? 0 : 10).Table(table =>
             {
-                HeaderCell(h.Cell(), "Ratio");
-                foreach (var y in years) HeaderCell(h.Cell(), $"FY{y}");
-            });
-            foreach (var label in labels)
-            {
-                BodyCell(table.Cell(), label);
-                foreach (var y in years)
+                table.ColumnsDefinition(cd => { cd.RelativeColumn(2.4f); foreach (var _ in chunk) cd.RelativeColumn(); });
+                table.Header(h =>
                 {
-                    var value = byLabelYear.TryGetValue((label, y), out var fact)
-                        ? fact.NumericValue?.ToString("0.##") ?? fact.RawValue
-                        : "-";
-                    BodyCell(table.Cell(), value, right: true);
+                    HeaderCell(h.Cell(), "Ratio");
+                    foreach (var y in chunk) HeaderCell(h.Cell(), $"FY{y}");
+                });
+                foreach (var label in labels)
+                {
+                    BodyCell(table.Cell(), label);
+                    foreach (var y in chunk)
+                    {
+                        var value = byLabelYear.TryGetValue((label, y), out var fact)
+                            ? fact.NumericValue?.ToString("0.##") ?? fact.RawValue
+                            : "-";
+                        BodyCell(table.Cell(), value, right: true);
+                    }
                 }
-            }
-        });
+            });
+        }
 
         if (ratioFacts.Any(f => f.YearInferred))
             col.Item().PaddingTop(3).Text("Some ratio rows: the source section carries no year header — years inferred by column position, excluded from automated analysis.")
                 .FontSize(DossierTheme.Small).FontColor(DossierTheme.Amber);
+    }
+
+    private static readonly (FinancialBasis Basis, FinancialStatementSection Section, string Title)[] AdditionalLineItemGroups =
+    [
+        (FinancialBasis.Standalone, FinancialStatementSection.BalanceSheet, "Balance sheet (Standalone)"),
+        (FinancialBasis.Standalone, FinancialStatementSection.ProfitAndLoss, "Profit & loss (Standalone)"),
+        (FinancialBasis.Standalone, FinancialStatementSection.CashFlow, "Cash flow (Standalone)"),
+        (FinancialBasis.Standalone, FinancialStatementSection.Other, "Other (Standalone)"),
+        (FinancialBasis.Consolidated, FinancialStatementSection.BalanceSheet, "Balance sheet (Consolidated)"),
+        (FinancialBasis.Consolidated, FinancialStatementSection.ProfitAndLoss, "Profit & loss (Consolidated)"),
+        (FinancialBasis.Consolidated, FinancialStatementSection.CashFlow, "Cash flow (Consolidated)"),
+        (FinancialBasis.Consolidated, FinancialStatementSection.Other, "Other (Consolidated)"),
+    ];
+
+    /// <summary>Pivots the catch-all FinancialFact rows (every value-bearing line item × year not mapped to
+    /// a typed <see cref="FinancialYearData"/> column) into label × year grids, grouped by basis and
+    /// statement section and year-chunked like <see cref="FinancialStatementTable"/> — previously one flat
+    /// row per (label, year) pair, which on a company with a long filing history produced an unusable
+    /// several-hundred-row table (22 labels × 12 years for the balance sheet alone, on real data) instead
+    /// of the pivoted grid the source workbook itself uses. A handful of rows genuinely carry no year at
+    /// all (the source cash-flow section had no year header and even column-position inference couldn't
+    /// resolve one) — those are never silently dropped, just listed separately per group.</summary>
+    private void AdditionalLineItemsTables(ColumnDescriptor col, IReadOnlyList<FinancialFact> facts)
+    {
+        var first = true;
+        foreach (var (basis, section, title) in AdditionalLineItemGroups)
+        {
+            var group = facts.Where(x => x.Basis == basis && x.Section == section).ToList();
+            if (group.Count == 0) continue;
+
+            col.Item().PaddingTop(first ? 0 : 14).Text(title)
+                .FontFamily(DossierTheme.Display).FontSize(DossierTheme.Body).SemiBold();
+            first = false;
+
+            var dated = group.Where(x => x.FinancialYear is not null).ToList();
+            if (dated.Count > 0)
+            {
+                var years = dated.Select(x => x.FinancialYear!.Value).Distinct().OrderBy(y => y).ToList();
+                var labels = dated.Select(x => x.Label).Distinct().ToList();
+                var byLabelYear = dated.GroupBy(x => (x.Label, Year: x.FinancialYear!.Value))
+                    .ToDictionary(g => g.Key, g => g.First());
+
+                var yearChunks = years.Chunk(MaxYearColumnsPerTable).ToList();
+                for (var ci = 0; ci < yearChunks.Count; ci++)
+                {
+                    var chunk = yearChunks[ci];
+                    col.Item().PaddingTop(ci == 0 ? 4 : 10).Table(table =>
+                    {
+                        table.ColumnsDefinition(cd => { cd.RelativeColumn(2.4f); foreach (var _ in chunk) cd.RelativeColumn(); });
+                        table.Header(h =>
+                        {
+                            HeaderCell(h.Cell(), "Line item");
+                            foreach (var y in chunk) HeaderCell(h.Cell(), $"FY{y}");
+                        });
+                        foreach (var label in labels)
+                        {
+                            BodyCell(table.Cell(), label);
+                            foreach (var y in chunk)
+                            {
+                                var value = byLabelYear.TryGetValue((label, y), out var fact)
+                                    ? fact.NumericValue?.ToString("N2") ?? fact.RawValue
+                                    : "-";
+                                BodyCell(table.Cell(), value, right: true);
+                            }
+                        }
+                    });
+                }
+            }
+
+            var undated = group.Where(x => x.FinancialYear is null).ToList();
+            if (undated.Count > 0)
+            {
+                col.Item().PaddingTop(6).Text("Year could not be determined for the following (source section has no year header):")
+                    .FontSize(DossierTheme.Small).FontColor(DossierTheme.Amber);
+                col.Item().PaddingTop(2).Table(table =>
+                {
+                    table.ColumnsDefinition(cd => { cd.RelativeColumn(2.4f); cd.RelativeColumn(); });
+                    table.Header(h => { HeaderCell(h.Cell(), "Line item"); HeaderCell(h.Cell(), "Value"); });
+                    foreach (var x in undated)
+                    {
+                        BodyCell(table.Cell(), x.Label);
+                        BodyCell(table.Cell(), x.NumericValue?.ToString("N2") ?? x.RawValue, right: true);
+                    }
+                });
+            }
+
+            if (group.Any(x => x.YearInferred))
+                col.Item().PaddingTop(3).Text("Some rows above: the source section carries no year header — years inferred by column position, excluded from automated analysis.")
+                    .FontSize(DossierTheme.Small).FontColor(DossierTheme.Amber);
+        }
     }
 
     // ── C. Charges & Security ─────────────────────────────────────────────
@@ -469,6 +586,22 @@ public partial class DossierPdfComposer
             new Col<Litigation>("Parties", 2.4f, l => Clip(l.Litigants, 90)),
             new Col<Litigation>("Case no.", 1.8f, l => l.CaseNumber ?? "-"),
             new Col<Litigation>("Last hearing", 1.1f, l => D(l.LastHearingDate), true));
+    });
+
+    // ── F. Coverage & data sufficiency ──────────────────────────────────────
+
+    /// <summary>Only rendered when <see cref="HasCoverageGap"/> — the full detail the Snapshot's one-line
+    /// summary (<see cref="ComposeCoverageSummary"/>) points to: which optional sheets weren't in this
+    /// upload, and which deterministic checks had no basis to run.</summary>
+    private void AnnexureF(IContainer container) => container.Column(col =>
+    {
+        AnnexureHead(col, "Section 7", "Coverage & Data Sufficiency",
+            "Which optional workbook sheets this dossier is and is not built on, and which deterministic " +
+            "checks could not be run against this data set — so a report with no flags is never mistaken " +
+            "for a fully verified one.");
+
+        ComposeSourceCoverage(col);
+        ComposeNotAssessed(col);
     });
 
     private static string RoleLabel(LitigationRole r) => r switch

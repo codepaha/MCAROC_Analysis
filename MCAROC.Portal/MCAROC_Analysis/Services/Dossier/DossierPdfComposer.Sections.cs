@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using MCAROC_Analysis.Data.Entities;
 using MCAROC_Analysis.Models;
 using MCAROC_Analysis.Models.Dossier;
@@ -28,7 +29,9 @@ public partial class DossierPdfComposer
         var insolvency = lit.All.Count(l =>
             (l.CaseCategory ?? "").Contains("insolv", StringComparison.OrdinalIgnoreCase) && DossierComputations.IsPendingLitigation(l));
 
-        col.Item().PaddingTop(4).Row(row =>
+        ComposeCompanyProfile(col);
+
+        col.Item().PaddingTop(16).Row(row =>
         {
             row.RelativeItem().Element(c => StatTile(c, "Review priority", priority, accent: true));
             row.ConstantItem(10);
@@ -41,15 +44,6 @@ public partial class DossierPdfComposer
 
         col.Item().PaddingTop(16).Row(row =>
         {
-            row.RelativeItem().Element(c => KvBlock(c, "Company identity", new[]
-            {
-                ("Legal name", model.Cover.CompanyName),
-                ("CIN", model.Cover.Cin ?? "—"),
-                ("PAN", model.Cover.Pan ?? "—"),
-                ("Incorporated", D(model.Cover.IncorporationDate)),
-                ("ROC status", model.Cover.Status ?? "—"),
-            }));
-            row.ConstantItem(12);
             row.RelativeItem().Element(c => KvBlock(c, "Corporate", new[]
             {
                 ("Directors on record", model.Corporate.Directors.Count.ToString()),
@@ -58,10 +52,7 @@ public partial class DossierPdfComposer
                 ("Related corporates", model.Corporate.RelatedCorporates.Count.ToString()),
                 ("Last allotment", D(model.Corporate.SecurityAllotments.FirstOrDefault()?.AllotmentDate)),
             }));
-        });
-
-        col.Item().PaddingTop(12).Row(row =>
-        {
+            row.ConstantItem(12);
             row.RelativeItem().Element(c => KvBlock(c, "Charges & security", new[]
             {
                 ("Open charges", ch.OpenCount.ToString()),
@@ -69,7 +60,10 @@ public partial class DossierPdfComposer
                 ("Total open charge amount", Money(ch.TotalOpenAmount)),
                 ("Charge holders", ch.HolderCount.ToString()),
             }));
-            row.ConstantItem(12);
+        });
+
+        col.Item().PaddingTop(12).Row(row =>
+        {
             row.RelativeItem().Element(c => KvBlock(c, $"Financials (Standalone, FY{f.LatestYear})", new[]
             {
                 ("Total Equity", NumOrDash(f.Latest?.NetWorth)),
@@ -78,21 +72,24 @@ public partial class DossierPdfComposer
                 ("Total Debt", NumOrDash(f.Latest?.TotalDebt)),
                 ("Consolidated Total Equity", NumOrDash(f.Consolidated.OrderBy(x => x.FinancialYear).LastOrDefault()?.NetWorth)),
             }));
+            row.ConstantItem(12);
+            row.RelativeItem().Element(c =>
+            {
+                var compliance = model.Compliance;
+                KvBlock(c, "Compliance", new[]
+                {
+                    ("MCA / regulatory records", compliance.Records.Count.ToString()),
+                    ("Suit-filed groups", compliance.SuitFiledSummary.Count.ToString()),
+                    ("GST registrations", compliance.Gst.Count.ToString()),
+                    ("EPFO establishments", compliance.EpfoEstablishments.Count.ToString()),
+                    ("EPFO months on record", compliance.Epfo.Count.ToString()),
+                    ("MSME dues rows", compliance.Msme.Count.ToString()),
+                });
+            });
         });
 
         col.Item().PaddingTop(12).Row(row =>
         {
-            var compliance = model.Compliance;
-            row.RelativeItem().Element(c => KvBlock(c, "Compliance", new[]
-            {
-                ("MCA / regulatory records", compliance.Records.Count.ToString()),
-                ("Suit-filed groups", compliance.SuitFiledSummary.Count.ToString()),
-                ("GST registrations", compliance.Gst.Count.ToString()),
-                ("EPFO establishments", compliance.EpfoEstablishments.Count.ToString()),
-                ("EPFO months on record", compliance.Epfo.Count.ToString()),
-                ("MSME dues rows", compliance.Msme.Count.ToString()),
-            }));
-            row.ConstantItem(12);
             row.RelativeItem().Element(c => KvBlock(c, "Litigation", new[]
             {
                 ("Total cases", lit.All.Count.ToString()),
@@ -101,22 +98,114 @@ public partial class DossierPdfComposer
                 ("Filed against company", lit.FiledAgainstCount.ToString()),
                 ("Role not determined", lit.NotDeterminedCount.ToString()),
             }));
+            row.ConstantItem(12);
+            row.RelativeItem();
         });
 
-        ComposeSourceCoverage(col);
-        ComposeNotAssessed(col);
+        ComposeCoverageSummary(col);
     });
 
+    /// <summary>The first table in the dossier — full company-identity detail (address, contact,
+    /// capital, classification, the "About" narrative), matching the source workbook's own "Company
+    /// Information" sheet, which the sparser Snapshot stat blocks below do not reproduce. A no-op only
+    /// when no CompanyProfile was ingested at all (e.g. the ROC report itself was never parsed).</summary>
+    private void ComposeCompanyProfile(ColumnDescriptor col)
+    {
+        var p = model.Profile;
+        if (p is null) return;
+
+        col.Item().Border(0.75f).BorderColor(DossierTheme.Line).Column(box =>
+        {
+            box.Item().Background(DossierTheme.Ink).PaddingVertical(6).PaddingHorizontal(11)
+                .Text("Company Profile").FontFamily(DossierTheme.Display).FontSize(11.5f).FontColor("#FFFFFF");
+
+            void Row(string label, string? value)
+            {
+                if (string.IsNullOrWhiteSpace(value)) return;
+                box.Item().BorderBottom(0.5f).BorderColor(DossierTheme.LineSoft)
+                    .PaddingVertical(5).PaddingHorizontal(11).Row(r =>
+                {
+                    r.ConstantItem(150).Text(label).FontSize(DossierTheme.Small).FontColor(DossierTheme.InkSoft);
+                    r.RelativeItem().Text(value).FontSize(DossierTheme.Small).SemiBold();
+                });
+            }
+
+            void SectionLabel(string text) => box.Item().PaddingTop(8).PaddingHorizontal(11)
+                .Text(text.ToUpperInvariant()).FontSize(DossierTheme.Kicker).FontColor(DossierTheme.Maroon).LetterSpacing(0.05f);
+
+            Row("Legal name", model.Cover.CompanyName);
+            Row("CIN", model.Cover.Cin);
+            Row("PAN", model.Cover.Pan);
+            Row("Authorised capital", Money(p.AuthorisedCapital));
+            Row("Paid-up capital", Money(p.PaidUpCapital));
+            Row("Sum of charges (MCA)", Money(p.McaSumOfChargesCrore));
+            Row("Company status", p.CompanyStatus);
+            Row("Compliance status", p.ComplianceStatus);
+
+            if (!string.IsNullOrWhiteSpace(p.RegisteredAddress) || !string.IsNullOrWhiteSpace(p.RegisteredAddressCity))
+            {
+                SectionLabel("Registered address");
+                Row("Address", NormalizeAddress(p.RegisteredAddress));
+                Row("City / State", string.Join(", ",
+                    new[] { p.RegisteredAddressCity, p.RegisteredAddressState }.Where(s => !string.IsNullOrWhiteSpace(s))));
+                Row("PIN code", p.RegisteredAddressPinCode);
+            }
+            if (!string.IsNullOrWhiteSpace(p.BusinessAddress))
+            {
+                SectionLabel("Business address");
+                Row("Address", NormalizeAddress(p.BusinessAddress));
+            }
+
+            SectionLabel("Contact & classification");
+            Row("Website", p.Website);
+            Row("Phone", p.Phone);
+            Row("Entity type", p.EntityType);
+            Row("Listing status", p.ListingStatus);
+            Row("Incorporated", D(model.Cover.IncorporationDate));
+            Row("Last AGM", D(p.LastAgmDate));
+            Row("Industry", p.Industry);
+            Row("Segment", p.Segment);
+            Row("Business activity", p.BusinessActivity);
+
+            if (!string.IsNullOrWhiteSpace(p.NarrativeDescription))
+            {
+                SectionLabel("About the company");
+                box.Item().PaddingHorizontal(11).PaddingTop(2).PaddingBottom(8)
+                    .Text(p.NarrativeDescription).FontSize(DossierTheme.Small).FontColor(DossierTheme.InkSoft).LineHeight(1.4f);
+            }
+        });
+    }
+
+    /// <summary>A one-line pointer to Section 7, not the full disclosure — the snapshot states the fact
+    /// (so silence is never misread as "verified clean") and sends the reader on for detail, instead of
+    /// leading a client-facing report with two bullet lists of what's missing before a single finding.</summary>
+    private void ComposeCoverageSummary(ColumnDescriptor col)
+    {
+        if (!HasCoverageGap) return;
+        var cov = model.SourceCoverage;
+        var notes = model.ExecSummary.NotAssessed;
+
+        col.Item().PaddingTop(16).Element(c => Kicker(c, "Coverage"));
+        col.Item().Text(t =>
+        {
+            t.DefaultTextStyle(x => x.FontSize(DossierTheme.Small).FontColor(DossierTheme.InkSoft).LineHeight(1.5f));
+            t.Span($"Built on {cov.PresentOptionalSheets} of {cov.TotalOptionalSheets} optional workbook sheets. ");
+            if (notes.Count > 0)
+                t.Span($"{notes.Count} deterministic check{(notes.Count == 1 ? "" : "s")} could not be run against " +
+                    "this data set — absence of a flag elsewhere is not itself a clean result. ");
+            t.Span("Full detail in Section 7, Coverage & Data Sufficiency.").Italic();
+        });
+    }
+
     /// <summary>"Source coverage" — which optional workbook sheets this dossier is and is not built on,
-    /// so an empty annexure section reads as "not in this upload" rather than "verified nil". Renders
-    /// in every variant; a no-op only when every tracked optional sheet was present and a charge report
-    /// (where charges exist) was supplied.</summary>
+    /// so an empty annexure section reads as "not in this upload" rather than "verified nil". Called only
+    /// from <see cref="AnnexureF"/>; a no-op only when every tracked optional sheet was present and a
+    /// charge report (where charges exist) was supplied.</summary>
     private void ComposeSourceCoverage(ColumnDescriptor col)
     {
         var cov = model.SourceCoverage;
         if (!cov.AnySheetAbsent && !cov.ChargeReportMissing) return;
 
-        col.Item().PaddingTop(16).Element(c => Kicker(c, "Coverage"));
         col.Item().Element(c => SubHead(c, "Source coverage"));
         col.Item().PaddingBottom(8).Text(
             $"This dossier is built on {cov.PresentOptionalSheets} of {cov.TotalOptionalSheets} optional workbook " +
@@ -148,15 +237,14 @@ public partial class DossierPdfComposer
     }
 
     /// <summary>The deterministic checks the rule engine could NOT run, and why — so a "verified
-    /// clean" result is never mistaken for "not checked". Renders in every variant (AI-independent);
+    /// clean" result is never mistaken for "not checked". Called only from <see cref="AnnexureF"/>;
     /// a no-op when the engine ran everything.</summary>
     private void ComposeNotAssessed(ColumnDescriptor col)
     {
         var notes = model.ExecSummary.NotAssessed;
         if (notes.Count == 0) return;
 
-        col.Item().PaddingTop(16).Element(c => Kicker(c, "Coverage"));
-        col.Item().Element(c => SubHead(c, "Not assessed"));
+        col.Item().PaddingTop(16).Element(c => SubHead(c, "Not assessed"));
         col.Item().PaddingBottom(8).Text(
             $"{notes.Count} deterministic check{(notes.Count == 1 ? "" : "s")} could not be run against " +
             "this data set. Absence of a flag below is not a clean result — the check simply had no basis " +
@@ -177,6 +265,18 @@ public partial class DossierPdfComposer
     }
 
     private static string NumOrDash(decimal? v) => v is null ? "—" : $"₹{v.Value:N1} Cr";
+
+    /// <summary>Display-only cleanup of the source workbook's free-text address cells — collapses runs of
+    /// whitespace and repeated/stray commas (e.g. "Towers,,  Dr." → "Towers, Dr."). Cosmetic only: the
+    /// stored <see cref="Data.Entities.CompanyProfile"/> value is untouched, only this rendered string.</summary>
+    private static string? NormalizeAddress(string? s)
+    {
+        if (string.IsNullOrWhiteSpace(s)) return s;
+        var t = Regex.Replace(s.Trim(), @"\s+", " ");
+        t = Regex.Replace(t, @"\s*,\s*", ", ");
+        t = Regex.Replace(t, @"(,\s*){2,}", ", ");
+        return t.Trim().Trim(',').Trim();
+    }
 
     // ── Section 1 — Executive Summary ──────────────────────────────────────
 

@@ -17,13 +17,13 @@ public class DossierAssembler(AppDbContext db)
 {
     public async Task<DossierModel?> BuildAsync(long requestId, CancellationToken ct = default)
     {
-        var request = await db.Requests.Include(r => r.Client).FirstOrDefaultAsync(r => r.RequestId == requestId, ct);
+        var request = await db.Requests.AsNoTracking().Include(r => r.Client).FirstOrDefaultAsync(r => r.RequestId == requestId, ct);
         if (request?.LatestCompletedIngestionRunId is not { } runId) return null;
 
         // The analysis MUST belong to the ingestion run we are about to render — otherwise a fresh
         // re-ingest paired with a not-yet-re-run analysis would present stale findings over new data.
         // No terminal analysis for this exact ingestion run ⇒ the dossier is not ready (controller → 409).
-        var analysis = await db.AnalysisRuns
+        var analysis = await db.AnalysisRuns.AsNoTracking()
             .Where(a => a.RequestId == requestId && a.IngestionRunId == runId
                 && (a.Status == AnalysisRunStatus.Completed || a.Status == AnalysisRunStatus.CompletedWithErrors))
             .OrderByDescending(a => a.RunNumber)
@@ -46,10 +46,10 @@ public class DossierAssembler(AppDbContext db)
     /// re-derivation happens here, unlike <see cref="BuildAsync"/>.</summary>
     public async Task<DossierModel?> BuildForInFlightAnalysisAsync(long requestId, long ingestionRunId, long analysisRunId, CancellationToken ct = default)
     {
-        var request = await db.Requests.Include(r => r.Client).FirstOrDefaultAsync(r => r.RequestId == requestId, ct);
+        var request = await db.Requests.AsNoTracking().Include(r => r.Client).FirstOrDefaultAsync(r => r.RequestId == requestId, ct);
         if (request is null) return null;
 
-        var analysis = await db.AnalysisRuns.FirstOrDefaultAsync(
+        var analysis = await db.AnalysisRuns.AsNoTracking().FirstOrDefaultAsync(
             a => a.AnalysisRunId == analysisRunId && a.RequestId == requestId && a.IngestionRunId == ingestionRunId, ct);
         if (analysis is null) return null;
 
@@ -58,65 +58,72 @@ public class DossierAssembler(AppDbContext db)
 
     private async Task<DossierModel> BuildCoreAsync(McaRequest request, long runId, AnalysisRun analysis, CancellationToken ct)
     {
-        var run = await db.IngestionRuns.FirstOrDefaultAsync(x => x.IngestionRunId == runId, ct);
+        var run = await db.IngestionRuns.AsNoTracking().FirstOrDefaultAsync(x => x.IngestionRunId == runId, ct);
 
         // ── Corporate ──
-        var directors = await db.Directors.Where(x => x.IngestionRunId == runId).OrderBy(x => x.NameRaw).ToListAsync(ct);
-        var officers = await db.CompanyOfficers.Where(x => x.IngestionRunId == runId).OrderBy(x => x.NameRaw).ToListAsync(ct);
+        var directors = await db.Directors.AsNoTracking().Where(x => x.IngestionRunId == runId).OrderBy(x => x.NameRaw).ToListAsync(ct);
+        var officers = await db.CompanyOfficers.AsNoTracking().Where(x => x.IngestionRunId == runId).OrderBy(x => x.NameRaw).ToListAsync(ct);
         var shareholders = DossierDeduplicator.MergeShareholders(
-            await db.Shareholdings.Where(x => x.IngestionRunId == runId).ToListAsync(ct));
+            await db.Shareholdings.AsNoTracking().Where(x => x.IngestionRunId == runId).ToListAsync(ct));
         var related = DossierDeduplicator.DistinctRelatedCorporates(
-            await db.RelatedCorporates.Where(x => x.IngestionRunId == runId).ToListAsync(ct));
-        var allotments = await db.SecurityAllotments.Where(x => x.IngestionRunId == runId)
+            await db.RelatedCorporates.AsNoTracking().Where(x => x.IngestionRunId == runId).ToListAsync(ct));
+        var allotments = await db.SecurityAllotments.AsNoTracking().Where(x => x.IngestionRunId == runId)
             .OrderByDescending(x => x.AllotmentDate).ToListAsync(ct);
-        var desigHistory = await db.DirectorAssignmentHistories.Where(x => x.IngestionRunId == runId).ToListAsync(ct);
-        var otherDirectorships = await db.DirectorAssociations.Where(x => x.IngestionRunId == runId).ToListAsync(ct);
-        var structure = await db.CompanyStructures.FirstOrDefaultAsync(x => x.IngestionRunId == runId, ct);
-        var shareholdingPattern = await db.ShareholdingPatternRows.Where(x => x.IngestionRunId == runId)
+        var desigHistory = await db.DirectorAssignmentHistories.AsNoTracking().Where(x => x.IngestionRunId == runId).ToListAsync(ct);
+        var otherDirectorships = await db.DirectorAssociations.AsNoTracking().Where(x => x.IngestionRunId == runId).ToListAsync(ct);
+        var structure = await db.CompanyStructures.AsNoTracking().FirstOrDefaultAsync(x => x.IngestionRunId == runId, ct);
+        var shareholdingPattern = await db.ShareholdingPatternRows.AsNoTracking().Where(x => x.IngestionRunId == runId)
             .OrderBy(x => x.HolderClass).ThenBy(x => x.AsOnDate).ThenBy(x => x.DisplayOrder).ToListAsync(ct);
-        var relatedPartyTransactions = await db.RelatedPartyTransactions.Where(x => x.IngestionRunId == runId)
+        var relatedPartyTransactions = await db.RelatedPartyTransactions.AsNoTracking().Where(x => x.IngestionRunId == runId)
             .OrderBy(x => x.FinancialYearEnding).ThenBy(x => x.EntityNameNormalized).ToListAsync(ct);
-        var profile = await db.CompanyProfiles.FirstOrDefaultAsync(x => x.IngestionRunId == runId, ct);
+        var profile = await db.CompanyProfiles.AsNoTracking().FirstOrDefaultAsync(x => x.IngestionRunId == runId, ct);
 
         // ── Financials ──
-        var fyAll = await db.FinancialYearData.Where(x => x.IngestionRunId == runId)
+        var fyAll = await db.FinancialYearData.AsNoTracking().Where(x => x.IngestionRunId == runId)
             .OrderBy(x => x.FinancialYear).ToListAsync(ct);
         var standalone = fyAll.Where(f => f.Basis == FinancialBasis.Standalone).ToList();
         var consolidated = fyAll.Where(f => f.Basis == FinancialBasis.Consolidated).ToList();
-        var facts = await db.FinancialFacts.Where(x => x.IngestionRunId == runId)
+        var facts = await db.FinancialFacts.AsNoTracking().Where(x => x.IngestionRunId == runId)
             .OrderBy(x => x.Section).ThenBy(x => x.Label).ThenByDescending(x => x.FinancialYear).ToListAsync(ct);
-        var parameters = await db.FinancialParameters.Where(x => x.IngestionRunId == runId).ToListAsync(ct);
-        var auditors = await db.AuditorObservations.Where(x => x.IngestionRunId == runId)
+        var parameters = await db.FinancialParameters.AsNoTracking().Where(x => x.IngestionRunId == runId).ToListAsync(ct);
+        var auditors = await db.AuditorObservations.AsNoTracking().Where(x => x.IngestionRunId == runId)
             .OrderByDescending(x => x.FinancialYear).ToListAsync(ct);
-        var peers = await db.PeerComparisonMetrics.Where(x => x.IngestionRunId == runId).ToListAsync(ct);
-        var peerCompanies = await db.PeerCompanies.Where(x => x.IngestionRunId == runId).OrderBy(x => x.Rank).ToListAsync(ct);
+        var peers = await db.PeerComparisonMetrics.AsNoTracking().Where(x => x.IngestionRunId == runId).ToListAsync(ct);
+        var peerCompanies = await db.PeerCompanies.AsNoTracking().Where(x => x.IngestionRunId == runId).OrderBy(x => x.Rank).ToListAsync(ct);
 
         // ── Charges ──
-        var charges = await db.RocCharges.Include(c => c.Events).ThenInclude(e => e.SecurityComponents)
+        // AsSplitQuery: without it, the Events → SecurityComponents chain becomes one flat JOIN result set
+        // that multiplies every charge row by its event count by its component count, which EF then has to
+        // de-duplicate client-side — expensive and, on a heavily-charged company, slow enough to trip the
+        // default 30s SQL command timeout (observed on the Coastal fixture: 213 charges / 337 events / 454
+        // components).
+        var charges = await db.RocCharges.AsNoTracking().AsSplitQuery()
+            .Include(c => c.Events).ThenInclude(e => e.SecurityComponents)
             .Where(x => x.IngestionRunId == runId).ToListAsync(ct);
 
         // ── Compliance ──
-        var compliance = await db.ComplianceRecords.Where(x => x.IngestionRunId == runId)
+        var compliance = await db.ComplianceRecords.AsNoTracking().Where(x => x.IngestionRunId == runId)
             .OrderBy(x => x.RecordType).ThenByDescending(x => x.RecordDate).ToListAsync(ct);
-        var msme = await db.MsmePayments.Where(x => x.IngestionRunId == runId).ToListAsync(ct);
-        var gst = await db.GstRegistrations.Include(g => g.Filings).Where(x => x.IngestionRunId == runId).ToListAsync(ct);
-        var epfo = await db.EpfoContributions.Where(x => x.IngestionRunId == runId)
+        var msme = await db.MsmePayments.AsNoTracking().Where(x => x.IngestionRunId == runId).ToListAsync(ct);
+        var gst = await db.GstRegistrations.AsNoTracking().AsSplitQuery()
+            .Include(g => g.Filings).Where(x => x.IngestionRunId == runId).ToListAsync(ct);
+        var epfo = await db.EpfoContributions.AsNoTracking().Where(x => x.IngestionRunId == runId)
             .OrderByDescending(x => x.WageMonth).ToListAsync(ct);
-        var epfoEstablishments = await db.EpfoEstablishments.Where(x => x.IngestionRunId == runId)
+        var epfoEstablishments = await db.EpfoEstablishments.AsNoTracking().Where(x => x.IngestionRunId == runId)
             .OrderBy(x => x.Name).ToListAsync(ct);
-        var creditRatings = await db.CreditRatings.Where(x => x.IngestionRunId == runId)
+        var creditRatings = await db.CreditRatings.AsNoTracking().Where(x => x.IngestionRunId == runId)
             .OrderByDescending(x => x.RatingDate).ToListAsync(ct);
 
         // ── Litigation ──
-        var litigations = await db.Litigations.Where(x => x.IngestionRunId == runId).ToListAsync(ct);
+        var litigations = await db.Litigations.AsNoTracking().Where(x => x.IngestionRunId == runId).ToListAsync(ct);
 
         // ── Source records (Layer 0) — the verbatim staging rows the "Full source" annexure renders from ──
-        var sourceRows = await db.SourceRows.Where(x => x.IngestionRunId == runId).ToListAsync(ct);
+        var sourceRows = await db.SourceRows.AsNoTracking().Where(x => x.IngestionRunId == runId).ToListAsync(ct);
         var sourceSheets = BuildSourceSheets(sourceRows);
 
         // ── Findings ──
         ExecutiveSummary? execSummary = null;
-        var raw = await db.AnalysisFindings.Where(f => f.AnalysisRunId == analysis.AnalysisRunId).ToListAsync(ct);
+        var raw = await db.AnalysisFindings.AsNoTracking().Where(f => f.AnalysisRunId == analysis.AnalysisRunId).ToListAsync(ct);
         var findings = raw
             .OrderByDescending(f => f.Severity).ThenByDescending(f => f.DisplayPriority).ThenByDescending(f => f.ObservationDate)
             .ToList();
@@ -153,7 +160,8 @@ public class DossierAssembler(AppDbContext db)
                 findings, execSummary, notAssessed),
             sourceSheets,
             SheetCoverage.From(run),
-            Metrics: []);
+            Metrics: [],
+            Profile: profile);
 
         // Metrics are derived from the fully-assembled model, then folded back in.
         return model with { Metrics = DossierComputations.BuildMetricGroups(model) };
