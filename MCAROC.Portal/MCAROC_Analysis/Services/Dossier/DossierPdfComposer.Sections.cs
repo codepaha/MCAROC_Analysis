@@ -1,3 +1,4 @@
+using System.Text.Json;
 using MCAROC_Analysis.Data.Entities;
 using MCAROC_Analysis.Models;
 using MCAROC_Analysis.Models.Dossier;
@@ -231,14 +232,28 @@ public partial class DossierPdfComposer
             t.Span(es.ReviewPriority?.ToString() ?? "Not assessed").SemiBold();
         });
 
-        // Key risk flags — Critical + Review findings.
+        // Key risk flags — Critical + Review findings. A cross-section finding (CrossSectionRules)
+        // lists the codes of the findings it synthesises in SupportingSignalsJson; those component
+        // findings render as nested evidence under the cross-section card instead of also appearing as
+        // separate flat sibling cards — the two engines are deliberately independent (FindingConsolidator
+        // merges same-dimension duplicates; CrossSectionRules correlates across dimensions on top), but
+        // nothing before #197 told the reader that's what the extra card meant.
         var flags = es.FindingsInDisplayOrder
             .Where(x => x.Severity is FindingSeverity.Critical or FindingSeverity.Review).ToList();
         if (flags.Count > 0)
         {
+            var byCode = flags.ToDictionary(f => f.Code);
+            var componentCodes = flags.SelectMany(f => SupportingCodes(f)).ToHashSet();
+            var topLevel = flags.Where(f => !componentCodes.Contains(f.Code)).ToList();
+
             col.Item().Element(c => SubHead(c, "Key risk flags"));
-            foreach (var flag in flags)
-                col.Item().PaddingBottom(9).Element(c => FlagCard(c, flag));
+            foreach (var flag in topLevel)
+            {
+                var components = SupportingCodes(flag)
+                    .Select(code => byCode.GetValueOrDefault(code))
+                    .Where(f => f is not null).Cast<AnalysisFinding>().ToList();
+                col.Item().PaddingBottom(9).Element(c => FlagCard(c, flag, components));
+            }
         }
 
         // Additional observations — Watch + Positive.
@@ -296,7 +311,17 @@ public partial class DossierPdfComposer
         });
     });
 
-    private void FlagCard(IContainer c, AnalysisFinding f) => c
+    /// <summary>Parses <see cref="AnalysisFinding.SupportingSignalsJson"/> — a JSON array of related
+    /// finding Codes, never free text (see that property's doc comment) — tolerating absent/malformed
+    /// JSON the same way <see cref="DossierAssembler.DeserializeSufficiencyNotes"/> does elsewhere.</summary>
+    private static IReadOnlyList<string> SupportingCodes(AnalysisFinding f)
+    {
+        if (string.IsNullOrWhiteSpace(f.SupportingSignalsJson)) return [];
+        try { return JsonSerializer.Deserialize<List<string>>(f.SupportingSignalsJson) ?? []; }
+        catch (JsonException) { return []; }
+    }
+
+    private void FlagCard(IContainer c, AnalysisFinding f, IReadOnlyList<AnalysisFinding>? components = null) => c
         .Background(SevWash(f.Severity)).Border(0.75f).BorderColor(DossierTheme.Line)
         .BorderLeft(2.5f).BorderColor(SevColour(f.Severity)).Padding(11).Column(col =>
     {
@@ -308,8 +333,25 @@ public partial class DossierPdfComposer
         col.Item().PaddingTop(3).Text(f.SummaryText).FontSize(DossierTheme.Small).FontColor(DossierTheme.InkSoft).LineHeight(1.45f);
         if (!string.IsNullOrWhiteSpace(f.WhyThisMatters))
             col.Item().PaddingTop(3).Text(f.WhyThisMatters).FontSize(DossierTheme.Small).FontColor(DossierTheme.InkSoft).LineHeight(1.45f);
-        col.Item().PaddingTop(5).Text(t => t.SectionLink($"See {AnnexureRef(f.Section)}", AnnexureSection(f.Section))
-            .FontFamily(DossierTheme.Mono).FontSize(DossierTheme.Small).FontColor(DossierTheme.MaroonDeep));
+
+        if (components is { Count: > 0 })
+        {
+            col.Item().PaddingTop(7).Text("Evidence").SemiBold().FontSize(DossierTheme.Small).FontColor(DossierTheme.InkSoft);
+            foreach (var comp in components)
+                col.Item().PaddingLeft(10).PaddingTop(3).Row(r =>
+                {
+                    r.ConstantItem(10).Text("•").FontSize(DossierTheme.Small).FontColor(DossierTheme.InkFaint);
+                    r.RelativeItem().Text(t =>
+                    {
+                        t.Span(comp.Title + ". ").SemiBold().FontSize(DossierTheme.Small);
+                        t.Span(comp.SummaryText).FontSize(DossierTheme.Small).FontColor(DossierTheme.InkSoft);
+                        t.Span($"  ({AnnexureRef(comp.Section)})").FontSize(DossierTheme.Small).FontColor(DossierTheme.InkFaint);
+                    });
+                });
+        }
+        else
+            col.Item().PaddingTop(5).Text(t => t.SectionLink($"See {AnnexureRef(f.Section)}", AnnexureSection(f.Section))
+                .FontFamily(DossierTheme.Mono).FontSize(DossierTheme.Small).FontColor(DossierTheme.MaroonDeep));
     });
 
     private void Pill(IContainer c, string text, string colour) =>
