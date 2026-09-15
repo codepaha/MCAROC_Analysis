@@ -206,4 +206,24 @@ public class AuditorsParserTests
         Assert.Equal("AUDITOR_SERIAL_NUMBER_OUT_OF_RANGE", warning.IssueCode);
         Assert.Contains("2147483648", warning.Message);
     }
+
+    /// <summary>Regression found via real-file E2E testing: a literal "-" in "Comments Given By" (no
+    /// comment on file for that year) propagated as a real value into both AuditorName and
+    /// ObservationText, unlike the sibling detail table's text columns which already normalize "-"/"NIL"
+    /// to null. Once the dossier PDF started prefixing the Comment cell with auditor-identity text (for
+    /// identity recovered from elsewhere), this left a stray "— -" tail in the final report.</summary>
+    [Fact]
+    public void DashCommentsGivenBy_NormalizesToNull_NotLiteralDash()
+    {
+        var sheet = Sheet("Auditors' Comments-Standalone",
+            Row("AUDITORS' COMMENTS - STANDALONE"),
+            Row("Financial Year", "Qualified?", "", "", "Comments Given By"),
+            Row(2025.0, "No", "", "", "-"));
+
+        var result = AuditorsParser.Parse(sheet, 1, 1, 10);
+
+        var obs = Assert.Single(result.Items);
+        Assert.Null(obs.ObservationText);
+        Assert.Null(obs.AuditorName);
+    }
 }
