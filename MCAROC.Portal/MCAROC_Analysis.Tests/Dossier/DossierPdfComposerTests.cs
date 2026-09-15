@@ -1,5 +1,6 @@
 using System.Text.Json;
 using MCAROC_Analysis.Data.Entities;
+using MCAROC_Analysis.Models;
 using MCAROC_Analysis.Services.Dossier;
 using Microsoft.EntityFrameworkCore;
 using UglyToad.PdfPig;
@@ -254,5 +255,169 @@ public class DossierPdfComposerTests : IAsyncLifetime
         Assert.Contains("B S R & CO LLP", text);
         Assert.Contains("101248W/W100022", text);
         Assert.Contains("223018", text);
+    }
+
+    /// <summary>#213 review: the new Company Profile block (first table on the Snapshot page) must render
+    /// every field the source workbook's "Company Information" sheet carries, and — since a request can be
+    /// analysed before any ROC report was ever parsed — must not crash or render anything when there is no
+    /// CompanyProfile at all, rather than assuming one always exists.</summary>
+    [SkippableFact]
+    public async Task Company_profile_table_renders_full_detail_and_is_absent_when_no_profile_was_ingested()
+    {
+        Skip.IfNot(OperatingSystem.IsWindows(),
+            "PdfPig text extraction from SkiaSharp subset fonts is unreliable on Linux; covered by the windows-tests job.");
+
+        await using var seed = DossierGoldenMasterTests.CreateContext();
+        var (requestId, _, _) = await DossierTestSeed.SeedAsync(seed);
+
+        // The base seed only sets a handful of CompanyProfile fields (enough for the cover/corporate
+        // blocks that predate #213) — extend it here, scoped to this one uniquely-numbered request, so
+        // this test actually exercises every Company Profile row without perturbing the golden-master
+        // fixture other tests in this file depend on.
+        await seed.CompanyProfiles.Where(p => p.RequestId == requestId).ExecuteUpdateAsync(s => s
+            .SetProperty(p => p.RegisteredAddress, "1 Test Street")
+            .SetProperty(p => p.RegisteredAddressCity, "Bengaluru")
+            .SetProperty(p => p.RegisteredAddressState, "Karnataka")
+            .SetProperty(p => p.RegisteredAddressPinCode, "560001")
+            .SetProperty(p => p.BusinessAddress, "2 Business Park")
+            .SetProperty(p => p.Website, "https://goldenmaster.example")
+            .SetProperty(p => p.Phone, "+91-80-99999999")
+            .SetProperty(p => p.EntityType, "Private Limited Company")
+            .SetProperty(p => p.ListingStatus, "Unlisted")
+            .SetProperty(p => p.Industry, "Testing")
+            .SetProperty(p => p.Segment, "Quality Assurance")
+            .SetProperty(p => p.NarrativeDescription, "Golden Master Ltd is a fixture used exclusively for automated tests."));
+
+        await using var db = DossierGoldenMasterTests.CreateContext();
+        var model = await new DossierAssembler(db).BuildAsync(requestId);
+        Assert.NotNull(model);
+        Assert.NotNull(model!.Profile);
+
+        var pdf = new DossierPdfRenderer(WebRoot()).Render(model, DossierVariant.Executive);
+        var text = TextOf(pdf);
+
+        // "Company Pro?le"/"REGISTERED ADDRESS" not "Profile": PdfPig's glyph extraction mangles the "fi"
+        // ligature into "?" (a pre-existing, documented quirk of this file's other tests) — assert on the
+        // surrounding ligature-free kicker labels instead of the section title itself.
+        Assert.Contains("REGISTERED ADDRESS", text);
+        Assert.Contains("CONTACT & CLASSIFICATION", text);
+        Assert.Contains("1 Test Street", text);
+        Assert.Contains("Bengaluru", text);
+        Assert.Contains("Karnataka", text);
+        Assert.Contains("560001", text);
+        Assert.Contains("2 Business Park", text);
+        Assert.Contains("https://goldenmaster.example", text);
+        Assert.Contains("+91-80-99999999", text);
+        Assert.Contains("Unlisted", text);
+        Assert.Contains("Quality Assurance", text);
+        Assert.Contains("automated tests", text);
+
+        // Absent-profile behaviour: no CompanyProfile row at all must not crash the composer, and the
+        // block must not render (not even an empty header) — checked via the same ligature-free markers.
+        var noProfileModel = model with { Profile = null };
+        var noProfileText = TextOf(new DossierPdfRenderer(WebRoot()).Render(noProfileModel, DossierVariant.Executive));
+        Assert.DoesNotContain("REGISTERED ADDRESS", noProfileText);
+        Assert.DoesNotContain("CONTACT & CLASSIFICATION", noProfileText);
+    }
+
+    /// <summary>#213 review: the "Source coverage" / "Not assessed" detail must only exist as Section 7 —
+    /// both the Contents anchor and the appendix page itself — when there is an actual gap to disclose.
+    /// The seeded fixture's real assembled model already has both an absent-sheet and a not-assessed-notes
+    /// gap (proving the "has a gap" path); forcing both to empty proves the "no gap" path never renders an
+    /// empty appendix page instead of just being silently correct by coincidence.</summary>
+    [SkippableFact]
+    public async Task Coverage_appendix_and_contents_anchor_exist_only_when_there_is_a_gap_to_disclose()
+    {
+        Skip.IfNot(OperatingSystem.IsWindows(),
+            "PdfPig text extraction from SkiaSharp subset fonts is unreliable on Linux; covered by the windows-tests job.");
+
+        await using var seed = DossierGoldenMasterTests.CreateContext();
+        var (requestId, _, _) = await DossierTestSeed.SeedAsync(seed);
+
+        await using var db = DossierGoldenMasterTests.CreateContext();
+        var model = await new DossierAssembler(db).BuildAsync(requestId);
+        Assert.NotNull(model);
+
+        // "Suf?ciency" not "Sufficiency": PdfPig mangles the "ffi" ligature into "?" (same pre-existing
+        // quirk noted in the Company Profile test above) — assert on the ligature-free "SECTION 7" kicker
+        // and the "7. Coverage & Data" contents-line prefix instead of the full title text.
+        var gapText = TextOf(new DossierPdfRenderer(WebRoot()).Render(model!, DossierVariant.Executive));
+        Assert.Contains("7. Coverage & Data", gapText);
+        Assert.Contains("SECTION 7", gapText);
+        Assert.Contains("Full detail in Section 7", gapText);
+
+        var noGapModel = model! with
+        {
+            SourceCoverage = SheetCoverage.Empty,
+            ExecSummary = model.ExecSummary with { NotAssessed = [] }
+        };
+        var noGapText = TextOf(new DossierPdfRenderer(WebRoot()).Render(noGapModel, DossierVariant.Executive));
+        Assert.DoesNotContain("7. Coverage & Data", noGapText);
+        Assert.DoesNotContain("SECTION 7", noGapText);
+        Assert.DoesNotContain("Full detail in Section 7", noGapText);
+    }
+
+    /// <summary>#213 review: beyond <c>MaxYearColumnsPerTable</c> (6), both the typed Standalone financial
+    /// table and the FinancialFact "Additional line items" catch-all must split into multiple tables
+    /// without dropping or duplicating a single (label, year) value at the chunk boundary. Every planted
+    /// value here is a distinctive two-decimal figure (10.18–10.25 / 20.18–20.25) that no other seeded
+    /// figure in this fixture can coincidentally reproduce, so "appears exactly once anywhere in the
+    /// rendered text" is a direct proof of neither dropping nor duplicating.</summary>
+    [SkippableFact]
+    public async Task Financial_grids_beyond_six_years_are_chunked_with_every_value_appearing_exactly_once()
+    {
+        Skip.IfNot(OperatingSystem.IsWindows(),
+            "PdfPig text extraction from SkiaSharp subset fonts is unreliable on Linux; covered by the windows-tests job.");
+
+        await using var seed = DossierGoldenMasterTests.CreateContext();
+        var (requestId, ingestionRunId, _) = await DossierTestSeed.SeedAsync(seed);
+
+        // The base seed already carries standalone 2023/2024/2025 — add five more years so the total (8)
+        // exceeds the 6-per-table cap and must split into two chunks (2018-2023, 2024-2025).
+        int[] extraYears = [2018, 2019, 2020, 2021, 2022];
+        foreach (var year in extraYears)
+            seed.FinancialYearData.Add(new FinancialYearData
+            {
+                RequestId = requestId, IngestionRunId = ingestionRunId,
+                FinancialYear = year, Basis = FinancialBasis.Standalone,
+                NetWorth = 10m + year % 100 * 0.01m
+            });
+
+        int[] allEightYears = [2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025];
+        foreach (var year in allEightYears)
+            seed.FinancialFacts.Add(new FinancialFact
+            {
+                RequestId = requestId, IngestionRunId = ingestionRunId,
+                Basis = FinancialBasis.Standalone, Section = FinancialStatementSection.BalanceSheet,
+                Label = "Test Extra Line", FinancialYear = year,
+                NumericValue = 20m + year % 100 * 0.01m,
+                RawValue = (20m + year % 100 * 0.01m).ToString("0.00")
+            });
+        await seed.SaveChangesAsync();
+
+        await using var db = DossierGoldenMasterTests.CreateContext();
+        var model = await new DossierAssembler(db).BuildAsync(requestId);
+        Assert.NotNull(model);
+
+        var pdf = new DossierPdfRenderer(WebRoot()).Render(model!, DossierVariant.Executive);
+        var text = TextOf(pdf);
+
+        foreach (var year in extraYears)
+        {
+            var netWorthValue = (10m + year % 100 * 0.01m).ToString("N2");
+            Assert.Single(System.Text.RegularExpressions.Regex.Matches(
+                text, System.Text.RegularExpressions.Regex.Escape(netWorthValue)));
+        }
+
+        foreach (var year in allEightYears)
+        {
+            var factValue = (20m + year % 100 * 0.01m).ToString("N2");
+            Assert.Single(System.Text.RegularExpressions.Regex.Matches(
+                text, System.Text.RegularExpressions.Regex.Escape(factValue)));
+        }
+
+        // The chunk boundary itself: an FY from each half of the split must appear as a table header.
+        Assert.Contains("FY2018", text);
+        Assert.Contains("FY2024", text);
     }
 }

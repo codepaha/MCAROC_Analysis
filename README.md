@@ -9,7 +9,13 @@ This is the first setup doc for the repo — if you're the dev team receiving th
 ## Prerequisites
 
 - **.NET SDK 10.0** (see `TargetFramework` in `MCAROC.Portal/MCAROC_Analysis/MCAROC_Analysis.csproj`)
-- **SQL Server** — SQLEXPRESS works for local dev (`.\SQLEXPRESS`, Windows-integrated auth by default)
+- **SQL Server** — SQLEXPRESS works for local dev (`.\SQLEXPRESS`, Windows-integrated auth by default).
+  SQL Server Express creates new databases with `AUTO_CLOSE ON`, which closes the database (and pays a full
+  recovery cost on the next query) every time the connection pool drains to zero — this can stall a portal
+  request long enough to hit the default 30s SQL command timeout, surfacing as a generic
+  `TaskCanceledException` unrelated to the report's size. After the app/tests have created
+  `MCAROC_Analysis`/`MCAROC_Analysis_Test` on first run, disable it once per machine:
+  `sqlcmd -S .\SQLEXPRESS -Q "ALTER DATABASE MCAROC_Analysis SET AUTO_CLOSE OFF; ALTER DATABASE MCAROC_Analysis_Test SET AUTO_CLOSE OFF;"`
 - **Tesseract OCR** installed locally — the MCA filings pipeline OCRs any PDF page without usable native
   text (`McaFilings:TesseractExePath`, default `C:\Program Files\Tesseract-OCR\tesseract.exe`)
 - A **Google Cloud project** with Vertex AI enabled, and a service-account JSON key file with access to it

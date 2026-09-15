@@ -14,6 +14,12 @@ public partial class DossierPdfComposer(DossierModel model, DossierVariant varia
 {
     private DossierCover Cover => model.Cover;
 
+    /// <summary>True when there is a genuine coverage gap to disclose (a missing optional sheet, a
+    /// missing charge report, or a deterministic check that could not run) — drives whether Section 7
+    /// exists at all, so a fully-covered upload never renders an empty appendix page.</summary>
+    private bool HasCoverageGap => model.SourceCoverage.AnySheetAbsent || model.SourceCoverage.ChargeReportMissing
+        || model.ExecSummary.NotAssessed.Count > 0;
+
     /// <summary>The canonical Cubictree entity line — cover footer + document metadata.</summary>
     internal const string AttributionLine =
         "Cubictree (a Gaba Projects Private Limited company)  •  CIN: U45201DL2012PTC239728  •  www.cubictree.com";
@@ -80,22 +86,40 @@ public partial class DossierPdfComposer(DossierModel model, DossierVariant varia
     private void RunningHeader(IContainer c) => c.PaddingBottom(6).BorderBottom(0.75f).BorderColor(DossierTheme.Line)
         .Row(row =>
         {
-            row.RelativeItem().Text(Cover.CompanyName).FontSize(DossierTheme.Small).FontColor(DossierTheme.InkSoft);
-            row.RelativeItem().AlignRight().Text($"CIN {Cover.Cin ?? "—"}")
+            row.ConstantItem(20).Element(HeaderLogo);
+            row.ConstantItem(8);
+            row.RelativeItem().AlignMiddle().Text(Cover.CompanyName).FontSize(DossierTheme.Small).FontColor(DossierTheme.InkSoft);
+            row.RelativeItem().AlignRight().AlignMiddle().Text($"CIN {Cover.Cin ?? "—"}")
                 .FontFamily(DossierTheme.Mono).FontSize(DossierTheme.Small).FontColor(DossierTheme.InkFaint);
         });
 
-    private void RunningFooter(IContainer c) => c.PaddingTop(6).Row(row =>
+    /// <summary>Same mark as the cover (real logo if supplied, else the "CT" monogram), shrunk to running-header
+    /// size. Width-constrained-then-Image, matching <see cref="ComposeCover"/>'s working pattern — an explicit
+    /// Height alongside a Row-cell-derived width silently produced no image at all.</summary>
+    private void HeaderLogo(IContainer c)
     {
-        row.RelativeItem().Text("Strictly Private & Confidential").FontSize(DossierTheme.Small).FontColor(DossierTheme.InkFaint);
-        row.RelativeItem().AlignRight().Text(t =>
+        if (logo is { Length: > 0 })
+            c.AlignMiddle().Image(logo);
+        else
+            c.AlignMiddle().Width(14).Height(14).Background(DossierTheme.Maroon).AlignCenter().AlignMiddle()
+                .Text("CT").FontFamily(DossierTheme.Display).FontSize(6).Bold().FontColor("#FFFFFF");
+    }
+
+    private void RunningFooter(IContainer c) => c.PaddingTop(6).BorderTop(0.5f).BorderColor(DossierTheme.LineSoft).Column(col =>
+    {
+        col.Item().PaddingTop(4).Row(row =>
         {
-            t.DefaultTextStyle(x => x.FontSize(DossierTheme.Small).FontColor(DossierTheme.InkFaint));
-            t.Span("Page ");
-            t.CurrentPageNumber();
-            t.Span(" of ");
-            t.TotalPages();
+            row.RelativeItem().Text("Strictly Private & Confidential").FontSize(DossierTheme.Small).FontColor(DossierTheme.InkFaint);
+            row.RelativeItem().AlignRight().Text(t =>
+            {
+                t.DefaultTextStyle(x => x.FontSize(DossierTheme.Small).FontColor(DossierTheme.InkFaint));
+                t.Span("Page ");
+                t.CurrentPageNumber();
+                t.Span(" of ");
+                t.TotalPages();
+            });
         });
+        col.Item().PaddingTop(2).Text(AttributionLine).FontSize(DossierTheme.TableHeader).FontColor(DossierTheme.InkFaint);
     });
 
     private void Kicker(IContainer c, string text) => c.PaddingBottom(2).Text(text.ToUpperInvariant())
@@ -207,6 +231,8 @@ public partial class DossierPdfComposer(DossierModel model, DossierVariant varia
             ContentsLine(col, "4. Directors & Governance", "annexure-a");
             ContentsLine(col, "5. Statutory Compliance", "annexure-d");
             ContentsLine(col, "6. Litigation", "annexure-e");
+            if (HasCoverageGap)
+                ContentsLine(col, "7. Coverage & Data Sufficiency", "annexure-f");
 
             col.Item().PaddingTop(18).Background(DossierTheme.PaperRaised).Border(0.75f).BorderColor(DossierTheme.Line)
                 .BorderLeft(2.5f).BorderColor(DossierTheme.Maroon).Padding(14).Text(t =>

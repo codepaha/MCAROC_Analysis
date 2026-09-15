@@ -20,7 +20,11 @@ public sealed record DossierModel(
     DossierExecSummary ExecSummary,
     IReadOnlyList<DossierSourceSheet> SourceSheets,
     SheetCoverage SourceCoverage,
-    IReadOnlyList<MetricGroup> Metrics);
+    IReadOnlyList<MetricGroup> Metrics,
+    // Added after every other field so the ~19 existing positional `new DossierModel(...)` call sites in
+    // the test suite (metrics/calculation-assurance fixtures that don't care about the profile block)
+    // keep compiling unchanged — only DossierAssembler passes this positionally; everyone else gets null.
+    CompanyProfile? Profile = null);
 
 public sealed record DossierCover(
     string CompanyName, string? Cin, string? Pan, DateOnly? IncorporationDate, string? Status,
