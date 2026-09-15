@@ -100,6 +100,37 @@ public class DossierPdfComposerTests : IAsyncLifetime
         Assert.DoesNotContain("documents index", lower);
     }
 
+    /// <summary>#152/#197: the source-reported ratios (catalogue A1.x) get their own "Ratios, as
+    /// reported" block in Financial Profile instead of sitting in the flat "Additional line items"
+    /// catch-all — and must appear there exactly once, not in both places. The seed already carries one
+    /// real Ratios-section FinancialFact ("Debt / Equity Ratio") alongside one non-Ratios fact
+    /// ("Reserves and Surplus"), so this exercises the real split without adding fixture data.</summary>
+    [SkippableFact]
+    public async Task Source_reported_ratios_get_their_own_block_not_the_flat_catch_all()
+    {
+        Skip.IfNot(OperatingSystem.IsWindows(),
+            "PdfPig text extraction from SkiaSharp subset fonts is unreliable on Linux; covered by the windows-tests job.");
+
+        await using var seed = DossierGoldenMasterTests.CreateContext();
+        var (requestId, _, _) = await DossierTestSeed.SeedAsync(seed);
+
+        await using var db = DossierGoldenMasterTests.CreateContext();
+        var model = await new DossierAssembler(db).BuildAsync(requestId);
+        Assert.NotNull(model);
+
+        var pdf = new DossierPdfRenderer(WebRoot()).Render(model!, DossierVariant.Executive);
+        var text = TextOf(pdf);
+
+        Assert.Contains("Ratios, as reported", text);
+        Assert.Contains("Debt / Equity Ratio", text);
+        Assert.Contains("3.44", text);
+        Assert.Contains("Reserves and Surplus", text); // still in the flat catch-all — it isn't a ratio
+
+        // The whole point: the ratio appears exactly once (in its own block), not duplicated below.
+        var occurrences = System.Text.RegularExpressions.Regex.Matches(text, "Debt / Equity Ratio").Count;
+        Assert.Equal(1, occurrences);
+    }
+
     /// <summary>#197: a cross-section finding (CrossSectionRules) lists its component finding codes in
     /// SupportingSignalsJson; the component must render nested as "Evidence" under the cross-section
     /// card, not also as its own separate flat sibling card — that duplication is exactly the "flag
