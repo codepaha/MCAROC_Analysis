@@ -441,16 +441,106 @@ public class DossierPdfComposerTests : IAsyncLifetime
         var model = await new DossierAssembler(db).BuildAsync(requestId);
         Assert.NotNull(model);
 
-        var creditRatingsName = SheetAliases.CanonicalName(SheetAliases.CreditRatings);
+        // #215 gave Credit Ratings, Unaccepted Ratings, Related Party Transactions and Proprietorship a
+        // real table each — Structure remains one of the few still-unmapped categories.
+        var structureName = SheetAliases.CanonicalName(SheetAliases.Structure);
         var fakeRun = new IngestionRun
         {
-            AbsentOptionalSheetsJson = JsonSerializer.Serialize(new[] { creditRatingsName })
+            AbsentOptionalSheetsJson = JsonSerializer.Serialize(new[] { structureName })
         };
         var forcedModel = model! with { SourceCoverage = SheetCoverage.From(fakeRun) };
 
         var text = TextOf(new DossierPdfRenderer(WebRoot()).Render(forcedModel, DossierVariant.Executive));
 
-        Assert.Contains("Credit ratings", text);
+        Assert.Contains("Corporate structure", text);
         Assert.Contains("no dedicated section in this dossier", text);
+    }
+
+    /// <summary>#215: Credit Ratings, Unaccepted Ratings, Related Party Transactions and Proprietorship
+    /// all moved from Section 7's "no table" fallback list to a real, dedicated table each. Proves the
+    /// full round trip per category: present data renders, and an absent sheet shows the in-context
+    /// "not provided in this upload" note right next to that specific empty table (not folded into
+    /// Section 7's fallback list, since it now has a proper home).</summary>
+    [SkippableFact]
+    public async Task Newly_mapped_categories_render_present_data_and_disclose_absence_in_context()
+    {
+        Skip.IfNot(OperatingSystem.IsWindows(),
+            "PdfPig text extraction from SkiaSharp subset fonts is unreliable on Linux; covered by the windows-tests job.");
+
+        await using var seed = DossierGoldenMasterTests.CreateContext();
+        var (requestId, ingestionRunId, _) = await DossierTestSeed.SeedAsync(seed);
+
+        seed.RelatedPartyTransactions.Add(new RelatedPartyTransaction
+        {
+            RequestId = requestId, IngestionRunId = ingestionRunId,
+            FinancialYearEnding = new DateOnly(2025, 3, 31), EntityType = "Subsidiary",
+            EntityNameRaw = "Test RPT Counterparty Ltd", EntityNameNormalized = "TEST RPT COUNTERPARTY LTD",
+            RelationshipRaw = "Subsidiary", TransactionType = "Sale of goods", AmountCrore = 12.34m
+        });
+        seed.CreditRatings.Add(new CreditRating
+        {
+            // Short values throughout — a long value wrapping onto two lines in this narrow-columned
+            // table can jumble PdfPig's reading order with the single-line cells beside it (the same
+            // extraction quirk this file's other tests already avoid), so nothing here should wrap.
+            RequestId = requestId, IngestionRunId = ingestionRunId,
+            Agency = "TestAgency", Instrument = "NCD", Rating = "BBB+",
+            Action = "Held", Outlook = "Stable", Amount = 55.5m,
+            RatingDate = new DateOnly(2025, 6, 1), IsAccepted = true
+        });
+        seed.ProprietorshipAssociations.Add(new ProprietorshipAssociation
+        {
+            RequestId = requestId, IngestionRunId = ingestionRunId,
+            DirectorDin = "00000001", DirectorNameRaw = "ALICE RAO",
+            LegalName = "Alice Rao Trading Co", Pan = "AAAAA1111A", Status = "Active"
+        });
+        seed.FinancialDisputeCases.Add(new FinancialDisputeCase
+        {
+            RequestId = requestId, IngestionRunId = ingestionRunId,
+            Direction = "RECEIVABLE", DisputeType = "Money Claim", Court = "TestCourt",
+            Litigants = "GML vs Debtor", CaseNumber = "TFD/2025/001",
+            AmountUnderDefault = 7.89m, Verdict = "Pending", DateOfDefault = new DateOnly(2025, 1, 15)
+        });
+        await seed.SaveChangesAsync();
+
+        await using var db = DossierGoldenMasterTests.CreateContext();
+        var model = await new DossierAssembler(db).BuildAsync(requestId);
+        Assert.NotNull(model);
+
+        var presentText = TextOf(new DossierPdfRenderer(WebRoot()).Render(model!, DossierVariant.Executive));
+        Assert.Contains("Test RPT Counterparty Ltd", presentText);
+        Assert.Contains("TestAgency", presentText);
+        Assert.Contains("BBB+", presentText);
+        Assert.Contains("Held", presentText);
+        Assert.Contains("Alice Rao Trading Co", presentText);
+        Assert.Contains("TestCourt", presentText);
+
+        // A separate, freshly-seeded request with none of these four categories at all — proves the
+        // in-context note for a genuinely empty table (the first request above has real rows in every
+        // one of them now, so forcing its SourceCoverage flag alone would prove nothing: the empty-state
+        // branch only runs when the row count is actually zero).
+        await using var seed2 = DossierGoldenMasterTests.CreateContext();
+        var (requestId2, _, _) = await DossierTestSeed.SeedAsync(seed2);
+
+        await using var db2 = DossierGoldenMasterTests.CreateContext();
+        var model2 = await new DossierAssembler(db2).BuildAsync(requestId2);
+        Assert.NotNull(model2);
+
+        var absentNames = new[]
+        {
+            SheetAliases.CanonicalName(SheetAliases.RelatedPartyTransactions),
+            SheetAliases.CanonicalName(SheetAliases.CreditRatings),
+            SheetAliases.CanonicalName(SheetAliases.UnacceptedRatings),
+            SheetAliases.CanonicalName(SheetAliases.Proprietorship),
+            SheetAliases.CanonicalName(SheetAliases.LegalCasesFinancialDispute),
+        };
+        var fakeRun = new IngestionRun { AbsentOptionalSheetsJson = JsonSerializer.Serialize(absentNames) };
+        var absentModel = model2! with { SourceCoverage = SheetCoverage.From(fakeRun) };
+        var absentText = TextOf(new DossierPdfRenderer(WebRoot()).Render(absentModel, DossierVariant.Executive));
+
+        Assert.Contains("This upload did not include “Related Party Transactions”.", absentText);
+        Assert.Contains("This upload did not include “Credit Ratings” or “Unaccepted Ratings”.", absentText);
+        Assert.Contains("This upload did not include “Proprietorship”.", absentText);
+        Assert.Contains("This upload did not include “Legal Cases - Financial Dispute”.", absentText);
+        Assert.DoesNotContain("no dedicated section in this dossier", absentText);
     }
 }

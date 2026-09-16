@@ -172,6 +172,22 @@ public partial class DossierPdfComposer
             new Col<DirectorAssociation>("Company", 2.4f, a => a.ConnectedCompanyRaw),
             new Col<DirectorAssociation>("CIN", 1.6f, a => a.ConnectedCin ?? "-"),
             new Col<DirectorAssociation>("Status", 1.2f, a => a.CompanyStatus ?? "-"));
+
+        Item(col, ref n, "Related party transactions", c.RelatedPartyTransactions, [SheetAliases.RelatedPartyTransactions],
+            new Col<RelatedPartyTransaction>("FY ending", 1.1f, r => D(r.FinancialYearEnding), true),
+            new Col<RelatedPartyTransaction>("Entity", 2.2f, r => r.EntityNameRaw),
+            new Col<RelatedPartyTransaction>("Entity type", 1.3f, r => r.EntityType ?? "-"),
+            new Col<RelatedPartyTransaction>("Relationship", 1.6f, r => r.RelationshipRaw ?? "-"),
+            new Col<RelatedPartyTransaction>("Transaction type", 1.6f, r => r.TransactionType ?? "-"),
+            new Col<RelatedPartyTransaction>("Amount ₹Cr", 1.1f, r => r.AmountCrore?.ToString("0.##") ?? "-", true));
+
+        Item(col, ref n, "Proprietorship associations", c.ProprietorshipList, [SheetAliases.Proprietorship],
+            new Col<ProprietorshipAssociation>("Director", 2f, p => p.DirectorNameRaw),
+            new Col<ProprietorshipAssociation>("DIN", 1.1f, p => p.DirectorDin),
+            new Col<ProprietorshipAssociation>("Legal name", 2.2f, p => p.LegalName ?? "-"),
+            new Col<ProprietorshipAssociation>("Business name(s)", 2.2f, p => p.BusinessNames ?? "-"),
+            new Col<ProprietorshipAssociation>("PAN", 1.3f, p => p.Pan ?? "-"),
+            new Col<ProprietorshipAssociation>("Status", 1.2f, p => p.Status ?? "-"));
     });
 
     // ── B. Financials ─────────────────────────────────────────────────────
@@ -581,6 +597,17 @@ public partial class DossierPdfComposer
             new Col<MsmePayment>("PAN", 1.4f, m => m.SupplierPan ?? "-"),
             new Col<MsmePayment>("Amount due ₹Cr", 1.3f, m => m.AmountDueCrore?.ToString("0.##") ?? "-", true),
             new Col<MsmePayment>("Period", 1.3f, m => m.ReportingPeriod));
+
+        // One table for both source sheets — CreditRating.IsAccepted is the only thing that
+        // distinguishes an "Unaccepted Ratings" row from a "Credit Ratings" one.
+        Item(col, ref n, "Credit ratings", d.CreditRatings, [SheetAliases.CreditRatings, SheetAliases.UnacceptedRatings],
+            new Col<CreditRating>("Agency", 1.6f, r => r.Agency),
+            new Col<CreditRating>("Instrument", 1.8f, r => r.Instrument ?? "-"),
+            new Col<CreditRating>("Rating", 1.3f, r => r.Rating ?? "-"),
+            new Col<CreditRating>("Action", 1.2f, r => r.IsAccepted ? r.Action ?? "-" : "Not accepted"),
+            new Col<CreditRating>("Outlook", 1.1f, r => r.Outlook ?? "-"),
+            new Col<CreditRating>("Amount", 1.1f, r => r.Amount?.ToString("0.##") ?? "-", true),
+            new Col<CreditRating>("Date", 1.1f, r => D(r.RatingDate), true));
     });
 
     // ── E. Litigation ─────────────────────────────────────────────────────
@@ -623,6 +650,17 @@ public partial class DossierPdfComposer
             new Col<Litigation>("Parties", 2.4f, l => Clip(l.Litigants, 90)),
             new Col<Litigation>("Case no.", 1.8f, l => l.CaseNumber ?? "-"),
             new Col<Litigation>("Last hearing", 1.1f, l => D(l.LastHearingDate), true));
+
+        // A separate register from the Legal history above — never merged with Litigation rows (see
+        // FinancialDisputeCase's own doc comment).
+        Item(col, ref n, "Legal cases — financial dispute", lit.FinancialDisputeCasesList, [SheetAliases.LegalCasesFinancialDispute],
+            new Col<FinancialDisputeCase>("Direction", 1.3f, x => x.Direction ?? "-"),
+            new Col<FinancialDisputeCase>("Dispute type", 1.5f, x => x.DisputeType ?? "-"),
+            new Col<FinancialDisputeCase>("Court", 1.8f, x => x.Court ?? "-"),
+            new Col<FinancialDisputeCase>("Litigants", 2.2f, x => Clip(x.Litigants, 90)),
+            new Col<FinancialDisputeCase>("Case no.", 1.4f, x => x.CaseNumber ?? "-"),
+            new Col<FinancialDisputeCase>("Amount", 1.1f, x => x.AmountUnderDefault?.ToString("0.##") ?? "-", true),
+            new Col<FinancialDisputeCase>("Verdict", 1.3f, x => x.Verdict ?? "-"));
     });
 
     // ── F. Coverage & data sufficiency ──────────────────────────────────────
