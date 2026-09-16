@@ -10,9 +10,14 @@ namespace MCAROC_Analysis.Tests.Dossier;
 /// later, the <c>DossierAssembler</c>. Deterministic values so a golden-master snapshot is stable.</summary>
 public static class DossierTestSeed
 {
-    public static async Task<(long RequestId, long IngestionRunId, long AnalysisRunId)> SeedAsync(AppDbContext db)
+    public static async Task<(long RequestId, long IngestionRunId, long AnalysisRunId)> SeedAsync(
+        AppDbContext db, bool includeLitigationInDossier = true)
     {
-        var client = new Client { ClientCode = $"D{Guid.NewGuid():N}"[..10], ClientName = "Test Bank", CreatedDate = DateTime.UtcNow };
+        var client = new Client
+        {
+            ClientCode = $"D{Guid.NewGuid():N}"[..10], ClientName = "Test Bank", CreatedDate = DateTime.UtcNow,
+            IncludeLitigationInDossier = includeLitigationInDossier
+        };
         db.Clients.Add(client);
         var request = new McaRequest
         {

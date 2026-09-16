@@ -1,6 +1,7 @@
 using System.Text.Json;
 using MCAROC_Analysis.Data;
 using MCAROC_Analysis.Data.Entities;
+using MCAROC_Analysis.Models;
 using MCAROC_Analysis.Services.CalculationAssurance;
 using Microsoft.EntityFrameworkCore;
 
@@ -11,6 +12,7 @@ namespace MCAROC_Analysis.Services.Analysis;
 public class AnalysisOrchestrator(
     AppDbContext db,
     AiCrossSectionAnalysisService aiService,
+    AiChargesNarrativeService chargesNarrativeService,
     AnalysisQueue queue,
     CalculationLedgerService calculationLedgerService,
     CalculationCheckRunnerService calculationCheckRunnerService,
@@ -156,6 +158,25 @@ public class AnalysisOrchestrator(
                 // deterministic result, mirroring Phase 2's "AI failure doesn't stop the batch" precedent.
                 run.Status = AnalysisRunStatus.CompletedWithErrors;
                 run.FailureReason = aiOutcome.FailureReason;
+            }
+
+            // Charges narrative (Feature 2) — a wholly separate AI call from the cross-section synthesis
+            // above, in its own try/catch: a failure here must never turn an otherwise-successful analysis
+            // into CompletedWithErrors, so run.Status is never touched in this block.
+            try
+            {
+                var runCharges = await db.RocCharges.Include(c => c.Events)
+                    .Where(c => c.RequestId == requestId && c.IngestionRunId == ingestionRunId).ToListAsync(ct);
+                var openCharges = DossierComputations.OpenChargesByAmount(runCharges);
+                var selected = AiChargesNarrativeService.SelectChargesForNarrative(openCharges);
+                var chargesOutcome = await chargesNarrativeService.SynthesizeAsync(selected, openCharges.Count, ct);
+                if (chargesOutcome.Success)
+                    run.ChargesNarrativeJson = JsonSerializer.Serialize(chargesOutcome.Narrative);
+            }
+            catch (Exception ex)
+            {
+                logger.LogWarning(ex, "Charges-narrative synthesis failed for request {RequestId}, analysis run {AnalysisRunId} — analysis itself still proceeding.",
+                    requestId, run.AnalysisRunId);
             }
 
             run.CompletedDate = DateTime.UtcNow;

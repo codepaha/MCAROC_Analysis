@@ -71,7 +71,9 @@ process startup, not watched for changes.
 
 Every key the app actually reads, grouped by section — not a curated subset. Sizes are converted to
 human-readable units alongside the raw byte value actually in `appsettings.json`, so you can sanity-check
-either.
+either. `MCAROC.Portal/MCAROC_Analysis/appsettings.Example.json` has every one of these keys in a single
+file with inline comments (including the password-hash steps for the reviewer login) — not loaded by the
+app itself, just a template to copy values out of.
 
 ### Database
 

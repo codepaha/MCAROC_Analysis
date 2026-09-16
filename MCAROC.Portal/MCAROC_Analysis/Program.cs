@@ -90,6 +90,14 @@ builder.Services.AddSingleton(sp =>
     var credentialsPath = config["GoogleCloud:CredentialsPath"] ?? throw new InvalidOperationException("GoogleCloud:CredentialsPath is not configured.");
     return new AiCrossSectionAnalysisService(projectId, location, credentialsPath, sp.GetRequiredService<ILogger<AiCrossSectionAnalysisService>>());
 });
+builder.Services.AddSingleton(sp =>
+{
+    var config = sp.GetRequiredService<IConfiguration>();
+    var projectId = config["GoogleCloud:ProjectId"] ?? throw new InvalidOperationException("GoogleCloud:ProjectId is not configured.");
+    var location = config["GoogleCloud:Location"] ?? "us-central1";
+    var credentialsPath = config["GoogleCloud:CredentialsPath"] ?? throw new InvalidOperationException("GoogleCloud:CredentialsPath is not configured.");
+    return new AiChargesNarrativeService(projectId, location, credentialsPath, sp.GetRequiredService<ILogger<AiChargesNarrativeService>>());
+});
 builder.Services.AddScoped<AnalysisOrchestrator>();
 builder.Services.AddHostedService<AnalysisWorker>();
 

@@ -137,6 +137,13 @@ public class DossierAssembler(AppDbContext db)
             catch (JsonException) { }
         }
 
+        ChargesNarrative? chargesNarrative = null;
+        if (analysis.ChargesNarrativeJson is { } cnj)
+        {
+            try { chargesNarrative = JsonSerializer.Deserialize<ChargesNarrative>(cnj); }
+            catch (JsonException) { }
+        }
+
         var notAssessed = DeserializeSufficiencyNotes(analysis.DataSufficiencyNotesJson);
 
         var roles = DossierComputations.LitigationRoles(litigations, findings);
@@ -165,7 +172,12 @@ public class DossierAssembler(AppDbContext db)
             sourceSheets,
             SheetCoverage.From(run),
             Metrics: [],
-            Profile: profile);
+            Profile: profile,
+            // Carried through unfiltered — DossierModel is shared with the portal's on-screen company page
+            // (see DossierCache's doc comment), so no litigation data is ever redacted here. Only
+            // DossierPdfComposer reads this flag, to decide what its own PDF output shows.
+            IncludeLitigation: request.Client?.IncludeLitigationInDossier ?? true,
+            ChargesNarrative: chargesNarrative);
 
         // Metrics are derived from the fully-assembled model, then folded back in.
         return model with { Metrics = DossierComputations.BuildMetricGroups(model) };

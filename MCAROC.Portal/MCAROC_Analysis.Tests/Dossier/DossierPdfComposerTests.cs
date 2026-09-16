@@ -1,6 +1,9 @@
 using System.Text.Json;
 using MCAROC_Analysis.Data.Entities;
 using MCAROC_Analysis.Models;
+using MCAROC_Analysis.Models.Dossier;
+using MCAROC_Analysis.Services.Analysis;
+using MCAROC_Analysis.Services.Analysis.Rules;
 using MCAROC_Analysis.Services.Dossier;
 using MCAROC_Analysis.Services.Excel;
 using Microsoft.EntityFrameworkCore;
@@ -552,5 +555,320 @@ public class DossierPdfComposerTests : IAsyncLifetime
         Assert.Contains("This upload did not include “Proprietorship”.", absentText);
         Assert.Contains("This upload did not include “Legal Cases - Financial Dispute”.", absentText);
         Assert.DoesNotContain("no dedicated section in this dossier", absentText);
+    }
+
+    // ── Feature: per-client Litigation toggle ────────────────────────────────
+
+    /// <summary>When the client's IncludeLitigationInDossier flag is off, the PDF is a genuinely different
+    /// document: no TOC entry, no Litigation annexure, no litigation-sourced finding, and a cross-section
+    /// finding that cites a litigation code (via SupportingSignalsJson) is excluded too — not softened into
+    /// a redirect citation. Built via DossierTestSeed's own flag parameter, proving the real
+    /// Client → DossierAssembler → DossierPdfComposer wiring, not just a composer-level model override.</summary>
+    [SkippableFact]
+    public async Task Litigation_is_completely_absent_when_the_clients_flag_is_off()
+    {
+        Skip.IfNot(OperatingSystem.IsWindows(),
+            "PdfPig text extraction from SkiaSharp subset fonts is unreliable on Linux; covered by the windows-tests job.");
+
+        await using var seed = DossierGoldenMasterTests.CreateContext();
+        var (requestId, _, _) = await DossierTestSeed.SeedAsync(seed, includeLitigationInDossier: false);
+
+        await using var db = DossierGoldenMasterTests.CreateContext();
+        var model = await new DossierAssembler(db).BuildAsync(requestId);
+        Assert.NotNull(model);
+        Assert.False(model!.IncludeLitigation);
+
+        // A cross-section finding that cites one of the seed's litigation finding codes — must be excluded
+        // too, not just the plain litigation-section findings.
+        var crossSection = new AnalysisFinding
+        {
+            AnalysisRunId = model.AnalysisRunId ?? 0, RequestId = requestId,
+            Section = FindingSection.CrossSection, Severity = FindingSeverity.Review, TemporalStatus = TemporalStatus.Current,
+            Code = "TEST_CROSS_SECTION_LITIGATION_LINKED", Title = "Cross-Section Litigation Linked Finding",
+            SummaryText = "Cross-section summary referencing litigation.", DisplayPriority = 99,
+            ObservationDate = new DateOnly(2026, 1, 1),
+            SupportingSignalsJson = JsonSerializer.Serialize(new[] { LitigationRules.PendingAgainstCompanyCode })
+        };
+        var testModel = model with
+        {
+            ExecSummary = model.ExecSummary with
+            {
+                FindingsInDisplayOrder = [.. model.ExecSummary.FindingsInDisplayOrder, crossSection]
+            }
+        };
+
+        var text = TextOf(new DossierPdfRenderer(WebRoot()).Render(testModel, DossierVariant.Executive));
+
+        Assert.DoesNotContain("6. Litigation", text);
+        Assert.DoesNotContain("SECTION 6", text);
+        Assert.DoesNotContain("Pending Litigation Against Company", text);
+        Assert.DoesNotContain("Potential Litigation Requiring Role Verification", text);
+        Assert.DoesNotContain("Cross-Section Litigation Linked Finding", text);
+        Assert.DoesNotContain("and Litigation.", text);
+    }
+
+    /// <summary>Regression guard: with the flag on (the default), the Litigation TOC entry, annexure and
+    /// Snapshot tile are all still present — the toggle only changes anything for the clients it's turned
+    /// off for.</summary>
+    [SkippableFact]
+    public async Task Litigation_flag_on_by_default_is_unaffected()
+    {
+        Skip.IfNot(OperatingSystem.IsWindows(),
+            "PdfPig text extraction from SkiaSharp subset fonts is unreliable on Linux; covered by the windows-tests job.");
+
+        await using var seed = DossierGoldenMasterTests.CreateContext();
+        var (requestId, _, _) = await DossierTestSeed.SeedAsync(seed);
+
+        await using var db = DossierGoldenMasterTests.CreateContext();
+        var model = await new DossierAssembler(db).BuildAsync(requestId);
+        Assert.NotNull(model);
+        Assert.True(model!.IncludeLitigation);
+
+        var text = TextOf(new DossierPdfRenderer(WebRoot()).Render(model, DossierVariant.Executive));
+
+        Assert.Contains("6. Litigation", text);
+        Assert.Contains("SECTION 6", text);
+        Assert.Contains("Pending Litigation Against Company", text);
+        Assert.Contains("and Litigation.", text);
+    }
+
+    /// <summary>Proves ReviewPriority and the flag-count strip are genuinely recomputed from the filtered
+    /// finding set (via ReviewPriorityCalculator.Explain), not passed through from the stored, litigation-
+    /// inclusive AnalysisRun columns — a single Litigation-section Critical finding (with a non-designated
+    /// code, so it alone drives priority only via "single-domain critical", not a shortcut) is the only
+    /// thing driving priority/critical-count above zero, so removing it must change both.</summary>
+    [SkippableFact]
+    public async Task Priority_and_counts_are_recomputed_without_litigation_when_the_flag_is_off()
+    {
+        Skip.IfNot(OperatingSystem.IsWindows(),
+            "PdfPig text extraction from SkiaSharp subset fonts is unreliable on Linux; covered by the windows-tests job.");
+
+        await using var seed = DossierGoldenMasterTests.CreateContext();
+        var (requestId, _, _) = await DossierTestSeed.SeedAsync(seed);
+
+        await using var db = DossierGoldenMasterTests.CreateContext();
+        var model = await new DossierAssembler(db).BuildAsync(requestId);
+        Assert.NotNull(model);
+
+        var litigationCritical = new AnalysisFinding
+        {
+            AnalysisRunId = model!.AnalysisRunId ?? 0, RequestId = requestId,
+            Section = FindingSection.Litigation, Severity = FindingSeverity.Critical, TemporalStatus = TemporalStatus.Current,
+            Code = "LITIGATION_TEST_CRITICAL", Title = "Test Litigation Critical Finding",
+            SummaryText = "Test litigation critical summary.", DisplayPriority = 95, ObservationDate = new DateOnly(2026, 1, 1)
+        };
+        var customExec = model.ExecSummary with
+        {
+            ReviewPriority = ReviewPriority.High,
+            CriticalCount = 1, ReviewCount = 0, WatchCount = 0, PositiveCount = 0,
+            FindingsInDisplayOrder = [litigationCritical],
+            Structured = null,
+            NotAssessed = []
+        };
+
+        var flagOnModel = model with { IncludeLitigation = true, ExecSummary = customExec };
+        var flagOffModel = model with { IncludeLitigation = false, ExecSummary = customExec };
+
+        var onText = TextOf(new DossierPdfRenderer(WebRoot()).Render(flagOnModel, DossierVariant.Executive));
+        var offText = TextOf(new DossierPdfRenderer(WebRoot()).Render(flagOffModel, DossierVariant.Executive));
+
+        Assert.Contains("HIGH", onText);
+        Assert.Contains("1 Critical", onText);
+
+        Assert.Contains("LOW", offText);
+        Assert.Contains("0 Critical", offText);
+        Assert.DoesNotContain("Test Litigation Critical Finding", offText);
+    }
+
+    /// <summary>The stored AI executive summary ("Cross-section read") is free-text prose that cannot be
+    /// safely filtered for litigation mentions, so it must be suppressed outright when the flag is off —
+    /// reusing the same null-Structured fallback path used when AI synthesis itself failed.</summary>
+    [SkippableFact]
+    public async Task Ai_executive_summary_is_suppressed_when_the_flag_is_off()
+    {
+        Skip.IfNot(OperatingSystem.IsWindows(),
+            "PdfPig text extraction from SkiaSharp subset fonts is unreliable on Linux; covered by the windows-tests job.");
+
+        await using var seed = DossierGoldenMasterTests.CreateContext();
+        var (requestId, _, _) = await DossierTestSeed.SeedAsync(seed);
+
+        await using var db = DossierGoldenMasterTests.CreateContext();
+        var model = await new DossierAssembler(db).BuildAsync(requestId);
+        Assert.NotNull(model);
+
+        var structured = new ExecutiveSummary(
+            "Business performance is stable.", "Financial position is under review.",
+            "Borrowing and security look typical.", "Governance disclosures are on file.",
+            ["Track the pending litigation matters closely before disbursement."]);
+        var withSummary = model! with { ExecSummary = model.ExecSummary with { Structured = structured } };
+
+        var onText = TextOf(new DossierPdfRenderer(WebRoot()).Render(
+            withSummary with { IncludeLitigation = true }, DossierVariant.Executive));
+        var offText = TextOf(new DossierPdfRenderer(WebRoot()).Render(
+            withSummary with { IncludeLitigation = false }, DossierVariant.Executive));
+
+        Assert.Contains("Cross-section read", onText);
+        Assert.Contains("Track the pending litigation matters closely", onText);
+
+        Assert.DoesNotContain("Cross-section read", offText);
+        Assert.DoesNotContain("Track the pending litigation matters closely", offText);
+    }
+
+    /// <summary>D12's "Not assessed" coverage note for the litigation check
+    /// (LitigationRules.PendingAgainstCompanyCode, "LITIGATION_..."-prefixed) must be excluded from the
+    /// flag-off Coverage & Data Sufficiency section along with everything else litigation-derived.</summary>
+    [SkippableFact]
+    public async Task Litigation_not_assessed_note_is_excluded_when_the_flag_is_off()
+    {
+        Skip.IfNot(OperatingSystem.IsWindows(),
+            "PdfPig text extraction from SkiaSharp subset fonts is unreliable on Linux; covered by the windows-tests job.");
+
+        await using var seed = DossierGoldenMasterTests.CreateContext();
+        var (requestId, _, _) = await DossierTestSeed.SeedAsync(seed);
+
+        await using var db = DossierGoldenMasterTests.CreateContext();
+        var model = await new DossierAssembler(db).BuildAsync(requestId);
+        Assert.NotNull(model);
+
+        var litigationNote = new DataSufficiencyNote(
+            LitigationRules.PendingAgainstCompanyCode, "No litigation records were available for cross-checking.");
+        var withNote = model! with
+        {
+            ExecSummary = model.ExecSummary with { NotAssessed = [.. model.ExecSummary.NotAssessed, litigationNote] }
+        };
+
+        var onText = TextOf(new DossierPdfRenderer(WebRoot()).Render(
+            withNote with { IncludeLitigation = true }, DossierVariant.Executive));
+        var offText = TextOf(new DossierPdfRenderer(WebRoot()).Render(
+            withNote with { IncludeLitigation = false }, DossierVariant.Executive));
+
+        Assert.Contains("No litigation records were available for cross-checking.", onText);
+        Assert.DoesNotContain("No litigation records were available for cross-checking.", offText);
+    }
+
+    /// <summary>The redaction must fail CLOSED on unparseable provenance: a cross-section finding whose
+    /// SupportingSignalsJson is null, empty or malformed cannot be proven litigation-free, so it must be
+    /// excluded — the opposite default from the existing SupportingCodes/ParseSupportingCodes helpers, which
+    /// return an empty set (and so "no dependency") for the same inputs. Paired with a positive case: a
+    /// cross-section finding that parses cleanly and demonstrably does not cite a litigation code must still
+    /// be kept, proving the fix doesn't over-exclude every cross-section finding.</summary>
+    [SkippableFact]
+    public async Task Cross_section_finding_with_unparseable_provenance_is_excluded_when_the_flag_is_off()
+    {
+        Skip.IfNot(OperatingSystem.IsWindows(),
+            "PdfPig text extraction from SkiaSharp subset fonts is unreliable on Linux; covered by the windows-tests job.");
+
+        await using var seed = DossierGoldenMasterTests.CreateContext();
+        var (requestId, _, _) = await DossierTestSeed.SeedAsync(seed, includeLitigationInDossier: false);
+
+        await using var db = DossierGoldenMasterTests.CreateContext();
+        var model = await new DossierAssembler(db).BuildAsync(requestId);
+        Assert.NotNull(model);
+
+        AnalysisFinding CrossSection(string suffix, string title, string? supportingSignalsJson) => new()
+        {
+            AnalysisRunId = model!.AnalysisRunId ?? 0, RequestId = requestId,
+            Section = FindingSection.CrossSection, Severity = FindingSeverity.Review, TemporalStatus = TemporalStatus.Current,
+            Code = $"TEST_CROSS_{suffix}", Title = title, SummaryText = title + ".",
+            DisplayPriority = 60, ObservationDate = new DateOnly(2026, 1, 1), SupportingSignalsJson = supportingSignalsJson
+        };
+
+        var nullJson = CrossSection("NULL", "Cross-Section Null Provenance", null);
+        var emptyJson = CrossSection("EMPTY", "Cross-Section Empty Provenance", "");
+        var malformedJson = CrossSection("MALFORMED", "Cross-Section Malformed Provenance", "{not valid json");
+        var provablyClean = CrossSection("CLEAN", "Cross-Section Provably Litigation Free",
+            JsonSerializer.Serialize(new[] { "SOME_NON_LITIGATION_CODE" }));
+
+        var testModel = model! with
+        {
+            ExecSummary = model.ExecSummary with
+            {
+                FindingsInDisplayOrder = [.. model.ExecSummary.FindingsInDisplayOrder, nullJson, emptyJson, malformedJson, provablyClean]
+            }
+        };
+
+        var text = TextOf(new DossierPdfRenderer(WebRoot()).Render(testModel, DossierVariant.Executive));
+
+        Assert.DoesNotContain("Cross-Section Null Provenance", text);
+        Assert.DoesNotContain("Cross-Section Empty Provenance", text);
+        Assert.DoesNotContain("Cross-Section Malformed Provenance", text);
+        Assert.Contains("Cross-Section Provably Litigation Free", text);
+    }
+
+    /// <summary>DossierModel is shared with the portal's on-screen company page (DossierCache /
+    /// RequestsController), so the redaction must live entirely inside DossierPdfComposer — the model
+    /// DossierAssembler/DossierCache hand back for a flag-off client must still carry full, unfiltered
+    /// litigation data.</summary>
+    [Fact]
+    public async Task Portal_company_page_is_unaffected_by_the_litigation_toggle()
+    {
+        await using var seed = DossierGoldenMasterTests.CreateContext();
+        var (requestId, _, _) = await DossierTestSeed.SeedAsync(seed, includeLitigationInDossier: false);
+
+        await using var db = DossierGoldenMasterTests.CreateContext();
+        var model = await new DossierAssembler(db).BuildAsync(requestId);
+
+        Assert.NotNull(model);
+        Assert.False(model!.IncludeLitigation);
+        Assert.NotEmpty(model.Litigation.All);
+        Assert.Contains(model.ExecSummary.FindingsInDisplayOrder, f => f.Section == FindingSection.Litigation);
+    }
+
+    // ── Feature: AI narrative for Charges & Security ─────────────────────────
+
+    /// <summary>The charges-narrative callout renders with the "CT AI" attribution the rest of this dossier
+    /// already locks in (see Renders_the_dossier_with_no_risk_score's own assertions) — never the model
+    /// name or vendor — and shows the covered/total charge counts and each notable point's charge
+    /// reference tag.</summary>
+    [SkippableFact]
+    public async Task Charges_narrative_renders_with_CT_AI_attribution_and_never_leaks_the_model_or_vendor()
+    {
+        Skip.IfNot(OperatingSystem.IsWindows(),
+            "PdfPig text extraction from SkiaSharp subset fonts is unreliable on Linux; covered by the windows-tests job.");
+
+        await using var seed = DossierGoldenMasterTests.CreateContext();
+        var (requestId, _, _) = await DossierTestSeed.SeedAsync(seed);
+
+        await using var db = DossierGoldenMasterTests.CreateContext();
+        var model = await new DossierAssembler(db).BuildAsync(requestId);
+        Assert.NotNull(model);
+
+        var narrative = new ChargesNarrative(
+            "The largest open charge is held by State Bank of India over the current assets and movable fixed assets.",
+            [new NotableCollateralPoint("Consortium arrangement across multiple lenders on the same asset pool.", [model!.Charges.Open.First().ChargeId])],
+            CoveredChargeCount: model.Charges.Open.Count, TotalOpenChargeCount: model.Charges.Open.Count);
+        var testModel = model with { ChargesNarrative = narrative };
+
+        var text = TextOf(new DossierPdfRenderer(WebRoot()).Render(testModel, DossierVariant.Executive));
+
+        Assert.Contains("CT AI", text);
+        Assert.DoesNotContain("gemini", text.ToLowerInvariant());
+        Assert.DoesNotContain("vertex", text.ToLowerInvariant());
+        Assert.Contains("The largest open charge is held by State Bank of India", text);
+        Assert.Contains("Consortium arrangement across multiple lenders", text);
+        Assert.Contains($"Charge {model.Charges.Open.First().ChargeId}", text);
+        Assert.Contains($"Largest {model.Charges.Open.Count} of {model.Charges.Open.Count} open charge", text);
+    }
+
+    /// <summary>No AnalysisRun.ChargesNarrativeJson (the AI call failed, or hasn't run for this analysis
+    /// run) must not render an empty/broken callout — a no-op, same posture as the rest of this dossier's
+    /// AI-narrative fallbacks (e.g. "Cross-section read").</summary>
+    [SkippableFact]
+    public async Task Charges_narrative_callout_is_absent_when_no_narrative_was_persisted()
+    {
+        Skip.IfNot(OperatingSystem.IsWindows(),
+            "PdfPig text extraction from SkiaSharp subset fonts is unreliable on Linux; covered by the windows-tests job.");
+
+        await using var seed = DossierGoldenMasterTests.CreateContext();
+        var (requestId, _, _) = await DossierTestSeed.SeedAsync(seed);
+
+        await using var db = DossierGoldenMasterTests.CreateContext();
+        var model = await new DossierAssembler(db).BuildAsync(requestId);
+        Assert.NotNull(model);
+        Assert.Null(model!.ChargesNarrative);
+
+        var text = TextOf(new DossierPdfRenderer(WebRoot()).Render(model, DossierVariant.Executive));
+
+        Assert.DoesNotContain("CT AI read of the largest open charges", text);
     }
 }

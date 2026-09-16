@@ -1,6 +1,7 @@
 using MCAROC_Analysis.Data.Entities;
 using MCAROC_Analysis.Models;
 using MCAROC_Analysis.Models.Dossier;
+using MCAROC_Analysis.Services.Analysis;
 using MCAROC_Analysis.Services.Excel;
 using QuestPDF.Fluent;
 using QuestPDF.Infrastructure;
@@ -28,8 +29,11 @@ public partial class DossierPdfComposer
         col.Item().Section("annexure-a").Element(AnnexureA);
         col.Item().PageBreak();
         col.Item().Section("annexure-d").Element(AnnexureD);
-        col.Item().PageBreak();
-        col.Item().Section("annexure-e").Element(AnnexureE);
+        if (ShowLitigation)
+        {
+            col.Item().PageBreak();
+            col.Item().Section("annexure-e").Element(AnnexureE);
+        }
         if (HasCoverageGap)
         {
             col.Item().PageBreak();
@@ -145,7 +149,10 @@ public partial class DossierPdfComposer
             new Col<RelatedCorporate>("Status", 1.2f, r => r.CompanyStatus ?? "-"),
             new Col<RelatedCorporate>("Location", 1.4f, r => r.Location ?? "-"));
 
-        Item(col, ref n, "Shareholding above 5%", c.Shareholders,
+        // The heading promises "above 5%" — c.Shareholders itself carries every shareholding record on
+        // file (director/promoter holdings well under 5% included), so this table must filter, not just
+        // display everything under a misleading title (#reported: a 0.14%-holding director was showing up here).
+        Item(col, ref n, "Shareholding above 5%", c.Shareholders.Where(s => s.HoldingPercentage is > 5m).ToList(),
             [SheetAliases.DirectorShareholding, SheetAliases.MajorShareholding],
             new Col<Shareholding>("FY", 0.7f, s => s.FinancialYear.ToString()),
             new Col<Shareholding>("Shareholder", 2.4f, s => s.ShareholderNameRaw),
@@ -490,6 +497,9 @@ public partial class DossierPdfComposer
             created12?.HasValue == true ? $"{created12.DisplayValue()} of that was created in the trailing 12 months." : null,
         }.Where(s => s is not null)));
 
+        if (model.ChargesNarrative is { } narrative)
+            ChargesNarrativeBlock(col, narrative);
+
         if (model.SourceCoverage.ChargeReportMissing)
             col.Item().PaddingBottom(10).Border(0.75f).BorderColor(DossierTheme.Line).BorderLeft(2.5f)
                 .BorderColor(DossierTheme.Amber).Background(DossierTheme.PaperRaised).Padding(11).Text(
@@ -538,19 +548,67 @@ public partial class DossierPdfComposer
                 }
             });
 
-        // Normalized security (confidence-gated) or raw wording.
+        // Normalized security category, when confidently classified — shown alongside, never instead of,
+        // the actual property/asset wording below. These used to be mutually exclusive (an "else"), which
+        // hid Property Particulars on every charge that classified with High/Medium confidence — the
+        // large majority in practice (#reported: property/asset details missing from Charge Detail).
         var labels = model.Charges.SecurityTypeLabels(charge);
-        var narrativeEv = evs.LastOrDefault(e => !string.IsNullOrWhiteSpace(e.PropertyParticulars) || !string.IsNullOrWhiteSpace(e.InstrumentDescription));
         if (charge.LatestSecurityConfidence is ChargeClassificationConfidence.High or ChargeClassificationConfidence.Medium && labels.Count > 0)
             col.Item().PaddingTop(5).Text("Security: " + string.Join(", ", labels.Select(SpaceCamel))
                 + (charge.LatestArrangement is { } arr and not ChargeArrangement.Unknown ? $"  ·  {arr}" : ""))
                 .FontSize(DossierTheme.Small).FontColor(DossierTheme.Ink);
-        else if (narrativeEv is not null)
-            col.Item().PaddingTop(5).Text("Security (source wording): " + (narrativeEv.PropertyParticulars ?? narrativeEv.InstrumentDescription))
+
+        var propertyEv = evs.LastOrDefault(e => !string.IsNullOrWhiteSpace(e.PropertyParticulars));
+        if (propertyEv is not null)
+            col.Item().PaddingTop(3).Text("Property particulars: " + propertyEv!.PropertyParticulars)
                 .FontSize(DossierTheme.Small).FontColor(DossierTheme.InkSoft);
+        else if (labels.Count == 0)
+        {
+            // No normalized category and no Property Particulars — fall back to whatever raw instrument
+            // wording the source charge report carries, so a genuinely thin record still shows something.
+            var narrativeEv = evs.LastOrDefault(e => !string.IsNullOrWhiteSpace(e.InstrumentDescription));
+            if (narrativeEv is not null)
+                col.Item().PaddingTop(3).Text("Security (source wording): " + narrativeEv.InstrumentDescription)
+                    .FontSize(DossierTheme.Small).FontColor(DossierTheme.InkSoft);
+        }
     });
 
     private static string SpaceCamel(string s) => System.Text.RegularExpressions.Regex.Replace(s, "(\\B[A-Z])", " $1");
+
+    /// <summary>AI-synthesized read of the largest open charges — visually distinct from AtAGlance's own
+    /// maroon-left-border callout, same "AI-authored, verify against the raw data below" posture already
+    /// used for finding narratives elsewhere in this document. "CT AI" attribution only, matching the
+    /// existing test-locked phrasing (never the model name or vendor).</summary>
+    private void ChargesNarrativeBlock(ColumnDescriptor col, ChargesNarrative narrative)
+    {
+        col.Item().PaddingBottom(14).Border(0.75f).BorderColor(DossierTheme.Line).BorderLeft(2.5f)
+            .BorderColor(DossierTheme.Sage).Background(DossierTheme.PaperRaised).Padding(11).Column(inner =>
+        {
+            inner.Item().Text("CT AI read of the largest open charges").SemiBold()
+                .FontFamily(DossierTheme.Display).FontSize(DossierTheme.Body).FontColor(DossierTheme.Ink);
+            inner.Item().PaddingTop(2).Text(
+                $"Largest {narrative.CoveredChargeCount} of {narrative.TotalOpenChargeCount} open charge(s) by amount, considered below.")
+                .FontSize(DossierTheme.Small).FontColor(DossierTheme.InkFaint);
+            inner.Item().PaddingTop(6).Text(narrative.Summary)
+                .FontSize(DossierTheme.Small).FontColor(DossierTheme.InkSoft).LineHeight(1.45f);
+
+            if (narrative.NotableCollateralPoints.Count > 0)
+            {
+                inner.Item().PaddingTop(7).Text("Notable").SemiBold().FontSize(DossierTheme.Small).FontColor(DossierTheme.InkSoft);
+                foreach (var point in narrative.NotableCollateralPoints)
+                    inner.Item().PaddingLeft(10).PaddingTop(3).Row(r =>
+                    {
+                        r.ConstantItem(10).Text("•").FontSize(DossierTheme.Small).FontColor(DossierTheme.InkFaint);
+                        r.RelativeItem().Text(t =>
+                        {
+                            t.Span(point.Text + "  ").FontSize(DossierTheme.Small).FontColor(DossierTheme.InkSoft);
+                            t.Span("(" + string.Join(", ", point.ChargeIds.Select(id => $"Charge {id}")) + ")")
+                                .FontSize(DossierTheme.Small).FontColor(DossierTheme.InkFaint);
+                        });
+                    });
+            }
+        });
+    }
 
     // ── D. Compliance ─────────────────────────────────────────────────────
 

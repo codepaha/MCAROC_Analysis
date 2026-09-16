@@ -1,0 +1,41 @@
+@model IReadOnlyList<MCAROC_Analysis.Data.Entities.Client>
+@{
+    ViewData["Title"] = "Clients";
+}
+
+<div class="pi-page-head">
+    <div>
+        <div class="pi-kicker">Internal</div>
+        <h1>Clients</h1>
+        <p>Per-client dossier settings. Everything else about a client's requests is unaffected by this page.</p>
+    </div>
+</div>
+
+@if (TempData["Message"] is string message)
+{
+    <div class="alert alert-success">@message</div>
+}
+
+<div class="pi-panel" style="padding:0;">
+    <table class="table mb-0">
+        <thead>
+        <tr>
+            <th>Client</th>
+            <th>Code</th>
+            <th>Litigation in dossier</th>
+            <th></th>
+        </tr>
+        </thead>
+        <tbody>
+        @foreach (var client in Model)
+        {
+            <tr>
+                <td>@client.ClientName</td>
+                <td>@client.ClientCode</td>
+                <td>@(client.IncludeLitigationInDossier ? "Included" : "Omitted (separate report)")</td>
+                <td><a asp-action="Edit" asp-route-id="@client.ClientId" class="btn btn-sm btn-outline-secondary">Edit</a></td>
+            </tr>
+        }
+        </tbody>
+    </table>
+</div>
