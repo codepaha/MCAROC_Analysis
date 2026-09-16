@@ -17,16 +17,22 @@
     };
 }
 
-@if (run is null)
+@if (run is null && r.RequestStatus == RequestStatus.AiAnalysisInProgress)
+{
+    var indicatorModel = (RunLabel: (string?)null, StartedUtc: r.AnalysisStartedDate);
+    <partial name="Details/_AnalysisRunningIndicator" model="indicatorModel" />
+}
+else if (run is null)
 {
     <div class="mca-empty">
         <i class="bi bi-robot"></i>
-        <p>@(r.RequestStatus == RequestStatus.AiAnalysisInProgress ? "Analysis in progress — reload to check for results." : "Analysis has not started for this request yet.")</p>
+        <p>Analysis has not started for this request yet.</p>
     </div>
 }
 else if (run.Status == AnalysisRunStatus.Running)
 {
-    <div class="mca-empty"><i class="bi bi-hourglass-split"></i><p>Analysis in progress… (run #@run.RunNumber). Reload to check for results.</p></div>
+    var indicatorModel = (RunLabel: $"(run #{run.RunNumber}) ", StartedUtc: (DateTime?)run.StartedDate);
+    <partial name="Details/_AnalysisRunningIndicator" model="indicatorModel" />
 }
 else if (run.Status == AnalysisRunStatus.Failed)
 {

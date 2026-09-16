@@ -1,0 +1,32 @@
+@model (string? RunLabel, DateTime? StartedUtc)
+@* Shared by both "waiting for the AnalysisRun row to even exist yet" and "AnalysisRun.Status == Running" —
+   auto-reloads every 5s (same pattern as PreLoginReports/History.cshtml) so results appear without the
+   user having to manually refresh, plus a client-ticked elapsed timer since there's no sub-stage percent
+   to show (AnalysisRun has no progress column, unlike PreLoginReportJob). *@
+<div class="mca-empty">
+    <i class="bi bi-hourglass-split"></i>
+    <p>Analysis in progress @Model.RunLabel&mdash; this page updates automatically when it finishes.</p>
+    <div class="progress mx-auto mca-analysis-progress" style="max-width:320px;height:8px;" role="progressbar" aria-label="Analysis in progress">
+        <div class="progress-bar progress-bar-striped progress-bar-animated bg-info" style="width:100%"></div>
+    </div>
+    @if (Model.StartedUtc is { } startedUtc)
+    {
+        <p class="text-muted small mt-2 mb-0" id="mca-analysis-elapsed" data-started-utc="@startedUtc.ToString("o")">Elapsed: 0s</p>
+    }
+</div>
+<script>
+    (function () {
+        var el = document.getElementById('mca-analysis-elapsed');
+        if (el) {
+            var started = new Date(el.dataset.startedUtc).getTime();
+            var tick = function () {
+                var secs = Math.max(0, Math.round((Date.now() - started) / 1000));
+                var mins = Math.floor(secs / 60);
+                el.textContent = 'Elapsed: ' + (mins > 0 ? (mins + 'm ' + (secs % 60) + 's') : (secs + 's'));
+            };
+            tick();
+            setInterval(tick, 1000);
+        }
+        setTimeout(function () { location.reload(); }, 5000);
+    })();
+</script>

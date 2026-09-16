@@ -118,6 +118,62 @@ public class StructuredFactsProviderTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Litigation_detail_fact_includes_the_court_name()
+    {
+        // Regression test: the fact string used to omit Court entirely, so the chatbot would tell users
+        // "the specific court is not mentioned" even when Litigations.Court was populated in the data.
+        await using var db = CreateContext();
+        var (requestId, runId) = await SeedRequestAsync(db);
+
+        db.Litigations.Add(new Litigation
+        {
+            RequestId = requestId,
+            IngestionRunId = runId,
+            CaseType = "Filed By this Corporate",
+            CaseStatus = "Pending",
+            Court = "NATIONAL COMPANY LAW TRIBUNAL",
+            Litigants = "DEVBHUMI REALTORS PRIVATE LIMITED",
+            CaseNumber = "W.P.(C) No. 001046 - / 2023"
+        });
+        await db.SaveChangesAsync();
+
+        var provider = new StructuredFactsProvider(db);
+        var hints = new QuestionHints(FilingCategory.Compliance, null, null, null, null);
+
+        var facts = await provider.BuildDigestAsync(requestId, hints, CancellationToken.None);
+
+        var litigationFact = Assert.Single(facts, f => f.DomainKey == "Litigation" && f.EntityType == "Litigation");
+        Assert.Contains("NATIONAL COMPANY LAW TRIBUNAL", litigationFact.Text);
+    }
+
+    [Fact]
+    public async Task Litigation_detail_fact_omits_the_court_clause_when_court_is_unknown()
+    {
+        await using var db = CreateContext();
+        var (requestId, runId) = await SeedRequestAsync(db);
+
+        db.Litigations.Add(new Litigation
+        {
+            RequestId = requestId,
+            IngestionRunId = runId,
+            CaseType = "Filed By this Corporate",
+            CaseStatus = "Pending",
+            Court = null,
+            Litigants = "Some Party",
+            CaseNumber = "CASE-1"
+        });
+        await db.SaveChangesAsync();
+
+        var provider = new StructuredFactsProvider(db);
+        var hints = new QuestionHints(FilingCategory.Compliance, null, null, null, null);
+
+        var facts = await provider.BuildDigestAsync(requestId, hints, CancellationToken.None);
+
+        var litigationFact = Assert.Single(facts, f => f.DomainKey == "Litigation" && f.EntityType == "Litigation");
+        Assert.DoesNotContain("Court:", litigationFact.Text);
+    }
+
+    [Fact]
     public async Task Financial_facts_are_tagged_by_basis_when_both_standalone_and_consolidated_exist()
     {
         await using var db = CreateContext();
