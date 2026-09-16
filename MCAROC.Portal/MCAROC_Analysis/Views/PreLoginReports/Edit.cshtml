@@ -5,7 +5,7 @@
 
 <div class="pi-page-head"><div><div class="pi-kicker">Optional edit</div><h1>Edit report data</h1><p>Change any field, add or remove a charge (or director), then regenerate the @Model.Format.ToString().ToUpperInvariant() Word report. This replaces the downloadable file in history.</p></div></div>
 <div class="pi-panel" style="padding:24px;">
-    <form asp-action="Edit" asp-route-batch="@Model.BatchId" asp-route-id="@Model.JobId" method="post">
+    <form asp-action="Edit" asp-route-batch="@Model.BatchId" asp-route-id="@Model.JobId" method="post" enctype="multipart/form-data">
         <div asp-validation-summary="ModelOnly" class="text-danger mb-3"></div>
         <input asp-for="JobId" type="hidden" /><input asp-for="Cin" type="hidden" /><input asp-for="Format" type="hidden" />
         @if (Model.LegalCases is not null)
@@ -44,6 +44,22 @@
         </tbody></table></div>
         <button type="button" class="btn btn-sm btn-outline-secondary mb-4" id="addChargeRow"><i class="bi bi-plus-lg me-1"></i>Add charge</button>
         <template id="chargeRowTemplate"><tr>@if (Model.Format == PreLoginReportFormat.Sbi) { <td><input name="Charges[0].Srn" class="form-control form-control-sm" value="-" /></td> }<td><input name="Charges[0].Id" class="form-control form-control-sm" value="-" /></td><td><input name="Charges[0].Holder" class="form-control form-control-sm" value="-" /></td><td><input name="Charges[0].Created" class="form-control form-control-sm" value="-" /></td><td><input name="Charges[0].Modified" class="form-control form-control-sm" value="-" /></td><td><input name="Charges[0].Satisfied" class="form-control form-control-sm" value="-" /></td><td><input name="Charges[0].Amount" class="form-control form-control-sm" value="-" /></td><td class="text-center"><input type="checkbox" name="Charges[0].IsOpen" class="form-check-input" value="true" /></td><td><button type="button" class="btn btn-sm btn-outline-danger row-remove">&times;</button></td></tr></template>
+
+        @if (Model.Format == PreLoginReportFormat.Sbi)
+        {
+            <h3 class="h5 mb-3">Legal cases</h3>
+            <div class="mb-4">
+                @if (Model.AttachedLegalCaseCount is { } count)
+                {
+                    <p class="mb-2">@count litigation case@(count == 1 ? "" : "s") currently attached. Uploading a new file below replaces them.</p>
+                }
+                else
+                {
+                    <p class="mb-2">No litigation file attached yet. Upload a litigation-tracker export (.xlsx or .csv) to populate the "Details of legal cases" table and the court-level counts.</p>
+                }
+                <input type="file" name="legalCasesFile" class="form-control" accept=".xlsx,.xls,.csv" />
+            </div>
+        }
 
         @if (Model.Format == PreLoginReportFormat.Prr)
         {

@@ -3,6 +3,7 @@ using System.Text.RegularExpressions;
 using MCAROC_Analysis.Data;
 using MCAROC_Analysis.Data.Entities;
 using MCAROC_Analysis.Models;
+using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 
 namespace MCAROC_Analysis.Services.PreLoginReports;
@@ -47,7 +48,7 @@ public sealed class PreLoginReportJobService(AppDbContext db, PreLoginReportQueu
         var registrationNumber = model.PartnershipRegistrationNumber!.Trim().ToUpperInvariant();
         var data = new InstaReportData(
             new InstaCompany(model.PartnershipName!.Trim(), "-", registrationNumber, "Partnership", "-", "-", "-", "-", "-", "-",
-                model.PartnershipAddress!.Trim(), "-", "-", "-", "-", "-"),
+                model.PartnershipAddress!.Trim(), "-", "-", "-", "-", "-", IsPartnership: true),
             [], [], ToLegalCases(model.LegalCases));
         var batch = Guid.NewGuid();
         db.PreLoginReportJobs.Add(new PreLoginReportJob
@@ -112,16 +113,36 @@ public sealed class PreLoginReportJobService(AppDbContext db, PreLoginReportQueu
     /// <summary>Applies a user's edits (including any added/removed charge or director rows) and
     /// regenerates the stored report in place. Same Completed-only restriction as <see cref="GetEditableDraftAsync"/>
     /// — see that method's remarks for the race this closes. Restricted to <paramref name="batch"/> per #47.</summary>
-    public async Task ApplyEditAndRegenerateAsync(Guid batch, long id, PreLoginReportDraftViewModel draft, CancellationToken cancellationToken)
+    public async Task ApplyEditAndRegenerateAsync(Guid batch, long id, PreLoginReportDraftViewModel draft, CancellationToken cancellationToken, IFormFile? legalCasesFile = null)
     {
         var job = await FindInBatchAsync(batch, id, cancellationToken) ?? throw new PreLoginReportException("Report request not found.");
         if (job.Status != PreLoginReportJobStatus.Completed)
             throw new PreLoginReportException("This report is still being generated. Wait for it to complete before editing.");
         var format = Enum.Parse<PreLoginReportFormat>(job.Format);
         var data = PreLoginReportService.ApplyEdits(draft);
+        // IsPartnership is a fixed identity fact set at job creation (#217/#221), never form-editable —
+        // re-attach it from the stored job rather than trust the posted draft.
+        var stored = string.IsNullOrWhiteSpace(job.DataJson) ? null : JsonSerializer.Deserialize<InstaReportData>(job.DataJson);
+        data = data with { Company = data.Company with { IsPartnership = stored?.Company.IsPartnership ?? false } };
+
+        if (legalCasesFile is { Length: > 0 })
+        {
+            await using var stream = legalCasesFile.OpenReadStream();
+            data = data with { LegalCases = LegalCaseFileParser.ToInstaLegalCases(LegalCaseFileParser.Parse(stream, legalCasesFile.FileName)) };
+        }
+        else if (stored?.LegalCases?.Cases is not null)
+        {
+            // No new upload this edit. The draft's hidden count fields are stale passthrough once a file has
+            // ever been parsed for this job (the Edit page never lets the user hand-edit those counts) — the
+            // previously-parsed Cases list (and its derived counts) is the authoritative source, so restore
+            // it wholesale rather than keep ApplyEdits' bare count-only reconstruction from those fields.
+            data = data with { LegalCases = stored.LegalCases };
+        }
+
         // A partnership has no immutable MCA identifier: its PAN/registration number is a manually editable
-        // field, so both identity rows in the regenerated document must use the edited value.
-        var identifier = data.LegalCases is null ? job.Cin : data.Company.RegistrationNumber;
+        // field, so both identity rows in the regenerated document must use the edited value. This must key
+        // off Company.IsPartnership, not LegalCases — Company/LLP jobs can carry LegalCases too now (#221).
+        var identifier = data.Company.IsPartnership ? data.Company.RegistrationNumber : job.Cin;
         var generated = await reports.GenerateFromDataAsync(identifier, format, data, cancellationToken);
         if (!string.IsNullOrWhiteSpace(job.ReportStoragePath) && File.Exists(job.ReportStoragePath)) File.Delete(job.ReportStoragePath);
         job.ReportStoragePath = await StoreReportAsync(job.PreLoginReportJobId, generated, cancellationToken);

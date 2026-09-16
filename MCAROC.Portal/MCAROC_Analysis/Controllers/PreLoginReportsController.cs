@@ -80,13 +80,13 @@ public sealed class PreLoginReportsController(PreLoginReportJobService jobs) : C
 
     [HttpPost("{batch:guid}/{id:long}/edit")]
     [ValidateAntiForgeryToken]
-    public async Task<IActionResult> Edit(Guid batch, long id, PreLoginReportDraftViewModel model, CancellationToken cancellationToken)
+    public async Task<IActionResult> Edit(Guid batch, long id, PreLoginReportDraftViewModel model, IFormFile? legalCasesFile, CancellationToken cancellationToken)
     {
         model.BatchId = batch; // the route (not the posted form) is the trusted source of the access token
         if (!ModelState.IsValid) return View(model);
         try
         {
-            await jobs.ApplyEditAndRegenerateAsync(batch, id, model, cancellationToken);
+            await jobs.ApplyEditAndRegenerateAsync(batch, id, model, cancellationToken, legalCasesFile);
             return RedirectToAction(nameof(History), new { batch });
         }
         catch (PreLoginReportException ex)
