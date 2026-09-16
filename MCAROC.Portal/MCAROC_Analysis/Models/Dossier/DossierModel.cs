@@ -41,9 +41,13 @@ public sealed record DossierCorporate(
     CompanyStructure? Structure,
     decimal? PaidUpCapital,
     IReadOnlyList<ShareholdingPatternRow> ShareholdingPattern,
-    IReadOnlyList<RelatedPartyTransaction> RelatedPartyTransactions)
+    IReadOnlyList<RelatedPartyTransaction> RelatedPartyTransactions,
+    // Appended after every existing field, nullable with a normalizing list property, so the ~17
+    // existing positional `new DossierCorporate(...)` test call sites keep compiling unchanged (#215).
+    IReadOnlyList<ProprietorshipAssociation>? Proprietorship = null)
 {
     public int ActiveDirectorCount => Directors.Count(d => d.CessationDate is null);
+    public IReadOnlyList<ProprietorshipAssociation> ProprietorshipList => Proprietorship ?? [];
 }
 
 public sealed record DossierFinancials(
@@ -91,7 +95,11 @@ public sealed record DossierCompliance(
 public sealed record DossierLitigation(
     IReadOnlyList<Litigation> All,
     IReadOnlyList<LitigationThread> Threads,
-    IReadOnlyDictionary<long, LitigationRole> RoleById)
+    IReadOnlyDictionary<long, LitigationRole> RoleById,
+    // Appended after every existing field, nullable with a normalizing list property, so the ~17
+    // existing positional `new DossierLitigation(...)` test call sites keep compiling unchanged (#215).
+    // A separate register from Litigation/All — see FinancialDisputeCase's own doc comment.
+    IReadOnlyList<FinancialDisputeCase>? FinancialDisputeCases = null)
 {
     public LitigationRole RoleFor(Litigation l) => RoleById.GetValueOrDefault(l.LitigationId, LitigationRole.NotDetermined);
     public int FiledAgainstCount => RoleById.Values.Count(v => v == LitigationRole.FiledAgainst);
@@ -99,6 +107,7 @@ public sealed record DossierLitigation(
     public int NotDeterminedCount => RoleById.Values.Count(v => v == LitigationRole.NotDetermined);
     public int PendingCount => All.Count(DossierComputations.IsPendingLitigation);
     public int DisposedCount => All.Count - PendingCount;
+    public IReadOnlyList<FinancialDisputeCase> FinancialDisputeCasesList => FinancialDisputeCases ?? [];
 }
 
 public sealed record DossierExecSummary(

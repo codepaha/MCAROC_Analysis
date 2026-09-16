@@ -76,6 +76,8 @@ public class DossierAssembler(AppDbContext db)
             .OrderBy(x => x.HolderClass).ThenBy(x => x.AsOnDate).ThenBy(x => x.DisplayOrder).ToListAsync(ct);
         var relatedPartyTransactions = await db.RelatedPartyTransactions.AsNoTracking().Where(x => x.IngestionRunId == runId)
             .OrderBy(x => x.FinancialYearEnding).ThenBy(x => x.EntityNameNormalized).ToListAsync(ct);
+        var proprietorship = await db.ProprietorshipAssociations.AsNoTracking().Where(x => x.IngestionRunId == runId)
+            .OrderBy(x => x.DirectorNameRaw).ToListAsync(ct);
         var profile = await db.CompanyProfiles.AsNoTracking().FirstOrDefaultAsync(x => x.IngestionRunId == runId, ct);
 
         // ── Financials ──
@@ -116,6 +118,8 @@ public class DossierAssembler(AppDbContext db)
 
         // ── Litigation ──
         var litigations = await db.Litigations.AsNoTracking().Where(x => x.IngestionRunId == runId).ToListAsync(ct);
+        var financialDisputeCases = await db.FinancialDisputeCases.AsNoTracking().Where(x => x.IngestionRunId == runId)
+            .OrderByDescending(x => x.DateOfDefault).ToListAsync(ct);
 
         // ── Source records (Layer 0) — the verbatim staging rows the "Full source" annexure renders from ──
         var sourceRows = await db.SourceRows.AsNoTracking().Where(x => x.IngestionRunId == runId).ToListAsync(ct);
@@ -143,7 +147,7 @@ public class DossierAssembler(AppDbContext db)
                 request.CompanyName, request.Cin ?? profile?.Cin, request.Pan ?? profile?.Pan,
                 profile?.IncorporationDate, profile?.CompanyStatus,
                 request.Client?.ClientName ?? "", DateTime.UtcNow, run?.CompletedDate, run?.SourceSnapshotDate),
-            new DossierCorporate(directors, officers, shareholders, related, allotments, desigHistory, otherDirectorships, structure, profile?.PaidUpCapital, shareholdingPattern, relatedPartyTransactions),
+            new DossierCorporate(directors, officers, shareholders, related, allotments, desigHistory, otherDirectorships, structure, profile?.PaidUpCapital, shareholdingPattern, relatedPartyTransactions, proprietorship),
             new DossierFinancials(standalone, consolidated, facts, parameters, auditors, peers, peerCompanies),
             new DossierCharges(
                 charges,
@@ -152,7 +156,7 @@ public class DossierAssembler(AppDbContext db)
                 DossierComputations.LenderConcentration(charges),
                 findings.Count(f => f.Code == ChargeRules.MaterialEnhancementCode)),
             new DossierCompliance(compliance, msme, gst, epfo, epfoEstablishments, DossierDeduplicator.SummariseSuitFiled(compliance), creditRatings),
-            new DossierLitigation(litigations, DossierDeduplicator.ThreadLitigation(litigations), roles),
+            new DossierLitigation(litigations, DossierDeduplicator.ThreadLitigation(litigations), roles, financialDisputeCases),
             new DossierExecSummary(
                 analysis.OverallReviewPriority,
                 analysis.CriticalFindingsCount, analysis.ReviewFindingsCount,

@@ -202,21 +202,17 @@ public partial class DossierPdfComposer
     }
 
     /// <summary>Tracked optional categories with no table anywhere in this dossier, present or absent —
-    /// unlike every other tracked category (directors, GST, EPFO, credit... the rest), these have no
-    /// in-context home for a "not provided in this upload" note, so an absence here would otherwise never
-    /// reach a client at all. Listed explicitly in <see cref="ComposeSourceCoverage"/> instead. Building an
-    /// actual table for each is a separate, larger follow-up (#214 review) — this is the interim,
-    /// client-safe disclosure so nothing is silently lost in the meantime.</summary>
+    /// unlike every other tracked category (directors, GST, EPFO, credit ratings... the rest), these have
+    /// no in-context home for a "not provided in this upload" note, so an absence here would otherwise
+    /// never reach a client at all. Listed explicitly in <see cref="ComposeSourceCoverage"/> instead.
+    /// Credit Ratings, Unaccepted Ratings, Related Party Transactions and Proprietorship moved out of this
+    /// list in #215 once each got a real table; Structure, Highlights and the Financial Parameters
+    /// annexure remain — building a table for each is a separate, larger follow-up.</summary>
     private static readonly (IReadOnlyList<string> Sheet, string Label)[] UnmappedOptionalCategories =
     [
         (SheetAliases.Structure, "Corporate structure"),
-        (SheetAliases.Proprietorship, "Proprietorship"),
         (SheetAliases.Highlights, "Highlights"),
         (SheetAliases.FinancialParametersAnnexure, "Financial parameters (annexure)"),
-        (SheetAliases.RelatedPartyTransactions, "Related party transactions"),
-        (SheetAliases.CreditRatings, "Credit ratings"),
-        (SheetAliases.UnacceptedRatings, "Unaccepted ratings"),
-        (SheetAliases.LegalCasesFinancialDispute, "Legal cases — financial dispute"),
     ];
 
     /// <summary>"Source coverage" — the aggregate count, plus an explicit list of any absent category from
