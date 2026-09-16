@@ -8,6 +8,12 @@
     <form asp-action="Edit" asp-route-batch="@Model.BatchId" asp-route-id="@Model.JobId" method="post">
         <div asp-validation-summary="ModelOnly" class="text-danger mb-3"></div>
         <input asp-for="JobId" type="hidden" /><input asp-for="Cin" type="hidden" /><input asp-for="Format" type="hidden" />
+        @if (Model.LegalCases is not null)
+        {
+            <input asp-for="LegalCases.SupremeCourt" type="hidden" /><input asp-for="LegalCases.HighCourt" type="hidden" /><input asp-for="LegalCases.DistrictCourt" type="hidden" />
+            <input asp-for="LegalCases.ConsumerForum" type="hidden" /><input asp-for="LegalCases.ItatTax" type="hidden" /><input asp-for="LegalCases.NcltNclat" type="hidden" />
+            <input asp-for="LegalCases.DrtDrat" type="hidden" /><input asp-for="LegalCases.Rera" type="hidden" /><input asp-for="LegalCases.NgtOthers" type="hidden" />
+        }
         <h3 class="h5 mb-3">Company details</h3>
         <div class="row g-3 mb-4">
             <div class="col-md-6"><label asp-for="Company.Name" class="form-label">Company name</label><input asp-for="Company.Name" class="form-control" /></div>
