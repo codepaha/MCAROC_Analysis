@@ -602,9 +602,11 @@ public partial class DossierPdfComposer
         // distinguishes an "Unaccepted Ratings" row from a "Credit Ratings" one.
         Item(col, ref n, "Credit ratings", d.CreditRatings, [SheetAliases.CreditRatings, SheetAliases.UnacceptedRatings],
             new Col<CreditRating>("Agency", 1.6f, r => r.Agency),
-            new Col<CreditRating>("Instrument", 1.8f, r => r.Instrument ?? "-"),
-            new Col<CreditRating>("Rating", 1.3f, r => r.Rating ?? "-"),
-            new Col<CreditRating>("Action", 1.2f, r => r.IsAccepted ? r.Action ?? "-" : "Not accepted"),
+            new Col<CreditRating>("Instrument", 1.5f, r => r.Instrument ?? "-"),
+            new Col<CreditRating>("Rating", 1.1f, r => r.Rating ?? "-"),
+            // Wide enough for "Not accepted" (the fixed unaccepted-row label) at this table's padding —
+            // narrower than this and it wraps to two lines, found via a real regression test (#216).
+            new Col<CreditRating>("Action", 1.7f, r => r.IsAccepted ? r.Action ?? "-" : "Not accepted"),
             new Col<CreditRating>("Outlook", 1.1f, r => r.Outlook ?? "-"),
             new Col<CreditRating>("Amount", 1.1f, r => r.Amount?.ToString("0.##") ?? "-", true),
             new Col<CreditRating>("Date", 1.1f, r => D(r.RatingDate), true));

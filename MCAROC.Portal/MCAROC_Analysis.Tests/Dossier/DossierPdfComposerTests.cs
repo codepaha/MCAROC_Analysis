@@ -487,6 +487,14 @@ public class DossierPdfComposerTests : IAsyncLifetime
             Action = "Held", Outlook = "Stable", Amount = 55.5m,
             RatingDate = new DateOnly(2025, 6, 1), IsAccepted = true
         });
+        seed.CreditRatings.Add(new CreditRating
+        {
+            // #216 review: an unaccepted row (no Action column — the source sheet carries none, per
+            // CreditRating.Action's own doc comment) must render "Not accepted" rather than a blank cell.
+            RequestId = requestId, IngestionRunId = ingestionRunId,
+            Agency = "UnacceptedAgency", Instrument = "NCD2", Rating = "-",
+            Action = null, Outlook = null, RatingDate = new DateOnly(2025, 7, 1), IsAccepted = false
+        });
         seed.ProprietorshipAssociations.Add(new ProprietorshipAssociation
         {
             RequestId = requestId, IngestionRunId = ingestionRunId,
@@ -511,6 +519,8 @@ public class DossierPdfComposerTests : IAsyncLifetime
         Assert.Contains("TestAgency", presentText);
         Assert.Contains("BBB+", presentText);
         Assert.Contains("Held", presentText);
+        Assert.Contains("UnacceptedAgency", presentText);
+        Assert.Contains("Not accepted", presentText);
         Assert.Contains("Alice Rao Trading Co", presentText);
         Assert.Contains("TestCourt", presentText);
 
