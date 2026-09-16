@@ -36,7 +36,9 @@ public sealed class PreLoginReportsController(PreLoginReportJobService jobs) : C
 
         try
         {
-            var batchId = await jobs.QueueSingleAsync(model.Cin, model.CompanyName, model.Format, cancellationToken);
+            var batchId = model.EntityType == PreLoginReportEntityType.Partnership
+                ? await jobs.QueuePartnershipAsync(model, cancellationToken)
+                : await jobs.QueueSingleAsync(model.Cin, model.CompanyName, model.Format, cancellationToken);
             return RedirectToAction(nameof(History), new { batch = batchId });
         }
         catch (PreLoginReportException ex)

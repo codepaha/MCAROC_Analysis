@@ -79,6 +79,11 @@ public sealed class PreLoginReportService(InstaFinancialsClient client, IWebHost
             ("Date of last AGM", c.LastAgm), ("Date of Balance Sheet", c.BalanceSheetDate), ("Company Status", c.Status)
         };
         foreach (var (label, value) in companyFields) ReplaceCellValue(companyDetails, label, value);
+        if (data.LegalCases is not null)
+        {
+            ReplaceCellLabel(companyDetails, "CIN", "PAN / Registration Number");
+            ReplaceCellLabel(companyDetails, "Company Name", "Partnership Name");
+        }
 
         var summary = FindTableAfterHeading(body, "SUMMARY")
             ?? throw new PreLoginReportException("The selected report template is invalid.");
@@ -131,6 +136,23 @@ public sealed class PreLoginReportService(InstaFinancialsClient client, IWebHost
         // Charges.Count == 0: leave the placeholder row untouched — it already renders correctly (matches
         // the template's own sample company, which also had zero charges).
 
+        if (data.LegalCases is not null)
+        {
+            var legalCasesTable = FindTableAfterHeading(body, "Legal Cases")
+                ?? throw new PreLoginReportException("The selected report template is invalid.");
+            var legalCasesRow = legalCasesTable.Elements<TableRow>().Skip(1).FirstOrDefault()
+                ?? throw new PreLoginReportException("The selected report template is invalid.");
+            var values = new[]
+            {
+                data.LegalCases.SupremeCourt, data.LegalCases.HighCourt, data.LegalCases.DistrictCourt,
+                data.LegalCases.ConsumerForum, data.LegalCases.ItatTax, data.LegalCases.NcltNclat,
+                data.LegalCases.DrtDrat, data.LegalCases.Rera, data.LegalCases.NgtOthers
+            };
+            var cells = legalCasesRow.Elements<TableCell>().ToList();
+            if (cells.Count != values.Length) throw new PreLoginReportException("The selected report template is invalid.");
+            for (var i = 0; i < values.Length; i++) SetCellText(cells[i], values[i].ToString(CultureInfo.InvariantCulture));
+        }
+
         ReplacePreparedOnDateField(body);
     }
 
@@ -178,6 +200,12 @@ public sealed class PreLoginReportService(InstaFinancialsClient client, IWebHost
         SetCellText(row.Elements<TableCell>().ElementAt(1), newValue);
     }
 
+    private static void ReplaceCellLabel(Table table, string oldLabel, string newLabel)
+    {
+        var row = table.Elements<TableRow>().FirstOrDefault(r => GetElementText(r.Elements<TableCell>().First()) == oldLabel);
+        if (row is not null) SetCellText(row.Elements<TableCell>().First(), newLabel);
+    }
+
     private static string GetElementText(OpenXmlElement element) => string.Concat(element.Descendants<Text>().Select(t => t.Text)).Trim();
 
     // Replaces a cell's entire content with a single clean run, cloning the last existing run's formatting
@@ -199,6 +227,7 @@ public sealed class PreLoginReportService(InstaFinancialsClient client, IWebHost
     public static PreLoginReportDraftViewModel ToDraft(long jobId, Guid batchId, string cin, PreLoginReportFormat format, InstaReportData data) => new()
     {
         JobId = jobId, BatchId = batchId, Cin = cin, Format = format, Company = ToEditable(data.Company),
+        LegalCases = data.LegalCases is null ? null : ToEditable(data.LegalCases),
         Charges = data.Charges.Select(c => new EditableChargeViewModel { Srn = c.Srn, Id = c.Id, Holder = c.Holder, Created = c.Created, Modified = c.Modified, Satisfied = c.Satisfied, Amount = c.Amount, IsOpen = c.IsOpen }).ToList(),
         Directors = data.Directors.Select(d => new EditableDirectorViewModel { Name = d.Name, DinOrPan = d.DinOrPan, Designation = d.Designation, Appointed = d.Appointed }).ToList()
     };
@@ -209,7 +238,10 @@ public sealed class PreLoginReportService(InstaFinancialsClient client, IWebHost
             draft.Company.Address, draft.Company.Email, draft.Company.Listed, draft.Company.LastAgm, draft.Company.BalanceSheetDate, draft.Company.Status,
             draft.Company.ActiveCompliance, draft.Company.BooksOfAccountAddress),
         draft.Charges.Select(c => new InstaCharge(c.Id, c.Holder, c.Created, c.Modified, c.Satisfied, c.Amount, c.IsOpen, c.Srn)).ToList(),
-        draft.Directors.Select(d => new InstaDirector(d.Name, d.DinOrPan, d.Designation, d.Appointed)).ToList());
+        draft.Directors.Select(d => new InstaDirector(d.Name, d.DinOrPan, d.Designation, d.Appointed)).ToList(),
+        draft.LegalCases is null ? null : new InstaLegalCases(draft.LegalCases.SupremeCourt, draft.LegalCases.HighCourt,
+            draft.LegalCases.DistrictCourt, draft.LegalCases.ConsumerForum, draft.LegalCases.ItatTax, draft.LegalCases.NcltNclat,
+            draft.LegalCases.DrtDrat, draft.LegalCases.Rera, draft.LegalCases.NgtOthers));
 
     private static EditableCompanyViewModel ToEditable(InstaCompany c) => new()
     {
@@ -217,6 +249,13 @@ public sealed class PreLoginReportService(InstaFinancialsClient client, IWebHost
         Class = c.Class, AuthorisedCapital = c.AuthorisedCapital, PaidUpCapital = c.PaidUpCapital, Members = c.Members, Incorporated = c.Incorporated,
         Address = c.Address, Email = c.Email, Listed = c.Listed, LastAgm = c.LastAgm, BalanceSheetDate = c.BalanceSheetDate, Status = c.Status,
         ActiveCompliance = c.ActiveCompliance, BooksOfAccountAddress = c.BooksOfAccountAddress
+    };
+
+    private static EditableLegalCasesViewModel ToEditable(InstaLegalCases cases) => new()
+    {
+        SupremeCourt = cases.SupremeCourt, HighCourt = cases.HighCourt, DistrictCourt = cases.DistrictCourt,
+        ConsumerForum = cases.ConsumerForum, ItatTax = cases.ItatTax, NcltNclat = cases.NcltNclat,
+        DrtDrat = cases.DrtDrat, Rera = cases.Rera, NgtOthers = cases.NgtOthers
     };
 
     private static string SafeFileName(string companyName, string cin)

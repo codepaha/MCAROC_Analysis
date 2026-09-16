@@ -40,12 +40,32 @@ public sealed class PreLoginReportJobService(AppDbContext db, PreLoginReportQueu
         return batch;
     }
 
+    /// <summary>Partnership reports are intentionally self-contained: their details and legal-case counts
+    /// are supplied by the user and serialized before the worker runs, so this path cannot call the MCA API.</summary>
+    public async Task<Guid> QueuePartnershipAsync(PreLoginReportViewModel model, CancellationToken cancellationToken)
+    {
+        var registrationNumber = model.PartnershipRegistrationNumber!.Trim().ToUpperInvariant();
+        var data = new InstaReportData(
+            new InstaCompany(model.PartnershipName!.Trim(), "-", registrationNumber, "Partnership", "-", "-", "-", "-", "-", "-",
+                model.PartnershipAddress!.Trim(), "-", "-", "-", "-", "-"),
+            [], [], ToLegalCases(model.LegalCases));
+        var batch = Guid.NewGuid();
+        db.PreLoginReportJobs.Add(new PreLoginReportJob
+        {
+            BatchId = batch, Cin = registrationNumber, SubmittedCompanyName = data.Company.Name, Format = PreLoginReportFormat.Sbi.ToString(),
+            DataJson = JsonSerializer.Serialize(data), Status = PreLoginReportJobStatus.Queued, ProgressPercent = 0, CreatedUtc = DateTime.UtcNow
+        });
+        await db.SaveChangesAsync(cancellationToken);
+        queue.Enqueue(await db.PreLoginReportJobs.Where(x => x.BatchId == batch).Select(x => x.PreLoginReportJobId).SingleAsync(cancellationToken));
+        return batch;
+    }
+
     private static IReadOnlyList<string> ValidateCins(IEnumerable<string> cins)
     {
         var normalized = cins.Select(x => x.Trim().ToUpperInvariant()).Where(x => x.Length > 0).Distinct().ToList();
         if (normalized.Count == 0) throw new PreLoginReportException("Enter at least one CIN.");
-        if (normalized.Any(cin => !Regex.IsMatch(cin, "^[LU][0-9]{5}[A-Z]{2}[0-9]{4}[A-Z]{3}[0-9]{6}$")))
-            throw new PreLoginReportException("Only company CINs are supported. LLPINs are not supported by the configured API.");
+        if (normalized.Any(cin => !Regex.IsMatch(cin, "^(?:[LU][0-9]{5}[A-Z]{2}[0-9]{4}[A-Z]{3}[0-9]{6}|[A-Z]{3}-[0-9]{4})$")))
+            throw new PreLoginReportException("Enter a valid company CIN or LLPIN.");
         return normalized;
     }
 
@@ -134,7 +154,7 @@ public sealed class PreLoginReportJobService(AppDbContext db, PreLoginReportQueu
         try
         {
             var format = Enum.Parse<PreLoginReportFormat>(job.Format);
-            var data = await reports.FetchDataAsync(job.Cin, job.SubmittedCompanyName, cancellationToken);
+            var data = DeserializeManualPartnership(job.DataJson) ?? await reports.FetchDataAsync(job.Cin, job.SubmittedCompanyName, cancellationToken);
             job.DataJson = JsonSerializer.Serialize(data); job.Status = PreLoginReportJobStatus.Generating; job.ProgressPercent = 60;
             await db.SaveChangesAsync(cancellationToken);
             var generated = await reports.GenerateFromDataAsync(job.Cin, format, data, cancellationToken);
@@ -161,4 +181,15 @@ public sealed class PreLoginReportJobService(AppDbContext db, PreLoginReportQueu
     }
 
     private void Schedule(long jobId, TimeSpan delay) => _ = Task.Run(async () => { await Task.Delay(delay); queue.Enqueue(jobId); });
+
+    private static InstaReportData? DeserializeManualPartnership(string? dataJson)
+    {
+        if (string.IsNullOrWhiteSpace(dataJson)) return null;
+        var data = JsonSerializer.Deserialize<InstaReportData>(dataJson);
+        return data?.LegalCases is not null ? data : null;
+    }
+
+    private static InstaLegalCases ToLegalCases(EditableLegalCasesViewModel cases) => new(
+        cases.SupremeCourt, cases.HighCourt, cases.DistrictCourt, cases.ConsumerForum, cases.ItatTax,
+        cases.NcltNclat, cases.DrtDrat, cases.Rera, cases.NgtOthers);
 }

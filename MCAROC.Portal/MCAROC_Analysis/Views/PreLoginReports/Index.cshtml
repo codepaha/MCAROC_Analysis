@@ -1,51 +1,6 @@
 @model PreLoginReportViewModel
-@{
-    ViewData["Title"] = "Pre-login Reports";
-}
-
-<div class="pi-page-head">
-    <div>
-        <div class="pi-kicker">Public report generation</div>
-        <h1>Pre-login MCA Reports</h1>
-        <p>Enter a company CIN, choose SBI or PRR, and the report is generated in the background — track it and download it from report history. Need to fix a field or add a charge afterward? Edit any completed report from there too. Looking for a report you already submitted? <a asp-action="Mine">My Reports</a> remembers what this browser has opened.</p>
-    </div>
-</div>
-
-<div class="pi-panel mt-3" style="padding:24px;max-width:680px;">
-    <h2 class="h5">Batch processing</h2><p class="text-muted">Up to 25 CINs, one report each.</p>
-    <form asp-action="Batch" method="post"><label asp-for="Format" class="form-label">Report format</label><select asp-for="Format" class="form-select mb-3"><option value="Sbi">SBI</option><option value="Prr">PRR</option></select>
-        <label asp-for="Cins" class="form-label">One CIN per line</label><textarea asp-for="Cins" class="form-control" rows="5" placeholder="U74899DL1991PTC043274"></textarea>
-        <button type="submit" class="btn btn-outline-primary mt-3">Queue batch</button>
-    </form>
-</div>
-
-<div class="pi-panel" style="padding:24px;max-width:680px;">
-    <form asp-action="Fetch" method="post">
-        <div asp-validation-summary="ModelOnly" class="text-danger mb-3"></div>
-        <div class="mb-3">
-            <label asp-for="Cin" class="form-label"></label>
-            <input asp-for="Cin" class="form-control" autocomplete="off" placeholder="U74899DL1991PTC043274" />
-            <div class="form-text">Only company CINs are currently supported by the InstaFinancials CompanyCIN endpoint.</div>
-            <span asp-validation-for="Cin" class="text-danger"></span>
-        </div>
-        <div class="mb-3">
-            <label asp-for="CompanyName" class="form-label"></label>
-            <input asp-for="CompanyName" class="form-control" autocomplete="organization" placeholder="Used only if the API does not return a name" />
-            <span asp-validation-for="CompanyName" class="text-danger"></span>
-        </div>
-        <fieldset class="mb-4">
-            <legend class="form-label">Report format</legend>
-            <div class="form-check mb-2">
-                <input class="form-check-input" type="radio" asp-for="Format" value="Sbi" id="formatSbi" />
-                <label class="form-check-label" for="formatSbi"><strong>SBI</strong> - company profile, legal-case summary, MCA-ROC charges and disclaimer.</label>
-            </div>
-            <div class="form-check">
-                <input class="form-check-input" type="radio" asp-for="Format" value="Prr" id="formatPrr" />
-                <label class="form-check-label" for="formatPrr"><strong>PRR</strong> - company profile, MCA-ROC charges and directors/signatories.</label>
-            </div>
-        </fieldset>
-        <button type="submit" class="btn btn-primary"><i class="bi bi-arrow-right-circle me-1"></i>Generate report</button>
-    </form>
-</div>
-
-@section Scripts { <partial name="_ValidationScriptsPartial" /> }
+@{ ViewData["Title"] = "Pre-login Reports"; }
+<div class="pi-page-head"><div><div class="pi-kicker">Public report generation</div><h1>Pre-login MCA Reports</h1><p>Generate SBI reports for companies, LLPs, or partnerships. Company and LLP reports use the report-data service; partnership reports are fully manual and never call an external API. <a asp-action="Mine">My Reports</a> remembers reports opened in this browser.</p></div></div>
+<div class="pi-panel mt-3" style="padding:24px;max-width:680px;"><h2 class="h5">Batch processing</h2><p class="text-muted">Up to 25 company CINs, one report each.</p><form asp-action="Batch" method="post"><label asp-for="Format" class="form-label">Report format</label><select asp-for="Format" class="form-select mb-3"><option value="Sbi">SBI</option><option value="Prr">PRR</option></select><label asp-for="Cins" class="form-label">One CIN per line</label><textarea asp-for="Cins" class="form-control" rows="5" placeholder="U74899DL1991PTC043274"></textarea><button type="submit" class="btn btn-outline-primary mt-3">Queue batch</button></form></div>
+<div class="pi-panel" style="padding:24px;max-width:680px;"><form asp-action="Fetch" method="post"><div asp-validation-summary="ModelOnly" class="text-danger mb-3"></div><fieldset class="mb-3"><legend class="form-label">SBI entity type</legend><div class="form-check form-check-inline"><input class="form-check-input" type="radio" asp-for="EntityType" value="Company" id="entityCompany" checked /><label class="form-check-label" for="entityCompany">Company</label></div><div class="form-check form-check-inline"><input class="form-check-input" type="radio" asp-for="EntityType" value="Llp" id="entityLlp" /><label class="form-check-label" for="entityLlp">LLP</label></div><div class="form-check form-check-inline"><input class="form-check-input" type="radio" asp-for="EntityType" value="Partnership" id="entityPartnership" /><label class="form-check-label" for="entityPartnership">Partnership</label></div></fieldset><div id="apiFields"><div class="mb-3"><label asp-for="Cin" class="form-label" id="identifierLabel"></label><input asp-for="Cin" class="form-control" autocomplete="off" placeholder="U74899DL1991PTC043274" /><div class="form-text" id="identifierHelp">Enter the company CIN. The report-data service supplies the remaining details.</div><span asp-validation-for="Cin" class="text-danger"></span></div><div class="mb-3"><label asp-for="CompanyName" class="form-label"></label><input asp-for="CompanyName" class="form-control" autocomplete="organization" placeholder="Used only if the API does not return a name" /></div></div><div id="partnershipFields" hidden><div class="mb-3"><label asp-for="PartnershipName" class="form-label"></label><input asp-for="PartnershipName" class="form-control" /></div><div class="mb-3"><label asp-for="PartnershipRegistrationNumber" class="form-label"></label><input asp-for="PartnershipRegistrationNumber" class="form-control" /></div><div class="mb-3"><label asp-for="PartnershipAddress" class="form-label"></label><textarea asp-for="PartnershipAddress" class="form-control" rows="3"></textarea></div><h2 class="h6">Legal cases</h2><p class="form-text">Enter the number of cases in each forum. These values appear in the SBI Legal Cases table.</p><div class="row g-3 mb-3"><div class="col-md-4"><label asp-for="LegalCases.SupremeCourt" class="form-label">Supreme Court</label><input asp-for="LegalCases.SupremeCourt" class="form-control" min="0" /></div><div class="col-md-4"><label asp-for="LegalCases.HighCourt" class="form-label">High Court</label><input asp-for="LegalCases.HighCourt" class="form-control" min="0" /></div><div class="col-md-4"><label asp-for="LegalCases.DistrictCourt" class="form-label">District Court</label><input asp-for="LegalCases.DistrictCourt" class="form-control" min="0" /></div><div class="col-md-4"><label asp-for="LegalCases.ConsumerForum" class="form-label">Consumer Forum</label><input asp-for="LegalCases.ConsumerForum" class="form-control" min="0" /></div><div class="col-md-4"><label asp-for="LegalCases.ItatTax" class="form-label">ITAT / Tax</label><input asp-for="LegalCases.ItatTax" class="form-control" min="0" /></div><div class="col-md-4"><label asp-for="LegalCases.NcltNclat" class="form-label">NCLT / NCLAT</label><input asp-for="LegalCases.NcltNclat" class="form-control" min="0" /></div><div class="col-md-4"><label asp-for="LegalCases.DrtDrat" class="form-label">DRT / DRAT</label><input asp-for="LegalCases.DrtDrat" class="form-control" min="0" /></div><div class="col-md-4"><label asp-for="LegalCases.Rera" class="form-label">RERA</label><input asp-for="LegalCases.Rera" class="form-control" min="0" /></div><div class="col-md-4"><label asp-for="LegalCases.NgtOthers" class="form-label">NGT / Others</label><input asp-for="LegalCases.NgtOthers" class="form-control" min="0" /></div></div></div><fieldset class="mb-4"><legend class="form-label">Report format</legend><div class="form-check mb-2"><input class="form-check-input" type="radio" asp-for="Format" value="Sbi" id="formatSbi" /><label class="form-check-label" for="formatSbi"><strong>SBI</strong> - company/LLP profile or manual partnership profile, legal-case summary, MCA-ROC charges and disclaimer.</label></div><div class="form-check"><input class="form-check-input" type="radio" asp-for="Format" value="Prr" id="formatPrr" /><label class="form-check-label" for="formatPrr"><strong>PRR</strong> - company profile, MCA-ROC charges and directors/signatories.</label></div></fieldset><button type="submit" class="btn btn-primary"><i class="bi bi-arrow-right-circle me-1"></i>Generate report</button></form></div>
+@section Scripts { <partial name="_ValidationScriptsPartial" /><script>(function(){var radios=document.querySelectorAll('input[name="EntityType"]'),api=document.getElementById('apiFields'),partnership=document.getElementById('partnershipFields'),cin=document.getElementById('Cin'),label=document.getElementById('identifierLabel'),help=document.getElementById('identifierHelp'),prr=document.getElementById('formatPrr');function refresh(){var type=document.querySelector('input[name="EntityType"]:checked').value,manual=type==='Partnership';api.hidden=manual;partnership.hidden=!manual;prr.disabled=manual;label.textContent=type==='Llp'?'LLPIN':'Company CIN';cin.placeholder=type==='Llp'?'AAA-1234':'U74899DL1991PTC043274';help.textContent=type==='Llp'?'Enter the LLPIN. The report-data service supplies the remaining details.':'Enter the company CIN. The report-data service supplies the remaining details.';if(manual)document.getElementById('formatSbi').checked=true;}radios.forEach(function(radio){radio.addEventListener('change',refresh);});refresh();}());</script> }

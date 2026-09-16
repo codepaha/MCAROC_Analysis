@@ -30,7 +30,8 @@ public sealed record InstaCompany(
 
 public sealed record InstaCharge(string Id, string Holder, string Created, string Modified, string Satisfied, string Amount, bool IsOpen, string Srn = "-");
 public sealed record InstaDirector(string Name, string DinOrPan, string Designation, string Appointed);
-public sealed record InstaReportData(InstaCompany Company, IReadOnlyList<InstaCharge> Charges, IReadOnlyList<InstaDirector> Directors);
+public sealed record InstaLegalCases(int SupremeCourt, int HighCourt, int DistrictCourt, int ConsumerForum, int ItatTax, int NcltNclat, int DrtDrat, int Rera, int NgtOthers);
+public sealed record InstaReportData(InstaCompany Company, IReadOnlyList<InstaCharge> Charges, IReadOnlyList<InstaDirector> Directors, InstaLegalCases? LegalCases = null);
 
 public sealed class InstaFinancialsClient(HttpClient http, IOptions<InstaFinancialsOptions> options)
 {
@@ -47,7 +48,7 @@ public sealed class InstaFinancialsClient(HttpClient http, IOptions<InstaFinanci
 
         using var response = await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
         if (response.StatusCode == HttpStatusCode.NotFound)
-            throw new PreLoginReportException("No company record was returned for this CIN. LLPINs and some struck-off companies are not supported by this endpoint.");
+            throw new PreLoginReportException("No record was returned for this CIN / LLPIN. Check the identifier and try again.");
         if (!response.IsSuccessStatusCode)
             throw new PreLoginReportException($"The report data service returned HTTP {(int)response.StatusCode}. Please try again later.",
                 response.StatusCode is HttpStatusCode.RequestTimeout or HttpStatusCode.TooManyRequests || (int)response.StatusCode >= 500);

@@ -153,6 +153,26 @@ public class InstaFinancialsClientTests
     }
 
     [Fact]
+    public async Task Partnership_sbi_report_renders_manual_identity_and_legal_case_counts()
+    {
+        var service = new PreLoginReportService(NewClient(HttpStatusCode.OK, "{}", "configured-key"), new TestEnvironment(ProjectRoot()));
+        var data = new InstaReportData(
+            new InstaCompany("Acme Partnership", "-", "ABCDE1234F", "Partnership", "-", "-", "-", "-", "-", "-", "1 Market Road, Delhi", "-", "-", "-", "-", "-"),
+            [], [], new InstaLegalCases(1, 2, 3, 4, 5, 6, 7, 8, 9));
+
+        var result = await service.GenerateFromDataAsync("ABCDE1234F", PreLoginReportFormat.Sbi, data, CancellationToken.None);
+
+        using var document = WordprocessingDocument.Open(new MemoryStream(result.Bytes), false);
+        var text = string.Concat(document.MainDocumentPart!.Document!.Body!.Descendants<DocumentFormat.OpenXml.Wordprocessing.Text>().Select(t => t.Text));
+        Assert.Contains("Partnership Name", text);
+        Assert.Contains("PAN / Registration Number", text);
+        Assert.Contains("Acme Partnership", text);
+        Assert.Contains("ABCDE1234F", text);
+        Assert.Contains("1 Market Road, Delhi", text);
+        Assert.Contains("123456789", text);
+    }
+
+    [Fact]
     public async Task Sbi_report_clones_a_charges_row_per_charge()
     {
         const string payload = """

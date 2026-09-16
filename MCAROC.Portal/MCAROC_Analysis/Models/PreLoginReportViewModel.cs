@@ -8,12 +8,16 @@ public enum PreLoginReportFormat
     Prr
 }
 
-public sealed class PreLoginReportViewModel
+public enum PreLoginReportEntityType
 {
-    [Required(ErrorMessage = "CIN is required.")]
-    [Display(Name = "Company CIN")]
-    [RegularExpression("^[LU][0-9]{5}[A-Z]{2}[0-9]{4}[A-Z]{3}[0-9]{6}$",
-        ErrorMessage = "Enter a valid company CIN, for example U74899DL1991PTC043274. LLPINs are not supported by this API.")]
+    Company,
+    Llp,
+    Partnership
+}
+
+public sealed class PreLoginReportViewModel : IValidatableObject
+{
+    [Display(Name = "CIN / LLPIN")]
     public string Cin { get; set; } = string.Empty;
 
     [Display(Name = "Company / LLP name (optional)")]
@@ -24,9 +28,45 @@ public sealed class PreLoginReportViewModel
     [Display(Name = "Report format")]
     public PreLoginReportFormat Format { get; set; } = PreLoginReportFormat.Sbi;
 
+    [Display(Name = "Entity type")]
+    public PreLoginReportEntityType EntityType { get; set; } = PreLoginReportEntityType.Company;
+
+    [Display(Name = "Partnership name")]
+    [StringLength(250)]
+    public string? PartnershipName { get; set; }
+
+    [Display(Name = "PAN / Registration Number")]
+    [StringLength(100)]
+    public string? PartnershipRegistrationNumber { get; set; }
+
+    [Display(Name = "Address")]
+    [StringLength(2000)]
+    public string? PartnershipAddress { get; set; }
+
+    public EditableLegalCasesViewModel LegalCases { get; set; } = new();
+
     [Display(Name = "Batch CINs")]
     [StringLength(5000)]
     public string? Cins { get; set; }
+
+    public IEnumerable<ValidationResult> Validate(ValidationContext validationContext)
+    {
+        if (EntityType == PreLoginReportEntityType.Partnership)
+        {
+            if (Format != PreLoginReportFormat.Sbi)
+                yield return new ValidationResult("Partnership reports are available in SBI format only.", [nameof(Format)]);
+            if (string.IsNullOrWhiteSpace(PartnershipName))
+                yield return new ValidationResult("Partnership name is required.", [nameof(PartnershipName)]);
+            if (string.IsNullOrWhiteSpace(PartnershipRegistrationNumber))
+                yield return new ValidationResult("PAN / Registration Number is required.", [nameof(PartnershipRegistrationNumber)]);
+            if (string.IsNullOrWhiteSpace(PartnershipAddress))
+                yield return new ValidationResult("Address is required.", [nameof(PartnershipAddress)]);
+            yield break;
+        }
+
+        if (string.IsNullOrWhiteSpace(Cin))
+            yield return new ValidationResult("CIN / LLPIN is required.", [nameof(Cin)]);
+    }
 }
 
 public sealed class PreLoginReportDraftViewModel
@@ -38,8 +78,23 @@ public sealed class PreLoginReportDraftViewModel
     [Required] public string Cin { get; set; } = string.Empty;
     [Required] public PreLoginReportFormat Format { get; set; }
     [Required] public EditableCompanyViewModel Company { get; set; } = new();
+    public EditableLegalCasesViewModel? LegalCases { get; set; }
+    public bool IsPartnership => LegalCases is not null;
     public List<EditableChargeViewModel> Charges { get; set; } = [];
     public List<EditableDirectorViewModel> Directors { get; set; } = [];
+}
+
+public sealed class EditableLegalCasesViewModel
+{
+    [Range(0, 9999)] public int SupremeCourt { get; set; }
+    [Range(0, 9999)] public int HighCourt { get; set; }
+    [Range(0, 9999)] public int DistrictCourt { get; set; }
+    [Range(0, 9999)] public int ConsumerForum { get; set; }
+    [Range(0, 9999)] public int ItatTax { get; set; }
+    [Range(0, 9999)] public int NcltNclat { get; set; }
+    [Range(0, 9999)] public int DrtDrat { get; set; }
+    [Range(0, 9999)] public int Rera { get; set; }
+    [Range(0, 9999)] public int NgtOthers { get; set; }
 }
 
 public sealed class EditableCompanyViewModel
