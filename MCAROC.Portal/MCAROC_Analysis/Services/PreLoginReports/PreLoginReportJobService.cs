@@ -119,10 +119,14 @@ public sealed class PreLoginReportJobService(AppDbContext db, PreLoginReportQueu
             throw new PreLoginReportException("This report is still being generated. Wait for it to complete before editing.");
         var format = Enum.Parse<PreLoginReportFormat>(job.Format);
         var data = PreLoginReportService.ApplyEdits(draft);
-        var generated = await reports.GenerateFromDataAsync(job.Cin, format, data, cancellationToken);
+        // A partnership has no immutable MCA identifier: its PAN/registration number is a manually editable
+        // field, so both identity rows in the regenerated document must use the edited value.
+        var identifier = data.LegalCases is null ? job.Cin : data.Company.RegistrationNumber;
+        var generated = await reports.GenerateFromDataAsync(identifier, format, data, cancellationToken);
         if (!string.IsNullOrWhiteSpace(job.ReportStoragePath) && File.Exists(job.ReportStoragePath)) File.Delete(job.ReportStoragePath);
         job.ReportStoragePath = await StoreReportAsync(job.PreLoginReportJobId, generated, cancellationToken);
         job.DataJson = JsonSerializer.Serialize(data);
+        job.Cin = identifier;
         job.Status = PreLoginReportJobStatus.Completed; job.ProgressPercent = 100; job.CompletedUtc = DateTime.UtcNow;
         await db.SaveChangesAsync(cancellationToken);
     }
