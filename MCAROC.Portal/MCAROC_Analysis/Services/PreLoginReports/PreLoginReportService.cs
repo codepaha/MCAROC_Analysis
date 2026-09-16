@@ -79,7 +79,7 @@ public sealed class PreLoginReportService(InstaFinancialsClient client, IWebHost
             ("Date of last AGM", c.LastAgm), ("Date of Balance Sheet", c.BalanceSheetDate), ("Company Status", c.Status)
         };
         foreach (var (label, value) in companyFields) ReplaceCellValue(companyDetails, label, value);
-        if (data.LegalCases is not null)
+        if (c.IsPartnership)
         {
             ReplaceCellLabel(companyDetails, "CIN", "PAN / Registration Number");
             ReplaceCellLabel(companyDetails, "Company Name", "Partnership Name");
@@ -133,6 +133,7 @@ public sealed class PreLoginReportService(InstaFinancialsClient client, IWebHost
             }
             placeholderRow.Remove();
         }
+        StyleChargesTable(chargesTable);
         // Charges.Count == 0: leave the placeholder row untouched — it already renders correctly (matches
         // the template's own sample company, which also had zero charges).
 
@@ -153,7 +154,96 @@ public sealed class PreLoginReportService(InstaFinancialsClient client, IWebHost
             for (var i = 0; i < values.Length; i++) SetCellText(cells[i], values[i].ToString(CultureInfo.InvariantCulture));
         }
 
+        var legalCaseDetailsTable = FindTableAfterHeading(body, "Details of legal cases")
+            ?? throw new PreLoginReportException("The selected report template is invalid.");
+        if (data.LegalCases?.Cases is { Count: > 0 } cases)
+        {
+            var templateRows = legalCaseDetailsTable.Elements<TableRow>().ToList();
+            if (templateRows.Count != 9) throw new PreLoginReportException("The selected report template is invalid.");
+            var prototypeCells = templateRows[0].Elements<TableCell>().ToList();
+            if (prototypeCells.Count != 2) throw new PreLoginReportException("The selected report template is invalid.");
+            foreach (var row in templateRows) row.Remove();
+
+            foreach (var (legalCase, index) in cases.Select((lc, i) => (lc, i)))
+            {
+                var fields = new (string Label, string Value)[]
+                {
+                    ("Court", legalCase.Court),
+                    ("Sr No", (index + 1).ToString(CultureInfo.InvariantCulture)),
+                    ("Case no", legalCase.CaseNo),
+                    ("Case Type", legalCase.CaseType),
+                    ("Case Year", legalCase.CaseYear),
+                    ("Case Stage", legalCase.CaseStage),
+                    ("Act", legalCase.Act),
+                    ("Date of Filing", legalCase.DateOfFiling),
+                    ("State", legalCase.State),
+                    ("District", legalCase.District),
+                    ("Case details", legalCase.CaseDetails),
+                    // LDOH has no reliable source data (see LegalCaseFileParser), so it remains "-".
+                    ("Last Date of Hearing", "-"),
+                    ("Next Date of Hearing", legalCase.DateOfHearing),
+                    ("Status", legalCase.Status)
+                };
+
+                foreach (var (field, fieldIndex) in fields.Select((field, fieldIndex) => (field, fieldIndex)))
+                    legalCaseDetailsTable.Append(CreateLegalCaseFieldRow(
+                        prototypeCells[0], prototypeCells[1], field.Label, field.Value,
+                        isFirst: fieldIndex == 0, isLast: fieldIndex == fields.Length - 1));
+
+                legalCaseDetailsTable.Append(CreateLegalCaseSpacerRow(prototypeCells[0], prototypeCells[1]));
+            }
+            StyleLegalCaseTable(legalCaseDetailsTable);
+        }
+        // No cases attached: leave the placeholder card's "No litigation cases on file." text untouched,
+        // matching the same zero-row convention as the MCA-ROC charges table above.
+
+        StyleDetailHeading(body, "Details of MCA-ROC CHARGES");
+        StyleDetailHeading(body, "Details of legal cases");
+
         ReplacePreparedOnDateField(body);
+        ReserveLetterheadSpaceForDisclaimer(body);
+    }
+
+    // The default letterhead artwork is page-relative, square-wrapped content. Its lower edge reaches below
+    // the normal 720-twip body margin, so a Disclaimer beginning at the top of a page collides with it.
+    // Word can suppress spacing at the top of a page, and PageBreakBefore can introduce a blank page when
+    // pagination already breaks there. A dedicated final section reliably preserves space below the letterhead.
+    private static void ReserveLetterheadSpaceForDisclaimer(Body body)
+    {
+        var paragraphs = body.Elements<Paragraph>().ToList();
+        var disclaimerIndex = paragraphs.FindIndex(p => GetElementText(p) == "Disclaimer");
+        if (disclaimerIndex <= 0) throw new PreLoginReportException("The selected report template is invalid.");
+
+        var disclaimer = paragraphs[disclaimerIndex];
+        var properties = disclaimer.GetFirstChild<ParagraphProperties>() ?? disclaimer.PrependChild(new ParagraphProperties());
+        properties.RemoveAllChildren<PageBreakBefore>();
+        if (properties.GetFirstChild<SpacingBetweenLines>() is { } spacing)
+            spacing.Before = null;
+
+        // The case cards are a table, not body paragraphs. The section marker must therefore remain in the
+        // final spacer immediately after that table; attaching it to the last non-empty body paragraph puts
+        // the cards and Disclaimer in the same final section. Keep exactly one marker spacer and remove the
+        // earlier redundant spacers, which were responsible for the intervening blank page.
+        var precedingParagraph = paragraphs[disclaimerIndex - 1];
+        for (var i = disclaimerIndex - 2; i >= 0 && string.IsNullOrWhiteSpace(GetElementText(paragraphs[i])); i--)
+            paragraphs[i].Remove();
+        var finalSection = body.Elements<SectionProperties>().SingleOrDefault()
+            ?? throw new PreLoginReportException("The selected report template is invalid.");
+        if (precedingParagraph.ParagraphProperties?.GetFirstChild<SectionProperties>() is null)
+        {
+            var precedingProperties = precedingParagraph.GetFirstChild<ParagraphProperties>()
+                ?? precedingParagraph.PrependChild(new ParagraphProperties());
+            precedingProperties.AppendChild(new KeepNext());
+            var firstSection = (SectionProperties)finalSection.CloneNode(true);
+            firstSection.InsertBefore(new SectionType { Val = SectionMarkValues.NextPage }, firstSection.GetFirstChild<PageSize>());
+            precedingProperties.AppendChild(firstSection);
+        }
+
+        // The Disclaimer is the first page in its new section but must use the normal default letterhead,
+        // rather than the report's first-page header.
+        finalSection.RemoveAllChildren<TitlePage>();
+        var margins = finalSection.GetFirstChild<PageMargin>() ?? finalSection.AppendChild(new PageMargin());
+        margins.Top = 1440; // Clears page-relative letterhead artwork that ends at about 1120 twips.
     }
 
     // Replaces the template's live "PREPARED ON" DATE field with a static value — deterministic at
@@ -224,10 +314,153 @@ public sealed class PreLoginReportService(InstaFinancialsClient client, IWebHost
         firstPara.Append(newRun);
     }
 
+    // Sets only a "Label : value" cell's trailing value run, leaving the leading bold label run (and its
+    // "Label : " text) untouched — unlike SetCellText, which would wipe the label along with the value.
+    private static void SetCellValueRun(TableCell cell, string text)
+    {
+        var run = cell.Descendants<Run>().LastOrDefault() ?? throw new PreLoginReportException("The selected report template is invalid.");
+        var textElement = run.GetFirstChild<Text>() ?? throw new PreLoginReportException("The selected report template is invalid.");
+        textElement.Text = text;
+        textElement.Space = SpaceProcessingModeValues.Preserve;
+    }
+
+    private static void StyleChargesTable(Table table)
+    {
+        SetTableBorders(table, showHorizontalSeparators: true);
+        var rows = table.Elements<TableRow>().ToList();
+        foreach (var (row, index) in rows.Select((row, index) => (row, index)))
+        {
+            var rowProperties = row.GetFirstChild<TableRowProperties>() ?? row.PrependChild(new TableRowProperties());
+            if (index == 0 && rowProperties.GetFirstChild<TableHeader>() is null)
+                rowProperties.AppendChild(new TableHeader());
+            if (rowProperties.GetFirstChild<CantSplit>() is null)
+                rowProperties.AppendChild(new CantSplit());
+
+            var fill = index == 0 ? "D9EAF7" : index % 2 == 0 ? "EDF4FB" : "FFFFFF";
+            foreach (var cell in row.Elements<TableCell>())
+                SetCellVisualStyle(cell, fill, showBottomBorder: true, fontSize: index == 0 ? "18" : "19");
+        }
+    }
+
+    private static TableRow CreateLegalCaseFieldRow(
+        TableCell labelPrototype, TableCell valuePrototype, string label, string value, bool isFirst, bool isLast)
+    {
+        var row = new TableRow(new TableRowProperties(new CantSplit()));
+        var labelCell = (TableCell)labelPrototype.CloneNode(true);
+        var valueCell = (TableCell)valuePrototype.CloneNode(true);
+        SetCellText(labelCell, $"{label} : ");
+        SetCellText(valueCell, value);
+        StyleLegalCaseCell(labelCell, bold: true, width: "1900", isFirst, isLast);
+        StyleLegalCaseCell(valueCell, bold: false, width: "6900", isFirst, isLast);
+
+        foreach (var paragraph in new[] { labelCell, valueCell }.SelectMany(c => c.Elements<Paragraph>()))
+        {
+            var properties = paragraph.GetFirstChild<ParagraphProperties>() ?? paragraph.PrependChild(new ParagraphProperties());
+            properties.SpacingBetweenLines = new SpacingBetweenLines
+                { Before = "0", After = "0", Line = "240", LineRule = LineSpacingRuleValues.Auto };
+            properties.RemoveAllChildren<KeepNext>();
+            if (!isLast) properties.AppendChild(new KeepNext());
+        }
+
+        row.Append(labelCell, valueCell);
+        return row;
+    }
+
+    private static TableRow CreateLegalCaseSpacerRow(TableCell labelPrototype, TableCell valuePrototype)
+    {
+        var row = CreateLegalCaseFieldRow(labelPrototype, valuePrototype, string.Empty, string.Empty, isFirst: false, isLast: true);
+        row.TableRowProperties!.RemoveAllChildren<TableRowHeight>();
+        row.TableRowProperties.AppendChild(new TableRowHeight { Val = 180U, HeightType = HeightRuleValues.Exact });
+        foreach (var cell in row.Elements<TableCell>())
+            cell.TableCellProperties!.TableCellBorders = new TableCellBorders(
+                new TopBorder { Val = BorderValues.Nil }, new LeftBorder { Val = BorderValues.Nil },
+                new BottomBorder { Val = BorderValues.Nil }, new RightBorder { Val = BorderValues.Nil });
+        return row;
+    }
+
+    private static void StyleLegalCaseTable(Table table)
+    {
+        SetTableBorders(table, showHorizontalSeparators: false);
+        var grid = table.GetFirstChild<TableGrid>() ?? table.InsertAfter(new TableGrid(), table.GetFirstChild<TableProperties>());
+        grid.RemoveAllChildren<GridColumn>();
+        grid.Append(new GridColumn { Width = "1900" }, new GridColumn { Width = "6900" });
+    }
+
+    private static void StyleLegalCaseCell(TableCell cell, bool bold, string width, bool isFirst, bool isLast)
+    {
+        var properties = cell.GetFirstChild<TableCellProperties>() ?? cell.PrependChild(new TableCellProperties());
+        properties.TableCellWidth = new TableCellWidth { Type = TableWidthUnitValues.Dxa, Width = width };
+        properties.Shading = new Shading { Val = ShadingPatternValues.Clear, Color = "auto", Fill = "FFFFFF" };
+        properties.TableCellBorders = new TableCellBorders(
+            new TopBorder { Val = isFirst ? BorderValues.Single : BorderValues.Nil, Color = "7F8C8D", Size = 6U },
+            new LeftBorder { Val = BorderValues.Nil },
+            new BottomBorder { Val = isLast ? BorderValues.Single : BorderValues.Nil, Color = "7F8C8D", Size = 6U },
+            new RightBorder { Val = BorderValues.Nil });
+        foreach (var run in cell.Descendants<Run>())
+        {
+            var runProperties = run.GetFirstChild<RunProperties>() ?? run.PrependChild(new RunProperties());
+            runProperties.Bold = bold ? new Bold() : null;
+            runProperties.FontSize = new FontSize { Val = "19" };
+            runProperties.FontSizeComplexScript = new FontSizeComplexScript { Val = "19" };
+            runProperties.Color = new Color { Val = "000000" };
+        }
+    }
+
+    private static void SetTableBorders(Table table, bool showHorizontalSeparators)
+    {
+        var properties = table.GetFirstChild<TableProperties>() ?? table.PrependChild(new TableProperties());
+        properties.RemoveAllChildren<TableBorders>();
+        var horizontal = showHorizontalSeparators
+            ? new InsideHorizontalBorder { Val = BorderValues.Single, Color = "B4C7E7", Size = 4U }
+            : new InsideHorizontalBorder { Val = BorderValues.Nil };
+        properties.AppendChild(new TableBorders(
+            new TopBorder { Val = BorderValues.Nil },
+            new LeftBorder { Val = BorderValues.Nil },
+            new BottomBorder { Val = BorderValues.Nil },
+            new RightBorder { Val = BorderValues.Nil },
+            horizontal,
+            new InsideVerticalBorder { Val = BorderValues.Nil }));
+    }
+
+    private static void SetCellVisualStyle(TableCell cell, string fill, bool showBottomBorder, string fontSize)
+    {
+        var properties = cell.GetFirstChild<TableCellProperties>() ?? cell.PrependChild(new TableCellProperties());
+        properties.RemoveAllChildren<Shading>();
+        properties.AppendChild(new Shading { Val = ShadingPatternValues.Clear, Color = "auto", Fill = fill });
+        properties.RemoveAllChildren<TableCellBorders>();
+        properties.AppendChild(new TableCellBorders(
+            new TopBorder { Val = BorderValues.Nil },
+            new LeftBorder { Val = BorderValues.Nil },
+            showBottomBorder
+                ? new BottomBorder { Val = BorderValues.Single, Color = "B4C7E7", Size = 4U }
+                : new BottomBorder { Val = BorderValues.Nil },
+            new RightBorder { Val = BorderValues.Nil }));
+        foreach (var run in cell.Descendants<Run>())
+        {
+            var runProperties = run.GetFirstChild<RunProperties>() ?? run.PrependChild(new RunProperties());
+            runProperties.FontSize = new FontSize { Val = fontSize };
+            runProperties.FontSizeComplexScript = new FontSizeComplexScript { Val = fontSize };
+            runProperties.Color = new Color { Val = "1F2937" };
+        }
+    }
+
+    private static void StyleDetailHeading(Body body, string headingText)
+    {
+        var heading = body.Elements<Paragraph>().FirstOrDefault(p => GetElementText(p) == headingText);
+        if (heading is null) return;
+        foreach (var run in heading.Elements<Run>())
+        {
+            var properties = run.GetFirstChild<RunProperties>() ?? run.PrependChild(new RunProperties());
+            properties.Color = new Color { Val = "2E75B6" };
+        }
+    }
+
     public static PreLoginReportDraftViewModel ToDraft(long jobId, Guid batchId, string cin, PreLoginReportFormat format, InstaReportData data) => new()
     {
         JobId = jobId, BatchId = batchId, Cin = cin, Format = format, Company = ToEditable(data.Company),
+        IsPartnership = data.Company.IsPartnership,
         LegalCases = data.LegalCases is null ? null : ToEditable(data.LegalCases),
+        AttachedLegalCaseCount = data.LegalCases?.Cases?.Count,
         Charges = data.Charges.Select(c => new EditableChargeViewModel { Srn = c.Srn, Id = c.Id, Holder = c.Holder, Created = c.Created, Modified = c.Modified, Satisfied = c.Satisfied, Amount = c.Amount, IsOpen = c.IsOpen }).ToList(),
         Directors = data.Directors.Select(d => new EditableDirectorViewModel { Name = d.Name, DinOrPan = d.DinOrPan, Designation = d.Designation, Appointed = d.Appointed }).ToList()
     };

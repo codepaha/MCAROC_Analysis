@@ -243,6 +243,15 @@ service — if it sits `queued`, `run.cmd` is down) runs *only* what Linux can't
 
 ## Log  <!-- newest first. Prefix: NEEDS / BLOCKED / DONE / DECISION / FYI -->
 
+### 2026-09-16 - Codex (DONE #221 SBI legal-case upload and report layout)
+- **Branch `fix/sbi-prelogin-legal-case-report`** adds XLS/XLSX/CSV litigation upload on the pre-login
+  report edit flow, derives the nine court-level counts, and renders complete case details in the SBI DOCX.
+- The reviewed layout keeps blue zebra styling for charges, uses compact label/value case blocks that stay
+  together across pages, starts the Disclaimer in its own section, and fixes the final-page address above
+  the footer photograph. The owner visually approved the 5-charge/5-case Word-to-PDF output.
+- Focused validation: **48 passed, 0 failed** (`InstaFinancialsClientTests`,
+  `PreLoginReportJobServiceTests`, `LegalCaseFileParserTests`, `SbiLegalCasesTemplateTests`). No migration.
+
 ### 2026-09-14 — Claude session (PR #183 MERGED to `main` — #164 fully complete)
 - **PR #183 MERGED into `main` as `6d06182`** at reviewed head `f6575d0` — both hosted checks green. Round 1
   caught a real factual error in the runbook: "config is read fresh on each login attempt" doesn't mean a

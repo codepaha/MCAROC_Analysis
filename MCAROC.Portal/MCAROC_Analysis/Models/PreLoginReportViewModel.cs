@@ -79,7 +79,10 @@ public sealed class PreLoginReportDraftViewModel
     [Required] public PreLoginReportFormat Format { get; set; }
     [Required] public EditableCompanyViewModel Company { get; set; } = new();
     public EditableLegalCasesViewModel? LegalCases { get; set; }
-    public bool IsPartnership => LegalCases is not null;
+    public bool IsPartnership { get; set; }
+    /// <summary>Cases already attached from a previously uploaded litigation file (#221) — display-only,
+    /// so the Edit page can show "142 cases attached" without round-tripping the whole list through the form.</summary>
+    public int? AttachedLegalCaseCount { get; set; }
     public List<EditableChargeViewModel> Charges { get; set; } = [];
     public List<EditableDirectorViewModel> Directors { get; set; } = [];
 }

@@ -26,11 +26,19 @@ public sealed record InstaCompany(
     string Class, string AuthorisedCapital, string PaidUpCapital, string Members, string Incorporated,
     string Address, string Email, string Listed, string LastAgm, string BalanceSheetDate, string Status,
     // SBI-only fields — InstaBasic has no corresponding data, so these are always manually entered on the Review page.
-    string ActiveCompliance = "-", string BooksOfAccountAddress = "-");
+    string ActiveCompliance = "-", string BooksOfAccountAddress = "-",
+    // A partnership's identity (CIN→PAN/Registration Number relabeling, and which identifier survives an
+    // edit — see PreLoginReportJobService.ApplyEditAndRegenerateAsync) is a fixed fact about the job, set
+    // once at creation (#217/#221) — kept independent of whether LegalCases happens to be populated, since
+    // Company/LLP jobs can now carry uploaded litigation data too (#221).
+    bool IsPartnership = false);
 
 public sealed record InstaCharge(string Id, string Holder, string Created, string Modified, string Satisfied, string Amount, bool IsOpen, string Srn = "-");
 public sealed record InstaDirector(string Name, string DinOrPan, string Designation, string Appointed);
-public sealed record InstaLegalCases(int SupremeCourt, int HighCourt, int DistrictCourt, int ConsumerForum, int ItatTax, int NcltNclat, int DrtDrat, int Rera, int NgtOthers);
+/// <summary><see cref="Cases"/> is null for a manually-entered count-only summary (today's Partnership
+/// flow); once a litigation file is uploaded (#221), it holds every parsed case and the 9 counts become a
+/// rollup of <see cref="LegalCaseRecord.Category"/> — see <see cref="LegalCaseFileParser.ToInstaLegalCases"/>.</summary>
+public sealed record InstaLegalCases(int SupremeCourt, int HighCourt, int DistrictCourt, int ConsumerForum, int ItatTax, int NcltNclat, int DrtDrat, int Rera, int NgtOthers, IReadOnlyList<LegalCaseRecord>? Cases = null);
 public sealed record InstaReportData(InstaCompany Company, IReadOnlyList<InstaCharge> Charges, IReadOnlyList<InstaDirector> Directors, InstaLegalCases? LegalCases = null);
 
 public sealed class InstaFinancialsClient(HttpClient http, IOptions<InstaFinancialsOptions> options)

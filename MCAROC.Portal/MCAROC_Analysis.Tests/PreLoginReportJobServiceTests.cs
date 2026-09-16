@@ -1,9 +1,11 @@
+using System.Text;
 using System.Text.Json;
 using MCAROC_Analysis.Data;
 using MCAROC_Analysis.Data.Entities;
 using MCAROC_Analysis.Models;
 using MCAROC_Analysis.Services.PreLoginReports;
 using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Options;
@@ -197,6 +199,106 @@ public class PreLoginReportJobServiceTests : IAsyncLifetime
 
         // An unrelated, never-seeded batch Guid sees nothing — not an error, not everyone else's jobs.
         Assert.Empty(await service.HistoryAsync(Guid.NewGuid(), CancellationToken.None));
+    }
+
+    // ── #221: litigation file upload — identity must key off Company.IsPartnership, never off whether
+    // LegalCases happens to be populated, since Company/LLP jobs can now carry uploaded litigation too. ──
+
+    static PreLoginReportJobServiceTests() => Encoding.RegisterProvider(System.Text.CodePagesEncodingProvider.Instance);
+
+    private const string CsvHeader = "Court,Case_Number,Role,Case_Type,Case_Status,Case_Stage,Filing_Date,Case_Year,Court_Forum,State,District,Petitioners,Petitioner_Advocates,Respondents,Respondent_Advocates,LDOH_NDOH,Act,Cnr_Number,Bench,Side";
+    private const string CsvRow = "district,1/2020,,CS,PENDING,NA,01-01-2020,2020,Civil Court Rohtak,Haryana,Rohtak,A Ltd,,B Ltd,,15-09-2026,CPC,CNR1,,other";
+
+    private static IFormFile MakeCasesFile(string fileName = "cases.csv")
+    {
+        var bytes = Encoding.UTF8.GetBytes(CsvHeader + "\r\n" + CsvRow);
+        return new FormFile(new MemoryStream(bytes), 0, bytes.Length, "legalCasesFile", fileName) { Headers = new Microsoft.AspNetCore.Http.HeaderDictionary(), ContentType = "text/csv" };
+    }
+
+    private async Task CleanupGeneratedReportAsync(long jobId)
+    {
+        await using var db = CreateContext();
+        var job = await db.PreLoginReportJobs.FindAsync(jobId);
+        if (job?.ReportStoragePath is { } path && File.Exists(path)) File.Delete(path);
+    }
+
+    [Fact]
+    public async Task ApplyEditAndRegenerateAsync_keeps_job_cin_for_a_company_job_even_once_legal_cases_are_attached()
+    {
+        // Regression test: the identifier used to key off `data.LegalCases is null`, which broke the moment
+        // a non-partnership (Company/LLP) job could also carry LegalCases (#221) — it must key off the
+        // independent Company.IsPartnership flag instead.
+        var data = new InstaReportData(
+            new InstaCompany("Example Private Limited", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", IsPartnership: false),
+            [], []);
+        var (jobId, batchId) = await SeedJobAsync(PreLoginReportJobStatus.Completed, JsonSerializer.Serialize(data), "U12345DL2025PTC123456");
+        await using var db = CreateContext();
+        var service = CreateService(db);
+        var draft = await service.GetEditableDraftAsync(batchId, jobId, CancellationToken.None);
+
+        try
+        {
+            await service.ApplyEditAndRegenerateAsync(batchId, jobId, draft, CancellationToken.None, MakeCasesFile());
+
+            await using var verifyDb = CreateContext();
+            var job = await verifyDb.PreLoginReportJobs.SingleAsync(x => x.PreLoginReportJobId == jobId);
+            Assert.Equal("U12345DL2025PTC123456", job.Cin);
+            var stored = JsonSerializer.Deserialize<InstaReportData>(job.DataJson!)!;
+            Assert.False(stored.Company.IsPartnership);
+            Assert.NotNull(stored.LegalCases);
+            Assert.Equal(1, stored.LegalCases!.DistrictCourt);
+            Assert.Single(stored.LegalCases.Cases!);
+        }
+        finally { await CleanupGeneratedReportAsync(jobId); }
+    }
+
+    [Fact]
+    public async Task ApplyEditAndRegenerateAsync_uses_the_edited_registration_number_for_a_partnership()
+    {
+        var data = new InstaReportData(
+            new InstaCompany("ABC Partners", "-", "REG-OLD", "Partnership", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", IsPartnership: true),
+            [], [], new InstaLegalCases(0, 0, 0, 0, 0, 0, 0, 0, 0));
+        var (jobId, batchId) = await SeedJobAsync(PreLoginReportJobStatus.Completed, JsonSerializer.Serialize(data), "REG-OLD");
+        await using var db = CreateContext();
+        var service = CreateService(db);
+        var draft = await service.GetEditableDraftAsync(batchId, jobId, CancellationToken.None);
+        draft.Company.RegistrationNumber = "REG-NEW";
+
+        try
+        {
+            await service.ApplyEditAndRegenerateAsync(batchId, jobId, draft, CancellationToken.None);
+
+            await using var verifyDb = CreateContext();
+            var job = await verifyDb.PreLoginReportJobs.SingleAsync(x => x.PreLoginReportJobId == jobId);
+            Assert.Equal("REG-NEW", job.Cin);
+        }
+        finally { await CleanupGeneratedReportAsync(jobId); }
+    }
+
+    [Fact]
+    public async Task ApplyEditAndRegenerateAsync_preserves_previously_attached_legal_cases_when_no_new_file_is_uploaded()
+    {
+        var existingCases = LegalCaseFileParser.Parse(new MemoryStream(Encoding.UTF8.GetBytes(CsvHeader + "\r\n" + CsvRow)), "cases.csv");
+        var data = new InstaReportData(
+            new InstaCompany("Example Private Limited", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-"),
+            [], [], LegalCaseFileParser.ToInstaLegalCases(existingCases));
+        var (jobId, batchId) = await SeedJobAsync(PreLoginReportJobStatus.Completed, JsonSerializer.Serialize(data), "U12345DL2025PTC123456");
+        await using var db = CreateContext();
+        var service = CreateService(db);
+        var draft = await service.GetEditableDraftAsync(batchId, jobId, CancellationToken.None);
+
+        try
+        {
+            // No legalCasesFile this time — a plain edit of an unrelated field.
+            await service.ApplyEditAndRegenerateAsync(batchId, jobId, draft, CancellationToken.None);
+
+            await using var verifyDb = CreateContext();
+            var job = await verifyDb.PreLoginReportJobs.SingleAsync(x => x.PreLoginReportJobId == jobId);
+            var stored = JsonSerializer.Deserialize<InstaReportData>(job.DataJson!)!;
+            Assert.NotNull(stored.LegalCases?.Cases);
+            Assert.Single(stored.LegalCases!.Cases!);
+        }
+        finally { await CleanupGeneratedReportAsync(jobId); }
     }
 
     private sealed class TestEnvironment : IWebHostEnvironment

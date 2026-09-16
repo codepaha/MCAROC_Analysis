@@ -157,7 +157,7 @@ public class InstaFinancialsClientTests
     {
         var service = new PreLoginReportService(NewClient(HttpStatusCode.OK, "{}", "configured-key"), new TestEnvironment(ProjectRoot()));
         var data = new InstaReportData(
-            new InstaCompany("Acme Partnership", "-", "ABCDE1234F", "Partnership", "-", "-", "-", "-", "-", "-", "1 Market Road, Delhi", "-", "-", "-", "-", "-"),
+            new InstaCompany("Acme Partnership", "-", "ABCDE1234F", "Partnership", "-", "-", "-", "-", "-", "-", "1 Market Road, Delhi", "-", "-", "-", "-", "-", IsPartnership: true),
             [], [], new InstaLegalCases(1, 2, 3, 4, 5, 6, 7, 8, 9));
 
         var result = await service.GenerateFromDataAsync("ABCDE1234F", PreLoginReportFormat.Sbi, data, CancellationToken.None);
