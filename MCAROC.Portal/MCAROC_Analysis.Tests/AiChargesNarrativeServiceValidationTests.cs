@@ -229,13 +229,92 @@ public class AiChargesNarrativeServiceValidationTests
     [Fact]
     public void Validate_CapsNotableCollateralPointsAtFive()
     {
+        // Letters, not digits, in each point's text — this test is about the cap, kept independent of the
+        // numeric-fabrication check exercised separately below.
         var selected = AiChargesNarrativeService.SelectChargesForNarrative([Charge(1, "C1", 500m)]);
-        var points = string.Join(",", Enumerable.Range(0, 8).Select(i => $$"""{ "text": "Point {{i}}", "chargeIds": [1] }"""));
+        var letters = new[] { "A", "B", "C", "D", "E", "F", "G", "H" };
+        var points = string.Join(",", letters.Select(l => $$"""{ "text": "Point {{l}}", "chargeIds": [1] }"""));
         var response = $$"""{ "summary": "Summary.", "notableCollateralPoints": [{{points}}] }""";
 
         var outcome = AiChargesNarrativeService.Validate(response, selected, totalOpenChargeCount: 1);
 
         Assert.Equal(5, outcome.Narrative!.NotableCollateralPoints.Count);
+    }
+
+    [Fact]
+    public void Validate_SummaryWithBareUnsupportedNumber_NoCurrencyMarker_FailsTheWholeOutcome()
+    {
+        // #218 review: a fabricated figure with no ₹/Rs/crore marker at all — e.g. "999" bare — must still
+        // be caught, not just the currency-prefixed/suffixed forms.
+        var selected = AiChargesNarrativeService.SelectChargesForNarrative([Charge(1, "C1", 500m)]);
+        var response = """
+            {
+              "summary": "The largest charge secures an unprecedented 999 in facilities.",
+              "notableCollateralPoints": []
+            }
+            """;
+
+        var outcome = AiChargesNarrativeService.Validate(response, selected, totalOpenChargeCount: 1);
+
+        Assert.False(outcome.Success);
+        Assert.Contains("Summary", outcome.FailureReason);
+    }
+
+    [Fact]
+    public void Validate_SummaryClaimingAFabricatedChargeCount_FailsTheWholeOutcome()
+    {
+        // #218 review: "5 material charges" when only 1 charge was ever sent — the blanket 1-10 allow-list
+        // previously let any small bare count through regardless of what was actually shown to the model.
+        var selected = AiChargesNarrativeService.SelectChargesForNarrative([Charge(1, "C1", 500m)]);
+        var response = """
+            {
+              "summary": "There are 5 material charges totalling 999 secured against the company.",
+              "notableCollateralPoints": []
+            }
+            """;
+
+        var outcome = AiChargesNarrativeService.Validate(response, selected, totalOpenChargeCount: 1);
+
+        Assert.False(outcome.Success);
+    }
+
+    [Fact]
+    public void Validate_SummaryReferencingTheRealCoveredAndTotalChargeCounts_IsPreserved()
+    {
+        // The fix must not over-correct: a genuine "the largest of the N shown, out of M total" reference —
+        // using the real, server-computed counts — is a legitimate, verifiable claim and must survive.
+        var selected = AiChargesNarrativeService.SelectChargesForNarrative(
+            [Charge(1, "C1", 500m), Charge(2, "C2", 400m), Charge(3, "C3", 300m)]);
+        var response = """
+            {
+              "summary": "This narrative covers the largest 3 of 10 open charges by amount.",
+              "notableCollateralPoints": []
+            }
+            """;
+
+        var outcome = AiChargesNarrativeService.Validate(response, selected, totalOpenChargeCount: 10);
+
+        Assert.True(outcome.Success);
+        Assert.Equal("This narrative covers the largest 3 of 10 open charges by amount.", outcome.Narrative!.Summary);
+    }
+
+    [Fact]
+    public void Validate_SummaryReferencingARealChargeIdOrNumberFromThePrompt_IsPreserved()
+    {
+        // BuildPrompt shows the model both ChargeId and RocChargeNumber for every selected charge — a prose
+        // reference to either (not just the structured chargeIds field checked separately) must not be
+        // rejected as invented, since it's a real value the model was actually shown.
+        var selected = AiChargesNarrativeService.SelectChargesForNarrative([Charge(42, "101265730", 500m)]);
+        var response = """
+            {
+              "summary": "Charge 42 (source charge number 101265730) is the largest on record.",
+              "notableCollateralPoints": []
+            }
+            """;
+
+        var outcome = AiChargesNarrativeService.Validate(response, selected, totalOpenChargeCount: 1);
+
+        Assert.True(outcome.Success);
     }
 
     [Fact]

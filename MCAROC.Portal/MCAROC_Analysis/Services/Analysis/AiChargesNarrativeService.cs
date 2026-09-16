@@ -180,7 +180,7 @@ public partial class AiChargesNarrativeService
             return new ChargesNarrativeOutcome(false, null, "Model response parsed to null.");
 
         var sentChargeIds = selectedCharges.Select(sc => sc.Charge.ChargeId).ToHashSet();
-        var allowed = BuildAllowedNumbers(selectedCharges);
+        var allowed = BuildAllowedNumbers(selectedCharges, totalOpenChargeCount);
 
         // Summary is one cohesive paragraph, not a discardable list — it cannot be partially redacted the
         // way a bullet point can without producing broken prose, so an unsupported number here fails the
@@ -209,10 +209,20 @@ public partial class AiChargesNarrativeService
         return new ChargesNarrativeOutcome(true, narrative, null);
     }
 
-    private static HashSet<string> BuildAllowedNumbers(IReadOnlyList<SelectedCharge> selectedCharges)
+    /// <summary>Every number the model was actually shown, and nothing else — deliberately NOT a blanket
+    /// small-integer allow-list (that would let a fabricated count like "5 material charges" through
+    /// unchecked when only 1 charge was ever sent). selectedCharges.Count/totalOpenChargeCount are here so
+    /// a genuine "the largest of the N charges shown" reads as supported; each charge's own ChargeId and
+    /// RocChargeNumber are here because BuildPrompt shows both to the model, so a prose reference to either
+    /// (not just the structured chargeIds field already cross-checked separately) must not be rejected as
+    /// invented.</summary>
+    private static HashSet<string> BuildAllowedNumbers(IReadOnlyList<SelectedCharge> selectedCharges, int totalOpenChargeCount)
     {
-        var allowed = new HashSet<string>();
-        for (var i = 1; i <= 10; i++) allowed.Add(i.ToString(CultureInfo.InvariantCulture));
+        var allowed = new HashSet<string>
+        {
+            selectedCharges.Count.ToString(CultureInfo.InvariantCulture),
+            totalOpenChargeCount.ToString(CultureInfo.InvariantCulture)
+        };
 
         void AddAmount(decimal? v)
         {
@@ -224,6 +234,8 @@ public partial class AiChargesNarrativeService
 
         foreach (var sc in selectedCharges)
         {
+            allowed.Add(sc.Charge.ChargeId.ToString(CultureInfo.InvariantCulture));
+            if (!string.IsNullOrWhiteSpace(sc.Charge.RocChargeNumber)) allowed.Add(sc.Charge.RocChargeNumber);
             AddAmount(sc.Charge.CurrentAmount);
             if (sc.Charge.CreationDate is { } cd) allowed.Add(cd.Year.ToString(CultureInfo.InvariantCulture));
             if (sc.Charge.LatestModificationDate is { } md) allowed.Add(md.Year.ToString(CultureInfo.InvariantCulture));
@@ -251,13 +263,20 @@ public partial class AiChargesNarrativeService
         return false;
     }
 
-    // Same amount/percentage/year recognition as AiCrossSectionAnalysisService.FinancialNumberRegex —
-    // ₹/Rs./INR-prefixed and bare crore/lakh-suffixed amounts, percentages, ratios, years.
+    // Starts from the same amount/percentage/year recognition as AiCrossSectionAnalysisService's regex
+    // (₹/Rs./INR-prefixed and bare crore/lakh-suffixed amounts, percentages, ratios, years), plus one more
+    // alternative this service needs that the sibling doesn't: a fully bare number with no currency marker,
+    // no crore/lakh suffix, nothing (e.g. a fabricated "999" or "5 charges"). Without it, an unmarked
+    // invented figure was never even inspected. Kept as a trailing fallback, not a replacement for the
+    // marker-specific alternatives above, because those need their own trailing boundary (`%`, `x`, `crore`)
+    // to correctly bound the match where the bare pattern's `\b` wouldn't (e.g. "3x" has no word boundary
+    // between the digit and the letter).
     [GeneratedRegex(
         @"₹\s?[\d,]+(\.\d+)?(\s?(?:crore|cr\.?|lakh))?" +
         @"|\b(?:Rs\.?|INR)\s?[\d,]+(\.\d+)?(\s?(?:crore|cr\.?|lakh))?" +
         @"|\b[\d,]+(\.\d+)?\s?(?:crore|lakh)\b" +
-        @"|[\d.]+\s?%|[\d.]+x\b|FY\s?\d{4}|\b(19|20)\d{2}\b",
+        @"|[\d.]+\s?%|[\d.]+x\b|FY\s?\d{4}|\b(19|20)\d{2}\b" +
+        @"|\b\d[\d,]*(\.\d+)?\b",
         RegexOptions.IgnoreCase)]
     private static partial Regex FinancialNumberRegex();
 
