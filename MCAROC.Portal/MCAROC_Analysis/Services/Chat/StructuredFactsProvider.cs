@@ -128,8 +128,11 @@ public class StructuredFactsProvider(AppDbContext db)
         {
             if (detailed.Contains("Litigation"))
                 foreach (var l in litigations)
+                {
+                    var courtSuffix = string.IsNullOrWhiteSpace(l.Court) ? "" : $", Court: {l.Court}";
                     facts.Add(new StructuredFact("Litigation",
-                        $"{l.CaseType} ({l.CaseStatus}): {l.Litigants}, Case No. {l.CaseNumber}", "Litigation", l.LitigationId));
+                        $"{l.CaseType} ({l.CaseStatus}): {l.Litigants}, Case No. {l.CaseNumber}{courtSuffix}", "Litigation", l.LitigationId));
+                }
             else
                 facts.Add(new StructuredFact("Litigation", $"{litigations.Count} litigation record(s) on file.", null, null));
         }
