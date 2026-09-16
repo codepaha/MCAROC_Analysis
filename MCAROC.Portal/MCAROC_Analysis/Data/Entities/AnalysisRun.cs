@@ -45,5 +45,11 @@ public class AnalysisRun
     /// inputs) — diagnostic only, never surfaced as an adverse finding.</summary>
     public string? DataSufficiencyNotesJson { get; set; }
 
+    /// <summary>AI-synthesized read of the largest open charges (see AiChargesNarrativeService) — a
+    /// separate call and a separate JSON blob from ExecutiveSummaryJson, on its own independent
+    /// PromptVersion. Null when the call failed or has not run yet; a failure here never affects
+    /// Status/ExecutiveSummaryJson (see AnalysisOrchestrator's own try/catch around it).</summary>
+    public string? ChargesNarrativeJson { get; set; }
+
     public List<AnalysisFinding> Findings { get; set; } = [];
 }

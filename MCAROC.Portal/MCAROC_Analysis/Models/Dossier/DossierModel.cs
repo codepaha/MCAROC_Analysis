@@ -24,7 +24,16 @@ public sealed record DossierModel(
     // Added after every other field so the ~19 existing positional `new DossierModel(...)` call sites in
     // the test suite (metrics/calculation-assurance fixtures that don't care about the profile block)
     // keep compiling unchanged — only DossierAssembler passes this positionally; everyone else gets null.
-    CompanyProfile? Profile = null);
+    CompanyProfile? Profile = null,
+    // The client's dossier-export preference (Client.IncludeLitigationInDossier), carried through unfiltered
+    // — DossierModel itself is shared with the portal's on-screen company page (see DossierCache's own doc
+    // comment), so no data here is ever redacted based on this flag. Only DossierPdfComposer reads it, to
+    // decide what its own PDF output shows. Defaults true so every existing positional call site is unaffected.
+    bool IncludeLitigation = true,
+    // AI-synthesized read of the largest open charges (AiChargesNarrativeService), computed once at
+    // analysis time — null when the AI call failed or hasn't run for this analysis run yet. Appended last,
+    // same append-only precedent as Profile/IncludeLitigation above.
+    Services.Analysis.ChargesNarrative? ChargesNarrative = null);
 
 public sealed record DossierCover(
     string CompanyName, string? Cin, string? Pan, DateOnly? IncorporationDate, string? Status,

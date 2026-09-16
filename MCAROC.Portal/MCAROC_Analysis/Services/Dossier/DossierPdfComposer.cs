@@ -1,4 +1,7 @@
+using System.Text.Json;
+using MCAROC_Analysis.Data.Entities;
 using MCAROC_Analysis.Models.Dossier;
+using MCAROC_Analysis.Services.Analysis;
 using QuestPDF.Fluent;
 using QuestPDF.Helpers;
 using QuestPDF.Infrastructure;
@@ -18,7 +21,90 @@ public partial class DossierPdfComposer(DossierModel model, DossierVariant varia
     /// missing charge report, or a deterministic check that could not run) — drives whether Section 7
     /// exists at all, so a fully-covered upload never renders an empty appendix page.</summary>
     private bool HasCoverageGap => model.SourceCoverage.AnySheetAbsent || model.SourceCoverage.ChargeReportMissing
-        || model.ExecSummary.NotAssessed.Count > 0;
+        || EffectiveNotAssessed.Count > 0;
+
+    // ── Litigation-optional "effective view" ─────────────────────────────────
+    // DossierModel is shared with the portal's on-screen company page (DossierCache/RequestsController), so
+    // it is never filtered — every field on model.ExecSummary/model.Litigation stays complete regardless of
+    // this client's dossier-export preference. Only THIS PDF composer decides what to show, computed here
+    // once and read everywhere below instead of model.ExecSummary.* directly.
+
+    private bool ShowLitigation => model.IncludeLitigation;
+
+    /// <summary>label/value bag for the litigation-redacted view — QuestPDF's layout engine makes multiple
+    /// composition passes, so this is memoized on first access rather than recomputed (or, worse, re-filtered
+    /// inconsistently) each time any Effective* property below is read.</summary>
+    private sealed record EffectiveExecSummaryView(
+        IReadOnlyList<AnalysisFinding> Findings, ReviewPriority? Priority,
+        int Critical, int Review, int Watch, int Positive,
+        ExecutiveSummary? Structured, IReadOnlyList<DataSufficiencyNote> NotAssessed);
+
+    private EffectiveExecSummaryView? _effective;
+    private EffectiveExecSummaryView Effective => _effective ??= BuildEffectiveView();
+
+    private IReadOnlyList<AnalysisFinding> EffectiveFindings => Effective.Findings;
+    private ReviewPriority? EffectivePriority => Effective.Priority;
+    private int EffectiveCriticalCount => Effective.Critical;
+    private int EffectiveReviewCount => Effective.Review;
+    private int EffectiveWatchCount => Effective.Watch;
+    private int EffectivePositiveCount => Effective.Positive;
+    private ExecutiveSummary? EffectiveStructuredSummary => Effective.Structured;
+    private IReadOnlyList<DataSufficiencyNote> EffectiveNotAssessed => Effective.NotAssessed;
+
+    /// <summary>When the client's flag is on (the default), every Effective* value is exactly the model's
+    /// own — this only branches when litigation must be omitted from this specific PDF.</summary>
+    private EffectiveExecSummaryView BuildEffectiveView()
+    {
+        var es = model.ExecSummary;
+        if (!ShowLitigation)
+        {
+            var litigationCodes = es.FindingsInDisplayOrder
+                .Where(f => f.Section == FindingSection.Litigation).Select(f => f.Code).ToHashSet();
+            var findings = es.FindingsInDisplayOrder
+                .Where(f => f.Section != FindingSection.Litigation)
+                .Where(f => f.Section != FindingSection.CrossSection || IsProvablyLitigationFree(f, litigationCodes))
+                .ToList();
+            var priority = ReviewPriorityCalculator.Explain(findings).Priority;
+            var notAssessed = es.NotAssessed.Where(n => !n.Code.StartsWith("LITIGATION", StringComparison.Ordinal)).ToList();
+            return new EffectiveExecSummaryView(
+                findings, priority,
+                findings.Count(f => f.Severity == FindingSeverity.Critical),
+                findings.Count(f => f.Severity == FindingSeverity.Review),
+                findings.Count(f => f.Severity == FindingSeverity.Watch),
+                findings.Count(f => f.Severity == FindingSeverity.Positive),
+                // The stored AI executive summary is one free-text blob for the whole company — it cannot be
+                // reliably filtered for litigation mentions without re-synthesizing it (a second AI call, out
+                // of scope here). Suppress it outright rather than risk leaking litigation prose;
+                // "Cross-section read" already has a null-safe fallback for this (used when AI synthesis
+                // itself failed).
+                null,
+                notAssessed);
+        }
+        return new EffectiveExecSummaryView(
+            es.FindingsInDisplayOrder, es.ReviewPriority,
+            es.CriticalCount, es.ReviewCount, es.WatchCount, es.PositiveCount,
+            es.Structured, es.NotAssessed);
+    }
+
+    /// <summary>A cross-section finding must positively prove it has no litigation dependency before it
+    /// survives into a flag-off dossier — fails closed. <c>SupportingSignalsJson</c> being null, empty, or
+    /// unparseable means we cannot rule out a litigation dependency, so the finding is excluded; only a
+    /// successfully-parsed code list with no overlap against <paramref name="litigationCodes"/> passes.
+    /// Deliberately not reusing AiCrossSectionAnalysisService.ParseSupportingCodes, which returns an empty
+    /// set for both "genuinely no codes" and "malformed JSON" — the wrong default for a redaction decision.</summary>
+    private static bool IsProvablyLitigationFree(AnalysisFinding finding, HashSet<string> litigationCodes)
+    {
+        if (string.IsNullOrWhiteSpace(finding.SupportingSignalsJson)) return false;
+        HashSet<string> codes;
+        try
+        {
+            var parsed = JsonSerializer.Deserialize<List<string>>(finding.SupportingSignalsJson);
+            if (parsed is null) return false;
+            codes = parsed.ToHashSet();
+        }
+        catch (JsonException) { return false; }
+        return !codes.Overlaps(litigationCodes);
+    }
 
     /// <summary>The canonical Cubictree entity line — cover footer + document metadata.</summary>
     internal const string AttributionLine =
@@ -230,7 +316,8 @@ public partial class DossierPdfComposer(DossierModel model, DossierVariant varia
             ContentsLine(col, "3. Borrowing & Security", "annexure-c");
             ContentsLine(col, "4. Directors & Governance", "annexure-a");
             ContentsLine(col, "5. Statutory Compliance", "annexure-d");
-            ContentsLine(col, "6. Litigation", "annexure-e");
+            if (ShowLitigation)
+                ContentsLine(col, "6. Litigation", "annexure-e");
             if (HasCoverageGap)
                 ContentsLine(col, "7. Coverage & Data Sufficiency", "annexure-f");
 
@@ -250,7 +337,9 @@ public partial class DossierPdfComposer(DossierModel model, DossierVariant varia
     private void ContentsLine(ColumnDescriptor col, string label, string section) =>
         col.Item().PaddingVertical(5).BorderBottom(0.5f).BorderColor(DossierTheme.LineSoft).Row(row =>
         {
-            row.RelativeItem().Text(label).FontSize(DossierTheme.Body);
+            // SectionLink jumps the reader straight to the heading on click, in whatever PDF viewer they're
+            // using — same mechanism the finding cards already use for their "See Annexure X" references.
+            row.RelativeItem().Text(t => t.SectionLink(label, section).FontSize(DossierTheme.Body));
             row.ConstantItem(36).AlignRight().Text(t => t.BeginPageNumberOfSection(section)
                 .FontSize(DossierTheme.Body).FontColor(DossierTheme.InkFaint));
         });

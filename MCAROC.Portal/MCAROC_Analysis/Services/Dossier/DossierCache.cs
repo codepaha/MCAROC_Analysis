@@ -47,4 +47,33 @@ public class DossierCache(AppDbContext db, DossierAssembler assembler, IMemoryCa
             });
         return model;
     }
+
+    /// <summary>Clears both the in-memory <see cref="DossierModel"/> entry and the rendered on-disk PDF(s)
+    /// for one request, so a per-client setting change (e.g. <see cref="Client.IncludeLitigationInDossier"/>)
+    /// takes effect on the very next view/download instead of waiting up to 20 minutes (memory) or forever
+    /// (disk — that cache has no expiration at all). Neither cache key includes client-level settings, so
+    /// this must be called explicitly whenever one changes; there is no other invalidation trigger for it.</summary>
+    public async Task InvalidateForRequestAsync(long requestId, string contentRootPath, CancellationToken ct = default)
+    {
+        var keyParts = await db.Requests
+            .Where(r => r.RequestId == requestId)
+            .Select(r => new
+            {
+                r.LatestCompletedIngestionRunId,
+                AnalysisRunId = db.AnalysisRuns
+                    .Where(a => a.RequestId == requestId
+                        && a.IngestionRunId == r.LatestCompletedIngestionRunId
+                        && (a.Status == AnalysisRunStatus.Completed || a.Status == AnalysisRunStatus.CompletedWithErrors))
+                    .OrderByDescending(a => a.RunNumber).Select(a => (long?)a.AnalysisRunId).FirstOrDefault()
+            })
+            .FirstOrDefaultAsync(ct);
+
+        if (keyParts is { LatestCompletedIngestionRunId: { } ingestionRunId, AnalysisRunId: { } analysisRunId })
+            cache.Remove($"dossier:{requestId}:{ingestionRunId}:{analysisRunId}");
+
+        var dir = Path.Combine(contentRootPath, "App_Data", "Dossiers", requestId.ToString());
+        if (Directory.Exists(dir))
+            foreach (var file in Directory.EnumerateFiles(dir, "*.pdf"))
+                File.Delete(file);
+    }
 }
