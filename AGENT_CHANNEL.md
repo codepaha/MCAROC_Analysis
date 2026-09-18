@@ -243,6 +243,28 @@ service — if it sits `queued`, `run.cmd` is down) runs *only* what Linux can't
 
 ## Log  <!-- newest first. Prefix: NEEDS / BLOCKED / DONE / DECISION / FYI -->
 
+### 2026-09-18 — Claude session (DONE PR #225 review round 3 — CI connection string + migration-guard TOCTOU race, both fixed)
+- **Two real findings from Codex's `build-and-test` failure report, both fixed at head `<pending>`:**
+  1. `OperationalSlotLeaseMigrationGuardTests` hardcoded `Server=.\SQLEXPRESS;...Trusted_Connection=True;`
+     for its own dedicated throwaway database — fine locally, but the hosted `build-and-test` job points
+     `MCAROC_TEST_CONNECTION` at a SQL-auth container on `localhost,1433` (see `.github/workflows/ci.yml`),
+     not a named Windows instance, so it failed with "server not found". Fixed by deriving both the
+     master-DB and per-test-DB connection strings from `TestDatabase.ConnectionString` via
+     `SqlConnectionStringBuilder` (swap only `InitialCatalog`) — same fix already documented in
+     `project_ingestion_throughput.md`'s prior entry, this just re-confirms it landed cleanly on CI.
+  2. The migration guard's plain `IF EXISTS` (round 2's fix) had no lock behind it — a real acquisition
+     could commit a brand-new lease in the gap between the check and the migration's later `DropTable`,
+     which would then destroy it. Fixed: `OperationalSlotLeaseMigrationGuard` now takes the SAME
+     transaction-scoped `sp_getapplock` resources (`OperationalSlot_LargeUpload`/`OperationalSlot_LargeUnpack`)
+     that `OperationalSlotLeaseService.TryAcquireSlotAsync` takes, BEFORE running the existence check —
+     mutual exclusion holds for the guard's whole transaction (EF wraps a migration in one transaction by
+     default), so nothing can slip a new acquisition in before `DropTable` runs. Proved directly (not via a
+     timing race that could pass for the wrong reason): a new test opens the guard's transaction, then a
+     concurrent connection's own `sp_getapplock` attempt on the same resource with a short timeout is
+     asserted to be refused while the guard's transaction is open, and to succeed immediately once it ends.
+- 5/5 focused tests green (`OperationalSlotLeaseMigrationGuardTests`, including the new mutual-exclusion
+  test), full branch suite re-run in isolation to confirm no regression. `@codex` re-review requested.
+
 ### 2026-09-16 - Codex (DONE #221 SBI legal-case upload and report layout)
 - **Branch `fix/sbi-prelogin-legal-case-report`** adds XLS/XLSX/CSV litigation upload on the pre-login
   report edit flow, derives the nine court-level counts, and renders complete case details in the SBI DOCX.
