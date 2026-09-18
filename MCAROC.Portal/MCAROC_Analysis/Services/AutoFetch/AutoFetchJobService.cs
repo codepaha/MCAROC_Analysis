@@ -322,10 +322,12 @@ public sealed class AutoFetchJobService(
         // that briefly coexists with them (see the cleanup at the end of this method) — both draw from the
         // same volume-wide ledger the large-archive-upload feature uses, so the two features never
         // independently believe the same free space is available to both. Sized from the plan's own
-        // estimate (capped at the configured ceiling), not the ceiling itself, so a handful of PDFs for a
-        // small company doesn't have to fail because a machine lacks 40 GB free for nothing it will
-        // actually use — the live per-file and aggregate caps below are what bound real usage regardless.
-        var reserveBytes = 2 * Math.Max(Math.Min(estimatedBytes, aggregateCap), 50 * 1024 * 1024L);
+        // estimate (capped at the configured ceiling) plus one MaxResponseBytes margin — the most the
+        // aggregate download budget below can ever overshoot by, now that admission against it is atomic
+        // (see AggregateDownloadBudget) — so a handful of PDFs for a small company doesn't have to fail
+        // because a machine lacks 40 GB free for nothing it will actually use, while still covering the
+        // real worst case rather than only the happy-path estimate.
+        var reserveBytes = 2 * Math.Max(Math.Min(estimatedBytes, aggregateCap) + _opts.MaxResponseBytes, 50 * 1024 * 1024L);
         var reservation = await reservations.TryReserveAsync(
             "AutoFetchJob", job.AutoFetchJobId.ToString(), stagingDir, reserveBytes, _opts.StorageReservationLifetime, ct);
         if (!reservation.Success)
@@ -344,20 +346,26 @@ public sealed class AutoFetchJobService(
             var downloadedCount = job.FilesDownloaded;
             var failedCount = 0;
             var cappedCount = 0;
-            long bytes = initialBytes;
+            long bytes = initialBytes; // for progress display only — real bytes actually on disk, never a reservation
             var failures = new System.Collections.Concurrent.ConcurrentBag<string>();
+
+            // Enforces the aggregate cap atomically: a worker claims MaxResponseBytes of budget with a
+            // single compare-and-swap BEFORE it starts downloading, not a separate check-then-add after —
+            // the earlier version of this method let several concurrent workers all observe "under cap"
+            // in the same window before any of them had added anything, so the job could overshoot by up
+            // to DownloadConcurrency × MaxResponseBytes instead of one file's worth. TryReserve makes that
+            // race structurally impossible: only one caller can ever be the reservation that crosses the
+            // threshold, so real disk usage is now bounded by aggregateCap + MaxResponseBytes regardless
+            // of how many workers race the check (see AggregateDownloadBudget's own remarks).
+            var budget = new AggregateDownloadBudget(aggregateCap);
+            budget.SeedKnownUsage(initialBytes);
 
             var downloadTask = Parallel.ForEachAsync(pending,
                 new ParallelOptions { MaxDegreeOfParallelism = Math.Max(1, _opts.DownloadConcurrency), CancellationToken = ct },
                 async (item, token) =>
                 {
                     var (filing, (entryName, localPath, awsPath, did)) = item;
-                    // Live enforcement against the real running total — the plan-time estimate above only
-                    // decided what to attempt and how much to reserve; this is what actually bounds bytes
-                    // written to disk when declared sizes under-estimated the truth. A file already
-                    // in-flight when the cap is crossed is allowed to finish (bounded overshoot: at most
-                    // DownloadConcurrency × MaxResponseBytes), rather than aborting a partial transfer.
-                    if (Interlocked.Read(ref bytes) >= aggregateCap)
+                    if (!budget.TryReserve(_opts.MaxResponseBytes))
                     {
                         Interlocked.Increment(ref cappedCount);
                         return;
@@ -366,11 +374,14 @@ public sealed class AutoFetchJobService(
                     var ok = await DownloadWithRetryAsync(job.Bid, userId, awsPath, did, localPath, token);
                     if (ok)
                     {
+                        var actualBytes = new FileInfo(localPath).Length;
+                        budget.Commit(_opts.MaxResponseBytes, actualBytes);
                         Interlocked.Increment(ref downloadedCount);
-                        Interlocked.Add(ref bytes, new FileInfo(localPath).Length);
+                        Interlocked.Add(ref bytes, actualBytes);
                     }
                     else
                     {
+                        budget.Release(_opts.MaxResponseBytes);
                         Interlocked.Increment(ref failedCount);
                         failures.Add($"{filing.SectionFolder} / {filing.DocId} / {entryName}");
                     }

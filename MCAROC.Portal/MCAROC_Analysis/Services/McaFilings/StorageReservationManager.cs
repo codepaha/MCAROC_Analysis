@@ -153,7 +153,17 @@ public class StorageReservationManager(
         await using var tx = await db.Database.BeginTransactionAsync(System.Data.IsolationLevel.ReadCommitted, ct);
         try
         {
-            db.ChangeTracker.Clear();
+            // Deliberately no db.ChangeTracker.Clear() here, unlike TryReserveUploadCapacityAsync: that
+            // method's only caller (RequestsUploadController.Initiate) never touches its own tracked
+            // entities again after calling it, so clearing is harmless there. This method's caller
+            // (AutoFetchJobService) holds a long-lived tracked AutoFetchJob/McaRequest across its entire
+            // multi-stage run and keeps mutating + saving them long after this call returns — clearing the
+            // whole tracker here silently detaches those entities, so every subsequent SaveChangesAsync()
+            // for them becomes a no-op (found live: a job's status/progress simply stopped persisting
+            // right after its first successful reservation, with no exception anywhere to explain why).
+            // Staleness of an already-tracked StorageVolumeLease/StorageCapacityReservation row is not a
+            // real risk here either way: this method is called at most once per AppDbContext instance
+            // (each job run gets its own fresh scoped context), so nothing could have tracked one already.
             var lease = await db.StorageVolumeLeases
                 .FromSqlInterpolated($"SELECT VolumeRoot, ActiveReservedBytes, RowVersion FROM StorageVolumeLeases WITH (UPDLOCK, HOLDLOCK) WHERE VolumeRoot = {volume}")
                 .FirstOrDefaultAsync(ct);
@@ -177,6 +187,18 @@ public class StorageReservationManager(
             if (freeSpace - trueActiveReserved < bytes)
             {
                 await tx.RollbackAsync(ct);
+                // The line above set lease.ActiveReservedBytes = trueActiveReserved, marking the tracked
+                // entity Modified — rolling back the SQL transaction undoes that in the database but does
+                // nothing to EF's own change tracker, which has no concept of a SQL rollback. Left as-is,
+                // a LATER call to this method on the same AppDbContext (e.g. a retry once space frees up)
+                // would query for a fresh row, find this entity already tracked and Modified, and EF would
+                // keep serving the stale in-memory values — including a RowVersion the real row has since
+                // moved past — instead of the fresh read, eventually failing that later call's own
+                // SaveChangesAsync with a spurious concurrency exception. Detaching just this one entity
+                // (not the whole tracker — the caller may hold other, unrelated tracked entities of its
+                // own across this call, see the remarks on why this method never calls ChangeTracker.Clear)
+                // forces the next call to start from a genuinely fresh read.
+                db.Entry(lease).State = EntityState.Detached;
                 var msg = $"Insufficient storage on volume '{volume}'. Free: {freeSpace / (1024 * 1024)}MB, Reserved: {trueActiveReserved / (1024 * 1024)}MB, Needed: {bytes / (1024 * 1024)}MB.";
                 logger.LogWarning("{Message}", msg);
                 return new ReservationResult(false, msg, null);
