@@ -49,9 +49,9 @@ public class RequestsUploadController(
 
         var sessionId = Guid.NewGuid();
 
-        // 1. Acquire global large upload slot lease
+        // 1. Acquire a large upload slot lease — up to MaxConcurrentUploads sessions may hold one at once.
         var slotResult = await slotLeaseService.TryAcquireSlotAsync(
-            OperationalSlotLeaseService.LargeUploadSlot, sessionId.ToString(), _opts.SlotLeaseDuration, ct);
+            OperationalSlotLeaseService.LargeUploadSlot, sessionId.ToString(), _opts.SlotLeaseDuration, _opts.MaxConcurrentUploads, ct);
 
         if (!slotResult.Success)
             return StatusCode(StatusCodes.Status429TooManyRequests, slotResult.Error ?? "Another large upload is currently in progress.");

@@ -3,17 +3,22 @@ using Microsoft.Extensions.Options;
 
 namespace MCAROC_Analysis.Services.McaFilings;
 
-/// <summary>Dequeues MCA Filings work and dispatches it to a scoped FilingBatchProcessor. Two separate
-/// concurrency limits, per the plan: OCR/unpacking is CPU/disk-bound, Gemini extraction is externally
-/// rate-limited — sharing one limit between them would starve one or the other under load.</summary>
+/// <summary>Dequeues MCA Filings work and dispatches it to a scoped FilingBatchProcessor. Three separate,
+/// independently configurable concurrency limits (LargeArchiveUploadOptions — defaults match the values
+/// this class hardcoded before): unpacking (bounded by MaxConcurrentUnpacks — also the batch-wide cap
+/// OperationalSlotLeaseService enforces, so several outer archives can genuinely unpack at once instead of
+/// unpack work starving document OCR or vice versa by sharing one semaphore with it), OCR/classification
+/// (CPU/disk-bound), and Gemini extraction (externally rate-limited by the Vertex AI project quota — raise
+/// this only after checking that quota, not just local CPU headroom).</summary>
 public class FilingProcessingWorker(
     IServiceScopeFactory scopeFactory,
     FilingProcessingQueue queue,
     ILogger<FilingProcessingWorker> logger,
     IOptions<LargeArchiveUploadOptions>? options = null) : BackgroundService
 {
-    private readonly SemaphoreSlim _documentConcurrency = new(4);
-    private readonly SemaphoreSlim _extractionConcurrency = new(2);
+    private readonly SemaphoreSlim _unpackConcurrency = new(Math.Max(1, options?.Value.MaxConcurrentUnpacks ?? 1));
+    private readonly SemaphoreSlim _documentConcurrency = new(Math.Max(1, options?.Value.MaxConcurrentDocumentProcessing ?? 4));
+    private readonly SemaphoreSlim _extractionConcurrency = new(Math.Max(1, options?.Value.MaxConcurrentAiExtraction ?? 2));
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -51,7 +56,12 @@ public class FilingProcessingWorker(
 
     private async Task HandleItemAsync(FilingWorkItem item, CancellationToken ct)
     {
-        var semaphore = item is ExtractFilingWorkItem ? _extractionConcurrency : _documentConcurrency;
+        var semaphore = item switch
+        {
+            UnpackBatchWorkItem => _unpackConcurrency,
+            ExtractFilingWorkItem => _extractionConcurrency,
+            _ => _documentConcurrency
+        };
         await semaphore.WaitAsync(ct);
         try
         {

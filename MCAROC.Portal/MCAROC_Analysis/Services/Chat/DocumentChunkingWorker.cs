@@ -1,13 +1,19 @@
+using MCAROC_Analysis.Services.McaFilings;
+using Microsoft.Extensions.Options;
+
 namespace MCAROC_Analysis.Services.Chat;
 
 /// <summary>Dequeues BatchIds and fans out per-document chunking with bounded concurrency (CPU/IO-bound
-/// work, similar rationale to Phase 2's per-document concurrency limit).</summary>
+/// work, similar rationale to Phase 2's per-document concurrency limit) — each unit makes an embedding
+/// API call, so this shares the same LargeArchiveUploadOptions:MaxConcurrentChunking config as the rest of
+/// the pipeline's tunable limits rather than a hardcoded value.</summary>
 public class DocumentChunkingWorker(
     IServiceScopeFactory scopeFactory,
     DocumentChunkingQueue queue,
-    ILogger<DocumentChunkingWorker> logger) : BackgroundService
+    ILogger<DocumentChunkingWorker> logger,
+    IOptions<LargeArchiveUploadOptions>? options = null) : BackgroundService
 {
-    private readonly SemaphoreSlim _concurrency = new(4);
+    private readonly SemaphoreSlim _concurrency = new(Math.Max(1, options?.Value.MaxConcurrentChunking ?? 4));
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -15,7 +21,23 @@ public class DocumentChunkingWorker(
 
         await foreach (var batchId in queue.ReadAllAsync(stoppingToken))
         {
-            _ = HandleBatchAsync(batchId, stoppingToken);
+            // Different batches still run concurrently (fire-and-forget), but each batch transitions to
+            // "running" right here — from this point, a concurrent Enqueue can no longer be a silent
+            // no-op; it flags exactly one follow-up pass instead. See DocumentChunkingQueue's remarks.
+            queue.MarkStarted(batchId);
+            _ = RunPassAsync(batchId, stoppingToken);
+        }
+    }
+
+    private async Task RunPassAsync(long batchId, CancellationToken ct)
+    {
+        try
+        {
+            await HandleBatchAsync(batchId, ct);
+        }
+        finally
+        {
+            queue.MarkDone(batchId);
         }
     }
 

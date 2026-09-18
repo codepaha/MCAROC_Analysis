@@ -182,7 +182,9 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
 
         modelBuilder.Entity<OperationalSlotLease>(e =>
         {
-            e.HasKey(x => x.SlotType);
+            e.HasKey(x => x.LeaseId);
+            e.HasIndex(x => new { x.SlotType, x.ActiveHolderId }).IsUnique();
+            e.HasIndex(x => new { x.SlotType, x.ExpiresUtc });
             e.Property(x => x.SlotType).HasMaxLength(30);
             e.Property(x => x.ActiveHolderId).HasMaxLength(100);
         });

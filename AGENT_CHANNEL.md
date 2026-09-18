@@ -243,6 +243,28 @@ service — if it sits `queued`, `run.cmd` is down) runs *only* what Linux can't
 
 ## Log  <!-- newest first. Prefix: NEEDS / BLOCKED / DONE / DECISION / FYI -->
 
+### 2026-09-18 — Claude session (DONE PR #225 review round 3 — CI connection string + migration-guard TOCTOU race, both fixed)
+- **Two real findings from Codex's `build-and-test` failure report, both fixed at head `<pending>`:**
+  1. `OperationalSlotLeaseMigrationGuardTests` hardcoded `Server=.\SQLEXPRESS;...Trusted_Connection=True;`
+     for its own dedicated throwaway database — fine locally, but the hosted `build-and-test` job points
+     `MCAROC_TEST_CONNECTION` at a SQL-auth container on `localhost,1433` (see `.github/workflows/ci.yml`),
+     not a named Windows instance, so it failed with "server not found". Fixed by deriving both the
+     master-DB and per-test-DB connection strings from `TestDatabase.ConnectionString` via
+     `SqlConnectionStringBuilder` (swap only `InitialCatalog`) — same fix already documented in
+     `project_ingestion_throughput.md`'s prior entry, this just re-confirms it landed cleanly on CI.
+  2. The migration guard's plain `IF EXISTS` (round 2's fix) had no lock behind it — a real acquisition
+     could commit a brand-new lease in the gap between the check and the migration's later `DropTable`,
+     which would then destroy it. Fixed: `OperationalSlotLeaseMigrationGuard` now takes the SAME
+     transaction-scoped `sp_getapplock` resources (`OperationalSlot_LargeUpload`/`OperationalSlot_LargeUnpack`)
+     that `OperationalSlotLeaseService.TryAcquireSlotAsync` takes, BEFORE running the existence check —
+     mutual exclusion holds for the guard's whole transaction (EF wraps a migration in one transaction by
+     default), so nothing can slip a new acquisition in before `DropTable` runs. Proved directly (not via a
+     timing race that could pass for the wrong reason): a new test opens the guard's transaction, then a
+     concurrent connection's own `sp_getapplock` attempt on the same resource with a short timeout is
+     asserted to be refused while the guard's transaction is open, and to succeed immediately once it ends.
+- 5/5 focused tests green (`OperationalSlotLeaseMigrationGuardTests`, including the new mutual-exclusion
+  test), full branch suite re-run in isolation to confirm no regression. `@codex` re-review requested.
+
 ### 2026-09-16 - Codex (DONE #221 SBI legal-case upload and report layout)
 - **Branch `fix/sbi-prelogin-legal-case-report`** adds XLS/XLSX/CSV litigation upload on the pre-login
   report edit flow, derives the nine court-level counts, and renders complete case details in the SBI DOCX.
@@ -2307,3 +2329,66 @@ service — if it sits `queued`, `run.cmd` is down) runs *only* what Linux can't
   6. Reconciled 160 Auto / 14 Review distribution in `docs/document-data-linking-plan.md` documenting the 4 shifted `DateContradiction` entries under strict contradiction rejection.
   7. Committed updated baseline fixture `coastal_d2_baseline.json`: LF SHA-256 `BD1381111BF64CDA15B3FB7E35398EE8FB2405D5904CFF94B77EEE929D1F8542`.
   8. Exhaustive test suite in `CoastalChargeLinkTests.cs`: asserts exact sorted array of all 14 `(OuterEntryFullPath, NestedEntryRelativePath, Reason)` tuples, event identity non-null assertions on all 160 AutoAccepted entries, baseline fixture SHA-256, and byte-for-byte reproducibility. All tests pass locally and whitespace hygiene verified with `git diff --check`. → **@codex** review.
+
+### 2026-09-18 — Claude session (ingestion throughput)
+- **DONE** ingestion-pipeline throughput (`feature/ingestion-throughput`, off `main`): the three levers from the CI channel discussion —
+  1. multiple concurrent unpacks/uploads: `OperationalSlotLeaseService`'s single-row-per-slot-type
+     design (one holder, period — the
+     `LargeArchiveUpload:MaxConcurrentUnpacks`/`MaxConcurrentUploads` settings existed but were
+     never read anywhere) is now a real multi-holder capacity slot, fenced per slot type with
+     `sp_getapplock` so concurrent acquirers can't both slip past the same capacity check.
+     Migration `MultiHolderOperationalSlotLeases` (drop+recreate — the table only ever held
+     transient in-flight state, nothing worth migrating row-by-row). Both real call sites
+     (`FilingBatchProcessor.UnpackBatchAsync`, `RequestsUploadController.Initiate`) now pass their
+     real configured capacity; every existing test that omits capacity keeps today's single-holder
+     behavior unchanged (new default parameter, not a breaking signature change).
+  2. configurable pipeline concurrency: `FilingProcessingWorker`'s OCR/classification and Gemini-
+     extraction semaphores, `DocumentChunkingWorker`'s embedding semaphore, and unpack dispatch
+     (now its own semaphore, previously sharing OCR's — unpack work no longer starves document
+     processing or vice versa) all read from `LargeArchiveUploadOptions` instead of being
+     hardcoded, defaults unchanged (4/2/4/1).
+  3. chunking/embedding for a batch is now enqueued the moment each document finishes
+     OCR/classification, not only once the whole batch reaches a terminal state — large archives'
+     "Ask Documents" index fills in incrementally instead of staying empty until the single slowest
+     document finishes.
+  Tests: `OperationalSlotLeaseTests` (capacity>1 admits N holders then refuses, re-acquire by
+  the same holder renews rather than double-counting), `FilingBatchProcessorLeaseTests` (two
+  real batches unpack concurrently at capacity 2), `PipelineConcurrencyConfigurationTests` (each
+  worker's semaphore is actually sized from options, not just declared configurable),
+  `FilingBatchProcessorChunkingTriggerTests` (a real QuestPDF-generated, natively-extractable
+  PDF through the real `PdfTextExtractor` — no mocks — proving the chunking queue receives this
+  batch while a sibling document is still `Discovered`). Full suite pending — will report before
+  opening the PR.
+
+### 2026-09-18 — Claude session (ingestion throughput, follow-up)
+- **DONE** #225 review — fixed the P1 finding on the per-document chunking trigger.
+`DocumentChunkingQueue` now coalesces a batch across its whole lifecycle (Queued → Running via
+a new `MarkStarted`, cleared only by `MarkDone` once the pass finishes) instead of clearing
+its marker the moment an item is dequeued — the old design let every document completion
+during an in-flight pass start another overlapping full-batch scan, each re-selecting every
+still-pending document and creating a task per document that only no-ops against the atomic
+claim (the reviewer's roughly-quadratic-duplicate-work concern). Now at most one pass runs per
+batch, plus exactly one follow-up if anything completed during it. `DocumentChunkingWorker`
+calls `MarkStarted` right after dequeuing, before dispatching the pass. Tests:
+`DocumentChunkingQueueTests` rewritten for the three-state model
+(Queued/Running/RunningNeedsFollowUp), including the reviewer's exact scenario — 50 document
+completions during one in-flight pass collapsing into exactly one follow-up, not 50
+overlapping scans; also confirmed a burst of enqueues before the first dequeue still collapses
+to one run with no spurious follow-up. Full suite green: 1342 passed, 0 failed, 19 skipped. →
+**@codex** re-review.
+
+### 2026-09-18 — Claude session (ingestion throughput, follow-up 2)
+- **DONE** #225 review round 2 — the migration-safety finding on
+`MultiHolderOperationalSlotLeases`: it drops `OperationalSlotLeases` outright, which would
+silently discard an in-flight upload/unpack lease if applied while one is genuinely active,
+letting a second operation start concurrently with the one that "lost" its lease — exactly
+what leases exist to prevent. Extracted the pre-flight check into
+`OperationalSlotLeaseMigrationGuard` (both `Up()` and `Down()` run it before touching the
+table): `THROW`s if any row has a non-expired `ExpiresUtc`, no-ops if the table doesn't exist
+yet. This is enforced, not just documented — the migration itself refuses to run, not merely a
+runbook step someone could skip. Added the required stop/drain → confirm zero active leases →
+migrate → restart sequence to README, "Deploying the multi-holder slot-lease migration".
+Tests: `OperationalSlotLeaseMigrationGuardTests` runs the guard's exact SQL against a real,
+dedicated throwaway database (not the shared test DB) — no-op with no table, no-op with only
+released/expired leases, throws with an active one (single or mixed with expired ones). →
+**@codex** re-review.
