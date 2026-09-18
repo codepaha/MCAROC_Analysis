@@ -13,8 +13,20 @@ namespace MCAROC_Analysis.Tests;
 public class OperationalSlotLeaseMigrationGuardTests : IAsyncLifetime
 {
     private readonly string _databaseName = "MCAROC_MigrationGuard_" + Guid.NewGuid().ToString("N")[..12];
-    private string MasterConnectionString => @"Server=.\SQLEXPRESS;Database=master;Trusted_Connection=True;TrustServerCertificate=True;";
-    private string DatabaseConnectionString => $@"Server=.\SQLEXPRESS;Database={_databaseName};Trusted_Connection=True;TrustServerCertificate=True;";
+
+    // Built from TestDatabase.ConnectionString (which already respects the MCAROC_TEST_CONNECTION
+    // override) rather than a hardcoded .\SQLEXPRESS/Trusted_Connection string — the hosted CI runner's
+    // build-and-test job points that override at a SQL-auth container on localhost,1433, not a named
+    // local instance, and a hardcoded local connection string fails outright there (found live: CI red,
+    // "server not found", after this file first shipped with exactly that hardcoded string).
+    private static string ConnectionStringFor(string database)
+    {
+        var builder = new SqlConnectionStringBuilder(TestDatabase.ConnectionString) { InitialCatalog = database };
+        return builder.ConnectionString;
+    }
+
+    private string MasterConnectionString => ConnectionStringFor("master");
+    private string DatabaseConnectionString => ConnectionStringFor(_databaseName);
 
     public async Task InitializeAsync()
     {
