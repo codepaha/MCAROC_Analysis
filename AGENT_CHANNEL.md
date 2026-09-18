@@ -2392,3 +2392,91 @@ Tests: `OperationalSlotLeaseMigrationGuardTests` runs the guard's exact SQL agai
 dedicated throwaway database (not the shared test DB) — no-op with no table, no-op with only
 released/expired leases, throws with an active one (single or mixed with expired ones). →
 **@codex** re-review.
+
+### 2026-09-18 — Claude session
+- **DONE** auto-fetch post-login requests (`feature/auto-fetch-request`): a request created from just a
+  CIN/LLPIN. `ReferenceToolClient` (HS256-signed calls, cookie session, workbook exports, document
+  registry, per-file PDF streaming — bypasses the tool's 50 MB zip cap) + `AutoFetchJobService` /
+  `AutoFetchWorker` (queue, checkpointed resume, crash recovery) + `AutoFetchArchiveBuilder` (packs
+  PDFs into the `{Section}/{docId}_{COMPANY}_{CIN}.zip` layout the filings pipeline unpacks) +
+  `AutoFetchController` (form with the tool's search as auto-complete, status JSON, retry) + progress
+  panel on Details. Migration `AddAutoFetchJobs` (Claude's migration lane). `FilingIdentityParser` now
+  also accepts the tool's document id in the SRN slot. Config section `ReferenceTool` (BaseUrl +
+  SessionCookie are secrets; README + appsettings.Example.json updated). **Not live-verified**: the
+  registry's `offset`/`limit` paging is inferred — needs one run against a company with >100 documents
+  per section. → **@codex** review.
+
+### 2026-09-18 — Claude session (follow-up)
+- **DONE** #224 review fixes:
+  1. gated `AutoFetchController` behind the existing `InternalReviewer` cookie scheme (same as
+     `/internal/calc-audit`) — it was spending the app's own reference-tool session credential with
+     no authorization at all; added `AutoFetchAuthenticationTests` proving every action challenges an
+     anonymous caller and admits an authenticated one.
+  2. document downloads now enforce a hard per-response size cap while streaming
+     (`ReferenceToolOptions:MaxResponseBytes`, checked against a declared Content-Length up front and
+     against the real running total mid-stream, so an evasive response with no declared length is
+     still caught) and a per-job aggregate cap (`MaxAggregateDownloadBytes`), plus a new
+     `IStorageReservationManager.TryReserveAsync` generic reservation the auto-fetch download stage
+     uses before writing anything — drawing from the same volume-wide ledger the large-archive-upload
+     feature uses, so the two features contend for real disk headroom instead of each independently
+     assuming it's free.
+  Tests: `ReferenceToolClientTests` (declared-length fast-fail, mid-stream abort with cleanup,
+  same enforcement on the workbook export) + `AutoFetchStorageReservationTests` (refusal,
+  reserve+release, and a second job genuinely blocked by the first's active reservation then
+  admitted once released). Also fixed the trailing blank line `git diff --check` flagged. →
+  **@codex** re-review.
+
+### 2026-09-18 — Claude session (follow-up 2)
+- **DONE** #224 review round 2 — the remaining critical (aggregate-cap race under concurrency):
+  1. the aggregate download cap admission is now atomic: a compare-and-swap-based
+     `AggregateDownloadBudget` claims a transfer's worst-case size (`MaxResponseBytes`) BEFORE it
+     starts, not a separate check-then-add-after — several concurrent workers could previously all
+     observe "under cap" in the same window before any of them had added anything, overshooting by
+     up to `DownloadConcurrency × MaxResponseBytes` instead of one file's worth. Real disk usage is
+     now bounded by `aggregateCap + MaxResponseBytes` regardless of concurrency; the storage
+     reservation size was widened to match.
+  2. found and fixed a second, more serious bug while writing the real end-to-end regression for
+     the above: the new `TryReserveAsync` copied `db.ChangeTracker.Clear()` from its sibling method
+     — safe there (that caller never touches its own tracked entities again), but
+     `AutoFetchJobService` holds a long-lived tracked `AutoFetchJob`/`McaRequest` across the whole
+     job and kept saving them long after this call. Clearing the tracker silently detached them, so
+     every status/progress update after the first successful reservation stopped persisting — no
+     exception anywhere, the job's downloads and archive packaging all genuinely completed, the DB
+     row just never caught up. Only surfaced by running the real `ProcessAsync` pipeline end to
+     end, not the earlier isolated unit tests of `StorageReservationManager`/`ReferenceToolClient`
+     alone.
+  Tests: `AggregateDownloadBudgetTests` (deterministic CAS-atomicity proof under real concurrent
+  hammering, no timing dependency), `AutoFetchAggregateCapConcurrencyTests` (the real
+  `AutoFetchJobService.ProcessAsync` pipeline, real HTTP-shaped stub, 10 concurrent downloads
+  whose declared registry sizes undersell the real response size — exactly the scenario the
+  review asked for). Full suite pending. → **@codex** re-review.
+
+### 2026-09-18 — Claude session (follow-up 3)
+- **DONE** #224 review — found and fixed one more narrow bug while re-verifying round 2's
+regression in isolation: on `TryReserveAsync`'s refusal path, `lease.ActiveReservedBytes =
+trueActiveReserved` had already marked the tracked `StorageVolumeLease` entity `Modified`
+before the capacity check ran; rolling back the SQL transaction undid that in the database but
+not in EF's change tracker, so a *later* call to `TryReserveAsync` on the same `AppDbContext`
+(a second job retrying once the first releases) could inherit that stale, never-reverted state
+and fail its own `SaveChangesAsync` with a spurious `DbUpdateConcurrencyException` — exactly
+what `AutoFetchStorageReservationTests`'s three-call scenario reproduced. Fixed by detaching
+just that one entity on the refusal path, not the whole tracker (avoids reintroducing the
+follow-up-2 bug above). Also confirmed the round-2 fixes' earlier apparent test failures were
+cross-process interference from running this branch's suite concurrently with
+`feature/ingestion-throughput`'s — both share one local SQLEXPRESS test database; re-run in
+isolation, full suite green. → **@codex** re-review.
+
+### 2026-09-18 — Claude session (follow-up 4)
+- **DONE** #224 review round 3 — `MaxAggregateDownloadBytes` is now a genuine hard cap.
+`AggregateDownloadBudget.TryReserve` admitted whenever `current < capacity` regardless of
+whether the reservation itself would push past it, bounding overshoot to one transfer's worth
+but still exceeding a configured limit that should never be exceeded at all. Changed admission
+to require `current + worstCaseBytes <= capacity` — a reservation that would cross the cap is
+refused outright, even with some headroom still below it (the trade: a sliver of capacity
+smaller than one transfer can go unused right at the boundary, which is correct for a safety
+cap — the alternative, truncating a file mid-stream to use that sliver exactly, would produce
+a corrupt file). Storage reservation sizing simplified back to no longer need the overshoot
+margin. Rewrote `AggregateDownloadBudgetTests` for the new invariant (including a test proving
+a reservation IS refused with room still left, the exact case round 2 got wrong) and
+`AutoFetchAggregateCapConcurrencyTests`'s expected counts (3 of 10 documents admitted at the
+new cap, not 4; `BytesDownloaded` asserted `<=` the cap, never `>`). → **@codex** re-review.

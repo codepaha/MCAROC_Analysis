@@ -53,6 +53,10 @@
                     <span class="pi-side-icon"><i class="bi bi-plus-circle"></i></span>
                     <span>New Search</span>
                 </a>
+                <a class="pi-side-link @Active("AutoFetch", "New")" asp-controller="AutoFetch" asp-action="New">
+                    <span class="pi-side-icon"><i class="bi bi-cloud-download"></i></span>
+                    <span>New Auto-fetch</span>
+                </a>
                 <a class="pi-side-link @(controller == "requests" && action != "new" ? "active" : "")" asp-controller="Requests" asp-action="Index">
                     <span class="pi-side-icon"><i class="bi bi-clock-history"></i></span>
                     <span>Search History</span>

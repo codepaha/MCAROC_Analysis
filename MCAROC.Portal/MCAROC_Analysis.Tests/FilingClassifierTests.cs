@@ -103,4 +103,25 @@ public class FilingIdentityParserTests
         Assert.Null(identity.Srn);
         Assert.Null(identity.Cin);
     }
+
+    /// <summary>Auto-fetched filings carry the reference tool's document id (32 hex + version) where an
+    /// MCA SRN would be — see AutoFetchArchiveBuilder.</summary>
+    [Fact]
+    public void ParsesAutoFetchedNestedZipFileName()
+    {
+        var identity = FilingIdentityParser.Parse("2ee2d6813e1267e581cde7701d36eb46v1_LODHA_DEVELOPERS_LIMITED_L45200MH1995PLC093041");
+
+        Assert.Equal("2ee2d6813e1267e581cde7701d36eb46v1", identity.Srn);
+        Assert.Equal("LODHA DEVELOPERS LIMITED", identity.CompanyName);
+        Assert.Equal("L45200MH1995PLC093041", identity.Cin);
+    }
+
+    [Fact]
+    public void DoesNotTreatAnArbitraryWordAsAnSrn()
+    {
+        var identity = FilingIdentityParser.Parse("FORM_ACME_LIMITED_L45200MH1995PLC093041");
+
+        Assert.Null(identity.Srn);
+        Assert.Null(identity.Cin);
+    }
 }

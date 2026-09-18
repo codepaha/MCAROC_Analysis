@@ -65,6 +65,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<CompanyOfficer> CompanyOfficers => Set<CompanyOfficer>();
     public DbSet<CompanyEmail> CompanyEmails => Set<CompanyEmail>();
     public DbSet<PreLoginReportJob> PreLoginReportJobs => Set<PreLoginReportJob>();
+    public DbSet<AutoFetchJob> AutoFetchJobs => Set<AutoFetchJob>();
 
     // #164 Calculation assurance
     public DbSet<CalculationAuditSnapshot> CalculationAuditSnapshots => Set<CalculationAuditSnapshot>();
@@ -106,6 +107,19 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             e.Property(x => x.Format).HasMaxLength(10);
             e.Property(x => x.Status).HasConversion<string>().HasMaxLength(30);
             e.Property(x => x.Cin).HasMaxLength(30);
+        });
+
+        modelBuilder.Entity<AutoFetchJob>(e =>
+        {
+            e.HasKey(x => x.AutoFetchJobId);
+            e.HasIndex(x => x.RequestId).IsUnique();
+            e.HasIndex(x => x.Status);
+            e.HasOne(x => x.Request).WithMany().HasForeignKey(x => x.RequestId).OnDelete(DeleteBehavior.Cascade);
+            e.Property(x => x.Cin).HasMaxLength(30);
+            e.Property(x => x.Bid).HasMaxLength(64);
+            e.Property(x => x.Status).HasConversion<string>().HasMaxLength(30);
+            e.Property(x => x.StatusMessage).HasMaxLength(500);
+            e.Ignore(x => x.IsTerminal);
         });
 
         modelBuilder.Entity<McaRequest>(e =>

@@ -1,0 +1,86 @@
+@model RequestDetailsViewModel
+@{
+    var job = Model.AutoFetchJob!;
+    var r = Model.Request;
+    var warnings = new List<string>();
+    try { warnings = System.Text.Json.JsonSerializer.Deserialize<List<string>>(job.WarningsJson) ?? []; } catch { }
+    var running = !job.IsTerminal;
+    var failed = job.Status == AutoFetchJobStatus.Failed;
+}
+@* Auto-fetch progress. While the job runs this polls /Requests/{id}/autofetch/status every 3s and
+   reloads the page once the job reaches a terminal state (the tabs below only fill after ingestion). *@
+<div class="pi-panel mb-3 mca-autofetch @(failed ? "border-danger" : "")" id="mcaAutoFetch"
+     data-status-url="/Requests/@r.RequestId/autofetch/status" data-running="@(running ? "1" : "0")" style="padding:18px 22px;">
+    <div class="d-flex justify-content-between align-items-start gap-3 flex-wrap">
+        <div>
+            <div class="pi-kicker">Auto-fetch from the reference tool</div>
+            <div class="fw-semibold" id="afStage">
+                @if (failed) { <i class="bi bi-x-circle text-danger me-1"></i> }
+                else if (running) { <i class="bi bi-arrow-repeat me-1"></i> }
+                else { <i class="bi bi-check-circle text-success me-1"></i> }
+                <span id="afMessage">@(job.StatusMessage ?? job.Status.ToString())</span>
+            </div>
+            <div class="text-muted small" id="afDetail">
+                CIN @job.Cin
+                @if (job.FilesTotal > 0) { <span> &middot; filings <span id="afFiles">@job.FilesDownloaded.ToString("N0") / @job.FilesTotal.ToString("N0")</span>@(job.FilesFailed > 0 ? $" ({job.FilesFailed:N0} failed)" : "")</span> }
+                @if (job.StartedUtc is { } s) { <span> &middot; started @s.ToLocalTime().ToString("d MMM HH:mm")</span> }
+                @if (job.CompletedUtc is { } c) { <span> &middot; finished @c.ToLocalTime().ToString("d MMM HH:mm")</span> }
+            </div>
+        </div>
+        @if (failed)
+        {
+            <form method="post" action="/Requests/@r.RequestId/autofetch/retry">
+                @Html.AntiForgeryToken()
+                <button type="submit" class="btn btn-sm btn-outline-primary"><i class="bi bi-arrow-clockwise me-1"></i>Retry</button>
+            </form>
+        }
+    </div>
+
+    @if (running)
+    {
+        <div class="progress mt-3" style="height:8px;" role="progressbar" aria-label="Auto-fetch progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="@job.ProgressPercent">
+            <div class="progress-bar progress-bar-striped progress-bar-animated" id="afBar" style="width:@(Math.Max(2, job.ProgressPercent))%"></div>
+        </div>
+    }
+
+    @if (failed && !string.IsNullOrEmpty(job.FailureReason))
+    {
+        <div class="alert alert-danger mt-3 mb-0">@job.FailureReason</div>
+    }
+
+    @if (warnings.Count > 0)
+    {
+        <details class="mt-3">
+            <summary class="small">@warnings.Count warning@(warnings.Count == 1 ? "" : "s")</summary>
+            <ul class="small mb-0 mt-2">
+                @foreach (var w in warnings) { <li>@w</li> }
+            </ul>
+        </details>
+    }
+</div>
+
+@if (running)
+{
+    <script>
+        (function () {
+            var root = document.getElementById('mcaAutoFetch');
+            var url = root.dataset.statusUrl;
+            var bar = document.getElementById('afBar');
+            var msg = document.getElementById('afMessage');
+            var files = document.getElementById('afFiles');
+            function tick() {
+                fetch(url, { headers: { 'Accept': 'application/json' } })
+                    .then(function (r) { return r.ok ? r.json() : null; })
+                    .then(function (s) {
+                        if (!s) return;
+                        if (s.isTerminal) { location.reload(); return; }
+                        if (bar) bar.style.width = Math.max(2, s.progressPercent) + '%';
+                        if (msg) msg.textContent = s.statusMessage || s.status;
+                        if (files && s.filesTotal > 0) files.textContent = s.filesDownloaded.toLocaleString() + ' / ' + s.filesTotal.toLocaleString();
+                    })
+                    .catch(function () { });
+            }
+            setInterval(tick, 3000);
+        })();
+    </script>
+}
