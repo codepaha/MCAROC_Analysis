@@ -21,7 +21,23 @@ public class DocumentChunkingWorker(
 
         await foreach (var batchId in queue.ReadAllAsync(stoppingToken))
         {
-            _ = HandleBatchAsync(batchId, stoppingToken);
+            // Different batches still run concurrently (fire-and-forget), but each batch transitions to
+            // "running" right here — from this point, a concurrent Enqueue can no longer be a silent
+            // no-op; it flags exactly one follow-up pass instead. See DocumentChunkingQueue's remarks.
+            queue.MarkStarted(batchId);
+            _ = RunPassAsync(batchId, stoppingToken);
+        }
+    }
+
+    private async Task RunPassAsync(long batchId, CancellationToken ct)
+    {
+        try
+        {
+            await HandleBatchAsync(batchId, ct);
+        }
+        finally
+        {
+            queue.MarkDone(batchId);
         }
     }
 

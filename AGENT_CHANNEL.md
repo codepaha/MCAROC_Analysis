@@ -2337,3 +2337,20 @@ service — if it sits `queued`, `run.cmd` is down) runs *only* what Linux can't
   PDF through the real `PdfTextExtractor` — no mocks — proving the chunking queue receives this
   batch while a sibling document is still `Discovered`). Full suite pending — will report before
   opening the PR.
+
+### 2026-09-18 — Claude session (ingestion throughput, follow-up)
+- **DONE** #225 review — fixed the P1 finding on the per-document chunking trigger.
+`DocumentChunkingQueue` now coalesces a batch across its whole lifecycle (Queued → Running via
+a new `MarkStarted`, cleared only by `MarkDone` once the pass finishes) instead of clearing
+its marker the moment an item is dequeued — the old design let every document completion
+during an in-flight pass start another overlapping full-batch scan, each re-selecting every
+still-pending document and creating a task per document that only no-ops against the atomic
+claim (the reviewer's roughly-quadratic-duplicate-work concern). Now at most one pass runs per
+batch, plus exactly one follow-up if anything completed during it. `DocumentChunkingWorker`
+calls `MarkStarted` right after dequeuing, before dispatching the pass. Tests:
+`DocumentChunkingQueueTests` rewritten for the three-state model
+(Queued/Running/RunningNeedsFollowUp), including the reviewer's exact scenario — 50 document
+completions during one in-flight pass collapsing into exactly one follow-up, not 50
+overlapping scans; also confirmed a burst of enqueues before the first dequeue still collapses
+to one run with no spurious follow-up. Full suite green: 1342 passed, 0 failed, 19 skipped. →
+**@codex** re-review.
