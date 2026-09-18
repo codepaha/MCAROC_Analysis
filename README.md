@@ -153,6 +153,30 @@ dotnet ef database update   # applies any pending migrations
 dotnet run
 ```
 
+### Deploying the multi-holder slot-lease migration
+
+`MultiHolderOperationalSlotLeases` (the migration behind #225's multiple-concurrent-unpacks/uploads work)
+drops and recreates the `OperationalSlotLeases` table outright — it holds only transient in-flight state
+(which upload/unpack currently holds a slot), so there is nothing worth migrating row-by-row across the
+schema change. But dropping it while a real upload or unpack is genuinely in flight would silently
+discard that lease instead of its holder releasing it normally, and — worse — nothing would then stop a
+second operation from starting concurrently with the one that "lost" its lease, which is exactly what
+leases exist to prevent. In a shared/deployed environment (not a fresh local dev DB, which has never had
+a lease at all), apply it as:
+
+1. **Stop or drain** whatever is holding leases before migrating: the app process running
+   `FilingProcessingWorker` (unpack leases, `LargeUnpack`) and any in-flight resumable large-archive
+   upload sessions (upload leases, `LargeUpload` — see `RequestsUploadController`). Draining means letting
+   in-flight unpacks/uploads finish and not starting new ones, not just stopping the process abruptly.
+2. **Confirm zero active leases** before proceeding: `SELECT COUNT(*) FROM OperationalSlotLeases WHERE
+   ExpiresUtc > SYSUTCDATETIME()` should return `0`.
+3. **Run the migration** (`dotnet ef database update`). This is enforced, not just documented: the
+   migration's own `Up()`/`Down()` first run the same check and `THROW` (aborting the whole migration,
+   nothing else in it runs) if any lease is still active — a check this narrow can't be skipped by
+   forgetting the runbook step, but it also can't stop a genuinely idle lease from being just barely
+   inside its lease duration; if it throws, wait for step 1's drain to actually finish and retry.
+4. **Start the new workers** only after the migration succeeds.
+
 ## Running tests
 
 ```

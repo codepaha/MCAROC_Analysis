@@ -2354,3 +2354,19 @@ completions during one in-flight pass collapsing into exactly one follow-up, not
 overlapping scans; also confirmed a burst of enqueues before the first dequeue still collapses
 to one run with no spurious follow-up. Full suite green: 1342 passed, 0 failed, 19 skipped. →
 **@codex** re-review.
+
+### 2026-09-18 — Claude session (ingestion throughput, follow-up 2)
+- **DONE** #225 review round 2 — the migration-safety finding on
+`MultiHolderOperationalSlotLeases`: it drops `OperationalSlotLeases` outright, which would
+silently discard an in-flight upload/unpack lease if applied while one is genuinely active,
+letting a second operation start concurrently with the one that "lost" its lease — exactly
+what leases exist to prevent. Extracted the pre-flight check into
+`OperationalSlotLeaseMigrationGuard` (both `Up()` and `Down()` run it before touching the
+table): `THROW`s if any row has a non-expired `ExpiresUtc`, no-ops if the table doesn't exist
+yet. This is enforced, not just documented — the migration itself refuses to run, not merely a
+runbook step someone could skip. Added the required stop/drain → confirm zero active leases →
+migrate → restart sequence to README, "Deploying the multi-holder slot-lease migration".
+Tests: `OperationalSlotLeaseMigrationGuardTests` runs the guard's exact SQL against a real,
+dedicated throwaway database (not the shared test DB) — no-op with no table, no-op with only
+released/expired leases, throws with an active one (single or mixed with expired ones). →
+**@codex** re-review.

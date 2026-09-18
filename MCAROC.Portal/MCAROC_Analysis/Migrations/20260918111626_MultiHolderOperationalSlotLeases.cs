@@ -11,14 +11,21 @@ namespace MCAROC_Analysis.Migrations
         /// <inheritdoc />
         protected override void Up(MigrationBuilder migrationBuilder)
         {
+            // Enforced pre-flight, not just a documented runbook step: this migration is about to DROP
+            // OperationalSlotLeases outright (see the remark on that call below), so it must never run
+            // while a real upload or unpack is mid-flight and still holding a lease. See
+            // OperationalSlotLeaseMigrationGuard's own remarks for why, and README "Deploying the
+            // multi-holder slot-lease migration" for the full required sequence.
+            migrationBuilder.Sql(OperationalSlotLeaseMigrationGuard.Sql);
+
             // OperationalSlotLeases holds only transient, in-flight state (which upload/unpack currently
-            // holds a slot) — nothing worth migrating row-by-row across the schema change, and any lease
-            // that happened to be active at deploy time is meaningless once the app restarts anyway (its
-            // holder re-acquires on its own next attempt). Drop and recreate rather than ALTER COLUMN the
-            // existing columns to NOT NULL in place: EF's generated ALTER COLUMN does not backfill any
-            // existing NULL ActiveHolderId/AcquiredUtc/ExpiresUtc/LastHeartbeatUtc values first, so it would
-            // fail outright against a database that has ever had a lease acquired and released (a released
-            // lease under the old schema is exactly a row with those columns null).
+            // holds a slot) — nothing worth migrating row-by-row across the schema change, and (once the
+            // guard above confirms nothing is actually active) any lease row still present is already
+            // expired and meaningless. Drop and recreate rather than ALTER COLUMN the existing columns to
+            // NOT NULL in place: EF's generated ALTER COLUMN does not backfill any existing NULL
+            // ActiveHolderId/AcquiredUtc/ExpiresUtc/LastHeartbeatUtc values first, so it would fail outright
+            // against a database that has ever had a lease acquired and released (a released lease under
+            // the old schema is exactly a row with those columns null).
             migrationBuilder.DropTable(name: "OperationalSlotLeases");
 
             migrationBuilder.CreateTable(
@@ -52,6 +59,10 @@ namespace MCAROC_Analysis.Migrations
         /// <inheritdoc />
         protected override void Down(MigrationBuilder migrationBuilder)
         {
+            // Same reasoning as Up's guard, in reverse: rolling back also drops the (now new-shape) table
+            // outright, so it must not run while it holds a real active lease either.
+            migrationBuilder.Sql(OperationalSlotLeaseMigrationGuard.Sql);
+
             migrationBuilder.DropTable(name: "OperationalSlotLeases");
 
             migrationBuilder.CreateTable(
