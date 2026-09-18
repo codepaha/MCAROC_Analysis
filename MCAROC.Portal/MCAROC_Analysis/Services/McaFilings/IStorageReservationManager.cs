@@ -22,6 +22,17 @@ public interface IStorageReservationManager
         CancellationToken ct = default);
 
     /// <summary>
+    /// Generic single-volume reservation for any other owner that needs to reserve disk headroom before
+    /// writing — e.g. the auto-fetch pipeline reserving space for downloaded filing PDFs, which (unlike the
+    /// resumable-upload flow) has no single declared archive size or fixed staging/destination pair.
+    /// Draws from and updates the same StorageVolumeLease/StorageCapacityReservation ledger as
+    /// <see cref="TryReserveUploadCapacityAsync"/>, so a large-archive upload and an auto-fetch job never
+    /// independently believe the same free disk space is available to both of them.
+    /// </summary>
+    Task<ReservationResult> TryReserveAsync(
+        string ownerType, string ownerId, string directory, long bytes, TimeSpan lifetime, CancellationToken ct = default);
+
+    /// <summary>
     /// Transitions an existing reservation ownership from an upload session to an McaFilingBatch.
     /// </summary>
     Task<bool> TransitionReservationToBatchAsync(Guid sessionId, long batchId, CancellationToken ct = default);

@@ -4,6 +4,7 @@ using MCAROC_Analysis.Data;
 using MCAROC_Analysis.Data.Entities;
 using MCAROC_Analysis.Models;
 using MCAROC_Analysis.Services.AutoFetch;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
@@ -13,7 +14,15 @@ namespace MCAROC_Analysis.Controllers;
 /// <summary>The "just give me a CIN" way to create a post-login request: the reference tool supplies the
 /// workbooks and filing PDFs, and the job hands them to the very same ingestion / analysis / filings
 /// pipelines the manual upload form feeds. Lives under /Requests/... so it reads as a sibling of the
-/// manual New form, but in its own controller so RequestsController doesn't grow another concern.</summary>
+/// manual New form, but in its own controller so RequestsController doesn't grow another concern.
+///
+/// Gated behind the same "InternalReviewer" cookie scheme as /internal/calc-audit (see
+/// CalculationAuditController): every action here spends the app's own reference-tool session credential
+/// on the caller's behalf and can trigger unbounded external downloads, so it must not be reachable by an
+/// anonymous caller the way the rest of this app's pages are (see InternalAuthController's remarks on why
+/// that scheme exists — this reuses it for a second, unrelated privileged surface rather than inventing a
+/// new one).</summary>
+[Authorize(AuthenticationSchemes = "InternalReviewer")]
 public partial class AutoFetchController(
     AppDbContext db,
     AutoFetchJobService jobs,

@@ -349,6 +349,11 @@ public sealed class ReferenceToolClient(HttpClient http, IOptions<ReferenceToolO
         return await http.SendAsync(request, HttpCompletionOption.ResponseContentRead, ct);
     }
 
+    /// <summary>Streams one response to disk with a hard, enforced-while-streaming size cap
+    /// (<see cref="ReferenceToolOptions.MaxResponseBytes"/>) — never trusts a declared Content-Length
+    /// alone, since a misbehaving or malicious response can omit it or lie about it. A response that
+    /// exceeds the cap is aborted mid-stream and its partial file deleted before this method returns, so
+    /// no caller ever sees a truncated-but-kept file on disk.</summary>
     private async Task<(byte[] Header, string? ContentType)> StreamToFileAsync(string url, string tempPath, CancellationToken ct)
     {
         using var request = NewRequest(url);
@@ -360,9 +365,15 @@ public sealed class ReferenceToolClient(HttpClient http, IOptions<ReferenceToolO
             throw new ReferenceToolException($"The reference tool returned HTTP {(int)response.StatusCode}.",
                 retryable: response.StatusCode is HttpStatusCode.RequestTimeout or HttpStatusCode.TooManyRequests || (int)response.StatusCode >= 500);
 
+        var maxBytes = _opts.MaxResponseBytes;
+        if (response.Content.Headers.ContentLength is { } declaredLength && declaredLength > maxBytes)
+            throw new ReferenceToolException($"The reference tool declared a {declaredLength:N0}-byte response, which exceeds the {maxBytes:N0}-byte limit — refused before downloading.");
+
         Directory.CreateDirectory(Path.GetDirectoryName(tempPath)!);
         var header = new byte[8];
         var headerRead = 0;
+        long totalWritten = 0;
+        var exceeded = false;
         await using (var source = await response.Content.ReadAsStreamAsync(ct))
         await using (var file = new FileStream(tempPath, FileMode.Create, FileAccess.Write, FileShare.None, 64 * 1024, useAsync: true))
         {
@@ -376,9 +387,23 @@ public sealed class ReferenceToolClient(HttpClient http, IOptions<ReferenceToolO
                     Array.Copy(buffer, 0, header, headerRead, take);
                     headerRead += take;
                 }
+
+                totalWritten += read;
+                if (totalWritten > maxBytes)
+                {
+                    exceeded = true;
+                    break; // stop reading immediately — do not keep pulling an oversized body off the wire
+                }
                 await file.WriteAsync(buffer.AsMemory(0, read), ct);
             }
         }
+
+        if (exceeded)
+        {
+            TryDelete(tempPath);
+            throw new ReferenceToolException($"The reference tool's response exceeded the {maxBytes:N0}-byte limit while streaming; aborted and discarded.");
+        }
+
         return (header, response.Content.Headers.ContentType?.MediaType);
     }
 

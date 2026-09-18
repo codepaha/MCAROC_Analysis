@@ -2405,3 +2405,23 @@ released/expired leases, throws with an active one (single or mixed with expired
   SessionCookie are secrets; README + appsettings.Example.json updated). **Not live-verified**: the
   registry's `offset`/`limit` paging is inferred — needs one run against a company with >100 documents
   per section. → **@codex** review.
+
+### 2026-09-18 — Claude session (follow-up)
+- **DONE** #224 review fixes:
+  1. gated `AutoFetchController` behind the existing `InternalReviewer` cookie scheme (same as
+     `/internal/calc-audit`) — it was spending the app's own reference-tool session credential with
+     no authorization at all; added `AutoFetchAuthenticationTests` proving every action challenges an
+     anonymous caller and admits an authenticated one.
+  2. document downloads now enforce a hard per-response size cap while streaming
+     (`ReferenceToolOptions:MaxResponseBytes`, checked against a declared Content-Length up front and
+     against the real running total mid-stream, so an evasive response with no declared length is
+     still caught) and a per-job aggregate cap (`MaxAggregateDownloadBytes`), plus a new
+     `IStorageReservationManager.TryReserveAsync` generic reservation the auto-fetch download stage
+     uses before writing anything — drawing from the same volume-wide ledger the large-archive-upload
+     feature uses, so the two features contend for real disk headroom instead of each independently
+     assuming it's free.
+  Tests: `ReferenceToolClientTests` (declared-length fast-fail, mid-stream abort with cleanup,
+  same enforcement on the workbook export) + `AutoFetchStorageReservationTests` (refusal,
+  reserve+release, and a second job genuinely blocked by the first's active reservation then
+  admitted once released). Also fixed the trailing blank line `git diff --check` flagged. →
+  **@codex** re-review.

@@ -177,6 +177,67 @@ public class ReferenceToolClientTests : IDisposable
         Assert.False(File.Exists(Path.Combine(_tempDir, "doc", "bad.pdf")));
     }
 
+    /// <summary>A response that declares (via Content-Length) more than the configured cap is refused
+    /// before a single byte is written to disk — no ".download" temp file, no partial file, nothing.</summary>
+    [Fact]
+    public async Task Pdf_download_with_a_declared_length_over_the_cap_is_refused_before_writing_anything()
+    {
+        var oversized = new byte[2000];
+        "%PDF-1.4\n"u8.ToArray().CopyTo(oversized, 0);
+        var handler = new StubHandler();
+        handler.OnPath("server/common/docService/service.php", _ => Bytes(oversized, "application/pdf"));
+        var client = NewClient(handler, maxResponseBytes: 1000);
+
+        var dest = Path.Combine(_tempDir, "doc", "oversized.pdf");
+        var ex = await Assert.ThrowsAsync<ReferenceToolException>(() =>
+            client.DownloadPdfAsync("bid", "265271", "214/x/big.pdf", "bigv1", dest, CancellationToken.None));
+
+        Assert.Contains("2,000", ex.Message);
+        Assert.Contains("1,000", ex.Message);
+        Assert.False(File.Exists(dest));
+        Assert.False(File.Exists(dest + ".download"));
+    }
+
+    /// <summary>A response that omits Content-Length (the tool's endpoints don't always send one, and a
+    /// chunked/evasive response can't be trusted to) must still be caught by the streaming loop's own
+    /// running-total check, and its partial file cleaned up — this is the finding directly: writing an
+    /// unbounded external response to disk before any size check ran.</summary>
+    [Fact]
+    public async Task Pdf_download_with_no_declared_length_is_still_caught_mid_stream_and_cleaned_up()
+    {
+        var oversized = new byte[2000];
+        "%PDF-1.4\n"u8.ToArray().CopyTo(oversized, 0);
+        var handler = new StubHandler();
+        handler.OnPath("server/common/docService/service.php", _ => StreamingBytesWithNoDeclaredLength(oversized, "application/pdf"));
+        var client = NewClient(handler, maxResponseBytes: 1000);
+
+        var dest = Path.Combine(_tempDir, "doc", "oversized-streamed.pdf");
+        var ex = await Assert.ThrowsAsync<ReferenceToolException>(() =>
+            client.DownloadPdfAsync("bid", "265271", "214/x/big.pdf", "bigv1", dest, CancellationToken.None));
+
+        Assert.Contains("exceeded", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.False(File.Exists(dest));
+        Assert.False(File.Exists(dest + ".download"));
+    }
+
+    /// <summary>Same enforcement applies to the workbook export, not only filing PDFs — both funnel
+    /// through the same StreamToFileAsync.</summary>
+    [Fact]
+    public async Task Workbook_download_over_the_cap_is_also_refused_and_cleaned_up()
+    {
+        var ole = new byte[] { 0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1 }.Concat(new byte[2000]).ToArray();
+        var handler = new StubHandler();
+        handler.OnPath("server/common/publishing/service.php", _ => Bytes(ole, "application/vnd.ms-excel"));
+        var client = NewClient(handler, maxResponseBytes: 1000);
+
+        var dest = Path.Combine(_tempDir, "oversized-roc");
+        await Assert.ThrowsAsync<ReferenceToolException>(() =>
+            client.DownloadWorkbookAsync(Cin, "bid", ReferenceWorkbookKind.Corporate, dest, CancellationToken.None));
+
+        Assert.False(File.Exists(dest + ".xls"));
+        Assert.False(File.Exists(dest + ".download"));
+    }
+
     [Fact]
     public async Task Registry_pages_with_offset_until_a_page_adds_nothing()
     {
@@ -218,12 +279,13 @@ public class ReferenceToolClientTests : IDisposable
 
     // ── Helpers ─────────────────────────────────────────────────────────────────────────────────────
 
-    private static ReferenceToolClient NewClient(StubHandler handler, bool configured = true)
+    private static ReferenceToolClient NewClient(StubHandler handler, bool configured = true, long? maxResponseBytes = null)
     {
         var options = Options.Create(new ReferenceToolOptions
         {
             BaseUrl = configured ? "https://reference-tool.test" : "",
             SessionCookie = configured ? "PHPSESSID=abc; user=x" : "",
+            MaxResponseBytes = maxResponseBytes ?? new ReferenceToolOptions().MaxResponseBytes,
         });
         return new ReferenceToolClient(new HttpClient(handler), options, NullLogger<ReferenceToolClient>.Instance);
     }
@@ -259,6 +321,17 @@ public class ReferenceToolClientTests : IDisposable
     {
         var content = new ByteArrayContent(body);
         content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(contentType);
+        return new HttpResponseMessage(HttpStatusCode.OK) { Content = content };
+    }
+
+    /// <summary>Same bytes as <see cref="Bytes"/> but via StreamContent, which reports no Content-Length —
+    /// the shape a chunked/evasive response takes, forcing the streaming loop's own running-total check to
+    /// be what catches an oversized body rather than the declared-length fast-fail path.</summary>
+    private static HttpResponseMessage StreamingBytesWithNoDeclaredLength(byte[] body, string contentType)
+    {
+        var content = new StreamContent(new MemoryStream(body));
+        content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(contentType);
+        content.Headers.ContentLength = null;
         return new HttpResponseMessage(HttpStatusCode.OK) { Content = content };
     }
 

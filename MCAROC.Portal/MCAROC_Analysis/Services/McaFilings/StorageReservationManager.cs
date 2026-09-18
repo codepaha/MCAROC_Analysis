@@ -145,6 +145,71 @@ public class StorageReservationManager(
         }
     }
 
+    public async Task<ReservationResult> TryReserveAsync(
+        string ownerType, string ownerId, string directory, long bytes, TimeSpan lifetime, CancellationToken ct = default)
+    {
+        var volume = GetCanonicalVolumeRoot(directory);
+
+        await using var tx = await db.Database.BeginTransactionAsync(System.Data.IsolationLevel.ReadCommitted, ct);
+        try
+        {
+            db.ChangeTracker.Clear();
+            var lease = await db.StorageVolumeLeases
+                .FromSqlInterpolated($"SELECT VolumeRoot, ActiveReservedBytes, RowVersion FROM StorageVolumeLeases WITH (UPDLOCK, HOLDLOCK) WHERE VolumeRoot = {volume}")
+                .FirstOrDefaultAsync(ct);
+
+            if (lease is null)
+            {
+                lease = new StorageVolumeLease { VolumeRoot = volume, ActiveReservedBytes = 0 };
+                db.StorageVolumeLeases.Add(lease);
+                await db.SaveChangesAsync(ct);
+            }
+
+            // Recalculate true active reserved bytes from live active reservations, same as
+            // TryReserveUploadCapacityAsync — the cached lease value is never trusted on its own.
+            var now = DateTime.UtcNow;
+            var trueActiveReserved = await db.StorageCapacityReservations
+                .Where(r => r.VolumeRoot == volume && r.State == StorageCapacityReservationState.Active && r.ExpiresUtc > now)
+                .SumAsync(r => (long?)r.ReservedBytes, ct) ?? 0L;
+            lease.ActiveReservedBytes = trueActiveReserved;
+
+            var freeSpace = GetAvailableFreeSpace(volume);
+            if (freeSpace - trueActiveReserved < bytes)
+            {
+                await tx.RollbackAsync(ct);
+                var msg = $"Insufficient storage on volume '{volume}'. Free: {freeSpace / (1024 * 1024)}MB, Reserved: {trueActiveReserved / (1024 * 1024)}MB, Needed: {bytes / (1024 * 1024)}MB.";
+                logger.LogWarning("{Message}", msg);
+                return new ReservationResult(false, msg, null);
+            }
+
+            lease.ActiveReservedBytes += bytes;
+
+            var resId = Guid.NewGuid();
+            db.StorageCapacityReservations.Add(new StorageCapacityReservation
+            {
+                ReservationId = resId,
+                OwnerType = ownerType,
+                OwnerId = ownerId,
+                VolumeRoot = volume,
+                ReservedBytes = bytes,
+                State = StorageCapacityReservationState.Active,
+                CreatedUtc = now,
+                LastHeartbeatUtc = now,
+                ExpiresUtc = now.Add(lifetime)
+            });
+
+            await db.SaveChangesAsync(ct);
+            await tx.CommitAsync(ct);
+            return new ReservationResult(true, null, resId);
+        }
+        catch (Exception ex)
+        {
+            await tx.RollbackAsync(ct);
+            logger.LogError(ex, "Failed to acquire storage reservation for {OwnerType} {OwnerId}", ownerType, ownerId);
+            return new ReservationResult(false, $"Reservation failed: {ex.Message}", null);
+        }
+    }
+
     public async Task<bool> TransitionReservationToBatchAsync(Guid sessionId, long batchId, CancellationToken ct = default)
     {
         var sessionIdStr = sessionId.ToString();

@@ -42,7 +42,7 @@ public class AutoFetchControllerTests : IAsyncLifetime
         });
         var client = new ReferenceToolClient(new HttpClient(new NoNetworkHandler()), options, NullLogger<ReferenceToolClient>.Instance);
         var queue = new AutoFetchQueue();
-        var jobs = new AutoFetchJobService(db, client, options, new FileValidationService(new ExcelSheetReader()), null!, null!, null!,
+        var jobs = new AutoFetchJobService(db, client, options, new FileValidationService(new ExcelSheetReader()), null!, null!, null!, null!,
             new FakeEnv(Path.GetTempPath()), NullLogger<AutoFetchJobService>.Instance);
         var httpContext = new DefaultHttpContext();
         var controller = new AutoFetchController(db, jobs, queue, client, options)

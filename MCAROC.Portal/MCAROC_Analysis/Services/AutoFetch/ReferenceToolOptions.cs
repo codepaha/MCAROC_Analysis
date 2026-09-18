@@ -36,6 +36,24 @@ public sealed class ReferenceToolOptions
     /// the field blank. 0 = every document the registry lists.</summary>
     public int DefaultMaxDocumentsPerSection { get; init; } = 0;
 
+    /// <summary>Hard ceiling on any single downloaded response (one workbook export or one filing PDF),
+    /// enforced while streaming — not after the fact. A locked/misbehaving reference-tool response, or a
+    /// single unexpectedly huge filing, must never be allowed to write past this size to disk regardless
+    /// of what any declared Content-Length said.</summary>
+    public long MaxResponseBytes { get; init; } = 300_000_000L; // 300 MB
+
+    /// <summary>Hard ceiling on the total bytes one auto-fetch job downloads across every filing PDF.
+    /// Matches the same order of magnitude as LargeArchiveUpload:MaxUncompressedSizeBytes (the equivalent
+    /// cumulative guard for a manually-uploaded archive) — an auto-fetch job assembles the same kind of
+    /// archive from the other direction, and needs the same ceiling.</summary>
+    public long MaxAggregateDownloadBytes { get; init; } = 21_474_836_480L; // 20 GiB
+
+    /// <summary>How long a storage reservation for one job's downloads stays valid before it would be
+    /// swept as abandoned on a future app restart. Generous on purpose — a large job over slow bandwidth
+    /// can genuinely run for hours, and letting the reservation lapse mid-job would let a concurrent job
+    /// believe that disk headroom is free while this job is still writing into it.</summary>
+    public TimeSpan StorageReservationLifetime { get; init; } = TimeSpan.FromHours(24);
+
     /// <summary>Whether the auto-fetch form pre-ticks "also fetch the filing PDFs".</summary>
     public bool IncludeFilingsByDefault { get; init; } = true;
 

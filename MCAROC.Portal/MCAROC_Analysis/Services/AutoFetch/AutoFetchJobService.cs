@@ -30,9 +30,15 @@ public sealed class AutoFetchJobService(
     IngestionOrchestrator orchestrator,
     AnalysisQueue analysisQueue,
     FilingProcessingQueue filingQueue,
+    IStorageReservationManager reservations,
     IWebHostEnvironment env,
     ILogger<AutoFetchJobService> logger)
 {
+    /// <summary>Fallback per-file size estimate used when the registry gives no declared size for a
+    /// document or an attachment — only for sizing the up-front storage reservation and the plan-time
+    /// aggregate-cap truncation; the live download-time cap (see <see cref="FetchFilingsAsync"/>) is what
+    /// actually bounds real disk usage regardless of how good this estimate is.</summary>
+    private const long FallbackPerFileEstimateBytes = 2_000_000L; // 2 MB
     private readonly ReferenceToolOptions _opts = options.Value;
     private static readonly TimeSpan ProgressFlushInterval = TimeSpan.FromSeconds(2);
 
@@ -298,7 +304,8 @@ public sealed class AutoFetchJobService(
         if (registry.ListedCount < registry.TotalCount)
             warnings.Add($"The reference tool reports {registry.TotalCount:N0} filing documents but listed {registry.ListedCount:N0}; only the listed ones were fetched.");
 
-        var plan = BuildDownloadPlan(registry, job.MaxDocumentsPerSection, stagingDir, warnings);
+        var aggregateCap = _opts.MaxAggregateDownloadBytes;
+        var (plan, estimatedBytes) = BuildDownloadPlan(registry, job.MaxDocumentsPerSection, aggregateCap, stagingDir, warnings);
         job.FilesTotal = plan.Sum(f => f.Files.Count);
         job.FilesDownloaded = plan.Sum(f => f.Files.Count(x => IsStaged(x.LocalPath)));
         job.FilesFailed = 0;
@@ -311,92 +318,137 @@ public sealed class AutoFetchJobService(
             return;
         }
 
-        // Parallel download with a bounded degree of concurrency; progress flushed on a timer from this
-        // (single) DbContext-owning flow — the download tasks never touch the DbContext.
-        await SetStageAsync(job, AutoFetchJobStatus.DownloadingFilings, 40, $"Downloading filings 0 / {job.FilesTotal:N0}…", ct);
-        var pending = plan.SelectMany(f => f.Files.Select(x => (f, x))).Where(t => !IsStaged(t.x.LocalPath)).ToList();
-        var downloadedCount = job.FilesDownloaded;
-        var failedCount = 0;
-        long bytes = 0;
-        var failures = new System.Collections.Concurrent.ConcurrentBag<string>();
+        // Reserve disk headroom before writing a single byte: staged originals plus the packaged copy
+        // that briefly coexists with them (see the cleanup at the end of this method) — both draw from the
+        // same volume-wide ledger the large-archive-upload feature uses, so the two features never
+        // independently believe the same free space is available to both. Sized from the plan's own
+        // estimate (capped at the configured ceiling), not the ceiling itself, so a handful of PDFs for a
+        // small company doesn't have to fail because a machine lacks 40 GB free for nothing it will
+        // actually use — the live per-file and aggregate caps below are what bound real usage regardless.
+        var reserveBytes = 2 * Math.Max(Math.Min(estimatedBytes, aggregateCap), 50 * 1024 * 1024L);
+        var reservation = await reservations.TryReserveAsync(
+            "AutoFetchJob", job.AutoFetchJobId.ToString(), stagingDir, reserveBytes, _opts.StorageReservationLifetime, ct);
+        if (!reservation.Success)
+            throw new ReferenceToolException($"Not enough disk space to fetch this company's filings: {reservation.Error}");
 
-        var downloadTask = Parallel.ForEachAsync(pending,
-            new ParallelOptions { MaxDegreeOfParallelism = Math.Max(1, _opts.DownloadConcurrency), CancellationToken = ct },
-            async (item, token) =>
+        try
+        {
+            // Parallel download with a bounded degree of concurrency; progress flushed on a timer from this
+            // (single) DbContext-owning flow — the download tasks never touch the DbContext.
+            await SetStageAsync(job, AutoFetchJobStatus.DownloadingFilings, 40, $"Downloading filings 0 / {job.FilesTotal:N0}…", ct);
+            var allFiles = plan.SelectMany(f => f.Files.Select(x => (Filing: f, File: x))).ToList();
+            // A resumed job's already-staged bytes must count toward the aggregate cap from the start —
+            // otherwise a job retried enough times could accumulate past the cap one resume at a time.
+            var initialBytes = allFiles.Where(t => IsStaged(t.File.LocalPath)).Sum(t => new FileInfo(t.File.LocalPath).Length);
+            var pending = allFiles.Where(t => !IsStaged(t.File.LocalPath)).ToList();
+            var downloadedCount = job.FilesDownloaded;
+            var failedCount = 0;
+            var cappedCount = 0;
+            long bytes = initialBytes;
+            var failures = new System.Collections.Concurrent.ConcurrentBag<string>();
+
+            var downloadTask = Parallel.ForEachAsync(pending,
+                new ParallelOptions { MaxDegreeOfParallelism = Math.Max(1, _opts.DownloadConcurrency), CancellationToken = ct },
+                async (item, token) =>
+                {
+                    var (filing, (entryName, localPath, awsPath, did)) = item;
+                    // Live enforcement against the real running total — the plan-time estimate above only
+                    // decided what to attempt and how much to reserve; this is what actually bounds bytes
+                    // written to disk when declared sizes under-estimated the truth. A file already
+                    // in-flight when the cap is crossed is allowed to finish (bounded overshoot: at most
+                    // DownloadConcurrency × MaxResponseBytes), rather than aborting a partial transfer.
+                    if (Interlocked.Read(ref bytes) >= aggregateCap)
+                    {
+                        Interlocked.Increment(ref cappedCount);
+                        return;
+                    }
+
+                    var ok = await DownloadWithRetryAsync(job.Bid, userId, awsPath, did, localPath, token);
+                    if (ok)
+                    {
+                        Interlocked.Increment(ref downloadedCount);
+                        Interlocked.Add(ref bytes, new FileInfo(localPath).Length);
+                    }
+                    else
+                    {
+                        Interlocked.Increment(ref failedCount);
+                        failures.Add($"{filing.SectionFolder} / {filing.DocId} / {entryName}");
+                    }
+                });
+
+            while (!downloadTask.IsCompleted)
             {
-                var (filing, (entryName, localPath, awsPath, did)) = (item.f, item.x);
-                var ok = await DownloadWithRetryAsync(job.Bid, userId, awsPath, did, localPath, token);
-                if (ok)
-                {
-                    Interlocked.Increment(ref downloadedCount);
-                    Interlocked.Add(ref bytes, new FileInfo(localPath).Length);
-                }
-                else
-                {
-                    Interlocked.Increment(ref failedCount);
-                    failures.Add($"{filing.SectionFolder} / {filing.DocId} / {entryName}");
-                }
-            });
+                await Task.WhenAny(downloadTask, Task.Delay(ProgressFlushInterval, ct));
+                await FlushDownloadProgressAsync(job, Volatile.Read(ref downloadedCount), Volatile.Read(ref failedCount), Interlocked.Read(ref bytes), ct);
+            }
+            await downloadTask; // surfaces cancellation / unexpected exceptions
+            await FlushDownloadProgressAsync(job, downloadedCount, failedCount, Interlocked.Read(ref bytes), ct);
 
-        while (!downloadTask.IsCompleted)
-        {
-            await Task.WhenAny(downloadTask, Task.Delay(ProgressFlushInterval, ct));
-            await FlushDownloadProgressAsync(job, Volatile.Read(ref downloadedCount), Volatile.Read(ref failedCount), Volatile.Read(ref bytes), ct);
+            if (failedCount > 0)
+            {
+                var sample = failures.Take(10).ToList();
+                warnings.Add($"{failedCount:N0} of {job.FilesTotal:N0} filing PDFs could not be downloaded after {_opts.DownloadAttempts} attempts each " +
+                             $"(e.g. {string.Join("; ", sample)}{(failures.Count > sample.Count ? "; …" : "")}).");
+            }
+            if (cappedCount > 0)
+                warnings.Add($"Stopped after reaching the {aggregateCap / (1024 * 1024 * 1024.0):N1} GB aggregate download limit; {cappedCount:N0} planned file(s) were not attempted.");
+            if (downloadedCount == 0)
+                throw new ReferenceToolException("None of the filing PDFs could be downloaded — the session cookie has probably expired, or the reference documents are not unlocked for this company.");
+
+            // Package → RequestDocument → McaFilingBatch → unpack queue
+            await SetStageAsync(job, AutoFetchJobStatus.Packaging, 88, "Packaging the filings archive…", ct);
+            var outerZipPath = Path.Combine(stagingDir, $"{job.Cin}_filings.zip");
+            AutoFetchArchiveBuilder.Build(outerZipPath, request.CompanyName, job.Cin, plan.Select(p => p.ToArchiveFiling()), ct);
+
+            var safety = ArchiveSafetyValidator.ValidateOuterArchive(outerZipPath, ArchiveSafetyLimits.Default);
+            if (!safety.IsValid)
+                throw new ReferenceToolException($"The packaged filings archive failed the safety check: {safety.Error}");
+
+            var filingsDocument = await StoreDocumentAsync(request.RequestId, outerZipPath, $"{job.Cin}_MCA_Filings.zip", DocumentType.McaFilingsArchive, validateAsExcel: false, ct);
+            var batch = new McaFilingBatch
+            {
+                RequestId = request.RequestId,
+                SourceDocumentId = filingsDocument.DocumentId,
+                Status = FilingBatchStatus.Uploaded,
+                StartedDate = DateTime.UtcNow
+            };
+            db.McaFilingBatches.Add(batch);
+            job.FilingsDocumentId = filingsDocument.DocumentId;
+            await db.SaveChangesAsync(ct);
+            job.FilingBatchId = batch.BatchId;
+            job.ProgressPercent = 96;
+            job.StatusMessage = "Filings archive queued for OCR, extraction and indexing.";
+            await SaveWarningsAsync(job, warnings, ct);
+            filingQueue.Enqueue(new UnpackBatchWorkItem(batch.BatchId));
+
+            // The archive is stored under App_Data/Uploads now; the staged PDFs are no longer needed.
+            try { Directory.Delete(stagingDir, recursive: true); }
+            catch (Exception ex) { logger.LogWarning(ex, "Could not delete auto-fetch staging folder {Dir}", stagingDir); }
         }
-        await downloadTask; // surfaces cancellation / unexpected exceptions
-        await FlushDownloadProgressAsync(job, downloadedCount, failedCount, bytes, ct);
-
-        if (failedCount > 0)
+        finally
         {
-            var sample = failures.Take(10).ToList();
-            warnings.Add($"{failedCount:N0} of {job.FilesTotal:N0} filing PDFs could not be downloaded after {_opts.DownloadAttempts} attempts each " +
-                         $"(e.g. {string.Join("; ", sample)}{(failures.Count > sample.Count ? "; …" : "")}).");
+            await reservations.ReleaseReservationsAsync("AutoFetchJob", job.AutoFetchJobId.ToString(), CancellationToken.None);
         }
-        if (downloadedCount == 0)
-            throw new ReferenceToolException("None of the filing PDFs could be downloaded — the session cookie has probably expired, or the reference documents are not unlocked for this company.");
-
-        // Package → RequestDocument → McaFilingBatch → unpack queue
-        await SetStageAsync(job, AutoFetchJobStatus.Packaging, 88, "Packaging the filings archive…", ct);
-        var outerZipPath = Path.Combine(stagingDir, $"{job.Cin}_filings.zip");
-        AutoFetchArchiveBuilder.Build(outerZipPath, request.CompanyName, job.Cin, plan.Select(p => p.ToArchiveFiling()), ct);
-
-        var safety = ArchiveSafetyValidator.ValidateOuterArchive(outerZipPath, ArchiveSafetyLimits.Default);
-        if (!safety.IsValid)
-            throw new ReferenceToolException($"The packaged filings archive failed the safety check: {safety.Error}");
-
-        var filingsDocument = await StoreDocumentAsync(request.RequestId, outerZipPath, $"{job.Cin}_MCA_Filings.zip", DocumentType.McaFilingsArchive, validateAsExcel: false, ct);
-        var batch = new McaFilingBatch
-        {
-            RequestId = request.RequestId,
-            SourceDocumentId = filingsDocument.DocumentId,
-            Status = FilingBatchStatus.Uploaded,
-            StartedDate = DateTime.UtcNow
-        };
-        db.McaFilingBatches.Add(batch);
-        job.FilingsDocumentId = filingsDocument.DocumentId;
-        await db.SaveChangesAsync(ct);
-        job.FilingBatchId = batch.BatchId;
-        job.ProgressPercent = 96;
-        job.StatusMessage = "Filings archive queued for OCR, extraction and indexing.";
-        await SaveWarningsAsync(job, warnings, ct);
-        filingQueue.Enqueue(new UnpackBatchWorkItem(batch.BatchId));
-
-        // The archive is stored under App_Data/Uploads now; the staged PDFs are no longer needed.
-        try { Directory.Delete(stagingDir, recursive: true); }
-        catch (Exception ex) { logger.LogWarning(ex, "Could not delete auto-fetch staging folder {Dir}", stagingDir); }
     }
 
     /// <summary>Turns the registry into the list of nested zips to build, with the local staging path
     /// of every file. Documents that appear in more than one section are packaged once (first section
-    /// wins). The plan is truncated at the filings pipeline's batch-wide PDF cap — going past it would
-    /// only make the unpack step reject the whole archive.</summary>
-    private static List<PlannedFiling> BuildDownloadPlan(ReferenceDocumentRegistry registry, int maxDocumentsPerSection, string stagingDir, List<string> warnings)
+    /// wins). The plan is truncated at whichever of two caps is hit first: the filings pipeline's
+    /// batch-wide PDF count (going past it would only make the unpack step reject the whole archive), or
+    /// <paramref name="aggregateByteCap"/> (estimated from the registry's own declared sizes, falling back
+    /// to <see cref="FallbackPerFileEstimateBytes"/> per file when a size wasn't declared) — this estimate
+    /// only decides how much is planned and how large a storage reservation to ask for; the live download
+    /// loop in <see cref="FetchFilingsAsync"/> enforces the same cap against real downloaded bytes.</summary>
+    private static (List<PlannedFiling> Plan, long EstimatedBytes) BuildDownloadPlan(
+        ReferenceDocumentRegistry registry, int maxDocumentsPerSection, long aggregateByteCap, string stagingDir, List<string> warnings)
     {
         var plan = new List<PlannedFiling>();
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var fileCount = 0;
-        var cap = ArchiveSafetyLimits.Default.MaxPdfCount;
-        var truncated = false;
+        long estimatedBytes = 0;
+        var pdfCap = ArchiveSafetyLimits.Default.MaxPdfCount;
+        var truncatedByCount = false;
+        var truncatedByBytes = false;
 
         foreach (var section in registry.Sections)
         {
@@ -414,16 +466,28 @@ public sealed class AutoFetchJobService(
                     files.Add(new PlannedFile(AutoFetchArchiveBuilder.SanitizeEntryName(att.Name), Path.Combine(docDir, $"att{attIndex}.pdf"), att.AwsPath,
                         Path.GetFileNameWithoutExtension(att.Name)));
                 }
-                if (fileCount + files.Count > cap) { truncated = true; break; }
+
+                if (fileCount + files.Count > pdfCap) { truncatedByCount = true; break; }
+
+                // The registry's declared size (when present) covers the whole filing entry, not each
+                // attachment individually — split it evenly rather than attribute it all to the main PDF.
+                var docEstimate = doc.SizeKb.HasValue && doc.SizeKb.Value > 0
+                    ? (long)(doc.SizeKb.Value * 1024)
+                    : FallbackPerFileEstimateBytes * files.Count;
+                if (estimatedBytes + docEstimate > aggregateByteCap) { truncatedByBytes = true; break; }
+
                 fileCount += files.Count;
+                estimatedBytes += docEstimate;
                 plan.Add(new PlannedFiling(section.FolderName, doc.DocId, files));
             }
-            if (truncated) break;
+            if (truncatedByCount || truncatedByBytes) break;
         }
 
-        if (truncated)
-            warnings.Add($"The filing list was cut at the pipeline's {cap:N0}-PDF batch limit; later sections/documents were not fetched. Use a per-section cap to choose what to include.");
-        return plan;
+        if (truncatedByCount)
+            warnings.Add($"The filing list was cut at the pipeline's {pdfCap:N0}-PDF batch limit; later sections/documents were not fetched. Use a per-section cap to choose what to include.");
+        if (truncatedByBytes)
+            warnings.Add($"The filing list was cut at the {aggregateByteCap / (1024 * 1024 * 1024.0):N1} GB aggregate download limit (estimated from the registry's declared sizes); later sections/documents were not fetched.");
+        return (plan, estimatedBytes);
     }
 
     private async Task<bool> DownloadWithRetryAsync(string bid, string userId, string awsPath, string did, string localPath, CancellationToken ct)
