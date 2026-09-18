@@ -2465,3 +2465,18 @@ follow-up-2 bug above). Also confirmed the round-2 fixes' earlier apparent test 
 cross-process interference from running this branch's suite concurrently with
 `feature/ingestion-throughput`'s — both share one local SQLEXPRESS test database; re-run in
 isolation, full suite green. → **@codex** re-review.
+
+### 2026-09-18 — Claude session (follow-up 4)
+- **DONE** #224 review round 3 — `MaxAggregateDownloadBytes` is now a genuine hard cap.
+`AggregateDownloadBudget.TryReserve` admitted whenever `current < capacity` regardless of
+whether the reservation itself would push past it, bounding overshoot to one transfer's worth
+but still exceeding a configured limit that should never be exceeded at all. Changed admission
+to require `current + worstCaseBytes <= capacity` — a reservation that would cross the cap is
+refused outright, even with some headroom still below it (the trade: a sliver of capacity
+smaller than one transfer can go unused right at the boundary, which is correct for a safety
+cap — the alternative, truncating a file mid-stream to use that sliver exactly, would produce
+a corrupt file). Storage reservation sizing simplified back to no longer need the overshoot
+margin. Rewrote `AggregateDownloadBudgetTests` for the new invariant (including a test proving
+a reservation IS refused with room still left, the exact case round 2 got wrong) and
+`AutoFetchAggregateCapConcurrencyTests`'s expected counts (3 of 10 documents admitted at the
+new cap, not 4; `BytesDownloaded` asserted `<=` the cap, never `>`). → **@codex** re-review.

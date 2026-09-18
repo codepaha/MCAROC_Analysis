@@ -15,24 +15,28 @@ using Microsoft.Extensions.Options;
 
 namespace MCAROC_Analysis.Tests;
 
-/// <summary>Closes the review finding on PR #224 head <c>0ca705d</c>: "several workers only check
-/// <c>bytes &gt;= aggregateCap</c> before starting, then add after finishing" — multiple simultaneous
-/// downloads whose declared/individual sizes fit under the plan-time estimate can still, once the real
-/// bytes come in higher than declared, overshoot the aggregate cap by multiple files' worth if admission
-/// isn't atomic. Runs the real <see cref="AutoFetchJobService.ProcessAsync"/> download stage (real
-/// concurrency, real HTTP-shaped stub responses) rather than unit-testing the budget in isolation, since
-/// this is exactly the scenario Codex asked to see covered end to end. The registry deliberately declares
-/// sizes far smaller than the real per-file responses, so the plan-time byte-truncation
-/// (AutoFetchJobService.BuildDownloadPlan) does not itself remove any documents — every document reaches
-/// the live download loop, and the atomic budget in that loop is what must catch the overshoot.</summary>
+/// <summary>Closes two rounds of the same review finding on PR #224.
+/// Round 1 (head <c>0ca705d</c>): "several workers only check <c>bytes &gt;= aggregateCap</c> before
+/// starting, then add after finishing" — multiple simultaneous downloads whose declared/individual sizes
+/// fit under the plan-time estimate could, once the real bytes came in higher than declared, overshoot the
+/// aggregate cap by multiple files' worth because admission wasn't atomic.
+/// Round 2 (head <c>be5ca4a</c>): admission became atomic but still let the ONE reservation that crossed
+/// the threshold through — bounding the overshoot to one file's worth, but still exceeding a cap that is a
+/// configured limit, not an approximate one.
+/// This runs the real <see cref="AutoFetchJobService.ProcessAsync"/> download stage (real concurrency, real
+/// HTTP-shaped stub responses) rather than unit-testing the budget in isolation, since this is exactly the
+/// scenario Codex asked to see covered end to end. The registry deliberately declares sizes far smaller
+/// than the real per-file responses, so the plan-time byte-truncation (AutoFetchJobService.BuildDownloadPlan)
+/// does not itself remove any documents — every document reaches the live download loop, and the atomic,
+/// hard-capped budget in that loop is what must keep real usage at or under the configured limit.</summary>
 public class AutoFetchAggregateCapConcurrencyTests : IAsyncLifetime
 {
     private const string KeyHex = "6b65792d666f722d7465737473"; // "key-for-tests"
     private const long MaxResponseBytes = 50_000; // 50 KB per-file cap
     private const long AggregateCap = 180_000; // 180 KB — deliberately NOT a multiple of MaxResponseBytes,
-        // so admission legitimately crosses (not just reaches) the cap by less than one file's worth —
-        // exactly the bounded overshoot AggregateDownloadBudget allows, as opposed to the unbounded
-        // DownloadConcurrency × MaxResponseBytes overshoot the old check-then-add design permitted.
+        // so the last admitted reservation lands strictly under the cap (150,000) rather than exactly at
+        // it, proving the boundary math (150,000 + 50,000 = 200,000 > 180,000 → refused) rather than a
+        // coincidental exact fit.
     private const int RealFileBytes = 50_000; // exactly at the per-file cap — "individual sizes fit" per
         // the review, and equal to the worst-case reservation so admission counts are fully deterministic
         // (Commit's actual-minus-worstCase adjustment is a no-op, so no interleaving can admit "extra"
@@ -57,7 +61,7 @@ public class AutoFetchAggregateCapConcurrencyTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Real_concurrent_downloads_whose_declared_sizes_undersell_the_truth_never_overshoot_past_one_files_worth()
+    public async Task Real_concurrent_downloads_whose_declared_sizes_undersell_the_truth_never_exceed_the_configured_cap()
     {
         await using var db = CreateContext();
 
@@ -90,22 +94,21 @@ public class AutoFetchAggregateCapConcurrencyTests : IAsyncLifetime
         Assert.True(job.Status is AutoFetchJobStatus.Completed or AutoFetchJobStatus.CompletedWithWarnings,
             $"Job ended as {job.Status}: {job.FailureReason} / msg={job.StatusMessage} / processException={processException}");
 
-        // The bound this fix guarantees: at most one in-flight transfer's worth of overshoot past the
-        // cap, regardless of DownloadConcurrency. Before the fix, up to DownloadConcurrency (8) files —
-        // 400 KB — could land; admission is now deterministic (RealFileBytes == MaxResponseBytes, so
-        // Commit's true-up is a no-op and no interleaving can admit more): exactly 4 of the 10 documents
-        // fit before the 4th reservation's own arithmetic (150,000 + 50,000 = 200,000) legitimately
-        // crosses the 180,000 cap by less than one file's worth, and the 5th is refused outright.
-        Assert.Equal(4 * MaxResponseBytes, job.BytesDownloaded);
-        Assert.True(job.BytesDownloaded > AggregateCap,
-            $"Expected the bounded overshoot itself to be exercised (downloaded {job.BytesDownloaded} > cap {AggregateCap}), not merely staying under it.");
-        Assert.True(job.BytesDownloaded <= AggregateCap + MaxResponseBytes,
-            $"Downloaded {job.BytesDownloaded} bytes; expected at most {AggregateCap + MaxResponseBytes} (aggregate cap + one file's worst-case size) — the old design could reach up to {AggregateCap + 8 * MaxResponseBytes}.");
+        // The hard bound this fix guarantees: downloaded bytes never exceed AggregateCap, full stop,
+        // regardless of DownloadConcurrency. Before round 1's fix, up to DownloadConcurrency (8) files —
+        // 400 KB — could land; before round 2's fix, one reservation was still allowed to cross the
+        // threshold (200 KB, over the 180 KB cap). Admission is deterministic here (RealFileBytes ==
+        // MaxResponseBytes, so Commit's true-up is a no-op and no interleaving can admit more): exactly 3
+        // of the 10 documents fit (3 × 50,000 = 150,000 ≤ 180,000); a 4th would need 200,000, which is
+        // refused outright rather than admitted because 150,000 alone was still under the cap.
+        Assert.Equal(3 * MaxResponseBytes, job.BytesDownloaded);
+        Assert.True(job.BytesDownloaded <= AggregateCap,
+            $"Downloaded {job.BytesDownloaded} bytes; the configured cap {AggregateCap} must never be exceeded — old designs could reach up to {AggregateCap + 8 * MaxResponseBytes} (round 1) or {AggregateCap + MaxResponseBytes} (round 2).");
 
         // The cap must have actually been exercised — not all 10 documents' real bytes (500 KB) fit.
-        // FilesFailed stays 0: the other 6 were never attempted at all (refused by the budget before any
+        // FilesFailed stays 0: the other 7 were never attempted at all (refused by the budget before any
         // HTTP call), not attempted-and-failed.
-        Assert.Equal(4, job.FilesDownloaded);
+        Assert.Equal(3, job.FilesDownloaded);
         Assert.Equal(0, job.FilesFailed);
 
         var warnings = JsonSerializer.Deserialize<List<string>>(job.WarningsJson) ?? [];

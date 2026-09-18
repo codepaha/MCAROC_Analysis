@@ -322,12 +322,12 @@ public sealed class AutoFetchJobService(
         // that briefly coexists with them (see the cleanup at the end of this method) — both draw from the
         // same volume-wide ledger the large-archive-upload feature uses, so the two features never
         // independently believe the same free space is available to both. Sized from the plan's own
-        // estimate (capped at the configured ceiling) plus one MaxResponseBytes margin — the most the
-        // aggregate download budget below can ever overshoot by, now that admission against it is atomic
-        // (see AggregateDownloadBudget) — so a handful of PDFs for a small company doesn't have to fail
-        // because a machine lacks 40 GB free for nothing it will actually use, while still covering the
-        // real worst case rather than only the happy-path estimate.
-        var reserveBytes = 2 * Math.Max(Math.Min(estimatedBytes, aggregateCap) + _opts.MaxResponseBytes, 50 * 1024 * 1024L);
+        // estimate, capped at the configured ceiling — AggregateDownloadBudget below is a hard cap (never
+        // admits a reservation that would cross it), so real usage during the download phase never exceeds
+        // aggregateCap and no extra margin is needed for that. Using the estimate rather than the ceiling
+        // itself means a handful of PDFs for a small company doesn't have to fail because a machine lacks
+        // 20+ GB free for nothing it will actually use.
+        var reserveBytes = 2 * Math.Max(Math.Min(estimatedBytes, aggregateCap), 50 * 1024 * 1024L);
         var reservation = await reservations.TryReserveAsync(
             "AutoFetchJob", job.AutoFetchJobId.ToString(), stagingDir, reserveBytes, _opts.StorageReservationLifetime, ct);
         if (!reservation.Success)
@@ -349,14 +349,16 @@ public sealed class AutoFetchJobService(
             long bytes = initialBytes; // for progress display only — real bytes actually on disk, never a reservation
             var failures = new System.Collections.Concurrent.ConcurrentBag<string>();
 
-            // Enforces the aggregate cap atomically: a worker claims MaxResponseBytes of budget with a
-            // single compare-and-swap BEFORE it starts downloading, not a separate check-then-add after —
-            // the earlier version of this method let several concurrent workers all observe "under cap"
-            // in the same window before any of them had added anything, so the job could overshoot by up
-            // to DownloadConcurrency × MaxResponseBytes instead of one file's worth. TryReserve makes that
-            // race structurally impossible: only one caller can ever be the reservation that crosses the
-            // threshold, so real disk usage is now bounded by aggregateCap + MaxResponseBytes regardless
-            // of how many workers race the check (see AggregateDownloadBudget's own remarks).
+            // Enforces the aggregate cap atomically and as a genuine hard limit: a worker claims
+            // MaxResponseBytes of budget with a single compare-and-swap BEFORE it starts downloading, and
+            // that claim is refused outright if it would push the total past aggregateCap — not a separate
+            // check-then-add after (which let several concurrent workers all observe "under cap" in the
+            // same window before any of them had added anything, overshooting by up to
+            // DownloadConcurrency × MaxResponseBytes), and not "admit if any room remains" either (which
+            // still let the one reservation that crosses the threshold through, overshooting by up to one
+            // file's worth). Real disk usage from this loop never exceeds aggregateCap, full stop — see
+            // AggregateDownloadBudget's own remarks for why a sliver of unused capacity right at the
+            // boundary is the correct trade for that guarantee.
             var budget = new AggregateDownloadBudget(aggregateCap);
             budget.SeedKnownUsage(initialBytes);
 
