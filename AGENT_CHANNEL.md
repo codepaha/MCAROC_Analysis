@@ -2307,3 +2307,33 @@ service — if it sits `queued`, `run.cmd` is down) runs *only* what Linux can't
   6. Reconciled 160 Auto / 14 Review distribution in `docs/document-data-linking-plan.md` documenting the 4 shifted `DateContradiction` entries under strict contradiction rejection.
   7. Committed updated baseline fixture `coastal_d2_baseline.json`: LF SHA-256 `BD1381111BF64CDA15B3FB7E35398EE8FB2405D5904CFF94B77EEE929D1F8542`.
   8. Exhaustive test suite in `CoastalChargeLinkTests.cs`: asserts exact sorted array of all 14 `(OuterEntryFullPath, NestedEntryRelativePath, Reason)` tuples, event identity non-null assertions on all 160 AutoAccepted entries, baseline fixture SHA-256, and byte-for-byte reproducibility. All tests pass locally and whitespace hygiene verified with `git diff --check`. → **@codex** review.
+
+### 2026-09-18 — Claude session (ingestion throughput)
+- **DONE** ingestion-pipeline throughput (`feature/ingestion-throughput`, off `main`): the three levers from the CI channel discussion —
+  1. multiple concurrent unpacks/uploads: `OperationalSlotLeaseService`'s single-row-per-slot-type
+     design (one holder, period — the
+     `LargeArchiveUpload:MaxConcurrentUnpacks`/`MaxConcurrentUploads` settings existed but were
+     never read anywhere) is now a real multi-holder capacity slot, fenced per slot type with
+     `sp_getapplock` so concurrent acquirers can't both slip past the same capacity check.
+     Migration `MultiHolderOperationalSlotLeases` (drop+recreate — the table only ever held
+     transient in-flight state, nothing worth migrating row-by-row). Both real call sites
+     (`FilingBatchProcessor.UnpackBatchAsync`, `RequestsUploadController.Initiate`) now pass their
+     real configured capacity; every existing test that omits capacity keeps today's single-holder
+     behavior unchanged (new default parameter, not a breaking signature change).
+  2. configurable pipeline concurrency: `FilingProcessingWorker`'s OCR/classification and Gemini-
+     extraction semaphores, `DocumentChunkingWorker`'s embedding semaphore, and unpack dispatch
+     (now its own semaphore, previously sharing OCR's — unpack work no longer starves document
+     processing or vice versa) all read from `LargeArchiveUploadOptions` instead of being
+     hardcoded, defaults unchanged (4/2/4/1).
+  3. chunking/embedding for a batch is now enqueued the moment each document finishes
+     OCR/classification, not only once the whole batch reaches a terminal state — large archives'
+     "Ask Documents" index fills in incrementally instead of staying empty until the single slowest
+     document finishes.
+  Tests: `OperationalSlotLeaseTests` (capacity>1 admits N holders then refuses, re-acquire by
+  the same holder renews rather than double-counting), `FilingBatchProcessorLeaseTests` (two
+  real batches unpack concurrently at capacity 2), `PipelineConcurrencyConfigurationTests` (each
+  worker's semaphore is actually sized from options, not just declared configurable),
+  `FilingBatchProcessorChunkingTriggerTests` (a real QuestPDF-generated, natively-extractable
+  PDF through the real `PdfTextExtractor` — no mocks — proving the chunking queue receives this
+  batch while a sibling document is still `Discovered`). Full suite pending — will report before
+  opening the PR.

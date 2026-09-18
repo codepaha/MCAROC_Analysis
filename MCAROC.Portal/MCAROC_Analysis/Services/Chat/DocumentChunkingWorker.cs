@@ -1,13 +1,19 @@
+using MCAROC_Analysis.Services.McaFilings;
+using Microsoft.Extensions.Options;
+
 namespace MCAROC_Analysis.Services.Chat;
 
 /// <summary>Dequeues BatchIds and fans out per-document chunking with bounded concurrency (CPU/IO-bound
-/// work, similar rationale to Phase 2's per-document concurrency limit).</summary>
+/// work, similar rationale to Phase 2's per-document concurrency limit) — each unit makes an embedding
+/// API call, so this shares the same LargeArchiveUploadOptions:MaxConcurrentChunking config as the rest of
+/// the pipeline's tunable limits rather than a hardcoded value.</summary>
 public class DocumentChunkingWorker(
     IServiceScopeFactory scopeFactory,
     DocumentChunkingQueue queue,
-    ILogger<DocumentChunkingWorker> logger) : BackgroundService
+    ILogger<DocumentChunkingWorker> logger,
+    IOptions<LargeArchiveUploadOptions>? options = null) : BackgroundService
 {
-    private readonly SemaphoreSlim _concurrency = new(4);
+    private readonly SemaphoreSlim _concurrency = new(Math.Max(1, options?.Value.MaxConcurrentChunking ?? 4));
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {

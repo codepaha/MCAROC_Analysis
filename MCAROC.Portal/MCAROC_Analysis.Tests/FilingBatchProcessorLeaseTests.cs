@@ -77,7 +77,7 @@ public class FilingBatchProcessorLeaseTests : IAsyncLifetime
         return Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
     }
 
-    private static FilingBatchProcessor CreateProcessor(AppDbContext db, string contentRootPath, IOperationalSlotLeaseService slotLeaseService)
+    private static FilingBatchProcessor CreateProcessor(AppDbContext db, string contentRootPath, IOperationalSlotLeaseService slotLeaseService, int? maxConcurrentUnpacks = null)
     {
         var queue = new FilingProcessingQueue();
         var chunkQueue = new DocumentChunkingQueue();
@@ -90,7 +90,8 @@ public class FilingBatchProcessorLeaseTests : IAsyncLifetime
             queue,
             chunkQueue,
             NullLogger<FilingBatchProcessor>.Instance,
-            slotLeaseService);
+            slotLeaseService,
+            maxConcurrentUnpacks is { } cap ? Options.Create(new LargeArchiveUploadOptions { MaxConcurrentUnpacks = cap }) : null);
     }
 
     [Fact]
@@ -394,6 +395,76 @@ public class FilingBatchProcessorLeaseTests : IAsyncLifetime
             try { Directory.Delete(tempDir, recursive: true); } catch { }
             await db.McaFilingBatches.Where(b => b.BatchId == batch.BatchId).ExecuteDeleteAsync();
             await db.RequestDocuments.Where(d => d.DocumentId == doc.DocumentId).ExecuteDeleteAsync();
+            await db.OperationalSlotLeases.Where(s => s.SlotType == OperationalSlotLeaseService.LargeUnpackSlot).ExecuteDeleteAsync();
+        }
+    }
+
+    /// <summary>The throughput fix end to end: with MaxConcurrentUnpacks = 2, a second batch's
+    /// UnpackBatchAsync no longer has to wait for the first to release the slot — both genuinely unpack at
+    /// once, unlike UnpackBatchAsync_CannotBegin_WhenAnotherBatchHoldsLargeUnpackSlot above (the historical,
+    /// still-default capacity-1 behavior).</summary>
+    [Fact]
+    public async Task UnpackBatchAsync_TwoBatchesProceedConcurrently_WhenCapacityIsTwo()
+    {
+        await using var db = CreateContext();
+        var requestId = await EnsureTestRequestAsync(db);
+
+        var tempDir = Path.Combine(Path.GetTempPath(), "unpack-capacity2-test-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tempDir);
+
+        var zip1Path = Path.Combine(tempDir, "batch1.zip");
+        var zip2Path = Path.Combine(tempDir, "batch2.zip");
+        var sha1 = CreateValidOuterZip(zip1Path);
+        var sha2 = CreateValidOuterZip(zip2Path);
+
+        var doc1 = new RequestDocument
+        {
+            RequestId = requestId, DocumentType = DocumentType.McaFilingsArchive, OriginalFileName = "batch1.zip",
+            StoredFileName = "batch1.zip", StoragePath = zip1Path, FileSize = new FileInfo(zip1Path).Length,
+            FileHash = sha1, UploadStatus = DocumentUploadStatus.Uploaded, UploadedDate = DateTime.UtcNow, IsActiveSource = false
+        };
+        var doc2 = new RequestDocument
+        {
+            RequestId = requestId, DocumentType = DocumentType.McaFilingsArchive, OriginalFileName = "batch2.zip",
+            StoredFileName = "batch2.zip", StoragePath = zip2Path, FileSize = new FileInfo(zip2Path).Length,
+            FileHash = sha2, UploadStatus = DocumentUploadStatus.Uploaded, UploadedDate = DateTime.UtcNow, IsActiveSource = false
+        };
+        db.RequestDocuments.AddRange(doc1, doc2);
+        await db.SaveChangesAsync();
+
+        var batch1 = new McaFilingBatch { RequestId = requestId, SourceDocumentId = doc1.DocumentId, Status = FilingBatchStatus.Uploaded, StartedDate = DateTime.UtcNow };
+        var batch2 = new McaFilingBatch { RequestId = requestId, SourceDocumentId = doc2.DocumentId, Status = FilingBatchStatus.Uploaded, StartedDate = DateTime.UtcNow };
+        db.McaFilingBatches.AddRange(batch1, batch2);
+        await db.SaveChangesAsync();
+
+        var slotService = new OperationalSlotLeaseService(db, NullLogger<OperationalSlotLeaseService>.Instance);
+        var processor = CreateProcessor(db, tempDir, slotService, maxConcurrentUnpacks: 2);
+
+        try
+        {
+            // Batch 1 acquires and holds LargeUnpackSlot directly (simulating it mid-unpack), exactly as
+            // the capacity-1 test above does — the only difference is the capacity passed below.
+            var holder1 = batch1.BatchId.ToString();
+            var lease1 = await slotService.TryAcquireSlotAsync(OperationalSlotLeaseService.LargeUnpackSlot, holder1, TimeSpan.FromMinutes(5), capacity: 2);
+            Assert.True(lease1.Success, lease1.Error);
+
+            // Batch 2 must NOT be refused this time — capacity 2 admits both at once.
+            await processor.UnpackBatchAsync(batch2.BatchId, CancellationToken.None);
+
+            var updatedBatch2 = await db.McaFilingBatches.AsNoTracking().FirstAsync(b => b.BatchId == batch2.BatchId);
+            Assert.Equal(FilingBatchStatus.Processing, updatedBatch2.Status);
+
+            // Batch 1's lease is still held (release the direct one taken above never ran) — proving both
+            // genuinely coexisted rather than batch 2 having silently waited for batch 1 first.
+            var stillHeld = await db.OperationalSlotLeases.AsNoTracking()
+                .AnyAsync(s => s.SlotType == OperationalSlotLeaseService.LargeUnpackSlot && s.ActiveHolderId == holder1);
+            Assert.True(stillHeld);
+        }
+        finally
+        {
+            try { Directory.Delete(tempDir, recursive: true); } catch { }
+            await db.McaFilingBatches.Where(b => b.BatchId == batch1.BatchId || b.BatchId == batch2.BatchId).ExecuteDeleteAsync();
+            await db.RequestDocuments.Where(d => d.DocumentId == doc1.DocumentId || d.DocumentId == doc2.DocumentId).ExecuteDeleteAsync();
             await db.OperationalSlotLeases.Where(s => s.SlotType == OperationalSlotLeaseService.LargeUnpackSlot).ExecuteDeleteAsync();
         }
     }

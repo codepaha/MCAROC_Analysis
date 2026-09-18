@@ -5,6 +5,7 @@ using MCAROC_Analysis.Data.Entities;
 using MCAROC_Analysis.Services.Chat;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 
 namespace MCAROC_Analysis.Services.McaFilings;
 
@@ -19,12 +20,18 @@ public class FilingBatchProcessor(
     FilingProcessingQueue queue,
     DocumentChunkingQueue documentChunkingQueue,
     ILogger<FilingBatchProcessor> logger,
-    IOperationalSlotLeaseService? slotLeaseService = null)
+    IOperationalSlotLeaseService? slotLeaseService = null,
+    IOptions<LargeArchiveUploadOptions>? archiveOptions = null)
 {
     private static readonly ArchiveSafetyLimits Limits = ArchiveSafetyLimits.Default;
     private const int MaxRetryCount = 3;
     private static readonly FilingCategory[] AiEligibleCategories =
         [FilingCategory.Charge, FilingCategory.Compliance, FilingCategory.Constitutional];
+
+    // Defaults to 1 (today's single-batch-at-a-time behavior) when no options are supplied — every
+    // existing test that constructs this class directly without an options argument keeps working
+    // unchanged, including the ones that specifically assert on single-holder contention.
+    private int MaxConcurrentUnpacks => Math.Max(1, archiveOptions?.Value.MaxConcurrentUnpacks ?? 1);
 
     public async Task UnpackBatchAsync(long batchId, CancellationToken ct)
     {
@@ -32,13 +39,16 @@ public class FilingBatchProcessor(
         var leaseDuration = TimeSpan.FromMinutes(5);
         bool slotAcquired = false;
 
-        // 1. Acquire LargeUnpackSlot before unpack begins
+        // 1. Acquire a LargeUnpackSlot slot before unpack begins — up to MaxConcurrentUnpacks batches may
+        // hold one at once, so several requests' filings can unpack in parallel instead of the whole app
+        // being limited to exactly one unpack in flight.
         if (slotLeaseService is not null)
         {
             var leaseResult = await slotLeaseService.TryAcquireSlotAsync(
                 OperationalSlotLeaseService.LargeUnpackSlot,
                 holderId,
                 leaseDuration,
+                MaxConcurrentUnpacks,
                 ct);
 
             if (!leaseResult.Success)
@@ -371,6 +381,17 @@ public class FilingBatchProcessor(
 
             document.UpdatedAt = DateTime.UtcNow;
             await db.SaveChangesAsync(ct);
+
+            // Chunking eligibility (DocumentChunkingOrchestrator.GetPendingDocumentIdsAsync) is
+            // ProcessingStatus == Completed alone — it never waits on this document's own AI extraction,
+            // let alone every other document in the batch. Enqueueing here, the moment this one document
+            // reaches that state, is what lets "Ask Documents" fill in incrementally as OCR/classification
+            // finishes across a large batch, instead of staying empty until the single slowest document
+            // (often the biggest scanned-PDF OCR job) finally completes — which is when the batch-level
+            // trigger in MaybeCompleteBatchAsync below would otherwise fire for the first time. Cheap to
+            // call this often: DocumentChunkingQueue coalesces repeat enqueues of the same batch.
+            if (extraction.Status == FilingDocumentProcessingStatus.TextExtracted)
+                documentChunkingQueue.Enqueue(document.BatchId);
 
             await MaybeEnqueueFilingExtractionAsync(document.FilingId, ct);
             await MaybeCompleteBatchAsync(document.BatchId, ct);

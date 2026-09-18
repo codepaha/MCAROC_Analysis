@@ -10,6 +10,7 @@ using MCAROC_Analysis.Services.McaFilings;
 using MCAROC_Analysis.Services.PreLoginReports;
 using Microsoft.AspNetCore.Http.Features;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 
 Encoding.RegisterProvider(CodePagesEncodingProvider.Instance); // legacy .xls encodings
 
@@ -77,7 +78,8 @@ builder.Services.AddScoped(sp => new FilingBatchProcessor(
     sp.GetRequiredService<FilingProcessingQueue>(),
     sp.GetRequiredService<DocumentChunkingQueue>(),
     sp.GetRequiredService<ILogger<FilingBatchProcessor>>(),
-    sp.GetRequiredService<IOperationalSlotLeaseService>()));
+    sp.GetRequiredService<IOperationalSlotLeaseService>(),
+    sp.GetRequiredService<IOptions<LargeArchiveUploadOptions>>()));
 builder.Services.AddHostedService<FilingProcessingWorker>();
 
 // Rule engine + AI cross-section analysis pipeline

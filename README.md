@@ -118,19 +118,32 @@ See `docs/calculation-assurance-runbook.md` before changing any of these in a re
 | `CalculationAssurance:AiAuditMaxLedgerRowsPerCall` | No | `150` | Caps how many ledger rows are sent to the model in one prompt |
 | `InternalAuth:ReviewerUsername` / `ReviewerPasswordHash` / `ReviewerDisplayName` | No, until you want anyone to be able to sign in to `/internal/calc-audit` | all empty — nobody can sign in | Reviewer login — see the runbook for how to generate the password hash |
 
-### Large archive upload (#169)
+### Large archive upload (#169) and ingestion pipeline concurrency
 
 | Key | Required? | Default | What it's for |
 |---|---|---|---|
 | `LargeArchiveUpload:Enabled` | No | `false` | Master switch — resumable >2GB MCA filing archive upload |
 | `LargeArchiveUpload:MaxArchiveSizeBytes` | No | `5368709120` (5 GiB) | Largest accepted uploaded archive |
 | `LargeArchiveUpload:ChunkSizeBytes` | No | `67108864` (64 MiB) | Upload chunk size |
-| `LargeArchiveUpload:MaxConcurrentUploads` | No | `1` | Global concurrent-upload limit |
-| `LargeArchiveUpload:MaxConcurrentUnpacks` | No | `1` | Global concurrent-unpack limit |
+| `LargeArchiveUpload:MaxConcurrentUploads` | No | `1` | How many resumable large-archive uploads may finalize at once (`OperationalSlotLeaseService`'s `LargeUpload` slot) |
+| `LargeArchiveUpload:MaxConcurrentUnpacks` | No | `1` | How many requests' MCA filings archives may unpack at once (the `LargeUnpack` slot) — also sizes `FilingProcessingWorker`'s own unpack-dispatch concurrency |
+| `LargeArchiveUpload:MaxConcurrentDocumentProcessing` | No | `4` | How many filing PDFs undergo OCR/classification at once — CPU/disk-bound, safe to raise on a machine with spare cores |
+| `LargeArchiveUpload:MaxConcurrentAiExtraction` | No | `2` | How many Gemini structured-extraction calls run at once — bound by the Vertex AI project's own quota; raise only after checking that quota |
+| `LargeArchiveUpload:MaxConcurrentChunking` | No | `4` | How many document-chunk embedding calls run at once — same externally-rate-limited consideration, against the embedding model's quota |
 | `LargeArchiveUpload:MaxUncompressedSizeBytes` | No | `21474836480` (20 GiB) | Largest accepted uncompressed archive contents |
 | `LargeArchiveUpload:MaxPdfCount` | No | `10000` | Largest accepted number of PDFs in one archive |
 | `LargeArchiveUpload:MaxIndividualPdfSizeBytes` | No | `250000000` (~238 MiB) | Largest accepted single PDF within an archive |
 | `LargeArchiveUpload:MinFreeDiskHeadroomBytes` | No | `10737418240` (10 GiB) | An upload is refused if less than this much disk space is free — check this against your actual disk before enabling on a real machine |
+
+`MaxConcurrentUploads` and `MaxConcurrentUnpacks` bound how many requests' worth of ingestion run in
+parallel; `MaxConcurrentDocumentProcessing`/`MaxConcurrentAiExtraction`/`MaxConcurrentChunking` bound how
+parallel the work is *within* one batch. Raising the first two lets several companies' filings ingest at
+once instead of queuing behind one request's archive; raising the latter three speeds up one large
+company's own thousands of PDFs, subject to your CPU (OCR) and Vertex AI/embedding quota (extraction,
+chunking). Chunking/embedding for a batch is also enqueued incrementally as each document finishes OCR,
+not only once the whole batch is done — a large archive's "Ask Documents" index fills in progressively
+rather than staying empty until the single slowest document (often the biggest scanned-PDF OCR job)
+completes.
 
 ## Running locally
 
