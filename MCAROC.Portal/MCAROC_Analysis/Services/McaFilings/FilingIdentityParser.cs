@@ -8,10 +8,15 @@ public record ParsedFilingIdentity(string? Srn, string? CompanyName, string? Cin
 /// "70908_COASTAL_PROJECTS_U45203OR1995PLC003982.zip" → SRN 70908, Company "COASTAL PROJECTS",
 /// CIN "U45203OR1995PLC003982". A CIN is a fixed 21-character pattern (letter, 5 digits, 2-letter state,
 /// 4-digit year, 3-letter type, 6-digit number), which is used as the anchor to split the filename
-/// reliably even though the company name portion itself contains underscores.</summary>
+/// reliably even though the company name portion itself contains underscores.
+///
+/// The auto-fetch packager (<see cref="AutoFetch.AutoFetchArchiveBuilder"/>) has no MCA SRN for a filing
+/// pulled from the reference tool, so it puts the tool's document id (32 hex chars + a "v1" version
+/// suffix) in the SRN position instead — accepted here as the second alternative so those filings parse
+/// with a real company/CIN identity rather than falling back to "no identity".</summary>
 public static partial class FilingIdentityParser
 {
-    [GeneratedRegex(@"^(\d+)_(.+)_([A-Z]{1}\d{5}[A-Z]{2}\d{4}[A-Z]{3}\d{6})$", RegexOptions.IgnoreCase)]
+    [GeneratedRegex(@"^(\d+|[0-9a-f]{32}v\d+)_(.+)_([A-Z]{1}\d{5}[A-Z]{2}\d{4}[A-Z]{3}\d{6})$", RegexOptions.IgnoreCase)]
     private static partial Regex NestedZipNamePattern();
 
     public static ParsedFilingIdentity Parse(string nestedZipFileNameWithoutExtension)

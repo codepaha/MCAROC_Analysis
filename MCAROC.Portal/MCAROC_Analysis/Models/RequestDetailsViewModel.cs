@@ -87,6 +87,10 @@ public class RequestDetailsViewModel
     public List<AnalysisFinding> AnalysisFindings { get; set; } = [];
     public ExecutiveSummary? ExecutiveSummary { get; set; }
 
+    /// <summary>The auto-fetch job that created this request from a bare CIN, if any — the Details page
+    /// shows its progress panel (polling) until it reaches a terminal state.</summary>
+    public AutoFetchJob? AutoFetchJob { get; set; }
+
     // MCA Filings (PDF) pipeline
     public McaFilingBatch? FilingBatch { get; set; }
     public List<FilingSummaryViewModel> FilingSummaries { get; set; } = [];

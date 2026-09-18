@@ -2,6 +2,7 @@ using System.Text;
 using MCAROC_Analysis.Data;
 using MCAROC_Analysis.Services;
 using MCAROC_Analysis.Services.Analysis;
+using MCAROC_Analysis.Services.AutoFetch;
 using MCAROC_Analysis.Services.Chat;
 using MCAROC_Analysis.Services.Dashboard;
 using MCAROC_Analysis.Services.Dossier;
@@ -45,6 +46,22 @@ builder.Services.AddScoped<PreLoginReportService>();
 builder.Services.AddSingleton<PreLoginReportQueue>();
 builder.Services.AddScoped<PreLoginReportJobService>();
 builder.Services.AddHostedService<PreLoginReportWorker>();
+
+// Auto-fetch (reference tool) — a request created from just a CIN/LLPIN: workbooks + every filing PDF
+// are pulled from the reference tool and pushed through the same ingestion / analysis / filings pipelines
+// the manual New-request flow uses. Inert until ReferenceTool:BaseUrl + SessionCookie are configured.
+builder.Services.Configure<ReferenceToolOptions>(builder.Configuration.GetSection(ReferenceToolOptions.SectionName));
+builder.Services.AddHttpClient<ReferenceToolClient>(client => client.Timeout = TimeSpan.FromMinutes(10))
+    // The session cookie is sent as an explicit header per request; the handler's own cookie container
+    // must stay off or it silently drops that header.
+    .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
+    {
+        UseCookies = false,
+        AutomaticDecompression = System.Net.DecompressionMethods.All
+    });
+builder.Services.AddSingleton<AutoFetchQueue>();
+builder.Services.AddScoped<AutoFetchJobService>();
+builder.Services.AddHostedService<AutoFetchWorker>();
 
 builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseSqlServer(builder.Configuration.GetConnectionString("Default")));

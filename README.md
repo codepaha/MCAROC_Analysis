@@ -39,6 +39,8 @@ Run these from `MCAROC.Portal/MCAROC_Analysis/` (the project already has a `User
 dotnet user-secrets set "GoogleCloud:ProjectId" "your-gcp-project-id"
 dotnet user-secrets set "GoogleCloud:CredentialsPath" "C:\path\to\your-service-account-key.json"
 dotnet user-secrets set "InstaFinancials:ApiKey" "your-instafinancials-api-key"
+dotnet user-secrets set "ReferenceTool:BaseUrl" "https://<reference-tool-host>"
+dotnet user-secrets set "ReferenceTool:SessionCookie" "<Cookie header copied from a logged-in browser session>"
 ```
 
 Check what's currently set with `dotnet user-secrets list`. Secrets live outside the repo entirely (in
@@ -55,6 +57,8 @@ underscore in place of the JSON `:`):
 GoogleCloud__ProjectId=your-gcp-project-id
 GoogleCloud__CredentialsPath=/path/to/service-account-key.json
 InstaFinancials__ApiKey=your-instafinancials-api-key
+ReferenceTool__BaseUrl=https://<reference-tool-host>
+ReferenceTool__SessionCookie=<Cookie header copied from a logged-in browser session>
 ConnectionStrings__Default=Server=...;Database=...;...
 InternalAuth__ReviewerUsername=...
 InternalAuth__ReviewerPasswordHash=...
@@ -96,6 +100,34 @@ app itself, just a template to copy values out of.
 | `InstaFinancials:ApiKey` | **Yes**, only for pre-login reports | none — throws when a report is actually requested | InstaFinancials API auth |
 | `InstaFinancials:BaseUrl` | No | already set to the real endpoint | InstaFinancials API base URL |
 | `InstaFinancials:DaysToIgnore` | No | `888` | How many days old a company's InstaFinancials record can be before it's treated as stale and re-fetched |
+
+### Reference tool auto-fetch (post-login requests from a bare CIN)
+
+"New Auto-fetch" in the sidebar creates a full post-login request from just a CIN/LLPIN: the MCA / ROC
+workbook, the detailed charge workbook and every filing PDF are pulled from the reference tool and pushed
+through the same ingestion → analysis → filings (OCR / extraction / "Ask Documents" indexing) pipelines the
+manual New Search upload feeds. The tool has no API-key login — it is driven with a browser session
+cookie, which is the one credential here. To set it up: sign in to the tool in a browser, open DevTools →
+Network, pick any of its XHR calls and copy the full `Cookie` request-header value. When that session
+expires, every auto-fetch job fails at its first step ("session is not valid") — refresh the cookie and
+click Retry on the request; completed steps are kept.
+
+| Key | Required? | Default | What it's for |
+|---|---|---|---|
+| `ReferenceTool:BaseUrl` | **Yes**, only for auto-fetch | none — the page explains what's missing | Scheme + host of the reference tool's web app |
+| `ReferenceTool:SessionCookie` | **Yes**, only for auto-fetch | none | The logged-in browser session's `Cookie` header value |
+| `ReferenceTool:UserId` | No | resolved from the session | The tool's numeric id of that user (the PDF endpoint wants it) |
+| `ReferenceTool:ClientVersion` / `AppVersion` | No | `3.1.6` / `8.1.26` | Version query parameters the tool's front end sends |
+| `ReferenceTool:DownloadConcurrency` | No | `6` | Parallel PDF downloads per job |
+| `ReferenceTool:DownloadAttempts` | No | `3` | Per-file attempts before it's recorded as a warning |
+| `ReferenceTool:DefaultMaxDocumentsPerSection` | No | `0` (all) | Form default for the per-section cap |
+| `ReferenceTool:IncludeFilingsByDefault` | No | `true` | Whether the form pre-ticks "also fetch the filing PDFs" |
+
+Filing PDFs are fetched one file at a time (the tool's own zip export stops at 50 MB) and packaged into
+the `{Section}/{docId}_{COMPANY}_{CIN}.zip` nested-zip layout the filings pipeline already unpacks, so a
+large company (thousands of PDFs, hundreds of MB) works but takes a while — the request page shows live
+progress. The registry's per-section paging is inferred from the first page's `totalCount`; when the
+tool lists fewer documents than it reports, the job says so in its warnings.
 
 ### MCA filings (OCR)
 

@@ -2392,3 +2392,16 @@ Tests: `OperationalSlotLeaseMigrationGuardTests` runs the guard's exact SQL agai
 dedicated throwaway database (not the shared test DB) — no-op with no table, no-op with only
 released/expired leases, throws with an active one (single or mixed with expired ones). →
 **@codex** re-review.
+
+### 2026-09-18 — Claude session
+- **DONE** auto-fetch post-login requests (`feature/auto-fetch-request`): a request created from just a
+  CIN/LLPIN. `ReferenceToolClient` (HS256-signed calls, cookie session, workbook exports, document
+  registry, per-file PDF streaming — bypasses the tool's 50 MB zip cap) + `AutoFetchJobService` /
+  `AutoFetchWorker` (queue, checkpointed resume, crash recovery) + `AutoFetchArchiveBuilder` (packs
+  PDFs into the `{Section}/{docId}_{COMPANY}_{CIN}.zip` layout the filings pipeline unpacks) +
+  `AutoFetchController` (form with the tool's search as auto-complete, status JSON, retry) + progress
+  panel on Details. Migration `AddAutoFetchJobs` (Claude's migration lane). `FilingIdentityParser` now
+  also accepts the tool's document id in the SRN slot. Config section `ReferenceTool` (BaseUrl +
+  SessionCookie are secrets; README + appsettings.Example.json updated). **Not live-verified**: the
+  registry's `offset`/`limit` paging is inferred — needs one run against a company with >100 documents
+  per section. → **@codex** review.

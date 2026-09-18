@@ -127,11 +127,24 @@
     </ul>
 </div>
 
+@if (TempData["AutoFetchOk"] is string autoFetchOk)
+{
+    <div class="alert alert-success">@autoFetchOk</div>
+}
+@if (TempData["AutoFetchError"] is string autoFetchError)
+{
+    <div class="alert alert-danger">@autoFetchError</div>
+}
+@if (Model.AutoFetchJob is not null)
+{
+    @await Html.PartialAsync("Details/_AutoFetchPanel", Model)
+}
 @if (r.IsManualReviewRequired && !string.IsNullOrEmpty(r.ManualReviewReason))
 {
     <div class="alert alert-danger">@r.ManualReviewReason</div>
 }
-@if (r.RequestStatus == RequestStatus.ExtractionFailed && !string.IsNullOrEmpty(r.FailureReason))
+@if (r.RequestStatus == RequestStatus.ExtractionFailed && !string.IsNullOrEmpty(r.FailureReason)
+     && (Model.AutoFetchJob is null || Model.AutoFetchJob.Status != AutoFetchJobStatus.Failed))
 {
     <div class="alert alert-danger">Extraction failed: @r.FailureReason</div>
 }

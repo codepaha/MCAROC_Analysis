@@ -1,0 +1,143 @@
+@model AutoFetchRequestViewModel
+@{
+    ViewData["Title"] = "New Auto-fetch Search";
+}
+
+<div class="pi-page-head">
+    <div>
+        <div class="pi-kicker">New Request</div>
+        <h1>New Auto-fetch Search</h1>
+        <p>Enter a CIN or LLPIN and the portal fetches the MCA / ROC report, the detailed charge report and every filing PDF from the reference tool, then runs extraction, analysis and document indexing automatically. Prefer to upload the files yourself? Use <a asp-controller="Requests" asp-action="New">New Search</a>.</p>
+    </div>
+</div>
+
+@if (!Model.IsConfigured)
+{
+    <div class="alert alert-warning">
+        <strong>Auto-fetch is not configured on this server.</strong>
+        Set <code>ReferenceTool:BaseUrl</code> and <code>ReferenceTool:SessionCookie</code> (user-secrets locally, environment variables elsewhere — see README, “Configuring secrets”). Until then, use <a asp-controller="Requests" asp-action="New">New Search</a> to upload the files manually.
+    </div>
+}
+
+@if (!string.IsNullOrEmpty(Model.ErrorMessage))
+{
+    <div class="alert alert-danger">@Model.ErrorMessage</div>
+}
+
+<div class="pi-panel" style="padding:24px;max-width:760px;">
+    <form asp-controller="AutoFetch" asp-action="New" method="post" autocomplete="off">
+        <div class="mb-3">
+            <label asp-for="ClientId" class="form-label"></label>
+            <select asp-for="ClientId" class="form-select" asp-items="@(new SelectList(Model.Clients, nameof(Client.ClientId), nameof(Client.ClientName)))">
+                <option value="">Select Client</option>
+            </select>
+        </div>
+
+        <div class="mb-3">
+            <label class="form-label d-block">Entity Type</label>
+            <div class="form-check form-check-inline">
+                <input class="form-check-input" type="radio" asp-for="EntityType" value="Company" id="entityCompany" />
+                <label class="form-check-label" for="entityCompany">Company</label>
+            </div>
+            <div class="form-check form-check-inline">
+                <input class="form-check-input" type="radio" asp-for="EntityType" value="LLP" id="entityLlp" />
+                <label class="form-check-label" for="entityLlp">LLP</label>
+            </div>
+        </div>
+
+        <div class="mb-3 position-relative">
+            <label asp-for="Cin" class="form-label"></label>
+            <input asp-for="Cin" class="form-control" id="afCin" placeholder="U24246DL2003PTC118255" data-search-url="/Requests/AutoFetch/search" />
+            <div class="form-text">Type a CIN, LLPIN or company name — matches from the reference tool appear below; pick one to fill the fields.</div>
+            <ul class="list-group position-absolute w-100 shadow-sm" id="afHints" hidden style="z-index:20;max-height:280px;overflow:auto;"></ul>
+        </div>
+
+        <div class="mb-3">
+            <label asp-for="CompanyName" class="form-label"></label>
+            <input asp-for="CompanyName" class="form-control" id="afName" placeholder="Filled automatically from the reference tool" />
+            <div class="form-text">Optional. Filled from the reference tool, or from the workbook once extracted.</div>
+        </div>
+
+        <div class="mb-3">
+            <label asp-for="Pan" class="form-label"></label>
+            <input asp-for="Pan" class="form-control" placeholder="AABCV6369H" />
+            <div class="form-text">Optional. If given, it is checked against the extracted workbook.</div>
+        </div>
+
+        <hr />
+        <h3 style="font-size:15px;font-weight:600;margin-bottom:14px;">Filing documents</h3>
+
+        <div class="form-check mb-2">
+            <input class="form-check-input" type="checkbox" asp-for="IncludeFilings" id="afIncludeFilings" />
+            <label class="form-check-label" asp-for="IncludeFilings"></label>
+            <div class="form-text">Every filing PDF in the tool's four document sections (financial, charge, incorporation, scanned) is downloaded one file at a time, packaged and pushed through OCR, extraction and “Ask Documents” indexing. Large companies have thousands of PDFs — this runs in the background and the request page shows progress.</div>
+        </div>
+
+        <div class="mb-3" style="max-width:280px;">
+            <label asp-for="MaxDocumentsPerSection" class="form-label"></label>
+            <input asp-for="MaxDocumentsPerSection" class="form-control" type="number" min="0" placeholder="All" />
+            <div class="form-text">Blank or 0 = all. Documents are taken newest first.</div>
+        </div>
+
+        <div class="d-flex gap-2 mt-4">
+            <button type="submit" class="btn btn-primary" @(Model.IsConfigured ? "" : "disabled")><i class="bi bi-cloud-download me-1"></i>Fetch &amp; Analyse</button>
+            <a asp-controller="Dashboard" asp-action="Index" class="btn btn-outline-secondary">Cancel</a>
+        </div>
+    </form>
+</div>
+
+@section Scripts {
+    <script>
+        (function () {
+            var cin = document.getElementById('afCin');
+            var name = document.getElementById('afName');
+            var hints = document.getElementById('afHints');
+            var url = cin.dataset.searchUrl;
+            var timer = null, lastQuery = '';
+
+            function hide() { hints.hidden = true; hints.innerHTML = ''; }
+
+            function render(items) {
+                hints.innerHTML = '';
+                if (!items || items.length === 0) { hide(); return; }
+                items.forEach(function (h) {
+                    var li = document.createElement('li');
+                    li.className = 'list-group-item list-group-item-action';
+                    li.style.cursor = 'pointer';
+                    var strong = document.createElement('strong');
+                    strong.textContent = h.legalName || h.LegalName || '';
+                    var small = document.createElement('div');
+                    small.className = 'small text-muted';
+                    small.textContent = (h.cin || h.Cin || '') + ((h.status || h.Status) ? ' · ' + (h.status || h.Status) : '');
+                    li.appendChild(strong); li.appendChild(small);
+                    li.addEventListener('mousedown', function (e) {
+                        e.preventDefault();
+                        var id = (h.cin || h.Cin || '').toUpperCase();
+                        cin.value = id;
+                        name.value = h.legalName || h.LegalName || '';
+                        var isLlp = id.indexOf('-') >= 0;
+                        document.getElementById(isLlp ? 'entityLlp' : 'entityCompany').checked = true;
+                        hide();
+                    });
+                    hints.appendChild(li);
+                });
+                hints.hidden = false;
+            }
+
+            cin.addEventListener('input', function () {
+                var q = cin.value.trim();
+                if (timer) clearTimeout(timer);
+                if (q.length < 3) { hide(); return; }
+                timer = setTimeout(function () {
+                    lastQuery = q;
+                    fetch(url + '?q=' + encodeURIComponent(q), { headers: { 'Accept': 'application/json' } })
+                        .then(function (r) { return r.ok ? r.json() : []; })
+                        .then(function (items) { if (cin.value.trim() === lastQuery) render(items); })
+                        .catch(hide);
+                }, 300);
+            });
+            cin.addEventListener('blur', function () { setTimeout(hide, 150); });
+            cin.addEventListener('keydown', function (e) { if (e.key === 'Escape') hide(); });
+        })();
+    </script>
+}
