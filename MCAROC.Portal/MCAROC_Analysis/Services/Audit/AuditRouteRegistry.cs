@@ -53,6 +53,12 @@ public static class AuditRouteRegistry
             { ("CalculationAudit", "AcceptException"), (AuditActionType.DiscrepancyExceptionAccepted, AuditRulePolicy.Always) },
             { ("CalculationAudit", "MarkFixedPendingReaudit"), (AuditActionType.DiscrepancyMarkedFixedPending, AuditRulePolicy.Always) },
             { ("CalculationAudit", "Resolve"), (AuditActionType.DiscrepancyResolved, AuditRulePolicy.Always) },
+
+            // CompanyMasterDashboard
+            { ("CompanyMasterDashboard", "Probe"), (AuditActionType.CompanyMasterDateProbed, AuditRulePolicy.Always) },
+            { ("CompanyMasterDashboard", "TestProxies"), (AuditActionType.CompanyMasterProxyTested, AuditRulePolicy.Always) },
+            { ("CompanyMasterDashboard", "SyncNow"), (AuditActionType.CompanyMasterSyncTriggered, AuditRulePolicy.Always) },
+            { ("CompanyMasterDashboard", "UploadManual"), (AuditActionType.CompanyMasterManualUploaded, AuditRulePolicy.Always) },
         };
 
     public static (AuditActionType ActionType, AuditRulePolicy Policy) Resolve(string controller, string action)

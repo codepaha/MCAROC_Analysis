@@ -91,6 +91,12 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     // Company master lookup (bulk-imported MCA name→CIN/LLPIN/FCRN reference data)
     public DbSet<CompanyMasterRecord> CompanyMasterRecords => Set<CompanyMasterRecord>();
 
+    // Company master automated sync pipeline & observability
+    public DbSet<CompanyMasterSyncJob> CompanyMasterSyncJobs => Set<CompanyMasterSyncJob>();
+    public DbSet<CompanyMasterSyncMetric> CompanyMasterSyncMetrics => Set<CompanyMasterSyncMetric>();
+    public DbSet<StagingCompanyMasterRecord> StagingCompanyMasterRecords => Set<StagingCompanyMasterRecord>();
+
+
     protected override void ConfigureConventions(ModelConfigurationBuilder configurationBuilder)
     {
         // Default precision for monetary/count decimals (mostly Rs. Crore values); percentages override below.
@@ -794,6 +800,59 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             // filtered to RecordType first — Foreign records are looked up here but never surfaced to
             // AutoFetch, since neither its identifier regex nor EntityType accepts an FCRN.
             e.HasIndex(x => new { x.RecordType, x.Name });
+        });
+
+        modelBuilder.Entity<CompanyMasterSyncJob>(e =>
+        {
+            e.HasKey(x => x.JobId);
+            e.Property(x => x.TriggerType).HasConversion<string>().HasMaxLength(30);
+            e.Property(x => x.Status).HasConversion<string>().HasMaxLength(40);
+            e.Property(x => x.PublishedDateRaw).HasMaxLength(100);
+            e.Property(x => x.AggregateChecksum).HasMaxLength(128);
+            e.Property(x => x.LeaseOwnerInstanceId).HasMaxLength(100);
+            e.Property(x => x.SanitizedProxyAlias).HasMaxLength(100);
+            e.Property(x => x.ErrorMessage).HasMaxLength(2000);
+
+            e.HasIndex(x => new { x.Status, x.CreatedUtc });
+            e.HasIndex(x => x.FencingToken);
+        });
+
+        modelBuilder.Entity<CompanyMasterSyncMetric>(e =>
+        {
+            e.HasKey(x => x.MetricId);
+            e.Property(x => x.RecordType).HasConversion<string>().HasMaxLength(10);
+            e.HasOne(x => x.Job)
+                .WithMany(j => j.Metrics)
+                .HasForeignKey(x => x.JobId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            e.HasIndex(x => new { x.JobId, x.RecordType });
+        });
+
+        modelBuilder.Entity<StagingCompanyMasterRecord>(e =>
+        {
+            e.ToTable("Staging_CompanyMasterRecords");
+            e.HasKey(x => x.StagingId);
+            e.Property(x => x.BatchKey).HasMaxLength(100);
+            e.Property(x => x.SourceChecksum).HasMaxLength(128);
+            e.Property(x => x.ValidationState).HasMaxLength(30);
+
+            e.Property(x => x.Identifier).HasMaxLength(25);
+            e.Property(x => x.RecordType).HasConversion<string>().HasMaxLength(10);
+            e.Property(x => x.Name).HasMaxLength(400);
+            e.Property(x => x.Category).HasMaxLength(100);
+            e.Property(x => x.Class).HasMaxLength(50);
+            e.Property(x => x.ListingStatus).HasMaxLength(30);
+            e.Property(x => x.Roc).HasMaxLength(80);
+            e.Property(x => x.PinCode).HasMaxLength(10);
+            e.Property(x => x.State).HasMaxLength(80);
+            e.Property(x => x.District).HasMaxLength(80);
+            e.Property(x => x.Country).HasMaxLength(80);
+            e.Property(x => x.Status).HasMaxLength(30);
+            e.Property(x => x.SubCategory).HasMaxLength(80);
+            e.Property(x => x.IndustrialClassification).HasMaxLength(200);
+
+            e.HasIndex(x => new { x.SyncRunId, x.FencingToken, x.ValidationState, x.IsPromoted });
         });
 
         modelBuilder.Entity<Client>().HasData(
