@@ -24,7 +24,7 @@ public record ChunkingFailedPayload(
     bool IsTerminal,
     string CorrelationId);
 
-public record WorkerOrphanRecoveredPayload(int DocumentsReset, int BatchesRequeued);
+public record WorkerOrphanRecoveredPayload(long BatchId, long? RequestId, int DocumentsReset, string CorrelationId);
 
 public record DiscrepancyDecidedPayload(long DiscrepancyId, string DecisionAction);
 

@@ -87,11 +87,31 @@ namespace MCAROC_Analysis.Migrations
                 name: "IX_AuditLogs_Status_TimestampUtc",
                 table: "AuditLogs",
                 columns: new[] { "Status", "TimestampUtc" });
+
+            migrationBuilder.Sql(@"
+                IF OBJECT_ID('TR_AuditLogs_AppendOnly', 'TR') IS NULL
+                BEGIN
+                    EXEC(N'CREATE TRIGGER [TR_AuditLogs_AppendOnly]
+                    ON [dbo].[AuditLogs]
+                    INSTEAD OF UPDATE, DELETE
+                    AS
+                    BEGIN
+                        SET NOCOUNT ON;
+                        RAISERROR(''Table AuditLogs is append-only. UPDATE and DELETE operations are forbidden.'', 16, 1);
+                        ROLLBACK TRANSACTION;
+                    END;')
+                END
+            ");
         }
 
         /// <inheritdoc />
         protected override void Down(MigrationBuilder migrationBuilder)
         {
+            migrationBuilder.Sql(@"
+                IF OBJECT_ID('TR_AuditLogs_AppendOnly', 'TR') IS NOT NULL
+                    DROP TRIGGER TR_AuditLogs_AppendOnly;
+            ");
+
             migrationBuilder.DropTable(
                 name: "AuditLogs");
 

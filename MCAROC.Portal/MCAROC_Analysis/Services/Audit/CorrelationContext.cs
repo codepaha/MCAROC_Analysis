@@ -16,15 +16,12 @@ public static class CorrelationContext
             return s;
 
         string cid;
-        if (httpContext.Request.Headers.TryGetValue(HeaderName, out var headerVal) && !string.IsNullOrWhiteSpace(headerVal))
+        // Validate client-supplied correlation header as a strict bounded trace identifier (valid Guid),
+        // or generate the durable identifier server-side to prevent trace collisions and spoofing.
+        if (httpContext.Request.Headers.TryGetValue(HeaderName, out var headerVal)
+            && Guid.TryParse(headerVal.ToString(), out var clientGuid))
         {
-            cid = headerVal.ToString().Trim();
-            if (cid.Length > 64) cid = cid[..64];
-        }
-        else if (!string.IsNullOrWhiteSpace(httpContext.TraceIdentifier))
-        {
-            cid = httpContext.TraceIdentifier.Trim();
-            if (cid.Length > 64) cid = cid[..64];
+            cid = clientGuid.ToString("N");
         }
         else
         {

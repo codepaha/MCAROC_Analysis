@@ -52,6 +52,19 @@ public class AuditFrameworkTests : IAsyncLifetime
             UPDATE McaFilingBatches SET CorrelationId = LOWER(REPLACE(CAST(NEWID() AS nvarchar(36)), '-', '')) WHERE CorrelationId IS NULL OR CorrelationId = '';
             UPDATE AutoFetchJobs SET CorrelationId = LOWER(REPLACE(CAST(NEWID() AS nvarchar(36)), '-', '')) WHERE CorrelationId IS NULL OR CorrelationId = '';
             UPDATE LargeArchiveUploadSessions SET CorrelationId = LOWER(REPLACE(CAST(NEWID() AS nvarchar(36)), '-', '')) WHERE CorrelationId IS NULL OR CorrelationId = '';
+
+            IF OBJECT_ID('TR_AuditLogs_AppendOnly', 'TR') IS NULL
+            BEGIN
+                EXEC(N'CREATE TRIGGER [TR_AuditLogs_AppendOnly]
+                ON [dbo].[AuditLogs]
+                INSTEAD OF UPDATE, DELETE
+                AS
+                BEGIN
+                    SET NOCOUNT ON;
+                    RAISERROR(''Table AuditLogs is append-only. UPDATE and DELETE operations are forbidden.'', 16, 1);
+                    ROLLBACK TRANSACTION;
+                END;')
+            END
         ");
     }
 
@@ -875,6 +888,205 @@ public class AuditFrameworkTests : IAsyncLifetime
         Assert.Equal(AuditStatus.Failure, events[1].Status);
         Assert.NotNull(events[1].EventPayloadJson);
         Assert.Contains("TextFileMissing", events[1].EventPayloadJson);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────────────
+    // 27. Worker Orphan Recovered: Emits Per Affected Batch With Batch Correlation & RequestId
+    // ─────────────────────────────────────────────────────────────────────────────────
+    [Fact]
+    public async Task RecoverStaleWorkAsync_EmitsEventPerAffectedBatch_WithPersistedCorrelationId_AndRequestId()
+    {
+        await using var db = CreateContext();
+
+        // 1. Setup two requests with separate batches
+        var req1 = await SeedRequestAsync(db);
+        var expectedCorrelationId1 = $"corr_batch1_{Guid.NewGuid():N}"[..32];
+        var batch1 = new McaFilingBatch
+        {
+            RequestId = req1.RequestId,
+            CorrelationId = expectedCorrelationId1,
+            Status = FilingBatchStatus.Processing,
+            StartedDate = DateTime.UtcNow
+        };
+        db.McaFilingBatches.Add(batch1);
+
+        var req2 = await SeedRequestAsync(db);
+        var expectedCorrelationId2 = $"corr_batch2_{Guid.NewGuid():N}"[..32];
+        var batch2 = new McaFilingBatch
+        {
+            RequestId = req2.RequestId,
+            CorrelationId = expectedCorrelationId2,
+            Status = FilingBatchStatus.Processing,
+            StartedDate = DateTime.UtcNow
+        };
+        db.McaFilingBatches.Add(batch2);
+        await db.SaveChangesAsync();
+
+        var filing1 = new McaFiling
+        {
+            BatchId = batch1.BatchId,
+            RequestId = req1.RequestId,
+            Srn = $"SRN_{Guid.NewGuid():N}"[..12]
+        };
+        var filing2 = new McaFiling
+        {
+            BatchId = batch2.BatchId,
+            RequestId = req2.RequestId,
+            Srn = $"SRN_{Guid.NewGuid():N}"[..12]
+        };
+        db.McaFilings.AddRange(filing1, filing2);
+        await db.SaveChangesAsync();
+
+        // 2. Add stale InProgress documents for batch 1 (2 docs) and batch 2 (1 doc)
+        var doc1 = new McaFilingDocument
+        {
+            BatchId = batch1.BatchId,
+            RequestId = req1.RequestId,
+            FilingId = filing1.FilingId,
+            OriginalFileName = "TestDoc1.pdf",
+            ProcessingStatus = FilingDocumentProcessingStatus.Completed,
+            ChunkingStatus = ChunkingStatus.InProgress,
+            UpdatedAt = DateTime.UtcNow
+        };
+        var doc2 = new McaFilingDocument
+        {
+            BatchId = batch1.BatchId,
+            RequestId = req1.RequestId,
+            FilingId = filing1.FilingId,
+            OriginalFileName = "TestDoc2.pdf",
+            ProcessingStatus = FilingDocumentProcessingStatus.Completed,
+            ChunkingStatus = ChunkingStatus.InProgress,
+            UpdatedAt = DateTime.UtcNow
+        };
+        var doc3 = new McaFilingDocument
+        {
+            BatchId = batch2.BatchId,
+            RequestId = req2.RequestId,
+            FilingId = filing2.FilingId,
+            OriginalFileName = "TestDoc3.pdf",
+            ProcessingStatus = FilingDocumentProcessingStatus.Completed,
+            ChunkingStatus = ChunkingStatus.InProgress,
+            UpdatedAt = DateTime.UtcNow
+        };
+        db.McaFilingDocuments.AddRange(doc1, doc2, doc3);
+        await db.SaveChangesAsync();
+
+        // 3. Run RecoverStaleWorkAsync
+        var scopeFactory = CreateScopeFactory();
+        var auditService = new AuditLogService(scopeFactory, NullLogger<AuditLogService>.Instance);
+        var queue = new DocumentChunkingQueue();
+        var orchestrator = new DocumentChunkingOrchestrator(
+            db, null!, queue, NullLogger<DocumentChunkingOrchestrator>.Instance, auditService);
+
+        var recoveredCount = await orchestrator.RecoverStaleWorkAsync(CancellationToken.None);
+        Assert.True(recoveredCount >= 2);
+
+        // 4. Verify audit events in database
+        await using var verifyDb = CreateContext();
+        var events1 = await verifyDb.AuditLogs
+            .Where(a => a.CorrelationId == expectedCorrelationId1)
+            .ToListAsync();
+        var events2 = await verifyDb.AuditLogs
+            .Where(a => a.CorrelationId == expectedCorrelationId2)
+            .ToListAsync();
+
+        var ev1 = Assert.Single(events1);
+        Assert.Equal(AuditActionType.WorkerOrphanRecovered, ev1.Action);
+        Assert.Equal(AuditStatus.Success, ev1.Status);
+        Assert.Equal(req1.RequestId, ev1.RequestId);
+        Assert.Equal("McaFilingBatch", ev1.EntityType);
+        Assert.Equal(batch1.BatchId, ev1.EntityId);
+        Assert.NotNull(ev1.EventPayloadJson);
+        var jsonOpts = new JsonSerializerOptions(JsonSerializerDefaults.Web);
+        var p1 = JsonSerializer.Deserialize<WorkerOrphanRecoveredPayload>(ev1.EventPayloadJson, jsonOpts);
+        Assert.NotNull(p1);
+        Assert.Equal(batch1.BatchId, p1.BatchId);
+        Assert.Equal(req1.RequestId, p1.RequestId);
+        Assert.Equal(2, p1.DocumentsReset);
+        Assert.Equal(expectedCorrelationId1, p1.CorrelationId);
+
+        var ev2 = Assert.Single(events2);
+        Assert.Equal(AuditActionType.WorkerOrphanRecovered, ev2.Action);
+        Assert.Equal(AuditStatus.Success, ev2.Status);
+        Assert.Equal(req2.RequestId, ev2.RequestId);
+        Assert.Equal("McaFilingBatch", ev2.EntityType);
+        Assert.Equal(batch2.BatchId, ev2.EntityId);
+        Assert.NotNull(ev2.EventPayloadJson);
+        var p2 = JsonSerializer.Deserialize<WorkerOrphanRecoveredPayload>(ev2.EventPayloadJson, jsonOpts);
+        Assert.NotNull(p2);
+        Assert.Equal(batch2.BatchId, p2.BatchId);
+        Assert.Equal(req2.RequestId, p2.RequestId);
+        Assert.Equal(1, p2.DocumentsReset);
+        Assert.Equal(expectedCorrelationId2, p2.CorrelationId);
+
+        // 5. Verify the event appears in the request-scoped query used by the audit viewer
+        var request1ViewerLogs = await verifyDb.AuditLogs
+            .Where(a => a.RequestId == req1.RequestId && a.Action == AuditActionType.WorkerOrphanRecovered)
+            .ToListAsync();
+        Assert.Single(request1ViewerLogs);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────────────
+    // 28. Append-Only Immutability: Trigger Blocks UPDATE and DELETE Operations
+    // ─────────────────────────────────────────────────────────────────────────────────
+    [Fact]
+    public async Task AuditLogs_TriggerEnforcesAppendOnly_PreventsUpdateAndDeletion()
+    {
+        await using var db = CreateContext();
+
+        var correlationId = Guid.NewGuid().ToString("N");
+        var log = new AuditLog
+        {
+            TimestampUtc = DateTime.UtcNow,
+            CorrelationId = correlationId,
+            ActorType = ActorType.SystemWorker,
+            ActorId = "AppendOnlyTest",
+            Action = AuditActionType.OtherMutation,
+            EventKind = AuditEventKind.HttpMutation,
+            Status = AuditStatus.Success
+        };
+        db.AuditLogs.Add(log);
+        await db.SaveChangesAsync();
+
+        // Attempt to UPDATE the row — must be rejected by trigger
+        var updateEx = await Assert.ThrowsAsync<Microsoft.Data.SqlClient.SqlException>(async () =>
+        {
+            await db.Database.ExecuteSqlRawAsync(
+                "UPDATE AuditLogs SET Status = 'Failure' WHERE AuditLogId = {0}", log.AuditLogId);
+        });
+        Assert.Contains("append-only", updateEx.Message, StringComparison.OrdinalIgnoreCase);
+
+        // Attempt to DELETE the row — must be rejected by trigger
+        var deleteEx = await Assert.ThrowsAsync<Microsoft.Data.SqlClient.SqlException>(async () =>
+        {
+            await db.Database.ExecuteSqlRawAsync(
+                "DELETE FROM AuditLogs WHERE AuditLogId = {0}", log.AuditLogId);
+        });
+        Assert.Contains("append-only", deleteEx.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────────────
+    // 29. Correlation Context: Validates Guid Header and Rejects Arbitrary Client Strings
+    // ─────────────────────────────────────────────────────────────────────────────────
+    [Fact]
+    public void CorrelationContext_ValidatesGuidHeader_AndRejectsArbitraryClientHeaders()
+    {
+        // 1. Valid client Guid header -> accepted and formatted as 32-char hex
+        var clientGuid = Guid.NewGuid();
+        var httpContext1 = new DefaultHttpContext();
+        httpContext1.Request.Headers["X-Correlation-ID"] = clientGuid.ToString();
+
+        var resolvedCid1 = CorrelationContext.GetOrCreate(httpContext1);
+        Assert.Equal(clientGuid.ToString("N"), resolvedCid1);
+
+        // 2. Arbitrary / malicious client string -> rejected and replaced with server Guid
+        var httpContext2 = new DefaultHttpContext();
+        httpContext2.Request.Headers["X-Correlation-ID"] = "arbitrary-collision-attack-or-raw-text";
+
+        var resolvedCid2 = CorrelationContext.GetOrCreate(httpContext2);
+        Assert.NotEqual("arbitrary-collision-attack-or-raw-text", resolvedCid2);
+        Assert.True(Guid.TryParse(resolvedCid2, out _));
+        Assert.Equal(32, resolvedCid2.Length);
     }
 }
 

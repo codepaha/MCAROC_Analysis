@@ -311,14 +311,42 @@ public partial class DocumentChunkingOrchestrator(
 
         if (auditService is not null && staleDocuments.Count > 0)
         {
-            await auditService.TryLogAsync(new AuditEvent<WorkerOrphanRecoveredPayload>(
-                Action: AuditActionType.WorkerOrphanRecovered,
-                EventKind: AuditEventKind.DomainLifecycle,
-                Status: AuditStatus.Success,
-                ActorType: ActorType.SystemWorker,
-                ActorId: "DocumentChunkingOrchestrator",
-                CorrelationId: CorrelationContext.GenerateCorrelationId(),
-                Payload: new WorkerOrphanRecoveredPayload(staleDocuments.Count, batchIdsToEnqueue.Count)), ct);
+            var staleBatchIds = staleDocuments.Select(d => d.BatchId).Distinct().ToList();
+            var batches = await db.McaFilingBatches
+                .Where(b => staleBatchIds.Contains(b.BatchId))
+                .Select(b => new { b.BatchId, b.RequestId, b.CorrelationId })
+                .ToListAsync(ct);
+
+            var batchMap = batches.ToDictionary(b => b.BatchId);
+
+            foreach (var batchId in staleBatchIds)
+            {
+                var docCount = staleDocuments.Count(d => d.BatchId == batchId);
+                long? reqId = null;
+                string cid;
+
+                if (batchMap.TryGetValue(batchId, out var b))
+                {
+                    reqId = b.RequestId;
+                    cid = !string.IsNullOrWhiteSpace(b.CorrelationId) ? b.CorrelationId : CorrelationContext.GenerateCorrelationId();
+                }
+                else
+                {
+                    cid = CorrelationContext.GenerateCorrelationId();
+                }
+
+                await auditService.TryLogAsync(new AuditEvent<WorkerOrphanRecoveredPayload>(
+                    Action: AuditActionType.WorkerOrphanRecovered,
+                    EventKind: AuditEventKind.DomainLifecycle,
+                    Status: AuditStatus.Success,
+                    ActorType: ActorType.SystemWorker,
+                    ActorId: "DocumentChunkingOrchestrator",
+                    CorrelationId: cid,
+                    RequestId: reqId,
+                    EntityType: "McaFilingBatch",
+                    EntityId: batchId,
+                    Payload: new WorkerOrphanRecoveredPayload(batchId, reqId, docCount, cid)), ct);
+            }
         }
 
         return batchIdsToEnqueue.Count;
