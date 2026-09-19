@@ -8,8 +8,11 @@
 // collide), so they're unified into one table via RecordType rather than three separate tables — the
 // only thing every caller of this table wants is "given a name, hand back an identifier".
 //
-// This is a full-replace load (TRUNCATE then bulk insert), not an incremental upsert: MCA republishes
-// the whole extract each time, and at ~3.7M rows a row-by-row diff/merge isn't worth it.
+// This is a full-replace load, not an incremental upsert: MCA republishes the whole extract each time,
+// and at ~3.7M rows a row-by-row diff/merge isn't worth it. The replace itself loads into a separate
+// staging table and only swaps it in via a single renaming transaction once every row has loaded
+// successfully — a parse error, dropped connection, or bulk-copy failure partway through leaves the live
+// table exactly as it was (never truncated-and-then-stuck-empty, never left half-loaded).
 //
 // Usage:
 //   dotnet run --project Tools/ImportCompanyMasterData -- ^
@@ -63,15 +66,29 @@ if (companyFiles.Length == 0)
 Console.WriteLine($"Company master parts: {companyFiles.Length} file(s) in {companyFolder}");
 Console.WriteLine($"LLP master: {llpFile}");
 Console.WriteLine($"Foreign master: {foreignFile}");
-Console.WriteLine($"Target: {connectionString}");
+Console.WriteLine($"Target: {RedactedConnectionSummary(connectionString)}");
 Console.WriteLine();
 
 await using var connection = new SqlConnection(connectionString);
 await connection.OpenAsync();
 
-await using (var truncate = new SqlCommand("TRUNCATE TABLE dbo.CompanyMasterRecords", connection))
-    await truncate.ExecuteNonQueryAsync();
-Console.WriteLine("Cleared CompanyMasterRecords — starting full reload.");
+// Load into a staging copy of the table, not the live one — the live table is never truncated, so a
+// crash or bad batch partway through the ~3.7M-row load leaves it exactly as it was, still fully
+// queryable by AutoFetchController.Search the whole time. Only a successful full load ever reaches
+// SwapStagingIntoLiveAsync.
+await using (var dropOldStaging = new SqlCommand(
+    "IF OBJECT_ID('dbo.CompanyMasterRecords_Old') IS NOT NULL DROP TABLE dbo.CompanyMasterRecords_Old; " +
+    "IF OBJECT_ID('dbo.CompanyMasterRecords_Staging') IS NOT NULL DROP TABLE dbo.CompanyMasterRecords_Staging;",
+    connection))
+    await dropOldStaging.ExecuteNonQueryAsync(); // clears any leftovers from a previous failed run too
+
+await using (var createStaging = new SqlCommand(
+    "SELECT TOP (0) * INTO dbo.CompanyMasterRecords_Staging FROM dbo.CompanyMasterRecords; " +
+    "ALTER TABLE dbo.CompanyMasterRecords_Staging ADD CONSTRAINT PK_CompanyMasterRecords_Staging PRIMARY KEY (Identifier); " +
+    "CREATE INDEX IX_CompanyMasterRecords_Staging_RecordType_Name ON dbo.CompanyMasterRecords_Staging (RecordType, Name);",
+    connection))
+    await createStaging.ExecuteNonQueryAsync();
+Console.WriteLine("Created staging table — loading into it (live CompanyMasterRecords is untouched until the load fully succeeds).");
 
 // The MCA extract itself repeats some identifiers (seen: the same CIN twice within one company-master
 // part, ~2.16M rows in) — not a bug in this tool, just real dirty source data. Tracked across the whole
@@ -86,8 +103,46 @@ total += await LoadAsync(llpFile, CompanyMasterRecordType.Llp, ReadLlpRow, conne
 total += await LoadAsync(foreignFile, CompanyMasterRecordType.Foreign, ReadForeignRow, connection, seenIdentifiers);
 
 Console.WriteLine();
+Console.WriteLine("Every row loaded into staging — swapping it in as the live table now.");
+await using (var swap = new SqlCommand(
+    "BEGIN TRANSACTION; " +
+    "EXEC sp_rename 'dbo.CompanyMasterRecords', 'CompanyMasterRecords_Old'; " +
+    "EXEC sp_rename 'dbo.CompanyMasterRecords_Staging', 'CompanyMasterRecords'; " +
+    "EXEC sp_rename 'dbo.PK_CompanyMasterRecords_Staging', 'PK_CompanyMasterRecords', 'OBJECT'; " +
+    "EXEC sp_rename 'dbo.CompanyMasterRecords.IX_CompanyMasterRecords_Staging_RecordType_Name', 'IX_CompanyMasterRecords_RecordType_Name', 'INDEX'; " +
+    "COMMIT;",
+    connection)
+{ CommandTimeout = 120 })
+    await swap.ExecuteNonQueryAsync();
+
+try
+{
+    await using var dropOld = new SqlCommand("DROP TABLE dbo.CompanyMasterRecords_Old", connection) { CommandTimeout = 120 };
+    await dropOld.ExecuteNonQueryAsync();
+}
+catch (SqlException ex)
+{
+    // The swap already committed — the new data is live either way. Leaving the old copy around costs
+    // disk space, not correctness, so this is a warning, not a failed run.
+    Console.WriteLine($"Warning: swap succeeded but couldn't drop the old table copy ({ex.Message}). Drop dbo.CompanyMasterRecords_Old manually when convenient.");
+}
+
 Console.WriteLine($"Done. {total:N0} rows loaded into CompanyMasterRecords.");
 return 0;
+
+static string RedactedConnectionSummary(string connectionString)
+{
+    try
+    {
+        var builder = new SqlConnectionStringBuilder(connectionString);
+        var auth = builder.IntegratedSecurity ? "Windows integrated auth" : "SQL login (password redacted)";
+        return $"Server={builder.DataSource}; Database={builder.InitialCatalog}; {auth}";
+    }
+    catch (Exception)
+    {
+        return "(connection string could not be parsed — not logging it, it may contain a credential)";
+    }
+}
 
 static async Task<long> LoadAsync(string path, CompanyMasterRecordType recordType,
     Func<CsvReader, CompanyMasterRecordType, CompanyMasterRecord?> readRow, SqlConnection connection,
@@ -269,7 +324,7 @@ static async Task BulkInsertAsync(SqlConnection connection, DataTable table)
     // BulkCopyTimeout 0 (unlimited) is the safety net on top of pre-growing the DB files in advance.
     using var bulk = new SqlBulkCopy(connection, SqlBulkCopyOptions.TableLock, externalTransaction: null)
     {
-        DestinationTableName = "dbo.CompanyMasterRecords",
+        DestinationTableName = "dbo.CompanyMasterRecords_Staging",
         BulkCopyTimeout = 0,
         BatchSize = BatchSize,
     };
