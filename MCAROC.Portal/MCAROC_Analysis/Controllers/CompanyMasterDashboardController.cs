@@ -101,7 +101,7 @@ public sealed class CompanyMasterDashboardController : Controller
 
         try
         {
-            var job = await _deltaService.CreateJobAsync(CompanyMasterSyncTriggerType.ManualForceSync, "ReviewerManual", cancellationToken);
+            var job = await _deltaService.CreateJobAsync(CompanyMasterSyncTriggerType.ManualForceSync, "ReviewerManual", cancellationToken: cancellationToken);
             var metrics = await _deltaService.ExecuteAutomatedSyncAsync(job.JobId, job.FencingToken, cancellationToken: cancellationToken);
             if (metrics != null)
             {
@@ -146,7 +146,7 @@ public sealed class CompanyMasterDashboardController : Controller
         string tempExtractDir = Path.Combine(Path.GetTempPath(), $"mca_upload_{Guid.NewGuid():N}");
         try
         {
-            var job = await _deltaService.CreateJobAsync(CompanyMasterSyncTriggerType.ManualUpload, "ManualUpload", cancellationToken);
+            var job = await _deltaService.CreateJobAsync(CompanyMasterSyncTriggerType.ManualUpload, "ManualUpload", cancellationToken: cancellationToken);
             await _deltaService.UpdateJobStatusAsync(job.JobId, CompanyMasterSyncJobStatus.Downloading, cancellationToken: cancellationToken);
 
             await using (var uploadStream = archiveFile.OpenReadStream())

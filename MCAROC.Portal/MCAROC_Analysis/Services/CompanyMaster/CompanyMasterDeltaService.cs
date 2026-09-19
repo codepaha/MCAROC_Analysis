@@ -51,7 +51,12 @@ public partial class CompanyMasterDeltaService : ICompanyMasterDeltaService
         _logger = logger;
     }
 
-    public async Task<CompanyMasterSyncJob> CreateJobAsync(CompanyMasterSyncTriggerType triggerType, string? proxyAlias, CancellationToken cancellationToken = default)
+    public async Task<CompanyMasterSyncJob> CreateJobAsync(
+        CompanyMasterSyncTriggerType triggerType,
+        string? proxyAlias,
+        DateOnly? publishedDate = null,
+        string? publishedDateRaw = null,
+        CancellationToken cancellationToken = default)
     {
         // Reclaim orphaned jobs if lease expired
         var activeJobs = await _db.CompanyMasterSyncJobs
@@ -63,11 +68,8 @@ public partial class CompanyMasterDeltaService : ICompanyMasterDeltaService
                      || j.Status == CompanyMasterSyncJobStatus.Promoting)
             .ToListAsync(cancellationToken);
 
-        long highestToken = 0;
         foreach (var job in activeJobs)
         {
-            if (job.FencingToken > highestToken) highestToken = job.FencingToken;
-
             if (job.LeaseExpiresUtc.HasValue && job.LeaseExpiresUtc.Value < DateTime.UtcNow)
             {
                 job.Status = CompanyMasterSyncJobStatus.FailedOrphaned;
@@ -76,7 +78,14 @@ public partial class CompanyMasterDeltaService : ICompanyMasterDeltaService
             }
         }
 
-        long nextFencingToken = highestToken + 1;
+        // Compute next fencing token across ALL historical jobs (including completed/failed)
+        // so the sequence is globally monotonic even after older jobs are archived.
+        // MaxAsync with nullable projection returns null for empty tables; ?? 0 handles that.
+        // This query runs under the sp_getapplock exclusive lock held by the caller.
+        long maxHistoricalToken = await _db.CompanyMasterSyncJobs
+            .MaxAsync(j => (long?)j.FencingToken, cancellationToken) ?? 0;
+
+        long nextFencingToken = maxHistoricalToken + 1;
 
         var newJob = new CompanyMasterSyncJob
         {
@@ -84,6 +93,11 @@ public partial class CompanyMasterDeltaService : ICompanyMasterDeltaService
             TriggerType = triggerType,
             Status = CompanyMasterSyncJobStatus.Pending,
             SanitizedProxyAlias = proxyAlias ?? "Direct",
+            PublishedDate = publishedDate,
+            PublishedDateRaw = publishedDateRaw,
+            PublishedDateUtc = publishedDate.HasValue
+                ? new DateTime(publishedDate.Value.Year, publishedDate.Value.Month, publishedDate.Value.Day, 0, 0, 0, DateTimeKind.Utc)
+                : null,
             CreatedUtc = DateTime.UtcNow,
             LastHeartbeatUtc = DateTime.UtcNow,
             LeaseExpiresUtc = DateTime.UtcNow.AddMinutes(5),
@@ -121,7 +135,7 @@ public partial class CompanyMasterDeltaService : ICompanyMasterDeltaService
         }
     }
 
-    public async Task<long> IngestCsvFilesAsync(long syncRunId, long fencingToken, IReadOnlyList<string> csvFiles, CancellationToken cancellationToken = default)
+    public async Task<(long TotalRows, string AggregateChecksum)> IngestCsvFilesAsync(long syncRunId, long fencingToken, IReadOnlyList<string> csvFiles, CancellationToken cancellationToken = default)
     {
         await UpdateJobStatusAsync(syncRunId, CompanyMasterSyncJobStatus.Staging, cancellationToken: cancellationToken);
 
@@ -129,7 +143,9 @@ public partial class CompanyMasterDeltaService : ICompanyMasterDeltaService
         await using var connection = new SqlConnection(_connectionString);
         await connection.OpenAsync(cancellationToken);
 
-        using var sha256 = SHA256.Create();
+        // Feed each CSV file's raw bytes into an incremental SHA256 so we get one aggregate
+        // checksum over the full import payload — used for idempotent skip-if-same-checksum.
+        using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
 
         foreach (var file in csvFiles)
         {
@@ -149,7 +165,19 @@ public partial class CompanyMasterDeltaService : ICompanyMasterDeltaService
                 HeaderValidated = null
             };
 
-            using var reader = new StreamReader(file);
+            // Stream the raw file bytes into the SHA256 hash first, then rewind for CSV parsing.
+            await using var rawStream = File.OpenRead(file);
+            byte[] fileBytes = new byte[rawStream.Length];
+            int bytesRead = 0;
+            while (bytesRead < fileBytes.Length)
+            {
+                int n = await rawStream.ReadAsync(fileBytes.AsMemory(bytesRead), cancellationToken);
+                if (n == 0) break;
+                bytesRead += n;
+            }
+            hash.AppendData(fileBytes, 0, bytesRead);
+
+            using var reader = new StreamReader(new MemoryStream(fileBytes, 0, bytesRead));
             using var csv = new CsvReader(reader, csvConfig);
 
             if (!await csv.ReadAsync()) continue;
@@ -181,7 +209,9 @@ public partial class CompanyMasterDeltaService : ICompanyMasterDeltaService
             }
         }
 
-        return totalLoaded;
+        byte[] hashBytes = hash.GetHashAndReset();
+        string checksum = Convert.ToHexString(hashBytes);
+        return (totalLoaded, checksum);
     }
 
     private static CompanyMasterRecordType DetermineRecordType(string filePath)
@@ -766,9 +796,11 @@ public partial class CompanyMasterDeltaService : ICompanyMasterDeltaService
     }
 
     public async Task<PromotionMetricsResult?> ExecuteAutomatedSyncAsync(
-        long jobId, 
-        long fencingToken, 
-        Stream? archiveStream = null, 
+        long jobId,
+        long fencingToken,
+        DateOnly? publishedDate = null,
+        string? publishedDateRaw = null,
+        Stream? archiveStream = null,
         CancellationToken cancellationToken = default)
     {
         string tempExtractDir = Path.Combine(Path.GetTempPath(), $"mca_auto_{Guid.NewGuid():N}");
@@ -866,7 +898,22 @@ public partial class CompanyMasterDeltaService : ICompanyMasterDeltaService
                 throw new InvalidOperationException("Archive contained zero CSV files.");
             }
 
-            await IngestCsvFilesAsync(jobId, fencingToken, csvFiles, cancellationToken);
+            var (_, checksum) = await IngestCsvFilesAsync(jobId, fencingToken, csvFiles, cancellationToken);
+
+            // Persist the portal date and aggregate checksum so subsequent runs can skip identical data.
+            var jobToUpdate = await _db.CompanyMasterSyncJobs.FindAsync(new object[] { jobId }, cancellationToken);
+            if (jobToUpdate != null)
+            {
+                if (publishedDate.HasValue && jobToUpdate.PublishedDate == null)
+                {
+                    jobToUpdate.PublishedDate = publishedDate;
+                    jobToUpdate.PublishedDateRaw = publishedDateRaw;
+                    jobToUpdate.PublishedDateUtc = new DateTime(
+                        publishedDate.Value.Year, publishedDate.Value.Month, publishedDate.Value.Day, 0, 0, 0, DateTimeKind.Utc);
+                }
+                jobToUpdate.AggregateChecksum = checksum;
+                await _db.SaveChangesAsync(cancellationToken);
+            }
 
             var validation = await ValidateStagingAsync(jobId, fencingToken, cancellationToken);
             if (!validation.IsValid)

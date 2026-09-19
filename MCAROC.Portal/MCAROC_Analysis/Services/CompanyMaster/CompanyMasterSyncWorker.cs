@@ -89,7 +89,12 @@ public sealed class CompanyMasterSyncWorker : BackgroundService
 
         try
         {
-            var job = await deltaService.CreateJobAsync(CompanyMasterSyncTriggerType.Scheduled, null, cancellationToken);
+            var job = await deltaService.CreateJobAsync(
+                CompanyMasterSyncTriggerType.Scheduled,
+                null,
+                publishedDate: portalDate,
+                publishedDateRaw: portalDate.HasValue ? portalDate.Value.ToString("O") : null,
+                cancellationToken);
             _logger.LogInformation("Created scheduled sync job {JobId} with fencing token {Token}", job.JobId, job.FencingToken);
 
             // Gated by automation consent
@@ -102,7 +107,12 @@ public sealed class CompanyMasterSyncWorker : BackgroundService
             }
 
             _logger.LogInformation("Automation consent granted. Executing automated sync for Job {JobId}...", job.JobId);
-            await deltaService.ExecuteAutomatedSyncAsync(job.JobId, job.FencingToken, cancellationToken: cancellationToken);
+            await deltaService.ExecuteAutomatedSyncAsync(
+                job.JobId,
+                job.FencingToken,
+                publishedDate: portalDate,
+                publishedDateRaw: portalDate.HasValue ? portalDate.Value.ToString("O") : null,
+                cancellationToken: cancellationToken);
             _logger.LogInformation("Automated sync completed successfully for Job {JobId}.", job.JobId);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)

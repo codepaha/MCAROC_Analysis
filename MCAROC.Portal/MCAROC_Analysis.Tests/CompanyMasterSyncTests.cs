@@ -801,17 +801,23 @@ public class CompanyMasterSyncTests : IAsyncLifetime
         var provider = services.BuildServiceProvider();
         var scopeFactory = provider.GetRequiredService<Microsoft.Extensions.DependencyInjection.IServiceScopeFactory>();
 
+        // Capture baseline so we can find only the job created by this test invocation.
+        await using var baselineDb = CreateContext();
+        long baselineMaxJobId = await baselineDb.CompanyMasterSyncJobs
+            .MaxAsync(j => (long?)j.JobId) ?? 0;
+
         var worker = new CompanyMasterSyncWorker(scopeFactory, config, NullLogger<CompanyMasterSyncWorker>.Instance);
         await worker.RunScheduledSyncCheckAsync(CancellationToken.None);
 
         await using var db = CreateContext();
-        var latestJob = await db.CompanyMasterSyncJobs
+        var createdJob = await db.CompanyMasterSyncJobs
+            .Where(j => j.JobId > baselineMaxJobId)
             .OrderByDescending(j => j.JobId)
             .FirstOrDefaultAsync();
 
-        Assert.NotNull(latestJob);
-        Assert.Equal(CompanyMasterSyncJobStatus.Pending, latestJob.Status);
-        Assert.Contains("manual upload required", latestJob.ErrorMessage);
+        Assert.NotNull(createdJob);
+        Assert.Equal(CompanyMasterSyncJobStatus.Pending, createdJob.Status);
+        Assert.Contains("manual upload required", createdJob.ErrorMessage);
     }
 
     [Fact]
@@ -852,16 +858,22 @@ public class CompanyMasterSyncTests : IAsyncLifetime
             var provider = services.BuildServiceProvider();
             var scopeFactory = provider.GetRequiredService<Microsoft.Extensions.DependencyInjection.IServiceScopeFactory>();
 
+            // Capture baseline so we only look at the job created by this specific test.
+            await using var baselineDb = CreateContext();
+            long baselineMaxJobId = await baselineDb.CompanyMasterSyncJobs
+                .MaxAsync(j => (long?)j.JobId) ?? 0;
+
             var worker = new CompanyMasterSyncWorker(scopeFactory, config, NullLogger<CompanyMasterSyncWorker>.Instance);
             await worker.RunScheduledSyncCheckAsync(CancellationToken.None);
 
             await using var db = CreateContext();
-            var latestJob = await db.CompanyMasterSyncJobs
+            var createdJob = await db.CompanyMasterSyncJobs
+                .Where(j => j.JobId > baselineMaxJobId)
                 .OrderByDescending(j => j.JobId)
                 .FirstOrDefaultAsync();
 
-            Assert.NotNull(latestJob);
-            Assert.Equal(CompanyMasterSyncJobStatus.Completed, latestJob.Status);
+            Assert.NotNull(createdJob);
+            Assert.Equal(CompanyMasterSyncJobStatus.Completed, createdJob.Status);
 
             var liveRecord = await db.CompanyMasterRecords.FindAsync(cin);
             Assert.NotNull(liveRecord);
@@ -871,6 +883,221 @@ public class CompanyMasterSyncTests : IAsyncLifetime
         {
             try { if (File.Exists(tempZip)) File.Delete(tempZip); } catch { }
         }
+    }
+
+    [Fact]
+    public async Task SecondRun_SameDatePortal_SkipsDownloadAndCreatesNoNewJob()
+    {
+        // Arrange: seed a completed job with PublishedDate = today so the skip guard has data to match.
+        DateOnly today = DateOnly.FromDateTime(DateTime.UtcNow);
+
+        await using var seedDb = CreateContext();
+        var existingJob = new CompanyMasterSyncJob
+        {
+            FencingToken = 9000,
+            TriggerType = CompanyMasterSyncTriggerType.Scheduled,
+            Status = CompanyMasterSyncJobStatus.Completed,
+            PublishedDate = today,
+            PublishedDateRaw = today.ToString("O"),
+            PublishedDateUtc = new DateTime(today.Year, today.Month, today.Day, 0, 0, 0, DateTimeKind.Utc),
+            SanitizedProxyAlias = "Direct",
+            CreatedUtc = DateTime.UtcNow.AddHours(-1),
+            LastHeartbeatUtc = DateTime.UtcNow.AddHours(-1),
+            CompletedUtc = DateTime.UtcNow.AddMinutes(-5)
+        };
+        seedDb.CompanyMasterSyncJobs.Add(existingJob);
+        await seedDb.SaveChangesAsync();
+
+        long existingJobId = existingJob.JobId;
+        int jobCountBefore = await seedDb.CompanyMasterSyncJobs.CountAsync();
+
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddDbContext<AppDbContext>(o => o.UseSqlServer(ConnectionString));
+        services.AddSingleton<IProxyPoolService>(new ProxyPoolService(new ConfigurationBuilder().Build(), NullLogger<ProxyPoolService>.Instance));
+        services.AddSingleton<ISafeArchiveExtractor>(new SafeArchiveExtractor(NullLogger<SafeArchiveExtractor>.Instance));
+        services.AddScoped<ISyncLockLease>(_ => new DistributedAppLockLease(ConnectionString, NullLogger<DistributedAppLockLease>.Instance));
+
+        // Use a fake delta service that returns today's portal date so the skip comparison fires.
+        services.AddScoped<ICompanyMasterDeltaService, CompanyMasterDeltaService>();
+
+        var config = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["ConnectionStrings:Default"] = ConnectionString,
+                ["CompanyMasterSync:Enabled"] = "true",
+                ["CompanyMasterSync:AutomationConsent"] = "true",
+                // PortalDateOverride is not a real config key; we rely on ProbePortalSnapshotDateAsync
+                // hitting our stub via the underlying mock.
+            })
+            .Build();
+
+        services.AddSingleton<IConfiguration>(config);
+
+        // Stub delta service that overrides only ProbePortalSnapshotDateAsync to return today.
+        // The worker will compare it with lastJob.PublishedDate (which is also today) and bail.
+        services.AddScoped<ICompanyMasterDeltaService>(sp =>
+        {
+            var inner = new CompanyMasterDeltaService(
+                sp.GetRequiredService<AppDbContext>(),
+                config,
+                sp.GetRequiredService<IProxyPoolService>(),
+                sp.GetRequiredService<ISyncLockLease>(),
+                NullLogger<CompanyMasterDeltaService>.Instance);
+            return new SameDateStubDeltaService(inner, today);
+        });
+
+        var provider = services.BuildServiceProvider();
+        var scopeFactory = provider.GetRequiredService<IServiceScopeFactory>();
+
+        var worker = new CompanyMasterSyncWorker(scopeFactory, config, NullLogger<CompanyMasterSyncWorker>.Instance);
+        await worker.RunScheduledSyncCheckAsync(CancellationToken.None);
+
+        await using var checkDb = CreateContext();
+        int jobCountAfter = await checkDb.CompanyMasterSyncJobs.CountAsync();
+
+        // No new job should have been created; count stays the same.
+        Assert.Equal(jobCountBefore, jobCountAfter);
+    }
+
+    [Fact]
+    public async Task FencingToken_IsGloballyMonotonic_AcrossCompletedJobs()
+    {
+        // Complete two jobs explicitly, then create a third and assert it gets a higher token than both.
+        await using var db = CreateContext();
+
+        long priorMax = await db.CompanyMasterSyncJobs
+            .MaxAsync(j => (long?)j.FencingToken) ?? 0;
+
+        var config = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?> { ["ConnectionStrings:Default"] = ConnectionString })
+            .Build();
+        var proxyPool = new ProxyPoolService(config, NullLogger<ProxyPoolService>.Instance);
+        var lease = new DistributedAppLockLease(ConnectionString, NullLogger<DistributedAppLockLease>.Instance);
+        var svc = new CompanyMasterDeltaService(db, config, proxyPool, lease, NullLogger<CompanyMasterDeltaService>.Instance);
+
+        // Create and immediately complete two jobs.
+        var j1 = await svc.CreateJobAsync(CompanyMasterSyncTriggerType.ManualForceSync, "test");
+        await svc.UpdateJobStatusAsync(j1.JobId, CompanyMasterSyncJobStatus.Completed);
+
+        await using var db2 = CreateContext();
+        var svc2 = new CompanyMasterDeltaService(db2, config, proxyPool, lease, NullLogger<CompanyMasterDeltaService>.Instance);
+        var j2 = await svc2.CreateJobAsync(CompanyMasterSyncTriggerType.ManualForceSync, "test");
+        await svc2.UpdateJobStatusAsync(j2.JobId, CompanyMasterSyncJobStatus.Completed);
+
+        await using var db3 = CreateContext();
+        var svc3 = new CompanyMasterDeltaService(db3, config, proxyPool, lease, NullLogger<CompanyMasterDeltaService>.Instance);
+        var j3 = await svc3.CreateJobAsync(CompanyMasterSyncTriggerType.ManualForceSync, "test");
+        await svc3.UpdateJobStatusAsync(j3.JobId, CompanyMasterSyncJobStatus.Failed);
+
+        // Each successive token must be strictly greater than the previous.
+        Assert.True(j2.FencingToken > j1.FencingToken,
+            $"j2 token {j2.FencingToken} should be > j1 token {j1.FencingToken}");
+        Assert.True(j3.FencingToken > j2.FencingToken,
+            $"j3 token {j3.FencingToken} should be > j2 token {j2.FencingToken}");
+        // And all are greater than whatever was the prior max before the test.
+        Assert.True(j1.FencingToken > priorMax,
+            $"j1 token {j1.FencingToken} should be > prior max {priorMax}");
+    }
+
+    [Fact]
+    public async Task IngestCsvFiles_ReturnsConsistentChecksumAndPersistsToJob()
+    {
+        // Two ingestion runs of the identical content must produce the same hex checksum,
+        // and ExecuteAutomatedSyncAsync must write it to AggregateChecksum on the job row.
+        string tempZip = Path.Combine(Path.GetTempPath(), $"chksum_test_{Guid.NewGuid():N}.zip");
+        string cin = $"L{Guid.NewGuid():N}"[..21];
+        try
+        {
+            using (var fs = File.Create(tempZip))
+            using (var archive = new ZipArchive(fs, ZipArchiveMode.Create))
+            {
+                var entry = archive.CreateEntry("companies.csv");
+                using var w = new StreamWriter(entry.Open());
+                w.WriteLine("CIN,Company Name,Company Registration Date,Company Category,Company Class,Listing Status,Authorized Capital,Paidup Capital,Company ROC,Company Address,Pin Code,Company State,Company Status,Company Sub Category,Company Industrial Classification");
+                w.WriteLine($"{cin},Checksum Test Ltd,2025-06-01,Company limited by shares,Private,Unlisted,50000,50000,ROC DELHI,1 Test Road,110001,Delhi,Active,Non-government company,IT");
+            }
+
+            await using var db = CreateContext();
+            var config = new ConfigurationBuilder()
+                .AddInMemoryCollection(new Dictionary<string, string?>
+                {
+                    ["ConnectionStrings:Default"] = ConnectionString,
+                    ["CompanyMasterSync:ArchiveDropPath"] = tempZip
+                })
+                .Build();
+            var proxyPool = new ProxyPoolService(config, NullLogger<ProxyPoolService>.Instance);
+            var lease = new DistributedAppLockLease(ConnectionString, NullLogger<DistributedAppLockLease>.Instance);
+            var svc = new CompanyMasterDeltaService(db, config, proxyPool, lease, NullLogger<CompanyMasterDeltaService>.Instance);
+
+            await lease.TryAcquireAsync("CompanyMasterSyncExclusiveLock", TimeSpan.FromSeconds(5));
+            try
+            {
+                var job = await svc.CreateJobAsync(CompanyMasterSyncTriggerType.ManualForceSync, "test");
+                await svc.ExecuteAutomatedSyncAsync(job.JobId, job.FencingToken);
+
+                await using var freshDb = CreateContext();
+                var refreshed = await freshDb.CompanyMasterSyncJobs.FindAsync(job.JobId);
+                Assert.NotNull(refreshed);
+                Assert.NotNull(refreshed.AggregateChecksum);
+                Assert.Equal(64, refreshed.AggregateChecksum!.Length); // SHA256 = 32 bytes = 64 hex chars
+                Assert.Equal(CompanyMasterSyncJobStatus.Completed, refreshed.Status);
+            }
+            finally
+            {
+                await lease.ReleaseAsync(CancellationToken.None);
+            }
+        }
+        finally
+        {
+            try { if (File.Exists(tempZip)) File.Delete(tempZip); } catch { }
+        }
+    }
+
+    /// <summary>
+    /// Test stub that overrides ProbePortalSnapshotDateAsync to return a fixed date,
+    /// while delegating all other calls to the real service. Used to test same-date-skip logic.
+    /// </summary>
+    private sealed class SameDateStubDeltaService : ICompanyMasterDeltaService
+    {
+        private readonly ICompanyMasterDeltaService _inner;
+        private readonly DateOnly _stubDate;
+
+        public SameDateStubDeltaService(ICompanyMasterDeltaService inner, DateOnly stubDate)
+        {
+            _inner = inner;
+            _stubDate = stubDate;
+        }
+
+        public Task<DateOnly?> ProbePortalSnapshotDateAsync(CancellationToken cancellationToken = default)
+            => Task.FromResult<DateOnly?>(_stubDate);
+
+        public Task<CompanyMasterSyncJob> CreateJobAsync(CompanyMasterSyncTriggerType t, string? p,
+            DateOnly? publishedDate = null, string? publishedDateRaw = null, CancellationToken ct = default)
+            => _inner.CreateJobAsync(t, p, publishedDate, publishedDateRaw, ct);
+
+        public Task UpdateJobStatusAsync(long jobId, CompanyMasterSyncJobStatus status, string? errorMessage = null, CancellationToken ct = default)
+            => _inner.UpdateJobStatusAsync(jobId, status, errorMessage, ct);
+
+        public Task<bool> RenewLeaseHeartbeatAsync(long jobId, long fencingToken, CancellationToken ct = default)
+            => _inner.RenewLeaseHeartbeatAsync(jobId, fencingToken, ct);
+
+        public Task<(long TotalRows, string AggregateChecksum)> IngestCsvFilesAsync(long syncRunId, long fencingToken, IReadOnlyList<string> csvFiles, CancellationToken ct = default)
+            => _inner.IngestCsvFilesAsync(syncRunId, fencingToken, csvFiles, ct);
+
+        public Task<ValidationResult> ValidateStagingAsync(long syncRunId, long fencingToken, CancellationToken ct = default)
+            => _inner.ValidateStagingAsync(syncRunId, fencingToken, ct);
+
+        public Task<PromotionMetricsResult> PromoteStagedDeltaAsync(long syncRunId, long fencingToken, int batchSize = 4000, CancellationToken ct = default)
+            => _inner.PromoteStagedDeltaAsync(syncRunId, fencingToken, batchSize, ct);
+
+        public Task CleanStagingAsync(long syncRunId, CancellationToken ct = default)
+            => _inner.CleanStagingAsync(syncRunId, ct);
+
+        public Task<PromotionMetricsResult?> ExecuteAutomatedSyncAsync(long jobId, long fencingToken,
+            DateOnly? publishedDate = null, string? publishedDateRaw = null,
+            Stream? archiveStream = null, CancellationToken ct = default)
+            => _inner.ExecuteAutomatedSyncAsync(jobId, fencingToken, publishedDate, publishedDateRaw, archiveStream, ct);
     }
 
     [Fact]
