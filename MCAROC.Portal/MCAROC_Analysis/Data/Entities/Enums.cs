@@ -348,3 +348,28 @@ public enum CompanyMasterRecordType
     Llp,
     Foreign
 }
+
+public enum CompanyMasterSyncJobStatus
+{
+    Pending,
+    Probing,
+    Downloading,
+    Staging,
+    Staged,
+    Promoting,
+    Completed,
+    SkippedAlreadyPromotedChecksum,
+    FailedValidation,
+    FailedCollision,
+    FailedOrphaned,
+    PreemptedByTakeover,
+    Failed
+}
+
+public enum CompanyMasterSyncTriggerType
+{
+    Scheduled,
+    ManualUpload,
+    ManualForceSync
+}
+

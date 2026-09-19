@@ -1,0 +1,225 @@
+@model MCAROC_Analysis.Models.CompanyMasterDashboardViewModel
+@{
+    ViewData["Title"] = "Company Master Delta Ingestion & Observability";
+    Layout = "_Layout";
+}
+
+<div class="container-fluid px-4 py-3">
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        <div>
+            <h3 class="mb-0">Company Master Ingestion Dashboard</h3>
+            <small class="text-muted">Automated delta synchronization &amp; proxy telemetry for MCA CDM snapshots</small>
+        </div>
+        <div class="d-flex gap-2">
+            <form asp-controller="CompanyMasterDashboard" asp-action="Probe" method="post" class="d-inline">
+                @Html.AntiForgeryToken()
+                <button type="submit" class="btn btn-outline-secondary btn-sm">Check Portal Date</button>
+            </form>
+            <form asp-controller="CompanyMasterDashboard" asp-action="TestProxies" method="post" class="d-inline">
+                @Html.AntiForgeryToken()
+                <button type="submit" class="btn btn-outline-info btn-sm">Test Proxy Nodes</button>
+            </form>
+            <form asp-controller="CompanyMasterDashboard" asp-action="SyncNow" method="post" class="d-inline" onsubmit="return confirm('Initiate sync run now?');">
+                @Html.AntiForgeryToken()
+                <button type="submit" class="btn btn-primary btn-sm">Trigger Sync Now</button>
+            </form>
+        </div>
+    </div>
+
+    @if (!string.IsNullOrEmpty(Model.Message))
+    {
+        <div class="alert alert-success alert-dismissible fade show" role="alert">
+            @Model.Message
+            <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+        </div>
+    }
+
+    @if (!string.IsNullOrEmpty(Model.ErrorMessage))
+    {
+        <div class="alert alert-danger alert-dismissible fade show" role="alert">
+            @Model.ErrorMessage
+            <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+        </div>
+    }
+
+    <!-- KPI Summary Cards -->
+    <div class="row g-3 mb-4">
+        <div class="col-md-3">
+            <div class="card shadow-sm border-0 bg-light">
+                <div class="card-body">
+                    <div class="text-muted small text-uppercase fw-semibold">Total Master Records</div>
+                    <div class="h3 mb-0">@Model.TotalRecords.ToString("N0")</div>
+                    <div class="small text-muted mt-1">
+                        <span>Companies: @Model.TotalCompanies.ToString("N0")</span> &bull; 
+                        <span>LLPs: @Model.TotalLlps.ToString("N0")</span> &bull; 
+                        <span>Foreign: @Model.TotalForeign.ToString("N0")</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card shadow-sm border-0 bg-light">
+                <div class="card-body">
+                    <div class="text-muted small text-uppercase fw-semibold">Last Ingested Snapshot</div>
+                    <div class="h3 mb-0">@(Model.LastSnapshotDate?.ToString("dd-MMM-yyyy") ?? "None")</div>
+                    <div class="small text-muted mt-1">
+                        Completed: @(Model.LastSyncCompletedUtc?.ToString("yyyy-MM-dd HH:mm UTC") ?? "N/A")
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card shadow-sm border-0 bg-light">
+                <div class="card-body">
+                    <div class="text-muted small text-uppercase fw-semibold">Engine Status</div>
+                    <div class="h3 mb-0">
+                        <span class="badge bg-@(Model.LatestStatus == "Completed" ? "success" : "secondary")">
+                            @(Model.LatestStatus ?? "Idle")
+                        </span>
+                    </div>
+                    <div class="small text-muted mt-1">Concurrency: Session Lock Safe</div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card shadow-sm border-0 bg-light">
+                <div class="card-body">
+                    <div class="text-muted small text-uppercase fw-semibold">Proxy Pool Health</div>
+                    <div class="h3 mb-0">
+                        @Model.ProxyNodes.Count(p => p.IsHealthy) / @Model.ProxyNodes.Count Active
+                    </div>
+                    <div class="small text-muted mt-1">IPRoyal Residential Pool</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Manual Upload Card -->
+    <div class="card shadow-sm border-0 mb-4">
+        <div class="card-header bg-white fw-semibold">
+            Manual Snapshot Archive Ingestion (Safe Operational Path)
+        </div>
+        <div class="card-body">
+            <form asp-controller="CompanyMasterDashboard" asp-action="UploadManual" method="post" enctype="multipart/form-data" class="row g-2 align-items-center">
+                @Html.AntiForgeryToken()
+                <div class="col-auto flex-grow-1">
+                    <input type="file" name="archiveFile" accept=".zip" class="form-control form-control-sm" required />
+                </div>
+                <div class="col-auto">
+                    <button type="submit" class="btn btn-outline-success btn-sm">Upload &amp; Promote Archive (Max 500 MB)</button>
+                </div>
+                <div class="form-text mt-1 text-muted">
+                    Supports ZIP packages containing MCA company, LLP, or foreign master CSV exports. Files are staged, validated, and merged in 4,000-row non-locking batches.
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Run History Table -->
+    <div class="card shadow-sm border-0 mb-4">
+        <div class="card-header bg-white fw-semibold">
+            Recent Sync Runs &amp; Delta Telemetry
+        </div>
+        <div class="table-responsive">
+            <table class="table table-hover align-middle mb-0 small">
+                <thead class="table-light">
+                    <tr>
+                        <th>Job ID</th>
+                        <th>Trigger</th>
+                        <th>Status</th>
+                        <th>Token</th>
+                        <th>Snapshot Date</th>
+                        <th>Duration</th>
+                        <th>Proxy</th>
+                        <th>Added / Updated</th>
+                        <th>Last Heartbeat</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @if (Model.RecentJobs.Count == 0)
+                    {
+                        <tr>
+                            <td colspan="9" class="text-center text-muted py-3">No sync jobs recorded yet.</td>
+                        </tr>
+                    }
+                    else
+                    {
+                        @foreach (var job in Model.RecentJobs)
+                        {
+                            <tr>
+                                <td><strong>#@job.JobId</strong></td>
+                                <td><span class="badge bg-light text-dark border">@job.TriggerType</span></td>
+                                <td>
+                                    <span class="badge bg-@(job.Status == MCAROC_Analysis.Data.Entities.CompanyMasterSyncJobStatus.Completed ? "success" : (job.Status.ToString().StartsWith("Failed") ? "danger" : "info"))">
+                                        @job.Status
+                                    </span>
+                                    @if (!string.IsNullOrEmpty(job.ErrorMessage))
+                                    {
+                                        <div class="text-danger small text-truncate" style="max-width: 200px;" title="@job.ErrorMessage">@job.ErrorMessage</div>
+                                    }
+                                </td>
+                                <td>@job.FencingToken</td>
+                                <td>@(job.PublishedDate?.ToString("dd-MMM-yyyy") ?? job.PublishedDateRaw ?? "-")</td>
+                                <td>@(job.Duration.HasValue ? $"{job.Duration.Value.TotalSeconds:F1}s" : "-")</td>
+                                <td><code>@job.SanitizedProxyAlias</code></td>
+                                <td>
+                                    @{
+                                        int added = job.Metrics.Sum(m => m.NewRowsAdded);
+                                        int updated = job.Metrics.Sum(m => m.ExistingRowsUpdated);
+                                    }
+                                    <span class="text-success">+@added.ToString("N0")</span> / <span class="text-primary">@updated.ToString("N0")</span>
+                                </td>
+                                <td>@job.LastHeartbeatUtc.ToString("HH:mm:ss UTC")</td>
+                            </tr>
+                        }
+                    }
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- Proxy Node Health Matrix -->
+    <div class="card shadow-sm border-0">
+        <div class="card-header bg-white fw-semibold">
+            Proxy Node Pool Matrix
+        </div>
+        <div class="table-responsive">
+            <table class="table table-hover align-middle mb-0 small">
+                <thead class="table-light">
+                    <tr>
+                        <th>Proxy Alias / Node</th>
+                        <th>Health</th>
+                        <th>Successes</th>
+                        <th>Failures</th>
+                        <th>Last Latency</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @if (Model.ProxyNodes.Count == 0)
+                    {
+                        <tr>
+                            <td colspan="5" class="text-center text-muted py-2">No rotating proxy nodes configured (direct outbound connection active).</td>
+                        </tr>
+                    }
+                    else
+                    {
+                        @foreach (var node in Model.ProxyNodes)
+                        {
+                            <tr>
+                                <td><code>@node.SanitizedAlias</code></td>
+                                <td>
+                                    <span class="badge bg-@(node.IsHealthy ? "success" : "danger")">
+                                        @(node.IsHealthy ? "Healthy" : "Degraded")
+                                    </span>
+                                </td>
+                                <td>@node.SuccessCount</td>
+                                <td>@node.FailureCount</td>
+                                <td>@(node.LastLatencyMs > 0 ? $"{node.LastLatencyMs} ms" : "-")</td>
+                            </tr>
+                        }
+                    }
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>

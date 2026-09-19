@@ -187,6 +187,14 @@ builder.Services.AddAntiforgery(options =>
     options.HeaderName = "RequestVerificationToken";
 });
 
+// Issue #235: Company Master automated delta sync, proxy rotation, and observability
+builder.Services.AddSingleton<MCAROC_Analysis.Services.CompanyMaster.IProxyPoolService, MCAROC_Analysis.Services.CompanyMaster.ProxyPoolService>();
+builder.Services.AddSingleton<MCAROC_Analysis.Services.CompanyMaster.ITwoTierCaptchaSolverService, MCAROC_Analysis.Services.CompanyMaster.TwoTierCaptchaSolverService>();
+builder.Services.AddSingleton<MCAROC_Analysis.Services.CompanyMaster.ISafeArchiveExtractor, MCAROC_Analysis.Services.CompanyMaster.SafeArchiveExtractor>();
+builder.Services.AddScoped<MCAROC_Analysis.Services.CompanyMaster.ISyncLockLease, MCAROC_Analysis.Services.CompanyMaster.DistributedAppLockLease>();
+builder.Services.AddScoped<MCAROC_Analysis.Services.CompanyMaster.ICompanyMasterDeltaService, MCAROC_Analysis.Services.CompanyMaster.CompanyMasterDeltaService>();
+builder.Services.AddHostedService<MCAROC_Analysis.Services.CompanyMaster.CompanyMasterSyncWorker>();
+
 // #164 internal calculation-audit access gate — a feature-scoped cookie scheme, deliberately NOT the
 // application's default authentication scheme (AddAuthentication() with no scheme name argument). Every
 // existing endpoint in this app stays exactly as unauthenticated as it is today; only
