@@ -1,3 +1,4 @@
+using System.Data.Common;
 using MCAROC_Analysis.Controllers;
 using MCAROC_Analysis.Data;
 using MCAROC_Analysis.Data.Entities;
@@ -10,6 +11,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.ViewFeatures;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
@@ -24,6 +26,30 @@ public class AutoFetchControllerTests : IAsyncLifetime
 {
     private static AppDbContext CreateContext() =>
         new(new DbContextOptionsBuilder<AppDbContext>().UseSqlServer(TestDatabase.ConnectionString).Options);
+
+    private static AppDbContext CreateContextWithInterceptor(DbCommandInterceptor interceptor) =>
+        new(new DbContextOptionsBuilder<AppDbContext>().UseSqlServer(TestDatabase.ConnectionString).AddInterceptors(interceptor).Options);
+
+    private sealed class ThrowOnAutoFetchJobInsertInterceptor : DbCommandInterceptor
+    {
+        private static bool IsJobInsert(DbCommand command) =>
+            command.CommandText.Contains("AutoFetchJobs", StringComparison.OrdinalIgnoreCase)
+            && command.CommandText.Contains("INSERT", StringComparison.OrdinalIgnoreCase);
+
+        public override ValueTask<InterceptionResult<int>> NonQueryExecutingAsync(
+            DbCommand command, CommandEventData eventData, InterceptionResult<int> result, CancellationToken cancellationToken = default)
+        {
+            if (IsJobInsert(command)) throw new InvalidOperationException("Injected AutoFetch job insert failure.");
+            return base.NonQueryExecutingAsync(command, eventData, result, cancellationToken);
+        }
+
+        public override ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(
+            DbCommand command, CommandEventData eventData, InterceptionResult<DbDataReader> result, CancellationToken cancellationToken = default)
+        {
+            if (IsJobInsert(command)) throw new InvalidOperationException("Injected AutoFetch job insert failure.");
+            return base.ReaderExecutingAsync(command, eventData, result, cancellationToken);
+        }
+    }
 
     public async Task InitializeAsync()
     {
@@ -221,6 +247,48 @@ public class AutoFetchControllerTests : IAsyncLifetime
         await using var verify = CreateContext();
         Assert.Equal(1, await verify.Requests.CountAsync(request =>
             request.ClientId == 1 && request.AutoFetchCompanyIdentifier == identifier));
+    }
+
+    [Fact]
+    public async Task Concurrent_same_client_submissions_create_one_request_and_one_job()
+    {
+        var cin = $"U{Random.Shared.Next(10_000, 100_000)}MH2026PTC{Random.Shared.Next(100_000, 1_000_000)}";
+        await using var firstDb = CreateContext();
+        await using var secondDb = CreateContext();
+        var (firstController, _) = NewController(firstDb, configured: true);
+        var (secondController, _) = NewController(secondDb, configured: true);
+
+        var results = await Task.WhenAll(
+            firstController.New(new AutoFetchRequestViewModel { ClientId = 1, Cin = cin, EntityType = EntityType.Company }, CancellationToken.None),
+            secondController.New(new AutoFetchRequestViewModel { ClientId = 1, Cin = cin, EntityType = EntityType.Company }, CancellationToken.None));
+
+        Assert.Single(results, result => result is RedirectToActionResult);
+        var existing = Assert.Single(results, result => result is ViewResult);
+        var existingModel = Assert.IsType<AutoFetchRequestViewModel>(((ViewResult)existing).Model);
+        Assert.NotNull(existingModel.ExistingRequestId);
+
+        await using var verify = CreateContext();
+        var request = await verify.Requests.SingleAsync(r => r.ClientId == 1 && r.AutoFetchCompanyIdentifier == cin);
+        Assert.Equal(existingModel.ExistingRequestId, request.RequestId);
+        Assert.Equal(1, await verify.AutoFetchJobs.CountAsync(job => job.RequestId == request.RequestId));
+    }
+
+    [Fact]
+    public async Task Job_creation_failure_rolls_back_the_request_and_its_duplicate_claim()
+    {
+        var cin = $"U{Random.Shared.Next(10_000, 100_000)}MH2026PTC{Random.Shared.Next(100_000, 1_000_000)}";
+        await using var db = CreateContextWithInterceptor(new ThrowOnAutoFetchJobInsertInterceptor());
+        var (controller, _) = NewController(db, configured: true);
+
+        var failure = await Assert.ThrowsAsync<InvalidOperationException>(() => controller.New(new AutoFetchRequestViewModel
+        {
+            ClientId = 1, Cin = cin, EntityType = EntityType.Company
+        }, CancellationToken.None));
+        Assert.Contains("Injected AutoFetch job insert failure", failure.Message);
+
+        await using var verify = CreateContext();
+        Assert.Empty(await verify.Requests.Where(r => r.ClientId == 1 && r.AutoFetchCompanyIdentifier == cin).ToListAsync());
+        Assert.Empty(await verify.AutoFetchJobs.Where(job => job.Cin == cin).ToListAsync());
     }
 
     private static McaRequest NewAutoFetchRequest(long clientId, string identifier) => new()
