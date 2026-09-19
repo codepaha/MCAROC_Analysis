@@ -129,6 +129,41 @@ public class ReferenceToolClientTests : IDisposable
     }
 
     [Fact]
+    public async Task Automated_login_triggers_when_session_is_invalid_and_credentials_are_configured()
+    {
+        var handler = new StubHandler();
+        handler.OnPath("server/common/jwt/service.php", _ => Json($"{{\"jwtToken\":\"{KeyHex}\"}}"));
+        
+        var userDetailsCalls = 0;
+        handler.OnPath("server/user/userDetailsService.php", _ =>
+        {
+            userDetailsCalls++;
+            return userDetailsCalls == 1
+                ? Html("<!doctype html><html>login</html>") // first check fails
+                : Json("{\"id\":265271,\"name\":\"Namashree\"}"); // second check after login succeeds
+        });
+
+        handler.OnPath("server/user/login.php", req =>
+        {
+            var resp = Json("{\"id\":265271,\"user_name\":\"Namashree\"}");
+            resp.Headers.Add("Set-Cookie", "PHPSESSID=fresh-sess-123; path=/");
+            resp.Headers.Add("Set-Cookie", "user=fresh-user-token; path=/");
+            return resp;
+        });
+
+        var client = NewClient(handler, configured: true, username: "dharmendra@test.com", password: "SecretPassword123");
+        var session = await client.CheckSessionAsync(CancellationToken.None);
+
+        Assert.True(session.IsValid);
+        Assert.Equal("265271", session.UserId);
+        Assert.Equal(2, userDetailsCalls);
+
+        var loginReq = Assert.Single(handler.Requests.Where(r => r.RequestUri!.AbsolutePath.EndsWith("login.php")));
+        Assert.Equal(HttpMethod.Post, loginReq.Method);
+        Assert.Contains("fresh-sess-123", client.GetActiveSessionCookie());
+    }
+
+    [Fact]
     public async Task Workbook_export_is_judged_by_file_signature()
     {
         var handler = new StubHandler();
@@ -279,12 +314,14 @@ public class ReferenceToolClientTests : IDisposable
 
     // ── Helpers ─────────────────────────────────────────────────────────────────────────────────────
 
-    private static ReferenceToolClient NewClient(StubHandler handler, bool configured = true, long? maxResponseBytes = null)
+    private static ReferenceToolClient NewClient(StubHandler handler, bool configured = true, long? maxResponseBytes = null, string username = "", string password = "")
     {
         var options = Options.Create(new ReferenceToolOptions
         {
             BaseUrl = configured ? "https://reference-tool.test" : "",
             SessionCookie = configured ? "PHPSESSID=abc; user=x" : "",
+            Username = username,
+            Password = password,
             MaxResponseBytes = maxResponseBytes ?? new ReferenceToolOptions().MaxResponseBytes,
         });
         return new ReferenceToolClient(new HttpClient(handler), options, NullLogger<ReferenceToolClient>.Instance);

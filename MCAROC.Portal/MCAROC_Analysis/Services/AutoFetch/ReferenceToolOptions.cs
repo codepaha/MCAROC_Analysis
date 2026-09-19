@@ -60,5 +60,13 @@ public sealed class ReferenceToolOptions
     public string UserAgent { get; init; } =
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/153.0.0.0 Safari/537.36";
 
-    public bool IsConfigured => !string.IsNullOrWhiteSpace(BaseUrl) && !string.IsNullOrWhiteSpace(SessionCookie);
+    /// <summary>Optional credentials for automated login to the reference tool. When provided,
+    /// the client automatically performs login and session cookie refreshment when the session expires.</summary>
+    public string Username { get; init; } = string.Empty;
+    public string Password { get; init; } = string.Empty;
+
+    public bool CanAutoLogin => !string.IsNullOrWhiteSpace(Username) && !string.IsNullOrWhiteSpace(Password);
+
+    public bool IsConfigured => !string.IsNullOrWhiteSpace(BaseUrl) &&
+        (!string.IsNullOrWhiteSpace(SessionCookie) || CanAutoLogin);
 }

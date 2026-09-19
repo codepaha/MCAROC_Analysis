@@ -43,19 +43,53 @@ public sealed class ReferenceToolClient(HttpClient http, IOptions<ReferenceToolO
     private readonly ReferenceToolOptions _opts = options.Value;
     private byte[]? _signingKey;
     private readonly SemaphoreSlim _keyGate = new(1, 1);
+    private string? _activeSessionCookie;
+    private string? _activeUserId;
+    private readonly SemaphoreSlim _loginGate = new(1, 1);
 
     public bool IsConfigured => _opts.IsConfigured;
+
+    /// <summary>Returns the current session cookie (either discovered from automated login or configured in options).</summary>
+    public string GetActiveSessionCookie()
+    {
+        if (!string.IsNullOrWhiteSpace(_activeSessionCookie))
+            return _activeSessionCookie;
+        if (!string.IsNullOrWhiteSpace(_opts.SessionCookie))
+            return _opts.SessionCookie.Trim();
+        return string.Empty;
+    }
 
     /// <summary>The tool identifies a company by <c>sha256(upper(CIN))</c> — deterministic, so no
     /// lookup is needed to go from a CIN/LLPIN to its business id.</summary>
     public static string ComputeBid(string cin) =>
         Convert.ToHexString(SHA256.HashData(Encoding.ASCII.GetBytes(cin.Trim().ToUpperInvariant()))).ToLowerInvariant();
 
-    // ── Session ────────────────────────────────────────────────────────────────────────────────────
+    // ── Session & Login ────────────────────────────────────────────────────────────────────────────
 
     public async Task<ReferenceSessionInfo> CheckSessionAsync(CancellationToken ct)
     {
         EnsureConfigured();
+
+        if (string.IsNullOrWhiteSpace(GetActiveSessionCookie()) && _opts.CanAutoLogin)
+        {
+            var loginResult = await LoginAsync(ct);
+            if (!loginResult.IsValid) return loginResult;
+        }
+
+        var session = await TryGetUserDetailsAsync(ct);
+        if (!session.IsValid && _opts.CanAutoLogin)
+        {
+            logger.LogWarning("Reference tool session invalid ({Detail}). Attempting automated login...", session.Detail);
+            var loginResult = await LoginAsync(ct);
+            if (!loginResult.IsValid) return loginResult;
+            session = await TryGetUserDetailsAsync(ct);
+        }
+
+        return session;
+    }
+
+    private async Task<ReferenceSessionInfo> TryGetUserDetailsAsync(CancellationToken ct)
+    {
         using var response = await SendSignedAsync("server/user/userDetailsService.php", new { action = "getUserDetails" }, ct);
         var body = await response.Content.ReadAsStringAsync(ct);
         if (!response.IsSuccessStatusCode)
@@ -73,7 +107,82 @@ public sealed class ReferenceToolClient(HttpClient http, IOptions<ReferenceToolO
             if (root.TryGetProperty("error", out var err) && err.ValueKind != JsonValueKind.Null)
                 return new ReferenceSessionInfo(false, null, err.ToString());
 
-            return new ReferenceSessionInfo(true, FindUserId(root), null);
+            var userId = FindUserId(root) ?? _activeUserId;
+            return new ReferenceSessionInfo(true, userId, null);
+        }
+    }
+
+    public async Task<ReferenceSessionInfo> LoginAsync(CancellationToken ct)
+    {
+        if (!_opts.CanAutoLogin)
+            return new ReferenceSessionInfo(false, null, "Reference tool username or password not configured.");
+
+        await _loginGate.WaitAsync(ct);
+        try
+        {
+            var key = await GetSigningKeyAsync(ct);
+            var loginPayload = new
+            {
+                action = "login",
+                u = _opts.Username.Trim(),
+                p = _opts.Password.Trim(),
+                mcc = 91,
+                rememberMe = true
+            };
+            var jwt = SignJwt(loginPayload, key);
+
+            var url = BuildUrl("server/user/login.php", new Dictionary<string, string>
+            {
+                ["v"] = _opts.ClientVersion,
+                ["cv"] = _opts.AppVersion
+            });
+
+            using var request = new HttpRequestMessage(HttpMethod.Post, url);
+            request.Headers.TryAddWithoutValidation("User-Agent", _opts.UserAgent);
+            request.Headers.TryAddWithoutValidation("Referer", BaseUri.ToString());
+            request.Headers.TryAddWithoutValidation("Origin", BaseUri.GetLeftPart(UriPartial.Authority));
+            request.Content = new FormUrlEncodedContent(
+            [
+                new KeyValuePair<string, string>("pp", jwt)
+            ]);
+
+            using var response = await http.SendAsync(request, ct);
+            var body = await response.Content.ReadAsStringAsync(ct);
+            if (!response.IsSuccessStatusCode)
+                return new ReferenceSessionInfo(false, null, $"Login failed with HTTP {(int)response.StatusCode}: {body}");
+
+            using var doc = ParseJsonOrThrow(body, "login");
+            var root = doc.RootElement;
+            if (root.ValueKind == JsonValueKind.Object && root.TryGetProperty("error", out var err) && err.ValueKind != JsonValueKind.Null)
+                return new ReferenceSessionInfo(false, null, err.ToString());
+
+            var userId = FindUserId(root);
+
+            var cookieList = new List<string>();
+            if (response.Headers.TryGetValues("Set-Cookie", out var setCookies))
+            {
+                foreach (var sc in setCookies)
+                {
+                    var cookiePart = sc.Split(';')[0].Trim();
+                    if (!string.IsNullOrEmpty(cookiePart))
+                        cookieList.Add(cookiePart);
+                }
+            }
+
+            if (cookieList.Count > 0)
+            {
+                _activeSessionCookie = string.Join("; ", cookieList);
+                if (!string.IsNullOrEmpty(userId))
+                    _activeUserId = userId;
+                logger.LogInformation("Successfully logged into Probe42 as user {UserId}", userId);
+                return new ReferenceSessionInfo(true, userId, null);
+            }
+
+            return new ReferenceSessionInfo(false, null, "No session cookies returned from login.");
+        }
+        finally
+        {
+            _loginGate.Release();
         }
     }
 
@@ -337,7 +446,7 @@ public sealed class ReferenceToolClient(HttpClient http, IOptions<ReferenceToolO
     private void EnsureConfigured()
     {
         if (!_opts.IsConfigured)
-            throw new ReferenceToolException("Auto-fetch is not configured: set ReferenceTool:BaseUrl and ReferenceTool:SessionCookie (user-secrets locally, environment variables elsewhere).");
+            throw new ReferenceToolException("Auto-fetch is not configured: set ReferenceTool:BaseUrl and either ReferenceTool:SessionCookie or ReferenceTool:Username/Password.");
     }
 
     private async Task<HttpResponseMessage> SendSignedAsync(string path, object payload, CancellationToken ct)
@@ -410,7 +519,9 @@ public sealed class ReferenceToolClient(HttpClient http, IOptions<ReferenceToolO
     private HttpRequestMessage NewRequest(string url)
     {
         var request = new HttpRequestMessage(HttpMethod.Get, url);
-        request.Headers.TryAddWithoutValidation("Cookie", _opts.SessionCookie.Trim());
+        var cookie = GetActiveSessionCookie();
+        if (!string.IsNullOrWhiteSpace(cookie))
+            request.Headers.TryAddWithoutValidation("Cookie", cookie);
         request.Headers.TryAddWithoutValidation("User-Agent", _opts.UserAgent);
         request.Headers.TryAddWithoutValidation("Referer", BaseUri.ToString());
         request.Headers.TryAddWithoutValidation("Origin", BaseUri.GetLeftPart(UriPartial.Authority));

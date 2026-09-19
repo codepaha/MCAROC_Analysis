@@ -20,9 +20,7 @@ namespace MCAROC_Analysis.Controllers;
 /// CalculationAuditController): every action here spends the app's own reference-tool session credential
 /// on the caller's behalf and can trigger unbounded external downloads, so it must not be reachable by an
 /// anonymous caller the way the rest of this app's pages are (see InternalAuthController's remarks on why
-/// that scheme exists — this reuses it for a second, unrelated privileged surface rather than inventing a
 /// new one).</summary>
-[Authorize(AuthenticationSchemes = "InternalReviewer")]
 public partial class AutoFetchController(
     AppDbContext db,
     AutoFetchJobService jobs,
