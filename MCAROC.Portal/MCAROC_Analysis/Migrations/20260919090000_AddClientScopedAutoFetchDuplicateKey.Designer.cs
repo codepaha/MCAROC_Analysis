@@ -2990,8 +2990,6 @@ namespace MCAROC_Analysis.Migrations
 
                     b.HasKey("RequestId");
 
-                    b.HasIndex("ClientId");
-
                     b.HasIndex("ClientId", "AutoFetchCompanyIdentifier")
                         .IsUnique()
                         .HasDatabaseName("UX_McaRequests_Client_AutoFetchIdentifier")

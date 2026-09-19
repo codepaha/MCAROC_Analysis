@@ -2988,15 +2988,13 @@ namespace MCAROC_Analysis.Migrations
 
                     b.HasKey("RequestId");
 
-                    b.HasIndex("ClientId");
+                    b.HasIndex("RequestNumber")
+                        .IsUnique();
 
                     b.HasIndex("ClientId", "AutoFetchCompanyIdentifier")
                         .IsUnique()
                         .HasDatabaseName("UX_McaRequests_Client_AutoFetchIdentifier")
                         .HasFilter("[AutoFetchCompanyIdentifier] IS NOT NULL");
-
-                    b.HasIndex("RequestNumber")
-                        .IsUnique();
 
                     b.ToTable("Requests");
                 });

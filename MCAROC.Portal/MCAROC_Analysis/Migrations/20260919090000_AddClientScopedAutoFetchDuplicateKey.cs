@@ -44,6 +44,13 @@ public partial class AddClientScopedAutoFetchDuplicateKey : Migration
             columns: new[] { "ClientId", "AutoFetchCompanyIdentifier" },
             unique: true,
             filter: "[AutoFetchCompanyIdentifier] IS NOT NULL");
+
+        // The composite index covers this relationship lookup. EF removes the convention-created
+        // single-column index when the composite index is configured, so the migration must do the
+        // same or the runtime model and snapshot diverge.
+        migrationBuilder.DropIndex(
+            name: "IX_Requests_ClientId",
+            table: "Requests");
     }
 
     protected override void Down(MigrationBuilder migrationBuilder)
@@ -51,6 +58,11 @@ public partial class AddClientScopedAutoFetchDuplicateKey : Migration
         migrationBuilder.DropIndex(
             name: "UX_McaRequests_Client_AutoFetchIdentifier",
             table: "Requests");
+
+        migrationBuilder.CreateIndex(
+            name: "IX_Requests_ClientId",
+            table: "Requests",
+            column: "ClientId");
 
         migrationBuilder.DropColumn(
             name: "AutoFetchCompanyIdentifier",
