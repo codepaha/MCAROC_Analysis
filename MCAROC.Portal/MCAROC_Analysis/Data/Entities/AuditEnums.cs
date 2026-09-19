@@ -67,6 +67,12 @@ public enum AuditActionType
     DiscrepancyMarkedFixedPending,
     DiscrepancyResolved,
 
+    // CompanyMaster
+    CompanyMasterDateProbed,
+    CompanyMasterProxyTested,
+    CompanyMasterSyncTriggered,
+    CompanyMasterManualUploaded,
+
     // Fallback
     OtherMutation,
 
