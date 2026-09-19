@@ -243,6 +243,12 @@ service — if it sits `queued`, `run.cmd` is down) runs *only* what Linux can't
 
 ## Log  <!-- newest first. Prefix: NEEDS / BLOCKED / DONE / DECISION / FYI -->
 
+### 2026-09-19 - Codex (CLAIMED #229: internal company refresh coordinator)
+- **CLAIMED #229** on branch `feature/issue-229-company-refresh`, based on `main` at `b888ae7`.
+  Scope is provider locked/unlocked state and one durable refresh per canonical company; explicitly no
+  client access, billing, or public UI. PR #228 currently has an in-flight migration, so this branch starts
+  with the pure freshness/state policy and tests; persistence migration waits for #228 to merge and a rebase.
+
 ### 2026-09-18 — Claude session (DONE PR #225 review round 3 — CI connection string + migration-guard TOCTOU race, both fixed)
 - **Two real findings from Codex's `build-and-test` failure report, both fixed at head `<pending>`:**
   1. `OperationalSlotLeaseMigrationGuardTests` hardcoded `Server=.\SQLEXPRESS;...Trusted_Connection=True;`
