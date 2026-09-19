@@ -2920,6 +2920,10 @@ namespace MCAROC_Analysis.Migrations
                     b.Property<DateTime?>("AnalysisStartedDate")
                         .HasColumnType("datetime2");
 
+                    b.Property<string>("AutoFetchCompanyIdentifier")
+                        .HasMaxLength(30)
+                        .HasColumnType("nvarchar(30)");
+
                     b.Property<string>("Cin")
                         .HasColumnType("nvarchar(max)");
 
@@ -2985,6 +2989,11 @@ namespace MCAROC_Analysis.Migrations
                     b.HasKey("RequestId");
 
                     b.HasIndex("ClientId");
+
+                    b.HasIndex("ClientId", "AutoFetchCompanyIdentifier")
+                        .IsUnique()
+                        .HasDatabaseName("UX_McaRequests_Client_AutoFetchIdentifier")
+                        .HasFilter("[AutoFetchCompanyIdentifier] IS NOT NULL");
 
                     b.HasIndex("RequestNumber")
                         .IsUnique();

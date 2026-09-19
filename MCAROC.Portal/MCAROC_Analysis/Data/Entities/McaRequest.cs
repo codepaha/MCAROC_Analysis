@@ -16,6 +16,13 @@ public class McaRequest
     public string? Llpin { get; set; }
     public string? Pan { get; set; }
 
+    /// <summary>
+    /// Canonical CIN/LLPIN used only by the AutoFetch entry point to make a company's request
+    /// idempotent within its owning client. It is deliberately client-scoped: another client may
+    /// have an independent request for the same company, but must never see or reuse this request.
+    /// </summary>
+    public string? AutoFetchCompanyIdentifier { get; set; }
+
     public RequestStatus RequestStatus { get; set; } = RequestStatus.Created;
 
     public string? CreatedBy { get; set; }

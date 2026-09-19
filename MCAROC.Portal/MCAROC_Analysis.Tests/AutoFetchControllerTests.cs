@@ -107,6 +107,7 @@ public class AutoFetchControllerTests : IAsyncLifetime
 
         var request = await db.Requests.AsNoTracking().SingleAsync(r => r.RequestId == requestId);
         Assert.Equal("U45203OR1995PLC003982", request.Cin);
+        Assert.Equal("U45203OR1995PLC003982", request.AutoFetchCompanyIdentifier);
         Assert.Equal("AABCC1234D", request.Pan);
         Assert.Equal("U45203OR1995PLC003982", request.CompanyName); // placeholder until the tool/workbook names it
         Assert.Equal(RequestStatus.Created, request.RequestStatus);
@@ -142,6 +143,110 @@ public class AutoFetchControllerTests : IAsyncLifetime
         Assert.Equal("AAB-9876", request.Llpin);
         Assert.Equal("Some LLP", request.CompanyName);
         Assert.False((await db.AutoFetchJobs.AsNoTracking().SingleAsync(j => j.RequestId == request.RequestId)).IncludeFilings);
+    }
+
+    [Fact]
+    public async Task Same_client_and_normalized_identifier_shows_existing_request_without_another_job()
+    {
+        await using var db = CreateContext();
+        var (controller, queue) = NewController(db, configured: true);
+
+        var first = Assert.IsType<RedirectToActionResult>(await controller.New(new AutoFetchRequestViewModel
+        {
+            ClientId = 1, Cin = "U45203OR1995PLC003982", EntityType = EntityType.Company
+        }, CancellationToken.None));
+        var firstId = Assert.IsType<long>(first.RouteValues!["id"]);
+
+        var duplicate = Assert.IsType<ViewResult>(await controller.New(new AutoFetchRequestViewModel
+        {
+            ClientId = 1, Cin = " u45203or1995plc003982 ", EntityType = EntityType.Company
+        }, CancellationToken.None));
+        var model = Assert.IsType<AutoFetchRequestViewModel>(duplicate.Model);
+
+        Assert.Equal(firstId, model.ExistingRequestId);
+        Assert.NotNull(model.ExistingRequestNumber);
+        Assert.Equal(RequestStatus.Created.ToString(), model.ExistingRequestStatus);
+        Assert.Equal(1, await db.Requests.CountAsync(r => r.ClientId == 1 && r.AutoFetchCompanyIdentifier == "U45203OR1995PLC003982"));
+        Assert.Equal(1, await db.AutoFetchJobs.CountAsync(j => j.RequestId == firstId));
+
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        await foreach (var queued in queue.ReadAllAsync(cts.Token))
+        {
+            Assert.Equal((await db.AutoFetchJobs.SingleAsync(j => j.RequestId == firstId)).AutoFetchJobId, queued);
+            break;
+        }
+    }
+
+    [Fact]
+    public async Task Same_identifier_for_a_different_client_creates_an_independent_request()
+    {
+        await using var db = CreateContext();
+        var (controller, _) = NewController(db, configured: true);
+        const string cin = "U45203OR1995PLC003982";
+
+        var first = Assert.IsType<RedirectToActionResult>(await controller.New(new AutoFetchRequestViewModel
+        {
+            ClientId = 1, Cin = cin, EntityType = EntityType.Company
+        }, CancellationToken.None));
+        var second = Assert.IsType<RedirectToActionResult>(await controller.New(new AutoFetchRequestViewModel
+        {
+            ClientId = 2, Cin = cin, EntityType = EntityType.Company
+        }, CancellationToken.None));
+
+        Assert.NotEqual(first.RouteValues!["id"], second.RouteValues!["id"]);
+        var requests = await db.Requests.AsNoTracking()
+            .Where(r => r.AutoFetchCompanyIdentifier == cin)
+            .OrderBy(r => r.ClientId)
+            .ToListAsync();
+        Assert.Equal([1L, 2L], requests.Select(r => r.ClientId));
+        Assert.All(requests, request => Assert.Equal(cin, request.AutoFetchCompanyIdentifier));
+    }
+
+    [Fact]
+    public async Task Database_unique_index_allows_only_one_concurrent_request_for_the_same_client_and_company()
+    {
+        var token = Guid.NewGuid().ToString("N");
+        var identifier = $"U{token[..5]}MH2026PTC{token[5..11]}";
+        await using var first = CreateContext();
+        await using var second = CreateContext();
+
+        first.Requests.Add(NewAutoFetchRequest(1, identifier));
+        second.Requests.Add(NewAutoFetchRequest(1, identifier));
+
+        var results = await Task.WhenAll(SaveCapturingExceptionAsync(first), SaveCapturingExceptionAsync(second));
+
+        Assert.Single(results, exception => exception is null);
+        Assert.Single(results, exception => exception is DbUpdateException);
+
+        await using var verify = CreateContext();
+        Assert.Equal(1, await verify.Requests.CountAsync(request =>
+            request.ClientId == 1 && request.AutoFetchCompanyIdentifier == identifier));
+    }
+
+    private static McaRequest NewAutoFetchRequest(long clientId, string identifier) => new()
+    {
+        ClientId = clientId,
+        EntityType = EntityType.Company,
+        CompanyName = identifier,
+        Cin = identifier,
+        AutoFetchCompanyIdentifier = identifier,
+        RequestNumber = $"TEST-{Guid.NewGuid():N}",
+        RequestStatus = RequestStatus.Created,
+        CreatedDate = DateTime.UtcNow,
+        CreatedBy = "test"
+    };
+
+    private static async Task<Exception?> SaveCapturingExceptionAsync(AppDbContext context)
+    {
+        try
+        {
+            await context.SaveChangesAsync();
+            return null;
+        }
+        catch (Exception exception)
+        {
+            return exception;
+        }
     }
 
     [Fact]
