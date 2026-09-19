@@ -161,7 +161,23 @@ public sealed class CompanyMasterDashboardController : Controller
                     return RedirectToAction(nameof(Index));
                 }
 
-                await _deltaService.IngestCsvFilesAsync(job.JobId, job.FencingToken, csvFiles, cancellationToken);
+                var (_, checksum) = await _deltaService.IngestCsvFilesAsync(job.JobId, job.FencingToken, csvFiles, cancellationToken);
+
+                var jobToUpdate = await _db.CompanyMasterSyncJobs.FindAsync(new object[] { job.JobId }, cancellationToken);
+                if (jobToUpdate != null)
+                {
+                    jobToUpdate.AggregateChecksum = checksum;
+                    await _db.SaveChangesAsync(cancellationToken);
+                }
+
+                if (await _deltaService.IsChecksumAlreadyPromotedAsync(checksum, job.JobId, cancellationToken))
+                {
+                    _logger.LogInformation("Manual upload archive with checksum {Checksum} has already been promoted. Skipping promotion for Job {JobId}.", checksum, job.JobId);
+                    await _deltaService.CleanStagingAsync(job.JobId, cancellationToken);
+                    await _deltaService.UpdateJobStatusAsync(job.JobId, CompanyMasterSyncJobStatus.SkippedAlreadyPromotedChecksum, errorMessage: $"Archive checksum {checksum} has already been promoted in a previous run.", cancellationToken: cancellationToken);
+                    TempData["WarningMessage"] = $"Archive checksum {checksum[..Math.Min(8, checksum.Length)]}... has already been promoted in a previous run. Skipped duplicate promotion.";
+                    return RedirectToAction(nameof(Index));
+                }
             }
 
             var validation = await _deltaService.ValidateStagingAsync(job.JobId, job.FencingToken, cancellationToken);

@@ -28,6 +28,11 @@ public interface ICompanyMasterDeltaService
     Task<PromotionMetricsResult> PromoteStagedDeltaAsync(long syncRunId, long fencingToken, int batchSize = 4000, CancellationToken cancellationToken = default);
     Task CleanStagingAsync(long syncRunId, CancellationToken cancellationToken = default);
     Task<DateOnly?> ProbePortalSnapshotDateAsync(CancellationToken cancellationToken = default);
+    /// <summary>
+    /// Checks whether an archive with the given SHA256 aggregate checksum has already been
+    /// successfully promoted in a previous completed job.
+    /// </summary>
+    Task<bool> IsChecksumAlreadyPromotedAsync(string aggregateChecksum, long currentJobId, CancellationToken cancellationToken = default);
     /// <param name="publishedDate">Portal snapshot date already probed by the caller; persisted to the job record.</param>
     /// <param name="publishedDateRaw">Raw portal date text for auditability.</param>
     Task<PromotionMetricsResult?> ExecuteAutomatedSyncAsync(

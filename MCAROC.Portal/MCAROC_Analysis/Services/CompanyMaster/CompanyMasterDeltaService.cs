@@ -774,7 +774,7 @@ public partial class CompanyMasterDeltaService : ICompanyMasterDeltaService
         return null;
     }
 
-    public async Task<bool> RenewLeaseHeartbeatAsync(long jobId, long fencingToken, CancellationToken cancellationToken = default)
+    public virtual async Task<bool> RenewLeaseHeartbeatAsync(long jobId, long fencingToken, CancellationToken cancellationToken = default)
     {
         await using var connection = new SqlConnection(_connectionString);
         await connection.OpenAsync(cancellationToken);
@@ -795,6 +795,15 @@ public partial class CompanyMasterDeltaService : ICompanyMasterDeltaService
         return rows > 0;
     }
 
+    public async Task<bool> IsChecksumAlreadyPromotedAsync(string aggregateChecksum, long currentJobId, CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(aggregateChecksum)) return false;
+        return await _db.CompanyMasterSyncJobs
+            .AnyAsync(j => j.JobId != currentJobId
+                        && j.AggregateChecksum == aggregateChecksum
+                        && j.Status == CompanyMasterSyncJobStatus.Completed, cancellationToken);
+    }
+
     public async Task<PromotionMetricsResult?> ExecuteAutomatedSyncAsync(
         long jobId,
         long fencingToken,
@@ -806,17 +815,19 @@ public partial class CompanyMasterDeltaService : ICompanyMasterDeltaService
         string tempExtractDir = Path.Combine(Path.GetTempPath(), $"mca_auto_{Guid.NewGuid():N}");
         Stream? localStreamToDispose = null;
 
+        int heartbeatIntervalSec = _configuration.GetValue<int>("CompanyMasterSync:HeartbeatIntervalSeconds", 30);
         using var heartbeatCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        var linkedToken = heartbeatCts.Token;
         Task? heartbeatTask = null;
 
         try
         {
-            await UpdateJobStatusAsync(jobId, CompanyMasterSyncJobStatus.Downloading, cancellationToken: cancellationToken);
+            await UpdateJobStatusAsync(jobId, CompanyMasterSyncJobStatus.Downloading, cancellationToken: linkedToken);
 
             // Heartbeat loop during long download & staging
             heartbeatTask = Task.Run(async () =>
             {
-                using var timer = new PeriodicTimer(TimeSpan.FromSeconds(30));
+                using var timer = new PeriodicTimer(TimeSpan.FromSeconds(Math.Max(1, heartbeatIntervalSec)));
                 while (!heartbeatCts.Token.IsCancellationRequested)
                 {
                     try
@@ -875,33 +886,33 @@ public partial class CompanyMasterDeltaService : ICompanyMasterDeltaService
                     using var client = new HttpClient(handler) { Timeout = TimeSpan.FromMinutes(15) };
                     client.DefaultRequestHeaders.UserAgent.ParseAdd("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36");
 
-                    var response = await client.GetAsync(downloadUrl, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+                    var response = await client.GetAsync(downloadUrl, HttpCompletionOption.ResponseHeadersRead, linkedToken);
                     response.EnsureSuccessStatusCode();
 
                     var memoryStream = new MemoryStream();
-                    await response.Content.CopyToAsync(memoryStream, cancellationToken);
+                    await response.Content.CopyToAsync(memoryStream, linkedToken);
                     memoryStream.Position = 0;
                     localStreamToDispose = memoryStream;
                     streamToUse = localStreamToDispose;
                 }
             }
 
-            heartbeatCts.Token.ThrowIfCancellationRequested();
+            linkedToken.ThrowIfCancellationRequested();
 
             var extractor = _archiveExtractor ?? new SafeArchiveExtractor(Microsoft.Extensions.Logging.Abstractions.NullLogger<SafeArchiveExtractor>.Instance);
-            var extractedFiles = await extractor.ExtractSafelyAsync(streamToUse, tempExtractDir, cancellationToken);
+            var extractedFiles = await extractor.ExtractSafelyAsync(streamToUse, tempExtractDir, linkedToken);
             var csvFiles = extractedFiles.Where(f => f.EndsWith(".csv", StringComparison.OrdinalIgnoreCase)).ToList();
 
             if (csvFiles.Count == 0)
             {
-                await UpdateJobStatusAsync(jobId, CompanyMasterSyncJobStatus.Failed, "Archive contained zero CSV files.", cancellationToken);
+                await UpdateJobStatusAsync(jobId, CompanyMasterSyncJobStatus.Failed, "Archive contained zero CSV files.", linkedToken);
                 throw new InvalidOperationException("Archive contained zero CSV files.");
             }
 
-            var (_, checksum) = await IngestCsvFilesAsync(jobId, fencingToken, csvFiles, cancellationToken);
+            var (_, checksum) = await IngestCsvFilesAsync(jobId, fencingToken, csvFiles, linkedToken);
 
             // Persist the portal date and aggregate checksum so subsequent runs can skip identical data.
-            var jobToUpdate = await _db.CompanyMasterSyncJobs.FindAsync(new object[] { jobId }, cancellationToken);
+            var jobToUpdate = await _db.CompanyMasterSyncJobs.FindAsync(new object[] { jobId }, linkedToken);
             if (jobToUpdate != null)
             {
                 if (publishedDate.HasValue && jobToUpdate.PublishedDate == null)
@@ -912,10 +923,20 @@ public partial class CompanyMasterDeltaService : ICompanyMasterDeltaService
                         publishedDate.Value.Year, publishedDate.Value.Month, publishedDate.Value.Day, 0, 0, 0, DateTimeKind.Utc);
                 }
                 jobToUpdate.AggregateChecksum = checksum;
-                await _db.SaveChangesAsync(cancellationToken);
+                await _db.SaveChangesAsync(linkedToken);
             }
 
-            var validation = await ValidateStagingAsync(jobId, fencingToken, cancellationToken);
+            // Checksum idempotency: if an archive with the same aggregate checksum was already promoted,
+            // skip promotion, clean staging, and record SkippedAlreadyPromotedChecksum status.
+            if (await IsChecksumAlreadyPromotedAsync(checksum, jobId, linkedToken))
+            {
+                _logger.LogInformation("Archive with aggregate checksum {Checksum} has already been promoted. Skipping promotion for Job {JobId}.", checksum, jobId);
+                await CleanStagingAsync(jobId, linkedToken);
+                await UpdateJobStatusAsync(jobId, CompanyMasterSyncJobStatus.SkippedAlreadyPromotedChecksum, errorMessage: $"Archive checksum {checksum} has already been promoted in a previous run.", cancellationToken: linkedToken);
+                return null;
+            }
+
+            var validation = await ValidateStagingAsync(jobId, fencingToken, linkedToken);
             if (!validation.IsValid)
             {
                 _logger.LogWarning("Automated sync staging validation failed for Job {JobId}: {Error}", jobId, validation.ErrorMessage);
@@ -934,10 +955,24 @@ public partial class CompanyMasterDeltaService : ICompanyMasterDeltaService
             var metrics = await PromoteStagedDeltaAsync(jobId, fencingToken, batchSize, cancellationToken);
             return metrics;
         }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested && heartbeatCts.IsCancellationRequested)
+        {
+            _logger.LogWarning("Automated sync for Job {JobId} was aborted due to lease preemption / heartbeat failure.", jobId);
+            try
+            {
+                await CleanStagingAsync(jobId, CancellationToken.None);
+            }
+            catch (Exception cleanEx)
+            {
+                _logger.LogWarning(cleanEx, "Failed to clean staging for preempted Job {JobId}", jobId);
+            }
+            await UpdateJobStatusAsync(jobId, CompanyMasterSyncJobStatus.PreemptedByTakeover, "Heartbeat loss during staging; worker lease preempted.", CancellationToken.None);
+            throw;
+        }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             _logger.LogError(ex, "Automated sync pipeline failed for Job {JobId}", jobId);
-            await UpdateJobStatusAsync(jobId, CompanyMasterSyncJobStatus.Failed, ex.Message, cancellationToken);
+            await UpdateJobStatusAsync(jobId, CompanyMasterSyncJobStatus.Failed, ex.Message, CancellationToken.None);
             throw;
         }
         finally

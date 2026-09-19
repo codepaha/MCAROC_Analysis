@@ -1094,10 +1094,186 @@ public class CompanyMasterSyncTests : IAsyncLifetime
         public Task CleanStagingAsync(long syncRunId, CancellationToken ct = default)
             => _inner.CleanStagingAsync(syncRunId, ct);
 
+        public Task<bool> IsChecksumAlreadyPromotedAsync(string aggregateChecksum, long currentJobId, CancellationToken cancellationToken = default)
+            => _inner.IsChecksumAlreadyPromotedAsync(aggregateChecksum, currentJobId, cancellationToken);
+
         public Task<PromotionMetricsResult?> ExecuteAutomatedSyncAsync(long jobId, long fencingToken,
             DateOnly? publishedDate = null, string? publishedDateRaw = null,
             Stream? archiveStream = null, CancellationToken ct = default)
             => _inner.ExecuteAutomatedSyncAsync(jobId, fencingToken, publishedDate, publishedDateRaw, archiveStream, ct);
+    }
+
+    [Fact]
+    public async Task SecondRun_SameArchiveChecksum_SkipsWithSkippedAlreadyPromotedChecksum()
+    {
+        string tempZip = Path.Combine(Path.GetTempPath(), $"idempotency_test_{Guid.NewGuid():N}.zip");
+        string cin = $"L{Guid.NewGuid():N}"[..21];
+        try
+        {
+            using (var fs = File.Create(tempZip))
+            using (var archive = new ZipArchive(fs, ZipArchiveMode.Create))
+            {
+                var entry = archive.CreateEntry("companies.csv");
+                using var w = new StreamWriter(entry.Open());
+                w.WriteLine("CIN,Company Name,Company Registration Date,Company Category,Company Class,Listing Status,Authorized Capital,Paidup Capital,Company ROC,Company Address,Pin Code,Company State,Company Status,Company Sub Category,Company Industrial Classification");
+                w.WriteLine($"{cin},Idempotent Test Ltd,2025-07-01,Company limited by shares,Private,Unlisted,100000,100000,ROC DELHI,1 Idempotent Road,110001,Delhi,Active,Non-government company,IT");
+            }
+
+            var config = new ConfigurationBuilder()
+                .AddInMemoryCollection(new Dictionary<string, string?>
+                {
+                    ["ConnectionStrings:Default"] = ConnectionString,
+                    ["CompanyMasterSync:ArchiveDropPath"] = tempZip
+                })
+                .Build();
+            var proxyPool = new ProxyPoolService(config, NullLogger<ProxyPoolService>.Instance);
+            var lease = new DistributedAppLockLease(ConnectionString, NullLogger<DistributedAppLockLease>.Instance);
+
+            await lease.TryAcquireAsync("CompanyMasterSyncExclusiveLock", TimeSpan.FromSeconds(5));
+            try
+            {
+                // Run 1: First sync completes and promotes
+                await using var db1 = CreateContext();
+                var svc1 = new CompanyMasterDeltaService(db1, config, proxyPool, lease, NullLogger<CompanyMasterDeltaService>.Instance);
+                var job1 = await svc1.CreateJobAsync(CompanyMasterSyncTriggerType.ManualForceSync, "test1");
+                var metrics1 = await svc1.ExecuteAutomatedSyncAsync(job1.JobId, job1.FencingToken);
+
+                Assert.NotNull(metrics1);
+                await using var checkDb1 = CreateContext();
+                var refreshedJob1 = await checkDb1.CompanyMasterSyncJobs.FindAsync(job1.JobId);
+                Assert.NotNull(refreshedJob1);
+                Assert.Equal(CompanyMasterSyncJobStatus.Completed, refreshedJob1.Status);
+                Assert.NotNull(refreshedJob1.AggregateChecksum);
+                string firstChecksum = refreshedJob1.AggregateChecksum;
+
+                // Run 2: Second sync with the IDENTICAL archive
+                await using var db2 = CreateContext();
+                var svc2 = new CompanyMasterDeltaService(db2, config, proxyPool, lease, NullLogger<CompanyMasterDeltaService>.Instance);
+                var job2 = await svc2.CreateJobAsync(CompanyMasterSyncTriggerType.ManualForceSync, "test2");
+                var metrics2 = await svc2.ExecuteAutomatedSyncAsync(job2.JobId, job2.FencingToken);
+
+                // Checksum idempotency must have kicked in:
+                // 1. metrics2 is null (skipped duplicate promotion)
+                Assert.Null(metrics2);
+
+                // 2. job2 status is SkippedAlreadyPromotedChecksum with matching checksum
+                await using var checkDb2 = CreateContext();
+                var refreshedJob2 = await checkDb2.CompanyMasterSyncJobs.FindAsync(job2.JobId);
+                Assert.NotNull(refreshedJob2);
+                Assert.Equal(CompanyMasterSyncJobStatus.SkippedAlreadyPromotedChecksum, refreshedJob2.Status);
+                Assert.Equal(firstChecksum, refreshedJob2.AggregateChecksum);
+
+                // 3. Staging rows for job2 must have been cleanly removed
+                int stagingRowsForJob2 = await checkDb2.StagingCompanyMasterRecords
+                    .CountAsync(s => s.SyncRunId == job2.JobId);
+                Assert.Equal(0, stagingRowsForJob2);
+            }
+            finally
+            {
+                await lease.ReleaseAsync(CancellationToken.None);
+            }
+        }
+        finally
+        {
+            try { if (File.Exists(tempZip)) File.Delete(tempZip); } catch { }
+        }
+    }
+
+    [Fact]
+    public async Task HeartbeatLoss_DuringStaging_CancelsPipelinePromptly_AndMarksPreempted()
+    {
+        // Construct archive with sample CSV
+        using var memZip = new MemoryStream();
+        using (var archive = new ZipArchive(memZip, ZipArchiveMode.Create, leaveOpen: true))
+        {
+            var entry = archive.CreateEntry("companies.csv");
+            using var w = new StreamWriter(entry.Open());
+            w.WriteLine("CIN,Company Name,Company Registration Date,Company Category,Company Class,Listing Status,Authorized Capital,Paidup Capital,Company ROC,Company Address,Pin Code,Company State,Company Status,Company Sub Category,Company Industrial Classification");
+            w.WriteLine($"U{Guid.NewGuid():N}"[..21] + ",Preempted Worker Ltd,2025-01-01,Company limited by shares,Private,Unlisted,50000,50000,ROC DELHI,1 Preempt Road,110001,Delhi,Active,Non-government company,IT");
+        }
+        byte[] zipBytes = memZip.ToArray();
+
+        // 1-second heartbeat interval so the heartbeat tick fires promptly
+        var config = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["ConnectionStrings:Default"] = ConnectionString,
+                ["CompanyMasterSync:HeartbeatIntervalSeconds"] = "1"
+            })
+            .Build();
+
+        var proxyPool = new ProxyPoolService(config, NullLogger<ProxyPoolService>.Instance);
+        var lease = new DistributedAppLockLease(ConnectionString, NullLogger<DistributedAppLockLease>.Instance);
+
+        await using var db = CreateContext();
+        var preemptingSvc = new PreemptingHeartbeatDeltaService(db, config, proxyPool, lease, NullLogger<CompanyMasterDeltaService>.Instance);
+
+        await lease.TryAcquireAsync("CompanyMasterSyncExclusiveLock", TimeSpan.FromSeconds(5));
+        try
+        {
+            var job = await preemptingSvc.CreateJobAsync(CompanyMasterSyncTriggerType.Scheduled, "test_preempt");
+
+            // SlowStream delays read so that the 1-second heartbeat timer fires during reading/staging
+            using var slowStream = new SlowStream(zipBytes, delayMs: 1200);
+
+            // Must throw OperationCanceledException due to heartbeat preemption cancellation
+            var ex = await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+                preemptingSvc.ExecuteAutomatedSyncAsync(job.JobId, job.FencingToken, archiveStream: slowStream));
+
+            Assert.True(preemptingSvc.HeartbeatFailed, "Heartbeat check should have executed and returned false.");
+
+            // Verify job row was updated to PreemptedByTakeover
+            await using var checkDb = CreateContext();
+            var refreshedJob = await checkDb.CompanyMasterSyncJobs.FindAsync(job.JobId);
+            Assert.NotNull(refreshedJob);
+            Assert.Equal(CompanyMasterSyncJobStatus.PreemptedByTakeover, refreshedJob.Status);
+            Assert.Contains("Heartbeat loss during staging", refreshedJob.ErrorMessage);
+
+            // Staging rows must be cleaned up
+            int stagingRows = await checkDb.StagingCompanyMasterRecords.CountAsync(s => s.SyncRunId == job.JobId);
+            Assert.Equal(0, stagingRows);
+        }
+        finally
+        {
+            await lease.ReleaseAsync(CancellationToken.None);
+        }
+    }
+
+    private sealed class PreemptingHeartbeatDeltaService : CompanyMasterDeltaService
+    {
+        public bool HeartbeatFailed { get; private set; }
+
+        public PreemptingHeartbeatDeltaService(
+            AppDbContext db,
+            IConfiguration configuration,
+            IProxyPoolService proxyPool,
+            ISyncLockLease syncLockLease,
+            Microsoft.Extensions.Logging.ILogger<CompanyMasterDeltaService> logger)
+            : base(db, configuration, proxyPool, syncLockLease, logger)
+        {
+        }
+
+        public override Task<bool> RenewLeaseHeartbeatAsync(long jobId, long fencingToken, CancellationToken cancellationToken = default)
+        {
+            HeartbeatFailed = true;
+            // Simulate worker preemption / lease loss during staging
+            return Task.FromResult(false);
+        }
+    }
+
+    private sealed class SlowStream : MemoryStream
+    {
+        private readonly int _delayMs;
+        public SlowStream(byte[] buffer, int delayMs = 1200) : base(buffer)
+        {
+            _delayMs = delayMs;
+        }
+
+        public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            await Task.Delay(_delayMs, cancellationToken);
+            return await base.ReadAsync(buffer, cancellationToken);
+        }
     }
 
     [Fact]
