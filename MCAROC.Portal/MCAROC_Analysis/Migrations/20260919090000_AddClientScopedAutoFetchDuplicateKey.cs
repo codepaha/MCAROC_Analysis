@@ -1,13 +1,9 @@
-using MCAROC_Analysis.Data;
-using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Migrations;
 
 #nullable disable
 
 namespace MCAROC_Analysis.Migrations;
 
-[DbContext(typeof(AppDbContext))]
-[Migration("20260919090000_AddClientScopedAutoFetchDuplicateKey")]
 public partial class AddClientScopedAutoFetchDuplicateKey : Migration
 {
     protected override void Up(MigrationBuilder migrationBuilder)
