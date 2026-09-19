@@ -104,6 +104,10 @@ public class RequestDetailsViewModel
     public List<ChatMessage> ChatMessages { get; set; } = [];
     public int ChunkableDocumentCount { get; set; }
     public int ChunkedDocumentCount { get; set; }
+    public int AuthoritativeBatchChunkableCount { get; set; }
+    public int AuthoritativeBatchChunkedCount { get; set; }
+    public int AuthoritativeBatchChunkingFailedCount { get; set; }
+    public int AuthoritativeBatchTotalChunks { get; set; }
 
     // ---------------------------------------------------------------------
     // Highlights — computed from the lists already loaded above (no extra DB work).

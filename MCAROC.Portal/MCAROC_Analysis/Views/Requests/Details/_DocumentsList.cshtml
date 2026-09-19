@@ -48,7 +48,7 @@ else
                 </div>
                 <div class="card-body">
                     <div class="pi-table-wrap mb-2"><table class="pi-results-table">
-                        <thead><tr><th>File</th><th>Form Type</th><th>Category</th><th>Confidence</th><th>Status</th><th>Pages (native/OCR)</th></tr></thead>
+                        <thead><tr><th>File</th><th>Form Type</th><th>Category</th><th>Confidence</th><th>Status</th><th>Pages (native/OCR)</th><th>Search Index</th></tr></thead>
                         <tbody>
                         @foreach (var d in f.Documents.Where(d => d.DuplicateOfDocumentId == null).OrderBy(d => d.OriginalFileName))
                         {
@@ -66,11 +66,40 @@ else
                                 <td>@d.ClassificationConfidence <span class="text-muted">(@d.ClassificationMethod)</span></td>
                                 <td>@d.ProcessingStatus</td>
                                 <td>@d.NativePageCount / @d.OcrPageCount</td>
+                                <td>
+                                    @if (d.ChunkingStatus == ChunkingStatus.Chunked)
+                                    {
+                                        <span class="badge bg-success text-white">Chunked (@Model.DocumentChunkCounts.GetValueOrDefault(d.FilingDocumentId))</span>
+                                    }
+                                    else if (d.ChunkingStatus == ChunkingStatus.InProgress)
+                                    {
+                                        <span class="badge bg-primary text-white">Indexing...</span>
+                                    }
+                                    else if (d.ChunkingStatus == ChunkingStatus.Failed)
+                                    {
+                                        <span class="badge bg-danger text-white" title="@(d.ChunkingLastError ?? "Failed")" data-bs-toggle="tooltip">
+                                            Failed &ndash; @(d.ChunkingErrorCategory ?? "Unknown")
+                                        </span>
+                                        @if (User.Identities.Any(i => i.AuthenticationType == "InternalReviewer" && i.IsAuthenticated))
+                                        {
+                                            <form method="post" action="/Requests/@Model.RequestId/documents/@d.FilingDocumentId/retry-chunking" style="display:inline-block; margin-left:4px;">
+                                                @Html.AntiForgeryToken()
+                                                <button type="submit" class="btn btn-sm btn-outline-danger p-0 px-1" style="font-size:0.75rem;" title="Retry chunking">
+                                                    <i class="bi bi-arrow-clockwise"></i> Retry
+                                                </button>
+                                            </form>
+                                        }
+                                    }
+                                    else
+                                    {
+                                        <span class="badge bg-secondary text-white">Pending</span>
+                                    }
+                                </td>
                             </tr>
                         }
                         @if (dupes.Count > 0)
                         {
-                            <tr><td colspan="6" class="text-muted">+ @dupes.Count duplicate attachment(s) — provenance retained, text/AI reused from the canonical copy.</td></tr>
+                            <tr><td colspan="7" class="text-muted">+ @dupes.Count duplicate attachment(s) — provenance retained, text/AI reused from the canonical copy.</td></tr>
                         }
                         </tbody>
                     </table></div>

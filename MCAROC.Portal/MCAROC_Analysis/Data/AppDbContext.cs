@@ -510,6 +510,8 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             e.Property(x => x.TextExtractionMethod).HasConversion<string>().HasMaxLength(10);
             e.Property(x => x.AiExtractionStatus).HasConversion<string>().HasMaxLength(20);
             e.Property(x => x.ChunkingStatus).HasConversion<string>().HasMaxLength(20);
+            e.Property(x => x.ChunkingLastError).HasMaxLength(500);
+            e.Property(x => x.ChunkingErrorCategory).HasMaxLength(30);
         });
 
         modelBuilder.Entity<McaFilingExtraction>(e =>

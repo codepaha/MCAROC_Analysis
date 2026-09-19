@@ -54,4 +54,8 @@ public class McaFilingDocument
     // its own later stage, triggered once the whole batch reaches a terminal status, not per-document.
     public ChunkingStatus ChunkingStatus { get; set; } = ChunkingStatus.Pending;
     public int ChunkRetryCount { get; set; }
+    public string? ChunkingLastError { get; set; }
+    public string? ChunkingErrorCategory { get; set; }
+    public DateTime? ChunkingFailedUtc { get; set; }
+    public DateTime? ChunkingLastAttemptUtc { get; set; }
 }

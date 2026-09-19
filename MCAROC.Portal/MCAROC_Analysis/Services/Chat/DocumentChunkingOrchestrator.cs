@@ -28,7 +28,9 @@ public class DocumentChunkingOrchestrator(AppDbContext db, EmbeddingService embe
     {
         var claimed = await db.McaFilingDocuments
             .Where(d => d.FilingDocumentId == filingDocumentId && d.ChunkingStatus == ChunkingStatus.Pending)
-            .ExecuteUpdateAsync(s => s.SetProperty(d => d.ChunkingStatus, ChunkingStatus.InProgress), ct);
+            .ExecuteUpdateAsync(s => s
+                .SetProperty(d => d.ChunkingStatus, ChunkingStatus.InProgress)
+                .SetProperty(d => d.ChunkingLastAttemptUtc, DateTime.UtcNow), ct);
         if (claimed == 0)
             return; // already claimed/chunked by another worker or a previous run
 
@@ -96,21 +98,70 @@ public class DocumentChunkingOrchestrator(AppDbContext db, EmbeddingService embe
             db.DocumentChunks.AddRange(newChunks);
             await db.SaveChangesAsync(ct);
             await db.McaFilingDocuments.Where(d => targetIds.Contains(d.FilingDocumentId))
-                .ExecuteUpdateAsync(s => s.SetProperty(d => d.ChunkingStatus, ChunkingStatus.Chunked), ct);
+                .ExecuteUpdateAsync(s => s
+                    .SetProperty(d => d.ChunkingStatus, ChunkingStatus.Chunked)
+                    .SetProperty(d => d.ChunkingLastError, (string?)null)
+                    .SetProperty(d => d.ChunkingErrorCategory, (string?)null)
+                    .SetProperty(d => d.ChunkingFailedUtc, (DateTime?)null), ct);
             await transaction.CommitAsync(ct);
         }
         catch (Exception ex)
         {
             logger.LogWarning(ex, "Chunking failed for document {DocumentId}", filingDocumentId);
+            var category = ClassifyChunkingError(ex);
+            var sanitizedMsg = SanitizeAndCap(ex.Message, 500);
             var retryCount = document.ChunkRetryCount + 1;
-            var nextStatus = retryCount < MaxChunkRetryCount ? ChunkingStatus.Pending : ChunkingStatus.Failed;
+            var isTerminal = retryCount >= MaxChunkRetryCount;
+            var nextStatus = isTerminal ? ChunkingStatus.Failed : ChunkingStatus.Pending;
+
             await db.McaFilingDocuments.Where(d => d.FilingDocumentId == filingDocumentId)
                 .ExecuteUpdateAsync(s => s
                     .SetProperty(d => d.ChunkingStatus, nextStatus)
-                    .SetProperty(d => d.ChunkRetryCount, retryCount), ct);
-            if (nextStatus == ChunkingStatus.Pending)
+                    .SetProperty(d => d.ChunkRetryCount, retryCount)
+                    .SetProperty(d => d.ChunkingLastError, sanitizedMsg)
+                    .SetProperty(d => d.ChunkingErrorCategory, category)
+                    .SetProperty(d => d.ChunkingFailedUtc, isTerminal ? (DateTime?)DateTime.UtcNow : null), ct);
+
+            if (!isTerminal)
                 queue.Enqueue(document.BatchId);
         }
+    }
+
+    public async Task<bool> RetryFailedDocumentAsync(long filingDocumentId, long expectedBatchId, CancellationToken ct)
+    {
+        var rows = await db.McaFilingDocuments
+            .Where(d => d.FilingDocumentId == filingDocumentId
+                     && d.BatchId == expectedBatchId
+                     && d.DuplicateOfDocumentId == null
+                     && d.ProcessingStatus == FilingDocumentProcessingStatus.Completed
+                     && d.ChunkingStatus == ChunkingStatus.Failed)
+            .ExecuteUpdateAsync(s => s
+                .SetProperty(d => d.ChunkingStatus, ChunkingStatus.Pending)
+                .SetProperty(d => d.ChunkRetryCount, 0)
+                .SetProperty(d => d.ChunkingLastError, (string?)null)
+                .SetProperty(d => d.ChunkingErrorCategory, (string?)null)
+                .SetProperty(d => d.ChunkingFailedUtc, (DateTime?)null), ct);
+
+        if (rows == 1)
+            queue.Enqueue(expectedBatchId);
+
+        return rows == 1;
+    }
+
+    public static string ClassifyChunkingError(Exception ex) => ex switch
+    {
+        HttpRequestException => "EmbeddingApi",
+        InvalidOperationException e when e.Message.Contains("not found", StringComparison.OrdinalIgnoreCase) => "TextFileMissing",
+        InvalidOperationException e when e.Message.Contains("Embedding count", StringComparison.OrdinalIgnoreCase) => "VectorMismatch",
+        DbUpdateException => "DatabaseWrite",
+        _ => "Unknown"
+    };
+
+    private static string SanitizeAndCap(string? message, int maxChars)
+    {
+        if (string.IsNullOrWhiteSpace(message)) return "Unknown error";
+        var sanitized = message.Trim();
+        return sanitized.Length <= maxChars ? sanitized : sanitized[..maxChars];
     }
 
     /// <summary>Startup recovery: any document left InProgress by a crash is, by the same "fresh process =
