@@ -32,6 +32,9 @@ public sealed class AutoFetchJob
     /// <summary>The tool's business id — <c>sha256(upper(CIN))</c>, stored so the job never recomputes it.</summary>
     public string Bid { get; set; } = string.Empty;
 
+    /// <summary>Durable correlation ID initiated by the HTTP request and propagated to created batches and worker events.</summary>
+    public string CorrelationId { get; set; } = Guid.NewGuid().ToString("N");
+
     public AutoFetchJobStatus Status { get; set; } = AutoFetchJobStatus.Queued;
     public int ProgressPercent { get; set; }
     /// <summary>Short human-readable line for the current stage, e.g. "Downloading filings 412 / 1,830".</summary>

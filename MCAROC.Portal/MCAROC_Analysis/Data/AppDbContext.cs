@@ -85,6 +85,9 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<StorageVolumeLease> StorageVolumeLeases => Set<StorageVolumeLease>();
     public DbSet<OperationalSlotLease> OperationalSlotLeases => Set<OperationalSlotLease>();
 
+    // Audit Logging
+    public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
+
     protected override void ConfigureConventions(ModelConfigurationBuilder configurationBuilder)
     {
         // Default precision for monetary/count decimals (mostly Rs. Crore values); percentages override below.
@@ -117,6 +120,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             e.HasOne(x => x.Request).WithMany().HasForeignKey(x => x.RequestId).OnDelete(DeleteBehavior.Cascade);
             e.Property(x => x.Cin).HasMaxLength(30);
             e.Property(x => x.Bid).HasMaxLength(64);
+            e.Property(x => x.CorrelationId).HasMaxLength(64).IsRequired();
             e.Property(x => x.Status).HasConversion<string>().HasMaxLength(30);
             e.Property(x => x.StatusMessage).HasMaxLength(500);
             e.Ignore(x => x.IsTerminal);
@@ -172,6 +176,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             e.HasIndex(x => x.RequestId);
             e.HasIndex(x => x.HashedCapabilityToken);
             e.HasIndex(x => new { x.Status, x.ExpiresUtc });
+            e.Property(x => x.CorrelationId).HasMaxLength(64).IsRequired();
             e.Property(x => x.Status).HasConversion<string>().HasMaxLength(30);
             e.Property(x => x.HashedCapabilityToken).HasMaxLength(64);
             e.Property(x => x.ExpectedFullSha256).HasMaxLength(64);
@@ -487,6 +492,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
         {
             e.HasKey(x => x.BatchId);
             e.HasOne(x => x.Request).WithMany().HasForeignKey(x => x.RequestId).OnDelete(DeleteBehavior.Cascade);
+            e.Property(x => x.CorrelationId).HasMaxLength(64).IsRequired();
             e.Property(x => x.Status).HasConversion<string>().HasMaxLength(30);
         });
 
@@ -742,6 +748,23 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             e.Property(x => x.PreviousMode).HasMaxLength(20);
             e.Property(x => x.NewMode).HasMaxLength(20);
             e.Property(x => x.ChangedByReviewerName).HasMaxLength(200);
+        });
+
+        modelBuilder.Entity<AuditLog>(e =>
+        {
+            e.HasKey(x => x.AuditLogId);
+            e.Property(x => x.CorrelationId).HasMaxLength(64).IsRequired();
+            e.Property(x => x.ActorId).HasMaxLength(200).IsRequired();
+            e.Property(x => x.EntityType).HasMaxLength(80);
+            e.Property(x => x.ErrorMessage).HasMaxLength(500);
+            e.Property(x => x.EventPayloadJson).HasMaxLength(2000);
+            e.Property(x => x.Action).HasConversion<string>().HasMaxLength(60);
+            e.Property(x => x.ActorType).HasConversion<string>().HasMaxLength(30);
+            e.Property(x => x.EventKind).HasConversion<string>().HasMaxLength(20);
+            e.Property(x => x.Status).HasConversion<string>().HasMaxLength(10);
+            e.HasIndex(x => new { x.RequestId, x.TimestampUtc });
+            e.HasIndex(x => new { x.Status, x.TimestampUtc });
+            e.HasIndex(x => new { x.Action, x.TimestampUtc });
         });
 
         modelBuilder.Entity<Client>().HasData(

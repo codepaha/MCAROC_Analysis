@@ -1,5 +1,6 @@
 using MCAROC_Analysis.Data;
 using MCAROC_Analysis.Data.Entities;
+using MCAROC_Analysis.Services.Audit;
 using Microsoft.Data.SqlTypes;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
@@ -12,7 +13,12 @@ namespace MCAROC_Analysis.Services.Chat;
 /// touching the database — only once the full new chunk set is computed does one transaction delete the
 /// document's existing chunks and insert the new set together, so a failure never destroys a previously
 /// working index.</summary>
-public partial class DocumentChunkingOrchestrator(AppDbContext db, EmbeddingService embeddingService, DocumentChunkingQueue queue, ILogger<DocumentChunkingOrchestrator> logger)
+public partial class DocumentChunkingOrchestrator(
+    AppDbContext db,
+    EmbeddingService embeddingService,
+    DocumentChunkingQueue queue,
+    ILogger<DocumentChunkingOrchestrator> logger,
+    IAuditLogService? auditService = null)
 {
     public const string ChunkingVersion = "1.0";
     private const int MaxChunkRetryCount = 3;
@@ -36,6 +42,22 @@ public partial class DocumentChunkingOrchestrator(AppDbContext db, EmbeddingServ
             return; // already claimed/chunked by another worker or a previous run
 
         var document = await db.McaFilingDocuments.Include(d => d.Filing).FirstAsync(d => d.FilingDocumentId == filingDocumentId, ct);
+        var batch = await db.McaFilingBatches.AsNoTracking().FirstOrDefaultAsync(b => b.BatchId == document.BatchId, ct);
+        var correlationId = !string.IsNullOrWhiteSpace(batch?.CorrelationId) ? batch.CorrelationId : CorrelationContext.GenerateCorrelationId();
+
+        if (auditService is not null)
+        {
+            await auditService.TryLogAsync(new AuditEvent(
+                Action: AuditActionType.DocumentChunkingStarted,
+                EventKind: AuditEventKind.DomainLifecycle,
+                Status: AuditStatus.Success,
+                ActorType: ActorType.SystemWorker,
+                ActorId: "DocumentChunkingOrchestrator",
+                CorrelationId: correlationId,
+                RequestId: document.RequestId,
+                EntityType: "McaFilingDocument",
+                EntityId: filingDocumentId), ct);
+        }
 
         try
         {
@@ -105,6 +127,21 @@ public partial class DocumentChunkingOrchestrator(AppDbContext db, EmbeddingServ
                     .SetProperty(d => d.ChunkingErrorCategory, (string?)null)
                     .SetProperty(d => d.ChunkingFailedUtc, (DateTime?)null), ct);
             await transaction.CommitAsync(ct);
+
+            if (auditService is not null)
+            {
+                await auditService.TryLogAsync(new AuditEvent<ChunkingCompletedPayload>(
+                    Action: AuditActionType.DocumentChunkingCompleted,
+                    EventKind: AuditEventKind.DomainLifecycle,
+                    Status: AuditStatus.Success,
+                    ActorType: ActorType.SystemWorker,
+                    ActorId: "DocumentChunkingOrchestrator",
+                    CorrelationId: correlationId,
+                    RequestId: document.RequestId,
+                    EntityType: "McaFilingDocument",
+                    EntityId: filingDocumentId,
+                    Payload: new ChunkingCompletedPayload(filingDocumentId, textChunks.Count, EmbeddingService.ModelId, ChunkingVersion, correlationId)), ct);
+            }
         }
         catch (Exception ex)
         {
@@ -125,6 +162,22 @@ public partial class DocumentChunkingOrchestrator(AppDbContext db, EmbeddingServ
 
             if (!isTerminal)
                 queue.Enqueue(document.BatchId);
+
+            if (auditService is not null)
+            {
+                await auditService.TryLogAsync(new AuditEvent<ChunkingFailedPayload>(
+                    Action: AuditActionType.DocumentChunkingFailed,
+                    EventKind: AuditEventKind.DomainLifecycle,
+                    Status: AuditStatus.Failure,
+                    ActorType: ActorType.SystemWorker,
+                    ActorId: "DocumentChunkingOrchestrator",
+                    CorrelationId: correlationId,
+                    RequestId: document.RequestId,
+                    EntityType: "McaFilingDocument",
+                    EntityId: filingDocumentId,
+                    ErrorMessage: sanitizedMsg,
+                    Payload: new ChunkingFailedPayload(filingDocumentId, category, sanitizedMsg, retryCount, isTerminal, correlationId)), ct);
+            }
         }
     }
 
@@ -202,10 +255,10 @@ public partial class DocumentChunkingOrchestrator(AppDbContext db, EmbeddingServ
     [GeneratedRegex(@"(?i)\b(?:Server|Data Source|User ID|Initial Catalog)\s*=[^;]+(?:;|$)")]
     private static partial Regex ConnectionStringPattern();
 
-    [GeneratedRegex(@"[A-Za-z]:\\(?:[^\r\n\t""':;<>|?*,]+\\)*[^\r\n\t""':;<>|?*,]+")]
+    [GeneratedRegex(@"[A-Za-z]:\\(?:[^\r\n""':;<>|?*,/\\]+\\)*[^\s\r\n""':;<>|?*,/\\]+")]
     private static partial Regex WindowsDrivePathPattern();
 
-    [GeneratedRegex(@"\\\\[^\r\n\t""':;<>|?*,]+")]
+    [GeneratedRegex(@"\\\\[^\r\n""':;<>|?*,/\\]+\\(?:[^\r\n""':;<>|?*,/\\]+\\)*[^\s\r\n""':;<>|?*,/\\]+")]
     private static partial Regex UncPathPattern();
 
     [GeneratedRegex(@"(?:file:\/\/\/|\/)[a-zA-Z0-9_\-.\/]+\.[a-zA-Z0-9]+")]
@@ -255,6 +308,18 @@ public partial class DocumentChunkingOrchestrator(AppDbContext db, EmbeddingServ
         var batchIdsToEnqueue = staleDocuments.Select(d => d.BatchId).Concat(pendingBatchIds).Distinct().ToList();
         foreach (var batchId in batchIdsToEnqueue)
             queue.Enqueue(batchId);
+
+        if (auditService is not null && staleDocuments.Count > 0)
+        {
+            await auditService.TryLogAsync(new AuditEvent<WorkerOrphanRecoveredPayload>(
+                Action: AuditActionType.WorkerOrphanRecovered,
+                EventKind: AuditEventKind.DomainLifecycle,
+                Status: AuditStatus.Success,
+                ActorType: ActorType.SystemWorker,
+                ActorId: "DocumentChunkingOrchestrator",
+                CorrelationId: CorrelationContext.GenerateCorrelationId(),
+                Payload: new WorkerOrphanRecoveredPayload(staleDocuments.Count, batchIdsToEnqueue.Count)), ct);
+        }
 
         return batchIdsToEnqueue.Count;
     }

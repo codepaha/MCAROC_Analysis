@@ -3,6 +3,7 @@ using System.Text.RegularExpressions;
 using MCAROC_Analysis.Data;
 using MCAROC_Analysis.Data.Entities;
 using MCAROC_Analysis.Models;
+using MCAROC_Analysis.Services.Audit;
 using MCAROC_Analysis.Services.AutoFetch;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -113,7 +114,8 @@ public partial class AutoFetchController(
             request.RequestNumber = $"MCA-{request.CreatedDate:yyyyMMdd}-{request.RequestId:D6}";
             await db.SaveChangesAsync(ct);
 
-            var job = await jobs.CreateOrResetJobAsync(request, model.IncludeFilings, model.MaxDocumentsPerSection ?? 0, ct);
+            var correlationId = CorrelationContext.GetOrCreate(HttpContext);
+            var job = await jobs.CreateOrResetJobAsync(request, model.IncludeFilings, model.MaxDocumentsPerSection ?? 0, ct, correlationId);
             await transaction.CommitAsync(ct);
             queue.Enqueue(job.AutoFetchJobId);
 
@@ -167,7 +169,8 @@ public partial class AutoFetchController(
     [ValidateAntiForgeryToken]
     public async Task<IActionResult> Retry(long id, CancellationToken ct)
     {
-        var job = await jobs.RequeueAsync(id, ct);
+        var correlationId = CorrelationContext.GetOrCreate(HttpContext);
+        var job = await jobs.RequeueAsync(id, ct, correlationId);
         if (job is null) return NotFound();
         if (job.Status == AutoFetchJobStatus.Queued)
         {

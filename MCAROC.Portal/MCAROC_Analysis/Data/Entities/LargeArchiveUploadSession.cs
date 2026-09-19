@@ -27,6 +27,9 @@ public class LargeArchiveUploadSession
     /// <summary>SHA-256 hash of the client's opaque capability token. Token is never stored in plaintext.</summary>
     public string HashedCapabilityToken { get; set; } = string.Empty;
 
+    /// <summary>Durable correlation ID initiated by the HTTP request and propagated to created batches and worker events.</summary>
+    public string CorrelationId { get; set; } = Guid.NewGuid().ToString("N");
+
     public string OriginalFileName { get; set; } = string.Empty;
     public long TotalExpectedSizeBytes { get; set; }
     public long NextExpectedOffset { get; set; }

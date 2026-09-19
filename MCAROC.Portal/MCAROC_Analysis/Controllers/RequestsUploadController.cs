@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using MCAROC_Analysis.Data;
 using MCAROC_Analysis.Data.Entities;
+using MCAROC_Analysis.Services.Audit;
 using MCAROC_Analysis.Services.McaFilings;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -79,6 +80,7 @@ public class RequestsUploadController(
         {
             SessionId = sessionId,
             RequestId = requestId,
+            CorrelationId = CorrelationContext.GetOrCreate(HttpContext),
             HashedCapabilityToken = hashedToken,
             OriginalFileName = Path.GetFileName(request.FileName),
             TotalExpectedSizeBytes = request.TotalSizeBytes,

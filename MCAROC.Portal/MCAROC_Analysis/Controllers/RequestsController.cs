@@ -11,6 +11,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using System.Text.Json;
 using MCAROC_Analysis.Models.Chat;
+using MCAROC_Analysis.Services.Audit;
 using MCAROC_Analysis.Services.Chat;
 using Microsoft.AspNetCore.Authorization;
 
@@ -128,6 +129,7 @@ public class RequestsController(
             {
                 RequestId = request.RequestId,
                 SourceDocumentId = filingsDocument.DocumentId,
+                CorrelationId = CorrelationContext.GetOrCreate(HttpContext),
                 Status = FilingBatchStatus.Uploaded,
                 StartedDate = DateTime.UtcNow
             };
