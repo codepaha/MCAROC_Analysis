@@ -106,5 +106,20 @@ public class AutoFetchStorageReservationTests : IAsyncLifetime
         : StorageReservationManager(db, options, logger)
     {
         public override long GetAvailableFreeSpace(string volumeRoot) => freeSpaceBytes;
+
+        // GetCanonicalVolumeRoot resolves a path's OS drive/UNC root via Path.GetPathRoot — on Linux,
+        // backslashes aren't separators, so the synthetic UNC-style directories these tests use for
+        // isolation never parse out their own root and all collapse to "/", the same volume every real
+        // temp directory on the CI box resolves to. That silently pools this test's reservations with
+        // unrelated test classes' real, concurrently-running reservations against the actual disk, which
+        // is how a stray few MB held elsewhere at the same moment can push this test's tightly-margined
+        // 90MB-of-100MB reservation over the top. Parsing the UNC root by hand (mirroring what Windows'
+        // own Path.GetPathRoot already does for "\\server\share\...") keeps each test's synthetic volume
+        // genuinely isolated on any OS, while staying within VolumeRoot's 50-char column.
+        protected override string ResolveVolumeRoot(string path)
+        {
+            var segments = path.TrimStart('\\').Split('\\');
+            return segments.Length >= 2 ? $@"\\{segments[0]}\{segments[1]}\".ToUpperInvariant() : path.ToUpperInvariant();
+        }
     }
 }

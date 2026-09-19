@@ -20,8 +20,8 @@ public class StorageReservationManager(
         string destinationDirectory,
         CancellationToken ct = default)
     {
-        var stagingVolume = GetCanonicalVolumeRoot(stagingDirectory);
-        var destVolume = GetCanonicalVolumeRoot(destinationDirectory);
+        var stagingVolume = ResolveVolumeRoot(stagingDirectory);
+        var destVolume = ResolveVolumeRoot(destinationDirectory);
 
         var stagingBytes = _opts.CalculateStagingVolumeBytes(declaredArchiveSizeBytes);
         var destBytes = _opts.CalculateDestinationVolumeWorstCaseBytes(declaredArchiveSizeBytes);
@@ -148,7 +148,7 @@ public class StorageReservationManager(
     public async Task<ReservationResult> TryReserveAsync(
         string ownerType, string ownerId, string directory, long bytes, TimeSpan lifetime, CancellationToken ct = default)
     {
-        var volume = GetCanonicalVolumeRoot(directory);
+        var volume = ResolveVolumeRoot(directory);
 
         await using var tx = await db.Database.BeginTransactionAsync(System.Data.IsolationLevel.ReadCommitted, ct);
         try
@@ -348,6 +348,17 @@ public class StorageReservationManager(
         var root = Path.GetPathRoot(fullPath);
         return string.IsNullOrWhiteSpace(root) ? "DEFAULT" : root.ToUpperInvariant();
     }
+
+    /// <summary>Instance seam around <see cref="GetCanonicalVolumeRoot"/> so tests can substitute a
+    /// platform-independent volume key. On Linux, backslashes are ordinary filename characters rather than
+    /// separators, so a Windows-style UNC path (e.g. a test's synthetic "\\vol-&lt;guid&gt;\share\...")
+    /// never resolves to its own root — <c>Path.GetFullPath</c> treats it as one relative segment under the
+    /// working directory and <c>Path.GetPathRoot</c> collapses it to "/", the same volume every real temp
+    /// directory on the box also resolves to. Two tests (or two unrelated test classes) that each believe
+    /// they hold an isolated synthetic volume then silently share one real DB bucket and contend for the
+    /// same tracked headroom. Overriding this in a test to return the input path unchanged keeps each
+    /// caller's already-unique path as its own volume key regardless of OS path semantics.</summary>
+    protected virtual string ResolveVolumeRoot(string path) => GetCanonicalVolumeRoot(path);
 
     public virtual long GetAvailableFreeSpace(string volumeRoot)
     {
