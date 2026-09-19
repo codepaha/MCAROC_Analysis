@@ -176,23 +176,24 @@ public class AutoFetchControllerTests : IAsyncLifetime
     {
         await using var db = CreateContext();
         var (controller, queue) = NewController(db, configured: true);
+        var cin = NewCompanyIdentifier();
 
         var first = Assert.IsType<RedirectToActionResult>(await controller.New(new AutoFetchRequestViewModel
         {
-            ClientId = 1, Cin = "U45203OR1995PLC003982", EntityType = EntityType.Company
+            ClientId = 1, Cin = cin, EntityType = EntityType.Company
         }, CancellationToken.None));
         var firstId = Assert.IsType<long>(first.RouteValues!["id"]);
 
         var duplicate = Assert.IsType<ViewResult>(await controller.New(new AutoFetchRequestViewModel
         {
-            ClientId = 1, Cin = " u45203or1995plc003982 ", EntityType = EntityType.Company
+            ClientId = 1, Cin = $" {cin.ToLowerInvariant()} ", EntityType = EntityType.Company
         }, CancellationToken.None));
         var model = Assert.IsType<AutoFetchRequestViewModel>(duplicate.Model);
 
         Assert.Equal(firstId, model.ExistingRequestId);
         Assert.NotNull(model.ExistingRequestNumber);
         Assert.Equal(RequestStatus.Created.ToString(), model.ExistingRequestStatus);
-        Assert.Equal(1, await db.Requests.CountAsync(r => r.ClientId == 1 && r.AutoFetchCompanyIdentifier == "U45203OR1995PLC003982"));
+        Assert.Equal(1, await db.Requests.CountAsync(r => r.ClientId == 1 && r.AutoFetchCompanyIdentifier == cin));
         Assert.Equal(1, await db.AutoFetchJobs.CountAsync(j => j.RequestId == firstId));
 
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
@@ -208,7 +209,15 @@ public class AutoFetchControllerTests : IAsyncLifetime
     {
         await using var db = CreateContext();
         var (controller, _) = NewController(db, configured: true);
-        const string cin = "U45203OR1995PLC003982";
+        var cin = NewCompanyIdentifier();
+        var otherClient = new Client
+        {
+            ClientCode = $"AF{Guid.NewGuid():N}"[..10],
+            ClientName = "Second AutoFetch Client",
+            CreatedDate = DateTime.UtcNow
+        };
+        db.Clients.Add(otherClient);
+        await db.SaveChangesAsync();
 
         var first = Assert.IsType<RedirectToActionResult>(await controller.New(new AutoFetchRequestViewModel
         {
@@ -216,7 +225,7 @@ public class AutoFetchControllerTests : IAsyncLifetime
         }, CancellationToken.None));
         var second = Assert.IsType<RedirectToActionResult>(await controller.New(new AutoFetchRequestViewModel
         {
-            ClientId = 2, Cin = cin, EntityType = EntityType.Company
+            ClientId = otherClient.ClientId, Cin = cin, EntityType = EntityType.Company
         }, CancellationToken.None));
 
         Assert.NotEqual(first.RouteValues!["id"], second.RouteValues!["id"]);
@@ -224,7 +233,7 @@ public class AutoFetchControllerTests : IAsyncLifetime
             .Where(r => r.AutoFetchCompanyIdentifier == cin)
             .OrderBy(r => r.ClientId)
             .ToListAsync();
-        Assert.Equal([1L, 2L], requests.Select(r => r.ClientId));
+        Assert.Equal([1L, otherClient.ClientId], requests.Select(r => r.ClientId));
         Assert.All(requests, request => Assert.Equal(cin, request.AutoFetchCompanyIdentifier));
     }
 
@@ -280,11 +289,11 @@ public class AutoFetchControllerTests : IAsyncLifetime
         await using var db = CreateContextWithInterceptor(new ThrowOnAutoFetchJobInsertInterceptor());
         var (controller, _) = NewController(db, configured: true);
 
-        var failure = await Assert.ThrowsAsync<InvalidOperationException>(() => controller.New(new AutoFetchRequestViewModel
+        var failure = await Assert.ThrowsAsync<DbUpdateException>(() => controller.New(new AutoFetchRequestViewModel
         {
             ClientId = 1, Cin = cin, EntityType = EntityType.Company
         }, CancellationToken.None));
-        Assert.Contains("Injected AutoFetch job insert failure", failure.Message);
+        Assert.Contains("Injected AutoFetch job insert failure", failure.InnerException?.Message);
 
         await using var verify = CreateContext();
         Assert.Empty(await verify.Requests.Where(r => r.ClientId == 1 && r.AutoFetchCompanyIdentifier == cin).ToListAsync());
@@ -303,6 +312,9 @@ public class AutoFetchControllerTests : IAsyncLifetime
         CreatedDate = DateTime.UtcNow,
         CreatedBy = "test"
     };
+
+    private static string NewCompanyIdentifier() =>
+        $"U{Random.Shared.Next(10_000, 100_000)}MH2026PTC{Random.Shared.Next(100_000, 1_000_000)}";
 
     private static async Task<Exception?> SaveCapturingExceptionAsync(AppDbContext context)
     {
