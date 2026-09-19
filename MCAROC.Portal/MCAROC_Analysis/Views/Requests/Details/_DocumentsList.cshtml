@@ -1,4 +1,5 @@
 @model DocumentsPageViewModel
+@using MCAROC_Analysis.Services.Chat
 @{
     // Rendered both as a full partial response (fetch-swap / direct link) and inline from the Documents tab.
     string CatLabel(FilingCategory c) => c == FilingCategory.Unclassified ? "Other" : c.ToString();
@@ -77,7 +78,8 @@ else
                                     }
                                     else if (d.ChunkingStatus == ChunkingStatus.Failed)
                                     {
-                                        <span class="badge bg-danger text-white" title="@(d.ChunkingLastError ?? "Failed")" data-bs-toggle="tooltip">
+                                        var safeError = DocumentChunkingOrchestrator.SanitizeAndCap(d.ChunkingLastError ?? "Failed", 500);
+                                        <span class="badge bg-danger text-white" title="@safeError" data-bs-toggle="tooltip">
                                             Failed &ndash; @(d.ChunkingErrorCategory ?? "Unknown")
                                         </span>
                                         @if (User.Identities.Any(i => i.AuthenticationType == "InternalReviewer" && i.IsAuthenticated))

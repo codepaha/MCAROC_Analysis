@@ -1,8 +1,10 @@
+using System.Reflection;
 using MCAROC_Analysis.Controllers;
 using MCAROC_Analysis.Data;
 using MCAROC_Analysis.Data.Entities;
 using MCAROC_Analysis.Models;
 using MCAROC_Analysis.Services.Chat;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Data.SqlTypes;
 using Microsoft.EntityFrameworkCore;
@@ -92,6 +94,118 @@ public class ChunkingObservabilityAndRetryTests : IAsyncLifetime
         Assert.Equal("VectorMismatch", DocumentChunkingOrchestrator.ClassifyChunkingError(new InvalidOperationException("Embedding count 5 does not match chunk count 6 for document 123.")));
         Assert.Equal("DatabaseWrite", DocumentChunkingOrchestrator.ClassifyChunkingError(new DbUpdateException("DB error")));
         Assert.Equal("Unknown", DocumentChunkingOrchestrator.ClassifyChunkingError(new ArgumentException("Bad argument")));
+    }
+
+    [Fact]
+    public void SanitizeAndCap_RedactsSensitiveTokens_AndWindowsPaths()
+    {
+        // 1. Bearer and Basic tokens
+        var bearerErr = "Failed request to https://api.openai.com/v1/embeddings with Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.e30.t-IDcSemACt8x4iTMCda8Yhe3iZaWbvV5XKSTbuAn0M after 3 retries.";
+        var bearerClean = DocumentChunkingOrchestrator.SanitizeAndCap(bearerErr);
+        Assert.Contains("Bearer [REDACTED]", bearerClean);
+        Assert.DoesNotContain("eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9", bearerClean);
+
+        var basicErr = "Unauthorized with Basic dXNlcjpwYXNzd29yZA==";
+        var basicClean = DocumentChunkingOrchestrator.SanitizeAndCap(basicErr);
+        Assert.Contains("Basic [REDACTED]", basicClean);
+        Assert.DoesNotContain("dXNlcjpwYXNzd29yZA==", basicClean);
+
+        // 2. Secret / token / key / password assignments
+        var secretErr = "Call failed: api_key=AIzaSyD-1234567890abcdef and secret='SuperSecretKey' and password=\"P@ss123!\"";
+        var secretClean = DocumentChunkingOrchestrator.SanitizeAndCap(secretErr);
+        Assert.Contains("api_key=[REDACTED]", secretClean);
+        Assert.Contains("secret=[REDACTED]", secretClean);
+        Assert.Contains("password=[REDACTED]", secretClean);
+        Assert.DoesNotContain("AIzaSyD", secretClean);
+        Assert.DoesNotContain("SuperSecretKey", secretClean);
+
+        // 3. Windows file paths & UNC paths
+        var pathErr = @"Extracted text file not found for document 42 at C:\App_Data\Uploads\42\extracted.txt.";
+        var pathClean = DocumentChunkingOrchestrator.SanitizeAndCap(pathErr);
+        Assert.Contains("[PATH_REDACTED]", pathClean);
+        Assert.DoesNotContain(@"C:\App_Data", pathClean);
+
+        var spacesPathErr = @"Failed to open file at C:\Program Files\MCAROC\Storage\file.pdf";
+        var spacesPathClean = DocumentChunkingOrchestrator.SanitizeAndCap(spacesPathErr);
+        Assert.Contains("[PATH_REDACTED]", spacesPathClean);
+        Assert.DoesNotContain(@"C:\Program Files", spacesPathClean);
+
+        var uncErr = @"Failed opening \\fileserver\shares\42\extracted.txt";
+        var uncClean = DocumentChunkingOrchestrator.SanitizeAndCap(uncErr);
+        Assert.Contains("[PATH_REDACTED]", uncClean);
+        Assert.DoesNotContain(@"\\fileserver", uncClean);
+
+        // 4. PAN numbers
+        var panErr = "Customer record with PAN ABCDE1234F failed validation";
+        var panClean = DocumentChunkingOrchestrator.SanitizeAndCap(panErr);
+        Assert.Contains("[PAN_REDACTED]", panClean);
+        Assert.DoesNotContain("ABCDE1234F", panClean);
+
+        // 5. Length cap at 500 characters
+        var longErr = new string('x', 800);
+        var longClean = DocumentChunkingOrchestrator.SanitizeAndCap(longErr, 500);
+        Assert.Equal(500, longClean.Length);
+    }
+
+    [Fact]
+    public async Task ChunkDocumentAsync_RealLifecycle_SetsLastAttemptOnClaim_TerminalOnlyFailedUtc_AndClassifiesError()
+    {
+        await using var db = CreateContext();
+        var (request, batch, filing) = await SeedFilingHierarchyAsync(db);
+
+        // Document points to non-existent text file so ChunkDocumentAsync exercises real claim + catch path
+        var doc = new McaFilingDocument
+        {
+            BatchId = batch.BatchId,
+            RequestId = request.RequestId,
+            FilingId = filing.FilingId,
+            OriginalFileName = "lifecycle_test.pdf",
+            FileHash = $"hash_{Guid.NewGuid():N}",
+            ExtractedTextPath = @"C:\App_Data\Uploads\non_existent\text.txt",
+            ProcessingStatus = FilingDocumentProcessingStatus.Completed,
+            ChunkingStatus = ChunkingStatus.Pending,
+            ChunkRetryCount = 0,
+            ChunkingLastAttemptUtc = null,
+            ChunkingFailedUtc = null,
+            UpdatedAt = DateTime.UtcNow
+        };
+        db.McaFilingDocuments.Add(doc);
+        await db.SaveChangesAsync();
+
+        var queue = new DocumentChunkingQueue();
+        var orchestrator = new DocumentChunkingOrchestrator(db, null!, queue, NullLogger<DocumentChunkingOrchestrator>.Instance);
+
+        var beforeClaim = DateTime.UtcNow.AddSeconds(-1);
+
+        // Attempt 1: Pending -> InProgress (sets ChunkingLastAttemptUtc) -> fails with missing text file -> retryable (retry count = 1) -> Pending
+        await orchestrator.ChunkDocumentAsync(doc.FilingDocumentId, CancellationToken.None);
+        await db.Entry(doc).ReloadAsync();
+
+        Assert.NotNull(doc.ChunkingLastAttemptUtc);
+        Assert.True(doc.ChunkingLastAttemptUtc >= beforeClaim);
+        Assert.Equal(ChunkingStatus.Pending, doc.ChunkingStatus);
+        Assert.Equal(1, doc.ChunkRetryCount);
+        Assert.Null(doc.ChunkingFailedUtc); // Must be null for retryable failures!
+        Assert.Equal("TextFileMissing", doc.ChunkingErrorCategory);
+        Assert.Contains("[PATH_REDACTED]", doc.ChunkingLastError);
+        Assert.DoesNotContain(@"C:\App_Data", doc.ChunkingLastError);
+
+        // Attempt 2: ChunkRetryCount = 2, still retryable -> Pending, FailedUtc still null
+        await orchestrator.ChunkDocumentAsync(doc.FilingDocumentId, CancellationToken.None);
+        await db.Entry(doc).ReloadAsync();
+
+        Assert.Equal(ChunkingStatus.Pending, doc.ChunkingStatus);
+        Assert.Equal(2, doc.ChunkRetryCount);
+        Assert.Null(doc.ChunkingFailedUtc);
+
+        // Attempt 3: ChunkRetryCount = 3 (>= MaxChunkRetryCount = 3) -> Terminal Failed!
+        await orchestrator.ChunkDocumentAsync(doc.FilingDocumentId, CancellationToken.None);
+        await db.Entry(doc).ReloadAsync();
+
+        Assert.Equal(ChunkingStatus.Failed, doc.ChunkingStatus);
+        Assert.Equal(3, doc.ChunkRetryCount);
+        Assert.NotNull(doc.ChunkingFailedUtc); // Terminal failure sets ChunkingFailedUtc!
+        Assert.NotNull(doc.ChunkingLastAttemptUtc);
     }
 
     [Fact]
@@ -375,6 +489,43 @@ public class ChunkingObservabilityAndRetryTests : IAsyncLifetime
         var results = await Task.WhenAll(tasks);
         Assert.Single(results, true);
         Assert.Equal(4, results.Count(r => !r));
+
+        // Assert that the batch was enqueued EXACTLY ONCE into the queue
+        var enqueued = new List<long>();
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(1));
+        try
+        {
+            await foreach (var enqueuedBatchId in queue.ReadAllAsync(cts.Token))
+            {
+                enqueued.Add(enqueuedBatchId);
+                if (enqueued.Count >= 2) break;
+            }
+        }
+        catch (OperationCanceledException) { }
+
+        Assert.Single(enqueued);
+        Assert.Equal(batch.BatchId, enqueued[0]);
+    }
+
+    [Fact]
+    public void RetryDocumentChunkingEndpoint_HasAuthorizationAndAntiforgeryAttributes()
+    {
+        var method = typeof(RequestsController).GetMethod(nameof(RequestsController.RetryDocumentChunking));
+        Assert.NotNull(method);
+
+        // Assert [Authorize(AuthenticationSchemes = "InternalReviewer")]
+        var authAttr = method.GetCustomAttribute<AuthorizeAttribute>();
+        Assert.NotNull(authAttr);
+        Assert.Equal("InternalReviewer", authAttr.AuthenticationSchemes);
+
+        // Assert [ValidateAntiForgeryToken]
+        var afAttr = method.GetCustomAttribute<ValidateAntiForgeryTokenAttribute>();
+        Assert.NotNull(afAttr);
+
+        // Assert [HttpPost("/Requests/{id:long}/documents/{documentId:long}/retry-chunking")]
+        var postAttr = method.GetCustomAttribute<HttpPostAttribute>();
+        Assert.NotNull(postAttr);
+        Assert.Equal("/Requests/{id:long}/documents/{documentId:long}/retry-chunking", postAttr.Template);
     }
 
     [Fact]
@@ -406,5 +557,39 @@ public class ChunkingObservabilityAndRetryTests : IAsyncLifetime
         // Call endpoint for request 1 with document belonging to request 2 -> 404
         var result = await controller.RetryDocumentChunking(request1.RequestId, docInReq2.FilingDocumentId, orchestrator, CancellationToken.None);
         Assert.IsType<NotFoundResult>(result);
+    }
+
+    [Fact]
+    public async Task RetryDocumentChunkingEndpoint_ValidRequest_QueuesAndReturnsOk()
+    {
+        await using var db = CreateContext();
+        var (request, batch, filing) = await SeedFilingHierarchyAsync(db);
+
+        var doc = new McaFilingDocument
+        {
+            BatchId = batch.BatchId,
+            RequestId = request.RequestId,
+            FilingId = filing.FilingId,
+            OriginalFileName = "valid_retry.pdf",
+            FileHash = "h_valid",
+            ProcessingStatus = FilingDocumentProcessingStatus.Completed,
+            ChunkingStatus = ChunkingStatus.Failed,
+            ChunkRetryCount = 3,
+            UpdatedAt = DateTime.UtcNow
+        };
+        db.McaFilingDocuments.Add(doc);
+        await db.SaveChangesAsync();
+
+        var queue = new DocumentChunkingQueue();
+        var orchestrator = new DocumentChunkingOrchestrator(db, null!, queue, NullLogger<DocumentChunkingOrchestrator>.Instance);
+        var controller = new RequestsController(db, null!, null!, null!, null!, null!, Dossier.DossierGoldenMasterTests.CreateCache(), null!, null!);
+
+        var result = await controller.RetryDocumentChunking(request.RequestId, doc.FilingDocumentId, orchestrator, CancellationToken.None);
+        var jsonResult = Assert.IsType<JsonResult>(result);
+        Assert.NotNull(jsonResult.Value);
+
+        await db.Entry(doc).ReloadAsync();
+        Assert.Equal(ChunkingStatus.Pending, doc.ChunkingStatus);
+        Assert.Equal(0, doc.ChunkRetryCount);
     }
 }
