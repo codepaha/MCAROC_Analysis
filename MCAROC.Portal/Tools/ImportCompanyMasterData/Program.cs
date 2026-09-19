@@ -104,13 +104,39 @@ total += await LoadAsync(foreignFile, CompanyMasterRecordType.Foreign, ReadForei
 
 Console.WriteLine();
 Console.WriteLine("Every row loaded into staging — swapping it in as the live table now.");
+// sp_rename on a table renames only the table object — the PK constraint it carries keeps its old name
+// (PK_CompanyMasterRecords) regardless. The old table's constraint must be renamed out of the way
+// BEFORE the staging constraint claims that name, or the second rename collides with it (constraint
+// names are schema-scoped-unique, unlike index names).
+//
+// sp_rename reports failure via RAISERROR + a nonzero return code, NOT as a batch-aborting runtime
+// error — proven empirically (a real run of this tool once left the database half-swapped): neither an
+// implicit rollback-on-disconnect NOR `SET XACT_ABORT ON` catches a failing sp_rename, because the
+// engine never treats the call as having thrown — the batch just continues to the next statement and
+// COMMIT still runs, silently keeping every rename that happened to succeed. The only reliable signal is
+// sp_rename's own return code, checked and acted on explicitly after every single call.
 await using (var swap = new SqlCommand(
-    "BEGIN TRANSACTION; " +
-    "EXEC sp_rename 'dbo.CompanyMasterRecords', 'CompanyMasterRecords_Old'; " +
-    "EXEC sp_rename 'dbo.CompanyMasterRecords_Staging', 'CompanyMasterRecords'; " +
-    "EXEC sp_rename 'dbo.PK_CompanyMasterRecords_Staging', 'PK_CompanyMasterRecords', 'OBJECT'; " +
-    "EXEC sp_rename 'dbo.CompanyMasterRecords.IX_CompanyMasterRecords_Staging_RecordType_Name', 'IX_CompanyMasterRecords_RecordType_Name', 'INDEX'; " +
-    "COMMIT;",
+    """
+    BEGIN TRANSACTION;
+    DECLARE @rc int;
+
+    EXEC @rc = sp_rename 'dbo.CompanyMasterRecords', 'CompanyMasterRecords_Old';
+    IF @rc <> 0 BEGIN ROLLBACK TRANSACTION; THROW 50000, 'Swap step 1/5 failed: rename live table to _Old.', 1; END
+
+    EXEC @rc = sp_rename 'dbo.PK_CompanyMasterRecords', 'PK_CompanyMasterRecords_Old', 'OBJECT';
+    IF @rc <> 0 BEGIN ROLLBACK TRANSACTION; THROW 50000, 'Swap step 2/5 failed: rename old table''s PK out of the way.', 1; END
+
+    EXEC @rc = sp_rename 'dbo.CompanyMasterRecords_Staging', 'CompanyMasterRecords';
+    IF @rc <> 0 BEGIN ROLLBACK TRANSACTION; THROW 50000, 'Swap step 3/5 failed: rename staging table live.', 1; END
+
+    EXEC @rc = sp_rename 'dbo.PK_CompanyMasterRecords_Staging', 'PK_CompanyMasterRecords', 'OBJECT';
+    IF @rc <> 0 BEGIN ROLLBACK TRANSACTION; THROW 50000, 'Swap step 4/5 failed: rename new table''s PK to canonical name.', 1; END
+
+    EXEC @rc = sp_rename 'dbo.CompanyMasterRecords.IX_CompanyMasterRecords_Staging_RecordType_Name', 'IX_CompanyMasterRecords_RecordType_Name', 'INDEX';
+    IF @rc <> 0 BEGIN ROLLBACK TRANSACTION; THROW 50000, 'Swap step 5/5 failed: rename new table''s index to canonical name.', 1; END
+
+    COMMIT;
+    """,
     connection)
 { CommandTimeout = 120 })
     await swap.ExecuteNonQueryAsync();
