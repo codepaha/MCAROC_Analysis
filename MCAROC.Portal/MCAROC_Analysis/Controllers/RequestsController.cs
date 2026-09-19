@@ -12,6 +12,7 @@ using Microsoft.EntityFrameworkCore;
 using System.Text.Json;
 using MCAROC_Analysis.Models.Chat;
 using MCAROC_Analysis.Services.Chat;
+using Microsoft.AspNetCore.Authorization;
 
 namespace MCAROC_Analysis.Controllers;
 
@@ -567,13 +568,26 @@ public class RequestsController(
             vm.AiSuccessCount = extractions.Count(e => e.Status == ExtractionStatus.Success);
             vm.AiFailedCount = extractions.Count(e => e.Status == ExtractionStatus.Failed);
 
-            vm.ChunkableDocumentCount = await db.McaFilingDocuments.CountAsync(d =>
+            vm.AuthoritativeBatchChunkableCount = await db.McaFilingDocuments.CountAsync(d =>
                 d.BatchId == batch.BatchId && d.DuplicateOfDocumentId == null
                 && d.ProcessingStatus == FilingDocumentProcessingStatus.Completed);
-            vm.ChunkedDocumentCount = await db.McaFilingDocuments.CountAsync(d =>
+            vm.AuthoritativeBatchChunkedCount = await db.McaFilingDocuments.CountAsync(d =>
                 d.BatchId == batch.BatchId && d.DuplicateOfDocumentId == null
                 && d.ProcessingStatus == FilingDocumentProcessingStatus.Completed
                 && d.ChunkingStatus == ChunkingStatus.Chunked);
+            vm.AuthoritativeBatchChunkingFailedCount = await db.McaFilingDocuments.CountAsync(d =>
+                d.BatchId == batch.BatchId && d.DuplicateOfDocumentId == null
+                && d.ProcessingStatus == FilingDocumentProcessingStatus.Completed
+                && d.ChunkingStatus == ChunkingStatus.Failed);
+            vm.AuthoritativeBatchTotalChunks = await (
+                from chunk in db.DocumentChunks
+                join doc in db.McaFilingDocuments on chunk.FilingDocumentId equals doc.FilingDocumentId
+                where doc.BatchId == batch.BatchId
+                select chunk.ChunkId
+            ).CountAsync();
+
+            vm.ChunkableDocumentCount = vm.AuthoritativeBatchChunkableCount;
+            vm.ChunkedDocumentCount = vm.AuthoritativeBatchChunkedCount;
         }
 
         // Computed metrics (Wave 4). The portal and the dossier PDF read the SAME assembled
@@ -690,12 +704,39 @@ public class RequestsController(
             .Where(e => e.FilingId.HasValue)
             .ToDictionary(e => e.FilingId!.Value);
 
+        var pageDocIds = pageFilings.SelectMany(f => f.Documents).Select(d => d.FilingDocumentId).ToList();
+        vm.DocumentChunkCounts = await db.DocumentChunks
+            .Where(c => pageDocIds.Contains(c.FilingDocumentId))
+            .GroupBy(c => c.FilingDocumentId)
+            .Select(g => new { FilingDocumentId = g.Key, Count = g.Count() })
+            .ToDictionaryAsync(x => x.FilingDocumentId, x => x.Count);
+
         vm.Filings = pageIds // preserve the (category, SRN) page order
             .Select(fid => pageFilings.First(f => f.FilingId == fid))
             .Select(f => new DocumentsPageViewModel.FilingRow(f, DominantFor(f.FilingId), extractionByFiling.GetValueOrDefault(f.FilingId)))
             .ToList();
 
         return PartialView("Details/_DocumentsList", vm);
+    }
+
+    [HttpPost("/Requests/{id:long}/documents/{documentId:long}/retry-chunking")]
+    [Authorize(AuthenticationSchemes = "InternalReviewer")]
+    [ValidateAntiForgeryToken]
+    public async Task<IActionResult> RetryDocumentChunking(
+        long id,
+        long documentId,
+        [FromServices] DocumentChunkingOrchestrator chunkingOrchestrator,
+        CancellationToken ct)
+    {
+        var batch = await McaFilingBatchResolver.GetAuthoritativeBatchAsync(db, id);
+        if (batch is null) return NotFound();
+
+        var docExists = await db.McaFilingDocuments.AnyAsync(
+            d => d.FilingDocumentId == documentId && d.BatchId == batch.BatchId, ct);
+        if (!docExists) return NotFound();
+
+        var reset = await chunkingOrchestrator.RetryFailedDocumentAsync(documentId, batch.BatchId, ct);
+        return Json(new { queued = reset });
     }
 
     private async Task<RequestDocument> SaveDocumentAsync(long requestId, IFormFile file, DocumentType documentType, bool validateAsExcel = true)

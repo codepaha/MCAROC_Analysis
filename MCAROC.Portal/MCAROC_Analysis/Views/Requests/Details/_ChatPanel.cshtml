@@ -43,16 +43,27 @@
 
     @if (Model.FilingBatch is not null)
     {
-        if (Model.ChunkableDocumentCount == 0)
+        var chunkable = Model.AuthoritativeBatchChunkableCount > 0 ? Model.AuthoritativeBatchChunkableCount : Model.ChunkableDocumentCount;
+        var chunked = Model.AuthoritativeBatchChunkedCount > 0 ? Model.AuthoritativeBatchChunkedCount : Model.ChunkedDocumentCount;
+        var failed = Model.AuthoritativeBatchChunkingFailedCount;
+        var inProgressOrPending = chunkable > (chunked + failed);
+
+        if (chunkable == 0)
         {
             <div class="alert alert-info py-2 px-3 m-2 small mca-chat-indexing-warning" id="mcaChatIndexingWarning" role="status">
                 <i class="bi bi-info-circle me-1"></i>Document indexing has not started yet — questions can still be answered from structured data.
             </div>
         }
-        else if (Model.ChunkedDocumentCount < Model.ChunkableDocumentCount)
+        else if (inProgressOrPending)
         {
             <div class="alert alert-warning py-2 px-3 m-2 small mca-chat-indexing-warning" id="mcaChatIndexingWarning" role="status">
-                <i class="bi bi-exclamation-triangle me-1"></i>Document search is still indexing (indexed @Model.ChunkedDocumentCount of @Model.ChunkableDocumentCount documents) — answers may not yet cover all uploaded filings.
+                <i class="bi bi-exclamation-triangle me-1"></i>Document search is still indexing (indexed @chunked of @chunkable documents) — answers may not yet cover all uploaded filings.
+            </div>
+        }
+        else if (failed > 0)
+        {
+            <div class="alert alert-danger py-2 px-3 m-2 small mca-chat-indexing-warning" id="mcaChatIndexingWarning" role="status">
+                <i class="bi bi-exclamation-octagon me-1"></i>Document search indexed @chunked of @chunkable document(s). @failed document(s) failed indexing and are not searchable.
             </div>
         }
     }

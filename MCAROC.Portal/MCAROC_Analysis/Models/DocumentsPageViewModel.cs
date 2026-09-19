@@ -22,6 +22,9 @@ public class DocumentsPageViewModel
     /// <summary>Filing count per dominant category (all categories, ignores the current filter) — drives the filter chips.</summary>
     public Dictionary<FilingCategory, int> CategoryCounts { get; set; } = [];
 
+    /// <summary>Number of saved chunks per FilingDocumentId for documents on the current page.</summary>
+    public Dictionary<long, int> DocumentChunkCounts { get; set; } = [];
+
     public List<FilingRow> Filings { get; set; } = [];
 
     public record FilingRow(McaFiling Filing, FilingCategory DominantCategory, McaFilingExtraction? Extraction);

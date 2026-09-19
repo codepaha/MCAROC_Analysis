@@ -3,6 +3,7 @@ using MCAROC_Analysis.Data.Entities;
 using Microsoft.Data.SqlTypes;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
+using System.Text.RegularExpressions;
 
 namespace MCAROC_Analysis.Services.Chat;
 
@@ -11,7 +12,7 @@ namespace MCAROC_Analysis.Services.Chat;
 /// touching the database — only once the full new chunk set is computed does one transaction delete the
 /// document's existing chunks and insert the new set together, so a failure never destroys a previously
 /// working index.</summary>
-public class DocumentChunkingOrchestrator(AppDbContext db, EmbeddingService embeddingService, DocumentChunkingQueue queue, ILogger<DocumentChunkingOrchestrator> logger)
+public partial class DocumentChunkingOrchestrator(AppDbContext db, EmbeddingService embeddingService, DocumentChunkingQueue queue, ILogger<DocumentChunkingOrchestrator> logger)
 {
     public const string ChunkingVersion = "1.0";
     private const int MaxChunkRetryCount = 3;
@@ -28,7 +29,9 @@ public class DocumentChunkingOrchestrator(AppDbContext db, EmbeddingService embe
     {
         var claimed = await db.McaFilingDocuments
             .Where(d => d.FilingDocumentId == filingDocumentId && d.ChunkingStatus == ChunkingStatus.Pending)
-            .ExecuteUpdateAsync(s => s.SetProperty(d => d.ChunkingStatus, ChunkingStatus.InProgress), ct);
+            .ExecuteUpdateAsync(s => s
+                .SetProperty(d => d.ChunkingStatus, ChunkingStatus.InProgress)
+                .SetProperty(d => d.ChunkingLastAttemptUtc, DateTime.UtcNow), ct);
         if (claimed == 0)
             return; // already claimed/chunked by another worker or a previous run
 
@@ -37,7 +40,7 @@ public class DocumentChunkingOrchestrator(AppDbContext db, EmbeddingService embe
         try
         {
             if (document.ExtractedTextPath is null || !File.Exists(document.ExtractedTextPath))
-                throw new InvalidOperationException($"Extracted text file not found for document {filingDocumentId}.");
+                throw new InvalidOperationException($"Extracted text file not found for document {filingDocumentId} at '{document.ExtractedTextPath}'.");
 
             var fullText = await File.ReadAllTextAsync(document.ExtractedTextPath, ct);
             var textChunks = TextChunker.Chunk(fullText, ChatIndexingOptions.Default);
@@ -96,22 +99,126 @@ public class DocumentChunkingOrchestrator(AppDbContext db, EmbeddingService embe
             db.DocumentChunks.AddRange(newChunks);
             await db.SaveChangesAsync(ct);
             await db.McaFilingDocuments.Where(d => targetIds.Contains(d.FilingDocumentId))
-                .ExecuteUpdateAsync(s => s.SetProperty(d => d.ChunkingStatus, ChunkingStatus.Chunked), ct);
+                .ExecuteUpdateAsync(s => s
+                    .SetProperty(d => d.ChunkingStatus, ChunkingStatus.Chunked)
+                    .SetProperty(d => d.ChunkingLastError, (string?)null)
+                    .SetProperty(d => d.ChunkingErrorCategory, (string?)null)
+                    .SetProperty(d => d.ChunkingFailedUtc, (DateTime?)null), ct);
             await transaction.CommitAsync(ct);
         }
         catch (Exception ex)
         {
             logger.LogWarning(ex, "Chunking failed for document {DocumentId}", filingDocumentId);
+            var category = ClassifyChunkingError(ex);
+            var sanitizedMsg = SanitizeAndCap(ex.Message, 500);
             var retryCount = document.ChunkRetryCount + 1;
-            var nextStatus = retryCount < MaxChunkRetryCount ? ChunkingStatus.Pending : ChunkingStatus.Failed;
+            var isTerminal = retryCount >= MaxChunkRetryCount;
+            var nextStatus = isTerminal ? ChunkingStatus.Failed : ChunkingStatus.Pending;
+
             await db.McaFilingDocuments.Where(d => d.FilingDocumentId == filingDocumentId)
                 .ExecuteUpdateAsync(s => s
                     .SetProperty(d => d.ChunkingStatus, nextStatus)
-                    .SetProperty(d => d.ChunkRetryCount, retryCount), ct);
-            if (nextStatus == ChunkingStatus.Pending)
+                    .SetProperty(d => d.ChunkRetryCount, retryCount)
+                    .SetProperty(d => d.ChunkingLastError, sanitizedMsg)
+                    .SetProperty(d => d.ChunkingErrorCategory, category)
+                    .SetProperty(d => d.ChunkingFailedUtc, isTerminal ? (DateTime?)DateTime.UtcNow : null), ct);
+
+            if (!isTerminal)
                 queue.Enqueue(document.BatchId);
         }
     }
+
+    public async Task<bool> RetryFailedDocumentAsync(long filingDocumentId, long expectedBatchId, CancellationToken ct)
+    {
+        var rows = await db.McaFilingDocuments
+            .Where(d => d.FilingDocumentId == filingDocumentId
+                     && d.BatchId == expectedBatchId
+                     && d.DuplicateOfDocumentId == null
+                     && d.ProcessingStatus == FilingDocumentProcessingStatus.Completed
+                     && d.ChunkingStatus == ChunkingStatus.Failed)
+            .ExecuteUpdateAsync(s => s
+                .SetProperty(d => d.ChunkingStatus, ChunkingStatus.Pending)
+                .SetProperty(d => d.ChunkRetryCount, 0)
+                .SetProperty(d => d.ChunkingLastError, (string?)null)
+                .SetProperty(d => d.ChunkingErrorCategory, (string?)null)
+                .SetProperty(d => d.ChunkingFailedUtc, (DateTime?)null), ct);
+
+        if (rows == 1)
+            queue.Enqueue(expectedBatchId);
+
+        return rows == 1;
+    }
+
+    public static string ClassifyChunkingError(Exception ex) => ex switch
+    {
+        HttpRequestException => "EmbeddingApi",
+        InvalidOperationException e when e.Message.Contains("not found", StringComparison.OrdinalIgnoreCase) => "TextFileMissing",
+        InvalidOperationException e when e.Message.Contains("Embedding count", StringComparison.OrdinalIgnoreCase) => "VectorMismatch",
+        DbUpdateException => "DatabaseWrite",
+        _ => "Unknown"
+    };
+
+    public static string SanitizeAndCap(string? message, int maxChars = 500)
+    {
+        if (string.IsNullOrWhiteSpace(message)) return "Unknown error";
+
+        var text = message;
+        // 1. Redact Bearer and Basic auth tokens
+        text = BearerTokenPattern().Replace(text, "Bearer [REDACTED]");
+        text = BasicAuthPattern().Replace(text, "Basic [REDACTED]");
+
+        // 2. Redact key / api_key / token / password / secret assignments
+        text = SecretAssignmentPattern().Replace(text, "$1=[REDACTED]");
+
+        // 3. Redact database connection strings
+        text = ConnectionStringPattern().Replace(text, "[CONNECTION_STRING_REDACTED]");
+
+        // 4. Redact Windows drive paths (e.g. C:\path\file.ext), UNC paths (\\server\share\file.ext), and URI file paths
+        text = WindowsDrivePathPattern().Replace(text, "[PATH_REDACTED]");
+        text = UncPathPattern().Replace(text, "[PATH_REDACTED]");
+        text = UriFilePathPattern().Replace(text, "[PATH_REDACTED]");
+
+        // 5. Redact PAN numbers (5 uppercase letters, 4 digits, 1 uppercase letter)
+        text = PanPattern().Replace(text, "[PAN_REDACTED]");
+
+        // 6. Strip stack trace lines starting with "at ..."
+        text = StackTracePattern().Replace(text, "");
+
+        // 7. Collapse multi-whitespace and trim
+        text = MultiWhitespacePattern().Replace(text, " ").Trim();
+
+        return text.Length <= maxChars ? text : text[..maxChars];
+    }
+
+    [GeneratedRegex(@"\bBearer\s+[A-Za-z0-9_\-\.]+", RegexOptions.IgnoreCase)]
+    private static partial Regex BearerTokenPattern();
+
+    [GeneratedRegex(@"\bBasic\s+[A-Za-z0-9+/=]+", RegexOptions.IgnoreCase)]
+    private static partial Regex BasicAuthPattern();
+
+    [GeneratedRegex(@"(?i)\b(key|api[-_]?key|token|password|secret|pwd)\s*[=:]\s*['""]?[^\s&""';]+['""]?")]
+    private static partial Regex SecretAssignmentPattern();
+
+    [GeneratedRegex(@"(?i)\b(?:Server|Data Source|User ID|Initial Catalog)\s*=[^;]+(?:;|$)")]
+    private static partial Regex ConnectionStringPattern();
+
+    [GeneratedRegex(@"[A-Za-z]:\\(?:[^\r\n\t""':;<>|?*,]+\\)*[^\r\n\t""':;<>|?*,]+")]
+    private static partial Regex WindowsDrivePathPattern();
+
+    [GeneratedRegex(@"\\\\[^\r\n\t""':;<>|?*,]+")]
+    private static partial Regex UncPathPattern();
+
+    [GeneratedRegex(@"(?:file:\/\/\/|\/)[a-zA-Z0-9_\-.\/]+\.[a-zA-Z0-9]+")]
+    private static partial Regex UriFilePathPattern();
+
+    [GeneratedRegex(@"\b[A-Z]{5}[0-9]{4}[A-Z]\b")]
+    private static partial Regex PanPattern();
+
+    [GeneratedRegex(@"^\s*at\s+.*$", RegexOptions.Multiline)]
+    private static partial Regex StackTracePattern();
+
+    [GeneratedRegex(@"\s+")]
+    private static partial Regex MultiWhitespacePattern();
 
     /// <summary>Startup recovery: any document left InProgress by a crash is, by the same "fresh process =
     /// orphaned" logic already proven twice in this codebase (Phase 2/3), reset to Pending and its batch

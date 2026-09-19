@@ -55,6 +55,16 @@ public class AutoFetchControllerTests : IAsyncLifetime
     {
         await using var db = CreateContext();
         await db.Database.MigrateAsync();
+
+        var staleRequestIds = await db.Requests
+            .Where(r => r.ClientId == 1 && (r.AutoFetchCompanyIdentifier == "U45203OR1995PLC003982" || r.AutoFetchCompanyIdentifier == "AAB-9876"))
+            .Select(r => r.RequestId)
+            .ToListAsync();
+        if (staleRequestIds.Count > 0)
+        {
+            await db.AutoFetchJobs.Where(j => staleRequestIds.Contains(j.RequestId)).ExecuteDeleteAsync();
+            await db.Requests.Where(r => staleRequestIds.Contains(r.RequestId)).ExecuteDeleteAsync();
+        }
     }
 
     public Task DisposeAsync() => Task.CompletedTask;

@@ -108,6 +108,15 @@
                         <div class="pi-metric"><span>@(kv.Key == FilingCategory.Unclassified ? "Other" : kv.Key.ToString())</span><strong>@kv.Value</strong><small>document(s)</small></div>
                     }
                     <div class="pi-metric"><span>AI extraction</span><strong>@Model.AiSuccessCount / @(Model.AiSuccessCount + Model.AiFailedCount)</strong><small>filing(s) succeeded</small></div>
+                    <div class="pi-metric">
+                        <span>Search Index</span>
+                        <strong>@Model.AuthoritativeBatchTotalChunks chunk(s)</strong>
+                        <small>across @Model.AuthoritativeBatchChunkedCount / @Model.AuthoritativeBatchChunkableCount doc(s)</small>
+                        @if (Model.AuthoritativeBatchChunkingFailedCount > 0)
+                        {
+                            <div class="mt-1"><span class="badge bg-danger text-white">@Model.AuthoritativeBatchChunkingFailedCount failed</span></div>
+                        }
+                    </div>
                     @if (Model.ManualReviewFilingCount > 0)
                     {
                         <div class="pi-metric"><span>Manual review</span><strong>@Model.ManualReviewFilingCount</strong><small>document(s) flagged</small></div>
