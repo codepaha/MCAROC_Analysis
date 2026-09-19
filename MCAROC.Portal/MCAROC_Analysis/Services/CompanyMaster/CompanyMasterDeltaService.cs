@@ -370,7 +370,7 @@ public partial class CompanyMasterDeltaService : ICompanyMasterDeltaService
         return null;
     }
 
-    public async Task<ValidationResult> ValidateStagingAsync(long syncRunId, long fencingToken, CancellationToken cancellationToken = default)
+    public virtual async Task<ValidationResult> ValidateStagingAsync(long syncRunId, long fencingToken, CancellationToken cancellationToken = default)
     {
         await using var connection = new SqlConnection(_connectionString);
         await connection.OpenAsync(cancellationToken);
@@ -969,8 +969,31 @@ public partial class CompanyMasterDeltaService : ICompanyMasterDeltaService
             await UpdateJobStatusAsync(jobId, CompanyMasterSyncJobStatus.PreemptedByTakeover, "Heartbeat loss during staging; worker lease preempted.", CancellationToken.None);
             throw;
         }
+        catch (SqlException ex) when (ex.Message.Contains("Fencing check failed"))
+        {
+            _logger.LogWarning(ex, "Automated sync pipeline aborted by fencing preemption for Job {JobId}", jobId);
+            try
+            {
+                await CleanStagingAsync(jobId, CancellationToken.None);
+            }
+            catch (Exception cleanEx)
+            {
+                _logger.LogWarning(cleanEx, "Failed to clean staging for preempted Job {JobId}", jobId);
+            }
+            // Preserve PreemptedByTakeover status set by PromoteStagedDeltaAsync
+            await UpdateJobStatusAsync(jobId, CompanyMasterSyncJobStatus.PreemptedByTakeover, ex.Message, CancellationToken.None);
+            throw;
+        }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
+            // If the job was already marked PreemptedByTakeover, preserve that state rather than overwriting with generic Failed.
+            var currentJob = await _db.CompanyMasterSyncJobs.FindAsync(new object[] { jobId }, CancellationToken.None);
+            if (currentJob?.Status == CompanyMasterSyncJobStatus.PreemptedByTakeover)
+            {
+                _logger.LogWarning(ex, "Automated sync pipeline aborted because Job {JobId} was preempted by takeover.", jobId);
+                throw;
+            }
+
             _logger.LogError(ex, "Automated sync pipeline failed for Job {JobId}", jobId);
             await UpdateJobStatusAsync(jobId, CompanyMasterSyncJobStatus.Failed, ex.Message, CancellationToken.None);
             throw;

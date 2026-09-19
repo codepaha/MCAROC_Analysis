@@ -1277,6 +1277,86 @@ public class CompanyMasterSyncTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task ExecuteAutomatedSync_FencingTakeoverDuringPromotion_PreservesPreemptedByTakeoverStatus()
+    {
+        // Build test archive with sample CSV
+        using var memZip = new MemoryStream();
+        using (var archive = new ZipArchive(memZip, ZipArchiveMode.Create, leaveOpen: true))
+        {
+            var entry = archive.CreateEntry("companies.csv");
+            using var w = new StreamWriter(entry.Open());
+            w.WriteLine("CIN,Company Name,Company Registration Date,Company Category,Company Class,Listing Status,Authorized Capital,Paidup Capital,Company ROC,Company Address,Pin Code,Company State,Company Status,Company Sub Category,Company Industrial Classification");
+            w.WriteLine($"U{Guid.NewGuid():N}"[..21] + ",Takeover Test Ltd,2025-01-01,Company limited by shares,Private,Unlisted,50000,50000,ROC DELHI,1 Takeover Road,110001,Delhi,Active,Non-government company,IT");
+        }
+        memZip.Position = 0;
+
+        var config = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?> { ["ConnectionStrings:Default"] = ConnectionString })
+            .Build();
+
+        var proxyPool = new ProxyPoolService(config, NullLogger<ProxyPoolService>.Instance);
+        var lease = new DistributedAppLockLease(ConnectionString, NullLogger<DistributedAppLockLease>.Instance);
+
+        await using var db = CreateContext();
+        var takeoverSvc = new TakeoverBeforePromotionDeltaService(db, config, proxyPool, lease, NullLogger<CompanyMasterDeltaService>.Instance);
+
+        await lease.TryAcquireAsync("CompanyMasterSyncExclusiveLock", TimeSpan.FromSeconds(5));
+        try
+        {
+            var job = await takeoverSvc.CreateJobAsync(CompanyMasterSyncTriggerType.Scheduled, "test_takeover_e2e");
+
+            // Executing automated sync must fail on promotion because FencingToken was bumped after validation
+            var ex = await Assert.ThrowsAsync<SqlException>(() =>
+                takeoverSvc.ExecuteAutomatedSyncAsync(job.JobId, job.FencingToken, archiveStream: memZip));
+
+            Assert.Contains("Fencing check failed", ex.Message);
+
+            // Verify the outer handler preserved PreemptedByTakeover and did NOT overwrite it with Failed
+            await using var checkDb = CreateContext();
+            var refreshedJob = await checkDb.CompanyMasterSyncJobs.FindAsync(job.JobId);
+            Assert.NotNull(refreshedJob);
+            Assert.Equal(CompanyMasterSyncJobStatus.PreemptedByTakeover, refreshedJob.Status);
+            Assert.Contains("Fencing check failed", refreshedJob.ErrorMessage);
+
+            // Staging rows must have been cleaned up
+            int stagingRows = await checkDb.StagingCompanyMasterRecords.CountAsync(s => s.SyncRunId == job.JobId);
+            Assert.Equal(0, stagingRows);
+        }
+        finally
+        {
+            await lease.ReleaseAsync(CancellationToken.None);
+        }
+    }
+
+    private sealed class TakeoverBeforePromotionDeltaService : CompanyMasterDeltaService
+    {
+        private readonly AppDbContext _testDb;
+
+        public TakeoverBeforePromotionDeltaService(
+            AppDbContext db,
+            IConfiguration configuration,
+            IProxyPoolService proxyPool,
+            ISyncLockLease syncLockLease,
+            Microsoft.Extensions.Logging.ILogger<CompanyMasterDeltaService> logger)
+            : base(db, configuration, proxyPool, syncLockLease, logger)
+        {
+            _testDb = db;
+        }
+
+        public override async Task<ValidationResult> ValidateStagingAsync(long syncRunId, long fencingToken, CancellationToken cancellationToken = default)
+        {
+            var result = await base.ValidateStagingAsync(syncRunId, fencingToken, cancellationToken);
+
+            // Simulate fencing takeover by another worker immediately after staging validation, right before promotion
+            await _testDb.Database.ExecuteSqlAsync(
+                $"UPDATE dbo.CompanyMasterSyncJobs SET FencingToken = FencingToken + 1 WHERE JobId = {syncRunId}",
+                cancellationToken);
+
+            return result;
+        }
+    }
+
+    [Fact]
     public void AuditRouteRegistry_ExhaustiveReflectionTest_PassesWithCompanyMasterRoutes()
     {
         string[] mutatingActions = { "Probe", "TestProxies", "SyncNow", "UploadManual" };
