@@ -14,9 +14,11 @@ public interface ICompanyMasterDeltaService
 {
     Task<CompanyMasterSyncJob> CreateJobAsync(CompanyMasterSyncTriggerType triggerType, string? proxyAlias, CancellationToken cancellationToken = default);
     Task UpdateJobStatusAsync(long jobId, CompanyMasterSyncJobStatus status, string? errorMessage = null, CancellationToken cancellationToken = default);
+    Task<bool> RenewLeaseHeartbeatAsync(long jobId, long fencingToken, CancellationToken cancellationToken = default);
     Task<long> IngestCsvFilesAsync(long syncRunId, long fencingToken, IReadOnlyList<string> csvFiles, CancellationToken cancellationToken = default);
     Task<ValidationResult> ValidateStagingAsync(long syncRunId, long fencingToken, CancellationToken cancellationToken = default);
     Task<PromotionMetricsResult> PromoteStagedDeltaAsync(long syncRunId, long fencingToken, int batchSize = 4000, CancellationToken cancellationToken = default);
     Task CleanStagingAsync(long syncRunId, CancellationToken cancellationToken = default);
     Task<DateOnly?> ProbePortalSnapshotDateAsync(CancellationToken cancellationToken = default);
+    Task<PromotionMetricsResult?> ExecuteAutomatedSyncAsync(long jobId, long fencingToken, System.IO.Stream? archiveStream = null, CancellationToken cancellationToken = default);
 }

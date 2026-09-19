@@ -25,6 +25,8 @@ public partial class CompanyMasterDeltaService : ICompanyMasterDeltaService
     private readonly string _connectionString;
     private readonly IProxyPoolService _proxyPool;
     private readonly ISyncLockLease _lockLease;
+    private readonly ISafeArchiveExtractor _archiveExtractor;
+    private readonly IConfiguration _configuration;
     private readonly ILogger<CompanyMasterDeltaService> _logger;
 
     [GeneratedRegex(@"Company\s+Master\s+Details\s+As\s+on\s+([0-9]{1,2}(?:st|nd|rd|th)?\s+[A-Za-z]+\s+[0-9]{4})", RegexOptions.IgnoreCase)]
@@ -35,13 +37,17 @@ public partial class CompanyMasterDeltaService : ICompanyMasterDeltaService
         IConfiguration configuration,
         IProxyPoolService proxyPool,
         ISyncLockLease lockLease,
-        ILogger<CompanyMasterDeltaService> logger)
+        ILogger<CompanyMasterDeltaService> logger,
+        ISafeArchiveExtractor? archiveExtractor = null)
     {
         _db = db;
-        _connectionString = configuration.GetConnectionString("DefaultConnection") 
-            ?? throw new InvalidOperationException("DefaultConnection string is not configured.");
+        _configuration = configuration;
+        _connectionString = configuration.GetConnectionString("Default") 
+            ?? configuration.GetConnectionString("DefaultConnection") 
+            ?? throw new InvalidOperationException("Connection string 'Default' is not configured.");
         _proxyPool = proxyPool;
         _lockLease = lockLease;
+        _archiveExtractor = archiveExtractor ?? new SafeArchiveExtractor(Microsoft.Extensions.Logging.Abstractions.NullLogger<SafeArchiveExtractor>.Instance);
         _logger = logger;
     }
 
@@ -430,15 +436,17 @@ public partial class CompanyMasterDeltaService : ICompanyMasterDeltaService
 
             -- 0. Atomically verify worker fencing token ownership, job status, and refresh heartbeat
             UPDATE dbo.CompanyMasterSyncJobs
-            SET LastHeartbeatUtc = SYSUTCDATETIME()
+            SET LastHeartbeatUtc = SYSUTCDATETIME(),
+                LeaseExpiresUtc = DATEADD(minute, 5, SYSUTCDATETIME())
             WHERE JobId = @SyncRunId
               AND FencingToken = @FencingToken
-              AND Status IN ('Staged', 'Promoting');
+              AND Status IN ('Staged', 'Promoting')
+              AND (LeaseExpiresUtc IS NULL OR LeaseExpiresUtc >= SYSUTCDATETIME());
 
             IF @@ROWCOUNT = 0
             BEGIN
                 ROLLBACK TRANSACTION;
-                RAISERROR('Fencing check failed: Job %I64d has been preempted, superseded, or is no longer in promotable status.', 16, 1, @SyncRunId);
+                RAISERROR('Fencing check failed: Job %I64d has been preempted, superseded, expired, or is no longer in promotable status.', 16, 1, @SyncRunId);
                 RETURN;
             END
 
@@ -463,26 +471,13 @@ public partial class CompanyMasterDeltaService : ICompanyMasterDeltaService
                 RETURN;
             END
 
-            -- 2. Apply UPDATE strictly to live records matching this exact batch whose values changed
-            UPDATE c
-            SET c.Name = s.Name,
-                c.RegistrationDate = s.RegistrationDate,
-                c.Category = s.Category,
-                c.Class = s.Class,
-                c.ListingStatus = s.ListingStatus,
-                c.AuthorizedCapital = s.AuthorizedCapital,
-                c.PaidupCapital = s.PaidupCapital,
-                c.Roc = s.Roc,
-                c.Address = s.Address,
-                c.PinCode = s.PinCode,
-                c.State = s.State,
-                c.District = s.District,
-                c.Country = s.Country,
-                c.Status = s.Status,
-                c.SubCategory = s.SubCategory,
-                c.IndustrialClassification = s.IndustrialClassification
-            FROM dbo.CompanyMasterRecords c
-            INNER JOIN dbo.Staging_CompanyMasterRecords s
+            -- 2. Identify rows requiring UPDATE in this batch
+            DECLARE @UpdatedIds TABLE (StagingId bigint PRIMARY KEY);
+
+            INSERT INTO @UpdatedIds (StagingId)
+            SELECT s.StagingId
+            FROM dbo.Staging_CompanyMasterRecords s
+            INNER JOIN dbo.CompanyMasterRecords c
                 ON c.Identifier = s.Identifier AND c.RecordType = s.RecordType
             INNER JOIN @BatchIds b
                 ON s.StagingId = b.StagingId
@@ -505,9 +500,44 @@ public partial class CompanyMasterDeltaService : ICompanyMasterDeltaService
               OR ISNULL(c.IndustrialClassification, '') <> ISNULL(s.IndustrialClassification, '')
             );
 
+            UPDATE c
+            SET c.Name = s.Name,
+                c.RegistrationDate = s.RegistrationDate,
+                c.Category = s.Category,
+                c.Class = s.Class,
+                c.ListingStatus = s.ListingStatus,
+                c.AuthorizedCapital = s.AuthorizedCapital,
+                c.PaidupCapital = s.PaidupCapital,
+                c.Roc = s.Roc,
+                c.Address = s.Address,
+                c.PinCode = s.PinCode,
+                c.State = s.State,
+                c.District = s.District,
+                c.Country = s.Country,
+                c.Status = s.Status,
+                c.SubCategory = s.SubCategory,
+                c.IndustrialClassification = s.IndustrialClassification
+            FROM dbo.CompanyMasterRecords c
+            INNER JOIN dbo.Staging_CompanyMasterRecords s
+                ON c.Identifier = s.Identifier AND c.RecordType = s.RecordType
+            INNER JOIN @UpdatedIds u
+                ON s.StagingId = u.StagingId;
+
             DECLARE @UpdatedCount int = @@ROWCOUNT;
 
-            -- 3. Apply INSERT strictly for pure new additions in this exact batch
+            -- 3. Identify rows requiring INSERT in this batch
+            DECLARE @InsertedIds TABLE (StagingId bigint PRIMARY KEY);
+
+            INSERT INTO @InsertedIds (StagingId)
+            SELECT s.StagingId
+            FROM dbo.Staging_CompanyMasterRecords s
+            INNER JOIN @BatchIds b
+                ON s.StagingId = b.StagingId
+            WHERE NOT EXISTS (
+                SELECT 1 FROM dbo.CompanyMasterRecords c
+                WHERE c.Identifier = s.Identifier
+            );
+
             INSERT INTO dbo.CompanyMasterRecords (
                 Identifier, RecordType, Name, RegistrationDate, Category, Class, ListingStatus,
                 AuthorizedCapital, PaidupCapital, Roc, Address, PinCode, State, District,
@@ -518,21 +548,26 @@ public partial class CompanyMasterDeltaService : ICompanyMasterDeltaService
                 s.AuthorizedCapital, s.PaidupCapital, s.Roc, s.Address, s.PinCode, s.State, s.District,
                 s.Country, s.Status, s.SubCategory, s.IndustrialClassification
             FROM dbo.Staging_CompanyMasterRecords s
-            INNER JOIN @BatchIds b
-                ON s.StagingId = b.StagingId
-            WHERE NOT EXISTS (
-                SELECT 1 FROM dbo.CompanyMasterRecords c
-                WHERE c.Identifier = s.Identifier
-            );
+            INNER JOIN @InsertedIds i
+                ON s.StagingId = i.StagingId;
 
             DECLARE @InsertedCount int = @@ROWCOUNT;
 
-            -- 4. Mark ONLY and EXACTLY this batch of StagingIds as promoted
+            -- 4. Mark ONLY and EXACTLY this batch of StagingIds as promoted, tagging their exact transition state
             UPDATE s
-            SET s.IsPromoted = 1
+            SET s.IsPromoted = 1,
+                s.ValidationState = CASE 
+                    WHEN u.StagingId IS NOT NULL THEN 'Updated'
+                    WHEN i.StagingId IS NOT NULL THEN 'Inserted'
+                    ELSE 'Unchanged'
+                END
             FROM dbo.Staging_CompanyMasterRecords s
             INNER JOIN @BatchIds b
-                ON s.StagingId = b.StagingId;
+                ON s.StagingId = b.StagingId
+            LEFT JOIN @UpdatedIds u
+                ON s.StagingId = u.StagingId
+            LEFT JOIN @InsertedIds i
+                ON s.StagingId = i.StagingId;
 
             COMMIT TRANSACTION;
 
@@ -574,28 +609,91 @@ public partial class CompanyMasterDeltaService : ICompanyMasterDeltaService
             }
         }
 
-        // Record metrics per RecordType
+        // Record metrics grouped by RecordType from staging before cleaning up
+        const string metricsSql = @"
+            SELECT 
+                RecordType,
+                COUNT(1) as TotalSourceRows,
+                SUM(CASE WHEN ValidationState = 'Inserted' THEN 1 ELSE 0 END) as NewRowsAdded,
+                SUM(CASE WHEN ValidationState = 'Updated' THEN 1 ELSE 0 END) as ExistingRowsUpdated,
+                SUM(CASE WHEN ValidationState = 'Unchanged' THEN 1 ELSE 0 END) as UnchangedRowsSkipped,
+                SUM(CASE WHEN ValidationState = 'Rejected' THEN 1 ELSE 0 END) as CorruptedRowsSkipped
+            FROM dbo.Staging_CompanyMasterRecords
+            WHERE SyncRunId = @SyncRunId AND FencingToken = @FencingToken
+            GROUP BY RecordType;";
+
         var metricsByRecordType = new Dictionary<CompanyMasterRecordType, (int Added, int Updated, int Unchanged)>();
-        foreach (var type in new[] { CompanyMasterRecordType.Company, CompanyMasterRecordType.Llp, CompanyMasterRecordType.Foreign })
+        var metricsList = new List<CompanyMasterSyncMetric>();
+        int grandTotalInserted = 0;
+        int grandTotalUpdated = 0;
+        int grandTotalUnchanged = 0;
+
+        await using (var metricsCmd = new SqlCommand(metricsSql, connection))
         {
-            var metric = new CompanyMasterSyncMetric
+            metricsCmd.Parameters.AddWithValue("@SyncRunId", syncRunId);
+            metricsCmd.Parameters.AddWithValue("@FencingToken", fencingToken);
+
+            await using var reader = await metricsCmd.ExecuteReaderAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken))
             {
-                JobId = syncRunId,
-                RecordType = type,
-                TotalSourceRows = await _db.StagingCompanyMasterRecords.CountAsync(s => s.SyncRunId == syncRunId && s.RecordType == type, cancellationToken),
-                NewRowsAdded = totalInserted, // Recorded per run
-                ExistingRowsUpdated = totalUpdated,
-                UnchangedRowsSkipped = 0,
-                CorruptedRowsSkipped = 0
-            };
-            _db.CompanyMasterSyncMetrics.Add(metric);
-            metricsByRecordType[type] = (metric.NewRowsAdded, metric.ExistingRowsUpdated, metric.UnchangedRowsSkipped);
+                string rawType = reader.GetString(0);
+                if (!Enum.TryParse<CompanyMasterRecordType>(rawType, true, out var recordType))
+                {
+                    continue;
+                }
+
+                int totalSource = reader.GetInt32(1);
+                int added = reader.GetInt32(2);
+                int updated = reader.GetInt32(3);
+                int unchanged = reader.GetInt32(4);
+                int corrupted = reader.GetInt32(5);
+
+                var metric = new CompanyMasterSyncMetric
+                {
+                    JobId = syncRunId,
+                    RecordType = recordType,
+                    TotalSourceRows = totalSource,
+                    NewRowsAdded = added,
+                    ExistingRowsUpdated = updated,
+                    UnchangedRowsSkipped = unchanged,
+                    CorruptedRowsSkipped = corrupted
+                };
+
+                metricsList.Add(metric);
+                metricsByRecordType[recordType] = (added, updated, unchanged);
+
+                grandTotalInserted += added;
+                grandTotalUpdated += updated;
+                grandTotalUnchanged += unchanged;
+            }
         }
+
+        foreach (var recordType in Enum.GetValues<CompanyMasterRecordType>())
+        {
+            if (!metricsByRecordType.ContainsKey(recordType))
+            {
+                var metric = new CompanyMasterSyncMetric
+                {
+                    JobId = syncRunId,
+                    RecordType = recordType,
+                    TotalSourceRows = 0,
+                    NewRowsAdded = 0,
+                    ExistingRowsUpdated = 0,
+                    UnchangedRowsSkipped = 0,
+                    CorruptedRowsSkipped = 0
+                };
+                metricsList.Add(metric);
+                metricsByRecordType[recordType] = (0, 0, 0);
+            }
+        }
+
+        _db.CompanyMasterSyncMetrics.AddRange(metricsList);
+        await _db.SaveChangesAsync(cancellationToken);
 
         await UpdateJobStatusAsync(syncRunId, CompanyMasterSyncJobStatus.Completed, cancellationToken: cancellationToken);
         await CleanStagingAsync(syncRunId, cancellationToken);
 
-        return new PromotionMetricsResult(totalUpdated, totalInserted, 0, metricsByRecordType);
+        return new PromotionMetricsResult(grandTotalUpdated, grandTotalInserted, grandTotalUnchanged, metricsByRecordType);
     }
 
     public async Task CleanStagingAsync(long syncRunId, CancellationToken cancellationToken = default)
@@ -644,5 +742,181 @@ public partial class CompanyMasterDeltaService : ICompanyMasterDeltaService
             _logger.LogWarning(ex, "Failed to probe MCA CDM portal date.");
         }
         return null;
+    }
+
+    public async Task<bool> RenewLeaseHeartbeatAsync(long jobId, long fencingToken, CancellationToken cancellationToken = default)
+    {
+        await using var connection = new SqlConnection(_connectionString);
+        await connection.OpenAsync(cancellationToken);
+
+        const string sql = @"
+            UPDATE dbo.CompanyMasterSyncJobs
+            SET LastHeartbeatUtc = SYSUTCDATETIME(),
+                LeaseExpiresUtc = DATEADD(minute, 5, SYSUTCDATETIME())
+            WHERE JobId = @SyncRunId
+              AND FencingToken = @FencingToken
+              AND Status IN ('Probing', 'Downloading', 'Staging');";
+
+        await using var cmd = new SqlCommand(sql, connection);
+        cmd.Parameters.AddWithValue("@SyncRunId", jobId);
+        cmd.Parameters.AddWithValue("@FencingToken", fencingToken);
+
+        int rows = await cmd.ExecuteNonQueryAsync(cancellationToken);
+        return rows > 0;
+    }
+
+    public async Task<PromotionMetricsResult?> ExecuteAutomatedSyncAsync(
+        long jobId, 
+        long fencingToken, 
+        Stream? archiveStream = null, 
+        CancellationToken cancellationToken = default)
+    {
+        string tempExtractDir = Path.Combine(Path.GetTempPath(), $"mca_auto_{Guid.NewGuid():N}");
+        Stream? localStreamToDispose = null;
+
+        using var heartbeatCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        Task? heartbeatTask = null;
+
+        try
+        {
+            await UpdateJobStatusAsync(jobId, CompanyMasterSyncJobStatus.Downloading, cancellationToken: cancellationToken);
+
+            // Heartbeat loop during long download & staging
+            heartbeatTask = Task.Run(async () =>
+            {
+                using var timer = new PeriodicTimer(TimeSpan.FromSeconds(30));
+                while (!heartbeatCts.Token.IsCancellationRequested)
+                {
+                    try
+                    {
+                        if (await timer.WaitForNextTickAsync(heartbeatCts.Token))
+                        {
+                            bool ok = await RenewLeaseHeartbeatAsync(jobId, fencingToken, heartbeatCts.Token);
+                            if (!ok)
+                            {
+                                _logger.LogWarning("Heartbeat check failed for Job {JobId}; worker preemption detected.", jobId);
+                                heartbeatCts.Cancel();
+                                break;
+                            }
+                        }
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        break;
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex, "Heartbeat renewal error for Job {JobId}", jobId);
+                    }
+                }
+            }, cancellationToken);
+
+            Stream streamToUse;
+            if (archiveStream != null)
+            {
+                streamToUse = archiveStream;
+            }
+            else
+            {
+                string? dropPath = _configuration["CompanyMasterSync:ArchiveDropPath"];
+                if (!string.IsNullOrWhiteSpace(dropPath) && File.Exists(dropPath))
+                {
+                    _logger.LogInformation("Using configured archive drop file at {Path}", dropPath);
+                    localStreamToDispose = File.OpenRead(dropPath);
+                    streamToUse = localStreamToDispose;
+                }
+                else
+                {
+                    string? downloadUrl = _configuration["CompanyMasterSync:ArchiveDownloadUrl"] ?? "https://mcacdm.nic.in/company-master-details/download";
+                    _logger.LogInformation("Downloading archive from {Url}...", downloadUrl);
+
+                    var node = _proxyPool.GetNextHealthyNode();
+                    SocketsHttpHandler handler = new();
+                    if (node != null)
+                    {
+                        handler.Proxy = new System.Net.WebProxy(node.Endpoint)
+                        {
+                            Credentials = node.Username != null ? new System.Net.NetworkCredential(node.Username, node.Password) : null
+                        };
+                    }
+
+                    using var client = new HttpClient(handler) { Timeout = TimeSpan.FromMinutes(15) };
+                    client.DefaultRequestHeaders.UserAgent.ParseAdd("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36");
+
+                    var response = await client.GetAsync(downloadUrl, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+                    response.EnsureSuccessStatusCode();
+
+                    var memoryStream = new MemoryStream();
+                    await response.Content.CopyToAsync(memoryStream, cancellationToken);
+                    memoryStream.Position = 0;
+                    localStreamToDispose = memoryStream;
+                    streamToUse = localStreamToDispose;
+                }
+            }
+
+            heartbeatCts.Token.ThrowIfCancellationRequested();
+
+            var extractor = _archiveExtractor ?? new SafeArchiveExtractor(Microsoft.Extensions.Logging.Abstractions.NullLogger<SafeArchiveExtractor>.Instance);
+            var extractedFiles = await extractor.ExtractSafelyAsync(streamToUse, tempExtractDir, cancellationToken);
+            var csvFiles = extractedFiles.Where(f => f.EndsWith(".csv", StringComparison.OrdinalIgnoreCase)).ToList();
+
+            if (csvFiles.Count == 0)
+            {
+                await UpdateJobStatusAsync(jobId, CompanyMasterSyncJobStatus.Failed, "Archive contained zero CSV files.", cancellationToken);
+                throw new InvalidOperationException("Archive contained zero CSV files.");
+            }
+
+            await IngestCsvFilesAsync(jobId, fencingToken, csvFiles, cancellationToken);
+
+            var validation = await ValidateStagingAsync(jobId, fencingToken, cancellationToken);
+            if (!validation.IsValid)
+            {
+                _logger.LogWarning("Automated sync staging validation failed for Job {JobId}: {Error}", jobId, validation.ErrorMessage);
+                return null;
+            }
+
+            heartbeatCts.Cancel();
+            if (heartbeatTask != null)
+            {
+                try { await heartbeatTask; } catch { }
+            }
+
+            cancellationToken.ThrowIfCancellationRequested();
+
+            int batchSize = _configuration.GetValue<int>("CompanyMasterSync:PromotionBatchSize", 4000);
+            var metrics = await PromoteStagedDeltaAsync(jobId, fencingToken, batchSize, cancellationToken);
+            return metrics;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogError(ex, "Automated sync pipeline failed for Job {JobId}", jobId);
+            await UpdateJobStatusAsync(jobId, CompanyMasterSyncJobStatus.Failed, ex.Message, cancellationToken);
+            throw;
+        }
+        finally
+        {
+            heartbeatCts.Cancel();
+            if (heartbeatTask != null)
+            {
+                try { await heartbeatTask; } catch { }
+            }
+
+            if (localStreamToDispose != null)
+            {
+                await localStreamToDispose.DisposeAsync();
+            }
+
+            try
+            {
+                if (Directory.Exists(tempExtractDir))
+                {
+                    Directory.Delete(tempExtractDir, recursive: true);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to clean temp extraction directory {Dir}", tempExtractDir);
+            }
+        }
     }
 }

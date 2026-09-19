@@ -23,7 +23,7 @@ public class LeasePreemptedException : Exception
     }
 }
 
-public interface ISyncLockLease : IAsyncDisposable
+public interface ISyncLockLease : IDisposable, IAsyncDisposable
 {
     bool IsAcquired { get; }
     int? ActiveSpid { get; }

@@ -17,6 +17,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
 
@@ -544,6 +545,331 @@ public class CompanyMasterSyncTests : IAsyncLifetime
             Assert.NotNull(method);
             Assert.NotNull(method.GetCustomAttribute<HttpPostAttribute>());
             Assert.NotNull(method.GetCustomAttribute<ValidateAntiForgeryTokenAttribute>());
+        }
+    }
+
+    [Fact]
+    public async Task PromoteStagedDelta_PartitionsMetricsByRecordTypeAccurately()
+    {
+        await using var db = CreateContext();
+        long token = 1;
+
+        string updateCin = $"U{Guid.NewGuid():N}"[..21];
+        string unchangedCin = $"U{Guid.NewGuid():N}"[..21];
+        string insertCin = $"U{Guid.NewGuid():N}"[..21];
+
+        string unchangedLlp = $"AAA-{Guid.NewGuid():N}"[..8].ToUpperInvariant();
+        string insertLlp = $"BBB-{Guid.NewGuid():N}"[..8].ToUpperInvariant();
+
+        string updateForeign = $"F{Guid.NewGuid():N}"[..10].ToUpperInvariant();
+
+        // 1. Seed live records
+        db.CompanyMasterRecords.AddRange(
+            new CompanyMasterRecord
+            {
+                Identifier = updateCin,
+                RecordType = CompanyMasterRecordType.Company,
+                Name = "Original Company Name",
+                Status = "Active"
+            },
+            new CompanyMasterRecord
+            {
+                Identifier = unchangedCin,
+                RecordType = CompanyMasterRecordType.Company,
+                Name = "Unchanged Company Name",
+                Status = "Active"
+            },
+            new CompanyMasterRecord
+            {
+                Identifier = unchangedLlp,
+                RecordType = CompanyMasterRecordType.Llp,
+                Name = "Unchanged LLP Name",
+                Status = "Active"
+            },
+            new CompanyMasterRecord
+            {
+                Identifier = updateForeign,
+                RecordType = CompanyMasterRecordType.Foreign,
+                Name = "Original Foreign Name",
+                Status = "Active"
+            }
+        );
+
+        var job = new CompanyMasterSyncJob
+        {
+            FencingToken = token,
+            Status = CompanyMasterSyncJobStatus.Staged,
+            CreatedUtc = DateTime.UtcNow,
+            LeaseExpiresUtc = DateTime.UtcNow.AddMinutes(10)
+        };
+        db.CompanyMasterSyncJobs.Add(job);
+        await db.SaveChangesAsync();
+        long testJobId = job.JobId;
+
+        // 2. Stage records
+        db.StagingCompanyMasterRecords.AddRange(
+            // Company: 1 updated, 1 unchanged, 1 inserted
+            new StagingCompanyMasterRecord
+            {
+                SyncRunId = testJobId,
+                FencingToken = token,
+                ValidationState = "Validated",
+                Identifier = updateCin,
+                RecordType = CompanyMasterRecordType.Company,
+                Name = "Modified Company Name",
+                Status = "Active"
+            },
+            new StagingCompanyMasterRecord
+            {
+                SyncRunId = testJobId,
+                FencingToken = token,
+                ValidationState = "Validated",
+                Identifier = unchangedCin,
+                RecordType = CompanyMasterRecordType.Company,
+                Name = "Unchanged Company Name",
+                Status = "Active"
+            },
+            new StagingCompanyMasterRecord
+            {
+                SyncRunId = testJobId,
+                FencingToken = token,
+                ValidationState = "Validated",
+                Identifier = insertCin,
+                RecordType = CompanyMasterRecordType.Company,
+                Name = "Brand New Company",
+                Status = "Active"
+            },
+            // LLP: 1 unchanged, 1 inserted
+            new StagingCompanyMasterRecord
+            {
+                SyncRunId = testJobId,
+                FencingToken = token,
+                ValidationState = "Validated",
+                Identifier = unchangedLlp,
+                RecordType = CompanyMasterRecordType.Llp,
+                Name = "Unchanged LLP Name",
+                Status = "Active"
+            },
+            new StagingCompanyMasterRecord
+            {
+                SyncRunId = testJobId,
+                FencingToken = token,
+                ValidationState = "Validated",
+                Identifier = insertLlp,
+                RecordType = CompanyMasterRecordType.Llp,
+                Name = "Brand New LLP",
+                Status = "Active"
+            },
+            // Foreign: 1 updated
+            new StagingCompanyMasterRecord
+            {
+                SyncRunId = testJobId,
+                FencingToken = token,
+                ValidationState = "Validated",
+                Identifier = updateForeign,
+                RecordType = CompanyMasterRecordType.Foreign,
+                Name = "Modified Foreign Name",
+                Status = "Active"
+            }
+        );
+        await db.SaveChangesAsync();
+
+        var config = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?> { ["ConnectionStrings:Default"] = ConnectionString })
+            .Build();
+
+        var proxyPool = new ProxyPoolService(config, NullLogger<ProxyPoolService>.Instance);
+        var lease = new DistributedAppLockLease(ConnectionString, NullLogger<DistributedAppLockLease>.Instance);
+        var deltaService = new CompanyMasterDeltaService(db, config, proxyPool, lease, NullLogger<CompanyMasterDeltaService>.Instance);
+
+        var metrics = await deltaService.PromoteStagedDeltaAsync(testJobId, token, batchSize: 100);
+
+        // Assert per-record-type in-memory breakdown
+        Assert.Equal(2, metrics.TotalInserted);
+        Assert.Equal(2, metrics.TotalUpdated);
+        Assert.Equal(2, metrics.TotalUnchanged);
+
+        var companyMetrics = metrics.MetricsByRecordType[CompanyMasterRecordType.Company];
+        Assert.Equal(1, companyMetrics.Added);
+        Assert.Equal(1, companyMetrics.Updated);
+        Assert.Equal(1, companyMetrics.Unchanged);
+
+        var llpMetrics = metrics.MetricsByRecordType[CompanyMasterRecordType.Llp];
+        Assert.Equal(1, llpMetrics.Added);
+        Assert.Equal(0, llpMetrics.Updated);
+        Assert.Equal(1, llpMetrics.Unchanged);
+
+        var foreignMetrics = metrics.MetricsByRecordType[CompanyMasterRecordType.Foreign];
+        Assert.Equal(0, foreignMetrics.Added);
+        Assert.Equal(1, foreignMetrics.Updated);
+        Assert.Equal(0, foreignMetrics.Unchanged);
+
+        // Assert persisted CompanyMasterSyncMetrics in database
+        await using var freshDb = CreateContext();
+        var persisted = await freshDb.CompanyMasterSyncMetrics
+            .Where(m => m.JobId == testJobId)
+            .ToDictionaryAsync(m => m.RecordType);
+
+        Assert.Equal(3, persisted.Count);
+
+        var persistedCompany = persisted[CompanyMasterRecordType.Company];
+        Assert.Equal(3, persistedCompany.TotalSourceRows);
+        Assert.Equal(1, persistedCompany.NewRowsAdded);
+        Assert.Equal(1, persistedCompany.ExistingRowsUpdated);
+        Assert.Equal(1, persistedCompany.UnchangedRowsSkipped);
+
+        var persistedLlp = persisted[CompanyMasterRecordType.Llp];
+        Assert.Equal(2, persistedLlp.TotalSourceRows);
+        Assert.Equal(1, persistedLlp.NewRowsAdded);
+        Assert.Equal(0, persistedLlp.ExistingRowsUpdated);
+        Assert.Equal(1, persistedLlp.UnchangedRowsSkipped);
+
+        var persistedForeign = persisted[CompanyMasterRecordType.Foreign];
+        Assert.Equal(1, persistedForeign.TotalSourceRows);
+        Assert.Equal(0, persistedForeign.NewRowsAdded);
+        Assert.Equal(1, persistedForeign.ExistingRowsUpdated);
+        Assert.Equal(0, persistedForeign.UnchangedRowsSkipped);
+    }
+
+    [Fact]
+    public async Task LeaseExpiry_BeforePromotion_AbortsPromotionAndMarksPreempted()
+    {
+        await using var db = CreateContext();
+        long token = 1;
+
+        var job = new CompanyMasterSyncJob
+        {
+            FencingToken = token,
+            Status = CompanyMasterSyncJobStatus.Staged,
+            CreatedUtc = DateTime.UtcNow.AddMinutes(-30),
+            LeaseExpiresUtc = DateTime.UtcNow.AddMinutes(-10) // Expired in the past
+        };
+        db.CompanyMasterSyncJobs.Add(job);
+        await db.SaveChangesAsync();
+        long testJobId = job.JobId;
+
+        db.StagingCompanyMasterRecords.Add(new StagingCompanyMasterRecord
+        {
+            SyncRunId = testJobId,
+            FencingToken = token,
+            ValidationState = "Validated",
+            Identifier = $"U{Guid.NewGuid():N}"[..21],
+            RecordType = CompanyMasterRecordType.Company,
+            Name = "Expired Test Company",
+            Status = "Active"
+        });
+        await db.SaveChangesAsync();
+
+        var config = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?> { ["ConnectionStrings:Default"] = ConnectionString })
+            .Build();
+
+        var proxyPool = new ProxyPoolService(config, NullLogger<ProxyPoolService>.Instance);
+        var lease = new DistributedAppLockLease(ConnectionString, NullLogger<DistributedAppLockLease>.Instance);
+        var deltaService = new CompanyMasterDeltaService(db, config, proxyPool, lease, NullLogger<CompanyMasterDeltaService>.Instance);
+
+        var ex = await Assert.ThrowsAsync<SqlException>(() => deltaService.PromoteStagedDeltaAsync(testJobId, token, batchSize: 100));
+        Assert.Contains("Fencing check failed", ex.Message);
+
+        await using var freshDb = CreateContext();
+        var refreshedJob = await freshDb.CompanyMasterSyncJobs.FindAsync(testJobId);
+        Assert.NotNull(refreshedJob);
+        Assert.Equal(CompanyMasterSyncJobStatus.PreemptedByTakeover, refreshedJob.Status);
+    }
+
+    [Fact]
+    public async Task CompanyMasterSyncWorker_ConsentDisabled_LeavesJobPendingAwaitingManualUpload()
+    {
+        var services = new Microsoft.Extensions.DependencyInjection.ServiceCollection();
+        services.AddLogging();
+        services.AddDbContext<AppDbContext>(o => o.UseSqlServer(ConnectionString));
+        services.AddSingleton<IProxyPoolService>(new ProxyPoolService(new ConfigurationBuilder().Build(), NullLogger<ProxyPoolService>.Instance));
+        services.AddSingleton<ISafeArchiveExtractor>(new SafeArchiveExtractor(NullLogger<SafeArchiveExtractor>.Instance));
+        services.AddScoped<ISyncLockLease>(_ => new DistributedAppLockLease(ConnectionString, NullLogger<DistributedAppLockLease>.Instance));
+        services.AddScoped<ICompanyMasterDeltaService, CompanyMasterDeltaService>();
+
+        var config = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["ConnectionStrings:Default"] = ConnectionString,
+                ["CompanyMasterSync:Enabled"] = "true",
+                ["CompanyMasterSync:AutomationConsent"] = "false"
+            })
+            .Build();
+
+        services.AddSingleton<IConfiguration>(config);
+        var provider = services.BuildServiceProvider();
+        var scopeFactory = provider.GetRequiredService<Microsoft.Extensions.DependencyInjection.IServiceScopeFactory>();
+
+        var worker = new CompanyMasterSyncWorker(scopeFactory, config, NullLogger<CompanyMasterSyncWorker>.Instance);
+        await worker.RunScheduledSyncCheckAsync(CancellationToken.None);
+
+        await using var db = CreateContext();
+        var latestJob = await db.CompanyMasterSyncJobs
+            .OrderByDescending(j => j.JobId)
+            .FirstOrDefaultAsync();
+
+        Assert.NotNull(latestJob);
+        Assert.Equal(CompanyMasterSyncJobStatus.Pending, latestJob.Status);
+        Assert.Contains("manual upload required", latestJob.ErrorMessage);
+    }
+
+    [Fact]
+    public async Task CompanyMasterSyncWorker_ConsentEnabled_ExecutesAutomatedSyncPipelineToCompletion()
+    {
+        string tempZip = Path.Combine(Path.GetTempPath(), $"test_archive_{Guid.NewGuid():N}.zip");
+        string cin = $"U{Guid.NewGuid():N}"[..21];
+        try
+        {
+            using (var fileStream = File.Create(tempZip))
+            using (var archive = new ZipArchive(fileStream, ZipArchiveMode.Create))
+            {
+                var entry = archive.CreateEntry("companies.csv");
+                using var writer = new StreamWriter(entry.Open());
+                writer.WriteLine("CIN,Company Name,Company Registration Date,Company Category,Company Class,Listing Status,Authorized Capital,Paidup Capital,Company ROC,Company Address,Pin Code,Company State,Company Status,Company Sub Category,Company Industrial Classification");
+                writer.WriteLine($"{cin},Worker Test Company Ltd,2026-01-01,Company limited by shares,Private,Unlisted,100000,100000,ROC MUMBAI,123 Marine Drive,400001,Maharashtra,Active,Non-government company,Financial services");
+            }
+
+            var services = new Microsoft.Extensions.DependencyInjection.ServiceCollection();
+            services.AddLogging();
+            services.AddDbContext<AppDbContext>(o => o.UseSqlServer(ConnectionString));
+            services.AddSingleton<IProxyPoolService>(new ProxyPoolService(new ConfigurationBuilder().Build(), NullLogger<ProxyPoolService>.Instance));
+            services.AddSingleton<ISafeArchiveExtractor>(new SafeArchiveExtractor(NullLogger<SafeArchiveExtractor>.Instance));
+            services.AddScoped<ISyncLockLease>(_ => new DistributedAppLockLease(ConnectionString, NullLogger<DistributedAppLockLease>.Instance));
+            services.AddScoped<ICompanyMasterDeltaService, CompanyMasterDeltaService>();
+
+            var config = new ConfigurationBuilder()
+                .AddInMemoryCollection(new Dictionary<string, string?>
+                {
+                    ["ConnectionStrings:Default"] = ConnectionString,
+                    ["CompanyMasterSync:Enabled"] = "true",
+                    ["CompanyMasterSync:AutomationConsent"] = "true",
+                    ["CompanyMasterSync:ArchiveDropPath"] = tempZip
+                })
+                .Build();
+
+            services.AddSingleton<IConfiguration>(config);
+            var provider = services.BuildServiceProvider();
+            var scopeFactory = provider.GetRequiredService<Microsoft.Extensions.DependencyInjection.IServiceScopeFactory>();
+
+            var worker = new CompanyMasterSyncWorker(scopeFactory, config, NullLogger<CompanyMasterSyncWorker>.Instance);
+            await worker.RunScheduledSyncCheckAsync(CancellationToken.None);
+
+            await using var db = CreateContext();
+            var latestJob = await db.CompanyMasterSyncJobs
+                .OrderByDescending(j => j.JobId)
+                .FirstOrDefaultAsync();
+
+            Assert.NotNull(latestJob);
+            Assert.Equal(CompanyMasterSyncJobStatus.Completed, latestJob.Status);
+
+            var liveRecord = await db.CompanyMasterRecords.FindAsync(cin);
+            Assert.NotNull(liveRecord);
+            Assert.Equal("Worker Test Company Ltd", liveRecord.Name);
+        }
+        finally
+        {
+            try { if (File.Exists(tempZip)) File.Delete(tempZip); } catch { }
         }
     }
 

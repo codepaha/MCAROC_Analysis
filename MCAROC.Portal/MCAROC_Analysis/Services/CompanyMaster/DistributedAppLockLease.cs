@@ -21,8 +21,9 @@ public sealed class DistributedAppLockLease : ISyncLockLease
 
     public DistributedAppLockLease(IConfiguration configuration, ILogger<DistributedAppLockLease> logger)
     {
-        _connectionString = configuration.GetConnectionString("DefaultConnection") 
-            ?? throw new InvalidOperationException("DefaultConnection string is not configured.");
+        _connectionString = configuration.GetConnectionString("Default") 
+            ?? configuration.GetConnectionString("DefaultConnection") 
+            ?? throw new InvalidOperationException("Connection string 'Default' is not configured.");
         _logger = logger;
     }
 
@@ -229,5 +230,46 @@ public sealed class DistributedAppLockLease : ISyncLockLease
         if (_isDisposed) return;
         _isDisposed = true;
         await ReleaseAsync(CancellationToken.None);
+    }
+
+    public void Dispose()
+    {
+        if (_isDisposed) return;
+        _isDisposed = true;
+
+        try
+        {
+            if (_acquiredResource != null && _connection != null && _connection.State == ConnectionState.Open)
+            {
+                using var cmd = new SqlCommand("sp_releaseapplock", _connection)
+                {
+                    CommandType = CommandType.StoredProcedure
+                };
+                cmd.Parameters.AddWithValue("@Resource", _acquiredResource);
+                cmd.Parameters.AddWithValue("@LockOwner", "Session");
+                cmd.ExecuteNonQuery();
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Error synchronously releasing session applock '{LockResource}'", _acquiredResource);
+        }
+        finally
+        {
+            _acquiredResource = null;
+            try
+            {
+                if (_connection != null)
+                {
+                    _connection.Close();
+                    _connection.Dispose();
+                }
+            }
+            catch { }
+            finally
+            {
+                _connection = null;
+            }
+        }
     }
 }

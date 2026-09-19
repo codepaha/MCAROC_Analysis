@@ -102,7 +102,20 @@ public sealed class CompanyMasterDashboardController : Controller
         try
         {
             var job = await _deltaService.CreateJobAsync(CompanyMasterSyncTriggerType.ManualForceSync, "ReviewerManual", cancellationToken);
-            TempData["SuccessMessage"] = $"Manual sync job #{job.JobId} initiated with fencing token {job.FencingToken}.";
+            var metrics = await _deltaService.ExecuteAutomatedSyncAsync(job.JobId, job.FencingToken, cancellationToken: cancellationToken);
+            if (metrics != null)
+            {
+                TempData["SuccessMessage"] = $"Manual force sync #{job.JobId} completed! Updated: {metrics.TotalUpdated:N0}, Inserted: {metrics.TotalInserted:N0}.";
+            }
+            else
+            {
+                TempData["ErrorMessage"] = $"Sync #{job.JobId} did not complete successfully. Check job logs.";
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error running manual force sync");
+            TempData["ErrorMessage"] = $"Sync failed: {ex.Message}";
         }
         finally
         {

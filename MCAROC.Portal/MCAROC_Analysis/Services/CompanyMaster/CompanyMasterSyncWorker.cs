@@ -56,7 +56,7 @@ public sealed class CompanyMasterSyncWorker : BackgroundService
 
     public async Task RunScheduledSyncCheckAsync(CancellationToken cancellationToken)
     {
-        using var scope = _scopeFactory.CreateScope();
+        await using var scope = _scopeFactory.CreateAsyncScope();
         var deltaService = scope.ServiceProvider.GetRequiredService<ICompanyMasterDeltaService>();
         var lockLease = scope.ServiceProvider.GetRequiredService<ISyncLockLease>();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
@@ -101,8 +101,13 @@ public sealed class CompanyMasterSyncWorker : BackgroundService
                 return;
             }
 
-            // Note: Full headless Playwright scraping is policy-gated and opt-in
-            _logger.LogInformation("Scraping execution is active under consent.");
+            _logger.LogInformation("Automation consent granted. Executing automated sync for Job {JobId}...", job.JobId);
+            await deltaService.ExecuteAutomatedSyncAsync(job.JobId, job.FencingToken, cancellationToken: cancellationToken);
+            _logger.LogInformation("Automated sync completed successfully for Job {JobId}.", job.JobId);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogError(ex, "Error occurred during scheduled Company Master sync execution.");
         }
         finally
         {
