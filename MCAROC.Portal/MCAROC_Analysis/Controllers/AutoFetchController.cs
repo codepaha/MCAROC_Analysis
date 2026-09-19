@@ -95,7 +95,10 @@ public partial class AutoFetchController(
             Cin = identifier,
             Llpin = model.EntityType == EntityType.LLP ? identifier : null,
             Pan = pan,
-            AutoFetchCompanyIdentifier = identifier,
+            // AutoFetchCompanyIdentifier set only after job creation succeeds, so the unique-key row can never
+            // exist without a corresponding AutoFetchJob. If job creation fails after request insertion,
+            // the next attempt finds no existing request and can retry cleanly.
+            AutoFetchCompanyIdentifier = null,
             // RequestNumber has a unique index. Give the first insert its own value so concurrent
             // submissions can race only on the client-scoped AutoFetch identifier, not on an empty
             // request number shared by every newly-created request.
@@ -125,6 +128,12 @@ public partial class AutoFetchController(
 
         var job = await jobs.CreateOrResetJobAsync(request, model.IncludeFilings, model.MaxDocumentsPerSection ?? 0, ct);
         queue.Enqueue(job.AutoFetchJobId);
+
+        // Set the idempotency key only after the job is created and queued. This way, the unique-key row
+        // never exists without a corresponding AutoFetchJob: if job creation fails, the request has no
+        // identifier and the next submission attempt can proceed without hitting the duplicate check.
+        request.AutoFetchCompanyIdentifier = identifier;
+        await db.SaveChangesAsync(ct);
 
         return RedirectToAction("Details", "Requests", new { id = request.RequestId });
     }
