@@ -126,6 +126,11 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
         {
             e.HasKey(x => x.RequestId);
             e.HasIndex(x => x.RequestNumber).IsUnique();
+            e.Property(x => x.AutoFetchCompanyIdentifier).HasMaxLength(30);
+            e.HasIndex(x => new { x.ClientId, x.AutoFetchCompanyIdentifier })
+                .HasDatabaseName("UX_McaRequests_Client_AutoFetchIdentifier")
+                .IsUnique()
+                .HasFilter("[AutoFetchCompanyIdentifier] IS NOT NULL");
             e.HasOne(x => x.Client).WithMany().HasForeignKey(x => x.ClientId).OnDelete(DeleteBehavior.Restrict);
             e.Property(x => x.EntityType).HasConversion<string>().HasMaxLength(20);
             e.Property(x => x.RequestStatus).HasConversion<string>().HasMaxLength(30);

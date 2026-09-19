@@ -35,6 +35,11 @@ public class AutoFetchRequestViewModel
 
     public bool IsConfigured { get; set; }
     public string? ErrorMessage { get; set; }
+
+    /// <summary>Populated when this client already owns an AutoFetch request for the supplied identifier.</summary>
+    public long? ExistingRequestId { get; set; }
+    public string? ExistingRequestNumber { get; set; }
+    public string? ExistingRequestStatus { get; set; }
 }
 
 /// <summary>JSON shape the Details page polls while a job runs.</summary>

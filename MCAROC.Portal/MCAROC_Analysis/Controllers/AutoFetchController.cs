@@ -76,6 +76,14 @@ public partial class AutoFetchController(
         if (model.ClientId <= 0 || model.Clients.All(c => c.ClientId != model.ClientId))
             return Fail(model, "Select a client.");
 
+        // This lookup is scoped to ClientId on purpose. A matching company for another client is not a
+        // duplicate and must never be surfaced here: its request, documents and results belong only to
+        // that other client. The unique index below is the concurrency-safe backstop for this friendly
+        // pre-check.
+        var existing = await FindExistingRequestAsync(model.ClientId, identifier, ct);
+        if (existing is not null)
+            return Existing(model, existing);
+
         var request = new McaRequest
         {
             ClientId = model.ClientId,
@@ -85,19 +93,44 @@ public partial class AutoFetchController(
             Cin = identifier,
             Llpin = model.EntityType == EntityType.LLP ? identifier : null,
             Pan = pan,
+            AutoFetchCompanyIdentifier = identifier,
+            // RequestNumber has a unique index. Give the first insert its own value so concurrent
+            // submissions can race only on the client-scoped AutoFetch identifier, not on an empty
+            // request number shared by every newly-created request.
+            RequestNumber = $"PENDING-{Guid.NewGuid():N}",
             RequestStatus = RequestStatus.Created,
             CreatedDate = DateTime.UtcNow,
             CreatedBy = "auto-fetch"
         };
-        db.Requests.Add(request);
-        await db.SaveChangesAsync(ct);
-        request.RequestNumber = $"MCA-{request.CreatedDate:yyyyMMdd}-{request.RequestId:D6}";
-        await db.SaveChangesAsync(ct);
+        try
+        {
+            // The identity claim, request, and job are one logical unit. In particular, do not enqueue
+            // until after the database transaction commits: a crash after commit is recovered from the
+            // durable Queued job, while any job-creation failure rolls the request and its unique claim back.
+            await using var transaction = await db.Database.BeginTransactionAsync(ct);
+            db.Requests.Add(request);
+            await db.SaveChangesAsync(ct);
+            request.RequestNumber = $"MCA-{request.CreatedDate:yyyyMMdd}-{request.RequestId:D6}";
+            await db.SaveChangesAsync(ct);
 
-        var job = await jobs.CreateOrResetJobAsync(request, model.IncludeFilings, model.MaxDocumentsPerSection ?? 0, ct);
-        queue.Enqueue(job.AutoFetchJobId);
+            var job = await jobs.CreateOrResetJobAsync(request, model.IncludeFilings, model.MaxDocumentsPerSection ?? 0, ct);
+            await transaction.CommitAsync(ct);
+            queue.Enqueue(job.AutoFetchJobId);
 
-        return RedirectToAction("Details", "Requests", new { id = request.RequestId });
+            return RedirectToAction("Details", "Requests", new { id = request.RequestId });
+        }
+        catch (DbUpdateException)
+        {
+            // Two submissions can both pass the read above. The database's filtered unique index is the
+            // actual idempotency guarantee; after its expected collision, show the request created by the
+            // other submission instead of creating/enqueueing another fetch job.
+            db.ChangeTracker.Clear();
+            existing = await FindExistingRequestAsync(model.ClientId, identifier, ct);
+            if (existing is not null)
+                return Existing(model, existing);
+            throw;
+        }
+
     }
 
     /// <summary>Auto-complete for the form: proxies the reference tool's own company search. Returns an
@@ -163,6 +196,19 @@ public partial class AutoFetchController(
         model.ErrorMessage = message;
         return View("~/Views/Requests/AutoFetch.cshtml", model);
     }
+
+    private ViewResult Existing(AutoFetchRequestViewModel model, McaRequest request)
+    {
+        model.ExistingRequestId = request.RequestId;
+        model.ExistingRequestNumber = request.RequestNumber;
+        model.ExistingRequestStatus = request.RequestStatus.ToString();
+        return View("~/Views/Requests/AutoFetch.cshtml", model);
+    }
+
+    private Task<McaRequest?> FindExistingRequestAsync(long clientId, string identifier, CancellationToken ct) =>
+        db.Requests.AsNoTracking().FirstOrDefaultAsync(
+            request => request.ClientId == clientId && request.AutoFetchCompanyIdentifier == identifier,
+            ct);
 
     private Task<List<Client>> ActiveClientsAsync() =>
         db.Clients.Where(c => c.IsActive).OrderBy(c => c.ClientName).ToListAsync();

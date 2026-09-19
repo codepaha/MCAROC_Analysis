@@ -1,3 +1,4 @@
+using System.Data.Common;
 using MCAROC_Analysis.Controllers;
 using MCAROC_Analysis.Data;
 using MCAROC_Analysis.Data.Entities;
@@ -10,6 +11,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.ViewFeatures;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
@@ -24,6 +26,30 @@ public class AutoFetchControllerTests : IAsyncLifetime
 {
     private static AppDbContext CreateContext() =>
         new(new DbContextOptionsBuilder<AppDbContext>().UseSqlServer(TestDatabase.ConnectionString).Options);
+
+    private static AppDbContext CreateContextWithInterceptor(DbCommandInterceptor interceptor) =>
+        new(new DbContextOptionsBuilder<AppDbContext>().UseSqlServer(TestDatabase.ConnectionString).AddInterceptors(interceptor).Options);
+
+    private sealed class ThrowOnAutoFetchJobInsertInterceptor : DbCommandInterceptor
+    {
+        private static bool IsJobInsert(DbCommand command) =>
+            command.CommandText.Contains("AutoFetchJobs", StringComparison.OrdinalIgnoreCase)
+            && command.CommandText.Contains("INSERT", StringComparison.OrdinalIgnoreCase);
+
+        public override ValueTask<InterceptionResult<int>> NonQueryExecutingAsync(
+            DbCommand command, CommandEventData eventData, InterceptionResult<int> result, CancellationToken cancellationToken = default)
+        {
+            if (IsJobInsert(command)) throw new InvalidOperationException("Injected AutoFetch job insert failure.");
+            return base.NonQueryExecutingAsync(command, eventData, result, cancellationToken);
+        }
+
+        public override ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(
+            DbCommand command, CommandEventData eventData, InterceptionResult<DbDataReader> result, CancellationToken cancellationToken = default)
+        {
+            if (IsJobInsert(command)) throw new InvalidOperationException("Injected AutoFetch job insert failure.");
+            return base.ReaderExecutingAsync(command, eventData, result, cancellationToken);
+        }
+    }
 
     public async Task InitializeAsync()
     {
@@ -107,6 +133,7 @@ public class AutoFetchControllerTests : IAsyncLifetime
 
         var request = await db.Requests.AsNoTracking().SingleAsync(r => r.RequestId == requestId);
         Assert.Equal("U45203OR1995PLC003982", request.Cin);
+        Assert.Equal("U45203OR1995PLC003982", request.AutoFetchCompanyIdentifier);
         Assert.Equal("AABCC1234D", request.Pan);
         Assert.Equal("U45203OR1995PLC003982", request.CompanyName); // placeholder until the tool/workbook names it
         Assert.Equal(RequestStatus.Created, request.RequestStatus);
@@ -142,6 +169,164 @@ public class AutoFetchControllerTests : IAsyncLifetime
         Assert.Equal("AAB-9876", request.Llpin);
         Assert.Equal("Some LLP", request.CompanyName);
         Assert.False((await db.AutoFetchJobs.AsNoTracking().SingleAsync(j => j.RequestId == request.RequestId)).IncludeFilings);
+    }
+
+    [Fact]
+    public async Task Same_client_and_normalized_identifier_shows_existing_request_without_another_job()
+    {
+        await using var db = CreateContext();
+        var (controller, queue) = NewController(db, configured: true);
+        var cin = NewCompanyIdentifier();
+
+        var first = Assert.IsType<RedirectToActionResult>(await controller.New(new AutoFetchRequestViewModel
+        {
+            ClientId = 1, Cin = cin, EntityType = EntityType.Company
+        }, CancellationToken.None));
+        var firstId = Assert.IsType<long>(first.RouteValues!["id"]);
+
+        var duplicate = Assert.IsType<ViewResult>(await controller.New(new AutoFetchRequestViewModel
+        {
+            ClientId = 1, Cin = $" {cin.ToLowerInvariant()} ", EntityType = EntityType.Company
+        }, CancellationToken.None));
+        var model = Assert.IsType<AutoFetchRequestViewModel>(duplicate.Model);
+
+        Assert.Equal(firstId, model.ExistingRequestId);
+        Assert.NotNull(model.ExistingRequestNumber);
+        Assert.Equal(RequestStatus.Created.ToString(), model.ExistingRequestStatus);
+        Assert.Equal(1, await db.Requests.CountAsync(r => r.ClientId == 1 && r.AutoFetchCompanyIdentifier == cin));
+        Assert.Equal(1, await db.AutoFetchJobs.CountAsync(j => j.RequestId == firstId));
+
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        await foreach (var queued in queue.ReadAllAsync(cts.Token))
+        {
+            Assert.Equal((await db.AutoFetchJobs.SingleAsync(j => j.RequestId == firstId)).AutoFetchJobId, queued);
+            break;
+        }
+    }
+
+    [Fact]
+    public async Task Same_identifier_for_a_different_client_creates_an_independent_request()
+    {
+        await using var db = CreateContext();
+        var (controller, _) = NewController(db, configured: true);
+        var cin = NewCompanyIdentifier();
+        var otherClient = new Client
+        {
+            ClientCode = $"AF{Guid.NewGuid():N}"[..10],
+            ClientName = "Second AutoFetch Client",
+            CreatedDate = DateTime.UtcNow
+        };
+        db.Clients.Add(otherClient);
+        await db.SaveChangesAsync();
+
+        var first = Assert.IsType<RedirectToActionResult>(await controller.New(new AutoFetchRequestViewModel
+        {
+            ClientId = 1, Cin = cin, EntityType = EntityType.Company
+        }, CancellationToken.None));
+        var second = Assert.IsType<RedirectToActionResult>(await controller.New(new AutoFetchRequestViewModel
+        {
+            ClientId = otherClient.ClientId, Cin = cin, EntityType = EntityType.Company
+        }, CancellationToken.None));
+
+        Assert.NotEqual(first.RouteValues!["id"], second.RouteValues!["id"]);
+        var requests = await db.Requests.AsNoTracking()
+            .Where(r => r.AutoFetchCompanyIdentifier == cin)
+            .OrderBy(r => r.ClientId)
+            .ToListAsync();
+        Assert.Equal([1L, otherClient.ClientId], requests.Select(r => r.ClientId));
+        Assert.All(requests, request => Assert.Equal(cin, request.AutoFetchCompanyIdentifier));
+    }
+
+    [Fact]
+    public async Task Database_unique_index_allows_only_one_concurrent_request_for_the_same_client_and_company()
+    {
+        var token = Guid.NewGuid().ToString("N");
+        var identifier = $"U{token[..5]}MH2026PTC{token[5..11]}";
+        await using var first = CreateContext();
+        await using var second = CreateContext();
+
+        first.Requests.Add(NewAutoFetchRequest(1, identifier));
+        second.Requests.Add(NewAutoFetchRequest(1, identifier));
+
+        var results = await Task.WhenAll(SaveCapturingExceptionAsync(first), SaveCapturingExceptionAsync(second));
+
+        Assert.Single(results, exception => exception is null);
+        Assert.Single(results, exception => exception is DbUpdateException);
+
+        await using var verify = CreateContext();
+        Assert.Equal(1, await verify.Requests.CountAsync(request =>
+            request.ClientId == 1 && request.AutoFetchCompanyIdentifier == identifier));
+    }
+
+    [Fact]
+    public async Task Concurrent_same_client_submissions_create_one_request_and_one_job()
+    {
+        var cin = $"U{Random.Shared.Next(10_000, 100_000)}MH2026PTC{Random.Shared.Next(100_000, 1_000_000)}";
+        await using var firstDb = CreateContext();
+        await using var secondDb = CreateContext();
+        var (firstController, _) = NewController(firstDb, configured: true);
+        var (secondController, _) = NewController(secondDb, configured: true);
+
+        var results = await Task.WhenAll(
+            firstController.New(new AutoFetchRequestViewModel { ClientId = 1, Cin = cin, EntityType = EntityType.Company }, CancellationToken.None),
+            secondController.New(new AutoFetchRequestViewModel { ClientId = 1, Cin = cin, EntityType = EntityType.Company }, CancellationToken.None));
+
+        Assert.Single(results, result => result is RedirectToActionResult);
+        var existing = Assert.Single(results, result => result is ViewResult);
+        var existingModel = Assert.IsType<AutoFetchRequestViewModel>(((ViewResult)existing).Model);
+        Assert.NotNull(existingModel.ExistingRequestId);
+
+        await using var verify = CreateContext();
+        var request = await verify.Requests.SingleAsync(r => r.ClientId == 1 && r.AutoFetchCompanyIdentifier == cin);
+        Assert.Equal(existingModel.ExistingRequestId, request.RequestId);
+        Assert.Equal(1, await verify.AutoFetchJobs.CountAsync(job => job.RequestId == request.RequestId));
+    }
+
+    [Fact]
+    public async Task Job_creation_failure_rolls_back_the_request_and_its_duplicate_claim()
+    {
+        var cin = $"U{Random.Shared.Next(10_000, 100_000)}MH2026PTC{Random.Shared.Next(100_000, 1_000_000)}";
+        await using var db = CreateContextWithInterceptor(new ThrowOnAutoFetchJobInsertInterceptor());
+        var (controller, _) = NewController(db, configured: true);
+
+        var failure = await Assert.ThrowsAsync<DbUpdateException>(() => controller.New(new AutoFetchRequestViewModel
+        {
+            ClientId = 1, Cin = cin, EntityType = EntityType.Company
+        }, CancellationToken.None));
+        Assert.Contains("Injected AutoFetch job insert failure", failure.InnerException?.Message);
+
+        await using var verify = CreateContext();
+        Assert.Empty(await verify.Requests.Where(r => r.ClientId == 1 && r.AutoFetchCompanyIdentifier == cin).ToListAsync());
+        Assert.Empty(await verify.AutoFetchJobs.Where(job => job.Cin == cin).ToListAsync());
+    }
+
+    private static McaRequest NewAutoFetchRequest(long clientId, string identifier) => new()
+    {
+        ClientId = clientId,
+        EntityType = EntityType.Company,
+        CompanyName = identifier,
+        Cin = identifier,
+        AutoFetchCompanyIdentifier = identifier,
+        RequestNumber = $"TEST-{Guid.NewGuid():N}",
+        RequestStatus = RequestStatus.Created,
+        CreatedDate = DateTime.UtcNow,
+        CreatedBy = "test"
+    };
+
+    private static string NewCompanyIdentifier() =>
+        $"U{Random.Shared.Next(10_000, 100_000)}MH2026PTC{Random.Shared.Next(100_000, 1_000_000)}";
+
+    private static async Task<Exception?> SaveCapturingExceptionAsync(AppDbContext context)
+    {
+        try
+        {
+            await context.SaveChangesAsync();
+            return null;
+        }
+        catch (Exception exception)
+        {
+            return exception;
+        }
     }
 
     [Fact]

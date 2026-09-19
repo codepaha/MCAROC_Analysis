@@ -24,6 +24,15 @@
     <div class="alert alert-danger">@Model.ErrorMessage</div>
 }
 
+@if (Model.ExistingRequestId is long existingRequestId)
+{
+    <div class="alert alert-info">
+        <strong>This company is already available for the selected client.</strong>
+        Request <a asp-controller="Requests" asp-action="Details" asp-route-id="@existingRequestId">@Model.ExistingRequestNumber</a>
+        is currently @Model.ExistingRequestStatus. Open it to review progress, results, or retry a failed fetch.
+    </div>
+}
+
 <div class="pi-panel" style="padding:24px;max-width:760px;">
     <form asp-controller="AutoFetch" asp-action="New" method="post" autocomplete="off">
         <div class="mb-3">
