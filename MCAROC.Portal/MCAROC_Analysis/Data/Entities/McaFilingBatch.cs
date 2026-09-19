@@ -14,6 +14,9 @@ public class McaFilingBatch
     /// <summary>Upload session ID if created via resumable large archive upload.</summary>
     public Guid? UploadSessionId { get; set; }
 
+    /// <summary>Durable correlation ID propagated across HTTP boundaries and background worker events.</summary>
+    public string CorrelationId { get; set; } = Guid.NewGuid().ToString("N");
+
     public FilingBatchStatus Status { get; set; } = FilingBatchStatus.Uploaded;
     public string? FailureReason { get; set; }
 

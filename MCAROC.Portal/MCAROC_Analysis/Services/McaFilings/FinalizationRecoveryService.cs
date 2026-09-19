@@ -333,6 +333,7 @@ public class FinalizationRecoveryService(
             {
                 RequestId = session.RequestId,
                 SourceDocumentId = existingDoc.DocumentId,
+                CorrelationId = !string.IsNullOrWhiteSpace(session.CorrelationId) ? session.CorrelationId : Guid.NewGuid().ToString("N"),
                 Status = FilingBatchStatus.Uploaded,
                 StartedDate = DateTime.UtcNow,
                 UploadSessionId = session.SessionId

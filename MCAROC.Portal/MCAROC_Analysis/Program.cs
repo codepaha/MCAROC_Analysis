@@ -2,6 +2,7 @@ using System.Text;
 using MCAROC_Analysis.Data;
 using MCAROC_Analysis.Services;
 using MCAROC_Analysis.Services.Analysis;
+using MCAROC_Analysis.Services.Audit;
 using MCAROC_Analysis.Services.AutoFetch;
 using MCAROC_Analysis.Services.Chat;
 using MCAROC_Analysis.Services.Dashboard;
@@ -33,7 +34,12 @@ builder.Services.Configure<FormOptions>(options =>
 });
 
 // Add services to the container.
-builder.Services.AddControllersWithViews();
+builder.Services.AddControllersWithViews(options =>
+{
+    options.Filters.Add<AuditLogFilter>();
+});
+builder.Services.AddScoped<IAuditLogService, AuditLogService>();
+builder.Services.AddScoped<AuditLogFilter>();
 builder.Services.AddMemoryCache();
 builder.Services.AddHttpClient<InstaFinancialsClient>(client => client.Timeout = TimeSpan.FromMinutes(10));
 builder.Services.Configure<InstaFinancialsOptions>(builder.Configuration.GetSection(InstaFinancialsOptions.SectionName));

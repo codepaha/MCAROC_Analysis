@@ -46,7 +46,7 @@ public sealed class AutoFetchJobService(
 
     /// <summary>Creates (or, for a request that already has one, resets) the job row for a request and
     /// returns it. The caller enqueues it — separated so the controller can save the request first.</summary>
-    public async Task<AutoFetchJob> CreateOrResetJobAsync(McaRequest request, bool includeFilings, int maxDocumentsPerSection, CancellationToken ct)
+    public async Task<AutoFetchJob> CreateOrResetJobAsync(McaRequest request, bool includeFilings, int maxDocumentsPerSection, CancellationToken ct, string? correlationId = null)
     {
         var cin = (request.Cin ?? request.Llpin ?? "").Trim().ToUpperInvariant();
         if (cin.Length == 0) throw new InvalidOperationException("A CIN or LLPIN is required to auto-fetch.");
@@ -57,6 +57,11 @@ public sealed class AutoFetchJobService(
             job = new AutoFetchJob { RequestId = request.RequestId, CreatedUtc = DateTime.UtcNow };
             db.AutoFetchJobs.Add(job);
         }
+        if (!string.IsNullOrWhiteSpace(correlationId))
+            job.CorrelationId = correlationId.Trim();
+        else if (string.IsNullOrWhiteSpace(job.CorrelationId))
+            job.CorrelationId = Guid.NewGuid().ToString("N");
+
         job.Cin = cin;
         job.Bid = ReferenceToolClient.ComputeBid(cin);
         job.IncludeFilings = includeFilings;
@@ -71,10 +76,13 @@ public sealed class AutoFetchJobService(
     }
 
     /// <summary>Puts a Failed job back in the queue keeping its checkpoints — the caller enqueues it.</summary>
-    public async Task<AutoFetchJob?> RequeueAsync(long requestId, CancellationToken ct)
+    public async Task<AutoFetchJob?> RequeueAsync(long requestId, CancellationToken ct, string? correlationId = null)
     {
         var job = await db.AutoFetchJobs.FirstOrDefaultAsync(j => j.RequestId == requestId, ct);
         if (job is null || !job.IsTerminal) return job;
+        if (!string.IsNullOrWhiteSpace(correlationId))
+            job.CorrelationId = correlationId.Trim();
+
         job.Status = AutoFetchJobStatus.Queued;
         job.ProgressPercent = 0;
         job.StatusMessage = "Queued for retry.";
@@ -422,6 +430,7 @@ public sealed class AutoFetchJobService(
             {
                 RequestId = request.RequestId,
                 SourceDocumentId = filingsDocument.DocumentId,
+                CorrelationId = !string.IsNullOrWhiteSpace(job.CorrelationId) ? job.CorrelationId : Guid.NewGuid().ToString("N"),
                 Status = FilingBatchStatus.Uploaded,
                 StartedDate = DateTime.UtcNow
             };

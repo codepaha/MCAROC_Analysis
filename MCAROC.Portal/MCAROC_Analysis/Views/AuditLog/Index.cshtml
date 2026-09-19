@@ -1,0 +1,142 @@
+@model MCAROC_Analysis.Models.AuditLogPageViewModel
+@using MCAROC_Analysis.Data.Entities
+@{
+    ViewData["Title"] = $"Audit Logs - {Model.RequestNumber}";
+    var isFailuresOnly = string.Equals(Model.Filter, "failures", StringComparison.OrdinalIgnoreCase);
+}
+
+<div class="d-flex flex-wrap justify-content-between align-items-start gap-3 mb-3">
+    <div>
+        <h1 class="h4 mb-0">Internal Audit Logs</h1>
+        <div class="text-muted">@Model.CompanyName &middot; @Model.RequestNumber &middot; Request #@Model.RequestId</div>
+    </div>
+    <div class="d-flex align-items-center gap-2">
+        <span class="small text-muted">Signed in as @(User.Identity?.Name ?? "InternalReviewer")</span>
+        <a class="btn btn-outline-secondary btn-sm" asp-controller="Requests" asp-action="Details" asp-route-id="@Model.RequestId">
+            <i class="bi bi-arrow-left me-1"></i>Back to request
+        </a>
+        <form method="post" action="@Url.Action("Logout", "InternalAuth")" class="d-inline">
+            @Html.AntiForgeryToken()
+            <button type="submit" class="btn btn-outline-dark btn-sm">Sign out</button>
+        </form>
+    </div>
+</div>
+
+<div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+    <div class="btn-group btn-group-sm" role="group">
+        <a href="@Url.Action("Index", "AuditLog", new { requestId = Model.RequestId })"
+           class="btn @(!isFailuresOnly ? "btn-primary" : "btn-outline-primary")">All Events</a>
+        <a href="@Url.Action("Index", "AuditLog", new { requestId = Model.RequestId, filter = "failures" })"
+           class="btn @(isFailuresOnly ? "btn-danger" : "btn-outline-danger")">Failures Only</a>
+    </div>
+    <div class="text-muted small">
+        Showing @Model.Items.Count of @Model.TotalCount entries (Page @Model.Page of @Model.TotalPages)
+    </div>
+</div>
+
+@if (Model.Items.Count == 0)
+{
+    <div class="alert alert-secondary">
+        No audit log entries found for this request@(isFailuresOnly ? " with status Failure" : "").
+    </div>
+}
+else
+{
+    <div class="table-responsive">
+        <table class="table table-sm table-hover align-middle">
+            <thead class="table-light">
+                <tr>
+                    <th style="width: 140px;">Timestamp (UTC)</th>
+                    <th style="width: 120px;">Correlation ID</th>
+                    <th style="width: 180px;">Actor</th>
+                    <th style="width: 150px;">Action</th>
+                    <th style="width: 90px;">Status</th>
+                    <th>Diagnostics & Payload</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var item in Model.Items)
+                {
+                    <tr>
+                        <td class="text-nowrap small">
+                            @item.TimestampUtc.ToString("yyyy-MM-dd HH:mm:ss")
+                        </td>
+                        <td class="small font-monospace text-truncate" style="max-width: 120px;" title="@item.CorrelationId">
+                            @item.CorrelationId
+                        </td>
+                        <td>
+                            <div class="small fw-semibold">
+                                @if (item.ActorType == ActorType.AuthenticatedReviewer)
+                                {
+                                    <span class="badge bg-primary">Reviewer</span>
+                                }
+                                else if (item.ActorType == ActorType.SystemWorker)
+                                {
+                                    <span class="badge bg-secondary">System</span>
+                                }
+                                else
+                                {
+                                    <span class="badge bg-warning text-dark">Unverified</span>
+                                }
+                                <span class="ms-1">@item.ActorId</span>
+                            </div>
+                        </td>
+                        <td>
+                            <div class="small fw-semibold">@item.Action</div>
+                            <div class="text-muted small">@item.EventKind</div>
+                        </td>
+                        <td>
+                            @if (item.Status == AuditStatus.Success)
+                            {
+                                <span class="badge bg-success">Success</span>
+                            }
+                            else if (item.Status == AuditStatus.Warning)
+                            {
+                                <span class="badge bg-warning text-dark">Warning</span>
+                            }
+                            else
+                            {
+                                <span class="badge bg-danger">Failure</span>
+                            }
+                        </td>
+                        <td class="small">
+                            @if (!string.IsNullOrEmpty(item.ErrorMessage))
+                            {
+                                <div class="text-danger fw-semibold mb-1">
+                                    <i class="bi bi-exclamation-triangle me-1"></i>@item.ErrorMessage
+                                </div>
+                            }
+                            @if (!string.IsNullOrEmpty(item.EventPayloadJson))
+                            {
+                                <details class="mt-1">
+                                    <summary class="text-muted small cursor-pointer">Payload JSON</summary>
+                                    <pre class="bg-light p-2 rounded small mt-1 mb-0 border" style="max-height: 200px; overflow-y: auto;"><code>@item.EventPayloadJson</code></pre>
+                                </details>
+                            }
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+
+    @if (Model.TotalPages > 1)
+    {
+        <nav aria-label="Audit log pagination" class="mt-3">
+            <ul class="pagination pagination-sm justify-content-center">
+                <li class="page-item @(Model.Page <= 1 ? "disabled" : "")">
+                    <a class="page-link" href="@Url.Action("Index", "AuditLog", new { requestId = Model.RequestId, filter = Model.Filter, page = Model.Page - 1, pageSize = Model.PageSize })">Previous</a>
+                </li>
+                @for (var p = Math.Max(1, Model.Page - 2); p <= Math.Min(Model.TotalPages, Model.Page + 2); p++)
+                {
+                    <li class="page-item @(p == Model.Page ? "active" : "")">
+                        <a class="page-link" href="@Url.Action("Index", "AuditLog", new { requestId = Model.RequestId, filter = Model.Filter, page = p, pageSize = Model.PageSize })">@p</a>
+                    </li>
+                }
+                <li class="page-item @(Model.Page >= Model.TotalPages ? "disabled" : "")">
+                    <a class="page-link" href="@Url.Action("Index", "AuditLog", new { requestId = Model.RequestId, filter = Model.Filter, page = Model.Page + 1, pageSize = Model.PageSize })">Next</a>
+                </li>
+            </ul>
+        </nav>
+    }
+}
