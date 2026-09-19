@@ -399,6 +399,81 @@ public class AutoFetchControllerTests : IAsyncLifetime
         Assert.Empty(Assert.IsAssignableFrom<IEnumerable<ReferenceCompanyHint>>(Assert.IsType<OkObjectResult>(await configured.Search("ab", CancellationToken.None)).Value));
     }
 
+    /// <summary>The whole point of the local table: it must answer without ever touching the network.
+    /// <see cref="NewController"/>'s client always uses <see cref="NoNetworkHandler"/>, so if the
+    /// controller fell through to the external tool here it would throw instead of returning these
+    /// exact rows.</summary>
+    [Fact]
+    public async Task Search_answers_from_local_master_data_for_both_company_and_llp()
+    {
+        await using var db = CreateContext();
+        var prefix = $"ZZTESTCO{Guid.NewGuid():N}"[..16].ToUpperInvariant();
+        var companyId = NewCompanyIdentifier();
+        var llpId = $"ZZZ-{Random.Shared.Next(1000, 9999)}";
+        db.CompanyMasterRecords.AddRange(
+            new CompanyMasterRecord { Identifier = companyId, RecordType = CompanyMasterRecordType.Company, Name = $"{prefix} PRIVATE LIMITED", Status = "Active" },
+            new CompanyMasterRecord { Identifier = llpId, RecordType = CompanyMasterRecordType.Llp, Name = $"{prefix} LLP", Status = "Active" });
+        await db.SaveChangesAsync();
+        try
+        {
+            var (controller, _) = NewController(db, configured: true);
+            var hits = Assert.IsAssignableFrom<IEnumerable<ReferenceCompanyHint>>(
+                Assert.IsType<OkObjectResult>(await controller.Search(prefix, CancellationToken.None)).Value).ToList();
+
+            Assert.Equal(2, hits.Count);
+            Assert.Contains(hits, h => h.Cin == companyId && h.LegalName == $"{prefix} PRIVATE LIMITED" && h.Status == "Active");
+            Assert.Contains(hits, h => h.Cin == llpId && h.LegalName == $"{prefix} LLP");
+        }
+        finally
+        {
+            await db.CompanyMasterRecords.Where(r => r.Identifier == companyId || r.Identifier == llpId).ExecuteDeleteAsync();
+        }
+    }
+
+    /// <summary>Foreign-company (FCRN) rows are imported for reference but must never be offered as an
+    /// AutoFetch hint — neither the identifier regex nor <see cref="EntityType"/> accepts that shape, so
+    /// picking one would only lead to a hint the form then rejects.</summary>
+    [Fact]
+    public async Task Search_never_surfaces_foreign_master_records()
+    {
+        await using var db = CreateContext();
+        var prefix = $"ZZTESTFC{Guid.NewGuid():N}"[..16].ToUpperInvariant();
+        var foreignId = $"F{Random.Shared.Next(10_000, 99_999)}";
+        db.CompanyMasterRecords.Add(new CompanyMasterRecord { Identifier = foreignId, RecordType = CompanyMasterRecordType.Foreign, Name = $"{prefix} PLC", Status = "Active" });
+        await db.SaveChangesAsync();
+        try
+        {
+            var (controller, _) = NewController(db, configured: false); // no local match reaches here → falls through, but tool isn't configured either
+            Assert.Empty(Assert.IsAssignableFrom<IEnumerable<ReferenceCompanyHint>>(
+                Assert.IsType<OkObjectResult>(await controller.Search(prefix, CancellationToken.None)).Value));
+        }
+        finally
+        {
+            await db.CompanyMasterRecords.Where(r => r.Identifier == foreignId).ExecuteDeleteAsync();
+        }
+    }
+
+    [Fact]
+    public async Task Search_matches_local_master_data_case_insensitively_on_name_prefix()
+    {
+        await using var db = CreateContext();
+        var suffix = Guid.NewGuid().ToString("N")[..8].ToUpperInvariant();
+        var identifier = $"U{suffix}MH2026PTC000001";
+        db.CompanyMasterRecords.Add(new CompanyMasterRecord { Identifier = identifier, RecordType = CompanyMasterRecordType.Company, Name = $"ZZCASETEST{suffix} LIMITED" });
+        await db.SaveChangesAsync();
+        try
+        {
+            var (controller, _) = NewController(db, configured: false);
+            var hits = Assert.IsAssignableFrom<IEnumerable<ReferenceCompanyHint>>(
+                Assert.IsType<OkObjectResult>(await controller.Search($"zzcasetest{suffix}".ToLowerInvariant(), CancellationToken.None)).Value);
+            Assert.Single(hits, h => h.Cin == identifier);
+        }
+        finally
+        {
+            await db.CompanyMasterRecords.Where(r => r.Identifier == identifier).ExecuteDeleteAsync();
+        }
+    }
+
     private sealed class NoNetworkHandler : HttpMessageHandler
     {
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) =>

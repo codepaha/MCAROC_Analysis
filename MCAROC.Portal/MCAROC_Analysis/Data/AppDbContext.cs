@@ -88,6 +88,9 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     // Audit Logging
     public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
 
+    // Company master lookup (bulk-imported MCA name→CIN/LLPIN/FCRN reference data)
+    public DbSet<CompanyMasterRecord> CompanyMasterRecords => Set<CompanyMasterRecord>();
+
     protected override void ConfigureConventions(ModelConfigurationBuilder configurationBuilder)
     {
         // Default precision for monetary/count decimals (mostly Rs. Crore values); percentages override below.
@@ -765,6 +768,32 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             e.HasIndex(x => new { x.RequestId, x.TimestampUtc });
             e.HasIndex(x => new { x.Status, x.TimestampUtc });
             e.HasIndex(x => new { x.Action, x.TimestampUtc });
+        });
+
+        modelBuilder.Entity<CompanyMasterRecord>(e =>
+        {
+            e.HasKey(x => x.Identifier);
+            e.Property(x => x.Identifier).HasMaxLength(25);
+            e.Property(x => x.RecordType).HasConversion<string>().HasMaxLength(10);
+            e.Property(x => x.Name).HasMaxLength(400);
+            e.Property(x => x.Category).HasMaxLength(100);
+            e.Property(x => x.Class).HasMaxLength(50);
+            e.Property(x => x.ListingStatus).HasMaxLength(30);
+            e.Property(x => x.Roc).HasMaxLength(80);
+            e.Property(x => x.PinCode).HasMaxLength(10);
+            e.Property(x => x.State).HasMaxLength(80);
+            e.Property(x => x.District).HasMaxLength(80);
+            e.Property(x => x.Country).HasMaxLength(80);
+            e.Property(x => x.Status).HasMaxLength(30);
+            e.Property(x => x.SubCategory).HasMaxLength(80);
+            e.Property(x => x.IndustrialClassification).HasMaxLength(200);
+            // Address is free text of very uneven length (some records pack a full multi-line
+            // registered-office block in) — left nvarchar(max), same treatment as EpfoEstablishment.Address.
+
+            // Name search is this table's entire reason to exist (AutoFetchController.Search), always
+            // filtered to RecordType first — Foreign records are looked up here but never surfaced to
+            // AutoFetch, since neither its identifier regex nor EntityType accepts an FCRN.
+            e.HasIndex(x => new { x.RecordType, x.Name });
         });
 
         modelBuilder.Entity<Client>().HasData(

@@ -135,13 +135,20 @@ public partial class AutoFetchController(
 
     }
 
-    /// <summary>Auto-complete for the form: proxies the reference tool's own company search. Returns an
-    /// empty list (not an error) whenever the tool can't be asked, so the form still works by CIN alone.</summary>
+    /// <summary>Auto-complete for the form. Tries the locally bulk-imported MCA master data first — it's
+    /// instant and needs no external session — and only falls back to the reference tool's live search
+    /// when the local table has nothing (e.g. the name master hasn't been imported yet, or a genuinely
+    /// unmatched query). Returns an empty list (not an error) whenever neither source can help, so the
+    /// form still works by CIN alone.</summary>
     [HttpGet("/Requests/AutoFetch/search")]
     public async Task<IActionResult> Search([FromQuery] string? q, CancellationToken ct)
     {
         var query = (q ?? "").Trim();
         if (query.Length < 3) return Ok(Array.Empty<ReferenceCompanyHint>());
+
+        var localHits = await SearchLocalMasterDataAsync(query, 10, ct);
+        if (localHits.Count > 0) return Ok(localHits);
+
         if (!client.IsConfigured) return Ok(Array.Empty<ReferenceCompanyHint>());
         try
         {
@@ -154,6 +161,20 @@ public partial class AutoFetchController(
             return Ok(Array.Empty<ReferenceCompanyHint>());
         }
     }
+
+    /// <summary>Prefix match against the bulk-imported CompanyMasterRecords table (see
+    /// Tools/ImportCompanyMasterData), indexed on (RecordType, Name) so this is a seek, not a scan, even
+    /// at the table's ~3.7M-row scale. Foreign-company (FCRN) records are excluded: neither the identifier
+    /// regex above nor <see cref="EntityType"/> accepts that format, so surfacing them here would only
+    /// let a caller pick a hint that then fails validation.</summary>
+    private async Task<List<ReferenceCompanyHint>> SearchLocalMasterDataAsync(string query, int limit, CancellationToken ct) =>
+        await db.CompanyMasterRecords
+            .Where(r => (r.RecordType == CompanyMasterRecordType.Company || r.RecordType == CompanyMasterRecordType.Llp)
+                && r.Name.StartsWith(query))
+            .OrderBy(r => r.Name)
+            .Take(limit)
+            .Select(r => new ReferenceCompanyHint(r.Name, r.Identifier, null, r.Status, r.RecordType.ToString()))
+            .ToListAsync(ct);
 
     [HttpGet("/Requests/{id:long}/autofetch/status")]
     public async Task<IActionResult> Status(long id, CancellationToken ct)

@@ -334,3 +334,17 @@ public enum CalculationAssuranceMode
     ObserveOnly,
     Enforced
 }
+
+// ── Company master lookup (name → identifier, bulk-imported from MCA master data) ──
+
+/// <summary>Which MCA master list a <see cref="CompanyMasterRecord"/> was imported from. Only
+/// <see cref="Company"/> and <see cref="Llp"/> map onto AutoFetch's <see cref="EntityType"/> — MCA
+/// does not publish a CIN/LLPIN-shaped identifier for foreign companies that AutoFetch's regex or
+/// entity picker currently accept, so <see cref="Foreign"/> records are kept for reference/lookup only
+/// and excluded from the AutoFetch name-search results.</summary>
+public enum CompanyMasterRecordType
+{
+    Company,
+    Llp,
+    Foreign
+}
