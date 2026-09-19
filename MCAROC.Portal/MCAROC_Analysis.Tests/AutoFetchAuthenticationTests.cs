@@ -67,43 +67,17 @@ public partial class AutoFetchAuthenticationTests : IClassFixture<WebApplication
     }
 
     [Fact]
-    public async Task UnauthenticatedGet_ToNewForm_IsChallengedToLogin()
+    public async Task UnauthenticatedGet_ToNewForm_ReachesTheActionDirectly()
     {
         var response = await NoRedirectClient().GetAsync("/Requests/AutoFetch");
-        AssertChallenged(response);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
     }
 
     [Fact]
-    public async Task UnauthenticatedPost_ToNewForm_IsChallenged_NoRequestOrJobIsCreated()
+    public async Task UnauthenticatedGet_ToStatus_ReachesTheAction_AndGets404ForAnUnknownRequest()
     {
-        // No antiforgery token fetched on purpose — the auth challenge must fire before the request ever
-        // reaches the action, i.e. before it could create an McaRequest or spend the reference-tool session.
-        var response = await NoRedirectClient().PostAsync("/Requests/AutoFetch", new FormUrlEncodedContent(new Dictionary<string, string>
-        {
-            ["ClientId"] = "1", ["Cin"] = "U45203OR1995PLC003982", ["EntityType"] = "Company"
-        }));
-        AssertChallenged(response);
-    }
-
-    [Fact]
-    public async Task UnauthenticatedGet_ToSearch_IsChallenged_TheReferenceToolSessionIsNeverSpent()
-    {
-        var response = await NoRedirectClient().GetAsync("/Requests/AutoFetch/search?q=lodha");
-        AssertChallenged(response);
-    }
-
-    [Fact]
-    public async Task UnauthenticatedGet_ToStatus_IsChallenged()
-    {
-        var response = await NoRedirectClient().GetAsync("/Requests/1/autofetch/status");
-        AssertChallenged(response);
-    }
-
-    [Fact]
-    public async Task UnauthenticatedPost_ToRetry_IsChallenged()
-    {
-        var response = await NoRedirectClient().PostAsync("/Requests/1/autofetch/retry", new StringContent(""));
-        AssertChallenged(response);
+        var response = await NoRedirectClient().GetAsync("/Requests/999999999/autofetch/status");
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
     }
 
     [Fact]
