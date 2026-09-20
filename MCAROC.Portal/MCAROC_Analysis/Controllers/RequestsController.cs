@@ -13,6 +13,8 @@ using System.Text.Json;
 using MCAROC_Analysis.Models.Chat;
 using MCAROC_Analysis.Services.Audit;
 using MCAROC_Analysis.Services.Chat;
+using MCAROC_Analysis.Services.Excel;
+using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authorization;
 
 namespace MCAROC_Analysis.Controllers;
@@ -27,7 +29,9 @@ public class RequestsController(
     DossierCache dossierCache,
     IWebHostEnvironment env,
     CorporateTimelineBuilder corporateTimelineBuilder,
-    ILogger<RequestsController>? logger = null) : Controller
+    ILogger<RequestsController>? logger = null,
+    IWorkbookDerivativeService? derivativeService = null,
+    MCAROC_Analysis.Services.Documents.ISignedDownloadTokenService? tokenService = null) : Controller
 {
     [HttpGet("/Requests")]
     public async Task<IActionResult> Index([FromQuery] RequestListFilterCriteria filters)
@@ -424,6 +428,18 @@ public class RequestsController(
         doc.StoragePath = fullPath;
         await db.SaveChangesAsync();
 
+        if ((ext.Equals(".xls", StringComparison.OrdinalIgnoreCase) || ext.Equals(".xlsx", StringComparison.OrdinalIgnoreCase)) && derivativeService != null)
+        {
+            try
+            {
+                await derivativeService.GetOrCreateSanitizedDerivativeAsync(doc);
+            }
+            catch (Exception ex)
+            {
+                logger?.LogWarning(ex, "Failed to create sanitized derivative for candidate Document {DocumentId}", doc.DocumentId);
+            }
+        }
+
         return doc;
     }
 
@@ -783,6 +799,17 @@ public class RequestsController(
                 document.UploadStatus = DocumentUploadStatus.ValidationFailed;
                 document.QuarantineReason = openCheck.Error;
             }
+            else if (derivativeService != null)
+            {
+                try
+                {
+                    await derivativeService.GetOrCreateSanitizedDerivativeAsync(document);
+                }
+                catch (Exception ex)
+                {
+                    logger?.LogWarning(ex, "Failed to create sanitized derivative for Document {DocumentId}", document.DocumentId);
+                }
+            }
         }
 
         await db.SaveChangesAsync();
@@ -950,6 +977,179 @@ public class RequestsController(
         Response.Headers.ContentDisposition = cd.ToString();
 
         return PhysicalFile(physicalPath, "application/pdf", enableRangeProcessing: true);
+    }
+
+    private static readonly HashSet<char> DisallowedDownloadFileNameChars = new(
+        Path.GetInvalidFileNameChars().Concat(new[] { '"', '\\', '/', ':', ';', '\r', '\n', '*', '?', '<', '>', '|' })
+    );
+
+    /// <summary>
+    /// Deterministically resolves a safe download file name for uploaded documents,
+    /// preventing header injection, CRLF injection, and path traversal while preserving Unicode and valid extensions.
+    /// </summary>
+    public static string GetSafeUploadedDownloadFileName(long docId, string? originalFileName)
+    {
+        if (string.IsNullOrWhiteSpace(originalFileName))
+            return $"document-{docId}.bin";
+
+        var normalized = originalFileName.Replace('\\', '/');
+        var fileName = Path.GetFileName(normalized);
+        var cleanChars = fileName.Where(c => !char.IsControl(c) && !DisallowedDownloadFileNameChars.Contains(c)).ToArray();
+        var clean = new string(cleanChars).Trim();
+
+        if (string.IsNullOrWhiteSpace(clean))
+            return $"document-{docId}.bin";
+
+        return clean;
+    }
+
+    [HttpGet("/Requests/{requestId:long}/uploaded-documents/{docId:long}/download")]
+    public async Task<IActionResult> DownloadUploadedDocument(
+        long requestId,
+        long docId,
+        [FromQuery] string? token,
+        CancellationToken ct)
+    {
+        // ── Step 1: Zero-DB-Lookup Authorization Check ────────────────────────
+        // Fast-fail with uniform 404 BEFORE touching the database or verifying document existence.
+        // This prevents document-ID enumeration and guarantees unauthenticated anonymous callers
+        // without a valid signed token cannot probe the system.
+        var isReviewer = false;
+        try
+        {
+            var authResult = await HttpContext.AuthenticateAsync("InternalReviewer");
+            isReviewer = authResult?.Succeeded == true && authResult.Principal?.Identity?.IsAuthenticated == true;
+        }
+        catch (InvalidOperationException)
+        {
+            isReviewer = HttpContext.User?.Identities.Any(i => i.AuthenticationType == "InternalReviewer" && i.IsAuthenticated) == true;
+        }
+
+        var isTokenValid = tokenService?.ValidateToken(requestId, docId, token) ?? false;
+
+        if (!isReviewer && !isTokenValid)
+        {
+            // Telemetry: Record denial without leaking the token value
+            logger?.LogWarning(
+                "Audit: Uploaded document download DENIED (Unauthenticated/InvalidToken). RequestId={RequestId}, DocumentId={DocId}, HasToken={HasToken}",
+                requestId, docId, !string.IsNullOrWhiteSpace(token));
+            return NotFound();
+        }
+
+        // ── Step 2: Database Document Lookup (Only after authorization) ───────
+        var doc = await db.RequestDocuments.AsNoTracking().FirstOrDefaultAsync(d => d.DocumentId == docId && d.RequestId == requestId, ct);
+        if (doc == null)
+        {
+            logger?.LogWarning("Audit: Uploaded document not found. RequestId={RequestId}, DocumentId={DocId}", requestId, docId);
+            return NotFound();
+        }
+
+        // ── Step 3: Quarantine Enforcement ────────────────────────────────────
+        // Quarantined files are strictly reviewer-only for diagnostic inspection; token bearers cannot download quarantined files.
+        if (doc.UploadStatus == DocumentUploadStatus.Quarantined)
+        {
+            if (!isReviewer)
+            {
+                logger?.LogWarning("Audit: Quarantined document download DENIED for non-reviewer. RequestId={RequestId}, DocumentId={DocId}", requestId, docId);
+                return NotFound();
+            }
+        }
+
+        // ── Step 4: Extension Allowlist ───────────────────────────────────────
+        var ext = Path.GetExtension(doc.OriginalFileName).ToLowerInvariant();
+        if (string.IsNullOrEmpty(ext))
+        {
+            ext = Path.GetExtension(doc.StoragePath).ToLowerInvariant();
+        }
+
+        var allowedExtensions = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ".xlsx", ".xls", ".zip", ".csv", ".pdf"
+        };
+
+        if (!allowedExtensions.Contains(ext))
+        {
+            logger?.LogWarning("Audit: Unsupported file extension {Ext} requested for DocumentId={DocId}", ext, docId);
+            return StatusCode(StatusCodes.Status415UnsupportedMediaType, "Unsupported file media type.");
+        }
+
+        // ── Step 5: Resolve Physical Path (Sanitized derivative for Excel, Raw for others) ──
+        string physicalPath;
+        if (ext is ".xlsx" or ".xls")
+        {
+            if (derivativeService == null)
+            {
+                logger?.LogWarning("Derivative service unavailable for Document {DocId}", docId);
+                return StatusCode(StatusCodes.Status503ServiceUnavailable, "Sanitized download is currently unavailable for this document.");
+            }
+
+            var derivative = await derivativeService.GetOrCreateSanitizedDerivativeAsync(doc, ct);
+            if (derivative == null || derivative.Status == DocumentDerivativeStatus.Failed || string.IsNullOrEmpty(derivative.StoragePath))
+            {
+                logger?.LogWarning("Sanitized derivative unavailable for Document {DocId}", docId);
+                return StatusCode(StatusCodes.Status503ServiceUnavailable, "Sanitized download is currently unavailable for this document.");
+            }
+
+            if (!System.IO.File.Exists(derivative.StoragePath))
+            {
+                logger?.LogError("Sanitized derivative storage path missing on disk: {Path}", derivative.StoragePath);
+                return NotFound();
+            }
+
+            var expectedDerivativesDir = Path.GetFullPath(Path.Combine(env.ContentRootPath, "App_Data", "Uploads", requestId.ToString(), "derivatives")) + Path.DirectorySeparatorChar;
+            var fullDerivativePath = Path.GetFullPath(derivative.StoragePath);
+            if (!fullDerivativePath.StartsWith(expectedDerivativesDir, StringComparison.OrdinalIgnoreCase))
+            {
+                logger?.LogError("Path traversal detected on derivative {Path} for Request {RequestId}", fullDerivativePath, requestId);
+                return NotFound();
+            }
+
+            physicalPath = fullDerivativePath;
+        }
+        else
+        {
+            if (string.IsNullOrWhiteSpace(doc.StoragePath) || !System.IO.File.Exists(doc.StoragePath))
+            {
+                logger?.LogError("Storage path missing or file not found on disk for Document {DocId}", docId);
+                return NotFound();
+            }
+
+            var expectedUploadsDir = Path.GetFullPath(Path.Combine(env.ContentRootPath, "App_Data", "Uploads", requestId.ToString())) + Path.DirectorySeparatorChar;
+            var fullStoragePath = Path.GetFullPath(doc.StoragePath);
+            if (!fullStoragePath.StartsWith(expectedUploadsDir, StringComparison.OrdinalIgnoreCase))
+            {
+                logger?.LogError("Path traversal detected on document {Path} for Request {RequestId}", fullStoragePath, requestId);
+                return NotFound();
+            }
+
+            physicalPath = fullStoragePath;
+        }
+
+        // ── Step 6: Telemetry & Security Headers ──────────────────────────────
+        var authMethod = isReviewer ? "ReviewerSession" : "SignedToken";
+        logger?.LogInformation(
+            "Audit: Uploaded document download AUTHORIZED ({AuthMethod}). RequestId={RequestId}, DocumentId={DocId}, IsQuarantined={IsQuarantined}",
+            authMethod, requestId, docId, doc.UploadStatus == DocumentUploadStatus.Quarantined);
+
+        Response.Headers["Referrer-Policy"] = "no-referrer";
+        Response.Headers.CacheControl = "no-store, private";
+        Response.Headers["X-Content-Type-Options"] = "nosniff";
+
+        var safeFileName = GetSafeUploadedDownloadFileName(docId, doc.OriginalFileName);
+        var cd = new Microsoft.Net.Http.Headers.ContentDispositionHeaderValue("attachment");
+        cd.SetHttpFileName(safeFileName);
+        Response.Headers.ContentDisposition = cd.ToString();
+
+        var contentType = ext switch
+        {
+            ".xlsx" => "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            ".xls" => "application/vnd.ms-excel",
+            ".zip" => "application/zip",
+            ".csv" => "text/csv",
+            ".pdf" => "application/pdf",
+            _ => "application/octet-stream"
+        };
+        return PhysicalFile(physicalPath, contentType, enableRangeProcessing: true);
     }
 
     [HttpPost("/Requests/{requestId:long}/chat")]
