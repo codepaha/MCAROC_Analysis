@@ -1,0 +1,270 @@
+using System.Net;
+using System.Net.Http.Json;
+using System.Text.Json;
+using Microsoft.Extensions.Options;
+
+namespace MCAROC_Analysis.Services.LitigationData;
+
+/// <summary>Thin client for the three confirmed BPR Litigation Data API endpoints (authenticate, register,
+/// report — see the vendor's own Postman collection, never committed to source).
+/// <list type="bullet">
+/// <item><b>Confirmed by a live test call:</b> POST sec/authenticate returns the JWT as a raw response body
+/// (not JSON-wrapped) — <see cref="AuthenticateAsync"/> accepts that directly, with a JSON-field fallback
+/// kept only in case the vendor ever wraps it.</item>
+/// <item>The register response field name for the vendor job id is still unconfirmed — no example response
+/// was captured for that call. <see cref="ExtractStringField"/> tries a short list of plausible field names
+/// and fails loudly, naming the actual top-level keys received (never the values), if none match.</item>
+/// <item>GET report/job/{id} has no separate status/polling endpoint, so one response must distinguish
+/// "still processing" from "complete" from "failed" itself — see <see cref="GetReportAsync"/>. Confirmed by
+/// a live test call: a not-found job returns HTTP 200 with a JSON error envelope
+/// (<c>{"status":false,"message":"..."}</c>) — a valid, non-empty JSON body that is neither a report nor a
+/// string pending-status field, so it is classified explicitly rather than falling through to Completed.</item>
+/// </list></summary>
+public sealed class BprLitigationClient(HttpClient http, IOptions<BprLitigationOptions> options, ILogger<BprLitigationClient> logger)
+{
+    private static readonly string[] TokenFieldCandidates = ["jwt", "token", "access_token", "Authorization", "authorization"];
+    private static readonly string[] JobIdFieldCandidates = ["job_id", "jobId", "id", "request_id", "requestId"];
+    private static readonly string[] PendingStatusValues = ["pending", "processing", "in_progress", "inprogress", "queued", "running"];
+    private static readonly byte[] ZipSignature = [0x50, 0x4B, 0x03, 0x04]; // "PK\x03\x04" — XLSX is a zip container
+
+    private readonly BprLitigationOptions _opts = options.Value;
+
+    /// <summary>POST sec/authenticate with the configured id/secret_key. A live test call confirmed the
+    /// response body is the raw JWT itself, not JSON — that is tried first; a JSON-wrapped token (one of
+    /// <see cref="TokenFieldCandidates"/>) is accepted as a fallback in case the vendor changes this. Returns
+    /// the token exactly as received — sent back verbatim as the Authorization header value on later calls,
+    /// with no "Bearer " prefix (also confirmed from the vendor's own example requests). Never logged.</summary>
+    public async Task<string> AuthenticateAsync(CancellationToken ct)
+    {
+        RequireConfigured();
+        using var response = await http.PostAsJsonAsync("sec/authenticate", new { id = _opts.Id, secret_key = _opts.SecretKey }, ct);
+        var body = await response.Content.ReadAsStringAsync(ct);
+        if (!response.IsSuccessStatusCode)
+            throw new BprLitigationException($"BPR authentication failed with HTTP {(int)response.StatusCode}.");
+
+        var token = ExtractRawJwt(body) ?? ExtractStringField(body, TokenFieldCandidates);
+        if (token is null)
+            throw new BprLitigationException(
+                "BPR authentication succeeded but the response was neither a raw JWT body nor a recognizable " +
+                "JSON token field (tried: " + string.Join(", ", TokenFieldCandidates) + ").");
+        return token;
+    }
+
+    /// <summary>POST bprjob/register with only approved keywords (the caller is responsible for building
+    /// the plan via <see cref="LitigationKeywordPlanner"/> — this client never invents search terms).
+    /// Returns the vendor's job id. Callers must not call this twice for the same logical search; job-level
+    /// idempotency (skip registration once a vendor job id is already recorded) is the caller's
+    /// responsibility, not this client's — it has no state of its own.</summary>
+    public async Task<string> RegisterJobAsync(
+        string token, IReadOnlyList<string> keywords, string entityType, string applicationCustomerId, CancellationToken ct)
+    {
+        RequireConfigured();
+        if (keywords.Count == 0) throw new ArgumentException("At least one approved keyword is required.", nameof(keywords));
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, "bprjob/register");
+        request.Headers.TryAddWithoutValidation("Authorization", token);
+        request.Content = JsonContent.Create(new
+        {
+            entity_type = entityType,
+            keywords,
+            application_customer_id = applicationCustomerId,
+            file_format = _opts.FileFormat,
+            exact_match = _opts.ExactMatch,
+            formats = _opts.Formats
+        });
+
+        using var response = await http.SendAsync(request, ct);
+        var body = await response.Content.ReadAsStringAsync(ct);
+        if (!response.IsSuccessStatusCode)
+            throw new BprLitigationException($"BPR job registration failed with HTTP {(int)response.StatusCode}.");
+
+        var jobId = ExtractStringField(body, JobIdFieldCandidates);
+        if (jobId is null)
+            throw new BprLitigationException(
+                "BPR job registration succeeded but the response did not contain a recognizable job id field " +
+                "(tried: " + string.Join(", ", JobIdFieldCandidates) + ").");
+        return jobId;
+    }
+
+    /// <summary>GET report/job/{vendorJobId}. There is no separate status/polling endpoint in the confirmed
+    /// contract, so this single call must distinguish "not ready yet" from "complete" from "failed" itself:
+    /// <list type="bullet">
+    /// <item>HTTP 202/204/404/425 → <see cref="BprReportPollStatus.Pending"/> (report-generation lag is the
+    /// documented reason a fresh job id might briefly 404).</item>
+    /// <item>HTTP 200 with a small JSON body carrying a recognizable in-progress status field →
+    /// <see cref="BprReportPollStatus.Pending"/>.</item>
+    /// <item>HTTP 200 whose bytes start with the ZIP signature (XLSX) or whose Content-Type says so →
+    /// <see cref="BprReportPollStatus.Completed"/> with <see cref="BprReportFormat.Xlsx"/>.</item>
+    /// <item>HTTP 200 with any other non-trivial body → <see cref="BprReportPollStatus.Completed"/> with
+    /// <see cref="BprReportFormat.Json"/> if it parses as JSON, else <see cref="BprReportFormat.Unknown"/> —
+    /// never discarded, always handed back for the caller to store and a human to inspect.</item>
+    /// <item>Any other HTTP status → <see cref="BprReportPollStatus.Failed"/>.</item>
+    /// </list></summary>
+    public async Task<BprReportPollResult> GetReportAsync(string token, string vendorJobId, CancellationToken ct)
+    {
+        RequireConfigured();
+        using var request = new HttpRequestMessage(HttpMethod.Get, $"report/job/{Uri.EscapeDataString(vendorJobId)}");
+        request.Headers.TryAddWithoutValidation("Authorization", token);
+
+        using var response = await http.SendAsync(request, HttpCompletionOption.ResponseContentRead, ct);
+        if (response.StatusCode is HttpStatusCode.Accepted or HttpStatusCode.NoContent
+            or HttpStatusCode.NotFound or (HttpStatusCode)425)
+            return BprReportPollResult.Pending($"HTTP {(int)response.StatusCode} — treated as report not ready yet.");
+
+        var bytes = await response.Content.ReadAsByteArrayAsync(ct);
+        if (!response.IsSuccessStatusCode)
+            return BprReportPollResult.Failed($"HTTP {(int)response.StatusCode} from report/job/{vendorJobId}.");
+
+        if (bytes.Length == 0)
+            return BprReportPollResult.Pending("HTTP 200 with an empty body — treated as report not ready yet.");
+
+        if (StartsWithZipSignature(bytes))
+            return BprReportPollResult.Completed(bytes, BprReportFormat.Xlsx);
+
+        var contentType = response.Content.Headers.ContentType?.MediaType;
+        if (contentType is not null && contentType.Contains("spreadsheet", StringComparison.OrdinalIgnoreCase))
+            return BprReportPollResult.Completed(bytes, BprReportFormat.Xlsx);
+
+        var text = System.Text.Encoding.UTF8.GetString(bytes);
+        if (TryParseJson(text, out var root))
+        {
+            if (root.ValueKind == JsonValueKind.Object)
+            {
+                if (TryClassifyControlEnvelope(root, out var controlResult))
+                    return controlResult!;
+                if (HasPendingStatusField(root))
+                    return BprReportPollResult.Pending("Report response carries an in-progress status field.");
+            }
+            return BprReportPollResult.Completed(bytes, BprReportFormat.Json);
+        }
+
+        logger.LogWarning(
+            "BPR report/job/{VendorJobId} returned a 200 response that is neither a ZIP/XLSX signature nor valid JSON " +
+            "({ByteCount} bytes, Content-Type {ContentType}) — storing as Unknown for manual inspection.",
+            vendorJobId, bytes.Length, contentType ?? "(none)");
+        return BprReportPollResult.Completed(bytes, BprReportFormat.Unknown);
+    }
+
+    private void RequireConfigured()
+    {
+        if (!_opts.IsConfigured)
+            throw new BprLitigationException(
+                "BPR litigation client is not configured: set BprLitigation:BaseUrl, BprLitigation:Id and " +
+                "BprLitigation:SecretKey (user-secrets/environment only — never a committed file).");
+    }
+
+    private static bool StartsWithZipSignature(byte[] bytes) =>
+        bytes.Length >= ZipSignature.Length && bytes.AsSpan(0, ZipSignature.Length).SequenceEqual(ZipSignature);
+
+    private static bool TryParseJson(string text, out JsonElement root)
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(text);
+            root = document.RootElement.Clone();
+            return true;
+        }
+        catch (JsonException)
+        {
+            root = default;
+            return false;
+        }
+    }
+
+    private static bool HasPendingStatusField(JsonElement root)
+    {
+        foreach (var name in new[] { "status", "state", "job_status" })
+        {
+            if (root.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String &&
+                Array.IndexOf(PendingStatusValues, value.GetString()?.ToLowerInvariant()) >= 0)
+                return true;
+        }
+        return false;
+    }
+
+    /// <summary>Recognizes the confirmed BPR error-envelope shape — a JSON <b>boolean</b> <c>status</c> field
+    /// (e.g. <c>{"status":false,"message":"Job not found"}</c>), as opposed to the <b>string</b> status field
+    /// <see cref="HasPendingStatusField"/> checks for. A genuine report never carries a top-level boolean
+    /// "status" (see <see cref="BprLitigationReportParser"/> — real reports have "request_details" plus
+    /// nested court-category keys, never this), so any boolean status field means this 200 response is a
+    /// control envelope, not report content, and must never fall through to being stored as a completed
+    /// report. <c>status:false</c> is a confirmed failure (uses "message" if present). <c>status:true</c> has
+    /// no confirmed meaning here, so it is treated as not-yet-a-report (Pending) rather than risk storing a
+    /// non-report payload as Completed — the safe direction to err in.</summary>
+    private static bool TryClassifyControlEnvelope(JsonElement root, out BprReportPollResult? result)
+    {
+        result = null;
+        if (!root.TryGetProperty("status", out var statusValue) || statusValue.ValueKind is not (JsonValueKind.True or JsonValueKind.False))
+            return false;
+
+        if (statusValue.ValueKind == JsonValueKind.False)
+        {
+            var message = root.TryGetProperty("message", out var messageValue) && messageValue.ValueKind == JsonValueKind.String
+                ? messageValue.GetString()
+                : null;
+            result = BprReportPollResult.Failed(message ?? "BPR returned a status:false error envelope with no message.");
+            return true;
+        }
+
+        result = BprReportPollResult.Pending("BPR returned a status:true acknowledgement envelope — not yet a report.");
+        return true;
+    }
+
+    private static string? ExtractStringField(string json, string[] candidates)
+    {
+        if (!TryParseJson(json, out var root) || root.ValueKind != JsonValueKind.Object) return null;
+        foreach (var name in candidates)
+        {
+            if (root.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String)
+            {
+                var text = value.GetString();
+                if (!string.IsNullOrWhiteSpace(text)) return text;
+            }
+        }
+        return null;
+    }
+
+    /// <summary>Accepts the confirmed real shape of a sec/authenticate response: the JWT as the entire raw
+    /// body. Also tolerates a body wrapped in one extra layer of JSON-string quoting (<c>"eyJ..."</c>), in
+    /// case a proxy or client library re-serializes it.</summary>
+    private static string? ExtractRawJwt(string body)
+    {
+        var trimmed = body.Trim();
+        if (trimmed.Length >= 2 && trimmed[0] == '"' && trimmed[^1] == '"')
+            trimmed = trimmed[1..^1];
+        return LooksLikeJwt(trimmed) ? trimmed : null;
+    }
+
+    /// <summary>A JWT is three base64url segments separated by dots (header.payload.signature) — a loose but
+    /// specific enough check to distinguish a real token from an unrelated raw response body.</summary>
+    private static bool LooksLikeJwt(string value)
+    {
+        var parts = value.Split('.');
+        return parts.Length == 3 && Array.TrueForAll(parts, part => part.Length > 0 && IsBase64UrlSegment(part));
+    }
+
+    private static bool IsBase64UrlSegment(string segment)
+    {
+        foreach (var c in segment)
+        {
+            if (!char.IsAsciiLetterOrDigit(c) && c is not ('-' or '_'))
+                return false;
+        }
+        return true;
+    }
+}
+
+public enum BprReportFormat { Unknown, Json, Xlsx }
+
+public enum BprReportPollStatus { Pending, Completed, Failed }
+
+public sealed record BprReportPollResult(BprReportPollStatus Status, byte[]? Bytes, BprReportFormat Format, string? Message)
+{
+    public static BprReportPollResult Pending(string message) => new(BprReportPollStatus.Pending, null, BprReportFormat.Unknown, message);
+    public static BprReportPollResult Completed(byte[] bytes, BprReportFormat format) => new(BprReportPollStatus.Completed, bytes, format, null);
+    public static BprReportPollResult Failed(string message) => new(BprReportPollStatus.Failed, null, BprReportFormat.Unknown, message);
+}
+
+/// <summary>Raised for any BPR API failure — HTTP-level, misconfiguration, or an unrecognized response
+/// shape. Never carries the token/secret; callers may log this exception's message safely.</summary>
+public sealed class BprLitigationException(string message) : Exception(message);

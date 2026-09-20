@@ -152,7 +152,7 @@ gate, so it gets its own table rather than living inside either lane's section a
 
 | Issue | What | Lane | Depends on | Status |
 |---|---|---|---|---|
-| #241 LIT-01 | BPR API client + durable litigation-job lifecycle | Claude | — | unclaimed |
+| #241 LIT-01 | BPR API client + durable litigation-job lifecycle | Claude | — | **CLAIMED** (`feature/241-bpr-litigation-client`) |
 | #242 LIT-02 | Persist BPR cases; retain CSP provider identity and apply conservative CNR-first de-duplication | Claude | #241 | unclaimed |
 | #243 LIT-03 | All-orders retrieval, text retention, ZIP delivery | Claude | #241, #242 | unclaimed |
 | #244 LIT-04 | Request-scoped litigation evidence for MCA ROC Copilot | Claude | #243 | unclaimed |
@@ -279,6 +279,26 @@ service — if it sits `queued`, `run.cmd` is down) runs *only* what Linux can't
 
 ## Log  <!-- newest first. Prefix: NEEDS / BLOCKED / DONE / DECISION / FYI -->
 
+### 2026-09-20 — Claude session (DONE PR #251 review round 2 — raw-JWT auth, error-envelope misclassification, duplicate-search reset guard, all fixed)
+- **Three findings, both from a live test call against the real BPR API, both fixed at `07f71a8`:**
+  1. `sec/authenticate` returns the JWT as the raw response body, not JSON-wrapped — `AuthenticateAsync`
+     only tried JSON field extraction before this and would have thrown on the real response. Now accepts a
+     raw JWT directly (`LooksLikeJwt`: three base64url segments), JSON-field extraction kept as a fallback.
+  2. A not-found job returns HTTP 200 with `{"status":false,"message":"Job not found"}` — valid, non-empty
+     JSON with no *string* status field, so it fell through to being classified as a completed report. Added
+     `TryClassifyControlEnvelope`: a JSON *boolean* `status` field is never report content (real reports
+     never carry one), so `status:false` → Failed (using `message`); `status:true` → Pending (unconfirmed
+     meaning, but still not report content — err toward not losing data over risking a bad Completed).
+  3. `CreateOrResetJobAsync` unconditionally cleared `VendorJobId`/`RegistrationAttemptedUtc` on an existing
+     job even while Authenticating/Registering/Polling, or Pending with an unresolved registration attempt —
+     a subsequent worker could then register a second, duplicate vendor-side search while the original might
+     still be running. Reset is now rejected (`InvalidOperationException`) unless the job is terminal or was
+     never touched by BPR at all — an explicit, auditable rerun action, not an implicit side effect.
+- 11 new regression tests, 93/94 litigation-filtered tests pass (1 unrelated pre-existing skip), full build
+  clean. The prior push's `windows-tests` failure was the self-hosted runner's known shared-SQLEXPRESS
+  "Database already exists" contention (`DossierPdfComposerTests`, unrelated) — re-running. `@codex`
+  re-review requested.
+
 ### 2026-09-20 — Claude session (DONE PR #250 review round 1 — missing report fields + stale design doc, both fixed)
 - **Two findings on PR #250, both fixed at `f9de6d2`:**
   1. `LitigationReportArtifacts` omitted `Type` from both the PDF case-details grid and the CSV (distinct
@@ -298,6 +318,68 @@ service — if it sits `queued`, `run.cmd` is down) runs *only* what Linux can't
 - 49/50 litigation-filtered tests pass (1 unrelated pre-existing skip), full build clean. Propagated the
   same fixes into #251 (stacked on this branch) via a clean merge, no conflicts, 81/82 still green there.
   `@codex` re-review requested on both #250 and #251.
+
+### 2026-09-20 — Claude session (DONE PR #251 review round 1 — lease fencing + crash-safe registration, both fixed)
+- **Two real findings on PR #251, both fixed at `b830d74`:**
+  1. `LeaseOwner` was diagnostic-only (a reusable `"machine:pid"` string) — a stale worker whose lease had
+     been reclaimed by a takeover could still overwrite the takeover's state via its own unguarded
+     `SaveChangesAsync`/`ExecuteUpdateAsync` calls. Fixed: added `LeaseToken` (Guid), minted fresh on every
+     claim; every mutation after the claim is now its own `ExecuteUpdateAsync` guarded by
+     `(jobId, thisAttempt'sLeaseToken, LeaseExpiresUtc > now)`. A write that no longer matches throws
+     `LitigationSearchJobLeaseLostException` and processing stops immediately rather than racing the new
+     owner. New test proves a stale worker's resumed write is fenced out while a takeover's own write sticks.
+  2. Registration wasn't crash-idempotent — the BPR register call happened before `VendorJobId` was
+     persisted, so a crash in that window left recovery unable to tell whether a vendor-side job already
+     existed; the confirmed contract has no idempotency key or lookup-by-customer endpoint, so a blind retry
+     risked a duplicate search. The prior doc comment claiming this "can never double-register" was wrong.
+     Fixed: `RegistrationAttemptedUtc` now persists immediately before every register call; a later attempt
+     that finds it set with no confirmed `VendorJobId` fails closed (`LitigationRegistrationAmbiguousException`,
+     never auto-retried) with an actionable message instead of guessing.
+- Migration regenerated (not yet merged) to include both new columns. 79/80 litigation-filtered tests pass
+  (1 unrelated pre-existing skip), full build clean. `@codex` re-review requested.
+- Also checked while at it: **PR #250's `build-and-test` failure was CI flakiness, not a regression** — two
+  reruns each failed a different, unrelated `WebApplicationFactory`-based auth test class
+  (`CalculationAuditAuthenticationTests`, then `AutoFetchAuthenticationTests`), and PR #251 (a strict
+  superset of #250's diff, touching `Program.cs`/DI too) passed clean on its one run. Third rerun on the
+  exact head (`c1ceb17`) went green. **#250 does not need a rebase** — 8 commits behind `main`, but
+  `MERGEABLE`/`CLEAN` with zero file overlap against what main gained since (a docs merge + an unrelated
+  uploaded-document-download PR).
+
+### 2026-09-20 — Claude session (CLAIMED #241 LIT-01: BPR API client + durable job lifecycle; PR opened)
+- **CLAIMED #241** on branch `feature/241-bpr-litigation-client`, based on `feature/litigation-data-lake-integration`
+  (PR #250, open — this branch needs `LitigationKeywordPlanner`/`BprLitigationReportParser` from it and
+  will be rebased onto `main` once #250 merges), merged forward onto latest `main` for this channel entry.
+- Found the vendor's actual Postman collection (`BPR_Litigation_Data_API_postman_collection.json`, outside
+  the repo — never committed, its embedded secret key and stale JWTs are not copied into source, logs, or
+  this entry) — confirms 3 endpoints: `POST sec/authenticate` `{id, secret_key}`, `POST bprjob/register`
+  (raw JWT in the `Authorization` header, **no `Bearer ` prefix** — a real vendor quirk, confirmed from
+  their own example request), `GET report/job/{id}`. Two parts of the contract are still genuinely
+  unconfirmed even with the collection in hand — no example response was ever captured for either auth or
+  register, and the one captured `report/job/{id}` example is raw XLSX bytes despite the paired
+  registration using `file_format: JSON`, exactly the discrepancy `docs/litigation-data-lake-integration.md`
+  already flagged. `BprLitigationClient` handles both defensively (tries several plausible response field
+  names and fails loudly naming what it actually got; sniffs the report response's bytes/content-type/JSON
+  shape rather than trusting configuration) instead of guessing a schema that was never confirmed.
+- Implements: `BprLitigationClient` (typed `HttpClient`, `AddHttpClient<T>`), `BprLitigationOptions`
+  (empty-by-default, `IsConfigured` gate — same posture as `ReferenceTool`/`InternalAuth`),
+  `LitigationSearchJob` entity + migration (`AddLitigationSearchJobs` — one request has at most one job,
+  mirrors `AutoFetchJob`'s shape; retry/lease/backoff fields mirror `CalculationAiAuditRun`'s, since a BPR
+  poll can genuinely still be in flight across a restart), `LitigationSearchJobService`
+  (atomic claim → authenticate → register-if-not-already-registered → poll-with-backoff → retain raw
+  report bytes + SHA-256 for #242 to parse), `LitigationSearchQueue`/`LitigationSearchWorker` (mirrors
+  `AutoFetchQueue`/`AutoFetchWorker` exactly). Scope stops at "retain the raw report" — parsing it into
+  `LitigationCase` rows is #242's job, not this one's.
+- Deliberately does **not** wire an automatic trigger on request creation or add a controller endpoint —
+  the epic's dependency map funnels the UI trigger through #246, and there's no "approved aliases" admin
+  store yet for `LitigationKeywordPlanner` to draw on beyond legal name/history, so `CreateOrResetJobAsync`
+  takes an already-built keyword plan rather than deciding when/how to auto-start a search. Flagging this as
+  a real, currently-unowned gap: **nothing in #241–#248 covers curating approved aliases** — worth a
+  follow-up issue before #246/#247 need one.
+- 77/77 focused tests passing (`BprLitigationClientTests`, `LitigationSearchJobClaimAndRecoveryTests`,
+  `LitigationSearchJobServiceTests`, `LitigationSearchQueueTests`), full build clean, `AutoFetch*` tests
+  (36/36) re-run to confirm no regression near the touched `Program.cs`/`appsettings.json`. No product-facing
+  change — nothing calls this yet.
+- `@codex review` requested (depends on #250 merging first — flagged in the PR body).
 
 ### 2026-09-20 — Claude session (FYI: litigation epic #239/LIT-01–08 cross-lane task division recorded)
 - Added the **Litigation epic (#239, LIT-01–LIT-08 / #241–#248)** task-division table above (before

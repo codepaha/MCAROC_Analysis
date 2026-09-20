@@ -5,6 +5,7 @@ using Microsoft.Data.SqlTypes;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 #nullable disable
@@ -12,9 +13,11 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace MCAROC_Analysis.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260920090347_AddLitigationSearchJobs")]
+    partial class AddLitigationSearchJobs
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -3974,77 +3977,6 @@ namespace MCAROC_Analysis.Migrations
                     b.ToTable("RequestDocuments");
                 });
 
-            modelBuilder.Entity("MCAROC_Analysis.Data.Entities.RequestDocumentDerivative", b =>
-                {
-                    b.Property<long>("DerivativeId")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("bigint");
-
-                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("DerivativeId"));
-
-                    b.Property<DateTime>("CreatedUtc")
-                        .HasColumnType("datetime2");
-
-                    b.Property<string>("DerivativeType")
-                        .IsRequired()
-                        .HasMaxLength(30)
-                        .HasColumnType("nvarchar(30)");
-
-                    b.Property<long>("DocumentId")
-                        .HasColumnType("bigint");
-
-                    b.Property<string>("ErrorMessage")
-                        .HasMaxLength(1000)
-                        .HasColumnType("nvarchar(1000)");
-
-                    b.Property<string>("FileHash")
-                        .IsRequired()
-                        .HasMaxLength(64)
-                        .HasColumnType("nvarchar(64)");
-
-                    b.Property<long>("FileSize")
-                        .HasColumnType("bigint");
-
-                    b.Property<DateTime?>("LeaseExpiresUtc")
-                        .HasColumnType("datetime2");
-
-                    b.Property<Guid?>("LeaseToken")
-                        .HasColumnType("uniqueidentifier");
-
-                    b.Property<string>("RawFileHash")
-                        .IsRequired()
-                        .HasMaxLength(64)
-                        .HasColumnType("nvarchar(64)");
-
-                    b.Property<long>("RequestId")
-                        .HasColumnType("bigint");
-
-                    b.Property<int>("SanitizerVersion")
-                        .HasColumnType("int");
-
-                    b.Property<string>("Status")
-                        .IsRequired()
-                        .HasMaxLength(30)
-                        .HasColumnType("nvarchar(30)");
-
-                    b.Property<string>("StoragePath")
-                        .IsRequired()
-                        .HasMaxLength(500)
-                        .HasColumnType("nvarchar(500)");
-
-                    b.Property<DateTime>("UpdatedUtc")
-                        .HasColumnType("datetime2");
-
-                    b.HasKey("DerivativeId");
-
-                    b.HasIndex("RequestId");
-
-                    b.HasIndex("DocumentId", "DerivativeType")
-                        .IsUnique();
-
-                    b.ToTable("RequestDocumentDerivatives");
-                });
-
             modelBuilder.Entity("MCAROC_Analysis.Data.Entities.RocCharge", b =>
                 {
                     b.Property<long>("ChargeId")
@@ -5032,17 +4964,6 @@ namespace MCAROC_Analysis.Migrations
                     b.Navigation("SupersededByDocument");
                 });
 
-            modelBuilder.Entity("MCAROC_Analysis.Data.Entities.RequestDocumentDerivative", b =>
-                {
-                    b.HasOne("MCAROC_Analysis.Data.Entities.RequestDocument", "Document")
-                        .WithMany("Derivatives")
-                        .HasForeignKey("DocumentId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("Document");
-                });
-
             modelBuilder.Entity("MCAROC_Analysis.Data.Entities.RocChargeEvent", b =>
                 {
                     b.HasOne("MCAROC_Analysis.Data.Entities.RocCharge", "RocCharge")
@@ -5094,11 +5015,6 @@ namespace MCAROC_Analysis.Migrations
                     b.Navigation("Documents");
 
                     b.Navigation("IngestionRuns");
-                });
-
-            modelBuilder.Entity("MCAROC_Analysis.Data.Entities.RequestDocument", b =>
-                {
-                    b.Navigation("Derivatives");
                 });
 
             modelBuilder.Entity("MCAROC_Analysis.Data.Entities.RocCharge", b =>
