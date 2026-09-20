@@ -228,6 +228,82 @@ public class LitigationSearchJobServiceTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task ProcessAsync_a_stale_workers_report_after_a_mid_flight_lease_takeover_creates_no_snapshot_case_or_provenance()
+    {
+        // Regression for PR #252 round 3: worker A (this call) successfully retrieves the completed report
+        // from BPR, but — before its own snapshot-admission-plus-completion transaction ever runs — another
+        // worker reclaims the job's lease (e.g. because worker A stalled long enough for a recovery sweep to
+        // treat its lease as expired and reassign it). Before this fix, EnsureSnapshotAsync committed
+        // independently of the job's own lease-guarded completion write, so a fenced-out worker A could still
+        // leave a Pending LitigationReportSnapshot behind for LitigationCasePersistenceService.RecoverStaleWorkAsync
+        // to import later — publishing a report whose producing attempt was never accepted, under a request
+        // that (from the job's own row) still shows no completed search at all. Wrapping snapshot admission
+        // and the completion write in one transaction means this proves the stale report's snapshot, case and
+        // provenance never land anywhere — not deferred, not orphaned, just never committed.
+        long jobId;
+        long requestId;
+        await using (var setupDb = CreateContext())
+        {
+            var request = await SeedRequestAsync(setupDb);
+            requestId = request.RequestId;
+            var job = await NewService(setupDb).Service.CreateOrResetJobAsync(
+                request.RequestId, LitigationKeywordPlanner.Build(request.CompanyName!), "individual", "cust-1", CancellationToken.None);
+            jobId = job.LitigationSearchJobId;
+        }
+
+        const string reportJson = """
+            {
+                "request_details": {"job_id": "job-1", "report_date": "2026-09-20", "keywords": ["Test Company"]},
+                "district_court": {
+                    "against": {
+                        "civil": [
+                            {
+                                "_id": "provider-1", "csp_id": "csp-1", "cnr_number": "TNKP070001339999",
+                                "type": "district", "court": "Sub Judge", "bench": "Bench",
+                                "case_no": "22/2020", "case_type": "OS", "case_year": "2020",
+                                "case_stage": "Trial", "case_status": "DISPOSED", "act": "Code",
+                                "orders": []
+                            }
+                        ]
+                    }
+                }
+            }
+            """;
+
+        await using var processDb = CreateContext();
+        var (service, handler) = NewService(processDb);
+        handler.OnPath("sec/authenticate", _ => JsonResponse("""{"jwt":"token-1"}"""));
+        handler.OnPath("bprjob/register", _ => JsonResponse("""{"job_id":"vendor-job-1"}"""));
+        handler.OnPath("report/job/", _ =>
+        {
+            // The interleaving point itself: a real, synchronous DB write on an independent connection —
+            // exactly what a concurrent takeover would do — landing between "worker A has the completed
+            // report bytes in hand" and "worker A's snapshot-admission/completion transaction runs."
+            using var takeoverDb = CreateContext();
+            var newLeaseToken = Guid.NewGuid();
+            takeoverDb.LitigationSearchJobs
+                .Where(j => j.LitigationSearchJobId == jobId)
+                .ExecuteUpdate(s => s
+                    .SetProperty(j => j.LeaseToken, newLeaseToken)
+                    .SetProperty(j => j.LeaseExpiresUtc, DateTime.UtcNow.AddMinutes(15)));
+            return JsonResponse(reportJson);
+        });
+
+        await service.ProcessAsync(jobId, CancellationToken.None); // must not throw — LeaseLostException is swallowed
+
+        await using var verifyDb = CreateContext();
+        var reloaded = await verifyDb.LitigationSearchJobs.FirstAsync(j => j.LitigationSearchJobId == jobId);
+        Assert.NotEqual(LitigationSearchJobStatus.Completed, reloaded.Status); // worker A's fenced-out write never landed
+        Assert.Null(reloaded.RawReportBytes);
+        Assert.Null(reloaded.RawResponseHash);
+
+        Assert.Empty(await verifyDb.LitigationReportSnapshots.Where(s => s.LitigationSearchJobId == jobId).ToListAsync());
+        Assert.Empty(await verifyDb.LitigationCases.Where(c => c.RequestId == requestId).ToListAsync());
+        Assert.Empty(await verifyDb.LitigationCaseSourceReports
+            .Where(sr => sr.Case.RequestId == requestId).ToListAsync());
+    }
+
+    [Fact]
     public async Task ProcessAsync_fails_closed_without_retrying_when_a_prior_registration_attempt_never_confirmed()
     {
         // Reviewer finding on PR #251: registration is not crash-idempotent — if the process dies after BPR

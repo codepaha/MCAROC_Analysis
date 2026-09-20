@@ -22,9 +22,12 @@ namespace MCAROC_Analysis.Services.LitigationData;
 /// stops immediately. Unique indexes on <c>LitigationCase</c> and <c>LitigationCaseOrder</c> are a second,
 /// independent backstop against the same class of race at the case level.</item>
 /// <item><b>Recovery is snapshot-driven, not job-driven.</b> <see cref="EnsureSnapshotAsync"/> is called once,
-/// synchronously, the instant a job completes (see <c>LitigationSearchJobService.PollUntilCompleteAsync</c>)
-/// — <em>before</em> that job's own status is written as Completed, so a crash between the two leaves the job
-/// non-terminal and its own established recovery retries it from scratch rather than orphaning the snapshot.
+/// synchronously, the instant a job completes, in the SAME database transaction as that job's own
+/// lease-guarded completion write (see <c>LitigationSearchJobService.PollUntilCompleteAsync</c>) — not just
+/// ordered before it. If the lease check fails (another attempt has since reclaimed the job), the whole
+/// transaction rolls back, undoing the snapshot admission along with it: a fenced-out worker can never leave
+/// a committed-but-orphaned snapshot behind for <see cref="RecoverStaleWorkAsync"/> to import on a later
+/// sweep. A raw process crash mid-transaction gets the same all-or-nothing outcome from SQL Server itself.
 /// From then on, <see cref="RecoverStaleWorkAsync"/> queries <see cref="LitigationReportSnapshot"/> directly:
 /// a request's <c>LitigationSearchJob</c> row is reused across reruns and its <c>Status</c> can move away
 /// from Completed at any time (<c>CreateOrResetJobAsync</c>), so an older, still-incomplete snapshot must stay
@@ -44,9 +47,12 @@ public sealed class LitigationCasePersistenceService(
     /// <summary>Creates the immutable snapshot row for (job id, report hash) if one doesn't already exist, and
     /// returns its id. Called once, synchronously, at the single trigger point (a job reaching Completed) —
     /// by the time anything is ever enqueued for <see cref="PersistSnapshotAsync"/>, the snapshot it names
-    /// already exists, so that method never needs to create one. Race-safe against a concurrent creator via
-    /// the unique index anyway (defense in depth; under normal operation this runs at most once per real
-    /// completion, since the caller's own lease-guarded job update already serializes it) — mirrors
+    /// already exists, so that method never needs to create one. The caller (<c>LitigationSearchJobService</c>)
+    /// runs this inside the same transaction as its own lease-guarded completion write and rolls both back
+    /// together if the lease check fails — this method itself has no lease/job-token predicate of its own, so
+    /// it must never be called outside that transaction, or a fenced-out worker's snapshot could be committed
+    /// with no matching completion to vouch for it. Also race-safe against a concurrent creator via the unique
+    /// index (defense in depth; under normal operation this runs at most once per real completion) — mirrors
     /// <c>CalculationAiAuditOrchestrator.EnqueueForSnapshotAsync</c>'s exact pattern for the same problem.</summary>
     public async Task<long> EnsureSnapshotAsync(
         long jobId, string reportHash, BprReportFormat reportFormat, byte[] rawReportBytes, DateTime retrievedUtc, CancellationToken ct)
