@@ -9,11 +9,23 @@ using Microsoft.Extensions.Options;
 namespace MCAROC_Analysis.Services.LitigationData;
 
 /// <summary>Drives one <see cref="LitigationSearchJob"/> end to end: atomic claim, authenticate, register
-/// (skipped if already registered — idempotent), poll report/job/{id} until a terminal payload arrives or
-/// the poll budget is exhausted, then retain the raw bytes for #242 to parse. Mirrors
-/// <c>CalculationAiAuditOrchestrator</c>'s claim/lease/backoff/recovery shape exactly — same reasoning: an
-/// external vendor call that can genuinely still be in flight when the app restarts must not be
-/// double-fired by recovery.</summary>
+/// (skipped if already confirmed registered), poll report/job/{id} until a terminal payload arrives or the
+/// poll budget is exhausted, then retain the raw bytes for #242 to parse.
+///
+/// Every mutation after the initial claim is its own <c>ExecuteUpdateAsync</c> conditioned on
+/// <c>(jobId, thisAttempt'sLeaseToken, LeaseExpiresUtc > now)</c> — not just the reusable
+/// <c>LeaseOwner</c> string. If this attempt's lease has since been reclaimed (its own lease expired and
+/// recovery reassigned the job to a newer claim), every one of its writes affects 0 rows and is treated as
+/// "stop processing immediately" rather than silently clobbering whatever the newer claim has already
+/// written — LeaseOwner alone cannot provide this, since the same process reuses it across every claim it
+/// ever makes and carries no per-claim identity.
+///
+/// Registration is handled the same way <c>CalculationAiAuditOrchestrator</c> treats an external call that
+/// might have partially succeeded: <see cref="LitigationSearchJob.RegistrationAttemptedUtc"/> is persisted
+/// *before* the vendor call, and if a later attempt finds it set with no confirmed
+/// <see cref="LitigationSearchJob.VendorJobId"/>, it fails closed instead of retrying — the confirmed BPR
+/// contract has no idempotency key and no way to look up a prior registration, so guessing risks a duplicate
+/// vendor-side search.</summary>
 public sealed class LitigationSearchJobService(
     AppDbContext db,
     BprLitigationClient client,
@@ -59,7 +71,9 @@ public sealed class LitigationSearchJobService(
         job.FailureReason = null;
         job.VendorJobId = null;
         job.RegisteredUtc = null;
+        job.RegistrationAttemptedUtc = null;
         job.NextAttemptUtc = null;
+        job.LeaseToken = null;
         job.CompletedUtc = null;
         await db.SaveChangesAsync(ct);
         return job;
@@ -67,13 +81,15 @@ public sealed class LitigationSearchJobService(
 
     // ── Processing ─────────────────────────────────────────────────────────────────────────────────
 
-    /// <summary>Atomic Pending→Authenticating claim (bumping AttemptCount and taking a durable lease sized
-    /// for the whole poll budget), then authenticate → register (unless already registered) → poll. The
-    /// claim also requires NextAttemptUtc to have passed, so a backoff-scheduled retry that reaches the
-    /// queue early is declined here instead of processed ahead of schedule.</summary>
+    /// <summary>Atomic Pending→Authenticating claim (bumping AttemptCount, minting a fresh
+    /// <see cref="LitigationSearchJob.LeaseToken"/>, and taking a durable lease sized for the whole poll
+    /// budget), then authenticate → register (unless already confirmed registered) → poll. The claim also
+    /// requires NextAttemptUtc to have passed, so a backoff-scheduled retry that reaches the queue early is
+    /// declined here instead of processed ahead of schedule.</summary>
     public async Task ProcessAsync(long jobId, CancellationToken ct)
     {
         var now = DateTime.UtcNow;
+        var leaseToken = Guid.NewGuid();
         var claimed = await db.LitigationSearchJobs
             .Where(j => j.LitigationSearchJobId == jobId && j.Status == LitigationSearchJobStatus.Pending
                 && (j.NextAttemptUtc == null || j.NextAttemptUtc <= now))
@@ -81,6 +97,7 @@ public sealed class LitigationSearchJobService(
                 .SetProperty(j => j.Status, LitigationSearchJobStatus.Authenticating)
                 .SetProperty(j => j.AttemptCount, j => j.AttemptCount + 1)
                 .SetProperty(j => j.LeaseOwner, LeaseOwnerId)
+                .SetProperty(j => j.LeaseToken, leaseToken)
                 .SetProperty(j => j.LeaseExpiresUtc, now.AddSeconds(LeaseSeconds))
                 .SetProperty(j => j.StartedUtc, now)
                 .SetProperty(j => j.StatusMessage, "Authenticating with BPR."), ct);
@@ -93,85 +110,125 @@ public sealed class LitigationSearchJobService(
             return;
         }
 
-        var job = await db.LitigationSearchJobs.FirstAsync(j => j.LitigationSearchJobId == jobId, ct);
+        // Loaded once, un-tracked: everything after this point is a read-only snapshot for this attempt's own
+        // decisions. Every actual write to the row is its own lease-guarded ExecuteUpdateAsync below, never a
+        // mutation of this object or a tracked SaveChangesAsync — that is what makes the fencing meaningful.
+        var job = await db.LitigationSearchJobs.AsNoTracking().FirstAsync(j => j.LitigationSearchJobId == jobId, ct);
 
         try
         {
+            if (job.VendorJobId is null && job.RegistrationAttemptedUtc is not null)
+                throw new LitigationRegistrationAmbiguousException(
+                    $"A previous registration attempt for job {jobId} at {job.RegistrationAttemptedUtc:O} never " +
+                    "confirmed success or failure with BPR — the confirmed contract has no idempotency key and no " +
+                    "way to look up a prior registration, so retrying risks a duplicate vendor-side search. Manual " +
+                    "reconciliation required: check BPR directly, then set VendorJobId or clear RegistrationAttemptedUtc.");
+
             var token = await client.AuthenticateAsync(ct);
 
-            if (job.VendorJobId is null)
+            var vendorJobId = job.VendorJobId;
+            if (vendorJobId is null)
             {
-                job.Status = LitigationSearchJobStatus.Registering;
-                job.StatusMessage = "Registering search with BPR.";
-                await db.SaveChangesAsync(ct);
+                var claimedRegistering = await LeaseGuarded(jobId, leaseToken)
+                    .ExecuteUpdateAsync(s => s
+                        .SetProperty(j => j.Status, LitigationSearchJobStatus.Registering)
+                        .SetProperty(j => j.StatusMessage, "Registering search with BPR.")
+                        .SetProperty(j => j.RegistrationAttemptedUtc, DateTime.UtcNow), ct);
+                if (claimedRegistering == 0) throw new LitigationSearchJobLeaseLostException(jobId);
 
                 var keywords = ParseKeywordValues(job.KeywordsJson);
-                var vendorJobId = await client.RegisterJobAsync(token, keywords, job.EntityType, job.ApplicationCustomerId, ct);
+                vendorJobId = await client.RegisterJobAsync(token, keywords, job.EntityType, job.ApplicationCustomerId, ct);
 
-                job.VendorJobId = vendorJobId;
-                job.RegisteredUtc = DateTime.UtcNow;
+                // Persisted the instant BPR confirms success — this is the narrowest the crash window between
+                // "vendor accepted the call" and "we know it" can be made without a vendor idempotency key.
+                var registeredVendorJobId = vendorJobId;
+                var claimedRegistered = await LeaseGuarded(jobId, leaseToken)
+                    .ExecuteUpdateAsync(s => s
+                        .SetProperty(j => j.VendorJobId, registeredVendorJobId)
+                        .SetProperty(j => j.RegisteredUtc, DateTime.UtcNow), ct);
+                if (claimedRegistered == 0) throw new LitigationSearchJobLeaseLostException(jobId);
             }
 
-            job.Status = LitigationSearchJobStatus.Polling;
-            job.StatusMessage = "Waiting for BPR to complete the search.";
-            job.ProgressPercent = 25;
-            await db.SaveChangesAsync(ct);
+            var claimedPolling = await LeaseGuarded(jobId, leaseToken)
+                .ExecuteUpdateAsync(s => s
+                    .SetProperty(j => j.Status, LitigationSearchJobStatus.Polling)
+                    .SetProperty(j => j.StatusMessage, "Waiting for BPR to complete the search.")
+                    .SetProperty(j => j.ProgressPercent, 25), ct);
+            if (claimedPolling == 0) throw new LitigationSearchJobLeaseLostException(jobId);
 
-            await PollUntilCompleteAsync(job, token, ct);
+            await PollUntilCompleteAsync(jobId, leaseToken, vendorJobId, job.RegisteredUtc, token, ct);
+        }
+        catch (LitigationSearchJobLeaseLostException)
+        {
+            // Another worker has since reclaimed this job (this attempt's lease expired and recovery
+            // reassigned it) — we must stop touching the row entirely, including retry/backoff bookkeeping,
+            // which would itself be an unguarded write racing the new owner.
+            logger.LogWarning(
+                "Litigation search job {JobId} lost its lease mid-processing (attempt {Attempt}) — another worker has taken over.",
+                jobId, job.AttemptCount);
         }
         catch (Exception ex)
         {
             logger.LogWarning(ex, "BPR litigation search failed for job {JobId} (attempt {Attempt})", jobId, job.AttemptCount);
 
-            if (job.AttemptCount < _opts.MaxAttempts)
+            // An ambiguous-registration failure must never be auto-retried — see LitigationRegistrationAmbiguousException.
+            if (ex is not LitigationRegistrationAmbiguousException && job.AttemptCount < _opts.MaxAttempts)
             {
                 var nextAttemptUtc = DateTime.UtcNow + BackoffDelay(job.AttemptCount);
-                await db.LitigationSearchJobs.Where(j => j.LitigationSearchJobId == jobId)
+                var failureMessage = ex.Message;
+                var claimedRetry = await LeaseGuarded(jobId, leaseToken)
                     .ExecuteUpdateAsync(s => s
                         .SetProperty(j => j.Status, LitigationSearchJobStatus.Pending)
                         .SetProperty(j => j.NextAttemptUtc, nextAttemptUtc)
                         .SetProperty(j => j.StatusMessage, "Retrying after a failed attempt.")
-                        .SetProperty(j => j.FailureReason, ex.Message), ct);
-                ScheduleRetry(jobId, nextAttemptUtc, ct);
+                        .SetProperty(j => j.FailureReason, failureMessage), ct);
+                if (claimedRetry > 0) ScheduleRetry(jobId, nextAttemptUtc, ct);
             }
             else
             {
-                await db.LitigationSearchJobs.Where(j => j.LitigationSearchJobId == jobId)
+                var failureMessage = ex.Message;
+                await LeaseGuarded(jobId, leaseToken)
                     .ExecuteUpdateAsync(s => s
                         .SetProperty(j => j.Status, LitigationSearchJobStatus.Failed)
                         .SetProperty(j => j.StatusMessage, "Failed.")
-                        .SetProperty(j => j.FailureReason, ex.Message)
+                        .SetProperty(j => j.FailureReason, failureMessage)
                         .SetProperty(j => j.CompletedUtc, DateTime.UtcNow), ct);
                 logger.LogError(ex, "BPR litigation search job {JobId} failed permanently after {Attempts} attempts", jobId, job.AttemptCount);
             }
         }
     }
 
-    private async Task PollUntilCompleteAsync(LitigationSearchJob job, string token, CancellationToken ct)
+    private async Task PollUntilCompleteAsync(
+        long jobId, Guid leaseToken, string vendorJobId, DateTime? registeredUtc, string token, CancellationToken ct)
     {
-        var deadlineUtc = (job.RegisteredUtc ?? DateTime.UtcNow).AddMinutes(_opts.PollTimeoutMinutes);
+        var deadlineUtc = (registeredUtc ?? DateTime.UtcNow).AddMinutes(_opts.PollTimeoutMinutes);
 
         while (true)
         {
-            var result = await client.GetReportAsync(token, job.VendorJobId!, ct);
+            var result = await client.GetReportAsync(token, vendorJobId, ct);
 
             switch (result.Status)
             {
                 case BprReportPollStatus.Completed:
                     var bytes = result.Bytes!;
-                    job.Status = LitigationSearchJobStatus.Completed;
-                    job.ReportFormat = result.Format;
-                    job.RawReportBytes = bytes;
-                    job.RawReportByteLength = bytes.LongLength;
-                    job.RawResponseHash = ComputeHash(bytes);
-                    job.ProgressPercent = 100;
-                    job.StatusMessage = $"Report received ({result.Format}).";
-                    job.FailureReason = null;
-                    job.CompletedUtc = DateTime.UtcNow;
-                    await db.SaveChangesAsync(ct);
+                    var format = result.Format;
+                    var hash = ComputeHash(bytes);
+                    var statusMessage = $"Report received ({format}).";
+                    var claimedCompleted = await LeaseGuarded(jobId, leaseToken)
+                        .ExecuteUpdateAsync(s => s
+                            .SetProperty(j => j.Status, LitigationSearchJobStatus.Completed)
+                            .SetProperty(j => j.ReportFormat, format)
+                            .SetProperty(j => j.RawReportBytes, bytes)
+                            .SetProperty(j => j.RawReportByteLength, bytes.LongLength)
+                            .SetProperty(j => j.RawResponseHash, hash)
+                            .SetProperty(j => j.ProgressPercent, 100)
+                            .SetProperty(j => j.StatusMessage, statusMessage)
+                            .SetProperty(j => j.FailureReason, (string?)null)
+                            .SetProperty(j => j.CompletedUtc, DateTime.UtcNow), ct);
+                    if (claimedCompleted == 0) throw new LitigationSearchJobLeaseLostException(jobId);
+
                     logger.LogInformation(
-                        "BPR litigation search job {JobId} completed: {Format}, {ByteCount} bytes.",
-                        job.LitigationSearchJobId, result.Format, bytes.LongLength);
+                        "BPR litigation search job {JobId} completed: {Format}, {ByteCount} bytes.", jobId, format, bytes.LongLength);
                     return;
 
                 case BprReportPollStatus.Failed:
@@ -181,14 +238,30 @@ public sealed class LitigationSearchJobService(
                 default:
                     if (DateTime.UtcNow >= deadlineUtc)
                         throw new BprLitigationException(
-                            $"BPR report for vendor job {job.VendorJobId} did not complete within {_opts.PollTimeoutMinutes} minutes.");
+                            $"BPR report for vendor job {vendorJobId} did not complete within {_opts.PollTimeoutMinutes} minutes.");
 
-                    job.StatusMessage = result.Message ?? "Waiting for BPR to complete the search.";
-                    await db.SaveChangesAsync(ct);
+                    var message = result.Message ?? "Waiting for BPR to complete the search.";
+                    var claimedProgress = await LeaseGuarded(jobId, leaseToken)
+                        .ExecuteUpdateAsync(s => s.SetProperty(j => j.StatusMessage, message), ct);
+                    if (claimedProgress == 0) throw new LitigationSearchJobLeaseLostException(jobId);
+
                     await Task.Delay(TimeSpan.FromSeconds(_opts.PollIntervalSeconds), ct);
                     continue;
             }
         }
+    }
+
+    /// <summary>The query every write to an already-claimed job must go through: it requires the exact
+    /// <see cref="Guid"/> this attempt was claimed with, and an unexpired lease — not just
+    /// <c>LeaseOwner</c>, which is reused across every claim by this process and so cannot distinguish "still
+    /// me" from "a stale attempt by me that lost its lease." An <c>ExecuteUpdateAsync</c> against this query
+    /// returning 0 means the row no longer matches (fenced out); callers must treat that as "stop processing
+    /// immediately," never as an ordinary failure to retry.</summary>
+    private IQueryable<LitigationSearchJob> LeaseGuarded(long jobId, Guid leaseToken)
+    {
+        var now = DateTime.UtcNow;
+        return db.LitigationSearchJobs
+            .Where(j => j.LitigationSearchJobId == jobId && j.LeaseToken == leaseToken && j.LeaseExpiresUtc != null && j.LeaseExpiresUtc > now);
     }
 
     /// <summary>Exponential backoff, capped at 5 minutes — identical formula to
@@ -225,7 +298,8 @@ public sealed class LitigationSearchJobService(
 
     /// <summary>Re-enqueues eligible Pending/in-flight rows on startup. An Authenticating/Registering/Polling
     /// row is only reset if its lease has actually expired (or predates this column) — a still-genuinely-
-    /// running search is left alone rather than requeued into a duplicate BPR registration.</summary>
+    /// running search is left alone rather than requeued into a duplicate BPR registration. A fresh claim
+    /// mints its own new LeaseToken, so this reset does not need to touch that column itself.</summary>
     public async Task<int> RecoverStaleWorkAsync(CancellationToken ct)
     {
         var now = DateTime.UtcNow;
@@ -267,3 +341,13 @@ public sealed class LitigationSearchJobService(
 
     private static string ComputeHash(byte[] bytes) => Convert.ToHexStringLower(SHA256.HashData(bytes));
 }
+
+/// <summary>Raised when a guarded write finds this attempt's lease has been reclaimed — the row now belongs
+/// to a newer claim and must not be touched further.</summary>
+public sealed class LitigationSearchJobLeaseLostException(long jobId)
+    : Exception($"Litigation search job {jobId} lost its lease mid-processing — another worker has taken over.");
+
+/// <summary>Raised when a job's prior registration attempt never confirmed success or failure. Always
+/// terminal — never auto-retried — because the confirmed BPR contract gives no safe way to tell whether
+/// retrying would create a duplicate vendor-side search.</summary>
+public sealed class LitigationRegistrationAmbiguousException(string message) : Exception(message);

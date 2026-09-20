@@ -176,6 +176,58 @@ public class LitigationSearchJobClaimAndRecoveryTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task LeaseGuardedWrite_IsFencedOut_AfterATakeoverClaimsTheJobWithANewToken()
+    {
+        // Reviewer finding on PR #251: LeaseOwner alone is not a fencing token (it's a reusable
+        // "machine:pid" string), so a stale worker that resumes after its lease was reclaimed could
+        // overwrite a takeover worker's state. This proves the LeaseToken-guarded write
+        // (LitigationSearchJobService.LeaseGuarded) actually stops that: worker A's lease expires, a
+        // takeover (worker B) claims the job with a fresh token, and worker A's own resumed write — using
+        // its own now-stale token — is refused, while worker B's write (its real token) succeeds.
+        await using var db = CreateContext();
+        var request = await SeedRequestAsync(db);
+        var originalToken = Guid.NewGuid();
+        var job = new LitigationSearchJob
+        {
+            RequestId = request.RequestId, Status = LitigationSearchJobStatus.Polling, AttemptCount = 1,
+            EntityType = "individual", ApplicationCustomerId = "1", KeywordsJson = "[]", CreatedUtc = DateTime.UtcNow,
+            LeaseOwner = "worker-a:111", LeaseToken = originalToken, LeaseExpiresUtc = DateTime.UtcNow.AddSeconds(-1) // already expired
+        };
+        db.LitigationSearchJobs.Add(job);
+        await db.SaveChangesAsync();
+
+        // Takeover: recovery would reset Status to Pending first, but a claim only requires Status==Pending
+        // AND an unexpired lease going forward — model the claim directly, mirroring ProcessAsync's exactly.
+        var takeoverToken = Guid.NewGuid();
+        var takeoverClaim = await db.LitigationSearchJobs
+            .Where(j => j.LitigationSearchJobId == job.LitigationSearchJobId)
+            .ExecuteUpdateAsync(s => s
+                .SetProperty(j => j.Status, LitigationSearchJobStatus.Authenticating)
+                .SetProperty(j => j.LeaseOwner, "worker-b:222")
+                .SetProperty(j => j.LeaseToken, takeoverToken)
+                .SetProperty(j => j.LeaseExpiresUtc, DateTime.UtcNow.AddMinutes(30))
+                .SetProperty(j => j.AttemptCount, j => j.AttemptCount + 1));
+        Assert.Equal(1, takeoverClaim);
+
+        // Worker A, unaware it lost the lease, resumes and tries to write using its own (now stale) token —
+        // mirrors LitigationSearchJobService.LeaseGuarded's predicate exactly.
+        Task<int> GuardedWrite(Guid token) => db.LitigationSearchJobs
+            .Where(j => j.LitigationSearchJobId == job.LitigationSearchJobId && j.LeaseToken == token
+                && j.LeaseExpiresUtc != null && j.LeaseExpiresUtc > DateTime.UtcNow)
+            .ExecuteUpdateAsync(s => s.SetProperty(j => j.Status, LitigationSearchJobStatus.Completed));
+
+        Assert.Equal(0, await GuardedWrite(originalToken));
+
+        // Worker B's own write, using the token it was actually claimed with, succeeds.
+        Assert.Equal(1, await GuardedWrite(takeoverToken));
+
+        await using var verifyDb = CreateContext();
+        var reloaded = await verifyDb.LitigationSearchJobs.FirstAsync(j => j.LitigationSearchJobId == job.LitigationSearchJobId);
+        Assert.Equal(LitigationSearchJobStatus.Completed, reloaded.Status); // worker B's write is the one that stuck
+        Assert.Equal(2, reloaded.AttemptCount); // only the takeover's claim incremented it — worker A's fenced write did not
+    }
+
+    [Fact]
     public void BackoffDelay_IsIncreasingAndNeverNearZero()
     {
         var first = LitigationSearchJobService.BackoffDelay(1);

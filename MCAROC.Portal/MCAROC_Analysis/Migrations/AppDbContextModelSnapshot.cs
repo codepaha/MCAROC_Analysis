@@ -2939,6 +2939,9 @@ namespace MCAROC_Analysis.Migrations
                         .HasMaxLength(100)
                         .HasColumnType("nvarchar(100)");
 
+                    b.Property<Guid?>("LeaseToken")
+                        .HasColumnType("uniqueidentifier");
+
                     b.Property<DateTime?>("NextAttemptUtc")
                         .HasColumnType("datetime2");
 
@@ -2956,6 +2959,9 @@ namespace MCAROC_Analysis.Migrations
                         .HasColumnType("nvarchar(64)");
 
                     b.Property<DateTime?>("RegisteredUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<DateTime?>("RegistrationAttemptedUtc")
                         .HasColumnType("datetime2");
 
                     b.Property<string>("ReportFormat")

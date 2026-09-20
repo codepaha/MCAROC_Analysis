@@ -45,17 +45,35 @@ public sealed class LitigationSearchJob
     /// independently queried relation (unlike the future per-case keyword provenance #242 will add).</summary>
     public string KeywordsJson { get; set; } = "[]";
 
-    /// <summary>Set once POST bprjob/register succeeds. Its presence is what makes registration idempotent:
-    /// the orchestrator skips straight to polling if this is already set, so a crash between registering and
-    /// recording the vendor job id can never double-register the same search.</summary>
+    /// <summary>Set the instant POST bprjob/register confirms success — the orchestrator skips straight to
+    /// polling once this is set, so a normal retry never re-registers. This narrows, but does not eliminate,
+    /// the crash window: if the process dies after BPR accepts the call but before this column is persisted,
+    /// recovery cannot tell whether a vendor-side job now exists. The confirmed BPR contract has no
+    /// idempotency key and no way to look up a prior registration by customer id, so a blind retry in that
+    /// state risks a duplicate vendor-side search. <see cref="RegistrationAttemptedUtc"/> exists precisely to
+    /// catch that state and refuse to auto-retry rather than guess.</summary>
     public string? VendorJobId { get; set; }
     public DateTime? RegisteredUtc { get; set; }
+
+    /// <summary>Set immediately before every POST bprjob/register call, before the call is made — durable
+    /// evidence that an attempt was in flight. If a later claim finds this set but <see cref="VendorJobId"/>
+    /// still null, the previous attempt's outcome is unknown (BPR may or may not have created a job) and the
+    /// orchestrator fails the job closed rather than risk a duplicate registration; an operator must check
+    /// BPR directly and either set <see cref="VendorJobId"/> by hand or clear this column before a fresh
+    /// attempt is allowed.</summary>
+    public DateTime? RegistrationAttemptedUtc { get; set; }
 
     public int AttemptCount { get; set; }
 
     /// <summary>Durable worker lease — see <see cref="LitigationSearchJobStatus"/>. LeaseOwner
-    /// ("machine:pid") is diagnostic only; LeaseExpiresUtc is what enforces correctness.</summary>
+    /// ("machine:pid") is diagnostic only. <see cref="LeaseToken"/> + <see cref="LeaseExpiresUtc"/> are what
+    /// enforce correctness: every mutation this job's processing makes is conditioned on
+    /// <c>LeaseToken == (the token this attempt was claimed with) AND LeaseExpiresUtc > now</c>, so a worker
+    /// whose lease has been reclaimed by someone else (its own lease expired and recovery reassigned the job)
+    /// can no longer overwrite state a newer claim has since written — LeaseOwner alone cannot do this since
+    /// it is reused across every claim by the same process and carries no per-claim identity.</summary>
     public string? LeaseOwner { get; set; }
+    public Guid? LeaseToken { get; set; }
     public DateTime? LeaseExpiresUtc { get; set; }
 
     /// <summary>Set after a failed attempt so recovery/dispatch doesn't re-claim this row until the backoff

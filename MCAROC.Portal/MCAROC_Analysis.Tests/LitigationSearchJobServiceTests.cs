@@ -158,6 +158,51 @@ public class LitigationSearchJobServiceTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task ProcessAsync_fails_closed_without_retrying_when_a_prior_registration_attempt_never_confirmed()
+    {
+        // Reviewer finding on PR #251: registration is not crash-idempotent — if the process dies after BPR
+        // accepts the call but before VendorJobId is persisted, a blind retry would register a second vendor
+        // job (no idempotency key or lookup-by-customer endpoint exists in the confirmed contract). This
+        // proves the fix: a job whose RegistrationAttemptedUtc is set but VendorJobId is still null fails
+        // immediately, with an actionable message, and never calls bprjob/register again — even though
+        // MaxAttempts would otherwise allow a retry.
+        var options = new BprLitigationOptions
+        {
+            BaseUrl = "https://bpr.test/", Id = "app", SecretKey = "secret",
+            PollIntervalSeconds = 1, PollTimeoutMinutes = 1, MaxAttempts = 3 // would normally retry twice more
+        };
+
+        long jobId;
+        await using (var setupDb = CreateContext())
+        {
+            var request = await SeedRequestAsync(setupDb);
+            var job = await NewService(setupDb, options).Service.CreateOrResetJobAsync(
+                request.RequestId, LitigationKeywordPlanner.Build(request.CompanyName!), "individual", "cust-1", CancellationToken.None);
+            jobId = job.LitigationSearchJobId;
+
+            // Simulate the crash window itself: an earlier attempt persisted RegistrationAttemptedUtc right
+            // before calling bprjob/register, then the process died before VendorJobId could be recorded.
+            job.RegistrationAttemptedUtc = DateTime.UtcNow.AddMinutes(-5);
+            await setupDb.SaveChangesAsync(CancellationToken.None);
+        }
+
+        await using var processDb = CreateContext();
+        var (service, handler) = NewService(processDb, options);
+        StubHappyPath(handler); // would succeed if called — proves the refusal is deliberate, not incidental
+        await service.ProcessAsync(jobId, CancellationToken.None);
+
+        var registerCalls = handler.Requests.Count(r => r.RequestUri!.AbsolutePath.Contains("bprjob/register"));
+        Assert.Equal(0, registerCalls);
+
+        await using var verifyDb = CreateContext();
+        var reloaded = await verifyDb.LitigationSearchJobs.FirstAsync(j => j.LitigationSearchJobId == jobId);
+        Assert.Equal(LitigationSearchJobStatus.Failed, reloaded.Status);
+        Assert.Equal(1, reloaded.AttemptCount); // never retried despite MaxAttempts=3
+        Assert.Contains("Manual reconciliation required", reloaded.FailureReason);
+        Assert.Null(reloaded.VendorJobId);
+    }
+
+    [Fact]
     public async Task ProcessAsync_exhausts_attempts_and_ends_Failed_when_authentication_always_fails()
     {
         var options = new BprLitigationOptions
