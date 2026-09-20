@@ -73,6 +73,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<LitigationSearchJob> LitigationSearchJobs => Set<LitigationSearchJob>();
     public DbSet<LitigationCase> LitigationCases => Set<LitigationCase>();
     public DbSet<LitigationCaseOrder> LitigationCaseOrders => Set<LitigationCaseOrder>();
+    public DbSet<LitigationReportSnapshot> LitigationReportSnapshots => Set<LitigationReportSnapshot>();
     public DbSet<LitigationCaseSourceReport> LitigationCaseSourceReports => Set<LitigationCaseSourceReport>();
 
     // #164 Calculation assurance
@@ -163,7 +164,10 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
         modelBuilder.Entity<LitigationCase>(e =>
         {
             e.HasKey(x => x.LitigationCaseId);
-            e.HasIndex(x => new { x.RequestId, x.Cnr });
+            // Unique, not just indexed: the DB-level backstop against a concurrent-import race where two
+            // workers both pass the in-memory CanAutoDedupe check before either commits. SQL Server treats
+            // each NULL Cnr as distinct, so CNR-less cases (which never auto-dedupe anyway) never collide.
+            e.HasIndex(x => new { x.RequestId, x.Cnr, x.ProceedingType }).IsUnique();
             e.HasOne(x => x.Request).WithMany().HasForeignKey(x => x.RequestId).OnDelete(DeleteBehavior.Cascade);
             e.Property(x => x.CspId).HasMaxLength(100);
             e.Property(x => x.Cnr).HasMaxLength(20);
@@ -173,22 +177,39 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
         modelBuilder.Entity<LitigationCaseOrder>(e =>
         {
             e.HasKey(x => x.LitigationCaseOrderId);
-            e.HasIndex(x => x.LitigationCaseId);
+            // Unique, not just indexed — same concurrent-import backstop reasoning as LitigationCase above.
+            e.HasIndex(x => new { x.LitigationCaseId, x.PdfUrl, x.OrderDate, x.OrderType }).IsUnique();
             e.HasOne(x => x.Case).WithMany(c => c.Orders).HasForeignKey(x => x.LitigationCaseId).OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<LitigationReportSnapshot>(e =>
+        {
+            e.HasKey(x => x.LitigationReportSnapshotId);
+            e.HasIndex(x => new { x.LitigationSearchJobId, x.ReportHash }).IsUnique();
+            e.Property(x => x.ReportHash).HasMaxLength(64).IsRequired();
+            e.Property(x => x.Status).HasConversion<string>().HasMaxLength(20);
+            e.Property(x => x.ReportFormat).HasConversion<string>().HasMaxLength(20);
+            e.Property(x => x.LeaseOwner).HasMaxLength(100);
+            e.Property(x => x.RowVersion).IsRowVersion();
+            e.Ignore(x => x.IsTerminal);
+            // NoAction, not Cascade: LitigationSearchJob already cascades from McaRequest, and this table is
+            // also reached from Request via LitigationCase → LitigationCaseSourceReport (see below) — cascading
+            // this FK too would give SQL Server two convergent cascade paths onto LitigationCaseSourceReport
+            // (it refuses to create such a constraint). LitigationSearchJob rows aren't deleted in normal
+            // operation, so NoAction costs nothing here.
+            e.HasOne(x => x.SearchJob).WithMany().HasForeignKey(x => x.LitigationSearchJobId).OnDelete(DeleteBehavior.NoAction);
         });
 
         modelBuilder.Entity<LitigationCaseSourceReport>(e =>
         {
             e.HasKey(x => x.LitigationCaseSourceReportId);
-            e.HasIndex(x => new { x.LitigationCaseId, x.LitigationSearchJobId, x.ReportHash }).IsUnique();
-            e.Property(x => x.ReportHash).HasMaxLength(64).IsRequired();
+            e.HasIndex(x => new { x.LitigationCaseId, x.LitigationReportSnapshotId }).IsUnique();
+            e.Property(x => x.CspId).HasMaxLength(100);
             e.HasOne(x => x.Case).WithMany(c => c.SourceReports).HasForeignKey(x => x.LitigationCaseId).OnDelete(DeleteBehavior.Cascade);
-            // NoAction, not Cascade: both LitigationCase and LitigationSearchJob cascade from McaRequest, so
-            // cascading this FK too would give SQL Server two convergent cascade paths onto this table (it
-            // refuses to create such a constraint). The Case-side cascade above already covers "delete the
-            // request, its cases and their source-report links go too" — this FK only needs to protect
-            // referential integrity, not participate in the cascade itself.
-            e.HasOne(x => x.SearchJob).WithMany().HasForeignKey(x => x.LitigationSearchJobId).OnDelete(DeleteBehavior.NoAction);
+            // Safe to cascade (unlike the SearchJob FK on LitigationReportSnapshot above): Request has no
+            // cascade path to LitigationReportSnapshot at all (that FK is NoAction), so this is the only
+            // cascade path onto this table from that direction — no multiple-path conflict.
+            e.HasOne(x => x.ReportSnapshot).WithMany().HasForeignKey(x => x.LitigationReportSnapshotId).OnDelete(DeleteBehavior.Cascade);
         });
 
         modelBuilder.Entity<McaRequest>(e =>

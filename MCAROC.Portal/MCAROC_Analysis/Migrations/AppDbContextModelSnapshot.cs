@@ -2998,7 +2998,9 @@ namespace MCAROC_Analysis.Migrations
 
                     b.HasKey("LitigationCaseId");
 
-                    b.HasIndex("RequestId", "Cnr");
+                    b.HasIndex("RequestId", "Cnr", "ProceedingType")
+                        .IsUnique()
+                        .HasFilter("[Cnr] IS NOT NULL AND [ProceedingType] IS NOT NULL");
 
                     b.ToTable("LitigationCases");
                 });
@@ -3018,17 +3020,19 @@ namespace MCAROC_Analysis.Migrations
                         .HasColumnType("bigint");
 
                     b.Property<string>("OrderDate")
-                        .HasColumnType("nvarchar(max)");
+                        .HasColumnType("nvarchar(450)");
 
                     b.Property<string>("OrderType")
-                        .HasColumnType("nvarchar(max)");
+                        .HasColumnType("nvarchar(450)");
 
                     b.Property<string>("PdfUrl")
-                        .HasColumnType("nvarchar(max)");
+                        .HasColumnType("nvarchar(450)");
 
                     b.HasKey("LitigationCaseOrderId");
 
-                    b.HasIndex("LitigationCaseId");
+                    b.HasIndex("LitigationCaseId", "PdfUrl", "OrderDate", "OrderType")
+                        .IsUnique()
+                        .HasFilter("[PdfUrl] IS NOT NULL AND [OrderDate] IS NOT NULL AND [OrderType] IS NOT NULL");
 
                     b.ToTable("LitigationCaseOrders");
                 });
@@ -3041,28 +3045,104 @@ namespace MCAROC_Analysis.Migrations
 
                     SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("LitigationCaseSourceReportId"));
 
+                    b.Property<string>("CspId")
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)");
+
                     b.Property<DateTime>("FirstSeenUtc")
                         .HasColumnType("datetime2");
 
                     b.Property<long>("LitigationCaseId")
                         .HasColumnType("bigint");
 
+                    b.Property<long>("LitigationReportSnapshotId")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("ProviderCaseId")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.HasKey("LitigationCaseSourceReportId");
+
+                    b.HasIndex("LitigationReportSnapshotId");
+
+                    b.HasIndex("LitigationCaseId", "LitigationReportSnapshotId")
+                        .IsUnique();
+
+                    b.ToTable("LitigationCaseSourceReports");
+                });
+
+            modelBuilder.Entity("MCAROC_Analysis.Data.Entities.LitigationReportSnapshot", b =>
+                {
+                    b.Property<long>("LitigationReportSnapshotId")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("LitigationReportSnapshotId"));
+
+                    b.Property<int>("AttemptCount")
+                        .HasColumnType("int");
+
+                    b.Property<int>("CasesPersistedCount")
+                        .HasColumnType("int");
+
+                    b.Property<DateTime?>("CompletedUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<DateTime>("CreatedUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("FailureReason")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<DateTime?>("LeaseExpiresUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("LeaseOwner")
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)");
+
                     b.Property<long>("LitigationSearchJobId")
                         .HasColumnType("bigint");
+
+                    b.Property<long>("RawReportByteLength")
+                        .HasColumnType("bigint");
+
+                    b.Property<byte[]>("RawReportBytes")
+                        .IsRequired()
+                        .HasColumnType("varbinary(max)");
+
+                    b.Property<string>("ReportFormat")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("nvarchar(20)");
 
                     b.Property<string>("ReportHash")
                         .IsRequired()
                         .HasMaxLength(64)
                         .HasColumnType("nvarchar(64)");
 
-                    b.HasKey("LitigationCaseSourceReportId");
+                    b.Property<DateTime>("RetrievedUtc")
+                        .HasColumnType("datetime2");
 
-                    b.HasIndex("LitigationSearchJobId");
+                    b.Property<byte[]>("RowVersion")
+                        .IsConcurrencyToken()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("rowversion");
 
-                    b.HasIndex("LitigationCaseId", "LitigationSearchJobId", "ReportHash")
+                    b.Property<DateTime?>("StartedUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("nvarchar(20)");
+
+                    b.HasKey("LitigationReportSnapshotId");
+
+                    b.HasIndex("LitigationSearchJobId", "ReportHash")
                         .IsUnique();
 
-                    b.ToTable("LitigationCaseSourceReports");
+                    b.ToTable("LitigationReportSnapshots");
                 });
 
             modelBuilder.Entity("MCAROC_Analysis.Data.Entities.LitigationSearchJob", b =>
@@ -5134,13 +5214,24 @@ namespace MCAROC_Analysis.Migrations
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
 
+                    b.HasOne("MCAROC_Analysis.Data.Entities.LitigationReportSnapshot", "ReportSnapshot")
+                        .WithMany()
+                        .HasForeignKey("LitigationReportSnapshotId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Case");
+
+                    b.Navigation("ReportSnapshot");
+                });
+
+            modelBuilder.Entity("MCAROC_Analysis.Data.Entities.LitigationReportSnapshot", b =>
+                {
                     b.HasOne("MCAROC_Analysis.Data.Entities.LitigationSearchJob", "SearchJob")
                         .WithMany()
                         .HasForeignKey("LitigationSearchJobId")
                         .OnDelete(DeleteBehavior.NoAction)
                         .IsRequired();
-
-                    b.Navigation("Case");
 
                     b.Navigation("SearchJob");
                 });

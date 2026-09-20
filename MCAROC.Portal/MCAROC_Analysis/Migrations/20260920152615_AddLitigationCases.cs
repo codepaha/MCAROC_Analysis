@@ -59,15 +59,48 @@ namespace MCAROC_Analysis.Migrations
                 });
 
             migrationBuilder.CreateTable(
+                name: "LitigationReportSnapshots",
+                columns: table => new
+                {
+                    LitigationReportSnapshotId = table.Column<long>(type: "bigint", nullable: false)
+                        .Annotation("SqlServer:Identity", "1, 1"),
+                    LitigationSearchJobId = table.Column<long>(type: "bigint", nullable: false),
+                    ReportHash = table.Column<string>(type: "nvarchar(64)", maxLength: 64, nullable: false),
+                    ReportFormat = table.Column<string>(type: "nvarchar(20)", maxLength: 20, nullable: false),
+                    RawReportBytes = table.Column<byte[]>(type: "varbinary(max)", nullable: false),
+                    RawReportByteLength = table.Column<long>(type: "bigint", nullable: false),
+                    RetrievedUtc = table.Column<DateTime>(type: "datetime2", nullable: false),
+                    Status = table.Column<string>(type: "nvarchar(20)", maxLength: 20, nullable: false),
+                    AttemptCount = table.Column<int>(type: "int", nullable: false),
+                    CasesPersistedCount = table.Column<int>(type: "int", nullable: false),
+                    LeaseOwner = table.Column<string>(type: "nvarchar(100)", maxLength: 100, nullable: true),
+                    LeaseExpiresUtc = table.Column<DateTime>(type: "datetime2", nullable: true),
+                    RowVersion = table.Column<byte[]>(type: "rowversion", rowVersion: true, nullable: true),
+                    FailureReason = table.Column<string>(type: "nvarchar(max)", nullable: true),
+                    CreatedUtc = table.Column<DateTime>(type: "datetime2", nullable: false),
+                    StartedUtc = table.Column<DateTime>(type: "datetime2", nullable: true),
+                    CompletedUtc = table.Column<DateTime>(type: "datetime2", nullable: true)
+                },
+                constraints: table =>
+                {
+                    table.PrimaryKey("PK_LitigationReportSnapshots", x => x.LitigationReportSnapshotId);
+                    table.ForeignKey(
+                        name: "FK_LitigationReportSnapshots_LitigationSearchJobs_LitigationSearchJobId",
+                        column: x => x.LitigationSearchJobId,
+                        principalTable: "LitigationSearchJobs",
+                        principalColumn: "LitigationSearchJobId");
+                });
+
+            migrationBuilder.CreateTable(
                 name: "LitigationCaseOrders",
                 columns: table => new
                 {
                     LitigationCaseOrderId = table.Column<long>(type: "bigint", nullable: false)
                         .Annotation("SqlServer:Identity", "1, 1"),
                     LitigationCaseId = table.Column<long>(type: "bigint", nullable: false),
-                    PdfUrl = table.Column<string>(type: "nvarchar(max)", nullable: true),
-                    OrderDate = table.Column<string>(type: "nvarchar(max)", nullable: true),
-                    OrderType = table.Column<string>(type: "nvarchar(max)", nullable: true),
+                    PdfUrl = table.Column<string>(type: "nvarchar(450)", nullable: true),
+                    OrderDate = table.Column<string>(type: "nvarchar(450)", nullable: true),
+                    OrderType = table.Column<string>(type: "nvarchar(450)", nullable: true),
                     CreatedUtc = table.Column<DateTime>(type: "datetime2", nullable: false)
                 },
                 constraints: table =>
@@ -88,8 +121,9 @@ namespace MCAROC_Analysis.Migrations
                     LitigationCaseSourceReportId = table.Column<long>(type: "bigint", nullable: false)
                         .Annotation("SqlServer:Identity", "1, 1"),
                     LitigationCaseId = table.Column<long>(type: "bigint", nullable: false),
-                    LitigationSearchJobId = table.Column<long>(type: "bigint", nullable: false),
-                    ReportHash = table.Column<string>(type: "nvarchar(64)", maxLength: 64, nullable: false),
+                    LitigationReportSnapshotId = table.Column<long>(type: "bigint", nullable: false),
+                    ProviderCaseId = table.Column<string>(type: "nvarchar(max)", nullable: true),
+                    CspId = table.Column<string>(type: "nvarchar(100)", maxLength: 100, nullable: true),
                     FirstSeenUtc = table.Column<DateTime>(type: "datetime2", nullable: false)
                 },
                 constraints: table =>
@@ -102,32 +136,43 @@ namespace MCAROC_Analysis.Migrations
                         principalColumn: "LitigationCaseId",
                         onDelete: ReferentialAction.Cascade);
                     table.ForeignKey(
-                        name: "FK_LitigationCaseSourceReports_LitigationSearchJobs_LitigationSearchJobId",
-                        column: x => x.LitigationSearchJobId,
-                        principalTable: "LitigationSearchJobs",
-                        principalColumn: "LitigationSearchJobId");
+                        name: "FK_LitigationCaseSourceReports_LitigationReportSnapshots_LitigationReportSnapshotId",
+                        column: x => x.LitigationReportSnapshotId,
+                        principalTable: "LitigationReportSnapshots",
+                        principalColumn: "LitigationReportSnapshotId",
+                        onDelete: ReferentialAction.Cascade);
                 });
 
             migrationBuilder.CreateIndex(
-                name: "IX_LitigationCaseOrders_LitigationCaseId",
+                name: "IX_LitigationCaseOrders_LitigationCaseId_PdfUrl_OrderDate_OrderType",
                 table: "LitigationCaseOrders",
-                column: "LitigationCaseId");
+                columns: new[] { "LitigationCaseId", "PdfUrl", "OrderDate", "OrderType" },
+                unique: true,
+                filter: "[PdfUrl] IS NOT NULL AND [OrderDate] IS NOT NULL AND [OrderType] IS NOT NULL");
 
             migrationBuilder.CreateIndex(
-                name: "IX_LitigationCases_RequestId_Cnr",
+                name: "IX_LitigationCases_RequestId_Cnr_ProceedingType",
                 table: "LitigationCases",
-                columns: new[] { "RequestId", "Cnr" });
+                columns: new[] { "RequestId", "Cnr", "ProceedingType" },
+                unique: true,
+                filter: "[Cnr] IS NOT NULL AND [ProceedingType] IS NOT NULL");
 
             migrationBuilder.CreateIndex(
-                name: "IX_LitigationCaseSourceReports_LitigationCaseId_LitigationSearchJobId_ReportHash",
+                name: "IX_LitigationCaseSourceReports_LitigationCaseId_LitigationReportSnapshotId",
                 table: "LitigationCaseSourceReports",
-                columns: new[] { "LitigationCaseId", "LitigationSearchJobId", "ReportHash" },
+                columns: new[] { "LitigationCaseId", "LitigationReportSnapshotId" },
                 unique: true);
 
             migrationBuilder.CreateIndex(
-                name: "IX_LitigationCaseSourceReports_LitigationSearchJobId",
+                name: "IX_LitigationCaseSourceReports_LitigationReportSnapshotId",
                 table: "LitigationCaseSourceReports",
-                column: "LitigationSearchJobId");
+                column: "LitigationReportSnapshotId");
+
+            migrationBuilder.CreateIndex(
+                name: "IX_LitigationReportSnapshots_LitigationSearchJobId_ReportHash",
+                table: "LitigationReportSnapshots",
+                columns: new[] { "LitigationSearchJobId", "ReportHash" },
+                unique: true);
         }
 
         /// <inheritdoc />
@@ -141,6 +186,9 @@ namespace MCAROC_Analysis.Migrations
 
             migrationBuilder.DropTable(
                 name: "LitigationCases");
+
+            migrationBuilder.DropTable(
+                name: "LitigationReportSnapshots");
         }
     }
 }

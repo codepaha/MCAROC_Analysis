@@ -2,7 +2,15 @@ namespace MCAROC_Analysis.Services.LitigationData;
 
 /// <summary>Dequeues completed litigation search jobs and persists their cases in its own DI scope. Pure
 /// CPU/DB work (JSON parsing + EF writes, no external HTTP calls), so — unlike the vendor-facing workers in
-/// this lane — there is no reason to cap concurrency below the default of "as fast as items arrive."</summary>
+/// this lane — there is no reason to cap concurrency below the default of "as fast as items arrive."
+///
+/// Deliberately unbounded, not just "no reason to cap" — this worker relies on
+/// <see cref="LitigationCasePersistenceService"/>'s own atomic, RowVersion-protected claim to make
+/// concurrent execution *safe*, not on serializing dispatch to make it unnecessary. Two duplicate queue
+/// messages for the same job (e.g. one from a real completion, one from a startup recovery sweep racing it)
+/// legitimately run at the same time; exactly one of them wins the claim on the underlying
+/// <c>LitigationReportSnapshot</c> and the other's <c>SaveChangesAsync</c> throws
+/// <see cref="DbUpdateConcurrencyException"/> and stops immediately.</summary>
 public sealed class LitigationCasePersistenceWorker(
     IServiceScopeFactory scopes, LitigationCasePersistenceQueue queue, ILogger<LitigationCasePersistenceWorker> logger) : BackgroundService
 {
