@@ -153,7 +153,7 @@ gate, so it gets its own table rather than living inside either lane's section a
 | Issue | What | Lane | Depends on | Status |
 |---|---|---|---|---|
 | #241 LIT-01 | BPR API client + durable litigation-job lifecycle | Claude | — | **MERGED** (PR #251, `29ec856`) |
-| #242 LIT-02 | Persist BPR cases; retain CSP provider identity and apply conservative CNR-first de-duplication | Claude | #241 | unclaimed |
+| #242 LIT-02 | Persist BPR cases; retain CSP provider identity and apply conservative CNR-first de-duplication | Claude | #241 | **CLAIMED** (`feature/242-litigation-case-persistence`) |
 | #243 LIT-03 | All-orders retrieval, text retention, ZIP delivery | Claude | #241, #242 | unclaimed |
 | #244 LIT-04 | Request-scoped litigation evidence for MCA ROC Copilot | Claude | #243 | unclaimed |
 | #245 LIT-05 | Evidence-grounded Gemini case/portfolio analysis | Claude | #242, #243 | unclaimed |
@@ -278,6 +278,35 @@ service — if it sits `queued`, `run.cmd` is down) runs *only* what Linux can't
 ---
 
 ## Log  <!-- newest first. Prefix: NEEDS / BLOCKED / DONE / DECISION / FYI -->
+
+### 2026-09-20 — Claude session (CLAIMED #242 LIT-02: persist BPR cases with CNR-first de-dup; PR opened)
+- **CLAIMED #242** on branch `feature/242-litigation-case-persistence`, based on latest `main` (`7b027ed`,
+  after #241/#251 merged).
+- Adds `LitigationCase`/`LitigationCaseOrder`/`LitigationCaseSourceReport` + the `AddLitigationCases`
+  migration, `LitigationCasePersistenceService` (parses a completed job's raw report via the existing
+  `BprLitigationReportParser`, persists cases/orders, links source-report provenance), and a
+  queue/worker pair triggered automatically when `LitigationSearchJobService` marks a job Completed.
+- **Real design catch from my own tests**: a naive "idempotent if any source-report row references this job
+  id" check is wrong, because a request's `LitigationSearchJob` row is *reused in place* across reruns
+  (`CreateOrResetJobAsync`, enforced by the unique index on `RequestId` from #241) — so the same job id
+  recurs across genuinely different search runs. Fixed by keying both idempotency and the source-report
+  unique index on `(job id, RawResponseHash)` instead of job id alone — re-processing the exact same
+  completed report is a no-op, but a genuine rerun (same job row, new report) is processed and, via
+  CNR-first de-dup, correctly adds provenance rather than creating a duplicate case. Documented at length on
+  `LitigationCaseSourceReport` so this doesn't get re-broken later.
+- Also hit and fixed: (1) a SQL Server "multiple cascade paths" error — `LitigationCaseSourceReport`'s FK to
+  `LitigationSearchJob` needed `NoAction`, since both `LitigationCase` and `LitigationSearchJob` already
+  cascade from `McaRequest`; (2) `dotnet ef migrations remove` in this environment (tools 10.0.10 vs runtime
+  10.0.11 — the CLI's own warning) reproducibly corrupts `AppDbContextModelSnapshot.cs`, silently dropping
+  an unrelated entity (`RequestDocumentDerivatives`, from #240) from the reverted snapshot and causing a
+  regenerated migration to try to re-create its table. Worked around by restoring the snapshot from `main`
+  and deleting the stale migration files by hand instead of using `migrations remove` — **flagging this as a
+  real environment issue** worth investigating (upgrading the `dotnet-ef` global tool to 10.0.11 is the
+  likely fix) before the next agent hits the same thing blind.
+- Scope stops at persisting parsed cases from `BprReportFormat.Json` — no XLSX parser exists yet (logged,
+  left unpersisted, not guessed at). No product-facing change — nothing reads these tables yet (#245/#246/#247).
+- 100/101 litigation-filtered tests pass (1 unrelated pre-existing skip), 36/36 `AutoFetch` tests re-run to
+  confirm no regression, full build clean. `@codex review` requested.
 
 ### 2026-09-20 — Claude session (MERGED PR #251 — #241 LIT-01 done; #250 foundation also merged as PR #250)
 - **PR #250 MERGED into `main`** (foundation: `LitigationKeywordPlanner`, `LitigationCaseIdentity`,
