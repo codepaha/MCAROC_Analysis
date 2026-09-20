@@ -5,6 +5,7 @@ using Microsoft.Data.SqlTypes;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 #nullable disable
@@ -12,9 +13,11 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace MCAROC_Analysis.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260920051554_AddRequestDocumentDerivatives")]
+    partial class AddRequestDocumentDerivatives
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -2898,106 +2901,6 @@ namespace MCAROC_Analysis.Migrations
                     b.ToTable("Litigations");
                 });
 
-            modelBuilder.Entity("MCAROC_Analysis.Data.Entities.LitigationSearchJob", b =>
-                {
-                    b.Property<long>("LitigationSearchJobId")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("bigint");
-
-                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("LitigationSearchJobId"));
-
-                    b.Property<string>("ApplicationCustomerId")
-                        .IsRequired()
-                        .HasMaxLength(100)
-                        .HasColumnType("nvarchar(100)");
-
-                    b.Property<int>("AttemptCount")
-                        .HasColumnType("int");
-
-                    b.Property<DateTime?>("CompletedUtc")
-                        .HasColumnType("datetime2");
-
-                    b.Property<DateTime>("CreatedUtc")
-                        .HasColumnType("datetime2");
-
-                    b.Property<string>("EntityType")
-                        .IsRequired()
-                        .HasMaxLength(30)
-                        .HasColumnType("nvarchar(30)");
-
-                    b.Property<string>("FailureReason")
-                        .HasColumnType("nvarchar(max)");
-
-                    b.Property<string>("KeywordsJson")
-                        .IsRequired()
-                        .HasColumnType("nvarchar(max)");
-
-                    b.Property<DateTime?>("LeaseExpiresUtc")
-                        .HasColumnType("datetime2");
-
-                    b.Property<string>("LeaseOwner")
-                        .HasMaxLength(100)
-                        .HasColumnType("nvarchar(100)");
-
-                    b.Property<Guid?>("LeaseToken")
-                        .HasColumnType("uniqueidentifier");
-
-                    b.Property<DateTime?>("NextAttemptUtc")
-                        .HasColumnType("datetime2");
-
-                    b.Property<int>("ProgressPercent")
-                        .HasColumnType("int");
-
-                    b.Property<long?>("RawReportByteLength")
-                        .HasColumnType("bigint");
-
-                    b.Property<byte[]>("RawReportBytes")
-                        .HasColumnType("varbinary(max)");
-
-                    b.Property<string>("RawResponseHash")
-                        .HasMaxLength(64)
-                        .HasColumnType("nvarchar(64)");
-
-                    b.Property<DateTime?>("RegisteredUtc")
-                        .HasColumnType("datetime2");
-
-                    b.Property<DateTime?>("RegistrationAttemptedUtc")
-                        .HasColumnType("datetime2");
-
-                    b.Property<string>("ReportFormat")
-                        .IsRequired()
-                        .HasMaxLength(20)
-                        .HasColumnType("nvarchar(20)");
-
-                    b.Property<long>("RequestId")
-                        .HasColumnType("bigint");
-
-                    b.Property<DateTime?>("StartedUtc")
-                        .HasColumnType("datetime2");
-
-                    b.Property<string>("Status")
-                        .IsRequired()
-                        .HasMaxLength(30)
-                        .HasColumnType("nvarchar(30)");
-
-                    b.Property<string>("StatusMessage")
-                        .HasMaxLength(500)
-                        .HasColumnType("nvarchar(500)");
-
-                    b.Property<string>("VendorJobId")
-                        .HasMaxLength(100)
-                        .HasColumnType("nvarchar(100)");
-
-                    b.HasKey("LitigationSearchJobId");
-
-                    b.HasIndex("RequestId")
-                        .IsUnique();
-
-                    b.HasIndex("Status");
-
-                    b.ToTable("LitigationSearchJobs");
-                });
-
             modelBuilder.Entity("MCAROC_Analysis.Data.Entities.McaFiling", b =>
                 {
                     b.Property<long>("FilingId")
@@ -4927,17 +4830,6 @@ namespace MCAROC_Analysis.Migrations
                 });
 
             modelBuilder.Entity("MCAROC_Analysis.Data.Entities.LargeArchiveUploadSession", b =>
-                {
-                    b.HasOne("MCAROC_Analysis.Data.Entities.McaRequest", "Request")
-                        .WithMany()
-                        .HasForeignKey("RequestId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("Request");
-                });
-
-            modelBuilder.Entity("MCAROC_Analysis.Data.Entities.LitigationSearchJob", b =>
                 {
                     b.HasOne("MCAROC_Analysis.Data.Entities.McaRequest", "Request")
                         .WithMany()

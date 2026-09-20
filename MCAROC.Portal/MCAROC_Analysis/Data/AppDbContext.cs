@@ -8,6 +8,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<Client> Clients => Set<Client>();
     public DbSet<McaRequest> Requests => Set<McaRequest>();
     public DbSet<RequestDocument> RequestDocuments => Set<RequestDocument>();
+    public DbSet<RequestDocumentDerivative> RequestDocumentDerivatives => Set<RequestDocumentDerivative>();
 
     public DbSet<IngestionRun> IngestionRuns => Set<IngestionRun>();
     public DbSet<IngestionIssue> IngestionIssues => Set<IngestionIssue>();
@@ -188,6 +189,23 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             e.HasIndex(x => x.UploadSessionId)
                 .IsUnique()
                 .HasFilter("[UploadSessionId] IS NOT NULL");
+        });
+
+        modelBuilder.Entity<RequestDocumentDerivative>(e =>
+        {
+            e.HasKey(x => x.DerivativeId);
+            e.HasOne(x => x.Document)
+                .WithMany(d => d.Derivatives)
+                .HasForeignKey(x => x.DocumentId)
+                .OnDelete(DeleteBehavior.Cascade);
+            e.HasIndex(x => new { x.DocumentId, x.DerivativeType }).IsUnique();
+            e.HasIndex(x => x.RequestId);
+            e.Property(x => x.DerivativeType).HasConversion<string>().HasMaxLength(30);
+            e.Property(x => x.Status).HasConversion<string>().HasMaxLength(30);
+            e.Property(x => x.RawFileHash).HasMaxLength(64);
+            e.Property(x => x.FileHash).HasMaxLength(64);
+            e.Property(x => x.StoragePath).HasMaxLength(500);
+            e.Property(x => x.ErrorMessage).HasMaxLength(1000);
         });
 
         modelBuilder.Entity<McaFilingBatch>(e =>

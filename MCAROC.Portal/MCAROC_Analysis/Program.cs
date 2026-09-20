@@ -14,6 +14,7 @@ using MCAROC_Analysis.Services.PreLoginReports;
 using Microsoft.AspNetCore.Http.Features;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
+using Microsoft.AspNetCore.DataProtection;
 
 Encoding.RegisterProvider(CodePagesEncodingProvider.Instance); // legacy .xls encodings
 
@@ -89,8 +90,22 @@ builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseSqlServer(builder.Configuration.GetConnectionString("Default")));
 
 builder.Services.AddScoped<IExcelSheetReader, ExcelSheetReader>();
+builder.Services.AddScoped<IWorkbookDerivativeService, WorkbookDerivativeService>();
 builder.Services.AddScoped<FileValidationService>();
 builder.Services.AddScoped<IngestionOrchestrator>();
+
+var keysPath = Path.Combine(builder.Environment.ContentRootPath, "App_Data", "DataProtection-Keys");
+Directory.CreateDirectory(keysPath);
+var dpBuilder = builder.Services.AddDataProtection()
+    .PersistKeysToFileSystem(new DirectoryInfo(keysPath))
+    .SetApplicationName("MCAROC_Analysis");
+
+if (OperatingSystem.IsWindows())
+{
+    dpBuilder.ProtectKeysWithDpapi(protectToLocalMachine: true);
+}
+
+builder.Services.AddSingleton<MCAROC_Analysis.Services.Documents.ISignedDownloadTokenService, MCAROC_Analysis.Services.Documents.TimeLimitedSignedDownloadTokenService>();
 
 // MCA Filings (PDF) pipeline
 builder.Services.AddSingleton<FilingProcessingQueue>();

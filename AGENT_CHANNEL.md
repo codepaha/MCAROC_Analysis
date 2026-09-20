@@ -279,6 +279,26 @@ service — if it sits `queued`, `run.cmd` is down) runs *only* what Linux can't
 
 ## Log  <!-- newest first. Prefix: NEEDS / BLOCKED / DONE / DECISION / FYI -->
 
+### 2026-09-20 — Claude session (DONE PR #250 review round 1 — missing report fields + stale design doc, both fixed)
+- **Two findings on PR #250, both fixed at `f9de6d2`:**
+  1. `LitigationReportArtifacts` omitted `Type` from both the PDF case-details grid and the CSV (distinct
+     from `CaseType`/`Court`), and omitted `Bench` from the PDF entirely — both are required client report
+     fields. Added to both, with a CSV column/value regression test and a Windows-gated PDF text assertion
+     (mirrors `DossierPdfComposerTests`' convention — PdfPig text extraction off Windows fonts isn't
+     reliable, same reasoning as the `windows-tests` CI split).
+  2. `docs/litigation-data-lake-integration.md` predated #239's confirmed product decisions and still
+     described the superseded design (litigation feeding the MCA ROC dossier,
+     `Confirmed`/`Candidate`/`Rejected`/`NeedsReview` match-decision states, candidate matches excluded from
+     metrics) plus described the full end-to-end pipeline as already active when only the foundation layer
+     was built. Rewritten as a phased roadmap against the actual epic (#239, #241–#248), corrected to match
+     `LitigationCaseIdentity`'s real CNR-first contract, and folded in the confirmed BPR API contract details
+     from the vendor's Postman collection found during #241 (3 real endpoints, the no-`Bearer`-prefix header
+     quirk, the JSON/XLSX response discrepancy) plus what's still genuinely unconfirmed. Added a revision
+     note explaining what changed and why.
+- 49/50 litigation-filtered tests pass (1 unrelated pre-existing skip), full build clean. Propagated the
+  same fixes into #251 (stacked on this branch) via a clean merge, no conflicts, 81/82 still green there.
+  `@codex` re-review requested on both #250 and #251.
+
 ### 2026-09-20 — Claude session (DONE PR #251 review round 1 — lease fencing + crash-safe registration, both fixed)
 - **Two real findings on PR #251, both fixed at `b830d74`:**
   1. `LeaseOwner` was diagnostic-only (a reusable `"machine:pid"` string) — a stale worker whose lease had
