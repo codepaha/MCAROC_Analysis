@@ -32,4 +32,6 @@ public class RequestDocument
 
     /// <summary>Upload session ID if created via resumable large archive upload.</summary>
     public Guid? UploadSessionId { get; set; }
+
+    public List<RequestDocumentDerivative> Derivatives { get; set; } = [];
 }
