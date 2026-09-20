@@ -85,6 +85,9 @@ builder.Services.AddHttpClient<BprLitigationClient>((sp, client) =>
 builder.Services.AddSingleton<LitigationSearchQueue>();
 builder.Services.AddScoped<LitigationSearchJobService>();
 builder.Services.AddHostedService<LitigationSearchWorker>();
+builder.Services.AddSingleton<LitigationCasePersistenceQueue>();
+builder.Services.AddScoped<LitigationCasePersistenceService>();
+builder.Services.AddHostedService<LitigationCasePersistenceWorker>();
 
 builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseSqlServer(builder.Configuration.GetConnectionString("Default")));

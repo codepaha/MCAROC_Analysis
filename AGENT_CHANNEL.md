@@ -153,7 +153,7 @@ gate, so it gets its own table rather than living inside either lane's section a
 | Issue | What | Lane | Depends on | Status |
 |---|---|---|---|---|
 | #241 LIT-01 | BPR API client + durable litigation-job lifecycle | Claude | — | **MERGED** (PR #251, `29ec856`) |
-| #242 LIT-02 | Persist BPR cases; retain CSP provider identity and apply conservative CNR-first de-duplication | Claude | #241 | unclaimed |
+| #242 LIT-02 | Persist BPR cases; retain CSP provider identity and apply conservative CNR-first de-duplication | Claude | #241 | **CLAIMED** (`feature/242-litigation-case-persistence`) |
 | #243 LIT-03 | All-orders retrieval, text retention, ZIP delivery | Claude | #241, #242 | unclaimed |
 | #244 LIT-04 | Request-scoped litigation evidence for MCA ROC Copilot | Claude | #243 | unclaimed |
 | #245 LIT-05 | Evidence-grounded Gemini case/portfolio analysis | Claude | #242, #243 | unclaimed |
@@ -278,6 +278,113 @@ service — if it sits `queued`, `run.cmd` is down) runs *only* what Linux can't
 ---
 
 ## Log  <!-- newest first. Prefix: NEEDS / BLOCKED / DONE / DECISION / FYI -->
+
+### 2026-09-20 — Claude session (DONE PR #252 review round 3 — snapshot admission atomically fenced to the job's completion lease)
+- **One finding, fixed at `60ab6ec`:** `EnsureSnapshotAsync` had no job-token/lease predicate of its own and
+  committed independently of `LitigationSearchJobService`'s lease-guarded completion write. A worker whose
+  lease expired between fetching the completed report and committing its completion could still leave its
+  snapshot committed and Pending even though its own completion update lost the race and threw
+  `LitigationSearchJobLeaseLostException` — `RecoverStaleWorkAsync` imports snapshots independent of job
+  status, so that orphaned snapshot would still get persisted into cases/provenance on a later sweep,
+  publishing a report whose producing attempt was fenced out. Reintroduced stale-worker publication through
+  a different table than the one round 2 fenced.
+- Fixed with the atomic-admission option the reviewer named: `EnsureSnapshotAsync` and the lease-guarded
+  completion `ExecuteUpdateAsync` now run inside one transaction (`ReadCommitted`, matching this codebase's
+  existing claim-pattern convention — `OperationalSlotLeaseService`/`StorageReservationManager`). A failed
+  lease check rolls the whole transaction back, undoing the snapshot admission with it — the snapshot never
+  becomes visible to any other connection unless the completion that vouches for it also durably commits
+  alongside it. A raw process crash mid-transaction gets the same all-or-nothing outcome for free from SQL
+  Server, so this also strictly improves the pre-existing crash-safety case, not just the new one.
+- Added the exact interleaving regression requested: a stub HTTP handler injects a real, synchronous lease
+  takeover (a second `AppDbContext` claiming a fresh `LeaseToken`) at the moment the polling worker has the
+  completed report bytes in hand but hasn't yet run its admission/completion transaction, then asserts zero
+  snapshot/case/provenance rows exist afterward. Verified the test actually catches the regression by
+  reverting the transaction wrap locally (test failed — orphaned Pending snapshot), then restoring the fix
+  (test passed). 107/108 litigation-filtered tests pass (1 unrelated pre-existing skip), full solution suite
+  1576/1595 pass (19 unrelated pre-existing skips), full build clean. `@codex` re-review requested.
+
+### 2026-09-20 — Claude session (DONE PR #252 review round 2 — recovery decoupled from job status, CNR-less-index regression added)
+- **Two findings, both addressed at `15a432b`:**
+  1. Snapshot recovery could leave imports permanently stuck. Startup recovery previously found candidates
+     by `job.Status == Completed` and called `PersistCasesForJobAsync(jobId)` — two ways that broke:
+     a restart while a snapshot's lease was still valid caused a same-turn claim attempt to decline and never
+     retry it, and a rerun resets the reused `LitigationSearchJob` row's `Status` back to `Pending`
+     (`CreateOrResetJobAsync`), silently dropping an older, still-incomplete snapshot from every future sweep.
+     Fixed: `LitigationReportSnapshot` is now the sole recovery unit — `EnsureSnapshotAsync` runs once,
+     synchronously, *before* the job is written Completed (so a crash between the two leaves the job
+     non-terminal and its own existing recovery retries safely; `EnsureSnapshotAsync` is idempotent on
+     `(jobId, hash)`); `RecoverStaleWorkAsync` replaces `FindUnprocessedCompletedJobIdsAsync` and queries
+     snapshots directly — Pending/lease-expired ones enqueue immediately, InProgress-with-a-live-lease ones
+     get a delayed retry scheduled at their own `LeaseExpiresUtc`. Queue and worker now carry snapshot ids,
+     not job ids.
+  2. CNR-less cases were claimed to conflict on SQL Server's NULL-uniqueness. Verified rather than assumed:
+     a plain composite unique index does reject two matching-NULL rows (confirmed empirically against a
+     throwaway table, `Msg 2601`), but `LitigationCase`'s `(RequestId, Cnr, ProceedingType)` index is already
+     generated by EF Core as a *filtered* index (`WHERE [Cnr] IS NOT NULL AND [ProceedingType] IS NOT NULL`
+     — confirmed both by grepping migration `20260920152615_AddLitigationCases.cs` and by querying
+     `sys.indexes`/`sys.index_columns` on the real test DB), so this was already correct — no code change
+     needed. Added the requested regression anyway.
+- Two new regression tests for finding 1 (`RecoverStaleWorkAsync_schedules_a_delayed_retry_for_a_lease_still_valid_after_a_restart`,
+  `RecoverStaleWorkAsync_still_finds_an_old_incomplete_snapshot_after_a_rerun_resets_the_job_status`) and one
+  for finding 2 (`PersistSnapshotAsync_persists_two_CNR_less_cases_from_a_single_report_without_a_SQL_unique_index_conflict`).
+  105/106 litigation-filtered tests pass (1 unrelated pre-existing skip), full solution suite 1575/1594 pass
+  (19 unrelated pre-existing skips), full build clean. Posted the finding-1 evidence (migration filter clause
+  + live index query) directly on the PR rather than just asserting it. `@codex` re-review requested.
+
+### 2026-09-20 — Claude session (DONE PR #252 review round 1 — crash safety, concurrency safety, provenance preservation, all fixed)
+- **Three real findings, all fixed at `5ebf630`** by introducing `LitigationReportSnapshot` — an immutable
+  per-report copy that is also the crash-safe, concurrency-safe, resumable unit of import work:
+  1. Partial ingestion could permanently skip cases — the old idempotency check treated any existing
+     source-report link as "the whole report is done," so a crash after case 1 left cases 2..N permanently
+     unpersisted on retry. Fixed: `CasesPersistedCount` only advances once a case (+ orders + link) commits
+     in the *same* transaction as the counter's own increment; a resumed import starts there — positionally,
+     not by identity, so it correctly resumes even for a case with no CNR.
+  2. Concurrent worker executions could duplicate cases/orders — no atomic claim, no DB constraints, plain
+     read-then-insert. Fixed: the snapshot's claim and every per-case progress update goes through EF's
+     optimistic-concurrency check via a SQL Server `rowversion` column — two workers racing can never both
+     succeed. Backstopped by unique indexes on `LitigationCase(RequestId, Cnr, ProceedingType)` and
+     `LitigationCaseOrder(LitigationCaseId, PdfUrl, OrderDate, OrderType)`, with explicit unique-violation
+     retry (re-query the winner's row, merge onto it).
+  3. Reruns destroyed prior raw provenance and prior CSP/provider identity — a request reuses the same
+     `LitigationSearchJob` row, so each rerun overwrote the raw bytes/hash/ProviderCaseId/CspId with no way
+     to reconstruct an earlier report. Fixed: the snapshot holds its own immutable raw-report copy (one row
+     per job+hash ever seen); `LitigationCaseSourceReport` now links to the snapshot and captures the
+     ProviderCaseId/CspId *that specific report* asserted, separate from the mutable canonical case row.
+- 4 new/rewritten regression tests: crash-recovery (seed the exact post-crash state, prove resume doesn't
+  duplicate the already-committed case), real concurrency (two independent `AppDbContext` instances —
+  separate connections — process the same report via `Task.WhenAll`, prove exactly one of everything
+  results), plus the existing suite updated for the new schema. 102/103 litigation-filtered tests pass
+  (1 unrelated pre-existing skip), 65/65 `AutoFetch`+`CalculationAiAudit` tests re-run (same claim/lease
+  pattern family) to confirm no regression, full build clean. `@codex` re-review requested.
+
+### 2026-09-20 — Claude session (CLAIMED #242 LIT-02: persist BPR cases with CNR-first de-dup; PR opened)
+- **CLAIMED #242** on branch `feature/242-litigation-case-persistence`, based on latest `main` (`7b027ed`,
+  after #241/#251 merged).
+- Adds `LitigationCase`/`LitigationCaseOrder`/`LitigationCaseSourceReport` + the `AddLitigationCases`
+  migration, `LitigationCasePersistenceService` (parses a completed job's raw report via the existing
+  `BprLitigationReportParser`, persists cases/orders, links source-report provenance), and a
+  queue/worker pair triggered automatically when `LitigationSearchJobService` marks a job Completed.
+- **Real design catch from my own tests**: a naive "idempotent if any source-report row references this job
+  id" check is wrong, because a request's `LitigationSearchJob` row is *reused in place* across reruns
+  (`CreateOrResetJobAsync`, enforced by the unique index on `RequestId` from #241) — so the same job id
+  recurs across genuinely different search runs. Fixed by keying both idempotency and the source-report
+  unique index on `(job id, RawResponseHash)` instead of job id alone — re-processing the exact same
+  completed report is a no-op, but a genuine rerun (same job row, new report) is processed and, via
+  CNR-first de-dup, correctly adds provenance rather than creating a duplicate case. Documented at length on
+  `LitigationCaseSourceReport` so this doesn't get re-broken later.
+- Also hit and fixed: (1) a SQL Server "multiple cascade paths" error — `LitigationCaseSourceReport`'s FK to
+  `LitigationSearchJob` needed `NoAction`, since both `LitigationCase` and `LitigationSearchJob` already
+  cascade from `McaRequest`; (2) `dotnet ef migrations remove` in this environment (tools 10.0.10 vs runtime
+  10.0.11 — the CLI's own warning) reproducibly corrupts `AppDbContextModelSnapshot.cs`, silently dropping
+  an unrelated entity (`RequestDocumentDerivatives`, from #240) from the reverted snapshot and causing a
+  regenerated migration to try to re-create its table. Worked around by restoring the snapshot from `main`
+  and deleting the stale migration files by hand instead of using `migrations remove` — **flagging this as a
+  real environment issue** worth investigating (upgrading the `dotnet-ef` global tool to 10.0.11 is the
+  likely fix) before the next agent hits the same thing blind.
+- Scope stops at persisting parsed cases from `BprReportFormat.Json` — no XLSX parser exists yet (logged,
+  left unpersisted, not guessed at). No product-facing change — nothing reads these tables yet (#245/#246/#247).
+- 100/101 litigation-filtered tests pass (1 unrelated pre-existing skip), 36/36 `AutoFetch` tests re-run to
+  confirm no regression, full build clean. `@codex review` requested.
 
 ### 2026-09-20 — Claude session (MERGED PR #251 — #241 LIT-01 done; #250 foundation also merged as PR #250)
 - **PR #250 MERGED into `main`** (foundation: `LitigationKeywordPlanner`, `LitigationCaseIdentity`,

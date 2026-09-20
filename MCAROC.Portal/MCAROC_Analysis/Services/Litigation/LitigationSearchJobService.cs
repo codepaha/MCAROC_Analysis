@@ -30,6 +30,8 @@ public sealed class LitigationSearchJobService(
     AppDbContext db,
     BprLitigationClient client,
     LitigationSearchQueue queue,
+    LitigationCasePersistenceQueue casePersistenceQueue,
+    LitigationCasePersistenceService casePersistenceService,
     IOptions<BprLitigationOptions> options,
     ILogger<LitigationSearchJobService> logger)
 {
@@ -233,9 +235,30 @@ public sealed class LitigationSearchJobService(
             switch (result.Status)
             {
                 case BprReportPollStatus.Completed:
+                {
                     var bytes = result.Bytes!;
                     var format = result.Format;
                     var hash = ComputeHash(bytes);
+                    var retrievedUtc = DateTime.UtcNow;
+
+                    // Snapshot admission and the job's own lease-guarded completion happen in ONE
+                    // transaction, not as two independent commits. Without this, a worker whose lease
+                    // expires between the two writes could still leave its snapshot committed and Pending
+                    // even though its own completion update lost the race and threw
+                    // LitigationSearchJobLeaseLostException below — LitigationCasePersistenceService's
+                    // RecoverStaleWorkAsync finds and imports snapshots independent of the job's own status,
+                    // so that orphaned snapshot would still get persisted into cases/provenance on a later
+                    // sweep, publishing a report whose producing attempt was fenced out. Rolling both writes
+                    // back together when the lease check fails means the snapshot never becomes visible to
+                    // any other connection (READ COMMITTED) unless the completion that vouches for it also
+                    // durably committed alongside it — a raw process crash mid-transaction gets the same
+                    // all-or-nothing outcome for free (SQL Server rolls back an uncommitted transaction on
+                    // its own), so this is strictly safer than the previous two-independent-writes shape for
+                    // both the fenced-out-live-worker case and the crash case.
+                    await using var tx = await db.Database.BeginTransactionAsync(System.Data.IsolationLevel.ReadCommitted, ct);
+
+                    var snapshotId = await casePersistenceService.EnsureSnapshotAsync(jobId, hash, format, bytes, retrievedUtc, ct);
+
                     var statusMessage = $"Report received ({format}).";
                     var claimedCompleted = await LeaseGuarded(jobId, leaseToken)
                         .ExecuteUpdateAsync(s => s
@@ -248,11 +271,18 @@ public sealed class LitigationSearchJobService(
                             .SetProperty(j => j.StatusMessage, statusMessage)
                             .SetProperty(j => j.FailureReason, (string?)null)
                             .SetProperty(j => j.CompletedUtc, DateTime.UtcNow), ct);
-                    if (claimedCompleted == 0) throw new LitigationSearchJobLeaseLostException(jobId);
+                    if (claimedCompleted == 0)
+                    {
+                        await tx.RollbackAsync(ct); // undoes the snapshot admission too — no orphan left behind
+                        throw new LitigationSearchJobLeaseLostException(jobId);
+                    }
 
+                    await tx.CommitAsync(ct);
                     logger.LogInformation(
                         "BPR litigation search job {JobId} completed: {Format}, {ByteCount} bytes.", jobId, format, bytes.LongLength);
+                    casePersistenceQueue.Enqueue(snapshotId);
                     return;
+                }
 
                 case BprReportPollStatus.Failed:
                     throw new BprLitigationException(result.Message ?? "BPR report retrieval failed with no reason given.");
