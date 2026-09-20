@@ -152,7 +152,7 @@ gate, so it gets its own table rather than living inside either lane's section a
 
 | Issue | What | Lane | Depends on | Status |
 |---|---|---|---|---|
-| #241 LIT-01 | BPR API client + durable litigation-job lifecycle | Claude | — | **CLAIMED** (`feature/241-bpr-litigation-client`) |
+| #241 LIT-01 | BPR API client + durable litigation-job lifecycle | Claude | — | **MERGED** (PR #251, `29ec856`) |
 | #242 LIT-02 | Persist BPR cases; retain CSP provider identity and apply conservative CNR-first de-duplication | Claude | #241 | unclaimed |
 | #243 LIT-03 | All-orders retrieval, text retention, ZIP delivery | Claude | #241, #242 | unclaimed |
 | #244 LIT-04 | Request-scoped litigation evidence for MCA ROC Copilot | Claude | #243 | unclaimed |
@@ -278,6 +278,28 @@ service — if it sits `queued`, `run.cmd` is down) runs *only* what Linux can't
 ---
 
 ## Log  <!-- newest first. Prefix: NEEDS / BLOCKED / DONE / DECISION / FYI -->
+
+### 2026-09-20 — Claude session (MERGED PR #251 — #241 LIT-01 done; #250 foundation also merged as PR #250)
+- **PR #250 MERGED into `main`** (foundation: `LitigationKeywordPlanner`, `LitigationCaseIdentity`,
+  `BprLitigationReportParser`, `LitigationReportArtifacts`) after review round 1 (Type/Bench report fields,
+  stale design doc rewrite).
+- **PR #251 MERGED into `main` as `29ec856`** at reviewed head `38a4ea4` (rebased onto post-#250 `main`,
+  clean merge, no conflicts) — both required checks green, `MERGEABLE`/`CLEAN`. Two review rounds each found
+  real, distinct issues: round 1 (lease fencing via per-claim `LeaseToken`, crash-safe registration via
+  `RegistrationAttemptedUtc`), round 2 (raw-JWT auth confirmed by a live test call, `status:false` error-
+  envelope misclassification, duplicate-search reset guard on `CreateOrResetJobAsync`) — see the log entries
+  below for detail. Branch deleted.
+- **#241 (LIT-01) is done.** `BprLitigationClient`, `LitigationSearchJob`/`LitigationSearchJobService`,
+  `LitigationSearchQueue`/`Worker`, and the `AddLitigationSearchJobs` migration are now on `main`. No
+  product-facing change yet — nothing calls this. **Next: #242** (persist BPR cases, CNR-first de-dup) —
+  claiming now.
+- **Infra note:** the self-hosted Windows CI runner's shared `.\SQLEXPRESS` instance intermittently threw
+  `Database 'MCAROC_Analysis_Test' already exists` across unrelated branches (including `main` itself) during
+  this work — root cause was C: drive down to ~2.9GB free (NuGet cache + local `dotnet test` runs against the
+  same shared instance the runner uses). Mitigated by clearing the local NuGet cache (freed ~3.5GB); a full
+  SQL Server data-path migration off C: was proposed but the bulk multi-database file move was correctly
+  blocked by this session's own permission guardrails (touches other projects' databases + system databases)
+  — left for the owner to run directly if still wanted.
 
 ### 2026-09-20 — Claude session (DONE PR #251 review round 2 — raw-JWT auth, error-envelope misclassification, duplicate-search reset guard, all fixed)
 - **Three findings, both from a live test call against the real BPR API, both fixed at `07f71a8`:**
