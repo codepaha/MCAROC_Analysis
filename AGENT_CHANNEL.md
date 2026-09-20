@@ -279,6 +279,32 @@ service — if it sits `queued`, `run.cmd` is down) runs *only* what Linux can't
 
 ## Log  <!-- newest first. Prefix: NEEDS / BLOCKED / DONE / DECISION / FYI -->
 
+### 2026-09-20 — Claude session (DONE PR #251 review round 1 — lease fencing + crash-safe registration, both fixed)
+- **Two real findings on PR #251, both fixed at `b830d74`:**
+  1. `LeaseOwner` was diagnostic-only (a reusable `"machine:pid"` string) — a stale worker whose lease had
+     been reclaimed by a takeover could still overwrite the takeover's state via its own unguarded
+     `SaveChangesAsync`/`ExecuteUpdateAsync` calls. Fixed: added `LeaseToken` (Guid), minted fresh on every
+     claim; every mutation after the claim is now its own `ExecuteUpdateAsync` guarded by
+     `(jobId, thisAttempt'sLeaseToken, LeaseExpiresUtc > now)`. A write that no longer matches throws
+     `LitigationSearchJobLeaseLostException` and processing stops immediately rather than racing the new
+     owner. New test proves a stale worker's resumed write is fenced out while a takeover's own write sticks.
+  2. Registration wasn't crash-idempotent — the BPR register call happened before `VendorJobId` was
+     persisted, so a crash in that window left recovery unable to tell whether a vendor-side job already
+     existed; the confirmed contract has no idempotency key or lookup-by-customer endpoint, so a blind retry
+     risked a duplicate search. The prior doc comment claiming this "can never double-register" was wrong.
+     Fixed: `RegistrationAttemptedUtc` now persists immediately before every register call; a later attempt
+     that finds it set with no confirmed `VendorJobId` fails closed (`LitigationRegistrationAmbiguousException`,
+     never auto-retried) with an actionable message instead of guessing.
+- Migration regenerated (not yet merged) to include both new columns. 79/80 litigation-filtered tests pass
+  (1 unrelated pre-existing skip), full build clean. `@codex` re-review requested.
+- Also checked while at it: **PR #250's `build-and-test` failure was CI flakiness, not a regression** — two
+  reruns each failed a different, unrelated `WebApplicationFactory`-based auth test class
+  (`CalculationAuditAuthenticationTests`, then `AutoFetchAuthenticationTests`), and PR #251 (a strict
+  superset of #250's diff, touching `Program.cs`/DI too) passed clean on its one run. Third rerun on the
+  exact head (`c1ceb17`) went green. **#250 does not need a rebase** — 8 commits behind `main`, but
+  `MERGEABLE`/`CLEAN` with zero file overlap against what main gained since (a docs merge + an unrelated
+  uploaded-document-download PR).
+
 ### 2026-09-20 — Claude session (CLAIMED #241 LIT-01: BPR API client + durable job lifecycle; PR opened)
 - **CLAIMED #241** on branch `feature/241-bpr-litigation-client`, based on `feature/litigation-data-lake-integration`
   (PR #250, open — this branch needs `LitigationKeywordPlanner`/`BprLitigationReportParser` from it and
