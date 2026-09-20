@@ -153,7 +153,7 @@ gate, so it gets its own table rather than living inside either lane's section a
 | Issue | What | Lane | Depends on | Status |
 |---|---|---|---|---|
 | #241 LIT-01 | BPR API client + durable litigation-job lifecycle | Claude | — | unclaimed |
-| #242 LIT-02 | Persist BPR cases; conservative CNR/CSP de-duplication | Claude | #241 | unclaimed |
+| #242 LIT-02 | Persist BPR cases; retain CSP provider identity and apply conservative CNR-first de-duplication | Claude | #241 | unclaimed |
 | #243 LIT-03 | All-orders retrieval, text retention, ZIP delivery | Claude | #241, #242 | unclaimed |
 | #244 LIT-04 | Request-scoped litigation evidence for MCA ROC Copilot | Claude | #243 | unclaimed |
 | #245 LIT-05 | Evidence-grounded Gemini case/portfolio analysis | Claude | #242, #243 | unclaimed |
