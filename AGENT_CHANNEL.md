@@ -279,6 +279,26 @@ service — if it sits `queued`, `run.cmd` is down) runs *only* what Linux can't
 
 ## Log  <!-- newest first. Prefix: NEEDS / BLOCKED / DONE / DECISION / FYI -->
 
+### 2026-09-20 — Claude session (DONE PR #251 review round 2 — raw-JWT auth, error-envelope misclassification, duplicate-search reset guard, all fixed)
+- **Three findings, both from a live test call against the real BPR API, both fixed at `07f71a8`:**
+  1. `sec/authenticate` returns the JWT as the raw response body, not JSON-wrapped — `AuthenticateAsync`
+     only tried JSON field extraction before this and would have thrown on the real response. Now accepts a
+     raw JWT directly (`LooksLikeJwt`: three base64url segments), JSON-field extraction kept as a fallback.
+  2. A not-found job returns HTTP 200 with `{"status":false,"message":"Job not found"}` — valid, non-empty
+     JSON with no *string* status field, so it fell through to being classified as a completed report. Added
+     `TryClassifyControlEnvelope`: a JSON *boolean* `status` field is never report content (real reports
+     never carry one), so `status:false` → Failed (using `message`); `status:true` → Pending (unconfirmed
+     meaning, but still not report content — err toward not losing data over risking a bad Completed).
+  3. `CreateOrResetJobAsync` unconditionally cleared `VendorJobId`/`RegistrationAttemptedUtc` on an existing
+     job even while Authenticating/Registering/Polling, or Pending with an unresolved registration attempt —
+     a subsequent worker could then register a second, duplicate vendor-side search while the original might
+     still be running. Reset is now rejected (`InvalidOperationException`) unless the job is terminal or was
+     never touched by BPR at all — an explicit, auditable rerun action, not an implicit side effect.
+- 11 new regression tests, 93/94 litigation-filtered tests pass (1 unrelated pre-existing skip), full build
+  clean. The prior push's `windows-tests` failure was the self-hosted runner's known shared-SQLEXPRESS
+  "Database already exists" contention (`DossierPdfComposerTests`, unrelated) — re-running. `@codex`
+  re-review requested.
+
 ### 2026-09-20 — Claude session (DONE PR #250 review round 1 — missing report fields + stale design doc, both fixed)
 - **Two findings on PR #250, both fixed at `f9de6d2`:**
   1. `LitigationReportArtifacts` omitted `Type` from both the PDF case-details grid and the CSV (distinct
