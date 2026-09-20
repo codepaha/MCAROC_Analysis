@@ -154,7 +154,7 @@ gate, so it gets its own table rather than living inside either lane's section a
 |---|---|---|---|---|
 | #241 LIT-01 | BPR API client + durable litigation-job lifecycle | Claude | — | **MERGED** (PR #251, `29ec856`) |
 | #242 LIT-02 | Persist BPR cases; retain CSP provider identity and apply conservative CNR-first de-duplication | Claude | #241 | **MERGED** (PR #252, `7ce747a`) |
-| #243 LIT-03 | All-orders retrieval, text retention, ZIP delivery | Claude | #241, #242 | **CLAIMED** (`feature/243-litigation-orders-zip`) |
+| #243 LIT-03 | All-orders retrieval, text retention, ZIP delivery | Claude | #241, #242 | **PR open** (#253) |
 | #244 LIT-04 | Request-scoped litigation evidence for MCA ROC Copilot | Claude | #243 | unclaimed |
 | #245 LIT-05 | Evidence-grounded Gemini case/portfolio analysis | Claude | #242, #243 | unclaimed |
 | #246 LIT-06 | Litigation tab — court grid + case-card UI | Antigravity | #241, #242, #243, #245 | unclaimed |
@@ -278,6 +278,33 @@ service — if it sits `queued`, `run.cmd` is down) runs *only* what Linux can't
 ---
 
 ## Log  <!-- newest first. Prefix: NEEDS / BLOCKED / DONE / DECISION / FYI -->
+
+### 2026-09-20 — Claude session (#243 LIT-03: all-orders retrieval, text retention, ZIP delivery; PR #253 opened)
+- Built on branch `feature/243-litigation-orders-zip` (based on `main` post-#252). Adds `LitigationOrderDocument`
+  (one row per `LitigationCaseOrder`) — crash-safe/concurrency-safe PDF retrieval, retention and text
+  extraction, same lease/RowVersion claim shape as `LitigationReportSnapshot`.
+- **Applied the PR #252 round-3 lesson proactively, not reactively**: `LitigationCasePersistenceService.UpsertOrdersAsync`
+  admits (or refreshes) a document's row in the SAME transaction as the order it belongs to — never a
+  separate write an order could exist without a matching document eligible to import it.
+- `BprLitigationClient.DownloadOrderDocumentAsync` — bounded-size download (never buffers an unbounded
+  response), PDF-signature validated, only attaches BPR's JWT when the order URL shares BPR's own host
+  (documented as genuinely unconfirmed vendor behavior — no captured example exists for how order URLs are
+  authorized; see `docs/litigation-data-lake-integration.md`).
+- Retention: epic #239's confirmed "vendor PDF may expire after 7 days" — `Failed` stays retryable (with
+  backoff) until that deadline, then moves to terminal `Expired`, never falsely reported complete. Refresh:
+  a rerun that re-surfaces the same order with a genuinely later retention deadline resets `Failed`/`Expired`
+  back to `Pending`, auditable via `RefreshCount`/`LastRefreshedUtc` — the only refresh mechanism the
+  confirmed BPR contract supports (no per-order refetch endpoint).
+- `LitigationOrdersArchiveBuilder` + `LitigationController.DownloadOrdersZip` — one request-scoped bulk ZIP
+  of every currently `Downloaded` order, internal-reviewer auth only, no source vendor URL ever exposed.
+- Reused existing infra rather than parallel-building: `IStorageReservationManager` (AutoFetch's disk-quota
+  ledger), `PdfTextExtractor` (McaFilings' native+OCR extractor), `AutoFetchArchiveBuilder`'s folder/entry
+  sanitization helpers.
+- 33 new tests (order-download signature/size/host-scoped-auth, order-document admission/refresh atomicity,
+  full download+extract happy path with real PdfPig extraction, retention-expiry-skips-the-vendor-call, real
+  two-`AppDbContext` concurrency, recovery sweep with delayed retry, archive-builder packaging). Full
+  litigation suite 129/130 (1 unrelated pre-existing skip), full solution suite 1599/1618 (19 unrelated
+  pre-existing skips), full build clean. PR #253 opened, `@codex` review requested.
 
 ### 2026-09-20 — Claude session (MERGED PR #252 — #242 LIT-02 done; CLAIMED #243 LIT-03)
 - **PR #252 MERGED into `main` as `7ce747a`** at reviewed head `b9edf9e` — both required checks green,
