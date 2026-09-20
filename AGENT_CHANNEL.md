@@ -279,6 +279,30 @@ service — if it sits `queued`, `run.cmd` is down) runs *only* what Linux can't
 
 ## Log  <!-- newest first. Prefix: NEEDS / BLOCKED / DONE / DECISION / FYI -->
 
+### 2026-09-20 — Claude session (DONE PR #252 review round 3 — snapshot admission atomically fenced to the job's completion lease)
+- **One finding, fixed at `60ab6ec`:** `EnsureSnapshotAsync` had no job-token/lease predicate of its own and
+  committed independently of `LitigationSearchJobService`'s lease-guarded completion write. A worker whose
+  lease expired between fetching the completed report and committing its completion could still leave its
+  snapshot committed and Pending even though its own completion update lost the race and threw
+  `LitigationSearchJobLeaseLostException` — `RecoverStaleWorkAsync` imports snapshots independent of job
+  status, so that orphaned snapshot would still get persisted into cases/provenance on a later sweep,
+  publishing a report whose producing attempt was fenced out. Reintroduced stale-worker publication through
+  a different table than the one round 2 fenced.
+- Fixed with the atomic-admission option the reviewer named: `EnsureSnapshotAsync` and the lease-guarded
+  completion `ExecuteUpdateAsync` now run inside one transaction (`ReadCommitted`, matching this codebase's
+  existing claim-pattern convention — `OperationalSlotLeaseService`/`StorageReservationManager`). A failed
+  lease check rolls the whole transaction back, undoing the snapshot admission with it — the snapshot never
+  becomes visible to any other connection unless the completion that vouches for it also durably commits
+  alongside it. A raw process crash mid-transaction gets the same all-or-nothing outcome for free from SQL
+  Server, so this also strictly improves the pre-existing crash-safety case, not just the new one.
+- Added the exact interleaving regression requested: a stub HTTP handler injects a real, synchronous lease
+  takeover (a second `AppDbContext` claiming a fresh `LeaseToken`) at the moment the polling worker has the
+  completed report bytes in hand but hasn't yet run its admission/completion transaction, then asserts zero
+  snapshot/case/provenance rows exist afterward. Verified the test actually catches the regression by
+  reverting the transaction wrap locally (test failed — orphaned Pending snapshot), then restoring the fix
+  (test passed). 107/108 litigation-filtered tests pass (1 unrelated pre-existing skip), full solution suite
+  1576/1595 pass (19 unrelated pre-existing skips), full build clean. `@codex` re-review requested.
+
 ### 2026-09-20 — Claude session (DONE PR #252 review round 2 — recovery decoupled from job status, CNR-less-index regression added)
 - **Two findings, both addressed at `15a432b`:**
   1. Snapshot recovery could leave imports permanently stuck. Startup recovery previously found candidates
