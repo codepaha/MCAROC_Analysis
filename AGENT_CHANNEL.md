@@ -279,6 +279,32 @@ service — if it sits `queued`, `run.cmd` is down) runs *only* what Linux can't
 
 ## Log  <!-- newest first. Prefix: NEEDS / BLOCKED / DONE / DECISION / FYI -->
 
+### 2026-09-20 — Claude session (DONE PR #252 review round 1 — crash safety, concurrency safety, provenance preservation, all fixed)
+- **Three real findings, all fixed at `5ebf630`** by introducing `LitigationReportSnapshot` — an immutable
+  per-report copy that is also the crash-safe, concurrency-safe, resumable unit of import work:
+  1. Partial ingestion could permanently skip cases — the old idempotency check treated any existing
+     source-report link as "the whole report is done," so a crash after case 1 left cases 2..N permanently
+     unpersisted on retry. Fixed: `CasesPersistedCount` only advances once a case (+ orders + link) commits
+     in the *same* transaction as the counter's own increment; a resumed import starts there — positionally,
+     not by identity, so it correctly resumes even for a case with no CNR.
+  2. Concurrent worker executions could duplicate cases/orders — no atomic claim, no DB constraints, plain
+     read-then-insert. Fixed: the snapshot's claim and every per-case progress update goes through EF's
+     optimistic-concurrency check via a SQL Server `rowversion` column — two workers racing can never both
+     succeed. Backstopped by unique indexes on `LitigationCase(RequestId, Cnr, ProceedingType)` and
+     `LitigationCaseOrder(LitigationCaseId, PdfUrl, OrderDate, OrderType)`, with explicit unique-violation
+     retry (re-query the winner's row, merge onto it).
+  3. Reruns destroyed prior raw provenance and prior CSP/provider identity — a request reuses the same
+     `LitigationSearchJob` row, so each rerun overwrote the raw bytes/hash/ProviderCaseId/CspId with no way
+     to reconstruct an earlier report. Fixed: the snapshot holds its own immutable raw-report copy (one row
+     per job+hash ever seen); `LitigationCaseSourceReport` now links to the snapshot and captures the
+     ProviderCaseId/CspId *that specific report* asserted, separate from the mutable canonical case row.
+- 4 new/rewritten regression tests: crash-recovery (seed the exact post-crash state, prove resume doesn't
+  duplicate the already-committed case), real concurrency (two independent `AppDbContext` instances —
+  separate connections — process the same report via `Task.WhenAll`, prove exactly one of everything
+  results), plus the existing suite updated for the new schema. 102/103 litigation-filtered tests pass
+  (1 unrelated pre-existing skip), 65/65 `AutoFetch`+`CalculationAiAudit` tests re-run (same claim/lease
+  pattern family) to confirm no regression, full build clean. `@codex` re-review requested.
+
 ### 2026-09-20 — Claude session (CLAIMED #242 LIT-02: persist BPR cases with CNR-first de-dup; PR opened)
 - **CLAIMED #242** on branch `feature/242-litigation-case-persistence`, based on latest `main` (`7b027ed`,
   after #241/#251 merged).
