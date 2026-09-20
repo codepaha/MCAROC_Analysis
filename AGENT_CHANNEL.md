@@ -153,8 +153,8 @@ gate, so it gets its own table rather than living inside either lane's section a
 | Issue | What | Lane | Depends on | Status |
 |---|---|---|---|---|
 | #241 LIT-01 | BPR API client + durable litigation-job lifecycle | Claude | — | **MERGED** (PR #251, `29ec856`) |
-| #242 LIT-02 | Persist BPR cases; retain CSP provider identity and apply conservative CNR-first de-duplication | Claude | #241 | **CLAIMED** (`feature/242-litigation-case-persistence`) |
-| #243 LIT-03 | All-orders retrieval, text retention, ZIP delivery | Claude | #241, #242 | unclaimed |
+| #242 LIT-02 | Persist BPR cases; retain CSP provider identity and apply conservative CNR-first de-duplication | Claude | #241 | **MERGED** (PR #252, `7ce747a`) |
+| #243 LIT-03 | All-orders retrieval, text retention, ZIP delivery | Claude | #241, #242 | **CLAIMED** (`feature/243-litigation-orders-zip`) |
 | #244 LIT-04 | Request-scoped litigation evidence for MCA ROC Copilot | Claude | #243 | unclaimed |
 | #245 LIT-05 | Evidence-grounded Gemini case/portfolio analysis | Claude | #242, #243 | unclaimed |
 | #246 LIT-06 | Litigation tab — court grid + case-card UI | Antigravity | #241, #242, #243, #245 | unclaimed |
@@ -278,6 +278,24 @@ service — if it sits `queued`, `run.cmd` is down) runs *only* what Linux can't
 ---
 
 ## Log  <!-- newest first. Prefix: NEEDS / BLOCKED / DONE / DECISION / FYI -->
+
+### 2026-09-20 — Claude session (MERGED PR #252 — #242 LIT-02 done; CLAIMED #243 LIT-03)
+- **PR #252 MERGED into `main` as `7ce747a`** at reviewed head `b9edf9e` — both required checks green,
+  `MERGEABLE`/`CLEAN`. Three review rounds each found real, distinct issues: round 1 (crash safety via
+  positional `CasesPersistedCount`, concurrency safety via `LitigationReportSnapshot`'s `rowversion` claim,
+  provenance preservation via per-snapshot `LitigationCaseSourceReport` links), round 2 (recovery decoupled
+  from the job's own mutable/reused status, verified — not assumed — that the CNR-less unique index is
+  already correctly filtered), round 3 (snapshot admission atomically fenced to the job's completion lease
+  via one SQL transaction) — see the log entries below for detail. One CI failure along the way
+  (`CalculationDiscrepancyWorkflowServiceTests.Confirm_ConcurrentSameReviewerDoubleSubmit_RecordsExactlyOneApprovalAndOneHold`)
+  was confirmed as unrelated flakiness — a pre-existing test in a different service this branch never
+  touched, passing in two independent local full-suite runs — rerun went green. Branch deleted.
+- **#242 (LIT-02) is done.** `LitigationCase`/`LitigationCaseOrder`/`LitigationCaseSourceReport`/
+  `LitigationReportSnapshot` + the `AddLitigationCases` migration, `LitigationCasePersistenceService`/`Worker`/
+  `Queue`, and the trigger wiring in `LitigationSearchJobService` are now on `main`.
+- **CLAIMED #243** (LIT-03: all-orders retrieval, text retention, ZIP delivery) on branch
+  `feature/243-litigation-orders-zip`, based on latest `main` (`7ce747a`). Dependencies #241/#242 both
+  merged — unblocked per `gh issue view 243`.
 
 ### 2026-09-20 — Claude session (DONE PR #252 review round 3 — snapshot admission atomically fenced to the job's completion lease)
 - **One finding, fixed at `60ab6ec`:** `EnsureSnapshotAsync` had no job-token/lease predicate of its own and
