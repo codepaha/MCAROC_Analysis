@@ -15,11 +15,13 @@ conservative — a shared, valid CNR plus a compatible proceeding type is the on
 (`LitigationCaseIdentity.CanAutoDedupe`); CSP ID is retained as the BPR/provider case identity, but is never
 used as a merge key, since its scope in the vendor contract has not been confirmed.
 
-**Planned** — once all-orders retrieval and text retention are built (#243/#244): every order and judgment
-BPR returns for a completed search is downloaded, not a hand-picked subset. Retained order text is
-extracted, chunked and embedded so the MCA ROC Copilot can answer with exact case/order/page citations,
-strictly scoped to `RequestId` — never fabricated onto MCA filing IDs, since litigation orders are not MCA
-filings (see "New durable records" below).
+**Done (#243)** — every order and judgment BPR returns for a completed search is downloaded, not a
+hand-picked subset, with its text extracted and retained past the vendor PDF's own retention window (see
+"All-orders retrieval, text retention and bulk ZIP delivery (#243, done)" below).
+
+**Planned (#244)** — retained order text is chunked and embedded so the MCA ROC Copilot can answer with
+exact case/order/page citations, strictly scoped to `RequestId` — never fabricated onto MCA filing IDs,
+since litigation orders are not MCA filings (see "New durable records" below).
 
 ## Confirmed BPR API contract
 
@@ -41,11 +43,19 @@ Still genuinely unconfirmed, even with the collection in hand:
   registered with `file_format: JSON` — a confirmed, unresolved discrepancy, not a hypothetical one.
 - Corporate/LLP entity types (the collection's only example uses `entity_type: "individual"`).
 - Rate/concurrency limits, file-size limits, retention, licensing and client-display permissions.
+- **(#243)** How an order's `pdf_url` (a value inside the report JSON, not one of the three confirmed
+  endpoints) is authorized — no example was ever captured for fetching one. `BprLitigationClient.DownloadOrderDocumentAsync`
+  only attaches the BPR JWT when the URL shares BPR's own configured host (never forwarded to a third-party
+  document host, which would leak the token into that host's access logs); otherwise it is fetched with no
+  Authorization header at all, on the assumption the URL is self-contained/pre-signed — consistent with the
+  confirmed "may expire after seven days" product decision reading as a signed-URL TTL. If this assumption
+  is ever contradicted by a real response, that one method is the only place to change.
 
-`BprLitigationClient` (#241) handles both response-shape gaps defensively — trying a short list of plausible
-field names and failing loudly naming what it actually received, and sniffing the report response's
-bytes/content-type/JSON shape rather than trusting configuration — instead of assuming a schema that was
-never confirmed. Credentials belong in server secret storage (user-secrets/environment), never in the
+`BprLitigationClient` (#241/#243) handles all of these response-shape gaps defensively — trying a short list
+of plausible field names and failing loudly naming what it actually received, sniffing the report response's
+bytes/content-type/JSON shape rather than trusting configuration, and validating a downloaded order's bytes
+actually start with the PDF signature before ever calling it a success — instead of assuming a schema that
+was never confirmed. Credentials belong in server secret storage (user-secrets/environment), never in the
 Postman collection or a committed config file.
 
 ## Roadmap
@@ -57,9 +67,9 @@ stale copy of this table.
 | Phase | Scope | Status |
 |---|---|---|
 | Foundation | Keyword planning (`LitigationKeywordPlanner`), CNR-first identity/de-dup gate (`LitigationCaseIdentity`), BPR nested-JSON report parser (`BprLitigationReportParser`), QuestPDF case-card + CSV report shell (`LitigationReportArtifacts`) | **Done** — pure domain logic, no schema, no HTTP calls, no live data wired in yet |
-| #241 LIT-01 | BPR API client + durable job lifecycle (authenticate → register → poll → retain raw report) | In progress |
-| #242 LIT-02 | Persist BPR cases; CNR-first de-dup; retain CSP as provider identity | Planned |
-| #243 LIT-03 | All-orders retrieval, text retention, bulk ZIP delivery | Planned |
+| #241 LIT-01 | BPR API client + durable job lifecycle (authenticate → register → poll → retain raw report) | **Done** |
+| #242 LIT-02 | Persist BPR cases; CNR-first de-dup; retain CSP as provider identity | **Done** |
+| #243 LIT-03 | All-orders retrieval, text retention, bulk ZIP delivery | **Done** |
 | #244 LIT-04 | Request-scoped litigation evidence for the MCA ROC Copilot (a parallel chunk/citation model — never fabricated MCA filing IDs) | Planned |
 | #245 LIT-05 | Evidence-grounded Gemini case + portfolio analysis | Planned |
 | #246 LIT-06 | Litigation tab — court grid + case-card UI | Planned |
@@ -74,17 +84,51 @@ not infer "HFCL" from "Hero FinCorp"). The only automatically generated variants
 `Limited`/`Ltd` legal-suffix forms. Approved-alias curation (source, reviewer) has no admin store yet — flagged
 as a real gap in #241's PR, not currently covered by any of #241–#248.
 
-## New durable records (planned, #242 onward)
+## New durable records
 
 `LitigationSearchJob` (#241, request-scoped job lifecycle) is separate from the workbook-derived `Litigation`
 entity — the latter requires an MCA `IngestionRunId` and cannot represent an externally retrieved BPR case.
-#242 adds the case/party/advocate/order persistence layer on top of #241's job; #243 adds order-document
-retention. Exact entity names and shapes are #242/#243's design decisions, not fixed by this doc.
+#242 adds the case/party/advocate/order persistence layer (`LitigationCase`, `LitigationCaseOrder`,
+`LitigationReportSnapshot`, `LitigationCaseSourceReport`) on top of #241's job. #243 adds
+`LitigationOrderDocument` — one row per `LitigationCaseOrder` — for order-document retention.
 
 The current `DocumentChunk` schema is specific to `McaFilingDocument`/`McaFiling`. #244 must not insert
 litigation orders by fabricating MCA filing IDs — it needs a generic, request-scoped document-source
 contract, or a parallel litigation chunk table, with the retriever/citation model understanding both
 sources.
+
+## All-orders retrieval, text retention and bulk ZIP delivery (#243, done)
+
+For every order a persisted `LitigationCase` surfaces, `LitigationCasePersistenceService.UpsertOrdersAsync`
+admits a `LitigationOrderDocument` row in the **same transaction** as the order itself (a brand-new order) or
+as an explicit, auditable refresh of an existing one (a re-surfaced order whose document previously failed
+or expired — see below) — the same atomic-admission discipline `EnsureSnapshotAsync` already uses, so an
+order can never exist with no document eligible to import it. `LitigationOrderDocumentService` then owns
+retrieval itself: claim (RowVersion-protected lease, mirroring `LitigationReportSnapshot`) → authenticate →
+`BprLitigationClient.DownloadOrderDocumentAsync` (bounded-size, PDF-signature-validated, same-host-only JWT)
+→ reserve disk headroom (`IStorageReservationManager`, the same ledger AutoFetch draws from) → write →
+`PdfTextExtractor.ExtractAsync` (native text first, Tesseract OCR fallback — the same extractor McaFilings
+already uses).
+
+**Retention and expiry.** Epic #239's confirmed decision: the vendor's original PDF URL may expire seven
+days after the report that surfaced it was retrieved (`BprLitigationOptions.OrderRetentionDays`, default 7).
+Each `LitigationOrderDocument.RetainedUntilUtc` is computed once from its source report's own retrieval time.
+A failed download attempt stays `Failed` — retryable via the same lease/queue mechanism, with backoff — until
+that deadline passes, at which point it moves to the terminal `Expired` state rather than being retried
+forever. `Downloaded` and `Expired` are the only terminal states; `Failed` deliberately is not, satisfying
+epic #239's "no case is falsely reported as complete when an order download fails."
+
+**Refresh/refetch.** The confirmed BPR contract has no per-order refetch endpoint — the only way to get a
+fresh chance at an order is a full search rerun. When a rerun's report re-surfaces the exact same order (same
+`PdfUrl`/`OrderDate`/`OrderType`) and that order's document previously `Failed` or `Expired`, `UpsertOrdersAsync`
+resets it to `Pending` with an extended `RetainedUntilUtc` only if the new deadline is genuinely later —
+recorded via `RefreshCount`/`LastRefreshedUtc` for an explicit audit trail, never a silent retry.
+
+**Bulk ZIP delivery.** `LitigationController.DownloadOrdersZip` (`GET /Requests/{id}/Litigation/OrdersZip`,
+internal-reviewer auth only — no source vendor order URL is ever exposed) builds a request-scoped ZIP
+on demand from every currently `Downloaded` order via `LitigationOrdersArchiveBuilder`, grouped by case
+folder. A file that has since disappeared from disk is silently skipped, never a hard failure — "ZIP contains
+every currently retained order," never a stale or partial claim.
 
 ## Acceptance checks
 

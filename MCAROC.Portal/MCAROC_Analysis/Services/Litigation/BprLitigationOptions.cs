@@ -45,6 +45,19 @@ public sealed class BprLitigationOptions
     /// terminally Failed. Distinct from the in-poll-loop retry above.</summary>
     public int MaxAttempts { get; init; } = 3;
 
+    /// <summary>Days after a report is retrieved that its orders' vendor PDF URLs are expected to remain
+    /// retrievable — epic #239's confirmed product decision ("original vendor PDFs may expire after seven
+    /// days"). A <see cref="Data.Entities.LitigationOrderDocument"/> stuck <see
+    /// cref="Data.Entities.LitigationOrderDocumentStatus.Failed"/> past this window is moved to
+    /// <see cref="Data.Entities.LitigationOrderDocumentStatus.Expired"/> instead of retried forever.</summary>
+    public int OrderRetentionDays { get; init; } = 7;
+
+    /// <summary>Hard cap on one order PDF's response size — the vendor contract does not document a file-size
+    /// limit, so this guards against buffering an unbounded response into memory for a single order (a court
+    /// order/judgment PDF is realistically a handful of MB at most). A response whose declared or actual size
+    /// exceeds this is treated as a failed download, never silently truncated.</summary>
+    public long MaxOrderPdfBytes { get; init; } = 50 * 1024 * 1024;
+
     public bool IsConfigured =>
         !string.IsNullOrWhiteSpace(BaseUrl) && !string.IsNullOrWhiteSpace(Id) && !string.IsNullOrWhiteSpace(SecretKey);
 }

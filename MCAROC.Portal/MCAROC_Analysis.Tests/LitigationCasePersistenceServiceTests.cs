@@ -4,6 +4,7 @@ using MCAROC_Analysis.Data.Entities;
 using MCAROC_Analysis.Services.LitigationData;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 
 namespace MCAROC_Analysis.Tests;
 
@@ -15,6 +16,14 @@ public class LitigationCasePersistenceServiceTests : IAsyncLifetime
 {
     private static AppDbContext CreateContext() =>
         new(new DbContextOptionsBuilder<AppDbContext>().UseSqlServer(TestDatabase.ConnectionString).Options);
+
+    private static readonly IOptions<BprLitigationOptions> DefaultOptions = Options.Create(new BprLitigationOptions());
+
+    private static LitigationCasePersistenceService NewService(
+        AppDbContext db, LitigationCasePersistenceQueue? queue = null, LitigationOrderDocumentQueue? orderDocumentQueue = null,
+        BprLitigationOptions? options = null) =>
+        new(db, queue ?? new LitigationCasePersistenceQueue(), orderDocumentQueue ?? new LitigationOrderDocumentQueue(),
+            options is null ? DefaultOptions : Options.Create(options), NullLogger<LitigationCasePersistenceService>.Instance);
 
     public async Task InitializeAsync()
     {
@@ -73,10 +82,14 @@ public class LitigationCasePersistenceServiceTests : IAsyncLifetime
     /// <summary>Mirrors the production trigger sequence (LitigationSearchJobService.PollUntilCompleteAsync):
     /// ensure the immutable snapshot exists for this job's current raw report, then process it. Most tests
     /// don't care about the snapshot id itself, so this returns it only for the ones that do.</summary>
-    private static async Task<long> PersistJobAsync(LitigationCasePersistenceService service, LitigationSearchJob job, CancellationToken ct)
+    private static Task<long> PersistJobAsync(LitigationCasePersistenceService service, LitigationSearchJob job, CancellationToken ct) =>
+        PersistJobAsync(service, job, DateTime.UtcNow, ct);
+
+    private static async Task<long> PersistJobAsync(
+        LitigationCasePersistenceService service, LitigationSearchJob job, DateTime retrievedUtc, CancellationToken ct)
     {
         var snapshotId = await service.EnsureSnapshotAsync(
-            job.LitigationSearchJobId, job.RawResponseHash!, job.ReportFormat, job.RawReportBytes!, DateTime.UtcNow, ct);
+            job.LitigationSearchJobId, job.RawResponseHash!, job.ReportFormat, job.RawReportBytes!, retrievedUtc, ct);
         await service.PersistSnapshotAsync(snapshotId, ct);
         return snapshotId;
     }
@@ -150,13 +163,26 @@ public class LitigationCasePersistenceServiceTests : IAsyncLifetime
         return ids;
     }
 
+    private static async Task<List<long>> DrainAvailableAsync(LitigationOrderDocumentQueue queue, TimeSpan window)
+    {
+        var ids = new List<long>();
+        using var cts = new CancellationTokenSource(window);
+        try
+        {
+            await foreach (var id in queue.ReadAllAsync(cts.Token))
+                ids.Add(id);
+        }
+        catch (OperationCanceledException) { /* window elapsed — return whatever arrived */ }
+        return ids;
+    }
+
     [Fact]
     public async Task EnsureSnapshotAsync_then_PersistSnapshotAsync_persists_a_case_its_order_and_a_provenance_linked_snapshot()
     {
         await using var db = CreateContext();
         var request = await SeedRequestAsync(db, "A1");
         var job = await SeedCompletedJobAsync(db, request.RequestId, ReportJson("TNKP070001332020", "OS"));
-        var service = new LitigationCasePersistenceService(db, new LitigationCasePersistenceQueue(), NullLogger<LitigationCasePersistenceService>.Instance);
+        var service = NewService(db);
 
         await PersistJobAsync(service, job, CancellationToken.None);
 
@@ -190,7 +216,7 @@ public class LitigationCasePersistenceServiceTests : IAsyncLifetime
         await using var db = CreateContext();
         var request = await SeedRequestAsync(db, "A2");
         var job = await SeedCompletedJobAsync(db, request.RequestId, ReportJson("TNKP070001332021", "OS"));
-        var service = new LitigationCasePersistenceService(db, new LitigationCasePersistenceQueue(), NullLogger<LitigationCasePersistenceService>.Instance);
+        var service = NewService(db);
 
         await PersistJobAsync(service, job, CancellationToken.None);
         await PersistJobAsync(service, job, CancellationToken.None); // EnsureSnapshotAsync finds the same row; reprocessing must be a no-op
@@ -236,7 +262,7 @@ public class LitigationCasePersistenceServiceTests : IAsyncLifetime
         });
         await db.SaveChangesAsync();
 
-        var service = new LitigationCasePersistenceService(db, new LitigationCasePersistenceQueue(), NullLogger<LitigationCasePersistenceService>.Instance);
+        var service = NewService(db);
         await service.PersistSnapshotAsync(snapshot.LitigationReportSnapshotId, CancellationToken.None);
 
         await using var verifyDb = CreateContext();
@@ -264,14 +290,14 @@ public class LitigationCasePersistenceServiceTests : IAsyncLifetime
         await using var setupDb = CreateContext();
         var request = await SeedRequestAsync(setupDb, "B2");
         var job = await SeedCompletedJobAsync(setupDb, request.RequestId, ReportJson("TNKP070001332032", "OS"));
-        var setupService = new LitigationCasePersistenceService(setupDb, new LitigationCasePersistenceQueue(), NullLogger<LitigationCasePersistenceService>.Instance);
+        var setupService = NewService(setupDb);
         var snapshotId = await setupService.EnsureSnapshotAsync(
             job.LitigationSearchJobId, job.RawResponseHash!, job.ReportFormat, job.RawReportBytes!, DateTime.UtcNow, CancellationToken.None);
 
         await using var dbA = CreateContext();
         await using var dbB = CreateContext();
-        var serviceA = new LitigationCasePersistenceService(dbA, new LitigationCasePersistenceQueue(), NullLogger<LitigationCasePersistenceService>.Instance);
-        var serviceB = new LitigationCasePersistenceService(dbB, new LitigationCasePersistenceQueue(), NullLogger<LitigationCasePersistenceService>.Instance);
+        var serviceA = NewService(dbA);
+        var serviceB = NewService(dbB);
 
         await Task.WhenAll(
             serviceA.PersistSnapshotAsync(snapshotId, CancellationToken.None),
@@ -304,7 +330,7 @@ public class LitigationCasePersistenceServiceTests : IAsyncLifetime
         await using var db = CreateContext();
         var request = await SeedRequestAsync(db, "A3");
         var job1 = await SeedCompletedJobAsync(db, request.RequestId, ReportJson("TNKP070001332022", "OS"));
-        var service = new LitigationCasePersistenceService(db, new LitigationCasePersistenceQueue(), NullLogger<LitigationCasePersistenceService>.Instance);
+        var service = NewService(db);
         await PersistJobAsync(service, job1, CancellationToken.None);
 
         var job2 = await SeedCompletedJobAsync(db, request.RequestId, ReportJson("TNKP070001332022", "OS", caseNo: "23/2020"));
@@ -334,7 +360,7 @@ public class LitigationCasePersistenceServiceTests : IAsyncLifetime
         await using var db = CreateContext();
         var request = await SeedRequestAsync(db, "A4");
         var job1 = await SeedCompletedJobAsync(db, request.RequestId, ReportJson("TNKP070001332023", "OS"));
-        var service = new LitigationCasePersistenceService(db, new LitigationCasePersistenceQueue(), NullLogger<LitigationCasePersistenceService>.Instance);
+        var service = NewService(db);
         await PersistJobAsync(service, job1, CancellationToken.None);
 
         var job2 = await SeedCompletedJobAsync(db, request.RequestId, ReportJson("TNKP070001332023", "CC"));
@@ -355,7 +381,7 @@ public class LitigationCasePersistenceServiceTests : IAsyncLifetime
         await using var db = CreateContext();
         var request = await SeedRequestAsync(db, "A5");
         var job1 = await SeedCompletedJobAsync(db, request.RequestId, ReportJson("", "OS", caseNo: "22/2020", cspId: "shared-csp"));
-        var service = new LitigationCasePersistenceService(db, new LitigationCasePersistenceQueue(), NullLogger<LitigationCasePersistenceService>.Instance);
+        var service = NewService(db);
         await PersistJobAsync(service, job1, CancellationToken.None);
 
         var job2 = await SeedCompletedJobAsync(db, request.RequestId, ReportJson("", "OS", caseNo: "23/2020", cspId: "shared-csp"));
@@ -381,7 +407,7 @@ public class LitigationCasePersistenceServiceTests : IAsyncLifetime
         await using var db = CreateContext();
         var request = await SeedRequestAsync(db, "A8");
         var job = await SeedCompletedJobAsync(db, request.RequestId, TwoCaseReportJson("", ""));
-        var service = new LitigationCasePersistenceService(db, new LitigationCasePersistenceQueue(), NullLogger<LitigationCasePersistenceService>.Instance);
+        var service = NewService(db);
 
         await PersistJobAsync(service, job, CancellationToken.None); // must not throw a unique-constraint violation
 
@@ -406,7 +432,7 @@ public class LitigationCasePersistenceServiceTests : IAsyncLifetime
         };
         db.LitigationSearchJobs.Add(job);
         await db.SaveChangesAsync();
-        var service = new LitigationCasePersistenceService(db, new LitigationCasePersistenceQueue(), NullLogger<LitigationCasePersistenceService>.Instance);
+        var service = NewService(db);
 
         await PersistJobAsync(service, job, CancellationToken.None); // must not throw
 
@@ -421,7 +447,7 @@ public class LitigationCasePersistenceServiceTests : IAsyncLifetime
     {
         await using var db = CreateContext();
         var queue = new LitigationCasePersistenceQueue();
-        var service = new LitigationCasePersistenceService(db, queue, NullLogger<LitigationCasePersistenceService>.Instance);
+        var service = NewService(db, queue);
 
         var request = await SeedRequestAsync(db, "A7");
         var job = await SeedCompletedJobAsync(db, request.RequestId, ReportJson("TNKP070001332024", "OS"));
@@ -464,7 +490,7 @@ public class LitigationCasePersistenceServiceTests : IAsyncLifetime
         // delayed re-check at the lease's own expiry — not enqueue it immediately, and not drop it either.
         await using var db = CreateContext();
         var queue = new LitigationCasePersistenceQueue();
-        var service = new LitigationCasePersistenceService(db, queue, NullLogger<LitigationCasePersistenceService>.Instance);
+        var service = NewService(db, queue);
 
         var request = await SeedRequestAsync(db, "C1");
         var job = await SeedCompletedJobAsync(db, request.RequestId, ReportJson("TNKP070001332040", "OS"));
@@ -501,7 +527,7 @@ public class LitigationCasePersistenceServiceTests : IAsyncLifetime
         // job's current (mutable, reused) status.
         await using var db = CreateContext();
         var queue = new LitigationCasePersistenceQueue();
-        var service = new LitigationCasePersistenceService(db, queue, NullLogger<LitigationCasePersistenceService>.Instance);
+        var service = NewService(db, queue);
 
         var request = await SeedRequestAsync(db, "C2");
         var job = await SeedCompletedJobAsync(db, request.RequestId, ReportJson("TNKP070001332041", "OS"));
@@ -520,5 +546,192 @@ public class LitigationCasePersistenceServiceTests : IAsyncLifetime
 
         var enqueued = await DrainAvailableAsync(queue, TimeSpan.FromSeconds(2));
         Assert.Contains(oldSnapshotId, enqueued);
+    }
+
+    // ── #243/LIT-03: order-document admission ─────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task PersistSnapshotAsync_admits_a_Pending_order_document_for_a_new_order_and_enqueues_it_after_commit()
+    {
+        await using var db = CreateContext();
+        var orderDocumentQueue = new LitigationOrderDocumentQueue();
+        var options = new BprLitigationOptions { OrderRetentionDays = 7 };
+        var service = NewService(db, orderDocumentQueue: orderDocumentQueue, options: options);
+
+        var request = await SeedRequestAsync(db, "D1");
+        var retrievedUtc = new DateTime(2026, 9, 20, 12, 0, 0, DateTimeKind.Utc);
+        var job = await SeedCompletedJobAsync(db, request.RequestId, ReportJson("TNKP070001332050", "OS", orderUrl: "https://source.example/d1.pdf"));
+        await PersistJobAsync(service, job, retrievedUtc, CancellationToken.None);
+
+        await using var verifyDb = CreateContext();
+        var order = await verifyDb.LitigationCaseOrders.SingleAsync(o => o.Case!.RequestId == request.RequestId);
+        var document = await verifyDb.LitigationOrderDocuments.SingleAsync(d => d.LitigationCaseOrderId == order.LitigationCaseOrderId);
+        Assert.Equal(LitigationOrderDocumentStatus.Pending, document.Status);
+        Assert.Equal(retrievedUtc.AddDays(7), document.RetainedUntilUtc);
+
+        var enqueued = await DrainAvailableAsync(orderDocumentQueue, TimeSpan.FromSeconds(2));
+        Assert.Contains(document.LitigationOrderDocumentId, enqueued);
+    }
+
+    private static string TwoOrderReportJson(string cnr) => $$"""
+        {
+            "request_details": {"job_id": "job-1", "report_date": "2026-09-20", "keywords": ["Test Company"]},
+            "district_court": {
+                "against": {
+                    "civil": [
+                        {
+                            "_id": "provider-1", "csp_id": "csp-1", "cnr_number": "{{cnr}}",
+                            "type": "district", "court": "Sub Judge", "bench": "Bench",
+                            "case_no": "22/2020", "case_type": "OS", "case_year": "2020",
+                            "case_stage": "Trial", "case_status": "DISPOSED", "act": "Code",
+                            "orders": [
+                                {"pdf_url": "https://source.example/o1.pdf", "order_date": "09-01-2025", "order_type": "Judgment"},
+                                {"pdf_url": "https://source.example/o2.pdf", "order_date": "10-01-2025", "order_type": "Order"}
+                            ]
+                        }
+                    ]
+                }
+            }
+        }
+        """;
+
+    [Fact]
+    public async Task PersistSnapshotAsync_creates_exactly_one_order_document_per_order_never_zero_never_two()
+    {
+        await using var db = CreateContext();
+        var service = NewService(db);
+        var request = await SeedRequestAsync(db, "D2");
+        var job = await SeedCompletedJobAsync(db, request.RequestId, TwoOrderReportJson("TNKP070001332051"));
+
+        await PersistJobAsync(service, job, CancellationToken.None);
+
+        await using var verifyDb = CreateContext();
+        var orders = await verifyDb.LitigationCaseOrders.Where(o => o.Case!.RequestId == request.RequestId).ToListAsync();
+        Assert.Equal(2, orders.Count);
+        foreach (var order in orders)
+        {
+            var documents = await verifyDb.LitigationOrderDocuments
+                .Where(d => d.LitigationCaseOrderId == order.LitigationCaseOrderId).ToListAsync();
+            Assert.Single(documents);
+        }
+    }
+
+    [Fact]
+    public async Task PersistSnapshotAsync_admits_a_document_for_a_pre_existing_order_that_never_had_one()
+    {
+        // Simulates data persisted before #243 shipped (or an earlier attempt that failed before reaching
+        // admission): a LitigationCaseOrder with no LitigationOrderDocument row at all. A later report that
+        // re-surfaces the exact same order (same PdfUrl/OrderDate/OrderType — a duplicate, not a new order)
+        // must still admit a document for it now, not silently leave it without one forever.
+        await using var db = CreateContext();
+        var request = await SeedRequestAsync(db, "D3");
+        var reportJson = ReportJson("TNKP070001332054", "OS", orderUrl: "https://source.example/d3.pdf");
+        var job = await SeedCompletedJobAsync(db, request.RequestId, reportJson);
+
+        var caseRow = new LitigationCase
+        {
+            RequestId = request.RequestId, Cnr = "TNKP070001332054", ProceedingType = "OS",
+            FirstSeenUtc = DateTime.UtcNow, LastSeenUtc = DateTime.UtcNow
+        };
+        db.LitigationCases.Add(caseRow);
+        await db.SaveChangesAsync();
+        db.LitigationCaseOrders.Add(new LitigationCaseOrder
+        {
+            Case = caseRow, PdfUrl = "https://source.example/d3.pdf", OrderDate = "09-01-2025", OrderType = "Judgment", CreatedUtc = DateTime.UtcNow
+        });
+        await db.SaveChangesAsync();
+
+        var orderDocumentQueue = new LitigationOrderDocumentQueue();
+        var service = NewService(db, orderDocumentQueue: orderDocumentQueue);
+        await PersistJobAsync(service, job, CancellationToken.None);
+
+        await using var verifyDb = CreateContext();
+        var order = await verifyDb.LitigationCaseOrders.SingleAsync(o => o.Case!.RequestId == request.RequestId);
+        var document = await verifyDb.LitigationOrderDocuments.SingleAsync(d => d.LitigationCaseOrderId == order.LitigationCaseOrderId);
+        Assert.Equal(LitigationOrderDocumentStatus.Pending, document.Status);
+
+        var enqueued = await DrainAvailableAsync(orderDocumentQueue, TimeSpan.FromSeconds(2));
+        Assert.Contains(document.LitigationOrderDocumentId, enqueued);
+    }
+
+    [Fact]
+    public async Task PersistSnapshotAsync_refreshes_a_Failed_order_document_when_a_rerun_genuinely_extends_its_retention_window()
+    {
+        // The only "refresh/refetch" mechanism epic #239 requires: a later report re-surfacing the exact
+        // same order (same PdfUrl/OrderDate/OrderType) with a genuinely later retention deadline resets a
+        // previously Failed document back to Pending, extends its retention, and records the refresh —
+        // auditable via RefreshCount/LastRefreshedUtc.
+        await using var db = CreateContext();
+        var request = await SeedRequestAsync(db, "D4");
+        var reportJson = ReportJson("TNKP070001332055", "OS", orderUrl: "https://source.example/d4.pdf");
+        var firstRetrievedUtc = new DateTime(2026, 9, 1, 0, 0, 0, DateTimeKind.Utc);
+        var job = await SeedCompletedJobAsync(db, request.RequestId, reportJson);
+        var options = new BprLitigationOptions { OrderRetentionDays = 7 };
+        var service = NewService(db, options: options);
+        await PersistJobAsync(service, job, firstRetrievedUtc, CancellationToken.None);
+
+        var order = await db.LitigationCaseOrders.SingleAsync(o => o.Case!.RequestId == request.RequestId);
+        var document = await db.LitigationOrderDocuments.SingleAsync(d => d.LitigationCaseOrderId == order.LitigationCaseOrderId);
+        document.Status = LitigationOrderDocumentStatus.Failed;
+        document.FailureReason = "HTTP 404 downloading order PDF.";
+        document.AttemptCount = 3;
+        await db.SaveChangesAsync();
+
+        // A rerun (same job row, reused — SeedCompletedJobAsync updates it in place) retrieved well after
+        // the first attempt's retention window would have closed. Different case_no so the report's raw
+        // bytes (and hash) genuinely differ from the first — otherwise EnsureSnapshotAsync's idempotency
+        // would treat it as the exact same already-Completed snapshot and never reprocess it at all — while
+        // the order itself (same PdfUrl/OrderDate/OrderType) is still recognized as the same, duplicate order.
+        var secondRetrievedUtc = firstRetrievedUtc.AddDays(10);
+        var rerunReportJson = ReportJson("TNKP070001332055", "OS", caseNo: "23/2020", orderUrl: "https://source.example/d4.pdf");
+        var job2 = await SeedCompletedJobAsync(db, request.RequestId, rerunReportJson);
+        var orderDocumentQueue = new LitigationOrderDocumentQueue();
+        var service2 = NewService(db, orderDocumentQueue: orderDocumentQueue, options: options);
+        await PersistJobAsync(service2, job2, secondRetrievedUtc, CancellationToken.None);
+
+        await using var verifyDb = CreateContext();
+        var reloaded = await verifyDb.LitigationOrderDocuments.FirstAsync(d => d.LitigationOrderDocumentId == document.LitigationOrderDocumentId);
+        Assert.Equal(LitigationOrderDocumentStatus.Pending, reloaded.Status);
+        Assert.Equal(secondRetrievedUtc.AddDays(7), reloaded.RetainedUntilUtc);
+        Assert.Equal(1, reloaded.RefreshCount);
+        Assert.NotNull(reloaded.LastRefreshedUtc);
+
+        var enqueued = await DrainAvailableAsync(orderDocumentQueue, TimeSpan.FromSeconds(2));
+        Assert.Contains(document.LitigationOrderDocumentId, enqueued);
+    }
+
+    [Fact]
+    public async Task PersistSnapshotAsync_never_refreshes_an_already_Downloaded_order_document()
+    {
+        await using var db = CreateContext();
+        var request = await SeedRequestAsync(db, "D5");
+        var reportJson = ReportJson("TNKP070001332056", "OS", orderUrl: "https://source.example/d5.pdf");
+        var job = await SeedCompletedJobAsync(db, request.RequestId, reportJson);
+        var service = NewService(db);
+        await PersistJobAsync(service, job, CancellationToken.None);
+
+        var order = await db.LitigationCaseOrders.SingleAsync(o => o.Case!.RequestId == request.RequestId);
+        var document = await db.LitigationOrderDocuments.SingleAsync(d => d.LitigationCaseOrderId == order.LitigationCaseOrderId);
+        document.Status = LitigationOrderDocumentStatus.Downloaded;
+        document.StoragePath = "irrelevant-for-this-test.pdf";
+        await db.SaveChangesAsync();
+
+        // A rerun re-surfaces the exact same order (same PdfUrl/OrderDate/OrderType) via a genuinely
+        // different report (different case_no, so it isn't the same already-Completed snapshot reprocessed
+        // as a no-op) — must never disturb an already-successful download.
+        var rerunReportJson = ReportJson("TNKP070001332056", "OS", caseNo: "23/2020", orderUrl: "https://source.example/d5.pdf");
+        var job2 = await SeedCompletedJobAsync(db, request.RequestId, rerunReportJson);
+        var orderDocumentQueue = new LitigationOrderDocumentQueue();
+        var service2 = NewService(db, orderDocumentQueue: orderDocumentQueue);
+        await PersistJobAsync(service2, job2, CancellationToken.None);
+
+        await using var verifyDb = CreateContext();
+        var reloaded = await verifyDb.LitigationOrderDocuments.FirstAsync(d => d.LitigationOrderDocumentId == document.LitigationOrderDocumentId);
+        Assert.Equal(LitigationOrderDocumentStatus.Downloaded, reloaded.Status);
+        Assert.Equal(0, reloaded.RefreshCount);
+        Assert.Equal("irrelevant-for-this-test.pdf", reloaded.StoragePath);
+
+        var enqueued = await DrainAvailableAsync(orderDocumentQueue, TimeSpan.FromMilliseconds(300));
+        Assert.DoesNotContain(document.LitigationOrderDocumentId, enqueued);
     }
 }

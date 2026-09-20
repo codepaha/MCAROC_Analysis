@@ -88,6 +88,11 @@ builder.Services.AddHostedService<LitigationSearchWorker>();
 builder.Services.AddSingleton<LitigationCasePersistenceQueue>();
 builder.Services.AddScoped<LitigationCasePersistenceService>();
 builder.Services.AddHostedService<LitigationCasePersistenceWorker>();
+// #243 LIT-03 — all-orders retrieval, text retention, ZIP delivery. Reuses the already-registered
+// PdfTextExtractor/IStorageReservationManager (McaFilings pipeline) rather than standing up parallel infra.
+builder.Services.AddSingleton<LitigationOrderDocumentQueue>();
+builder.Services.AddScoped<LitigationOrderDocumentService>();
+builder.Services.AddHostedService<LitigationOrderDocumentWorker>();
 
 builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseSqlServer(builder.Configuration.GetConnectionString("Default")));

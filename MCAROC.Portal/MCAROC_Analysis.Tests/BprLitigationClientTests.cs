@@ -309,6 +309,146 @@ public sealed class BprLitigationClientTests
         Assert.NotNull(result.Bytes);
     }
 
+    // ── DownloadOrderDocumentAsync (#243/LIT-03 — not one of the three confirmed endpoints) ─────────
+
+    private static readonly byte[] PdfBytes = [0x25, 0x50, 0x44, 0x46, 0x2D, 0x31, 0x2E, 0x34, 0x0A]; // "%PDF-1.4\n"
+
+    [Fact]
+    public async Task DownloadOrderDocumentAsync_returns_bytes_for_a_valid_PDF_response()
+    {
+        var handler = new StubHandler();
+        handler.OnPath("orders/o1.pdf", _ => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new ByteArrayContent(PdfBytes) { Headers = { ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/pdf") } }
+        });
+
+        var result = await NewClient(handler).DownloadOrderDocumentAsync(
+            "token", "https://bpr.example/orders/o1.pdf", 1024, CancellationToken.None);
+
+        Assert.True(result.Ok);
+        Assert.Equal(PdfBytes, result.Bytes);
+        Assert.Equal("application/pdf", result.ContentType);
+    }
+
+    [Fact]
+    public async Task DownloadOrderDocumentAsync_attaches_the_JWT_when_the_order_URL_shares_BPRs_host()
+    {
+        var handler = new StubHandler();
+        handler.OnPath("orders/o1.pdf", request =>
+        {
+            Assert.Equal("raw-token", request.Headers.GetValues("Authorization").Single());
+            return new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(PdfBytes) };
+        });
+
+        var result = await NewClient(handler).DownloadOrderDocumentAsync(
+            "raw-token", "https://bpr.example/orders/o1.pdf", 1024, CancellationToken.None);
+
+        Assert.True(result.Ok);
+    }
+
+    [Fact]
+    public async Task DownloadOrderDocumentAsync_never_attaches_the_JWT_to_a_third_party_host()
+    {
+        // Regression: forwarding BPR's own JWT to an arbitrary third-party document host (the confirmed
+        // contract has no example of how order URLs are authorized) would leak the token into that host's
+        // own access logs — must only ever be sent when the URL shares BPR's own configured host.
+        var handler = new StubHandler();
+        handler.OnPath("files/o1.pdf", request =>
+        {
+            Assert.False(request.Headers.Contains("Authorization"));
+            return new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(PdfBytes) };
+        });
+
+        var result = await NewClient(handler).DownloadOrderDocumentAsync(
+            "raw-token", "https://third-party-cdn.example/files/o1.pdf", 1024, CancellationToken.None);
+
+        Assert.True(result.Ok);
+    }
+
+    [Fact]
+    public async Task DownloadOrderDocumentAsync_fails_on_a_non_PDF_signature_response()
+    {
+        // A dead/expired link commonly returns an HTML error page or a JSON error body with HTTP 200 — must
+        // never be stored and reported as a retrieved order.
+        var handler = new StubHandler();
+        handler.OnPath("orders/o1.pdf", _ => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent("<html><body>Not Found</body></html>", Encoding.UTF8, "text/html")
+        });
+
+        var result = await NewClient(handler).DownloadOrderDocumentAsync(
+            "token", "https://bpr.example/orders/o1.pdf", 1024, CancellationToken.None);
+
+        Assert.False(result.Ok);
+        Assert.Contains("PDF signature", result.Error);
+    }
+
+    [Fact]
+    public async Task DownloadOrderDocumentAsync_fails_when_declared_ContentLength_exceeds_the_cap()
+    {
+        var handler = new StubHandler();
+        handler.OnPath("orders/big.pdf", _ =>
+        {
+            var content = new ByteArrayContent(PdfBytes);
+            content.Headers.ContentLength = 10_000_000;
+            return new HttpResponseMessage(HttpStatusCode.OK) { Content = content };
+        });
+
+        var result = await NewClient(handler).DownloadOrderDocumentAsync(
+            "token", "https://bpr.example/orders/big.pdf", maxBytes: 1024, CancellationToken.None);
+
+        Assert.False(result.Ok);
+        Assert.Contains("exceeding the 1,024-byte cap", result.Error);
+    }
+
+    [Fact]
+    public async Task DownloadOrderDocumentAsync_fails_when_the_actual_stream_exceeds_the_cap_with_no_declared_length()
+    {
+        var handler = new StubHandler();
+        handler.OnPath("orders/big.pdf", _ =>
+        {
+            var oversized = new byte[2048];
+            Array.Copy(PdfBytes, oversized, PdfBytes.Length);
+            var content = new StreamContent(new MemoryStream(oversized));
+            // A seekable MemoryStream otherwise lets StreamContent auto-report Content-Length from
+            // stream.Length — forcing it null exercises the bounded-read path rather than the
+            // declared-length short-circuit above (a chunked/non-seekable real response has no such header).
+            content.Headers.ContentLength = null;
+            return new HttpResponseMessage(HttpStatusCode.OK) { Content = content };
+        });
+
+        var result = await NewClient(handler).DownloadOrderDocumentAsync(
+            "token", "https://bpr.example/orders/big.pdf", maxBytes: 1024, CancellationToken.None);
+
+        Assert.False(result.Ok);
+        Assert.Contains("exceeded the 1,024-byte cap", result.Error);
+    }
+
+    [Fact]
+    public async Task DownloadOrderDocumentAsync_fails_on_a_non_success_HTTP_status()
+    {
+        var handler = new StubHandler();
+        handler.OnPath("orders/o1.pdf", _ => new HttpResponseMessage(HttpStatusCode.Forbidden));
+
+        var result = await NewClient(handler).DownloadOrderDocumentAsync(
+            "token", "https://bpr.example/orders/o1.pdf", 1024, CancellationToken.None);
+
+        Assert.False(result.Ok);
+        Assert.Contains("403", result.Error);
+    }
+
+    [Fact]
+    public async Task DownloadOrderDocumentAsync_rejects_a_non_absolute_or_non_http_url_without_calling_anything()
+    {
+        var handler = new StubHandler();
+
+        var result = await NewClient(handler).DownloadOrderDocumentAsync(
+            "token", "not-a-url", 1024, CancellationToken.None);
+
+        Assert.False(result.Ok);
+        Assert.Empty(handler.Requests);
+    }
+
     // ── Stub infrastructure — mirrors ReferenceToolClientTests' route-based StubHandler ───────────
 
     private sealed class StubHandler : HttpMessageHandler

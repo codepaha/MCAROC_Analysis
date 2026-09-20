@@ -3,6 +3,7 @@ using System.Text.Json;
 using MCAROC_Analysis.Data;
 using MCAROC_Analysis.Data.Entities;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 
 namespace MCAROC_Analysis.Services.LitigationData;
 
@@ -37,10 +38,13 @@ namespace MCAROC_Analysis.Services.LitigationData;
 /// has no XLSX reader. A snapshot whose report is a different format is marked <c>Failed</c> (terminal, never
 /// silently retried forever) rather than guessed at.</summary>
 public sealed class LitigationCasePersistenceService(
-    AppDbContext db, LitigationCasePersistenceQueue queue, ILogger<LitigationCasePersistenceService> logger)
+    AppDbContext db, LitigationCasePersistenceQueue queue, LitigationOrderDocumentQueue orderDocumentQueue,
+    IOptions<BprLitigationOptions> options, ILogger<LitigationCasePersistenceService> logger)
 {
     private const int LeaseMinutes = 15; // generous: pure CPU/DB work, no external calls, "tens not thousands" of cases
     private static readonly string LeaseOwnerId = $"{Environment.MachineName}:{Environment.ProcessId}";
+
+    private readonly BprLitigationOptions _opts = options.Value;
 
     // ── Snapshot creation ──────────────────────────────────────────────────────────────────────────
 
@@ -129,15 +133,32 @@ public sealed class LitigationCasePersistenceService(
                 return;
             }
 
+            // Every order this report surfaces — new or a re-surfaced existing one — is eligible for the same
+            // retention window, computed once from this report's own retrieval time (not from whenever a
+            // worker happens to get around to persisting it).
+            var orderRetainedUntilUtc = snapshot.RetrievedUtc.AddDays(_opts.OrderRetentionDays);
+            var orderDocumentsToEnqueue = new List<LitigationOrderDocument>();
+
             for (var i = snapshot.CasesPersistedCount; i < report.Cases.Count; i++)
-                await PersistOneCaseAsync(requestId, snapshot, report.Cases[i], ct);
+                orderDocumentsToEnqueue.AddRange(
+                    await PersistOneCaseAsync(requestId, snapshot, report.Cases[i], orderRetainedUntilUtc, ct));
 
             snapshot.Status = LitigationReportSnapshotStatus.Completed;
             snapshot.CompletedUtc = DateTime.UtcNow;
             await db.SaveChangesAsync(ct);
 
+            // Enqueued only after this snapshot's own commit succeeds — each order document was already
+            // durably committed as part of its own case's SaveChangesAsync (see PersistOneCaseAsync), so this
+            // is "notify workers now" not "make it safe," but still deliberately last: if the loop above were
+            // interrupted (lease lost partway through), any already-committed-but-not-yet-enqueued documents
+            // remain independently reachable via LitigationOrderDocumentService.RecoverStaleWorkAsync's own
+            // sweep, exactly like this type's own snapshot-level recovery.
+            foreach (var document in orderDocumentsToEnqueue)
+                orderDocumentQueue.Enqueue(document.LitigationOrderDocumentId);
+
             logger.LogInformation(
-                "Litigation report snapshot {SnapshotId} completed: {CaseCount} case(s) persisted.", snapshotId, report.Cases.Count);
+                "Litigation report snapshot {SnapshotId} completed: {CaseCount} case(s) persisted, {OrderDocCount} order document(s) queued.",
+                snapshotId, report.Cases.Count, orderDocumentsToEnqueue.Count);
         }
         catch (DbUpdateConcurrencyException)
         {
@@ -189,7 +210,8 @@ public sealed class LitigationCasePersistenceService(
         catch (DbUpdateConcurrencyException) { /* someone else already advanced this snapshot — leave it */ }
     }
 
-    private async Task PersistOneCaseAsync(long requestId, LitigationReportSnapshot snapshot, BprLitigationCase item, CancellationToken ct)
+    private async Task<IReadOnlyList<LitigationOrderDocument>> PersistOneCaseAsync(
+        long requestId, LitigationReportSnapshot snapshot, BprLitigationCase item, DateTime orderRetainedUntilUtc, CancellationToken ct)
     {
         var identity = LitigationCaseIdentity.Normalise(new LitigationCaseIdentityInput(
             CnrNumber: item.CnrNumber, CaseNumber: item.CaseNumber, CaseYear: ParseYear(item.CaseYear),
@@ -217,7 +239,9 @@ public sealed class LitigationCasePersistenceService(
             }
 
             ApplyFields(litigationCase, identity, item, now);
-            addedThisAttempt.AddRange(await UpsertOrdersAsync(litigationCase, item.Orders, now, ct));
+            var (orderEntities, orderDocumentsToEnqueue) =
+                await UpsertOrdersAsync(litigationCase, item.Orders, now, orderRetainedUntilUtc, ct);
+            addedThisAttempt.AddRange(orderEntities);
 
             var linkAlreadyExists = !isNewCase && litigationCase.LitigationCaseId != 0 &&
                 await db.LitigationCaseSourceReports.AnyAsync(s =>
@@ -238,7 +262,7 @@ public sealed class LitigationCasePersistenceService(
             try
             {
                 await db.SaveChangesAsync(ct);
-                return;
+                return orderDocumentsToEnqueue;
             }
             catch (DbUpdateException ex) when (IsUniqueConstraintViolation(ex) && attempt == 0)
             {
@@ -249,6 +273,8 @@ public sealed class LitigationCasePersistenceService(
                     requestId);
             }
         }
+
+        return [];
     }
 
     /// <summary>Looks for an existing case in the same request whose identity auto-dedupes against
@@ -298,25 +324,69 @@ public sealed class LitigationCasePersistenceService(
 
     /// <summary>Adds only orders not already recorded for this case — de-duplicated on (PdfUrl, OrderDate,
     /// OrderType), the closest available approximation of identity BPR's order records offer (they carry no
-    /// order-level id of their own); backstopped by a DB unique index for the concurrent-import case. Returns
-    /// the newly-added entities so a caller can precisely detach them if the surrounding SaveChanges fails.</summary>
-    private async Task<IReadOnlyList<LitigationCaseOrder>> UpsertOrdersAsync(
-        LitigationCase litigationCase, IReadOnlyList<BprLitigationOrder> orders, DateTime now, CancellationToken ct)
+    /// order-level id of their own); backstopped by a DB unique index for the concurrent-import case.
+    ///
+    /// Also admits (#243/LIT-03) each order's <see cref="LitigationOrderDocument"/> — a brand-new order gets a
+    /// new Pending document row, added to the SAME tracked-entity graph as the order itself so both are part
+    /// of the caller's single SaveChangesAsync (the same atomic-admission discipline as
+    /// <c>EnsureSnapshotAsync</c>: never commit an order without a matching document eligible for import, and
+    /// never leave a race between the two visible to any other connection). An order this report re-surfaces
+    /// that ALREADY has a document is an explicit, auditable refresh opportunity if that document previously
+    /// failed/expired and <paramref name="retainedUntilUtc"/> genuinely extends its window — see
+    /// <see cref="LitigationOrderDocument"/>'s own remarks for why this is the only "refresh/refetch"
+    /// mechanism epic #239 requires.
+    ///
+    /// Returns the newly-added/modified order and document entities (so a caller can precisely detach them if
+    /// the surrounding SaveChanges fails) separately from the document entities that need enqueueing for
+    /// download once that SaveChanges actually commits.</summary>
+    private async Task<(IReadOnlyList<object> Added, IReadOnlyList<LitigationOrderDocument> ToEnqueue)> UpsertOrdersAsync(
+        LitigationCase litigationCase, IReadOnlyList<BprLitigationOrder> orders, DateTime now, DateTime retainedUntilUtc, CancellationToken ct)
     {
-        if (orders.Count == 0) return [];
+        if (orders.Count == 0) return ([], []);
 
         // A brand-new case has LitigationCaseId == 0 at this point (not yet saved) — the query below then
         // correctly finds zero existing rows rather than needing a separate "is this new" branch.
         var existing = await db.LitigationCaseOrders
             .Where(o => o.LitigationCaseId == litigationCase.LitigationCaseId)
-            .Select(o => new { o.PdfUrl, o.OrderDate, o.OrderType })
+            .Select(o => new { o.LitigationCaseOrderId, o.PdfUrl, o.OrderDate, o.OrderType })
             .ToListAsync(ct);
 
-        var added = new List<LitigationCaseOrder>();
+        var added = new List<object>();
+        var toEnqueue = new List<LitigationOrderDocument>();
         foreach (var order in orders)
         {
-            var isDuplicate = existing.Any(e => e.PdfUrl == order.PdfUrl && e.OrderDate == order.OrderDate && e.OrderType == order.OrderType);
-            if (isDuplicate) continue;
+            var match = existing.FirstOrDefault(e => e.PdfUrl == order.PdfUrl && e.OrderDate == order.OrderDate && e.OrderType == order.OrderType);
+            if (match is not null)
+            {
+                var document = await db.LitigationOrderDocuments.FirstOrDefaultAsync(d => d.LitigationCaseOrderId == match.LitigationCaseOrderId, ct);
+                if (document is null)
+                {
+                    // A pre-existing order with no document yet — either persisted before #243 shipped, or an
+                    // earlier attempt at this exact case failed before reaching admission. Admit it now.
+                    document = new LitigationOrderDocument
+                    {
+                        LitigationCaseOrderId = match.LitigationCaseOrderId, Status = LitigationOrderDocumentStatus.Pending,
+                        RetainedUntilUtc = retainedUntilUtc, CreatedUtc = now
+                    };
+                    db.LitigationOrderDocuments.Add(document);
+                    added.Add(document);
+                    toEnqueue.Add(document);
+                }
+                else if (document.Status is LitigationOrderDocumentStatus.Failed or LitigationOrderDocumentStatus.Expired
+                    && retainedUntilUtc > document.RetainedUntilUtc)
+                {
+                    document.RetainedUntilUtc = retainedUntilUtc;
+                    document.Status = LitigationOrderDocumentStatus.Pending;
+                    document.RefreshCount++;
+                    document.LastRefreshedUtc = now;
+                    // Already tracked (Modified), not Added, but still recorded here so a retry-on-conflict
+                    // (see PersistOneCaseAsync) reverts this mutation too, rather than leaving it applied to
+                    // the change tracker across attempts while this method's own return value moves on.
+                    added.Add(document);
+                    toEnqueue.Add(document);
+                }
+                continue;
+            }
 
             var newOrder = new LitigationCaseOrder
             {
@@ -324,8 +394,16 @@ public sealed class LitigationCasePersistenceService(
             };
             db.LitigationCaseOrders.Add(newOrder);
             added.Add(newOrder);
+
+            var newDocument = new LitigationOrderDocument
+            {
+                Order = newOrder, Status = LitigationOrderDocumentStatus.Pending, RetainedUntilUtc = retainedUntilUtc, CreatedUtc = now
+            };
+            db.LitigationOrderDocuments.Add(newDocument);
+            added.Add(newDocument);
+            toEnqueue.Add(newDocument);
         }
-        return added;
+        return (added, toEnqueue);
     }
 
     private static int? ParseYear(string? value) => int.TryParse(value, out var year) ? year : null;

@@ -75,6 +75,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<LitigationCaseOrder> LitigationCaseOrders => Set<LitigationCaseOrder>();
     public DbSet<LitigationReportSnapshot> LitigationReportSnapshots => Set<LitigationReportSnapshot>();
     public DbSet<LitigationCaseSourceReport> LitigationCaseSourceReports => Set<LitigationCaseSourceReport>();
+    public DbSet<LitigationOrderDocument> LitigationOrderDocuments => Set<LitigationOrderDocument>();
 
     // #164 Calculation assurance
     public DbSet<CalculationAuditSnapshot> CalculationAuditSnapshots => Set<CalculationAuditSnapshot>();
@@ -210,6 +211,31 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             // cascade path to LitigationReportSnapshot at all (that FK is NoAction), so this is the only
             // cascade path onto this table from that direction — no multiple-path conflict.
             e.HasOne(x => x.ReportSnapshot).WithMany().HasForeignKey(x => x.LitigationReportSnapshotId).OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<LitigationOrderDocument>(e =>
+        {
+            e.HasKey(x => x.LitigationOrderDocumentId);
+            // 1:1 with LitigationCaseOrder — unique, not just indexed, so EnsureDocumentAsync's create-if-
+            // missing is race-safe against a concurrent creator the same way EnsureSnapshotAsync's own unique
+            // index is (see LitigationCasePersistenceService's remarks).
+            e.HasIndex(x => x.LitigationCaseOrderId).IsUnique();
+            e.Property(x => x.Status).HasConversion<string>().HasMaxLength(20);
+            e.Property(x => x.LeaseOwner).HasMaxLength(100);
+            e.Property(x => x.StoragePath).HasMaxLength(500);
+            e.Property(x => x.FileHash).HasMaxLength(64);
+            e.Property(x => x.ContentType).HasMaxLength(100);
+            e.Property(x => x.FailureReason).HasMaxLength(1000);
+            e.Property(x => x.TextExtractionStatus).HasConversion<string>().HasMaxLength(30);
+            e.Property(x => x.TextExtractionMethod).HasConversion<string>().HasMaxLength(20);
+            // ExtractedText left nvarchar(max) — same treatment as EpfoEstablishment.Address for free text
+            // with no natural bound.
+            e.Property(x => x.RowVersion).IsRowVersion();
+            e.Ignore(x => x.IsTerminal);
+            // Only cascade path onto this table from McaRequest (McaRequest → LitigationCase →
+            // LitigationCaseOrder → LitigationOrderDocument, one straight line) — safe to cascade, same
+            // reasoning as LitigationCaseOrder → LitigationCase above.
+            e.HasOne(x => x.Order).WithMany().HasForeignKey(x => x.LitigationCaseOrderId).OnDelete(DeleteBehavior.Cascade);
         });
 
         modelBuilder.Entity<McaRequest>(e =>

@@ -26,6 +26,7 @@ public sealed class BprLitigationClient(HttpClient http, IOptions<BprLitigationO
     private static readonly string[] JobIdFieldCandidates = ["job_id", "jobId", "id", "request_id", "requestId"];
     private static readonly string[] PendingStatusValues = ["pending", "processing", "in_progress", "inprogress", "queued", "running"];
     private static readonly byte[] ZipSignature = [0x50, 0x4B, 0x03, 0x04]; // "PK\x03\x04" — XLSX is a zip container
+    private static readonly byte[] PdfSignature = [0x25, 0x50, 0x44, 0x46, 0x2D]; // "%PDF-"
 
     private readonly BprLitigationOptions _opts = options.Value;
 
@@ -144,6 +145,94 @@ public sealed class BprLitigationClient(HttpClient http, IOptions<BprLitigationO
             vendorJobId, bytes.Length, contentType ?? "(none)");
         return BprReportPollResult.Completed(bytes, BprReportFormat.Unknown);
     }
+
+    /// <summary>Downloads one order's PDF from <paramref name="pdfUrl"/> (a <c>LitigationCaseOrder.PdfUrl</c>
+    /// value, captured verbatim from a BPR report). This is not one of the three confirmed BPR endpoints —
+    /// there is no captured example of how an order URL is authorized. Two defensive choices follow from
+    /// that:
+    /// <list type="bullet">
+    /// <item>The JWT is only ever attached when <paramref name="pdfUrl"/> shares BPR's own configured host —
+    /// never forwarded to an arbitrary third-party document host this URL might point to, which would leak
+    /// the token into that host's own access logs. If the URL is a self-contained pre-signed link (the
+    /// common pattern for a time-limited document link, and consistent with epic #239's "may expire after
+    /// seven days" reading as a signed-URL TTL), it needs no Authorization header at all.</item>
+    /// <item>The response is read as a bounded stream, never buffered unbounded into memory — the vendor
+    /// contract documents no file-size limit, so a declared or actual size over <paramref name="maxBytes"/>
+    /// is treated as a failed download rather than risking unbounded memory use for one order.</item>
+    /// </list>
+    /// Validates the downloaded bytes actually start with the PDF signature before calling it a success — a
+    /// dead/expired link commonly returns an HTML error page or a JSON error body with HTTP 200, which must
+    /// never be stored and reported as a retrieved order.</summary>
+    public async Task<BprOrderDownloadResult> DownloadOrderDocumentAsync(string token, string pdfUrl, long maxBytes, CancellationToken ct)
+    {
+        RequireConfigured();
+        if (!Uri.TryCreate(pdfUrl, UriKind.Absolute, out var uri) || (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps))
+            return BprOrderDownloadResult.Failed($"Order PDF URL is not a valid absolute HTTP(S) URL: '{pdfUrl}'.");
+
+        using var request = new HttpRequestMessage(HttpMethod.Get, uri);
+        if (http.BaseAddress is not null && string.Equals(uri.Host, http.BaseAddress.Host, StringComparison.OrdinalIgnoreCase))
+            request.Headers.TryAddWithoutValidation("Authorization", token);
+
+        HttpResponseMessage response;
+        try
+        {
+            response = await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
+        }
+        catch (HttpRequestException ex)
+        {
+            return BprOrderDownloadResult.Failed($"Network error downloading order PDF: {ex.Message}");
+        }
+
+        using (response)
+        {
+            if (!response.IsSuccessStatusCode)
+                return BprOrderDownloadResult.Failed($"HTTP {(int)response.StatusCode} downloading order PDF.");
+
+            var declaredLength = response.Content.Headers.ContentLength;
+            if (declaredLength is { } length && length > maxBytes)
+                return BprOrderDownloadResult.Failed(
+                    $"Order PDF declares {length:N0} bytes, exceeding the {maxBytes:N0}-byte cap.");
+
+            byte[] bytes;
+            try
+            {
+                bytes = await ReadBoundedAsync(response.Content, maxBytes, ct);
+            }
+            catch (BprLitigationException ex)
+            {
+                return BprOrderDownloadResult.Failed(ex.Message);
+            }
+
+            if (bytes.Length == 0)
+                return BprOrderDownloadResult.Failed("Order PDF download returned an empty body.");
+            if (!StartsWithPdfSignature(bytes))
+                return BprOrderDownloadResult.Failed(
+                    $"Downloaded content ({bytes.Length:N0} bytes) does not start with the PDF signature — " +
+                    "likely an error page or an expired link, not the order.");
+
+            return BprOrderDownloadResult.Success(bytes, response.Content.Headers.ContentType?.MediaType);
+        }
+    }
+
+    private static async Task<byte[]> ReadBoundedAsync(HttpContent content, long maxBytes, CancellationToken ct)
+    {
+        await using var stream = await content.ReadAsStreamAsync(ct);
+        using var buffer = new MemoryStream();
+        var chunk = new byte[81920];
+        long total = 0;
+        int read;
+        while ((read = await stream.ReadAsync(chunk, ct)) > 0)
+        {
+            total += read;
+            if (total > maxBytes)
+                throw new BprLitigationException($"Order PDF exceeded the {maxBytes:N0}-byte cap while downloading.");
+            buffer.Write(chunk, 0, read);
+        }
+        return buffer.ToArray();
+    }
+
+    private static bool StartsWithPdfSignature(byte[] bytes) =>
+        bytes.Length >= PdfSignature.Length && bytes.AsSpan(0, PdfSignature.Length).SequenceEqual(PdfSignature);
 
     private void RequireConfigured()
     {
@@ -268,3 +357,9 @@ public sealed record BprReportPollResult(BprReportPollStatus Status, byte[]? Byt
 /// <summary>Raised for any BPR API failure — HTTP-level, misconfiguration, or an unrecognized response
 /// shape. Never carries the token/secret; callers may log this exception's message safely.</summary>
 public sealed class BprLitigationException(string message) : Exception(message);
+
+public sealed record BprOrderDownloadResult(bool Ok, byte[]? Bytes, string? ContentType, string? Error)
+{
+    public static BprOrderDownloadResult Success(byte[] bytes, string? contentType) => new(true, bytes, contentType, null);
+    public static BprOrderDownloadResult Failed(string error) => new(false, null, null, error);
+}
