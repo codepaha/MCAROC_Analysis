@@ -281,6 +281,165 @@ public class WorkbookDerivativeServiceTests : IAsyncLifetime, IDisposable
     }
 
     [Fact]
+    public async Task LateWorker_WithExpiredLease_ValidationFailure_CannotMarkFailed_PreservesPendingState()
+    {
+        await using var db = CreateContext();
+
+        var request = new McaRequest
+        {
+            ClientId = 1,
+            EntityType = EntityType.Company,
+            CompanyName = "Late Validation Test Co",
+            RequestNumber = $"LVAL-{Guid.NewGuid():N}",
+            RequestStatus = RequestStatus.Created,
+            CreatedDate = DateTime.UtcNow
+        };
+        db.Requests.Add(request);
+        await db.SaveChangesAsync();
+
+        var uploadDir = Path.Combine(_tempDir, "App_Data", "Uploads", request.RequestId.ToString(), "original");
+        Directory.CreateDirectory(uploadDir);
+        var rawPath = Path.Combine(uploadDir, "sample_late_val.xlsx");
+        var originalHash = CreateSyntheticWorkbook(rawPath);
+
+        var doc = new RequestDocument
+        {
+            RequestId = request.RequestId,
+            DocumentType = DocumentType.McaRocReport,
+            OriginalFileName = "Sample_Late_Val.xlsx",
+            StoredFileName = "sample_late_val.xlsx",
+            StoragePath = rawPath,
+            FileSize = new FileInfo(rawPath).Length,
+            FileHash = originalHash,
+            UploadStatus = DocumentUploadStatus.Uploaded,
+            UploadedDate = DateTime.UtcNow
+        };
+        db.RequestDocuments.Add(doc);
+        await db.SaveChangesAsync();
+
+        var service = CreateService(db);
+        string? generatedFilePath = null;
+
+        // Seam: before validation runs, corrupt the generation file so ValidateOpens fails,
+        // and expire the lease so the worker is late.
+        service.PreValidationHook = async (derivId, token) =>
+        {
+            var derivativesDir = Path.Combine(_tempDir, "App_Data", "Uploads", request.RequestId.ToString(), "derivatives");
+            generatedFilePath = Path.Combine(derivativesDir, $"{doc.DocumentId}_sanitized.{token:N}.xlsx");
+            Assert.True(File.Exists(generatedFilePath), "Worker must have produced generation file before validation.");
+
+            // Corrupt file so ValidateOpens returns false
+            await File.WriteAllTextAsync(generatedFilePath, "CORRUPTED_NOT_A_VALID_WORKBOOK");
+
+            // Expire the lease in database
+            await using var hookDb = CreateContext();
+            var deriv = await hookDb.RequestDocumentDerivatives.FindAsync(derivId);
+            Assert.NotNull(deriv);
+            deriv.LeaseExpiresUtc = DateTime.UtcNow.AddMinutes(-5);
+            await hookDb.SaveChangesAsync();
+        };
+
+        var result = await service.GetOrCreateSanitizedDerivativeAsync(doc);
+
+        Assert.NotNull(result);
+        // Fencing prevents late worker from mutating status to Failed!
+        Assert.Equal(DocumentDerivativeStatus.Pending, result.Status);
+        Assert.Null(result.ErrorMessage);
+        Assert.NotNull(result.LeaseExpiresUtc);
+        Assert.True(result.LeaseExpiresUtc < DateTime.UtcNow);
+
+        // Generation file must be cleaned up
+        Assert.NotNull(generatedFilePath);
+        Assert.False(File.Exists(generatedFilePath), "Corrupt generation file must be deleted.");
+
+        // A new healthy worker can now take over and succeed
+        service.PreValidationHook = null;
+        var recoveryResult = await service.GetOrCreateSanitizedDerivativeAsync(doc);
+        Assert.NotNull(recoveryResult);
+        Assert.Equal(DocumentDerivativeStatus.Ready, recoveryResult.Status);
+        Assert.True(File.Exists(recoveryResult.StoragePath));
+    }
+
+    [Fact]
+    public async Task LateWorker_WithExpiredLease_Exception_CannotMarkFailed_PreservesPendingState()
+    {
+        await using var db = CreateContext();
+
+        var request = new McaRequest
+        {
+            ClientId = 1,
+            EntityType = EntityType.Company,
+            CompanyName = "Late Exception Test Co",
+            RequestNumber = $"LEXC-{Guid.NewGuid():N}",
+            RequestStatus = RequestStatus.Created,
+            CreatedDate = DateTime.UtcNow
+        };
+        db.Requests.Add(request);
+        await db.SaveChangesAsync();
+
+        var uploadDir = Path.Combine(_tempDir, "App_Data", "Uploads", request.RequestId.ToString(), "original");
+        Directory.CreateDirectory(uploadDir);
+        var rawPath = Path.Combine(uploadDir, "sample_late_exc.xlsx");
+        var originalHash = CreateSyntheticWorkbook(rawPath);
+
+        var doc = new RequestDocument
+        {
+            RequestId = request.RequestId,
+            DocumentType = DocumentType.McaRocReport,
+            OriginalFileName = "Sample_Late_Exc.xlsx",
+            StoredFileName = "sample_late_exc.xlsx",
+            StoragePath = rawPath,
+            FileSize = new FileInfo(rawPath).Length,
+            FileHash = originalHash,
+            UploadStatus = DocumentUploadStatus.Uploaded,
+            UploadedDate = DateTime.UtcNow
+        };
+        db.RequestDocuments.Add(doc);
+        await db.SaveChangesAsync();
+
+        var service = CreateService(db);
+        string? generatedFilePath = null;
+
+        // Seam: simulate an unexpected exception occurring after lease expiration
+        service.PreValidationHook = async (derivId, token) =>
+        {
+            var derivativesDir = Path.Combine(_tempDir, "App_Data", "Uploads", request.RequestId.ToString(), "derivatives");
+            generatedFilePath = Path.Combine(derivativesDir, $"{doc.DocumentId}_sanitized.{token:N}.xlsx");
+
+            // Expire the lease in database
+            await using var hookDb = CreateContext();
+            var deriv = await hookDb.RequestDocumentDerivatives.FindAsync(derivId);
+            Assert.NotNull(deriv);
+            deriv.LeaseExpiresUtc = DateTime.UtcNow.AddMinutes(-5);
+            await hookDb.SaveChangesAsync();
+
+            throw new InvalidOperationException("Simulated late processing crash.");
+        };
+
+        var result = await service.GetOrCreateSanitizedDerivativeAsync(doc);
+
+        Assert.NotNull(result);
+        // Fencing prevents late worker from mutating status to Failed!
+        Assert.Equal(DocumentDerivativeStatus.Pending, result.Status);
+        Assert.Null(result.ErrorMessage);
+        Assert.NotNull(result.LeaseExpiresUtc);
+        Assert.True(result.LeaseExpiresUtc < DateTime.UtcNow);
+
+        // Generation file must be cleaned up
+        if (generatedFilePath != null)
+        {
+            Assert.False(File.Exists(generatedFilePath), "Generation file must be cleaned up by catch block.");
+        }
+
+        // A new healthy worker can now take over and succeed
+        service.PreValidationHook = null;
+        var recoveryResult = await service.GetOrCreateSanitizedDerivativeAsync(doc);
+        Assert.NotNull(recoveryResult);
+        Assert.Equal(DocumentDerivativeStatus.Ready, recoveryResult.Status);
+        Assert.True(File.Exists(recoveryResult.StoragePath));
+    }
+
+    [Fact]
     public async Task InterleavedTakeover_WinnerFileAndHashRemainAuthoritative()
     {
         await using var db = CreateContext();

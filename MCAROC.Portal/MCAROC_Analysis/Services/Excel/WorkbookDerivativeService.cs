@@ -20,6 +20,11 @@ public class WorkbookDerivativeService(
     public const int CurrentSanitizerVersion = 1;
 
     /// <summary>
+    /// Test seam allowing deterministic simulation of lease expiration or takeover before validation.
+    /// </summary>
+    internal Func<long, Guid, Task>? PreValidationHook { get; set; }
+
+    /// <summary>
     /// Test seam allowing deterministic simulation of lease expiration or takeover before the completion CAS.
     /// </summary>
     internal Func<long, Guid, Task>? PreCasCompletionHook { get; set; }
@@ -147,13 +152,21 @@ public class WorkbookDerivativeService(
             if (string.IsNullOrWhiteSpace(doc.StoragePath) || !File.Exists(doc.StoragePath))
             {
                 logger.LogWarning("Source document file not found at {StoragePath} for Document {DocumentId}", doc.StoragePath, doc.DocumentId);
-                await db.RequestDocumentDerivatives
-                    .Where(d => d.DerivativeId == derivativeId && d.LeaseToken == workerToken)
+                var failureTime = DateTime.UtcNow;
+                var sourceMissingRows = await db.RequestDocumentDerivatives
+                    .Where(d => d.DerivativeId == derivativeId
+                             && d.LeaseToken == workerToken
+                             && d.LeaseExpiresUtc > failureTime)
                     .ExecuteUpdateAsync(u => u
                         .SetProperty(d => d.Status, DocumentDerivativeStatus.Failed)
                         .SetProperty(d => d.ErrorMessage, "Source document file not found.")
                         .SetProperty(d => d.LeaseExpiresUtc, (DateTime?)null)
-                        .SetProperty(d => d.UpdatedUtc, DateTime.UtcNow), ct);
+                        .SetProperty(d => d.UpdatedUtc, failureTime), ct);
+
+                if (sourceMissingRows == 0)
+                {
+                    logger.LogWarning("Worker {Token} lease expired or lost before recording missing source failure for derivative {DerivativeId}.", workerToken, derivativeId);
+                }
 
                 return await db.RequestDocumentDerivatives.AsNoTracking().FirstOrDefaultAsync(d => d.DerivativeId == derivativeId, ct);
             }
@@ -161,6 +174,11 @@ public class WorkbookDerivativeService(
             File.Copy(doc.StoragePath, generationPath, overwrite: true);
 
             ExcelMetadataSanitizer.SanitizeWorkbook(generationPath);
+
+            if (PreValidationHook != null)
+            {
+                await PreValidationHook(derivativeId, workerToken);
+            }
 
             var openCheck = fileValidation.ValidateOpens(generationPath);
             if (!openCheck.IsValid)
@@ -171,13 +189,21 @@ public class WorkbookDerivativeService(
                 }
 
                 logger.LogWarning("Sanitized derivative failed validation for Document {DocumentId}: {Error}", doc.DocumentId, openCheck.Error);
-                await db.RequestDocumentDerivatives
-                    .Where(d => d.DerivativeId == derivativeId && d.LeaseToken == workerToken)
+                var failureTime = DateTime.UtcNow;
+                var validationFailureRows = await db.RequestDocumentDerivatives
+                    .Where(d => d.DerivativeId == derivativeId
+                             && d.LeaseToken == workerToken
+                             && d.LeaseExpiresUtc > failureTime)
                     .ExecuteUpdateAsync(u => u
                         .SetProperty(d => d.Status, DocumentDerivativeStatus.Failed)
                         .SetProperty(d => d.ErrorMessage, openCheck.Error ?? "Validation failed.")
                         .SetProperty(d => d.LeaseExpiresUtc, (DateTime?)null)
-                        .SetProperty(d => d.UpdatedUtc, DateTime.UtcNow), ct);
+                        .SetProperty(d => d.UpdatedUtc, failureTime), ct);
+
+                if (validationFailureRows == 0)
+                {
+                    logger.LogWarning("Worker {Token} lease expired or lost before recording validation failure for derivative {DerivativeId}.", workerToken, derivativeId);
+                }
 
                 return await db.RequestDocumentDerivatives.AsNoTracking().FirstOrDefaultAsync(d => d.DerivativeId == derivativeId, ct);
             }
@@ -231,13 +257,21 @@ public class WorkbookDerivativeService(
                 try { File.Delete(generationPath); } catch { }
             }
 
-            await db.RequestDocumentDerivatives
-                .Where(d => d.DerivativeId == derivativeId && d.LeaseToken == workerToken)
+            var failureTime = DateTime.UtcNow;
+            var exceptionRows = await db.RequestDocumentDerivatives
+                .Where(d => d.DerivativeId == derivativeId
+                         && d.LeaseToken == workerToken
+                         && d.LeaseExpiresUtc > failureTime)
                 .ExecuteUpdateAsync(u => u
                     .SetProperty(d => d.Status, DocumentDerivativeStatus.Failed)
                     .SetProperty(d => d.ErrorMessage, ex.Message)
                     .SetProperty(d => d.LeaseExpiresUtc, (DateTime?)null)
-                    .SetProperty(d => d.UpdatedUtc, DateTime.UtcNow), ct);
+                    .SetProperty(d => d.UpdatedUtc, failureTime), ct);
+
+            if (exceptionRows == 0)
+            {
+                logger.LogWarning("Worker {Token} lease expired or lost before recording exception failure for derivative {DerivativeId}.", workerToken, derivativeId);
+            }
 
             return await db.RequestDocumentDerivatives.AsNoTracking().FirstOrDefaultAsync(d => d.DerivativeId == derivativeId, ct);
         }

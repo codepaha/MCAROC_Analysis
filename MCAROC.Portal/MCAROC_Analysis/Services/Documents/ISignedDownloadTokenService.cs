@@ -9,3 +9,4 @@ public interface ISignedDownloadTokenService
     string GenerateToken(long requestId, long docId, TimeSpan? lifetime = null);
     bool ValidateToken(long requestId, long docId, string? token);
 }
+
