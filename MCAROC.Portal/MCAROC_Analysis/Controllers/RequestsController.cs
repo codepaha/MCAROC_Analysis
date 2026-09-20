@@ -30,7 +30,8 @@ public class RequestsController(
     IWebHostEnvironment env,
     CorporateTimelineBuilder corporateTimelineBuilder,
     ILogger<RequestsController>? logger = null,
-    IWorkbookDerivativeService? derivativeService = null) : Controller
+    IWorkbookDerivativeService? derivativeService = null,
+    MCAROC_Analysis.Services.Documents.ISignedDownloadTokenService? tokenService = null) : Controller
 {
     [HttpGet("/Requests")]
     public async Task<IActionResult> Index([FromQuery] RequestListFilterCriteria filters)
@@ -1003,31 +1004,58 @@ public class RequestsController(
     }
 
     [HttpGet("/Requests/{requestId:long}/uploaded-documents/{docId:long}/download")]
-    public async Task<IActionResult> DownloadUploadedDocument(long requestId, long docId, CancellationToken ct)
+    public async Task<IActionResult> DownloadUploadedDocument(
+        long requestId,
+        long docId,
+        [FromQuery] string? token,
+        CancellationToken ct)
     {
-        var doc = await db.RequestDocuments.AsNoTracking().FirstOrDefaultAsync(d => d.DocumentId == docId, ct);
-        if (doc == null)
-        {
-            logger?.LogWarning("Uploaded document {DocId} not found.", docId);
-            return NotFound();
-        }
-
-        if (doc.RequestId != requestId)
-        {
-            logger?.LogWarning("Request scoping mismatch: Document {DocId} RequestId={DocRequestId} != requested {RequestId}", docId, doc.RequestId, requestId);
-            return NotFound();
-        }
-
-        if (doc.UploadStatus == DocumentUploadStatus.Quarantined)
+        // ── Step 1: Zero-DB-Lookup Authorization Check ────────────────────────
+        // Fast-fail with uniform 404 BEFORE touching the database or verifying document existence.
+        // This prevents document-ID enumeration and guarantees unauthenticated anonymous callers
+        // without a valid signed token cannot probe the system.
+        var isReviewer = false;
+        try
         {
             var authResult = await HttpContext.AuthenticateAsync("InternalReviewer");
-            if (!authResult.Succeeded || authResult.Principal?.Identity?.IsAuthenticated != true)
+            isReviewer = authResult?.Succeeded == true && authResult.Principal?.Identity?.IsAuthenticated == true;
+        }
+        catch (InvalidOperationException)
+        {
+            isReviewer = HttpContext.User?.Identities.Any(i => i.AuthenticationType == "InternalReviewer" && i.IsAuthenticated) == true;
+        }
+
+        var isTokenValid = tokenService?.ValidateToken(requestId, docId, token) ?? false;
+
+        if (!isReviewer && !isTokenValid)
+        {
+            // Telemetry: Record denial without leaking the token value
+            logger?.LogWarning(
+                "Audit: Uploaded document download DENIED (Unauthenticated/InvalidToken). RequestId={RequestId}, DocumentId={DocId}, HasToken={HasToken}",
+                requestId, docId, !string.IsNullOrWhiteSpace(token));
+            return NotFound();
+        }
+
+        // ── Step 2: Database Document Lookup (Only after authorization) ───────
+        var doc = await db.RequestDocuments.AsNoTracking().FirstOrDefaultAsync(d => d.DocumentId == docId && d.RequestId == requestId, ct);
+        if (doc == null)
+        {
+            logger?.LogWarning("Audit: Uploaded document not found. RequestId={RequestId}, DocumentId={DocId}", requestId, docId);
+            return NotFound();
+        }
+
+        // ── Step 3: Quarantine Enforcement ────────────────────────────────────
+        // Quarantined files are strictly reviewer-only for diagnostic inspection; token bearers cannot download quarantined files.
+        if (doc.UploadStatus == DocumentUploadStatus.Quarantined)
+        {
+            if (!isReviewer)
             {
-                logger?.LogWarning("Access denied: Quarantined document {DocId} requested without InternalReviewer role.", docId);
+                logger?.LogWarning("Audit: Quarantined document download DENIED for non-reviewer. RequestId={RequestId}, DocumentId={DocId}", requestId, docId);
                 return NotFound();
             }
         }
 
+        // ── Step 4: Extension Allowlist ───────────────────────────────────────
         var ext = Path.GetExtension(doc.OriginalFileName).ToLowerInvariant();
         if (string.IsNullOrEmpty(ext))
         {
@@ -1041,10 +1069,11 @@ public class RequestsController(
 
         if (!allowedExtensions.Contains(ext))
         {
-            logger?.LogWarning("Unsupported file extension {Ext} requested for Document {DocId}", ext, docId);
+            logger?.LogWarning("Audit: Unsupported file extension {Ext} requested for DocumentId={DocId}", ext, docId);
             return StatusCode(StatusCodes.Status415UnsupportedMediaType, "Unsupported file media type.");
         }
 
+        // ── Step 5: Resolve Physical Path (Sanitized derivative for Excel, Raw for others) ──
         string physicalPath;
         if (ext is ".xlsx" or ".xls")
         {
@@ -1079,33 +1108,39 @@ public class RequestsController(
         }
         else
         {
-            if (string.IsNullOrEmpty(doc.StoragePath) || !System.IO.File.Exists(doc.StoragePath))
+            if (string.IsNullOrWhiteSpace(doc.StoragePath) || !System.IO.File.Exists(doc.StoragePath))
             {
-                logger?.LogError("Source document storage path missing on disk: {Path}", doc.StoragePath);
+                logger?.LogError("Storage path missing or file not found on disk for Document {DocId}", docId);
                 return NotFound();
             }
 
-            var expectedOriginalDir = Path.GetFullPath(Path.Combine(env.ContentRootPath, "App_Data", "Uploads", requestId.ToString(), "original")) + Path.DirectorySeparatorChar;
-            var fullOriginalPath = Path.GetFullPath(doc.StoragePath);
-            if (!fullOriginalPath.StartsWith(expectedOriginalDir, StringComparison.OrdinalIgnoreCase))
+            var expectedUploadsDir = Path.GetFullPath(Path.Combine(env.ContentRootPath, "App_Data", "Uploads", requestId.ToString())) + Path.DirectorySeparatorChar;
+            var fullStoragePath = Path.GetFullPath(doc.StoragePath);
+            if (!fullStoragePath.StartsWith(expectedUploadsDir, StringComparison.OrdinalIgnoreCase))
             {
-                logger?.LogError("Path traversal detected on original {Path} for Request {RequestId}", fullOriginalPath, requestId);
+                logger?.LogError("Path traversal detected on document {Path} for Request {RequestId}", fullStoragePath, requestId);
                 return NotFound();
             }
 
-            physicalPath = fullOriginalPath;
+            physicalPath = fullStoragePath;
         }
 
+        // ── Step 6: Telemetry & Security Headers ──────────────────────────────
+        var authMethod = isReviewer ? "ReviewerSession" : "SignedToken";
+        logger?.LogInformation(
+            "Audit: Uploaded document download AUTHORIZED ({AuthMethod}). RequestId={RequestId}, DocumentId={DocId}, IsQuarantined={IsQuarantined}",
+            authMethod, requestId, docId, doc.UploadStatus == DocumentUploadStatus.Quarantined);
+
+        Response.Headers["Referrer-Policy"] = "no-referrer";
         Response.Headers.CacheControl = "no-store, private";
         Response.Headers["X-Content-Type-Options"] = "nosniff";
 
         var safeFileName = GetSafeUploadedDownloadFileName(docId, doc.OriginalFileName);
-        if (string.IsNullOrEmpty(Path.GetExtension(safeFileName)) && !string.IsNullOrEmpty(ext))
-        {
-            safeFileName += ext;
-        }
+        var cd = new Microsoft.Net.Http.Headers.ContentDispositionHeaderValue("attachment");
+        cd.SetHttpFileName(safeFileName);
+        Response.Headers.ContentDisposition = cd.ToString();
 
-        var mimeType = ext switch
+        var contentType = ext switch
         {
             ".xlsx" => "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             ".xls" => "application/vnd.ms-excel",
@@ -1114,12 +1149,7 @@ public class RequestsController(
             ".pdf" => "application/pdf",
             _ => "application/octet-stream"
         };
-
-        var cd = new Microsoft.Net.Http.Headers.ContentDispositionHeaderValue("attachment");
-        cd.SetHttpFileName(safeFileName);
-        Response.Headers.ContentDisposition = cd.ToString();
-
-        return PhysicalFile(physicalPath, mimeType, enableRangeProcessing: true);
+        return PhysicalFile(physicalPath, contentType, enableRangeProcessing: true);
     }
 
     [HttpPost("/Requests/{requestId:long}/chat")]

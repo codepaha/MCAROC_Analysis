@@ -1,5 +1,6 @@
 @model RequestDetailsViewModel
 @using Microsoft.AspNetCore.Authentication
+@inject MCAROC_Analysis.Services.Documents.ISignedDownloadTokenService TokenService
 @{
     var r = Model.Request;
     var hasBatch = Model.FilingBatch is not null;
@@ -45,17 +46,21 @@
                 <tbody>
                 @foreach (var doc in Model.Documents.OrderByDescending(d => d.UploadedDate))
                 {
+                    var token = isReviewer ? TokenService?.GenerateToken(r.RequestId, doc.DocumentId) : null;
+                    var downloadUrl = isReviewer && !string.IsNullOrEmpty(token)
+                        ? $"/Requests/{r.RequestId}/uploaded-documents/{doc.DocumentId}/download?token={Uri.EscapeDataString(token)}"
+                        : null;
                     <tr>
                         <td>
-                            @if (doc.UploadStatus == DocumentUploadStatus.Quarantined && !isReviewer)
+                            @if (isReviewer && downloadUrl != null && doc.UploadStatus != DocumentUploadStatus.Quarantined)
                             {
-                                <span><i class="bi bi-file-earmark me-1 text-muted"></i>@doc.OriginalFileName</span>
+                                <a href="@downloadUrl" class="text-decoration-none fw-semibold" title="Download @doc.OriginalFileName">
+                                    <i class="bi bi-file-earmark me-1"></i>@doc.OriginalFileName
+                                </a>
                             }
                             else
                             {
-                                <a href="/Requests/@r.RequestId/uploaded-documents/@doc.DocumentId/download" class="text-decoration-none fw-semibold" title="Download @doc.OriginalFileName">
-                                    <i class="bi bi-file-earmark me-1"></i>@doc.OriginalFileName
-                                </a>
+                                <span><i class="bi bi-file-earmark me-1 text-muted"></i>@doc.OriginalFileName</span>
                             }
                         </td>
                         <td>@doc.DocumentType</td>
@@ -79,22 +84,25 @@
                         </td>
                         <td>@doc.UploadedDate.ToString("d MMM yyyy HH:mm")</td>
                         <td>
-                            @if (doc.UploadStatus != DocumentUploadStatus.Quarantined)
+                            @if (isReviewer && downloadUrl != null)
                             {
-                                <a href="/Requests/@r.RequestId/uploaded-documents/@doc.DocumentId/download" class="btn btn-sm btn-outline-primary" title="Download @doc.OriginalFileName">
-                                    <i class="bi bi-download me-1"></i> Download
-                                </a>
-                            }
-                            else if (isReviewer)
-                            {
-                                <a href="/Requests/@r.RequestId/uploaded-documents/@doc.DocumentId/download" class="btn btn-sm btn-outline-danger" title="Download quarantined file (Reviewer only)">
-                                    <i class="bi bi-shield-exclamation me-1"></i> Download Quarantined
-                                </a>
+                                if (doc.UploadStatus != DocumentUploadStatus.Quarantined)
+                                {
+                                    <a href="@downloadUrl" class="btn btn-sm btn-outline-primary" title="Download @doc.OriginalFileName">
+                                        <i class="bi bi-download me-1"></i> Download
+                                    </a>
+                                }
+                                else
+                                {
+                                    <a href="@downloadUrl" class="btn btn-sm btn-outline-danger" title="Download quarantined file (Reviewer only)">
+                                        <i class="bi bi-shield-exclamation me-1"></i> Download Quarantined
+                                    </a>
+                                }
                             }
                             else
                             {
-                                <span class="badge bg-light text-muted border" title="Quarantined files cannot be downloaded">
-                                    <i class="bi bi-slash-circle me-1"></i> Unavailable
+                                <span class="badge bg-light text-muted border" title="Reviewer authorization required to download uploaded source files">
+                                    <i class="bi bi-lock me-1"></i> Reviewer Only
                                 </span>
                             }
                         </td>
@@ -172,11 +180,15 @@
                     <a class="mca-chip" data-mca-docs-load href="@Url.Action("Documents", "Requests", new { id = r.RequestId })">
                         <i class="bi bi-list-ul"></i> Browse @Model.FilingCategoryCounts.Values.Sum() filed document(s)
                     </a>
-                    @if (archiveDoc != null && (archiveDoc.UploadStatus != DocumentUploadStatus.Quarantined || isReviewer))
+                    @if (isReviewer && archiveDoc != null && (archiveDoc.UploadStatus != DocumentUploadStatus.Quarantined || isReviewer))
                     {
-                        <a href="/Requests/@r.RequestId/uploaded-documents/@archiveDoc.DocumentId/download" class="btn btn-sm btn-outline-secondary" title="Download Source Filings Archive (@archiveDoc.OriginalFileName)">
-                            <i class="bi bi-file-earmark-zip me-1"></i> Download Archive (.zip)
-                        </a>
+                        var archiveToken = TokenService?.GenerateToken(r.RequestId, archiveDoc.DocumentId);
+                        if (!string.IsNullOrEmpty(archiveToken))
+                        {
+                            <a href="/Requests/@r.RequestId/uploaded-documents/@archiveDoc.DocumentId/download?token=@Uri.EscapeDataString(archiveToken)" class="btn btn-sm btn-outline-secondary" title="Download Source Filings Archive (@archiveDoc.OriginalFileName)">
+                                <i class="bi bi-file-earmark-zip me-1"></i> Download Archive (.zip)
+                            </a>
+                        }
                     }
                 </div>
             }

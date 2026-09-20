@@ -11,6 +11,7 @@ using MCAROC_Analysis.Services.Dashboard;
 using MCAROC_Analysis.Services.Dossier;
 using MCAROC_Analysis.Services.Excel;
 using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
@@ -60,11 +61,18 @@ public class UploadedDocumentDownloadTests : IAsyncLifetime, IDisposable
         }
     }
 
-    private RequestsController CreateController(AppDbContext db, bool isInternalReviewer = false)
+    private RequestsController CreateController(
+        AppDbContext db,
+        bool isInternalReviewer = false,
+        MCAROC_Analysis.Services.Documents.ISignedDownloadTokenService? tokenService = null,
+        Microsoft.Extensions.Logging.ILogger<RequestsController>? customLogger = null)
     {
         var env = new FakeEnv(_tempDir);
         var fileVal = new FileValidationService(new ExcelSheetReader());
         var derivService = new WorkbookDerivativeService(db, env, fileVal, NullLogger<WorkbookDerivativeService>.Instance);
+        var dpProvider = DataProtectionProvider.Create(new DirectoryInfo(_tempDir));
+        tokenService ??= new MCAROC_Analysis.Services.Documents.TimeLimitedSignedDownloadTokenService(dpProvider);
+
         var controller = new RequestsController(
             db: db,
             orchestrator: null!,
@@ -75,8 +83,9 @@ public class UploadedDocumentDownloadTests : IAsyncLifetime, IDisposable
             dossierCache: Dossier.DossierGoldenMasterTests.CreateCache(),
             env: env,
             corporateTimelineBuilder: new CorporateTimelineBuilder(db),
-            logger: NullLogger<RequestsController>.Instance,
-            derivativeService: derivService);
+            logger: customLogger ?? NullLogger<RequestsController>.Instance,
+            derivativeService: derivService,
+            tokenService: tokenService);
 
         var services = new ServiceCollection();
         services.AddSingleton<IAuthenticationService>(new FakeAuthService(isInternalReviewer));
@@ -150,11 +159,37 @@ public class UploadedDocumentDownloadTests : IAsyncLifetime, IDisposable
         db.RequestDocuments.Add(doc);
         await db.SaveChangesAsync();
 
-        var controller = CreateController(db);
+        var dp = DataProtectionProvider.Create(new DirectoryInfo(_tempDir));
+        var tokenService = new MCAROC_Analysis.Services.Documents.TimeLimitedSignedDownloadTokenService(dp);
+        var token = tokenService.GenerateToken(req2.RequestId, doc.DocumentId);
+
+        var controller = CreateController(db, tokenService: tokenService);
         // Requesting doc of Req1 under Req2 route
-        var result = await controller.DownloadUploadedDocument(req2.RequestId, doc.DocumentId, default);
+        var result = await controller.DownloadUploadedDocument(req2.RequestId, doc.DocumentId, token, default);
 
         Assert.IsType<NotFoundResult>(result);
+    }
+
+    [Fact]
+    public async Task ZeroDatabaseLookup_OnMissingOrInvalidToken_Returns404()
+    {
+        // Seam: Configure an AppDbContext with a DbCommandInterceptor that unconditionally throws.
+        // If the action touches the database before rejecting missing/invalid tokens, the test will fail!
+        var failingOptions = new DbContextOptionsBuilder<AppDbContext>()
+            .UseSqlServer(ConnectionString)
+            .AddInterceptors(new ThrowingDbCommandInterceptor())
+            .Options;
+
+        await using var failingDb = new AppDbContext(failingOptions);
+        var controller = CreateController(failingDb, isInternalReviewer: false);
+
+        // 1. Missing token
+        var missingTokenResult = await controller.DownloadUploadedDocument(requestId: 12345, docId: 67890, token: null, default);
+        Assert.IsType<NotFoundResult>(missingTokenResult);
+
+        // 2. Invalid / tampered token
+        var invalidTokenResult = await controller.DownloadUploadedDocument(requestId: 12345, docId: 67890, token: "tampered.bearer.token", default);
+        Assert.IsType<NotFoundResult>(invalidTokenResult);
     }
 
     [Fact]
@@ -185,14 +220,18 @@ public class UploadedDocumentDownloadTests : IAsyncLifetime, IDisposable
         db.RequestDocuments.Add(doc);
         await db.SaveChangesAsync();
 
-        // 1. Anonymous / non-reviewer should receive 404
-        var anonController = CreateController(db, isInternalReviewer: false);
-        var anonResult = await anonController.DownloadUploadedDocument(req.RequestId, doc.DocumentId, default);
+        var dp = DataProtectionProvider.Create(new DirectoryInfo(_tempDir));
+        var tokenService = new MCAROC_Analysis.Services.Documents.TimeLimitedSignedDownloadTokenService(dp);
+        var token = tokenService.GenerateToken(req.RequestId, doc.DocumentId);
+
+        // 1. Anonymous / token-bearer attempting to download quarantined file must receive 404
+        var anonController = CreateController(db, isInternalReviewer: false, tokenService: tokenService);
+        var anonResult = await anonController.DownloadUploadedDocument(req.RequestId, doc.DocumentId, token, default);
         Assert.IsType<NotFoundResult>(anonResult);
 
-        // 2. Reviewer should receive 200 PhysicalFileResult
-        var reviewerController = CreateController(db, isInternalReviewer: true);
-        var reviewerResult = await reviewerController.DownloadUploadedDocument(req.RequestId, doc.DocumentId, default);
+        // 2. Authenticated reviewer receives 200 PhysicalFileResult
+        var reviewerController = CreateController(db, isInternalReviewer: true, tokenService: tokenService);
+        var reviewerResult = await reviewerController.DownloadUploadedDocument(req.RequestId, doc.DocumentId, token: null, default);
         var fileResult = Assert.IsType<PhysicalFileResult>(reviewerResult);
         Assert.Equal(rawPath, fileResult.FileName);
         Assert.Equal("text/csv", fileResult.ContentType);
@@ -219,8 +258,8 @@ public class UploadedDocumentDownloadTests : IAsyncLifetime, IDisposable
         db.RequestDocuments.Add(doc);
         await db.SaveChangesAsync();
 
-        var controller = CreateController(db);
-        var result = await controller.DownloadUploadedDocument(req.RequestId, doc.DocumentId, default);
+        var controller = CreateController(db, isInternalReviewer: true);
+        var result = await controller.DownloadUploadedDocument(req.RequestId, doc.DocumentId, token: null, default);
 
         var statusResult = Assert.IsType<ObjectResult>(result);
         Assert.Equal(StatusCodes.Status415UnsupportedMediaType, statusResult.StatusCode);
@@ -254,8 +293,12 @@ public class UploadedDocumentDownloadTests : IAsyncLifetime, IDisposable
         db.RequestDocuments.Add(doc);
         await db.SaveChangesAsync();
 
-        var controller = CreateController(db);
-        var result = await controller.DownloadUploadedDocument(req.RequestId, doc.DocumentId, default);
+        var dp = DataProtectionProvider.Create(new DirectoryInfo(_tempDir));
+        var tokenService = new MCAROC_Analysis.Services.Documents.TimeLimitedSignedDownloadTokenService(dp);
+        var token = tokenService.GenerateToken(req.RequestId, doc.DocumentId);
+
+        var controller = CreateController(db, isInternalReviewer: false, tokenService: tokenService);
+        var result = await controller.DownloadUploadedDocument(req.RequestId, doc.DocumentId, token, default);
 
         var fileResult = Assert.IsType<PhysicalFileResult>(result);
         Assert.NotEqual(rawPath, fileResult.FileName);
@@ -266,6 +309,7 @@ public class UploadedDocumentDownloadTests : IAsyncLifetime, IDisposable
         var headers = controller.Response.Headers;
         Assert.Equal("no-store, private", headers.CacheControl.ToString());
         Assert.Equal("nosniff", headers["X-Content-Type-Options"].ToString());
+        Assert.Equal("no-referrer", headers["Referrer-Policy"].ToString());
         Assert.Contains("attachment", headers.ContentDisposition.ToString());
         Assert.Contains("Coastal_ROC.xlsx", headers.ContentDisposition.ToString());
 
@@ -304,8 +348,12 @@ public class UploadedDocumentDownloadTests : IAsyncLifetime, IDisposable
         db.RequestDocuments.Add(doc);
         await db.SaveChangesAsync();
 
-        var controller = CreateController(db);
-        var result = await controller.DownloadUploadedDocument(req.RequestId, doc.DocumentId, default);
+        var dp = DataProtectionProvider.Create(new DirectoryInfo(_tempDir));
+        var tokenService = new MCAROC_Analysis.Services.Documents.TimeLimitedSignedDownloadTokenService(dp);
+        var token = tokenService.GenerateToken(req.RequestId, doc.DocumentId);
+
+        var controller = CreateController(db, isInternalReviewer: false, tokenService: tokenService);
+        var result = await controller.DownloadUploadedDocument(req.RequestId, doc.DocumentId, token, default);
 
         var fileResult = Assert.IsType<PhysicalFileResult>(result);
         Assert.Equal(rawPath, fileResult.FileName);
@@ -314,7 +362,49 @@ public class UploadedDocumentDownloadTests : IAsyncLifetime, IDisposable
     }
 
     [Fact]
-    public async Task DocumentsTab_RendersDownloadButtons_AndDifferentiatesReviewer()
+    public async Task AuditLog_RedactsToken()
+    {
+        await using var db = CreateContext();
+        var req = new McaRequest { ClientId = 1, EntityType = EntityType.Company, CompanyName = "Audit Co", RequestNumber = $"AUD-{Guid.NewGuid():N}", CreatedDate = DateTime.UtcNow };
+        db.Requests.Add(req);
+        await db.SaveChangesAsync();
+
+        var uploadDir = Path.Combine(_tempDir, "App_Data", "Uploads", req.RequestId.ToString(), "original");
+        Directory.CreateDirectory(uploadDir);
+        var rawPath = Path.Combine(uploadDir, "data.csv");
+        await File.WriteAllTextAsync(rawPath, "col1\nval1");
+
+        var doc = new RequestDocument
+        {
+            RequestId = req.RequestId,
+            DocumentType = DocumentType.Other,
+            OriginalFileName = "data.csv",
+            StoragePath = rawPath,
+            FileSize = new FileInfo(rawPath).Length,
+            UploadStatus = DocumentUploadStatus.Uploaded,
+            UploadedDate = DateTime.UtcNow
+        };
+        db.RequestDocuments.Add(doc);
+        await db.SaveChangesAsync();
+
+        var dp = DataProtectionProvider.Create(new DirectoryInfo(_tempDir));
+        var tokenService = new MCAROC_Analysis.Services.Documents.TimeLimitedSignedDownloadTokenService(dp);
+        var secretToken = tokenService.GenerateToken(req.RequestId, doc.DocumentId);
+
+        var logSink = new TestLogger<RequestsController>();
+        var controller = CreateController(db, isInternalReviewer: false, tokenService: tokenService, customLogger: logSink);
+
+        var result = await controller.DownloadUploadedDocument(req.RequestId, doc.DocumentId, secretToken, default);
+        Assert.IsType<PhysicalFileResult>(result);
+
+        var logOutput = logSink.GetLogOutput();
+        Assert.Contains($"RequestId={req.RequestId}", logOutput);
+        Assert.Contains($"DocumentId={doc.DocumentId}", logOutput);
+        Assert.DoesNotContain(secretToken, logOutput);
+    }
+
+    [Fact]
+    public async Task DocumentsTab_RendersDownloadButtons_OnlyForReviewer()
     {
         var request = new McaRequest
         {
@@ -369,23 +459,20 @@ public class UploadedDocumentDownloadTests : IAsyncLifetime, IDisposable
             FilingBatch = batch
         };
 
-        // 1. Render as Anonymous
+        // 1. Render as Anonymous visitor: MUST NOT contain any tokens or download links
         var anonHtml = await RenderDocumentsTabAsync(vm, isReviewer: false);
-        // Clean doc has download button
-        Assert.Contains("/Requests/42/uploaded-documents/101/download", anonHtml);
-        Assert.Contains("Download", anonHtml);
-        // Quarantined doc shows Unavailable badge and no active download button
-        Assert.Contains("Unavailable", anonHtml);
-        Assert.DoesNotContain("/Requests/42/uploaded-documents/102/download", anonHtml);
-        // Archive doc has Download Archive button
-        Assert.Contains("/Requests/42/uploaded-documents/103/download", anonHtml);
-        Assert.Contains("Download Archive (.zip)", anonHtml);
+        Assert.DoesNotContain("token=", anonHtml);
+        Assert.DoesNotContain("/download", anonHtml);
+        Assert.DoesNotContain("Download Archive (.zip)", anonHtml);
+        Assert.Contains("Reviewer Only", anonHtml);
 
-        // 2. Render as Reviewer
+        // 2. Render as Reviewer: MUST contain tokens and download links
         var reviewerHtml = await RenderDocumentsTabAsync(vm, isReviewer: true);
-        // Reviewer gets Download Quarantined button
-        Assert.Contains("/Requests/42/uploaded-documents/102/download", reviewerHtml);
+        Assert.Contains("token=", reviewerHtml);
+        Assert.Contains("/download?token=", reviewerHtml);
+        Assert.Contains("Download", reviewerHtml);
         Assert.Contains("Download Quarantined", reviewerHtml);
+        Assert.Contains("Download Archive (.zip)", reviewerHtml);
     }
 
     private static string FindRepoRoot()
@@ -419,6 +506,9 @@ public class UploadedDocumentDownloadTests : IAsyncLifetime, IDisposable
         services.AddLogging();
         services.AddControllersWithViews();
         services.AddSingleton<IAuthenticationService>(new FakeAuthService(isReviewer));
+        var dpProvider = DataProtectionProvider.Create(new DirectoryInfo(Path.GetTempPath()));
+        services.AddSingleton<MCAROC_Analysis.Services.Documents.ISignedDownloadTokenService>(
+            new MCAROC_Analysis.Services.Documents.TimeLimitedSignedDownloadTokenService(dpProvider));
 
         var sp = services.BuildServiceProvider();
         var viewEngine = sp.GetRequiredService<IRazorViewEngine>();
@@ -463,6 +553,56 @@ public class UploadedDocumentDownloadTests : IAsyncLifetime, IDisposable
 
         await viewResult.View.RenderAsync(viewContext);
         return writer.ToString();
+    }
+
+    private sealed class ThrowingDbCommandInterceptor : Microsoft.EntityFrameworkCore.Diagnostics.DbCommandInterceptor
+    {
+        public override Microsoft.EntityFrameworkCore.Diagnostics.InterceptionResult<System.Data.Common.DbDataReader> ReaderExecuting(
+            System.Data.Common.DbCommand command,
+            Microsoft.EntityFrameworkCore.Diagnostics.CommandEventData eventData,
+            Microsoft.EntityFrameworkCore.Diagnostics.InterceptionResult<System.Data.Common.DbDataReader> result)
+        {
+            throw new InvalidOperationException("Zero-DB-lookup invariant violated: database query executed before authorization!");
+        }
+
+        public override ValueTask<Microsoft.EntityFrameworkCore.Diagnostics.InterceptionResult<System.Data.Common.DbDataReader>> ReaderExecutingAsync(
+            System.Data.Common.DbCommand command,
+            Microsoft.EntityFrameworkCore.Diagnostics.CommandEventData eventData,
+            Microsoft.EntityFrameworkCore.Diagnostics.InterceptionResult<System.Data.Common.DbDataReader> result,
+            CancellationToken cancellationToken = default)
+        {
+            throw new InvalidOperationException("Zero-DB-lookup invariant violated: database query executed before authorization!");
+        }
+    }
+
+    private sealed class TestLogger<T> : Microsoft.Extensions.Logging.ILogger<T>
+    {
+        private readonly StringBuilder _sb = new();
+
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
+        public bool IsEnabled(Microsoft.Extensions.Logging.LogLevel logLevel) => true;
+
+        public void Log<TState>(
+            Microsoft.Extensions.Logging.LogLevel logLevel,
+            Microsoft.Extensions.Logging.EventId eventId,
+            TState state,
+            Exception? exception,
+            Func<TState, Exception?, string> formatter)
+        {
+            lock (_sb)
+            {
+                _sb.AppendLine(formatter(state, exception));
+            }
+        }
+
+        public string GetLogOutput()
+        {
+            lock (_sb)
+            {
+                return _sb.ToString();
+            }
+        }
     }
 
     private sealed class TestViewHostEnvironment : IWebHostEnvironment

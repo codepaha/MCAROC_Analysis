@@ -55,6 +55,9 @@ public class DocumentProvenanceRenderingTests
         services.AddSingleton<DiagnosticListener>(diag);
         services.AddSingleton(System.Text.Encodings.Web.HtmlEncoder.Create(System.Text.Unicode.UnicodeRanges.All));
         services.AddLogging();
+        services.AddRouting();
+        services.AddDataProtection();
+        services.AddSingleton<MCAROC_Analysis.Services.Documents.ISignedDownloadTokenService, MCAROC_Analysis.Services.Documents.TimeLimitedSignedDownloadTokenService>();
         services.AddControllersWithViews();
 
         return services.BuildServiceProvider();

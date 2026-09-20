@@ -215,7 +215,7 @@ public class WorkbookDerivativeServiceTests : IAsyncLifetime, IDisposable
     }
 
     [Fact]
-    public async Task GetOrCreateSanitizedDerivativeAsync_MissingSourceFile_SetsFailedStatus()
+    public async Task LateWorker_WithExpiredLease_CannotPublish_EvenWithoutTakeover()
     {
         await using var db = CreateContext();
 
@@ -223,24 +223,28 @@ public class WorkbookDerivativeServiceTests : IAsyncLifetime, IDisposable
         {
             ClientId = 1,
             EntityType = EntityType.Company,
-            CompanyName = "Missing File Test Co",
-            RequestNumber = $"MSF-{Guid.NewGuid():N}",
+            CompanyName = "Late Worker Test Co",
+            RequestNumber = $"LATE-{Guid.NewGuid():N}",
             RequestStatus = RequestStatus.Created,
             CreatedDate = DateTime.UtcNow
         };
         db.Requests.Add(request);
         await db.SaveChangesAsync();
 
-        var nonExistentPath = Path.Combine(_tempDir, "does_not_exist.xlsx");
+        var uploadDir = Path.Combine(_tempDir, "App_Data", "Uploads", request.RequestId.ToString(), "original");
+        Directory.CreateDirectory(uploadDir);
+        var rawPath = Path.Combine(uploadDir, "sample_late.xlsx");
+        var originalHash = CreateSyntheticWorkbook(rawPath);
+
         var doc = new RequestDocument
         {
             RequestId = request.RequestId,
             DocumentType = DocumentType.McaRocReport,
-            OriginalFileName = "does_not_exist.xlsx",
-            StoredFileName = "does_not_exist.xlsx",
-            StoragePath = nonExistentPath,
-            FileSize = 1000,
-            FileHash = "abc123",
+            OriginalFileName = "Sample_Late.xlsx",
+            StoredFileName = "sample_late.xlsx",
+            StoragePath = rawPath,
+            FileSize = new FileInfo(rawPath).Length,
+            FileHash = originalHash,
             UploadStatus = DocumentUploadStatus.Uploaded,
             UploadedDate = DateTime.UtcNow
         };
@@ -248,11 +252,191 @@ public class WorkbookDerivativeServiceTests : IAsyncLifetime, IDisposable
         await db.SaveChangesAsync();
 
         var service = CreateService(db);
+
+        string? generatedFilePath = null;
+        // Hook simulates Worker 1 being paused/delayed until after its lease has expired
+        service.PreCasCompletionHook = async (derivId, token) =>
+        {
+            await using var hookDb = CreateContext();
+            var deriv = await hookDb.RequestDocumentDerivatives.FindAsync(derivId);
+            Assert.NotNull(deriv);
+            // Expire the lease before CAS runs
+            deriv.LeaseExpiresUtc = DateTime.UtcNow.AddMinutes(-5);
+            await hookDb.SaveChangesAsync();
+
+            var derivativesDir = Path.Combine(_tempDir, "App_Data", "Uploads", request.RequestId.ToString(), "derivatives");
+            var expectedFile = Path.Combine(derivativesDir, $"{doc.DocumentId}_sanitized.{token:N}.xlsx");
+            Assert.True(File.Exists(expectedFile), "Worker 1 must have produced its generation file before CAS.");
+            generatedFilePath = expectedFile;
+        };
+
         var result = await service.GetOrCreateSanitizedDerivativeAsync(doc);
 
         Assert.NotNull(result);
-        Assert.Equal(DocumentDerivativeStatus.Failed, result.Status);
-        Assert.Contains("not found", result.ErrorMessage, StringComparison.OrdinalIgnoreCase);
+        Assert.NotEqual(DocumentDerivativeStatus.Ready, result.Status);
+
+        // Generation file must be cleaned up by the late worker
+        Assert.NotNull(generatedFilePath);
+        Assert.False(File.Exists(generatedFilePath), "Late worker must delete its own unpromoted generation file upon lease expiration.");
+    }
+
+    [Fact]
+    public async Task InterleavedTakeover_WinnerFileAndHashRemainAuthoritative()
+    {
+        await using var db = CreateContext();
+
+        var request = new McaRequest
+        {
+            ClientId = 1,
+            EntityType = EntityType.Company,
+            CompanyName = "Interleaved Test Co",
+            RequestNumber = $"INT-{Guid.NewGuid():N}",
+            RequestStatus = RequestStatus.Created,
+            CreatedDate = DateTime.UtcNow
+        };
+        db.Requests.Add(request);
+        await db.SaveChangesAsync();
+
+        var uploadDir = Path.Combine(_tempDir, "App_Data", "Uploads", request.RequestId.ToString(), "original");
+        Directory.CreateDirectory(uploadDir);
+        var rawPath = Path.Combine(uploadDir, "sample_interleaved.xlsx");
+        var originalHash = CreateSyntheticWorkbook(rawPath);
+
+        var doc = new RequestDocument
+        {
+            RequestId = request.RequestId,
+            DocumentType = DocumentType.McaRocReport,
+            OriginalFileName = "Sample_Interleaved.xlsx",
+            StoredFileName = "sample_interleaved.xlsx",
+            StoragePath = rawPath,
+            FileSize = new FileInfo(rawPath).Length,
+            FileHash = originalHash,
+            UploadStatus = DocumentUploadStatus.Uploaded,
+            UploadedDate = DateTime.UtcNow
+        };
+        db.RequestDocuments.Add(doc);
+        await db.SaveChangesAsync();
+
+        var service1 = CreateService(db);
+        var service2 = CreateService(db);
+
+        string? worker1FilePath = null;
+        string? worker2FilePath = null;
+        string? worker2Hash = null;
+
+        // Seam: Pause Worker 1 right before CAS, force lease takeover and completion by Worker 2
+        service1.PreCasCompletionHook = async (derivId, worker1Token) =>
+        {
+            var derivativesDir = Path.Combine(_tempDir, "App_Data", "Uploads", request.RequestId.ToString(), "derivatives");
+            worker1FilePath = Path.Combine(derivativesDir, $"{doc.DocumentId}_sanitized.{worker1Token:N}.xlsx");
+            Assert.True(File.Exists(worker1FilePath), "Worker 1 should have produced its generation file.");
+
+            // Expire Worker 1's lease in the database so Worker 2 can claim it
+            await using var hookDb = CreateContext();
+            var deriv = await hookDb.RequestDocumentDerivatives.FindAsync(derivId);
+            Assert.NotNull(deriv);
+            deriv.LeaseExpiresUtc = DateTime.UtcNow.AddMinutes(-5);
+            await hookDb.SaveChangesAsync();
+
+            // Worker 2 takes over and finishes completely
+            var worker2Result = await service2.GetOrCreateSanitizedDerivativeAsync(doc);
+            Assert.NotNull(worker2Result);
+            Assert.Equal(DocumentDerivativeStatus.Ready, worker2Result.Status);
+            worker2FilePath = worker2Result.StoragePath;
+            worker2Hash = worker2Result.FileHash;
+            Assert.True(File.Exists(worker2FilePath), "Worker 2's file must exist.");
+        };
+
+        // Worker 1 runs and attempts its CAS after Worker 2 has already won and promoted
+        var finalResult = await service1.GetOrCreateSanitizedDerivativeAsync(doc);
+
+        Assert.NotNull(finalResult);
+        Assert.Equal(DocumentDerivativeStatus.Ready, finalResult.Status);
+
+        // Worker 2's results must remain authoritative!
+        Assert.Equal(worker2FilePath, finalResult.StoragePath);
+        Assert.Equal(worker2Hash, finalResult.FileHash);
+
+        // Worker 1's generation file must have been deleted/cleaned up
+        Assert.NotNull(worker1FilePath);
+        Assert.False(File.Exists(worker1FilePath), "Worker 1's stale generation file must be deleted.");
+
+        // Worker 2's physical file must be intact on disk
+        Assert.NotNull(worker2FilePath);
+        Assert.True(File.Exists(worker2FilePath), "Worker 2's authoritative file must still exist.");
+        using (var fs = File.OpenRead(worker2FilePath))
+        {
+            var currentHash = Convert.ToHexString(SHA256.HashData(fs));
+            Assert.Equal(worker2Hash, currentHash);
+        }
+    }
+
+    [Fact]
+    public async Task OrphanCleanup_RemovesUnreferencedStaleGenerationFiles()
+    {
+        await using var db = CreateContext();
+
+        var request = new McaRequest
+        {
+            ClientId = 1,
+            EntityType = EntityType.Company,
+            CompanyName = "Orphan Cleanup Co",
+            RequestNumber = $"ORPH-{Guid.NewGuid():N}",
+            RequestStatus = RequestStatus.Created,
+            CreatedDate = DateTime.UtcNow
+        };
+        db.Requests.Add(request);
+        await db.SaveChangesAsync();
+
+        var doc = new RequestDocument
+        {
+            RequestId = request.RequestId,
+            DocumentType = DocumentType.McaRocReport,
+            OriginalFileName = "Sample_Report.xlsx",
+            StoredFileName = "sample.xlsx",
+            StoragePath = "dummy.xlsx",
+            FileSize = 123,
+            FileHash = "hash99",
+            UploadStatus = DocumentUploadStatus.Uploaded,
+            UploadedDate = DateTime.UtcNow
+        };
+        db.RequestDocuments.Add(doc);
+        await db.SaveChangesAsync();
+
+        var derivativesDir = Path.Combine(_tempDir, "App_Data", "Uploads", request.RequestId.ToString(), "derivatives");
+        Directory.CreateDirectory(derivativesDir);
+
+        // Active file
+        var activePath = Path.Combine(derivativesDir, $"{doc.DocumentId}_sanitized.active.xlsx");
+        File.WriteAllText(activePath, "active content");
+
+        var deriv = new RequestDocumentDerivative
+        {
+            DocumentId = doc.DocumentId,
+            RequestId = request.RequestId,
+            DerivativeType = DocumentDerivativeType.SanitizedExcel,
+            SanitizerVersion = 1,
+            RawFileHash = "hash99",
+            Status = DocumentDerivativeStatus.Ready,
+            StoragePath = activePath,
+            FileHash = "hash_active",
+            CreatedUtc = DateTime.UtcNow,
+            UpdatedUtc = DateTime.UtcNow
+        };
+        db.RequestDocumentDerivatives.Add(deriv);
+        await db.SaveChangesAsync();
+
+        // Stale orphan file from a crashed worker
+        var orphanPath = Path.Combine(derivativesDir, $"{doc.DocumentId}_sanitized.crashed123.xlsx");
+        File.WriteAllText(orphanPath, "crashed content");
+        File.SetLastWriteTimeUtc(orphanPath, DateTime.UtcNow.AddHours(-2));
+
+        var service = CreateService(db);
+        var deletedCount = await service.CleanupOrphanGenerationsAsync(request.RequestId, TimeSpan.FromMinutes(30));
+
+        Assert.Equal(1, deletedCount);
+        Assert.False(File.Exists(orphanPath), "Stale orphan file should have been deleted.");
+        Assert.True(File.Exists(activePath), "Active published file must be preserved.");
     }
 
     private sealed class FakeEnv(string contentRoot) : IWebHostEnvironment
@@ -265,3 +449,4 @@ public class WorkbookDerivativeServiceTests : IAsyncLifetime, IDisposable
         public IFileProvider ContentRootFileProvider { get; set; } = new NullFileProvider();
     }
 }
+
