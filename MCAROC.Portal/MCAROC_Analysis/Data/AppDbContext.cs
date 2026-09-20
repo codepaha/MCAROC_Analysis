@@ -71,6 +71,9 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     // Litigation data lake (#239, LIT-01: request-scoped BPR search jobs — distinct from the
     // workbook-derived Litigation entity above)
     public DbSet<LitigationSearchJob> LitigationSearchJobs => Set<LitigationSearchJob>();
+    public DbSet<LitigationCase> LitigationCases => Set<LitigationCase>();
+    public DbSet<LitigationCaseOrder> LitigationCaseOrders => Set<LitigationCaseOrder>();
+    public DbSet<LitigationCaseSourceReport> LitigationCaseSourceReports => Set<LitigationCaseSourceReport>();
 
     // #164 Calculation assurance
     public DbSet<CalculationAuditSnapshot> CalculationAuditSnapshots => Set<CalculationAuditSnapshot>();
@@ -155,6 +158,37 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             e.Property(x => x.ReportFormat).HasConversion<string>().HasMaxLength(20);
             e.Property(x => x.RawResponseHash).HasMaxLength(64);
             e.Ignore(x => x.IsTerminal);
+        });
+
+        modelBuilder.Entity<LitigationCase>(e =>
+        {
+            e.HasKey(x => x.LitigationCaseId);
+            e.HasIndex(x => new { x.RequestId, x.Cnr });
+            e.HasOne(x => x.Request).WithMany().HasForeignKey(x => x.RequestId).OnDelete(DeleteBehavior.Cascade);
+            e.Property(x => x.CspId).HasMaxLength(100);
+            e.Property(x => x.Cnr).HasMaxLength(20);
+            e.Property(x => x.ProceedingType).HasMaxLength(30);
+        });
+
+        modelBuilder.Entity<LitigationCaseOrder>(e =>
+        {
+            e.HasKey(x => x.LitigationCaseOrderId);
+            e.HasIndex(x => x.LitigationCaseId);
+            e.HasOne(x => x.Case).WithMany(c => c.Orders).HasForeignKey(x => x.LitigationCaseId).OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<LitigationCaseSourceReport>(e =>
+        {
+            e.HasKey(x => x.LitigationCaseSourceReportId);
+            e.HasIndex(x => new { x.LitigationCaseId, x.LitigationSearchJobId, x.ReportHash }).IsUnique();
+            e.Property(x => x.ReportHash).HasMaxLength(64).IsRequired();
+            e.HasOne(x => x.Case).WithMany(c => c.SourceReports).HasForeignKey(x => x.LitigationCaseId).OnDelete(DeleteBehavior.Cascade);
+            // NoAction, not Cascade: both LitigationCase and LitigationSearchJob cascade from McaRequest, so
+            // cascading this FK too would give SQL Server two convergent cascade paths onto this table (it
+            // refuses to create such a constraint). The Case-side cascade above already covers "delete the
+            // request, its cases and their source-report links go too" — this FK only needs to protect
+            // referential integrity, not participate in the cascade itself.
+            e.HasOne(x => x.SearchJob).WithMany().HasForeignKey(x => x.LitigationSearchJobId).OnDelete(DeleteBehavior.NoAction);
         });
 
         modelBuilder.Entity<McaRequest>(e =>

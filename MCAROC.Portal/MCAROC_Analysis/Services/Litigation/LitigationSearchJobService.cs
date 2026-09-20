@@ -30,6 +30,7 @@ public sealed class LitigationSearchJobService(
     AppDbContext db,
     BprLitigationClient client,
     LitigationSearchQueue queue,
+    LitigationCasePersistenceQueue casePersistenceQueue,
     IOptions<BprLitigationOptions> options,
     ILogger<LitigationSearchJobService> logger)
 {
@@ -252,6 +253,7 @@ public sealed class LitigationSearchJobService(
 
                     logger.LogInformation(
                         "BPR litigation search job {JobId} completed: {Format}, {ByteCount} bytes.", jobId, format, bytes.LongLength);
+                    casePersistenceQueue.Enqueue(jobId);
                     return;
 
                 case BprReportPollStatus.Failed:
