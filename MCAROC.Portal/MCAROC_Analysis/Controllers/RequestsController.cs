@@ -978,6 +978,10 @@ public class RequestsController(
         return PhysicalFile(physicalPath, "application/pdf", enableRangeProcessing: true);
     }
 
+    private static readonly HashSet<char> DisallowedDownloadFileNameChars = new(
+        Path.GetInvalidFileNameChars().Concat(new[] { '"', '\\', '/', ':', ';', '\r', '\n', '*', '?', '<', '>', '|' })
+    );
+
     /// <summary>
     /// Deterministically resolves a safe download file name for uploaded documents,
     /// preventing header injection, CRLF injection, and path traversal while preserving Unicode and valid extensions.
@@ -989,8 +993,7 @@ public class RequestsController(
 
         var normalized = originalFileName.Replace('\\', '/');
         var fileName = Path.GetFileName(normalized);
-        var invalidChars = Path.GetInvalidFileNameChars().ToHashSet();
-        var cleanChars = fileName.Where(c => !char.IsControl(c) && !invalidChars.Contains(c) && c != '"' && c != '\\' && c != '/' && c != ':' && c != ';' && c != '\r' && c != '\n').ToArray();
+        var cleanChars = fileName.Where(c => !char.IsControl(c) && !DisallowedDownloadFileNameChars.Contains(c)).ToArray();
         var clean = new string(cleanChars).Trim();
 
         if (string.IsNullOrWhiteSpace(clean))

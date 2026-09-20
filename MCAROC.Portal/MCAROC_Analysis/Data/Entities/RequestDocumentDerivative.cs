@@ -22,3 +22,4 @@ public class RequestDocumentDerivative
     public DateTime CreatedUtc { get; set; }
     public DateTime UpdatedUtc { get; set; }
 }
+

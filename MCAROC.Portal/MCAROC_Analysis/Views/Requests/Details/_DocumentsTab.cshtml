@@ -3,7 +3,16 @@
 @{
     var r = Model.Request;
     var hasBatch = Model.FilingBatch is not null;
-    var isReviewer = (await Context.AuthenticateAsync("InternalReviewer")).Succeeded;
+    var isReviewer = false;
+    try
+    {
+        var authResult = await Context.AuthenticateAsync("InternalReviewer");
+        isReviewer = authResult?.Succeeded == true;
+    }
+    catch (InvalidOperationException)
+    {
+        isReviewer = Context.User?.Identities.Any(i => i.AuthenticationType == "InternalReviewer" && i.IsAuthenticated) == true;
+    }
     var chatSuggestions = new[]
     {
         "Who are the current directors?",
