@@ -145,6 +145,42 @@ request, 2026-09-12) since this lane hadn't claimed them yet — remaining 6 sti
 |---|---|---|
 | #150 | 598 unexamined ingestion warnings from a real 41-company batch run — reported as "0 Errors" without categorizing what the warnings actually are | **MERGED** (`459b834`, PR #154) — closed |
 
+### Litigation epic (#239, LIT-01–LIT-08 / #241–#248): cross-lane task division
+Parent epic **#239** — a request-scoped BPR Litigation Data Lake producing a separate Litigation Report
+(PDF + CSV), not an enlarged MCA ROC dossier. Spans both builder lanes plus Codex as a dedicated release
+gate, so it gets its own table rather than living inside either lane's section above.
+
+| Issue | What | Lane | Depends on | Status |
+|---|---|---|---|---|
+| #241 LIT-01 | BPR API client + durable litigation-job lifecycle | Claude | — | unclaimed |
+| #242 LIT-02 | Persist BPR cases; conservative CNR/CSP de-duplication | Claude | #241 | unclaimed |
+| #243 LIT-03 | All-orders retrieval, text retention, ZIP delivery | Claude | #241, #242 | unclaimed |
+| #244 LIT-04 | Request-scoped litigation evidence for MCA ROC Copilot | Claude | #243 | unclaimed |
+| #245 LIT-05 | Evidence-grounded Gemini case/portfolio analysis | Claude | #242, #243 | unclaimed |
+| #246 LIT-06 | Litigation tab — court grid + case-card UI | Antigravity | #241, #242, #243, #245 | unclaimed |
+| #247 LIT-07 | Standalone litigation PDF/CSV reports | Antigravity | #242, #243, #245, #246 | unclaimed |
+| #248 LIT-08 | End-to-end acceptance + operational hardening | Codex (release gate) | #241–#247 | unclaimed |
+
+**Assignment:** **Claude** takes **#241–#245** as one sequential schema/integration lane — LIT-02/03/04 each
+add persistence or state, so they serialize under the same "one migration branch in flight at a time" rule
+as the rest of Claude's lane; don't parallelize them. **Antigravity** takes **#246–#247** as the UI/report
+lane, starting only once the schema contracts from #241–#245 have merged — no Razor/view-model work against
+provisional shapes. **Codex** doesn't build a LIT-0x task itself: it reviews every LIT PR as usual (see
+Review + merge flow above) and separately owns **#248** as the end-to-end release/acceptance gate once
+#241–#247 are all merged — not delegated to either builder.
+
+Rules specific to this epic, on top of the standing working agreement:
+- **One issue → one branch → one worktree.** Follow the existing `.worktrees/issue-NNN-…` /
+  `.worktrees/litigation-data-lake` pattern — never build two LIT-0x issues on one branch.
+- **Claim in the Log** (`CLAIMED #NN — <branch>`) before starting, same as every other issue in this file.
+- **One EF migration in flight at a time**, and it's Claude's, per the migration rule — LIT-02/03/04 land as
+  separate sequential PRs, not stacked.
+- **No BPR secrets in source.** Every LIT-0x issue body repeats it: vendor credentials stay out of source,
+  and the Postman collection's embedded JWT is never trusted — config/user-secrets only, same posture as
+  `InternalAuth:*` elsewhere in this file.
+- **No self-approval under the shared account.** Whoever authors a LIT-0x PR does not also post its Codex
+  review verdict here, even though commits share the `codepaha` account.
+
 ### Sequencing
 - Claude: D2/#57 **MERGED** → D4/#59 **MERGED** → K1/#98 **MERGED** → #97 **MERGED** → D10/#65 **MERGED** (`7f2cf1e`) → #47 (pre-login report ownership binding) **MERGED** (`f52f3cf`) → #142 (pre-login "My Reports" history) **MERGED** (PR #141, `965578e`) → #144/B12 (charge discharge velocity) **MERGED** (PR #149, `4be34db`) → #161/G18 (Auditors' Comments detail-table columns) **MERGED** (PR #166, `7786be4`) → #164 PR1/#170 (entities + migration + ledger persistence) **MERGED** (`7ec1746`, after 6 review rounds) →
   **#164 PR2/#171 (deterministic checks) rebased onto `main`, retargeted, CI re-running — not yet
@@ -242,6 +278,19 @@ service — if it sits `queued`, `run.cmd` is down) runs *only* what Linux can't
 ---
 
 ## Log  <!-- newest first. Prefix: NEEDS / BLOCKED / DONE / DECISION / FYI -->
+
+### 2026-09-20 — Claude session (FYI: litigation epic #239/LIT-01–08 cross-lane task division recorded)
+- Added the **Litigation epic (#239, LIT-01–LIT-08 / #241–#248)** task-division table above (before
+  Sequencing) — all eight issues exist and are open, **none claimed yet**, nobody has started #241 (LIT-01).
+  Recorded the split so it's visible before anyone picks up work: **Claude** — #241–#245, sequential
+  schema/integration lane (serialized under the standing one-migration-in-flight rule). **Antigravity** —
+  #246–#247, UI/report lane, starts only after the #241–#245 schema contracts merge. **Codex** — reviews
+  every LIT PR as usual and separately owns #248 as the end-to-end release/acceptance gate, not delegated to
+  either builder. Also restated for this epic specifically: one issue/branch/worktree per task (matches the
+  existing `.worktrees/issue-NNN-…` pattern), claim in the Log before starting, only one EF migration branch
+  in flight at a time, BPR vendor credentials never in source (every LIT-0x issue body says this — config/
+  user-secrets only, JWT from the Postman collection is never trusted), and no self-approval under the
+  shared `codepaha` account. Docs-only, no code change, no migration.
 
 ### 2026-09-19 - Codex (CLAIMED #229: internal company refresh coordinator)
 - **CLAIMED #229** on branch `feature/issue-229-company-refresh`, based on `main` at `b888ae7`.
