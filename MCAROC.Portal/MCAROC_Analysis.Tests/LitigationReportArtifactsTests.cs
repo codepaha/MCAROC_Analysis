@@ -1,5 +1,6 @@
 using System.Text;
 using MCAROC_Analysis.Services.LitigationData;
+using UglyToad.PdfPig;
 
 namespace MCAROC_Analysis.Tests;
 
@@ -20,12 +21,49 @@ public sealed class LitigationReportArtifactsTests
     }
 
     [Fact]
+    public void RenderCsv_includes_Type_and_Bench_columns_with_their_values()
+    {
+        // Regression for a review finding: Type was missing from both artifacts, Bench was missing from the
+        // PDF — Type and Bench are distinct fields from CaseType/Court and are both required client report
+        // fields. ReportWithSingleCase's fixture case has Type="district", Bench="Bench".
+        var csv = Encoding.UTF8.GetString(LitigationReportArtifacts.RenderCsv(ReportWithSingleCase("csp-1")));
+        var lines = csv.Split("\r\n", StringSplitOptions.RemoveEmptyEntries);
+        var headers = lines[0].Split(',');
+
+        Assert.Contains("Type", headers);
+        Assert.Contains("Bench", headers);
+        var typeIndex = Array.IndexOf(headers, "Type");
+        var benchIndex = Array.IndexOf(headers, "Bench");
+        var dataFields = lines[1].Split(',');
+        Assert.Equal("district", dataFields[typeIndex]);
+        Assert.Equal("Bench", dataFields[benchIndex]);
+    }
+
+    [Fact]
     public void RenderPdf_creates_a_pdf_with_the_case_identity_and_order_summary()
     {
         var pdf = LitigationReportArtifacts.RenderPdf(ReportWithSingleCase("csp-42"));
 
         Assert.True(pdf.Length > 500);
         Assert.Equal("%PDF-", Encoding.ASCII.GetString(pdf, 0, 5));
+    }
+
+    [SkippableFact]
+    public void RenderPdf_case_details_grid_includes_Type_and_Bench()
+    {
+        // Regression for a review finding: the PDF case-details grid rendered neither Type nor Bench, though
+        // both are required client report fields. Text extraction from QuestPDF-rendered PDFs is only
+        // reliable on Windows fonts — mirrors the DossierPdfComposerTests convention.
+        Skip.IfNot(OperatingSystem.IsWindows(),
+            "PdfPig text extraction is unreliable off Windows fonts; covered by the windows-tests CI job.");
+
+        var pdf = LitigationReportArtifacts.RenderPdf(ReportWithSingleCase("csp-42"));
+        using var doc = PdfDocument.Open(new MemoryStream(pdf));
+        var text = string.Concat(doc.GetPages().Select(p => p.Text));
+
+        Assert.Contains("TYPE", text);
+        Assert.Contains("DISTRICT", text); // Humanize() upper-cases the "district" fixture value
+        Assert.Contains("BENCH", text);
     }
 
     private static StandaloneLitigationReport ReportWithSingleCase(string cspId)
