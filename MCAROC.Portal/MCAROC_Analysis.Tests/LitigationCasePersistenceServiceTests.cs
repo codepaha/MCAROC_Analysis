@@ -10,7 +10,7 @@ namespace MCAROC_Analysis.Tests;
 /// <summary>Covers LitigationCasePersistenceService's crash-safety, concurrency-safety and case-level
 /// CNR-first de-duplication guarantees — see LitigationReportSnapshot's own remarks for the design this
 /// exercises: an immutable per-report snapshot that is also the atomic, RowVersion-protected, resumable unit
-/// of import work.</summary>
+/// of import work, recovered independently of its parent job's own (reused, rerun-reset) status.</summary>
 public class LitigationCasePersistenceServiceTests : IAsyncLifetime
 {
     private static AppDbContext CreateContext() =>
@@ -70,6 +70,17 @@ public class LitigationCasePersistenceServiceTests : IAsyncLifetime
         return job;
     }
 
+    /// <summary>Mirrors the production trigger sequence (LitigationSearchJobService.PollUntilCompleteAsync):
+    /// ensure the immutable snapshot exists for this job's current raw report, then process it. Most tests
+    /// don't care about the snapshot id itself, so this returns it only for the ones that do.</summary>
+    private static async Task<long> PersistJobAsync(LitigationCasePersistenceService service, LitigationSearchJob job, CancellationToken ct)
+    {
+        var snapshotId = await service.EnsureSnapshotAsync(
+            job.LitigationSearchJobId, job.RawResponseHash!, job.ReportFormat, job.RawReportBytes!, DateTime.UtcNow, ct);
+        await service.PersistSnapshotAsync(snapshotId, ct);
+        return snapshotId;
+    }
+
     private static string ReportJson(string cnr, string caseType, string caseNo = "22/2020", string cspId = "csp-1", string orderUrl = "https://source.example/o1.pdf") => $$"""
         {
             "request_details": {"job_id": "job-1", "report_date": "2026-09-20", "keywords": ["Test Company"]},
@@ -120,15 +131,34 @@ public class LitigationCasePersistenceServiceTests : IAsyncLifetime
     private static async Task<LitigationReportSnapshot> GetSnapshotAsync(AppDbContext db, long jobId, string reportHash) =>
         await db.LitigationReportSnapshots.FirstAsync(s => s.LitigationSearchJobId == jobId && s.ReportHash == reportHash);
 
+    /// <summary>Reads whatever ids show up on the queue within <paramref name="window"/> and returns them —
+    /// used instead of an exact-count drain for RecoverStaleWorkAsync tests, because that method queries
+    /// <em>every</em> non-terminal snapshot in the (shared, real SQL Server) test database, not just the rows
+    /// a given test itself created; other tests' leftover Pending/InProgress rows can legitimately also be
+    /// enqueued alongside the ones under test. Callers assert containment of the ids they care about, not an
+    /// exact total.</summary>
+    private static async Task<List<long>> DrainAvailableAsync(LitigationCasePersistenceQueue queue, TimeSpan window)
+    {
+        var ids = new List<long>();
+        using var cts = new CancellationTokenSource(window);
+        try
+        {
+            await foreach (var id in queue.ReadAllAsync(cts.Token))
+                ids.Add(id);
+        }
+        catch (OperationCanceledException) { /* window elapsed — return whatever arrived */ }
+        return ids;
+    }
+
     [Fact]
-    public async Task PersistCasesForJobAsync_persists_a_case_its_order_and_a_provenance_linked_snapshot()
+    public async Task EnsureSnapshotAsync_then_PersistSnapshotAsync_persists_a_case_its_order_and_a_provenance_linked_snapshot()
     {
         await using var db = CreateContext();
         var request = await SeedRequestAsync(db, "A1");
         var job = await SeedCompletedJobAsync(db, request.RequestId, ReportJson("TNKP070001332020", "OS"));
-        var service = new LitigationCasePersistenceService(db, NullLogger<LitigationCasePersistenceService>.Instance);
+        var service = new LitigationCasePersistenceService(db, new LitigationCasePersistenceQueue(), NullLogger<LitigationCasePersistenceService>.Instance);
 
-        await service.PersistCasesForJobAsync(job.LitigationSearchJobId, CancellationToken.None);
+        await PersistJobAsync(service, job, CancellationToken.None);
 
         await using var verifyDb = CreateContext();
         var cases = await verifyDb.LitigationCases.Where(c => c.RequestId == request.RequestId).ToListAsync();
@@ -155,15 +185,15 @@ public class LitigationCasePersistenceServiceTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task PersistCasesForJobAsync_reprocessing_the_same_job_is_idempotent()
+    public async Task PersistSnapshotAsync_reprocessing_the_same_snapshot_is_idempotent()
     {
         await using var db = CreateContext();
         var request = await SeedRequestAsync(db, "A2");
         var job = await SeedCompletedJobAsync(db, request.RequestId, ReportJson("TNKP070001332021", "OS"));
-        var service = new LitigationCasePersistenceService(db, NullLogger<LitigationCasePersistenceService>.Instance);
+        var service = new LitigationCasePersistenceService(db, new LitigationCasePersistenceQueue(), NullLogger<LitigationCasePersistenceService>.Instance);
 
-        await service.PersistCasesForJobAsync(job.LitigationSearchJobId, CancellationToken.None);
-        await service.PersistCasesForJobAsync(job.LitigationSearchJobId, CancellationToken.None); // retry — must be a no-op
+        await PersistJobAsync(service, job, CancellationToken.None);
+        await PersistJobAsync(service, job, CancellationToken.None); // EnsureSnapshotAsync finds the same row; reprocessing must be a no-op
 
         await using var verifyDb = CreateContext();
         Assert.Equal(1, await verifyDb.LitigationCases.CountAsync(c => c.RequestId == request.RequestId));
@@ -172,7 +202,7 @@ public class LitigationCasePersistenceServiceTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task PersistCasesForJobAsync_resumes_after_a_crash_between_cases_without_duplicating_the_first()
+    public async Task PersistSnapshotAsync_resumes_after_a_crash_between_cases_without_duplicating_the_first()
     {
         // A two-case report; simulate a worker that committed case 1 (case row + source-report link,
         // CasesPersistedCount=1) then crashed before case 2 — the snapshot is left InProgress with an expired
@@ -206,8 +236,8 @@ public class LitigationCasePersistenceServiceTests : IAsyncLifetime
         });
         await db.SaveChangesAsync();
 
-        var service = new LitigationCasePersistenceService(db, NullLogger<LitigationCasePersistenceService>.Instance);
-        await service.PersistCasesForJobAsync(job.LitigationSearchJobId, CancellationToken.None);
+        var service = new LitigationCasePersistenceService(db, new LitigationCasePersistenceQueue(), NullLogger<LitigationCasePersistenceService>.Instance);
+        await service.PersistSnapshotAsync(snapshot.LitigationReportSnapshotId, CancellationToken.None);
 
         await using var verifyDb = CreateContext();
         var cases = await verifyDb.LitigationCases.Where(c => c.RequestId == request.RequestId).OrderBy(c => c.Cnr).ToListAsync();
@@ -226,24 +256,26 @@ public class LitigationCasePersistenceServiceTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task PersistCasesForJobAsync_two_concurrent_contexts_processing_the_same_report_never_duplicate_anything()
+    public async Task PersistSnapshotAsync_two_concurrent_contexts_processing_the_same_snapshot_never_duplicate_anything()
     {
         // Forces real concurrency: two independent AppDbContext instances (separate connections, exactly like
-        // two worker processes) both call PersistCasesForJobAsync for the same completed job at the same time.
+        // two worker processes racing on two queue messages for the same snapshot — see
+        // LitigationCasePersistenceWorker's own remarks on why that's an expected, not exceptional, race).
         await using var setupDb = CreateContext();
         var request = await SeedRequestAsync(setupDb, "B2");
         var job = await SeedCompletedJobAsync(setupDb, request.RequestId, ReportJson("TNKP070001332032", "OS"));
-        var jobId = job.LitigationSearchJobId;
-        var reportHash = job.RawResponseHash!;
+        var setupService = new LitigationCasePersistenceService(setupDb, new LitigationCasePersistenceQueue(), NullLogger<LitigationCasePersistenceService>.Instance);
+        var snapshotId = await setupService.EnsureSnapshotAsync(
+            job.LitigationSearchJobId, job.RawResponseHash!, job.ReportFormat, job.RawReportBytes!, DateTime.UtcNow, CancellationToken.None);
 
         await using var dbA = CreateContext();
         await using var dbB = CreateContext();
-        var serviceA = new LitigationCasePersistenceService(dbA, NullLogger<LitigationCasePersistenceService>.Instance);
-        var serviceB = new LitigationCasePersistenceService(dbB, NullLogger<LitigationCasePersistenceService>.Instance);
+        var serviceA = new LitigationCasePersistenceService(dbA, new LitigationCasePersistenceQueue(), NullLogger<LitigationCasePersistenceService>.Instance);
+        var serviceB = new LitigationCasePersistenceService(dbB, new LitigationCasePersistenceQueue(), NullLogger<LitigationCasePersistenceService>.Instance);
 
         await Task.WhenAll(
-            serviceA.PersistCasesForJobAsync(jobId, CancellationToken.None),
-            serviceB.PersistCasesForJobAsync(jobId, CancellationToken.None));
+            serviceA.PersistSnapshotAsync(snapshotId, CancellationToken.None),
+            serviceB.PersistSnapshotAsync(snapshotId, CancellationToken.None));
 
         await using var verifyDb = CreateContext();
         var cases = await verifyDb.LitigationCases.Where(c => c.RequestId == request.RequestId).ToListAsync();
@@ -252,17 +284,17 @@ public class LitigationCasePersistenceServiceTests : IAsyncLifetime
         var orders = await verifyDb.LitigationCaseOrders.Where(o => o.LitigationCaseId == cases[0].LitigationCaseId).ToListAsync();
         Assert.Single(orders);
 
-        var snapshot = await GetSnapshotAsync(verifyDb, jobId, reportHash);
+        var snapshot = await verifyDb.LitigationReportSnapshots.FirstAsync(s => s.LitigationReportSnapshotId == snapshotId);
         Assert.Equal(LitigationReportSnapshotStatus.Completed, snapshot.Status);
         Assert.Equal(1, snapshot.CasesPersistedCount);
 
         var links = await verifyDb.LitigationCaseSourceReports
-            .Where(s => s.LitigationReportSnapshotId == snapshot.LitigationReportSnapshotId).ToListAsync();
+            .Where(s => s.LitigationReportSnapshotId == snapshotId).ToListAsync();
         Assert.Single(links); // exactly one link, not two
     }
 
     [Fact]
-    public async Task PersistCasesForJobAsync_merges_the_same_case_found_by_a_later_rerun_via_CNR()
+    public async Task PersistSnapshotAsync_merges_the_same_case_found_by_a_later_rerun_via_CNR()
     {
         // A request has at most one LitigationSearchJob row, reused in place on every rerun — so "a later
         // search run" means the SAME job id completing again with a new report (matching production's
@@ -272,12 +304,12 @@ public class LitigationCasePersistenceServiceTests : IAsyncLifetime
         await using var db = CreateContext();
         var request = await SeedRequestAsync(db, "A3");
         var job1 = await SeedCompletedJobAsync(db, request.RequestId, ReportJson("TNKP070001332022", "OS"));
-        var service = new LitigationCasePersistenceService(db, NullLogger<LitigationCasePersistenceService>.Instance);
-        await service.PersistCasesForJobAsync(job1.LitigationSearchJobId, CancellationToken.None);
+        var service = new LitigationCasePersistenceService(db, new LitigationCasePersistenceQueue(), NullLogger<LitigationCasePersistenceService>.Instance);
+        await PersistJobAsync(service, job1, CancellationToken.None);
 
         var job2 = await SeedCompletedJobAsync(db, request.RequestId, ReportJson("TNKP070001332022", "OS", caseNo: "23/2020"));
         Assert.Equal(job1.LitigationSearchJobId, job2.LitigationSearchJobId); // same row, reused — not a second job
-        await service.PersistCasesForJobAsync(job2.LitigationSearchJobId, CancellationToken.None);
+        await PersistJobAsync(service, job2, CancellationToken.None);
 
         await using var verifyDb = CreateContext();
         var cases = await verifyDb.LitigationCases.Where(c => c.RequestId == request.RequestId).ToListAsync();
@@ -294,7 +326,7 @@ public class LitigationCasePersistenceServiceTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task PersistCasesForJobAsync_never_merges_on_a_CNR_conflict_with_incompatible_proceeding_types()
+    public async Task PersistSnapshotAsync_never_merges_on_a_CNR_conflict_with_incompatible_proceeding_types()
     {
         // Same CNR, but "OS" normalises to a different proceeding type than "CC"/"C" — CanAutoDedupe requires
         // BOTH a matching CNR and a compatible proceeding type, so these must stay two separate cases. Two
@@ -302,11 +334,11 @@ public class LitigationCasePersistenceServiceTests : IAsyncLifetime
         await using var db = CreateContext();
         var request = await SeedRequestAsync(db, "A4");
         var job1 = await SeedCompletedJobAsync(db, request.RequestId, ReportJson("TNKP070001332023", "OS"));
-        var service = new LitigationCasePersistenceService(db, NullLogger<LitigationCasePersistenceService>.Instance);
-        await service.PersistCasesForJobAsync(job1.LitigationSearchJobId, CancellationToken.None);
+        var service = new LitigationCasePersistenceService(db, new LitigationCasePersistenceQueue(), NullLogger<LitigationCasePersistenceService>.Instance);
+        await PersistJobAsync(service, job1, CancellationToken.None);
 
         var job2 = await SeedCompletedJobAsync(db, request.RequestId, ReportJson("TNKP070001332023", "CC"));
-        await service.PersistCasesForJobAsync(job2.LitigationSearchJobId, CancellationToken.None);
+        await PersistJobAsync(service, job2, CancellationToken.None);
 
         await using var verifyDb = CreateContext();
         var cases = await verifyDb.LitigationCases.Where(c => c.RequestId == request.RequestId).ToListAsync();
@@ -314,7 +346,7 @@ public class LitigationCasePersistenceServiceTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task PersistCasesForJobAsync_never_merges_two_cases_on_a_shared_CSP_ID_alone()
+    public async Task PersistSnapshotAsync_never_merges_two_cases_on_a_shared_CSP_ID_alone()
     {
         // CSP ID is retained provider identity, never a merge key — two cases sharing a CSP ID but with no
         // CNR at all must remain two separate rows. The two reruns use different case numbers so their raw
@@ -323,11 +355,11 @@ public class LitigationCasePersistenceServiceTests : IAsyncLifetime
         await using var db = CreateContext();
         var request = await SeedRequestAsync(db, "A5");
         var job1 = await SeedCompletedJobAsync(db, request.RequestId, ReportJson("", "OS", caseNo: "22/2020", cspId: "shared-csp"));
-        var service = new LitigationCasePersistenceService(db, NullLogger<LitigationCasePersistenceService>.Instance);
-        await service.PersistCasesForJobAsync(job1.LitigationSearchJobId, CancellationToken.None);
+        var service = new LitigationCasePersistenceService(db, new LitigationCasePersistenceQueue(), NullLogger<LitigationCasePersistenceService>.Instance);
+        await PersistJobAsync(service, job1, CancellationToken.None);
 
         var job2 = await SeedCompletedJobAsync(db, request.RequestId, ReportJson("", "OS", caseNo: "23/2020", cspId: "shared-csp"));
-        await service.PersistCasesForJobAsync(job2.LitigationSearchJobId, CancellationToken.None);
+        await PersistJobAsync(service, job2, CancellationToken.None);
 
         await using var verifyDb = CreateContext();
         var cases = await verifyDb.LitigationCases.Where(c => c.RequestId == request.RequestId).ToListAsync();
@@ -336,7 +368,33 @@ public class LitigationCasePersistenceServiceTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task PersistCasesForJobAsync_marks_a_non_Json_report_format_Failed_without_throwing()
+    public async Task PersistSnapshotAsync_persists_two_CNR_less_cases_from_a_single_report_without_a_SQL_unique_index_conflict()
+    {
+        // Regression for the reviewer's finding: SQL Server treats two matching NULLs in a plain composite
+        // unique index as conflicting duplicates, which would break "no CNR ⇒ never auto-dedupe" for a report
+        // that itself contains two CNR-less cases. Verified this is NOT the case here — AppDbContext's
+        // (RequestId, Cnr, ProceedingType) unique index on LitigationCase is auto-generated by EF Core as a
+        // FILTERED index (`WHERE [Cnr] IS NOT NULL AND [ProceedingType] IS NOT NULL`; see the migration
+        // 20260920152615_AddLitigationCases.cs and AppDbContext's fluent config), which gives SQL Server
+        // "NULLs are distinct" semantics. This proves it end-to-end against the real database, in the
+        // specific shape the reviewer called out: both CNR-less rows land in the very same report/snapshot.
+        await using var db = CreateContext();
+        var request = await SeedRequestAsync(db, "A8");
+        var job = await SeedCompletedJobAsync(db, request.RequestId, TwoCaseReportJson("", ""));
+        var service = new LitigationCasePersistenceService(db, new LitigationCasePersistenceQueue(), NullLogger<LitigationCasePersistenceService>.Instance);
+
+        await PersistJobAsync(service, job, CancellationToken.None); // must not throw a unique-constraint violation
+
+        await using var verifyDb = CreateContext();
+        var cases = await verifyDb.LitigationCases.Where(c => c.RequestId == request.RequestId).OrderBy(c => c.Court).ToListAsync();
+        Assert.Equal(2, cases.Count); // both persisted — no false "duplicate" conflict on the shared NULL Cnr
+        Assert.All(cases, c => Assert.Null(c.Cnr));
+        Assert.Equal("Sub Judge A", cases[0].Court);
+        Assert.Equal("Sub Judge B", cases[1].Court);
+    }
+
+    [Fact]
+    public async Task PersistSnapshotAsync_marks_a_non_Json_report_format_Failed_without_throwing()
     {
         await using var db = CreateContext();
         var request = await SeedRequestAsync(db, "A6");
@@ -348,9 +406,9 @@ public class LitigationCasePersistenceServiceTests : IAsyncLifetime
         };
         db.LitigationSearchJobs.Add(job);
         await db.SaveChangesAsync();
-        var service = new LitigationCasePersistenceService(db, NullLogger<LitigationCasePersistenceService>.Instance);
+        var service = new LitigationCasePersistenceService(db, new LitigationCasePersistenceQueue(), NullLogger<LitigationCasePersistenceService>.Instance);
 
-        await service.PersistCasesForJobAsync(job.LitigationSearchJobId, CancellationToken.None); // must not throw
+        await PersistJobAsync(service, job, CancellationToken.None); // must not throw
 
         Assert.Equal(0, await db.LitigationCases.CountAsync(c => c.RequestId == request.RequestId));
         var snapshot = await GetSnapshotAsync(db, job.LitigationSearchJobId, "deadbeef");
@@ -359,28 +417,108 @@ public class LitigationCasePersistenceServiceTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task FindUnprocessedCompletedJobIdsAsync_returns_completed_jobs_but_not_pending_ones()
+    public async Task RecoverStaleWorkAsync_enqueues_pending_and_lease_expired_snapshots_but_not_completed_ones()
     {
-        // Deliberately does not try to pre-filter to "unprocessed" (see the method's own doc comment) —
-        // PersistCasesForJobAsync's own snapshot lookup is what makes re-enqueuing an already-fully-processed
-        // job a cheap no-op, so this only needs to prove the Completed-only filter.
         await using var db = CreateContext();
-        var request = await SeedRequestAsync(db, "A7");
-        var completedJob = await SeedCompletedJobAsync(db, request.RequestId, ReportJson("TNKP070001332024", "OS"));
+        var queue = new LitigationCasePersistenceQueue();
+        var service = new LitigationCasePersistenceService(db, queue, NullLogger<LitigationCasePersistenceService>.Instance);
 
-        var otherRequest = await SeedRequestAsync(db, "A7b");
-        var pendingJob = new LitigationSearchJob
+        var request = await SeedRequestAsync(db, "A7");
+        var job = await SeedCompletedJobAsync(db, request.RequestId, ReportJson("TNKP070001332024", "OS"));
+        var pendingSnapshotId = await service.EnsureSnapshotAsync(
+            job.LitigationSearchJobId, job.RawResponseHash!, job.ReportFormat, job.RawReportBytes!, DateTime.UtcNow, CancellationToken.None);
+
+        var expiredRequest = await SeedRequestAsync(db, "A7b");
+        var expiredJob = await SeedCompletedJobAsync(db, expiredRequest.RequestId, ReportJson("TNKP070001332025", "OS"));
+        var expiredSnapshot = new LitigationReportSnapshot
         {
-            RequestId = otherRequest.RequestId, Status = LitigationSearchJobStatus.Pending, EntityType = "individual",
-            ApplicationCustomerId = "1", KeywordsJson = "[]", CreatedUtc = DateTime.UtcNow
+            LitigationSearchJobId = expiredJob.LitigationSearchJobId, ReportHash = expiredJob.RawResponseHash!, ReportFormat = BprReportFormat.Json,
+            RawReportBytes = expiredJob.RawReportBytes!, RawReportByteLength = expiredJob.RawReportBytes!.LongLength, RetrievedUtc = DateTime.UtcNow,
+            Status = LitigationReportSnapshotStatus.InProgress, AttemptCount = 1, CasesPersistedCount = 0,
+            LeaseOwner = "crashed-worker", LeaseExpiresUtc = DateTime.UtcNow.AddMinutes(-5),
+            StartedUtc = DateTime.UtcNow.AddMinutes(-10), CreatedUtc = DateTime.UtcNow.AddMinutes(-10)
         };
-        db.LitigationSearchJobs.Add(pendingJob);
+        db.LitigationReportSnapshots.Add(expiredSnapshot);
         await db.SaveChangesAsync();
 
-        var service = new LitigationCasePersistenceService(db, NullLogger<LitigationCasePersistenceService>.Instance);
-        var ids = await service.FindUnprocessedCompletedJobIdsAsync(CancellationToken.None);
+        var completedRequest = await SeedRequestAsync(db, "A7c");
+        var completedJob = await SeedCompletedJobAsync(db, completedRequest.RequestId, ReportJson("TNKP070001332026", "OS"));
+        var completedSnapshotId = await PersistJobAsync(service, completedJob, CancellationToken.None); // fully processed — terminal
 
-        Assert.Contains(completedJob.LitigationSearchJobId, ids);
-        Assert.DoesNotContain(pendingJob.LitigationSearchJobId, ids);
+        var count = await service.RecoverStaleWorkAsync(CancellationToken.None);
+        Assert.True(count >= 2); // at least our pending + expired-lease rows (the query is global, not scoped to this test)
+
+        var enqueued = await DrainAvailableAsync(queue, TimeSpan.FromSeconds(2));
+        Assert.Contains(pendingSnapshotId, enqueued);
+        Assert.Contains(expiredSnapshot.LitigationReportSnapshotId, enqueued);
+        Assert.DoesNotContain(completedSnapshotId, enqueued);
+    }
+
+    [Fact]
+    public async Task RecoverStaleWorkAsync_schedules_a_delayed_retry_for_a_lease_still_valid_after_a_restart()
+    {
+        // Simulates the reviewer's exact concern: a worker claimed the snapshot (InProgress, live lease) and
+        // then the process restarted before that lease expired — e.g. a deploy or crash mid-processing. A
+        // same-turn TryClaimAsync alone would decline this claim (the lease looks still legitimately held)
+        // and never retry it, leaving the import stuck forever. RecoverStaleWorkAsync must instead schedule a
+        // delayed re-check at the lease's own expiry — not enqueue it immediately, and not drop it either.
+        await using var db = CreateContext();
+        var queue = new LitigationCasePersistenceQueue();
+        var service = new LitigationCasePersistenceService(db, queue, NullLogger<LitigationCasePersistenceService>.Instance);
+
+        var request = await SeedRequestAsync(db, "C1");
+        var job = await SeedCompletedJobAsync(db, request.RequestId, ReportJson("TNKP070001332040", "OS"));
+        var snapshotId = await service.EnsureSnapshotAsync(
+            job.LitigationSearchJobId, job.RawResponseHash!, job.ReportFormat, job.RawReportBytes!, DateTime.UtcNow, CancellationToken.None);
+        var snapshot = await db.LitigationReportSnapshots.FirstAsync(s => s.LitigationReportSnapshotId == snapshotId);
+        snapshot.Status = LitigationReportSnapshotStatus.InProgress;
+        snapshot.LeaseOwner = "worker-that-restarted";
+        snapshot.LeaseExpiresUtc = DateTime.UtcNow.AddMilliseconds(300); // short but not expired yet — must NOT enqueue immediately
+        snapshot.AttemptCount = 1;
+        snapshot.StartedUtc = DateTime.UtcNow;
+        await db.SaveChangesAsync();
+
+        var count = await service.RecoverStaleWorkAsync(CancellationToken.None);
+        Assert.True(count >= 1); // recovered/tracked, not silently skipped (query is global, not scoped to this test)
+
+        // Not enqueued immediately — the lease was still valid at recovery time. (Other tests' leftover rows
+        // may legitimately show up here too; only this test's own snapshot must be absent from this batch.)
+        var immediate = await DrainAvailableAsync(queue, TimeSpan.FromMilliseconds(100));
+        Assert.DoesNotContain(snapshotId, immediate);
+
+        // But it does show up once the lease actually expires — proving the retry was scheduled, not dropped.
+        var eventual = await DrainAvailableAsync(queue, TimeSpan.FromSeconds(3));
+        Assert.Contains(snapshotId, eventual);
+    }
+
+    [Fact]
+    public async Task RecoverStaleWorkAsync_still_finds_an_old_incomplete_snapshot_after_a_rerun_resets_the_job_status()
+    {
+        // The reviewer's second concern: LitigationSearchJob rows are reused across reruns
+        // (CreateOrResetJobAsync resets Status back to Pending on every new run). If recovery filtered by
+        // "job.Status == Completed" it would lose track of an older, still-incomplete snapshot the instant a
+        // rerun starts. RecoverStaleWorkAsync must find it by querying snapshots directly, never by the
+        // job's current (mutable, reused) status.
+        await using var db = CreateContext();
+        var queue = new LitigationCasePersistenceQueue();
+        var service = new LitigationCasePersistenceService(db, queue, NullLogger<LitigationCasePersistenceService>.Instance);
+
+        var request = await SeedRequestAsync(db, "C2");
+        var job = await SeedCompletedJobAsync(db, request.RequestId, ReportJson("TNKP070001332041", "OS"));
+        var oldSnapshotId = await service.EnsureSnapshotAsync(
+            job.LitigationSearchJobId, job.RawResponseHash!, job.ReportFormat, job.RawReportBytes!, DateTime.UtcNow, CancellationToken.None);
+        // Never processed — still Pending when the rerun below starts.
+
+        // A rerun reuses the same job row and resets its Status away from Completed (CreateOrResetJobAsync).
+        job.Status = LitigationSearchJobStatus.Pending;
+        job.VendorJobId = null;
+        job.RegisteredUtc = null;
+        await db.SaveChangesAsync();
+
+        var count = await service.RecoverStaleWorkAsync(CancellationToken.None);
+        Assert.True(count >= 1); // query is global, not scoped to this test
+
+        var enqueued = await DrainAvailableAsync(queue, TimeSpan.FromSeconds(2));
+        Assert.Contains(oldSnapshotId, enqueued);
     }
 }

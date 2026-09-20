@@ -31,6 +31,7 @@ public sealed class LitigationSearchJobService(
     BprLitigationClient client,
     LitigationSearchQueue queue,
     LitigationCasePersistenceQueue casePersistenceQueue,
+    LitigationCasePersistenceService casePersistenceService,
     IOptions<BprLitigationOptions> options,
     ILogger<LitigationSearchJobService> logger)
 {
@@ -237,6 +238,19 @@ public sealed class LitigationSearchJobService(
                     var bytes = result.Bytes!;
                     var format = result.Format;
                     var hash = ComputeHash(bytes);
+                    var retrievedUtc = DateTime.UtcNow;
+
+                    // Snapshot created BEFORE the job is marked Completed, not after: if the app crashes
+                    // between these two writes, the job stays non-terminal and its own established
+                    // crash-recovery (RecoverStaleWorkAsync above) retries it from scratch — an extra, wasted
+                    // vendor poll, but safe and eventually convergent (EnsureSnapshotAsync is idempotent on
+                    // (jobId, hash), so a retry finds the same snapshot rather than duplicating it). Doing it
+                    // in the other order would risk a crash leaving a job marked Completed with no snapshot
+                    // ever created for it — nothing scans for that gap once the job's own status can no longer
+                    // be trusted to reflect what snapshots exist (see LitigationCasePersistenceService's
+                    // snapshot-driven, not job-driven, recovery).
+                    var snapshotId = await casePersistenceService.EnsureSnapshotAsync(jobId, hash, format, bytes, retrievedUtc, ct);
+
                     var statusMessage = $"Report received ({format}).";
                     var claimedCompleted = await LeaseGuarded(jobId, leaseToken)
                         .ExecuteUpdateAsync(s => s
@@ -253,7 +267,7 @@ public sealed class LitigationSearchJobService(
 
                     logger.LogInformation(
                         "BPR litigation search job {JobId} completed: {Format}, {ByteCount} bytes.", jobId, format, bytes.LongLength);
-                    casePersistenceQueue.Enqueue(jobId);
+                    casePersistenceQueue.Enqueue(snapshotId);
                     return;
 
                 case BprReportPollStatus.Failed:

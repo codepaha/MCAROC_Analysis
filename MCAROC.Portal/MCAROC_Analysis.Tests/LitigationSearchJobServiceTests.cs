@@ -58,8 +58,11 @@ public class LitigationSearchJobServiceTests : IAsyncLifetime
         handler ??= new StubHandler();
         var client = new BprLitigationClient(
             new HttpClient(handler) { BaseAddress = new Uri(opts.BaseUrl) }, Options.Create(opts), NullLogger<BprLitigationClient>.Instance);
+        var casePersistenceQueue = new LitigationCasePersistenceQueue();
+        var casePersistenceService = new LitigationCasePersistenceService(
+            db, casePersistenceQueue, NullLogger<LitigationCasePersistenceService>.Instance);
         var service = new LitigationSearchJobService(
-            db, client, new LitigationSearchQueue(), new LitigationCasePersistenceQueue(), Options.Create(opts),
+            db, client, new LitigationSearchQueue(), casePersistenceQueue, casePersistenceService, Options.Create(opts),
             NullLogger<LitigationSearchJobService>.Instance);
         return (service, handler);
     }

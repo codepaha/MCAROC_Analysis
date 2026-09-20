@@ -9,7 +9,7 @@ namespace MCAROC_Analysis.Services.LitigationData;
 /// <summary>Parses a completed <see cref="LitigationSearchJob"/>'s raw report and persists its cases, orders
 /// and source-report provenance. Built around an immutable <see cref="LitigationReportSnapshot"/> per report
 /// (see its own remarks for why a copy separate from the mutable job row is required), which is also the
-/// crash-safe, concurrency-safe unit of import work:
+/// crash-safe, concurrency-safe, independently-recoverable unit of import work:
 /// <list type="bullet">
 /// <item><b>Crash safety.</b> The snapshot's <c>CasesPersistedCount</c> only advances once a case (plus its
 /// orders and source-report link) is durably committed. A worker that dies mid-report leaves the snapshot
@@ -21,23 +21,81 @@ namespace MCAROC_Analysis.Services.LitigationData;
 /// both succeed: the loser's <c>SaveChangesAsync</c> throws <see cref="DbUpdateConcurrencyException"/> and
 /// stops immediately. Unique indexes on <c>LitigationCase</c> and <c>LitigationCaseOrder</c> are a second,
 /// independent backstop against the same class of race at the case level.</item>
+/// <item><b>Recovery is snapshot-driven, not job-driven.</b> <see cref="EnsureSnapshotAsync"/> is called once,
+/// synchronously, the instant a job completes (see <c>LitigationSearchJobService.PollUntilCompleteAsync</c>)
+/// — <em>before</em> that job's own status is written as Completed, so a crash between the two leaves the job
+/// non-terminal and its own established recovery retries it from scratch rather than orphaning the snapshot.
+/// From then on, <see cref="RecoverStaleWorkAsync"/> queries <see cref="LitigationReportSnapshot"/> directly:
+/// a request's <c>LitigationSearchJob</c> row is reused across reruns and its <c>Status</c> can move away
+/// from Completed at any time (<c>CreateOrResetJobAsync</c>), so an older, still-incomplete snapshot must stay
+/// reachable regardless of what the job's current status says.</item>
 /// </list>
 /// Only <see cref="BprReportFormat.Json"/> reports can be parsed today — <see cref="BprLitigationReportParser"/>
 /// has no XLSX reader. A snapshot whose report is a different format is marked <c>Failed</c> (terminal, never
 /// silently retried forever) rather than guessed at.</summary>
-public sealed class LitigationCasePersistenceService(AppDbContext db, ILogger<LitigationCasePersistenceService> logger)
+public sealed class LitigationCasePersistenceService(
+    AppDbContext db, LitigationCasePersistenceQueue queue, ILogger<LitigationCasePersistenceService> logger)
 {
     private const int LeaseMinutes = 15; // generous: pure CPU/DB work, no external calls, "tens not thousands" of cases
+    private static readonly string LeaseOwnerId = $"{Environment.MachineName}:{Environment.ProcessId}";
 
-    public async Task PersistCasesForJobAsync(long jobId, CancellationToken ct)
+    // ── Snapshot creation ──────────────────────────────────────────────────────────────────────────
+
+    /// <summary>Creates the immutable snapshot row for (job id, report hash) if one doesn't already exist, and
+    /// returns its id. Called once, synchronously, at the single trigger point (a job reaching Completed) —
+    /// by the time anything is ever enqueued for <see cref="PersistSnapshotAsync"/>, the snapshot it names
+    /// already exists, so that method never needs to create one. Race-safe against a concurrent creator via
+    /// the unique index anyway (defense in depth; under normal operation this runs at most once per real
+    /// completion, since the caller's own lease-guarded job update already serializes it) — mirrors
+    /// <c>CalculationAiAuditOrchestrator.EnqueueForSnapshotAsync</c>'s exact pattern for the same problem.</summary>
+    public async Task<long> EnsureSnapshotAsync(
+        long jobId, string reportHash, BprReportFormat reportFormat, byte[] rawReportBytes, DateTime retrievedUtc, CancellationToken ct)
     {
-        var job = await db.LitigationSearchJobs.AsNoTracking().FirstOrDefaultAsync(j => j.LitigationSearchJobId == jobId, ct);
-        if (job is null || job.Status != LitigationSearchJobStatus.Completed ||
-            job.RawReportBytes is null || job.RawResponseHash is null)
-            return;
+        var existingId = await db.LitigationReportSnapshots
+            .Where(s => s.LitigationSearchJobId == jobId && s.ReportHash == reportHash)
+            .Select(s => (long?)s.LitigationReportSnapshotId)
+            .FirstOrDefaultAsync(ct);
+        if (existingId is not null) return existingId.Value;
 
-        var snapshot = await GetOrCreateSnapshotAsync(job, ct);
-        if (snapshot.IsTerminal) return; // already fully processed, or permanently unparseable
+        var snapshot = new LitigationReportSnapshot
+        {
+            LitigationSearchJobId = jobId, ReportHash = reportHash, ReportFormat = reportFormat,
+            RawReportBytes = rawReportBytes, RawReportByteLength = rawReportBytes.LongLength,
+            RetrievedUtc = retrievedUtc, Status = LitigationReportSnapshotStatus.Pending, CreatedUtc = DateTime.UtcNow
+        };
+        db.LitigationReportSnapshots.Add(snapshot);
+        try
+        {
+            await db.SaveChangesAsync(ct);
+            return snapshot.LitigationReportSnapshotId;
+        }
+        catch (DbUpdateException ex) when (IsUniqueConstraintViolation(ex))
+        {
+            db.Entry(snapshot).State = EntityState.Detached;
+            logger.LogInformation(
+                "Lost a race creating the litigation report snapshot for job {JobId} — another attempt already created it.", jobId);
+            return await db.LitigationReportSnapshots
+                .Where(s => s.LitigationSearchJobId == jobId && s.ReportHash == reportHash)
+                .Select(s => s.LitigationReportSnapshotId)
+                .FirstAsync(ct);
+        }
+    }
+
+    // ── Processing ─────────────────────────────────────────────────────────────────────────────────
+
+    public async Task PersistSnapshotAsync(long snapshotId, CancellationToken ct)
+    {
+        var snapshot = await db.LitigationReportSnapshots.Include(s => s.SearchJob)
+            .FirstOrDefaultAsync(s => s.LitigationReportSnapshotId == snapshotId, ct);
+        if (snapshot is null || snapshot.IsTerminal) return; // gone, or already fully processed/permanently unparseable
+        if (snapshot.SearchJob is null)
+        {
+            logger.LogError(
+                "Litigation report snapshot {SnapshotId} has no reachable LitigationSearchJob {JobId} — cannot resolve a RequestId.",
+                snapshotId, snapshot.LitigationSearchJobId);
+            return;
+        }
+        var requestId = snapshot.SearchJob.RequestId;
 
         if (!await TryClaimAsync(snapshot, ct)) return; // already owned by a still-live attempt
 
@@ -48,8 +106,8 @@ public sealed class LitigationCasePersistenceService(AppDbContext db, ILogger<Li
                 await MarkFailedAsync(snapshot,
                     $"No parser exists yet for report format {snapshot.ReportFormat} (only Json) — cases were not extracted.", ct);
                 logger.LogWarning(
-                    "Litigation report snapshot {SnapshotId} (job {JobId}) has format {Format} — no parser exists, marked Failed.",
-                    snapshot.LitigationReportSnapshotId, jobId, snapshot.ReportFormat);
+                    "Litigation report snapshot {SnapshotId} has format {Format} — no parser exists, marked Failed.",
+                    snapshotId, snapshot.ReportFormat);
                 return;
             }
 
@@ -61,20 +119,19 @@ public sealed class LitigationCasePersistenceService(AppDbContext db, ILogger<Li
             catch (JsonException ex)
             {
                 await MarkFailedAsync(snapshot, $"Raw report failed to parse as JSON despite ReportFormat=Json: {ex.Message}", ct);
-                logger.LogError(ex, "Litigation report snapshot {SnapshotId} failed to parse.", snapshot.LitigationReportSnapshotId);
+                logger.LogError(ex, "Litigation report snapshot {SnapshotId} failed to parse.", snapshotId);
                 return;
             }
 
             for (var i = snapshot.CasesPersistedCount; i < report.Cases.Count; i++)
-                await PersistOneCaseAsync(job.RequestId, snapshot, report.Cases[i], ct);
+                await PersistOneCaseAsync(requestId, snapshot, report.Cases[i], ct);
 
             snapshot.Status = LitigationReportSnapshotStatus.Completed;
             snapshot.CompletedUtc = DateTime.UtcNow;
             await db.SaveChangesAsync(ct);
 
             logger.LogInformation(
-                "Litigation report snapshot {SnapshotId} (job {JobId}) completed: {CaseCount} case(s) persisted.",
-                snapshot.LitigationReportSnapshotId, jobId, report.Cases.Count);
+                "Litigation report snapshot {SnapshotId} completed: {CaseCount} case(s) persisted.", snapshotId, report.Cases.Count);
         }
         catch (DbUpdateConcurrencyException)
         {
@@ -82,49 +139,9 @@ public sealed class LitigationCasePersistenceService(AppDbContext db, ILogger<Li
             // snapshot. Stop touching it; whatever it committed stands, and a future attempt (if still needed)
             // will resume from its own CasesPersistedCount.
             logger.LogWarning(
-                "Litigation report snapshot {SnapshotId} (job {JobId}) lost its claim mid-processing — another attempt has taken over.",
-                snapshot.LitigationReportSnapshotId, jobId);
+                "Litigation report snapshot {SnapshotId} lost its claim mid-processing — another attempt has taken over.", snapshotId);
         }
     }
-
-    /// <summary>Creates the snapshot row for (job id, report hash) if one doesn't already exist — race-safe
-    /// against a concurrent creator via the unique index, mirroring
-    /// <c>CalculationAiAuditOrchestrator.EnqueueForSnapshotAsync</c>'s exact pattern for the same problem.</summary>
-    private async Task<LitigationReportSnapshot> GetOrCreateSnapshotAsync(LitigationSearchJob job, CancellationToken ct)
-    {
-        var existing = await db.LitigationReportSnapshots
-            .FirstOrDefaultAsync(s => s.LitigationSearchJobId == job.LitigationSearchJobId && s.ReportHash == job.RawResponseHash, ct);
-        if (existing is not null) return existing;
-
-        var snapshot = new LitigationReportSnapshot
-        {
-            LitigationSearchJobId = job.LitigationSearchJobId,
-            ReportHash = job.RawResponseHash!,
-            ReportFormat = job.ReportFormat,
-            RawReportBytes = job.RawReportBytes!,
-            RawReportByteLength = job.RawReportBytes!.LongLength,
-            RetrievedUtc = job.CompletedUtc ?? DateTime.UtcNow,
-            Status = LitigationReportSnapshotStatus.Pending,
-            CreatedUtc = DateTime.UtcNow
-        };
-        db.LitigationReportSnapshots.Add(snapshot);
-        try
-        {
-            await db.SaveChangesAsync(ct);
-            return snapshot;
-        }
-        catch (DbUpdateException ex) when (IsUniqueConstraintViolation(ex))
-        {
-            db.Entry(snapshot).State = EntityState.Detached;
-            logger.LogInformation(
-                "Lost a race creating the litigation report snapshot for job {JobId} — another attempt already created it.",
-                job.LitigationSearchJobId);
-            return await db.LitigationReportSnapshots
-                .FirstAsync(s => s.LitigationSearchJobId == job.LitigationSearchJobId && s.ReportHash == job.RawResponseHash, ct);
-        }
-    }
-
-    private static readonly string LeaseOwnerId = $"{Environment.MachineName}:{Environment.ProcessId}";
 
     /// <summary>Atomic claim: Pending, or InProgress with an expired lease, becomes InProgress under this
     /// attempt. Protected by <see cref="LitigationReportSnapshot.RowVersion"/> — if another attempt claims the
@@ -310,13 +327,58 @@ public sealed class LitigationCasePersistenceService(AppDbContext db, ILogger<Li
     private static bool IsUniqueConstraintViolation(DbUpdateException ex) =>
         ex.InnerException is Microsoft.Data.SqlClient.SqlException { Number: 2601 or 2627 };
 
-    /// <summary>Returns every completed job's id, for the worker's startup recovery sweep to re-enqueue.
-    /// Deliberately unfiltered — re-enqueuing an already-fully-processed job is a cheap no-op (snapshot lookup
-    /// finds <c>IsTerminal</c> immediately), and pre-filtering here would just duplicate that check and risk
-    /// drifting out of sync with it.</summary>
-    public async Task<IReadOnlyList<long>> FindUnprocessedCompletedJobIdsAsync(CancellationToken ct) =>
-        await db.LitigationSearchJobs
-            .Where(j => j.Status == LitigationSearchJobStatus.Completed)
-            .Select(j => j.LitigationSearchJobId)
+    // ── Recovery ───────────────────────────────────────────────────────────────────────────────────
+
+    private void ScheduleRetry(long snapshotId, DateTime readyUtc, CancellationToken ct)
+    {
+        var delay = readyUtc - DateTime.UtcNow;
+        if (delay <= TimeSpan.Zero)
+        {
+            queue.Enqueue(snapshotId);
+            return;
+        }
+
+        var capturedQueue = queue;
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await Task.Delay(delay, ct);
+                capturedQueue.Enqueue(snapshotId);
+            }
+            catch (OperationCanceledException)
+            {
+                // App shutting down — the row stays as-is; the next startup's recovery sweep re-schedules or
+                // re-enqueues it.
+            }
+        }, ct);
+    }
+
+    /// <summary>Re-enqueues every non-terminal snapshot on startup — queried directly from
+    /// <see cref="LitigationReportSnapshot"/>, independent of the associated job's current status (a rerun can
+    /// move it away from Completed via <c>CreateOrResetJobAsync</c> at any time; an older, still-incomplete
+    /// snapshot must remain reachable regardless — see this type's own remarks). A Pending snapshot, or an
+    /// InProgress one whose lease has already expired, is enqueued immediately. An InProgress snapshot whose
+    /// lease is still valid (the process that held it died without the lease itself expiring yet — e.g. an app
+    /// restart) is instead scheduled for a delayed re-check at its own <c>LeaseExpiresUtc</c>, mirroring
+    /// <c>LitigationSearchJobService</c>'s own <c>ScheduleRetry</c> pattern — never silently declined and left
+    /// stuck the way a same-turn <see cref="TryClaimAsync"/> alone would leave it.</summary>
+    public async Task<int> RecoverStaleWorkAsync(CancellationToken ct)
+    {
+        var now = DateTime.UtcNow;
+        var nonTerminal = await db.LitigationReportSnapshots
+            .Where(s => s.Status == LitigationReportSnapshotStatus.Pending || s.Status == LitigationReportSnapshotStatus.InProgress)
+            .Select(s => new { s.LitigationReportSnapshotId, s.Status, s.LeaseExpiresUtc })
             .ToListAsync(ct);
+
+        foreach (var s in nonTerminal)
+        {
+            if (s.Status == LitigationReportSnapshotStatus.InProgress && s.LeaseExpiresUtc is { } expires && expires > now)
+                ScheduleRetry(s.LitigationReportSnapshotId, expires, ct);
+            else
+                queue.Enqueue(s.LitigationReportSnapshotId);
+        }
+
+        return nonTerminal.Count;
+    }
 }
