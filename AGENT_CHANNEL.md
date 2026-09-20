@@ -152,7 +152,7 @@ gate, so it gets its own table rather than living inside either lane's section a
 
 | Issue | What | Lane | Depends on | Status |
 |---|---|---|---|---|
-| #241 LIT-01 | BPR API client + durable litigation-job lifecycle | Claude | — | unclaimed |
+| #241 LIT-01 | BPR API client + durable litigation-job lifecycle | Claude | — | **CLAIMED** (`feature/241-bpr-litigation-client`) |
 | #242 LIT-02 | Persist BPR cases; retain CSP provider identity and apply conservative CNR-first de-duplication | Claude | #241 | unclaimed |
 | #243 LIT-03 | All-orders retrieval, text retention, ZIP delivery | Claude | #241, #242 | unclaimed |
 | #244 LIT-04 | Request-scoped litigation evidence for MCA ROC Copilot | Claude | #243 | unclaimed |
@@ -278,6 +278,42 @@ service — if it sits `queued`, `run.cmd` is down) runs *only* what Linux can't
 ---
 
 ## Log  <!-- newest first. Prefix: NEEDS / BLOCKED / DONE / DECISION / FYI -->
+
+### 2026-09-20 — Claude session (CLAIMED #241 LIT-01: BPR API client + durable job lifecycle; PR opened)
+- **CLAIMED #241** on branch `feature/241-bpr-litigation-client`, based on `feature/litigation-data-lake-integration`
+  (PR #250, open — this branch needs `LitigationKeywordPlanner`/`BprLitigationReportParser` from it and
+  will be rebased onto `main` once #250 merges), merged forward onto latest `main` for this channel entry.
+- Found the vendor's actual Postman collection (`BPR_Litigation_Data_API_postman_collection.json`, outside
+  the repo — never committed, its embedded secret key and stale JWTs are not copied into source, logs, or
+  this entry) — confirms 3 endpoints: `POST sec/authenticate` `{id, secret_key}`, `POST bprjob/register`
+  (raw JWT in the `Authorization` header, **no `Bearer ` prefix** — a real vendor quirk, confirmed from
+  their own example request), `GET report/job/{id}`. Two parts of the contract are still genuinely
+  unconfirmed even with the collection in hand — no example response was ever captured for either auth or
+  register, and the one captured `report/job/{id}` example is raw XLSX bytes despite the paired
+  registration using `file_format: JSON`, exactly the discrepancy `docs/litigation-data-lake-integration.md`
+  already flagged. `BprLitigationClient` handles both defensively (tries several plausible response field
+  names and fails loudly naming what it actually got; sniffs the report response's bytes/content-type/JSON
+  shape rather than trusting configuration) instead of guessing a schema that was never confirmed.
+- Implements: `BprLitigationClient` (typed `HttpClient`, `AddHttpClient<T>`), `BprLitigationOptions`
+  (empty-by-default, `IsConfigured` gate — same posture as `ReferenceTool`/`InternalAuth`),
+  `LitigationSearchJob` entity + migration (`AddLitigationSearchJobs` — one request has at most one job,
+  mirrors `AutoFetchJob`'s shape; retry/lease/backoff fields mirror `CalculationAiAuditRun`'s, since a BPR
+  poll can genuinely still be in flight across a restart), `LitigationSearchJobService`
+  (atomic claim → authenticate → register-if-not-already-registered → poll-with-backoff → retain raw
+  report bytes + SHA-256 for #242 to parse), `LitigationSearchQueue`/`LitigationSearchWorker` (mirrors
+  `AutoFetchQueue`/`AutoFetchWorker` exactly). Scope stops at "retain the raw report" — parsing it into
+  `LitigationCase` rows is #242's job, not this one's.
+- Deliberately does **not** wire an automatic trigger on request creation or add a controller endpoint —
+  the epic's dependency map funnels the UI trigger through #246, and there's no "approved aliases" admin
+  store yet for `LitigationKeywordPlanner` to draw on beyond legal name/history, so `CreateOrResetJobAsync`
+  takes an already-built keyword plan rather than deciding when/how to auto-start a search. Flagging this as
+  a real, currently-unowned gap: **nothing in #241–#248 covers curating approved aliases** — worth a
+  follow-up issue before #246/#247 need one.
+- 77/77 focused tests passing (`BprLitigationClientTests`, `LitigationSearchJobClaimAndRecoveryTests`,
+  `LitigationSearchJobServiceTests`, `LitigationSearchQueueTests`), full build clean, `AutoFetch*` tests
+  (36/36) re-run to confirm no regression near the touched `Program.cs`/`appsettings.json`. No product-facing
+  change — nothing calls this yet.
+- `@codex review` requested (depends on #250 merging first — flagged in the PR body).
 
 ### 2026-09-20 — Claude session (FYI: litigation epic #239/LIT-01–08 cross-lane task division recorded)
 - Added the **Litigation epic (#239, LIT-01–LIT-08 / #241–#248)** task-division table above (before

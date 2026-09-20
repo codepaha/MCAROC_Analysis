@@ -67,6 +67,10 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<PreLoginReportJob> PreLoginReportJobs => Set<PreLoginReportJob>();
     public DbSet<AutoFetchJob> AutoFetchJobs => Set<AutoFetchJob>();
 
+    // Litigation data lake (#239, LIT-01: request-scoped BPR search jobs — distinct from the
+    // workbook-derived Litigation entity above)
+    public DbSet<LitigationSearchJob> LitigationSearchJobs => Set<LitigationSearchJob>();
+
     // #164 Calculation assurance
     public DbSet<CalculationAuditSnapshot> CalculationAuditSnapshots => Set<CalculationAuditSnapshot>();
     public DbSet<CalculationLedgerEntry> CalculationLedgerEntries => Set<CalculationLedgerEntry>();
@@ -132,6 +136,23 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             e.Property(x => x.CorrelationId).HasMaxLength(64).IsRequired();
             e.Property(x => x.Status).HasConversion<string>().HasMaxLength(30);
             e.Property(x => x.StatusMessage).HasMaxLength(500);
+            e.Ignore(x => x.IsTerminal);
+        });
+
+        modelBuilder.Entity<LitigationSearchJob>(e =>
+        {
+            e.HasKey(x => x.LitigationSearchJobId);
+            e.HasIndex(x => x.RequestId).IsUnique();
+            e.HasIndex(x => x.Status);
+            e.HasOne(x => x.Request).WithMany().HasForeignKey(x => x.RequestId).OnDelete(DeleteBehavior.Cascade);
+            e.Property(x => x.Status).HasConversion<string>().HasMaxLength(30);
+            e.Property(x => x.StatusMessage).HasMaxLength(500);
+            e.Property(x => x.EntityType).HasMaxLength(30);
+            e.Property(x => x.ApplicationCustomerId).HasMaxLength(100);
+            e.Property(x => x.VendorJobId).HasMaxLength(100);
+            e.Property(x => x.LeaseOwner).HasMaxLength(100);
+            e.Property(x => x.ReportFormat).HasConversion<string>().HasMaxLength(20);
+            e.Property(x => x.RawResponseHash).HasMaxLength(64);
             e.Ignore(x => x.IsTerminal);
         });
 

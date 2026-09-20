@@ -8,6 +8,7 @@ using MCAROC_Analysis.Services.Chat;
 using MCAROC_Analysis.Services.Dashboard;
 using MCAROC_Analysis.Services.Dossier;
 using MCAROC_Analysis.Services.Excel;
+using MCAROC_Analysis.Services.LitigationData;
 using MCAROC_Analysis.Services.McaFilings;
 using MCAROC_Analysis.Services.PreLoginReports;
 using Microsoft.AspNetCore.Http.Features;
@@ -68,6 +69,21 @@ builder.Services.AddHttpClient<ReferenceToolClient>(client => client.Timeout = T
 builder.Services.AddSingleton<AutoFetchQueue>();
 builder.Services.AddScoped<AutoFetchJobService>();
 builder.Services.AddHostedService<AutoFetchWorker>();
+
+// Litigation data lake (#239, LIT-01) — authenticate/register/poll against the BPR Litigation Data API and
+// retain the raw report for #242 to persist. Inert until BprLitigation:BaseUrl/Id/SecretKey are configured
+// (user-secrets/environment only — see BprLitigationOptions).
+builder.Services.Configure<BprLitigationOptions>(builder.Configuration.GetSection(BprLitigationOptions.SectionName));
+builder.Services.AddHttpClient<BprLitigationClient>((sp, client) =>
+{
+    var opts = sp.GetRequiredService<IOptions<BprLitigationOptions>>().Value;
+    if (!string.IsNullOrWhiteSpace(opts.BaseUrl))
+        client.BaseAddress = new Uri(opts.BaseUrl.EndsWith('/') ? opts.BaseUrl : opts.BaseUrl + "/");
+    client.Timeout = TimeSpan.FromMinutes(2);
+});
+builder.Services.AddSingleton<LitigationSearchQueue>();
+builder.Services.AddScoped<LitigationSearchJobService>();
+builder.Services.AddHostedService<LitigationSearchWorker>();
 
 builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseSqlServer(builder.Configuration.GetConnectionString("Default")));
