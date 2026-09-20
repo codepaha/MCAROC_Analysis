@@ -6,20 +6,20 @@ using Microsoft.Extensions.Options;
 namespace MCAROC_Analysis.Services.LitigationData;
 
 /// <summary>Thin client for the three confirmed BPR Litigation Data API endpoints (authenticate, register,
-/// report — see the vendor's own Postman collection, never committed to source). Two parts of the contract
-/// are still unconfirmed and are handled defensively rather than assumed:
+/// report — see the vendor's own Postman collection, never committed to source).
 /// <list type="bullet">
-/// <item>The authenticate/register response field names for the token and vendor job id — no example
-/// response was captured for either call. <see cref="ExtractToken"/>/<see cref="ExtractJobId"/> try a short
-/// list of plausible field names and fail loudly, naming the actual top-level keys received (never the
-/// values), if none match.</item>
-/// <item>Whether GET report/job/{id} distinguishes "still processing" from "complete" via HTTP status, a
-/// JSON status field, or content type — the vendor's own captured example returned a raw XLSX binary for a
-/// job registered with file_format=JSON, a confirmed discrepancy. <see cref="GetReportAsync"/> sniffs the
-/// actual response rather than trusting configuration.</item>
-/// </list>
-/// Both gaps are documented in docs/litigation-data-lake-integration.md's "Vendor contract required"
-/// section and must be revisited once a real account confirms the exact shapes.</summary>
+/// <item><b>Confirmed by a live test call:</b> POST sec/authenticate returns the JWT as a raw response body
+/// (not JSON-wrapped) — <see cref="AuthenticateAsync"/> accepts that directly, with a JSON-field fallback
+/// kept only in case the vendor ever wraps it.</item>
+/// <item>The register response field name for the vendor job id is still unconfirmed — no example response
+/// was captured for that call. <see cref="ExtractStringField"/> tries a short list of plausible field names
+/// and fails loudly, naming the actual top-level keys received (never the values), if none match.</item>
+/// <item>GET report/job/{id} has no separate status/polling endpoint, so one response must distinguish
+/// "still processing" from "complete" from "failed" itself — see <see cref="GetReportAsync"/>. Confirmed by
+/// a live test call: a not-found job returns HTTP 200 with a JSON error envelope
+/// (<c>{"status":false,"message":"..."}</c>) — a valid, non-empty JSON body that is neither a report nor a
+/// string pending-status field, so it is classified explicitly rather than falling through to Completed.</item>
+/// </list></summary>
 public sealed class BprLitigationClient(HttpClient http, IOptions<BprLitigationOptions> options, ILogger<BprLitigationClient> logger)
 {
     private static readonly string[] TokenFieldCandidates = ["jwt", "token", "access_token", "Authorization", "authorization"];
@@ -29,9 +29,11 @@ public sealed class BprLitigationClient(HttpClient http, IOptions<BprLitigationO
 
     private readonly BprLitigationOptions _opts = options.Value;
 
-    /// <summary>POST sec/authenticate with the configured id/secret_key. Returns the raw token exactly as
-    /// received — it is sent back verbatim as the Authorization header value on later calls, with no
-    /// "Bearer " prefix (confirmed from the vendor's own example requests). Never logged.</summary>
+    /// <summary>POST sec/authenticate with the configured id/secret_key. A live test call confirmed the
+    /// response body is the raw JWT itself, not JSON — that is tried first; a JSON-wrapped token (one of
+    /// <see cref="TokenFieldCandidates"/>) is accepted as a fallback in case the vendor changes this. Returns
+    /// the token exactly as received — sent back verbatim as the Authorization header value on later calls,
+    /// with no "Bearer " prefix (also confirmed from the vendor's own example requests). Never logged.</summary>
     public async Task<string> AuthenticateAsync(CancellationToken ct)
     {
         RequireConfigured();
@@ -40,12 +42,11 @@ public sealed class BprLitigationClient(HttpClient http, IOptions<BprLitigationO
         if (!response.IsSuccessStatusCode)
             throw new BprLitigationException($"BPR authentication failed with HTTP {(int)response.StatusCode}.");
 
-        var token = ExtractStringField(body, TokenFieldCandidates);
+        var token = ExtractRawJwt(body) ?? ExtractStringField(body, TokenFieldCandidates);
         if (token is null)
             throw new BprLitigationException(
-                "BPR authentication succeeded but the response did not contain a recognizable token field " +
-                "(tried: " + string.Join(", ", TokenFieldCandidates) + "). The vendor's response schema for " +
-                "this call was never confirmed — see docs/litigation-data-lake-integration.md.");
+                "BPR authentication succeeded but the response was neither a raw JWT body nor a recognizable " +
+                "JSON token field (tried: " + string.Join(", ", TokenFieldCandidates) + ").");
         return token;
     }
 
@@ -127,8 +128,13 @@ public sealed class BprLitigationClient(HttpClient http, IOptions<BprLitigationO
         var text = System.Text.Encoding.UTF8.GetString(bytes);
         if (TryParseJson(text, out var root))
         {
-            if (root.ValueKind == JsonValueKind.Object && HasPendingStatusField(root))
-                return BprReportPollResult.Pending("Report response carries an in-progress status field.");
+            if (root.ValueKind == JsonValueKind.Object)
+            {
+                if (TryClassifyControlEnvelope(root, out var controlResult))
+                    return controlResult!;
+                if (HasPendingStatusField(root))
+                    return BprReportPollResult.Pending("Report response carries an in-progress status field.");
+            }
             return BprReportPollResult.Completed(bytes, BprReportFormat.Json);
         }
 
@@ -176,6 +182,34 @@ public sealed class BprLitigationClient(HttpClient http, IOptions<BprLitigationO
         return false;
     }
 
+    /// <summary>Recognizes the confirmed BPR error-envelope shape — a JSON <b>boolean</b> <c>status</c> field
+    /// (e.g. <c>{"status":false,"message":"Job not found"}</c>), as opposed to the <b>string</b> status field
+    /// <see cref="HasPendingStatusField"/> checks for. A genuine report never carries a top-level boolean
+    /// "status" (see <see cref="BprLitigationReportParser"/> — real reports have "request_details" plus
+    /// nested court-category keys, never this), so any boolean status field means this 200 response is a
+    /// control envelope, not report content, and must never fall through to being stored as a completed
+    /// report. <c>status:false</c> is a confirmed failure (uses "message" if present). <c>status:true</c> has
+    /// no confirmed meaning here, so it is treated as not-yet-a-report (Pending) rather than risk storing a
+    /// non-report payload as Completed — the safe direction to err in.</summary>
+    private static bool TryClassifyControlEnvelope(JsonElement root, out BprReportPollResult? result)
+    {
+        result = null;
+        if (!root.TryGetProperty("status", out var statusValue) || statusValue.ValueKind is not (JsonValueKind.True or JsonValueKind.False))
+            return false;
+
+        if (statusValue.ValueKind == JsonValueKind.False)
+        {
+            var message = root.TryGetProperty("message", out var messageValue) && messageValue.ValueKind == JsonValueKind.String
+                ? messageValue.GetString()
+                : null;
+            result = BprReportPollResult.Failed(message ?? "BPR returned a status:false error envelope with no message.");
+            return true;
+        }
+
+        result = BprReportPollResult.Pending("BPR returned a status:true acknowledgement envelope — not yet a report.");
+        return true;
+    }
+
     private static string? ExtractStringField(string json, string[] candidates)
     {
         if (!TryParseJson(json, out var root) || root.ValueKind != JsonValueKind.Object) return null;
@@ -188,6 +222,35 @@ public sealed class BprLitigationClient(HttpClient http, IOptions<BprLitigationO
             }
         }
         return null;
+    }
+
+    /// <summary>Accepts the confirmed real shape of a sec/authenticate response: the JWT as the entire raw
+    /// body. Also tolerates a body wrapped in one extra layer of JSON-string quoting (<c>"eyJ..."</c>), in
+    /// case a proxy or client library re-serializes it.</summary>
+    private static string? ExtractRawJwt(string body)
+    {
+        var trimmed = body.Trim();
+        if (trimmed.Length >= 2 && trimmed[0] == '"' && trimmed[^1] == '"')
+            trimmed = trimmed[1..^1];
+        return LooksLikeJwt(trimmed) ? trimmed : null;
+    }
+
+    /// <summary>A JWT is three base64url segments separated by dots (header.payload.signature) — a loose but
+    /// specific enough check to distinguish a real token from an unrelated raw response body.</summary>
+    private static bool LooksLikeJwt(string value)
+    {
+        var parts = value.Split('.');
+        return parts.Length == 3 && Array.TrueForAll(parts, part => part.Length > 0 && IsBase64UrlSegment(part));
+    }
+
+    private static bool IsBase64UrlSegment(string segment)
+    {
+        foreach (var c in segment)
+        {
+            if (!char.IsAsciiLetterOrDigit(c) && c is not ('-' or '_'))
+                return false;
+        }
+        return true;
     }
 }
 

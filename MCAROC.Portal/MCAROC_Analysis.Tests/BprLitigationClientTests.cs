@@ -69,7 +69,7 @@ public sealed class BprLitigationClientTests
         });
 
         var ex = await Assert.ThrowsAsync<BprLitigationException>(() => NewClient(handler).AuthenticateAsync(CancellationToken.None));
-        Assert.Contains("recognizable token field", ex.Message);
+        Assert.Contains("recognizable JSON token field", ex.Message);
     }
 
     [Fact]
@@ -81,6 +81,56 @@ public sealed class BprLitigationClientTests
         var ex = await Assert.ThrowsAsync<BprLitigationException>(() => client.AuthenticateAsync(CancellationToken.None));
         Assert.Contains("not configured", ex.Message);
         Assert.Empty(handler.Requests);
+    }
+
+    [Fact]
+    public async Task AuthenticateAsync_accepts_a_raw_JWT_body_confirmed_by_a_live_test_call()
+    {
+        // Regression for a review finding: a live test call to sec/authenticate returned the JWT as the
+        // entire raw response body, not JSON-wrapped — the original implementation only tried JSON field
+        // extraction and would have thrown on the real vendor response. A synthetic (not vendor-derived)
+        // three-segment JWT-shaped string, used purely to exercise LooksLikeJwt's format check.
+        const string rawJwt = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.synthetic-test-payload-only.synthetic-test-signature-only";
+        var handler = new StubHandler();
+        handler.OnPath("sec/authenticate", _ => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(rawJwt, Encoding.UTF8, "text/plain")
+        });
+
+        var token = await NewClient(handler).AuthenticateAsync(CancellationToken.None);
+
+        Assert.Equal(rawJwt, token);
+    }
+
+    [Fact]
+    public async Task AuthenticateAsync_accepts_a_quoted_raw_JWT_body()
+    {
+        const string rawJwt = "eyJhbGciOiJIUzI1NiJ9.eyJhcHBfaWQiOiJhcHAifQ.c2lnbmF0dXJl";
+        var handler = new StubHandler();
+        handler.OnPath("sec/authenticate", _ => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent($"\"{rawJwt}\"", Encoding.UTF8, "application/json")
+        });
+
+        var token = await NewClient(handler).AuthenticateAsync(CancellationToken.None);
+
+        Assert.Equal(rawJwt, token);
+    }
+
+    [Fact]
+    public async Task AuthenticateAsync_still_prefers_a_JSON_wrapped_token_when_the_body_is_not_a_bare_JWT()
+    {
+        // A JSON object body is never mistaken for a raw JWT (LooksLikeJwt requires exactly 3 dot-separated
+        // segments), so the JSON-field fallback still runs.
+        var handler = new StubHandler();
+        handler.OnPath("sec/authenticate", _ => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent("""{"jwt":"wrapped-token"}""", Encoding.UTF8, "application/json")
+        });
+
+        var token = await NewClient(handler).AuthenticateAsync(CancellationToken.None);
+
+        Assert.Equal("wrapped-token", token);
     }
 
     // ── Register ───────────────────────────────────────────────────────────────────────────────────
@@ -147,6 +197,58 @@ public sealed class BprLitigationClientTests
 
         Assert.Equal(BprReportPollStatus.Completed, result.Status);
         Assert.Equal(BprReportFormat.Json, result.Format);
+    }
+
+    [Fact]
+    public async Task GetReportAsync_treats_the_confirmed_status_false_error_envelope_as_Failed_not_Completed()
+    {
+        // Regression for a review finding: a live test call against an unknown/not-found job returned HTTP
+        // 200 with {"status":false,"message":"Job not found"} — valid, non-empty JSON that the original
+        // implementation would have classified as a completed report (it has no string "status"/"state"
+        // field for HasPendingStatusField to catch; "status" here is a JSON boolean, a different shape).
+        var handler = new StubHandler();
+        handler.OnPath("report/job/", _ => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent("""{"status":false,"message":"Job not found"}""", Encoding.UTF8, "application/json")
+        });
+
+        var result = await NewClient(handler).GetReportAsync("token", "job-1", CancellationToken.None);
+
+        Assert.Equal(BprReportPollStatus.Failed, result.Status);
+        Assert.Equal("Job not found", result.Message);
+        Assert.Null(result.Bytes);
+    }
+
+    [Fact]
+    public async Task GetReportAsync_treats_a_status_false_envelope_with_no_message_as_Failed_with_a_generic_reason()
+    {
+        var handler = new StubHandler();
+        handler.OnPath("report/job/", _ => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent("""{"status":false}""", Encoding.UTF8, "application/json")
+        });
+
+        var result = await NewClient(handler).GetReportAsync("token", "job-1", CancellationToken.None);
+
+        Assert.Equal(BprReportPollStatus.Failed, result.Status);
+        Assert.NotNull(result.Message);
+    }
+
+    [Fact]
+    public async Task GetReportAsync_treats_a_status_true_boolean_envelope_as_Pending_not_Completed()
+    {
+        // "status:true" has no confirmed meaning, but it is a boolean control field, not report content
+        // (a real report never carries a top-level boolean "status" — see BprLitigationReportParser) — must
+        // not be stored as a completed report on the strength of an unconfirmed guess.
+        var handler = new StubHandler();
+        handler.OnPath("report/job/", _ => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent("""{"status":true}""", Encoding.UTF8, "application/json")
+        });
+
+        var result = await NewClient(handler).GetReportAsync("token", "job-1", CancellationToken.None);
+
+        Assert.Equal(BprReportPollStatus.Pending, result.Status);
     }
 
     [Theory]

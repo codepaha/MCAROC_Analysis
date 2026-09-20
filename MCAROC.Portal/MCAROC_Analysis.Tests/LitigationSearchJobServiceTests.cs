@@ -88,6 +88,72 @@ public class LitigationSearchJobServiceTests : IAsyncLifetime
         Assert.Null(job.VendorJobId);
     }
 
+    [Theory]
+    [InlineData(LitigationSearchJobStatus.Authenticating)]
+    [InlineData(LitigationSearchJobStatus.Registering)]
+    [InlineData(LitigationSearchJobStatus.Polling)]
+    public async Task CreateOrResetJobAsync_rejects_resetting_a_job_that_is_actively_in_flight(LitigationSearchJobStatus inFlightStatus)
+    {
+        // Regression for a review finding: resetting a job while BPR may still be processing the original
+        // search risks a subsequent worker registering a second, duplicate vendor-side search.
+        await using var db = CreateContext();
+        var request = await SeedRequestAsync(db);
+        var (service, _) = NewService(db);
+        var keywords = LitigationKeywordPlanner.Build(request.CompanyName!);
+        var job = await service.CreateOrResetJobAsync(request.RequestId, keywords, "individual", "cust-1", CancellationToken.None);
+        job.Status = inFlightStatus;
+        job.VendorJobId = "vendor-job-in-flight";
+        await db.SaveChangesAsync(CancellationToken.None);
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.CreateOrResetJobAsync(request.RequestId, keywords, "individual", "cust-1", CancellationToken.None));
+        Assert.Contains(inFlightStatus.ToString(), ex.Message);
+
+        var reloaded = await db.LitigationSearchJobs.AsNoTracking().FirstAsync(j => j.LitigationSearchJobId == job.LitigationSearchJobId);
+        Assert.Equal(inFlightStatus, reloaded.Status); // untouched — the throw happened before any write
+        Assert.Equal("vendor-job-in-flight", reloaded.VendorJobId);
+    }
+
+    [Fact]
+    public async Task CreateOrResetJobAsync_rejects_resetting_a_Pending_job_with_an_unresolved_registration_attempt()
+    {
+        // A Pending job whose RegistrationAttemptedUtc is set but VendorJobId is still null means the last
+        // attempt's registration outcome is unknown — BPR may already be running a search for it. Resetting
+        // here (clearing RegistrationAttemptedUtc) would let a fresh registration attempt run right past
+        // ProcessAsync's own ambiguous-registration guard, defeating it.
+        await using var db = CreateContext();
+        var request = await SeedRequestAsync(db);
+        var (service, _) = NewService(db);
+        var keywords = LitigationKeywordPlanner.Build(request.CompanyName!);
+        var job = await service.CreateOrResetJobAsync(request.RequestId, keywords, "individual", "cust-1", CancellationToken.None);
+        job.RegistrationAttemptedUtc = DateTime.UtcNow;
+        await db.SaveChangesAsync(CancellationToken.None);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.CreateOrResetJobAsync(request.RequestId, keywords, "individual", "cust-1", CancellationToken.None));
+    }
+
+    [Theory]
+    [InlineData(LitigationSearchJobStatus.Completed)]
+    [InlineData(LitigationSearchJobStatus.Failed)]
+    public async Task CreateOrResetJobAsync_allows_an_explicit_rerun_once_the_job_is_terminal(LitigationSearchJobStatus terminalStatus)
+    {
+        await using var db = CreateContext();
+        var request = await SeedRequestAsync(db);
+        var (service, _) = NewService(db);
+        var keywords = LitigationKeywordPlanner.Build(request.CompanyName!);
+        var job = await service.CreateOrResetJobAsync(request.RequestId, keywords, "individual", "cust-1", CancellationToken.None);
+        job.Status = terminalStatus;
+        job.VendorJobId = "vendor-job-done";
+        job.CompletedUtc = DateTime.UtcNow;
+        await db.SaveChangesAsync(CancellationToken.None);
+
+        var rerun = await service.CreateOrResetJobAsync(request.RequestId, keywords, "individual", "cust-1", CancellationToken.None);
+
+        Assert.Equal(LitigationSearchJobStatus.Pending, rerun.Status);
+        Assert.Null(rerun.VendorJobId);
+    }
+
     // Each test below creates the job on one AppDbContext, then processes it on a *separate, fresh* one —
     // exactly like production, where CreateOrResetJobAsync runs in a controller's request-scoped context and
     // ProcessAsync runs later in the worker's own DI scope. Reusing one context for both would hide a real

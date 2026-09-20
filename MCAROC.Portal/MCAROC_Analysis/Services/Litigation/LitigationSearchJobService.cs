@@ -46,16 +46,32 @@ public sealed class LitigationSearchJobService(
 
     // ── Creation ───────────────────────────────────────────────────────────────────────────────────
 
-    /// <summary>Creates (or, for a request that already has one, resets) the job row and returns it. The
-    /// caller enqueues it — separated so a controller can save the request first. <paramref name="keywords"/>
-    /// must already be the approved plan (see <see cref="LitigationKeywordPlanner"/>) — this service never
-    /// invents search terms.</summary>
+    /// <summary>Creates a fresh job, or — an explicit, auditable rerun action, never an implicit side effect
+    /// of some other flow — resets one that has reached a terminal state (<see cref="LitigationSearchJob.IsTerminal"/>)
+    /// or was created but never touched BPR at all (Pending, no <see cref="LitigationSearchJob.VendorJobId"/>,
+    /// no <see cref="LitigationSearchJob.RegistrationAttemptedUtc"/>). The caller enqueues the returned job —
+    /// separated so a controller can save the request first. <paramref name="keywords"/> must already be the
+    /// approved plan (see <see cref="LitigationKeywordPlanner"/>) — this service never invents search terms.
+    ///
+    /// Rejects resetting a job that is Authenticating/Registering/Polling, or Pending with evidence a vendor
+    /// call may already be in flight (a set <c>VendorJobId</c> or <c>RegistrationAttemptedUtc</c>): clearing
+    /// those fields while the original BPR search may still be running would let a subsequent worker register
+    /// a second, duplicate vendor-side search for the same company under the same request.</summary>
+    /// <exception cref="InvalidOperationException">The existing job is non-terminal and may still have an
+    /// active BPR call in flight.</exception>
     public async Task<LitigationSearchJob> CreateOrResetJobAsync(
         long requestId, IReadOnlyList<LitigationKeyword> keywords, string entityType, string applicationCustomerId, CancellationToken ct)
     {
         if (keywords.Count == 0) throw new ArgumentException("At least one approved keyword is required.", nameof(keywords));
 
         var job = await db.LitigationSearchJobs.FirstOrDefaultAsync(j => j.RequestId == requestId, ct);
+        if (job is not null && !CanReset(job))
+            throw new InvalidOperationException(
+                $"Litigation search job {job.LitigationSearchJobId} for request {requestId} is {job.Status} " +
+                (job.VendorJobId is not null ? $"with vendor job {job.VendorJobId} " : "") +
+                "and may still have a BPR search in flight — resetting now could register a duplicate " +
+                "vendor-side search. Wait for it to reach a terminal state (Completed/Failed) before rerunning.");
+
         if (job is null)
         {
             job = new LitigationSearchJob { RequestId = requestId, CreatedUtc = DateTime.UtcNow };
@@ -78,6 +94,13 @@ public sealed class LitigationSearchJobService(
         await db.SaveChangesAsync(ct);
         return job;
     }
+
+    /// <summary>True only when there is no plausible way BPR already has, or might still create, an active
+    /// vendor-side search for this job: it is terminal, or it is Pending with neither a confirmed vendor job
+    /// id nor an unresolved registration attempt.</summary>
+    private static bool CanReset(LitigationSearchJob job) =>
+        job.IsTerminal ||
+        (job.Status == LitigationSearchJobStatus.Pending && job.VendorJobId is null && job.RegistrationAttemptedUtc is null);
 
     // ── Processing ─────────────────────────────────────────────────────────────────────────────────
 
