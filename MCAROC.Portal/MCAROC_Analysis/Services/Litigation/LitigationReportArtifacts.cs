@@ -35,7 +35,7 @@ public static class LitigationReportArtifacts
     private static readonly string[] CsvHeaders =
     [
         "Sr No", "Assignment Number", "Company", "Provider Case ID", "CSP ID", "CNR Number", "Court Category", "Direction",
-        "Court", "Bench", "Case Number", "Case Type", "Case Year", "Case Stage", "Case Status", "Act", "Filing Date",
+        "Type", "Court", "Bench", "Case Number", "Case Type", "Case Year", "Case Stage", "Case Status", "Act", "Filing Date",
         "Last Hearing Date", "Next Hearing Date", "Decision Date", "State", "District", "Petitioners", "Respondents",
         "Petitioner Advocates", "Respondent Advocates", "Order Count", "Order Dates", "Order Types", "Analysis Status",
         "Analysis Risk", "Analysis Summary", "Analysis Key Issues", "Analysis Recommended Action"
@@ -47,7 +47,7 @@ public static class LitigationReportArtifacts
         foreach (var value in new[]
         {
             serial.ToString(CultureInfo.InvariantCulture), report.AssignmentNumber, report.CompanyName,
-            item.ProviderCaseId, item.CspId, item.CnrNumber, item.CourtCategory, item.Direction, item.Court, item.Bench,
+            item.ProviderCaseId, item.CspId, item.CnrNumber, item.CourtCategory, item.Direction, item.Type, item.Court, item.Bench,
             item.CaseNumber, item.CaseType, item.CaseYear, item.CaseStage, item.CaseStatus, item.Act, item.FilingDate,
             item.LastHearingDate, item.NextHearingDate, item.DecisionDate, item.State, item.District,
             PartyText(item.PetitionersJson), PartyText(item.RespondentsJson), PartyText(item.PetitionerAdvocatesJson),
@@ -228,8 +228,9 @@ internal sealed class LitigationReportPdfDocument(StandaloneLitigationReport rep
         table.ColumnsDefinition(columns => { columns.RelativeColumn(); columns.RelativeColumn(); });
         var fields = new (string Label, string Value)[]
         {
-            ("CNR NO", Display(item.CnrNumber)), ("CSP ID", Display(item.CspId)), ("COURT CATEGORY", Humanize(item.CourtCategory)), ("CASE TYPE / YEAR", JoinValues(item.CaseType, item.CaseYear)),
-            ("CASE STAGE", Display(item.CaseStage)), ("DIRECTION", Humanize(item.Direction)), ("FILING DATE", Display(item.FilingDate)), ("LAST HEARING", Display(item.LastHearingDate)),
+            ("CNR NO", Display(item.CnrNumber)), ("CSP ID", Display(item.CspId)), ("COURT CATEGORY", Humanize(item.CourtCategory)), ("TYPE", Humanize(item.Type)),
+            ("DIRECTION", Humanize(item.Direction)), ("BENCH", Display(item.Bench)), ("CASE TYPE / YEAR", JoinValues(item.CaseType, item.CaseYear)),
+            ("CASE STAGE", Display(item.CaseStage)), ("FILING DATE", Display(item.FilingDate)), ("LAST HEARING", Display(item.LastHearingDate)),
             ("NEXT HEARING", Display(item.NextHearingDate)), ("DECISION DATE", Display(item.DecisionDate)), ("STATE / DISTRICT", JoinValues(item.State, item.District)), ("ACT", Display(item.Act))
         };
         foreach (var field in fields) table.Cell().BorderBottom(0.5f).BorderColor("#D7E3F2").PaddingVertical(3).PaddingRight(7).Text(text => { text.Span(field.Label + "  ").Bold().FontSize(6.8f).FontColor(Navy); text.Span(field.Value).FontSize(8.1f); });
