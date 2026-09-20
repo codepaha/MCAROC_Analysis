@@ -7,7 +7,7 @@ public class ExcelSheetReader : IExcelSheetReader
 {
     public IReadOnlyList<SheetData> ReadWorkbook(string filePath)
     {
-        using var stream = File.Open(filePath, FileMode.Open, FileAccess.Read, FileShare.Read);
+        using var stream = File.Open(filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
         using var reader = ExcelReaderFactory.CreateReader(stream);
 
         var dataSet = reader.AsDataSet(new ExcelDataSetConfiguration

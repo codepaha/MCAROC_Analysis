@@ -73,6 +73,7 @@ builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseSqlServer(builder.Configuration.GetConnectionString("Default")));
 
 builder.Services.AddScoped<IExcelSheetReader, ExcelSheetReader>();
+builder.Services.AddScoped<IWorkbookDerivativeService, WorkbookDerivativeService>();
 builder.Services.AddScoped<FileValidationService>();
 builder.Services.AddScoped<IngestionOrchestrator>();
 

@@ -1,7 +1,9 @@
 @model RequestDetailsViewModel
+@using Microsoft.AspNetCore.Authentication
 @{
     var r = Model.Request;
     var hasBatch = Model.FilingBatch is not null;
+    var isReviewer = (await Context.AuthenticateAsync("InternalReviewer")).Succeeded;
     var chatSuggestions = new[]
     {
         "Who are the current directors?",
@@ -30,12 +32,23 @@
         <div class="mca-section">
             <h3>Uploaded Reference Files <span class="mca-count">@Model.Documents.Count</span></h3>
             <div class="pi-table-wrap"><table class="pi-results-table">
-                <thead><tr><th>File</th><th>Type</th><th>Status</th><th>Source Role</th><th>Uploaded</th></tr></thead>
+                <thead><tr><th>File</th><th>Type</th><th>Status</th><th>Source Role</th><th>Uploaded</th><th>Action</th></tr></thead>
                 <tbody>
                 @foreach (var doc in Model.Documents.OrderByDescending(d => d.UploadedDate))
                 {
                     <tr>
-                        <td>@doc.OriginalFileName</td>
+                        <td>
+                            @if (doc.UploadStatus == DocumentUploadStatus.Quarantined && !isReviewer)
+                            {
+                                <span><i class="bi bi-file-earmark me-1 text-muted"></i>@doc.OriginalFileName</span>
+                            }
+                            else
+                            {
+                                <a href="/Requests/@r.RequestId/uploaded-documents/@doc.DocumentId/download" class="text-decoration-none fw-semibold" title="Download @doc.OriginalFileName">
+                                    <i class="bi bi-file-earmark me-1"></i>@doc.OriginalFileName
+                                </a>
+                            }
+                        </td>
                         <td>@doc.DocumentType</td>
                         <td>
                             @doc.UploadStatus
@@ -56,6 +69,26 @@
                             }
                         </td>
                         <td>@doc.UploadedDate.ToString("d MMM yyyy HH:mm")</td>
+                        <td>
+                            @if (doc.UploadStatus != DocumentUploadStatus.Quarantined)
+                            {
+                                <a href="/Requests/@r.RequestId/uploaded-documents/@doc.DocumentId/download" class="btn btn-sm btn-outline-primary" title="Download @doc.OriginalFileName">
+                                    <i class="bi bi-download me-1"></i> Download
+                                </a>
+                            }
+                            else if (isReviewer)
+                            {
+                                <a href="/Requests/@r.RequestId/uploaded-documents/@doc.DocumentId/download" class="btn btn-sm btn-outline-danger" title="Download quarantined file (Reviewer only)">
+                                    <i class="bi bi-shield-exclamation me-1"></i> Download Quarantined
+                                </a>
+                            }
+                            else
+                            {
+                                <span class="badge bg-light text-muted border" title="Quarantined files cannot be downloaded">
+                                    <i class="bi bi-slash-circle me-1"></i> Unavailable
+                                </span>
+                            }
+                        </td>
                     </tr>
                 }
                 </tbody>
@@ -100,6 +133,9 @@
             else
             {
                 var fb = Model.FilingBatch!;
+                var archiveDoc = fb.SourceDocumentId > 0
+                    ? Model.Documents.FirstOrDefault(d => d.DocumentId == fb.SourceDocumentId && d.DocumentType == DocumentType.McaFilingsArchive)
+                    : null;
                 if (fb.FailureReason is not null) { <div class="alert alert-danger">@fb.FailureReason</div> }
 
                 <div class="mca-highlight-grid" style="margin-bottom:16px;">
@@ -123,10 +159,16 @@
                     }
                 </div>
 
-                <div id="mca-docs-panel" data-mca-docs-url="@Url.Action("Documents", "Requests", new { id = r.RequestId })">
+                <div id="mca-docs-panel" data-mca-docs-url="@Url.Action("Documents", "Requests", new { id = r.RequestId })" class="d-flex align-items-center gap-2 flex-wrap">
                     <a class="mca-chip" data-mca-docs-load href="@Url.Action("Documents", "Requests", new { id = r.RequestId })">
                         <i class="bi bi-list-ul"></i> Browse @Model.FilingCategoryCounts.Values.Sum() filed document(s)
                     </a>
+                    @if (archiveDoc != null && (archiveDoc.UploadStatus != DocumentUploadStatus.Quarantined || isReviewer))
+                    {
+                        <a href="/Requests/@r.RequestId/uploaded-documents/@archiveDoc.DocumentId/download" class="btn btn-sm btn-outline-secondary" title="Download Source Filings Archive (@archiveDoc.OriginalFileName)">
+                            <i class="bi bi-file-earmark-zip me-1"></i> Download Archive (.zip)
+                        </a>
+                    }
                 </div>
             }
         </div>

@@ -3,6 +3,7 @@ using System.Text.Json;
 using MCAROC_Analysis.Data;
 using MCAROC_Analysis.Data.Entities;
 using MCAROC_Analysis.Services.Analysis;
+using MCAROC_Analysis.Services.Excel;
 using MCAROC_Analysis.Services.McaFilings;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
@@ -32,7 +33,8 @@ public sealed class AutoFetchJobService(
     FilingProcessingQueue filingQueue,
     IStorageReservationManager reservations,
     IWebHostEnvironment env,
-    ILogger<AutoFetchJobService> logger)
+    ILogger<AutoFetchJobService> logger,
+    IWorkbookDerivativeService? derivativeService = null)
 {
     /// <summary>Fallback per-file size estimate used when the registry gives no declared size for a
     /// document or an attachment — only for sizing the up-front storage reservation and the plan-time
@@ -584,6 +586,17 @@ public sealed class AutoFetchJobService(
             {
                 document.UploadStatus = DocumentUploadStatus.ValidationFailed;
                 document.QuarantineReason = openCheck.Error;
+            }
+            else if (derivativeService != null)
+            {
+                try
+                {
+                    await derivativeService.GetOrCreateSanitizedDerivativeAsync(document, ct);
+                }
+                catch (Exception ex)
+                {
+                    logger.LogWarning(ex, "Failed to create sanitized derivative during auto-fetch for Document {DocumentId}", document.DocumentId);
+                }
             }
         }
         await db.SaveChangesAsync(ct);
