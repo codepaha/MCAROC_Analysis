@@ -77,6 +77,9 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<LitigationCaseSourceReport> LitigationCaseSourceReports => Set<LitigationCaseSourceReport>();
     public DbSet<LitigationOrderDocument> LitigationOrderDocuments => Set<LitigationOrderDocument>();
     public DbSet<LitigationOrderChunk> LitigationOrderChunks => Set<LitigationOrderChunk>();
+    public DbSet<LitigationAiAnalysisRun> LitigationAiAnalysisRuns => Set<LitigationAiAnalysisRun>();
+    public DbSet<LitigationCaseAiAnalysis> LitigationCaseAiAnalyses => Set<LitigationCaseAiAnalysis>();
+    public DbSet<LitigationPortfolioAiAnalysis> LitigationPortfolioAiAnalyses => Set<LitigationPortfolioAiAnalysis>();
 
     // #164 Calculation assurance
     public DbSet<CalculationAuditSnapshot> CalculationAuditSnapshots => Set<CalculationAuditSnapshot>();
@@ -260,6 +263,45 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             // 768-dim vector — must match EmbeddingService.Dimensions exactly, same reasoning as
             // DocumentChunk.Embedding (VECTOR_DISTANCE requires both operands to match).
             e.Property(x => x.Embedding).HasColumnType("vector(768)");
+        });
+
+        modelBuilder.Entity<LitigationAiAnalysisRun>(e =>
+        {
+            e.HasKey(x => x.LitigationAiAnalysisRunId);
+            e.HasIndex(x => new { x.RequestId, x.RunNumber }).IsUnique();
+            e.HasIndex(x => x.RequestId).IsUnique().HasFilter("[Status] IN ('Pending', 'InProgress')");
+            e.HasIndex(x => new { x.Status, x.NextAttemptUtc });
+            e.Property(x => x.Status).HasConversion<string>().HasMaxLength(30);
+            e.Property(x => x.ModelId).HasMaxLength(100).IsRequired();
+            e.Property(x => x.PromptVersion).HasMaxLength(20).IsRequired();
+            e.Property(x => x.LeaseOwner).HasMaxLength(100);
+            e.Property(x => x.FailureReason).HasMaxLength(1000);
+            e.HasOne<McaRequest>().WithMany().HasForeignKey(x => x.RequestId).OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<LitigationCaseAiAnalysis>(e =>
+        {
+            e.HasKey(x => x.LitigationCaseAiAnalysisId);
+            e.HasIndex(x => new { x.LitigationAiAnalysisRunId, x.LitigationCaseId }).IsUnique();
+            e.Property(x => x.Status).HasConversion<string>().HasMaxLength(30);
+            e.Property(x => x.EvidenceHash).HasMaxLength(64).IsRequired();
+            e.Property(x => x.PromptHash).HasMaxLength(64).IsRequired();
+            e.Property(x => x.ResponseHash).HasMaxLength(64);
+            e.Property(x => x.FailureReason).HasMaxLength(1000);
+            e.HasOne<LitigationAiAnalysisRun>().WithMany(x => x.CaseAnalyses).HasForeignKey(x => x.LitigationAiAnalysisRunId).OnDelete(DeleteBehavior.Cascade);
+            e.HasOne<LitigationCase>().WithMany().HasForeignKey(x => x.LitigationCaseId).OnDelete(DeleteBehavior.NoAction);
+        });
+
+        modelBuilder.Entity<LitigationPortfolioAiAnalysis>(e =>
+        {
+            e.HasKey(x => x.LitigationPortfolioAiAnalysisId);
+            e.HasIndex(x => x.LitigationAiAnalysisRunId).IsUnique();
+            e.Property(x => x.Status).HasConversion<string>().HasMaxLength(30);
+            e.Property(x => x.EvidenceHash).HasMaxLength(64).IsRequired();
+            e.Property(x => x.PromptHash).HasMaxLength(64).IsRequired();
+            e.Property(x => x.ResponseHash).HasMaxLength(64);
+            e.Property(x => x.FailureReason).HasMaxLength(1000);
+            e.HasOne<LitigationAiAnalysisRun>().WithOne(x => x.PortfolioAnalysis).HasForeignKey<LitigationPortfolioAiAnalysis>(x => x.LitigationAiAnalysisRunId).OnDelete(DeleteBehavior.Cascade);
         });
 
         modelBuilder.Entity<McaRequest>(e =>

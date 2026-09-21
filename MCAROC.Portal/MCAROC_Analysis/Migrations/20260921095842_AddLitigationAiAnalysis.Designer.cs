@@ -5,6 +5,7 @@ using Microsoft.Data.SqlTypes;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 #nullable disable
@@ -12,9 +13,11 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace MCAROC_Analysis.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260921095842_AddLitigationAiAnalysis")]
+    partial class AddLitigationAiAnalysis
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -2926,9 +2929,6 @@ namespace MCAROC_Analysis.Migrations
                         .HasMaxLength(100)
                         .HasColumnType("nvarchar(100)");
 
-                    b.Property<Guid?>("LeaseToken")
-                        .HasColumnType("uniqueidentifier");
-
                     b.Property<string>("ModelId")
                         .IsRequired()
                         .HasMaxLength(100)
@@ -2957,10 +2957,6 @@ namespace MCAROC_Analysis.Migrations
                         .HasColumnType("nvarchar(30)");
 
                     b.HasKey("LitigationAiAnalysisRunId");
-
-                    b.HasIndex("RequestId")
-                        .IsUnique()
-                        .HasFilter("[Status] IN ('Pending', 'InProgress')");
 
                     b.HasIndex("RequestId", "RunNumber")
                         .IsUnique();
