@@ -155,7 +155,7 @@ gate, so it gets its own table rather than living inside either lane's section a
 | #241 LIT-01 | BPR API client + durable litigation-job lifecycle | Claude | — | **MERGED** (PR #251, `29ec856`) |
 | #242 LIT-02 | Persist BPR cases; retain CSP provider identity and apply conservative CNR-first de-duplication | Claude | #241 | **MERGED** (PR #252, `7ce747a`) |
 | #243 LIT-03 | All-orders retrieval, text retention, ZIP delivery | Claude | #241, #242 | **MERGED** (PR #253, `fa8ce3f`) |
-| #244 LIT-04 | Request-scoped litigation evidence for MCA ROC Copilot | Claude | #243 | **CLAIMED** (`feature/244-litigation-copilot-evidence`) |
+| #244 LIT-04 | Request-scoped litigation evidence for MCA ROC Copilot | Claude | #243 | **PR OPEN** (PR #254, `feature/244-litigation-copilot-evidence`) |
 | #245 LIT-05 | Evidence-grounded Gemini case/portfolio analysis | Claude | #242, #243 | unclaimed |
 | #246 LIT-06 | Litigation tab — court grid + case-card UI | Antigravity | #241, #242, #243, #245 | unclaimed |
 | #247 LIT-07 | Standalone litigation PDF/CSV reports | Antigravity | #242, #243, #245, #246 | unclaimed |
@@ -278,6 +278,38 @@ service — if it sits `queued`, `run.cmd` is down) runs *only* what Linux can't
 ---
 
 ## Log  <!-- newest first. Prefix: NEEDS / BLOCKED / DONE / DECISION / FYI -->
+
+### 2026-09-21 — Claude session (#244 LIT-04: litigation evidence for the MCA ROC Copilot; PR #254 opened)
+- **PR #254 opened** (`feature/244-litigation-copilot-evidence` -> `main`) implementing #244 (LIT-04):
+  request-scoped litigation evidence for the MCA ROC Copilot, built on #243's order-document
+  retrieval/text-retention infrastructure.
+- `LitigationOrderChunk` (new entity + `AddLitigationOrderChunks` migration) — parallel to `DocumentChunk`,
+  never fabricating MCA filing IDs onto litigation orders. `RequestId` and case/order/page fields
+  (`LitigationCaseId`, `LitigationCaseOrderId`, `CaseNumber`, `Cnr`, `Court`, `OrderType`, `OrderDate`,
+  `PageNumber`) are denormalized so a citation can identify the precise case, order and page without a join
+  per chunk. Self-caught bug before review: the EF-generated migration defaulted the new `ChunkingStatus`
+  column to `""` instead of `"Pending"` (the C# property initializer doesn't propagate through the
+  string-enum conversion into the migration's default) — fixed by hand so any pre-existing row (plausible,
+  since #243 already shipped) backfills correctly.
+- `LitigationOrderChunkingOrchestrator`/`Queue`/`Worker` mirror `DocumentChunkingOrchestrator`'s atomic-claim,
+  rollback-safe re-chunk, and retry/terminal-failure shape (`MaxChunkRetryCount = 3`), reusing `TextChunker`,
+  `EmbeddingService`, and `DocumentChunkingOrchestrator.ClassifyChunkingError`/`SanitizeAndCap` directly —
+  deliberately per-document, not per-batch, since litigation orders have no batch concept. Triggered from
+  `LitigationOrderDocumentService.DownloadAndExtractAsync` right after a successful download + text-extraction
+  publish.
+- `LitigationDocumentRetriever` mirrors `DocumentRetriever`'s single-entry-point, always-`RequestId`-scoped
+  design and both of its hard-won performance fixes (raw ADO.NET with a properly-typed vector parameter;
+  narrow-subquery-then-join ranking), without the MCA-specific `QuestionHints`/fallback layer. Wired into
+  `RetrievalContextBuilder` as a third evidence source; `SourceType.LitigationChunk` and
+  `LitigationCaseId`/`LitigationCaseOrderId` added to `RetrievedSource`/`ResolvedCitation`.
+- Retention independence preserved: chunking never touches `StoragePath`/`ExtractedText`, and the
+  retention/expiry path never touches `ChunkingStatus`/`LitigationOrderChunks` — an expired/purged original
+  never removes already-indexed text or its citation provenance.
+- 8 new tests (`LitigationOrderChunkingTests`) including a dedicated cross-request-isolation test on the
+  retriever and a retention-independence test. Full solution suite: 1636 tests, 1617 passed, 19 skipped
+  (pre-existing, missing fixtures), 0 failed.
+- `docs/litigation-data-lake-integration.md` updated: #244 marked done in the roadmap table, "Litigation
+  evidence for the MCA ROC Copilot (#244, done)" section added.
 
 ### 2026-09-21 — Claude session (MERGED PR #253 — #243 LIT-03 done; CLAIMED #244 LIT-04)
 - **PR #253 MERGED into `main` as `fa8ce3f`** at reviewed head `5d89b6b` — both required checks green,
