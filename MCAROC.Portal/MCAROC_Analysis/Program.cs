@@ -125,6 +125,7 @@ builder.Services.AddSingleton<ILitigationAiAnalysisClient>(sp =>
 });
 builder.Services.AddScoped<LitigationAiAnalysisOrchestrator>();
 builder.Services.AddHostedService<LitigationAiAnalysisWorker>();
+builder.Services.AddScoped<LitigationReportAssembler>();
 
 builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseSqlServer(builder.Configuration.GetConnectionString("Default")));

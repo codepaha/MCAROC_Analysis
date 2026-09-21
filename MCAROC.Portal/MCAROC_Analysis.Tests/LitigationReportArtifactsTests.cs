@@ -68,17 +68,76 @@ public sealed class LitigationReportArtifactsTests
 
     private static StandaloneLitigationReport ReportWithSingleCase(string cspId)
     {
-        var item = new BprLitigationCase("provider-1", cspId, "TNKP070001332020", "district_court", "against", "civil", "district",
-            "Sub Judge", "Bench", "22/2020", "OS", "2020", "Trial", "DISPOSED", "Code", "29-01-2020", "09-01-2025", null,
-            "09-01-2025", "Tamil Nadu", "Kancheepuram", "[\"Petitioner One\",\"Petitioner Two\"]", "[\"Respondent One\"]",
-            "[\"Advocate One\"]", null, [new BprLitigationOrder("https://source.example/order.pdf", "09-01-2025", "Judgment")]);
+        var orders = new List<StandaloneReportOrderDto>
+        {
+            new(
+                LitigationCaseOrderId: 101,
+                OrderDate: "09-01-2025",
+                OrderType: "Judgment",
+                AvailabilityBucket: LitigationOrderAvailabilityBucket.Downloaded,
+                DocumentStatus: MCAROC_Analysis.Data.Entities.LitigationOrderDocumentStatus.Downloaded,
+                TextExtractionStatus: MCAROC_Analysis.Data.Entities.FilingDocumentProcessingStatus.TextExtracted,
+                RetainedUntilUtc: DateTime.Parse("2025-01-16T12:00:00Z"),
+                AvailabilityDisclosure: "Available via portal (retained until 16-Jan-2025); text extracted",
+                CsvStatus: "Downloaded",
+                ExtractionLabel: "TextExtracted")
+        };
+
+        var caseDto = new StandaloneReportCaseDto(
+            LitigationCaseId: 1,
+            ProviderCaseId: "provider-1",
+            CspId: cspId,
+            CnrNumber: "TNKP070001332020",
+            CourtCategory: "district_court",
+            Direction: "against",
+            CaseClassification: "civil",
+            Type: "district",
+            Court: "Sub Judge",
+            Bench: "Bench",
+            CaseNumber: "22/2020",
+            CaseType: "OS",
+            CaseYear: "2020",
+            CaseStage: "Trial",
+            CaseStatus: "DISPOSED",
+            Act: "Code",
+            FilingDate: "29-01-2020",
+            LastHearingDate: "09-01-2025",
+            NextHearingDate: null,
+            DecisionDate: "09-01-2025",
+            State: "Tamil Nadu",
+            District: "Kancheepuram",
+            PetitionersJson: "[\"Petitioner One\",\"Petitioner Two\"]",
+            RespondentsJson: "[\"Respondent One\"]",
+            PetitionerAdvocatesJson: "[\"Advocate One\"]",
+            RespondentAdvocatesJson: null,
+            Orders: orders);
+
+        var grid = new MCAROC_Analysis.Models.LitigationCourtSummaryGrid();
+        grid.Rows.Add(new MCAROC_Analysis.Models.LitigationCourtSummaryRow
+        {
+            CourtName = "Sub Judge",
+            CourtCategory = "district_court",
+            TotalCases = 1,
+            PendingCases = 0,
+            DisposedCases = 1,
+            UnknownCases = 0,
+            TotalOrders = 1
+        });
+
         return new StandaloneLitigationReport(
-            "MCA-2026-001", "Test Company Limited", DateTimeOffset.Parse("2026-09-20T12:00:00Z"),
-            new BprLitigationReport(new BprLitigationRequest("job-1", "2026-09-20", ["Test Company"]), [item]),
-            new LitigationPortfolioAnalysis("Complete", "R2", "Synthetic QA portfolio analysis.", ["One test finding."]),
-            new Dictionary<string, LitigationCaseAnalysis>
+            AssignmentNumber: "MCA-2026-001",
+            CompanyName: "Test Company Limited",
+            GeneratedAtUtc: DateTimeOffset.Parse("2026-09-20T12:00:00Z"),
+            AuthoritativeSnapshotId: 42,
+            AuthoritativeSnapshotRetrievedUtc: DateTime.Parse("2026-09-20T11:00:00Z"),
+            IsPriorRunDataShown: false,
+            KeywordsSearched: ["Test Company"],
+            CourtSummaryGrid: grid,
+            Cases: [caseDto],
+            PortfolioAnalysis: new LitigationPortfolioAnalysis("Complete", "R2", "Synthetic QA portfolio analysis.", ["One test finding."]),
+            CaseAnalysesByCaseId: new Dictionary<long, LitigationCaseAnalysis>
             {
-                ["provider-1"] = new("Complete", "R2", "Synthetic QA case analysis.", ["One test issue."], "Review the underlying order.", "QA fixture only.")
+                [1] = new("Complete", "R2", "Synthetic QA case analysis.", ["One test issue."], "Review the underlying order.", "QA fixture only.")
             });
     }
 }
