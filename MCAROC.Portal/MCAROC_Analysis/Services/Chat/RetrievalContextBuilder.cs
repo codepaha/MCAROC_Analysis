@@ -1,29 +1,34 @@
 using MCAROC_Analysis.Data;
 using MCAROC_Analysis.Data.Entities;
+using MCAROC_Analysis.Services.LitigationData;
 using Microsoft.EntityFrameworkCore;
 
 namespace MCAROC_Analysis.Services.Chat;
 
 public record RetrievalContext(IReadOnlyList<RetrievedSource> Sources, string IndexingStatusLabel);
 
-/// <summary>ChatService -> RetrievalContextBuilder -> StructuredFactsProvider + DocumentRetriever. This
-/// separation is what makes a real question-classifying router easy to slot in later without restructuring
-/// ChatService — for now it always combines both sources rather than choosing one.</summary>
+/// <summary>ChatService -> RetrievalContextBuilder -> StructuredFactsProvider + DocumentRetriever +
+/// LitigationDocumentRetriever. This separation is what makes a real question-classifying router easy to slot
+/// in later without restructuring ChatService — for now it always combines all three sources rather than
+/// choosing one.</summary>
 public class RetrievalContextBuilder
 {
     private readonly AppDbContext _db = null!;
     private readonly StructuredFactsProvider _structuredFacts = null!;
     private readonly DocumentRetriever _documentRetriever = null!;
+    private readonly LitigationDocumentRetriever _litigationRetriever = null!;
     private readonly EmbeddingService _embeddingService = null!;
 
     protected RetrievalContextBuilder() { }
 
     public RetrievalContextBuilder(
-        AppDbContext db, StructuredFactsProvider structuredFacts, DocumentRetriever documentRetriever, EmbeddingService embeddingService)
+        AppDbContext db, StructuredFactsProvider structuredFacts, DocumentRetriever documentRetriever,
+        LitigationDocumentRetriever litigationRetriever, EmbeddingService embeddingService)
     {
         _db = db;
         _structuredFacts = structuredFacts;
         _documentRetriever = documentRetriever;
+        _litigationRetriever = litigationRetriever;
         _embeddingService = embeddingService;
     }
 
@@ -39,16 +44,29 @@ public class RetrievalContextBuilder
         var facts = await _structuredFacts.BuildDigestAsync(requestId, hints, ct);
 
         // A request without an authoritative batch must never search its historical chunks. Likewise,
-        // there is no reason to call Vertex for an embedding until that batch has indexed a chunk.
+        // there is no reason to call Vertex for an embedding until that batch has indexed a chunk. The
+        // embedding is shared between the MCA-filing and litigation searches below (computed at most once)
+        // rather than calling Vertex twice for the same question.
+        float[]? queryEmbedding = null;
+        async Task<float[]> GetQueryEmbeddingAsync() => queryEmbedding ??= await _embeddingService.EmbedQueryAsync(question, ct);
+
         var chunkMatches = new List<DocumentChunkMatch>();
         if (authoritativeBatch is { } batch
             && await _db.DocumentChunks.AnyAsync(c => c.RequestId == requestId && c.BatchId == batch.BatchId, ct))
         {
-            var queryEmbedding = await _embeddingService.EmbedQueryAsync(question, ct);
-            chunkMatches = await _documentRetriever.SearchRequestDocumentsAsync(requestId, batch.BatchId, queryEmbedding, hints, ct);
+            chunkMatches = await _documentRetriever.SearchRequestDocumentsAsync(requestId, batch.BatchId, await GetQueryEmbeddingAsync(), hints, ct);
         }
 
-        var sources = new List<RetrievedSource>(facts.Count + chunkMatches.Count);
+        // Litigation has no batch concept — gated only on "at least one litigation chunk already indexed for
+        // this request" (mirrors the MCA-filing gate's own reasoning: never call Vertex, or search, before
+        // there is anything to find).
+        var litigationMatches = new List<LitigationOrderChunkMatch>();
+        if (await _db.LitigationOrderChunks.AnyAsync(c => c.RequestId == requestId, ct))
+        {
+            litigationMatches = await _litigationRetriever.SearchRequestOrdersAsync(requestId, await GetQueryEmbeddingAsync(), ct);
+        }
+
+        var sources = new List<RetrievedSource>(facts.Count + chunkMatches.Count + litigationMatches.Count);
         var factTag = 1;
         foreach (var f in facts)
             sources.Add(new RetrievedSource($"F{factTag++}", SourceType.StructuredFact, f.Text,
@@ -63,6 +81,18 @@ public class RetrievalContextBuilder
                 $"{m.Chunk.DocumentName} · Page {m.Chunk.PageNumber}", RelevanceScore: m.Distance,
                 ChunkId: m.Chunk.ChunkId, DocumentName: m.Chunk.DocumentName, PageNumber: m.Chunk.PageNumber,
                 DocumentId: m.Chunk.FilingDocumentId));
+
+        var litigationTag = 1;
+        foreach (var m in litigationMatches)
+        {
+            var label = string.IsNullOrWhiteSpace(m.Chunk.CaseNumber)
+                ? $"Litigation order · Page {m.Chunk.PageNumber}"
+                : $"{m.Chunk.CaseNumber} ({m.Chunk.Court}) · Page {m.Chunk.PageNumber}";
+            sources.Add(new RetrievedSource($"L{litigationTag++}", SourceType.LitigationChunk, m.Chunk.ChunkText, label,
+                RelevanceScore: m.Distance, ChunkId: m.Chunk.LitigationOrderChunkId, DocumentName: m.Chunk.CaseNumber,
+                PageNumber: m.Chunk.PageNumber, DocumentId: m.Chunk.LitigationOrderDocumentId,
+                LitigationCaseId: m.Chunk.LitigationCaseId, LitigationCaseOrderId: m.Chunk.LitigationCaseOrderId));
+        }
 
         var indexingStatus = await ComputeIndexingStatusAsync(requestId, ct);
         return new RetrievalContext(sources, indexingStatus);

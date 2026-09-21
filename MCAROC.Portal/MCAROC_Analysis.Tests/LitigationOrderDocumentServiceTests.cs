@@ -51,7 +51,9 @@ public class LitigationOrderDocumentServiceTests : IAsyncLifetime
             ? Task.FromResult(new[] { IPAddress.Parse("203.0.113.10") })
             : Task.FromException<IPAddress[]>(new System.Net.Sockets.SocketException((int)System.Net.Sockets.SocketError.HostNotFound));
 
-    private LitigationOrderDocumentService NewService(AppDbContext db, StubHandler handler, LitigationOrderDocumentQueue? queue = null, BprLitigationOptions? options = null)
+    private LitigationOrderDocumentService NewService(
+        AppDbContext db, StubHandler handler, LitigationOrderDocumentQueue? queue = null, BprLitigationOptions? options = null,
+        LitigationOrderChunkingQueue? chunkingQueue = null)
     {
         var opts = options ?? DefaultOptions;
         var client = new BprLitigationClient(
@@ -59,7 +61,8 @@ public class LitigationOrderDocumentServiceTests : IAsyncLifetime
         var reservations = new StorageReservationManager(db, Options.Create(new LargeArchiveUploadOptions()), NullLogger<StorageReservationManager>.Instance);
         var extractor = new PdfTextExtractor(NullLogger<PdfTextExtractor>.Instance, tesseractExePath: @"C:\not-installed\tesseract.exe");
         return new LitigationOrderDocumentService(
-            db, client, reservations, extractor, queue ?? new LitigationOrderDocumentQueue(), Options.Create(opts),
+            db, client, reservations, extractor, queue ?? new LitigationOrderDocumentQueue(),
+            chunkingQueue ?? new LitigationOrderChunkingQueue(), Options.Create(opts),
             new FakeEnv(_tempDir), NullLogger<LitigationOrderDocumentService>.Instance);
     }
 

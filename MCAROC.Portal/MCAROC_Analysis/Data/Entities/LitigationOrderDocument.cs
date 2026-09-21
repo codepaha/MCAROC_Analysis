@@ -97,6 +97,36 @@ public sealed class LitigationOrderDocument
     public int RefreshCount { get; set; }
     public DateTime? LastRefreshedUtc { get; set; }
 
+    /// <summary>#244/LIT-04: indexing state for <see cref="LitigationOrderChunk"/> rows derived from
+    /// <see cref="ExtractedText"/>. Defaults to <see cref="ChunkingStatus.Pending"/> for every row regardless
+    /// of download state — harmless, since nothing acts on it until <see cref="TextExtractionStatus"/> also
+    /// reaches <see cref="FilingDocumentProcessingStatus.TextExtracted"/> (mirrors
+    /// <c>McaFilingDocument.ChunkingStatus</c>'s exact same two-gate reasoning). Reuses
+    /// <c>Services.McaFilings.ChunkingStatus</c> directly — a fully generic Pending/InProgress/Chunked/Failed
+    /// state machine with no McaFiling-specific members — rather than a parallel enum.</summary>
+    public ChunkingStatus ChunkingStatus { get; set; } = ChunkingStatus.Pending;
+    public int ChunkRetryCount { get; set; }
+    public string? ChunkingLastError { get; set; }
+    public string? ChunkingErrorCategory { get; set; }
+    public DateTime? ChunkingFailedUtc { get; set; }
+    public DateTime? ChunkingLastAttemptUtc { get; set; }
+
+    /// <summary>Claim/fencing for the chunking attempt — same lease discipline as <see cref="LeaseOwner"/>/
+    /// <see cref="LeaseToken"/>/<see cref="LeaseExpiresUtc"/> above, kept as a separate lease because chunking
+    /// is claimed and completed independently of the download attempt (a different attempt, at a different
+    /// time, potentially by a different process instance). <c>LitigationOrderChunkingOrchestrator</c>'s claim
+    /// mints a fresh token on every Pending → InProgress transition, and every write that follows (the
+    /// Chunked completion, and every Pending/Failed retry transition) is guarded by
+    /// <c>(ChunkingLeaseToken == thisAttempt'sToken, ChunkingLeaseExpiresUtc > now)</c> — a fenced-out attempt
+    /// (superseded by a takeover, or its own lease simply expired) must never publish a chunk set or retry
+    /// count over what the takeover already wrote. Startup recovery may only reclaim a row whose lease has
+    /// demonstrably expired; a still-live lease is left alone and re-checked once it expires, never reset on
+    /// sight — the gap PR #254's review round 1 found or a genuine multi-instance deployment would duplicate
+    /// paid embedding work and let a stale worker overwrite a newer chunk set.</summary>
+    public string? ChunkingLeaseOwner { get; set; }
+    public Guid? ChunkingLeaseToken { get; set; }
+    public DateTime? ChunkingLeaseExpiresUtc { get; set; }
+
     public byte[]? RowVersion { get; set; }
 
     public DateTime CreatedUtc { get; set; }

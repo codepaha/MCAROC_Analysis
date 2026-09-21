@@ -30,8 +30,8 @@ namespace MCAROC_Analysis.Services.LitigationData;
 /// untouched.</summary>
 public sealed class LitigationOrderDocumentService(
     AppDbContext db, BprLitigationClient client, IStorageReservationManager reservations, PdfTextExtractor textExtractor,
-    LitigationOrderDocumentQueue queue, IOptions<BprLitigationOptions> options, IWebHostEnvironment env,
-    ILogger<LitigationOrderDocumentService> logger)
+    LitigationOrderDocumentQueue queue, LitigationOrderChunkingQueue chunkingQueue, IOptions<BprLitigationOptions> options,
+    IWebHostEnvironment env, ILogger<LitigationOrderDocumentService> logger)
 {
     private const int LeaseMinutes = 10; // one HTTP download + one PDF text extraction — generous but not job-length
     private static readonly string LeaseOwnerId = $"{Environment.MachineName}:{Environment.ProcessId}";
@@ -181,6 +181,13 @@ public sealed class LitigationOrderDocumentService(
             logger.LogInformation(
                 "Litigation order document {Id} downloaded and extracted ({Bytes} bytes, {Method}).",
                 orderDocumentId, download.Bytes.LongLength, textMethod);
+
+            // #244/LIT-04: only enqueue for chunking once text extraction actually succeeded — a Downloaded
+            // document with no (or failed) extraction has nothing in ExtractedText for the orchestrator's own
+            // claim to find, and would just fail immediately. RecoverStaleWorkAsync (chunking side) sweeps for
+            // any document that reaches this state without ever being enqueued, so skipping here is safe.
+            if (textStatus == FilingDocumentProcessingStatus.TextExtracted)
+                chunkingQueue.Enqueue(orderDocumentId);
         }
         finally
         {

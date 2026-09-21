@@ -19,9 +19,10 @@ used as a merge key, since its scope in the vendor contract has not been confirm
 hand-picked subset, with its text extracted and retained past the vendor PDF's own retention window (see
 "All-orders retrieval, text retention and bulk ZIP delivery (#243, done)" below).
 
-**Planned (#244)** — retained order text is chunked and embedded so the MCA ROC Copilot can answer with
-exact case/order/page citations, strictly scoped to `RequestId` — never fabricated onto MCA filing IDs,
-since litigation orders are not MCA filings (see "New durable records" below).
+**Done (#244)** — retained order text is chunked and embedded so the MCA ROC Copilot can answer with exact
+case/order/page citations, strictly scoped to `RequestId` — never fabricated onto MCA filing IDs, since
+litigation orders are not MCA filings (see "New durable records" and "Litigation evidence for the MCA ROC
+Copilot (#244, done)" below).
 
 ## Confirmed BPR API contract
 
@@ -87,7 +88,7 @@ stale copy of this table.
 | #241 LIT-01 | BPR API client + durable job lifecycle (authenticate → register → poll → retain raw report) | **Done** |
 | #242 LIT-02 | Persist BPR cases; CNR-first de-dup; retain CSP as provider identity | **Done** |
 | #243 LIT-03 | All-orders retrieval, text retention, bulk ZIP delivery | **Done** |
-| #244 LIT-04 | Request-scoped litigation evidence for the MCA ROC Copilot (a parallel chunk/citation model — never fabricated MCA filing IDs) | Planned |
+| #244 LIT-04 | Request-scoped litigation evidence for the MCA ROC Copilot (a parallel chunk/citation model — never fabricated MCA filing IDs) | **Done** |
 | #245 LIT-05 | Evidence-grounded Gemini case + portfolio analysis | Planned |
 | #246 LIT-06 | Litigation tab — court grid + case-card UI | Planned |
 | #247 LIT-07 | Wire the standalone PDF/CSV report shell to persisted live data | Planned |
@@ -109,10 +110,10 @@ entity — the latter requires an MCA `IngestionRunId` and cannot represent an e
 `LitigationReportSnapshot`, `LitigationCaseSourceReport`) on top of #241's job. #243 adds
 `LitigationOrderDocument` — one row per `LitigationCaseOrder` — for order-document retention.
 
-The current `DocumentChunk` schema is specific to `McaFilingDocument`/`McaFiling`. #244 must not insert
-litigation orders by fabricating MCA filing IDs — it needs a generic, request-scoped document-source
-contract, or a parallel litigation chunk table, with the retriever/citation model understanding both
-sources.
+The `DocumentChunk` schema is specific to `McaFilingDocument`/`McaFiling`. #244 adds `LitigationOrderChunk`
+(one row per page-or-page-fragment of a `LitigationOrderDocument.ExtractedText`) as a parallel table rather
+than inserting litigation orders by fabricating MCA filing IDs — see "Litigation evidence for the MCA ROC
+Copilot (#244, done)" below for the full chunk/retrieval/citation model.
 
 ## All-orders retrieval, text retention and bulk ZIP delivery (#243, done)
 
@@ -154,6 +155,108 @@ on demand from every currently `Downloaded` order via `LitigationOrdersArchiveBu
 folder. A file that has since disappeared from disk is silently skipped, never a hard failure — "ZIP contains
 every currently retained order," never a stale or partial claim.
 
+## Litigation evidence for the MCA ROC Copilot (#244, done)
+
+`LitigationOrderChunk` is the litigation-specific counterpart to `DocumentChunk` — one row per page (or, for
+an oversized page, a paragraph-bounded fragment of one) of a `LitigationOrderDocument.ExtractedText`, split on
+the same `--- Page N (native|OCR) ---` markers `PdfTextExtractor` already writes (shared with the MCA-filing
+pipeline, so `TextChunker` is reused unmodified). `RequestId` is denormalized onto every chunk — the same
+"every retrieval query filters on it directly" discipline `DocumentChunk.RequestId` already establishes, so
+cross-request leakage is structurally harder, not just procedurally avoided. `LitigationCaseId`/
+`LitigationCaseOrderId`/`CaseNumber`/`Cnr`/`Court`/`OrderType`/`OrderDate` are likewise denormalized from the
+owning case/order, so a citation can name "the precise case, order and page" (epic #239's own phrasing)
+without a join per chunk.
+
+**Chunking trigger and lifecycle.** `LitigationOrderDocumentService.DownloadAndExtractAsync` enqueues a
+document for chunking immediately after it publishes a successful download **and** text extraction actually
+reached `TextExtractionStatus.TextExtracted` — a `Downloaded` document with failed/skipped extraction has
+nothing to chunk and would just fail immediately. `LitigationOrderChunkingOrchestrator` mirrors
+`DocumentChunkingOrchestrator`'s rollback-safe re-chunk shape (chunk+embed entirely before touching the
+database; one transaction deletes the old chunk set and inserts the new one together) and retry/
+terminal-failure shape (`ChunkRetryCount`, `MaxChunkRetryCount = 3`, classified/sanitized errors reusing
+`DocumentChunkingOrchestrator.ClassifyChunkingError`/`SanitizeAndCap` directly rather than duplicating that
+redaction logic) — but is deliberately per-document, not per-batch: litigation orders have no batch concept,
+so `LitigationOrderChunkingQueue` is a plain `Channel<long>` of order-document ids, simpler than
+`DocumentChunkingQueue`'s batch-level coalescing. `LitigationOrderChunkingWorker` dequeues with bounded
+concurrency (`MaxConcurrentChunking = 4`, since each unit makes a real Vertex AI embedding call).
+
+**Claim/fencing (PR #254 review round 1).** A first cut of the claim copied `DocumentChunkingOrchestrator`'s
+own shape exactly — a plain `ChunkingStatus.Pending → InProgress` status flip with no owner, lease expiry or
+fencing token, and startup recovery resetting every `InProgress` row unconditionally. That is safe only under
+a single-instance assumption this pipeline does not get to make: under a real multi-instance deployment, a
+second instance starting up while the first is still actively (and slowly — a genuine Vertex AI call) embedding
+would reset that live row back to `Pending` and let both instances claim, embed and attempt to publish the same
+document, with completion unfenced to the claim so the stale instance could overwrite the newer chunk set
+purely by finishing last — duplicating paid embedding work and defeating the claimed atomic-claim safety.
+Closed with the same lease discipline `LitigationOrderDocumentService` already uses for the download attempt:
+the claim mints a fresh `ChunkingLeaseToken`/`ChunkingLeaseExpiresUtc` (`ChunkingLeaseOwner` for
+observability), and every write that follows — the `Chunked` completion and every `Pending`/`Failed` retry
+transition — is guarded by an `ExecuteUpdateAsync` requiring that exact token and an unexpired lease
+(`ChunkingLeaseGuarded`, mirroring `LitigationOrderDocumentService.LeaseGuarded`). The completion write shares
+one transaction with the chunk delete+insert, so a fenced-out attempt's entire chunk set — never just the
+final status flag — rolls back rather than landing even transiently. `RecoverStaleWorkAsync` may now only
+reclaim a row whose lease has demonstrably expired (or never existed); a still-live lease is left completely
+alone and instead scheduled for a one-time re-check right when it's due to expire, mirroring
+`LitigationOrderDocumentService.RecoverStaleWorkAsync`'s own InProgress/live-lease handling. Separately, every
+`Downloaded` + `TextExtracted` + still-`Pending` document is swept and re-enqueued regardless of InProgress
+history, closing the gap where a crash between a successful download publish and the chunking enqueue call
+would otherwise leave a document silently un-indexed forever. Covered by a real multi-context regression
+(`A_second_instances_startup_recovery_never_resets_or_re_enqueues_a_document_worker_A_still_legitimately_owns`)
+proving a live-leased claim survives a concurrent instance's recovery sweep untouched, and a second
+(`ChunkOrderDocumentAsync_a_stale_workers_late_completion_after_a_mid_flight_lease_takeover_never_overwrites_the_winners_chunk_set`)
+proving that once a genuine expiry/takeover happens, the original (now-stale) worker's late completion is
+fenced out and the takeover's chunk rows — down to their own identity values — are left completely untouched.
+
+**Delayed-reclaim liveness and lease renewal (PR #254 review round 2).** Round 1's fix left two gaps. First:
+`RecoverStaleWorkAsync`'s delayed path (`ScheduleRetry`, for a row whose lease was still live at sweep time)
+only ever re-enqueued the id once that lease was due to expire — it never performed the actual reclaim itself,
+and the claim at the time only ever admitted `ChunkingStatus.Pending`. So if the original worker had genuinely
+crashed while its lease was live, the row stayed stuck `InProgress` forever after that lease expired, waiting
+on some unrelated future app restart's recovery sweep to notice it again. Closed by widening the claim itself
+(one atomic `ExecuteUpdateAsync`) to also admit an `InProgress` row whose lease has itself already expired or
+was never set — this fixes every path that can ever reach such a row (immediate, delayed, or any future
+trigger) with one rule, rather than duplicating "is this row actually reclaimable" logic in both the claim and
+the delayed recheck. Second: `EmbeddingService.EmbedDocumentsAsync` loops sequential Vertex batches internally,
+so a single call for a large document's full chunk set could legitimately run past the fixed lease window
+purely due to volume, not a crash — losing the lease mid-flight would discard real, paid-for embedding work and
+restart the whole document from scratch, repeatedly, for a document that is otherwise healthy. Closed by having
+the orchestrator call `EmbedDocumentsAsync` itself in batches capped at one real Vertex round-trip each, renewing
+the (lease-token-guarded) `ChunkingLeaseExpiresUtc` after every batch; a renewal that itself finds 0 rows means a
+takeover has already superseded this attempt, so embedding stops immediately rather than paying for further
+Vertex calls no one can ever publish. Covered by three more tests:
+`A_crashed_workers_live_lease_becomes_claimable_and_reaches_Chunked_via_the_delayed_recheck_without_another_app_restart`
+(recovery runs before a crashed worker's lease expires, and the document still reaches `Chunked` once that
+lease is due — no second recovery sweep, no app restart), and
+`ChunkOrderDocumentAsync_renews_the_lease_between_embedding_batches_for_a_multi_batch_document` (a 40-chunk
+document forcing two embedding batches; the lease's recorded expiry strictly increases between the two batch
+calls, proving the renewal actually moved it forward rather than merely coasting on the original grant).
+
+**Retrieval.** `LitigationDocumentRetriever` is the litigation counterpart to `DocumentRetriever` — the same
+single-entry-point discipline (`SearchRequestOrdersAsync(requestId, queryEmbedding, ct)`, always
+`RequestId`-scoped) and the same two hard-won, measured performance fixes DocumentRetriever's own remarks
+document (raw ADO.NET with a properly-typed `SqlDbTypeExtensions.Vector` parameter, since EF Core 10.0.11's
+SqlServer provider binds `SqlVector<float>` as plain `DbType.Binary`; ranking on a narrow
+`(LitigationOrderChunkId, Distance)` subquery before joining back for wide columns, to avoid a
+`RESOURCE_SEMAPHORE` memory-grant stall sorting full rows including `ChunkText`). Deliberately simpler than
+`DocumentRetriever`, though: no `QuestionHints`/soft-hint-then-fallback layer, since #244's acceptance criteria
+don't call for litigation-specific hint dimensions (CNR/court/order-type keyword extraction would be scope
+creep nothing in the issue asked for).
+
+**Wiring into the Copilot.** `RetrievalContextBuilder.BuildAsync` adds litigation chunks as a third source
+alongside structured facts and MCA-filing chunks — gated on "at least one `LitigationOrderChunk` already
+indexed for this request" (mirroring the MCA-filing gate's own "never call Vertex before there's anything to
+find" reasoning), with the query embedding computed at most once and shared between both chunk searches.
+`SourceType.LitigationChunk` is a new enum member; `RetrievedSource` and `ChatCompletionService.ResolvedCitation`
+both gained `LitigationCaseId`/`LitigationCaseOrderId` fields (reusing `ChunkId`/`DocumentName`/`PageNumber`/
+`DocumentId` for the parts that mean the same thing as an MCA-filing citation) so a resolved citation can
+identify the precise case, order and page without inventing a parallel citation shape.
+
+**Retention independence.** Chunking never touches `LitigationOrderDocument.StoragePath`/`ExtractedText`, and
+the retention/expiry path (`LitigationOrderDocumentService.MarkFailedOrExpiredAsync` and its callers) never
+touches `ChunkingStatus` or `LitigationOrderChunks` — an order whose original PDF has since expired or been
+purged keeps its already-indexed chunks and remains fully retrievable, satisfying epic #239's "retained
+independently of the raw PDF file's own fate" requirement for extracted text.
+
 ## Acceptance checks
 
 - Bharat Petroleum, Hero FinCorp and HDFC samples retain every approved alias, including Hindi variants,
@@ -163,7 +266,9 @@ every currently retained order," never a stale or partial claim.
 - A job retry never creates a duplicate vendor registration or duplicate persisted cases/order documents.
 - A failed/incomplete all-orders download reports exact failures and never claims document coverage is
   complete.
-- Copilot answers cite only documents belonging to the active request and cite exact document/page evidence.
+- Copilot answers cite only documents belonging to the active request and cite exact document/page evidence
+  (covered for litigation by `LitigationOrderChunkingTests`, including a dedicated cross-request-isolation
+  test on `LitigationDocumentRetriever`).
 - The report discloses which keywords were searched, the source, retrieval time, and document/case coverage
   — with no Confirmed/Probable/Candidate labeling anywhere in the client-facing artifact.
 
