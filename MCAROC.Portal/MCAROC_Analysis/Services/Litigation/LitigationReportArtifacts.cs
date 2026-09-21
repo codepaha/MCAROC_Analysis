@@ -3,11 +3,142 @@ using System.Text;
 using System.Text.Json;
 using CsvHelper;
 using CsvHelper.Configuration;
+using MCAROC_Analysis.Data.Entities;
+using MCAROC_Analysis.Models;
+using MCAROC_Analysis.Services.McaFilings;
 using QuestPDF.Fluent;
 using QuestPDF.Helpers;
 using QuestPDF.Infrastructure;
 
 namespace MCAROC_Analysis.Services.LitigationData;
+
+public enum LitigationOrderAvailabilityBucket
+{
+    Downloaded,
+    Expired,
+    Failed,
+    Pending
+}
+
+/// <summary>
+/// Canonical resolver for order availability and disclosure text.
+/// Retention Contract:
+/// - RetainedUntilUtc governs the vendor API retrieval deadline.
+/// - If Status == Downloaded, the PDF has been successfully stored locally and remains permanently
+///   available in the portal regardless of whether RetainedUntilUtc has passed.
+/// - If Status != Downloaded and RetainedUntilUtc <= asOfUtc, the vendor retrieval window has expired.
+/// </summary>
+public static class LitigationOrderAvailabilityResolver
+{
+    public static (LitigationOrderAvailabilityBucket Bucket, string Disclosure, string CsvStatus, string ExtractionLabel) Resolve(
+        LitigationOrderDocument? doc,
+        DateTime asOfUtc)
+    {
+        var extractionLabel = doc?.TextExtractionStatus?.ToString() ?? "NotAttempted";
+
+        if (doc is null)
+            return (LitigationOrderAvailabilityBucket.Pending, "Retrieval pending", "Pending", extractionLabel);
+
+        // Downloaded file is retained locally — permanent portal availability takes precedence over vendor deadline.
+        // RetainedUntilUtc is the vendor API retrieval deadline, NOT the local storage expiry.
+        // We label it as "vendor deadline" to avoid implying the file disappears after that date.
+        if (doc.Status == LitigationOrderDocumentStatus.Downloaded)
+        {
+            var deadlineStr = doc.RetainedUntilUtc > DateTime.MinValue
+                ? $" (vendor deadline: {doc.RetainedUntilUtc:dd-MMM-yyyy})"
+                : string.Empty;
+            var textNote = doc.TextExtractionStatus == FilingDocumentProcessingStatus.TextExtracted
+                ? "; text extracted"
+                : string.Empty;
+            return (LitigationOrderAvailabilityBucket.Downloaded, $"Available via portal{deadlineStr}{textNote}", "Downloaded", extractionLabel);
+        }
+
+        bool isExpired = doc.Status == LitigationOrderDocumentStatus.Expired
+            || (doc.RetainedUntilUtc > DateTime.MinValue && doc.RetainedUntilUtc <= asOfUtc);
+
+        if (isExpired)
+        {
+            var dateStr = doc.RetainedUntilUtc > DateTime.MinValue
+                ? $" on {doc.RetainedUntilUtc:dd-MMM-yyyy}"
+                : string.Empty;
+            var textNote = doc.TextExtractionStatus == FilingDocumentProcessingStatus.TextExtracted
+                ? "; extracted text retained in portal"
+                : string.Empty;
+            return (LitigationOrderAvailabilityBucket.Expired, $"Vendor PDF expired{dateStr}{textNote}", "Expired", extractionLabel);
+        }
+
+        if (doc.Status == LitigationOrderDocumentStatus.Failed)
+            return (LitigationOrderAvailabilityBucket.Failed, "Retrieval failed", "Failed", extractionLabel);
+
+        return (LitigationOrderAvailabilityBucket.Pending, "Retrieval pending", "Pending", extractionLabel);
+    }
+}
+
+public sealed record StandaloneReportOrderDto(
+    long LitigationCaseOrderId,
+    string? OrderDate,
+    string? OrderType,
+    LitigationOrderAvailabilityBucket AvailabilityBucket,
+    LitigationOrderDocumentStatus? DocumentStatus,
+    FilingDocumentProcessingStatus? TextExtractionStatus,
+    DateTime? RetainedUntilUtc,
+    string AvailabilityDisclosure,
+    string CsvStatus,
+    string ExtractionLabel);
+
+public sealed record StandaloneReportCaseDto(
+    long LitigationCaseId,
+    string? ProviderCaseId,
+    string? CspId,
+    string? CnrNumber,
+    string? CourtCategory,
+    string? Direction,
+    string? CaseClassification,
+    string? Type,
+    string? Court,
+    string? Bench,
+    string? CaseNumber,
+    string? CaseType,
+    string? CaseYear,
+    string? CaseStage,
+    string? CaseStatus,
+    string? Act,
+    string? FilingDate,
+    string? LastHearingDate,
+    string? NextHearingDate,
+    string? DecisionDate,
+    string? State,
+    string? District,
+    string? PetitionersJson,
+    string? RespondentsJson,
+    string? PetitionerAdvocatesJson,
+    string? RespondentAdvocatesJson,
+    IReadOnlyList<StandaloneReportOrderDto> Orders);
+
+public sealed record StandaloneLitigationReport(
+    string AssignmentNumber,
+    string CompanyName,
+    DateTimeOffset GeneratedAtUtc,
+    long AuthoritativeSnapshotId,
+    DateTime AuthoritativeSnapshotRetrievedUtc,
+    bool IsPriorRunDataShown,
+    IReadOnlyList<string> KeywordsSearched,
+    LitigationCourtSummaryGrid CourtSummaryGrid,
+    IReadOnlyList<StandaloneReportCaseDto> Cases,
+    LitigationPortfolioAnalysis? PortfolioAnalysis = null,
+    IReadOnlyDictionary<long, LitigationCaseAnalysis>? CaseAnalysesByCaseId = null)
+{
+    public LitigationCaseAnalysis? AnalysisFor(long litigationCaseId) =>
+        CaseAnalysesByCaseId is not null && CaseAnalysesByCaseId.TryGetValue(litigationCaseId, out var analysis)
+            ? analysis
+            : null;
+}
+
+/// <summary>Evidence-backed portfolio interpretation, supplied by the future analysis pipeline.</summary>
+public sealed record LitigationPortfolioAnalysis(string Status, string? RiskLevel, string? Summary, IReadOnlyList<string>? KeyFindings);
+
+/// <summary>Evidence-backed interpretation for a case. A missing entry means analysis has not run.</summary>
+public sealed record LitigationCaseAnalysis(string Status, string? RiskLevel, string? Summary, IReadOnlyList<string>? KeyIssues, string? RecommendedAction, string? EvidenceNote = null);
 
 /// <summary>Renders the standalone litigation deliverables for one MCA ROC assignment.</summary>
 public static class LitigationReportArtifacts
@@ -27,7 +158,11 @@ public static class LitigationReportArtifacts
             foreach (var header in CsvHeaders) csv.WriteField(header);
             csv.NextRecord();
             var serial = 0;
-            foreach (var item in report.Source.Cases) { serial++; WriteRow(csv, serial, report, item); }
+            foreach (var item in report.Cases)
+            {
+                serial++;
+                WriteRow(csv, serial, report, item);
+            }
         }
         return stream.ToArray();
     }
@@ -37,13 +172,22 @@ public static class LitigationReportArtifacts
         "Sr No", "Assignment Number", "Company", "Provider Case ID", "CSP ID", "CNR Number", "Court Category", "Direction",
         "Type", "Court", "Bench", "Case Number", "Case Type", "Case Year", "Case Stage", "Case Status", "Act", "Filing Date",
         "Last Hearing Date", "Next Hearing Date", "Decision Date", "State", "District", "Petitioners", "Respondents",
-        "Petitioner Advocates", "Respondent Advocates", "Order Count", "Order Dates", "Order Types", "Analysis Status",
-        "Analysis Risk", "Analysis Summary", "Analysis Key Issues", "Analysis Recommended Action"
+        "Petitioner Advocates", "Respondent Advocates", "Order Count", "Downloaded Order Count", "Expired Order Count",
+        "Order Dates", "Order Types", "Order Availability Statuses", "Order Retained Until Dates", "Order Text Extraction Statuses",
+        "Analysis Status", "Analysis Risk", "Analysis Summary", "Analysis Key Issues", "Analysis Recommended Action"
     ];
 
-    private static void WriteRow(CsvWriter csv, int serial, StandaloneLitigationReport report, BprLitigationCase item)
+    private static void WriteRow(CsvWriter csv, int serial, StandaloneLitigationReport report, StandaloneReportCaseDto item)
     {
-        var analysis = report.AnalysisFor(item);
+        var analysis = report.AnalysisFor(item.LitigationCaseId);
+        var downloadedCount = item.Orders.Count(o => o.AvailabilityBucket == LitigationOrderAvailabilityBucket.Downloaded);
+        var expiredCount = item.Orders.Count(o => o.AvailabilityBucket == LitigationOrderAvailabilityBucket.Expired);
+        var orderDates = string.Join("; ", item.Orders.Select(o => o.OrderDate ?? "-"));
+        var orderTypes = string.Join("; ", item.Orders.Select(o => o.OrderType ?? "-"));
+        var orderStatuses = string.Join("; ", item.Orders.Select(o => o.CsvStatus));
+        var orderRetainedUntil = string.Join("; ", item.Orders.Select(o => o.RetainedUntilUtc?.ToString("yyyy-MM-dd") ?? "-"));
+        var orderExtraction = string.Join("; ", item.Orders.Select(o => o.ExtractionLabel));
+
         foreach (var value in new[]
         {
             serial.ToString(CultureInfo.InvariantCulture), report.AssignmentNumber, report.CompanyName,
@@ -52,8 +196,8 @@ public static class LitigationReportArtifacts
             item.LastHearingDate, item.NextHearingDate, item.DecisionDate, item.State, item.District,
             PartyText(item.PetitionersJson), PartyText(item.RespondentsJson), PartyText(item.PetitionerAdvocatesJson),
             PartyText(item.RespondentAdvocatesJson), item.Orders.Count.ToString(CultureInfo.InvariantCulture),
-            string.Join("; ", item.Orders.Select(order => order.OrderDate).Where(value => !string.IsNullOrWhiteSpace(value))),
-            string.Join("; ", item.Orders.Select(order => order.OrderType).Where(value => !string.IsNullOrWhiteSpace(value))),
+            downloadedCount.ToString(CultureInfo.InvariantCulture), expiredCount.ToString(CultureInfo.InvariantCulture),
+            orderDates, orderTypes, orderStatuses, orderRetainedUntil, orderExtraction,
             analysis?.Status ?? "Pending", analysis?.RiskLevel, analysis?.Summary,
             analysis is null ? null : string.Join("; ", analysis.KeyIssues ?? []), analysis?.RecommendedAction
         }) csv.WriteField(SafeCsv(value));
@@ -90,25 +234,6 @@ public static class LitigationReportArtifacts
     }
 }
 
-public sealed record StandaloneLitigationReport(
-    string AssignmentNumber,
-    string CompanyName,
-    DateTimeOffset GeneratedAtUtc,
-    BprLitigationReport Source,
-    LitigationPortfolioAnalysis? PortfolioAnalysis = null,
-    IReadOnlyDictionary<string, LitigationCaseAnalysis>? CaseAnalysesByProviderCaseId = null)
-{
-    public LitigationCaseAnalysis? AnalysisFor(BprLitigationCase item) =>
-        !string.IsNullOrWhiteSpace(item.ProviderCaseId) && CaseAnalysesByProviderCaseId is not null &&
-        CaseAnalysesByProviderCaseId.TryGetValue(item.ProviderCaseId, out var analysis) ? analysis : null;
-}
-
-/// <summary>Evidence-backed portfolio interpretation, supplied by the future analysis pipeline.</summary>
-public sealed record LitigationPortfolioAnalysis(string Status, string? RiskLevel, string? Summary, IReadOnlyList<string>? KeyFindings);
-
-/// <summary>Evidence-backed interpretation for a provider case. A missing entry means analysis has not run.</summary>
-public sealed record LitigationCaseAnalysis(string Status, string? RiskLevel, string? Summary, IReadOnlyList<string>? KeyIssues, string? RecommendedAction, string? EvidenceNote = null);
-
 internal sealed class LitigationReportPdfDocument(StandaloneLitigationReport report) : IDocument
 {
     private const string Ink = "#15233D";
@@ -135,12 +260,15 @@ internal sealed class LitigationReportPdfDocument(StandaloneLitigationReport rep
             {
                 column.Spacing(9);
                 ComposeCover(column);
-                column.Item().PageBreak();
-                var serial = 0;
-                foreach (var item in report.Source.Cases)
+                if (report.Cases.Count > 0)
                 {
-                    serial++;
-                    column.Item().EnsureSpace(180).Element(card => ComposeCaseCard(card, serial, item, report.AnalysisFor(item)));
+                    column.Item().PageBreak();
+                    var serial = 0;
+                    foreach (var item in report.Cases)
+                    {
+                        serial++;
+                        column.Item().EnsureSpace(180).Element(card => ComposeCaseCard(card, serial, item, report.AnalysisFor(item.LitigationCaseId)));
+                    }
                 }
             });
             page.Footer().Element(ComposeFooter);
@@ -164,33 +292,93 @@ internal sealed class LitigationReportPdfDocument(StandaloneLitigationReport rep
 
     private void ComposeCover(ColumnDescriptor column)
     {
-        var cases = report.Source.Cases;
-        var pending = cases.Count(item => IsPending(item.CaseStatus));
-        var disposed = cases.Count(item => IsDisposed(item.CaseStatus));
-        var orders = cases.Sum(item => item.Orders.Count);
+        var grid = report.CourtSummaryGrid;
+        var pending = grid.TotalPendingCases;
+        var disposed = grid.TotalDisposedCases;
+        var orders = grid.TotalOrders;
         column.Item().PaddingTop(6).Text("Litigation Due Diligence Report").Bold().FontSize(22).FontColor(Ink);
         column.Item().PaddingTop(2).Text(report.CompanyName).SemiBold().FontSize(13).FontColor(Navy);
         column.Item().Text($"Assignment {report.AssignmentNumber}  |  Generated {report.GeneratedAtUtc:dd MMM yyyy, HH:mm} UTC").FontSize(8).FontColor(Colors.Grey.Darken1);
         column.Item().PaddingTop(10).Element(container => InformationTable(container, new[]
         {
-            ("SOURCE", "BPR Litigation Data Lake"), ("SOURCE REPORT DATE", Display(report.Source.Request.ReportDate)),
-            ("KEYWORDS SEARCHED", report.Source.Request.Keywords.Count == 0 ? "Not supplied by source" : string.Join(" | ", report.Source.Request.Keywords)),
-            ("REPORT SCOPE", "Standalone litigation report; separate from the MCA ROC dossier")
+            ("SOURCE", "BPR Litigation Data Lake"),
+            ("AUTHORITATIVE SNAPSHOT", $"{report.AuthoritativeSnapshotRetrievedUtc:dd MMM yyyy, HH:mm} UTC (ID: {report.AuthoritativeSnapshotId}){(report.IsPriorRunDataShown ? " [Prior Run Snapshot]" : string.Empty)}"),
+            ("KEYWORDS SEARCHED", report.KeywordsSearched.Count == 0 ? "Not supplied by source" : string.Join(" | ", report.KeywordsSearched)),
+            ("REPORT SCOPE", "Standalone litigation report; separate from the MCA ROC dossier"),
+            ("SNAPSHOT ANCHORING", "Membership-only snapshot anchoring; case metadata reflects current persisted records.")
         }));
         column.Item().PaddingTop(12).Row(row =>
         {
-            Metric(row.RelativeItem(), "CASES", cases.Count.ToString(CultureInfo.InvariantCulture), Navy); row.ConstantItem(7);
+            Metric(row.RelativeItem(), "CASES", grid.TotalCases.ToString(CultureInfo.InvariantCulture), Navy); row.ConstantItem(7);
             Metric(row.RelativeItem(), "PENDING", pending.ToString(CultureInfo.InvariantCulture), Red); row.ConstantItem(7);
             Metric(row.RelativeItem(), "DISPOSED", disposed.ToString(CultureInfo.InvariantCulture), Green); row.ConstantItem(7);
             Metric(row.RelativeItem(), "ORDERS ON RECORD", orders.ToString(CultureInfo.InvariantCulture), Amber);
         });
-        column.Item().PaddingTop(13).Element(container => PortfolioPanel(container, report.PortfolioAnalysis));
+
+        // Court Summary Grid
+        column.Item().PaddingTop(12).Text("COURT / TRIBUNAL SUMMARY").Bold().FontSize(8.5f).FontColor(Navy);
+        if (grid.Rows.Count == 0)
+        {
+            column.Item().PaddingTop(4).Background("#FAFCFF").Border(0.8f).BorderColor(Border).Padding(8)
+                .Text("No court proceedings found in authoritative snapshot.").FontSize(8.2f).FontColor(Colors.Grey.Darken1);
+        }
+        else
+        {
+            column.Item().PaddingTop(4).Element(c => ComposeCourtGridTable(c, grid));
+        }
+
+        column.Item().PaddingTop(12).Element(container => PortfolioPanel(container, report.PortfolioAnalysis));
         column.Item().PaddingTop(10).Background("#FAFCFF").Border(0.8f).BorderColor(Border).Padding(9).Column(note =>
         {
             note.Item().Text("REPORT USE AND EVIDENCE").Bold().FontSize(8).FontColor(Navy);
             note.Item().PaddingTop(4).Text("Each following card preserves case metadata returned by the source. Case analysis is shown only where an evidence-backed analysis has been supplied. Original order files are accessed from the portal and are not embedded in this report.").FontSize(8.2f).FontColor(Colors.Grey.Darken1);
         });
     }
+
+    private static void ComposeCourtGridTable(IContainer container, LitigationCourtSummaryGrid grid) => container.Table(table =>
+    {
+        table.ColumnsDefinition(columns =>
+        {
+            columns.RelativeColumn(3); // Court
+            columns.RelativeColumn(2); // Category
+            columns.RelativeColumn(1); // Total
+            columns.RelativeColumn(1); // Pending
+            columns.RelativeColumn(1); // Disposed
+            columns.RelativeColumn(1); // Unknown
+            columns.RelativeColumn(1); // Orders
+        });
+
+        table.Header(header =>
+        {
+            header.Cell().Background("#EAF2FD").BorderBottom(1).BorderColor(Navy).Padding(4).Text("COURT / TRIBUNAL").Bold().FontSize(7).FontColor(Navy);
+            header.Cell().Background("#EAF2FD").BorderBottom(1).BorderColor(Navy).Padding(4).Text("CATEGORY").Bold().FontSize(7).FontColor(Navy);
+            header.Cell().Background("#EAF2FD").BorderBottom(1).BorderColor(Navy).Padding(4).AlignRight().Text("TOTAL").Bold().FontSize(7).FontColor(Navy);
+            header.Cell().Background("#EAF2FD").BorderBottom(1).BorderColor(Navy).Padding(4).AlignRight().Text("PENDING").Bold().FontSize(7).FontColor(Navy);
+            header.Cell().Background("#EAF2FD").BorderBottom(1).BorderColor(Navy).Padding(4).AlignRight().Text("DISPOSED").Bold().FontSize(7).FontColor(Navy);
+            header.Cell().Background("#EAF2FD").BorderBottom(1).BorderColor(Navy).Padding(4).AlignRight().Text("UNKNOWN").Bold().FontSize(7).FontColor(Navy);
+            header.Cell().Background("#EAF2FD").BorderBottom(1).BorderColor(Navy).Padding(4).AlignRight().Text("ORDERS").Bold().FontSize(7).FontColor(Navy);
+        });
+
+        foreach (var row in grid.Rows)
+        {
+            table.Cell().BorderBottom(0.5f).BorderColor("#D7E3F2").Padding(4).Text(Display(row.CourtName)).FontSize(7.5f);
+            table.Cell().BorderBottom(0.5f).BorderColor("#D7E3F2").Padding(4).Text(Humanize(row.CourtCategory)).FontSize(7.5f);
+            table.Cell().BorderBottom(0.5f).BorderColor("#D7E3F2").Padding(4).AlignRight().Text(row.TotalCases.ToString(CultureInfo.InvariantCulture)).FontSize(7.5f);
+            table.Cell().BorderBottom(0.5f).BorderColor("#D7E3F2").Padding(4).AlignRight().Text(row.PendingCases.ToString(CultureInfo.InvariantCulture)).FontSize(7.5f);
+            table.Cell().BorderBottom(0.5f).BorderColor("#D7E3F2").Padding(4).AlignRight().Text(row.DisposedCases.ToString(CultureInfo.InvariantCulture)).FontSize(7.5f);
+            table.Cell().BorderBottom(0.5f).BorderColor("#D7E3F2").Padding(4).AlignRight().Text(row.UnknownCases.ToString(CultureInfo.InvariantCulture)).FontSize(7.5f);
+            table.Cell().BorderBottom(0.5f).BorderColor("#D7E3F2").Padding(4).AlignRight().Text(row.TotalOrders.ToString(CultureInfo.InvariantCulture)).FontSize(7.5f);
+        }
+
+        // Total footer row
+        table.Cell().Background("#F0F4FA").BorderTop(1).BorderColor(Navy).Padding(4).Text("Total (Reconciled)").Bold().FontSize(7.5f).FontColor(Navy);
+        table.Cell().Background("#F0F4FA").BorderTop(1).BorderColor(Navy).Padding(4).Text("").FontSize(7.5f);
+        table.Cell().Background("#F0F4FA").BorderTop(1).BorderColor(Navy).Padding(4).AlignRight().Text(grid.TotalCases.ToString(CultureInfo.InvariantCulture)).Bold().FontSize(7.5f).FontColor(Navy);
+        table.Cell().Background("#F0F4FA").BorderTop(1).BorderColor(Navy).Padding(4).AlignRight().Text(grid.TotalPendingCases.ToString(CultureInfo.InvariantCulture)).Bold().FontSize(7.5f).FontColor(Navy);
+        table.Cell().Background("#F0F4FA").BorderTop(1).BorderColor(Navy).Padding(4).AlignRight().Text(grid.TotalDisposedCases.ToString(CultureInfo.InvariantCulture)).Bold().FontSize(7.5f).FontColor(Navy);
+        table.Cell().Background("#F0F4FA").BorderTop(1).BorderColor(Navy).Padding(4).AlignRight().Text(grid.TotalUnknownCases.ToString(CultureInfo.InvariantCulture)).Bold().FontSize(7.5f).FontColor(Navy);
+        table.Cell().Background("#F0F4FA").BorderTop(1).BorderColor(Navy).Padding(4).AlignRight().Text(grid.TotalOrders.ToString(CultureInfo.InvariantCulture)).Bold().FontSize(7.5f).FontColor(Navy);
+    });
 
     private static void Metric(IContainer container, string label, string value, string color) => container.Background(BlueTint).Border(0.8f).BorderColor(Border).Padding(8).Column(card =>
     {
@@ -205,13 +393,35 @@ internal sealed class LitigationReportPdfDocument(StandaloneLitigationReport rep
         if (analysis?.KeyFindings is { Count: > 0 }) foreach (var finding in analysis.KeyFindings) panel.Item().PaddingTop(2).Text(text => { text.Span("• ").FontColor(Navy); text.Span(finding); });
     });
 
-    private static void ComposeCaseCard(IContainer container, int serial, BprLitigationCase item, LitigationCaseAnalysis? analysis) => container.Border(0.9f).BorderColor(Border).Column(card =>
+    private static void ComposeCaseCard(IContainer container, int serial, StandaloneReportCaseDto item, LitigationCaseAnalysis? analysis) => container.Border(0.9f).BorderColor(Border).Column(card =>
     {
-        var accent = StatusColor(item.CaseStatus);
+        var bucket = LitigationCaseStatusClassifier.Classify(item.CaseStatus, item.CaseStage);
+        var accent = bucket switch
+        {
+            LitigationCaseStatusBucket.Pending => Red,
+            LitigationCaseStatusBucket.Disposed => Green,
+            _ => Amber
+        };
+        var statusBadgeText = bucket switch
+        {
+            LitigationCaseStatusBucket.Pending => "PENDING",
+            LitigationCaseStatusBucket.Disposed => "DISPOSED",
+            _ => !string.IsNullOrWhiteSpace(item.CaseStatus) ? item.CaseStatus.ToUpperInvariant() : "UNKNOWN"
+        };
+
         card.Item().Background(BlueTint).BorderLeft(4).BorderColor(accent).Padding(9).Row(row =>
         {
-            row.RelativeItem().Column(title => { title.Item().Text($"CASE {serial:000}").Bold().FontSize(7.5f).FontColor(Navy); title.Item().PaddingTop(2).Text(Display(item.CaseNumber)).Bold().FontSize(14).FontColor(Ink); title.Item().PaddingTop(1).Text(Display(item.Court)).FontSize(8.5f).FontColor(Colors.Grey.Darken1); });
-            row.AutoItem().Column(badges => { badges.Item().AlignRight().Element(c => Pill(c, Display(item.CaseStatus).ToUpperInvariant(), accent)); badges.Item().PaddingTop(4).AlignRight().Text(item.Orders.Count == 1 ? "1 ORDER ON RECORD" : $"{item.Orders.Count} ORDERS ON RECORD").FontSize(7).FontColor(Amber); });
+            row.RelativeItem().Column(title =>
+            {
+                title.Item().Text($"CASE {serial:000}").Bold().FontSize(7.5f).FontColor(Navy);
+                title.Item().PaddingTop(2).Text(Display(item.CaseNumber)).Bold().FontSize(14).FontColor(Ink);
+                title.Item().PaddingTop(1).Text(Display(item.Court)).FontSize(8.5f).FontColor(Colors.Grey.Darken1);
+            });
+            row.AutoItem().Column(badges =>
+            {
+                badges.Item().AlignRight().Element(c => Pill(c, statusBadgeText, accent));
+                badges.Item().PaddingTop(4).AlignRight().Text(item.Orders.Count == 1 ? "1 ORDER ON RECORD" : $"{item.Orders.Count} ORDERS ON RECORD").FontSize(7).FontColor(Amber);
+            });
         });
         card.Item().Padding(9).Column(body =>
         {
@@ -223,7 +433,7 @@ internal sealed class LitigationReportPdfDocument(StandaloneLitigationReport rep
         });
     });
 
-    private static void CaseDetailsGrid(IContainer container, BprLitigationCase item) => container.Table(table =>
+    private static void CaseDetailsGrid(IContainer container, StandaloneReportCaseDto item) => container.Table(table =>
     {
         table.ColumnsDefinition(columns => { columns.RelativeColumn(); columns.RelativeColumn(); });
         var fields = new (string Label, string Value)[]
@@ -236,7 +446,7 @@ internal sealed class LitigationReportPdfDocument(StandaloneLitigationReport rep
         foreach (var field in fields) table.Cell().BorderBottom(0.5f).BorderColor("#D7E3F2").PaddingVertical(3).PaddingRight(7).Text(text => { text.Span(field.Label + "  ").Bold().FontSize(6.8f).FontColor(Navy); text.Span(field.Value).FontSize(8.1f); });
     });
 
-    private static void PartiesPanel(IContainer container, BprLitigationCase item) => container.Background("#FBFDFF").Border(0.7f).BorderColor(Border).Padding(8).Column(panel =>
+    private static void PartiesPanel(IContainer container, StandaloneReportCaseDto item) => container.Background("#FBFDFF").Border(0.7f).BorderColor(Border).Padding(8).Column(panel =>
     {
         panel.Item().Text("PARTIES & REPRESENTATION").Bold().FontSize(8).FontColor(Navy);
         panel.Item().PaddingTop(5).Row(row => { PartyColumn(row.RelativeItem(), "PETITIONER", LitigationReportArtifacts.PartyText(item.PetitionersJson), LitigationReportArtifacts.PartyText(item.PetitionerAdvocatesJson)); row.ConstantItem(10); PartyColumn(row.RelativeItem(), "RESPONDENT", LitigationReportArtifacts.PartyText(item.RespondentsJson), LitigationReportArtifacts.PartyText(item.RespondentAdvocatesJson)); });
@@ -251,18 +461,28 @@ internal sealed class LitigationReportPdfDocument(StandaloneLitigationReport rep
 
     private static void AnalysisPanel(IContainer container, LitigationCaseAnalysis? analysis) => container.Background("#F5F8FD").Border(0.8f).BorderColor(Border).Padding(8).Column(panel =>
     {
-        panel.Item().Row(row => { row.RelativeItem().Text("CASE ANALYSIS").Bold().FontSize(8).FontColor(Navy); row.AutoItem().Element(c => Pill(c, analysis?.RiskLevel ?? "PENDING", analysis is null ? Navy : RiskColor(analysis.RiskLevel))); });
+        panel.Item().Row(row => { row.RelativeItem().Text("CASE ANALYSIS").Bold().FontSize(8.5f).FontColor(Navy); row.AutoItem().Element(c => Pill(c, analysis?.RiskLevel ?? "PENDING", analysis is null ? Navy : RiskColor(analysis.RiskLevel))); });
         panel.Item().PaddingTop(5).Text(analysis?.Summary ?? "Analysis pending. It will be generated only after extracted order text and case metadata are available for this case.").FontSize(8.2f);
         if (analysis?.KeyIssues is { Count: > 0 }) { panel.Item().PaddingTop(5).Text("KEY ISSUES").Bold().FontSize(7).FontColor(Navy); foreach (var issue in analysis.KeyIssues) panel.Item().PaddingTop(2).Text(text => { text.Span("• ").FontColor(Navy); text.Span(issue); }); }
         if (!string.IsNullOrWhiteSpace(analysis?.RecommendedAction)) panel.Item().PaddingTop(5).Text(text => { text.Span("RECOMMENDED ACTION  ").Bold().FontSize(7).FontColor(Green); text.Span(analysis.RecommendedAction).FontSize(8); });
         if (!string.IsNullOrWhiteSpace(analysis?.EvidenceNote)) panel.Item().PaddingTop(4).Text(analysis.EvidenceNote).Italic().FontSize(7.2f).FontColor(Colors.Grey.Darken1);
     });
 
-    private static void OrdersPanel(IContainer container, IReadOnlyList<BprLitigationOrder> orders) => container.Column(panel =>
+    private static void OrdersPanel(IContainer container, IReadOnlyList<StandaloneReportOrderDto> orders) => container.Column(panel =>
     {
         panel.Item().Text("ORDERS & JUDGMENTS").Bold().FontSize(8).FontColor(Navy);
         if (orders.Count == 0) { panel.Item().PaddingTop(4).Text("No order record was returned for this case.").FontSize(8).FontColor(Colors.Grey.Darken1); return; }
-        foreach (var order in orders) panel.Item().PaddingTop(4).Background("#FFFCF4").BorderLeft(3).BorderColor(Amber).Padding(5).Text(text => { text.Span(Display(order.OrderDate)).Bold().FontColor(Amber); text.Span("  |  "); text.Span(Display(order.OrderType)); text.Span("  |  Available through the portal while retained.").FontColor(Colors.Grey.Darken1); });
+        foreach (var order in orders)
+        {
+            panel.Item().PaddingTop(4).Background("#FFFCF4").BorderLeft(3).BorderColor(Amber).Padding(5).Text(text =>
+            {
+                text.Span(Display(order.OrderDate)).Bold().FontColor(Amber);
+                text.Span("  |  ");
+                text.Span(Display(order.OrderType));
+                text.Span("  |  ");
+                text.Span(order.AvailabilityDisclosure).FontColor(Colors.Grey.Darken1);
+            });
+        }
     });
 
     private static void InformationTable(IContainer container, IEnumerable<(string Label, string Value)> values) => container.Table(table =>
@@ -272,9 +492,6 @@ internal sealed class LitigationReportPdfDocument(StandaloneLitigationReport rep
     });
 
     private static void Pill(IContainer container, string text, string color) => container.Background("#FFFFFF").Border(0.8f).BorderColor(color).CornerRadius(7).PaddingVertical(3).PaddingHorizontal(7).Text(text).Bold().FontSize(6.8f).FontColor(color);
-    private static bool IsPending(string? status) => status?.Contains("PENDING", StringComparison.OrdinalIgnoreCase) == true;
-    private static bool IsDisposed(string? status) => status?.Contains("DISPOSED", StringComparison.OrdinalIgnoreCase) == true;
-    private static string StatusColor(string? status) => IsPending(status) ? Red : IsDisposed(status) ? Green : Amber;
     private static string RiskColor(string? risk) => risk?.StartsWith("R1", StringComparison.OrdinalIgnoreCase) == true ? Green : risk?.StartsWith("R2", StringComparison.OrdinalIgnoreCase) == true ? Amber : risk?.StartsWith("R3", StringComparison.OrdinalIgnoreCase) == true ? Red : Navy;
     private static string Display(string? value) => string.IsNullOrWhiteSpace(value) ? "-" : value;
     private static string JoinValues(string? first, string? second) => string.Join(" / ", new[] { first, second }.Where(value => !string.IsNullOrWhiteSpace(value)));

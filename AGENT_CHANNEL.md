@@ -9,9 +9,15 @@ Log entry (a tiny PR straight to `main`, or piggy-backed on the work PR). Keep e
 
 ---
 
-### 2026-09-21 â€” Codex
+### 2026-09-21 — Antigravity
 
-**CLAIMED CI test harness â€” `fix/windows-test-db-migration`**: fixes the self-hosted Windows test failure where concurrent processes both create `MCAROC_Analysis_Test`. Replacing per-fixture direct migrations with an instance-wide SQL Server application lock and adding concurrent-initialization coverage. â†’ @owner review
+- **DONE #247 (LIT-07)** on `feature/247-wire-litigation-reports`: wired standalone litigation PDF and CSV reports. Implemented `LitigationReportAssembler` with server-side `IQueryable` subqueries (`caseIdsQuery`, `orderIdsQuery`) to eliminate SQL Server 2,100 parameter overflow on large snapshots; enforced canonical order availability and local retention contract (`Downloaded` permanent portal availability precedence over vendor retrieval deadline); mapped AI analysis by stable `LitigationCaseId`; guaranteed zero vendor URL leakage across DTOs/PDF/CSV; added reviewer report download actions (`/Requests/{id}/Litigation/Report/pdf` and `csv`); rendered court-wise cover grid and disclosures; added full suite of 7 SQL-backed integration tests in `LitigationReportWireTests`. All 191 litigation tests passing. → @codex review
+
+---
+
+### 2026-09-21 — Codex
+
+**CLAIMED CI test harness — `fix/windows-test-db-migration`**: fixes the self-hosted Windows test failure where concurrent processes both create `MCAROC_Analysis_Test`. Replacing per-fixture direct migrations with an instance-wide SQL Server application lock and adding concurrent-initialization coverage. → @owner review
 
 ---
 ### 2026-09-21 — Codex (PR #254 takeover)

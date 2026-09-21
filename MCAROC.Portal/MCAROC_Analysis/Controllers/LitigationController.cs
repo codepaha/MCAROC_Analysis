@@ -295,6 +295,52 @@ public class LitigationController(
         return PhysicalFile(zipPath, "application/zip");
     }
 
+    /// <summary>Generates and downloads the standalone litigation due diligence PDF report.</summary>
+    [HttpGet("/Requests/{id:long}/Litigation/Report/pdf")]
+    [Authorize(AuthenticationSchemes = "InternalReviewer")]
+    public async Task<IActionResult> DownloadPdfReport(long id, [FromServices] LitigationReportAssembler assembler, CancellationToken ct)
+    {
+        var report = await assembler.AssembleAsync(id, ct);
+        if (report is null)
+            return NotFound("No completed litigation snapshot is available for this request.");
+
+        var pdfBytes = LitigationReportArtifacts.RenderPdf(report);
+        var safeCompany = AutoFetchArchiveBuilder.CompanyToken(report.CompanyName);
+        var fileName = $"LitigationReport_{safeCompany}_{id}.pdf";
+
+        Response.Headers["Referrer-Policy"] = "no-referrer";
+        Response.Headers.CacheControl = "no-store, private";
+        Response.Headers["X-Content-Type-Options"] = "nosniff";
+        var contentDisposition = new Microsoft.Net.Http.Headers.ContentDispositionHeaderValue("attachment");
+        contentDisposition.SetHttpFileName(fileName);
+        Response.Headers.ContentDisposition = contentDisposition.ToString();
+
+        return File(pdfBytes, "application/pdf");
+    }
+
+    /// <summary>Generates and downloads the standalone litigation case register CSV export.</summary>
+    [HttpGet("/Requests/{id:long}/Litigation/Report/csv")]
+    [Authorize(AuthenticationSchemes = "InternalReviewer")]
+    public async Task<IActionResult> DownloadCsvReport(long id, [FromServices] LitigationReportAssembler assembler, CancellationToken ct)
+    {
+        var report = await assembler.AssembleAsync(id, ct);
+        if (report is null)
+            return NotFound("No completed litigation snapshot is available for this request.");
+
+        var csvBytes = LitigationReportArtifacts.RenderCsv(report);
+        var safeCompany = AutoFetchArchiveBuilder.CompanyToken(report.CompanyName);
+        var fileName = $"LitigationReport_{safeCompany}_{id}.csv";
+
+        Response.Headers["Referrer-Policy"] = "no-referrer";
+        Response.Headers.CacheControl = "no-store, private";
+        Response.Headers["X-Content-Type-Options"] = "nosniff";
+        var contentDisposition = new Microsoft.Net.Http.Headers.ContentDispositionHeaderValue("attachment");
+        contentDisposition.SetHttpFileName(fileName);
+        Response.Headers.ContentDisposition = contentDisposition.ToString();
+
+        return File(csvBytes, "text/csv; charset=utf-8");
+    }
+
     private static void TryDelete(string path)
     {
         try { if (System.IO.File.Exists(path)) System.IO.File.Delete(path); }
