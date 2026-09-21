@@ -172,8 +172,8 @@ gate, so it gets its own table rather than living inside either lane's section a
 | #241 LIT-01 | BPR API client + durable litigation-job lifecycle | Claude | — | **MERGED** (PR #251, `29ec856`) |
 | #242 LIT-02 | Persist BPR cases; retain CSP provider identity and apply conservative CNR-first de-duplication | Claude | #241 | **MERGED** (PR #252, `7ce747a`) |
 | #243 LIT-03 | All-orders retrieval, text retention, ZIP delivery | Claude | #241, #242 | **MERGED** (PR #253, `fa8ce3f`) |
-| #244 LIT-04 | Request-scoped litigation evidence for MCA ROC Copilot | Claude | #243 | **PR OPEN** (PR #254, `feature/244-litigation-copilot-evidence`) |
-| #245 LIT-05 | Evidence-grounded Gemini case/portfolio analysis | Claude | #242, #243 | unclaimed |
+| #244 LIT-04 | Request-scoped litigation evidence for MCA ROC Copilot | Claude | #243 | **MERGED** (PR #254, `624f404`) |
+| #245 LIT-05 | Evidence-grounded Gemini case/portfolio analysis | Codex (takeover) | #242, #243 | **CLAIMED** (`feature/245-litigation-gemini-analysis`) |
 | #246 LIT-06 | Litigation tab — court grid + case-card UI | Antigravity | #241, #242, #243, #245 | unclaimed |
 | #247 LIT-07 | Standalone litigation PDF/CSV reports | Antigravity | #242, #243, #245, #246 | unclaimed |
 | #248 LIT-08 | End-to-end acceptance + operational hardening | Codex (release gate) | #241–#247 | unclaimed |
