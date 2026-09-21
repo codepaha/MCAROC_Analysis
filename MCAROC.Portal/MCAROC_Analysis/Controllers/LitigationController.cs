@@ -13,8 +13,41 @@ namespace MCAROC_Analysis.Controllers;
 /// every other request-scoped document download in <c>RequestsController</c> — litigation order PDFs are not
 /// part of the public/client-facing report surface (see epic #239's report contract: "No source vendor order
 /// URL will be published in the report").</summary>
-public class LitigationController(AppDbContext db, IWebHostEnvironment env, ILogger<LitigationController>? logger = null) : Controller
+public class LitigationController(AppDbContext db, IWebHostEnvironment env, LitigationAiAnalysisOrchestrator analysis,
+    ILogger<LitigationController>? logger = null) : Controller
 {
+    /// <summary>Starts an evidence-only LIT-05 run, or returns the already-active run. The response is
+    /// deliberately lifecycle metadata; completed case/portfolio output is read from the persisted endpoint.
+    /// This keeps the paid call asynchronous and prevents a browser refresh from issuing a second request.</summary>
+    [HttpPost("/Requests/{id:long}/Litigation/Analysis")]
+    [Authorize(AuthenticationSchemes = "InternalReviewer")]
+    public async Task<IActionResult> StartAnalysis(long id, CancellationToken ct)
+    {
+        if (!await db.Requests.AnyAsync(r => r.RequestId == id, ct)) return NotFound();
+        var run = await analysis.CreateOrJoinAsync(id, ct);
+        return Accepted(new { run.LitigationAiAnalysisRunId, run.RunNumber, status = run.Status.ToString(), run.CreatedUtc });
+    }
+
+    /// <summary>Returns a render-ready projection made entirely from persisted auditable records. Pending and
+    /// failed states remain visible rather than being replaced by a made-up conclusion.</summary>
+    [HttpGet("/Requests/{id:long}/Litigation/Analysis")]
+    [Authorize(AuthenticationSchemes = "InternalReviewer")]
+    public async Task<IActionResult> GetAnalysis(long id, CancellationToken ct)
+    {
+        if (!await db.Requests.AnyAsync(r => r.RequestId == id, ct)) return NotFound();
+        var run = await db.LitigationAiAnalysisRuns.Where(x => x.RequestId == id)
+            .OrderByDescending(x => x.RunNumber).Select(x => new
+            {
+                x.LitigationAiAnalysisRunId, x.RunNumber, Status = x.Status.ToString(), x.AttemptCount,
+                x.CreatedUtc, x.CompletedUtc, x.FailureReason,
+                Cases = x.CaseAnalyses.OrderBy(c => c.LitigationCaseId).Select(c => new
+                { c.LitigationCaseId, Status = c.Status.ToString(), c.AnalysisJson, c.FailureReason, c.CompletedUtc }),
+                Portfolio = x.PortfolioAnalysis == null ? null : new
+                { Status = x.PortfolioAnalysis.Status.ToString(), x.PortfolioAnalysis.AnalysisJson, x.PortfolioAnalysis.FailureReason, x.PortfolioAnalysis.CompletedUtc }
+            }).FirstOrDefaultAsync(ct);
+        return run is null ? NotFound() : Ok(run);
+    }
+
     [HttpGet("/Requests/{id:long}/Litigation/OrdersZip")]
     [Authorize(AuthenticationSchemes = "InternalReviewer")]
     public async Task<IActionResult> DownloadOrdersZip(long id, CancellationToken ct)
