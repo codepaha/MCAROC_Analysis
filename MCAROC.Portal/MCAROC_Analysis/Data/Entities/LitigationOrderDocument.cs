@@ -37,10 +37,17 @@ public enum LitigationOrderDocumentStatus
 /// gets a genuinely new retrieval attempt this way, distinguishing "never tried again" from "tried again and
 /// still failed."
 ///
-/// <b>Crash/concurrency safety</b> mirrors <see cref="LitigationReportSnapshot"/> exactly, for the same
-/// reasons: <see cref="LeaseOwner"/>/<see cref="LeaseToken"/>/<see cref="LeaseExpiresUtc"/> make claiming one
-/// document for download atomic and reclaimable after a crash, and <see cref="RowVersion"/> makes every
-/// mutation optimistic-concurrency-protected so two workers can never both believe they own the same row.</summary>
+/// <b>Crash/concurrency safety</b> starts like <see cref="LitigationReportSnapshot"/>'s own lease pattern —
+/// <see cref="LeaseOwner"/>/<see cref="LeaseToken"/>/<see cref="LeaseExpiresUtc"/> make claiming one document
+/// for download atomic and reclaimable after a crash, with <see cref="RowVersion"/> protecting that CLAIM
+/// step specifically — but goes further for every write after the claim: this row's download involves an
+/// out-of-transaction side effect (a file write) that RowVersion alone cannot protect, so every subsequent
+/// write is instead an explicit, lease-token-and-expiry-guarded <c>ExecuteUpdateAsync</c>, and the file itself
+/// is written to a path keyed by the claiming attempt's own <see cref="LeaseToken"/> (see <see
+/// cref="StoragePath"/>) rather than a fixed name — see <c>LitigationOrderDocumentService</c>'s own remarks
+/// for the exact failure this closes: a stale worker whose lease has been superseded by a takeover finishing
+/// its download late and corrupting the winner's file on disk even though the database row is otherwise
+/// correctly protected.</summary>
 public sealed class LitigationOrderDocument
 {
     public long LitigationOrderDocumentId { get; set; }
@@ -52,9 +59,10 @@ public sealed class LitigationOrderDocument
     /// <summary>The deadline by which this order's vendor PDF URL is expected to still be retrievable —
     /// source report's <c>RetrievedUtc</c> plus <c>BprLitigationOptions.OrderRetentionDays</c> (default 7,
     /// matching epic #239's confirmed decision), computed once at row creation and never moved by a failed
-    /// attempt. A rerun that re-surfaces this same order via a new snapshot gets its own fresh order-document
-    /// admission (see <c>LitigationOrderDocumentService.EnsureDocumentAsync</c>), which is how "refresh"
-    /// effectively extends retrievability rather than this field being pushed forward in place.</summary>
+    /// attempt. A rerun that re-surfaces this same order via a new snapshot gets an explicit refresh (see
+    /// <c>LitigationCasePersistenceService.UpsertOrdersAsync</c>, which admits/refreshes this row inside the
+    /// same transaction as the order it belongs to), which is how "refresh" effectively extends
+    /// retrievability rather than this field being pushed forward in place.</summary>
     public DateTime RetainedUntilUtc { get; set; }
 
     public int AttemptCount { get; set; }
@@ -62,6 +70,10 @@ public sealed class LitigationOrderDocument
     public Guid? LeaseToken { get; set; }
     public DateTime? LeaseExpiresUtc { get; set; }
 
+    /// <summary>Path to the retained PDF, named <c>{LitigationOrderDocumentId}-{LeaseToken:N}.pdf</c> — keyed
+    /// by the WINNING attempt's own lease token, never a fixed/shared name, so a stale attempt's late file
+    /// write can never land on the same path as the attempt that actually published this row. See
+    /// <c>LitigationOrderDocumentService</c>'s own remarks for why a fixed path is unsafe here.</summary>
     public string? StoragePath { get; set; }
     public long? FileSizeBytes { get; set; }
     public string? FileHash { get; set; }

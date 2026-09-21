@@ -14,10 +14,29 @@ public sealed class BprLitigationClientTests
 {
     private static readonly BprLitigationOptions Configured = new() { BaseUrl = "https://bpr.example/", Id = "app", SecretKey = "secret" };
 
-    private static BprLitigationClient NewClient(StubHandler handler, BprLitigationOptions? options = null) => new(
+    // A fake DNS map, never real network/DNS — IsSafeDestinationAsync's private-address check must stay
+    // fully deterministic and CI-sandbox-safe. Addresses are from RFC 5737's documentation ranges (public-
+    // looking but reserved for exactly this purpose) except where a test deliberately maps a host to a
+    // private/loopback address to prove the block applies even to an otherwise-allowed hostname.
+    private static readonly Dictionary<string, IPAddress[]> DefaultDnsMap = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["bpr.example"] = [IPAddress.Parse("203.0.113.10")],
+        ["cdn.approved.example"] = [IPAddress.Parse("203.0.113.20")],
+        ["unapproved.example"] = [IPAddress.Parse("203.0.113.30")],
+        ["internal-cdn.example"] = [IPAddress.Parse("127.0.0.1")]
+    };
+
+    private static Task<IPAddress[]> FakeResolver(string host, CancellationToken ct) =>
+        DefaultDnsMap.TryGetValue(host, out var addresses)
+            ? Task.FromResult(addresses)
+            : Task.FromException<IPAddress[]>(new System.Net.Sockets.SocketException((int)System.Net.Sockets.SocketError.HostNotFound));
+
+    private static BprLitigationClient NewClient(
+        StubHandler handler, BprLitigationOptions? options = null, Func<string, CancellationToken, Task<IPAddress[]>>? resolver = null) => new(
         new HttpClient(handler) { BaseAddress = new Uri("https://bpr.example/") },
         Options.Create(options ?? Configured),
-        NullLogger<BprLitigationClient>.Instance);
+        NullLogger<BprLitigationClient>.Instance,
+        resolver ?? FakeResolver);
 
     // ── Authenticate ───────────────────────────────────────────────────────────────────────────────
 
@@ -347,22 +366,158 @@ public sealed class BprLitigationClientTests
     }
 
     [Fact]
-    public async Task DownloadOrderDocumentAsync_never_attaches_the_JWT_to_a_third_party_host()
+    public async Task DownloadOrderDocumentAsync_never_attaches_the_JWT_to_an_approved_third_party_host()
     {
-        // Regression: forwarding BPR's own JWT to an arbitrary third-party document host (the confirmed
+        // Regression: forwarding BPR's own JWT to an approved third-party document host (the confirmed
         // contract has no example of how order URLs are authorized) would leak the token into that host's
-        // own access logs — must only ever be sent when the URL shares BPR's own configured host.
+        // own access logs — must only ever be sent when the URL shares BPR's own configured host, even for a
+        // host that passed the allowlist check.
         var handler = new StubHandler();
         handler.OnPath("files/o1.pdf", request =>
         {
             Assert.False(request.Headers.Contains("Authorization"));
             return new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(PdfBytes) };
         });
+        var options = new BprLitigationOptions
+        {
+            BaseUrl = Configured.BaseUrl, Id = Configured.Id, SecretKey = Configured.SecretKey,
+            AllowedOrderDocumentHosts = ["cdn.approved.example"]
+        };
 
-        var result = await NewClient(handler).DownloadOrderDocumentAsync(
-            "raw-token", "https://third-party-cdn.example/files/o1.pdf", 1024, CancellationToken.None);
+        var result = await NewClient(handler, options).DownloadOrderDocumentAsync(
+            "raw-token", "https://cdn.approved.example/files/o1.pdf", 1024, CancellationToken.None);
 
         Assert.True(result.Ok);
+    }
+
+    // ── SSRF prevention (PR #253 review): pdf_url is untrusted vendor-report content ─────────────────
+
+    [Fact]
+    public async Task DownloadOrderDocumentAsync_rejects_a_host_not_on_the_allowlist_without_calling_it()
+    {
+        var handler = new StubHandler();
+        handler.OnPath("files/o1.pdf", _ => new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(PdfBytes) });
+
+        var result = await NewClient(handler).DownloadOrderDocumentAsync(
+            "token", "https://unapproved.example/files/o1.pdf", 1024, CancellationToken.None);
+
+        Assert.False(result.Ok);
+        Assert.Contains("not BPR's own host or on the configured AllowedOrderDocumentHosts allowlist", result.Error);
+        Assert.Empty(handler.Requests); // the server-side request is never made
+    }
+
+    [Fact]
+    public async Task DownloadOrderDocumentAsync_rejects_a_plain_HTTP_url_even_on_an_allowed_host()
+    {
+        var handler = new StubHandler();
+        handler.OnPath("orders/o1.pdf", _ => new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(PdfBytes) });
+
+        var result = await NewClient(handler).DownloadOrderDocumentAsync(
+            "token", "http://bpr.example/orders/o1.pdf", 1024, CancellationToken.None);
+
+        Assert.False(result.Ok);
+        Assert.Contains("not a valid absolute HTTPS URL", result.Error);
+        Assert.Empty(handler.Requests);
+    }
+
+    [Fact]
+    public async Task DownloadOrderDocumentAsync_rejects_a_private_IP_literal_even_when_explicitly_allowlisted()
+    {
+        // Defense in depth: even a misconfigured allowlist entry that is itself a raw metadata/private IP
+        // address must still be refused — the private-address check is not something the allowlist can
+        // override.
+        var handler = new StubHandler();
+        handler.OnPath("latest/meta-data", _ => new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(PdfBytes) });
+        var options = new BprLitigationOptions
+        {
+            BaseUrl = Configured.BaseUrl, Id = Configured.Id, SecretKey = Configured.SecretKey,
+            AllowedOrderDocumentHosts = ["169.254.169.254"]
+        };
+
+        var result = await NewClient(handler, options).DownloadOrderDocumentAsync(
+            "token", "https://169.254.169.254/latest/meta-data", 1024, CancellationToken.None);
+
+        Assert.False(result.Ok);
+        Assert.Contains("resolves to a private, loopback or link-local address", result.Error);
+        Assert.Empty(handler.Requests);
+    }
+
+    [Fact]
+    public async Task DownloadOrderDocumentAsync_rejects_an_allowlisted_hostname_that_resolves_to_a_private_address()
+    {
+        // The allowlist check alone is not enough — a hostname (unlike a literal IP) could resolve
+        // internally now or after a future DNS change, so the destination is always resolved and checked.
+        var handler = new StubHandler();
+        handler.OnPath("files/o1.pdf", _ => new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(PdfBytes) });
+        var options = new BprLitigationOptions
+        {
+            BaseUrl = Configured.BaseUrl, Id = Configured.Id, SecretKey = Configured.SecretKey,
+            AllowedOrderDocumentHosts = ["internal-cdn.example"] // maps to 127.0.0.1 in DefaultDnsMap
+        };
+
+        var result = await NewClient(handler, options).DownloadOrderDocumentAsync(
+            "token", "https://internal-cdn.example/files/o1.pdf", 1024, CancellationToken.None);
+
+        Assert.False(result.Ok);
+        Assert.Contains("resolves to a private, loopback or link-local address", result.Error);
+        Assert.Empty(handler.Requests);
+    }
+
+    [Fact]
+    public async Task DownloadOrderDocumentAsync_fails_closed_when_the_host_cannot_be_resolved_at_all()
+    {
+        var options = new BprLitigationOptions
+        {
+            BaseUrl = Configured.BaseUrl, Id = Configured.Id, SecretKey = Configured.SecretKey,
+            AllowedOrderDocumentHosts = ["nonexistent-host.example"] // not in DefaultDnsMap — resolver throws
+        };
+        var handler = new StubHandler();
+
+        var result = await NewClient(handler, options).DownloadOrderDocumentAsync(
+            "token", "https://nonexistent-host.example/o1.pdf", 1024, CancellationToken.None);
+
+        Assert.False(result.Ok);
+        Assert.Empty(handler.Requests);
+    }
+
+    [Fact]
+    public async Task BprLitigationHttpClient_registration_disables_automatic_redirect_following()
+    {
+        // Regression for PR #253 review: the host-allowlist/private-address checks above only ever see the
+        // URL a vendor report asserts. If the underlying transport transparently followed a redirect, a
+        // response could silently come from a completely different, unchecked host — the checks would have
+        // been bypassed, not merely skipped. This proves the exact handler configuration
+        // Program.cs's AddHttpClient<BprLitigationClient> registration uses actually prevents that (keep
+        // this in sync with that registration if it ever changes).
+        using var listener = new HttpListener();
+        var port = GetFreeTcpPort();
+        listener.Prefixes.Add($"http://127.0.0.1:{port}/");
+        listener.Start();
+        var serverTask = Task.Run(async () =>
+        {
+            var ctx = await listener.GetContextAsync();
+            ctx.Response.StatusCode = 302;
+            ctx.Response.RedirectLocation = "http://internal.example/should-never-be-fetched";
+            ctx.Response.Close();
+        });
+
+        using var handler = new System.Net.Http.SocketsHttpHandler { AllowAutoRedirect = false };
+        using var client = new HttpClient(handler);
+
+        var response = await client.GetAsync($"http://127.0.0.1:{port}/");
+
+        Assert.Equal(HttpStatusCode.Redirect, response.StatusCode); // never silently followed to the Location host
+        listener.Stop();
+        await serverTask;
+    }
+
+    private static int GetFreeTcpPort()
+    {
+        var listener = new System.Net.Sockets.TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        var port = ((IPEndPoint)listener.LocalEndpoint).Port;
+        listener.Stop();
+        return port;
     }
 
     [Fact]

@@ -58,6 +58,16 @@ public sealed class BprLitigationOptions
     /// exceeds this is treated as a failed download, never silently truncated.</summary>
     public long MaxOrderPdfBytes { get; init; } = 50 * 1024 * 1024;
 
+    /// <summary>Explicit allowlist of extra hostnames (beyond BPR's own configured host) that an order's
+    /// <c>pdf_url</c> is allowed to point to — never inferred from the report content itself. A vendor
+    /// report's <c>pdf_url</c> is untrusted input; without this, <see cref="BprLitigationClient.DownloadOrderDocumentAsync"/>
+    /// would make the application fetch (and potentially retain, if the response happens to start with the
+    /// PDF signature) whatever URL the report asserts — a server-side request forgery path onto internal
+    /// services or cloud metadata endpoints. Empty by default: until an operator confirms a real vendor
+    /// document/CDN host and adds it here, only BPR's own host is ever fetched from. Case-insensitive exact
+    /// match only, no wildcards.</summary>
+    public IReadOnlyList<string> AllowedOrderDocumentHosts { get; init; } = [];
+
     public bool IsConfigured =>
         !string.IsNullOrWhiteSpace(BaseUrl) && !string.IsNullOrWhiteSpace(Id) && !string.IsNullOrWhiteSpace(SecretKey);
 }

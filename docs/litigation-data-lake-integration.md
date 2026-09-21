@@ -50,6 +50,15 @@ Still genuinely unconfirmed, even with the collection in hand:
   Authorization header at all, on the assumption the URL is self-contained/pre-signed — consistent with the
   confirmed "may expire after seven days" product decision reading as a signed-URL TTL. If this assumption
   is ever contradicted by a real response, that one method is the only place to change.
+- **(#243, security)** `pdf_url` is untrusted vendor-report content, not a value this application chose —
+  treated accordingly. `DownloadOrderDocumentAsync` requires HTTPS, requires the host to be BPR's own
+  configured host or on the operator-maintained `BprLitigationOptions.AllowedOrderDocumentHosts` allowlist,
+  resolves the destination and refuses any private/loopback/link-local/carrier-NAT address (defense in depth
+  even for an allowlisted host, against DNS pointing it somewhere internal now or later), and never follows a
+  redirect (`Program.cs` registers the client with `AllowAutoRedirect = false` specifically so a 3xx can't
+  silently retarget the request past these checks). Without this, a compromised or malicious report could
+  point `pdf_url` at an internal service or a cloud metadata endpoint and have this server fetch — and, if
+  the response happened to start with the PDF signature, retain — it.
 
 `BprLitigationClient` (#241/#243) handles all of these response-shape gaps defensively — trying a short list
 of plausible field names and failing loudly naming what it actually received, sniffing the report response's
@@ -105,10 +114,17 @@ as an explicit, auditable refresh of an existing one (a re-surfaced order whose 
 or expired — see below) — the same atomic-admission discipline `EnsureSnapshotAsync` already uses, so an
 order can never exist with no document eligible to import it. `LitigationOrderDocumentService` then owns
 retrieval itself: claim (RowVersion-protected lease, mirroring `LitigationReportSnapshot`) → authenticate →
-`BprLitigationClient.DownloadOrderDocumentAsync` (bounded-size, PDF-signature-validated, same-host-only JWT)
-→ reserve disk headroom (`IStorageReservationManager`, the same ledger AutoFetch draws from) → write →
-`PdfTextExtractor.ExtractAsync` (native text first, Tesseract OCR fallback — the same extractor McaFilings
-already uses).
+`BprLitigationClient.DownloadOrderDocumentAsync` (SSRF-guarded — see the allowlist/private-address/redirect
+checks above; bounded-size; PDF-signature-validated; same-host-only JWT) → reserve disk headroom
+(`IStorageReservationManager`, the same ledger AutoFetch draws from) → write, to a path keyed by this
+attempt's own lease token, never a fixed name → `PdfTextExtractor.ExtractAsync` (native text first, Tesseract
+OCR fallback — the same extractor McaFilings already uses) → publish, via an `ExecuteUpdateAsync` explicitly
+guarded by `(documentId, thisAttempt'sLeaseToken, LeaseExpiresUtc > now)`, mirroring `LitigationSearchJobService.LeaseGuarded`
+exactly. That last step matters because the file write is an out-of-transaction side effect RowVersion alone
+cannot protect: a worker whose lease has been superseded by a takeover, finishing its download late, must
+never be able to publish its own (possibly different) bytes over what the takeover already wrote — the
+per-attempt file path plus the lease-guarded publish together close that gap; a fenced-out attempt deletes
+only its own file and touches nothing else.
 
 **Retention and expiry.** Epic #239's confirmed decision: the vendor's original PDF URL may expire seven
 days after the report that surfaced it was retrieved (`BprLitigationOptions.OrderRetentionDays`, default 7).

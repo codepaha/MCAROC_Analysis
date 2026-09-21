@@ -20,7 +20,9 @@ namespace MCAROC_Analysis.Services.LitigationData;
 /// (<c>{"status":false,"message":"..."}</c>) — a valid, non-empty JSON body that is neither a report nor a
 /// string pending-status field, so it is classified explicitly rather than falling through to Completed.</item>
 /// </list></summary>
-public sealed class BprLitigationClient(HttpClient http, IOptions<BprLitigationOptions> options, ILogger<BprLitigationClient> logger)
+public sealed class BprLitigationClient(
+    HttpClient http, IOptions<BprLitigationOptions> options, ILogger<BprLitigationClient> logger,
+    Func<string, CancellationToken, Task<IPAddress[]>>? hostResolver = null)
 {
     private static readonly string[] TokenFieldCandidates = ["jwt", "token", "access_token", "Authorization", "authorization"];
     private static readonly string[] JobIdFieldCandidates = ["job_id", "jobId", "id", "request_id", "requestId"];
@@ -29,6 +31,10 @@ public sealed class BprLitigationClient(HttpClient http, IOptions<BprLitigationO
     private static readonly byte[] PdfSignature = [0x25, 0x50, 0x44, 0x46, 0x2D]; // "%PDF-"
 
     private readonly BprLitigationOptions _opts = options.Value;
+    // Defaults to real DNS resolution in production; tests inject a canned resolver so
+    // IsSafeDestinationAsync's private-address check is deterministic and never depends on real network/DNS
+    // reachability (which a CI sandbox may not have for arbitrary hostnames at all).
+    private readonly Func<string, CancellationToken, Task<IPAddress[]>> _resolveHost = hostResolver ?? Dns.GetHostAddressesAsync;
 
     /// <summary>POST sec/authenticate with the configured id/secret_key. A live test call confirmed the
     /// response body is the raw JWT itself, not JSON — that is tried first; a JSON-wrapped token (one of
@@ -147,15 +153,28 @@ public sealed class BprLitigationClient(HttpClient http, IOptions<BprLitigationO
     }
 
     /// <summary>Downloads one order's PDF from <paramref name="pdfUrl"/> (a <c>LitigationCaseOrder.PdfUrl</c>
-    /// value, captured verbatim from a BPR report). This is not one of the three confirmed BPR endpoints —
-    /// there is no captured example of how an order URL is authorized. Two defensive choices follow from
-    /// that:
+    /// value, captured verbatim from a BPR report — untrusted vendor-report content, not one of the three
+    /// confirmed BPR endpoints, with no captured example of how an order URL is authorized). Several
+    /// defensive checks follow from that, in order:
     /// <list type="bullet">
+    /// <item><b>HTTPS only, and only to an explicitly allowed host</b> (<see cref="BprLitigationOptions.AllowedOrderDocumentHosts"/>
+    /// plus BPR's own configured host) — never a URL the vendor report merely asserts. Without this, a
+    /// malicious or compromised report could point <c>pdf_url</c> at an arbitrary internal service or cloud
+    /// metadata endpoint and have this server fetch (and, if the response starts with the PDF signature,
+    /// retain) it — a server-side request forgery path. This check runs before any network call.</item>
+    /// <item><b>The allowed host must not resolve to a private/loopback/link-local address</b> — checked via
+    /// DNS resolution of the actual destination, not the literal hostname string, so an allowed hostname that
+    /// (now or via a future DNS change) resolves internally is still refused. Defense in depth even for an
+    /// intentionally-allowlisted host.</item>
+    /// <item><b>Redirects are never followed</b> — the caller's <see cref="HttpClient"/> is registered with
+    /// automatic redirects disabled (see <c>Program.cs</c>'s <c>AddHttpClient&lt;BprLitigationClient&gt;</c>
+    /// registration) specifically so a 3xx response can never silently pivot this request to a host the
+    /// checks above never saw. A 3xx here is simply a failed download, like any other non-2xx status.</item>
     /// <item>The JWT is only ever attached when <paramref name="pdfUrl"/> shares BPR's own configured host —
-    /// never forwarded to an arbitrary third-party document host this URL might point to, which would leak
-    /// the token into that host's own access logs. If the URL is a self-contained pre-signed link (the
-    /// common pattern for a time-limited document link, and consistent with epic #239's "may expire after
-    /// seven days" reading as a signed-URL TTL), it needs no Authorization header at all.</item>
+    /// never forwarded to an approved third-party document host, which would leak the token into that host's
+    /// own access logs. If the URL is a self-contained pre-signed link (the common pattern for a time-limited
+    /// document link, and consistent with epic #239's "may expire after seven days" reading as a signed-URL
+    /// TTL), it needs no Authorization header at all.</item>
     /// <item>The response is read as a bounded stream, never buffered unbounded into memory — the vendor
     /// contract documents no file-size limit, so a declared or actual size over <paramref name="maxBytes"/>
     /// is treated as a failed download rather than risking unbounded memory use for one order.</item>
@@ -166,11 +185,21 @@ public sealed class BprLitigationClient(HttpClient http, IOptions<BprLitigationO
     public async Task<BprOrderDownloadResult> DownloadOrderDocumentAsync(string token, string pdfUrl, long maxBytes, CancellationToken ct)
     {
         RequireConfigured();
-        if (!Uri.TryCreate(pdfUrl, UriKind.Absolute, out var uri) || (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps))
-            return BprOrderDownloadResult.Failed($"Order PDF URL is not a valid absolute HTTP(S) URL: '{pdfUrl}'.");
+        if (!Uri.TryCreate(pdfUrl, UriKind.Absolute, out var uri) || uri.Scheme != Uri.UriSchemeHttps)
+            return BprOrderDownloadResult.Failed($"Order PDF URL is not a valid absolute HTTPS URL: '{pdfUrl}'.");
+
+        var bprHost = http.BaseAddress?.Host;
+        var isBprHost = bprHost is not null && string.Equals(uri.Host, bprHost, StringComparison.OrdinalIgnoreCase);
+        if (!isBprHost && !_opts.AllowedOrderDocumentHosts.Any(h => string.Equals(h, uri.Host, StringComparison.OrdinalIgnoreCase)))
+            return BprOrderDownloadResult.Failed(
+                $"Order PDF host '{uri.Host}' is not BPR's own host or on the configured AllowedOrderDocumentHosts allowlist — refusing to fetch it.");
+
+        if (!await IsSafeDestinationAsync(uri.Host, ct))
+            return BprOrderDownloadResult.Failed(
+                $"Order PDF host '{uri.Host}' resolves to a private, loopback or link-local address — refusing to fetch it.");
 
         using var request = new HttpRequestMessage(HttpMethod.Get, uri);
-        if (http.BaseAddress is not null && string.Equals(uri.Host, http.BaseAddress.Host, StringComparison.OrdinalIgnoreCase))
+        if (isBprHost)
             request.Headers.TryAddWithoutValidation("Authorization", token);
 
         HttpResponseMessage response;
@@ -233,6 +262,55 @@ public sealed class BprLitigationClient(HttpClient http, IOptions<BprLitigationO
 
     private static bool StartsWithPdfSignature(byte[] bytes) =>
         bytes.Length >= PdfSignature.Length && bytes.AsSpan(0, PdfSignature.Length).SequenceEqual(PdfSignature);
+
+    // Private/loopback/link-local ranges an order PDF host must never resolve to, even if the hostname
+    // itself is on the allowlist — defense in depth against DNS pointing an approved-looking name at an
+    // internal address (now, or via a future DNS change).
+    private static readonly IReadOnlyList<IPNetwork> BlockedDestinationNetworks =
+    [
+        IPNetwork.Parse("10.0.0.0/8"),
+        IPNetwork.Parse("172.16.0.0/12"),
+        IPNetwork.Parse("192.168.0.0/16"),
+        IPNetwork.Parse("127.0.0.0/8"),
+        IPNetwork.Parse("169.254.0.0/16"), // link-local — includes cloud metadata endpoints (e.g. 169.254.169.254)
+        IPNetwork.Parse("0.0.0.0/8"),
+        IPNetwork.Parse("100.64.0.0/10"), // carrier-grade NAT — internal-facing in practice
+        IPNetwork.Parse("::1/128"),
+        IPNetwork.Parse("fe80::/10"),
+        IPNetwork.Parse("fc00::/7")
+    ];
+
+    /// <summary>Resolves <paramref name="host"/> and checks every returned address against
+    /// <see cref="BlockedDestinationNetworks"/> — resolving rather than pattern-matching the hostname string,
+    /// so this catches an allowlisted host that (now or later) resolves to an internal address, not just an
+    /// obviously-internal literal. A resolution failure or an empty result is treated as unsafe (fail closed)
+    /// rather than silently proceeding.</summary>
+    private async Task<bool> IsSafeDestinationAsync(string host, CancellationToken ct)
+    {
+        IPAddress[] addresses;
+        if (IPAddress.TryParse(host, out var literal))
+        {
+            addresses = [literal];
+        }
+        else
+        {
+            try
+            {
+                addresses = await _resolveHost(host, ct);
+            }
+            catch (Exception)
+            {
+                return false;
+            }
+        }
+
+        if (addresses.Length == 0) return false;
+        return addresses.All(address =>
+        {
+            var normalized = address.IsIPv4MappedToIPv6 ? address.MapToIPv4() : address;
+            return !BlockedDestinationNetworks.Any(network => network.Contains(normalized));
+        });
+    }
 
     private void RequireConfigured()
     {

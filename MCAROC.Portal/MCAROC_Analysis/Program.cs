@@ -81,7 +81,12 @@ builder.Services.AddHttpClient<BprLitigationClient>((sp, client) =>
     if (!string.IsNullOrWhiteSpace(opts.BaseUrl))
         client.BaseAddress = new Uri(opts.BaseUrl.EndsWith('/') ? opts.BaseUrl : opts.BaseUrl + "/");
     client.Timeout = TimeSpan.FromMinutes(2);
-});
+})
+// Redirects disabled: DownloadOrderDocumentAsync's host-allowlist/private-address checks only ever see the
+// URL a vendor report asserts — an auto-followed 3xx would silently re-target the request to a host those
+// checks never validated, defeating them. See BprLitigationClientTests for the regression this protects
+// (mirror any change here in that test's own handler construction).
+.ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { AllowAutoRedirect = false });
 builder.Services.AddSingleton<LitigationSearchQueue>();
 builder.Services.AddScoped<LitigationSearchJobService>();
 builder.Services.AddHostedService<LitigationSearchWorker>();

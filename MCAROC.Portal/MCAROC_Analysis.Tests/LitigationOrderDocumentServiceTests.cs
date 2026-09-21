@@ -44,11 +44,18 @@ public class LitigationOrderDocumentServiceTests : IAsyncLifetime
         BaseUrl = "https://bpr.example/", Id = "app", SecretKey = "secret", OrderRetentionDays = 7, MaxOrderPdfBytes = 50 * 1024 * 1024
     };
 
+    // A fake DNS map, never real network/DNS — see BprLitigationClientTests' own copy of this reasoning.
+    // "bpr.example" resolves to an RFC 5737 documentation address (public-looking, reserved, never blocked).
+    private static Task<IPAddress[]> FakeResolver(string host, CancellationToken ct) =>
+        string.Equals(host, "bpr.example", StringComparison.OrdinalIgnoreCase)
+            ? Task.FromResult(new[] { IPAddress.Parse("203.0.113.10") })
+            : Task.FromException<IPAddress[]>(new System.Net.Sockets.SocketException((int)System.Net.Sockets.SocketError.HostNotFound));
+
     private LitigationOrderDocumentService NewService(AppDbContext db, StubHandler handler, LitigationOrderDocumentQueue? queue = null, BprLitigationOptions? options = null)
     {
         var opts = options ?? DefaultOptions;
         var client = new BprLitigationClient(
-            new HttpClient(handler) { BaseAddress = new Uri(opts.BaseUrl) }, Options.Create(opts), NullLogger<BprLitigationClient>.Instance);
+            new HttpClient(handler) { BaseAddress = new Uri(opts.BaseUrl) }, Options.Create(opts), NullLogger<BprLitigationClient>.Instance, FakeResolver);
         var reservations = new StorageReservationManager(db, Options.Create(new LargeArchiveUploadOptions()), NullLogger<StorageReservationManager>.Instance);
         var extractor = new PdfTextExtractor(NullLogger<PdfTextExtractor>.Instance, tesseractExePath: @"C:\not-installed\tesseract.exe");
         return new LitigationOrderDocumentService(
@@ -283,6 +290,63 @@ public class LitigationOrderDocumentServiceTests : IAsyncLifetime
         await using var verifyDb = CreateContext();
         var reloaded = await verifyDb.LitigationOrderDocuments.FirstAsync(d => d.LitigationOrderDocumentId == document.LitigationOrderDocumentId);
         Assert.Equal(LitigationOrderDocumentStatus.Downloaded, reloaded.Status);
+    }
+
+    [Fact]
+    public async Task DownloadAndExtractAsync_a_stale_workers_late_completion_after_a_mid_flight_takeover_never_corrupts_the_winners_file()
+    {
+        // Regression for PR #253 review finding 2: worker A claims, then (while still slowly mid-download)
+        // its lease genuinely expires and a second worker B takes over, downloads, and publishes ITS OWN
+        // bytes. A then finishes its own download and tries to publish too. Before the fix, both wrote to the
+        // SAME fixed path ({id}.pdf) and only the DB row was RowVersion-protected — whichever of A/B wrote
+        // its file to disk LAST could leave the file mismatched with whatever hash the database (correctly)
+        // recorded. This proves the fix: per-claim file paths mean A and B can never write the same file, and
+        // A's lease-guarded publish is rejected outright (0 rows), so A's own file is deleted and never
+        // touches the row B already published — DB hash and on-disk bytes always agree.
+        await using var db = CreateContext();
+        var (_, _, order) = await SeedOrderAsync(db, "S1", "https://bpr.example/orders/s1.pdf");
+        var document = await SeedDocumentAsync(db, order.LitigationCaseOrderId, DateTime.UtcNow.AddDays(5));
+
+        var pdfBytesA = ExtractablePdfBytes(
+            "Stale worker A's bytes — must never end up as the published file on disk even though A finishes its own download.");
+        var pdfBytesB = ExtractablePdfBytes(
+            "Winning worker B's bytes — this is what must be published and must exactly match the database's recorded hash.");
+
+        var handlerA = new StubHandler();
+        StubAuthenticate(handlerA);
+        handlerA.OnPath("orders/s1.pdf", _ =>
+        {
+            // The interleaving point itself: A's lease is backdated to already-expired on an independent
+            // connection — exactly what real wall-clock elapsed time while A was still (slowly) downloading
+            // would produce — then a full, real worker B claims and completes synchronously, right here,
+            // before control ever returns to A.
+            using (var takeoverDb = CreateContext())
+            {
+                takeoverDb.LitigationOrderDocuments.Where(d => d.LitigationOrderDocumentId == document.LitigationOrderDocumentId)
+                    .ExecuteUpdate(s => s.SetProperty(d => d.LeaseExpiresUtc, DateTime.UtcNow.AddSeconds(-1)));
+            }
+
+            var handlerB = new StubHandler();
+            StubAuthenticate(handlerB);
+            handlerB.OnPath("orders/s1.pdf", __ => new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(pdfBytesB) });
+            using var dbB = CreateContext();
+            var serviceB = NewService(dbB, handlerB);
+            serviceB.DownloadAndExtractAsync(document.LitigationOrderDocumentId, CancellationToken.None).GetAwaiter().GetResult();
+
+            return new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(pdfBytesA) };
+        });
+
+        var serviceA = NewService(db, handlerA); // A's own claim already happened before this call started
+        await serviceA.DownloadAndExtractAsync(document.LitigationOrderDocumentId, CancellationToken.None);
+
+        await using var verifyDb = CreateContext();
+        var reloaded = await verifyDb.LitigationOrderDocuments.FirstAsync(d => d.LitigationOrderDocumentId == document.LitigationOrderDocumentId);
+        Assert.Equal(LitigationOrderDocumentStatus.Downloaded, reloaded.Status);
+        var expectedHashB = Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(pdfBytesB));
+        Assert.Equal(expectedHashB, reloaded.FileHash); // B's hash, never A's
+        Assert.NotNull(reloaded.StoragePath);
+        var onDisk = await File.ReadAllBytesAsync(reloaded.StoragePath!);
+        Assert.Equal(pdfBytesB, onDisk); // the file ON DISK matches what the DB records — no A/B mismatch
     }
 
     // ── Recovery ───────────────────────────────────────────────────────────────────────────────────
