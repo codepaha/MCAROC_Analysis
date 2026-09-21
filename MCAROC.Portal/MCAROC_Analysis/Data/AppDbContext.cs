@@ -269,6 +269,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
         {
             e.HasKey(x => x.LitigationAiAnalysisRunId);
             e.HasIndex(x => new { x.RequestId, x.RunNumber }).IsUnique();
+            e.HasIndex(x => x.RequestId).IsUnique().HasFilter("[Status] IN ('Pending', 'InProgress')");
             e.HasIndex(x => new { x.Status, x.NextAttemptUtc });
             e.Property(x => x.Status).HasConversion<string>().HasMaxLength(30);
             e.Property(x => x.ModelId).HasMaxLength(100).IsRequired();

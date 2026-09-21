@@ -111,6 +111,20 @@ builder.Services.AddHostedService<LitigationOrderDocumentWorker>();
 builder.Services.AddSingleton<LitigationOrderChunkingQueue>();
 builder.Services.AddScoped<LitigationOrderChunkingOrchestrator>();
 builder.Services.AddHostedService<LitigationOrderChunkingWorker>();
+// #245 LIT-05 â€” durable evidence-grounded Gemini case analysis. This is a dedicated litigation worker,
+// not a CRA worker; a missing Vertex configuration fails only a requested analysis run, never startup.
+builder.Services.Configure<LitigationAiAnalysisOptions>(builder.Configuration.GetSection(LitigationAiAnalysisOptions.SectionName));
+builder.Services.AddSingleton<LitigationAiAnalysisQueue>();
+builder.Services.AddSingleton<ILitigationAiAnalysisClient>(sp =>
+{
+    var config = sp.GetRequiredService<IConfiguration>();
+    var projectId = config["GoogleCloud:ProjectId"] ?? throw new InvalidOperationException("GoogleCloud:ProjectId is required for litigation AI analysis.");
+    var location = config["GoogleCloud:Location"] ?? "us-central1";
+    var credentialsPath = config["GoogleCloud:CredentialsPath"] ?? throw new InvalidOperationException("GoogleCloud:CredentialsPath is required for litigation AI analysis.");
+    return new VertexLitigationAiAnalysisClient(projectId, location, credentialsPath, sp.GetRequiredService<ILogger<VertexLitigationAiAnalysisClient>>());
+});
+builder.Services.AddScoped<LitigationAiAnalysisOrchestrator>();
+builder.Services.AddHostedService<LitigationAiAnalysisWorker>();
 
 builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseSqlServer(builder.Configuration.GetConnectionString("Default")));

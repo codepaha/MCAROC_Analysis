@@ -19,6 +19,7 @@ public sealed class LitigationAiAnalysisRun
     public string ModelId { get; set; } = string.Empty;
     public string PromptVersion { get; set; } = string.Empty;
     public string? LeaseOwner { get; set; }
+    public Guid? LeaseToken { get; set; }
     public DateTime? LeaseExpiresUtc { get; set; }
     public DateTime? NextAttemptUtc { get; set; }
     public DateTime CreatedUtc { get; set; }
