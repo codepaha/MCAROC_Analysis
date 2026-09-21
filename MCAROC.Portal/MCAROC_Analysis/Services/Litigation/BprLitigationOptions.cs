@@ -45,6 +45,29 @@ public sealed class BprLitigationOptions
     /// terminally Failed. Distinct from the in-poll-loop retry above.</summary>
     public int MaxAttempts { get; init; } = 3;
 
+    /// <summary>Days after a report is retrieved that its orders' vendor PDF URLs are expected to remain
+    /// retrievable — epic #239's confirmed product decision ("original vendor PDFs may expire after seven
+    /// days"). A <see cref="Data.Entities.LitigationOrderDocument"/> stuck <see
+    /// cref="Data.Entities.LitigationOrderDocumentStatus.Failed"/> past this window is moved to
+    /// <see cref="Data.Entities.LitigationOrderDocumentStatus.Expired"/> instead of retried forever.</summary>
+    public int OrderRetentionDays { get; init; } = 7;
+
+    /// <summary>Hard cap on one order PDF's response size — the vendor contract does not document a file-size
+    /// limit, so this guards against buffering an unbounded response into memory for a single order (a court
+    /// order/judgment PDF is realistically a handful of MB at most). A response whose declared or actual size
+    /// exceeds this is treated as a failed download, never silently truncated.</summary>
+    public long MaxOrderPdfBytes { get; init; } = 50 * 1024 * 1024;
+
+    /// <summary>Explicit allowlist of extra hostnames (beyond BPR's own configured host) that an order's
+    /// <c>pdf_url</c> is allowed to point to — never inferred from the report content itself. A vendor
+    /// report's <c>pdf_url</c> is untrusted input; without this, <see cref="BprLitigationClient.DownloadOrderDocumentAsync"/>
+    /// would make the application fetch (and potentially retain, if the response happens to start with the
+    /// PDF signature) whatever URL the report asserts — a server-side request forgery path onto internal
+    /// services or cloud metadata endpoints. Empty by default: until an operator confirms a real vendor
+    /// document/CDN host and adds it here, only BPR's own host is ever fetched from. Case-insensitive exact
+    /// match only, no wildcards.</summary>
+    public IReadOnlyList<string> AllowedOrderDocumentHosts { get; init; } = [];
+
     public bool IsConfigured =>
         !string.IsNullOrWhiteSpace(BaseUrl) && !string.IsNullOrWhiteSpace(Id) && !string.IsNullOrWhiteSpace(SecretKey);
 }
