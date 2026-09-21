@@ -14,6 +14,8 @@ Log entry (a tiny PR straight to `main`, or piggy-backed on the work PR). Keep e
 **CLAIMED CI test harness â€” `fix/windows-test-db-migration`**: fixes the self-hosted Windows test failure where concurrent processes both create `MCAROC_Analysis_Test`. Replacing per-fixture direct migrations with an instance-wide SQL Server application lock and adding concurrent-initialization coverage. â†’ @owner review
 
 ---
+### 2026-09-21 — Codex (PR #254 takeover)
+- **DONE:** Took over Claude's unpushed round-three recovery fix on `feature/244-litigation-copilot-evidence` after the session ended. The guarded recovery reset now rechecks lease expiry and queues only rows still Pending; added an interceptor-driven independent-context regression for reclaim between recovery's read and write. `git diff --check` passed. The focused test was discovered but cannot run on this host because the shared SQL Server requires unsupported encryption; push pending hosted CI.
 
 ## Participants & roles
 

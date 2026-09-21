@@ -1,9 +1,11 @@
+using System.Data.Common;
 using MCAROC_Analysis.Data;
 using MCAROC_Analysis.Data.Entities;
 using MCAROC_Analysis.Services.Chat;
 using MCAROC_Analysis.Services.LitigationData;
 using MCAROC_Analysis.Services.McaFilings;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
 
@@ -20,6 +22,33 @@ public class LitigationOrderChunkingTests : IAsyncLifetime
 
     private static AppDbContext CreateContext() =>
         new(new DbContextOptionsBuilder<AppDbContext>().UseSqlServer(ConnectionString).Options);
+
+    private static AppDbContext CreateContextWithInterceptor(DbCommandInterceptor interceptor) =>
+        new(new DbContextOptionsBuilder<AppDbContext>().UseSqlServer(ConnectionString).AddInterceptors(interceptor).Options);
+
+    /// <summary>Genuine ADO.NET-level interleaving hook, zero production code changes — same idiom as
+    /// CalculationDiscrepancyWorkflowServiceTests' ThrowOnTableWriteInterceptor, but runs a side effect and
+    /// lets the command proceed instead of throwing. Fires exactly once, the instant the first command
+    /// matching (tableName, "UPDATE") is about to execute — for RecoverStaleWorkAsync that is its one guarded
+    /// reset UPDATE, which only ever runs strictly after its own read (a SELECT, never matched here) has
+    /// already completed. Running the concurrent reclaim from here lands it deterministically in that exact
+    /// window, rather than relying on unpredictable real-world async scheduling.</summary>
+    private sealed class RunOnceBeforeFirstUpdateInterceptor(string tableName, Action onFirstUpdate) : DbCommandInterceptor
+    {
+        private bool _fired;
+
+        public override ValueTask<InterceptionResult<int>> NonQueryExecutingAsync(
+            DbCommand command, CommandEventData eventData, InterceptionResult<int> result, CancellationToken cancellationToken = default)
+        {
+            if (!_fired && command.CommandText.Contains(tableName, StringComparison.OrdinalIgnoreCase)
+                && command.CommandText.Contains("UPDATE", StringComparison.OrdinalIgnoreCase))
+            {
+                _fired = true;
+                onFirstUpdate();
+            }
+            return base.NonQueryExecutingAsync(command, eventData, result, cancellationToken);
+        }
+    }
 
     public async Task InitializeAsync()
     {
@@ -374,6 +403,63 @@ public class LitigationOrderChunkingTests : IAsyncLifetime
 
         var eventual = await DrainAvailableAsync(queue, TimeSpan.FromSeconds(3));
         Assert.Contains(liveDoc.LitigationOrderDocumentId, eventual); // shows up once its lease expires
+    }
+
+    [Fact]
+    public async Task RecoverStaleWorkAsync_guarded_reset_never_overwrites_a_row_reclaimed_between_its_read_and_its_write()
+    {
+        // Regression for PR #254 review round 3: RecoverStaleWorkAsync reads a snapshot of expired/unleased
+        // InProgress rows, then bulk-resets them to Pending. Between that read and that write, another worker
+        // can atomically reclaim one of those SAME rows (fresh token, fresh unexpired lease, ChunkingStatus
+        // staying InProgress throughout) — a WHERE clause guarding only on ChunkingStatus would still match
+        // and clobber that fresh claim. A DbCommandInterceptor forces the concurrent reclaim to run exactly
+        // the instant recovery's own guarded UPDATE is about to execute — i.e., strictly after its read has
+        // already captured this row as a reclaim candidate — proving the write's own re-checked guard, not
+        // mere luck, is what protects the winner.
+        await using var seedDb = CreateContext();
+        var (_, _, order) = await SeedOrderAsync(seedDb, "RC1");
+        var document = await SeedDownloadedDocumentAsync(seedDb, order.LitigationCaseOrderId,
+            "--- Page 1 (native) ---\nText from a row recovery will observe as expired, long enough to clear the fifty-character chunk minimum.");
+
+        // Seed InProgress with an already-expired lease — recovery's own read will correctly add this id to
+        // its reclaim-candidate set.
+        await seedDb.LitigationOrderDocuments.Where(d => d.LitigationOrderDocumentId == document.LitigationOrderDocumentId)
+            .ExecuteUpdateAsync(s => s
+                .SetProperty(d => d.ChunkingStatus, ChunkingStatus.InProgress)
+                .SetProperty(d => d.ChunkingLeaseToken, Guid.NewGuid())
+                .SetProperty(d => d.ChunkingLeaseOwner, "stale-worker")
+                .SetProperty(d => d.ChunkingLeaseExpiresUtc, DateTime.UtcNow.AddMinutes(-5)));
+
+        var winnerToken = Guid.NewGuid();
+        var winnerExpiry = DateTime.UtcNow.AddMinutes(10);
+        var interceptor = new RunOnceBeforeFirstUpdateInterceptor("LitigationOrderDocuments", () =>
+        {
+            // The winner's real, independent claim — a fresh token and a fresh, unexpired lease, landing on
+            // an entirely separate connection from recovery's own.
+            using var winnerDb = CreateContext();
+            var claimed = winnerDb.LitigationOrderDocuments
+                .Where(d => d.LitigationOrderDocumentId == document.LitigationOrderDocumentId && d.ChunkingStatus == ChunkingStatus.InProgress)
+                .ExecuteUpdate(s => s
+                    .SetProperty(d => d.ChunkingLeaseToken, winnerToken)
+                    .SetProperty(d => d.ChunkingLeaseOwner, "winner-worker")
+                    .SetProperty(d => d.ChunkingLeaseExpiresUtc, winnerExpiry));
+            Assert.Equal(1, claimed); // sanity: the simulated reclaim itself must have actually landed
+        });
+
+        await using var recoveryDb = CreateContextWithInterceptor(interceptor);
+        var queue = new LitigationOrderChunkingQueue();
+        var orchestrator = new LitigationOrderChunkingOrchestrator(recoveryDb, new StubEmbeddingService(_ => []), queue, NullLogger<LitigationOrderChunkingOrchestrator>.Instance);
+
+        await orchestrator.RecoverStaleWorkAsync(CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var reloaded = await verify.LitigationOrderDocuments.AsNoTracking().FirstAsync(d => d.LitigationOrderDocumentId == document.LitigationOrderDocumentId);
+        Assert.Equal(ChunkingStatus.InProgress, reloaded.ChunkingStatus); // never reset — the winner's claim stands
+        Assert.Equal(winnerToken, reloaded.ChunkingLeaseToken); // winner's token intact, not clobbered
+        Assert.Equal(winnerExpiry.ToString("s"), reloaded.ChunkingLeaseExpiresUtc?.ToString("s")); // winner's expiry intact
+
+        var enqueued = await DrainAvailableAsync(queue, TimeSpan.FromMilliseconds(300));
+        Assert.DoesNotContain(document.LitigationOrderDocumentId, enqueued); // recovery must never enqueue the reclaimed id
     }
 
     // ── Lease fencing / multi-instance takeover (PR #254 review round 1) ─────────────────────────────

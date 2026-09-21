@@ -61,7 +61,22 @@ namespace MCAROC_Analysis.Services.LitigationData;
 /// still-working attempt's lease is extended in step with its actual progress, while an attempt that stops
 /// making real progress (crashed, or already fenced out by a takeover) simply stops renewing and its lease
 /// expires on schedule. A renewal that itself finds 0 rows means a takeover has already superseded this
-/// attempt; embedding stops immediately rather than paying for further Vertex calls no one can ever publish.</summary>
+/// attempt; embedding stops immediately rather than paying for further Vertex calls no one can ever publish.
+///
+/// <b>Guarded compare-and-swap in recovery (PR #254 review round 3):</b> <see cref="RecoverStaleWorkAsync"/>
+/// reads a snapshot of every InProgress row, then — for those it judged expired/unleased — issues a bulk
+/// <c>ExecuteUpdateAsync</c> resetting them to Pending. Round 2's version of that write checked only
+/// <c>ChunkingStatus == InProgress</c>, which is not enough on its own: between the read and the write, another
+/// worker can have already atomically reclaimed one of those SAME rows via <see cref="ChunkOrderDocumentAsync"/>'s
+/// own widened claim, minting a fresh token and a fresh, unexpired lease while <c>ChunkingStatus</c> stays
+/// InProgress throughout — a status-only WHERE clause would still match that freshly (and legitimately)
+/// reclaimed row and reset it back to Pending, invalidating a live owner's in-flight claim and letting a
+/// second worker duplicate the same embedding work. The write now also re-checks <c>ChunkingLeaseExpiresUtc</c>
+/// in the same atomic UPDATE — SQL Server evaluates the WHERE clause against each row's CURRENT, live data at
+/// the moment the UPDATE actually executes, not against this method's stale in-memory snapshot from a moment
+/// earlier, so a reclaimed row (whose fresh expiry is always in the future) no longer matches and is left
+/// completely untouched. A follow-up read then enqueues only the rows that guarded transition actually landed
+/// on, rather than every originally-read id regardless of outcome.</summary>
 public sealed class LitigationOrderChunkingOrchestrator(
     AppDbContext db, EmbeddingService embeddingService, LitigationOrderChunkingQueue queue,
     ILogger<LitigationOrderChunkingOrchestrator> logger)
@@ -274,14 +289,34 @@ public sealed class LitigationOrderChunkingOrchestrator(
                 expiredOrUnleasedIds.Add(d.LitigationOrderDocumentId); // no lease, or genuinely expired — abandoned
         }
 
+        var actuallyResetIds = new List<long>();
         if (expiredOrUnleasedIds.Count > 0)
         {
-            // Re-checks ChunkingStatus == InProgress in the WHERE clause so a row that legitimately completed
-            // or failed between the read above and this write is never clobbered back to Pending.
+            // Guarded compare-and-swap (PR #254 review round 3): re-checking only ChunkingStatus == InProgress
+            // here is not enough — between the read above and this write, another worker can have already
+            // atomically reclaimed one of these SAME rows via ChunkOrderDocumentAsync's own widened claim (PR
+            // #254 review round 2), minting a fresh token and a fresh, unexpired lease while the row's
+            // ChunkingStatus stays InProgress throughout. A WHERE clause that only checks ChunkingStatus would
+            // still match that freshly (and legitimately) reclaimed row and reset it back to Pending —
+            // invalidating a live owner's in-flight claim and letting a second worker duplicate the same
+            // embedding work. Re-checking ChunkingLeaseExpiresUtc in the SAME atomic UPDATE closes this: SQL
+            // Server evaluates the WHERE clause against each row's CURRENT, live data at the moment the UPDATE
+            // actually executes, not against this method's stale in-memory snapshot — a reclaimed row's fresh
+            // expiry is always in the future, so it no longer matches and is left completely untouched.
             await db.LitigationOrderDocuments
-                .Where(d => expiredOrUnleasedIds.Contains(d.LitigationOrderDocumentId) && d.ChunkingStatus == ChunkingStatus.InProgress)
+                .Where(d => expiredOrUnleasedIds.Contains(d.LitigationOrderDocumentId) && d.ChunkingStatus == ChunkingStatus.InProgress
+                    && (d.ChunkingLeaseExpiresUtc == null || d.ChunkingLeaseExpiresUtc <= now))
                 .ExecuteUpdateAsync(s => s.SetProperty(d => d.ChunkingStatus, ChunkingStatus.Pending), ct);
-            foreach (var id in expiredOrUnleasedIds)
+
+            // Enqueue only the rows the guarded transition above actually landed on — a row skipped by that
+            // guard (because it was reclaimed in between) is already owned by whoever reclaimed it and needs
+            // no help from this sweep; enqueueing its id anyway would just be a wasted, no-op claim attempt at
+            // best, and at worst papers over a bug if the guard above is ever weakened later.
+            actuallyResetIds = await db.LitigationOrderDocuments
+                .Where(d => expiredOrUnleasedIds.Contains(d.LitigationOrderDocumentId) && d.ChunkingStatus == ChunkingStatus.Pending)
+                .Select(d => d.LitigationOrderDocumentId)
+                .ToListAsync(ct);
+            foreach (var id in actuallyResetIds)
                 queue.Enqueue(id);
         }
 
@@ -292,10 +327,10 @@ public sealed class LitigationOrderChunkingOrchestrator(
             .Select(d => d.LitigationOrderDocumentId)
             .ToListAsync(ct);
 
-        foreach (var id in pendingEligibleIds.Except(expiredOrUnleasedIds))
+        foreach (var id in pendingEligibleIds.Except(actuallyResetIds))
             queue.Enqueue(id);
 
-        return inProgress.Count + pendingEligibleIds.Except(expiredOrUnleasedIds).Count();
+        return inProgress.Count + pendingEligibleIds.Except(actuallyResetIds).Count();
     }
 
     /// <summary>One-time delayed re-enqueue for a document whose chunking lease is still live at recovery
