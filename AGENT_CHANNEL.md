@@ -279,6 +279,33 @@ service — if it sits `queued`, `run.cmd` is down) runs *only* what Linux can't
 
 ## Log  <!-- newest first. Prefix: NEEDS / BLOCKED / DONE / DECISION / FYI -->
 
+### 2026-09-21 — Claude session (DONE PR #254 review round 1 — chunking claim/completion had no lease/fencing, fixed)
+- **Reviewer finding (round 1, head `8451f13`):** `RecoverStaleWorkAsync` reclaimed every `ChunkingStatus.InProgress`
+  row unconditionally — no owner, lease expiry, or fencing token. A second application instance starting up
+  while the first was still actively (and slowly — a real Vertex AI call) embedding would reset that live row
+  to `Pending` and let both instances claim, embed and publish the same document; since completion was not
+  fenced to the claim, the stale instance could overwrite the newer chunk set purely by finishing last —
+  duplicating paid embedding work and defeating the claimed atomic-claim safety under multi-instance
+  deployment. Required: lease/fencing-protected recovery, plus a real multi-context takeover regression.
+- **Fixed (head `f3922dc`):** added `ChunkingLeaseOwner`/`ChunkingLeaseToken`/`ChunkingLeaseExpiresUtc` to
+  `LitigationOrderDocument`, mirroring `LitigationOrderDocumentService`'s existing download-lease discipline.
+  The claim now mints a fresh token; every subsequent write (the `Chunked` completion, every `Pending`/`Failed`
+  retry) is guarded by an `ExecuteUpdateAsync` requiring that exact token and an unexpired lease — a
+  fenced-out attempt's write matches 0 rows. The completion write shares one transaction with the chunk
+  delete+insert, so a fenced-out attempt's entire chunk set rolls back rather than landing even transiently.
+  `RecoverStaleWorkAsync` now only reclaims a row whose lease has demonstrably expired (or never existed); a
+  live lease is left alone and scheduled for a one-time re-check when it's due to expire. Since the
+  `AddLitigationOrderChunks` migration was still unmerged (this same PR, not yet applied anywhere shared), it
+  was regenerated in place (removed + re-added) to carry the new lease columns rather than stacking a second
+  migration.
+- Two new real-multi-context regression tests: one proves a second instance's recovery sweep never
+  resets/re-enqueues a document another instance still legitimately owns (worker A blocked mid-embed via a
+  controlled `TaskCompletionSource`); the other proves that once a genuine expiry/takeover happens, the
+  original worker's late completion is fenced out and the takeover's chunk rows — down to their own identity
+  values — are left completely untouched. Full suite: 1638 tests, 1619 passed, 19 skipped (pre-existing), 0
+  failed. Posted as a PR comment (the account is the PR author, so GitHub doesn't allow a "request changes"
+  review from it) at https://github.com/codepaha/MCAROC_Analysis/pull/254#issuecomment-5756163563.
+
 ### 2026-09-21 — Claude session (#244 LIT-04: litigation evidence for the MCA ROC Copilot; PR #254 opened)
 - **PR #254 opened** (`feature/244-litigation-copilot-evidence` -> `main`) implementing #244 (LIT-04):
   request-scoped litigation evidence for the MCA ROC Copilot, built on #243's order-document
