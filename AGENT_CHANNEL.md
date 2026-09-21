@@ -279,6 +279,35 @@ service — if it sits `queued`, `run.cmd` is down) runs *only* what Linux can't
 
 ## Log  <!-- newest first. Prefix: NEEDS / BLOCKED / DONE / DECISION / FYI -->
 
+### 2026-09-21 — Claude session (DONE PR #254 review round 2 — chunking delayed-reclaim liveness gap + no lease renewal, both fixed)
+- **Reviewer finding (round 2, head `f3922dc`):** round 1's fix left two gaps. (1) `RecoverStaleWorkAsync`'s
+  delayed path (`ScheduleRetry`, for a row whose lease was still live at sweep time) only ever re-enqueued the
+  id once that lease was due to expire — it never performed the reclaim itself, and the claim only ever
+  admitted `ChunkingStatus.Pending`. A crashed worker's row therefore stayed stuck `InProgress` forever after
+  its lease expired, waiting on some unrelated future app restart's recovery sweep. (2) `EmbeddingService.EmbedDocumentsAsync`
+  loops sequential Vertex batches internally with no lease renewal, so a single call for a large document's
+  full chunk set could legitimately run past the fixed 10-minute lease purely on volume, discarding paid
+  embedding work and restarting from scratch repeatedly for an otherwise-healthy document.
+- **Fixed (head `498e2a3`):** widened `ChunkOrderDocumentAsync`'s claim to a single atomic `ExecuteUpdateAsync`
+  that also admits an `InProgress` row whose lease has itself already expired or was never set — closes the
+  gap for every path that can reach such a row (immediate, delayed, or any future trigger) with one rule
+  rather than duplicating "is this row reclaimable" logic in two places. Added lease renewal: the orchestrator
+  now calls `EmbedDocumentsAsync` itself in batches capped at one real Vertex round-trip each, renewing the
+  lease-token-guarded expiry after every batch; a renewal finding 0 rows means a takeover already superseded
+  this attempt, so embedding stops immediately.
+- Three new regression tests: a crashed worker's live lease becomes claimable and reaches `Chunked` via the
+  delayed recheck with no further app restart (`A_crashed_workers_live_lease_becomes_claimable_and_reaches_Chunked_via_the_delayed_recheck_without_another_app_restart`);
+  the lease's recorded expiry strictly increases between two embedding batches for a 40-chunk document
+  (`ChunkOrderDocumentAsync_renews_the_lease_between_embedding_batches_for_a_multi_batch_document`). Full
+  suite: 1640 tests, 1621 passed, 19 skipped (pre-existing), 0 failed.
+- **Also diagnosed (user-reported):** the `windows-tests` CI check failed on the round-1 head (`f3922dc`) with
+  `Database 'MCAROC_Analysis_Test' already exists`. Root cause: my own local `dotnet test` runs this session
+  (repeated full-suite runs against `.\SQLEXPRESS`) very likely collided with that same job on the same
+  self-hosted runner — `TestDatabase.cs` already documents this exact contention class, and that job's test
+  filter doesn't even touch the new litigation chunking tests. Not a code defect; noted on the PR, and I'll
+  avoid running local tests while CI is in flight on future pushes.
+- Posted as a PR comment (the account is the PR author, so GitHub doesn't allow a "request changes" review
+  from it) at https://github.com/codepaha/MCAROC_Analysis/pull/254#issuecomment-5756538887.
 ### 2026-09-21 — Claude session (DONE PR #254 review round 1 — chunking claim/completion had no lease/fencing, fixed)
 - **Reviewer finding (round 1, head `8451f13`):** `RecoverStaleWorkAsync` reclaimed every `ChunkingStatus.InProgress`
   row unconditionally — no owner, lease expiry, or fencing token. A second application instance starting up
