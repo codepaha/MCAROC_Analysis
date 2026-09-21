@@ -16,6 +16,7 @@ using MCAROC_Analysis.Services.Chat;
 using MCAROC_Analysis.Services.Excel;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authorization;
+using MCAROC_Analysis.Services.LitigationData;
 
 namespace MCAROC_Analysis.Controllers;
 
@@ -444,7 +445,7 @@ public class RequestsController(
     }
 
     [HttpGet("/Requests/{id:long}")]
-    public async Task<IActionResult> Details(long id, [FromQuery] long? charge)
+    public async Task<IActionResult> Details(long id, [FromQuery] long? charge, [FromQuery] string? court = null, [FromQuery] string? status = null, [FromQuery] int page = 1)
     {
         var request = await db.Requests.Include(r => r.Client).FirstOrDefaultAsync(r => r.RequestId == id);
         if (request is null) return NotFound();
@@ -628,6 +629,395 @@ public class RequestsController(
                 .Where(m => m.ChatSessionId == chatSession.ChatSessionId)
                 .OrderBy(m => m.CreatedDate)
                 .ToListAsync();
+        }
+
+        var isReviewer = (await HttpContext.AuthenticateAsync("InternalReviewer"))?.Succeeded == true;
+        if (isReviewer)
+        {
+            var litVm = new LitigationTabViewModel
+            {
+                Request = request,
+                IsReviewer = true,
+                CurrentPage = Math.Max(1, page),
+                PageSize = 25
+            };
+
+            var job = await db.LitigationSearchJobs.AsNoTracking().FirstOrDefaultAsync(j => j.RequestId == id);
+            litVm.SearchJob = job;
+
+            if (job is not null)
+            {
+                LitigationReportSnapshot? currentAttemptSnapshot = null;
+                if (!string.IsNullOrWhiteSpace(job.RawResponseHash))
+                {
+                    currentAttemptSnapshot = await db.LitigationReportSnapshots
+                        .AsNoTracking()
+                        .FirstOrDefaultAsync(s => s.LitigationSearchJobId == job.LitigationSearchJobId && s.ReportHash == job.RawResponseHash);
+                }
+                litVm.CurrentAttemptSnapshot = currentAttemptSnapshot;
+
+                if (string.IsNullOrWhiteSpace(job.RawResponseHash))
+                {
+                    litVm.ImportState = SnapshotImportState.NotCreated;
+                }
+                else if (currentAttemptSnapshot is null)
+                {
+                    litVm.ImportState = job.Status == LitigationSearchJobStatus.Completed
+                        ? SnapshotImportState.SnapshotMissing
+                        : SnapshotImportState.NotCreated;
+                }
+                else
+                {
+                    litVm.ImportState = currentAttemptSnapshot.Status switch
+                    {
+                        LitigationReportSnapshotStatus.Pending => SnapshotImportState.InProgress,
+                        LitigationReportSnapshotStatus.InProgress => SnapshotImportState.InProgress,
+                        LitigationReportSnapshotStatus.Completed => SnapshotImportState.Completed,
+                        LitigationReportSnapshotStatus.Failed => SnapshotImportState.Failed,
+                        _ => SnapshotImportState.NotCreated
+                    };
+                }
+
+                LitigationReportSnapshot? authoritativeSnapshot = null;
+                bool isPriorRun = false;
+                if (currentAttemptSnapshot is { Status: LitigationReportSnapshotStatus.Completed })
+                {
+                    authoritativeSnapshot = currentAttemptSnapshot;
+                }
+                else
+                {
+                    authoritativeSnapshot = await db.LitigationReportSnapshots
+                        .AsNoTracking()
+                        .Where(s => s.LitigationSearchJobId == job.LitigationSearchJobId && s.Status == LitigationReportSnapshotStatus.Completed)
+                        .OrderByDescending(s => s.RetrievedUtc)
+                        .FirstOrDefaultAsync();
+                    if (authoritativeSnapshot is not null)
+                    {
+                        isPriorRun = true;
+                    }
+                }
+
+                litVm.AuthoritativeSnapshot = authoritativeSnapshot;
+                litVm.IsPriorRunDataShown = isPriorRun;
+
+                if (authoritativeSnapshot is not null)
+                {
+                    var authoritativeSnapshotId = authoritativeSnapshot.LitigationReportSnapshotId;
+                    var caseIdsQuery = db.LitigationCaseSourceReports
+                        .Where(sr => sr.LitigationReportSnapshotId == authoritativeSnapshotId)
+                        .Select(sr => sr.LitigationCaseId)
+                        .Distinct();
+
+                    var allAuthoritativeCases = await db.LitigationCases
+                        .AsNoTracking()
+                        .Where(c => caseIdsQuery.Contains(c.LitigationCaseId))
+                        .Select(c => new
+                        {
+                            c.LitigationCaseId,
+                            c.Court,
+                            c.CourtCategory,
+                            c.CaseStatus,
+                            c.CaseStage,
+                            c.LastHearingDate,
+                            OrderCount = c.Orders.Count
+                        })
+                        .ToListAsync();
+
+                    var courtGroups = allAuthoritativeCases
+                        .GroupBy(c => string.IsNullOrWhiteSpace(c.Court) ? "Unspecified Court" : c.Court.Trim())
+                        .OrderBy(g => g.Key)
+                        .ToList();
+
+                    var summaryGrid = new LitigationCourtSummaryGrid();
+                    foreach (var g in courtGroups)
+                    {
+                        var row = new LitigationCourtSummaryRow
+                        {
+                            CourtName = g.Key,
+                            CourtCategory = g.Select(x => x.CourtCategory).FirstOrDefault(cat => !string.IsNullOrWhiteSpace(cat)),
+                            TotalCases = g.Count(),
+                            TotalOrders = g.Sum(x => x.OrderCount)
+                        };
+                        foreach (var item in g)
+                        {
+                            var bucket = LitigationCaseStatusClassifier.Classify(item.CaseStatus, item.CaseStage);
+                            switch (bucket)
+                            {
+                                case LitigationCaseStatusBucket.Pending:
+                                    row.PendingCases++;
+                                    break;
+                                case LitigationCaseStatusBucket.Disposed:
+                                    row.DisposedCases++;
+                                    break;
+                                case LitigationCaseStatusBucket.Unknown:
+                                default:
+                                    row.UnknownCases++;
+                                    break;
+                            }
+                        }
+                        summaryGrid.Rows.Add(row);
+                    }
+                    litVm.CourtSummaryGrid = summaryGrid;
+
+                    List<LitigationKeyword> keywords = [];
+                    if (!string.IsNullOrWhiteSpace(job.KeywordsJson))
+                    {
+                        try
+                        {
+                            keywords = JsonSerializer.Deserialize<List<LitigationKeyword>>(job.KeywordsJson) ?? [];
+                        }
+                        catch { }
+                    }
+
+                    var allCompletedSnapshots = await db.LitigationReportSnapshots
+                        .AsNoTracking()
+                        .Where(s => s.LitigationSearchJobId == job.LitigationSearchJobId && s.Status == LitigationReportSnapshotStatus.Completed)
+                        .OrderByDescending(s => s.RetrievedUtc)
+                        .Select(s => new LitigationSnapshotSummary(s.LitigationReportSnapshotId, s.RetrievedUtc, s.ReportHash, s.CasesPersistedCount, s.ReportFormat))
+                        .ToListAsync();
+
+                    var orderDocCounts = await (
+                        from c in db.LitigationCases
+                        where caseIdsQuery.Contains(c.LitigationCaseId)
+                        from o in c.Orders
+                        join d in db.LitigationOrderDocuments on o.LitigationCaseOrderId equals d.LitigationCaseOrderId into docs
+                        from doc in docs.DefaultIfEmpty()
+                        select (LitigationOrderDocumentStatus?)(doc != null ? doc.Status : null)
+                    ).ToListAsync();
+
+                    var totalOrdersCount = orderDocCounts.Count;
+                    var downloadedCount = orderDocCounts.Count(s => s == LitigationOrderDocumentStatus.Downloaded);
+                    var failedCount = orderDocCounts.Count(s => s == LitigationOrderDocumentStatus.Failed);
+                    var expiredCount = orderDocCounts.Count(s => s == LitigationOrderDocumentStatus.Expired);
+                    var pendingOrdersCount = orderDocCounts.Count(s => s == null || s == LitigationOrderDocumentStatus.Pending || s == LitigationOrderDocumentStatus.InProgress);
+
+                    var totalObservationsCount = await db.LitigationCaseSourceReports
+                        .Where(sr => caseIdsQuery.Contains(sr.LitigationCaseId))
+                        .CountAsync();
+
+                    bool isAuthoritativeCoverage = !isPriorRun && litVm.ImportState == SnapshotImportState.Completed;
+
+                    litVm.SourceCoverage = new LitigationSourceCoverageViewModel
+                    {
+                        Keywords = keywords,
+                        Snapshots = allCompletedSnapshots,
+                        IsAuthoritativeCoverage = isAuthoritativeCoverage,
+                        CoverageSummaryText = isAuthoritativeCoverage
+                            ? $"De-duplicated across {keywords.Count} search keywords and {allCompletedSnapshots.Count} completed report snapshots into {allAuthoritativeCases.Count} unique legal proceedings."
+                            : $"Showing data from previous completed search snapshot retrieved {authoritativeSnapshot.RetrievedUtc:dd-MMM-yyyy HH:mm} UTC.",
+                        UniqueCasesCount = allAuthoritativeCases.Count,
+                        TotalObservationsCount = totalObservationsCount,
+                        TotalOrders = totalOrdersCount,
+                        DownloadedOrders = downloadedCount,
+                        PendingOrders = pendingOrdersCount,
+                        FailedOrders = failedCount,
+                        ExpiredOrders = expiredCount
+                    };
+
+                    var filteredCases = allAuthoritativeCases.AsEnumerable();
+                    if (!string.IsNullOrWhiteSpace(court))
+                    {
+                        filteredCases = filteredCases.Where(c => string.Equals(c.Court, court, StringComparison.OrdinalIgnoreCase));
+                    }
+                    if (!string.IsNullOrWhiteSpace(status))
+                    {
+                        if (Enum.TryParse<LitigationCaseStatusBucket>(status, true, out var bucket))
+                        {
+                            filteredCases = filteredCases.Where(c => LitigationCaseStatusClassifier.Classify(c.CaseStatus, c.CaseStage) == bucket);
+                        }
+                        else
+                        {
+                            filteredCases = filteredCases.Where(c => string.Equals(c.CaseStatus, status, StringComparison.OrdinalIgnoreCase));
+                        }
+                    }
+
+                    var orderedFilteredCases = filteredCases
+                        .OrderBy(c => c.Court ?? string.Empty)
+                        .ThenByDescending(c => c.LastHearingDate ?? string.Empty)
+                        .ThenBy(c => c.LitigationCaseId)
+                        .ToList();
+
+                    litVm.TotalCaseCount = orderedFilteredCases.Count;
+
+                    var pagedCaseIds = orderedFilteredCases
+                        .Skip((litVm.CurrentPage - 1) * litVm.PageSize)
+                        .Take(litVm.PageSize)
+                        .Select(c => c.LitigationCaseId)
+                        .ToList();
+
+                    var pagedCases = await db.LitigationCases
+                        .AsNoTracking()
+                        .Where(c => pagedCaseIds.Contains(c.LitigationCaseId))
+                        .Include(c => c.Orders)
+                        .ToListAsync();
+
+                    var orderIds = pagedCases.SelectMany(c => c.Orders).Select(o => o.LitigationCaseOrderId).Distinct().ToList();
+                    var orderDocs = await db.LitigationOrderDocuments
+                        .AsNoTracking()
+                        .Where(d => orderIds.Contains(d.LitigationCaseOrderId))
+                        .ToListAsync();
+                    var orderDocByOrderId = orderDocs.ToDictionary(d => d.LitigationCaseOrderId);
+
+                    var latestAiRun = await db.LitigationAiAnalysisRuns
+                        .AsNoTracking()
+                        .Where(r => r.RequestId == id)
+                        .OrderByDescending(r => r.RunNumber)
+                        .Include(r => r.PortfolioAnalysis)
+                        .FirstOrDefaultAsync();
+
+                    Dictionary<long, LitigationCaseAiAnalysis> caseAiByCaseId = [];
+                    if (latestAiRun is not null)
+                    {
+                        var caseAnalyses = await db.LitigationCaseAiAnalyses
+                            .AsNoTracking()
+                            .Where(ca => ca.LitigationAiAnalysisRunId == latestAiRun.LitigationAiAnalysisRunId && pagedCaseIds.Contains(ca.LitigationCaseId))
+                            .ToListAsync();
+                        caseAiByCaseId = caseAnalyses.ToDictionary(ca => ca.LitigationCaseId);
+
+                        if (latestAiRun.PortfolioAnalysis is { } pa)
+                        {
+                            var vmPa = new LitigationPortfolioAiAnalysisViewModel
+                            {
+                                LitigationPortfolioAiAnalysisId = pa.LitigationPortfolioAiAnalysisId,
+                                Status = pa.Status,
+                                CompletedUtc = pa.CompletedUtc,
+                                FailureReason = pa.FailureReason,
+                                RunNumber = latestAiRun.RunNumber
+                            };
+                            if (!string.IsNullOrWhiteSpace(pa.AnalysisJson))
+                            {
+                                try
+                                {
+                                    using var doc = JsonDocument.Parse(pa.AnalysisJson);
+                                    var root = doc.RootElement;
+                                    if (root.TryGetProperty("summary", out var sProp)) vmPa.Summary = sProp.GetString();
+                                    if (root.TryGetProperty("unknowns", out var uProp) && uProp.ValueKind == JsonValueKind.Array)
+                                    {
+                                        vmPa.Unknowns = uProp.EnumerateArray().Select(x => x.GetString() ?? "").Where(x => !string.IsNullOrEmpty(x)).ToList();
+                                    }
+                                }
+                                catch { }
+                            }
+                            litVm.PortfolioAnalysis = vmPa;
+                        }
+                    }
+
+                    foreach (var c in pagedCases.OrderBy(c => c.Court ?? string.Empty).ThenByDescending(c => c.LastHearingDate ?? string.Empty).ThenBy(c => c.LitigationCaseId))
+                    {
+                        var card = new LitigationCaseCardViewModel
+                        {
+                            LitigationCaseId = c.LitigationCaseId,
+                            CaseNumber = c.CaseNumber,
+                            Cnr = c.Cnr,
+                            CspId = c.CspId,
+                            ProviderCaseId = c.ProviderCaseId,
+                            Court = c.Court,
+                            Bench = c.Bench,
+                            CourtCategory = c.CourtCategory,
+                            State = c.State,
+                            District = c.District,
+                            CaseType = c.CaseType,
+                            CaseYear = c.CaseYear,
+                            CaseStage = c.CaseStage,
+                            CaseStatus = c.CaseStatus,
+                            StatusBucket = LitigationCaseStatusClassifier.Classify(c.CaseStatus, c.CaseStage),
+                            Act = c.Act,
+                            ProceedingType = c.ProceedingType,
+                            Direction = c.Direction,
+                            FilingDate = c.FilingDate,
+                            LastHearingDate = c.LastHearingDate,
+                            NextHearingDate = c.NextHearingDate,
+                            DecisionDate = c.DecisionDate,
+                            FirstSeenUtc = c.FirstSeenUtc,
+                            LastSeenUtc = c.LastSeenUtc
+                        };
+
+                        if (!string.IsNullOrWhiteSpace(c.PetitionersJson))
+                        {
+                            try { card.Petitioners = JsonSerializer.Deserialize<List<string>>(c.PetitionersJson) ?? []; } catch { }
+                        }
+                        if (!string.IsNullOrWhiteSpace(c.RespondentsJson))
+                        {
+                            try { card.Respondents = JsonSerializer.Deserialize<List<string>>(c.RespondentsJson) ?? []; } catch { }
+                        }
+                        if (!string.IsNullOrWhiteSpace(c.PetitionerAdvocatesJson))
+                        {
+                            try { card.PetitionerAdvocates = JsonSerializer.Deserialize<List<string>>(c.PetitionerAdvocatesJson) ?? []; } catch { }
+                        }
+                        if (!string.IsNullOrWhiteSpace(c.RespondentAdvocatesJson))
+                        {
+                            try { card.RespondentAdvocates = JsonSerializer.Deserialize<List<string>>(c.RespondentAdvocatesJson) ?? []; } catch { }
+                        }
+
+                        foreach (var o in c.Orders.OrderByDescending(o => o.OrderDate))
+                        {
+                            orderDocByOrderId.TryGetValue(o.LitigationCaseOrderId, out var od);
+                            card.Orders.Add(new LitigationOrderRowViewModel
+                            {
+                                LitigationCaseOrderId = o.LitigationCaseOrderId,
+                                LitigationOrderDocumentId = od?.LitigationOrderDocumentId,
+                                OrderDate = o.OrderDate,
+                                OrderType = o.OrderType,
+                                DocumentStatus = od?.Status,
+                                FailureReason = od?.FailureReason,
+                                RefreshCount = od?.RefreshCount ?? 0
+                            });
+                        }
+
+                        if (caseAiByCaseId.TryGetValue(c.LitigationCaseId, out var ca))
+                        {
+                            var vmCa = new LitigationCaseAiAnalysisViewModel
+                            {
+                                LitigationCaseAiAnalysisId = ca.LitigationCaseAiAnalysisId,
+                                Status = ca.Status,
+                                CompletedUtc = ca.CompletedUtc,
+                                FailureReason = ca.FailureReason,
+                                RunNumber = latestAiRun?.RunNumber ?? 0
+                            };
+                            if (!string.IsNullOrWhiteSpace(ca.AnalysisJson))
+                            {
+                                try
+                                {
+                                    using var doc = JsonDocument.Parse(ca.AnalysisJson);
+                                    var root = doc.RootElement;
+                                    if (root.TryGetProperty("summary", out var sProp)) vmCa.Summary = sProp.GetString();
+                                    if (root.TryGetProperty("unknowns", out var uProp) && uProp.ValueKind == JsonValueKind.Array)
+                                    {
+                                        vmCa.Unknowns = uProp.EnumerateArray().Select(x => x.GetString() ?? "").Where(x => !string.IsNullOrEmpty(x)).ToList();
+                                    }
+                                    if (root.TryGetProperty("evidenceReferences", out var refProp) && refProp.ValueKind == JsonValueKind.Array)
+                                    {
+                                        foreach (var r in refProp.EnumerateArray())
+                                        {
+                                            var orderId = r.TryGetProperty("litigationCaseOrderId", out var oProp) ? oProp.GetInt64() : 0;
+                                            var pageNum = r.TryGetProperty("pageNumber", out var pProp) ? pProp.GetInt32() : 0;
+                                            vmCa.Citations.Add($"Order #{orderId} (p. {pageNum})");
+                                        }
+                                    }
+                                }
+                                catch { }
+                            }
+                            card.Analysis = vmCa;
+                            if (ca.CompletedUtc.HasValue && c.LastSeenUtc > ca.CompletedUtc.Value)
+                            {
+                                card.IsAnalysisStaleComparedToCase = true;
+                            }
+                        }
+
+                        litVm.Cases.Add(card);
+                    }
+                }
+            }
+
+            vm.LitigationDataLake = litVm;
+        }
+        else
+        {
+            vm.LitigationDataLake = new LitigationTabViewModel
+            {
+                Request = request,
+                IsReviewer = false
+            };
         }
 
         return View(vm);

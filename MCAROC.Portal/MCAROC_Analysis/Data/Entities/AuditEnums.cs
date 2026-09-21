@@ -75,6 +75,7 @@ public enum AuditActionType
 
     // Litigation
     LitigationAnalysisRequested,
+    LitigationSearchRequested,
 
     // Fallback
     OtherMutation,
