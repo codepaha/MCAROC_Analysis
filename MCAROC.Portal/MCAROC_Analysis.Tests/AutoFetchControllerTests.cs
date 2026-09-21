@@ -54,7 +54,7 @@ public class AutoFetchControllerTests : IAsyncLifetime
     public async Task InitializeAsync()
     {
         await using var db = CreateContext();
-        await db.Database.MigrateAsync();
+        await global::MCAROC_Analysis.Tests.TestDatabase.MigrateAsync(db);
 
         var staleRequestIds = await db.Requests
             .Where(r => r.ClientId == 1 && (r.AutoFetchCompanyIdentifier == "U45203OR1995PLC003982" || r.AutoFetchCompanyIdentifier == "AAB-9876"))

@@ -24,7 +24,7 @@ public class ClientsControllerTests : IAsyncLifetime
     public async Task InitializeAsync()
     {
         await using var db = DossierGoldenMasterTests.CreateContext();
-        await db.Database.MigrateAsync();
+        await global::MCAROC_Analysis.Tests.TestDatabase.MigrateAsync(db);
         _contentRoot = Path.Combine(Path.GetTempPath(), "mcaroc-clients-tests", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(_contentRoot);
     }

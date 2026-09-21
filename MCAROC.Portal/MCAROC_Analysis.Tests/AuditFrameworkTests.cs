@@ -47,7 +47,7 @@ public class AuditFrameworkTests : IAsyncLifetime
     public async Task InitializeAsync()
     {
         await using var db = CreateContext();
-        await db.Database.MigrateAsync();
+        await global::MCAROC_Analysis.Tests.TestDatabase.MigrateAsync(db);
         await db.Database.ExecuteSqlRawAsync(@"
             UPDATE McaFilingBatches SET CorrelationId = LOWER(REPLACE(CAST(NEWID() AS nvarchar(36)), '-', '')) WHERE CorrelationId IS NULL OR CorrelationId = '';
             UPDATE AutoFetchJobs SET CorrelationId = LOWER(REPLACE(CAST(NEWID() AS nvarchar(36)), '-', '')) WHERE CorrelationId IS NULL OR CorrelationId = '';

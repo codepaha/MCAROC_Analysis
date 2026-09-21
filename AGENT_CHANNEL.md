@@ -9,6 +9,12 @@ Log entry (a tiny PR straight to `main`, or piggy-backed on the work PR). Keep e
 
 ---
 
+### 2026-09-21 â€” Codex
+
+**CLAIMED CI test harness â€” `fix/windows-test-db-migration`**: fixes the self-hosted Windows test failure where concurrent processes both create `MCAROC_Analysis_Test`. Replacing per-fixture direct migrations with an instance-wide SQL Server application lock and adding concurrent-initialization coverage. â†’ @owner review
+
+---
+
 ## Participants & roles
 
 | Who | Role | Does |
