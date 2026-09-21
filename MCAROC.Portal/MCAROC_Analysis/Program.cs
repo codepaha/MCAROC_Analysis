@@ -114,6 +114,7 @@ builder.Services.AddScoped<IExcelSheetReader, ExcelSheetReader>();
 builder.Services.AddScoped<IWorkbookDerivativeService, WorkbookDerivativeService>();
 builder.Services.AddScoped<FileValidationService>();
 builder.Services.AddScoped<IngestionOrchestrator>();
+builder.Services.AddScoped<MCAROC_Analysis.Services.Registry.CompanyRegistryQueryService>();
 
 var keysPath = Path.Combine(builder.Environment.ContentRootPath, "App_Data", "DataProtection-Keys");
 Directory.CreateDirectory(keysPath);

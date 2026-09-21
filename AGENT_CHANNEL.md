@@ -104,6 +104,7 @@ Razor + view-model-load only, or pure computation over entities that already exi
 | #66 D11 | credit rating metrics (Section F) | #51 A9 (merged) | **MERGED** (`8213961`) |
 | #106 | Corporate tab render-audit — 5 sets of captured columns not shown (LastAgmDate/LeiStatus, Directors, Other Directorships, Shareholding, Related Corporates) | none — Razor-only | **MERGED** (`f4c2f3f`, PR #109) |
 | #107 | Compliance tab render-audit — GST registration + EPFO contribution columns not shown | none — Razor-only | **MERGED** (`7b74f11`, PR #110) |
+| #255 | Company Master registry dashboard: server-backed overview, explorer and safe metrics | none — Razor/compute only | **CLAIMED** (`feature/255-company-master-registry-dashboard`) |
 | visual | before/after screenshots on every render PR; keep `E:\Downloads\VTION\ROC_JSON_Reports` current | — | ongoing |
 
 **Wave 3 (2026-09-12, filed as #112–#124 under EPIC #31). #114/#115/#121 picked up by Claude (owner
@@ -278,6 +279,11 @@ service — if it sits `queued`, `run.cmd` is down) runs *only* what Linux can't
 ---
 
 ## Log  <!-- newest first. Prefix: NEEDS / BLOCKED / DONE / DECISION / FYI -->
+
+### 2026-09-21 — Antigravity (CLAIMED #255: Company Master registry dashboard)
+- **CLAIMED #255** on branch `feature/255-company-master-registry-dashboard`, based on latest `main` (`fa8ce3f`).
+- Assigned to Antigravity through repository lane convention: render, visual QA, and pure metrics-computation only (zero migrations, zero schema changes).
+- Scope: Server-backed Company, LLP, and Foreign registry intelligence dashboard distinct from `/internal/company-master`, utilizing established internal inline-SVG partials (no Chart.js), strictly bounded v1 query gate (exact PK seek on Identifier, (RecordType, Name) prefix seek with deterministic keyset cursor (Name, Identifier), no unindexed residual filters), snapshot consistency with four-tier state evaluation (VerifiedSnapshot, SyncColdUnavailable with explicit temporary unavailable state and no live scans, UnverifiedLegacyImport with withheld aggregates, EmptyRegistry), single-flight rebuild with cache retention, dynamic status vocabulary verification, explicit AutoFetch prefill contract (`GET /Requests/AutoFetch?cin=...`), and SQL Server-backed test suite.
 
 ### 2026-09-21 — Claude session (DONE PR #254 review round 1 — chunking claim/completion had no lease/fencing, fixed)
 - **Reviewer finding (round 1, head `8451f13`):** `RecoverStaleWorkAsync` reclaimed every `ChunkingStatus.InProgress`

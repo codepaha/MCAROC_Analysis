@@ -1,0 +1,51 @@
+@model RegistryAggregateData
+@using MCAROC_Analysis.Models.Registry
+
+<div class="card mb-4">
+    <div class="card-header d-flex justify-content-between align-items-center">
+        <div>
+            <div class="fw-bold">Foreign Company Presence in India (FCRN)</div>
+            <div class="text-muted small">Entities incorporated outside India with established places of business under Companies Act §379&ndash;393.</div>
+        </div>
+        <span class="badge bg-secondary">Total: @Model.ForeignStatus.Total.ToString("N0")</span>
+    </div>
+    <div class="card-body">
+        <div class="row g-3 mb-4">
+            <div class="col-md-4">
+                <div class="p-3 border rounded text-center">
+                    <div class="text-success fw-bold h4 mb-0">@Model.ForeignStatus.Active.ToString("N0")</div>
+                    <div class="small text-muted">Active in India</div>
+                    <div class="small fw-semibold text-success">@Model.ForeignStatus.ActivePercent.ToString("F1")%</div>
+                </div>
+            </div>
+            <div class="col-md-4">
+                <div class="p-3 border rounded text-center">
+                    <div class="text-warning fw-bold h4 mb-0">@Model.ForeignStatus.StrikeOff.ToString("N0")</div>
+                    <div class="small text-muted">Closed / Ceased Business</div>
+                    <div class="small fw-semibold text-warning">@Model.ForeignStatus.StrikeOffPercent.ToString("F1")%</div>
+                </div>
+            </div>
+            <div class="col-md-4">
+                <div class="p-3 border rounded text-center">
+                    <div class="text-secondary fw-bold h4 mb-0">@Model.ForeignStatus.OtherUnclassified.ToString("N0")</div>
+                    <div class="small text-muted">Other / Inactive</div>
+                    <div class="small fw-semibold text-secondary">@Model.ForeignStatus.OtherPercent.ToString("F1")%</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-header fw-bold">Top Countries of Origin</div>
+            <div class="card-body">
+                @if (Model.ForeignCountriesChart != null)
+                {
+                    @await Html.PartialAsync("_HorizontalBars", Model.ForeignCountriesChart)
+                }
+                else
+                {
+                    <p class="text-muted mb-0 small">No country data available.</p>
+                }
+            </div>
+        </div>
+    </div>
+</div>

@@ -1,0 +1,81 @@
+@model RegistryDashboardViewModel
+@using MCAROC_Analysis.Models.Registry
+
+@{
+    var agg = Model.Aggregates;
+    if (agg == null) return;
+    var meta = agg.Metadata;
+    var overall = agg.OverallStatus;
+}
+
+<div class="pi-panel mb-4 p-4" style="background: linear-gradient(135deg, var(--surface) 0%, var(--surface-2) 100%); border: 1px solid var(--border); border-radius: 12px;">
+    <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+        <div>
+            <div class="text-uppercase small fw-bold tracking-wide" style="color: var(--brand); letter-spacing: 1.2px;">
+                MCA Registry Universe &bull; @(meta.PublishedDate?.ToString("dd MMM yyyy") ?? "Latest Snapshot")
+            </div>
+            <h2 class="h4 mb-1 fw-bold">
+                India Corporate &amp; Entity Master Registry
+            </h2>
+            <div class="text-muted small">
+                Source: <strong>@meta.Source</strong> &bull; Total Tracked: <strong>@meta.TotalRecords.ToString("N0")</strong> entities
+            </div>
+        </div>
+        @if (meta.IsSyncInProgress)
+        {
+            <div class="alert alert-warning py-1 px-3 mb-0 d-flex align-items-center gap-2 small">
+                <span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>
+                <span>Sync in progress (@meta.ActiveSyncStatus). Serving stable snapshot as of @(meta.PublishedDate?.ToString("dd-MMM-yyyy") ?? "previous run").</span>
+            </div>
+        }
+    </div>
+
+    <div class="row g-3">
+        <div class="col-md-3 col-sm-6">
+            <div class="p-3 rounded" style="background: var(--surface); border: 1px solid var(--border);">
+                <div class="text-muted text-uppercase small">Total Entities</div>
+                <div class="h3 fw-bold my-1">@meta.TotalRecords.ToString("N0")</div>
+                <div class="text-muted small">
+                    Co: @meta.CompanyCount.ToString("N0") &bull; LLP: @meta.LlpCount.ToString("N0") &bull; FCRN: @meta.ForeignCount.ToString("N0")
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3 col-sm-6">
+            <div class="p-3 rounded" style="background: var(--surface); border: 1px solid var(--border);">
+                <div class="text-muted text-uppercase small">Active Operational</div>
+                <div class="h3 fw-bold my-1 text-success">@overall.Active.ToString("N0")</div>
+                <div class="text-muted small">
+                    <strong>@overall.ActivePercent.ToString("F1")%</strong> of entire registry universe
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3 col-sm-6">
+            <div class="p-3 rounded" style="background: var(--surface); border: 1px solid var(--border);">
+                <div class="text-muted text-uppercase small">Strike Off / Closed</div>
+                <div class="h3 fw-bold my-1 text-warning">@overall.StrikeOff.ToString("N0")</div>
+                <div class="text-muted small">
+                    <strong>@overall.StrikeOffPercent.ToString("F1")%</strong> struck off or closed
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3 col-sm-6">
+            <div class="p-3 rounded" style="background: var(--surface); border: 1px solid var(--border);">
+                <div class="text-muted text-uppercase small">Distressed (CIRP / Liq)</div>
+                @if (overall.HasObservedCirp || overall.HasObservedLiquidation)
+                {
+                    <div class="h3 fw-bold my-1 text-danger">@((overall.UnderCirp + overall.UnderLiquidation).ToString("N0"))</div>
+                    <div class="text-muted small">
+                        CIRP: @overall.UnderCirp.ToString("N0") &bull; Liq: @overall.UnderLiquidation.ToString("N0")
+                    </div>
+                }
+                else
+                {
+                    <div class="h3 fw-bold my-1 text-muted">&mdash;</div>
+                    <div class="text-muted small">
+                        Unavailable / Not tracked in snapshot
+                    </div>
+                }
+            </div>
+        </div>
+    </div>
+</div>
