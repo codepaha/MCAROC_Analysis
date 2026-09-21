@@ -279,6 +279,34 @@ service — if it sits `queued`, `run.cmd` is down) runs *only* what Linux can't
 
 ## Log  <!-- newest first. Prefix: NEEDS / BLOCKED / DONE / DECISION / FYI -->
 
+### 2026-09-21 — Claude session (DONE PR #253 review round 1 — SSRF via pdf_url + lease not fencing file writes, both fixed)
+- **Two real findings, both fixed at `ef1c57c`:**
+  1. **SSRF.** `DownloadOrderDocumentAsync` fetched any absolute HTTP(S) URL a vendor report's `pdf_url`
+     asserted (untrusted input), only omitting the JWT for a third-party host — a malicious/compromised
+     report could point it at an internal service or cloud metadata endpoint and have this server fetch (and
+     retain, if the response started with `%PDF-`) it. Fixed: HTTPS-only; host must be BPR's own configured
+     host or on a new `BprLitigationOptions.AllowedOrderDocumentHosts` allowlist (empty by default); the
+     destination is DNS-resolved and any private/loopback/link-local/carrier-NAT address is refused — checked
+     against the resolved IP, not the hostname string, so this also catches an allowlisted host that resolves
+     internally; redirects are never followed (`Program.cs`'s `AddHttpClient<BprLitigationClient>` now sets
+     `AllowAutoRedirect = false`) so a 3xx can't silently retarget the request past these checks. DNS
+     resolution is injected for testability (defaults to `Dns.GetHostAddressesAsync`) rather than hard-coded,
+     so the private-address check never depends on real network/DNS reachability in CI.
+  2. **Lease didn't fence file writes.** Every worker wrote to the same fixed path (`{id}.pdf}`); RowVersion
+     protected the DB row from two attempts both winning, but not a file write outside any transaction — a
+     worker whose lease expired while still mid-download could finish and overwrite (or, as the added
+     regression demonstrated, delete via its own cleanup-on-loss) a takeover's already-published file. Fixed:
+     every write goes to a path keyed by the claiming attempt's own `LeaseToken`, never a fixed name; the
+     final publish and every Failed/Expired transition is now an `ExecuteUpdateAsync` guarded by
+     `(documentId, thisAttempt'sLeaseToken, LeaseExpiresUtc > now)` — mirroring
+     `LitigationSearchJobService.LeaseGuarded` exactly — instead of a plain `SaveChangesAsync`.
+- 7 new regressions (6 SSRF/redirect — including a real `HttpListener`-backed proof `AllowAutoRedirect=false`
+  actually prevents following a 3xx — plus 1 interleaved stale-writer test). Verified the stale-writer test
+  actually catches the regression: reverted the per-claim file path locally, confirmed it failed (the exact
+  corruption class described — a stale worker's cleanup deleted the winner's still-referenced file), restored
+  the fix, confirmed it passes. Full litigation suite 136/137 (1 unrelated pre-existing skip), full solution
+  suite 1606/1625 (19 unrelated pre-existing skips), full build clean. `@codex` re-review requested.
+
 ### 2026-09-20 — Claude session (#243 LIT-03: all-orders retrieval, text retention, ZIP delivery; PR #253 opened)
 - Built on branch `feature/243-litigation-orders-zip` (based on `main` post-#252). Adds `LitigationOrderDocument`
   (one row per `LitigationCaseOrder`) — crash-safe/concurrency-safe PDF retrieval, retention and text
