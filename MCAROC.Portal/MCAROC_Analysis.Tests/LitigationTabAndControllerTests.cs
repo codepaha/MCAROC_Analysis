@@ -769,11 +769,82 @@ public class LitigationTabAndControllerTests : IAsyncLifetime
                 var caseObj = new LitigationCase { CaseStatus = tc.Status, CaseStage = tc.Stage };
                 var bucketFromCase = LitigationCaseStatusClassifier.Classify(caseObj);
                 Assert.Equal(tc.Expected, bucketFromCase);
+
+                // Directly assert shared compiled delegates
+                Assert.Equal(tc.Expected == LitigationCaseStatusBucket.Disposed, LitigationCaseStatusClassifier.IsDisposedCompiled(caseObj));
+                Assert.Equal(tc.Expected == LitigationCaseStatusBucket.Pending, LitigationCaseStatusClassifier.IsPendingCompiled(caseObj));
+                Assert.Equal(tc.Expected == LitigationCaseStatusBucket.Unknown, LitigationCaseStatusClassifier.IsUnknownCompiled(caseObj));
             }
         }
         finally
         {
             CultureInfo.CurrentCulture = originalCulture;
+        }
+    }
+
+    [Fact]
+    public async Task StatusClassifier_SqlExpressions_ExecuteAgainstSqlServer_WithZeroClientEvaluation()
+    {
+        await using var db = CreateContext();
+        var client = new Client { ClientCode = "SQLT" + Guid.NewGuid().ToString("N")[..6], ClientName = "SQL Trans Co", CreatedDate = DateTime.UtcNow };
+        db.Clients.Add(client);
+        var request = new McaRequest { Client = client, CompanyName = "SQL Trans Co", RequestNumber = $"REQ-{Guid.NewGuid():N}", CreatedDate = DateTime.UtcNow };
+        db.Requests.Add(request);
+        await db.SaveChangesAsync();
+
+        var cases = new List<LitigationCase>
+        {
+            new() { RequestId = request.RequestId, CaseNumber = "C1", CaseStatus = "DISPOSED AFTER HEARING", Court = "Delhi HC", FirstSeenUtc = DateTime.UtcNow },
+            new() { RequestId = request.RequestId, CaseNumber = "C2", CaseStatus = "pEnDiNg", Court = "Delhi HC", FirstSeenUtc = DateTime.UtcNow },
+            new() { RequestId = request.RequestId, CaseNumber = "C3", CaseStatus = "Arbitrary Unmatched", Court = "Delhi HC", FirstSeenUtc = DateTime.UtcNow },
+            new() { RequestId = request.RequestId, CaseNumber = "C4", CaseStatus = null, CaseStage = null, Court = "Delhi HC", FirstSeenUtc = DateTime.UtcNow },
+            new() { RequestId = request.RequestId, CaseNumber = "C5", CaseStatus = "Admitted", CaseStage = "Hearing", Court = "Delhi HC", FirstSeenUtc = DateTime.UtcNow }
+        };
+        db.LitigationCases.AddRange(cases);
+        await db.SaveChangesAsync();
+
+        // 1. Verify IsDisposedExpr translates to SQL and executes
+        var disposedInSql = await db.LitigationCases
+            .Where(c => c.RequestId == request.RequestId)
+            .Where(LitigationCaseStatusClassifier.IsDisposedExpr)
+            .ToListAsync();
+        Assert.Single(disposedInSql);
+        Assert.Equal("C1", disposedInSql[0].CaseNumber);
+
+        // 2. Verify IsPendingExpr translates to SQL and executes
+        var pendingInSql = await db.LitigationCases
+            .Where(c => c.RequestId == request.RequestId)
+            .Where(LitigationCaseStatusClassifier.IsPendingExpr)
+            .ToListAsync();
+        Assert.Equal(2, pendingInSql.Count);
+        Assert.Contains(pendingInSql, c => c.CaseNumber == "C2");
+        Assert.Contains(pendingInSql, c => c.CaseNumber == "C5");
+
+        // 3. Verify IsUnknownExpr translates to SQL and executes
+        var unknownInSql = await db.LitigationCases
+            .Where(c => c.RequestId == request.RequestId)
+            .Where(LitigationCaseStatusClassifier.IsUnknownExpr)
+            .ToListAsync();
+        Assert.Equal(2, unknownInSql.Count);
+        Assert.Contains(unknownInSql, c => c.CaseNumber == "C3");
+        Assert.Contains(unknownInSql, c => c.CaseNumber == "C4");
+
+        // 4. Parity verification: every case in database matches the compiled delegate exactly
+        var allCasesInDb = await db.LitigationCases.Where(c => c.RequestId == request.RequestId).ToListAsync();
+        foreach (var c in allCasesInDb)
+        {
+            var isDisposedSql = disposedInSql.Any(x => x.LitigationCaseId == c.LitigationCaseId);
+            var isPendingSql = pendingInSql.Any(x => x.LitigationCaseId == c.LitigationCaseId);
+            var isUnknownSql = unknownInSql.Any(x => x.LitigationCaseId == c.LitigationCaseId);
+
+            Assert.Equal(isDisposedSql, LitigationCaseStatusClassifier.IsDisposedCompiled(c));
+            Assert.Equal(isPendingSql, LitigationCaseStatusClassifier.IsPendingCompiled(c));
+            Assert.Equal(isUnknownSql, LitigationCaseStatusClassifier.IsUnknownCompiled(c));
+
+            var expectedBucket = isDisposedSql ? LitigationCaseStatusBucket.Disposed :
+                                 isPendingSql ? LitigationCaseStatusBucket.Pending :
+                                 LitigationCaseStatusBucket.Unknown;
+            Assert.Equal(expectedBucket, LitigationCaseStatusClassifier.Classify(c));
         }
     }
 

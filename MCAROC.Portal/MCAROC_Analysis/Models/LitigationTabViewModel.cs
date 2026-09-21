@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Linq.Expressions;
+using System.Reflection;
 using System.Text.Json;
 using MCAROC_Analysis.Data.Entities;
 using MCAROC_Analysis.Services.LitigationData;
@@ -101,49 +102,42 @@ public static class LitigationCaseStatusClassifier
             ))
         );
 
-    private static readonly string[] DisposedTokens =
-    [
-        "dispos", "clos", "dismis", "withdr", "settl", "decid", "quash", "decree", "allow", "reject"
-    ];
-
-    private static readonly string[] PendingTokens =
-    [
-        "pend", "admit", "hear", "stage", "evid", "argum", "notic", "stay", "trial", "appear"
-    ];
-
-    public static LitigationCaseStatusBucket Classify(LitigationCase c) =>
-        Classify(c.CaseStatus, c.CaseStage);
-
-    public static LitigationCaseStatusBucket Classify(string? caseStatus, string? caseStage = null)
+    private sealed class ToLowerInvariantVisitor : ExpressionVisitor
     {
-        var status = caseStatus?.ToLowerInvariant();
-        var stage = caseStage?.ToLowerInvariant();
+        private static readonly MethodInfo ToLowerMethod = typeof(string).GetMethod(nameof(string.ToLower), Type.EmptyTypes)!;
+        private static readonly MethodInfo ToLowerInvariantMethod = typeof(string).GetMethod(nameof(string.ToLowerInvariant), Type.EmptyTypes)!;
 
-        if (IsDisposedMatch(status, stage)) return LitigationCaseStatusBucket.Disposed;
-        if (IsPendingMatch(status, stage)) return LitigationCaseStatusBucket.Pending;
+        protected override Expression VisitMethodCall(MethodCallExpression node)
+        {
+            if (node.Method == ToLowerMethod && node.Object != null)
+            {
+                return Expression.Call(Visit(node.Object), ToLowerInvariantMethod);
+            }
+            return base.VisitMethodCall(node);
+        }
+    }
+
+    private static Func<LitigationCase, bool> CompileInvariant(Expression<Func<LitigationCase, bool>> expr)
+    {
+        var visitor = new ToLowerInvariantVisitor();
+        var rewritten = (Expression<Func<LitigationCase, bool>>)visitor.Visit(expr);
+        return rewritten.Compile();
+    }
+
+    public static readonly Func<LitigationCase, bool> IsDisposedCompiled = CompileInvariant(IsDisposedExpr);
+    public static readonly Func<LitigationCase, bool> IsPendingCompiled = CompileInvariant(IsPendingExpr);
+    public static readonly Func<LitigationCase, bool> IsUnknownCompiled = CompileInvariant(IsUnknownExpr);
+
+    public static LitigationCaseStatusBucket Classify(LitigationCase? c)
+    {
+        if (c is null) return LitigationCaseStatusBucket.Unknown;
+        if (IsDisposedCompiled(c)) return LitigationCaseStatusBucket.Disposed;
+        if (IsPendingCompiled(c)) return LitigationCaseStatusBucket.Pending;
         return LitigationCaseStatusBucket.Unknown;
     }
 
-    private static bool IsDisposedMatch(string? status, string? stage)
-    {
-        foreach (var t in DisposedTokens)
-        {
-            if (status != null && status.Contains(t, StringComparison.Ordinal)) return true;
-            if (stage != null && stage.Contains(t, StringComparison.Ordinal)) return true;
-        }
-        return false;
-    }
-
-    private static bool IsPendingMatch(string? status, string? stage)
-    {
-        if (IsDisposedMatch(status, stage)) return false;
-        foreach (var t in PendingTokens)
-        {
-            if (status != null && status.Contains(t, StringComparison.Ordinal)) return true;
-            if (stage != null && stage.Contains(t, StringComparison.Ordinal)) return true;
-        }
-        return false;
-    }
+    public static LitigationCaseStatusBucket Classify(string? caseStatus, string? caseStage = null) =>
+        Classify(new LitigationCase { CaseStatus = caseStatus, CaseStage = caseStage });
 }
 
 public enum SnapshotImportState
