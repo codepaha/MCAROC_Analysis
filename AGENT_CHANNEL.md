@@ -154,8 +154,8 @@ gate, so it gets its own table rather than living inside either lane's section a
 |---|---|---|---|---|
 | #241 LIT-01 | BPR API client + durable litigation-job lifecycle | Claude | — | **MERGED** (PR #251, `29ec856`) |
 | #242 LIT-02 | Persist BPR cases; retain CSP provider identity and apply conservative CNR-first de-duplication | Claude | #241 | **MERGED** (PR #252, `7ce747a`) |
-| #243 LIT-03 | All-orders retrieval, text retention, ZIP delivery | Claude | #241, #242 | **PR open** (#253) |
-| #244 LIT-04 | Request-scoped litigation evidence for MCA ROC Copilot | Claude | #243 | unclaimed |
+| #243 LIT-03 | All-orders retrieval, text retention, ZIP delivery | Claude | #241, #242 | **MERGED** (PR #253, `fa8ce3f`) |
+| #244 LIT-04 | Request-scoped litigation evidence for MCA ROC Copilot | Claude | #243 | **CLAIMED** (`feature/244-litigation-copilot-evidence`) |
 | #245 LIT-05 | Evidence-grounded Gemini case/portfolio analysis | Claude | #242, #243 | unclaimed |
 | #246 LIT-06 | Litigation tab — court grid + case-card UI | Antigravity | #241, #242, #243, #245 | unclaimed |
 | #247 LIT-07 | Standalone litigation PDF/CSV reports | Antigravity | #242, #243, #245, #246 | unclaimed |
@@ -278,6 +278,31 @@ service — if it sits `queued`, `run.cmd` is down) runs *only* what Linux can't
 ---
 
 ## Log  <!-- newest first. Prefix: NEEDS / BLOCKED / DONE / DECISION / FYI -->
+
+### 2026-09-21 — Claude session (MERGED PR #253 — #243 LIT-03 done; CLAIMED #244 LIT-04)
+- **PR #253 MERGED into `main` as `fa8ce3f`** at reviewed head `5d89b6b` — both required checks green,
+  `MERGEABLE`/`CLEAN`. Two review rounds, both substantive: round 1 (SSRF via untrusted `pdf_url` — HTTPS-
+  only/host-allowlist/private-address-block/no-redirect; lease not fencing file writes — per-claim file
+  paths + `ExecuteUpdateAsync`-guarded terminal writes), round 2 (DNS rebinding could still bypass the
+  private-address check — closed with a `SocketsHttpHandler.ConnectCallback` that resolves and validates
+  immediately before connecting, no second independent resolution in between).
+- **DECISION (owner, 2026-09-21):** round 2's reviewer also flagged that the connect-time protection only
+  applies to a DIRECT connection — if a system/environment proxy is active, the callback connects to the
+  proxy (confirmed empirically), not the order host, so the proxy's own resolution is outside this check's
+  visibility; a private-IP corporate proxy would also be refused by the address check, breaking legitimate
+  proxy use. The owner reviewed this against the actual threat model (internal, fixed-vendor integration, not
+  exposed to hostile input) and accepted the gap: the outer protections (HTTPS-only, exact host allowlist, no
+  redirects, host-scoped JWT, size/signature validation) are judged sufficient without also
+  disabling/hardening proxy behavior. Documented directly on `CreateSafeConnectCallback` (dated, attributed)
+  rather than silently dropped — revisit if this server's exposure or reachability to sensitive internal
+  services changes. See the log entries below for both review rounds' full detail.
+- **#243 (LIT-03) is done.** `LitigationOrderDocument` + the `AddLitigationOrderDocuments` migration,
+  `LitigationOrderDocumentService`/`Worker`/`Queue`, `BprLitigationClient.DownloadOrderDocumentAsync`/
+  `CreateSafeConnectCallback`, `LitigationOrdersArchiveBuilder`, and `LitigationController`'s bulk-ZIP
+  endpoint are now on `main`.
+- **CLAIMED #244** (LIT-04: request-scoped litigation evidence for the MCA ROC Copilot) on branch
+  `feature/244-litigation-copilot-evidence`, based on latest `main` (`fa8ce3f`). Dependency #243 merged —
+  unblocked per `gh issue view 244`.
 
 ### 2026-09-21 — Claude session (DONE PR #253 review round 2 — DNS rebinding could still bypass the private-address check, fixed)
 - **One P1, fixed at `d11f58a`:** round 1's `IsSafeDestinationAsync` resolves and validates the order-PDF
