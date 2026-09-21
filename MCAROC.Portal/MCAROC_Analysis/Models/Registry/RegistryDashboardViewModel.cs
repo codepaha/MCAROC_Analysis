@@ -133,3 +133,4 @@ public sealed class RegistryDashboardViewModel
     public string ActiveTab { get; set; } = "overview"; // overview, companies, llps, foreign, explorer
     public string? StatusMessage { get; set; }
 }
+

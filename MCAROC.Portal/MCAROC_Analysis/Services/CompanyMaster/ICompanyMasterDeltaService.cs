@@ -25,7 +25,7 @@ public interface ICompanyMasterDeltaService
     /// <returns>Total staging rows loaded, and the hex-encoded SHA256 aggregate checksum of all CSV content.</returns>
     Task<(long TotalRows, string AggregateChecksum)> IngestCsvFilesAsync(long syncRunId, long fencingToken, IReadOnlyList<string> csvFiles, CancellationToken cancellationToken = default);
     Task<ValidationResult> ValidateStagingAsync(long syncRunId, long fencingToken, CancellationToken cancellationToken = default);
-    Task<PromotionMetricsResult> PromoteStagedDeltaAsync(long syncRunId, long fencingToken, int batchSize = 4000, CancellationToken cancellationToken = default);
+    Task<PromotionMetricsResult> PromoteStagedDeltaAsync(long syncRunId, long fencingToken, int batchSize = 4000, CancellationToken cancellationToken = default, TimeSpan? admissionTimeout = null);
     Task CleanStagingAsync(long syncRunId, CancellationToken cancellationToken = default);
     Task<DateOnly?> ProbePortalSnapshotDateAsync(CancellationToken cancellationToken = default);
     /// <summary>

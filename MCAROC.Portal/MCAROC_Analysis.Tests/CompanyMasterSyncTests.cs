@@ -12,6 +12,7 @@ using MCAROC_Analysis.Data;
 using MCAROC_Analysis.Data.Entities;
 using MCAROC_Analysis.Services.Audit;
 using MCAROC_Analysis.Services.CompanyMaster;
+using MCAROC_Analysis.Services.Registry;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Data.SqlClient;
@@ -29,6 +30,17 @@ public class CompanyMasterSyncTests : IAsyncLifetime
 
     private static AppDbContext CreateContext() =>
         new(new DbContextOptionsBuilder<AppDbContext>().UseSqlServer(ConnectionString).Options);
+
+    private static CompanyMasterDeltaService CreateDeltaService(
+        AppDbContext db,
+        IConfiguration config,
+        IProxyPoolService proxyPool,
+        ISyncLockLease lease,
+        IRegistryPromotionCoordinator? coordinator = null)
+    {
+        var coord = coordinator ?? new RegistryPromotionCoordinator(ConnectionString, NullLogger<RegistryPromotionCoordinator>.Instance);
+        return new CompanyMasterDeltaService(db, config, proxyPool, lease, coord, NullLogger<CompanyMasterDeltaService>.Instance);
+    }
 
     public async Task InitializeAsync()
     {
@@ -138,7 +150,7 @@ public class CompanyMasterSyncTests : IAsyncLifetime
 
             var proxyPool = new ProxyPoolService(config, NullLogger<ProxyPoolService>.Instance);
             var lease = new DistributedAppLockLease(ConnectionString, NullLogger<DistributedAppLockLease>.Instance);
-            var deltaService = new CompanyMasterDeltaService(db, config, proxyPool, lease, NullLogger<CompanyMasterDeltaService>.Instance);
+            var deltaService = CreateDeltaService(db, config, proxyPool, lease);
 
             // Worker preemption simulation: Bump the fencing token in DB to simulate another worker taking over
             job.FencingToken = token + 1;
@@ -255,7 +267,7 @@ public class CompanyMasterSyncTests : IAsyncLifetime
 
             var proxyPool = new ProxyPoolService(config, NullLogger<ProxyPoolService>.Instance);
             var lease = new DistributedAppLockLease(ConnectionString, NullLogger<DistributedAppLockLease>.Instance);
-            var deltaService = new CompanyMasterDeltaService(db, config, proxyPool, lease, NullLogger<CompanyMasterDeltaService>.Instance);
+            var deltaService = CreateDeltaService(db, config, proxyPool, lease);
 
             var valResult = await deltaService.ValidateStagingAsync(testJobId, token);
             Assert.False(valResult.IsValid);
@@ -324,7 +336,7 @@ public class CompanyMasterSyncTests : IAsyncLifetime
 
             var proxyPool = new ProxyPoolService(config, NullLogger<ProxyPoolService>.Instance);
             var lease = new DistributedAppLockLease(ConnectionString, NullLogger<DistributedAppLockLease>.Instance);
-            var deltaService = new CompanyMasterDeltaService(db, config, proxyPool, lease, NullLogger<CompanyMasterDeltaService>.Instance);
+            var deltaService = CreateDeltaService(db, config, proxyPool, lease);
 
             var valResult = await deltaService.ValidateStagingAsync(testJobId, token);
             Assert.True(valResult.IsValid);
@@ -440,7 +452,7 @@ public class CompanyMasterSyncTests : IAsyncLifetime
 
             var proxyPool = new ProxyPoolService(config, NullLogger<ProxyPoolService>.Instance);
             var lease = new DistributedAppLockLease(ConnectionString, NullLogger<DistributedAppLockLease>.Instance);
-            var deltaService = new CompanyMasterDeltaService(db, config, proxyPool, lease, NullLogger<CompanyMasterDeltaService>.Instance);
+            var deltaService = CreateDeltaService(db, config, proxyPool, lease);
 
             var metrics = await deltaService.PromoteStagedDeltaAsync(testJobId, token, batchSize: 100);
 
@@ -680,7 +692,7 @@ public class CompanyMasterSyncTests : IAsyncLifetime
 
         var proxyPool = new ProxyPoolService(config, NullLogger<ProxyPoolService>.Instance);
         var lease = new DistributedAppLockLease(ConnectionString, NullLogger<DistributedAppLockLease>.Instance);
-        var deltaService = new CompanyMasterDeltaService(db, config, proxyPool, lease, NullLogger<CompanyMasterDeltaService>.Instance);
+        var deltaService = CreateDeltaService(db, config, proxyPool, lease);
 
         var metrics = await deltaService.PromoteStagedDeltaAsync(testJobId, token, batchSize: 100);
 
@@ -766,7 +778,7 @@ public class CompanyMasterSyncTests : IAsyncLifetime
 
         var proxyPool = new ProxyPoolService(config, NullLogger<ProxyPoolService>.Instance);
         var lease = new DistributedAppLockLease(ConnectionString, NullLogger<DistributedAppLockLease>.Instance);
-        var deltaService = new CompanyMasterDeltaService(db, config, proxyPool, lease, NullLogger<CompanyMasterDeltaService>.Instance);
+        var deltaService = CreateDeltaService(db, config, proxyPool, lease);
 
         var ex = await Assert.ThrowsAsync<SqlException>(() => deltaService.PromoteStagedDeltaAsync(testJobId, token, batchSize: 100));
         Assert.Contains("Fencing check failed", ex.Message);
@@ -786,6 +798,7 @@ public class CompanyMasterSyncTests : IAsyncLifetime
         services.AddSingleton<IProxyPoolService>(new ProxyPoolService(new ConfigurationBuilder().Build(), NullLogger<ProxyPoolService>.Instance));
         services.AddSingleton<ISafeArchiveExtractor>(new SafeArchiveExtractor(NullLogger<SafeArchiveExtractor>.Instance));
         services.AddScoped<ISyncLockLease>(_ => new DistributedAppLockLease(ConnectionString, NullLogger<DistributedAppLockLease>.Instance));
+        services.AddSingleton<IRegistryPromotionCoordinator>(_ => new RegistryPromotionCoordinator(ConnectionString, NullLogger<RegistryPromotionCoordinator>.Instance));
         services.AddScoped<ICompanyMasterDeltaService, CompanyMasterDeltaService>();
 
         var config = new ConfigurationBuilder()
@@ -842,6 +855,7 @@ public class CompanyMasterSyncTests : IAsyncLifetime
             services.AddSingleton<IProxyPoolService>(new ProxyPoolService(new ConfigurationBuilder().Build(), NullLogger<ProxyPoolService>.Instance));
             services.AddSingleton<ISafeArchiveExtractor>(new SafeArchiveExtractor(NullLogger<SafeArchiveExtractor>.Instance));
             services.AddScoped<ISyncLockLease>(_ => new DistributedAppLockLease(ConnectionString, NullLogger<DistributedAppLockLease>.Instance));
+            services.AddSingleton<IRegistryPromotionCoordinator>(_ => new RegistryPromotionCoordinator(ConnectionString, NullLogger<RegistryPromotionCoordinator>.Instance));
             services.AddScoped<ICompanyMasterDeltaService, CompanyMasterDeltaService>();
 
             var config = new ConfigurationBuilder()
@@ -938,11 +952,13 @@ public class CompanyMasterSyncTests : IAsyncLifetime
         // The worker will compare it with lastJob.PublishedDate (which is also today) and bail.
         services.AddScoped<ICompanyMasterDeltaService>(sp =>
         {
+            var coord = new RegistryPromotionCoordinator(ConnectionString, NullLogger<RegistryPromotionCoordinator>.Instance);
             var inner = new CompanyMasterDeltaService(
                 sp.GetRequiredService<AppDbContext>(),
                 config,
                 sp.GetRequiredService<IProxyPoolService>(),
                 sp.GetRequiredService<ISyncLockLease>(),
+                coord,
                 NullLogger<CompanyMasterDeltaService>.Instance);
             return new SameDateStubDeltaService(inner, today);
         });
@@ -974,19 +990,19 @@ public class CompanyMasterSyncTests : IAsyncLifetime
             .Build();
         var proxyPool = new ProxyPoolService(config, NullLogger<ProxyPoolService>.Instance);
         var lease = new DistributedAppLockLease(ConnectionString, NullLogger<DistributedAppLockLease>.Instance);
-        var svc = new CompanyMasterDeltaService(db, config, proxyPool, lease, NullLogger<CompanyMasterDeltaService>.Instance);
+        var svc = CreateDeltaService(db, config, proxyPool, lease);
 
         // Create and immediately complete two jobs.
         var j1 = await svc.CreateJobAsync(CompanyMasterSyncTriggerType.ManualForceSync, "test");
         await svc.UpdateJobStatusAsync(j1.JobId, CompanyMasterSyncJobStatus.Completed);
 
         await using var db2 = CreateContext();
-        var svc2 = new CompanyMasterDeltaService(db2, config, proxyPool, lease, NullLogger<CompanyMasterDeltaService>.Instance);
+        var svc2 = CreateDeltaService(db2, config, proxyPool, lease);
         var j2 = await svc2.CreateJobAsync(CompanyMasterSyncTriggerType.ManualForceSync, "test");
         await svc2.UpdateJobStatusAsync(j2.JobId, CompanyMasterSyncJobStatus.Completed);
 
         await using var db3 = CreateContext();
-        var svc3 = new CompanyMasterDeltaService(db3, config, proxyPool, lease, NullLogger<CompanyMasterDeltaService>.Instance);
+        var svc3 = CreateDeltaService(db3, config, proxyPool, lease);
         var j3 = await svc3.CreateJobAsync(CompanyMasterSyncTriggerType.ManualForceSync, "test");
         await svc3.UpdateJobStatusAsync(j3.JobId, CompanyMasterSyncJobStatus.Failed);
 
@@ -1028,7 +1044,7 @@ public class CompanyMasterSyncTests : IAsyncLifetime
                 .Build();
             var proxyPool = new ProxyPoolService(config, NullLogger<ProxyPoolService>.Instance);
             var lease = new DistributedAppLockLease(ConnectionString, NullLogger<DistributedAppLockLease>.Instance);
-            var svc = new CompanyMasterDeltaService(db, config, proxyPool, lease, NullLogger<CompanyMasterDeltaService>.Instance);
+            var svc = CreateDeltaService(db, config, proxyPool, lease);
 
             await lease.TryAcquireAsync("CompanyMasterSyncExclusiveLock", TimeSpan.FromSeconds(5));
             try
@@ -1088,8 +1104,8 @@ public class CompanyMasterSyncTests : IAsyncLifetime
         public Task<ValidationResult> ValidateStagingAsync(long syncRunId, long fencingToken, CancellationToken ct = default)
             => _inner.ValidateStagingAsync(syncRunId, fencingToken, ct);
 
-        public Task<PromotionMetricsResult> PromoteStagedDeltaAsync(long syncRunId, long fencingToken, int batchSize = 4000, CancellationToken ct = default)
-            => _inner.PromoteStagedDeltaAsync(syncRunId, fencingToken, batchSize, ct);
+        public Task<PromotionMetricsResult> PromoteStagedDeltaAsync(long syncRunId, long fencingToken, int batchSize = 4000, CancellationToken ct = default, TimeSpan? admissionTimeout = null)
+            => _inner.PromoteStagedDeltaAsync(syncRunId, fencingToken, batchSize, ct, admissionTimeout);
 
         public Task CleanStagingAsync(long syncRunId, CancellationToken ct = default)
             => _inner.CleanStagingAsync(syncRunId, ct);
@@ -1134,7 +1150,7 @@ public class CompanyMasterSyncTests : IAsyncLifetime
             {
                 // Run 1: First sync completes and promotes
                 await using var db1 = CreateContext();
-                var svc1 = new CompanyMasterDeltaService(db1, config, proxyPool, lease, NullLogger<CompanyMasterDeltaService>.Instance);
+                var svc1 = CreateDeltaService(db1, config, proxyPool, lease);
                 var job1 = await svc1.CreateJobAsync(CompanyMasterSyncTriggerType.ManualForceSync, "test1");
                 var metrics1 = await svc1.ExecuteAutomatedSyncAsync(job1.JobId, job1.FencingToken);
 
@@ -1148,7 +1164,7 @@ public class CompanyMasterSyncTests : IAsyncLifetime
 
                 // Run 2: Second sync with the IDENTICAL archive
                 await using var db2 = CreateContext();
-                var svc2 = new CompanyMasterDeltaService(db2, config, proxyPool, lease, NullLogger<CompanyMasterDeltaService>.Instance);
+                var svc2 = CreateDeltaService(db2, config, proxyPool, lease);
                 var job2 = await svc2.CreateJobAsync(CompanyMasterSyncTriggerType.ManualForceSync, "test2");
                 var metrics2 = await svc2.ExecuteAutomatedSyncAsync(job2.JobId, job2.FencingToken);
 
@@ -1248,8 +1264,9 @@ public class CompanyMasterSyncTests : IAsyncLifetime
             IConfiguration configuration,
             IProxyPoolService proxyPool,
             ISyncLockLease syncLockLease,
-            Microsoft.Extensions.Logging.ILogger<CompanyMasterDeltaService> logger)
-            : base(db, configuration, proxyPool, syncLockLease, logger)
+            Microsoft.Extensions.Logging.ILogger<CompanyMasterDeltaService> logger,
+            IRegistryPromotionCoordinator? coordinator = null)
+            : base(db, configuration, proxyPool, syncLockLease, coordinator ?? new RegistryPromotionCoordinator(ConnectionString, NullLogger<RegistryPromotionCoordinator>.Instance), logger)
         {
         }
 
@@ -1337,8 +1354,9 @@ public class CompanyMasterSyncTests : IAsyncLifetime
             IConfiguration configuration,
             IProxyPoolService proxyPool,
             ISyncLockLease syncLockLease,
-            Microsoft.Extensions.Logging.ILogger<CompanyMasterDeltaService> logger)
-            : base(db, configuration, proxyPool, syncLockLease, logger)
+            Microsoft.Extensions.Logging.ILogger<CompanyMasterDeltaService> logger,
+            IRegistryPromotionCoordinator? coordinator = null)
+            : base(db, configuration, proxyPool, syncLockLease, coordinator ?? new RegistryPromotionCoordinator(ConnectionString, NullLogger<RegistryPromotionCoordinator>.Instance), logger)
         {
             _testDb = db;
         }

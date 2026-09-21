@@ -26,6 +26,10 @@ public sealed class RegistryDashboardController : Controller
         CancellationToken ct = default)
     {
         var model = await _queryService.GetDashboardAsync(tab, explorer, ct);
+        if (model.Explorer?.ValidationErrorMessage != null)
+        {
+            Response.StatusCode = Microsoft.AspNetCore.Http.StatusCodes.Status400BadRequest;
+        }
         return View("~/Views/Registry/Index.cshtml", model);
     }
 
@@ -35,6 +39,11 @@ public sealed class RegistryDashboardController : Controller
         CancellationToken ct = default)
     {
         var model = await _queryService.GetDashboardAsync("explorer", criteria, ct);
+        if (model.Explorer?.ValidationErrorMessage != null)
+        {
+            Response.StatusCode = Microsoft.AspNetCore.Http.StatusCodes.Status400BadRequest;
+        }
         return View("~/Views/Registry/Index.cshtml", model);
     }
 }
+

@@ -16,20 +16,35 @@ using Microsoft.Extensions.Logging;
 
 namespace MCAROC_Analysis.Services.Registry;
 
-public sealed class CompanyRegistryQueryService
+public sealed partial class CompanyRegistryQueryService
 {
     private readonly AppDbContext _db;
     private readonly IMemoryCache _cache;
+    private readonly IRegistryPromotionCoordinator _promotionCoordinator;
     private readonly ILogger<CompanyRegistryQueryService> _logger;
     private static readonly SemaphoreSlim RebuildLock = new(1, 1);
+
+    [GeneratedRegex("^[LU][0-9]{5}[A-Z]{2}[0-9]{4}[A-Z]{3}[0-9]{6}$")]
+    private static partial Regex CinPattern();
+
+    [GeneratedRegex("^[A-Z]{3}-[0-9]{4}$")]
+    private static partial Regex LlpinPattern();
+
+    [GeneratedRegex("^F[0-9]{5}$")]
+    private static partial Regex StandardFcrnPattern();
+
+    [GeneratedRegex("^F[0-9]+$")]
+    private static partial Regex NumericFcrnPattern();
 
     public CompanyRegistryQueryService(
         AppDbContext db,
         IMemoryCache cache,
+        IRegistryPromotionCoordinator promotionCoordinator,
         ILogger<CompanyRegistryQueryService> logger)
     {
         _db = db;
         _cache = cache;
+        _promotionCoordinator = promotionCoordinator ?? throw new ArgumentNullException(nameof(promotionCoordinator));
         _logger = logger;
     }
 
@@ -54,9 +69,7 @@ public sealed class CompanyRegistryQueryService
 
         var activePromotionJob = await _db.CompanyMasterSyncJobs
             .AsNoTracking()
-            .Where(j => j.Status == CompanyMasterSyncJobStatus.Promoting
-                     || j.Status == CompanyMasterSyncJobStatus.Staging
-                     || j.Status == CompanyMasterSyncJobStatus.Downloading)
+            .Where(j => j.Status == CompanyMasterSyncJobStatus.Promoting)
             .OrderByDescending(j => j.JobId)
             .FirstOrDefaultAsync(ct);
 
@@ -86,47 +99,92 @@ public sealed class CompanyRegistryQueryService
         string cacheKey = CacheKeyForJob(latestCompleted.JobId);
         bool hasWarmCache = _cache.TryGetValue(cacheKey, out RegistryAggregateData? cachedData);
 
-        if (activePromotionJob != null)
+        if (hasWarmCache && cachedData != null)
         {
-            if (hasWarmCache && cachedData != null)
+            // A warm-cache request must probe the distributed gate.
+            // If the shared gate cannot be acquired (e.g. a remote node or this node holds exclusive admission),
+            // or if DB indicates Promoting, serve the cache stamped IsSyncInProgress = true.
+            bool isPromoting = activePromotionJob != null;
+            if (!isPromoting)
             {
-                // Serve cached stable snapshot with active sync flag
+                await using var probeScope = await _promotionCoordinator.TryAcquireRebuildGateAsync(ct);
+                if (probeScope == null)
+                {
+                    isPromoting = true;
+                }
+                else
+                {
+                    // Re-verify DB status while probeScope is held
+                    isPromoting = await _db.CompanyMasterSyncJobs
+                        .AsNoTracking()
+                        .AnyAsync(j => j.Status == CompanyMasterSyncJobStatus.Promoting, ct);
+                }
+            }
+
+            if (isPromoting)
+            {
+                activePromotionJob ??= await _db.CompanyMasterSyncJobs
+                    .AsNoTracking()
+                    .Where(j => j.Status == CompanyMasterSyncJobStatus.Promoting)
+                    .OrderByDescending(j => j.JobId)
+                    .FirstOrDefaultAsync(ct);
+
                 vm.State = RegistrySnapshotState.VerifiedSnapshot;
                 vm.Aggregates = CloneWithActiveSync(cachedData, activePromotionJob);
             }
             else
             {
-                // Cold cache during active promotion — NEVER scan live table!
-                vm.State = RegistrySnapshotState.SyncColdUnavailable;
-                vm.StatusMessage = "Verified Aggregates Temporarily Unavailable: A Company Master snapshot sync is currently promoting into the registry database, and this instance has no pre-promotion cached aggregates. Verified metrics will appear once the active promotion completes and establishes consistency. Exact identifier and name-prefix lookups in the Explorer remain fully operational.";
+                vm.State = RegistrySnapshotState.VerifiedSnapshot;
+                vm.Aggregates = cachedData;
             }
         }
         else
         {
-            // No active sync. Check cache or single-flight rebuild.
-            if (hasWarmCache && cachedData != null)
+            // Cold cache: must single-flight rebuild under the rebuild gate
+            await RebuildLock.WaitAsync(ct);
+            try
             {
+                if (!_cache.TryGetValue(cacheKey, out cachedData))
+                {
+                    // If promotion was already detected in initial check, withhold cold cache without acquiring gate
+                    if (activePromotionJob != null)
+                    {
+                        vm.State = RegistrySnapshotState.SyncColdUnavailable;
+                        vm.StatusMessage = "Verified Aggregates Temporarily Unavailable: A Company Master snapshot sync is currently promoting into the registry database, and this instance has no pre-promotion cached aggregates. Verified metrics will appear once the active promotion completes and establishes consistency. Exact identifier and name-prefix lookups in the Explorer remain fully operational.";
+                        return vm;
+                    }
+
+                    // Acquire shared rebuild gate from before first aggregate query through cache insertion
+                    await using var rebuildGate = await _promotionCoordinator.TryAcquireRebuildGateAsync(ct);
+                    if (rebuildGate == null)
+                    {
+                        vm.State = RegistrySnapshotState.SyncColdUnavailable;
+                        vm.StatusMessage = "Verified Aggregates Temporarily Unavailable: A Company Master snapshot sync is currently promoting into the registry database, and this instance has no pre-promotion cached aggregates. Verified metrics will appear once the active promotion completes and establishes consistency. Exact identifier and name-prefix lookups in the Explorer remain fully operational.";
+                        return vm;
+                    }
+
+                    // Inside rebuild gate, verify DB does not show active Promoting
+                    bool isDbPromoting = await _db.CompanyMasterSyncJobs
+                        .AsNoTracking()
+                        .AnyAsync(j => j.Status == CompanyMasterSyncJobStatus.Promoting, ct);
+
+                    if (isDbPromoting)
+                    {
+                        vm.State = RegistrySnapshotState.SyncColdUnavailable;
+                        vm.StatusMessage = "Verified Aggregates Temporarily Unavailable: A Company Master snapshot sync is currently promoting into the registry database, and this instance has no pre-promotion cached aggregates. Verified metrics will appear once the active promotion completes and establishes consistency. Exact identifier and name-prefix lookups in the Explorer remain fully operational.";
+                        return vm;
+                    }
+
+                    cachedData = await BuildAggregatesFromDatabaseAsync(latestCompleted, ct);
+                    _cache.Set(cacheKey, cachedData, TimeSpan.FromHours(24));
+                }
+
                 vm.State = RegistrySnapshotState.VerifiedSnapshot;
                 vm.Aggregates = cachedData;
             }
-            else
+            finally
             {
-                // Single-flight rebuild
-                await RebuildLock.WaitAsync(ct);
-                try
-                {
-                    if (!_cache.TryGetValue(cacheKey, out cachedData))
-                    {
-                        cachedData = await BuildAggregatesFromDatabaseAsync(latestCompleted, ct);
-                        _cache.Set(cacheKey, cachedData, TimeSpan.FromHours(24));
-                    }
-                    vm.State = RegistrySnapshotState.VerifiedSnapshot;
-                    vm.Aggregates = cachedData;
-                }
-                finally
-                {
-                    RebuildLock.Release();
-                }
+                RebuildLock.Release();
             }
         }
 
@@ -163,12 +221,15 @@ public sealed class CompanyRegistryQueryService
 
         var upperQ = rawQ.ToUpperInvariant();
 
-        // 1. Check if input is formatted like an Identifier (CIN: 21 chars; LLPIN: contains hyphen e.g. AAA-1234; FCRN: starts with F)
-        bool isCinShape = upperQ.Length == 21 && (upperQ.StartsWith('U') || upperQ.StartsWith('L'));
-        bool isLlpinShape = upperQ.Contains('-') && upperQ.Length >= 6 && upperQ.Length <= 10;
-        bool isFcrnShape = upperQ.StartsWith('F') && upperQ.Length >= 5;
+        // 1. Check if input is formatted like an exact Identifier
+        // CIN: 21 chars, LLPIN: AAA-1234, Standard FCRN: F00000.
+        // For explicitly selected Foreign entity type, also accept numeric FCRN variations (e.g. F123456).
+        bool isCin = CinPattern().IsMatch(upperQ);
+        bool isLlpin = LlpinPattern().IsMatch(upperQ);
+        bool isStandardFcrn = StandardFcrnPattern().IsMatch(upperQ);
+        bool isExplicitForeignNumeric = criteria.RecordType == CompanyMasterRecordType.Foreign && NumericFcrnPattern().IsMatch(upperQ);
 
-        if (isCinShape || isLlpinShape || isFcrnShape)
+        if (isCin || isLlpin || isStandardFcrn || isExplicitForeignNumeric)
         {
             // Exact PK Seek on Identifier
             var exactMatch = await _db.CompanyMasterRecords
@@ -258,7 +319,7 @@ public sealed class CompanyRegistryQueryService
         Country = r.Country
     };
 
-    private static RegistryAggregateData CloneWithActiveSync(RegistryAggregateData source, CompanyMasterSyncJob activeJob)
+    private static RegistryAggregateData CloneWithActiveSync(RegistryAggregateData source, CompanyMasterSyncJob? activeJob)
     {
         return new RegistryAggregateData
         {
@@ -268,8 +329,8 @@ public sealed class CompanyRegistryQueryService
                 CompletedUtc = source.Metadata.CompletedUtc,
                 Source = source.Metadata.Source,
                 IsSyncInProgress = true,
-                ActiveSyncStatus = activeJob.Status,
-                ActiveJobId = activeJob.JobId,
+                ActiveSyncStatus = activeJob?.Status ?? CompanyMasterSyncJobStatus.Promoting,
+                ActiveJobId = activeJob?.JobId,
                 TotalRecords = source.Metadata.TotalRecords,
                 CompanyCount = source.Metadata.CompanyCount,
                 LlpCount = source.Metadata.LlpCount,
