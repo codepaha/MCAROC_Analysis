@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Reflection;
 using System.Security.Claims;
 using MCAROC_Analysis.Controllers;
@@ -566,7 +567,280 @@ public class LitigationTabAndControllerTests : IAsyncLifetime
         Assert.Equal("no-store, private", httpContext.Response.Headers.CacheControl.ToString());
     }
 
-    // ── 8. Non-Reviewer Non-Leakage Rendering Test ───────────────────────────
+    // ── 8. SQL Provider Filtered Grid, Precedence & Pagination ────────────────
+
+    [Fact]
+    public async Task Details_SqlProvider_FilteredGrid_PrecedenceAndPagination()
+    {
+        await using var db = CreateContext();
+        var client = new Client { ClientCode = "SQLP" + Guid.NewGuid().ToString("N")[..6], ClientName = "SQL Provider Test Co", CreatedDate = DateTime.UtcNow };
+        db.Clients.Add(client);
+        var request = new McaRequest
+        {
+            Client = client,
+            CompanyName = "SQL Provider Co",
+            EntityType = EntityType.Company,
+            RequestNumber = $"REQ-{Guid.NewGuid():N}",
+            CreatedDate = DateTime.UtcNow
+        };
+        db.Requests.Add(request);
+        await db.SaveChangesAsync();
+
+        var job = new LitigationSearchJob
+        {
+            RequestId = request.RequestId,
+            Status = LitigationSearchJobStatus.Completed,
+            RawResponseHash = "hash_auth_full_graph",
+            ProgressPercent = 100
+        };
+        db.LitigationSearchJobs.Add(job);
+        await db.SaveChangesAsync();
+
+        var snapshot = new LitigationReportSnapshot
+        {
+            LitigationSearchJobId = job.LitigationSearchJobId,
+            ReportHash = "hash_auth_full_graph",
+            Status = LitigationReportSnapshotStatus.Completed,
+            RetrievedUtc = DateTime.UtcNow.AddHours(-2),
+            CasesPersistedCount = 26
+        };
+        db.LitigationReportSnapshots.Add(snapshot);
+        await db.SaveChangesAsync();
+
+        // Case 1: null court, mixed-case pending
+        var case1 = new LitigationCase { RequestId = request.RequestId, Court = null, CaseNumber = "CASE-1", CaseStatus = "pEnDiNg", FirstSeenUtc = DateTime.UtcNow };
+        // Case 2: whitespace court, unknown status
+        var case2 = new LitigationCase { RequestId = request.RequestId, Court = "   ", CaseNumber = "CASE-2", CaseStatus = "Arbitrary 123", FirstSeenUtc = DateTime.UtcNow };
+        // Case 3: "Delhi HC", overlapping tokens "DISPOSED AFTER HEARING" (Disposed precedence)
+        var case3 = new LitigationCase { RequestId = request.RequestId, Court = "Delhi HC", CaseNumber = "CASE-3", CaseStatus = "DISPOSED AFTER HEARING", FirstSeenUtc = DateTime.UtcNow };
+        // Case 4: "Delhi HC  " trailing space, pending trial
+        var case4 = new LitigationCase { RequestId = request.RequestId, Court = "Delhi HC  ", CaseNumber = "CASE-4", CaseStatus = "Pending Trial", FirstSeenUtc = DateTime.UtcNow };
+
+        db.LitigationCases.AddRange(case1, case2, case3, case4);
+
+        // Cases 5..26 (22 additional cases) to test 25-case page boundary (26 total cases)
+        var extraCases = new List<LitigationCase>();
+        for (int i = 5; i <= 26; i++)
+        {
+            extraCases.Add(new LitigationCase
+            {
+                RequestId = request.RequestId,
+                Court = null,
+                CaseNumber = $"CASE-{i}",
+                CaseStatus = "Pending",
+                FirstSeenUtc = DateTime.UtcNow
+            });
+        }
+        db.LitigationCases.AddRange(extraCases);
+        await db.SaveChangesAsync();
+
+        var allCases = new[] { case1, case2, case3, case4 }.Concat(extraCases).ToList();
+        foreach (var c in allCases)
+        {
+            db.LitigationCaseSourceReports.Add(new LitigationCaseSourceReport
+            {
+                LitigationCaseId = c.LitigationCaseId,
+                LitigationReportSnapshotId = snapshot.LitigationReportSnapshotId,
+                FirstSeenUtc = DateTime.UtcNow
+            });
+        }
+
+        // Add order and document for Case 3
+        var order = new LitigationCaseOrder { LitigationCaseId = case3.LitigationCaseId, OrderDate = "2026-01-15", OrderType = "Final Order" };
+        db.LitigationCaseOrders.Add(order);
+        await db.SaveChangesAsync();
+
+        var orderDoc = new LitigationOrderDocument
+        {
+            LitigationCaseOrderId = order.LitigationCaseOrderId,
+            Status = LitigationOrderDocumentStatus.Downloaded,
+            StoragePath = "C:\\fake\\order.pdf"
+        };
+        db.LitigationOrderDocuments.Add(orderDoc);
+        await db.SaveChangesAsync();
+
+        var controller = CreateRequestsController(db, isReviewer: true);
+
+        // Call 1: Unfiltered (page 1)
+        var res1 = await controller.Details(request.RequestId, charge: null);
+        var vm1 = Assert.IsType<RequestDetailsViewModel>(Assert.IsType<ViewResult>(res1).Model);
+        var lake1 = vm1.LitigationDataLake!;
+        Assert.Equal(26, lake1.TotalCaseCount);
+        Assert.Equal(25, lake1.Cases.Count);
+
+        // Verify Grid Invariants on Call 1
+        var grid1 = lake1.CourtSummaryGrid;
+        Assert.Equal(26, grid1.TotalCases);
+        Assert.True(grid1.IsReconciled);
+        Assert.Equal(grid1.TotalCases, grid1.TotalPendingCases + grid1.TotalDisposedCases + grid1.TotalUnknownCases);
+        Assert.Equal(grid1.TotalCases, lake1.TotalCaseCount);
+        Assert.Equal(2, grid1.Rows.Count); // Collapsed into "Delhi HC" and "Unspecified Court"
+        foreach (var r in grid1.Rows)
+        {
+            Assert.Equal(r.TotalCases, r.PendingCases + r.DisposedCases + r.UnknownCases);
+        }
+
+        var dhcRow = grid1.Rows.Single(r => r.CourtName == "Delhi HC");
+        Assert.Equal(2, dhcRow.TotalCases);
+        Assert.Equal(1, dhcRow.DisposedCases);
+        Assert.Equal(1, dhcRow.PendingCases);
+        Assert.Equal(0, dhcRow.UnknownCases);
+
+        var unspecRow = grid1.Rows.Single(r => r.CourtName == "Unspecified Court");
+        Assert.Equal(24, unspecRow.TotalCases);
+
+        // Verify Case Cards on Call 1 are ordered by normalized court ("Delhi HC" before "Unspecified Court")
+        Assert.Equal("Delhi HC", lake1.Cases[0].Court);
+        Assert.Equal("Delhi HC  ", lake1.Cases[1].Court);
+
+        // Call 2: Filtered by "Unspecified Court"
+        var res2 = await controller.Details(request.RequestId, charge: null, court: "Unspecified Court");
+        var lake2 = Assert.IsType<RequestDetailsViewModel>(Assert.IsType<ViewResult>(res2).Model).LitigationDataLake!;
+        Assert.Equal(24, lake2.TotalCaseCount);
+        var grid2 = lake2.CourtSummaryGrid;
+        Assert.Single(grid2.Rows);
+        Assert.Equal(24, grid2.TotalCases);
+        Assert.Equal(grid2.TotalCases, grid2.TotalPendingCases + grid2.TotalDisposedCases + grid2.TotalUnknownCases);
+        Assert.Equal(grid2.TotalCases, lake2.TotalCaseCount);
+        foreach (var r in grid2.Rows)
+        {
+            Assert.Equal(r.TotalCases, r.PendingCases + r.DisposedCases + r.UnknownCases);
+        }
+
+        // Call 3: Filtered by "Delhi HC" + "Disposed"
+        var res3 = await controller.Details(request.RequestId, charge: null, court: "Delhi HC", status: "Disposed");
+        var lake3 = Assert.IsType<RequestDetailsViewModel>(Assert.IsType<ViewResult>(res3).Model).LitigationDataLake!;
+        Assert.Equal(1, lake3.TotalCaseCount);
+        var card3 = Assert.Single(lake3.Cases);
+        Assert.Equal("CASE-3", card3.CaseNumber);
+        Assert.Equal(LitigationCaseStatusBucket.Disposed, card3.StatusBucket);
+        var grid3 = lake3.CourtSummaryGrid;
+        Assert.Single(grid3.Rows);
+        Assert.Equal(1, grid3.TotalCases);
+        Assert.Equal(1, grid3.TotalDisposedCases);
+        Assert.Equal(0, grid3.TotalPendingCases);
+        Assert.Equal(0, grid3.TotalUnknownCases);
+        Assert.Equal(grid3.TotalCases, grid3.TotalPendingCases + grid3.TotalDisposedCases + grid3.TotalUnknownCases);
+        Assert.Equal(grid3.TotalCases, lake3.TotalCaseCount);
+        foreach (var r in grid3.Rows)
+        {
+            Assert.Equal(r.TotalCases, r.PendingCases + r.DisposedCases + r.UnknownCases);
+        }
+
+        // Call 4: Page 2
+        var res4 = await controller.Details(request.RequestId, charge: null, page: 2);
+        var lake4 = Assert.IsType<RequestDetailsViewModel>(Assert.IsType<ViewResult>(res4).Model).LitigationDataLake!;
+        Assert.Single(lake4.Cases); // The 26th case
+        Assert.Equal(26, lake4.TotalCaseCount);
+        Assert.Equal(26, lake4.CourtSummaryGrid.TotalCases);
+        Assert.True(lake4.CourtSummaryGrid.IsReconciled);
+        Assert.Equal(lake4.CourtSummaryGrid.TotalCases, lake4.CourtSummaryGrid.TotalPendingCases + lake4.CourtSummaryGrid.TotalDisposedCases + lake4.CourtSummaryGrid.TotalUnknownCases);
+        foreach (var r in lake4.CourtSummaryGrid.Rows)
+        {
+            Assert.Equal(r.TotalCases, r.PendingCases + r.DisposedCases + r.UnknownCases);
+        }
+    }
+
+    [Fact]
+    public void StatusClassifier_AsciiContract_MatchesAcrossCulturesAndCompiledDelegates()
+    {
+        var testCases = new (string? Status, string? Stage, LitigationCaseStatusBucket Expected)[]
+        {
+            ("DISPOSED AFTER HEARING", null, LitigationCaseStatusBucket.Disposed),
+            ("pEnDiNg", null, LitigationCaseStatusBucket.Pending),
+            ("AdMiTtEd", "EvIdEnCe StAgE", LitigationCaseStatusBucket.Pending),
+            ("DiSmIsSeD", "Final Order", LitigationCaseStatusBucket.Disposed),
+            ("Arbitrary 123", "Unknown 456", LitigationCaseStatusBucket.Unknown),
+            (null, null, LitigationCaseStatusBucket.Unknown),
+            ("", "", LitigationCaseStatusBucket.Unknown)
+        };
+
+        var originalCulture = CultureInfo.CurrentCulture;
+        try
+        {
+            // Test with Turkish culture where 'I' normally maps to 'ı' (U+0131)
+            CultureInfo.CurrentCulture = new CultureInfo("tr-TR");
+
+            foreach (var tc in testCases)
+            {
+                var bucket = LitigationCaseStatusClassifier.Classify(tc.Status, tc.Stage);
+                Assert.Equal(tc.Expected, bucket);
+
+                var caseObj = new LitigationCase { CaseStatus = tc.Status, CaseStage = tc.Stage };
+                var bucketFromCase = LitigationCaseStatusClassifier.Classify(caseObj);
+                Assert.Equal(tc.Expected, bucketFromCase);
+            }
+        }
+        finally
+        {
+            CultureInfo.CurrentCulture = originalCulture;
+        }
+    }
+
+    [Fact]
+    public async Task Details_SourceCoverage_IsStrictlyScopedToAuthoritativeSnapshot()
+    {
+        await using var db = CreateContext();
+        var client = new Client { ClientCode = "SCOP" + Guid.NewGuid().ToString("N")[..6], ClientName = "Scope Co", CreatedDate = DateTime.UtcNow };
+        db.Clients.Add(client);
+        var request = new McaRequest { Client = client, CompanyName = "Scope Co", RequestNumber = $"REQ-{Guid.NewGuid():N}", CreatedDate = DateTime.UtcNow };
+        db.Requests.Add(request);
+        await db.SaveChangesAsync();
+
+        var job = new LitigationSearchJob { RequestId = request.RequestId, Status = LitigationSearchJobStatus.Completed, RawResponseHash = "hash_auth" };
+        db.LitigationSearchJobs.Add(job);
+        await db.SaveChangesAsync();
+
+        var snapPrior = new LitigationReportSnapshot { LitigationSearchJobId = job.LitigationSearchJobId, ReportHash = "hash_prior", Status = LitigationReportSnapshotStatus.Completed, RetrievedUtc = DateTime.UtcNow.AddDays(-2), CasesPersistedCount = 1 };
+        var snapAuth = new LitigationReportSnapshot { LitigationSearchJobId = job.LitigationSearchJobId, ReportHash = "hash_auth", Status = LitigationReportSnapshotStatus.Completed, RetrievedUtc = DateTime.UtcNow, CasesPersistedCount = 1 };
+        db.LitigationReportSnapshots.AddRange(snapPrior, snapAuth);
+        await db.SaveChangesAsync();
+
+        var caseA = new LitigationCase { RequestId = request.RequestId, Court = "High Court", CaseNumber = "CASE-A", CaseStatus = "Pending", FirstSeenUtc = DateTime.UtcNow };
+        db.LitigationCases.Add(caseA);
+        await db.SaveChangesAsync();
+
+        // 2 observations for Case A: 1 in prior snapshot, 1 in authoritative snapshot
+        db.LitigationCaseSourceReports.Add(new LitigationCaseSourceReport { LitigationCaseId = caseA.LitigationCaseId, LitigationReportSnapshotId = snapPrior.LitigationReportSnapshotId, FirstSeenUtc = DateTime.UtcNow.AddDays(-2) });
+        db.LitigationCaseSourceReports.Add(new LitigationCaseSourceReport { LitigationCaseId = caseA.LitigationCaseId, LitigationReportSnapshotId = snapAuth.LitigationReportSnapshotId, FirstSeenUtc = DateTime.UtcNow });
+        await db.SaveChangesAsync();
+
+        var controller = CreateRequestsController(db, isReviewer: true);
+        var res = await controller.Details(request.RequestId, charge: null);
+        var lake = Assert.IsType<RequestDetailsViewModel>(Assert.IsType<ViewResult>(res).Model).LitigationDataLake!;
+
+        // UniqueCasesCount == 1, TotalObservationsCount strictly == 1 (from snapAuth, NOT 2)
+        Assert.Equal(1, lake.SourceCoverage.UniqueCasesCount);
+        Assert.Equal(1, lake.SourceCoverage.TotalObservationsCount);
+        Assert.Equal(2, lake.SourceCoverage.CompletedSnapshotHistory.Count);
+    }
+
+    [Fact]
+    public async Task Details_DoesNotCrash_WhenAuthenticationServiceIsNotRegisteredInContext()
+    {
+        await using var db = CreateContext();
+        var client = new Client { ClientCode = "NOAU" + Guid.NewGuid().ToString("N")[..6], ClientName = "No Auth Co", CreatedDate = DateTime.UtcNow };
+        db.Clients.Add(client);
+        var request = new McaRequest { Client = client, CompanyName = "No Auth Co", RequestNumber = $"REQ-{Guid.NewGuid():N}", CreatedDate = DateTime.UtcNow };
+        db.Requests.Add(request);
+        await db.SaveChangesAsync();
+
+        var controller = CreateRequestsController(db, isReviewer: false);
+        // Clear RequestServices to simulate test context without IAuthenticationService
+        controller.ControllerContext = new ControllerContext
+        {
+            HttpContext = new DefaultHttpContext()
+        };
+        controller.TempData = new TempDataDictionary(controller.HttpContext, new NullTempDataProvider());
+
+        var result = await controller.Details(request.RequestId, charge: null);
+        var viewResult = Assert.IsType<ViewResult>(result);
+        var vm = Assert.IsType<RequestDetailsViewModel>(viewResult.Model);
+        Assert.NotNull(vm.LitigationDataLake);
+        Assert.False(vm.LitigationDataLake.IsReviewer);
+    }
+
+    // ── 9. Non-Reviewer Non-Leakage Rendering Test ───────────────────────────
 
     [Fact]
     public async Task RenderLitigationTab_NonReviewer_ShowsLoginPromptAndZeroDataLakeData()

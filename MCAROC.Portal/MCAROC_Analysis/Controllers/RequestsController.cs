@@ -631,7 +631,7 @@ public class RequestsController(
                 .ToListAsync();
         }
 
-        var isReviewer = (await HttpContext.AuthenticateAsync("InternalReviewer"))?.Succeeded == true;
+        var isReviewer = await CheckIsInternalReviewerAsync();
         if (isReviewer)
         {
             var litVm = new LitigationTabViewModel
@@ -708,54 +708,120 @@ public class RequestsController(
                         .Select(sr => sr.LitigationCaseId)
                         .Distinct();
 
-                    var allAuthoritativeCases = await db.LitigationCases
+                    var casesQuery = db.LitigationCases
                         .AsNoTracking()
-                        .Where(c => caseIdsQuery.Contains(c.LitigationCaseId))
-                        .Select(c => new
-                        {
-                            c.LitigationCaseId,
-                            c.Court,
-                            c.CourtCategory,
-                            c.CaseStatus,
-                            c.CaseStage,
-                            c.LastHearingDate,
-                            OrderCount = c.Orders.Count
-                        })
-                        .ToListAsync();
+                        .Where(c => caseIdsQuery.Contains(c.LitigationCaseId));
 
-                    var courtGroups = allAuthoritativeCases
-                        .GroupBy(c => string.IsNullOrWhiteSpace(c.Court) ? "Unspecified Court" : c.Court.Trim())
-                        .OrderBy(g => g.Key)
-                        .ToList();
-
-                    var summaryGrid = new LitigationCourtSummaryGrid();
-                    foreach (var g in courtGroups)
+                    if (!string.IsNullOrWhiteSpace(court))
                     {
-                        var row = new LitigationCourtSummaryRow
+                        var trimmedCourt = court.Trim();
+                        if (string.Equals(trimmedCourt, "Unspecified Court", StringComparison.OrdinalIgnoreCase))
                         {
-                            CourtName = g.Key,
-                            CourtCategory = g.Select(x => x.CourtCategory).FirstOrDefault(cat => !string.IsNullOrWhiteSpace(cat)),
-                            TotalCases = g.Count(),
-                            TotalOrders = g.Sum(x => x.OrderCount)
-                        };
-                        foreach (var item in g)
+                            casesQuery = casesQuery.Where(c => c.Court == null || c.Court.Trim() == "");
+                        }
+                        else
                         {
-                            var bucket = LitigationCaseStatusClassifier.Classify(item.CaseStatus, item.CaseStage);
+                            casesQuery = casesQuery.Where(c => c.Court != null && c.Court.Trim() == trimmedCourt);
+                        }
+                    }
+
+                    if (!string.IsNullOrWhiteSpace(status))
+                    {
+                        if (Enum.TryParse<LitigationCaseStatusBucket>(status, true, out var bucket))
+                        {
                             switch (bucket)
                             {
                                 case LitigationCaseStatusBucket.Pending:
-                                    row.PendingCases++;
+                                    casesQuery = casesQuery.Where(LitigationCaseStatusClassifier.IsPendingExpr);
                                     break;
                                 case LitigationCaseStatusBucket.Disposed:
-                                    row.DisposedCases++;
+                                    casesQuery = casesQuery.Where(LitigationCaseStatusClassifier.IsDisposedExpr);
                                     break;
                                 case LitigationCaseStatusBucket.Unknown:
-                                default:
-                                    row.UnknownCases++;
+                                    casesQuery = casesQuery.Where(LitigationCaseStatusClassifier.IsUnknownExpr);
                                     break;
                             }
                         }
-                        summaryGrid.Rows.Add(row);
+                        else
+                        {
+                            var lowerStatus = status.Trim().ToLower();
+                            casesQuery = casesQuery.Where(c => c.CaseStatus != null && c.CaseStatus.ToLower() == lowerStatus);
+                        }
+                    }
+
+                    litVm.TotalCaseCount = await casesQuery.CountAsync();
+
+                    var courtSummaryData = await casesQuery
+                        .GroupBy(c => (c.Court == null || c.Court.Trim() == "") ? "Unspecified Court" : c.Court.Trim())
+                        .Select(g => new
+                        {
+                            CourtName = g.Key,
+                            CourtCategory = g.Select(x => x.CourtCategory).FirstOrDefault(cat => cat != null && cat != ""),
+                            TotalCases = g.Count(),
+                            TotalOrders = g.Sum(c => c.Orders.Count),
+                            DisposedCases = g.Sum(c => (
+                                (c.CaseStatus != null && (
+                                    c.CaseStatus.ToLower().Contains("dispos") || c.CaseStatus.ToLower().Contains("clos") ||
+                                    c.CaseStatus.ToLower().Contains("dismis") || c.CaseStatus.ToLower().Contains("withdr") ||
+                                    c.CaseStatus.ToLower().Contains("settl")  || c.CaseStatus.ToLower().Contains("decid") ||
+                                    c.CaseStatus.ToLower().Contains("quash")  || c.CaseStatus.ToLower().Contains("decree") ||
+                                    c.CaseStatus.ToLower().Contains("allow")  || c.CaseStatus.ToLower().Contains("reject")
+                                )) || (c.CaseStage != null && (
+                                    c.CaseStage.ToLower().Contains("dispos") || c.CaseStage.ToLower().Contains("clos") ||
+                                    c.CaseStage.ToLower().Contains("dismis") || c.CaseStage.ToLower().Contains("withdr") ||
+                                    c.CaseStage.ToLower().Contains("settl")  || c.CaseStage.ToLower().Contains("decid") ||
+                                    c.CaseStage.ToLower().Contains("quash")  || c.CaseStage.ToLower().Contains("decree") ||
+                                    c.CaseStage.ToLower().Contains("allow")  || c.CaseStage.ToLower().Contains("reject")
+                                ))
+                            ) ? 1 : 0),
+                            PendingCases = g.Sum(c => (
+                                !(
+                                    (c.CaseStatus != null && (
+                                        c.CaseStatus.ToLower().Contains("dispos") || c.CaseStatus.ToLower().Contains("clos") ||
+                                        c.CaseStatus.ToLower().Contains("dismis") || c.CaseStatus.ToLower().Contains("withdr") ||
+                                        c.CaseStatus.ToLower().Contains("settl")  || c.CaseStatus.ToLower().Contains("decid") ||
+                                        c.CaseStatus.ToLower().Contains("quash")  || c.CaseStatus.ToLower().Contains("decree") ||
+                                        c.CaseStatus.ToLower().Contains("allow")  || c.CaseStatus.ToLower().Contains("reject")
+                                    )) || (c.CaseStage != null && (
+                                        c.CaseStage.ToLower().Contains("dispos") || c.CaseStage.ToLower().Contains("clos") ||
+                                        c.CaseStage.ToLower().Contains("dismis") || c.CaseStage.ToLower().Contains("withdr") ||
+                                        c.CaseStage.ToLower().Contains("settl")  || c.CaseStage.ToLower().Contains("decid") ||
+                                        c.CaseStage.ToLower().Contains("quash")  || c.CaseStage.ToLower().Contains("decree") ||
+                                        c.CaseStage.ToLower().Contains("allow")  || c.CaseStage.ToLower().Contains("reject")
+                                    ))
+                                ) && (
+                                    (c.CaseStatus != null && (
+                                        c.CaseStatus.ToLower().Contains("pend")  || c.CaseStatus.ToLower().Contains("admit") ||
+                                        c.CaseStatus.ToLower().Contains("hear")  || c.CaseStatus.ToLower().Contains("stage") ||
+                                        c.CaseStatus.ToLower().Contains("evid")  || c.CaseStatus.ToLower().Contains("argum") ||
+                                        c.CaseStatus.ToLower().Contains("notic") || c.CaseStatus.ToLower().Contains("stay") ||
+                                        c.CaseStatus.ToLower().Contains("trial") || c.CaseStatus.ToLower().Contains("appear")
+                                    )) || (c.CaseStage != null && (
+                                        c.CaseStage.ToLower().Contains("pend")  || c.CaseStage.ToLower().Contains("admit") ||
+                                        c.CaseStage.ToLower().Contains("hear")  || c.CaseStage.ToLower().Contains("stage") ||
+                                        c.CaseStage.ToLower().Contains("evid")  || c.CaseStage.ToLower().Contains("argum") ||
+                                        c.CaseStage.ToLower().Contains("notic") || c.CaseStage.ToLower().Contains("stay") ||
+                                        c.CaseStage.ToLower().Contains("trial") || c.CaseStage.ToLower().Contains("appear")
+                                    ))
+                                )
+                            ) ? 1 : 0)
+                        })
+                        .OrderBy(x => x.CourtName)
+                        .ToListAsync();
+
+                    var summaryGrid = new LitigationCourtSummaryGrid();
+                    foreach (var d in courtSummaryData)
+                    {
+                        summaryGrid.Rows.Add(new LitigationCourtSummaryRow
+                        {
+                            CourtName = d.CourtName,
+                            CourtCategory = d.CourtCategory,
+                            TotalCases = d.TotalCases,
+                            PendingCases = d.PendingCases,
+                            DisposedCases = d.DisposedCases,
+                            UnknownCases = d.TotalCases - d.PendingCases - d.DisposedCases,
+                            TotalOrders = d.TotalOrders
+                        });
                     }
                     litVm.CourtSummaryGrid = summaryGrid;
 
@@ -792,8 +858,9 @@ public class RequestsController(
                     var pendingOrdersCount = orderDocCounts.Count(s => s == null || s == LitigationOrderDocumentStatus.Pending || s == LitigationOrderDocumentStatus.InProgress);
 
                     var totalObservationsCount = await db.LitigationCaseSourceReports
-                        .Where(sr => caseIdsQuery.Contains(sr.LitigationCaseId))
+                        .Where(sr => sr.LitigationReportSnapshotId == authoritativeSnapshotId)
                         .CountAsync();
+                    var uniqueCasesCount = await caseIdsQuery.CountAsync();
 
                     bool isAuthoritativeCoverage = !isPriorRun && litVm.ImportState == SnapshotImportState.Completed;
 
@@ -803,9 +870,9 @@ public class RequestsController(
                         Snapshots = allCompletedSnapshots,
                         IsAuthoritativeCoverage = isAuthoritativeCoverage,
                         CoverageSummaryText = isAuthoritativeCoverage
-                            ? $"De-duplicated across {keywords.Count} search keywords and {allCompletedSnapshots.Count} completed report snapshots into {allAuthoritativeCases.Count} unique legal proceedings."
+                            ? $"Authoritative snapshot ({authoritativeSnapshot.RetrievedUtc:dd-MMM-yyyy HH:mm} UTC) de-duplicated across {keywords.Count} search keywords into {uniqueCasesCount} unique legal proceedings ({totalObservationsCount} source observations). Request history includes {allCompletedSnapshots.Count} completed search snapshot(s)."
                             : $"Showing data from previous completed search snapshot retrieved {authoritativeSnapshot.RetrievedUtc:dd-MMM-yyyy HH:mm} UTC.",
-                        UniqueCasesCount = allAuthoritativeCases.Count,
+                        UniqueCasesCount = uniqueCasesCount,
                         TotalObservationsCount = totalObservationsCount,
                         TotalOrders = totalOrdersCount,
                         DownloadedOrders = downloadedCount,
@@ -814,42 +881,16 @@ public class RequestsController(
                         ExpiredOrders = expiredCount
                     };
 
-                    var filteredCases = allAuthoritativeCases.AsEnumerable();
-                    if (!string.IsNullOrWhiteSpace(court))
-                    {
-                        filteredCases = filteredCases.Where(c => string.Equals(c.Court, court, StringComparison.OrdinalIgnoreCase));
-                    }
-                    if (!string.IsNullOrWhiteSpace(status))
-                    {
-                        if (Enum.TryParse<LitigationCaseStatusBucket>(status, true, out var bucket))
-                        {
-                            filteredCases = filteredCases.Where(c => LitigationCaseStatusClassifier.Classify(c.CaseStatus, c.CaseStage) == bucket);
-                        }
-                        else
-                        {
-                            filteredCases = filteredCases.Where(c => string.Equals(c.CaseStatus, status, StringComparison.OrdinalIgnoreCase));
-                        }
-                    }
-
-                    var orderedFilteredCases = filteredCases
-                        .OrderBy(c => c.Court ?? string.Empty)
+                    var pagedCases = await casesQuery
+                        .OrderBy(c => (c.Court == null || c.Court.Trim() == "") ? "Unspecified Court" : c.Court.Trim())
                         .ThenByDescending(c => c.LastHearingDate ?? string.Empty)
                         .ThenBy(c => c.LitigationCaseId)
-                        .ToList();
-
-                    litVm.TotalCaseCount = orderedFilteredCases.Count;
-
-                    var pagedCaseIds = orderedFilteredCases
                         .Skip((litVm.CurrentPage - 1) * litVm.PageSize)
                         .Take(litVm.PageSize)
-                        .Select(c => c.LitigationCaseId)
-                        .ToList();
-
-                    var pagedCases = await db.LitigationCases
-                        .AsNoTracking()
-                        .Where(c => pagedCaseIds.Contains(c.LitigationCaseId))
                         .Include(c => c.Orders)
                         .ToListAsync();
+
+                    var pagedCaseIds = pagedCases.Select(c => c.LitigationCaseId).ToList();
 
                     var orderIds = pagedCases.SelectMany(c => c.Orders).Select(o => o.LitigationCaseOrderId).Distinct().ToList();
                     var orderDocs = await db.LitigationOrderDocuments
@@ -902,7 +943,7 @@ public class RequestsController(
                         }
                     }
 
-                    foreach (var c in pagedCases.OrderBy(c => c.Court ?? string.Empty).ThenByDescending(c => c.LastHearingDate ?? string.Empty).ThenBy(c => c.LitigationCaseId))
+                    foreach (var c in pagedCases)
                     {
                         var card = new LitigationCaseCardViewModel
                         {
@@ -1709,5 +1750,26 @@ public class RequestsController(
         }
 
         return dto;
+    }
+
+    private async Task<bool> CheckIsInternalReviewerAsync()
+    {
+        var authService = HttpContext?.RequestServices?.GetService<IAuthenticationService>();
+        if (authService is null)
+        {
+            return HttpContext?.User?.Identities.Any(i => i.AuthenticationType == "InternalReviewer" && i.IsAuthenticated) == true
+                || (User?.Identity?.IsAuthenticated == true && (User.IsInRole("InternalReviewer") || User.HasClaim("role", "InternalReviewer")));
+        }
+
+        try
+        {
+            var authResult = await HttpContext.AuthenticateAsync("InternalReviewer");
+            return authResult?.Succeeded == true && authResult.Principal?.Identity?.IsAuthenticated == true;
+        }
+        catch (Exception)
+        {
+            return HttpContext?.User?.Identities.Any(i => i.AuthenticationType == "InternalReviewer" && i.IsAuthenticated) == true
+                || (User?.Identity?.IsAuthenticated == true && (User.IsInRole("InternalReviewer") || User.HasClaim("role", "InternalReviewer")));
+        }
     }
 }

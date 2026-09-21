@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Linq.Expressions;
 using System.Text.Json;
 using MCAROC_Analysis.Data.Entities;
 using MCAROC_Analysis.Services.LitigationData;
@@ -12,8 +13,94 @@ public enum LitigationCaseStatusBucket
     Unknown
 }
 
+/// <summary>
+/// Centralized classifier and canonical EF Core SQL expressions for litigation case status and stage.
+/// ASCII Casing Contract:
+/// - All legal status tokens are 7-bit ASCII strings ("dispos", "pend", etc.).
+/// - EF Core queries use string.ToLower() which reliably translates to LOWER([column]) in SQL Server.
+/// - In-memory classification uses culture-invariant lowercasing (ToLowerInvariant()) over the same ASCII token set.
+/// - Precedence rule: Disposed tokens have priority over Pending tokens (e.g. "disposed after hearing" -> Disposed).
+/// - Mutual exclusivity: Every case maps to exactly one of Pending, Disposed, or Unknown.
+/// </summary>
 public static class LitigationCaseStatusClassifier
 {
+    public static readonly Expression<Func<LitigationCase, bool>> IsDisposedExpr = c =>
+        (c.CaseStatus != null && (
+            c.CaseStatus.ToLower().Contains("dispos") || c.CaseStatus.ToLower().Contains("clos") ||
+            c.CaseStatus.ToLower().Contains("dismis") || c.CaseStatus.ToLower().Contains("withdr") ||
+            c.CaseStatus.ToLower().Contains("settl")  || c.CaseStatus.ToLower().Contains("decid") ||
+            c.CaseStatus.ToLower().Contains("quash")  || c.CaseStatus.ToLower().Contains("decree") ||
+            c.CaseStatus.ToLower().Contains("allow")  || c.CaseStatus.ToLower().Contains("reject")
+        )) || (c.CaseStage != null && (
+            c.CaseStage.ToLower().Contains("dispos") || c.CaseStage.ToLower().Contains("clos") ||
+            c.CaseStage.ToLower().Contains("dismis") || c.CaseStage.ToLower().Contains("withdr") ||
+            c.CaseStage.ToLower().Contains("settl")  || c.CaseStage.ToLower().Contains("decid") ||
+            c.CaseStage.ToLower().Contains("quash")  || c.CaseStage.ToLower().Contains("decree") ||
+            c.CaseStage.ToLower().Contains("allow")  || c.CaseStage.ToLower().Contains("reject")
+        ));
+
+    public static readonly Expression<Func<LitigationCase, bool>> IsPendingExpr = c =>
+        !(
+            (c.CaseStatus != null && (
+                c.CaseStatus.ToLower().Contains("dispos") || c.CaseStatus.ToLower().Contains("clos") ||
+                c.CaseStatus.ToLower().Contains("dismis") || c.CaseStatus.ToLower().Contains("withdr") ||
+                c.CaseStatus.ToLower().Contains("settl")  || c.CaseStatus.ToLower().Contains("decid") ||
+                c.CaseStatus.ToLower().Contains("quash")  || c.CaseStatus.ToLower().Contains("decree") ||
+                c.CaseStatus.ToLower().Contains("allow")  || c.CaseStatus.ToLower().Contains("reject")
+            )) || (c.CaseStage != null && (
+                c.CaseStage.ToLower().Contains("dispos") || c.CaseStage.ToLower().Contains("clos") ||
+                c.CaseStage.ToLower().Contains("dismis") || c.CaseStage.ToLower().Contains("withdr") ||
+                c.CaseStage.ToLower().Contains("settl")  || c.CaseStage.ToLower().Contains("decid") ||
+                c.CaseStage.ToLower().Contains("quash")  || c.CaseStage.ToLower().Contains("decree") ||
+                c.CaseStage.ToLower().Contains("allow")  || c.CaseStage.ToLower().Contains("reject")
+            ))
+        ) && (
+            (c.CaseStatus != null && (
+                c.CaseStatus.ToLower().Contains("pend")  || c.CaseStatus.ToLower().Contains("admit") ||
+                c.CaseStatus.ToLower().Contains("hear")  || c.CaseStatus.ToLower().Contains("stage") ||
+                c.CaseStatus.ToLower().Contains("evid")  || c.CaseStatus.ToLower().Contains("argum") ||
+                c.CaseStatus.ToLower().Contains("notic") || c.CaseStatus.ToLower().Contains("stay") ||
+                c.CaseStatus.ToLower().Contains("trial") || c.CaseStatus.ToLower().Contains("appear")
+            )) || (c.CaseStage != null && (
+                c.CaseStage.ToLower().Contains("pend")  || c.CaseStage.ToLower().Contains("admit") ||
+                c.CaseStage.ToLower().Contains("hear")  || c.CaseStage.ToLower().Contains("stage") ||
+                c.CaseStage.ToLower().Contains("evid")  || c.CaseStage.ToLower().Contains("argum") ||
+                c.CaseStage.ToLower().Contains("notic") || c.CaseStage.ToLower().Contains("stay") ||
+                c.CaseStage.ToLower().Contains("trial") || c.CaseStage.ToLower().Contains("appear")
+            ))
+        );
+
+    public static readonly Expression<Func<LitigationCase, bool>> IsUnknownExpr = c =>
+        !(
+            (c.CaseStatus != null && (
+                c.CaseStatus.ToLower().Contains("dispos") || c.CaseStatus.ToLower().Contains("clos") ||
+                c.CaseStatus.ToLower().Contains("dismis") || c.CaseStatus.ToLower().Contains("withdr") ||
+                c.CaseStatus.ToLower().Contains("settl")  || c.CaseStatus.ToLower().Contains("decid") ||
+                c.CaseStatus.ToLower().Contains("quash")  || c.CaseStatus.ToLower().Contains("decree") ||
+                c.CaseStatus.ToLower().Contains("allow")  || c.CaseStatus.ToLower().Contains("reject")
+            )) || (c.CaseStage != null && (
+                c.CaseStage.ToLower().Contains("dispos") || c.CaseStage.ToLower().Contains("clos") ||
+                c.CaseStage.ToLower().Contains("dismis") || c.CaseStage.ToLower().Contains("withdr") ||
+                c.CaseStage.ToLower().Contains("settl")  || c.CaseStage.ToLower().Contains("decid") ||
+                c.CaseStage.ToLower().Contains("quash")  || c.CaseStage.ToLower().Contains("decree") ||
+                c.CaseStage.ToLower().Contains("allow")  || c.CaseStage.ToLower().Contains("reject")
+            ))
+        ) && !(
+            (c.CaseStatus != null && (
+                c.CaseStatus.ToLower().Contains("pend")  || c.CaseStatus.ToLower().Contains("admit") ||
+                c.CaseStatus.ToLower().Contains("hear")  || c.CaseStatus.ToLower().Contains("stage") ||
+                c.CaseStatus.ToLower().Contains("evid")  || c.CaseStatus.ToLower().Contains("argum") ||
+                c.CaseStatus.ToLower().Contains("notic") || c.CaseStatus.ToLower().Contains("stay") ||
+                c.CaseStatus.ToLower().Contains("trial") || c.CaseStatus.ToLower().Contains("appear")
+            )) || (c.CaseStage != null && (
+                c.CaseStage.ToLower().Contains("pend")  || c.CaseStage.ToLower().Contains("admit") ||
+                c.CaseStage.ToLower().Contains("hear")  || c.CaseStage.ToLower().Contains("stage") ||
+                c.CaseStage.ToLower().Contains("evid")  || c.CaseStage.ToLower().Contains("argum") ||
+                c.CaseStage.ToLower().Contains("notic") || c.CaseStage.ToLower().Contains("stay") ||
+                c.CaseStage.ToLower().Contains("trial") || c.CaseStage.ToLower().Contains("appear")
+            ))
+        );
+
     private static readonly string[] DisposedTokens =
     [
         "dispos", "clos", "dismis", "withdr", "settl", "decid", "quash", "decree", "allow", "reject"
@@ -24,25 +111,38 @@ public static class LitigationCaseStatusClassifier
         "pend", "admit", "hear", "stage", "evid", "argum", "notic", "stay", "trial", "appear"
     ];
 
+    public static LitigationCaseStatusBucket Classify(LitigationCase c) =>
+        Classify(c.CaseStatus, c.CaseStage);
+
     public static LitigationCaseStatusBucket Classify(string? caseStatus, string? caseStage = null)
     {
-        var text = $"{caseStatus} {caseStage}".Trim().ToLowerInvariant();
-        if (string.IsNullOrWhiteSpace(text))
-            return LitigationCaseStatusBucket.Unknown;
+        var status = caseStatus?.ToLowerInvariant();
+        var stage = caseStage?.ToLowerInvariant();
 
-        foreach (var token in DisposedTokens)
-        {
-            if (text.Contains(token, StringComparison.OrdinalIgnoreCase))
-                return LitigationCaseStatusBucket.Disposed;
-        }
-
-        foreach (var token in PendingTokens)
-        {
-            if (text.Contains(token, StringComparison.OrdinalIgnoreCase))
-                return LitigationCaseStatusBucket.Pending;
-        }
-
+        if (IsDisposedMatch(status, stage)) return LitigationCaseStatusBucket.Disposed;
+        if (IsPendingMatch(status, stage)) return LitigationCaseStatusBucket.Pending;
         return LitigationCaseStatusBucket.Unknown;
+    }
+
+    private static bool IsDisposedMatch(string? status, string? stage)
+    {
+        foreach (var t in DisposedTokens)
+        {
+            if (status != null && status.Contains(t, StringComparison.Ordinal)) return true;
+            if (stage != null && stage.Contains(t, StringComparison.Ordinal)) return true;
+        }
+        return false;
+    }
+
+    private static bool IsPendingMatch(string? status, string? stage)
+    {
+        if (IsDisposedMatch(status, stage)) return false;
+        foreach (var t in PendingTokens)
+        {
+            if (status != null && status.Contains(t, StringComparison.Ordinal)) return true;
+            if (stage != null && stage.Contains(t, StringComparison.Ordinal)) return true;
+        }
+        return false;
     }
 }
 
@@ -111,6 +211,7 @@ public sealed class LitigationSourceCoverageViewModel
 {
     public List<LitigationKeyword> Keywords { get; set; } = [];
     public List<LitigationSnapshotSummary> Snapshots { get; set; } = [];
+    public List<LitigationSnapshotSummary> CompletedSnapshotHistory { get => Snapshots; set => Snapshots = value; }
 
     public bool IsAuthoritativeCoverage { get; set; }
     public string CoverageSummaryText { get; set; } = string.Empty;
