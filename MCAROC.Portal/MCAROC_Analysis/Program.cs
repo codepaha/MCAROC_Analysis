@@ -84,9 +84,17 @@ builder.Services.AddHttpClient<BprLitigationClient>((sp, client) =>
 })
 // Redirects disabled: DownloadOrderDocumentAsync's host-allowlist/private-address checks only ever see the
 // URL a vendor report asserts — an auto-followed 3xx would silently re-target the request to a host those
-// checks never validated, defeating them. See BprLitigationClientTests for the regression this protects
-// (mirror any change here in that test's own handler construction).
-.ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { AllowAutoRedirect = false });
+// checks never validated, defeating them. ConnectCallback closes a second, independent gap: SocketsHttpHandler
+// re-resolves the hostname itself when it actually opens the connection, so a DNS record that changes between
+// BprLitigationClient's own resolve-and-validate and this second resolution (DNS rebinding) could otherwise
+// still land on a private address the check believed it had already ruled out — see
+// BprLitigationClient.CreateSafeConnectCallback's own remarks. See BprLitigationClientTests for the
+// regressions both of these protect (mirror any change here in that test's own handler construction).
+.ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
+{
+    AllowAutoRedirect = false,
+    ConnectCallback = BprLitigationClient.CreateSafeConnectCallback()
+});
 builder.Services.AddSingleton<LitigationSearchQueue>();
 builder.Services.AddScoped<LitigationSearchJobService>();
 builder.Services.AddHostedService<LitigationSearchWorker>();

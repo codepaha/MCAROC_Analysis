@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Net.Sockets;
 using System.Text.Json;
 using Microsoft.Extensions.Options;
 
@@ -280,11 +281,23 @@ public sealed class BprLitigationClient(
         IPNetwork.Parse("fc00::/7")
     ];
 
+    private static bool IsBlockedAddress(IPAddress address)
+    {
+        var normalized = address.IsIPv4MappedToIPv6 ? address.MapToIPv4() : address;
+        return BlockedDestinationNetworks.Any(network => network.Contains(normalized));
+    }
+
     /// <summary>Resolves <paramref name="host"/> and checks every returned address against
     /// <see cref="BlockedDestinationNetworks"/> — resolving rather than pattern-matching the hostname string,
     /// so this catches an allowlisted host that (now or later) resolves to an internal address, not just an
     /// obviously-internal literal. A resolution failure or an empty result is treated as unsafe (fail closed)
-    /// rather than silently proceeding.</summary>
+    /// rather than silently proceeding.
+    ///
+    /// This is a fast-fail check only, for a clear error message before ever opening a socket — it is NOT
+    /// the authoritative enforcement. <see cref="CreateSafeConnectCallback"/> is: this method's own
+    /// resolution happens here, but <see cref="SocketsHttpHandler"/> resolves the hostname AGAIN, independently,
+    /// when it actually opens the connection — a classic DNS-rebinding window (the record changes between
+    /// the two resolutions) that this check alone cannot close. See that method's remarks.</summary>
     private async Task<bool> IsSafeDestinationAsync(string host, CancellationToken ct)
     {
         IPAddress[] addresses;
@@ -305,11 +318,64 @@ public sealed class BprLitigationClient(
         }
 
         if (addresses.Length == 0) return false;
-        return addresses.All(address =>
+        return addresses.All(address => !IsBlockedAddress(address));
+    }
+
+    /// <summary>Builds a <see cref="SocketsHttpHandler.ConnectCallback"/> that resolves the destination host
+    /// and opens the TCP connection to a specific, just-validated address itself, instead of letting
+    /// <see cref="SocketsHttpHandler"/> do its own independent resolve-then-connect. This closes a DNS-
+    /// rebinding gap <see cref="IsSafeDestinationAsync"/> alone cannot: that method resolves and validates the
+    /// host once, up front; without this callback, the actual connection later triggers a SECOND, entirely
+    /// independent resolution, and if the DNS record changes in between (trivial for an attacker who controls
+    /// DNS for an allowlisted host), the validated check and the real destination can disagree — the request
+    /// would reach whatever the second resolution returned, private address or not. Resolving and validating
+    /// immediately before connecting, using the exact address then connected to, leaves no such window.
+    /// Applied uniformly to every request this <see cref="HttpClient"/> makes (not just order-PDF downloads):
+    /// BPR's own confirmed endpoints target an operator-configured <c>BaseUrl</c>, never vendor-report
+    /// content, so this never blocks legitimate traffic to them unless BPR is ever deployed on a private
+    /// network — unconfirmed and unsupported by anything in the current contract; revisit here if that
+    /// changes. The original hostname is preserved for the caller's own Host header / TLS SNI — only the
+    /// physical TCP connection target changes.</summary>
+    public static Func<SocketsHttpConnectionContext, CancellationToken, ValueTask<Stream>> CreateSafeConnectCallback(
+        Func<string, CancellationToken, Task<IPAddress[]>>? hostResolver = null)
+    {
+        var resolveHost = hostResolver ?? Dns.GetHostAddressesAsync;
+        return async (context, ct) =>
         {
-            var normalized = address.IsIPv4MappedToIPv6 ? address.MapToIPv4() : address;
-            return !BlockedDestinationNetworks.Any(network => network.Contains(normalized));
-        });
+            var host = context.DnsEndPoint.Host;
+            IPAddress[] addresses;
+            if (IPAddress.TryParse(host, out var literal))
+            {
+                addresses = [literal];
+            }
+            else
+            {
+                addresses = await resolveHost(host, ct);
+            }
+
+            if (addresses.Length == 0)
+                throw new InvalidOperationException($"Could not resolve '{host}' to connect.");
+
+            foreach (var address in addresses)
+            {
+                if (IsBlockedAddress(address))
+                    throw new InvalidOperationException(
+                        $"Refusing to connect to '{host}' — resolved to a private, loopback or link-local address ({address}).");
+            }
+
+            var target = addresses[0].IsIPv4MappedToIPv6 ? addresses[0].MapToIPv4() : addresses[0];
+            var socket = new Socket(SocketType.Stream, ProtocolType.Tcp) { NoDelay = true };
+            try
+            {
+                await socket.ConnectAsync(target, context.DnsEndPoint.Port, ct);
+                return new NetworkStream(socket, ownsSocket: true);
+            }
+            catch
+            {
+                socket.Dispose();
+                throw;
+            }
+        };
     }
 
     private void RequireConfigured()

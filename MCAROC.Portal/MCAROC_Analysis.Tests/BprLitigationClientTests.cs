@@ -480,6 +480,73 @@ public sealed class BprLitigationClientTests
         Assert.Empty(handler.Requests);
     }
 
+    // ── CreateSafeConnectCallback (PR #253 review round 2 — DNS rebinding) ────────────────────────────
+
+    // SocketsHttpConnectionContext has no public constructor, so the callback can only be exercised by
+    // actually triggering SocketsHttpHandler's own connection pipeline — a real HttpClient request against a
+    // handler configured with the callback under test. The callback fully replaces DNS resolution AND
+    // connection establishment, so the target host name itself never needs to be real; only the fake
+    // resolver's return value matters.
+
+    [Fact]
+    public async Task CreateSafeConnectCallback_refuses_to_connect_when_the_resolved_address_is_private()
+    {
+        // The DNS-rebinding fix itself: IsSafeDestinationAsync resolves and validates once, up front, but
+        // SocketsHttpHandler resolves AGAIN, independently, when it actually opens the connection — if the
+        // DNS record changed in between, that second resolution is what the request really reaches. This
+        // proves the connect-time resolution is validated too, using its own fresh result.
+        using var handler = new System.Net.Http.SocketsHttpHandler
+        {
+            ConnectCallback = BprLitigationClient.CreateSafeConnectCallback((_, _) => Task.FromResult<IPAddress[]>([IPAddress.Parse("127.0.0.1")]))
+        };
+        using var client = new HttpClient(handler);
+
+        var ex = await Assert.ThrowsAsync<HttpRequestException>(() => client.GetAsync("https://rebound.example/"));
+
+        Assert.Contains("private, loopback or link-local", ex.InnerException?.Message ?? ex.Message);
+    }
+
+    [Fact]
+    public async Task CreateSafeConnectCallback_refuses_when_any_of_several_resolved_addresses_is_private()
+    {
+        using var handler = new System.Net.Http.SocketsHttpHandler
+        {
+            ConnectCallback = BprLitigationClient.CreateSafeConnectCallback(
+                (_, _) => Task.FromResult<IPAddress[]>([IPAddress.Parse("203.0.113.60"), IPAddress.Parse("10.0.0.5")]))
+        };
+        using var client = new HttpClient(handler);
+
+        var ex = await Assert.ThrowsAsync<HttpRequestException>(() => client.GetAsync("https://multi.example/"));
+
+        Assert.Contains("private, loopback or link-local", ex.InnerException?.Message ?? ex.Message);
+    }
+
+    [Fact]
+    public async Task CreateSafeConnectCallback_resolves_the_host_exactly_once_never_a_separate_resolution_to_connect_with()
+    {
+        // The property that actually closes the rebinding window: one resolution feeds both the validation
+        // AND the connection attempt — there is no second, independent resolve() call in between for a DNS
+        // record to change during.
+        var callCount = 0;
+        using var handler = new System.Net.Http.SocketsHttpHandler
+        {
+            ConnectCallback = BprLitigationClient.CreateSafeConnectCallback((_, _) =>
+            {
+                Interlocked.Increment(ref callCount);
+                // TEST-NET-3 (RFC 5737): public-looking, reserved for documentation, never actually
+                // routable — the connect attempt itself is expected to fail/time out; only the resolver
+                // call count matters.
+                return Task.FromResult<IPAddress[]>([IPAddress.Parse("203.0.113.50")]);
+            }),
+            ConnectTimeout = TimeSpan.FromSeconds(2)
+        };
+        using var client = new HttpClient(handler);
+
+        await Assert.ThrowsAnyAsync<Exception>(() => client.GetAsync("https://rebound.example:65530/"));
+
+        Assert.Equal(1, callCount);
+    }
+
     [Fact]
     public async Task BprLitigationHttpClient_registration_disables_automatic_redirect_following()
     {

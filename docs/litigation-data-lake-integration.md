@@ -56,7 +56,15 @@ Still genuinely unconfirmed, even with the collection in hand:
   resolves the destination and refuses any private/loopback/link-local/carrier-NAT address (defense in depth
   even for an allowlisted host, against DNS pointing it somewhere internal now or later), and never follows a
   redirect (`Program.cs` registers the client with `AllowAutoRedirect = false` specifically so a 3xx can't
-  silently retarget the request past these checks). Without this, a compromised or malicious report could
+  silently retarget the request past these checks). That resolve-and-validate check alone still has a DNS-
+  rebinding gap, though: `SocketsHttpHandler` resolves the same hostname a SECOND, independent time when it
+  actually opens the connection, so a DNS record that changes between the two resolutions could still land
+  the real request on a private address the check believed it had ruled out. `BprLitigationClient.CreateSafeConnectCallback`
+  closes that: it's wired into the same `HttpClient` registration as `ConnectCallback`, resolves the
+  destination and validates it immediately before opening the socket — the exact address it connects to is
+  the one it just checked, with no second resolution in between — applied to every request this client
+  makes, not just order downloads, since BPR's own confirmed endpoints target an operator-configured
+  `BaseUrl`, never vendor-report content. Without any of this, a compromised or malicious report could
   point `pdf_url` at an internal service or a cloud metadata endpoint and have this server fetch — and, if
   the response happened to start with the PDF signature, retain — it.
 
