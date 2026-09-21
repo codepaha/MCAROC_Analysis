@@ -77,6 +77,12 @@ jobs:
   #    ToUnicode data PdfPig needs, so those assertions only run truthfully on Windows.
   windows-tests:
     runs-on: [self-hosted, windows, mcaroc]
+    # This runner's integration tests share one SQLEXPRESS instance and its test database. Keep
+    # Windows-only jobs from different PRs from creating/migrating that database concurrently;
+    # cancel-in-progress must remain false so an active validation is allowed to finish.
+    concurrency:
+      group: mcaroc-self-hosted-sqlexpress-tests
+      cancel-in-progress: false
     steps:
       - uses: actions/checkout@v4
 
