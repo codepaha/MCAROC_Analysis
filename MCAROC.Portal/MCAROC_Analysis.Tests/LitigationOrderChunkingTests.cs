@@ -166,6 +166,53 @@ public class LitigationOrderChunkingTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task ChunkOrderDocumentAsync_renews_the_lease_between_embedding_batches_for_a_multi_batch_document()
+    {
+        // Regression for PR #254 review round 2: EmbedDocumentsAsync loops sequential Vertex batches
+        // internally, so a single call for a large document's full chunk set could legitimately run past a
+        // fixed lease window purely due to volume, not a crash. This proves the fix — the lease's expiry
+        // actually moves forward between the orchestrator's own per-batch embedding calls, not just that
+        // batching happens to occur.
+        await using var db = CreateContext();
+        var (_, _, order) = await SeedOrderAsync(db, "RN1");
+        // 40 one-page chunks — well over the 32-per-call renewal batch size — forces two real embedding calls.
+        var pages = string.Concat(Enumerable.Range(1, 40).Select(i =>
+            $"--- Page {i} (native) ---\nOrder page {i} text, padded well past the fifty-character chunk minimum threshold.\n\n"));
+        var document = await SeedDownloadedDocumentAsync(db, order.LitigationCaseOrderId, pages);
+
+        var callCount = 0;
+        DateTime? leaseExpiryAtFirstBatch = null;
+        DateTime? leaseExpiryAtSecondBatch = null;
+        var stub = new StubEmbeddingService(n =>
+        {
+            callCount++;
+            // Read the lease's CURRENT expiry at the moment each batch call starts — the first read reflects
+            // only the original claim (no renewal has run yet); the second read happens after the first
+            // batch's own renewal already ran. If renewal never renewed anything, both reads would show the
+            // exact same, unchanged expiry.
+            using var readDb = CreateContext();
+            var expiry = readDb.LitigationOrderDocuments.AsNoTracking()
+                .First(d => d.LitigationOrderDocumentId == document.LitigationOrderDocumentId).ChunkingLeaseExpiresUtc;
+            if (callCount == 1) leaseExpiryAtFirstBatch = expiry;
+            else if (callCount == 2) leaseExpiryAtSecondBatch = expiry;
+            return Enumerable.Range(0, n).Select(_ => Axis(0)).ToList();
+        });
+        var orchestrator = new LitigationOrderChunkingOrchestrator(db, stub, new LitigationOrderChunkingQueue(), NullLogger<LitigationOrderChunkingOrchestrator>.Instance);
+
+        await orchestrator.ChunkOrderDocumentAsync(document.LitigationOrderDocumentId, CancellationToken.None);
+
+        Assert.Equal(2, callCount); // 40 chunks / 32-per-batch = 2 real embedding round-trips
+        Assert.NotNull(leaseExpiryAtFirstBatch);
+        Assert.NotNull(leaseExpiryAtSecondBatch);
+        Assert.True(leaseExpiryAtSecondBatch > leaseExpiryAtFirstBatch); // renewal after batch 1 moved the expiry forward
+
+        await using var verify = CreateContext();
+        var reloaded = await verify.LitigationOrderDocuments.AsNoTracking().FirstAsync(d => d.LitigationOrderDocumentId == document.LitigationOrderDocumentId);
+        Assert.Equal(ChunkingStatus.Chunked, reloaded.ChunkingStatus);
+        Assert.Equal(40, await verify.LitigationOrderChunks.CountAsync(c => c.LitigationOrderDocumentId == document.LitigationOrderDocumentId));
+    }
+
+    [Fact]
     public async Task ChunkOrderDocumentAsync_a_second_claim_on_an_already_chunked_document_is_a_no_op()
     {
         await using var db = CreateContext();
@@ -385,6 +432,71 @@ public class LitigationOrderChunkingTests : IAsyncLifetime
         await using var verify = CreateContext();
         var final = await verify.LitigationOrderDocuments.AsNoTracking().FirstAsync(d => d.LitigationOrderDocumentId == document.LitigationOrderDocumentId);
         Assert.Equal(ChunkingStatus.Chunked, final.ChunkingStatus); // A's own, undisturbed completion succeeded
+    }
+
+    [Fact]
+    public async Task A_crashed_workers_live_lease_becomes_claimable_and_reaches_Chunked_via_the_delayed_recheck_without_another_app_restart()
+    {
+        // Regression for PR #254 review round 2: RecoverStaleWorkAsync's delayed path (ScheduleRetry, for a
+        // row whose lease was still live at sweep time) used to only ever re-enqueue the id once that lease
+        // expired — it never performed the actual InProgress -> Pending reclaim itself, and the claim at the
+        // time only ever admitted Pending. So if the original worker had genuinely crashed while its lease was
+        // live, the row stayed stuck InProgress forever after that lease expired, waiting on some unrelated
+        // future app restart's recovery sweep to notice it again. This proves the fix (the claim itself now
+        // also admits an expired-lease InProgress row): recovery runs once, BEFORE the crashed worker's lease
+        // expires, and the document still reaches Chunked once that lease is due — with no second recovery
+        // sweep and no app restart in between.
+        await using var seedDb = CreateContext();
+        var (_, _, order) = await SeedOrderAsync(seedDb, "CR1");
+        var document = await SeedDownloadedDocumentAsync(seedDb, order.LitigationCaseOrderId,
+            "--- Page 1 (native) ---\nText from a worker that crashed while its lease was still live, long enough to clear the fifty-character chunk minimum.");
+
+        // Simulate a crashed worker's claim directly (never renewed, never completed) — its own independent
+        // context, discarded immediately, standing in for a process that died right after claiming.
+        await using (var crashedWorkerDb = CreateContext())
+        {
+            await crashedWorkerDb.LitigationOrderDocuments.Where(d => d.LitigationOrderDocumentId == document.LitigationOrderDocumentId)
+                .ExecuteUpdateAsync(s => s
+                    .SetProperty(d => d.ChunkingStatus, ChunkingStatus.InProgress)
+                    .SetProperty(d => d.ChunkingLeaseToken, Guid.NewGuid())
+                    .SetProperty(d => d.ChunkingLeaseOwner, "crashed-worker")
+                    .SetProperty(d => d.ChunkingLeaseExpiresUtc, DateTime.UtcNow.AddSeconds(2))); // still live below
+        }
+
+        await using var recoveryDb = CreateContext();
+        var queue = new LitigationOrderChunkingQueue();
+        var recoveryOrchestrator = new LitigationOrderChunkingOrchestrator(
+            recoveryDb, new StubEmbeddingService(_ => []), queue, NullLogger<LitigationOrderChunkingOrchestrator>.Instance);
+        // Run recovery BEFORE the crashed worker's lease expires — the exact scenario described in review: the
+        // lease is still live at this instant, so the row is left alone and instead scheduled for a one-time
+        // delayed re-check.
+        await recoveryOrchestrator.RecoverStaleWorkAsync(CancellationToken.None);
+
+        await using (var readDb = CreateContext())
+        {
+            var reloaded = await readDb.LitigationOrderDocuments.AsNoTracking().FirstAsync(d => d.LitigationOrderDocumentId == document.LitigationOrderDocumentId);
+            Assert.Equal(ChunkingStatus.InProgress, reloaded.ChunkingStatus); // untouched by the immediate path
+        }
+        var immediate = await DrainAvailableAsync(queue, TimeSpan.FromMilliseconds(300));
+        Assert.DoesNotContain(document.LitigationOrderDocumentId, immediate); // not yet — lease still live
+
+        // Wait past the crashed worker's lease expiry — the delayed re-check fires and enqueues the id.
+        var eventual = await DrainAvailableAsync(queue, TimeSpan.FromSeconds(3));
+        Assert.Contains(document.LitigationOrderDocumentId, eventual);
+
+        // A worker dequeues it and calls ChunkOrderDocumentAsync exactly as it normally would — no further
+        // recovery sweep, no app restart. Its own independent context; the claim's widened predicate reclaims
+        // the now-expired-lease InProgress row directly.
+        await using var reclaimDb = CreateContext();
+        var reclaimStub = new StubEmbeddingService(n => Enumerable.Range(0, n).Select(_ => Axis(0)).ToList());
+        var reclaimOrchestrator = new LitigationOrderChunkingOrchestrator(
+            reclaimDb, reclaimStub, queue, NullLogger<LitigationOrderChunkingOrchestrator>.Instance);
+        await reclaimOrchestrator.ChunkOrderDocumentAsync(document.LitigationOrderDocumentId, CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var final = await verify.LitigationOrderDocuments.AsNoTracking().FirstAsync(d => d.LitigationOrderDocumentId == document.LitigationOrderDocumentId);
+        Assert.Equal(ChunkingStatus.Chunked, final.ChunkingStatus);
+        Assert.True(await verify.LitigationOrderChunks.AnyAsync(c => c.LitigationOrderDocumentId == document.LitigationOrderDocumentId));
     }
 
     [Fact]

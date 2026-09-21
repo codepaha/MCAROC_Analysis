@@ -207,6 +207,30 @@ proving a live-leased claim survives a concurrent instance's recovery sweep unto
 proving that once a genuine expiry/takeover happens, the original (now-stale) worker's late completion is
 fenced out and the takeover's chunk rows — down to their own identity values — are left completely untouched.
 
+**Delayed-reclaim liveness and lease renewal (PR #254 review round 2).** Round 1's fix left two gaps. First:
+`RecoverStaleWorkAsync`'s delayed path (`ScheduleRetry`, for a row whose lease was still live at sweep time)
+only ever re-enqueued the id once that lease was due to expire — it never performed the actual reclaim itself,
+and the claim at the time only ever admitted `ChunkingStatus.Pending`. So if the original worker had genuinely
+crashed while its lease was live, the row stayed stuck `InProgress` forever after that lease expired, waiting
+on some unrelated future app restart's recovery sweep to notice it again. Closed by widening the claim itself
+(one atomic `ExecuteUpdateAsync`) to also admit an `InProgress` row whose lease has itself already expired or
+was never set — this fixes every path that can ever reach such a row (immediate, delayed, or any future
+trigger) with one rule, rather than duplicating "is this row actually reclaimable" logic in both the claim and
+the delayed recheck. Second: `EmbeddingService.EmbedDocumentsAsync` loops sequential Vertex batches internally,
+so a single call for a large document's full chunk set could legitimately run past the fixed lease window
+purely due to volume, not a crash — losing the lease mid-flight would discard real, paid-for embedding work and
+restart the whole document from scratch, repeatedly, for a document that is otherwise healthy. Closed by having
+the orchestrator call `EmbedDocumentsAsync` itself in batches capped at one real Vertex round-trip each, renewing
+the (lease-token-guarded) `ChunkingLeaseExpiresUtc` after every batch; a renewal that itself finds 0 rows means a
+takeover has already superseded this attempt, so embedding stops immediately rather than paying for further
+Vertex calls no one can ever publish. Covered by three more tests:
+`A_crashed_workers_live_lease_becomes_claimable_and_reaches_Chunked_via_the_delayed_recheck_without_another_app_restart`
+(recovery runs before a crashed worker's lease expires, and the document still reaches `Chunked` once that
+lease is due — no second recovery sweep, no app restart), and
+`ChunkOrderDocumentAsync_renews_the_lease_between_embedding_batches_for_a_multi_batch_document` (a 40-chunk
+document forcing two embedding batches; the lease's recorded expiry strictly increases between the two batch
+calls, proving the renewal actually moved it forward rather than merely coasting on the original grant).
+
 **Retrieval.** `LitigationDocumentRetriever` is the litigation counterpart to `DocumentRetriever` — the same
 single-entry-point discipline (`SearchRequestOrdersAsync(requestId, queryEmbedding, ct)`, always
 `RequestId`-scoped) and the same two hard-won, measured performance fixes DocumentRetriever's own remarks
