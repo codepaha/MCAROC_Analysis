@@ -240,7 +240,7 @@ public class LitigationReportAssembler(
         var courtGrid = new LitigationCourtSummaryGrid();
         var courtGroups = reportCases
             .GroupBy(c => string.IsNullOrWhiteSpace(c.Court) ? "Unspecified Court" : c.Court.Trim(),
-                     StringComparer.Ordinal)
+                     StringComparer.OrdinalIgnoreCase)
             .OrderBy(g => g.Key, StringComparer.OrdinalIgnoreCase);
 
         foreach (var g in courtGroups)

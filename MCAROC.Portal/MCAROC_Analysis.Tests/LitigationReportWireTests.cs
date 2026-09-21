@@ -754,4 +754,86 @@ public sealed class LitigationReportWireTests : IAsyncLifetime
         var (bucket3, _, _, _) = LitigationOrderAvailabilityResolver.Resolve(doc3, DateTime.UtcNow);
         Assert.Equal(LitigationOrderAvailabilityBucket.Expired, bucket3);
     }
+
+    // ── 9. Court-Grid Casing Parity (mixed-case same court → one row) ────────
+
+    [Fact]
+    public async Task AssembleAsync_CourtGrid_MixedCaseCourtNames_CollapseToOneRow()
+    {
+        await using var db = CreateContext();
+        var client = new Client { ClientCode = "MC" + Guid.NewGuid().ToString("N")[..6], ClientName = "Casing Parity Co", CreatedDate = DateTime.UtcNow };
+        db.Clients.Add(client);
+        var request = new McaRequest { Client = client, CompanyName = "Casing Parity Co", RequestNumber = $"REQ-MC-{Guid.NewGuid():N}", CreatedDate = DateTime.UtcNow };
+        db.Requests.Add(request);
+        await db.SaveChangesAsync();
+
+        var job = new LitigationSearchJob
+        {
+            RequestId = request.RequestId,
+            KeywordsJson = "[{\"Value\":\"Casing Parity Co\",\"Source\":0}]",
+            Status = LitigationSearchJobStatus.Completed,
+            RawResponseHash = "hash-mc-001",
+            CreatedUtc = DateTime.UtcNow,
+            CompletedUtc = DateTime.UtcNow
+        };
+        db.LitigationSearchJobs.Add(job);
+        await db.SaveChangesAsync();
+
+        var snapshot = new LitigationReportSnapshot
+        {
+            LitigationSearchJobId = job.LitigationSearchJobId,
+            ReportHash = "hash-mc-001",
+            Status = LitigationReportSnapshotStatus.Completed,
+            RetrievedUtc = DateTime.UtcNow,
+            CreatedUtc = DateTime.UtcNow,
+            CompletedUtc = DateTime.UtcNow
+        };
+        db.LitigationReportSnapshots.Add(snapshot);
+        await db.SaveChangesAsync();
+
+        // Same logical court stored with different casings — SQL Server's case-insensitive
+        // collation groups them as one row on the portal. The assembler must do the same.
+        var cases = new List<LitigationCase>
+        {
+            new() { RequestId = request.RequestId, CaseNumber = "MC-001", Court = "Delhi HC",   CourtCategory = "high_court", CaseStatus = "Pending",  FirstSeenUtc = DateTime.UtcNow, LastSeenUtc = DateTime.UtcNow },
+            new() { RequestId = request.RequestId, CaseNumber = "MC-002", Court = "delhi hc",   CourtCategory = "high_court", CaseStatus = "Pending",  FirstSeenUtc = DateTime.UtcNow, LastSeenUtc = DateTime.UtcNow },
+            new() { RequestId = request.RequestId, CaseNumber = "MC-003", Court = "DELHI HC",   CourtCategory = "high_court", CaseStatus = "Disposed", FirstSeenUtc = DateTime.UtcNow, LastSeenUtc = DateTime.UtcNow },
+            new() { RequestId = request.RequestId, CaseNumber = "MC-004", Court = "NCLT DELHI", CourtCategory = "tribunal",   CaseStatus = "Pending",  FirstSeenUtc = DateTime.UtcNow, LastSeenUtc = DateTime.UtcNow },
+            new() { RequestId = request.RequestId, CaseNumber = "MC-005", Court = "nclt delhi", CourtCategory = "tribunal",   CaseStatus = "Pending",  FirstSeenUtc = DateTime.UtcNow, LastSeenUtc = DateTime.UtcNow },
+        };
+        db.LitigationCases.AddRange(cases);
+        await db.SaveChangesAsync();
+
+        foreach (var c in cases)
+        {
+            db.LitigationCaseSourceReports.Add(new LitigationCaseSourceReport
+            {
+                LitigationCaseId = c.LitigationCaseId,
+                LitigationReportSnapshotId = snapshot.LitigationReportSnapshotId,
+                FirstSeenUtc = DateTime.UtcNow
+            });
+        }
+        await db.SaveChangesAsync();
+
+        var assembler = new LitigationReportAssembler(db);
+        var report = await assembler.AssembleAsync(request.RequestId);
+
+        Assert.NotNull(report);
+        Assert.Equal(5, report.CourtSummaryGrid.TotalCases);
+        // Mixed-casing of "Delhi HC" (3 cases) and "NCLT DELHI" (2 cases) must each collapse to 1 row
+        Assert.Equal(2, report.CourtSummaryGrid.Rows.Count);
+        Assert.True(report.CourtSummaryGrid.IsReconciled);
+
+        // The Delhi HC row must aggregate all 3 mixed-case entries
+        var hcRow = report.CourtSummaryGrid.Rows.Single(r =>
+            r.CourtName.Equals("Delhi HC", StringComparison.OrdinalIgnoreCase));
+        Assert.Equal(3, hcRow.TotalCases);
+        Assert.Equal(1, hcRow.DisposedCases);
+        Assert.Equal(2, hcRow.PendingCases);
+
+        var ncltRow = report.CourtSummaryGrid.Rows.Single(r =>
+            r.CourtName.Equals("NCLT DELHI", StringComparison.OrdinalIgnoreCase));
+        Assert.Equal(2, ncltRow.TotalCases);
+        Assert.Equal(2, ncltRow.PendingCases);
+    }
 }
