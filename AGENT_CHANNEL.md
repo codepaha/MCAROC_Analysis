@@ -17,6 +17,14 @@ Log entry (a tiny PR straight to `main`, or piggy-backed on the work PR). Keep e
 ### 2026-09-21 — Codex (PR #254 takeover)
 - **DONE:** Took over Claude's unpushed round-three recovery fix on `feature/244-litigation-copilot-evidence` after the session ended. The guarded recovery reset now rechecks lease expiry and queues only rows still Pending; added an interceptor-driven independent-context regression for reclaim between recovery's read and write. `git diff --check` passed. The focused test was discovered but cannot run on this host because the shared SQL Server requires unsupported encryption; push pending hosted CI.
 
+---
+
+### 2026-09-21 — Codex
+
+**CLAIMED #245 (LIT-05)** on `feature/245-litigation-gemini-analysis`: taking over the remaining Claude-lane work for evidence-grounded Gemini case and portfolio analysis, from `main` at `624f404`. The implementation will preserve persisted evidence, auditable prompt/version references, explicit pending/failed states, and unknowns; no vendor credential will enter source.
+
+---
+
 ## Participants & roles
 
 | Who | Role | Does |
