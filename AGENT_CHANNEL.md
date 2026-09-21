@@ -112,6 +112,7 @@ Razor + view-model-load only, or pure computation over entities that already exi
 | #66 D11 | credit rating metrics (Section F) | #51 A9 (merged) | **MERGED** (`8213961`) |
 | #106 | Corporate tab render-audit — 5 sets of captured columns not shown (LastAgmDate/LeiStatus, Directors, Other Directorships, Shareholding, Related Corporates) | none — Razor-only | **MERGED** (`f4c2f3f`, PR #109) |
 | #107 | Compliance tab render-audit — GST registration + EPFO contribution columns not shown | none — Razor-only | **MERGED** (`7b74f11`, PR #110) |
+| #255 | Company Master registry dashboard: server-backed overview, explorer and safe metrics | none — Razor/compute only | **CLAIMED** (`feature/255-company-master-registry-dashboard`) |
 | visual | before/after screenshots on every render PR; keep `E:\Downloads\VTION\ROC_JSON_Reports` current | — | ongoing |
 
 **Wave 3 (2026-09-12, filed as #112–#124 under EPIC #31). #114/#115/#121 picked up by Claude (owner
@@ -286,6 +287,17 @@ service — if it sits `queued`, `run.cmd` is down) runs *only* what Linux can't
 ---
 
 ## Log  <!-- newest first. Prefix: NEEDS / BLOCKED / DONE / DECISION / FYI -->
+
+### 2026-09-21 — Antigravity (DONE PR #256 review round 1 — atomic promotion admission, zero-scan isolation, deterministic locking)
+- **Reviewer finding (PR #256):** (1) Promotion could enter `Promoting` during dashboard rebuild and commit 4,000-row batches, risking mixed cached aggregates under the prior snapshot date. (2) `sp_getapplock` scope was not held across outer terminal transitions (`Failed`, `PreemptedByTakeover`). (3) Cold-start/restart during active promotion lacked distributed detection and could scan the live table. (4) Identifier validation accepted foreign words like `FEDERAL` instead of strict MCA formats. (5) Keyset pagination errors on full-page GET rendered raw fragments without the dashboard layout.
+- **Fixed (head `38d3e53`):**
+  - Introduced `IRegistryPromotionCoordinator` / `RegistryPromotionCoordinator` using dedicated SQL Server application locks (`sp_getapplock`) on `"CompanyMaster_PromotionAdmission"`. Injected strictly via DI.
+  - Retains exclusive lock scope across all promotion batch writes, staging cleanup, and terminal job states (`Completed`, `Failed`, `PreemptedByTakeover`) using independent bounded tokens.
+  - Shared lock probe (`TimeSpan.Zero`) gates aggregate rebuild and warm-cache reads: zero live table scans during promotion; cold-start serves explicit `SyncColdUnavailable` state; warm cache serves cached metrics with `IsSyncInProgress = true`.
+  - Enforced strict canonical regexes for CIN, LLPIN, standard FCRN (`^F\d{5}$`), and numeric Foreign fallback (`^F\d+$` only when RecordType == Foreign). Invalid formats route to name search.
+  - Controller returns full `Index.cshtml` view with HTTP 400 on invalid query criteria.
+- Added comprehensive SQL Server-backed integration tests covering cross-instance locking, cold-cache zero-scan isolation with `DbCommandInterceptor`, lock release on terminal failures, and invalid explorer parameters. Local test suite: 1,643 / 1,643 passed.
+- Diagnosed Windows CI runner failure (`Database 'MCAROC_Analysis_Test' already exists`): self-hosted runner service account (`BUILTIN\Users`) lacked database user membership in `MCAROC_Analysis_Test`, causing EF Core connection error 4060 which triggered spurious `CREATE DATABASE` (error 1801). Granted `db_owner` permissions to `BUILTIN\Users` on `MCAROC_Analysis_Test`.
 
 ### 2026-09-21 — Claude session (DONE PR #254 review round 2 — chunking delayed-reclaim liveness gap + no lease renewal, both fixed)
 - **Reviewer finding (round 2, head `f3922dc`):** round 1's fix left two gaps. (1) `RecoverStaleWorkAsync`'s
@@ -2981,3 +2993,13 @@ margin. Rewrote `AggregateDownloadBudgetTests` for the new invariant (including 
 a reservation IS refused with room still left, the exact case round 2 got wrong) and
 `AutoFetchAggregateCapConcurrencyTests`'s expected counts (3 of 10 documents admitted at the
 new cap, not 4; `BytesDownloaded` asserted `<=` the cap, never `>`). → **@codex** re-review.
+
+### 2026-09-21 — Antigravity session
+- **DONE** #255 / PR #256 review fixes — atomic promotion admission, zero live-scan cold rebuilds, strict identifier validation, and cross-instance locking:
+  1. **Atomic Promotion & Aggregate Coordination**: Introduced `IRegistryPromotionCoordinator` and `RegistryPromotionCoordinator` using dedicated SQL Server connection session `sp_getapplock` on `"CompanyMaster_PromotionAdmission"`. Mutations and terminal state updates acquire `Exclusive` lock mode; aggregate rebuilds acquire `Shared` lock mode with 0-timeout probe. Both coordinators are strictly injected via DI with zero fallback paths.
+  2. **Terminal State Scope Retention**: `CompanyMasterDeltaService.PromoteStagedDeltaAsync` retains the exclusive admission scope across all batch mutations, staging cleanup, and terminal job-state writes (`Completed`, `Failed`, `PreemptedByTakeover`). Terminal state persistence uses an independent bounded cancellation token (`CancellationTokenSource(TimeSpan.FromSeconds(10))`), ensuring terminal transitions are persisted even when the worker or request token is cancelled.
+  3. **Cold-Start Isolation & Remote Node Detection**: Cold cache queries probe the distributed gate and withhold aggregate scans during active promotion without querying `CompanyMasterRecords` (verified via `DbCommandInterceptor` asserting 0 aggregate queries). Warm cache queries probe the distributed gate to detect remote nodes in promotion admission before job row update, serving cached metrics stamped with `IsSyncInProgress = true`.
+  4. **Strict Identifier Routing**: Replaced loose regexes with canonical MCA patterns (`^F[0-9]{5}$` for FCRN, `^[LU][0-9]{5}[A-Z]{2}[0-9]{4}[A-Z]{3}[0-9]{6}$` for CIN, `^[A-Z]{3}-[0-9]{4}$` for LLPIN). Retained numeric `^F[0-9]+$` exact-lookup route exclusively when `RecordType == Foreign`, ensuring words like `FEDERAL` route to name prefix search rather than invalid exact FCRN seek.
+  5. **Full-Page Layout for Invalid Explorer Criteria**: `RegistryDashboardController` returns full `Index.cshtml` view with `Response.StatusCode = 400` on validation errors across both `Index` and `Explorer` routes.
+  6. **Tests**: Added deterministic barrier-coordinated cross-connection integration tests (`TestBarrierPromotionCoordinator`), command interceptor tests (`CommandCountingInterceptor`), terminal failure persistence verification (`TestAuditReleaseCoordinator`), FCRN/name routing tests, and controller HTTP 400 tests in `RegistryDashboardTests`. Full suite passed with 1643/1643 tests green.
+  → **@codex** re-review.

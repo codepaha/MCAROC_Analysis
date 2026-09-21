@@ -1,0 +1,113 @@
+@model RegistryDashboardViewModel
+@using MCAROC_Analysis.Models.Registry
+
+@{
+    ViewData["Title"] = "Registry Intelligence";
+    var tab = Model.ActiveTab;
+    var agg = Model.Aggregates;
+}
+
+<div class="pi-page-head mb-3">
+    <div>
+        <div class="pi-kicker">Corporate Intelligence &bull; Ministry of Corporate Affairs</div>
+        <h1>Company Master Registry Dashboard</h1>
+        <p class="text-muted">Server-backed overview, status intelligence, and index-seek explorer across 3.7M+ master entities.</p>
+    </div>
+</div>
+
+@if (Model.State == RegistrySnapshotState.EmptyRegistry)
+{
+    <div class="alert alert-info d-flex align-items-center gap-3 p-4 my-4">
+        <i class="bi bi-info-circle-fill fs-2"></i>
+        <div>
+            <h5 class="alert-heading fw-bold mb-1">Registry Not Initialized</h5>
+            <p class="mb-0">No master records found in the database. Run the master sync pipeline or use the bulk import tool to load Company Master data.</p>
+        </div>
+    </div>
+}
+else if (Model.State == RegistrySnapshotState.UnverifiedLegacyImport)
+{
+    <div class="alert alert-warning d-flex align-items-center gap-3 p-4 mb-4">
+        <i class="bi bi-exclamation-triangle-fill fs-2 flex-shrink-0"></i>
+        <div>
+            <h5 class="alert-heading fw-bold mb-1">Legacy Master Import Detected (Unverified Provenance)</h5>
+            <p class="mb-2">@Model.StatusMessage</p>
+            <div class="small text-muted">To establish verified snapshot provenance and unlock full registry analytics, trigger a sync run via <a asp-controller="CompanyMasterDashboard" asp-action="Index" class="fw-bold">Company Master Ingestion</a>.</div>
+        </div>
+    </div>
+
+    @await Html.PartialAsync("_RegistryExplorer", Model.Explorer)
+}
+else if (Model.State == RegistrySnapshotState.SyncColdUnavailable)
+{
+    <div class="alert alert-warning d-flex align-items-center gap-3 p-4 mb-4">
+        <i class="bi bi-hourglass-split fs-2 flex-shrink-0"></i>
+        <div>
+            <h5 class="alert-heading fw-bold mb-1">Verified Aggregates Temporarily Unavailable During Sync</h5>
+            <p class="mb-2">@Model.StatusMessage</p>
+            <div class="small text-muted">Live table scanning is disabled during batch promotions to maintain snapshot consistency. The Explorer remains active below for direct queries.</div>
+        </div>
+    </div>
+
+    @await Html.PartialAsync("_RegistryExplorer", Model.Explorer)
+}
+else if (Model.State == RegistrySnapshotState.VerifiedSnapshot && agg != null)
+{
+    @await Html.PartialAsync("_HeadlineKpiBand", Model)
+
+    <!-- Navigation Tabs -->
+    <ul class="nav nav-pills mb-4 gap-2" id="registryTabs" role="tablist">
+        <li class="nav-item" role="presentation">
+            <a class="nav-link @(tab == "overview" ? "active" : "")" asp-controller="RegistryDashboard" asp-action="Index" asp-route-tab="overview">
+                <i class="bi bi-grid-1x2 me-1"></i>Registry Overview
+            </a>
+        </li>
+        <li class="nav-item" role="presentation">
+            <a class="nav-link @(tab == "companies" ? "active" : "")" asp-controller="RegistryDashboard" asp-action="Index" asp-route-tab="companies">
+                <i class="bi bi-building me-1"></i>Companies (@agg.Metadata.CompanyCount.ToString("N0"))
+            </a>
+        </li>
+        <li class="nav-item" role="presentation">
+            <a class="nav-link @(tab == "llps" ? "active" : "")" asp-controller="RegistryDashboard" asp-action="Index" asp-route-tab="llps">
+                <i class="bi bi-briefcase me-1"></i>LLPs (@agg.Metadata.LlpCount.ToString("N0"))
+            </a>
+        </li>
+        <li class="nav-item" role="presentation">
+            <a class="nav-link @(tab == "foreign" ? "active" : "")" asp-controller="RegistryDashboard" asp-action="Index" asp-route-tab="foreign">
+                <i class="bi bi-globe me-1"></i>Foreign (@agg.Metadata.ForeignCount.ToString("N0"))
+            </a>
+        </li>
+        <li class="nav-item" role="presentation">
+            <a class="nav-link @(tab == "explorer" ? "active" : "")" asp-controller="RegistryDashboard" asp-action="Index" asp-route-tab="explorer">
+                <i class="bi bi-search me-1"></i>Data Explorer
+            </a>
+        </li>
+    </ul>
+
+    <!-- Tab Contents -->
+    <div class="tab-content">
+        @if (tab == "overview")
+        {
+            @await Html.PartialAsync("_StatusBreakdown", (agg.OverallStatus, "All Entities Status Breakdown", "Aggregated across Companies, LLPs, and Foreign entities."))
+            @await Html.PartialAsync("_GeographyIndustrySection", agg)
+        }
+        else if (tab == "companies")
+        {
+            @await Html.PartialAsync("_StatusBreakdown", (agg.CompanyStatus, "Company Master Status Breakdown", "Current status breakdown for registered public, private, and OPC companies."))
+            @await Html.PartialAsync("_GeographyIndustrySection", agg)
+        }
+        else if (tab == "llps")
+        {
+            @await Html.PartialAsync("_StatusBreakdown", (agg.LlpStatus, "LLP Master Status Breakdown", "Current status distribution across Limited Liability Partnerships."))
+        }
+        else if (tab == "foreign")
+        {
+            @await Html.PartialAsync("_ForeignPresenceSection", agg)
+        }
+        else if (tab == "explorer")
+        {
+            @await Html.PartialAsync("_RegistryExplorer", Model.Explorer)
+        }
+    </div>
+}
+

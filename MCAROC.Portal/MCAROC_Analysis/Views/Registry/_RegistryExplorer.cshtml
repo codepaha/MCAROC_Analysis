@@ -1,0 +1,161 @@
+@model RegistryExplorerResult
+@using MCAROC_Analysis.Models.Registry
+@using MCAROC_Analysis.Data.Entities
+
+<div class="card mb-4">
+    <div class="card-header">
+        <div class="fw-bold">Registry Data Explorer</div>
+        <div class="text-muted small">
+            Direct index-backed lookup across 3.7M+ master records. Search by exact CIN/LLPIN or choose an Entity Type with a 3+ letter company name prefix.
+        </div>
+    </div>
+    <div class="card-body">
+        <form method="get" asp-controller="RegistryDashboard" asp-action="Explorer" class="row g-2 align-items-end mb-3">
+            <div class="col-md-5">
+                <label class="form-label small fw-semibold">Identifier or Name Prefix</label>
+                <input type="text" name="Q" value="@Model.Criteria.Q" class="form-control" placeholder="e.g. U24246DL2003PTC118255 or TATA" required />
+            </div>
+            <div class="col-md-3">
+                <label class="form-label small fw-semibold">Entity Type (Required for Name Search)</label>
+                <select name="RecordType" class="form-select">
+                    <option value="">Select Type...</option>
+                    <option value="Company" selected="@(Model.Criteria.RecordType == CompanyMasterRecordType.Company)">Company</option>
+                    <option value="Llp" selected="@(Model.Criteria.RecordType == CompanyMasterRecordType.Llp)">LLP</option>
+                    <option value="Foreign" selected="@(Model.Criteria.RecordType == CompanyMasterRecordType.Foreign)">Foreign Company</option>
+                </select>
+            </div>
+            <div class="col-md-4 d-flex gap-2">
+                <button type="submit" class="btn btn-primary flex-grow-1">
+                    <i class="bi bi-search me-1"></i>Search Registry
+                </button>
+                <a asp-controller="RegistryDashboard" asp-action="Index" asp-route-tab="explorer" class="btn btn-outline-secondary">
+                    Reset
+                </a>
+            </div>
+        </form>
+
+        @if (!string.IsNullOrEmpty(Model.ValidationErrorMessage))
+        {
+            <div class="alert alert-warning d-flex align-items-center gap-2 mb-3">
+                <i class="bi bi-exclamation-triangle-fill flex-shrink-0"></i>
+                <div>@Model.ValidationErrorMessage</div>
+            </div>
+        }
+
+        @if (Model.SearchExecuted && string.IsNullOrEmpty(Model.ValidationErrorMessage))
+        {
+            <div class="d-flex justify-content-between align-items-center mb-2">
+                <div class="text-muted small">
+                    Showing @Model.Items.Count record@(Model.Items.Count == 1 ? "" : "s")
+                </div>
+            </div>
+
+            @if (Model.Items.Count == 0)
+            {
+                <div class="p-4 text-center text-muted border rounded">
+                    <i class="bi bi-inbox fs-2 d-block mb-2"></i>
+                    No matching master records found for this query.
+                </div>
+            }
+            else
+            {
+                <div class="table-responsive">
+                    <table class="table table-hover table-sm align-middle mb-0">
+                        <thead class="table-light">
+                            <tr>
+                                <th>Identifier</th>
+                                <th>Entity Name</th>
+                                <th>Type</th>
+                                <th>Status</th>
+                                <th>Reg. Date</th>
+                                <th>State / ROC</th>
+                                <th>Class / Industry</th>
+                                <th class="text-end">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var item in Model.Items)
+                            {
+                                <tr>
+                                    <td>
+                                        <code class="fw-bold">@item.Identifier</code>
+                                    </td>
+                                    <td>
+                                        <div class="fw-semibold">@item.Name</div>
+                                        @if (!string.IsNullOrWhiteSpace(item.Address))
+                                        {
+                                            <div class="text-muted small text-truncate" style="max-width: 320px;" title="@item.Address">
+                                                @item.Address
+                                            </div>
+                                        }
+                                    </td>
+                                    <td>
+                                        <span class="badge @(item.RecordType == CompanyMasterRecordType.Company ? "bg-primary" : item.RecordType == CompanyMasterRecordType.Llp ? "bg-info text-dark" : "bg-warning text-dark")">
+                                            @item.RecordType
+                                        </span>
+                                    </td>
+                                    <td>
+                                        @{
+                                            var s = item.Status ?? "Unknown";
+                                            var badgeClass = s.Equals("Active", StringComparison.OrdinalIgnoreCase) ? "bg-success"
+                                                : s.Contains("CIRP", StringComparison.OrdinalIgnoreCase) || s.Contains("Liquidation", StringComparison.OrdinalIgnoreCase) ? "bg-danger"
+                                                : s.Equals("Strike Off", StringComparison.OrdinalIgnoreCase) || s.Equals("Defunct", StringComparison.OrdinalIgnoreCase) ? "bg-warning text-dark"
+                                                : "bg-secondary";
+                                        }
+                                        <span class="badge @badgeClass">@s</span>
+                                    </td>
+                                    <td class="text-nowrap small">
+                                        @(item.RegistrationDate?.ToString("dd-MMM-yyyy") ?? "—")
+                                    </td>
+                                    <td class="small">
+                                        <div>@(item.State ?? "—")</div>
+                                        <div class="text-muted">@(item.Roc ?? "")</div>
+                                    </td>
+                                    <td class="small">
+                                        <div>@(item.Class ?? "—")</div>
+                                        <div class="text-muted text-truncate" style="max-width: 200px;" title="@item.Industry">
+                                            @(item.Industry ?? "")
+                                        </div>
+                                    </td>
+                                    <td class="text-end text-nowrap">
+                                        <a class="btn btn-sm btn-outline-primary py-0 px-2" asp-controller="Requests" asp-action="Index" asp-route-SearchText="@item.Identifier" title="Search in analyzed requests">
+                                            <i class="bi bi-search"></i> Dossiers
+                                        </a>
+                                        @if (item.IsEligibleForAutoFetch)
+                                        {
+                                            <a class="btn btn-sm btn-outline-success py-0 px-2 ms-1" asp-controller="AutoFetch" asp-action="New" asp-route-cin="@item.Identifier" title="Prefill Auto-fetch">
+                                                <i class="bi bi-cloud-download"></i> Auto-fetch
+                                            </a>
+                                        }
+                                        else
+                                        {
+                                            <button type="button" class="btn btn-sm btn-outline-secondary py-0 px-2 ms-1" disabled title="Foreign company identifiers (FCRN) are not eligible for automated filing retrieval.">
+                                                <i class="bi bi-cloud-download"></i> N/A
+                                            </button>
+                                        }
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+
+                @if (Model.HasNextPage)
+                {
+                    <div class="mt-3 text-center">
+                        <form method="get" asp-controller="RegistryDashboard" asp-action="Explorer" class="d-inline-block">
+                            <input type="hidden" name="Q" value="@Model.Criteria.Q" />
+                            <input type="hidden" name="RecordType" value="@Model.Criteria.RecordType" />
+                            <input type="hidden" name="CursorName" value="@Model.NextCursorName" />
+                            <input type="hidden" name="CursorIdentifier" value="@Model.NextCursorIdentifier" />
+                            <button type="submit" class="btn btn-outline-primary">
+                                Load Next 50 Records <i class="bi bi-chevron-right ms-1"></i>
+                            </button>
+                        </form>
+                    </div>
+                }
+            }
+        }
+    </div>
+</div>
+

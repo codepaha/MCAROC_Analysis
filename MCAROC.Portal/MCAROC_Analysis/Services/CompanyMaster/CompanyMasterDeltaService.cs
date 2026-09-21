@@ -26,6 +26,7 @@ public partial class CompanyMasterDeltaService : ICompanyMasterDeltaService
     private readonly IProxyPoolService _proxyPool;
     private readonly ISyncLockLease _lockLease;
     private readonly ISafeArchiveExtractor _archiveExtractor;
+    private readonly MCAROC_Analysis.Services.Registry.IRegistryPromotionCoordinator _promotionCoordinator;
     private readonly IConfiguration _configuration;
     private readonly ILogger<CompanyMasterDeltaService> _logger;
 
@@ -37,6 +38,7 @@ public partial class CompanyMasterDeltaService : ICompanyMasterDeltaService
         IConfiguration configuration,
         IProxyPoolService proxyPool,
         ISyncLockLease lockLease,
+        MCAROC_Analysis.Services.Registry.IRegistryPromotionCoordinator promotionCoordinator,
         ILogger<CompanyMasterDeltaService> logger,
         ISafeArchiveExtractor? archiveExtractor = null)
     {
@@ -47,6 +49,7 @@ public partial class CompanyMasterDeltaService : ICompanyMasterDeltaService
             ?? throw new InvalidOperationException("Connection string 'Default' is not configured.");
         _proxyPool = proxyPool;
         _lockLease = lockLease;
+        _promotionCoordinator = promotionCoordinator ?? throw new ArgumentNullException(nameof(promotionCoordinator));
         _archiveExtractor = archiveExtractor ?? new SafeArchiveExtractor(Microsoft.Extensions.Logging.Abstractions.NullLogger<SafeArchiveExtractor>.Instance);
         _logger = logger;
     }
@@ -450,12 +453,22 @@ public partial class CompanyMasterDeltaService : ICompanyMasterDeltaService
         return new ValidationResult(true, validatedCount, duplicateCount, null);
     }
 
-    public async Task<PromotionMetricsResult> PromoteStagedDeltaAsync(long syncRunId, long fencingToken, int batchSize = 4000, CancellationToken cancellationToken = default)
+    public async Task<PromotionMetricsResult> PromoteStagedDeltaAsync(
+        long syncRunId,
+        long fencingToken,
+        int batchSize = 4000,
+        CancellationToken cancellationToken = default,
+        TimeSpan? admissionTimeout = null)
     {
-        await UpdateJobStatusAsync(syncRunId, CompanyMasterSyncJobStatus.Promoting, cancellationToken: cancellationToken);
+        var timeout = admissionTimeout ?? TimeSpan.FromSeconds(30);
+        await using var admission = await _promotionCoordinator.AcquirePromotionAdmissionAsync(syncRunId, timeout, cancellationToken);
 
-        await using var connection = new SqlConnection(_connectionString);
-        await connection.OpenAsync(cancellationToken);
+        try
+        {
+            await UpdateJobStatusAsync(syncRunId, CompanyMasterSyncJobStatus.Promoting, cancellationToken: cancellationToken);
+
+            await using var connection = new SqlConnection(_connectionString);
+            await connection.OpenAsync(cancellationToken);
 
         int totalUpdated = 0;
         int totalInserted = 0;
@@ -633,8 +646,6 @@ public partial class CompanyMasterDeltaService : ICompanyMasterDeltaService
             }
             catch (SqlException ex) when (ex.Message.Contains("Fencing check failed"))
             {
-                _logger.LogError("Promotion aborted by atomic fencing check preemption for Job {JobId}", syncRunId);
-                await UpdateJobStatusAsync(syncRunId, CompanyMasterSyncJobStatus.PreemptedByTakeover, ex.Message, cancellationToken);
                 throw;
             }
         }
@@ -721,9 +732,24 @@ public partial class CompanyMasterDeltaService : ICompanyMasterDeltaService
         await _db.SaveChangesAsync(cancellationToken);
 
         await UpdateJobStatusAsync(syncRunId, CompanyMasterSyncJobStatus.Completed, cancellationToken: cancellationToken);
-        await CleanStagingAsync(syncRunId, cancellationToken);
+            await CleanStagingAsync(syncRunId, cancellationToken);
 
-        return new PromotionMetricsResult(grandTotalUpdated, grandTotalInserted, grandTotalUnchanged, metricsByRecordType);
+            return new PromotionMetricsResult(grandTotalUpdated, grandTotalInserted, grandTotalUnchanged, metricsByRecordType);
+        }
+        catch (SqlException ex) when (ex.Message.Contains("Fencing check failed"))
+        {
+            _logger.LogError("Promotion aborted by atomic fencing check preemption for Job {JobId}", syncRunId);
+            using var persistCts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            await UpdateJobStatusAsync(syncRunId, CompanyMasterSyncJobStatus.PreemptedByTakeover, ex.Message, persistCts.Token);
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Promotion failed for Job {JobId}", syncRunId);
+            using var persistCts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            await UpdateJobStatusAsync(syncRunId, CompanyMasterSyncJobStatus.Failed, ex.Message, persistCts.Token);
+            throw;
+        }
     }
 
     public async Task CleanStagingAsync(long syncRunId, CancellationToken cancellationToken = default)

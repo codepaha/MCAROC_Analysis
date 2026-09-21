@@ -1,0 +1,111 @@
+@model RegistryAggregateData
+@using MCAROC_Analysis.Models.Registry
+
+<div class="row g-3 mb-4">
+    <div class="col-lg-6">
+        <div class="card h-100">
+            <div class="card-header fw-bold">Top 10 States &bull; Companies</div>
+            <div class="card-body">
+                @if (Model.TopStatesChart != null)
+                {
+                    @await Html.PartialAsync("_HorizontalBars", Model.TopStatesChart)
+                }
+                else
+                {
+                    <p class="text-muted mb-0 small">No state data available.</p>
+                }
+            </div>
+        </div>
+    </div>
+    <div class="col-lg-6">
+        <div class="card h-100">
+            <div class="card-header fw-bold">Top 10 Industries &bull; Companies</div>
+            <div class="card-body">
+                @if (Model.TopIndustriesChart != null)
+                {
+                    @await Html.PartialAsync("_HorizontalBars", Model.TopIndustriesChart)
+                }
+                else
+                {
+                    <p class="text-muted mb-0 small">No industry data available.</p>
+                }
+            </div>
+        </div>
+    </div>
+</div>
+
+@if (Model.CompanyRegistrationYearSeries != null)
+{
+    <div class="card mb-4">
+        <div class="card-header d-flex justify-content-between align-items-center">
+            <div>
+                <div class="fw-bold">Annual Incorporations (2000 &ndash; Present)</div>
+                <div class="text-muted small">Based on official RegistrationDate. Reflects entity entry dates, not status transitions or historical strike-off timing.</div>
+            </div>
+        </div>
+        <div class="card-body">
+            @await Html.PartialAsync("_Sparkline", Model.CompanyRegistrationYearSeries, new ViewDataDictionary(ViewData) { ["Width"] = 720d, ["Height"] = 120d, ["ExtraClass"] = "mca-sparkline--wide" })
+        </div>
+    </div>
+}
+
+<div class="row g-3 mb-4">
+    <div class="col-md-4">
+        <div class="card h-100">
+            <div class="card-header fw-bold">Company Class</div>
+            <div class="card-body">
+                <table class="table table-sm table-borderless mb-0">
+                    <tbody>
+                        @foreach (var c in Model.CompanyClasses)
+                        {
+                            <tr>
+                                <td>@c.Label</td>
+                                <td class="text-end fw-semibold">@c.Count.ToString("N0")</td>
+                                <td class="text-end text-muted small">@c.Percent.ToString("F1")%</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="card h-100">
+            <div class="card-header fw-bold">Listing Status</div>
+            <div class="card-body">
+                <table class="table table-sm table-borderless mb-0">
+                    <tbody>
+                        @foreach (var l in Model.ListingStatusSplit)
+                        {
+                            <tr>
+                                <td>@l.Label</td>
+                                <td class="text-end fw-semibold">@l.Count.ToString("N0")</td>
+                                <td class="text-end text-muted small">@l.Percent.ToString("F1")%</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="card h-100">
+            <div class="card-header fw-bold">Authorized Capital Tiers</div>
+            <div class="card-body">
+                <table class="table table-sm table-borderless mb-0">
+                    <tbody>
+                        @foreach (var cap in Model.CapitalDistribution)
+                        {
+                            <tr>
+                                <td>@cap.Range</td>
+                                <td class="text-end fw-semibold">@cap.Count.ToString("N0")</td>
+                                <td class="text-end text-muted small">@cap.Percent.ToString("F1")%</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+

@@ -38,16 +38,28 @@ public partial class AutoFetchController(
     private static partial Regex PanPattern();
 
     [HttpGet("/Requests/AutoFetch")]
-    public async Task<IActionResult> New()
+    public async Task<IActionResult> New([FromQuery] string? cin = null)
     {
         var opts = options.Value;
-        return View("~/Views/Requests/AutoFetch.cshtml", new AutoFetchRequestViewModel
+        var vm = new AutoFetchRequestViewModel
         {
             Clients = await ActiveClientsAsync(),
             IncludeFilings = opts.IncludeFilingsByDefault,
             MaxDocumentsPerSection = opts.DefaultMaxDocumentsPerSection > 0 ? opts.DefaultMaxDocumentsPerSection : null,
             IsConfigured = opts.IsConfigured
-        });
+        };
+
+        if (!string.IsNullOrWhiteSpace(cin))
+        {
+            var trimmed = cin.Trim().ToUpperInvariant();
+            if (IdentifierPattern().IsMatch(trimmed))
+            {
+                vm.Cin = trimmed;
+                vm.EntityType = trimmed.Contains('-') ? EntityType.LLP : EntityType.Company;
+            }
+        }
+
+        return View("~/Views/Requests/AutoFetch.cshtml", vm);
     }
 
     [HttpPost("/Requests/AutoFetch")]
