@@ -256,27 +256,50 @@ public class LitigationOrderChunkingTests : IAsyncLifetime
     // ── Recovery ───────────────────────────────────────────────────────────────────────────────────
 
     [Fact]
-    public async Task RecoverStaleWorkAsync_resets_InProgress_to_Pending_and_enqueues_both_stale_and_never_enqueued_eligible_documents()
+    public async Task RecoverStaleWorkAsync_resets_only_expired_or_unleased_InProgress_rows_and_enqueues_never_enqueued_eligible_documents()
     {
         await using var db = CreateContext();
         var queue = new LitigationOrderChunkingQueue();
         var orchestrator = new LitigationOrderChunkingOrchestrator(db, new StubEmbeddingService(_ => []), queue, NullLogger<LitigationOrderChunkingOrchestrator>.Instance);
 
-        // Stale: left InProgress by a crash.
-        var (_, _, staleOrder) = await SeedOrderAsync(db, "R1");
-        var staleDoc = await SeedDownloadedDocumentAsync(db, staleOrder.LitigationCaseOrderId, "--- Page 1 (native) ---\ntext");
-        staleDoc.ChunkingStatus = ChunkingStatus.InProgress;
+        // Unleased InProgress: left that way by a crash before the lease fields ever existed, or by a claim
+        // path that never set them — no lease at all is treated the same as an expired one (demonstrably
+        // abandoned, not merely "someone else might still own it").
+        var (_, _, unleaseOrder) = await SeedOrderAsync(db, "R1");
+        var unleaseDoc = await SeedDownloadedDocumentAsync(db, unleaseOrder.LitigationCaseOrderId, "--- Page 1 (native) ---\ntext");
+        unleaseDoc.ChunkingStatus = ChunkingStatus.InProgress;
+        await db.SaveChangesAsync();
+
+        // Expired-lease InProgress: a genuine crash mid-claim — the lease token exists but its expiry has
+        // already passed.
+        var (_, _, expiredOrder) = await SeedOrderAsync(db, "R2");
+        var expiredDoc = await SeedDownloadedDocumentAsync(db, expiredOrder.LitigationCaseOrderId, "--- Page 1 (native) ---\ntext");
+        expiredDoc.ChunkingStatus = ChunkingStatus.InProgress;
+        expiredDoc.ChunkingLeaseToken = Guid.NewGuid();
+        expiredDoc.ChunkingLeaseExpiresUtc = DateTime.UtcNow.AddMinutes(-5);
+        await db.SaveChangesAsync();
+
+        // Live-lease InProgress: another (still-alive) attempt genuinely owns this right now — PR #254 review
+        // round 1's exact scenario. Recovery must never reset or immediately re-enqueue this; it schedules a
+        // one-time re-check for when the lease is actually due to expire instead.
+        var (_, _, liveOrder) = await SeedOrderAsync(db, "R3");
+        var liveDoc = await SeedDownloadedDocumentAsync(db, liveOrder.LitigationCaseOrderId, "--- Page 1 (native) ---\ntext");
+        liveDoc.ChunkingStatus = ChunkingStatus.InProgress;
+        liveDoc.ChunkingLeaseToken = Guid.NewGuid();
+        // Generous relative to the immediate-drain window below — real DB round-trips seeding the other rows
+        // above can themselves eat into a too-tight margin.
+        liveDoc.ChunkingLeaseExpiresUtc = DateTime.UtcNow.AddSeconds(2);
         await db.SaveChangesAsync();
 
         // Never enqueued: eligible (Downloaded + TextExtracted) but still Pending, simulating a crash between
         // publish and the enqueue call.
-        var (_, _, pendingOrder) = await SeedOrderAsync(db, "R2");
+        var (_, _, pendingOrder) = await SeedOrderAsync(db, "R4");
         var pendingDoc = await SeedDownloadedDocumentAsync(db, pendingOrder.LitigationCaseOrderId, "--- Page 1 (native) ---\ntext");
 
         // Not eligible: still InProgress on the DOWNLOAD side (never finished extraction) — must not be swept
         // by the "Downloaded + TextExtracted" half of the sweep, though it WOULD be caught if it were also
         // ChunkingStatus.InProgress; here it's Pending on both axes, so it's simply not yet eligible.
-        var (_, _, notDownloadedOrder) = await SeedOrderAsync(db, "R3");
+        var (_, _, notDownloadedOrder) = await SeedOrderAsync(db, "R5");
         var notDownloadedDoc = new LitigationOrderDocument
         {
             LitigationCaseOrderId = notDownloadedOrder.LitigationCaseOrderId, Status = LitigationOrderDocumentStatus.InProgress,
@@ -286,15 +309,150 @@ public class LitigationOrderChunkingTests : IAsyncLifetime
         await db.SaveChangesAsync();
 
         var count = await orchestrator.RecoverStaleWorkAsync(CancellationToken.None);
-        Assert.True(count >= 2);
+        Assert.True(count >= 3);
 
-        await db.Entry(staleDoc).ReloadAsync();
-        Assert.Equal(ChunkingStatus.Pending, staleDoc.ChunkingStatus); // reset from InProgress
+        await db.Entry(unleaseDoc).ReloadAsync();
+        Assert.Equal(ChunkingStatus.Pending, unleaseDoc.ChunkingStatus); // reset — no lease at all
+        await db.Entry(expiredDoc).ReloadAsync();
+        Assert.Equal(ChunkingStatus.Pending, expiredDoc.ChunkingStatus); // reset — lease had expired
+        await db.Entry(liveDoc).ReloadAsync();
+        Assert.Equal(ChunkingStatus.InProgress, liveDoc.ChunkingStatus); // untouched — lease still live
 
-        var enqueued = await DrainAvailableAsync(queue, TimeSpan.FromMilliseconds(300));
-        Assert.Contains(staleDoc.LitigationOrderDocumentId, enqueued);
-        Assert.Contains(pendingDoc.LitigationOrderDocumentId, enqueued);
-        Assert.DoesNotContain(notDownloadedDoc.LitigationOrderDocumentId, enqueued);
+        var immediate = await DrainAvailableAsync(queue, TimeSpan.FromMilliseconds(300));
+        Assert.Contains(unleaseDoc.LitigationOrderDocumentId, immediate);
+        Assert.Contains(expiredDoc.LitigationOrderDocumentId, immediate);
+        Assert.Contains(pendingDoc.LitigationOrderDocumentId, immediate);
+        Assert.DoesNotContain(notDownloadedDoc.LitigationOrderDocumentId, immediate);
+        Assert.DoesNotContain(liveDoc.LitigationOrderDocumentId, immediate); // live lease — not yet
+
+        var eventual = await DrainAvailableAsync(queue, TimeSpan.FromSeconds(3));
+        Assert.Contains(liveDoc.LitigationOrderDocumentId, eventual); // shows up once its lease expires
+    }
+
+    // ── Lease fencing / multi-instance takeover (PR #254 review round 1) ─────────────────────────────
+
+    [Fact]
+    public async Task A_second_instances_startup_recovery_never_resets_or_re_enqueues_a_document_worker_A_still_legitimately_owns()
+    {
+        await using var db = CreateContext();
+        var (_, _, order) = await SeedOrderAsync(db, "MC1");
+        var document = await SeedDownloadedDocumentAsync(db, order.LitigationCaseOrderId,
+            "--- Page 1 (native) ---\nText that worker A is still actively (and slowly) embedding right now.");
+
+        // Worker A claims via the real claim path and then blocks mid-embed — a TaskCompletionSource this
+        // test controls stands in for "still actively calling Vertex AI."
+        var aIsEmbedding = new TaskCompletionSource();
+        var releaseA = new TaskCompletionSource();
+        var stubA = new StubEmbeddingService(n =>
+        {
+            aIsEmbedding.TrySetResult();
+            releaseA.Task.GetAwaiter().GetResult(); // blocks here until this test releases it
+            return Enumerable.Range(0, n).Select(_ => Axis(0)).ToList();
+        });
+        var orchestratorA = new LitigationOrderChunkingOrchestrator(db, stubA, new LitigationOrderChunkingQueue(), NullLogger<LitigationOrderChunkingOrchestrator>.Instance);
+        var aTask = orchestratorA.ChunkOrderDocumentAsync(document.LitigationOrderDocumentId, CancellationToken.None);
+
+        await aIsEmbedding.Task.WaitAsync(TimeSpan.FromSeconds(5)); // A has claimed and is now mid-embed
+
+        Guid? leaseTokenBeforeRecovery;
+        await using (var readDb = CreateContext())
+        {
+            var reloaded = await readDb.LitigationOrderDocuments.AsNoTracking().FirstAsync(d => d.LitigationOrderDocumentId == document.LitigationOrderDocumentId);
+            Assert.Equal(ChunkingStatus.InProgress, reloaded.ChunkingStatus);
+            Assert.NotNull(reloaded.ChunkingLeaseToken);
+            Assert.True(reloaded.ChunkingLeaseExpiresUtc > DateTime.UtcNow); // live lease
+            leaseTokenBeforeRecovery = reloaded.ChunkingLeaseToken;
+        }
+
+        // A second, independent instance's startup recovery — its own context, its own queue.
+        await using var dbB = CreateContext();
+        var queueB = new LitigationOrderChunkingQueue();
+        var orchestratorB = new LitigationOrderChunkingOrchestrator(dbB, new StubEmbeddingService(_ => []), queueB, NullLogger<LitigationOrderChunkingOrchestrator>.Instance);
+        await orchestratorB.RecoverStaleWorkAsync(CancellationToken.None);
+
+        await using (var readDb = CreateContext())
+        {
+            var reloaded = await readDb.LitigationOrderDocuments.AsNoTracking().FirstAsync(d => d.LitigationOrderDocumentId == document.LitigationOrderDocumentId);
+            Assert.Equal(ChunkingStatus.InProgress, reloaded.ChunkingStatus); // untouched
+            Assert.Equal(leaseTokenBeforeRecovery, reloaded.ChunkingLeaseToken); // still A's token
+        }
+        var immediatelyEnqueuedByB = await DrainAvailableAsync(queueB, TimeSpan.FromMilliseconds(200));
+        Assert.DoesNotContain(document.LitigationOrderDocumentId, immediatelyEnqueuedByB); // B never re-enqueued it
+
+        releaseA.SetResult(); // let A finish normally
+        await aTask.WaitAsync(TimeSpan.FromSeconds(5));
+
+        await using var verify = CreateContext();
+        var final = await verify.LitigationOrderDocuments.AsNoTracking().FirstAsync(d => d.LitigationOrderDocumentId == document.LitigationOrderDocumentId);
+        Assert.Equal(ChunkingStatus.Chunked, final.ChunkingStatus); // A's own, undisturbed completion succeeded
+    }
+
+    [Fact]
+    public async Task ChunkOrderDocumentAsync_a_stale_workers_late_completion_after_a_mid_flight_lease_takeover_never_overwrites_the_winners_chunk_set()
+    {
+        // Regression for PR #254 review round 1: worker A claims, then (while still slowly embedding) its
+        // lease genuinely expires and a second instance's recovery sweep resets the row so worker B can claim,
+        // chunk and publish ITS OWN chunk set. A then finishes its own (now-stale) embedding and tries to
+        // publish too. Before the fix, the claim was a plain status flip with no fencing token at all, so A's
+        // completion would have unconditionally deleted B's already-published chunks and inserted its own —
+        // this proves the fix: A's lease-guarded completion matches 0 rows, so its entire transaction (the
+        // delete of B's chunks AND the insert of A's own) rolls back, leaving B's chunk rows — down to their
+        // own identity values — completely untouched.
+        await using var db = CreateContext();
+        var (_, _, order) = await SeedOrderAsync(db, "TK1");
+        var document = await SeedDownloadedDocumentAsync(db, order.LitigationCaseOrderId,
+            "--- Page 1 (native) ---\nOriginal order text from worker A, long enough to clear the fifty-character chunk minimum.");
+
+        List<long>? bChunkIdsAfterPublish = null;
+        var stubA = new StubEmbeddingService(n =>
+        {
+            // The interleaving point: force-expire A's already-minted lease on an INDEPENDENT connection
+            // (exactly what real wall-clock elapsed time while A was still slowly embedding would produce),
+            // then run a full, real worker B — its own recovery sweep, its own orchestrator, its own context —
+            // synchronously right here, before control ever returns to A's own embedding call.
+            using (var takeoverDb = CreateContext())
+            {
+                takeoverDb.LitigationOrderDocuments.Where(d => d.LitigationOrderDocumentId == document.LitigationOrderDocumentId)
+                    .ExecuteUpdate(s => s.SetProperty(d => d.ChunkingLeaseExpiresUtc, DateTime.UtcNow.AddSeconds(-1)));
+            }
+
+            using var dbB = CreateContext();
+            var stubB = new StubEmbeddingService(m => Enumerable.Range(0, m).Select(_ => Axis(1)).ToList());
+            var orchestratorB = new LitigationOrderChunkingOrchestrator(dbB, stubB, new LitigationOrderChunkingQueue(), NullLogger<LitigationOrderChunkingOrchestrator>.Instance);
+            // B's own recovery resets the now-expired row from InProgress back to Pending so its own claim can
+            // succeed — exactly the real startup-recovery path a second instance would run. Only OUR document
+            // is then driven through B's orchestrator directly by id (not via the queue, which is irrelevant
+            // to what this test proves) — the shared, real test DB means recovery's sweep can also touch
+            // unrelated InProgress rows left by other tests, matching LitigationOrderDocumentServiceTests' own
+            // "query is global to the shared test DB" precedent.
+            orchestratorB.RecoverStaleWorkAsync(CancellationToken.None).GetAwaiter().GetResult();
+            orchestratorB.ChunkOrderDocumentAsync(document.LitigationOrderDocumentId, CancellationToken.None).GetAwaiter().GetResult();
+
+            using (var readDb = CreateContext())
+            {
+                bChunkIdsAfterPublish = readDb.LitigationOrderChunks
+                    .Where(c => c.LitigationOrderDocumentId == document.LitigationOrderDocumentId)
+                    .Select(c => c.LitigationOrderChunkId).OrderBy(id => id).ToList();
+            }
+
+            return Enumerable.Range(0, n).Select(_ => Axis(0)).ToList(); // A's own (now-stale) embeddings
+        });
+
+        var orchestratorA = new LitigationOrderChunkingOrchestrator(db, stubA, new LitigationOrderChunkingQueue(), NullLogger<LitigationOrderChunkingOrchestrator>.Instance);
+        await orchestratorA.ChunkOrderDocumentAsync(document.LitigationOrderDocumentId, CancellationToken.None); // A's own claim already happened before this call started
+
+        Assert.NotNull(bChunkIdsAfterPublish);
+        Assert.NotEmpty(bChunkIdsAfterPublish);
+
+        await using var verify = CreateContext();
+        var reloadedDoc = await verify.LitigationOrderDocuments.AsNoTracking().FirstAsync(d => d.LitigationOrderDocumentId == document.LitigationOrderDocumentId);
+        Assert.Equal(ChunkingStatus.Chunked, reloadedDoc.ChunkingStatus); // B's completion stands
+        Assert.Null(reloadedDoc.ChunkingLastError); // never overwritten with an error either
+
+        var finalChunkIds = await verify.LitigationOrderChunks
+            .Where(c => c.LitigationOrderDocumentId == document.LitigationOrderDocumentId)
+            .Select(c => c.LitigationOrderChunkId).OrderBy(id => id).ToListAsync();
+        Assert.Equal(bChunkIdsAfterPublish, finalChunkIds); // exact same rows — A's late write never committed
     }
 
     private static async Task<List<long>> DrainAvailableAsync(LitigationOrderChunkingQueue queue, TimeSpan window)

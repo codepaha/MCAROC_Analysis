@@ -45,6 +45,25 @@ namespace MCAROC_Analysis.Migrations
                 maxLength: 500,
                 nullable: true);
 
+            migrationBuilder.AddColumn<DateTime>(
+                name: "ChunkingLeaseExpiresUtc",
+                table: "LitigationOrderDocuments",
+                type: "datetime2",
+                nullable: true);
+
+            migrationBuilder.AddColumn<string>(
+                name: "ChunkingLeaseOwner",
+                table: "LitigationOrderDocuments",
+                type: "nvarchar(100)",
+                maxLength: 100,
+                nullable: true);
+
+            migrationBuilder.AddColumn<Guid>(
+                name: "ChunkingLeaseToken",
+                table: "LitigationOrderDocuments",
+                type: "uniqueidentifier",
+                nullable: true);
+
             // EF's own generator produced defaultValue: "" here — the CLR-side property initializer
             // (ChunkingStatus.Pending) isn't reflected through the string conversion into the migration's
             // AddColumn default. Fixed by hand: any LitigationOrderDocument row that already exists when
@@ -134,6 +153,18 @@ namespace MCAROC_Analysis.Migrations
 
             migrationBuilder.DropColumn(
                 name: "ChunkingLastError",
+                table: "LitigationOrderDocuments");
+
+            migrationBuilder.DropColumn(
+                name: "ChunkingLeaseExpiresUtc",
+                table: "LitigationOrderDocuments");
+
+            migrationBuilder.DropColumn(
+                name: "ChunkingLeaseOwner",
+                table: "LitigationOrderDocuments");
+
+            migrationBuilder.DropColumn(
+                name: "ChunkingLeaseToken",
                 table: "LitigationOrderDocuments");
 
             migrationBuilder.DropColumn(

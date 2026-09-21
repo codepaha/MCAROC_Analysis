@@ -13,7 +13,7 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace MCAROC_Analysis.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    [Migration("20260921050945_AddLitigationOrderChunks")]
+    [Migration("20260921055513_AddLitigationOrderChunks")]
     partial class AddLitigationOrderChunks
     {
         /// <inheritdoc />
@@ -3181,6 +3181,16 @@ namespace MCAROC_Analysis.Migrations
                     b.Property<string>("ChunkingLastError")
                         .HasMaxLength(500)
                         .HasColumnType("nvarchar(500)");
+
+                    b.Property<DateTime?>("ChunkingLeaseExpiresUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("ChunkingLeaseOwner")
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)");
+
+                    b.Property<Guid?>("ChunkingLeaseToken")
+                        .HasColumnType("uniqueidentifier");
 
                     b.Property<string>("ChunkingStatus")
                         .IsRequired()

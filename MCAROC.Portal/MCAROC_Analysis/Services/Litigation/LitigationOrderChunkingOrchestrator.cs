@@ -10,23 +10,32 @@ namespace MCAROC_Analysis.Services.LitigationData;
 
 /// <summary>Chunks and embeds one <see cref="LitigationOrderDocument"/>'s extracted text at a time
 /// (#244/LIT-04) — the litigation-specific counterpart to <c>Services.Chat.DocumentChunkingOrchestrator</c>,
-/// mirroring its atomic-claim and rollback-safe re-chunk shape exactly (chunking/embedding — the parts that
-/// can fail — happen entirely before touching the database; only once the full new chunk set is computed
-/// does one transaction delete the document's existing chunks and insert the new set together, so a failure
-/// never destroys a previously working index). Reuses <see cref="TextChunker"/> and <see cref="EmbeddingService"/>
-/// unmodified — both are already fully generic — and <c>DocumentChunkingOrchestrator</c>'s own
-/// <c>ClassifyChunkingError</c>/<c>SanitizeAndCap</c> static helpers rather than duplicating that regex-heavy
-/// PII/secret-redaction logic, which has nothing McaFiling-specific about it.
+/// mirroring its rollback-safe re-chunk shape (chunking/embedding — the parts that can fail — happen entirely
+/// before touching the database; only once the full new chunk set is computed does one transaction delete the
+/// document's existing chunks and insert the new set together, so a failure never destroys a previously
+/// working index). Reuses <see cref="TextChunker"/> and <see cref="EmbeddingService"/> unmodified — both are
+/// already fully generic — and <c>DocumentChunkingOrchestrator</c>'s own <c>ClassifyChunkingError</c>/
+/// <c>SanitizeAndCap</c> static helpers rather than duplicating that regex-heavy PII/secret-redaction logic,
+/// which has nothing McaFiling-specific about it.
 ///
 /// Deliberately per-document, not per-batch like <c>DocumentChunkingOrchestrator</c>: litigation orders have
 /// no batch concept (see <see cref="LitigationOrderChunkingQueue"/>'s own remarks), so there is no analogous
 /// "list pending documents for this batch" fan-out step — the queue already carries exactly one order
 /// document id per unit of work.
 ///
-/// The claim query below checks only <c>ChunkingStatus == Pending</c>, not download/extraction state —
-/// mirrors <c>DocumentChunkingOrchestrator.ChunkDocumentAsync</c>'s own claim exactly, relying entirely on
-/// the trigger (<c>LitigationOrderDocumentService</c>, after a successful download+extraction publish) and
-/// <see cref="RecoverStaleWorkAsync"/> (which does check those) to only ever enqueue eligible ids.</summary>
+/// <b>Lease/fencing (PR #254 review round 1):</b> unlike <c>DocumentChunkingOrchestrator</c>'s plain status
+/// flip, the claim here mints a fresh <see cref="LitigationOrderDocument.ChunkingLeaseToken"/> and
+/// <see cref="LitigationOrderDocument.ChunkingLeaseExpiresUtc"/>, and every write that follows — the Chunked
+/// completion and every Pending/Failed retry transition — is guarded by <see cref="ChunkingLeaseGuarded"/>,
+/// mirroring <c>LitigationOrderDocumentService.LeaseGuarded</c> exactly. A first cut of this orchestrator
+/// copied <c>DocumentChunkingOrchestrator</c>'s unfenced "claim is just a status flip, recovery resets any
+/// InProgress row unconditionally" shape — safe only under a single-instance assumption that this litigation
+/// pipeline does not get to make: a second application instance starting up while the first is still actively
+/// (and slowly — a real Vertex AI call) embedding would reset that live row to Pending and let both instances
+/// embed and publish the same document, with the stale one able to overwrite the newer chunk set purely by
+/// finishing last. The lease closes that: a fenced-out attempt's completion/failure write matches 0 rows and
+/// is discarded (its own delete+insert is rolled back before ever committing), and startup recovery
+/// (<see cref="RecoverStaleWorkAsync"/>) only ever resets a row whose lease has demonstrably expired.</summary>
 public sealed class LitigationOrderChunkingOrchestrator(
     AppDbContext db, EmbeddingService embeddingService, LitigationOrderChunkingQueue queue,
     ILogger<LitigationOrderChunkingOrchestrator> logger)
@@ -34,13 +43,23 @@ public sealed class LitigationOrderChunkingOrchestrator(
     public const string ChunkingVersion = "1.0";
     private const int MaxChunkRetryCount = 3;
 
+    // One HTTP-ish call to Vertex AI (batched, up to MaxBatchSize=32 texts per round-trip) plus DB work —
+    // generous but not job-length, same reasoning as LitigationOrderDocumentService.LeaseMinutes.
+    private const int ChunkingLeaseMinutes = 10;
+    private static readonly string LeaseOwnerId = $"{Environment.MachineName}:{Environment.ProcessId}";
+
     public async Task ChunkOrderDocumentAsync(long orderDocumentId, CancellationToken ct)
     {
+        var now = DateTime.UtcNow;
+        var myLeaseToken = Guid.NewGuid();
         var claimed = await db.LitigationOrderDocuments
             .Where(d => d.LitigationOrderDocumentId == orderDocumentId && d.ChunkingStatus == ChunkingStatus.Pending)
             .ExecuteUpdateAsync(s => s
                 .SetProperty(d => d.ChunkingStatus, ChunkingStatus.InProgress)
-                .SetProperty(d => d.ChunkingLastAttemptUtc, DateTime.UtcNow), ct);
+                .SetProperty(d => d.ChunkingLeaseToken, myLeaseToken)
+                .SetProperty(d => d.ChunkingLeaseOwner, LeaseOwnerId)
+                .SetProperty(d => d.ChunkingLeaseExpiresUtc, now.AddMinutes(ChunkingLeaseMinutes))
+                .SetProperty(d => d.ChunkingLastAttemptUtc, now), ct);
         if (claimed == 0)
             return; // already claimed/chunked by another worker or a previous run
 
@@ -94,18 +113,30 @@ public sealed class LitigationOrderChunkingOrchestrator(
                 });
             }
 
+            // The delete+insert and the lease-guarded completion write share one transaction: if the guarded
+            // update matches 0 rows (this attempt was fenced out — superseded by a takeover, or its own lease
+            // simply expired mid-embed), the whole transaction rolls back, so a stale attempt's chunk set
+            // never lands even transiently. Only a successful, still-authoritative completion commits.
             await using var transaction = await db.Database.BeginTransactionAsync(ct);
             await db.LitigationOrderChunks.Where(c => c.LitigationOrderDocumentId == orderDocumentId).ExecuteDeleteAsync(ct);
             db.LitigationOrderChunks.AddRange(newChunks);
             await db.SaveChangesAsync(ct);
-            await db.LitigationOrderDocuments.Where(d => d.LitigationOrderDocumentId == orderDocumentId)
-                .ExecuteUpdateAsync(s => s
-                    .SetProperty(d => d.ChunkingStatus, ChunkingStatus.Chunked)
-                    .SetProperty(d => d.ChunkingLastError, (string?)null)
-                    .SetProperty(d => d.ChunkingErrorCategory, (string?)null)
-                    .SetProperty(d => d.ChunkingFailedUtc, (DateTime?)null), ct);
-            await transaction.CommitAsync(ct);
+            var published = await ChunkingLeaseGuarded(orderDocumentId, myLeaseToken).ExecuteUpdateAsync(s => s
+                .SetProperty(d => d.ChunkingStatus, ChunkingStatus.Chunked)
+                .SetProperty(d => d.ChunkingLastError, (string?)null)
+                .SetProperty(d => d.ChunkingErrorCategory, (string?)null)
+                .SetProperty(d => d.ChunkingFailedUtc, (DateTime?)null), ct);
 
+            if (published == 0)
+            {
+                await transaction.RollbackAsync(ct);
+                logger.LogWarning(
+                    "Litigation order document {Id} lost its chunking lease before its chunk set could be published — discarding this attempt's results.",
+                    orderDocumentId);
+                return;
+            }
+
+            await transaction.CommitAsync(ct);
             logger.LogInformation("Litigation order document {Id} chunked: {Count} chunk(s).", orderDocumentId, textChunks.Count);
         }
         catch (Exception ex)
@@ -117,37 +148,80 @@ public sealed class LitigationOrderChunkingOrchestrator(
             var isTerminal = retryCount >= MaxChunkRetryCount;
             var nextStatus = isTerminal ? ChunkingStatus.Failed : ChunkingStatus.Pending;
 
-            await db.LitigationOrderDocuments.Where(d => d.LitigationOrderDocumentId == orderDocumentId)
-                .ExecuteUpdateAsync(s => s
-                    .SetProperty(d => d.ChunkingStatus, nextStatus)
-                    .SetProperty(d => d.ChunkRetryCount, retryCount)
-                    .SetProperty(d => d.ChunkingLastError, sanitizedMsg)
-                    .SetProperty(d => d.ChunkingErrorCategory, category)
-                    .SetProperty(d => d.ChunkingFailedUtc, isTerminal ? (DateTime?)DateTime.UtcNow : null), ct);
+            var recorded = await ChunkingLeaseGuarded(orderDocumentId, myLeaseToken).ExecuteUpdateAsync(s => s
+                .SetProperty(d => d.ChunkingStatus, nextStatus)
+                .SetProperty(d => d.ChunkRetryCount, retryCount)
+                .SetProperty(d => d.ChunkingLastError, sanitizedMsg)
+                .SetProperty(d => d.ChunkingErrorCategory, category)
+                .SetProperty(d => d.ChunkingFailedUtc, isTerminal ? (DateTime?)DateTime.UtcNow : null), ct);
+
+            if (recorded == 0)
+            {
+                // Fenced out — a takeover already owns this document's retry accounting; recording our own
+                // failure here would either clobber a newer attempt's state or resurrect a row a takeover has
+                // already moved past. Leave it entirely alone, and never re-enqueue on its behalf.
+                logger.LogWarning(
+                    "Litigation order document {Id} lost its chunking lease before its failure could be recorded — leaving it to whichever attempt now owns it.",
+                    orderDocumentId);
+                return;
+            }
 
             if (!isTerminal)
                 queue.Enqueue(orderDocumentId);
         }
     }
 
-    /// <summary>Startup recovery: any document left InProgress by a crash is reset to Pending and re-enqueued
-    /// unconditionally (same "fresh process = orphaned" logic as <c>DocumentChunkingOrchestrator</c>'s own
-    /// recovery — no staleness timeout at startup). Separately, every Downloaded-and-text-extracted document
-    /// still Pending chunking is also swept and re-enqueued, independent of whether it was ever InProgress —
-    /// closes the same gap that method's own doc comment describes: a document can reach ChunkingStatus.Pending
-    /// (its default) without anything ever having enqueued it, e.g. after a migration backfill or an app crash
-    /// between a successful download publish and the chunking enqueue call.</summary>
+    /// <summary>The query every write after a claim must go through — requires this exact attempt's chunking
+    /// lease token and an unexpired lease, not just any tracked-entity SaveChanges or a plain id filter. An
+    /// ExecuteUpdateAsync against this query returning 0 means the row no longer matches (fenced out); callers
+    /// must treat that as "stop touching this document," never as an ordinary failure to retry. Mirrors
+    /// <c>LitigationOrderDocumentService.LeaseGuarded</c> exactly.</summary>
+    private IQueryable<LitigationOrderDocument> ChunkingLeaseGuarded(long documentId, Guid leaseToken)
+    {
+        var now = DateTime.UtcNow;
+        return db.LitigationOrderDocuments.Where(d =>
+            d.LitigationOrderDocumentId == documentId && d.ChunkingLeaseToken == leaseToken &&
+            d.ChunkingLeaseExpiresUtc != null && d.ChunkingLeaseExpiresUtc > now);
+    }
+
+    /// <summary>Startup recovery may only reclaim work whose chunking lease has demonstrably expired — a row
+    /// still <see cref="ChunkingStatus.InProgress"/> with a live, unexpired lease is left completely alone and
+    /// instead scheduled for a one-time re-check right when that lease is due to expire (mirrors
+    /// <c>LitigationOrderDocumentService.RecoverStaleWorkAsync</c>'s own InProgress/live-lease handling
+    /// exactly). Resetting on sight — this orchestrator's original shape, matching
+    /// <c>DocumentChunkingOrchestrator</c>'s own unfenced recovery — is safe only under a single-instance
+    /// assumption; a second instance starting up while the first is still actively (and slowly) embedding
+    /// would otherwise reset that live row and let both instances embed and publish the same document (PR
+    /// #254 review round 1). Separately, every Downloaded-and-text-extracted document still Pending chunking
+    /// is swept and re-enqueued regardless of its InProgress history — closes the gap where a document reaches
+    /// ChunkingStatus.Pending (its default) without anything ever having enqueued it, e.g. after a migration
+    /// backfill or a crash between a successful download publish and the chunking enqueue call.</summary>
     public async Task<int> RecoverStaleWorkAsync(CancellationToken ct)
     {
-        var staleIds = await db.LitigationOrderDocuments
+        var now = DateTime.UtcNow;
+        var inProgress = await db.LitigationOrderDocuments
             .Where(d => d.ChunkingStatus == ChunkingStatus.InProgress)
-            .Select(d => d.LitigationOrderDocumentId)
+            .Select(d => new { d.LitigationOrderDocumentId, d.ChunkingLeaseExpiresUtc })
             .ToListAsync(ct);
 
-        if (staleIds.Count > 0)
+        var expiredOrUnleasedIds = new List<long>();
+        foreach (var d in inProgress)
         {
-            await db.LitigationOrderDocuments.Where(d => d.ChunkingStatus == ChunkingStatus.InProgress)
+            if (d.ChunkingLeaseExpiresUtc is { } expires && expires > now)
+                ScheduleRetry(d.LitigationOrderDocumentId, expires, ct); // live lease — leave it to its own owner
+            else
+                expiredOrUnleasedIds.Add(d.LitigationOrderDocumentId); // no lease, or genuinely expired — abandoned
+        }
+
+        if (expiredOrUnleasedIds.Count > 0)
+        {
+            // Re-checks ChunkingStatus == InProgress in the WHERE clause so a row that legitimately completed
+            // or failed between the read above and this write is never clobbered back to Pending.
+            await db.LitigationOrderDocuments
+                .Where(d => expiredOrUnleasedIds.Contains(d.LitigationOrderDocumentId) && d.ChunkingStatus == ChunkingStatus.InProgress)
                 .ExecuteUpdateAsync(s => s.SetProperty(d => d.ChunkingStatus, ChunkingStatus.Pending), ct);
+            foreach (var id in expiredOrUnleasedIds)
+                queue.Enqueue(id);
         }
 
         var pendingEligibleIds = await db.LitigationOrderDocuments
@@ -157,10 +231,39 @@ public sealed class LitigationOrderChunkingOrchestrator(
             .Select(d => d.LitigationOrderDocumentId)
             .ToListAsync(ct);
 
-        var idsToEnqueue = staleIds.Concat(pendingEligibleIds).Distinct().ToList();
-        foreach (var id in idsToEnqueue)
+        foreach (var id in pendingEligibleIds.Except(expiredOrUnleasedIds))
             queue.Enqueue(id);
 
-        return idsToEnqueue.Count;
+        return inProgress.Count + pendingEligibleIds.Except(expiredOrUnleasedIds).Count();
+    }
+
+    /// <summary>One-time delayed re-enqueue for a document whose chunking lease is still live at recovery
+    /// time — fires once that lease is actually due to expire, so a genuinely abandoned attempt (the owning
+    /// process crashed and never renewed/completed it) still gets picked back up without this recovery sweep
+    /// having to guess at a live lease's remaining owner. Mirrors <c>LitigationOrderDocumentService.ScheduleRetry</c>
+    /// exactly, including its shutdown handling: if the app stops before the delay elapses, the next startup's
+    /// recovery sweep re-evaluates the row from scratch.</summary>
+    private void ScheduleRetry(long orderDocumentId, DateTime readyUtc, CancellationToken ct)
+    {
+        var delay = readyUtc - DateTime.UtcNow;
+        if (delay <= TimeSpan.Zero)
+        {
+            queue.Enqueue(orderDocumentId);
+            return;
+        }
+
+        var capturedQueue = queue;
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await Task.Delay(delay, ct);
+                capturedQueue.Enqueue(orderDocumentId);
+            }
+            catch (OperationCanceledException)
+            {
+                // App shutting down — the row stays as-is; the next startup's recovery sweep re-evaluates it.
+            }
+        }, ct);
     }
 }

@@ -234,6 +234,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             e.Property(x => x.ChunkingStatus).HasConversion<string>().HasMaxLength(20);
             e.Property(x => x.ChunkingLastError).HasMaxLength(500);
             e.Property(x => x.ChunkingErrorCategory).HasMaxLength(30);
+            e.Property(x => x.ChunkingLeaseOwner).HasMaxLength(100);
             e.Property(x => x.RowVersion).IsRowVersion();
             e.Ignore(x => x.IsTerminal);
             // Only cascade path onto this table from McaRequest (McaRequest → LitigationCase →

@@ -171,18 +171,41 @@ without a join per chunk.
 document for chunking immediately after it publishes a successful download **and** text extraction actually
 reached `TextExtractionStatus.TextExtracted` — a `Downloaded` document with failed/skipped extraction has
 nothing to chunk and would just fail immediately. `LitigationOrderChunkingOrchestrator` mirrors
-`DocumentChunkingOrchestrator`'s atomic-claim (`ExecuteUpdateAsync` gated on `ChunkingStatus.Pending`),
-rollback-safe re-chunk (chunk+embed entirely before touching the database; one transaction deletes the old
-chunk set and inserts the new one together), and retry/terminal-failure shape (`ChunkRetryCount`,
-`MaxChunkRetryCount = 3`, classified/sanitized errors reusing `DocumentChunkingOrchestrator.ClassifyChunkingError`/
-`SanitizeAndCap` directly rather than duplicating that redaction logic) — but is deliberately per-document, not
-per-batch: litigation orders have no batch concept, so `LitigationOrderChunkingQueue` is a plain
-`Channel<long>` of order-document ids, simpler than `DocumentChunkingQueue`'s batch-level coalescing.
-`LitigationOrderChunkingWorker` dequeues with bounded concurrency (`MaxConcurrentChunking = 4`, since each unit
-makes a real Vertex AI embedding call) and, on startup, `RecoverStaleWorkAsync` resets any crash-orphaned
-`InProgress` row to `Pending` and separately sweeps every `Downloaded` + `TextExtracted` + still-`Pending`
-document — closing the gap where a crash between a successful download publish and the chunking enqueue call
-would otherwise leave a document silently un-indexed forever.
+`DocumentChunkingOrchestrator`'s rollback-safe re-chunk shape (chunk+embed entirely before touching the
+database; one transaction deletes the old chunk set and inserts the new one together) and retry/
+terminal-failure shape (`ChunkRetryCount`, `MaxChunkRetryCount = 3`, classified/sanitized errors reusing
+`DocumentChunkingOrchestrator.ClassifyChunkingError`/`SanitizeAndCap` directly rather than duplicating that
+redaction logic) — but is deliberately per-document, not per-batch: litigation orders have no batch concept,
+so `LitigationOrderChunkingQueue` is a plain `Channel<long>` of order-document ids, simpler than
+`DocumentChunkingQueue`'s batch-level coalescing. `LitigationOrderChunkingWorker` dequeues with bounded
+concurrency (`MaxConcurrentChunking = 4`, since each unit makes a real Vertex AI embedding call).
+
+**Claim/fencing (PR #254 review round 1).** A first cut of the claim copied `DocumentChunkingOrchestrator`'s
+own shape exactly — a plain `ChunkingStatus.Pending → InProgress` status flip with no owner, lease expiry or
+fencing token, and startup recovery resetting every `InProgress` row unconditionally. That is safe only under
+a single-instance assumption this pipeline does not get to make: under a real multi-instance deployment, a
+second instance starting up while the first is still actively (and slowly — a genuine Vertex AI call) embedding
+would reset that live row back to `Pending` and let both instances claim, embed and attempt to publish the same
+document, with completion unfenced to the claim so the stale instance could overwrite the newer chunk set
+purely by finishing last — duplicating paid embedding work and defeating the claimed atomic-claim safety.
+Closed with the same lease discipline `LitigationOrderDocumentService` already uses for the download attempt:
+the claim mints a fresh `ChunkingLeaseToken`/`ChunkingLeaseExpiresUtc` (`ChunkingLeaseOwner` for
+observability), and every write that follows — the `Chunked` completion and every `Pending`/`Failed` retry
+transition — is guarded by an `ExecuteUpdateAsync` requiring that exact token and an unexpired lease
+(`ChunkingLeaseGuarded`, mirroring `LitigationOrderDocumentService.LeaseGuarded`). The completion write shares
+one transaction with the chunk delete+insert, so a fenced-out attempt's entire chunk set — never just the
+final status flag — rolls back rather than landing even transiently. `RecoverStaleWorkAsync` may now only
+reclaim a row whose lease has demonstrably expired (or never existed); a still-live lease is left completely
+alone and instead scheduled for a one-time re-check right when it's due to expire, mirroring
+`LitigationOrderDocumentService.RecoverStaleWorkAsync`'s own InProgress/live-lease handling. Separately, every
+`Downloaded` + `TextExtracted` + still-`Pending` document is swept and re-enqueued regardless of InProgress
+history, closing the gap where a crash between a successful download publish and the chunking enqueue call
+would otherwise leave a document silently un-indexed forever. Covered by a real multi-context regression
+(`A_second_instances_startup_recovery_never_resets_or_re_enqueues_a_document_worker_A_still_legitimately_owns`)
+proving a live-leased claim survives a concurrent instance's recovery sweep untouched, and a second
+(`ChunkOrderDocumentAsync_a_stale_workers_late_completion_after_a_mid_flight_lease_takeover_never_overwrites_the_winners_chunk_set`)
+proving that once a genuine expiry/takeover happens, the original (now-stale) worker's late completion is
+fenced out and the takeover's chunk rows — down to their own identity values — are left completely untouched.
 
 **Retrieval.** `LitigationDocumentRetriever` is the litigation counterpart to `DocumentRetriever` — the same
 single-entry-point discipline (`SearchRequestOrdersAsync(requestId, queryEmbedding, ct)`, always
