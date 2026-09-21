@@ -279,6 +279,27 @@ service — if it sits `queued`, `run.cmd` is down) runs *only* what Linux can't
 
 ## Log  <!-- newest first. Prefix: NEEDS / BLOCKED / DONE / DECISION / FYI -->
 
+### 2026-09-21 — Claude session (DONE PR #253 review round 2 — DNS rebinding could still bypass the private-address check, fixed)
+- **One P1, fixed at `d11f58a`:** round 1's `IsSafeDestinationAsync` resolves and validates the order-PDF
+  host once, up front, but `SocketsHttpHandler` independently re-resolves the same hostname a SECOND time
+  when it actually opens the connection — if the DNS record changed in between (trivial for an attacker
+  controlling DNS for an allowlisted host), the validated check and the real destination could disagree,
+  reaching a private address the check believed it had ruled out.
+- Added `BprLitigationClient.CreateSafeConnectCallback` — a `SocketsHttpHandler.ConnectCallback` wired into
+  the same `AddHttpClient<BprLitigationClient>` registration as `AllowAutoRedirect = false`. It resolves and
+  validates the destination immediately before opening the socket, then connects using that exact
+  resolution — no second, independent resolve() call for a DNS record to change during. Applied uniformly to
+  every request this client makes (not just order downloads), since BPR's own confirmed endpoints target an
+  operator-configured `BaseUrl`, never vendor-report content. `IsSafeDestinationAsync` stays as a fast-fail
+  pre-check; the connect callback is now the actual, TOCTOU-proof enforcement.
+- 3 new regressions — `SocketsHttpConnectionContext` has no public constructor in this runtime, so the
+  callback can only be exercised by triggering `SocketsHttpHandler`'s real connection pipeline (a genuine
+  `HttpClient` request against a handler configured with the callback under test), not by constructing a
+  context directly: refuses when the resolved address is private, refuses when any of several resolved
+  addresses is private, proves the resolver is called exactly once per connection attempt. Full litigation
+  suite 139/140 (1 unrelated pre-existing skip), full solution suite 1609/1628 (19 unrelated pre-existing
+  skips), full build clean. `@codex` re-review requested.
+
 ### 2026-09-21 — Claude session (DONE PR #253 review round 1 — SSRF via pdf_url + lease not fencing file writes, both fixed)
 - **Two real findings, both fixed at `ef1c57c`:**
   1. **SSRF.** `DownloadOrderDocumentAsync` fetched any absolute HTTP(S) URL a vendor report's `pdf_url`
