@@ -114,6 +114,9 @@ builder.Services.AddScoped<IExcelSheetReader, ExcelSheetReader>();
 builder.Services.AddScoped<IWorkbookDerivativeService, WorkbookDerivativeService>();
 builder.Services.AddScoped<FileValidationService>();
 builder.Services.AddScoped<IngestionOrchestrator>();
+builder.Services.Configure<MCAROC_Analysis.Services.Registry.RegistrySnapshotStoreOptions>(
+    builder.Configuration.GetSection(MCAROC_Analysis.Services.Registry.RegistrySnapshotStoreOptions.SectionName));
+builder.Services.AddSingleton<MCAROC_Analysis.Services.Registry.IRegistrySnapshotStore, MCAROC_Analysis.Services.Registry.FileRegistrySnapshotStore>();
 builder.Services.AddSingleton<MCAROC_Analysis.Services.Registry.IRegistryPromotionCoordinator, MCAROC_Analysis.Services.Registry.RegistryPromotionCoordinator>();
 builder.Services.AddScoped<MCAROC_Analysis.Services.Registry.CompanyRegistryQueryService>();
 
@@ -278,6 +281,8 @@ builder.Services.AddRateLimiter(options =>
 });
 
 var app = builder.Build();
+
+MCAROC_Analysis.Services.Registry.FileRegistrySnapshotStore.ValidatePreflight(app.Services, app.Environment);
 
 // Register the bundled Fraunces / IBM Plex fonts with QuestPDF so the dossier renders identically
 // regardless of what fonts the host machine has installed.

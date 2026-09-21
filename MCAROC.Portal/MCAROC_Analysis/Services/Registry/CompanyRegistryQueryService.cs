@@ -21,8 +21,10 @@ public sealed partial class CompanyRegistryQueryService
     private readonly AppDbContext _db;
     private readonly IMemoryCache _cache;
     private readonly IRegistryPromotionCoordinator _promotionCoordinator;
+    private readonly IRegistrySnapshotStore _snapshotStore;
     private readonly ILogger<CompanyRegistryQueryService> _logger;
-    private static readonly SemaphoreSlim RebuildLock = new(1, 1);
+    private static readonly SemaphoreSlim DefaultProcessRebuildLock = new(1, 1);
+    private readonly SemaphoreSlim _rebuildLock;
 
     [GeneratedRegex("^[LU][0-9]{5}[A-Z]{2}[0-9]{4}[A-Z]{3}[0-9]{6}$")]
     private static partial Regex CinPattern();
@@ -40,43 +42,48 @@ public sealed partial class CompanyRegistryQueryService
         AppDbContext db,
         IMemoryCache cache,
         IRegistryPromotionCoordinator promotionCoordinator,
-        ILogger<CompanyRegistryQueryService> logger)
+        IRegistrySnapshotStore snapshotStore,
+        ILogger<CompanyRegistryQueryService> logger,
+        SemaphoreSlim? localRebuildLock = null)
     {
         _db = db;
         _cache = cache;
-        _promotionCoordinator = promotionCoordinator ?? throw new ArgumentNullException(nameof(promotionCoordinator));
+        _promotionCoordinator = promotionCoordinator;
+        _snapshotStore = snapshotStore;
         _logger = logger;
+        _rebuildLock = localRebuildLock ?? DefaultProcessRebuildLock;
     }
 
     public static string CacheKeyForJob(long jobId) => $"RegistryAggregates_Job_{jobId}";
 
-    public async Task<RegistryDashboardViewModel> GetDashboardAsync(
-        string? activeTab,
-        RegistryExplorerCriteria? explorerCriteria,
-        CancellationToken ct = default)
+    public Task<RegistryDashboardViewModel> GetDashboardAsync(RegistryExplorerCriteria? explorerCriteria = null, CancellationToken ct = default)
+        => GetDashboardAsync("overview", explorerCriteria, ct);
+
+    public async Task<RegistryDashboardViewModel> GetDashboardAsync(string? activeTab, RegistryExplorerCriteria? explorerCriteria, CancellationToken ct = default)
     {
         var vm = new RegistryDashboardViewModel
         {
             ActiveTab = string.IsNullOrWhiteSpace(activeTab) ? "overview" : activeTab.ToLowerInvariant()
         };
 
-        // 1. Identify snapshot status
-        var latestCompleted = await _db.CompanyMasterSyncJobs
-            .AsNoTracking()
-            .Where(j => j.Status == CompanyMasterSyncJobStatus.Completed)
-            .OrderByDescending(j => j.JobId)
-            .FirstOrDefaultAsync(ct);
-
+        // 1. Initial status check across jobs
         var activePromotionJob = await _db.CompanyMasterSyncJobs
             .AsNoTracking()
             .Where(j => j.Status == CompanyMasterSyncJobStatus.Promoting)
             .OrderByDescending(j => j.JobId)
             .FirstOrDefaultAsync(ct);
 
+        var latestCompleted = await _db.CompanyMasterSyncJobs
+            .AsNoTracking()
+            .Where(j => j.Status == CompanyMasterSyncJobStatus.Completed && j.PublishedDate.HasValue)
+            .OrderByDescending(j => j.JobId)
+            .FirstOrDefaultAsync(ct);
+
         if (latestCompleted == null)
         {
-            var hasAnyRecords = await _db.CompanyMasterRecords.AsNoTracking().AnyAsync(ct);
-            if (hasAnyRecords)
+            // Evaluate legacy unverified vs empty state
+            bool recordsExist = await _db.CompanyMasterRecords.AnyAsync(ct);
+            if (recordsExist)
             {
                 vm.State = RegistrySnapshotState.UnverifiedLegacyImport;
                 vm.StatusMessage = "Legacy Master Import Detected (Unverified Provenance): The registry contains records imported without a sync lifecycle job. Aggregate metrics are withheld until an automated or manual sync establishes verified snapshot provenance. Exact identifier and name-prefix lookups in the Explorer remain fully operational.";
@@ -87,34 +94,41 @@ public sealed partial class CompanyRegistryQueryService
                 vm.StatusMessage = "No records found in registry. A master data sync or bulk import is required to initialize registry intelligence.";
             }
 
-            if (explorerCriteria != null && !string.IsNullOrWhiteSpace(explorerCriteria.Q))
+            if (explorerCriteria != null && (!string.IsNullOrWhiteSpace(explorerCriteria.Q) || explorerCriteria.HasSecondaryFilters))
             {
                 vm.Explorer = await SearchExplorerAsync(explorerCriteria, ct);
             }
-
             return vm;
         }
 
-        // 2. We have a completed sync job. Check in-flight sync & cache.
+        // 2. Multi-tier aggregate caching: L1 (in-memory) -> L2 (shared snapshot store) -> L3 (single-flight rebuild)
         string cacheKey = CacheKeyForJob(latestCompleted.JobId);
         bool hasWarmCache = _cache.TryGetValue(cacheKey, out RegistryAggregateData? cachedData);
 
+        if (!hasWarmCache || cachedData == null)
+        {
+            // Check L2 shared store before contending for rebuild lock
+            cachedData = await _snapshotStore.GetSnapshotAsync(latestCompleted.JobId, ct);
+            if (cachedData != null)
+            {
+                hasWarmCache = true;
+                _cache.Set(cacheKey, cachedData, TimeSpan.FromHours(24));
+            }
+        }
+
         if (hasWarmCache && cachedData != null)
         {
-            // A warm-cache request must probe the distributed gate.
-            // If the shared gate cannot be acquired (e.g. a remote node or this node holds exclusive admission),
-            // or if DB indicates Promoting, serve the cache stamped IsSyncInProgress = true.
+            // A warm-cache request probes the advisory promotion gate to detect remote or local active promotions
             bool isPromoting = activePromotionJob != null;
             if (!isPromoting)
             {
-                await using var probeScope = await _promotionCoordinator.TryAcquireRebuildGateAsync(ct);
-                if (probeScope == null)
+                bool gateOpen = await _promotionCoordinator.TryProbePromotionAdmissionAsync(ct);
+                if (!gateOpen)
                 {
                     isPromoting = true;
                 }
                 else
                 {
-                    // Re-verify DB status while probeScope is held
                     isPromoting = await _db.CompanyMasterSyncJobs
                         .AsNoTracking()
                         .AnyAsync(j => j.Status == CompanyMasterSyncJobStatus.Promoting, ct);
@@ -140,51 +154,80 @@ public sealed partial class CompanyRegistryQueryService
         }
         else
         {
-            // Cold cache: must single-flight rebuild under the rebuild gate
-            await RebuildLock.WaitAsync(ct);
+            // Cold cache: single-flight rebuild under _rebuildLock
+            await _rebuildLock.WaitAsync(ct);
             try
             {
                 if (!_cache.TryGetValue(cacheKey, out cachedData))
                 {
-                    // If promotion was already detected in initial check, withhold cold cache without acquiring gate
-                    if (activePromotionJob != null)
+                    // Double-check L2 store inside RebuildLock
+                    cachedData = await _snapshotStore.GetSnapshotAsync(latestCompleted.JobId, ct);
+                    if (cachedData != null)
                     {
-                        vm.State = RegistrySnapshotState.SyncColdUnavailable;
-                        vm.StatusMessage = "Verified Aggregates Temporarily Unavailable: A Company Master snapshot sync is currently promoting into the registry database, and this instance has no pre-promotion cached aggregates. Verified metrics will appear once the active promotion completes and establishes consistency. Exact identifier and name-prefix lookups in the Explorer remain fully operational.";
-                        return vm;
+                        _cache.Set(cacheKey, cachedData, TimeSpan.FromHours(24));
                     }
-
-                    // Acquire shared rebuild gate from before first aggregate query through cache insertion
-                    await using var rebuildGate = await _promotionCoordinator.TryAcquireRebuildGateAsync(ct);
-                    if (rebuildGate == null)
+                    else
                     {
-                        vm.State = RegistrySnapshotState.SyncColdUnavailable;
-                        vm.StatusMessage = "Verified Aggregates Temporarily Unavailable: A Company Master snapshot sync is currently promoting into the registry database, and this instance has no pre-promotion cached aggregates. Verified metrics will appear once the active promotion completes and establishes consistency. Exact identifier and name-prefix lookups in the Explorer remain fully operational.";
-                        return vm;
+                        // If promotion was already detected in initial check, withhold cold cache without acquiring gate
+                        if (activePromotionJob != null)
+                        {
+                            vm.State = RegistrySnapshotState.SyncColdUnavailable;
+                            vm.StatusMessage = "Verified Aggregates Temporarily Unavailable: A Company Master snapshot sync is currently promoting into the registry database, and this instance has no pre-promotion cached aggregates. Verified metrics will appear once the active promotion completes and establishes consistency. Exact identifier and name-prefix lookups in the Explorer remain fully operational.";
+                            return vm;
+                        }
+
+                        // Acquire cluster-wide rebuild gate (Shared promotion + Exclusive rebuild)
+                        await using var rebuildGate = await _promotionCoordinator.TryAcquireRebuildGateAsync(ct);
+                        if (rebuildGate == null)
+                        {
+                            // Non-owner node: another node holds rebuild lock, or promotion is active
+                            vm.State = RegistrySnapshotState.SyncColdUnavailable;
+                            vm.StatusMessage = "Verified Aggregates Temporarily Unavailable: A Company Master snapshot sync is currently promoting into the registry database or another portal instance is compiling verified aggregates. Verified metrics will appear once compilation completes. Exact identifier and name-prefix lookups in the Explorer remain fully operational.";
+                            return vm;
+                        }
+
+                        // Inside rebuild gate, verify DB does not show active Promoting
+                        bool isDbPromoting = await _db.CompanyMasterSyncJobs
+                            .AsNoTracking()
+                            .AnyAsync(j => j.Status == CompanyMasterSyncJobStatus.Promoting, ct);
+
+                        if (isDbPromoting)
+                        {
+                            vm.State = RegistrySnapshotState.SyncColdUnavailable;
+                            vm.StatusMessage = "Verified Aggregates Temporarily Unavailable: A Company Master snapshot sync is currently promoting into the registry database, and this instance has no pre-promotion cached aggregates. Verified metrics will appear once the active promotion completes and establishes consistency. Exact identifier and name-prefix lookups in the Explorer remain fully operational.";
+                            return vm;
+                        }
+
+                        cachedData = await BuildAggregatesFromDatabaseAsync(latestCompleted, ct);
+
+                        // Retain rebuild gate until shared-store write succeeds. Fail closed without populating L1 if persistence fails.
+                        try
+                        {
+                            await _snapshotStore.SaveSnapshotAsync(latestCompleted.JobId, cachedData, ct);
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogError(ex, "Failed to persist aggregate snapshot for Job {JobId} to shared store. Failing closed without populating L1.", latestCompleted.JobId);
+                            vm.State = RegistrySnapshotState.SyncColdUnavailable;
+                            vm.StatusMessage = "Verified Aggregates Storage Error: Aggregates were computed but could not be persisted to the shared snapshot store. Explorer lookups remain operational.";
+                            return vm;
+                        }
+
+                        _cache.Set(cacheKey, cachedData, TimeSpan.FromHours(24));
                     }
-
-                    // Inside rebuild gate, verify DB does not show active Promoting
-                    bool isDbPromoting = await _db.CompanyMasterSyncJobs
-                        .AsNoTracking()
-                        .AnyAsync(j => j.Status == CompanyMasterSyncJobStatus.Promoting, ct);
-
-                    if (isDbPromoting)
-                    {
-                        vm.State = RegistrySnapshotState.SyncColdUnavailable;
-                        vm.StatusMessage = "Verified Aggregates Temporarily Unavailable: A Company Master snapshot sync is currently promoting into the registry database, and this instance has no pre-promotion cached aggregates. Verified metrics will appear once the active promotion completes and establishes consistency. Exact identifier and name-prefix lookups in the Explorer remain fully operational.";
-                        return vm;
-                    }
-
-                    cachedData = await BuildAggregatesFromDatabaseAsync(latestCompleted, ct);
-                    _cache.Set(cacheKey, cachedData, TimeSpan.FromHours(24));
                 }
 
                 vm.State = RegistrySnapshotState.VerifiedSnapshot;
-                vm.Aggregates = cachedData;
+                if (cachedData != null)
+                {
+                    vm.Aggregates = activePromotionJob != null
+                        ? CloneWithActiveSync(cachedData, activePromotionJob)
+                        : cachedData;
+                }
             }
             finally
             {
-                RebuildLock.Release();
+                _rebuildLock.Release();
             }
         }
 

@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Data.Common;
+using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -16,6 +17,8 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Xunit;
@@ -111,10 +114,13 @@ public class RegistryDashboardTests : IAsyncLifetime
     private static CompanyRegistryQueryService CreateQueryService(
         AppDbContext db,
         IMemoryCache cache,
-        IRegistryPromotionCoordinator? coordinator = null)
+        IRegistryPromotionCoordinator? coordinator = null,
+        IRegistrySnapshotStore? snapshotStore = null,
+        SemaphoreSlim? localRebuildLock = null)
     {
         var coord = coordinator ?? new RegistryPromotionCoordinator(ConnectionString, NullLogger<RegistryPromotionCoordinator>.Instance);
-        return new CompanyRegistryQueryService(db, cache, coord, NullLogger<CompanyRegistryQueryService>.Instance);
+        var store = snapshotStore ?? new FileRegistrySnapshotStore(Options.Create(new RegistrySnapshotStoreOptions()));
+        return new CompanyRegistryQueryService(db, cache, coord, store, NullLogger<CompanyRegistryQueryService>.Instance, localRebuildLock);
     }
 
     [Fact]
@@ -445,7 +451,7 @@ public class RegistryDashboardTests : IAsyncLifetime
 
         var queryCoordinator = new RegistryPromotionCoordinator(ConnectionString, NullLogger<RegistryPromotionCoordinator>.Instance);
         var cache = new MemoryCache(new MemoryCacheOptions());
-        var queryService = new CompanyRegistryQueryService(interceptedDb, cache, queryCoordinator, NullLogger<CompanyRegistryQueryService>.Instance);
+        var queryService = CreateQueryService(interceptedDb, cache, queryCoordinator);
 
         var vm = await queryService.GetDashboardAsync("overview", null);
 
@@ -484,7 +490,7 @@ public class RegistryDashboardTests : IAsyncLifetime
 
         // QueryService on another coordinator instance
         var queryCoordinator = new RegistryPromotionCoordinator(ConnectionString, NullLogger<RegistryPromotionCoordinator>.Instance);
-        var queryService = new CompanyRegistryQueryService(db, cache, queryCoordinator, NullLogger<CompanyRegistryQueryService>.Instance);
+        var queryService = CreateQueryService(db, cache, queryCoordinator);
 
         var vm = await queryService.GetDashboardAsync("overview", null);
 
@@ -663,6 +669,9 @@ public class RegistryDashboardTests : IAsyncLifetime
             }
             return gate;
         }
+
+        public Task<bool> TryProbePromotionAdmissionAsync(CancellationToken cancellationToken = default)
+            => _inner.TryProbePromotionAdmissionAsync(cancellationToken);
     }
 
     private sealed class CommandCountingInterceptor : DbCommandInterceptor
@@ -724,6 +733,9 @@ public class RegistryDashboardTests : IAsyncLifetime
         public Task<IAsyncDisposable?> TryAcquireRebuildGateAsync(CancellationToken cancellationToken = default)
             => _inner.TryAcquireRebuildGateAsync(cancellationToken);
 
+        public Task<bool> TryProbePromotionAdmissionAsync(CancellationToken cancellationToken = default)
+            => _inner.TryProbePromotionAdmissionAsync(cancellationToken);
+
         private sealed class AuditingScope : IAsyncDisposable
         {
             private readonly IAsyncDisposable _inner;
@@ -739,6 +751,359 @@ public class RegistryDashboardTests : IAsyncLifetime
             {
                 _audit();
                 await _inner.DisposeAsync();
+            }
+        }
+    }
+
+    private sealed class FailingRegistrySnapshotStore : IRegistrySnapshotStore
+    {
+        public Task<RegistryAggregateData?> GetSnapshotAsync(long jobId, CancellationToken ct = default)
+            => Task.FromResult<RegistryAggregateData?>(null);
+
+        public Task SaveSnapshotAsync(long jobId, RegistryAggregateData data, CancellationToken ct = default)
+            => throw new IOException("Simulated shared store write failure (disk full or network storage unavailable)");
+    }
+
+    private sealed class TestHostEnvironment : IHostEnvironment
+    {
+        public string EnvironmentName { get; set; } = Environments.Production;
+        public string ApplicationName { get; set; } = "MCAROC_Analysis";
+        public string ContentRootPath { get; set; } = AppContext.BaseDirectory;
+        public Microsoft.Extensions.FileProviders.IFileProvider ContentRootFileProvider { get; set; } = null!;
+    }
+
+    [Fact]
+    public void ProductionStartup_FailsClosed_WhenRegistrySnapshotStoreRootIsAbsentOrInaccessible()
+    {
+        var prodEnv = new TestHostEnvironment { EnvironmentName = Environments.Production };
+        var devEnv = new TestHostEnvironment { EnvironmentName = Environments.Development };
+
+        // 1. Production with null/empty Root fails closed
+        var emptyOpts = Options.Create(new RegistrySnapshotStoreOptions { Root = "" });
+        var servicesEmpty = new ServiceCollection()
+            .AddSingleton(emptyOpts)
+            .BuildServiceProvider();
+
+        var exMissing = Assert.Throws<InvalidOperationException>(() =>
+            FileRegistrySnapshotStore.ValidatePreflight(servicesEmpty, prodEnv));
+        Assert.Contains("RegistrySnapshotStore:Root must be explicitly configured", exMissing.Message);
+
+        // 2. Production with inaccessible Root fails closed
+        var invalidOpts = Options.Create(new RegistrySnapshotStoreOptions { Root = "Z:\\invalid_non_existent_mount\\forbidden" });
+        var servicesInvalid = new ServiceCollection()
+            .AddSingleton(invalidOpts)
+            .BuildServiceProvider();
+
+        var exInaccessible = Assert.Throws<InvalidOperationException>(() =>
+            FileRegistrySnapshotStore.ValidatePreflight(servicesInvalid, prodEnv));
+        Assert.Contains("preflight failed", exInaccessible.Message);
+
+        // 3. Development environment with empty Root resolves default without error
+        string devRoot = FileRegistrySnapshotStore.ResolveRootPath(new RegistrySnapshotStoreOptions(), devEnv);
+        Assert.Contains("RegistrySnapshots", devRoot);
+
+        var servicesDev = new ServiceCollection()
+            .AddSingleton(Options.Create(new RegistrySnapshotStoreOptions()))
+            .BuildServiceProvider();
+        FileRegistrySnapshotStore.ValidatePreflight(servicesDev, devEnv);
+    }
+
+    [Fact]
+    public async Task SimultaneousColdStart_MultipleInstances_CannotExecuteDuplicateRebuilds_AndReadsSharedCacheWithoutScanning()
+    {
+        await using var db = CreateContext();
+        var completedJob = await SeedSyncJobAsync(db, CompanyMasterSyncJobStatus.Completed, new DateOnly(2026, 9, 1));
+        var id = $"U24246DL2003PTC{Random.Shared.Next(100000, 999999)}";
+        await SeedRecordAsync(db, id, "Multi Node Test Pvt Ltd", CompanyMasterRecordType.Company);
+
+        string sharedRoot = Path.Combine(Path.GetTempPath(), "mcaroc_shared_store_" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(sharedRoot);
+
+        try
+        {
+            var storeOptions = Options.Create(new RegistrySnapshotStoreOptions { Root = sharedRoot });
+            var sharedStoreA = new FileRegistrySnapshotStore(storeOptions, logger: NullLogger<FileRegistrySnapshotStore>.Instance);
+            var sharedStoreB = new FileRegistrySnapshotStore(storeOptions, logger: NullLogger<FileRegistrySnapshotStore>.Instance);
+
+            // Node A setup with counting interceptor and barrier coordinator
+            var interceptorA = new CommandCountingInterceptor();
+            var optionsA = new DbContextOptionsBuilder<AppDbContext>()
+                .UseSqlServer(ConnectionString)
+                .AddInterceptors(interceptorA)
+                .Options;
+            await using var dbA = new AppDbContext(optionsA);
+            var realCoordinatorA = new RegistryPromotionCoordinator(ConnectionString, NullLogger<RegistryPromotionCoordinator>.Instance);
+            var barrierCoordinatorA = new TestBarrierPromotionCoordinator(realCoordinatorA);
+            var cacheA = new MemoryCache(new MemoryCacheOptions());
+            var queryServiceA = new CompanyRegistryQueryService(dbA, cacheA, barrierCoordinatorA, sharedStoreA, NullLogger<CompanyRegistryQueryService>.Instance, new SemaphoreSlim(1, 1));
+
+            // Node B setup with its own connection, separate interceptor, separate cache, separate coordinator
+            var interceptorB = new CommandCountingInterceptor();
+            var optionsB = new DbContextOptionsBuilder<AppDbContext>()
+                .UseSqlServer(ConnectionString)
+                .AddInterceptors(interceptorB)
+                .Options;
+            await using var dbB = new AppDbContext(optionsB);
+            var coordinatorB = new RegistryPromotionCoordinator(ConnectionString, NullLogger<RegistryPromotionCoordinator>.Instance);
+            var cacheB = new MemoryCache(new MemoryCacheOptions());
+            var queryServiceB = new CompanyRegistryQueryService(dbB, cacheB, coordinatorB, sharedStoreB, NullLogger<CompanyRegistryQueryService>.Instance, new SemaphoreSlim(1, 1));
+
+            // PHASE 1: Node A begins cold rebuild, acquires rebuild gate and hits barrier
+            var taskA = Task.Run(() => queryServiceA.GetDashboardAsync("overview", null));
+            await barrierCoordinatorA.RebuildGateAcquiredSignal.Task.WaitAsync(TimeSpan.FromSeconds(10));
+
+            // While Node A holds rebuild gate, Node B requests dashboard with cold cache
+            var vmA_concurrentB = await queryServiceB.GetDashboardAsync("overview", null);
+
+            // Node B cannot acquire gate -> returns SyncColdUnavailable with 0 queries
+            Assert.Equal(RegistrySnapshotState.SyncColdUnavailable, vmA_concurrentB.State);
+            Assert.Equal(0, interceptorB.MasterRecordsAggregateQueriesCount);
+
+            // Let Node A proceed with rebuild and persistence to shared store
+            barrierCoordinatorA.ProceedWithRebuildSignal.TrySetResult(true);
+            var vmA = await taskA.WaitAsync(TimeSpan.FromSeconds(15));
+            Assert.Equal(RegistrySnapshotState.VerifiedSnapshot, vmA.State);
+            Assert.NotNull(vmA.Aggregates);
+            Assert.True(interceptorA.MasterRecordsAggregateQueriesCount > 0);
+
+            // Verify file was written to sharedRoot
+            string snapshotFile = Path.Combine(sharedRoot, $"snapshot_{completedJob.JobId}.json");
+            Assert.True(File.Exists(snapshotFile));
+
+            // PHASE 2: Node A has completed and released both locks.
+            // Node B has its independent cache (cacheB is still cold).
+            // Node B requests dashboard: must read from shared store (L2) and execute 0 aggregate queries.
+            var vmB = await queryServiceB.GetDashboardAsync("overview", null);
+
+            Assert.Equal(RegistrySnapshotState.VerifiedSnapshot, vmB.State);
+            Assert.NotNull(vmB.Aggregates);
+            Assert.Equal(completedJob.PublishedDate, vmB.Aggregates.Metadata.PublishedDate);
+            Assert.Equal(vmA.Aggregates.Metadata.TotalRecords, vmB.Aggregates.Metadata.TotalRecords);
+
+            // Interceptor B must still have recorded 0 aggregate queries across both phases!
+            Assert.Equal(0, interceptorB.MasterRecordsAggregateQueriesCount);
+
+            // Also check that cacheB is now warm (L1 populated)
+            string cacheKey = CompanyRegistryQueryService.CacheKeyForJob(completedJob.JobId);
+            Assert.True(cacheB.TryGetValue(cacheKey, out RegistryAggregateData? warmB));
+            Assert.NotNull(warmB);
+        }
+        finally
+        {
+            if (Directory.Exists(sharedRoot))
+            {
+                try { Directory.Delete(sharedRoot, recursive: true); } catch { }
+            }
+        }
+    }
+
+    [Fact]
+    public async Task L2Snapshot_CorruptedChecksum_UnsupportedVersion_OrInvalidJson_Rejected()
+    {
+        string testRoot = Path.Combine(Path.GetTempPath(), "mcaroc_corrupt_test_" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(testRoot);
+
+        try
+        {
+            var options = Options.Create(new RegistrySnapshotStoreOptions { Root = testRoot });
+            var store = new FileRegistrySnapshotStore(options);
+
+            long jobId = 777;
+            var data = new RegistryAggregateData
+            {
+                Metadata = new RegistrySnapshotMetadata
+                {
+                    PublishedDate = new DateOnly(2026, 9, 1),
+                    CompletedUtc = DateTime.UtcNow,
+                    TotalRecords = 500,
+                    Source = "Test"
+                }
+            };
+
+            // 1. Save valid snapshot
+            await store.SaveSnapshotAsync(jobId, data);
+            string snapshotFile = Path.Combine(testRoot, $"snapshot_{jobId}.json");
+            Assert.True(File.Exists(snapshotFile));
+
+            var loadedValid = await store.GetSnapshotAsync(jobId);
+            Assert.NotNull(loadedValid);
+
+            // 2. Corrupt checksum (tamper with RawDtoJson while keeping Sha256Hash)
+            string originalJson = await File.ReadAllTextAsync(snapshotFile);
+            var envelope = System.Text.Json.JsonSerializer.Deserialize<RegistrySnapshotEnvelope>(originalJson);
+            Assert.NotNull(envelope);
+
+            var tamperedEnvelope = new RegistrySnapshotEnvelope
+            {
+                PayloadVersion = envelope.PayloadVersion,
+                JobId = envelope.JobId,
+                PublishedDate = envelope.PublishedDate,
+                CompletedUtc = envelope.CompletedUtc,
+                Source = envelope.Source,
+                CreatedUtc = envelope.CreatedUtc,
+                Sha256Hash = envelope.Sha256Hash, // original hash
+                RawDtoJson = "{\"Metadata\":{\"TotalRecords\":999999}}" // tampered payload
+            };
+            await File.WriteAllTextAsync(snapshotFile, System.Text.Json.JsonSerializer.Serialize(tamperedEnvelope));
+
+            var loadedTampered = await store.GetSnapshotAsync(jobId);
+            Assert.Null(loadedTampered); // Must reject tampered checksum
+
+            // 3. Unsupported payload version
+            tamperedEnvelope.PayloadVersion = 999;
+            tamperedEnvelope.RawDtoJson = envelope.RawDtoJson;
+            tamperedEnvelope.Sha256Hash = envelope.Sha256Hash;
+            await File.WriteAllTextAsync(snapshotFile, System.Text.Json.JsonSerializer.Serialize(tamperedEnvelope));
+
+            var loadedWrongVersion = await store.GetSnapshotAsync(jobId);
+            Assert.Null(loadedWrongVersion); // Must reject unsupported version
+
+            // 4. Invalid JSON
+            await File.WriteAllTextAsync(snapshotFile, "{ definitely not valid json ::::");
+
+            var loadedInvalidJson = await store.GetSnapshotAsync(jobId);
+            Assert.Null(loadedInvalidJson); // Must reject invalid JSON
+        }
+        finally
+        {
+            if (Directory.Exists(testRoot))
+            {
+                try { Directory.Delete(testRoot, recursive: true); } catch { }
+            }
+        }
+    }
+
+    [Fact]
+    public async Task SharedStoreWriteFailure_ReturnsStorageErrorState_LeavesL1Empty()
+    {
+        await using var db = CreateContext();
+        var completedJob = await SeedSyncJobAsync(db, CompanyMasterSyncJobStatus.Completed, new DateOnly(2026, 9, 1));
+        var id = $"U24246DL2003PTC{Random.Shared.Next(100000, 999999)}";
+        await SeedRecordAsync(db, id, "Write Failure Test Pvt Ltd", CompanyMasterRecordType.Company);
+
+        var cache = new MemoryCache(new MemoryCacheOptions());
+        var coordinator = new RegistryPromotionCoordinator(ConnectionString, NullLogger<RegistryPromotionCoordinator>.Instance);
+
+        // Store that fails on SaveSnapshotAsync
+        var failingStore = new FailingRegistrySnapshotStore();
+        var queryService = new CompanyRegistryQueryService(db, cache, coordinator, failingStore, NullLogger<CompanyRegistryQueryService>.Instance);
+
+        var vm = await queryService.GetDashboardAsync("overview", null);
+
+        Assert.Equal(RegistrySnapshotState.SyncColdUnavailable, vm.State);
+        Assert.NotNull(vm.StatusMessage);
+        Assert.Contains("Verified Aggregates Storage Error", vm.StatusMessage);
+
+        // Assert that L1 cache was NOT populated
+        string cacheKey = CompanyRegistryQueryService.CacheKeyForJob(completedJob.JobId);
+        Assert.False(cache.TryGetValue(cacheKey, out _));
+    }
+
+    [Fact]
+    public async Task Retention_RetainsConfiguredNewestJobIds_SafelyIgnoresTemporaryFiles()
+    {
+        string testRoot = Path.Combine(Path.GetTempPath(), "mcaroc_retention_test_" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(testRoot);
+
+        try
+        {
+            var options = Options.Create(new RegistrySnapshotStoreOptions
+            {
+                Root = testRoot,
+                RetentionCount = 3
+            });
+            var store = new FileRegistrySnapshotStore(options);
+
+            var dummyData = new RegistryAggregateData
+            {
+                Metadata = new RegistrySnapshotMetadata
+                {
+                    PublishedDate = new DateOnly(2026, 9, 1),
+                    CompletedUtc = DateTime.UtcNow,
+                    TotalRecords = 100,
+                    Source = "Test"
+                }
+            };
+
+            // Create temporary in-progress file and unrelated file
+            string tmpFile = Path.Combine(testRoot, "snapshot_999.tmp.someguid");
+            await File.WriteAllTextAsync(tmpFile, "temporary in-flight file");
+
+            string unrelatedFile = Path.Combine(testRoot, "notes.txt");
+            await File.WriteAllTextAsync(unrelatedFile, "keep me");
+
+            // Save snapshots for 5 jobs: 10, 20, 30, 40, 50
+            for (long j = 10; j <= 50; j += 10)
+            {
+                await store.SaveSnapshotAsync(j, dummyData);
+            }
+
+            // Snapshots retained must be the newest 3: 30, 40, 50
+            Assert.False(File.Exists(Path.Combine(testRoot, "snapshot_10.json")));
+            Assert.False(File.Exists(Path.Combine(testRoot, "snapshot_20.json")));
+            Assert.True(File.Exists(Path.Combine(testRoot, "snapshot_30.json")));
+            Assert.True(File.Exists(Path.Combine(testRoot, "snapshot_40.json")));
+            Assert.True(File.Exists(Path.Combine(testRoot, "snapshot_50.json")));
+
+            // Temporary and unrelated files must safely be preserved
+            Assert.True(File.Exists(tmpFile));
+            Assert.True(File.Exists(unrelatedFile));
+        }
+        finally
+        {
+            if (Directory.Exists(testRoot))
+            {
+                try { Directory.Delete(testRoot, recursive: true); } catch { }
+            }
+        }
+    }
+
+    [Fact]
+    public async Task L2Snapshot_PreservesActivePromotionCheck_AndStampsIsSyncInProgress()
+    {
+        await using var db = CreateContext();
+        var completedJob = await SeedSyncJobAsync(db, CompanyMasterSyncJobStatus.Completed, new DateOnly(2026, 9, 1));
+        var promotingJob = await SeedSyncJobAsync(db, CompanyMasterSyncJobStatus.Promoting, new DateOnly(2026, 9, 20));
+
+        string testRoot = Path.Combine(Path.GetTempPath(), "mcaroc_l2_promo_test_" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(testRoot);
+
+        try
+        {
+            var options = Options.Create(new RegistrySnapshotStoreOptions { Root = testRoot });
+            var store = new FileRegistrySnapshotStore(options);
+
+            var dummyData = new RegistryAggregateData
+            {
+                Metadata = new RegistrySnapshotMetadata
+                {
+                    PublishedDate = completedJob.PublishedDate,
+                    CompletedUtc = completedJob.CompletedUtc,
+                    TotalRecords = 12345,
+                    Source = "Test",
+                    IsSyncInProgress = false
+                }
+            };
+            // Populate L2 only (L1 cache starts cold)
+            await store.SaveSnapshotAsync(completedJob.JobId, dummyData);
+
+            var cache = new MemoryCache(new MemoryCacheOptions());
+            var coordinator = new RegistryPromotionCoordinator(ConnectionString, NullLogger<RegistryPromotionCoordinator>.Instance);
+            var queryService = new CompanyRegistryQueryService(db, cache, coordinator, store, NullLogger<CompanyRegistryQueryService>.Instance);
+
+            var vm = await queryService.GetDashboardAsync("overview", null);
+
+            Assert.Equal(RegistrySnapshotState.VerifiedSnapshot, vm.State);
+            Assert.NotNull(vm.Aggregates);
+            Assert.True(vm.Aggregates.Metadata.IsSyncInProgress);
+            Assert.Equal(CompanyMasterSyncJobStatus.Promoting, vm.Aggregates.Metadata.ActiveSyncStatus);
+            Assert.Equal(12345, vm.Aggregates.Metadata.TotalRecords);
+        }
+        finally
+        {
+            if (Directory.Exists(testRoot))
+            {
+                try { Directory.Delete(testRoot, recursive: true); } catch { }
             }
         }
     }

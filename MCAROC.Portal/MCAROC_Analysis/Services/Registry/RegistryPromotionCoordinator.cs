@@ -113,6 +113,8 @@ public sealed class RegistryPromotionCoordinator : IRegistryPromotionCoordinator
         }
     }
 
+    private const string RebuildLockResource = "CompanyMaster_AggregateRebuild";
+
     public async Task<IAsyncDisposable?> TryAcquireRebuildGateAsync(CancellationToken cancellationToken = default)
     {
         lock (_stateLock)
@@ -139,17 +141,111 @@ public sealed class RegistryPromotionCoordinator : IRegistryPromotionCoordinator
             }
         }
 
-        // 2. Distributed SQL Server shared lock probe with 0 timeout
+        // 2. Distributed SQL Server dual-lock acquisition:
+        //    - Shared lock on LockResource ("CompanyMaster_PromotionAdmission") ensures no active promotion
+        //    - Exclusive lock on RebuildLockResource ("CompanyMaster_AggregateRebuild") ensures single rebuild owner across cluster
         SqlConnection? connection = null;
+        bool acquiredSharedPromotion = false;
         try
         {
             connection = new SqlConnection(_connectionString);
             await connection.OpenAsync(cancellationToken);
 
-            await using var cmd = new SqlCommand("sp_getapplock", connection)
+            // Step A: Acquire Shared lock on LockResource (timeout = 0)
+            await using (var cmdProm = new SqlCommand("sp_getapplock", connection)
             {
                 CommandType = CommandType.StoredProcedure,
                 CommandTimeout = 30
+            })
+            {
+                cmdProm.Parameters.AddWithValue("@Resource", LockResource);
+                cmdProm.Parameters.AddWithValue("@LockMode", "Shared");
+                cmdProm.Parameters.AddWithValue("@LockOwner", "Session");
+                cmdProm.Parameters.AddWithValue("@LockTimeout", 0);
+
+                var retParam = cmdProm.Parameters.Add("@ReturnValue", SqlDbType.Int);
+                retParam.Direction = ParameterDirection.ReturnValue;
+
+                await cmdProm.ExecuteNonQueryAsync(cancellationToken);
+                int returnCode = (int)retParam.Value;
+
+                if (returnCode < 0)
+                {
+                    // Active promotion in progress
+                    await connection.DisposeAsync();
+                    _inProcessGate.Release();
+                    return null;
+                }
+                acquiredSharedPromotion = true;
+            }
+
+            // Step B: Acquire Exclusive lock on RebuildLockResource (timeout = 0)
+            await using (var cmdReb = new SqlCommand("sp_getapplock", connection)
+            {
+                CommandType = CommandType.StoredProcedure,
+                CommandTimeout = 30
+            })
+            {
+                cmdReb.Parameters.AddWithValue("@Resource", RebuildLockResource);
+                cmdReb.Parameters.AddWithValue("@LockMode", "Exclusive");
+                cmdReb.Parameters.AddWithValue("@LockOwner", "Session");
+                cmdReb.Parameters.AddWithValue("@LockTimeout", 0);
+
+                var retParam = cmdReb.Parameters.Add("@ReturnValue", SqlDbType.Int);
+                retParam.Direction = ParameterDirection.ReturnValue;
+
+                await cmdReb.ExecuteNonQueryAsync(cancellationToken);
+                int returnCode = (int)retParam.Value;
+
+                if (returnCode < 0)
+                {
+                    // Another node is actively rebuilding aggregates across cluster
+                    _logger?.LogInformation("Another portal node holds '{RebuildResource}'. Non-owner node backing off without scanning.", RebuildLockResource);
+                    await ReleaseAppLockAsync(connection, LockResource);
+                    await connection.DisposeAsync();
+                    _inProcessGate.Release();
+                    return null;
+                }
+            }
+
+            _logger?.LogDebug("Acquired shared promotion gate and exclusive rebuild gate on SPID {Spid}", connection.ServerProcessId);
+            return new RebuildGateScope(this, connection);
+        }
+        catch (Exception ex)
+        {
+            _logger?.LogWarning(ex, "Exception acquiring rebuild gate locks");
+            if (connection != null)
+            {
+                if (acquiredSharedPromotion)
+                {
+                    await ReleaseAppLockAsync(connection, LockResource);
+                }
+                await connection.DisposeAsync();
+            }
+            _inProcessGate.Release();
+            return null;
+        }
+    }
+
+    public async Task<bool> TryProbePromotionAdmissionAsync(CancellationToken cancellationToken = default)
+    {
+        lock (_stateLock)
+        {
+            if (_activePromotionJobId.HasValue)
+            {
+                return false;
+            }
+        }
+
+        try
+        {
+            await using var connection = new SqlConnection(_connectionString);
+            await connection.OpenAsync(cancellationToken);
+
+            await using var cmd = new SqlCommand("sp_getapplock", connection)
+            {
+                CommandType = CommandType.StoredProcedure,
+                CommandTimeout = 10
             };
 
             cmd.Parameters.AddWithValue("@Resource", LockResource);
@@ -163,26 +259,37 @@ public sealed class RegistryPromotionCoordinator : IRegistryPromotionCoordinator
             await cmd.ExecuteNonQueryAsync(cancellationToken);
             int returnCode = (int)retParam.Value;
 
-            if (returnCode < 0)
+            if (returnCode >= 0)
             {
-                // Lock held exclusively by an active promotion node
-                await connection.DisposeAsync();
-                _inProcessGate.Release();
-                return null;
+                await ReleaseAppLockAsync(connection, LockResource);
+                return true;
             }
 
-            _logger?.LogDebug("Acquired shared rebuild gate on SPID {Spid}", connection.ServerProcessId);
-            return new RebuildGateScope(this, connection);
+            return false;
         }
         catch (Exception ex)
         {
-            _logger?.LogWarning(ex, "Exception probing shared rebuild gate for '{LockResource}'", LockResource);
-            if (connection != null)
+            _logger?.LogDebug(ex, "Advisory promotion gate probe observed exception. Treating as locked.");
+            return false;
+        }
+    }
+
+    private static async Task ReleaseAppLockAsync(SqlConnection connection, string resource)
+    {
+        try
+        {
+            await using var cmd = new SqlCommand("sp_releaseapplock", connection)
             {
-                await connection.DisposeAsync();
-            }
-            _inProcessGate.Release();
-            return null;
+                CommandType = CommandType.StoredProcedure,
+                CommandTimeout = 10
+            };
+            cmd.Parameters.AddWithValue("@Resource", resource);
+            cmd.Parameters.AddWithValue("@LockOwner", "Session");
+            await cmd.ExecuteNonQueryAsync();
+        }
+        catch
+        {
+            // Best effort release on abort/cleanup
         }
     }
 
@@ -190,14 +297,7 @@ public sealed class RegistryPromotionCoordinator : IRegistryPromotionCoordinator
     {
         try
         {
-            await using var cmd = new SqlCommand("sp_releaseapplock", connection)
-            {
-                CommandType = CommandType.StoredProcedure,
-                CommandTimeout = 30
-            };
-            cmd.Parameters.AddWithValue("@Resource", LockResource);
-            cmd.Parameters.AddWithValue("@LockOwner", "Session");
-            await cmd.ExecuteNonQueryAsync();
+            await ReleaseAppLockAsync(connection, LockResource);
             _logger?.LogInformation("Released exclusive promotion admission for Job {JobId}", syncRunId);
         }
         catch (Exception ex)
@@ -222,18 +322,12 @@ public sealed class RegistryPromotionCoordinator : IRegistryPromotionCoordinator
     {
         try
         {
-            await using var cmd = new SqlCommand("sp_releaseapplock", connection)
-            {
-                CommandType = CommandType.StoredProcedure,
-                CommandTimeout = 30
-            };
-            cmd.Parameters.AddWithValue("@Resource", LockResource);
-            cmd.Parameters.AddWithValue("@LockOwner", "Session");
-            await cmd.ExecuteNonQueryAsync();
+            await ReleaseAppLockAsync(connection, RebuildLockResource);
+            await ReleaseAppLockAsync(connection, LockResource);
         }
         catch (Exception ex)
         {
-            _logger?.LogWarning(ex, "Error releasing shared rebuild gate lock for '{LockResource}'", LockResource);
+            _logger?.LogWarning(ex, "Error releasing rebuild gate locks");
         }
         finally
         {
@@ -286,3 +380,4 @@ public sealed class RegistryPromotionCoordinator : IRegistryPromotionCoordinator
         }
     }
 }
+
