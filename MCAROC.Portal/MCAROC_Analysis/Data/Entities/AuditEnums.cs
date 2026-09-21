@@ -73,6 +73,9 @@ public enum AuditActionType
     CompanyMasterSyncTriggered,
     CompanyMasterManualUploaded,
 
+    // Litigation
+    LitigationAnalysisRequested,
+
     // Fallback
     OtherMutation,
 

@@ -59,6 +59,9 @@ public static class AuditRouteRegistry
             { ("CompanyMasterDashboard", "TestProxies"), (AuditActionType.CompanyMasterProxyTested, AuditRulePolicy.Always) },
             { ("CompanyMasterDashboard", "SyncNow"), (AuditActionType.CompanyMasterSyncTriggered, AuditRulePolicy.Always) },
             { ("CompanyMasterDashboard", "UploadManual"), (AuditActionType.CompanyMasterManualUploaded, AuditRulePolicy.Always) },
+
+            // Litigation
+            { ("Litigation", "StartAnalysis"), (AuditActionType.LitigationAnalysisRequested, AuditRulePolicy.Always) },
         };
 
     public static (AuditActionType ActionType, AuditRulePolicy Policy) Resolve(string controller, string action)
