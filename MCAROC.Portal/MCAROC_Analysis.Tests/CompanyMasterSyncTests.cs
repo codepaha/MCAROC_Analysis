@@ -33,7 +33,7 @@ public class CompanyMasterSyncTests : IAsyncLifetime
     public async Task InitializeAsync()
     {
         await using var db = CreateContext();
-        await db.Database.MigrateAsync();
+        await global::MCAROC_Analysis.Tests.TestDatabase.MigrateAsync(db);
     }
 
     public async Task DisposeAsync()

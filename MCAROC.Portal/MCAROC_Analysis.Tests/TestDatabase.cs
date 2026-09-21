@@ -1,3 +1,8 @@
+using System.Data;
+using MCAROC_Analysis.Data;
+using Microsoft.Data.SqlClient;
+using Microsoft.EntityFrameworkCore;
+
 namespace MCAROC_Analysis.Tests;
 
 /// <summary>The SQL Server the integration tests run against. Defaults to a local SQLEXPRESS instance
@@ -6,7 +11,79 @@ namespace MCAROC_Analysis.Tests;
 /// stood up. Test classes reference <see cref="ConnectionString"/> rather than hard-coding the string.</summary>
 internal static class TestDatabase
 {
+    private const string MigrationLockResourcePrefix = "MCAROC_Analysis_TestDatabaseMigration:";
+
     public static readonly string ConnectionString = Build();
+
+    /// <summary>
+    /// Migrates the shared SQL Server test database while holding an instance-wide session applock in
+    /// <c>master</c>. xUnit is already serial within a test process, but this repository's self-hosted runner
+    /// also shares SQLEXPRESS with local/other-agent test processes. Without this lock, two processes can both
+    /// decide that the database does not exist and race in EF's create path, producing "Database already exists"
+    /// before any test assertion executes.
+    /// </summary>
+    public static async Task MigrateAsync(AppDbContext db, CancellationToken cancellationToken = default)
+    {
+        var target = new SqlConnectionStringBuilder(ConnectionString);
+        if (string.IsNullOrWhiteSpace(target.InitialCatalog))
+            throw new InvalidOperationException("The shared test database connection string must specify a database name.");
+
+        var targetDatabase = target.InitialCatalog;
+        target.InitialCatalog = "master";
+
+        await using var lockConnection = new SqlConnection(target.ConnectionString);
+        await lockConnection.OpenAsync(cancellationToken);
+
+        await using var acquire = new SqlCommand("sp_getapplock", lockConnection)
+        {
+            CommandType = CommandType.StoredProcedure,
+            CommandTimeout = 150
+        };
+        acquire.Parameters.AddWithValue("@Resource", MigrationLockResourcePrefix + targetDatabase);
+        acquire.Parameters.AddWithValue("@LockMode", "Exclusive");
+        acquire.Parameters.AddWithValue("@LockOwner", "Session");
+        acquire.Parameters.AddWithValue("@LockTimeout", 120_000);
+        var returnValue = acquire.Parameters.Add("@ReturnValue", SqlDbType.Int);
+        returnValue.Direction = ParameterDirection.ReturnValue;
+        await acquire.ExecuteNonQueryAsync(cancellationToken);
+
+        if ((int)returnValue.Value < 0)
+            throw new InvalidOperationException($"Could not acquire the shared test-database migration lock for '{targetDatabase}' (sp_getapplock return {(int)returnValue.Value}).");
+
+        try
+        {
+            try
+            {
+                await using var create = new SqlCommand("""
+                    IF DB_ID(@databaseName) IS NULL
+                    BEGIN
+                        DECLARE @createDatabaseSql nvarchar(258) = N'CREATE DATABASE ' + QUOTENAME(@databaseName);
+                        EXEC(@createDatabaseSql);
+                    END
+                    """, lockConnection);
+                create.Parameters.Add("@databaseName", SqlDbType.NVarChar, 128).Value = targetDatabase;
+                await create.ExecuteNonQueryAsync(cancellationToken);
+            }
+            catch (SqlException ex) when (ex.Number == 1801)
+            {
+                // A pre-existing local checkout can still be running the old, uncoordinated setup path.
+                // SQL Server has committed that competing CREATE DATABASE by the time it returns 1801, so
+                // continue with EF's idempotent migration while holding the lock.
+            }
+
+            await db.Database.MigrateAsync(cancellationToken);
+        }
+        finally
+        {
+            await using var release = new SqlCommand("sp_releaseapplock", lockConnection)
+            {
+                CommandType = CommandType.StoredProcedure
+            };
+            release.Parameters.AddWithValue("@Resource", MigrationLockResourcePrefix + targetDatabase);
+            release.Parameters.AddWithValue("@LockOwner", "Session");
+            await release.ExecuteNonQueryAsync(CancellationToken.None);
+        }
+    }
 
     private static string Build()
     {

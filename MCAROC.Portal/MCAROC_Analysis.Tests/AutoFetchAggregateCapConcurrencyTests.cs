@@ -51,7 +51,7 @@ public class AutoFetchAggregateCapConcurrencyTests : IAsyncLifetime
     {
         Directory.CreateDirectory(_tempDir);
         await using var db = CreateContext();
-        await db.Database.MigrateAsync();
+        await global::MCAROC_Analysis.Tests.TestDatabase.MigrateAsync(db);
     }
 
     public Task DisposeAsync()
