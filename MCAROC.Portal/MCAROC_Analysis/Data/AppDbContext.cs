@@ -76,6 +76,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<LitigationReportSnapshot> LitigationReportSnapshots => Set<LitigationReportSnapshot>();
     public DbSet<LitigationCaseSourceReport> LitigationCaseSourceReports => Set<LitigationCaseSourceReport>();
     public DbSet<LitigationOrderDocument> LitigationOrderDocuments => Set<LitigationOrderDocument>();
+    public DbSet<LitigationOrderChunk> LitigationOrderChunks => Set<LitigationOrderChunk>();
 
     // #164 Calculation assurance
     public DbSet<CalculationAuditSnapshot> CalculationAuditSnapshots => Set<CalculationAuditSnapshot>();
@@ -230,12 +231,34 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             e.Property(x => x.TextExtractionMethod).HasConversion<string>().HasMaxLength(20);
             // ExtractedText left nvarchar(max) — same treatment as EpfoEstablishment.Address for free text
             // with no natural bound.
+            e.Property(x => x.ChunkingStatus).HasConversion<string>().HasMaxLength(20);
+            e.Property(x => x.ChunkingLastError).HasMaxLength(500);
+            e.Property(x => x.ChunkingErrorCategory).HasMaxLength(30);
             e.Property(x => x.RowVersion).IsRowVersion();
             e.Ignore(x => x.IsTerminal);
             // Only cascade path onto this table from McaRequest (McaRequest → LitigationCase →
             // LitigationCaseOrder → LitigationOrderDocument, one straight line) — safe to cascade, same
             // reasoning as LitigationCaseOrder → LitigationCase above.
             e.HasOne(x => x.Order).WithMany().HasForeignKey(x => x.LitigationCaseOrderId).OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<LitigationOrderChunk>(e =>
+        {
+            // Plain scalar FK columns, no HasOne/navigation and no cascade-delete config declared — matches
+            // DocumentChunk's own convention exactly (see that entity's own modelBuilder block below).
+            e.HasKey(x => x.LitigationOrderChunkId);
+            e.HasIndex(x => x.RequestId);
+            e.HasIndex(x => x.LitigationOrderDocumentId);
+            e.HasIndex(x => x.LitigationCaseOrderId);
+            e.HasIndex(x => new { x.RequestId, x.LitigationCaseId });
+            e.Property(x => x.CaseNumber).HasMaxLength(100);
+            e.Property(x => x.Cnr).HasMaxLength(20);
+            e.Property(x => x.Court).HasMaxLength(200);
+            e.Property(x => x.OrderType).HasMaxLength(100);
+            e.Property(x => x.OrderDate).HasMaxLength(20);
+            // 768-dim vector — must match EmbeddingService.Dimensions exactly, same reasoning as
+            // DocumentChunk.Embedding (VECTOR_DISTANCE requires both operands to match).
+            e.Property(x => x.Embedding).HasColumnType("vector(768)");
         });
 
         modelBuilder.Entity<McaRequest>(e =>

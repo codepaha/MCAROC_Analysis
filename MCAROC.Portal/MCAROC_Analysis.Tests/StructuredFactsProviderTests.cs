@@ -1,6 +1,7 @@
 using MCAROC_Analysis.Data;
 using MCAROC_Analysis.Data.Entities;
 using MCAROC_Analysis.Services.Chat;
+using MCAROC_Analysis.Services.LitigationData;
 using Microsoft.Data.SqlTypes;
 using Microsoft.EntityFrameworkCore;
 
@@ -232,6 +233,7 @@ public class StructuredFactsProviderTests : IAsyncLifetime
             db,
             new StructuredFactsProvider(db),
             new DocumentRetriever(db, ChatRetrievalOptions.Default),
+            new LitigationDocumentRetriever(db, ChatRetrievalOptions.Default),
             embedding);
 
         var context = await contextBuilder.BuildAsync(requestId, "What open charges are recorded?", CancellationToken.None);
@@ -270,6 +272,7 @@ public class StructuredFactsProviderTests : IAsyncLifetime
             db,
             new StructuredFactsProvider(db),
             new DocumentRetriever(db, ChatRetrievalOptions.Default),
+            new LitigationDocumentRetriever(db, ChatRetrievalOptions.Default),
             embedding);
 
         var context = await contextBuilder.BuildAsync(requestId, "What charges are recorded?", CancellationToken.None);

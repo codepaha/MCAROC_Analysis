@@ -12,6 +12,7 @@ using MCAROC_Analysis.Services.Analysis;
 using MCAROC_Analysis.Services.Chat;
 using MCAROC_Analysis.Services.Dashboard;
 using MCAROC_Analysis.Services.Dossier;
+using MCAROC_Analysis.Services.LitigationData;
 using MCAROC_Analysis.Services.McaFilings;
 using Microsoft.AspNetCore.Antiforgery;
 using Microsoft.AspNetCore.Builder;
@@ -324,7 +325,8 @@ public class ChatEndpointJsonTests : IAsyncLifetime
         var requestId = await SeedRequestAsync("No Ingestion Corp"); // SeedRequestAsync never sets LatestCompletedIngestionRunId
         var embedding = new ThrowingEmbeddingService();
         var contextBuilder = new RetrievalContextBuilder(
-            db, new StructuredFactsProvider(db), new DocumentRetriever(db, ChatRetrievalOptions.Default), embedding);
+            db, new StructuredFactsProvider(db), new DocumentRetriever(db, ChatRetrievalOptions.Default),
+            new LitigationDocumentRetriever(db, ChatRetrievalOptions.Default), embedding);
         var completion = new ThrowIfCalledCompletionService();
         var chatService = new ChatService(db, contextBuilder, completion, NullLogger<ChatService>.Instance);
         var controller = NewController(db);

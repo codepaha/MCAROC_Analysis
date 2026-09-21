@@ -97,6 +97,20 @@ public sealed class LitigationOrderDocument
     public int RefreshCount { get; set; }
     public DateTime? LastRefreshedUtc { get; set; }
 
+    /// <summary>#244/LIT-04: indexing state for <see cref="LitigationOrderChunk"/> rows derived from
+    /// <see cref="ExtractedText"/>. Defaults to <see cref="ChunkingStatus.Pending"/> for every row regardless
+    /// of download state — harmless, since nothing acts on it until <see cref="TextExtractionStatus"/> also
+    /// reaches <see cref="FilingDocumentProcessingStatus.TextExtracted"/> (mirrors
+    /// <c>McaFilingDocument.ChunkingStatus</c>'s exact same two-gate reasoning). Reuses
+    /// <c>Services.McaFilings.ChunkingStatus</c> directly — a fully generic Pending/InProgress/Chunked/Failed
+    /// state machine with no McaFiling-specific members — rather than a parallel enum.</summary>
+    public ChunkingStatus ChunkingStatus { get; set; } = ChunkingStatus.Pending;
+    public int ChunkRetryCount { get; set; }
+    public string? ChunkingLastError { get; set; }
+    public string? ChunkingErrorCategory { get; set; }
+    public DateTime? ChunkingFailedUtc { get; set; }
+    public DateTime? ChunkingLastAttemptUtc { get; set; }
+
     public byte[]? RowVersion { get; set; }
 
     public DateTime CreatedUtc { get; set; }

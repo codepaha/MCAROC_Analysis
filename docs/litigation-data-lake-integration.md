@@ -19,9 +19,10 @@ used as a merge key, since its scope in the vendor contract has not been confirm
 hand-picked subset, with its text extracted and retained past the vendor PDF's own retention window (see
 "All-orders retrieval, text retention and bulk ZIP delivery (#243, done)" below).
 
-**Planned (#244)** — retained order text is chunked and embedded so the MCA ROC Copilot can answer with
-exact case/order/page citations, strictly scoped to `RequestId` — never fabricated onto MCA filing IDs,
-since litigation orders are not MCA filings (see "New durable records" below).
+**Done (#244)** — retained order text is chunked and embedded so the MCA ROC Copilot can answer with exact
+case/order/page citations, strictly scoped to `RequestId` — never fabricated onto MCA filing IDs, since
+litigation orders are not MCA filings (see "New durable records" and "Litigation evidence for the MCA ROC
+Copilot (#244, done)" below).
 
 ## Confirmed BPR API contract
 
@@ -87,7 +88,7 @@ stale copy of this table.
 | #241 LIT-01 | BPR API client + durable job lifecycle (authenticate → register → poll → retain raw report) | **Done** |
 | #242 LIT-02 | Persist BPR cases; CNR-first de-dup; retain CSP as provider identity | **Done** |
 | #243 LIT-03 | All-orders retrieval, text retention, bulk ZIP delivery | **Done** |
-| #244 LIT-04 | Request-scoped litigation evidence for the MCA ROC Copilot (a parallel chunk/citation model — never fabricated MCA filing IDs) | Planned |
+| #244 LIT-04 | Request-scoped litigation evidence for the MCA ROC Copilot (a parallel chunk/citation model — never fabricated MCA filing IDs) | **Done** |
 | #245 LIT-05 | Evidence-grounded Gemini case + portfolio analysis | Planned |
 | #246 LIT-06 | Litigation tab — court grid + case-card UI | Planned |
 | #247 LIT-07 | Wire the standalone PDF/CSV report shell to persisted live data | Planned |
@@ -109,10 +110,10 @@ entity — the latter requires an MCA `IngestionRunId` and cannot represent an e
 `LitigationReportSnapshot`, `LitigationCaseSourceReport`) on top of #241's job. #243 adds
 `LitigationOrderDocument` — one row per `LitigationCaseOrder` — for order-document retention.
 
-The current `DocumentChunk` schema is specific to `McaFilingDocument`/`McaFiling`. #244 must not insert
-litigation orders by fabricating MCA filing IDs — it needs a generic, request-scoped document-source
-contract, or a parallel litigation chunk table, with the retriever/citation model understanding both
-sources.
+The `DocumentChunk` schema is specific to `McaFilingDocument`/`McaFiling`. #244 adds `LitigationOrderChunk`
+(one row per page-or-page-fragment of a `LitigationOrderDocument.ExtractedText`) as a parallel table rather
+than inserting litigation orders by fabricating MCA filing IDs — see "Litigation evidence for the MCA ROC
+Copilot (#244, done)" below for the full chunk/retrieval/citation model.
 
 ## All-orders retrieval, text retention and bulk ZIP delivery (#243, done)
 
@@ -154,6 +155,61 @@ on demand from every currently `Downloaded` order via `LitigationOrdersArchiveBu
 folder. A file that has since disappeared from disk is silently skipped, never a hard failure — "ZIP contains
 every currently retained order," never a stale or partial claim.
 
+## Litigation evidence for the MCA ROC Copilot (#244, done)
+
+`LitigationOrderChunk` is the litigation-specific counterpart to `DocumentChunk` — one row per page (or, for
+an oversized page, a paragraph-bounded fragment of one) of a `LitigationOrderDocument.ExtractedText`, split on
+the same `--- Page N (native|OCR) ---` markers `PdfTextExtractor` already writes (shared with the MCA-filing
+pipeline, so `TextChunker` is reused unmodified). `RequestId` is denormalized onto every chunk — the same
+"every retrieval query filters on it directly" discipline `DocumentChunk.RequestId` already establishes, so
+cross-request leakage is structurally harder, not just procedurally avoided. `LitigationCaseId`/
+`LitigationCaseOrderId`/`CaseNumber`/`Cnr`/`Court`/`OrderType`/`OrderDate` are likewise denormalized from the
+owning case/order, so a citation can name "the precise case, order and page" (epic #239's own phrasing)
+without a join per chunk.
+
+**Chunking trigger and lifecycle.** `LitigationOrderDocumentService.DownloadAndExtractAsync` enqueues a
+document for chunking immediately after it publishes a successful download **and** text extraction actually
+reached `TextExtractionStatus.TextExtracted` — a `Downloaded` document with failed/skipped extraction has
+nothing to chunk and would just fail immediately. `LitigationOrderChunkingOrchestrator` mirrors
+`DocumentChunkingOrchestrator`'s atomic-claim (`ExecuteUpdateAsync` gated on `ChunkingStatus.Pending`),
+rollback-safe re-chunk (chunk+embed entirely before touching the database; one transaction deletes the old
+chunk set and inserts the new one together), and retry/terminal-failure shape (`ChunkRetryCount`,
+`MaxChunkRetryCount = 3`, classified/sanitized errors reusing `DocumentChunkingOrchestrator.ClassifyChunkingError`/
+`SanitizeAndCap` directly rather than duplicating that redaction logic) — but is deliberately per-document, not
+per-batch: litigation orders have no batch concept, so `LitigationOrderChunkingQueue` is a plain
+`Channel<long>` of order-document ids, simpler than `DocumentChunkingQueue`'s batch-level coalescing.
+`LitigationOrderChunkingWorker` dequeues with bounded concurrency (`MaxConcurrentChunking = 4`, since each unit
+makes a real Vertex AI embedding call) and, on startup, `RecoverStaleWorkAsync` resets any crash-orphaned
+`InProgress` row to `Pending` and separately sweeps every `Downloaded` + `TextExtracted` + still-`Pending`
+document — closing the gap where a crash between a successful download publish and the chunking enqueue call
+would otherwise leave a document silently un-indexed forever.
+
+**Retrieval.** `LitigationDocumentRetriever` is the litigation counterpart to `DocumentRetriever` — the same
+single-entry-point discipline (`SearchRequestOrdersAsync(requestId, queryEmbedding, ct)`, always
+`RequestId`-scoped) and the same two hard-won, measured performance fixes DocumentRetriever's own remarks
+document (raw ADO.NET with a properly-typed `SqlDbTypeExtensions.Vector` parameter, since EF Core 10.0.11's
+SqlServer provider binds `SqlVector<float>` as plain `DbType.Binary`; ranking on a narrow
+`(LitigationOrderChunkId, Distance)` subquery before joining back for wide columns, to avoid a
+`RESOURCE_SEMAPHORE` memory-grant stall sorting full rows including `ChunkText`). Deliberately simpler than
+`DocumentRetriever`, though: no `QuestionHints`/soft-hint-then-fallback layer, since #244's acceptance criteria
+don't call for litigation-specific hint dimensions (CNR/court/order-type keyword extraction would be scope
+creep nothing in the issue asked for).
+
+**Wiring into the Copilot.** `RetrievalContextBuilder.BuildAsync` adds litigation chunks as a third source
+alongside structured facts and MCA-filing chunks — gated on "at least one `LitigationOrderChunk` already
+indexed for this request" (mirroring the MCA-filing gate's own "never call Vertex before there's anything to
+find" reasoning), with the query embedding computed at most once and shared between both chunk searches.
+`SourceType.LitigationChunk` is a new enum member; `RetrievedSource` and `ChatCompletionService.ResolvedCitation`
+both gained `LitigationCaseId`/`LitigationCaseOrderId` fields (reusing `ChunkId`/`DocumentName`/`PageNumber`/
+`DocumentId` for the parts that mean the same thing as an MCA-filing citation) so a resolved citation can
+identify the precise case, order and page without inventing a parallel citation shape.
+
+**Retention independence.** Chunking never touches `LitigationOrderDocument.StoragePath`/`ExtractedText`, and
+the retention/expiry path (`LitigationOrderDocumentService.MarkFailedOrExpiredAsync` and its callers) never
+touches `ChunkingStatus` or `LitigationOrderChunks` — an order whose original PDF has since expired or been
+purged keeps its already-indexed chunks and remains fully retrievable, satisfying epic #239's "retained
+independently of the raw PDF file's own fate" requirement for extracted text.
+
 ## Acceptance checks
 
 - Bharat Petroleum, Hero FinCorp and HDFC samples retain every approved alias, including Hindi variants,
@@ -163,7 +219,9 @@ every currently retained order," never a stale or partial claim.
 - A job retry never creates a duplicate vendor registration or duplicate persisted cases/order documents.
 - A failed/incomplete all-orders download reports exact failures and never claims document coverage is
   complete.
-- Copilot answers cite only documents belonging to the active request and cite exact document/page evidence.
+- Copilot answers cite only documents belonging to the active request and cite exact document/page evidence
+  (covered for litigation by `LitigationOrderChunkingTests`, including a dedicated cross-request-isolation
+  test on `LitigationDocumentRetriever`).
 - The report discloses which keywords were searched, the source, retrieval time, and document/case coverage
   — with no Confirmed/Probable/Candidate labeling anywhere in the client-facing artifact.
 

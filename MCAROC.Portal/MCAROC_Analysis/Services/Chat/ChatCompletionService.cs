@@ -9,7 +9,9 @@ using Microsoft.Extensions.Logging;
 
 namespace MCAROC_Analysis.Services.Chat;
 
-public record ResolvedCitation(string SourceType, long? ChunkId, string? DocumentName, int? PageNumber, string? EntityType, long? EntityId, string Label, long? DocumentId = null);
+public record ResolvedCitation(
+    string SourceType, long? ChunkId, string? DocumentName, int? PageNumber, string? EntityType, long? EntityId,
+    string Label, long? DocumentId = null, long? LitigationCaseId = null, long? LitigationCaseOrderId = null);
 
 public record ChatCompletionResult(string Answer, bool InsufficientEvidence, List<ResolvedCitation> CitedSources);
 
@@ -133,9 +135,15 @@ public class ChatCompletionService
         var citations = validTags.Select(tag =>
         {
             var s = sourcesByTag[tag];
-            return s.Type == SourceType.DocumentChunk
-                ? new ResolvedCitation("DocumentChunk", s.ChunkId, s.DocumentName, s.PageNumber, null, null, s.DisplayLabel, s.DocumentId)
-                : new ResolvedCitation("StructuredFact", null, null, null, s.EntityType, s.EntityId, s.DisplayLabel);
+            return s.Type switch
+            {
+                SourceType.DocumentChunk =>
+                    new ResolvedCitation("DocumentChunk", s.ChunkId, s.DocumentName, s.PageNumber, null, null, s.DisplayLabel, s.DocumentId),
+                SourceType.LitigationChunk =>
+                    new ResolvedCitation("LitigationChunk", s.ChunkId, s.DocumentName, s.PageNumber, null, null, s.DisplayLabel, s.DocumentId,
+                        s.LitigationCaseId, s.LitigationCaseOrderId),
+                _ => new ResolvedCitation("StructuredFact", null, null, null, s.EntityType, s.EntityId, s.DisplayLabel)
+            };
         }).ToList();
 
         return new ChatCompletionResult(dto.Answer ?? InsufficientAnswer, false, citations);

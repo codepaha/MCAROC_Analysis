@@ -106,6 +106,11 @@ builder.Services.AddHostedService<LitigationCasePersistenceWorker>();
 builder.Services.AddSingleton<LitigationOrderDocumentQueue>();
 builder.Services.AddScoped<LitigationOrderDocumentService>();
 builder.Services.AddHostedService<LitigationOrderDocumentWorker>();
+// #244 LIT-04 — chunk/embed each order document's extracted text for the MCA ROC Copilot. Reuses the
+// already-registered EmbeddingService (Services.Chat, Phase 4) unmodified.
+builder.Services.AddSingleton<LitigationOrderChunkingQueue>();
+builder.Services.AddScoped<LitigationOrderChunkingOrchestrator>();
+builder.Services.AddHostedService<LitigationOrderChunkingWorker>();
 
 builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseSqlServer(builder.Configuration.GetConnectionString("Default")));
@@ -225,6 +230,7 @@ builder.Services.AddScoped<DocumentChunkingOrchestrator>();
 builder.Services.AddHostedService<DocumentChunkingWorker>();
 builder.Services.AddScoped<StructuredFactsProvider>();
 builder.Services.AddScoped(sp => new DocumentRetriever(sp.GetRequiredService<AppDbContext>(), ChatRetrievalOptions.Default));
+builder.Services.AddScoped(sp => new LitigationDocumentRetriever(sp.GetRequiredService<AppDbContext>(), ChatRetrievalOptions.Default));
 builder.Services.AddScoped<RetrievalContextBuilder>();
 builder.Services.AddScoped<ChatService>();
 
