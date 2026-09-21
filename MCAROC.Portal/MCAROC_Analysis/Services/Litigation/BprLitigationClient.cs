@@ -335,7 +335,20 @@ public sealed class BprLitigationClient(
     /// content, so this never blocks legitimate traffic to them unless BPR is ever deployed on a private
     /// network — unconfirmed and unsupported by anything in the current contract; revisit here if that
     /// changes. The original hostname is preserved for the caller's own Host header / TLS SNI — only the
-    /// physical TCP connection target changes.</summary>
+    /// physical TCP connection target changes.
+    ///
+    /// <b>Known, deliberately accepted gap (risk-accepted by the owner on 2026-09-21, PR #253):</b> this
+    /// protection only applies to a DIRECT connection. If a system/environment proxy is active (the default
+    /// <see cref="SocketsHttpHandler.UseProxy"/> behavior, left as-is here), this callback connects to the
+    /// PROXY's address, not the order host's — the proxy performs the real DNS resolution and connection on
+    /// this application's behalf, entirely outside this check's visibility, reopening the same rebinding
+    /// class of gap one layer further out (and a private-IP corporate proxy would itself be refused by the
+    /// address check above, breaking legitimate proxy use). Disabling the outer allowlist/HTTPS-
+    /// only/no-redirect/host-scoped-JWT protections would be the real regression; those remain in force
+    /// regardless of proxy use and are judged sufficient for this internal, fixed-vendor integration's actual
+    /// threat model. Full proxy-aware destination validation is deferred, tracked here rather than in a
+    /// separate issue — revisit if this server is ever exposed to less-trusted input or gains reachability to
+    /// more sensitive internal services.</summary>
     public static Func<SocketsHttpConnectionContext, CancellationToken, ValueTask<Stream>> CreateSafeConnectCallback(
         Func<string, CancellationToken, Task<IPAddress[]>>? hostResolver = null)
     {
