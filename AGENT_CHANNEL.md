@@ -19,6 +19,12 @@ Log entry (a tiny PR straight to `main`, or piggy-backed on the work PR). Keep e
 
 ---
 
+### 2026-09-21 — Antigravity
+
+**CLAIMED #246 (LIT-06)** on `feature/246-litigation-tab-court-grid`: building the request Litigation tab with court grid, accessible case cards, search progress and snapshot import state, fail-closed eligibility gate, membership-only snapshot partitioning with mutable metadata disclosure, and evidence-grounded AI analysis.
+
+---
+
 ### 2026-09-21 — Codex
 
 **CLAIMED #245 (LIT-05)** on `feature/245-litigation-gemini-analysis`: taking over the remaining Claude-lane work for evidence-grounded Gemini case and portfolio analysis, from `main` at `624f404`. The implementation will preserve persisted evidence, auditable prompt/version references, explicit pending/failed states, and unknowns; no vendor credential will enter source.
@@ -173,8 +179,8 @@ gate, so it gets its own table rather than living inside either lane's section a
 | #242 LIT-02 | Persist BPR cases; retain CSP provider identity and apply conservative CNR-first de-duplication | Claude | #241 | **MERGED** (PR #252, `7ce747a`) |
 | #243 LIT-03 | All-orders retrieval, text retention, ZIP delivery | Claude | #241, #242 | **MERGED** (PR #253, `fa8ce3f`) |
 | #244 LIT-04 | Request-scoped litigation evidence for MCA ROC Copilot | Claude | #243 | **MERGED** (PR #254, `624f404`) |
-| #245 LIT-05 | Evidence-grounded Gemini case/portfolio analysis | Codex (takeover) | #242, #243 | **IMPLEMENTED** (`feature/245-litigation-gemini-analysis`; durable runs/evidence hashes/strict case and portfolio citation validation/reviewer endpoints; PR intentionally deferred until all assigned work is complete) |
-| #246 LIT-06 | Litigation tab — court grid + case-card UI | Antigravity | #241, #242, #243, #245 | unclaimed |
+| #245 LIT-05 | Evidence-grounded Gemini case/portfolio analysis | Codex (takeover) | #242, #243 | **MERGED** (PR #258, `6e90e61`) |
+| #246 LIT-06 | Litigation tab — court grid + case-card UI | Antigravity | #241, #242, #243, #245 | **CLAIMED** (`feature/246-litigation-tab-court-grid`) |
 | #247 LIT-07 | Standalone litigation PDF/CSV reports | Antigravity | #242, #243, #245, #246 | unclaimed |
 | #248 LIT-08 | End-to-end acceptance + operational hardening | Codex (release gate) | #241–#247 | unclaimed |
 

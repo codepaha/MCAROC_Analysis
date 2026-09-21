@@ -89,14 +89,21 @@ internal static class TestDatabase
     {
         var baseString = Environment.GetEnvironmentVariable("MCAROC_TEST_CONNECTION") is { Length: > 0 } fromEnv
             ? fromEnv
-            : @"Server=.\SQLEXPRESS;Database=MCAROC_Analysis_Test;Trusted_Connection=True;TrustServerCertificate=True;";
+            : @"Server=.\SQLEXPRESS;Database=MCAROC_Analysis_Test;Trusted_Connection=True;TrustServerCertificate=True;Encrypt=False;";
 
-        // The self-hosted Windows CI box runs several agents + local builds against one SQLEXPRESS
-        // instance, and the default 30s command timeout is exceeded under that load — MigrateAsync and
-        // the dossier assembler's wide reads time out even though nothing is deadlocked. 120s absorbs
-        // the contention while still failing a genuinely stuck query in bounded time.
-        return baseString.Contains("Command Timeout", StringComparison.OrdinalIgnoreCase)
-            ? baseString
-            : baseString.TrimEnd(';') + ";Command Timeout=120";
+        var builder = new SqlConnectionStringBuilder(baseString);
+        if (!baseString.Contains("Encrypt", StringComparison.OrdinalIgnoreCase))
+        {
+            builder.Encrypt = false;
+        }
+        if (!baseString.Contains("TrustServerCertificate", StringComparison.OrdinalIgnoreCase))
+        {
+            builder.TrustServerCertificate = true;
+        }
+        if (!baseString.Contains("Command Timeout", StringComparison.OrdinalIgnoreCase))
+        {
+            builder.CommandTimeout = 120;
+        }
+        return builder.ConnectionString;
     }
 }

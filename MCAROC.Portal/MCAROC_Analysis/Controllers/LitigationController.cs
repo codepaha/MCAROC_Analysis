@@ -5,17 +5,23 @@ using MCAROC_Analysis.Services.LitigationData;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 
 namespace MCAROC_Analysis.Controllers;
 
-/// <summary>#243/LIT-03's one product-facing surface ahead of the full litigation UI (#246/#247): a
-/// request-scoped bulk ZIP of every currently-retained order PDF. Internal-reviewer only, same auth scheme as
-/// every other request-scoped document download in <c>RequestsController</c> — litigation order PDFs are not
-/// part of the public/client-facing report surface (see epic #239's report contract: "No source vendor order
-/// URL will be published in the report").</summary>
-public class LitigationController(AppDbContext db, IWebHostEnvironment env, LitigationAiAnalysisOrchestrator analysis,
+/// <summary>Request-scoped litigation endpoints: BPR search triggering, status polling, safe order PDF
+/// downloads, bulk order ZIP delivery, and evidence-grounded AI analysis.</summary>
+public class LitigationController(
+    AppDbContext db,
+    IWebHostEnvironment env,
+    LitigationAiAnalysisOrchestrator analysis,
+    LitigationSearchJobService searchJobService,
+    LitigationSearchQueue searchQueue,
+    IOptions<BprLitigationOptions> bprOptions,
     ILogger<LitigationController>? logger = null) : Controller
 {
+    private readonly BprLitigationOptions _opts = bprOptions.Value;
+
     /// <summary>Starts an evidence-only LIT-05 run, or returns the already-active run. The response is
     /// deliberately lifecycle metadata; completed case/portfolio output is read from the persisted endpoint.
     /// This keeps the paid call asynchronous and prevents a browser refresh from issuing a second request.</summary>
@@ -46,6 +52,174 @@ public class LitigationController(AppDbContext db, IWebHostEnvironment env, Liti
                 { Status = x.PortfolioAnalysis.Status.ToString(), x.PortfolioAnalysis.AnalysisJson, x.PortfolioAnalysis.FailureReason, x.PortfolioAnalysis.CompletedUtc }
             }).FirstOrDefaultAsync(ct);
         return run is null ? NotFound() : Ok(run);
+    }
+
+    /// <summary>Starts or reruns a BPR litigation search for the request. Evaluates fail-closed eligibility
+    /// before queuing the job.</summary>
+    [HttpPost("/Requests/{id:long}/Litigation/Search")]
+    [Authorize(AuthenticationSchemes = "InternalReviewer")]
+    [ValidateAntiForgeryToken]
+    public async Task<IActionResult> StartSearch(long id, CancellationToken ct)
+    {
+        var request = await db.Requests.FirstOrDefaultAsync(r => r.RequestId == id, ct);
+        if (request is null) return NotFound();
+
+        if (!_opts.IsConfigured)
+            return BadRequest("BPR Litigation API is not configured on this instance.");
+
+        if (string.IsNullOrWhiteSpace(request.CompanyName))
+            return BadRequest("Company name is required for litigation keyword planning.");
+
+        if (request.EntityType is not (EntityType.Company or EntityType.LLP))
+            return BadRequest("Unsupported entity type for litigation search.");
+
+        if (string.IsNullOrWhiteSpace(_opts.DefaultEntityType))
+            return BadRequest("Default entity type is not configured.");
+
+        var historicalNames = request.LatestCompletedIngestionRunId is { } runId
+            ? await db.CompanyNameHistories.Where(x => x.IngestionRunId == runId && !string.IsNullOrWhiteSpace(x.PreviousName))
+                .Select(x => x.PreviousName).ToListAsync(ct)
+            : [];
+
+        var keywords = LitigationKeywordPlanner.Build(request.CompanyName, historicalNames);
+        var appCustomerId = !string.IsNullOrWhiteSpace(request.RequestNumber)
+            ? request.RequestNumber.Trim()
+            : $"REQ-{request.RequestId}";
+
+        try
+        {
+            var job = await searchJobService.CreateOrResetJobAsync(id, keywords, _opts.DefaultEntityType, appCustomerId, ct);
+            searchQueue.Enqueue(job.LitigationSearchJobId);
+
+            if (Request.Headers.Accept.ToString().Contains("application/json"))
+                return Accepted(new { job.LitigationSearchJobId, status = job.Status.ToString(), job.CreatedUtc });
+
+            TempData["LitigationSearchOk"] = "Litigation search has been queued.";
+            return Redirect($"/Requests/{id}#tab-litigation");
+        }
+        catch (InvalidOperationException ex)
+        {
+            logger?.LogWarning(ex, "Failed to start litigation search for Request {RequestId}: active search already in progress", id);
+            if (Request.Headers.Accept.ToString().Contains("application/json"))
+                return Conflict(new { error = ex.Message });
+
+            TempData["LitigationSearchError"] = ex.Message;
+            return Redirect($"/Requests/{id}#tab-litigation");
+        }
+    }
+
+    /// <summary>Returns the current search job and snapshot import lifecycle state for live client polling.
+    /// Responds with no-store to prevent proxy caching.</summary>
+    [HttpGet("/Requests/{id:long}/Litigation/Status")]
+    [Authorize(AuthenticationSchemes = "InternalReviewer")]
+    [ResponseCache(NoStore = true, Location = ResponseCacheLocation.None)]
+    public async Task<IActionResult> GetSearchStatus(long id, CancellationToken ct)
+    {
+        Response.Headers.CacheControl = "no-store, private";
+
+        var job = await db.LitigationSearchJobs.AsNoTracking().FirstOrDefaultAsync(j => j.RequestId == id, ct);
+        if (job is null) return NotFound();
+
+        LitigationReportSnapshot? currentSnapshot = null;
+        if (!string.IsNullOrWhiteSpace(job.RawResponseHash))
+        {
+            currentSnapshot = await db.LitigationReportSnapshots.AsNoTracking()
+                .FirstOrDefaultAsync(s => s.LitigationSearchJobId == job.LitigationSearchJobId && s.ReportHash == job.RawResponseHash, ct);
+        }
+
+        string importState;
+        bool isTerminal;
+        bool isFullyIndexed;
+
+        if (string.IsNullOrWhiteSpace(job.RawResponseHash))
+        {
+            importState = "NotCreated";
+            isTerminal = job.IsTerminal;
+            isFullyIndexed = false;
+        }
+        else if (currentSnapshot is null)
+        {
+            if (job.Status == LitigationSearchJobStatus.Completed)
+            {
+                importState = "SnapshotMissing";
+                isTerminal = true;
+                isFullyIndexed = false;
+            }
+            else
+            {
+                importState = "NotCreated";
+                isTerminal = job.IsTerminal;
+                isFullyIndexed = false;
+            }
+        }
+        else
+        {
+            importState = currentSnapshot.Status.ToString();
+            isTerminal = job.IsTerminal && currentSnapshot.IsTerminal;
+            isFullyIndexed = job.Status == LitigationSearchJobStatus.Completed && currentSnapshot.Status == LitigationReportSnapshotStatus.Completed;
+        }
+
+        return Ok(new
+        {
+            searchJobStatus = job.Status.ToString(),
+            progressPercent = job.ProgressPercent,
+            statusMessage = job.StatusMessage,
+            failureReason = job.FailureReason ?? currentSnapshot?.FailureReason,
+            importState,
+            casesPersisted = currentSnapshot?.CasesPersistedCount ?? 0,
+            isFullyIndexed,
+            isTerminal
+        });
+    }
+
+    /// <summary>Safely streams one downloaded litigation order PDF. Validates internal reviewer authentication,
+    /// canonical directory path, and physical file existence.</summary>
+    [HttpGet("/Requests/{id:long}/Litigation/Orders/{documentId:long}/download")]
+    [Authorize(AuthenticationSchemes = "InternalReviewer")]
+    public async Task<IActionResult> DownloadOrderDocument(long id, long documentId, CancellationToken ct)
+    {
+        var doc = await db.LitigationOrderDocuments
+            .Where(d => d.LitigationOrderDocumentId == documentId && d.Order!.Case!.RequestId == id)
+            .Select(d => new
+            {
+                d.LitigationOrderDocumentId,
+                d.Status,
+                d.StoragePath,
+                d.Order!.OrderDate,
+                d.Order.OrderType,
+                CaseLabel = d.Order.Case!.CaseNumber ?? d.Order.Case.Cnr
+            })
+            .FirstOrDefaultAsync(ct);
+
+        if (doc is null || doc.Status != LitigationOrderDocumentStatus.Downloaded || string.IsNullOrWhiteSpace(doc.StoragePath))
+            return NotFound("Order document not found or not downloaded.");
+
+        var expectedDir = Path.GetFullPath(
+            Path.Combine(env.ContentRootPath, "App_Data", "Requests", id.ToString(), "litigation-orders")) + Path.DirectorySeparatorChar;
+
+        var fullPath = Path.GetFullPath(doc.StoragePath);
+        if (!fullPath.StartsWith(expectedDir, StringComparison.OrdinalIgnoreCase))
+        {
+            logger?.LogError(
+                "Path traversal detected on litigation order document {Id} for Request {RequestId}",
+                documentId, id);
+            return BadRequest("Invalid document path.");
+        }
+
+        if (!System.IO.File.Exists(fullPath))
+            return NotFound("Order PDF file is not available on disk.");
+
+        Response.Headers["Referrer-Policy"] = "no-referrer";
+        Response.Headers.CacheControl = "no-store, private";
+        Response.Headers["X-Content-Type-Options"] = "nosniff";
+
+        var safeCase = string.IsNullOrWhiteSpace(doc.CaseLabel) ? "Case" : AutoFetchArchiveBuilder.CompanyToken(doc.CaseLabel);
+        var fileName = $"Order_{safeCase}_{doc.OrderDate ?? "undated"}_{documentId}.pdf";
+        var contentDisposition = new Microsoft.Net.Http.Headers.ContentDispositionHeaderValue("attachment");
+        contentDisposition.SetHttpFileName(fileName);
+        Response.Headers.ContentDisposition = contentDisposition.ToString();
+
+        return PhysicalFile(fullPath, "application/pdf");
     }
 
     [HttpGet("/Requests/{id:long}/Litigation/OrdersZip")]

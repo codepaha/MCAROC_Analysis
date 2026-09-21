@@ -1,0 +1,299 @@
+@using MCAROC_Analysis.Models
+@using MCAROC_Analysis.Data.Entities
+@model LitigationCaseCardViewModel
+@{
+    var statusBadgeClass = Model.StatusBucket switch
+    {
+        LitigationCaseStatusBucket.Pending => "bg-warning text-dark",
+        LitigationCaseStatusBucket.Disposed => "bg-success text-white",
+        _ => "bg-secondary text-white"
+    };
+    var requestId = ViewBag.RequestId ?? 0;
+}
+
+<div class="card mb-3 shadow-sm border" id="case-card-@Model.LitigationCaseId">
+    <div class="card-header d-flex flex-wrap justify-content-between align-items-center bg-light py-2 px-3">
+        <div class="d-flex align-items-center gap-2">
+            <span class="badge @statusBadgeClass">@Model.StatusBucket</span>
+            <strong>@(string.IsNullOrWhiteSpace(Model.CaseNumber) ? "Case #" + Model.LitigationCaseId : Model.CaseNumber)</strong>
+            @if (!string.IsNullOrWhiteSpace(Model.CaseType))
+            {
+                <span class="text-muted">(@Model.CaseType)</span>
+            }
+        </div>
+        <div class="text-muted small">
+            <span><strong>Court:</strong> @(Model.Court ?? "Unspecified Court")</span>
+            @if (!string.IsNullOrWhiteSpace(Model.Bench))
+            {
+                <span>(@Model.Bench)</span>
+            }
+        </div>
+    </div>
+    <div class="card-body">
+        <!-- Provenance & Identifiers -->
+        <div class="row g-2 mb-3 small text-muted">
+            <div class="col-md-3">
+                <strong>CNR:</strong>
+                <span class="font-monospace text-dark">@(string.IsNullOrWhiteSpace(Model.Cnr) ? "N/A" : Model.Cnr)</span>
+            </div>
+            <div class="col-md-3">
+                <strong>CSP ID:</strong>
+                <span class="font-monospace text-dark">@(string.IsNullOrWhiteSpace(Model.CspId) ? "N/A" : Model.CspId)</span>
+            </div>
+            <div class="col-md-3">
+                <strong>Proceeding Type:</strong>
+                <span class="text-dark">@(Model.ProceedingType ?? "N/A")</span>
+            </div>
+            <div class="col-md-3">
+                <strong>Category:</strong>
+                <span class="text-dark">@(Model.CourtCategory ?? "N/A")</span>
+            </div>
+        </div>
+
+        <!-- Dates & Stage -->
+        <div class="row g-2 mb-3 small">
+            <div class="col-md-3">
+                <span class="text-muted">Filing Date:</span>
+                <strong>@(string.IsNullOrWhiteSpace(Model.FilingDate) ? "—" : Model.FilingDate)</strong>
+            </div>
+            <div class="col-md-3">
+                <span class="text-muted">Last Hearing:</span>
+                <strong>@(string.IsNullOrWhiteSpace(Model.LastHearingDate) ? "—" : Model.LastHearingDate)</strong>
+            </div>
+            <div class="col-md-3">
+                <span class="text-muted">Next Hearing:</span>
+                <strong>@(string.IsNullOrWhiteSpace(Model.NextHearingDate) ? "—" : Model.NextHearingDate)</strong>
+            </div>
+            <div class="col-md-3">
+                <span class="text-muted">Decision Date:</span>
+                <strong>@(string.IsNullOrWhiteSpace(Model.DecisionDate) ? "—" : Model.DecisionDate)</strong>
+            </div>
+        </div>
+
+        @if (!string.IsNullOrWhiteSpace(Model.CaseStatus) || !string.IsNullOrWhiteSpace(Model.CaseStage) || !string.IsNullOrWhiteSpace(Model.Act))
+        {
+            <div class="row g-2 mb-3 small">
+                @if (!string.IsNullOrWhiteSpace(Model.CaseStatus))
+                {
+                    <div class="col-md-4">
+                        <span class="text-muted">Raw Status:</span>
+                        <span>@Model.CaseStatus</span>
+                    </div>
+                }
+                @if (!string.IsNullOrWhiteSpace(Model.CaseStage))
+                {
+                    <div class="col-md-4">
+                        <span class="text-muted">Stage:</span>
+                        <span>@Model.CaseStage</span>
+                    </div>
+                }
+                @if (!string.IsNullOrWhiteSpace(Model.Act))
+                {
+                    <div class="col-md-4">
+                        <span class="text-muted">Act:</span>
+                        <span>@Model.Act</span>
+                    </div>
+                }
+            </div>
+        }
+
+        <!-- Parties & Advocates -->
+        <div class="row g-3 mb-3">
+            <div class="col-md-6">
+                <div class="p-2 border rounded bg-white h-100">
+                    <div class="small fw-bold text-muted mb-1"><i class="bi bi-person me-1"></i>Petitioners</div>
+                    @if (Model.Petitioners.Count > 0)
+                    {
+                        <ul class="mb-1 ps-3 small">
+                            @foreach (var p in Model.Petitioners)
+                            {
+                                <li>@p</li>
+                            }
+                        </ul>
+                    }
+                    else
+                    {
+                        <div class="small text-muted fst-italic">Not recorded</div>
+                    }
+
+                    @if (Model.PetitionerAdvocates.Count > 0)
+                    {
+                        <div class="small text-muted mt-2">
+                            <strong>Advocate(s):</strong> @string.Join(", ", Model.PetitionerAdvocates)
+                        </div>
+                    }
+                </div>
+            </div>
+            <div class="col-md-6">
+                <div class="p-2 border rounded bg-white h-100">
+                    <div class="small fw-bold text-muted mb-1"><i class="bi bi-person-fill me-1"></i>Respondents</div>
+                    @if (Model.Respondents.Count > 0)
+                    {
+                        <ul class="mb-1 ps-3 small">
+                            @foreach (var r in Model.Respondents)
+                            {
+                                <li>@r</li>
+                            }
+                        </ul>
+                    }
+                    else
+                    {
+                        <div class="small text-muted fst-italic">Not recorded</div>
+                    }
+
+                    @if (Model.RespondentAdvocates.Count > 0)
+                    {
+                        <div class="small text-muted mt-2">
+                            <strong>Advocate(s):</strong> @string.Join(", ", Model.RespondentAdvocates)
+                        </div>
+                    }
+                </div>
+            </div>
+        </div>
+
+        <!-- Orders & Documents Table -->
+        <div class="mb-3">
+            <div class="d-flex align-items-center justify-content-between mb-2">
+                <span class="small fw-bold text-secondary text-uppercase">Orders &amp; Judgments (@Model.Orders.Count)</span>
+            </div>
+            @if (Model.Orders.Count > 0)
+            {
+                <div class="table-responsive">
+                    <table class="table table-sm table-hover align-middle mb-0 small border">
+                        <thead class="table-light">
+                            <tr>
+                                <th>Order Date</th>
+                                <th>Order Type</th>
+                                <th>Retrieval Status</th>
+                                <th class="text-end">Action</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var order in Model.Orders)
+                            {
+                                <tr>
+                                    <td>@(string.IsNullOrWhiteSpace(order.OrderDate) ? "—" : order.OrderDate)</td>
+                                    <td>@(string.IsNullOrWhiteSpace(order.OrderType) ? "Order" : order.OrderType)</td>
+                                    <td>
+                                        @switch (order.DocumentStatus)
+                                        {
+                                            case LitigationOrderDocumentStatus.Downloaded:
+                                                <span class="badge bg-success">Downloaded</span>
+                                                break;
+                                            case LitigationOrderDocumentStatus.Expired:
+                                                <span class="badge bg-danger">URL Expired</span>
+                                                <small class="text-muted ms-1">(Cannot be refetched individually; requires full search rerun)</small>
+                                                break;
+                                            case LitigationOrderDocumentStatus.Failed:
+                                                <span class="badge bg-secondary">Download Failed</span>
+                                                @if (!string.IsNullOrWhiteSpace(order.FailureReason))
+                                                {
+                                                    <small class="text-danger ms-1">@order.FailureReason</small>
+                                                }
+                                                break;
+                                            case LitigationOrderDocumentStatus.InProgress:
+                                                <span class="badge bg-info text-dark">Downloading</span>
+                                                break;
+                                            case LitigationOrderDocumentStatus.Pending:
+                                            default:
+                                                <span class="badge bg-light text-dark border">Pending Download</span>
+                                                break;
+                                        }
+                                    </td>
+                                    <td class="text-end">
+                                        @if (order.DocumentStatus == LitigationOrderDocumentStatus.Downloaded && order.LitigationOrderDocumentId.HasValue)
+                                        {
+                                            <a href="/Requests/@requestId/Litigation/Orders/@order.LitigationOrderDocumentId/download" class="btn btn-sm btn-outline-primary py-0 px-2" target="_blank">
+                                                <i class="bi bi-file-earmark-pdf me-1"></i>Download PDF
+                                            </a>
+                                        }
+                                        else if (order.DocumentStatus == LitigationOrderDocumentStatus.Expired)
+                                        {
+                                            <span class="text-muted small">URL Expired</span>
+                                        }
+                                        else
+                                        {
+                                            <span class="text-muted small">—</span>
+                                        }
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            }
+            else
+            {
+                <div class="text-muted small fst-italic p-2 border rounded bg-light">No order documents reported by vendor for this case.</div>
+            }
+        </div>
+
+        <!-- Gemini AI Case Analysis -->
+        <div class="border rounded p-3 bg-light">
+            <div class="d-flex align-items-center justify-content-between mb-2">
+                <span class="small fw-bold text-uppercase text-primary">
+                    <i class="bi bi-stars me-1"></i>Evidence-Grounded AI Analysis
+                </span>
+                @if (Model.Analysis is not null)
+                {
+                    <span class="badge @(Model.Analysis.Status == LitigationAiAnalysisItemStatus.Completed ? "bg-primary" : Model.Analysis.Status == LitigationAiAnalysisItemStatus.InsufficientEvidence ? "bg-warning text-dark" : "bg-danger")">
+                        @Model.Analysis.Status
+                    </span>
+                }
+            </div>
+
+            @if (Model.Analysis is null)
+            {
+                <div class="small text-muted">
+                    <i class="bi bi-hourglass-split me-1"></i><strong>Analysis Pending:</strong> Evidence-grounded AI analysis has not yet been executed for this case.
+                </div>
+            }
+            else
+            {
+                @if (Model.IsAnalysisStaleComparedToCase)
+                {
+                    <div class="alert alert-warning py-1 px-2 mb-2 small">
+                        <i class="bi bi-exclamation-triangle-fill me-1"></i><strong>Analysis Stale:</strong> This case was re-surfaced or mutated in a later search after this analysis completed (@(Model.Analysis.CompletedUtc?.ToString("dd-MMM-yyyy HH:mm")) UTC). Analysis reflects prior run evidence.
+                    </div>
+                }
+
+                @if (!string.IsNullOrWhiteSpace(Model.Analysis.Summary))
+                {
+                    <p class="small mb-2 text-dark">@Model.Analysis.Summary</p>
+                }
+
+                @if (Model.Analysis.Unknowns.Count > 0)
+                {
+                    <div class="mb-2">
+                        <div class="small fw-bold text-muted">Information Gaps / Unknowns:</div>
+                        <ul class="mb-0 ps-3 small text-muted">
+                            @foreach (var u in Model.Analysis.Unknowns)
+                            {
+                                <li>@u</li>
+                            }
+                        </ul>
+                    </div>
+                }
+
+                @if (Model.Analysis.Citations.Count > 0)
+                {
+                    <div class="small text-muted mt-2 pt-2 border-top">
+                        <strong>Evidence Citations:</strong> @string.Join(", ", Model.Analysis.Citations)
+                    </div>
+                }
+
+                @if (Model.Analysis.Status == LitigationAiAnalysisItemStatus.Failed && !string.IsNullOrWhiteSpace(Model.Analysis.FailureReason))
+                {
+                    <div class="small text-danger mt-1">
+                        <strong>Failure Reason:</strong> @Model.Analysis.FailureReason
+                    </div>
+                }
+            }
+        </div>
+    </div>
+    <div class="card-footer bg-light py-1 px-3 text-muted small d-flex justify-content-between align-items-center" style="font-size: 0.8rem;">
+        <span>Snapshot membership anchored; metadata reflects current database state.</span>
+        <span>First seen: @Model.FirstSeenUtc.ToString("dd-MMM-yyyy") &bull; Last seen: @Model.LastSeenUtc.ToString("dd-MMM-yyyy")</span>
+    </div>
+</div>
+

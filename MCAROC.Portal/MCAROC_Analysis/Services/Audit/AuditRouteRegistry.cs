@@ -62,6 +62,7 @@ public static class AuditRouteRegistry
 
             // Litigation
             { ("Litigation", "StartAnalysis"), (AuditActionType.LitigationAnalysisRequested, AuditRulePolicy.Always) },
+            { ("Litigation", "StartSearch"), (AuditActionType.LitigationSearchRequested, AuditRulePolicy.Always) },
         };
 
     public static (AuditActionType ActionType, AuditRulePolicy Policy) Resolve(string controller, string action)
