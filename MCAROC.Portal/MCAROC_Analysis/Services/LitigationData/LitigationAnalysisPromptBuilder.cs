@@ -49,6 +49,16 @@ public static class LitigationAnalysisPromptBuilder
             """;
     }
 
+    public static string BuildPortfolioPrompt(string persistedCaseAnalysesJson) => $$"""
+        You are preparing a portfolio-level litigation synthesis. Use only the persisted, validated case
+        analyses below. Do not add a fact, outcome, trend, or risk conclusion not supported by an exact
+        caseAnalysisId. Failed and InsufficientEvidence entries are unknowns, not negative findings.
+        Respond only with JSON:
+        {"status":"Completed|InsufficientEvidence","summary":"string","unknowns":["string"],"caseAnalysisIds":[1]}
+        Persisted case analyses:
+        {{persistedCaseAnalysesJson}}
+        """;
+
     private static string Truncate(string text, int maxChars) => text.Length <= maxChars ? text : text[..maxChars];
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
 }

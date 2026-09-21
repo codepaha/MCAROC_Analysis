@@ -6,6 +6,18 @@ namespace MCAROC_Analysis.Services.LitigationData;
 /// persisted with the prompt. This makes a citation a real database address, not model-authored decoration.</summary>
 public static class LitigationAnalysisResponseValidator
 {
+    public static LitigationAnalysisValidationResult ValidatePortfolio(string rawJson, ISet<long> allowedIds)
+    {
+        PortfolioResponse? response;
+        try { response = JsonSerializer.Deserialize<PortfolioResponse>(rawJson, Options); }
+        catch (JsonException ex) { return LitigationAnalysisValidationResult.Rejected($"Invalid JSON: {ex.Message}"); }
+        if (response is null || response.Status is not ("Completed" or "InsufficientEvidence") || string.IsNullOrWhiteSpace(response.Summary))
+            return LitigationAnalysisValidationResult.Rejected("Missing or unsupported portfolio status/summary.");
+        var ids = response.CaseAnalysisIds ?? [];
+        if (response.Status == "Completed" && ids.Count == 0) return LitigationAnalysisValidationResult.Rejected("Completed portfolio output has no case references.");
+        if (ids.Any(id => !allowedIds.Contains(id))) return LitigationAnalysisValidationResult.Rejected("Portfolio referenced analysis not persisted with this run.");
+        return LitigationAnalysisValidationResult.Accepted(JsonSerializer.Serialize(response, Options));
+    }
     public static LitigationAnalysisValidationResult ValidateCase(string rawJson, LitigationAnalysisEvidence evidence)
     {
         CaseResponse? response;
@@ -29,6 +41,7 @@ public static class LitigationAnalysisResponseValidator
     private static readonly JsonSerializerOptions Options = new() { PropertyNameCaseInsensitive = true, PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
     private sealed record CaseResponse(string? Status, string? Summary, List<string>? Unknowns, List<EvidenceReference>? EvidenceReferences);
     private sealed record EvidenceReference(long LitigationCaseOrderId, long LitigationOrderDocumentId, int PageNumber, int ChunkIndex);
+    private sealed record PortfolioResponse(string? Status, string? Summary, List<string>? Unknowns, List<long>? CaseAnalysisIds);
 }
 
 public sealed record LitigationAnalysisValidationResult(bool IsAccepted, string? AnalysisJson, string? RejectReason)

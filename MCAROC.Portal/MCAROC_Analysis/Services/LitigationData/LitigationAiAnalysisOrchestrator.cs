@@ -91,12 +91,35 @@ public sealed class LitigationAiAnalysisOrchestrator(
                 item.Status = valid.IsAccepted ? LitigationAiAnalysisItemStatus.Completed : LitigationAiAnalysisItemStatus.Failed;
                 item.AnalysisJson = valid.AnalysisJson; item.FailureReason = valid.RejectReason; item.CompletedUtc = DateTime.UtcNow;
             }
-            var evidenceForPortfolio = JsonSerializer.Serialize(db.LitigationCaseAiAnalyses.Local.Select(x => new { x.LitigationCaseId, x.Status, x.AnalysisJson, x.EvidenceHash }));
-            db.LitigationPortfolioAiAnalyses.Add(new LitigationPortfolioAiAnalysis { LitigationAiAnalysisRunId = runId,
-                Status = LitigationAiAnalysisItemStatus.InsufficientEvidence, EvidenceJson = evidenceForPortfolio,
-                EvidenceHash = LitigationAnalysisPromptBuilder.ComputeHash(evidenceForPortfolio), PromptHash = LitigationAnalysisPromptBuilder.ComputeHash(evidenceForPortfolio),
-                AnalysisJson = "{\"status\":\"InsufficientEvidence\",\"summary\":\"Portfolio synthesis is not generated without separately validated cross-case evidence.\",\"unknowns\":[\"Cross-case synthesis pending\"],\"evidenceReferences\":[]}", CompletedUtc = DateTime.UtcNow });
-            run.Status = db.LitigationCaseAiAnalyses.Local.Any(x => x.Status == LitigationAiAnalysisItemStatus.Failed)
+            // Persist case outputs before the synthesis prompt is built: its allowed reference set consists
+            // of database identities, never temporary in-memory rows or unvalidated raw model text.
+            await db.SaveChangesAsync(ct);
+            var persistedCases = await db.LitigationCaseAiAnalyses.Where(x => x.LitigationAiAnalysisRunId == runId)
+                .OrderBy(x => x.LitigationCaseAiAnalysisId).ToListAsync(ct);
+            var evidenceForPortfolio = JsonSerializer.Serialize(persistedCases.Select(x => new { x.LitigationCaseAiAnalysisId, x.LitigationCaseId, x.Status, x.AnalysisJson, x.EvidenceHash }));
+            var portfolioPrompt = LitigationAnalysisPromptBuilder.BuildPortfolioPrompt(evidenceForPortfolio);
+            var portfolio = new LitigationPortfolioAiAnalysis { LitigationAiAnalysisRunId = runId,
+                EvidenceJson = evidenceForPortfolio, EvidenceHash = LitigationAnalysisPromptBuilder.ComputeHash(evidenceForPortfolio),
+                PromptHash = LitigationAnalysisPromptBuilder.ComputeHash(portfolioPrompt) };
+            var usable = persistedCases.Where(x => x.Status == LitigationAiAnalysisItemStatus.Completed).Select(x => x.LitigationCaseAiAnalysisId).ToHashSet();
+            if (usable.Count == 0)
+            {
+                portfolio.Status = LitigationAiAnalysisItemStatus.InsufficientEvidence;
+                portfolio.AnalysisJson = "{\"status\":\"InsufficientEvidence\",\"summary\":\"No completed evidence-grounded case analysis is available for synthesis.\",\"unknowns\":[\"Case analyses unavailable\"],\"caseAnalysisIds\":[]}";
+            }
+            else
+            {
+                var response = await client.CallAsync(portfolioPrompt, Options.TimeoutSeconds, ct);
+                portfolio.RawResponseJson = response.RawResponse;
+                portfolio.ResponseHash = string.IsNullOrWhiteSpace(response.RawResponse) ? null : LitigationAnalysisPromptBuilder.ComputeHash(response.RawResponse);
+                var valid = response.Success ? LitigationAnalysisResponseValidator.ValidatePortfolio(response.RawResponse, usable)
+                    : LitigationAnalysisValidationResult.Rejected(response.FailureReason ?? "Portfolio AI call failed.");
+                portfolio.Status = valid.IsAccepted ? LitigationAiAnalysisItemStatus.Completed : LitigationAiAnalysisItemStatus.Failed;
+                portfolio.AnalysisJson = valid.AnalysisJson; portfolio.FailureReason = valid.RejectReason;
+            }
+            portfolio.CompletedUtc = DateTime.UtcNow;
+            db.LitigationPortfolioAiAnalyses.Add(portfolio);
+            run.Status = persistedCases.Any(x => x.Status == LitigationAiAnalysisItemStatus.Failed) || portfolio.Status == LitigationAiAnalysisItemStatus.Failed
                 ? LitigationAiAnalysisRunStatus.CompletedWithErrors : LitigationAiAnalysisRunStatus.Completed;
             run.CompletedUtc = DateTime.UtcNow; run.LeaseToken = null; run.LeaseExpiresUtc = null;
             await db.SaveChangesAsync(ct);

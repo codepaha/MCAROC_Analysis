@@ -42,4 +42,13 @@ public sealed class LitigationAnalysisPromptBuilderTests
             """, evidence);
         Assert.True(result.IsAccepted);
     }
+
+    [Fact]
+    public void PortfolioValidator_RejectsCaseAnalysisOutsidePersistedRun()
+    {
+        var result = LitigationAnalysisResponseValidator.ValidatePortfolio("""
+            {"status":"Completed","summary":"Trend","unknowns":[],"caseAnalysisIds":[999]}
+            """, new HashSet<long> { 7 });
+        Assert.False(result.IsAccepted);
+    }
 }
