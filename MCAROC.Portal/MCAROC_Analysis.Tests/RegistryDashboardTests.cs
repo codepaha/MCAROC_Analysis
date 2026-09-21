@@ -788,15 +788,25 @@ public class RegistryDashboardTests : IAsyncLifetime
             FileRegistrySnapshotStore.ValidatePreflight(servicesEmpty, prodEnv));
         Assert.Contains("RegistrySnapshotStore:Root must be explicitly configured", exMissing.Message);
 
-        // 2. Production with inaccessible Root fails closed
-        var invalidOpts = Options.Create(new RegistrySnapshotStoreOptions { Root = "Z:\\invalid_non_existent_mount\\forbidden" });
-        var servicesInvalid = new ServiceCollection()
-            .AddSingleton(invalidOpts)
-            .BuildServiceProvider();
+        // 2. Production with inaccessible Root fails closed (nested under a file, fails on all OSes)
+        string blockingFile = Path.Combine(Path.GetTempPath(), $"mcaroc_blocking_file_{Guid.NewGuid():N}.tmp");
+        File.WriteAllText(blockingFile, "block");
+        try
+        {
+            string invalidPath = Path.Combine(blockingFile, "forbidden_subfolder");
+            var invalidOpts = Options.Create(new RegistrySnapshotStoreOptions { Root = invalidPath });
+            var servicesInvalid = new ServiceCollection()
+                .AddSingleton(invalidOpts)
+                .BuildServiceProvider();
 
-        var exInaccessible = Assert.Throws<InvalidOperationException>(() =>
-            FileRegistrySnapshotStore.ValidatePreflight(servicesInvalid, prodEnv));
-        Assert.Contains("preflight failed", exInaccessible.Message);
+            var exInaccessible = Assert.Throws<InvalidOperationException>(() =>
+                FileRegistrySnapshotStore.ValidatePreflight(servicesInvalid, prodEnv));
+            Assert.Contains("preflight failed", exInaccessible.Message);
+        }
+        finally
+        {
+            try { File.Delete(blockingFile); } catch { }
+        }
 
         // 3. Development environment with empty Root resolves default without error
         string devRoot = FileRegistrySnapshotStore.ResolveRootPath(new RegistrySnapshotStoreOptions(), devEnv);
