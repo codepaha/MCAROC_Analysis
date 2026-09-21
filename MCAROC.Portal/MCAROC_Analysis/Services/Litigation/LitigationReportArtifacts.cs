@@ -39,16 +39,18 @@ public static class LitigationOrderAvailabilityResolver
         if (doc is null)
             return (LitigationOrderAvailabilityBucket.Pending, "Retrieval pending", "Pending", extractionLabel);
 
-        // Downloaded file is retained locally — permanent portal availability takes precedence
+        // Downloaded file is retained locally — permanent portal availability takes precedence over vendor deadline.
+        // RetainedUntilUtc is the vendor API retrieval deadline, NOT the local storage expiry.
+        // We label it as "vendor deadline" to avoid implying the file disappears after that date.
         if (doc.Status == LitigationOrderDocumentStatus.Downloaded)
         {
-            var dateStr = doc.RetainedUntilUtc > DateTime.MinValue
-                ? $" (retained until {doc.RetainedUntilUtc:dd-MMM-yyyy})"
+            var deadlineStr = doc.RetainedUntilUtc > DateTime.MinValue
+                ? $" (vendor deadline: {doc.RetainedUntilUtc:dd-MMM-yyyy})"
                 : string.Empty;
             var textNote = doc.TextExtractionStatus == FilingDocumentProcessingStatus.TextExtracted
                 ? "; text extracted"
                 : string.Empty;
-            return (LitigationOrderAvailabilityBucket.Downloaded, $"Available via portal{dateStr}{textNote}", "Downloaded", extractionLabel);
+            return (LitigationOrderAvailabilityBucket.Downloaded, $"Available via portal{deadlineStr}{textNote}", "Downloaded", extractionLabel);
         }
 
         bool isExpired = doc.Status == LitigationOrderDocumentStatus.Expired

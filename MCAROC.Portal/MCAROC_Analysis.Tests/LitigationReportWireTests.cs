@@ -633,4 +633,125 @@ public sealed class LitigationReportWireTests : IAsyncLifetime
         Assert.Contains("LitigationReport_HEADER_TEST_CO_", response.Headers.ContentDisposition.ToString());
         Assert.Contains(".pdf", response.Headers.ContentDisposition.ToString());
     }
+    // ── 7. Court-Grid Grouping Parity (one court → one row, category from first non-null) ─────
+
+    [Fact]
+    public async Task AssembleAsync_CourtGrid_GroupsByCourtNameOnly_MatchesPortalBehavior()
+    {
+        await using var db = CreateContext();
+        var client = new Client { ClientCode = "CG" + Guid.NewGuid().ToString("N")[..6], ClientName = "Grid Parity Co", CreatedDate = DateTime.UtcNow };
+        db.Clients.Add(client);
+        var request = new McaRequest { Client = client, CompanyName = "Grid Parity Co", RequestNumber = $"REQ-CG-{Guid.NewGuid():N}", CreatedDate = DateTime.UtcNow };
+        db.Requests.Add(request);
+        await db.SaveChangesAsync();
+
+        var job = new LitigationSearchJob
+        {
+            RequestId = request.RequestId,
+            KeywordsJson = "[{\"Value\":\"Grid Parity Co\",\"Source\":0}]",
+            Status = LitigationSearchJobStatus.Completed,
+            RawResponseHash = "hash-cg-001",
+            CreatedUtc = DateTime.UtcNow,
+            CompletedUtc = DateTime.UtcNow
+        };
+        db.LitigationSearchJobs.Add(job);
+        await db.SaveChangesAsync();
+
+        var snapshot = new LitigationReportSnapshot
+        {
+            LitigationSearchJobId = job.LitigationSearchJobId,
+            ReportHash = "hash-cg-001",
+            Status = LitigationReportSnapshotStatus.Completed,
+            RetrievedUtc = DateTime.UtcNow,
+            CreatedUtc = DateTime.UtcNow,
+            CompletedUtc = DateTime.UtcNow
+        };
+        db.LitigationReportSnapshots.Add(snapshot);
+        await db.SaveChangesAsync();
+
+        // Same court name "High Court of Delhi" but two different CourtCategory values.
+        // The portal groups by court name only and picks the first non-null category.
+        // The assembler must produce exactly ONE row for "High Court of Delhi".
+        var cases = new List<LitigationCase>
+        {
+            new() { RequestId = request.RequestId, CaseNumber = "CG-001", Court = "High Court of Delhi", CourtCategory = "high_court",    CaseStatus = "Pending",  FirstSeenUtc = DateTime.UtcNow, LastSeenUtc = DateTime.UtcNow },
+            new() { RequestId = request.RequestId, CaseNumber = "CG-002", Court = "High Court of Delhi", CourtCategory = "high_court",    CaseStatus = "Disposed", FirstSeenUtc = DateTime.UtcNow, LastSeenUtc = DateTime.UtcNow },
+            new() { RequestId = request.RequestId, CaseNumber = "CG-003", Court = "High Court of Delhi", CourtCategory = null,           CaseStatus = "Pending",  FirstSeenUtc = DateTime.UtcNow, LastSeenUtc = DateTime.UtcNow },
+            new() { RequestId = request.RequestId, CaseNumber = "CG-004", Court = "NCLT Delhi",          CourtCategory = "tribunal",      CaseStatus = "Pending",  FirstSeenUtc = DateTime.UtcNow, LastSeenUtc = DateTime.UtcNow },
+        };
+        db.LitigationCases.AddRange(cases);
+        await db.SaveChangesAsync();
+
+        foreach (var c in cases)
+        {
+            db.LitigationCaseSourceReports.Add(new LitigationCaseSourceReport
+            {
+                LitigationCaseId = c.LitigationCaseId,
+                LitigationReportSnapshotId = snapshot.LitigationReportSnapshotId,
+                FirstSeenUtc = DateTime.UtcNow
+            });
+        }
+        await db.SaveChangesAsync();
+
+        var assembler = new LitigationReportAssembler(db);
+        var report = await assembler.AssembleAsync(request.RequestId);
+
+        Assert.NotNull(report);
+        Assert.Equal(4, report.CourtSummaryGrid.TotalCases);
+        Assert.Equal(2, report.CourtSummaryGrid.Rows.Count); // "High Court of Delhi" (3 cases) + "NCLT Delhi" (1 case)
+        Assert.True(report.CourtSummaryGrid.IsReconciled);
+
+        var hcRow = report.CourtSummaryGrid.Rows.Single(r => r.CourtName == "High Court of Delhi");
+        Assert.Equal(3, hcRow.TotalCases);
+        Assert.Equal(1, hcRow.DisposedCases);
+        Assert.Equal(2, hcRow.PendingCases);
+        // Category comes from first non-null value in the group
+        Assert.Equal("high_court", hcRow.CourtCategory);
+
+        var ncltRow = report.CourtSummaryGrid.Rows.Single(r => r.CourtName == "NCLT Delhi");
+        Assert.Equal(1, ncltRow.TotalCases);
+        Assert.Equal("tribunal", ncltRow.CourtCategory);
+    }
+
+    // ── 8. Downloaded Disclosure Does Not Imply Availability Expiry ──────────
+
+    [Fact]
+    public void Resolver_Downloaded_DisclosureLabelsVendorDeadline_NotAvailabilityEnd()
+    {
+        var futureDeadline = DateTime.UtcNow.AddDays(10);
+        var pastDeadline = DateTime.UtcNow.AddDays(-10);
+
+        // Downloaded + future vendor deadline
+        var doc1 = new LitigationOrderDocument
+        {
+            Status = LitigationOrderDocumentStatus.Downloaded,
+            RetainedUntilUtc = futureDeadline,
+            TextExtractionStatus = FilingDocumentProcessingStatus.TextExtracted
+        };
+        var (bucket1, disclosure1, _, _) = LitigationOrderAvailabilityResolver.Resolve(doc1, DateTime.UtcNow);
+        Assert.Equal(LitigationOrderAvailabilityBucket.Downloaded, bucket1);
+        Assert.Contains("vendor deadline", disclosure1, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("retained until", disclosure1, StringComparison.OrdinalIgnoreCase);
+
+        // Downloaded + PAST vendor deadline → still Downloaded (local copy retained)
+        var doc2 = new LitigationOrderDocument
+        {
+            Status = LitigationOrderDocumentStatus.Downloaded,
+            RetainedUntilUtc = pastDeadline,
+            TextExtractionStatus = null
+        };
+        var (bucket2, disclosure2, _, _) = LitigationOrderAvailabilityResolver.Resolve(doc2, DateTime.UtcNow);
+        Assert.Equal(LitigationOrderAvailabilityBucket.Downloaded, bucket2);
+        Assert.Contains("Available via portal", disclosure2, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("retained until", disclosure2, StringComparison.OrdinalIgnoreCase);
+
+        // NOT Downloaded + past deadline → Expired
+        var doc3 = new LitigationOrderDocument
+        {
+            Status = LitigationOrderDocumentStatus.Pending,
+            RetainedUntilUtc = pastDeadline
+        };
+        var (bucket3, _, _, _) = LitigationOrderAvailabilityResolver.Resolve(doc3, DateTime.UtcNow);
+        Assert.Equal(LitigationOrderAvailabilityBucket.Expired, bucket3);
+    }
 }

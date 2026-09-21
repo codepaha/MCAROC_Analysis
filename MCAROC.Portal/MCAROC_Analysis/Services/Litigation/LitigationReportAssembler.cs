@@ -234,14 +234,14 @@ public class LitigationReportAssembler(
         }
 
         // Build Court Summary Grid
+        // Group by normalized court name ONLY — matching RequestsController.cs L755.
+        // Category is derived deterministically by picking the first non-null value in the group,
+        // identical to the portal's g.Select(x => x.CourtCategory).FirstOrDefault(cat => cat != null && cat != "").
         var courtGrid = new LitigationCourtSummaryGrid();
         var courtGroups = reportCases
-            .GroupBy(c => new
-            {
-                Court = string.IsNullOrWhiteSpace(c.Court) ? "Unspecified Court" : c.Court.Trim(),
-                Category = c.CourtCategory
-            })
-            .OrderBy(g => g.Key.Court);
+            .GroupBy(c => string.IsNullOrWhiteSpace(c.Court) ? "Unspecified Court" : c.Court.Trim(),
+                     StringComparer.Ordinal)
+            .OrderBy(g => g.Key, StringComparer.OrdinalIgnoreCase);
 
         foreach (var g in courtGroups)
         {
@@ -249,6 +249,11 @@ public class LitigationReportAssembler(
             int disposed = 0;
             int unknown = 0;
             int ordersCount = 0;
+
+            // Deterministic category: first non-null/non-empty value in the group
+            string? groupCategory = g
+                .Select(c => c.CourtCategory)
+                .FirstOrDefault(cat => !string.IsNullOrEmpty(cat));
 
             foreach (var item in g)
             {
@@ -264,8 +269,8 @@ public class LitigationReportAssembler(
 
             courtGrid.Rows.Add(new LitigationCourtSummaryRow
             {
-                CourtName = g.Key.Court,
-                CourtCategory = g.Key.Category,
+                CourtName = g.Key,
+                CourtCategory = groupCategory,
                 TotalCases = g.Count(),
                 PendingCases = pending,
                 DisposedCases = disposed,
