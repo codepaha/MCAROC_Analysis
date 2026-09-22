@@ -77,12 +77,23 @@ jobs:
   #    ToUnicode data PdfPig needs, so those assertions only run truthfully on Windows.
   windows-tests:
     runs-on: [self-hosted, windows, mcaroc]
-    # This runner's integration tests share one SQLEXPRESS instance and its test database. Keep
-    # Windows-only jobs from different PRs from creating/migrating that database concurrently;
-    # cancel-in-progress must remain false so an active validation is allowed to finish.
+    # This runner's integration tests share one SQLEXPRESS instance. The applock in TestDatabase.cs
+    # coordinates callers running this same, current code, but cannot coordinate an old/uncoordinated
+    # local checkout or a leftover local test process on this machine hammering the same fixed database
+    # name (root-caused live on this exact PR: three consecutive hosted runs failed identically with
+    # "Database already exists" from inside EF's own MigrateAsync, for ~100s across ~27 tests — the
+    # signature of a persistent colliding process, not a short creation race the applock already
+    # handles). Fix: this job never touches the shared MCAROC_Analysis_Test name at all — every run gets
+    # its own catalog, so no other process (CI or local) can ever collide with it again. cancel-in-progress
+    # stays false so an active validation is allowed to finish.
     concurrency:
       group: mcaroc-self-hosted-sqlexpress-tests
       cancel-in-progress: false
+    env:
+      # Unique per run+attempt, never reused — a re-run of the same run gets a fresh attempt number, so
+      # a prior attempt's (possibly still-cleaning-up) database is never revisited either.
+      MCAROC_TEST_CATALOG: MCAROC_Analysis_CI_${{ github.run_id }}_${{ github.run_attempt }}
+      MCAROC_TEST_CONNECTION: 'Server=.\SQLEXPRESS;Database=MCAROC_Analysis_CI_${{ github.run_id }}_${{ github.run_attempt }};Trusted_Connection=True;TrustServerCertificate=True;Encrypt=False;'
     steps:
       - uses: actions/checkout@v4
 
@@ -99,7 +110,23 @@ jobs:
       - name: Reconciliation + PDF text-extraction tests
         # MCAROC_RECON_FIXTURES points SourceReconciliationTests at the two real .xls workbooks on
         # this runner. Override the location with the repo variable RECON_FIXTURES_DIR; the tests
-        # skip (never fail) if the files are absent.
+        # skip (never fail) if the files are absent. MCAROC_TEST_CONNECTION (job env, above) points
+        # every test in this run at its own run-scoped database — see the concurrency block's comment.
         env:
           MCAROC_RECON_FIXTURES: ${{ vars.RECON_FIXTURES_DIR || 'E:\Downloads' }}
         run: dotnet test MCAROC.Portal/MCAROC_Analysis.Tests/MCAROC_Analysis.Tests.csproj --no-build --configuration Release --filter "FullyQualifiedName~SourceReconciliation|FullyQualifiedName~DossierFontsTests|FullyQualifiedName~DossierPdfComposerTests"
+
+      - name: Drop this run's scoped test database
+        # Always runs, even if the test step failed, so a run-scoped database never lingers. Validates
+        # the CI-generated prefix before dropping anything, on principle — MCAROC_TEST_CATALOG is built
+        # entirely from this job's own env above, never external input, but the check costs nothing and
+        # makes it impossible for this step to ever target the shared MCAROC_Analysis_Test database (or
+        # anything else) by a future refactor accidentally widening what it points at.
+        if: always()
+        shell: pwsh
+        run: |
+          $dbName = $env:MCAROC_TEST_CATALOG
+          if ($dbName -notlike 'MCAROC_Analysis_CI_*') {
+            throw "Refusing to drop '$dbName' — does not match the expected CI-run-scoped prefix."
+          }
+          sqlcmd -S ".\SQLEXPRESS" -d master -Q "IF DB_ID(N'$dbName') IS NOT NULL BEGIN ALTER DATABASE [$dbName] SET SINGLE_USER WITH ROLLBACK IMMEDIATE; DROP DATABASE [$dbName]; END"
