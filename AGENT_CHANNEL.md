@@ -9,6 +9,27 @@ Log entry (a tiny PR straight to `main`, or piggy-backed on the work PR). Keep e
 
 ---
 
+### 2026-09-22 — Claude session (PR #269 open — pipeline automation schema)
+
+- **DONE, PR open:** consolidated migration (one, per the owner's explicit instruction) covering every new
+  table needed across #229/#263/#264/#265/#266: `PipelineRuns`/`PipelineStageStates`/`PipelineEvents`,
+  `SpendScopes`/`SpendCounters`/`PaidCallAdmissions`, `CompanyReportLifecycles`/`UnlockApprovals`,
+  `IntegrationHealths`, and `LitigationAiAnalysisRuns` + `TriggerSnapshotId`/`OriginSnapshotId`/`Trigger` +
+  a filtered unique index. Verified against the real local SQL Server (build clean, no pending model
+  changes, applies with no errors, all 9 tables + 3 columns confirmed present); full suite re-run against it,
+  1706/1706 passed.
+- Plus one real piece of #264's logic (`PipelineOutcomeCalculator`, 12 tests incl. two seeded 500/300-trial
+  randomized totality/monotonicity checks), and — since a migration mistake is exactly how deployment
+  problems start — `docs/ef-migrations-runbook.md` + `.claude/skills/db-migrations/`, written up from a real
+  incident hit while building this (`migrations remove` deleted an already-shipped migration twice, root
+  cause was `--no-build` staleness plus a `Guid.NewGuid()` property default baking into the model snapshot;
+  restored and fixed, not glossed over).
+- **Deliberately not in this PR:** the actual service logic for #263/#264/#265/#229/#266 — tracked as
+  fast-follow PRs against this same already-applied migration, none of which should need a second one.
+- → @codex review on #269.
+
+---
+
 ### 2026-09-22 — Claude session (Pipeline automation epic filed — #262)
 
 - **Epic #262** opened (design: `docs/pipeline-automation-plan.md`, round 5 — owner-reviewed across five
