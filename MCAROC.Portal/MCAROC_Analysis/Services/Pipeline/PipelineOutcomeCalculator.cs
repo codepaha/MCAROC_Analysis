@@ -25,18 +25,33 @@ public static class PipelineOutcomeCalculator
     ];
 
     /// <summary>A core stage counts as done when it succeeded (with or without warnings) OR when it was
-    /// legitimately skipped (e.g. <c>Unlock</c>/<c>Refresh</c>/<c>Fetch</c> are <c>Skipped(MANUAL_SOURCE)</c>
-    /// for a manual-upload request, per §3.3) — a manual-upload pipeline must still be able to reach
-    /// <see cref="PipelineOutcome.CoreReady"/>/<see cref="PipelineOutcome.Complete"/>, not sit in
-    /// <see cref="PipelineOutcome.InProgress"/> forever because a stage that never runs for it never
-    /// "succeeds" either. Deliberately narrower than <see cref="IsTerminal"/>: a per-stage <see
+    /// skipped for a documented, policy-sanctioned *neutral* reason — e.g. <c>Unlock</c>/<c>Refresh</c>/
+    /// <c>Fetch</c> are <c>Skipped(MANUAL_SOURCE)</c> for a manual-upload request, per §3.3 — so that
+    /// pipeline can still reach <see cref="PipelineOutcome.CoreReady"/>/<see cref="PipelineOutcome.Complete"/>
+    /// instead of sitting in <see cref="PipelineOutcome.InProgress"/> forever because a stage that never
+    /// runs for it never "succeeds" either.
+    ///
+    /// A <em>warning</em>-kind skip on a core stage does **not** count as done: nothing in the documented
+    /// design ever puts a core stage in `Skipped(Warning)` — if one is ever observed, it means something
+    /// unexpected happened to a stage the pipeline cannot treat as optional, and silently letting it satisfy
+    /// core completion would smuggle a real problem past the reviewer. The same applies to a `Skipped` state
+    /// with no recorded skip kind at all (a null <see cref="PipelineStageSkipKind"/>) — treated exactly like
+    /// `Warning`, fail closed rather than assume it was fine.
+    ///
+    /// Deliberately narrower than <see cref="IsTerminal"/> in a second way too: a per-stage <see
     /// cref="PipelineStageStateKind.Cancelled"/> core stage must NOT count as done (the run was aborted, not
     /// completed) — <see cref="PipelineStageStateKind.NeedsAttention"/> never reaches this check at all,
     /// since row 2 in <see cref="Aggregate"/> already short-circuits on it first.</summary>
-    private static bool SatisfiesCoreCompletion(PipelineStageStateKind state) => state is
-        PipelineStageStateKind.Succeeded or
-        PipelineStageStateKind.SucceededWithWarnings or
-        PipelineStageStateKind.Skipped;
+    private static bool SatisfiesCoreCompletion(PipelineStageStateKind state, PipelineStageSkipKind? skipKind) =>
+        state is PipelineStageStateKind.Succeeded or PipelineStageStateKind.SucceededWithWarnings ||
+        (state == PipelineStageStateKind.Skipped && skipKind == PipelineStageSkipKind.Neutral);
+
+    private static bool CoreDone(
+        IReadOnlyDictionary<PipelineStage, PipelineStageStateKind> states,
+        IReadOnlyDictionary<PipelineStage, PipelineStageSkipKind?> skipKinds) =>
+        CoreStages.All(stage =>
+            states.TryGetValue(stage, out var s) &&
+            SatisfiesCoreCompletion(s, skipKinds.TryGetValue(stage, out var k) ? k : null));
 
     /// <param name="states">Every stage's current kind for this run — a stage never evaluated is expected
     /// to be present as <see cref="PipelineStageStateKind.NotStarted"/>, not absent, so this function stays
@@ -57,7 +72,7 @@ public static class PipelineOutcomeCalculator
         if (states.Values.Any(s => s == PipelineStageStateKind.NeedsAttention))
             return PipelineOutcome.NeedsAttention;
 
-        var coreDone = CoreStages.All(stage => states.TryGetValue(stage, out var s) && SatisfiesCoreCompletion(s));
+        var coreDone = CoreDone(states, skipKinds);
         var anyNonTerminal = states.Values.Any(s => !IsTerminal(s));
 
         // Row 3: core done, something else (an enrichment stage) still in flight -> CoreReady, not blocked.
@@ -67,10 +82,13 @@ public static class PipelineOutcomeCalculator
         if (!coreDone) return PipelineOutcome.InProgress;
 
         // Rows 5/6: every stage terminal (implied by coreDone && !anyNonTerminal). Split on whether any
-        // stage carries a warning — SucceededWithWarnings, or a Skipped stage whose SkipKind is Warning.
+        // stage carries a warning — SucceededWithWarnings, or a Skipped stage whose SkipKind is Warning (or
+        // absent — see SatisfiesCoreCompletion's doc comment on why a missing kind is treated as a warning,
+        // not assumed neutral).
         var anyWarning = states.Any(kv =>
             kv.Value == PipelineStageStateKind.SucceededWithWarnings ||
-            (kv.Value == PipelineStageStateKind.Skipped && skipKinds.TryGetValue(kv.Key, out var k) && k == PipelineStageSkipKind.Warning));
+            (kv.Value == PipelineStageStateKind.Skipped &&
+                (!skipKinds.TryGetValue(kv.Key, out var k) || k != PipelineStageSkipKind.Neutral)));
 
         return anyWarning ? PipelineOutcome.CompleteWithWarnings : PipelineOutcome.Complete;
     }
@@ -81,6 +99,8 @@ public static class PipelineOutcomeCalculator
     /// cref="PipelineRun.CoreReadyUtc"/> and never clear it afterward, even if the outcome later becomes
     /// <see cref="PipelineOutcome.NeedsAttention"/> from an enrichment stage. This function only answers
     /// "is it true right now" — the once-only persistence is the reconciler's job, not this one's.</summary>
-    public static bool IsCoreReady(IReadOnlyDictionary<PipelineStage, PipelineStageStateKind> states) =>
-        CoreStages.All(stage => states.TryGetValue(stage, out var s) && SatisfiesCoreCompletion(s));
+    public static bool IsCoreReady(
+        IReadOnlyDictionary<PipelineStage, PipelineStageStateKind> states,
+        IReadOnlyDictionary<PipelineStage, PipelineStageSkipKind?> skipKinds) =>
+        CoreDone(states, skipKinds);
 }

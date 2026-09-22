@@ -86,6 +86,8 @@ public class PipelineOutcomeCalculatorTests
     [Fact]
     public void EverythingTerminalWithOneWarningKindSkip_IsCompleteWithWarnings()
     {
+        // An enrichment stage (Litigation, not a core stage) skipped with a Warning kind — unaffected by the
+        // core-completion gating below, still folds into CompleteWithWarnings as before.
         var states = AllCoreSucceeded(PipelineStageStateKind.Succeeded);
         states[PipelineStage.Litigation] = PipelineStageStateKind.Skipped;
         var skips = NoSkips.ToDictionary(kv => kv.Key, kv => kv.Key == PipelineStage.Litigation
@@ -98,19 +100,19 @@ public class PipelineOutcomeCalculatorTests
     public void IsCoreReady_FalseUntilEveryCoreStageSucceeds()
     {
         var states = AllCoreSucceeded();
-        Assert.True(PipelineOutcomeCalculator.IsCoreReady(states));
+        Assert.True(PipelineOutcomeCalculator.IsCoreReady(states, NoSkips));
 
         states[PipelineStage.Dossier] = PipelineStageStateKind.Running;
-        Assert.False(PipelineOutcomeCalculator.IsCoreReady(states));
+        Assert.False(PipelineOutcomeCalculator.IsCoreReady(states, NoSkips));
     }
 
     [Fact]
     public void ManualUploadRequest_SkippedUnlockRefreshFetch_StillReachesComplete()
     {
         // Regression for a real P1: a manual-upload request has Unlock/Refresh/Fetch Skipped(MANUAL_SOURCE)
-        // forever, not Succeeded — core completion must accept a legitimately-Skipped core stage as done, or
-        // this pipeline sits in InProgress permanently even after Ingest/Analysis/CalcAssurance/Dossier all
-        // genuinely succeed.
+        // forever, not Succeeded — core completion must accept a legitimately-Skipped(Neutral) core stage as
+        // done, or this pipeline sits in InProgress permanently even after Ingest/Analysis/CalcAssurance/
+        // Dossier all genuinely succeed.
         var states = AllStages.ToDictionary(s => s, _ => PipelineStageStateKind.Succeeded);
         states[PipelineStage.Unlock] = PipelineStageStateKind.Skipped;
         states[PipelineStage.Refresh] = PipelineStageStateKind.Skipped;
@@ -118,8 +120,36 @@ public class PipelineOutcomeCalculatorTests
         var skips = NoSkips.ToDictionary(kv => kv.Key, kv =>
             states[kv.Key] == PipelineStageStateKind.Skipped ? (PipelineStageSkipKind?)PipelineStageSkipKind.Neutral : null);
 
-        Assert.True(PipelineOutcomeCalculator.IsCoreReady(states));
+        Assert.True(PipelineOutcomeCalculator.IsCoreReady(states, skips));
         Assert.Equal(PipelineOutcome.Complete, PipelineOutcomeCalculator.Aggregate(states, skips, cancelled: false));
+    }
+
+    [Fact]
+    public void CoreStageSkippedWithWarningKind_DoesNotReachCoreReadyOrComplete()
+    {
+        // Regression for a real P1: a core stage's Skipped state must be gated on its SkipKind, not accepted
+        // unconditionally — nothing in the design ever puts a core stage in Skipped(Warning); if one is ever
+        // observed, the pipeline must not silently treat it as done.
+        var states = AllStages.ToDictionary(s => s, _ => PipelineStageStateKind.Succeeded);
+        states[PipelineStage.Fetch] = PipelineStageStateKind.Skipped;
+        var skips = NoSkips.ToDictionary(kv => kv.Key, kv =>
+            kv.Key == PipelineStage.Fetch ? (PipelineStageSkipKind?)PipelineStageSkipKind.Warning : null);
+
+        Assert.False(PipelineOutcomeCalculator.IsCoreReady(states, skips));
+        Assert.Equal(PipelineOutcome.InProgress, PipelineOutcomeCalculator.Aggregate(states, skips, cancelled: false));
+    }
+
+    [Fact]
+    public void CoreStageSkippedWithNoRecordedKind_DoesNotReachCoreReadyOrComplete()
+    {
+        // Same as above but for a Skipped core stage with no SkipKind recorded at all (null) - treated the
+        // same as Warning: fail closed, never assume it was the neutral/sanctioned case.
+        var states = AllStages.ToDictionary(s => s, _ => PipelineStageStateKind.Succeeded);
+        states[PipelineStage.Refresh] = PipelineStageStateKind.Skipped;
+        // NoSkips already maps every stage (including Refresh) to null.
+
+        Assert.False(PipelineOutcomeCalculator.IsCoreReady(states, NoSkips));
+        Assert.Equal(PipelineOutcome.InProgress, PipelineOutcomeCalculator.Aggregate(states, NoSkips, cancelled: false));
     }
 
     [Fact]
@@ -130,7 +160,7 @@ public class PipelineOutcomeCalculatorTests
         var states = AllCoreSucceeded();
         states[PipelineStage.Analysis] = PipelineStageStateKind.Cancelled;
 
-        Assert.False(PipelineOutcomeCalculator.IsCoreReady(states));
+        Assert.False(PipelineOutcomeCalculator.IsCoreReady(states, NoSkips));
         Assert.Equal(PipelineOutcome.InProgress, PipelineOutcomeCalculator.Aggregate(states, NoSkips, cancelled: false));
     }
 
@@ -147,10 +177,18 @@ public class PipelineOutcomeCalculatorTests
         for (var trial = 0; trial < 500; trial++)
         {
             var states = AllStages.ToDictionary(s => s, _ => AllStateKinds[rng.Next(AllStateKinds.Length)]);
+            // Three-way random skip kind (Neutral / Warning / null-i.e.-unrecorded) so the totality check
+            // also exercises the "missing kind fails closed" path, not just the two named kinds.
             var skips = AllStages.ToDictionary(s => s, s =>
-                states[s] == PipelineStageStateKind.Skipped
-                    ? (PipelineStageSkipKind?)(rng.Next(2) == 0 ? PipelineStageSkipKind.Neutral : PipelineStageSkipKind.Warning)
-                    : null);
+            {
+                if (states[s] != PipelineStageStateKind.Skipped) return (PipelineStageSkipKind?)null;
+                return rng.Next(3) switch
+                {
+                    0 => PipelineStageSkipKind.Neutral,
+                    1 => PipelineStageSkipKind.Warning,
+                    _ => null
+                };
+            });
             var cancelled = rng.Next(4) == 0;
 
             var outcome = PipelineOutcomeCalculator.Aggregate(states, skips, cancelled);
@@ -161,7 +199,7 @@ public class PipelineOutcomeCalculatorTests
             if (states.Values.Any(v => v == PipelineStageStateKind.NeedsAttention))
             { Assert.Equal(PipelineOutcome.NeedsAttention, outcome); continue; }
 
-            var coreDone = PipelineOutcomeCalculator.IsCoreReady(states);
+            var coreDone = PipelineOutcomeCalculator.IsCoreReady(states, skips);
             if (!coreDone) { Assert.Equal(PipelineOutcome.InProgress, outcome); continue; }
 
             var anyNonTerminal = states.Values.Any(v => v is PipelineStageStateKind.NotStarted or
