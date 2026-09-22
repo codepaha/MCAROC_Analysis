@@ -117,16 +117,22 @@ jobs:
         run: dotnet test MCAROC.Portal/MCAROC_Analysis.Tests/MCAROC_Analysis.Tests.csproj --no-build --configuration Release --filter "FullyQualifiedName~SourceReconciliation|FullyQualifiedName~DossierFontsTests|FullyQualifiedName~DossierPdfComposerTests"
 
       - name: Drop this run's scoped test database
-        # Always runs, even if the test step failed, so a run-scoped database never lingers. Validates
-        # the CI-generated prefix before dropping anything, on principle — MCAROC_TEST_CATALOG is built
-        # entirely from this job's own env above, never external input, but the check costs nothing and
-        # makes it impossible for this step to ever target the shared MCAROC_Analysis_Test database (or
-        # anything else) by a future refactor accidentally widening what it points at.
+        # Always runs, even if the test step failed, so a run-scoped database never lingers. Validates the
+        # *exact* name grammar this job generates (MCAROC_Analysis_CI_<run_id>_<run_attempt>, both numeric)
+        # before dropping anything — a prefix-only check would let a value with a matching prefix but any
+        # suffix through, including SQL metacharacters, straight into the interpolated N''/[] below. An
+        # anchored regex on the numeric shape makes that impossible: nothing but the exact grammar GitHub's
+        # own run_id/run_attempt produce can ever pass. -b makes sqlcmd itself fail (non-zero exit) if the
+        # ALTER/DROP errors, instead of silently leaving a stranded CI database with a "succeeded" step.
+        #
+        # shell: powershell (Windows PowerShell 5.1), not pwsh — this self-hosted runner does not have
+        # PowerShell Core installed (confirmed live: an earlier version of this step using `shell: pwsh`
+        # failed with "pwsh: command not found").
         if: always()
-        shell: pwsh
+        shell: powershell
         run: |
           $dbName = $env:MCAROC_TEST_CATALOG
-          if ($dbName -notlike 'MCAROC_Analysis_CI_*') {
-            throw "Refusing to drop '$dbName' — does not match the expected CI-run-scoped prefix."
+          if ($dbName -notmatch '^MCAROC_Analysis_CI_[0-9]+_[0-9]+$') {
+            throw "Refusing to drop '$dbName' — does not match the exact CI-run-scoped name grammar."
           }
-          sqlcmd -S ".\SQLEXPRESS" -d master -Q "IF DB_ID(N'$dbName') IS NOT NULL BEGIN ALTER DATABASE [$dbName] SET SINGLE_USER WITH ROLLBACK IMMEDIATE; DROP DATABASE [$dbName]; END"
+          sqlcmd -S ".\SQLEXPRESS" -d master -b -Q "IF DB_ID(N'$dbName') IS NOT NULL BEGIN ALTER DATABASE [$dbName] SET SINGLE_USER WITH ROLLBACK IMMEDIATE; DROP DATABASE [$dbName]; END"
