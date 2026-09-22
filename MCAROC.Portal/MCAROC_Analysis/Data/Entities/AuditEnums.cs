@@ -55,6 +55,7 @@ public enum AuditActionType
     InternalLoggedOut,
 
     // Analyst access
+    AnalystProvisioned,
     AnalystLoginAttempted,
     AnalystLoggedOut,
     AnalystAssignmentChanged,

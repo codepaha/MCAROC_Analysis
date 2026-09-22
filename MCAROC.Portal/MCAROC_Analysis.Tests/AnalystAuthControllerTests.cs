@@ -13,7 +13,7 @@ public sealed class AnalystAuthControllerTests
     [InlineData("   ", "")]
     public void NormalizeLoginName_UsesTheCanonicalDatabaseLookupForm(string? input, string expected)
     {
-        Assert.Equal(expected, AnalystAuthController.NormalizeLoginName(input));
+        Assert.Equal(expected, AnalystLoginNameNormalizer.Normalize(input));
     }
 
     [Fact]

@@ -45,6 +45,7 @@ builder.Services.AddControllersWithViews(options =>
 builder.Services.AddScoped<IAuditLogService, AuditLogService>();
 builder.Services.AddScoped<AuditLogFilter>();
 builder.Services.AddSingleton<IAnalystPasswordHasher, AnalystPasswordHasher>();
+builder.Services.AddScoped<AnalystProvisioningService>();
 builder.Services.AddScoped<IAnalystRequestAccessService, AnalystRequestAccessService>();
 builder.Services.AddScoped<IAuthorizationHandler, AnalystRequestAuthorizationHandler>();
 builder.Services.AddMemoryCache();
@@ -334,6 +335,12 @@ builder.Services.AddRateLimiter(options =>
 });
 
 var app = builder.Build();
+
+if (args.Length > 0 && string.Equals(args[0], AnalystProvisioningCommand.Argument, StringComparison.Ordinal))
+{
+    Environment.ExitCode = await AnalystProvisioningCommand.RunAsync(app.Services, args);
+    return;
+}
 
 MCAROC_Analysis.Services.Registry.FileRegistrySnapshotStore.ValidatePreflight(app.Services, app.Environment);
 

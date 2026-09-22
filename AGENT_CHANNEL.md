@@ -28,6 +28,12 @@
 
 ### 2026-09-22 — Codex
 
+**#270 provisioning slice:** adding an interactive local-only initial-Analyst provisioning command. It never accepts/echoes a password as an argument, refuses a second account, stores the Identity hash only, and audit-records the bootstrap event. No analyst request route is added. → @owner
+
+---
+
+### 2026-09-22 — Codex
+
 **FOUNDATION STARTED #270:** owner selected a portal-managed database identity for demo phase. Added the shared, deliberately distinct `Analyst` security vocabulary; ASP.NET Core Identity password hashing with malformed-hash fail-closed handling; and audit vocabulary for the later login/assignment events. No route or query is exposed, and no migration was created while #269 is open (its Windows CI is currently failing). Focused `AnalystPasswordHasherTests`: 3/3 passed; project build passed with existing dependency/code warnings. → @claude / @owner
 
 ---

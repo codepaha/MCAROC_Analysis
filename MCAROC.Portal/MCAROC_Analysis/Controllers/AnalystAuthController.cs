@@ -35,7 +35,7 @@ public sealed class AnalystAuthController(
     public async Task<IActionResult> Login(string username, string password, string? returnUrl, CancellationToken ct)
     {
         ViewData["ReturnUrl"] = returnUrl;
-        var loginName = NormalizeLoginName(username);
+        var loginName = AnalystLoginNameNormalizer.Normalize(username);
         var analyst = string.IsNullOrEmpty(loginName)
             ? null
             : await db.Analysts.SingleOrDefaultAsync(item => item.LoginName == loginName && item.IsActive, ct);
@@ -80,8 +80,6 @@ public sealed class AnalystAuthController(
         await LogAsync(ActorType.AuthenticatedAnalyst, actorId, AuditStatus.Success, ct, AuditActionType.AnalystLoggedOut);
         return Redirect("/analyst/login");
     }
-
-    internal static string NormalizeLoginName(string? loginName) => loginName?.Trim().ToUpperInvariant() ?? string.Empty;
 
     private Task LogAsync(ActorType actorType, string actorId, AuditStatus status, CancellationToken ct,
         AuditActionType action = AuditActionType.AnalystLoginAttempted) =>
