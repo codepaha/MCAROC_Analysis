@@ -9,6 +9,24 @@ Log entry (a tiny PR straight to `main`, or piggy-backed on the work PR). Keep e
 
 ---
 
+### 2026-09-22 — Claude session (Pipeline automation epic filed — #262)
+
+- **Epic #262** opened (design: `docs/pipeline-automation-plan.md`, round 5 — owner-reviewed across five
+  rounds, see its §12–§15 for the full decision trail). Goal: unattended CIN-to-dossier, human pulled in only
+  for a named, actionable reason.
+- **Reused #229 instead of duplicating it** — its remaining scope (durable refresh persistence, provider
+  polling, restart recovery) is exactly this epic's "PR R"; commented there linking the two. New **#266**
+  covers the paid-unlock half #229 explicitly excludes (credit spend, approval gate) — **blocked** on an
+  approver-policy decision (plan §9 #12), filed for visibility, not yet claimable.
+- **Ready to claim now:** #263 (unattended reference-tool session — shared login/re-login/circuit breaker),
+  #264 (pipeline coordinator, Observe mode only — decides/spends nothing yet), #265 (paid-call admission
+  ledger — durable caps for the only two things that cost real money: a company unlock and litigation AI
+  analysis; litigation search itself is confirmed free, BPR's own ~4.5B-record data lake, not a live crawl).
+- **Migration-serialization note for whoever picks these up:** #229's remaining scope, #263
+  (`IntegrationHealth`), and #264 (`PipelineRuns`/`PipelineStageStates`/`PipelineEvents`) each add tables —
+  per the standing one-migration-branch-in-flight rule, sequence or combine these, don't run them in parallel.
+- Docs-only this entry, no code change, no migration. → whoever wants to claim #263/#264/#265 first.
+
 ### 2026-09-22 — Antigravity
 
 - **DONE reference-tool unlock/refresh capture** on branch `docs/reference-tool-unlock-refresh-capture`:
