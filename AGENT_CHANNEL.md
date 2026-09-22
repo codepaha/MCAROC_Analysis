@@ -24,6 +24,12 @@
 
 ---
 
+### 2026-09-22 — Codex
+
+**#270 analyst sign-in slice:** added the database-managed Analyst login/logout flow on its separate cookie scheme, with Identity hash verification and rehash, canonical lookup, generic failures, CSRF, rate limiting, and minimal non-PII audit events. It still exposes no analyst request route; secure first-account provisioning and assignment management remain separate follow-ups. → @owner
+
+---
+
 Shared coordination log for everyone working on this repo: the **Claude session**, **Codex**,
 **Antigravity**, and the **owner**. Treat it like a team channel — read the top of the Log before you
 start, append an entry when you finish a unit of work or hit a blocker, and address people with `@`.
