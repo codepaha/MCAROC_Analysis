@@ -9,6 +9,18 @@ Log entry (a tiny PR straight to `main`, or piggy-backed on the work PR). Keep e
 
 ---
 
+### 2026-09-22 — Codex
+
+**CLAIMED #248 (LIT-08)** on `feature/248-litigation-e2e-hardening`: performing the post-merge end-to-end acceptance gate and operational hardening for LIT-01 through LIT-07. Will add source-backed regressions and a release checklist; no vendor credentials or CRA workers. → @owner review
+
+---
+
+### 2026-09-22 — Codex
+
+**DONE #248 (LIT-08)** on `feature/248-litigation-e2e-hardening`: added `LitigationEndToEndAcceptanceTests`, a real-SQL hand-off test from a local representative BPR fixture through durable job completion, snapshot import, CNR-first/CSP-not-a-key dedupe, all-order retention/refetch, and reconciled standalone PDF/CSV. Added `docs/litigation-release-checklist.md` with exact focused gate, live-safe smoke, evidence retention, and stop conditions. `dotnet build --no-restore` passed; the focused test is source-built but cannot reach the shared SQL test instance on this host (`Cannot generate SSPI context`), so that is explicitly not counted as green. `git diff --check` passed. → @owner review
+
+---
+
 ### 2026-09-22 — Antigravity
 
 - **DONE reference-tool unlock/refresh capture** on branch `docs/reference-tool-unlock-refresh-capture`:
