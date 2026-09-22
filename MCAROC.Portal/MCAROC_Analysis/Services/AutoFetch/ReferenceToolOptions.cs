@@ -67,6 +67,31 @@ public sealed class ReferenceToolOptions
 
     public bool CanAutoLogin => !string.IsNullOrWhiteSpace(Username) && !string.IsNullOrWhiteSpace(Password);
 
+    /// <summary>Ceiling on automated logins in any sliding one-hour window (see <see
+    /// cref="ReferenceToolSession.TryReserveLoginSlot"/>). Protects the account from a login loop hammering
+    /// it indefinitely if credentials become invalid — every job would otherwise retry a failed login on
+    /// every session-expired call it makes.</summary>
+    public int MaxLoginsPerHour { get; init; } = 6;
+
+    /// <summary>Consecutive non-auth failures before the <c>IntegrationHealth</c> breaker opens (an
+    /// <c>AuthRejected</c> failure opens it immediately regardless of this count — see
+    /// docs/pipeline-automation-plan.md §5.4).</summary>
+    public int BreakerThreshold { get; init; } = 3;
+
+    /// <summary>How long a half-open probe's claim lasts before another probe may try again — also how far
+    /// <c>NextProbeUtc</c> is pushed out the moment the breaker opens, so the very first probe attempt
+    /// waits at least this long after the trip.</summary>
+    public int BreakerProbeLeaseMinutes { get; init; } = 5;
+
+    /// <summary>How often <see cref="ReferenceToolHealthProbe"/> checks a currently-open breaker with a
+    /// cheap session call.</summary>
+    public int HealthProbeMinutes { get; init; } = 10;
+
+    /// <summary>How often <see cref="AutoFetchWorker"/> re-enqueues any <c>Queued</c> job older than this
+    /// interval while the breaker is closed — repairs a lost in-memory enqueue (e.g. an app restart) without
+    /// waiting for an operator to notice (§5.4 mechanism 4).</summary>
+    public int RequeueSweepMinutes { get; init; } = 2;
+
     public bool IsConfigured => !string.IsNullOrWhiteSpace(BaseUrl) &&
         (!string.IsNullOrWhiteSpace(SessionCookie) || CanAutoLogin);
 }

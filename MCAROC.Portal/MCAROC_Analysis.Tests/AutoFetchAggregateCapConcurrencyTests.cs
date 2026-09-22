@@ -75,7 +75,7 @@ public class AutoFetchAggregateCapConcurrencyTests : IAsyncLifetime
             DownloadConcurrency = 8, // deliberately high — the more concurrent workers, the bigger the old race's overshoot would be
             DownloadAttempts = 1
         });
-        var client = new ReferenceToolClient(new HttpClient(new StubHandler()), options, NullLogger<ReferenceToolClient>.Instance);
+        var client = new ReferenceToolClient(new HttpClient(new StubHandler()), options, new ReferenceToolSession(), new NoOpIntegrationHealthService(), NullLogger<ReferenceToolClient>.Instance);
         var storageReservations = new StorageReservationManager(db, Options.Create(new LargeArchiveUploadOptions()), NullLogger<StorageReservationManager>.Instance);
 
         var jobs = new AutoFetchJobService(

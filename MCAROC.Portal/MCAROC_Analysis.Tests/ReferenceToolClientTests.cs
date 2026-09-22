@@ -128,6 +128,55 @@ public class ReferenceToolClientTests : IDisposable
         Assert.Contains("non-JSON", session.Detail);
     }
 
+    /// <summary>The recovery path #263 exists for: an ordinary data call (not CheckSessionAsync, which
+    /// already has its own manual retry loop) hits a session-expired response, and — with credentials
+    /// configured — transparently re-logs in once and replays the same call, so the caller never sees the
+    /// failure at all.</summary>
+    [Fact]
+    public async Task A_session_expired_data_call_recovers_via_one_relogin_and_replay()
+    {
+        var handler = new StubHandler();
+        handler.OnPath("server/common/jwt/service.php", _ => Json($"{{\"jwtToken\":\"{KeyHex}\"}}"));
+
+        var searchCalls = 0;
+        handler.OnPath("server/common/search/service.php", _ =>
+        {
+            searchCalls++;
+            return searchCalls == 1
+                ? Html("<!doctype html><html>login</html>") // session expired — not JSON
+                : Json("{\"data\":[{\"legal_name\":\"LODHA DEVELOPERS LIMITED\",\"cin\":\"l45200mh1995plc093041\"}]}");
+        });
+        handler.OnPath("server/user/login.php", req =>
+        {
+            var resp = Json("{\"id\":265271}");
+            resp.Headers.Add("Set-Cookie", "PHPSESSID=fresh-after-recovery; path=/");
+            return resp;
+        });
+
+        var client = NewClient(handler, username: "dharmendra@test.com", password: "SecretPassword123");
+        var hits = await client.SearchCompaniesAsync("lodha", 10, CancellationToken.None);
+
+        var hit = Assert.Single(hits);
+        Assert.Equal(Cin, hit.Cin);
+        Assert.Equal(2, searchCalls); // the original attempt plus exactly one replay
+        Assert.Single(handler.Requests, r => r.RequestUri!.AbsolutePath.EndsWith("login.php"));
+        Assert.Contains("fresh-after-recovery", client.GetActiveSessionCookie());
+    }
+
+    /// <summary>Without configured credentials there is nothing to recover with — the session-expired
+    /// failure must propagate unchanged rather than looping or hanging.</summary>
+    [Fact]
+    public async Task A_session_expired_data_call_propagates_when_auto_login_is_not_configured()
+    {
+        var handler = new StubHandler();
+        handler.OnPath("server/common/jwt/service.php", _ => Json($"{{\"jwtToken\":\"{KeyHex}\"}}"));
+        handler.OnPath("server/common/search/service.php", _ => Html("<!doctype html><html>login</html>"));
+
+        var client = NewClient(handler); // no username/password
+        var ex = await Assert.ThrowsAsync<ReferenceToolException>(() => client.SearchCompaniesAsync("lodha", 10, CancellationToken.None));
+        Assert.Equal(ReferenceToolFailureKind.SessionExpired, ex.Kind);
+    }
+
     [Fact]
     public async Task Automated_login_triggers_when_session_is_invalid_and_credentials_are_configured()
     {
@@ -324,7 +373,7 @@ public class ReferenceToolClientTests : IDisposable
             Password = password,
             MaxResponseBytes = maxResponseBytes ?? new ReferenceToolOptions().MaxResponseBytes,
         });
-        return new ReferenceToolClient(new HttpClient(handler), options, NullLogger<ReferenceToolClient>.Instance);
+        return new ReferenceToolClient(new HttpClient(handler), options, new ReferenceToolSession(), new NoOpIntegrationHealthService(), NullLogger<ReferenceToolClient>.Instance);
     }
 
     private static string Doc(string id, string name, int attachments = 0)

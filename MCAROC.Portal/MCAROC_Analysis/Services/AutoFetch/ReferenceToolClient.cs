@@ -4,6 +4,8 @@ using System.Net.Http.Headers;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using MCAROC_Analysis.Data.Entities;
+using MCAROC_Analysis.Services.Pipeline;
 using Microsoft.Extensions.Options;
 
 namespace MCAROC_Analysis.Services.AutoFetch;
@@ -23,7 +25,7 @@ namespace MCAROC_Analysis.Services.AutoFetch;
 /// <item>The PDF endpoint has no archive size cap, which is why filings are fetched one file at a time
 /// instead of asking the tool to build a zip (that path fails past 50 MB).</item>
 /// </list></summary>
-public sealed class ReferenceToolClient(HttpClient http, IOptions<ReferenceToolOptions> options, ILogger<ReferenceToolClient> logger)
+public sealed class ReferenceToolClient(HttpClient http, IOptions<ReferenceToolOptions> options, ReferenceToolSession session, IIntegrationHealthService health, ILogger<ReferenceToolClient> logger)
 {
     private static readonly byte[] OleSignature = [0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1];
     private static readonly byte[] ZipSignature = [0x50, 0x4B, 0x03, 0x04];
@@ -41,21 +43,22 @@ public sealed class ReferenceToolClient(HttpClient http, IOptions<ReferenceToolO
     ];
 
     private readonly ReferenceToolOptions _opts = options.Value;
-    private byte[]? _signingKey;
-    private readonly SemaphoreSlim _keyGate = new(1, 1);
-    private string? _activeSessionCookie;
-    private string? _activeUserId;
-    private readonly SemaphoreSlim _loginGate = new(1, 1);
 
     public bool IsConfigured => _opts.IsConfigured;
 
-    /// <summary>Returns the current session cookie (either discovered from automated login or configured in options).</summary>
+    /// <summary>Returns the current session cookie — shared across every <see cref="ReferenceToolClient"/>
+    /// instance via <see cref="ReferenceToolSession"/> (this client is transient; the session is not), so a
+    /// login by one job scope is visible to every other. Falls back to (and seeds the session with) the
+    /// operator-configured cookie the first time this is called with nothing discovered yet.</summary>
     public string GetActiveSessionCookie()
     {
-        if (!string.IsNullOrWhiteSpace(_activeSessionCookie))
-            return _activeSessionCookie;
+        if (!string.IsNullOrWhiteSpace(session.Cookie))
+            return session.Cookie;
         if (!string.IsNullOrWhiteSpace(_opts.SessionCookie))
-            return _opts.SessionCookie.Trim();
+        {
+            session.SeedFromConfiguredCookie(_opts.SessionCookie.Trim());
+            return session.Cookie ?? _opts.SessionCookie.Trim();
+        }
         return string.Empty;
     }
 
@@ -107,7 +110,7 @@ public sealed class ReferenceToolClient(HttpClient http, IOptions<ReferenceToolO
             if (root.TryGetProperty("error", out var err) && err.ValueKind != JsonValueKind.Null)
                 return new ReferenceSessionInfo(false, null, err.ToString());
 
-            var userId = FindUserId(root) ?? _activeUserId;
+            var userId = FindUserId(root) ?? session.UserId;
             return new ReferenceSessionInfo(true, userId, null);
         }
     }
@@ -117,9 +120,19 @@ public sealed class ReferenceToolClient(HttpClient http, IOptions<ReferenceToolO
         if (!_opts.CanAutoLogin)
             return new ReferenceSessionInfo(false, null, "Reference tool username or password not configured.");
 
-        await _loginGate.WaitAsync(ct);
+        var generationBeforeWaiting = session.Generation;
+        await session.LoginGate.WaitAsync(ct);
         try
         {
+            // Single-flight: if another caller already logged in while this one was waiting on the gate,
+            // there is nothing to do — use the session it just set instead of logging in a second time.
+            if (session.Generation != generationBeforeWaiting)
+                return new ReferenceSessionInfo(true, session.UserId, null);
+
+            if (!session.TryReserveLoginSlot(_opts.MaxLoginsPerHour, DateTime.UtcNow))
+                return new ReferenceSessionInfo(false, null,
+                    $"Reference tool login rate limit reached ({_opts.MaxLoginsPerHour}/hour) — refusing to attempt another login.");
+
             var key = await GetSigningKeyAsync(ct);
             var loginPayload = new
             {
@@ -149,12 +162,24 @@ public sealed class ReferenceToolClient(HttpClient http, IOptions<ReferenceToolO
             using var response = await http.SendAsync(request, ct);
             var body = await response.Content.ReadAsStringAsync(ct);
             if (!response.IsSuccessStatusCode)
-                return new ReferenceSessionInfo(false, null, $"Login failed with HTTP {(int)response.StatusCode}: {body}");
+            {
+                // A rejected login carried over HTTP status (401/403) is a credentials signal, not a
+                // transient outage — classified AuthRejected so the circuit breaker opens immediately with
+                // no threshold, same as an explicit "error" field below.
+                var kind = response.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden
+                    ? ReferenceToolFailureKind.AuthRejected
+                    : ReferenceToolFailureKind.Unavailable;
+                return new ReferenceSessionInfo(false, null, $"Login failed with HTTP {(int)response.StatusCode}: {body}", kind);
+            }
 
-            using var doc = ParseJsonOrThrow(body, "login");
+            JsonDocument doc;
+            try { doc = ParseJsonOrThrow(body, "login"); }
+            catch (ReferenceToolException ex) { return new ReferenceSessionInfo(false, null, ex.Message, ReferenceToolFailureKind.ContractChanged); }
+            using (doc)
+            {
             var root = doc.RootElement;
             if (root.ValueKind == JsonValueKind.Object && root.TryGetProperty("error", out var err) && err.ValueKind != JsonValueKind.Null)
-                return new ReferenceSessionInfo(false, null, err.ToString());
+                return new ReferenceSessionInfo(false, null, err.ToString(), ReferenceToolFailureKind.AuthRejected);
 
             var userId = FindUserId(root);
 
@@ -171,18 +196,17 @@ public sealed class ReferenceToolClient(HttpClient http, IOptions<ReferenceToolO
 
             if (cookieList.Count > 0)
             {
-                _activeSessionCookie = string.Join("; ", cookieList);
-                if (!string.IsNullOrEmpty(userId))
-                    _activeUserId = userId;
-                logger.LogInformation("Successfully logged into Probe42 as user {UserId}", userId);
+                session.SetCookie(string.Join("; ", cookieList), userId);
+                logger.LogInformation("Successfully logged into the reference tool as user {UserId}", userId);
                 return new ReferenceSessionInfo(true, userId, null);
             }
 
             return new ReferenceSessionInfo(false, null, "No session cookies returned from login.");
+            }
         }
         finally
         {
-            _loginGate.Release();
+            session.LoginGate.Release();
         }
     }
 
@@ -199,14 +223,19 @@ public sealed class ReferenceToolClient(HttpClient http, IOptions<ReferenceToolO
 
     // ── Search ─────────────────────────────────────────────────────────────────────────────────────
 
-    public async Task<IReadOnlyList<ReferenceCompanyHint>> SearchCompaniesAsync(string query, int limit, CancellationToken ct)
+    public Task<IReadOnlyList<ReferenceCompanyHint>> SearchCompaniesAsync(string query, int limit, CancellationToken ct)
     {
         EnsureConfigured();
+        return WithSessionRecoveryAsync(() => SearchCompaniesCoreAsync(query, limit, ct), ct);
+    }
+
+    private async Task<IReadOnlyList<ReferenceCompanyHint>> SearchCompaniesCoreAsync(string query, int limit, CancellationToken ct)
+    {
         var payload = new { action = "getNameHints", q = query.Trim(), filters = "{}", offset = 0, limit };
         using var response = await SendSignedAsync("server/common/search/service.php", payload, ct);
         var body = await response.Content.ReadAsStringAsync(ct);
         if (!response.IsSuccessStatusCode)
-            throw new ReferenceToolException($"The reference tool's search returned HTTP {(int)response.StatusCode}.", retryable: (int)response.StatusCode >= 500);
+            throw new ReferenceToolException($"The reference tool's search returned HTTP {(int)response.StatusCode}.", ClassifyHttpFailure(response.StatusCode));
 
         using var doc = ParseJsonOrThrow(body, "search");
         var hits = new List<ReferenceCompanyHint>();
@@ -230,9 +259,14 @@ public sealed class ReferenceToolClient(HttpClient http, IOptions<ReferenceToolO
     /// and returns the full path written (extension chosen from the file signature: .xls for a legacy
     /// OLE workbook, .xlsx for an OOXML one). Throws <see cref="ReferenceToolException"/> when the tool
     /// answers with anything that is not a workbook (typically: company not unlocked / session expired).</summary>
-    public async Task<string> DownloadWorkbookAsync(string cin, string bid, ReferenceWorkbookKind kind, string destinationPathWithoutExtension, CancellationToken ct)
+    public Task<string> DownloadWorkbookAsync(string cin, string bid, ReferenceWorkbookKind kind, string destinationPathWithoutExtension, CancellationToken ct)
     {
         EnsureConfigured();
+        return WithSessionRecoveryAsync(() => DownloadWorkbookCoreAsync(cin, bid, kind, destinationPathWithoutExtension, ct), ct);
+    }
+
+    private async Task<string> DownloadWorkbookCoreAsync(string cin, string bid, ReferenceWorkbookKind kind, string destinationPathWithoutExtension, CancellationToken ct)
+    {
         var printParams = JsonSerializer.Serialize(new
         {
             cin = cin.Trim().ToUpperInvariant(),
@@ -262,9 +296,14 @@ public sealed class ReferenceToolClient(HttpClient http, IOptions<ReferenceToolO
             var snippet = await ReadSnippetAsync(tempPath);
             TryDelete(tempPath);
             var label = kind == ReferenceWorkbookKind.Charge ? "charge" : "corporate";
+            // Genuinely ambiguous from this call alone (§5.7.0 of the pipeline-automation plan): the tool
+            // answers "not unlocked" and "session expired" identically here. Classified SessionExpired, the
+            // recoverable case WithSessionRecoveryAsync already re-logs in for — not CompanyLocked, which is
+            // reserved for the definitive getAssetTeams check #229/#266 wires in, not a guess made here.
             throw new ReferenceToolException(
                 $"The reference tool did not return a workbook for the {label} export (content-type '{contentType ?? "?"}'). " +
-                $"This usually means the company is not unlocked in the tool, or the session cookie has expired. Response began: {snippet}");
+                $"This usually means the company is not unlocked in the tool, or the session cookie has expired. Response began: {snippet}",
+                ReferenceToolFailureKind.SessionExpired);
         }
 
         var finalPath = destinationPathWithoutExtension + extension;
@@ -286,22 +325,20 @@ public sealed class ReferenceToolClient(HttpClient http, IOptions<ReferenceToolO
         EnsureConfigured();
         var sections = RegistrySections.ToDictionary(s => s.Key, s => new SectionAccumulator(s.FolderName));
 
-        var first = await FetchRegistryPageAsync(bid, offset: null, limit: null, ct);
-        var pageSize = Math.Max(1, MergeRegistryPage(first, sections));
+        var pageSize = Math.Max(1, await FetchAndMergeRegistryPageAsync(bid, offset: null, limit: null, sections, ct));
 
         const int maxPages = 200; // 20,000 rows — far above any real company; guards an endpoint that ignores offset
         for (var page = 1; page < maxPages; page++)
         {
             if (!sections.Values.Any(s => s.Docs.Count < s.Total)) break;
             var offset = page * pageSize;
-            string next;
-            try { next = await FetchRegistryPageAsync(bid, offset, pageSize, ct); }
+            int added;
+            try { added = await FetchAndMergeRegistryPageAsync(bid, offset, pageSize, sections, ct); }
             catch (ReferenceToolException ex)
             {
                 logger.LogWarning(ex, "Reference-documents paging stopped at offset {Offset}", offset);
                 break;
             }
-            var added = MergeRegistryPage(next, sections);
             if (added == 0) break; // the endpoint ignored the offset, or we're past the end
         }
 
@@ -329,17 +366,24 @@ public sealed class ReferenceToolClient(HttpClient http, IOptions<ReferenceToolO
         public Dictionary<string, ReferenceDocument> Docs { get; } = new(StringComparer.OrdinalIgnoreCase);
     }
 
-    private async Task<string> FetchRegistryPageAsync(string bid, int? offset, int? limit, CancellationToken ct)
-    {
-        object payload = offset is null
-            ? new { action = "referenceDocs", bid }
-            : new { action = "referenceDocs", bid, offset = offset.Value, limit = limit!.Value };
-        using var response = await SendSignedAsync("server/common/docService/service.php", payload, ct);
-        var body = await response.Content.ReadAsStringAsync(ct);
-        if (!response.IsSuccessStatusCode)
-            throw new ReferenceToolException($"The reference tool's document registry returned HTTP {(int)response.StatusCode}.", retryable: (int)response.StatusCode >= 500);
-        return body;
-    }
+    /// <summary>Fetches one registry page and merges it into <paramref name="sections"/> as a single
+    /// recoverable unit (see <see cref="WithSessionRecoveryAsync{T}"/>) — the fetch and the "was this
+    /// actually JSON, not a session-expired page" check must retry together, since the latter is what
+    /// classifies <see cref="ReferenceToolFailureKind.SessionExpired"/> here, not the HTTP call itself.
+    /// Safe to retry as a unit: <see cref="MergeRegistryPage"/> only mutates <paramref name="sections"/>
+    /// after it has already validated the body is well-formed JSON.</summary>
+    private Task<int> FetchAndMergeRegistryPageAsync(string bid, int? offset, int? limit, Dictionary<string, SectionAccumulator> sections, CancellationToken ct) =>
+        WithSessionRecoveryAsync(async () =>
+        {
+            object payload = offset is null
+                ? new { action = "referenceDocs", bid }
+                : new { action = "referenceDocs", bid, offset = offset.Value, limit = limit!.Value };
+            using var response = await SendSignedAsync("server/common/docService/service.php", payload, ct);
+            var body = await response.Content.ReadAsStringAsync(ct);
+            if (!response.IsSuccessStatusCode)
+                throw new ReferenceToolException($"The reference tool's document registry returned HTTP {(int)response.StatusCode}.", ClassifyHttpFailure(response.StatusCode));
+            return MergeRegistryPage(body, sections);
+        }, ct);
 
     /// <summary>Merges one registry response into the per-section accumulators; returns how many
     /// documents were new (0 ⇒ stop paging).</summary>
@@ -347,7 +391,7 @@ public sealed class ReferenceToolClient(HttpClient http, IOptions<ReferenceToolO
     {
         using var doc = ParseJsonOrThrow(body, "document registry");
         if (doc.RootElement.ValueKind != JsonValueKind.Object)
-            throw new ReferenceToolException("The reference tool's document registry response was not a JSON object (session expired or company not unlocked?).");
+            throw new ReferenceToolException("The reference tool's document registry response was not a JSON object (session expired or company not unlocked?).", ReferenceToolFailureKind.SessionExpired);
 
         var added = 0;
         foreach (var (key, acc) in sections)
@@ -414,9 +458,14 @@ public sealed class ReferenceToolClient(HttpClient http, IOptions<ReferenceToolO
 
     /// <summary>Downloads one PDF (a main e-form or an attachment) straight to disk. Verifies the
     /// <c>%PDF</c> signature — the endpoint answers a bad key or an expired session with HTTP 200 + JSON.</summary>
-    public async Task DownloadPdfAsync(string bid, string userId, string awsPath, string did, string destinationPath, CancellationToken ct)
+    public Task DownloadPdfAsync(string bid, string userId, string awsPath, string did, string destinationPath, CancellationToken ct)
     {
         EnsureConfigured();
+        return WithSessionRecoveryAsync(() => DownloadPdfCoreAsync(bid, userId, awsPath, did, destinationPath, ct), ct);
+    }
+
+    private async Task DownloadPdfCoreAsync(string bid, string userId, string awsPath, string did, string destinationPath, CancellationToken ct)
+    {
         var url = BuildUrl("server/common/docService/service.php", new Dictionary<string, string>
         {
             ["bid"] = bid,
@@ -435,7 +484,7 @@ public sealed class ReferenceToolClient(HttpClient http, IOptions<ReferenceToolO
         {
             var snippet = await ReadSnippetAsync(tempPath);
             TryDelete(tempPath);
-            throw new ReferenceToolException($"Not a PDF (content-type '{contentType ?? "?"}'): {snippet}");
+            throw new ReferenceToolException($"Not a PDF (content-type '{contentType ?? "?"}'): {snippet}", ReferenceToolFailureKind.SessionExpired);
         }
         TryDelete(destinationPath);
         File.Move(tempPath, destinationPath);
@@ -443,10 +492,96 @@ public sealed class ReferenceToolClient(HttpClient http, IOptions<ReferenceToolO
 
     // ── Plumbing ────────────────────────────────────────────────────────────────────────────────────
 
+    /// <summary>Runs <paramref name="action"/>; on a <see cref="ReferenceToolFailureKind.SessionExpired"/>
+    /// failure, re-logs in once (via the same single-flight, rate-limited <see cref="LoginAsync"/> every
+    /// other caller shares — see <see cref="ReferenceToolSession"/>) and replays <paramref name="action"/>
+    /// exactly once more. A second <see cref="ReferenceToolFailureKind.SessionExpired"/> is not retried
+    /// again — it propagates, since by then either re-login itself failed (surfaced as the login's own
+    /// failure kind) or the freshly-logged-in session was rejected again, which is a contract problem this
+    /// method cannot fix by looping. When auto-login is not configured, the original exception propagates
+    /// unchanged — there is nothing to recover with.
+    ///
+    /// Also the single place that reports every real call's outcome to <see
+    /// cref="IIntegrationHealthService"/> (docs/pipeline-automation-plan.md §5.4) — every public entry
+    /// point routes through here (directly or via <see cref="FetchAndMergeRegistryPageAsync"/>), so nothing
+    /// needs to remember to report health separately.</summary>
+    private async Task<T> WithSessionRecoveryAsync<T>(Func<Task<T>> action, CancellationToken ct)
+    {
+        var callStartUtc = DateTime.UtcNow;
+        try
+        {
+            var result = await action();
+            await ReportHealthSafeAsync(success: true, callStartUtc, error: null, authRejected: false, ct);
+            return result;
+        }
+        catch (ReferenceToolException ex) when (ex.Kind == ReferenceToolFailureKind.SessionExpired && _opts.CanAutoLogin)
+        {
+            logger.LogWarning(ex, "Reference tool session expired; attempting one re-login and replay.");
+            var login = await LoginAsync(ct);
+            if (!login.IsValid)
+            {
+                await ReportHealthSafeAsync(false, callStartUtc, login.Detail, login.Kind == ReferenceToolFailureKind.AuthRejected, ct);
+                throw new ReferenceToolException($"Session expired and automated re-login failed: {login.Detail}", login.Kind ?? ReferenceToolFailureKind.SessionExpired, ex);
+            }
+            try
+            {
+                var result = await action();
+                await ReportHealthSafeAsync(true, callStartUtc, null, false, ct);
+                return result;
+            }
+            catch (Exception inner) when (inner is ReferenceToolException or HttpRequestException or TaskCanceledException && !ct.IsCancellationRequested)
+            {
+                await ReportHealthSafeAsync(false, callStartUtc, inner.Message, inner is ReferenceToolException { Kind: ReferenceToolFailureKind.AuthRejected }, ct);
+                throw;
+            }
+        }
+        catch (Exception ex) when (ex is ReferenceToolException or HttpRequestException or TaskCanceledException && !ct.IsCancellationRequested)
+        {
+            await ReportHealthSafeAsync(false, callStartUtc, ex.Message, ex is ReferenceToolException { Kind: ReferenceToolFailureKind.AuthRejected }, ct);
+            throw;
+        }
+    }
+
+    private Task WithSessionRecoveryAsync(Func<Task> action, CancellationToken ct) =>
+        WithSessionRecoveryAsync<bool>(async () => { await action(); return true; }, ct);
+
+    /// <summary>Health reporting must never be what breaks a caller — if the health row's own database
+    /// write fails, log it and let the real result/exception from <paramref name="action"/> propagate
+    /// unchanged rather than replacing it with a health-tracking error.</summary>
+    private async Task ReportHealthSafeAsync(bool success, DateTime callStartUtc, string? error, bool authRejected, CancellationToken ct)
+    {
+        try
+        {
+            if (success)
+                await health.ReportSuccessAsync(IntegrationName.ReferenceTool, callStartUtc, ct);
+            else
+                await health.ReportFailureAsync(IntegrationName.ReferenceTool, callStartUtc, error, authRejected,
+                    _opts.BreakerThreshold, TimeSpan.FromMinutes(_opts.BreakerProbeLeaseMinutes), ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            logger.LogWarning(ex, "Failed to record reference-tool integration health");
+        }
+    }
+
+    /// <summary>Classifies an ordinary (non-login) HTTP failure into a <see cref="ReferenceToolFailureKind"/>.
+    /// 401/403 here means <see cref="ReferenceToolFailureKind.SessionExpired"/>, not <see
+    /// cref="ReferenceToolFailureKind.AuthRejected"/> — that kind is reserved for the login call itself
+    /// rejecting the *credentials*; a data call rejecting an already-established session is exactly the
+    /// recoverable case <see cref="WithSessionRecoveryAsync{T}"/> re-logs in for.</summary>
+    private static ReferenceToolFailureKind ClassifyHttpFailure(HttpStatusCode status) => status switch
+    {
+        HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden => ReferenceToolFailureKind.SessionExpired,
+        HttpStatusCode.TooManyRequests => ReferenceToolFailureKind.RateLimited,
+        HttpStatusCode.RequestTimeout => ReferenceToolFailureKind.Unavailable,
+        _ when (int)status >= 500 => ReferenceToolFailureKind.Unavailable,
+        _ => ReferenceToolFailureKind.Other
+    };
+
     private void EnsureConfigured()
     {
         if (!_opts.IsConfigured)
-            throw new ReferenceToolException("Auto-fetch is not configured: set ReferenceTool:BaseUrl and either ReferenceTool:SessionCookie or ReferenceTool:Username/Password.");
+            throw new ReferenceToolException("Auto-fetch is not configured: set ReferenceTool:BaseUrl and either ReferenceTool:SessionCookie or ReferenceTool:Username/Password.", ReferenceToolFailureKind.Other);
     }
 
     private async Task<HttpResponseMessage> SendSignedAsync(string path, object payload, CancellationToken ct)
@@ -469,14 +604,13 @@ public sealed class ReferenceToolClient(HttpClient http, IOptions<ReferenceToolO
         request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("*/*"));
         using var response = await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
         if (response.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
-            throw new ReferenceToolException($"The reference tool refused the request (HTTP {(int)response.StatusCode}) — the session cookie has probably expired.");
+            throw new ReferenceToolException($"The reference tool refused the request (HTTP {(int)response.StatusCode}) — the session cookie has probably expired.", ReferenceToolFailureKind.SessionExpired);
         if (!response.IsSuccessStatusCode)
-            throw new ReferenceToolException($"The reference tool returned HTTP {(int)response.StatusCode}.",
-                retryable: response.StatusCode is HttpStatusCode.RequestTimeout or HttpStatusCode.TooManyRequests || (int)response.StatusCode >= 500);
+            throw new ReferenceToolException($"The reference tool returned HTTP {(int)response.StatusCode}.", ClassifyHttpFailure(response.StatusCode));
 
         var maxBytes = _opts.MaxResponseBytes;
         if (response.Content.Headers.ContentLength is { } declaredLength && declaredLength > maxBytes)
-            throw new ReferenceToolException($"The reference tool declared a {declaredLength:N0}-byte response, which exceeds the {maxBytes:N0}-byte limit — refused before downloading.");
+            throw new ReferenceToolException($"The reference tool declared a {declaredLength:N0}-byte response, which exceeds the {maxBytes:N0}-byte limit — refused before downloading.", ReferenceToolFailureKind.Other);
 
         Directory.CreateDirectory(Path.GetDirectoryName(tempPath)!);
         var header = new byte[8];
@@ -561,11 +695,11 @@ public sealed class ReferenceToolClient(HttpClient http, IOptions<ReferenceToolO
 
     private async Task<byte[]> GetSigningKeyAsync(CancellationToken ct)
     {
-        if (_signingKey is { } cached) return cached;
-        await _keyGate.WaitAsync(ct);
+        if (session.SigningKey is { } cached) return cached;
+        await session.SigningKeyGate.WaitAsync(ct);
         try
         {
-            if (_signingKey is { } again) return again;
+            if (session.SigningKey is { } again) return again;
             var url = BuildUrl("server/common/jwt/service.php", new Dictionary<string, string>
             {
                 ["action"] = "getJwtToken",
@@ -576,15 +710,16 @@ public sealed class ReferenceToolClient(HttpClient http, IOptions<ReferenceToolO
             using var response = await http.SendAsync(request, ct);
             var body = await response.Content.ReadAsStringAsync(ct);
             if (!response.IsSuccessStatusCode)
-                throw new ReferenceToolException($"Could not obtain the reference tool's signing key (HTTP {(int)response.StatusCode}).", retryable: true);
+                throw new ReferenceToolException($"Could not obtain the reference tool's signing key (HTTP {(int)response.StatusCode}).", ReferenceToolFailureKind.Unavailable);
             using var doc = ParseJsonOrThrow(body, "signing key");
             var hex = doc.RootElement.ValueKind == JsonValueKind.Object && doc.RootElement.TryGetProperty("jwtToken", out var t) ? t.GetString() : null;
             if (string.IsNullOrWhiteSpace(hex))
-                throw new ReferenceToolException("The reference tool's signing-key response did not contain a key.");
-            _signingKey = DecodeKey(hex);
-            return _signingKey;
+                throw new ReferenceToolException("The reference tool's signing-key response did not contain a key.", ReferenceToolFailureKind.ContractChanged);
+            var decoded = DecodeKey(hex);
+            session.SetSigningKey(decoded);
+            return decoded;
         }
-        finally { _keyGate.Release(); }
+        finally { session.SigningKeyGate.Release(); }
     }
 
     /// <summary>The key is published hex-encoded; the front end decodes it to bytes before signing.
@@ -605,7 +740,7 @@ public sealed class ReferenceToolClient(HttpClient http, IOptions<ReferenceToolO
         catch (JsonException)
         {
             var snippet = body.Length > 160 ? body[..160] : body;
-            throw new ReferenceToolException($"The reference tool's {what} response was not JSON (session expired?). It began: {snippet.ReplaceLineEndings(" ")}");
+            throw new ReferenceToolException($"The reference tool's {what} response was not JSON (session expired?). It began: {snippet.ReplaceLineEndings(" ")}", ReferenceToolFailureKind.SessionExpired);
         }
     }
 

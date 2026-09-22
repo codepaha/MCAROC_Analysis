@@ -317,6 +317,8 @@ public class AuditFrameworkTests : IAsyncLifetime
         var clientMock = new ReferenceToolClient(
             new HttpClient(),
             Microsoft.Extensions.Options.Options.Create(new ReferenceToolOptions()),
+            new ReferenceToolSession(),
+            new NoOpIntegrationHealthService(),
             NullLogger<ReferenceToolClient>.Instance);
 
         var jobs = new AutoFetchJobService(

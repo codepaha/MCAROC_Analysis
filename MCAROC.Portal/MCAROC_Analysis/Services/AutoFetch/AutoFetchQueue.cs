@@ -10,4 +10,11 @@ public sealed class AutoFetchQueue
     private readonly Channel<long> _channel = Channel.CreateUnbounded<long>();
     public void Enqueue(long jobId) => _channel.Writer.TryWrite(jobId);
     public IAsyncEnumerable<long> ReadAllAsync(CancellationToken ct) => _channel.Reader.ReadAllAsync(ct);
+
+    /// <summary>Exposed so <see cref="AutoFetchWorker"/> can gate on the reference-tool breaker *before*
+    /// taking an item off the channel (docs/pipeline-automation-plan.md §5.4 mechanism 1) — an item must
+    /// never be dequeued while the breaker is open, since a dequeued-but-unprocessable job has nowhere to
+    /// go back to.</summary>
+    public ValueTask<bool> WaitToReadAsync(CancellationToken ct) => _channel.Reader.WaitToReadAsync(ct);
+    public bool TryRead(out long jobId) => _channel.Reader.TryRead(out jobId);
 }

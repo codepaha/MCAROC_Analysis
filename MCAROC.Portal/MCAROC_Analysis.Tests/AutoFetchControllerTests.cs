@@ -76,7 +76,7 @@ public class AutoFetchControllerTests : IAsyncLifetime
             BaseUrl = configured ? "https://reference-tool.test" : "",
             SessionCookie = configured ? "PHPSESSID=abc" : ""
         });
-        var client = new ReferenceToolClient(new HttpClient(new NoNetworkHandler()), options, NullLogger<ReferenceToolClient>.Instance);
+        var client = new ReferenceToolClient(new HttpClient(new NoNetworkHandler()), options, new ReferenceToolSession(), new NoOpIntegrationHealthService(), NullLogger<ReferenceToolClient>.Instance);
         var queue = new AutoFetchQueue();
         var jobs = new AutoFetchJobService(db, client, options, new FileValidationService(new ExcelSheetReader()), null!, null!, null!, null!,
             new FakeEnv(Path.GetTempPath()), NullLogger<AutoFetchJobService>.Instance);

@@ -98,9 +98,15 @@ public sealed class AutoFetchJobService(
 
     public async Task ProcessAsync(long jobId, CancellationToken ct)
     {
-        // Atomic claim — only one worker may move a job out of Queued.
+        // Atomic claim — only one worker may move a job out of Queued, and the predicate itself excludes
+        // an open reference-tool breaker (docs/pipeline-automation-plan.md §5.4 mechanism 2), one statement,
+        // one snapshot. AutoFetchWorker already gates before dequeuing (mechanism 1), so this only fires on
+        // the rare race where the breaker opened in between; when it does, the job is left Queued — never
+        // marked Failed for this reason — and the periodic re-enqueue sweep (mechanism 4) picks it back up
+        // once the breaker closes.
         var claimed = await db.AutoFetchJobs
-            .Where(j => j.AutoFetchJobId == jobId && j.Status == AutoFetchJobStatus.Queued)
+            .Where(j => j.AutoFetchJobId == jobId && j.Status == AutoFetchJobStatus.Queued
+                && !db.IntegrationHealths.Any(h => h.Name == IntegrationName.ReferenceTool && h.State == IntegrationHealthState.Open))
             .ExecuteUpdateAsync(s => s
                 .SetProperty(j => j.Status, AutoFetchJobStatus.CheckingSession)
                 .SetProperty(j => j.StartedUtc, DateTime.UtcNow)
@@ -215,6 +221,22 @@ public sealed class AutoFetchJobService(
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
             throw; // shutdown — the worker's recovery sweep re-queues it
+        }
+        catch (ReferenceToolException ex) when (ex.Kind is ReferenceToolFailureKind.Unavailable or ReferenceToolFailureKind.RateLimited)
+        {
+            // Breaker-class failure (§5.4 mechanism 3): a job claimed a moment before the breaker opened
+            // (or a genuinely transient outage) must not be recorded as Failed/ExtractionFailed — that would
+            // burn the request's one auto-fetch attempt for something that wasn't this company's fault.
+            // Left Queued with its checkpoints intact; the periodic re-enqueue sweep picks it back up once
+            // the breaker closes (or immediately, for a transient failure that never actually opened it).
+            logger.LogWarning(ex, "Auto-fetch job {JobId} (request {RequestId}) hit a breaker-class reference-tool failure ({Kind}); leaving it retryable",
+                job.AutoFetchJobId, job.RequestId, ex.Kind);
+            db.ChangeTracker.Clear();
+            await db.AutoFetchJobs.Where(j => j.AutoFetchJobId == jobId)
+                .ExecuteUpdateAsync(s => s
+                    .SetProperty(j => j.Status, AutoFetchJobStatus.Queued)
+                    .SetProperty(j => j.StatusMessage, "The reference tool is temporarily unavailable — will retry automatically.")
+                    .SetProperty(j => j.HeartbeatUtc, DateTime.UtcNow), CancellationToken.None);
         }
         catch (Exception ex)
         {
