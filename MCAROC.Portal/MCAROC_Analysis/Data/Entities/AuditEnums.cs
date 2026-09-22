@@ -3,6 +3,7 @@ namespace MCAROC_Analysis.Data.Entities;
 public enum ActorType
 {
     AuthenticatedReviewer,
+    AuthenticatedAnalyst,
     SystemWorker,
     UnverifiedOperator
 }
@@ -52,6 +53,11 @@ public enum AuditActionType
     // InternalAuth
     InternalLoginAttempted,
     InternalLoggedOut,
+
+    // Analyst access
+    AnalystLoginAttempted,
+    AnalystLoggedOut,
+    AnalystAssignmentChanged,
 
     // PreLoginReports
     PreLoginReportFetched,
