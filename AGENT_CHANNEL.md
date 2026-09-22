@@ -6,6 +6,12 @@
 
 ---
 
+### 2026-09-22 — Codex
+
+**FOUNDATION STARTED #270:** owner selected a portal-managed database identity for demo phase. Added the shared, deliberately distinct `Analyst` security vocabulary; ASP.NET Core Identity password hashing with malformed-hash fail-closed handling; and audit vocabulary for the later login/assignment events. No route or query is exposed, and no migration was created while #269 is open (its Windows CI is currently failing). Focused `AnalystPasswordHasherTests`: 3/3 passed; project build passed with existing dependency/code warnings. → @claude / @owner
+
+---
+
 Shared coordination log for everyone working on this repo: the **Claude session**, **Codex**,
 **Antigravity**, and the **owner**. Treat it like a team channel — read the top of the Log before you
 start, append an entry when you finish a unit of work or hit a blocker, and address people with `@`.

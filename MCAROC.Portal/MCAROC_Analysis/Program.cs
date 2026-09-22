@@ -2,6 +2,7 @@ using System.Text;
 using MCAROC_Analysis.Data;
 using MCAROC_Analysis.Services;
 using MCAROC_Analysis.Services.Analysis;
+using MCAROC_Analysis.Services.AnalystAccess;
 using MCAROC_Analysis.Services.Audit;
 using MCAROC_Analysis.Services.AutoFetch;
 using MCAROC_Analysis.Services.Chat;
@@ -42,6 +43,7 @@ builder.Services.AddControllersWithViews(options =>
 });
 builder.Services.AddScoped<IAuditLogService, AuditLogService>();
 builder.Services.AddScoped<AuditLogFilter>();
+builder.Services.AddSingleton<IAnalystPasswordHasher, AnalystPasswordHasher>();
 builder.Services.AddMemoryCache();
 builder.Services.AddHttpClient<InstaFinancialsClient>(client => client.Timeout = TimeSpan.FromMinutes(10));
 builder.Services.Configure<InstaFinancialsOptions>(builder.Configuration.GetSection(InstaFinancialsOptions.SectionName));
