@@ -21,6 +21,11 @@ public sealed class AnalystProvisioningService(
             throw new ArgumentException("The login name or display name exceeds its allowed length.");
         if (password.Length < 16)
             throw new ArgumentException("The password must contain at least 16 characters.");
+        // A database transaction plus an exclusive table lock serializes separate command processes too.
+        // `AnyAsync` followed by insert alone leaves an empty-table race where two operators can bootstrap
+        // two accounts. This command is SQL Server-only, like the portal's deployed AppDbContext.
+        await using var transaction = await db.Database.BeginTransactionAsync(ct);
+        await db.Database.ExecuteSqlRawAsync("SELECT TOP (1) 1 FROM [Analysts] WITH (TABLOCKX, HOLDLOCK)", ct);
         if (await db.Analysts.AnyAsync(ct))
             throw new InvalidOperationException("An Analyst already exists. This phase-one command cannot create another account.");
 
@@ -33,6 +38,7 @@ public sealed class AnalystProvisioningService(
         };
         db.Analysts.Add(analyst);
         await db.SaveChangesAsync(ct);
+        await transaction.CommitAsync(ct);
 
         await auditLog.TryLogAsync(new AuditEvent(
             AuditActionType.AnalystProvisioned,

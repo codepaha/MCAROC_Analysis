@@ -16,13 +16,13 @@ namespace MCAROC_Analysis.Controllers;
 /// Database-managed sign-in for the staged analyst role. This remains separate from InternalReviewer:
 /// the cookie grants no access except to endpoints that opt into the Analyst policy and resource check.
 /// </summary>
-[AllowAnonymous]
 public sealed class AnalystAuthController(
     AppDbContext db,
     IAnalystPasswordHasher passwordHasher,
     IAuditLogService auditLog) : Controller
 {
     [HttpGet("/analyst/login")]
+    [AllowAnonymous]
     public IActionResult Login(string? returnUrl)
     {
         ViewData["ReturnUrl"] = returnUrl;
@@ -30,6 +30,7 @@ public sealed class AnalystAuthController(
     }
 
     [HttpPost("/analyst/login")]
+    [AllowAnonymous]
     [ValidateAntiForgeryToken]
     [EnableRateLimiting("AnalystLogin")]
     public async Task<IActionResult> Login(string username, string password, string? returnUrl, CancellationToken ct)
@@ -39,9 +40,10 @@ public sealed class AnalystAuthController(
         var analyst = string.IsNullOrEmpty(loginName)
             ? null
             : await db.Analysts.SingleOrDefaultAsync(item => item.LoginName == loginName && item.IsActive, ct);
+        var submittedPassword = password ?? string.Empty;
         var verification = analyst is null
             ? PasswordVerificationResult.Failed
-            : passwordHasher.Verify(password ?? string.Empty, analyst.PasswordHash);
+            : passwordHasher.Verify(submittedPassword, analyst.PasswordHash);
 
         if (verification == PasswordVerificationResult.Failed)
         {
@@ -52,7 +54,7 @@ public sealed class AnalystAuthController(
 
         if (verification == PasswordVerificationResult.SuccessRehashNeeded)
         {
-            analyst!.PasswordHash = passwordHasher.Hash(password);
+            analyst!.PasswordHash = passwordHasher.Hash(submittedPassword);
             await db.SaveChangesAsync(ct);
         }
 

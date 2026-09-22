@@ -1,5 +1,6 @@
 using MCAROC_Analysis.Controllers;
 using MCAROC_Analysis.Data.Entities;
+using MCAROC_Analysis.Services.AnalystAccess;
 using MCAROC_Analysis.Services.Audit;
 
 namespace MCAROC_Analysis.Tests;
