@@ -133,6 +133,6 @@ jobs:
         run: |
           $dbName = $env:MCAROC_TEST_CATALOG
           if ($dbName -notmatch '^MCAROC_Analysis_CI_[0-9]+_[0-9]+$') {
-            throw "Refusing to drop '$dbName' — does not match the exact CI-run-scoped name grammar."
+            throw "Refusing to drop '$dbName' - does not match the exact CI-run-scoped name grammar."
           }
           sqlcmd -S ".\SQLEXPRESS" -d master -b -Q "IF DB_ID(N'$dbName') IS NOT NULL BEGIN ALTER DATABASE [$dbName] SET SINGLE_USER WITH ROLLBACK IMMEDIATE; DROP DATABASE [$dbName]; END"
