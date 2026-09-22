@@ -244,6 +244,11 @@ namespace MCAROC_Analysis.Migrations
                 filter: "[Trigger] = 'Auto'");
 
             migrationBuilder.CreateIndex(
+                name: "IX_LitigationAiAnalysisRuns_TriggerSnapshotId",
+                table: "LitigationAiAnalysisRuns",
+                column: "TriggerSnapshotId");
+
+            migrationBuilder.CreateIndex(
                 name: "IX_CompanyReportLifecycles_Identifier",
                 table: "CompanyReportLifecycles",
                 column: "Identifier",
@@ -303,11 +308,33 @@ namespace MCAROC_Analysis.Migrations
                 name: "IX_UnlockApprovals_Identifier_ConsumedAdmissionId_ExpiresUtc",
                 table: "UnlockApprovals",
                 columns: new[] { "Identifier", "ConsumedAdmissionId", "ExpiresUtc" });
+
+            migrationBuilder.AddForeignKey(
+                name: "FK_LitigationAiAnalysisRuns_LitigationReportSnapshots_OriginSnapshotId",
+                table: "LitigationAiAnalysisRuns",
+                column: "OriginSnapshotId",
+                principalTable: "LitigationReportSnapshots",
+                principalColumn: "LitigationReportSnapshotId");
+
+            migrationBuilder.AddForeignKey(
+                name: "FK_LitigationAiAnalysisRuns_LitigationReportSnapshots_TriggerSnapshotId",
+                table: "LitigationAiAnalysisRuns",
+                column: "TriggerSnapshotId",
+                principalTable: "LitigationReportSnapshots",
+                principalColumn: "LitigationReportSnapshotId");
         }
 
         /// <inheritdoc />
         protected override void Down(MigrationBuilder migrationBuilder)
         {
+            migrationBuilder.DropForeignKey(
+                name: "FK_LitigationAiAnalysisRuns_LitigationReportSnapshots_OriginSnapshotId",
+                table: "LitigationAiAnalysisRuns");
+
+            migrationBuilder.DropForeignKey(
+                name: "FK_LitigationAiAnalysisRuns_LitigationReportSnapshots_TriggerSnapshotId",
+                table: "LitigationAiAnalysisRuns");
+
             migrationBuilder.DropTable(
                 name: "CompanyReportLifecycles");
 
@@ -337,6 +364,10 @@ namespace MCAROC_Analysis.Migrations
 
             migrationBuilder.DropIndex(
                 name: "IX_LitigationAiAnalysisRuns_OriginSnapshotId",
+                table: "LitigationAiAnalysisRuns");
+
+            migrationBuilder.DropIndex(
+                name: "IX_LitigationAiAnalysisRuns_TriggerSnapshotId",
                 table: "LitigationAiAnalysisRuns");
 
             migrationBuilder.DropColumn(

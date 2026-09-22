@@ -104,6 +104,36 @@ public class PipelineOutcomeCalculatorTests
         Assert.False(PipelineOutcomeCalculator.IsCoreReady(states));
     }
 
+    [Fact]
+    public void ManualUploadRequest_SkippedUnlockRefreshFetch_StillReachesComplete()
+    {
+        // Regression for a real P1: a manual-upload request has Unlock/Refresh/Fetch Skipped(MANUAL_SOURCE)
+        // forever, not Succeeded — core completion must accept a legitimately-Skipped core stage as done, or
+        // this pipeline sits in InProgress permanently even after Ingest/Analysis/CalcAssurance/Dossier all
+        // genuinely succeed.
+        var states = AllStages.ToDictionary(s => s, _ => PipelineStageStateKind.Succeeded);
+        states[PipelineStage.Unlock] = PipelineStageStateKind.Skipped;
+        states[PipelineStage.Refresh] = PipelineStageStateKind.Skipped;
+        states[PipelineStage.Fetch] = PipelineStageStateKind.Skipped;
+        var skips = NoSkips.ToDictionary(kv => kv.Key, kv =>
+            states[kv.Key] == PipelineStageStateKind.Skipped ? (PipelineStageSkipKind?)PipelineStageSkipKind.Neutral : null);
+
+        Assert.True(PipelineOutcomeCalculator.IsCoreReady(states));
+        Assert.Equal(PipelineOutcome.Complete, PipelineOutcomeCalculator.Aggregate(states, skips, cancelled: false));
+    }
+
+    [Fact]
+    public void PerStageCancelledCoreStage_NeverSatisfiesCoreCompletion()
+    {
+        // A per-stage Cancelled state (distinct from the whole run being cancelled) means that stage was
+        // aborted, not completed or legitimately skipped — it must never let coreDone become true.
+        var states = AllCoreSucceeded();
+        states[PipelineStage.Analysis] = PipelineStageStateKind.Cancelled;
+
+        Assert.False(PipelineOutcomeCalculator.IsCoreReady(states));
+        Assert.Equal(PipelineOutcome.InProgress, PipelineOutcomeCalculator.Aggregate(states, NoSkips, cancelled: false));
+    }
+
     // ── Randomized invariant checks (docs/pipeline-automation-plan.md §8: "a generated-combination test
     // asserting the function is total ... and monotone [a NeedsAttention stage] can never improve the
     // outcome"). Fixed seed: a failure here must reproduce identically on every run. ──

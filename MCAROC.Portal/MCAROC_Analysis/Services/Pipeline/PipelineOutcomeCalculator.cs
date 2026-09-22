@@ -15,17 +15,28 @@ public static class PipelineOutcomeCalculator
         PipelineStageStateKind.Skipped or
         PipelineStageStateKind.Cancelled;
 
-    /// <summary>The stages that must all be <see cref="PipelineStageStateKind.Succeeded"/> or <see
-    /// cref="PipelineStageStateKind.SucceededWithWarnings"/> before <see cref="PipelineOutcome.CoreReady"/>
-    /// can be reached — the core track, docs/pipeline-automation-plan.md §3.3's dependency graph.</summary>
+    /// <summary>The stages that must all reach a *done* state (see <see cref="SatisfiesCoreCompletion"/>)
+    /// before <see cref="PipelineOutcome.CoreReady"/> can be reached — the core track,
+    /// docs/pipeline-automation-plan.md §3.3's dependency graph.</summary>
     public static readonly IReadOnlyList<PipelineStage> CoreStages =
     [
         PipelineStage.Resolve, PipelineStage.Unlock, PipelineStage.Refresh, PipelineStage.Fetch,
         PipelineStage.Ingest, PipelineStage.Analysis, PipelineStage.CalcAssurance, PipelineStage.Dossier
     ];
 
-    private static bool SucceededOrWarned(PipelineStageStateKind state) => state is
-        PipelineStageStateKind.Succeeded or PipelineStageStateKind.SucceededWithWarnings;
+    /// <summary>A core stage counts as done when it succeeded (with or without warnings) OR when it was
+    /// legitimately skipped (e.g. <c>Unlock</c>/<c>Refresh</c>/<c>Fetch</c> are <c>Skipped(MANUAL_SOURCE)</c>
+    /// for a manual-upload request, per §3.3) — a manual-upload pipeline must still be able to reach
+    /// <see cref="PipelineOutcome.CoreReady"/>/<see cref="PipelineOutcome.Complete"/>, not sit in
+    /// <see cref="PipelineOutcome.InProgress"/> forever because a stage that never runs for it never
+    /// "succeeds" either. Deliberately narrower than <see cref="IsTerminal"/>: a per-stage <see
+    /// cref="PipelineStageStateKind.Cancelled"/> core stage must NOT count as done (the run was aborted, not
+    /// completed) — <see cref="PipelineStageStateKind.NeedsAttention"/> never reaches this check at all,
+    /// since row 2 in <see cref="Aggregate"/> already short-circuits on it first.</summary>
+    private static bool SatisfiesCoreCompletion(PipelineStageStateKind state) => state is
+        PipelineStageStateKind.Succeeded or
+        PipelineStageStateKind.SucceededWithWarnings or
+        PipelineStageStateKind.Skipped;
 
     /// <param name="states">Every stage's current kind for this run — a stage never evaluated is expected
     /// to be present as <see cref="PipelineStageStateKind.NotStarted"/>, not absent, so this function stays
@@ -46,7 +57,7 @@ public static class PipelineOutcomeCalculator
         if (states.Values.Any(s => s == PipelineStageStateKind.NeedsAttention))
             return PipelineOutcome.NeedsAttention;
 
-        var coreDone = CoreStages.All(stage => states.TryGetValue(stage, out var s) && SucceededOrWarned(s));
+        var coreDone = CoreStages.All(stage => states.TryGetValue(stage, out var s) && SatisfiesCoreCompletion(s));
         var anyNonTerminal = states.Values.Any(s => !IsTerminal(s));
 
         // Row 3: core done, something else (an enrichment stage) still in flight -> CoreReady, not blocked.
@@ -64,13 +75,12 @@ public static class PipelineOutcomeCalculator
         return anyWarning ? PipelineOutcome.CompleteWithWarnings : PipelineOutcome.Complete;
     }
 
-    /// <summary>Every <see cref="PipelineStage"/> that has ever reached <see
-    /// cref="PipelineStageStateKind.Succeeded"/>/<see cref="PipelineStageStateKind.SucceededWithWarnings"/>
-    /// for every stage in <see cref="CoreStages"/> marks the moment a dossier first became downloadable —
-    /// callers persist this exactly once (the first tick this returns true) into <see
+    /// <summary>True once every stage in <see cref="CoreStages"/> satisfies <see
+    /// cref="SatisfiesCoreCompletion"/> — marks the moment a dossier first became downloadable. Callers
+    /// persist this exactly once (the first tick this returns true) into <see
     /// cref="PipelineRun.CoreReadyUtc"/> and never clear it afterward, even if the outcome later becomes
     /// <see cref="PipelineOutcome.NeedsAttention"/> from an enrichment stage. This function only answers
     /// "is it true right now" — the once-only persistence is the reconciler's job, not this one's.</summary>
     public static bool IsCoreReady(IReadOnlyDictionary<PipelineStage, PipelineStageStateKind> states) =>
-        CoreStages.All(stage => states.TryGetValue(stage, out var s) && SucceededOrWarned(s));
+        CoreStages.All(stage => states.TryGetValue(stage, out var s) && SatisfiesCoreCompletion(s));
 }

@@ -13,7 +13,7 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace MCAROC_Analysis.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    [Migration("20260922051129_AddPipelineAutomationSchema")]
+    [Migration("20260922055359_AddPipelineAutomationSchema")]
     partial class AddPipelineAutomationSchema
     {
         /// <inheritdoc />
@@ -3076,6 +3076,8 @@ namespace MCAROC_Analysis.Migrations
                         .IsUnique()
                         .HasFilter("[Status] IN ('Pending', 'InProgress')");
 
+                    b.HasIndex("TriggerSnapshotId");
+
                     b.HasIndex("RequestId", "RunNumber")
                         .IsUnique();
 
@@ -6030,11 +6032,21 @@ namespace MCAROC_Analysis.Migrations
 
             modelBuilder.Entity("MCAROC_Analysis.Data.Entities.LitigationAiAnalysisRun", b =>
                 {
+                    b.HasOne("MCAROC_Analysis.Data.Entities.LitigationReportSnapshot", null)
+                        .WithMany()
+                        .HasForeignKey("OriginSnapshotId")
+                        .OnDelete(DeleteBehavior.NoAction);
+
                     b.HasOne("MCAROC_Analysis.Data.Entities.McaRequest", null)
                         .WithMany()
                         .HasForeignKey("RequestId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
+
+                    b.HasOne("MCAROC_Analysis.Data.Entities.LitigationReportSnapshot", null)
+                        .WithMany()
+                        .HasForeignKey("TriggerSnapshotId")
+                        .OnDelete(DeleteBehavior.NoAction);
                 });
 
             modelBuilder.Entity("MCAROC_Analysis.Data.Entities.LitigationCase", b =>

@@ -394,6 +394,14 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             e.Property(x => x.LeaseOwner).HasMaxLength(100);
             e.Property(x => x.FailureReason).HasMaxLength(1000);
             e.HasOne<McaRequest>().WithMany().HasForeignKey(x => x.RequestId).OnDelete(DeleteBehavior.Cascade);
+            // Both anchor the "which purchased snapshot" provenance to a real row, not just an unvalidated
+            // long — without these, nothing stops TriggerSnapshotId/OriginSnapshotId from pointing at a
+            // nonexistent or wrong snapshot, which would make the unique-per-origin-snapshot index above a
+            // guarantee about garbage data rather than a real snapshot. NoAction (not Cascade): a snapshot
+            // being superseded/reimported must never delete the audit trail of what was analysed from it —
+            // same reasoning as LitigationCaseAiAnalysis → LitigationCase just above in this file.
+            e.HasOne<LitigationReportSnapshot>().WithMany().HasForeignKey(x => x.TriggerSnapshotId).OnDelete(DeleteBehavior.NoAction);
+            e.HasOne<LitigationReportSnapshot>().WithMany().HasForeignKey(x => x.OriginSnapshotId).OnDelete(DeleteBehavior.NoAction);
         });
 
         modelBuilder.Entity<LitigationCaseAiAnalysis>(e =>
