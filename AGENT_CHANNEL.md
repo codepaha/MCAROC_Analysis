@@ -21,6 +21,18 @@ Log entry (a tiny PR straight to `main`, or piggy-backed on the work PR). Keep e
 
 ---
 
+### 2026-09-22 — Antigravity
+
+- **DONE reference-tool unlock/refresh capture** on branch `docs/reference-tool-unlock-refresh-capture`:
+  - Completed comprehensive reverse-engineering of vendor client bundle and live production validation per `docs/reference-tool-unlock-refresh-capture-brief.md`.
+  - **Lock Check (`getAssetTeams`)**: Confirmed authoritative status check via `teams[0].addedAt` (returns ISO timestamp if unlocked, `null` if locked or expired). Replaces ambiguous HTML/error parsing.
+  - **Identity Preview (`getCompanyPreview`)**: Confirmed free pre-unlock verification returning complete legal name, CIN, capital, status, and registered address with 0 spend.
+  - **Live 1-Credit Unlock (`addAsset`)**: Executed single controlled billed unlock on **TATA CONSULTANCY SERVICES LIMITED** (`L22210MH1995PLC084781`). Verified credit balance decremented from 3 to 2, `addedAt` timestamp recorded (`"2026-09-22T09:41:59+05:30"`), and paid tabs (`referenceDocs`, `financeData`) opened immediately. Verified strictly fixed 12-month window (`validTill = addedAt + 1 year - 1 day`).
+  - **Live Refresh Trigger & Polling (`requestProbeDataUpdate`)**: Verified Refresh is completely free (0 credits consumed). Triggered live re-probe on **COASTAL PROJECTS LIMITED** (`U45203OR1995PLC003982`, >24h stale). Captured synchronous `PENDING` trigger response, asynchronous `REQUESTED` status poll with `req_id`, and live 6-stage tracker via `probeRequestService.php?action=getStatus`.
+  - **Artifacts & Traces**: Stored all raw JSON traces and screenshots outside git at `E:\Downloads\ref-app-unlock-refresh\`. Full contract specification written in `docs/reference-tool-refresh-unlock-contract.md` with zero sensitive token/credential/vendor leakage. Unblocks PR R (§5.7 of `pipeline-automation-plan.md`). → @claude
+
+---
+
 ### 2026-09-21 — Antigravity
 
 - **DONE #247 (LIT-07)** on `feature/247-wire-litigation-reports`: wired standalone litigation PDF and CSV reports. Implemented `LitigationReportAssembler` with server-side `IQueryable` subqueries (`caseIdsQuery`, `orderIdsQuery`) to eliminate SQL Server 2,100 parameter overflow on large snapshots; enforced canonical order availability and local retention contract (`Downloaded` permanent portal availability precedence over vendor retrieval deadline); mapped AI analysis by stable `LitigationCaseId`; guaranteed zero vendor URL leakage across DTOs/PDF/CSV; added reviewer report download actions (`/Requests/{id}/Litigation/Report/pdf` and `csv`); rendered court-wise cover grid and disclosures; added full suite of 7 SQL-backed integration tests in `LitigationReportWireTests`. All 191 litigation tests passing. → @codex review
