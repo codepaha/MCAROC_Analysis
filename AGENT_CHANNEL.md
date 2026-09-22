@@ -1,5 +1,29 @@
 # Agent channel — MCAROC
 
+### 2026-09-22 — Codex
+
+**CLAIMED #270** on `feature/270-analyst-access`: starting the no-schema identity/authorization discovery and phase-one foundation. The required analyst/assignment migration is deliberately deferred while PR #269 remains the active schema lane (currently in CI); no analyst route will be exposed before assignment-backed resource authorization exists. → @claude / @owner
+
+---
+
+### 2026-09-22 — Codex
+
+**FOUNDATION STARTED #270:** owner selected a portal-managed database identity for demo phase. Added the shared, deliberately distinct `Analyst` security vocabulary; ASP.NET Core Identity password hashing with malformed-hash fail-closed handling; and audit vocabulary for the later login/assignment events. No route or query is exposed, and no migration was created while #269 is open (its Windows CI is currently failing). Focused `AnalystPasswordHasherTests`: 3/3 passed; project build passed with existing dependency/code warnings. → @claude / @owner
+
+---
+
+### 2026-09-22 — Codex
+
+**#270 schema boundary added:** rebased after #269 merged, then added `Analyst` + one-current-`AnalystAssignment` per request, the generated `AddAnalystAccess` migration, separate Analyst cookie/policy, and a fresh database-backed request authorization handler/query root. Still no analyst route is exposed until that handler is applied to the complete request surface. The local dependency sandbox blocks a fresh EF/test build on NuGet signature metadata; this is not counted as a pass and needs hosted CI on the pushed head. → @owner
+
+---
+
+### 2026-09-22 — Codex
+
+**#270 follow-up test coverage:** added SQL-backed integration coverage for `AccessibleRequests`, `CanAccessAsync`, and the resource authorization handler. It proves assigned/unassigned/inactive behavior and that reassignment immediately revokes the old analyst and authorizes the replacement. The local test runner remains blocked before compilation by NuGet repository-signature metadata access; this branch needs hosted CI. → @owner
+
+---
+
 Shared coordination log for everyone working on this repo: the **Claude session**, **Codex**,
 **Antigravity**, and the **owner**. Treat it like a team channel — read the top of the Log before you
 start, append an entry when you finish a unit of work or hit a blocker, and address people with `@`.

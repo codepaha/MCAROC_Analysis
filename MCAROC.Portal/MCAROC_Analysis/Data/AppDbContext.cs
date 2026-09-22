@@ -7,6 +7,8 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
 {
     public DbSet<Client> Clients => Set<Client>();
     public DbSet<McaRequest> Requests => Set<McaRequest>();
+    public DbSet<Analyst> Analysts => Set<Analyst>();
+    public DbSet<AnalystAssignment> AnalystAssignments => Set<AnalystAssignment>();
     public DbSet<RequestDocument> RequestDocuments => Set<RequestDocument>();
     public DbSet<RequestDocumentDerivative> RequestDocumentDerivatives => Set<RequestDocumentDerivative>();
 
@@ -442,6 +444,27 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             e.Property(x => x.EntityType).HasConversion<string>().HasMaxLength(20);
             e.Property(x => x.RequestStatus).HasConversion<string>().HasMaxLength(30);
             e.Property(x => x.RowVersion).IsRowVersion();
+        });
+
+        modelBuilder.Entity<Analyst>(e =>
+        {
+            e.HasKey(x => x.AnalystId);
+            e.Property(x => x.LoginName).HasMaxLength(100).IsRequired();
+            e.HasIndex(x => x.LoginName).IsUnique();
+            e.Property(x => x.PasswordHash).HasMaxLength(512).IsRequired();
+            e.Property(x => x.DisplayName).HasMaxLength(100).IsRequired();
+        });
+
+        modelBuilder.Entity<AnalystAssignment>(e =>
+        {
+            e.HasKey(x => x.AnalystAssignmentId);
+            e.HasIndex(x => x.RequestId).IsUnique();
+            e.HasIndex(x => new { x.AnalystId, x.RequestId });
+            e.Property(x => x.AssignedByActorId).HasMaxLength(200).IsRequired();
+            e.Property(x => x.Reason).HasMaxLength(500);
+            e.Property(x => x.RowVersion).IsRowVersion();
+            e.HasOne(x => x.Analyst).WithMany(x => x.Assignments).HasForeignKey(x => x.AnalystId).OnDelete(DeleteBehavior.Restrict);
+            e.HasOne(x => x.Request).WithMany().HasForeignKey(x => x.RequestId).OnDelete(DeleteBehavior.Cascade);
         });
 
         modelBuilder.Entity<RequestDocument>(e =>
