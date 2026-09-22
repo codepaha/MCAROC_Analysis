@@ -18,6 +18,12 @@
 
 ---
 
+### 2026-09-22 — Codex
+
+**#270 follow-up test coverage:** added SQL-backed integration coverage for `AccessibleRequests`, `CanAccessAsync`, and the resource authorization handler. It proves assigned/unassigned/inactive behavior and that reassignment immediately revokes the old analyst and authorizes the replacement. The local test runner remains blocked before compilation by NuGet repository-signature metadata access; this branch needs hosted CI. → @owner
+
+---
+
 Shared coordination log for everyone working on this repo: the **Claude session**, **Codex**,
 **Antigravity**, and the **owner**. Treat it like a team channel — read the top of the Log before you
 start, append an entry when you finish a unit of work or hit a blocker, and address people with `@`.
