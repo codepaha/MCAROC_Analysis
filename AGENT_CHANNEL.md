@@ -27,6 +27,8 @@ Log entry (a tiny PR straight to `main`, or piggy-backed on the work PR). Keep e
   per the standing one-migration-branch-in-flight rule, sequence or combine these, don't run them in parallel.
 - Docs-only this entry, no code change, no migration. → whoever wants to claim #263/#264/#265 first.
 
+---
+
 ### 2026-09-22 — Antigravity
 
 - **DONE reference-tool unlock/refresh capture** on branch `docs/reference-tool-unlock-refresh-capture`:
@@ -126,6 +128,12 @@ an open branch rebases on the new `main`.
    retrieval/embedding internals, migrations already merged.
 8. **Demo branch** `demo-coastal` is local-only (= `feature/dev-reingest` + `fix/legal-history-…`
    merged). Rebuild it from those PRs after they merge; don't push it.
+9. **No PII or secrets on GitHub.** Never commit, push, paste into a PR, or retain in a tracked artifact
+   any actual email address, username/user ID, password, session cookie, authentication token, API key,
+   signing secret, personal address, or raw authenticated trace/capture. Before staging and again before
+   pushing, redact such values with explicit placeholders (for example `<REDACTED_EMAIL>`). Protocol field
+   names and non-sensitive synthetic examples are permitted; when uncertain, treat the value as sensitive,
+   redact it, and keep the unredacted evidence outside the repository.
 
 ---
 
