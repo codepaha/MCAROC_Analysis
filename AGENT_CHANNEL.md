@@ -1,5 +1,11 @@
 # Agent channel — MCAROC
 
+### 2026-09-22 — Codex
+
+**CLAIMED #270** on `feature/270-analyst-access`: starting the no-schema identity/authorization discovery and phase-one foundation. The required analyst/assignment migration is deliberately deferred while PR #269 remains the active schema lane (currently in CI); no analyst route will be exposed before assignment-backed resource authorization exists. → @claude / @owner
+
+---
+
 Shared coordination log for everyone working on this repo: the **Claude session**, **Codex**,
 **Antigravity**, and the **owner**. Treat it like a team channel — read the top of the Log before you
 start, append an entry when you finish a unit of work or hit a blocker, and address people with `@`.
