@@ -9,15 +9,44 @@ Log entry (a tiny PR straight to `main`, or piggy-backed on the work PR). Keep e
 
 ---
 
-### 2026-09-22 — Codex
+### 2026-09-22 — Claude session (PR #269 open — pipeline automation schema)
 
-**CLAIMED #248 (LIT-08)** on `feature/248-litigation-e2e-hardening`: performing the post-merge end-to-end acceptance gate and operational hardening for LIT-01 through LIT-07. Will add source-backed regressions and a release checklist; no vendor credentials or CRA workers. → @owner review
+- **DONE, PR open:** consolidated migration (one, per the owner's explicit instruction) covering every new
+  table needed across #229/#263/#264/#265/#266: `PipelineRuns`/`PipelineStageStates`/`PipelineEvents`,
+  `SpendScopes`/`SpendCounters`/`PaidCallAdmissions`, `CompanyReportLifecycles`/`UnlockApprovals`,
+  `IntegrationHealths`, and `LitigationAiAnalysisRuns` + `TriggerSnapshotId`/`OriginSnapshotId`/`Trigger` +
+  a filtered unique index. Verified against the real local SQL Server (build clean, no pending model
+  changes, applies with no errors, all 9 tables + 3 columns confirmed present); full suite re-run against it,
+  1706/1706 passed.
+- Plus one real piece of #264's logic (`PipelineOutcomeCalculator`, 12 tests incl. two seeded 500/300-trial
+  randomized totality/monotonicity checks), and — since a migration mistake is exactly how deployment
+  problems start — `docs/ef-migrations-runbook.md` + `.claude/skills/db-migrations/`, written up from a real
+  incident hit while building this (`migrations remove` deleted an already-shipped migration twice, root
+  cause was `--no-build` staleness plus a `Guid.NewGuid()` property default baking into the model snapshot;
+  restored and fixed, not glossed over).
+- **Deliberately not in this PR:** the actual service logic for #263/#264/#265/#229/#266 — tracked as
+  fast-follow PRs against this same already-applied migration, none of which should need a second one.
+- → @codex review on #269.
 
 ---
 
-### 2026-09-22 — Codex
+### 2026-09-22 — Claude session (Pipeline automation epic filed — #262)
 
-**DONE #248 (LIT-08)** on `feature/248-litigation-e2e-hardening`: added `LitigationEndToEndAcceptanceTests`, a real-SQL hand-off test from a local representative BPR fixture through durable job completion, snapshot import, CNR-first/CSP-not-a-key dedupe, all-order retention/refetch, and reconciled standalone PDF/CSV. Added `docs/litigation-release-checklist.md` with exact focused gate, live-safe smoke, evidence retention, and stop conditions. `dotnet build --no-restore` passed; the focused test is source-built but cannot reach the shared SQL test instance on this host (`Cannot generate SSPI context`), so that is explicitly not counted as green. `git diff --check` passed. → @owner review
+- **Epic #262** opened (design: `docs/pipeline-automation-plan.md`, round 5 — owner-reviewed across five
+  rounds, see its §12–§15 for the full decision trail). Goal: unattended CIN-to-dossier, human pulled in only
+  for a named, actionable reason.
+- **Reused #229 instead of duplicating it** — its remaining scope (durable refresh persistence, provider
+  polling, restart recovery) is exactly this epic's "PR R"; commented there linking the two. New **#266**
+  covers the paid-unlock half #229 explicitly excludes (credit spend, approval gate) — **blocked** on an
+  approver-policy decision (plan §9 #12), filed for visibility, not yet claimable.
+- **Ready to claim now:** #263 (unattended reference-tool session — shared login/re-login/circuit breaker),
+  #264 (pipeline coordinator, Observe mode only — decides/spends nothing yet), #265 (paid-call admission
+  ledger — durable caps for the only two things that cost real money: a company unlock and litigation AI
+  analysis; litigation search itself is confirmed free, BPR's own ~4.5B-record data lake, not a live crawl).
+- **Migration-serialization note for whoever picks these up:** #229's remaining scope, #263
+  (`IntegrationHealth`), and #264 (`PipelineRuns`/`PipelineStageStates`/`PipelineEvents`) each add tables —
+  per the standing one-migration-branch-in-flight rule, sequence or combine these, don't run them in parallel.
+- Docs-only this entry, no code change, no migration. → whoever wants to claim #263/#264/#265 first.
 
 ---
 
@@ -30,6 +59,18 @@ Log entry (a tiny PR straight to `main`, or piggy-backed on the work PR). Keep e
   - **Live 1-Credit Unlock (`addAsset`)**: Executed single controlled billed unlock on **TATA CONSULTANCY SERVICES LIMITED** (`L22210MH1995PLC084781`). Verified credit balance decremented from 3 to 2, `addedAt` timestamp recorded (`"2026-09-22T09:41:59+05:30"`), and paid tabs (`referenceDocs`, `financeData`) opened immediately. Verified strictly fixed 12-month window (`validTill = addedAt + 1 year - 1 day`).
   - **Live Refresh Trigger & Polling (`requestProbeDataUpdate`)**: Verified Refresh is completely free (0 credits consumed). Triggered live re-probe on **COASTAL PROJECTS LIMITED** (`U45203OR1995PLC003982`, >24h stale). Captured synchronous `PENDING` trigger response, asynchronous `REQUESTED` status poll with `req_id`, and live 6-stage tracker via `probeRequestService.php?action=getStatus`.
   - **Artifacts & Traces**: Stored all raw JSON traces and screenshots outside git at `E:\Downloads\ref-app-unlock-refresh\`. Full contract specification written in `docs/reference-tool-refresh-unlock-contract.md` with zero sensitive token/credential/vendor leakage. Unblocks PR R (§5.7 of `pipeline-automation-plan.md`). → @claude
+
+---
+
+### 2026-09-22 — Codex
+
+**CLAIMED #248 (LIT-08)** on `feature/248-litigation-e2e-hardening`: performing the post-merge end-to-end acceptance gate and operational hardening for LIT-01 through LIT-07. Will add source-backed regressions and a release checklist; no vendor credentials or CRA workers. → @owner review
+
+---
+
+### 2026-09-22 — Codex
+
+**DONE #248 (LIT-08)** on `feature/248-litigation-e2e-hardening`: added `LitigationEndToEndAcceptanceTests`, a real-SQL hand-off test from a local representative BPR fixture through durable job completion, snapshot import, CNR-first/CSP-not-a-key dedupe, all-order retention/refetch, and reconciled standalone PDF/CSV. Added `docs/litigation-release-checklist.md` with exact focused gate, live-safe smoke, evidence retention, and stop conditions. `dotnet build --no-restore` passed; the focused test is source-built but cannot reach the shared SQL test instance on this host (`Cannot generate SSPI context`), so that is explicitly not counted as green. `git diff --check` passed. → @owner review
 
 ---
 

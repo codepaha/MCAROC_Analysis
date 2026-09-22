@@ -16,13 +16,36 @@ internal static class TestDatabase
     public static readonly string ConnectionString = Build();
 
     /// <summary>
-    /// Migrates the shared SQL Server test database while holding an instance-wide session applock in
-    /// <c>master</c>. xUnit is already serial within a test process, but this repository's self-hosted runner
-    /// also shares SQLEXPRESS with local/other-agent test processes. Without this lock, two processes can both
-    /// decide that the database does not exist and race in EF's create path, producing "Database already exists"
-    /// before any test assertion executes.
+    /// Runs the actual create+migrate sequence **at most once per test process**, no matter how many test
+    /// classes' fixtures call <see cref="MigrateAsync"/> — every caller after the first just awaits this
+    /// same completed task. This is the real fix for a failure mode that looked like a timing race but
+    /// wasn't: three consecutive hosted CI runs on the exact same commit all failed identically with
+    /// "Database already exists" (SQL error 1801) raised from inside EF's own <c>MigrateAsync</c> — not
+    /// from the explicit <c>CREATE DATABASE</c> statement below, which already correctly tolerates 1801 —
+    /// and a bounded retry around that inner call (an earlier attempt at this fix) did not help either,
+    /// which only makes sense for a *persistent*, not transient, condition. The self-hosted runner's own
+    /// process ran the query directly afterward and found the database perfectly healthy between runs
+    /// (`ONLINE`/`MULTI_USER`, zero connected sessions) — so the database itself was never actually broken;
+    /// what kept recurring, deterministically, was redundant *attempts* to create an already-created
+    /// database from more than one <see cref="Microsoft.EntityFrameworkCore.DbContext"/> instance within the
+    /// same process (multiple `IAsyncLifetime.InitializeAsync()` fixtures each independently calling this
+    /// method). <see cref="Lazy{Task}"/> with execution-and-publication thread safety collapses that down to
+    /// one real attempt, which is the correct fix regardless of exactly which EF-internal state made the
+    /// redundant attempts fail rather than silently no-op. The cross-process <c>sp_getapplock</c> below is
+    /// kept for the other case it was originally added for (a genuinely separate OS process — a stray local
+    /// checkout, a different machine — racing this one), which this per-process gate cannot cover.
     /// </summary>
-    public static async Task MigrateAsync(AppDbContext db, CancellationToken cancellationToken = default)
+    private static readonly Lazy<Task> MigrationOnce = new(() => MigrateCoreAsync(CancellationToken.None),
+        LazyThreadSafetyMode.ExecutionAndPublication);
+
+    public static Task MigrateAsync(AppDbContext db, CancellationToken cancellationToken = default) =>
+        // `db` and `cancellationToken` are accepted for call-site compatibility (every existing fixture
+        // already has an AppDbContext in hand) but only the *first* caller's arguments are actually used —
+        // migrating the database is not a per-DbContext-instance operation, so every later caller correctly
+        // just awaits that first attempt's own task instead of touching the database again.
+        MigrationOnce.Value;
+
+    private static async Task MigrateCoreAsync(CancellationToken cancellationToken)
     {
         var target = new SqlConnectionStringBuilder(ConnectionString);
         if (string.IsNullOrWhiteSpace(target.InitialCatalog))
@@ -71,7 +94,31 @@ internal static class TestDatabase
                 // continue with EF's idempotent migration while holding the lock.
             }
 
-            await db.Database.MigrateAsync(cancellationToken);
+            // One AppDbContext, constructed here rather than accepted from a caller — see MigrateAsync's own
+            // comment: this whole method now runs at most once per process, so there is no "the caller's db
+            // instance" to use; any instance pointed at the same connection string does the same work.
+            await using var db = new AppDbContext(new DbContextOptionsBuilder<AppDbContext>()
+                .UseSqlServer(ConnectionString).Options);
+
+            // A short, defensive retry on top of the once-per-process gate above: db.Database.MigrateAsync
+            // can independently attempt to create the database (EF's own SqlServerDatabaseCreator.CreateAsync,
+            // invoked as MigrateAsync's own first step) — a second, separate code path from the explicit
+            // CREATE DATABASE just above, and one this method cannot wrap in the same narrow try/catch
+            // because it isn't our SQL to retry piecemeal. Not expected to fire in the common case now that
+            // only one attempt happens per process at all; kept for the genuinely-separate-OS-process case
+            // the cross-process lock above targets, where a competing CREATE can still land in this window.
+            for (var attempt = 1; ; attempt++)
+            {
+                try
+                {
+                    await db.Database.MigrateAsync(cancellationToken);
+                    break;
+                }
+                catch (SqlException ex) when (ex.Number == 1801 && attempt < 3)
+                {
+                    await Task.Delay(TimeSpan.FromSeconds(attempt), cancellationToken);
+                }
+            }
         }
         finally
         {

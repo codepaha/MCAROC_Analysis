@@ -68,6 +68,17 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<PreLoginReportJob> PreLoginReportJobs => Set<PreLoginReportJob>();
     public DbSet<AutoFetchJob> AutoFetchJobs => Set<AutoFetchJob>();
 
+    // Pipeline automation (epic #262)
+    public DbSet<PipelineRun> PipelineRuns => Set<PipelineRun>();
+    public DbSet<PipelineStageState> PipelineStageStates => Set<PipelineStageState>();
+    public DbSet<PipelineEvent> PipelineEvents => Set<PipelineEvent>();
+    public DbSet<SpendScope> SpendScopes => Set<SpendScope>();
+    public DbSet<SpendCounter> SpendCounters => Set<SpendCounter>();
+    public DbSet<PaidCallAdmission> PaidCallAdmissions => Set<PaidCallAdmission>();
+    public DbSet<CompanyReportLifecycle> CompanyReportLifecycles => Set<CompanyReportLifecycle>();
+    public DbSet<UnlockApproval> UnlockApprovals => Set<UnlockApproval>();
+    public DbSet<IntegrationHealth> IntegrationHealths => Set<IntegrationHealth>();
+
     // Litigation data lake (#239, LIT-01: request-scoped BPR search jobs — distinct from the
     // workbook-derived Litigation entity above)
     public DbSet<LitigationSearchJob> LitigationSearchJobs => Set<LitigationSearchJob>();
@@ -148,6 +159,107 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             e.Property(x => x.StatusMessage).HasMaxLength(500);
             e.Ignore(x => x.IsTerminal);
         });
+
+        // Pipeline automation (epic #262) ------------------------------------------------------------------
+
+        modelBuilder.Entity<PipelineRun>(e =>
+        {
+            e.HasKey(x => x.PipelineRunId);
+            // At most one *live* run per request — a cancelled/superseded run is never revived.
+            e.HasIndex(x => x.RequestId).IsUnique()
+                .HasFilter("[Outcome] IN ('InProgress','CoreReady','NeedsAttention')");
+            e.HasIndex(x => new { x.ReconcileLeaseExpiresUtc, x.Outcome });
+            e.HasOne(x => x.Request).WithMany().HasForeignKey(x => x.RequestId).OnDelete(DeleteBehavior.Cascade);
+            e.Property(x => x.Trigger).HasConversion<string>().HasMaxLength(20);
+            e.Property(x => x.Outcome).HasConversion<string>().HasMaxLength(30);
+            e.Property(x => x.CorrelationId).HasMaxLength(64).IsRequired();
+            e.Property(x => x.ReconcileLeaseOwner).HasMaxLength(100);
+            e.Property(x => x.RowVersion).IsRowVersion();
+        });
+
+        modelBuilder.Entity<PipelineStageState>(e =>
+        {
+            e.HasKey(x => new { x.PipelineRunId, x.Stage });
+            e.HasIndex(x => new { x.State, x.NextAttemptUtc });
+            e.HasOne(x => x.Run).WithMany(r => r.StageStates).HasForeignKey(x => x.PipelineRunId).OnDelete(DeleteBehavior.Cascade);
+            e.Property(x => x.Stage).HasConversion<string>().HasMaxLength(20);
+            e.Property(x => x.State).HasConversion<string>().HasMaxLength(30);
+            e.Property(x => x.SkipKind).HasConversion<string>().HasMaxLength(10);
+            e.Property(x => x.ReasonCode).HasMaxLength(60);
+            e.Property(x => x.ReasonDetail).HasMaxLength(1000);
+        });
+
+        modelBuilder.Entity<PipelineEvent>(e =>
+        {
+            e.HasKey(x => x.PipelineEventId);
+            e.HasIndex(x => new { x.PipelineRunId, x.AtUtc });
+            e.HasOne<PipelineRun>().WithMany().HasForeignKey(x => x.PipelineRunId).OnDelete(DeleteBehavior.Cascade);
+            e.Property(x => x.Stage).HasConversion<string>().HasMaxLength(20);
+            e.Property(x => x.Action).HasMaxLength(60).IsRequired();
+            e.Property(x => x.Actor).HasMaxLength(100).IsRequired();
+            e.Property(x => x.ReasonCode).HasMaxLength(60);
+            e.Property(x => x.CorrelationId).HasMaxLength(64);
+        });
+
+        modelBuilder.Entity<SpendScope>(e =>
+        {
+            e.HasKey(x => x.SpendScopeId);
+            e.HasIndex(x => new { x.Kind, x.ScopeKey }).IsUnique();
+            e.Property(x => x.Kind).HasConversion<string>().HasMaxLength(30);
+            e.Property(x => x.ScopeKey).HasMaxLength(300).IsRequired();
+            e.Property(x => x.RowVersion).IsRowVersion();
+        });
+
+        modelBuilder.Entity<SpendCounter>(e =>
+        {
+            e.HasKey(x => x.SpendCounterId);
+            e.HasIndex(x => new { x.Kind, x.DayKey }).IsUnique();
+            e.Property(x => x.Kind).HasConversion<string>().HasMaxLength(30);
+            e.Property(x => x.RowVersion).IsRowVersion();
+        });
+
+        modelBuilder.Entity<PaidCallAdmission>(e =>
+        {
+            e.HasKey(x => x.PaidCallAdmissionId);
+            e.HasIndex(x => new { x.Kind, x.ScopeKey, x.State });
+            e.HasIndex(x => x.RequestId);
+            e.HasOne<McaRequest>().WithMany().HasForeignKey(x => x.RequestId).OnDelete(DeleteBehavior.Restrict);
+            e.Property(x => x.Kind).HasConversion<string>().HasMaxLength(30);
+            e.Property(x => x.ScopeKey).HasMaxLength(300).IsRequired();
+            e.Property(x => x.Trigger).HasConversion<string>().HasMaxLength(10);
+            e.Property(x => x.State).HasConversion<string>().HasMaxLength(20);
+            e.Property(x => x.CorrelationId).HasMaxLength(64);
+        });
+
+        modelBuilder.Entity<CompanyReportLifecycle>(e =>
+        {
+            e.HasKey(x => x.CompanyReportLifecycleId);
+            e.HasIndex(x => x.Identifier).IsUnique();
+            e.Property(x => x.Identifier).HasMaxLength(30).IsRequired();
+            e.Property(x => x.State).HasConversion<string>().HasMaxLength(20);
+            e.Property(x => x.RowVersion).IsRowVersion();
+        });
+
+        modelBuilder.Entity<UnlockApproval>(e =>
+        {
+            e.HasKey(x => x.UnlockApprovalId);
+            e.HasIndex(x => new { x.Identifier, x.ConsumedAdmissionId, x.ExpiresUtc });
+            e.Property(x => x.Identifier).HasMaxLength(30).IsRequired();
+            e.Property(x => x.ApprovedBy).HasMaxLength(200).IsRequired();
+            e.Property(x => x.Reason).HasMaxLength(1000);
+        });
+
+        modelBuilder.Entity<IntegrationHealth>(e =>
+        {
+            e.HasKey(x => x.IntegrationHealthId);
+            e.HasIndex(x => x.Name).IsUnique();
+            e.Property(x => x.Name).HasConversion<string>().HasMaxLength(20);
+            e.Property(x => x.State).HasConversion<string>().HasMaxLength(10);
+            e.Property(x => x.LastError).HasMaxLength(2000);
+            e.Property(x => x.RowVersion).IsRowVersion();
+        });
+
+        // -----------------------------------------------------------------------------------------------------
 
         modelBuilder.Entity<LitigationSearchJob>(e =>
         {
@@ -271,12 +383,25 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             e.HasIndex(x => new { x.RequestId, x.RunNumber }).IsUnique();
             e.HasIndex(x => x.RequestId).IsUnique().HasFilter("[Status] IN ('Pending', 'InProgress')");
             e.HasIndex(x => new { x.Status, x.NextAttemptUtc });
+            // At most one Auto run per *origin* snapshot — the database invariant behind "N requests sharing
+            // one purchased litigation report still yield at most one paid auto analysis" (docs/pipeline-
+            // automation-plan.md §4.2). Keyed on OriginSnapshotId, not TriggerSnapshotId, on purpose.
+            e.HasIndex(x => x.OriginSnapshotId).IsUnique().HasFilter("[Trigger] = 'Auto'");
             e.Property(x => x.Status).HasConversion<string>().HasMaxLength(30);
+            e.Property(x => x.Trigger).HasConversion<string>().HasMaxLength(10);
             e.Property(x => x.ModelId).HasMaxLength(100).IsRequired();
             e.Property(x => x.PromptVersion).HasMaxLength(20).IsRequired();
             e.Property(x => x.LeaseOwner).HasMaxLength(100);
             e.Property(x => x.FailureReason).HasMaxLength(1000);
             e.HasOne<McaRequest>().WithMany().HasForeignKey(x => x.RequestId).OnDelete(DeleteBehavior.Cascade);
+            // Both anchor the "which purchased snapshot" provenance to a real row, not just an unvalidated
+            // long — without these, nothing stops TriggerSnapshotId/OriginSnapshotId from pointing at a
+            // nonexistent or wrong snapshot, which would make the unique-per-origin-snapshot index above a
+            // guarantee about garbage data rather than a real snapshot. NoAction (not Cascade): a snapshot
+            // being superseded/reimported must never delete the audit trail of what was analysed from it —
+            // same reasoning as LitigationCaseAiAnalysis → LitigationCase just above in this file.
+            e.HasOne<LitigationReportSnapshot>().WithMany().HasForeignKey(x => x.TriggerSnapshotId).OnDelete(DeleteBehavior.NoAction);
+            e.HasOne<LitigationReportSnapshot>().WithMany().HasForeignKey(x => x.OriginSnapshotId).OnDelete(DeleteBehavior.NoAction);
         });
 
         modelBuilder.Entity<LitigationCaseAiAnalysis>(e =>
