@@ -9,12 +9,29 @@ public enum LitigationAiAnalysisRunStatus { Pending, InProgress, Completed, Comp
 /// neither is silently converted into an adverse conclusion.</summary>
 public enum LitigationAiAnalysisItemStatus { Pending, Completed, Failed, InsufficientEvidence }
 
+/// <summary>What started this run — <see cref="Auto"/> is the pipeline coordinator (docs/pipeline-automation-
+/// plan.md §4.2), <see cref="Reused"/> is a copy from another request's already-purchased snapshot (§4.2a,
+/// never itself a new spend), <see cref="Manual"/> is the existing reviewer button, unchanged.</summary>
+public enum LitigationAiAnalysisTrigger { Manual, Auto, Reused }
+
 public sealed class LitigationAiAnalysisRun
 {
     public long LitigationAiAnalysisRunId { get; set; }
     public long RequestId { get; set; }
     public int RunNumber { get; set; }
     public LitigationAiAnalysisRunStatus Status { get; set; } = LitigationAiAnalysisRunStatus.Pending;
+
+    public LitigationAiAnalysisTrigger Trigger { get; set; } = LitigationAiAnalysisTrigger.Manual;
+    /// <summary>The snapshot that triggered *this* run (this request's own newest fully-imported snapshot at
+    /// admission time) — null only on rows predating this column.</summary>
+    public long? TriggerSnapshotId { get; set; }
+    /// <summary>The snapshot that was originally *purchased* — equal to <see cref="TriggerSnapshotId"/>
+    /// unless this run's snapshot was itself reused from another request (§4.2a). The paid-call admission
+    /// ledger's <c>analysis|{OriginSnapshotId}</c> scope, and the "at most one Auto run per snapshot" unique
+    /// index, are both keyed on this, not on <see cref="TriggerSnapshotId"/> — that is what lets N requests
+    /// sharing one purchased report still yield at most one paid auto analysis.</summary>
+    public long? OriginSnapshotId { get; set; }
+
     public int AttemptCount { get; set; }
     public string ModelId { get; set; } = string.Empty;
     public string PromptVersion { get; set; } = string.Empty;
