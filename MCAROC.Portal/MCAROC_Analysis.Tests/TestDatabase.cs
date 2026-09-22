@@ -18,22 +18,22 @@ internal static class TestDatabase
     /// <summary>
     /// Runs the actual create+migrate sequence **at most once per test process**, no matter how many test
     /// classes' fixtures call <see cref="MigrateAsync"/> — every caller after the first just awaits this
-    /// same completed task. This is the real fix for a failure mode that looked like a timing race but
-    /// wasn't: three consecutive hosted CI runs on the exact same commit all failed identically with
-    /// "Database already exists" (SQL error 1801) raised from inside EF's own <c>MigrateAsync</c> — not
-    /// from the explicit <c>CREATE DATABASE</c> statement below, which already correctly tolerates 1801 —
-    /// and a bounded retry around that inner call (an earlier attempt at this fix) did not help either,
-    /// which only makes sense for a *persistent*, not transient, condition. The self-hosted runner's own
-    /// process ran the query directly afterward and found the database perfectly healthy between runs
-    /// (`ONLINE`/`MULTI_USER`, zero connected sessions) — so the database itself was never actually broken;
-    /// what kept recurring, deterministically, was redundant *attempts* to create an already-created
-    /// database from more than one <see cref="Microsoft.EntityFrameworkCore.DbContext"/> instance within the
-    /// same process (multiple `IAsyncLifetime.InitializeAsync()` fixtures each independently calling this
-    /// method). <see cref="Lazy{Task}"/> with execution-and-publication thread safety collapses that down to
-    /// one real attempt, which is the correct fix regardless of exactly which EF-internal state made the
-    /// redundant attempts fail rather than silently no-op. The cross-process <c>sp_getapplock</c> below is
-    /// kept for the other case it was originally added for (a genuinely separate OS process — a stray local
-    /// checkout, a different machine — racing this one), which this per-process gate cannot cover.
+    /// same completed task. This is a defensive hardening measure, not the fix for the three consecutive
+    /// hosted CI failures that motivated touching this file (see docs/ef-migrations-runbook.md §6 for the
+    /// full, evidenced account) — that root cause was **confirmed directly** to be an unrelated, separate OS
+    /// process (a leftover local `dotnet test` run, still alive and actively using the database at the exact
+    /// moment a hosted run failed) colliding with CI over one fixed, shared database name; it was fixed in
+    /// <c>.github/workflows/ci.yml</c> by giving every CI run its own database name, not by anything in this
+    /// file. An earlier version of this doc comment attributed those failures to in-process fixture
+    /// redundancy instead — that was an untested hypothesis this <see cref="Lazy{Task}"/> gate was built
+    /// around, and it was wrong: nothing here ever confirmed EF re-attempts creation per <see
+    /// cref="Microsoft.EntityFrameworkCore.DbContext"/> instance within one process, and the hosted failures
+    /// kept recurring after this gate first shipped, which is what actually prompted the real investigation.
+    /// The gate is kept anyway as cheap, independent insurance (fewer redundant round-trips if multiple
+    /// fixtures do call this in one process), just not credited with something it didn't fix. The
+    /// cross-process <c>sp_getapplock</c> below coordinates two callers running this *same, current* code
+    /// against each other; it was never going to help against the unrelated process above, which the
+    /// run-scoped database name in CI sidesteps entirely instead of trying to coordinate around.
     /// </summary>
     private static readonly Lazy<Task> MigrationOnce = new(() => MigrateCoreAsync(CancellationToken.None),
         LazyThreadSafetyMode.ExecutionAndPublication);

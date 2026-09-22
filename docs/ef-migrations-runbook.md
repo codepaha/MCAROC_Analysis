@@ -181,9 +181,15 @@ next local test run started again.
   UTF-8 without a BOM (Windows PowerShell 5.1 falls back to the system codepage with no BOM to hint
   otherwise), which broke the PowerShell parse entirely. Both are why the actual hosted run — not just a
   local read-through — is the only real acceptance evidence for a change like this.
-- Separately, `TestDatabase.MigrateAsync` itself now runs its create+migrate sequence **at most once per
-  process** (`Lazy<Task>`), not once per calling test-fixture — multiple test classes each independently
-  re-invoking EF's own migrator was adding redundant attempts on top of the naming collision above.
+- Separately — and this is *not* what fixed the three hosted failures above, credited here only to correct
+  an earlier overclaim — `TestDatabase.MigrateAsync` also runs its create+migrate sequence **at most once
+  per process** (`Lazy<Task>`) rather than once per calling test-fixture. This was built as a hardening
+  measure around an untested hypothesis (that in-process fixture redundancy was the cause) *before* the
+  real, cross-process cause above was confirmed; the failures kept recurring after it shipped, which is what
+  actually triggered the investigation that found the live `testhost.exe`. It's kept anyway as cheap,
+  independent insurance — fewer redundant database round-trips if multiple fixtures do call this in one
+  process — just not credited with resolving something it didn't. `TestDatabase.cs`'s own doc comment
+  originally made this same overclaim and has been corrected to match this account.
 
 **Takeaway for the dev team:** if `windows-tests` (or a local run against `.\SQLEXPRESS`) ever fails with
 "database already exists" again, check for a lingering local `testhost.exe`/`dotnet.exe` before assuming the
