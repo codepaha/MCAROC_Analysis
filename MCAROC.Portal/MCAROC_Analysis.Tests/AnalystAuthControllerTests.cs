@@ -1,4 +1,6 @@
 using MCAROC_Analysis.Controllers;
+using MCAROC_Analysis.Data.Entities;
+using MCAROC_Analysis.Services.Audit;
 
 namespace MCAROC_Analysis.Tests;
 
@@ -12,5 +14,15 @@ public sealed class AnalystAuthControllerTests
     public void NormalizeLoginName_UsesTheCanonicalDatabaseLookupForm(string? input, string expected)
     {
         Assert.Equal(expected, AnalystAuthController.NormalizeLoginName(input));
+    }
+
+    [Fact]
+    public void AuditRegistry_LeavesAnalystAuthToItsCredentialAwareAuditEvents()
+    {
+        var login = AuditRouteRegistry.Resolve("AnalystAuth", "Login");
+        var logout = AuditRouteRegistry.Resolve("AnalystAuth", "Logout");
+
+        Assert.Equal((AuditActionType.AnalystLoginAttempted, AuditRulePolicy.Never), login);
+        Assert.Equal((AuditActionType.AnalystLoggedOut, AuditRulePolicy.Never), logout);
     }
 }
