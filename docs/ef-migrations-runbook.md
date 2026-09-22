@@ -144,3 +144,54 @@ columns + one filtered unique index on the existing `LitigationAiAnalysisRuns` t
 locally: builds clean, `has-pending-model-changes` reports none, `database update` applies with no errors,
 and all nine new tables plus the three new columns are confirmed present via a direct `sqlcmd` query against
 the local database afterward.
+
+## 6. A related trap: the shared test database colliding with CI
+
+Not a `dotnet ef` bug — a **test-infrastructure** one, hit while getting PR #269 through review, and
+included here because the symptom looks exactly like §3.2's "already exists" error and would otherwise send
+the next person straight back down that same wrong path.
+
+**Symptom:** the self-hosted `windows-tests` CI job failed repeatedly (three consecutive hosted runs) with
+`SqlException: Database 'MCAROC_Analysis_Test' already exists`, 27 of 29 tests failing over roughly 100
+seconds each time — a *persistent* pattern, not a one-off. Bounded retries around the migration call (an
+early, insufficient fix attempt) made no difference, which was itself the tell that this wasn't a short
+creation race at all.
+
+**Root cause:** the self-hosted CI runner and a developer's local dev machine can be **the same physical
+box** (they were, here). Every local `dotnet test` run and every `windows-tests` CI run both defaulted to
+the identical, fixed database name (`MCAROC_Analysis_Test`) with no coordination between "a GitHub Actions
+job" and "a plain local process" — the existing `sp_getapplock`-based lock in `TestDatabase.cs` only
+coordinates callers running this same code against each other, never an unrelated process. Confirmed
+directly, not guessed: a leftover local test run (`testhost.exe`, ~1.5 GB resident) was still alive and
+actively using that database while a CI run failed; killing it and re-running cleared the symptom until the
+next local test run started again.
+
+**Fix — stop sharing the name, don't try to coordinate around it:**
+- `windows-tests` now sets `MCAROC_TEST_CONNECTION` to a **run-and-attempt-scoped catalog**,
+  `MCAROC_Analysis_CI_<run_id>_<run_attempt>` (`.github/workflows/ci.yml`) — no other process, CI or local,
+  can ever target that exact name.
+- An `if: always()` cleanup step drops only that exact catalog afterward, guarded by an **anchored, exact-
+  grammar regex** (`^MCAROC_Analysis_CI_[0-9]+_[0-9]+$`) checked before the name is ever interpolated into
+  SQL — a prefix-only check was tried first and correctly flagged in review as insufficient, since anything
+  merely *starting with* the right prefix would still reach the query. `sqlcmd -b` makes a failed
+  `ALTER`/`DROP` fail the step visibly instead of silently leaving a stranded database behind.
+- Two bugs specific to *this* runner surfaced only once the fix actually ran there: `shell: pwsh` failed
+  outright (`pwsh: command not found` — this runner has Windows PowerShell 5.1, not PowerShell Core), and an
+  em-dash in the guard's own error message was silently corrupted by the runner writing the step's script as
+  UTF-8 without a BOM (Windows PowerShell 5.1 falls back to the system codepage with no BOM to hint
+  otherwise), which broke the PowerShell parse entirely. Both are why the actual hosted run — not just a
+  local read-through — is the only real acceptance evidence for a change like this.
+- Separately — and this is *not* what fixed the three hosted failures above, credited here only to correct
+  an earlier overclaim — `TestDatabase.MigrateAsync` also runs its create+migrate sequence **at most once
+  per process** (`Lazy<Task>`) rather than once per calling test-fixture. This was built as a hardening
+  measure around an untested hypothesis (that in-process fixture redundancy was the cause) *before* the
+  real, cross-process cause above was confirmed; the failures kept recurring after it shipped, which is what
+  actually triggered the investigation that found the live `testhost.exe`. It's kept anyway as cheap,
+  independent insurance — fewer redundant database round-trips if multiple fixtures do call this in one
+  process — just not credited with resolving something it didn't. `TestDatabase.cs`'s own doc comment
+  originally made this same overclaim and has been corrected to match this account.
+
+**Takeaway for the dev team:** if `windows-tests` (or a local run against `.\SQLEXPRESS`) ever fails with
+"database already exists" again, check for a lingering local `testhost.exe`/`dotnet.exe` before assuming the
+migration or the lock is broken — `tasklist` for those image names is the first thing to run, not
+`migrations remove`. Full detail and every verification step: PR #269.
