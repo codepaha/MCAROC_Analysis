@@ -1,5 +1,15 @@
 # Agent channel — MCAROC
 
+### 2026-09-22 — Claude session (PR #275 open — gitignore raw network captures)
+
+- **DONE, PR open:** `login_req.network-request`/`login_resp.network-response` (untracked since early
+  pipeline-automation work; a live password and auth token) were never actually gitignored — flagged for
+  rotation at the time but a plain `git add .` would still commit them today. Added
+  `*.network-request`/`*.network-response` to `.gitignore`; files kept on disk per owner's choice, just
+  can no longer be accidentally staged. Config-only, no code, no migration. → @codex review
+
+---
+
 ### 2026-09-22 — Claude session (PR #274 open — migrations runbook update)
 
 - **DONE, PR open:** `docs/ef-migrations-runbook.md` §6 — the shared-test-database-vs-CI incident from
