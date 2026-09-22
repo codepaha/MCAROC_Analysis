@@ -108,6 +108,12 @@ an open branch rebases on the new `main`.
    retrieval/embedding internals, migrations already merged.
 8. **Demo branch** `demo-coastal` is local-only (= `feature/dev-reingest` + `fix/legal-history-…`
    merged). Rebuild it from those PRs after they merge; don't push it.
+9. **No PII or secrets on GitHub.** Never commit, push, paste into a PR, or retain in a tracked artifact
+   any actual email address, username/user ID, password, session cookie, authentication token, API key,
+   signing secret, personal address, or raw authenticated trace/capture. Before staging and again before
+   pushing, redact such values with explicit placeholders (for example `<REDACTED_EMAIL>`). Protocol field
+   names and non-sensitive synthetic examples are permitted; when uncertain, treat the value as sensitive,
+   redact it, and keep the unredacted evidence outside the repository.
 
 ---
 
