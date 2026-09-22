@@ -323,6 +323,14 @@ builder.Services.AddRateLimiter(options =>
             Window = TimeSpan.FromMinutes(5),
             QueueLimit = 0
         }));
+    options.AddPolicy("AnalystLogin", httpContext => System.Threading.RateLimiting.RateLimitPartition.GetFixedWindowLimiter(
+        httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+        _ => new System.Threading.RateLimiting.FixedWindowRateLimiterOptions
+        {
+            PermitLimit = 5,
+            Window = TimeSpan.FromMinutes(5),
+            QueueLimit = 0
+        }));
 });
 
 var app = builder.Build();
