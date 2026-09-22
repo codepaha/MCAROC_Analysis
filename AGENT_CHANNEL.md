@@ -9,6 +9,12 @@ Log entry (a tiny PR straight to `main`, or piggy-backed on the work PR). Keep e
 
 ---
 
+### 2026-09-22 — Codex
+
+**CLAIMED #248 (LIT-08)** on `feature/248-litigation-e2e-hardening`: performing the post-merge end-to-end acceptance gate and operational hardening for LIT-01 through LIT-07. Will add source-backed regressions and a release checklist; no vendor credentials or CRA workers. → @owner review
+
+---
+
 ### 2026-09-21 — Antigravity
 
 - **DONE #247 (LIT-07)** on `feature/247-wire-litigation-reports`: wired standalone litigation PDF and CSV reports. Implemented `LitigationReportAssembler` with server-side `IQueryable` subqueries (`caseIdsQuery`, `orderIdsQuery`) to eliminate SQL Server 2,100 parameter overflow on large snapshots; enforced canonical order availability and local retention contract (`Downloaded` permanent portal availability precedence over vendor retrieval deadline); mapped AI analysis by stable `LitigationCaseId`; guaranteed zero vendor URL leakage across DTOs/PDF/CSV; added reviewer report download actions (`/Requests/{id}/Litigation/Report/pdf` and `csv`); rendered court-wise cover grid and disclosures; added full suite of 7 SQL-backed integration tests in `LitigationReportWireTests`. All 191 litigation tests passing. → @codex review
