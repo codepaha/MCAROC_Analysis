@@ -16,6 +16,7 @@ using Microsoft.AspNetCore.Http.Features;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using Microsoft.AspNetCore.DataProtection;
+using Microsoft.AspNetCore.Authorization;
 
 Encoding.RegisterProvider(CodePagesEncodingProvider.Instance); // legacy .xls encodings
 
@@ -44,6 +45,8 @@ builder.Services.AddControllersWithViews(options =>
 builder.Services.AddScoped<IAuditLogService, AuditLogService>();
 builder.Services.AddScoped<AuditLogFilter>();
 builder.Services.AddSingleton<IAnalystPasswordHasher, AnalystPasswordHasher>();
+builder.Services.AddScoped<IAnalystRequestAccessService, AnalystRequestAccessService>();
+builder.Services.AddScoped<IAuthorizationHandler, AnalystRequestAuthorizationHandler>();
 builder.Services.AddMemoryCache();
 builder.Services.AddHttpClient<InstaFinancialsClient>(client => client.Timeout = TimeSpan.FromMinutes(10));
 builder.Services.Configure<InstaFinancialsOptions>(builder.Configuration.GetSection(InstaFinancialsOptions.SectionName));
@@ -280,6 +283,16 @@ builder.Services.AddHostedService<MCAROC_Analysis.Services.CompanyMaster.Company
 // existing endpoint in this app stays exactly as unauthenticated as it is today; only
 // [Authorize(AuthenticationSchemes = "InternalReviewer")] on CalculationAuditController is affected.
 builder.Services.AddAuthentication()
+    .AddCookie(AnalystAccessConstants.AuthenticationScheme, o =>
+    {
+        o.LoginPath = "/analyst/login";
+        o.Cookie.Name = "mcaroc_analyst_auth";
+        o.Cookie.HttpOnly = true;
+        o.Cookie.SecurePolicy = CookieSecurePolicy.Always;
+        o.Cookie.SameSite = SameSiteMode.Strict;
+        o.ExpireTimeSpan = TimeSpan.FromHours(8);
+        o.SlidingExpiration = true;
+    })
     .AddCookie("InternalReviewer", o =>
     {
         o.LoginPath = "/internal/login";
@@ -290,6 +303,15 @@ builder.Services.AddAuthentication()
         o.ExpireTimeSpan = TimeSpan.FromHours(8);
         o.SlidingExpiration = true;
     });
+builder.Services.AddAuthorization(options =>
+{
+    options.AddPolicy(AnalystAccessConstants.Policy, policy =>
+    {
+        policy.AuthenticationSchemes.Add(AnalystAccessConstants.AuthenticationScheme);
+        policy.RequireAuthenticatedUser();
+        policy.RequireRole(AnalystAccessConstants.Role);
+    });
+});
 builder.Services.AddRateLimiter(options =>
 {
     options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;

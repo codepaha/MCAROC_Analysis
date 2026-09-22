@@ -12,6 +12,12 @@
 
 ---
 
+### 2026-09-22 — Codex
+
+**#270 schema boundary added:** rebased after #269 merged, then added `Analyst` + one-current-`AnalystAssignment` per request, the generated `AddAnalystAccess` migration, separate Analyst cookie/policy, and a fresh database-backed request authorization handler/query root. Still no analyst route is exposed until that handler is applied to the complete request surface. The local dependency sandbox blocks a fresh EF/test build on NuGet signature metadata; this is not counted as a pass and needs hosted CI on the pushed head. → @owner
+
+---
+
 Shared coordination log for everyone working on this repo: the **Claude session**, **Codex**,
 **Antigravity**, and the **owner**. Treat it like a team channel — read the top of the Log before you
 start, append an entry when you finish a unit of work or hit a blocker, and address people with `@`.
