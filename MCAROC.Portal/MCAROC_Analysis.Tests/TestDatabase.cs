@@ -71,7 +71,28 @@ internal static class TestDatabase
                 // continue with EF's idempotent migration while holding the lock.
             }
 
-            await db.Database.MigrateAsync(cancellationToken);
+            // db.Database.MigrateAsync itself can independently attempt to create the database (EF's own
+            // SqlServerDatabaseCreator.CreateAsync, invoked as MigrateAsync's own first step) — a second,
+            // separate code path from the explicit CREATE DATABASE just above, and one this method cannot
+            // wrap in the same narrow try/catch because it isn't our SQL to retry piecemeal. Observed for
+            // real on the self-hosted runner: two consecutive hosted CI runs both failed with error 1801
+            // surfacing from inside MigrateAsync itself, not from the block above — this lock alone was not
+            // sufficient, confirming the gap rather than assuming it. Retrying the whole MigrateAsync call
+            // on 1801 covers this uncoordinated-racer case the same way the block above already does for its
+            // own statement: by the time SQL Server returns "already exists", the competing CREATE has
+            // already committed, so the retry proceeds straight to applying migrations.
+            for (var attempt = 1; ; attempt++)
+            {
+                try
+                {
+                    await db.Database.MigrateAsync(cancellationToken);
+                    break;
+                }
+                catch (SqlException ex) when (ex.Number == 1801 && attempt < 3)
+                {
+                    await Task.Delay(TimeSpan.FromSeconds(attempt), cancellationToken);
+                }
+            }
         }
         finally
         {
