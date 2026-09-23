@@ -32,6 +32,12 @@
 - Rebased onto #281; `RequestsController` constructor conflict resolved by keeping both optional params. #281's
   analyst boundary filter denies the new pipeline routes to analyst sessions by default — intended.
 - → **@codex** review: https://github.com/codepaha/MCAROC_Analysis/pull/283. Next: #229, then #266.
+---
+
+### 2026-09-23 — Codex (#190 activated, source-age slice)
+
+- Owner activated #190 and chose automatic retrieval. On isolated `feature/190-recheck-company`, added workbook source snapshot age to request list/detail and a SQL regression for latest-completed-run provenance; documented the reviewer action's join with #229 refresh and #266 approval in `docs/issue-190-company-recheck-design.md`.
+- App/test projects compile. Focused SQL tests cannot run locally: `Cannot generate SSPI context` before test setup. The action is not exposed yet: current `AutoFetchJobService.CreateOrResetJobAsync` preserves prior checkpoints, and #229's provider-readiness service is not on `main`; calling it now would falsely claim a fresh fetch. → @owner / @claude
 
 ---
 
@@ -3267,3 +3273,13 @@ new cap, not 4; `BytesDownloaded` asserted `<=` the cap, never `>`). → **@code
   5. **Full-Page Layout for Invalid Explorer Criteria**: `RegistryDashboardController` returns full `Index.cshtml` view with `Response.StatusCode = 400` on validation errors across both `Index` and `Explorer` routes.
   6. **Tests**: Added deterministic barrier-coordinated cross-connection integration tests (`TestBarrierPromotionCoordinator`), command interceptor tests (`CommandCountingInterceptor`), terminal failure persistence verification (`TestAuditReleaseCoordinator`), FCRN/name routing tests, and controller HTTP 400 tests in `RegistryDashboardTests`. Full suite passed with 1643/1643 tests green.
   → **@codex** re-review.
+### 2026-09-23 — Codex issue #190 restart after #229
+- **IN PROGRESS** Draft PR #282 rebased onto merged #229 (`1058b51`). Added an InternalReviewer-only, CSRF-protected request re-check action; it atomically admits a fresh workbook-only job attempt on the same request and clears old checkpoints. It uses #229's provider freshness gate before export and leaves the #266 locked-company approval path untouched. Added source supersession after successful ingestion and a focused checkpoint/duplicate-click regression. Local build passes; SQL integration test cannot initialize here (`Cannot generate SSPI context`). Keep PR draft pending hosted CI and final lifecycle review.
+### 2026-09-23 — Codex issue #190 review follow-up
+- **IN PROGRESS** Independent review of PR #282 at `5ff2da5` kept it draft pending proof for simultaneous re-check posts/workers and restart recovery. Added separate-DbContext barrier tests for two POST admissions and two workers, plus a re-check-specific parked-refresh restart test through `AutoFetchWorker.RecoverAsync`. Awaiting hosted CI on the new head; local SQL integration remains unavailable because the connection returns `Cannot generate SSPI context`.
+### 2026-09-23 — Codex issue #190 ingestion recovery fix
+- **IN PROGRESS** Review found a crash window between ingestion commit and the auto-fetch job checkpoint. Changed `IngestionOrchestrator` to commit `AutoFetchJob.IngestionRunId` with the completed run/request pointer, and moved source promotion and analysis enqueue into the resume path. Added a SQL regression that stops immediately after that commit, invokes startup recovery, and checks that run N+2 is not created. Keep PR #282 draft until hosted CI and independent re-review of the new head.
+### 2026-09-23 — Codex issue #190 hosted CI fixture follow-up
+- **IN PROGRESS** The first CI run after the ingestion-checkpoint fix passed the new crash-point regression but failed `AutoFetchAggregateCapConcurrencyTests` because that older test seeded invented `RocDocumentId`/`IngestionRunId` values. Recovery now validates the committed run lineage, so the test fixture was changed to create a real source document and completed run; its aggregate-cap assertions remain. Windows CI passed on the prior head; rerun both jobs on the fixture-fix head before re-review.
+### 2026-09-23 — Codex issue #190 re-review follow-up
+- **IN PROGRESS** Independent re-review at `ae36aa8` found no blocker and confirmed the ingestion crash fix, but noted that its restart regression did not directly assert analysis re-enqueue. The test now injects a visible `AnalysisQueue` into the resumed job and asserts that the same request ID is queued. Keep PR #282 draft; rerun exact-head CI after this test-only change.

@@ -13,10 +13,12 @@ namespace MCAROC_Analysis.Services;
 /// forward only on success, which is what makes reprocessing idempotent (see portalplan/plan doc).</summary>
 public class IngestionOrchestrator(AppDbContext db, IExcelSheetReader sheetReader, ILogger<IngestionOrchestrator> logger)
 {
-    public async Task<IngestionRun> RunAsync(long requestId, long rocDocumentId, long? chargeDocumentId, CancellationToken ct = default)
+    public async Task<IngestionRun> RunAsync(long requestId, long rocDocumentId, long? chargeDocumentId, CancellationToken ct = default,
+        long? autoFetchJobId = null)
     {
         var request = await db.Requests.FirstOrDefaultAsync(r => r.RequestId == requestId, ct)
             ?? throw new InvalidOperationException($"Request {requestId} not found.");
+        var previousCompletedRunId = request.LatestCompletedIngestionRunId;
         var rocDocument = await db.RequestDocuments.FirstAsync(d => d.DocumentId == rocDocumentId, ct);
         var chargeDocument = chargeDocumentId is null
             ? null
@@ -105,6 +107,18 @@ public class IngestionOrchestrator(AppDbContext db, IExcelSheetReader sheetReade
             request.RequestStatus = RequestStatus.DataExtracted;
             request.AnalysisCompletedDate = DateTime.UtcNow;
 
+            // The auto-fetch checkpoint must commit with the completed run. Otherwise a restart after
+            // this transaction but before the caller saves its job creates a second ingestion run.
+            if (autoFetchJobId is { } jobId)
+            {
+                var job = await db.AutoFetchJobs.FirstAsync(j => j.AutoFetchJobId == jobId, ct);
+                if (job.RequestId != requestId || job.Status != AutoFetchJobStatus.Ingesting ||
+                    job.RocDocumentId != rocDocumentId || job.ChargeDocumentId != chargeDocumentId ||
+                    job.IngestionRunId is not null)
+                    throw new InvalidOperationException($"Auto-fetch job {jobId} no longer matches ingestion request {requestId}.");
+                job.IngestionRunId = run.IngestionRunId;
+            }
+
             await db.SaveChangesAsync(ct);
             await transaction.CommitAsync(ct);
         }
@@ -125,6 +139,7 @@ public class IngestionOrchestrator(AppDbContext db, IExcelSheetReader sheetReade
 
             request.RequestStatus = RequestStatus.ExtractionFailed;
             request.FailureReason = ex.Message;
+            request.LatestCompletedIngestionRunId = previousCompletedRunId;
             db.Requests.Update(request);
 
             await db.SaveChangesAsync(ct);

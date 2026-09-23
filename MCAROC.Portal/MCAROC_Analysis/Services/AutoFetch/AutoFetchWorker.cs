@@ -81,14 +81,15 @@ public sealed class AutoFetchWorker(IServiceScopeFactory scopes, AutoFetchQueue 
     /// <summary>A job interrupted by a restart is put back to Queued and re-enqueued. The job service
     /// resumes from its checkpoints (documents/ingestion run/filings already produced are kept, staged
     /// PDFs already on disk are not re-downloaded), so this is safe to repeat.</summary>
-    private async Task RecoverAsync(CancellationToken ct)
+    internal async Task RecoverAsync(CancellationToken ct, long? requestId = null)
     {
         try
         {
             using var scope = scopes.CreateScope();
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
             var interrupted = await db.AutoFetchJobs
-                .Where(j => j.Status != AutoFetchJobStatus.Completed
+                .Where(j => (requestId == null || j.RequestId == requestId)
+                    && j.Status != AutoFetchJobStatus.Completed
                     && j.Status != AutoFetchJobStatus.CompletedWithWarnings
                     && j.Status != AutoFetchJobStatus.Failed)
                 .ToListAsync(ct);

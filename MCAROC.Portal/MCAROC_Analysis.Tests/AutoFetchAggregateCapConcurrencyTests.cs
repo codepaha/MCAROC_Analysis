@@ -4,6 +4,7 @@ using System.Text.Json;
 using MCAROC_Analysis.Data;
 using MCAROC_Analysis.Data.Entities;
 using MCAROC_Analysis.Services;
+using MCAROC_Analysis.Services.Analysis;
 using MCAROC_Analysis.Services.AutoFetch;
 using MCAROC_Analysis.Services.Excel;
 using MCAROC_Analysis.Services.McaFilings;
@@ -80,7 +81,7 @@ public class AutoFetchAggregateCapConcurrencyTests : IAsyncLifetime
 
         var jobs = new AutoFetchJobService(
             db, client, options, new FileValidationService(new ExcelSheetReader()),
-            null!, null!, new FilingProcessingQueue(), storageReservations,
+            null!, new AnalysisQueue(), new FilingProcessingQueue(), storageReservations,
             new FakeEnv(_tempDir), NullLogger<AutoFetchJobService>.Instance);
 
         var (_, jobId) = await SeedRequestPastIngestionAsync(db);
@@ -128,13 +129,33 @@ public class AutoFetchAggregateCapConcurrencyTests : IAsyncLifetime
         db.Requests.Add(request);
         await db.SaveChangesAsync();
 
-        // Checkpoints already past workbook-fetch and ingestion — ProcessAsync skips straight to the
-        // filings download stage, which is the only thing this test needs to exercise.
+        // Checkpoints refer to a completed run and its source document. The resumed job verifies
+        // that lineage before it reaches the filings download stage exercised by this test.
+        var roc = new RequestDocument
+        {
+            RequestId = request.RequestId, DocumentType = DocumentType.McaRocReport,
+            OriginalFileName = "aggregate-cap.xls", StoredFileName = "aggregate-cap.xls",
+            StoragePath = @"C:\fake\aggregate-cap.xls", FileHash = "aggregate-cap",
+            UploadedDate = DateTime.UtcNow
+        };
+        db.RequestDocuments.Add(roc);
+        await db.SaveChangesAsync();
+        var run = new IngestionRun
+        {
+            RequestId = request.RequestId, RunNumber = 1, StartedDate = DateTime.UtcNow,
+            CompletedDate = DateTime.UtcNow, Status = IngestionRunStatus.CompletedClean,
+            SourceRocDocumentId = roc.DocumentId
+        };
+        db.IngestionRuns.Add(run);
+        await db.SaveChangesAsync();
+        request.LatestCompletedIngestionRunId = run.IngestionRunId;
+        await db.SaveChangesAsync();
+
         var job = new AutoFetchJob
         {
             RequestId = request.RequestId, Cin = request.Cin!, Bid = ReferenceToolClient.ComputeBid(request.Cin!),
             Status = AutoFetchJobStatus.Queued, IncludeFilings = true, MaxDocumentsPerSection = 0,
-            RocDocumentId = 999_999_999, IngestionRunId = 999_999_999, WarningsJson = "[]", CreatedUtc = DateTime.UtcNow
+            RocDocumentId = roc.DocumentId, IngestionRunId = run.IngestionRunId, WarningsJson = "[]", CreatedUtc = DateTime.UtcNow
         };
         db.AutoFetchJobs.Add(job);
         await db.SaveChangesAsync();

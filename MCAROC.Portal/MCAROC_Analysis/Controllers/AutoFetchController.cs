@@ -221,6 +221,33 @@ public partial class AutoFetchController(
         return RedirectToAction("Details", "Requests", new { id });
     }
 
+    [Authorize(AuthenticationSchemes = "InternalReviewer")]
+    [HttpPost("/Requests/{id:long}/recheck")]
+    [ValidateAntiForgeryToken]
+    public async Task<IActionResult> Recheck(long id, CancellationToken ct)
+    {
+        var request = await db.Requests.AsNoTracking().FirstOrDefaultAsync(r => r.RequestId == id, ct);
+        if (request is null) return NotFound();
+        var identifier = (request.Cin ?? request.Llpin ?? "").Trim().ToUpperInvariant();
+        if (!IdentifierPattern().IsMatch(identifier) || request.LatestCompletedIngestionRunId is null)
+            return BadRequest("A completed request with a valid CIN or LLPIN is required.");
+        if (!options.Value.IsConfigured || !options.Value.RefreshBeforeFetch)
+        {
+            TempData["AutoFetchError"] = "Company re-check requires the configured reference tool and its freshness gate.";
+            return RedirectToAction("Details", "Requests", new { id });
+        }
+
+        var job = await jobs.TryQueueRecheckAsync(id, CorrelationContext.GetOrCreate(HttpContext), ct);
+        if (job is null)
+            TempData["AutoFetchError"] = "This request is still being processed or a company re-check is already active. Refresh the page for its status.";
+        else
+        {
+            queue.Enqueue(job.AutoFetchJobId);
+            TempData["AutoFetchOk"] = "Company re-check queued. Previous completed results remain available while fresh workbooks are retrieved.";
+        }
+        return RedirectToAction("Details", "Requests", new { id });
+    }
+
     public static AutoFetchStatusDto ToDto(AutoFetchJob job, RequestStatus requestStatus)
     {
         IReadOnlyList<string> warnings;
