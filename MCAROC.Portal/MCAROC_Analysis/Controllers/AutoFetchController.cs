@@ -5,6 +5,7 @@ using MCAROC_Analysis.Data.Entities;
 using MCAROC_Analysis.Models;
 using MCAROC_Analysis.Services.Audit;
 using MCAROC_Analysis.Services.AutoFetch;
+using MCAROC_Analysis.Services.Pipeline;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -28,7 +29,8 @@ public partial class AutoFetchController(
     AutoFetchQueue queue,
     ReferenceToolClient client,
     IOptions<ReferenceToolOptions> options,
-    ILogger<AutoFetchController>? logger = null) : Controller
+    ILogger<AutoFetchController>? logger = null,
+    PipelineAdopter? pipelineAdopter = null) : Controller
 {
     // Company CIN (21 chars) or LLPIN (AAA-1234) — same rule the pre-login flow applies.
     [GeneratedRegex("^(?:[LU][0-9]{5}[A-Z]{2}[0-9]{4}[A-Z]{3}[0-9]{6}|[A-Z]{3}-[0-9]{4})$")]
@@ -130,6 +132,8 @@ public partial class AutoFetchController(
             var job = await jobs.CreateOrResetJobAsync(request, model.IncludeFilings, model.MaxDocumentsPerSection ?? 0, ct, correlationId);
             await transaction.CommitAsync(ct);
             queue.Enqueue(job.AutoFetchJobId);
+            if (pipelineAdopter is not null)
+                await pipelineAdopter.TryAdoptAsync(request.RequestId, PipelineRunTrigger.AutoFetch, correlationId, ct);
 
             return RedirectToAction("Details", "Requests", new { id = request.RequestId });
         }

@@ -1,0 +1,61 @@
+@model RequestDetailsViewModel
+@* Pipeline stage strip. Stays hidden unless the request has a pipeline run; polls every 5s while the run is
+   live. Built with textContent only — reason details can carry vendor/free text. *@
+<div class="pi-panel mb-3 d-none" id="mcaPipeline" data-status-url="/Requests/@Model.Request.RequestId/pipeline/status" style="padding:14px 22px;">
+    <div class="d-flex justify-content-between align-items-center gap-2 flex-wrap mb-2">
+        <div class="pi-kicker mb-0">Pipeline</div>
+        <span class="badge" id="plOutcome"></span>
+    </div>
+    <div class="d-flex flex-wrap gap-1" id="plStages"></div>
+    <div class="small text-danger mt-2" id="plAttention"></div>
+</div>
+<script>
+    (function () {
+        var root = document.getElementById('mcaPipeline');
+        var url = root.dataset.statusUrl;
+        var stateClass = {
+            Succeeded: 'text-bg-success', SucceededWithWarnings: 'text-bg-warning', Running: 'text-bg-primary',
+            RetryScheduled: 'text-bg-info', NeedsAttention: 'text-bg-danger', Cancelled: 'text-bg-dark',
+            Skipped: 'bg-body-secondary text-body-secondary border'
+        };
+        var outcomeClass = {
+            Complete: 'text-bg-success', CompleteWithWarnings: 'text-bg-warning', CoreReady: 'text-bg-info',
+            NeedsAttention: 'text-bg-danger', Cancelled: 'text-bg-dark', InProgress: 'text-bg-primary'
+        };
+        var timer = null;
+        function render(s) {
+            root.classList.remove('d-none');
+            var outcome = document.getElementById('plOutcome');
+            outcome.className = 'badge ' + (outcomeClass[s.outcome] || 'text-bg-secondary');
+            outcome.textContent = s.outcome;
+            var list = document.getElementById('plStages');
+            list.replaceChildren();
+            var attention = document.getElementById('plAttention');
+            attention.replaceChildren();
+            s.stages.forEach(function (st) {
+                var chip = document.createElement('span');
+                chip.className = 'badge ' + (stateClass[st.state] || 'bg-body-tertiary text-body-secondary border');
+                chip.textContent = st.stage;
+                chip.title = st.state + (st.reasonCode ? ' · ' + st.reasonCode : '') + (st.reasonDetail ? ' — ' + st.reasonDetail : '');
+                list.appendChild(chip);
+                if (st.state === 'NeedsAttention') {
+                    var line = document.createElement('div');
+                    var name = document.createElement('strong');
+                    name.textContent = st.stage + ': ';
+                    line.appendChild(name);
+                    line.appendChild(document.createTextNode((st.reasonCode || '') + (st.reasonDetail ? ' — ' + st.reasonDetail : '')));
+                    attention.appendChild(line);
+                }
+            });
+            if (!s.isLive && timer) { clearInterval(timer); timer = null; }
+        }
+        function tick() {
+            fetch(url, { headers: { 'Accept': 'application/json' } })
+                .then(function (r) { return r.ok ? r.json() : null; })
+                .then(function (s) { if (s) render(s); else if (timer) { clearInterval(timer); timer = null; } })
+                .catch(function () { });
+        }
+        tick();
+        timer = setInterval(tick, 5000);
+    })();
+</script>

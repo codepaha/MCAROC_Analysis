@@ -20,6 +20,30 @@ public sealed class PipelineOptions
     public int AdmissionSweepMinutes { get; set; } = 2;
 
     public PipelineCapOptions Caps { get; set; } = new();
+
+    /// <summary>Master switch for the coordinator (adoption + reconcile). Off by default. The coordinator
+    /// currently only observes: it records stage states and never starts, retries or spends anything.</summary>
+    public bool Enabled { get; set; }
+
+    /// <summary>Requests created on or after this instant are adopted by the periodic sweep. Null (the
+    /// default) disables the sweep entirely, so switching the coordinator on never back-fills legacy
+    /// requests (e.g. the COASTAL demo dataset) unless an operator deliberately picks a cutoff.</summary>
+    public DateTime? AdoptAfterUtc { get; set; }
+
+    public int TickSeconds { get; set; } = 30;
+    public int MaxRunsPerTick { get; set; } = 20;
+
+    /// <summary>Which optional enrichment stages a run expects; snapshotted into <c>PipelineRun.PolicyJson</c>
+    /// at creation so a later config change doesn't silently alter a run already in flight.</summary>
+    public PipelinePolicy Policy { get; set; } = new();
+}
+
+/// <summary>Enrichment-stage policy. Both default off (plan §9 #1/#2 are still open): a stage whose policy is
+/// off and which nobody started by hand is reported as a neutral skip, not as missing work.</summary>
+public sealed class PipelinePolicy
+{
+    public bool LitigationSearch { get; set; }
+    public bool LitigationAnalysis { get; set; }
 }
 
 /// <summary>Daily caps on <c>Auto</c> admissions per kind. Manual admissions are counted against the same
