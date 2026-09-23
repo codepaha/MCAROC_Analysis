@@ -14,4 +14,20 @@ appsettings, user-secrets exports, source, issue comments, or shell history.
 
 After provisioning, confirm the command emitted only `Initial Analyst account created.` and that the audit
 log contains an `AnalystProvisioned` event with the command actor. Use a synthetic account for deployment
-smoke testing. Assignment/reassignment and the analyst queue are separate issue #270 slices.
+smoke testing.
+
+## Assign a request to the initial Analyst
+
+Run this from the same administrator-controlled interactive console. The command only works when exactly
+one active Analyst exists, checks that the request exists, serializes changes against other assignment
+commands, and records the operator, prior/new Analyst IDs, time, and sanitized optional reason in the audit
+log. Enter an internal operator identifier, not an email address; do not put credentials, personal data, or
+other sensitive details in the reason.
+
+```powershell
+dotnet run --project MCAROC.Portal/MCAROC_Analysis -- --assign-analyst-request
+```
+
+Re-running it with the same request and reason is a no-op. Changing the reason updates the assignment
+metadata and creates an audit event. This remains an operations command; it does not create a public or
+analyst-facing assignment endpoint.

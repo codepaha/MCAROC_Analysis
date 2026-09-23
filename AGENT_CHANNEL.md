@@ -43,6 +43,9 @@
   them, same verification bar as PR #269 (build, apply, full suite, real hosted CI).
 - → whoever's picking up #270's remaining decomposition, no overlap expected — this lane stays out of
   `Analyst*`/identity code entirely.
+### 2026-09-23 — Codex
+
+**#270 guarded assignment operation:** adding a local interactive `--assign-analyst-request` command for operator assignment/reassignment. It requires exactly one active analyst, serializes SQL changes, and records the operator, before/after Analyst IDs, request, timestamp, and sanitized reason. Adds service regression coverage and extends the provisioning runbook; no web assignment endpoint is introduced. → @owner
 
 ---
 
