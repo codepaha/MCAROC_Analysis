@@ -23,7 +23,7 @@ public sealed record AnalystAssignmentOperationResult(
 
 /// <summary>Creates or reassigns the phase-one request allocation. Called by the local operator command;
 /// it is deliberately not a web endpoint.</summary>
-public sealed class AnalystAssignmentOperationService(AppDbContext db, IAuditLogService auditLog)
+public sealed class AnalystAssignmentOperationService(AppDbContext db)
 {
     public async Task<AnalystAssignmentOperationResult> AssignAsync(
         long requestId, string operatorId, string? reason, CancellationToken ct = default)
@@ -78,10 +78,11 @@ public sealed class AnalystAssignmentOperationService(AppDbContext db, IAuditLog
             assignment.Reason = cleanReason;
         }
 
+        // Materialize a new assignment's identity before including it in the audit event. This flush is
+        // still inside the explicit transaction, so a later audit-insert failure rolls it back.
         await db.SaveChangesAsync(ct);
-        await transaction.CommitAsync(ct);
 
-        await auditLog.TryLogAsync(new AuditEvent<AnalystAssignmentAuditPayload>(
+        var auditEvent = new AuditEvent<AnalystAssignmentAuditPayload>(
             AuditActionType.AnalystAssignmentChanged,
             AuditEventKind.DomainLifecycle,
             AuditStatus.Success,
@@ -92,7 +93,14 @@ public sealed class AnalystAssignmentOperationService(AppDbContext db, IAuditLog
             EntityType: nameof(AnalystAssignment),
             EntityId: assignment.AnalystAssignmentId,
             Payload: new AnalystAssignmentAuditPayload(requestId, assignment.AnalystAssignmentId,
-                previousAnalystId, analystId, assignedUtc, cleanReason)), ct);
+                previousAnalystId, analystId, assignedUtc, cleanReason));
+        db.AuditLogs.Add(AuditLogEntryFactory.Create(auditEvent));
+
+        // Assignment and required audit evidence must commit or roll back together. The generic audit
+        // logger is intentionally best-effort and writes through a separate context, so it cannot be
+        // used for this operation's acceptance boundary.
+        await db.SaveChangesAsync(ct);
+        await transaction.CommitAsync(ct);
 
         return new AnalystAssignmentOperationResult(requestId, assignment.AnalystAssignmentId,
             previousAnalystId, analystId, assignedUtc, Changed: true);

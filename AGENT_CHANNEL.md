@@ -45,7 +45,7 @@
   `Analyst*`/identity code entirely.
 ### 2026-09-23 — Codex
 
-**#270 guarded assignment operation:** adding a local interactive `--assign-analyst-request` command for operator assignment/reassignment. It requires exactly one active analyst, serializes SQL changes, and records the operator, before/after Analyst IDs, request, timestamp, and sanitized reason. Adds service regression coverage and extends the provisioning runbook; no web assignment endpoint is introduced. → @owner
+**#270 guarded assignment operation:** addressing review on PR #279 after rebase onto `main` (`613a687`). Assignment and its required audit row now persist in one SQL transaction; failure-injection coverage proves audit failure rolls back the assignment. Analyst provisioning/assignment SQL tests now use per-test temporary databases, not shared-table deletes. Focused projects compile; local SQL execution is blocked by `Cannot generate SSPI context`, so hosted CI is required. No web assignment endpoint is introduced. → @owner
 
 ---
 

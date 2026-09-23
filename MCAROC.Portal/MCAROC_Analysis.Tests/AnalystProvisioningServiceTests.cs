@@ -6,44 +6,32 @@ using Microsoft.EntityFrameworkCore;
 
 namespace MCAROC_Analysis.Tests;
 
-public sealed class AnalystProvisioningServiceTests : IAsyncLifetime
+public sealed class AnalystProvisioningServiceTests
 {
-    private static AppDbContext CreateContext() => new(new DbContextOptionsBuilder<AppDbContext>()
-        .UseSqlServer(TestDatabase.ConnectionString).Options);
-
-    public async Task InitializeAsync()
-    {
-        await using var db = CreateContext();
-        await TestDatabase.MigrateAsync(db);
-    }
-
-    public Task DisposeAsync() => Task.CompletedTask;
+    private static AppDbContext CreateContext(string connectionString) => new(new DbContextOptionsBuilder<AppDbContext>()
+        .UseSqlServer(connectionString).Options);
 
     [Fact]
     public async Task ConcurrentProvisioning_CreatesOnlyOneInitialAnalyst()
     {
-        await using (var cleanup = CreateContext())
-        {
-            await cleanup.AnalystAssignments.ExecuteDeleteAsync();
-            await cleanup.Analysts.ExecuteDeleteAsync();
-        }
+        await using var isolated = await TestDatabase.CreateIsolatedDatabaseAsync("AnalystProvisioning");
 
         var start = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var first = AttemptAsync(start.Task, "FIRST-ANALYST");
-        var second = AttemptAsync(start.Task, "SECOND-ANALYST");
+        var first = AttemptAsync(isolated.ConnectionString, start.Task, "FIRST-ANALYST");
+        var second = AttemptAsync(isolated.ConnectionString, start.Task, "SECOND-ANALYST");
         start.SetResult();
 
         var results = await Task.WhenAll(first, second);
 
         Assert.Equal(1, results.Count(result => result));
-        await using var verify = CreateContext();
+        await using var verify = CreateContext(isolated.ConnectionString);
         Assert.Equal(1, await verify.Analysts.CountAsync());
     }
 
-    private static async Task<bool> AttemptAsync(Task start, string loginName)
+    private static async Task<bool> AttemptAsync(string connectionString, Task start, string loginName)
     {
         await start;
-        await using var db = CreateContext();
+        await using var db = CreateContext(connectionString);
         var service = new AnalystProvisioningService(db, new AnalystPasswordHasher(), new NoopAuditLogService());
         try
         {

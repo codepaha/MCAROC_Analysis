@@ -45,6 +45,38 @@ internal static class TestDatabase
         // just awaits that first attempt's own task instead of touching the database again.
         MigrationOnce.Value;
 
+    internal static async Task<IsolatedDatabase> CreateIsolatedDatabaseAsync(string namePrefix, CancellationToken cancellationToken = default)
+    {
+        var safePrefix = new string(namePrefix.Where(char.IsLetterOrDigit).Take(40).ToArray());
+        if (safePrefix.Length == 0)
+            throw new ArgumentException("A database name prefix is required.", nameof(namePrefix));
+
+        var databaseName = $"MCAROC_{safePrefix}_{Guid.NewGuid():N}";
+        var masterBuilder = new SqlConnectionStringBuilder(ConnectionString) { InitialCatalog = "master" };
+        var databaseBuilder = new SqlConnectionStringBuilder(ConnectionString) { InitialCatalog = databaseName };
+        await using (var master = new SqlConnection(masterBuilder.ConnectionString))
+        {
+            await master.OpenAsync(cancellationToken);
+            await using var create = master.CreateCommand();
+            create.CommandText = $"CREATE DATABASE [{databaseName}]";
+            await create.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        var isolated = new IsolatedDatabase(databaseName, masterBuilder.ConnectionString, databaseBuilder.ConnectionString);
+        try
+        {
+            await using var db = new AppDbContext(new DbContextOptionsBuilder<AppDbContext>()
+                .UseSqlServer(isolated.ConnectionString).Options);
+            await db.Database.MigrateAsync(cancellationToken);
+            return isolated;
+        }
+        catch
+        {
+            await isolated.DisposeAsync();
+            throw;
+        }
+    }
+
     private static async Task MigrateCoreAsync(CancellationToken cancellationToken)
     {
         var target = new SqlConnectionStringBuilder(ConnectionString);
@@ -152,5 +184,22 @@ internal static class TestDatabase
             builder.CommandTimeout = 120;
         }
         return builder.ConnectionString;
+    }
+}
+
+internal sealed class IsolatedDatabase(string name, string masterConnectionString, string connectionString) : IAsyncDisposable
+{
+    private bool _disposed;
+    public string ConnectionString { get; } = connectionString;
+
+    public async ValueTask DisposeAsync()
+    {
+        if (_disposed) return;
+        await using var master = new SqlConnection(masterConnectionString);
+        await master.OpenAsync();
+        await using var drop = master.CreateCommand();
+        drop.CommandText = $"ALTER DATABASE [{name}] SET SINGLE_USER WITH ROLLBACK IMMEDIATE; DROP DATABASE [{name}];";
+        await drop.ExecuteNonQueryAsync();
+        _disposed = true;
     }
 }
