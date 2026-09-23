@@ -93,6 +93,43 @@ public sealed class CompanyUnlockServiceTests : IAsyncLifetime
         Assert.Equal(consumed.ConsumedAdmissionId, admission.PaidCallAdmissionId);
     }
 
+    /// <summary>PR #286 review: concurrent approve clicks must not create more than one open approval — a
+    /// second, never-expiring approval could otherwise outlive a failed unlock and authorize a later spend.</summary>
+    [Fact]
+    public async Task Concurrent_approvals_for_one_company_create_exactly_one_open_approval()
+    {
+        var sp = Services(LockedTool());
+        var (requestId, _) = await SeedJobAsync();
+
+        using var gate = new ManualResetEventSlim(false);
+        var tasks = Enumerable.Range(0, 8).Select(_ => Task.Run(async () => { gate.Wait(); return await ApproveAsync(sp, requestId); })).ToArray();
+        gate.Set();
+        var approvals = await Task.WhenAll(tasks);
+
+        Assert.Single(approvals.Select(a => a.UnlockApprovalId).Distinct());
+        await using var db = CreateContext();
+        Assert.Equal(1, await db.UnlockApprovals.CountAsync(a => a.Identifier == _cin));
+    }
+
+    /// <summary>The exact scenario from the review: concurrent approvals, then the paid call fails. No approval
+    /// may survive to authorize another spend — a new one has to be given deliberately.</summary>
+    [Fact]
+    public async Task After_concurrent_approvals_and_a_failed_unlock_nothing_can_authorize_another_spend()
+    {
+        var tool = LockedTool();
+        tool.AddAssetStatus = System.Net.HttpStatusCode.InternalServerError;
+        var sp = Services(tool);
+        var (requestId, _) = await SeedJobAsync();
+        await Task.WhenAll(Enumerable.Range(0, 4).Select(_ => ApproveAsync(sp, requestId)));
+
+        Assert.Equal(UnlockOutcome.Failed, (await ExecuteAsync(sp, requestId)).Outcome);
+        Assert.Equal(UnlockOutcome.NoApproval, (await ExecuteAsync(sp, requestId)).Outcome);
+
+        Assert.Equal(1, tool.Count("addAsset"));
+        await using var db = CreateContext();
+        Assert.False(await db.UnlockApprovals.AnyAsync(a => a.Identifier == _cin && a.ConsumedAdmissionId == null && a.ExpiresUtc > Now.UtcDateTime));
+    }
+
     [Fact]
     public async Task Without_an_approval_nothing_is_spent()
     {

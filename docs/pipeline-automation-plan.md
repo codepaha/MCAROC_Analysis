@@ -599,7 +599,9 @@ below) needs no change.
   - Approval: `POST /Requests/{id}/autofetch/unlock/approve` — internal-reviewer sign-in, antiforgery, mandatory
     reason, audited (`UnlockApproved`). Per §9 #12 it **does not expire** (`ExpiresUtc = DateTime.MaxValue`) and
     covers every request waiting on the company. Because approvals don't expire, every open approval for a company
-    is retired as soon as the company is found unlocked, by us or anyone.
+    is retired as soon as the company is found unlocked, by us or anyone — and after a failed paid call, so a
+    failure always needs a fresh approval. Creating an approval is atomic per company (check-then-insert under a
+    transaction-owned `sp_getapplock`), so concurrent clicks can't leave a second open approval behind.
   - Spend: `getAssetTeams` first (anyone's unlock is adopted for free) → approval (or `Pipeline:AutoUnlock:Enabled`,
     default off, still capped by `UnlockPerDay`, default 0) → preview identity → `getUpgradeStatusForUnlockingAsset`
     → admission with the approval consumed in the same transaction (`PaidCallAdmissionRequest.WithinTransaction`;

@@ -50,8 +50,23 @@ public sealed class CompanyUnlockService(
             ?? throw new InvalidOperationException("Only an auto-fetch request can have its company unlocked.");
 
         var now = time.GetUtcNow().UtcDateTime;
+
+        // Check-then-insert must be atomic per company: two concurrent clicks each inserting a never-expiring
+        // approval would leave one behind after the other is consumed, able to authorize a later spend nobody
+        // approved. A transaction-owned app lock serialises approvals for the company across instances.
+        await using var tx = await db.Database.BeginTransactionAsync(ct);
+        var resource = $"MCAROC:UnlockApproval:{identifier}";
+        await db.Database.ExecuteSqlInterpolatedAsync($@"
+DECLARE @r int;
+EXEC @r = sp_getapplock @Resource = {resource}, @LockMode = 'Exclusive', @LockOwner = 'Transaction', @LockTimeout = 15000;
+IF @r < 0 THROW 50001, 'Could not acquire the unlock-approval lock for this company.', 1;", ct);
+
         var open = await OpenApprovals(identifier, now).OrderBy(a => a.UnlockApprovalId).FirstOrDefaultAsync(ct);
-        if (open is not null) return open;
+        if (open is not null)
+        {
+            await tx.CommitAsync(ct);
+            return open;
+        }
 
         var approval = new UnlockApproval
         {
@@ -60,6 +75,7 @@ public sealed class CompanyUnlockService(
         };
         db.UnlockApprovals.Add(approval);
         await db.SaveChangesAsync(ct);
+        await tx.CommitAsync(ct);
         logger.LogWarning("Unlock of {Identifier} approved by {ApprovedBy} (request {RequestId}): {Reason}", identifier, approval.ApprovedBy, requestId, approval.Reason);
         return approval;
     }
@@ -127,14 +143,19 @@ public sealed class CompanyUnlockService(
         catch (Exception ex) when (ex is ReferenceToolException or HttpRequestException or TaskCanceledException && !ct.IsCancellationRequested)
         {
             logger.LogError(ex, "Unlock call for {Identifier} failed after the admission was committed", identifier);
+            // A failed spend needs a fresh, deliberate approval — never one left over from before the attempt.
+            await RetireOpenApprovalsAsync(identifier, CancellationToken.None);
             return new UnlockResult(UnlockOutcome.Failed,
                 $"The unlock call failed ({ex.Message}). The credit may have been spent — check the reference tool before approving again.");
         }
 
         var after = await client.GetAssetStatusAsync(bid, ct);
         if (after.AddedAt is null)
+        {
+            await RetireOpenApprovalsAsync(identifier, CancellationToken.None);
             return new UnlockResult(UnlockOutcome.Failed,
                 "The reference tool accepted the unlock but still reports the company locked. Check the tool before approving again.");
+        }
         await RetireOpenApprovalsAsync(identifier, ct);
         return new UnlockResult(UnlockOutcome.Unlocked, $"Unlocked in the reference tool on {after.AddedAt:u} (1 credit).");
     }
