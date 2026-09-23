@@ -136,7 +136,14 @@ public sealed class CompanyRefreshService(
                     .SetProperty(r => r.RefreshDeadlineUtc, (DateTime?)null), ct);
                 if (completed == 1)
                     logger.LogInformation("Reference-tool refresh for {Identifier} completed (data as of {DataAsOf})", identifier, asOf);
-                return new RefreshGateResult(RefreshGateKind.Ready, $"The reference tool finished refreshing this company's data (as of {asOf:u}).", asOf);
+
+                // Newer than the request is not the same as fresh: a refresh that lands more than 24 hours after
+                // it was requested can carry data that is already stale. Only fresh data may be exported; stale
+                // data is re-evaluated like any stale company, which starts (or joins) a new refresh.
+                if (CompanyRefreshPolicy.Decide(new CompanyRefreshState(true, asOf, HasActiveRefresh: false), now) == CompanyRefreshDecision.ReuseFreshSnapshot)
+                    return new RefreshGateResult(RefreshGateKind.Ready, $"The reference tool finished refreshing this company's data (as of {asOf:u}).", asOf);
+                logger.LogWarning("Reference-tool refresh for {Identifier} landed with data already over 24 hours old ({DataAsOf}); refreshing again", identifier, asOf);
+                return await EvaluateAsync(identifier, bid, ct);
             }
 
             // Nothing pending, yet the data predates our request: the request never took effect. Re-send it

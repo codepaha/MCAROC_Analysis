@@ -12,8 +12,9 @@ namespace MCAROC_Analysis.Tests;
 /// <summary>An in-memory stand-in for the reference tool's unlock/refresh endpoints
 /// (docs/reference-tool-refresh-unlock-contract.md), dispatching on the signed payload's <c>action</c>. Holds
 /// one company's state and records every call in order, so tests can assert on sequencing — in particular that
-/// nothing is exported before a refresh has completed.</summary>
-public sealed class FakeReferenceTool : HttpMessageHandler
+/// nothing is exported before a refresh has completed. Answers only for its own company (<paramref name="bid"/>);
+/// any other company gets a 404, so a worker polling some other test's company can't change this one's state.</summary>
+public sealed class FakeReferenceTool(string bid) : HttpMessageHandler
 {
     private const string KeyHex = "6b65792d666f722d7465737473";
     private readonly object _sync = new();
@@ -41,7 +42,10 @@ public sealed class FakeReferenceTool : HttpMessageHandler
         }
 
         var qp = System.Web.HttpUtility.ParseQueryString(request.RequestUri.Query)["qp"];
-        var action = qp is null ? "" : Payload(qp).GetProperty("action").GetString() ?? "";
+        var payload = qp is null ? default : Payload(qp);
+        var action = qp is null ? "" : payload.GetProperty("action").GetString() ?? "";
+        if (qp is not null && payload.TryGetProperty("bid", out var requestedBid) && requestedBid.GetString() != bid)
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound) { Content = new StringContent("other company") });
         Calls.Enqueue(action);
         lock (_sync)
         {

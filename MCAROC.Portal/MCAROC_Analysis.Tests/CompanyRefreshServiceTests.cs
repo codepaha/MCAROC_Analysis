@@ -31,7 +31,14 @@ public sealed class CompanyRefreshServiceTests : IAsyncLifetime
         await TestDatabase.MigrateAsync(db);
     }
 
-    public Task DisposeAsync() => Task.CompletedTask;
+    /// <summary>Parked jobs left behind would be polled by every later worker test sharing this database.</summary>
+    public async Task DisposeAsync()
+    {
+        await using var db = CreateContext();
+        await db.AutoFetchJobs.Where(j => j.Cin == _cin).ExecuteDeleteAsync();
+        await db.Requests.Where(r => r.Cin == _cin).ExecuteDeleteAsync();
+        await db.CompanyReportLifecycles.Where(l => l.Identifier == _cin).ExecuteDeleteAsync();
+    }
 
     private DateTimeOffset Now => _time.GetUtcNow();
 
@@ -51,7 +58,7 @@ public sealed class CompanyRefreshServiceTests : IAsyncLifetime
     [Fact]
     public async Task A_locked_company_reports_locked_and_never_requests_a_refresh()
     {
-        var tool = new FakeReferenceTool { AddedAt = null };
+        var tool = new FakeReferenceTool(Bid) { AddedAt = null };
 
         var gate = await EvaluateAsync(tool);
 
@@ -64,7 +71,7 @@ public sealed class CompanyRefreshServiceTests : IAsyncLifetime
     [Fact]
     public async Task A_company_whose_12_month_unlock_lapsed_reports_expired()
     {
-        var tool = new FakeReferenceTool { AddedAt = Now.AddMonths(-13), DataAsOf = Now.AddHours(-1) };
+        var tool = new FakeReferenceTool(Bid) { AddedAt = Now.AddMonths(-13), DataAsOf = Now.AddHours(-1) };
         Assert.Equal(RefreshGateKind.Ready, (await EvaluateAsync(tool)).Kind); // adopts the old unlock date
 
         tool.AddedAt = null; // the tool now reports it locked again
@@ -79,7 +86,7 @@ public sealed class CompanyRefreshServiceTests : IAsyncLifetime
     public async Task Data_under_24_hours_old_is_reused_without_a_refresh_and_the_unlock_date_is_adopted()
     {
         var addedAt = Now.AddMonths(-2);
-        var tool = new FakeReferenceTool { AddedAt = addedAt, DataAsOf = Now.AddHours(-3) };
+        var tool = new FakeReferenceTool(Bid) { AddedAt = addedAt, DataAsOf = Now.AddHours(-3) };
 
         var gate = await EvaluateAsync(tool);
 
@@ -94,7 +101,7 @@ public sealed class CompanyRefreshServiceTests : IAsyncLifetime
     [Fact]
     public async Task Stale_data_starts_exactly_one_refresh_and_completes_only_once_the_tool_has_newer_data()
     {
-        var tool = new FakeReferenceTool { AddedAt = Now.AddMonths(-2), DataAsOf = Now.AddDays(-3) };
+        var tool = new FakeReferenceTool(Bid) { AddedAt = Now.AddMonths(-2), DataAsOf = Now.AddDays(-3) };
 
         var started = await EvaluateAsync(tool);
         Assert.Equal(RefreshGateKind.Waiting, started.Kind);
@@ -121,10 +128,55 @@ public sealed class CompanyRefreshServiceTests : IAsyncLifetime
         Assert.Equal(tool.DataAsOf!.Value.UtcDateTime, l.LastRefreshCompletedUtc!.Value, TimeSpan.FromSeconds(1));
     }
 
+    /// <summary>PR #285 review: data newer than the request is not enough — a refresh that lands more than 24
+    /// hours after it was requested can carry data that is itself already stale. It must not authorize an
+    /// export; a new refresh is started instead.</summary>
+    [Fact]
+    public async Task A_refresh_that_lands_with_data_already_over_24_hours_old_is_not_ready_and_starts_a_new_refresh()
+    {
+        var tool = new FakeReferenceTool(Bid) { AddedAt = Now.AddMonths(-2), DataAsOf = Now.AddDays(-3) };
+        var requested = Now;
+        Assert.Equal(RefreshGateKind.Waiting, (await EvaluateAsync(tool)).Kind);
+        var firstClaim = (await LifecycleAsync()).ActiveRefreshId;
+
+        _time.Advance(TimeSpan.FromHours(30)); // inside the 36h deadline
+        tool.RefreshPending = false;
+        tool.DataAsOf = requested.AddHours(1); // newer than the request, but 29 hours old now
+
+        var gate = await EvaluateAsync(tool);
+
+        Assert.Equal(RefreshGateKind.Waiting, gate.Kind);
+        Assert.Equal(2, tool.Count("requestProbeDataUpdate"));
+        var l = await LifecycleAsync();
+        Assert.Equal(CompanyReportLifecycleState.Refreshing, l.State);
+        Assert.NotNull(l.ActiveRefreshId);
+        Assert.NotEqual(firstClaim, l.ActiveRefreshId);
+        Assert.Equal(tool.DataAsOf!.Value.UtcDateTime, l.LastRefreshCompletedUtc!.Value, TimeSpan.FromSeconds(1)); // the landing is still recorded
+    }
+
+    [Fact]
+    public async Task A_parked_job_whose_refresh_lands_with_stale_data_does_not_export()
+    {
+        var tool = new FakeReferenceTool(Bid) { AddedAt = Now.AddMonths(-2), DataAsOf = Now.AddDays(-3) };
+        var requested = Now;
+        var jobId = await SeedJobAsync();
+        await ProcessAsync(tool, jobId);
+        Assert.Equal(AutoFetchJobStatus.WaitingForRefresh, (await JobAsync(jobId)).Status);
+
+        _time.Advance(TimeSpan.FromHours(30));
+        tool.RefreshPending = false;
+        tool.DataAsOf = requested.AddHours(1);
+        await SetStatusAsync(jobId, AutoFetchJobStatus.Queued);
+        await ProcessAsync(tool, jobId);
+
+        Assert.Equal(AutoFetchJobStatus.WaitingForRefresh, (await JobAsync(jobId)).Status);
+        Assert.Equal(0, tool.Count("publishProbedData"));
+    }
+
     [Fact]
     public async Task Concurrent_starts_for_a_stale_company_trigger_one_refresh_and_the_rest_join_it()
     {
-        var tool = new FakeReferenceTool { AddedAt = Now.AddMonths(-2), DataAsOf = Now.AddDays(-3) };
+        var tool = new FakeReferenceTool(Bid) { AddedAt = Now.AddMonths(-2), DataAsOf = Now.AddDays(-3) };
 
         using var gate = new ManualResetEventSlim(false);
         var tasks = Enumerable.Range(0, 8).Select(_ => Task.Run(async () => { gate.Wait(); return await EvaluateAsync(tool); })).ToArray();
@@ -140,7 +192,7 @@ public sealed class CompanyRefreshServiceTests : IAsyncLifetime
     {
         // Simulates a crash between claiming the refresh and calling the tool: the claim is in the database,
         // the tool has nothing pending and still holds the old data.
-        var tool = new FakeReferenceTool { AddedAt = Now.AddMonths(-2), DataAsOf = Now.AddDays(-3), OnRefreshRequested = _ => { } };
+        var tool = new FakeReferenceTool(Bid) { AddedAt = Now.AddMonths(-2), DataAsOf = Now.AddDays(-3), OnRefreshRequested = _ => { } };
         Assert.Equal(RefreshGateKind.Waiting, (await EvaluateAsync(tool)).Kind); // claims; the request is a no-op
 
         _time.Advance(TimeSpan.FromMinutes(10));
@@ -154,7 +206,7 @@ public sealed class CompanyRefreshServiceTests : IAsyncLifetime
     [Fact]
     public async Task A_refresh_past_its_deadline_times_out_and_a_retry_starts_a_new_one()
     {
-        var tool = new FakeReferenceTool { AddedAt = Now.AddMonths(-2), DataAsOf = Now.AddDays(-3) };
+        var tool = new FakeReferenceTool(Bid) { AddedAt = Now.AddMonths(-2), DataAsOf = Now.AddDays(-3) };
         await EvaluateAsync(tool);
 
         _time.Advance(TimeSpan.FromHours(37));
@@ -175,7 +227,7 @@ public sealed class CompanyRefreshServiceTests : IAsyncLifetime
     [Fact]
     public async Task MCA_maintenance_defers_without_claiming_a_refresh()
     {
-        var tool = new FakeReferenceTool { AddedAt = Now.AddMonths(-2), DataAsOf = Now.AddDays(-3), McaStatus = "UNDER_MAINTENANCE" };
+        var tool = new FakeReferenceTool(Bid) { AddedAt = Now.AddMonths(-2), DataAsOf = Now.AddDays(-3), McaStatus = "UNDER_MAINTENANCE" };
 
         var gate = await EvaluateAsync(tool);
 
@@ -187,7 +239,7 @@ public sealed class CompanyRefreshServiceTests : IAsyncLifetime
     [Fact]
     public async Task A_failed_refresh_request_gives_the_claim_back()
     {
-        var tool = new FakeReferenceTool { AddedAt = Now.AddMonths(-2), DataAsOf = Now.AddDays(-3), RefreshRequestStatus = System.Net.HttpStatusCode.ServiceUnavailable };
+        var tool = new FakeReferenceTool(Bid) { AddedAt = Now.AddMonths(-2), DataAsOf = Now.AddDays(-3), RefreshRequestStatus = System.Net.HttpStatusCode.ServiceUnavailable };
 
         await Assert.ThrowsAsync<ReferenceToolException>(() => EvaluateAsync(tool));
 
@@ -201,7 +253,7 @@ public sealed class CompanyRefreshServiceTests : IAsyncLifetime
     [Fact]
     public async Task A_locked_company_fails_the_job_without_any_export()
     {
-        var tool = new FakeReferenceTool { AddedAt = null };
+        var tool = new FakeReferenceTool(Bid) { AddedAt = null };
         var jobId = await SeedJobAsync();
 
         await ProcessAsync(tool, jobId);
@@ -215,7 +267,7 @@ public sealed class CompanyRefreshServiceTests : IAsyncLifetime
     [Fact]
     public async Task A_stale_company_parks_the_job_and_exports_only_after_the_refresh_completes()
     {
-        var tool = new FakeReferenceTool { AddedAt = Now.AddMonths(-2), DataAsOf = Now.AddDays(-3) };
+        var tool = new FakeReferenceTool(Bid) { AddedAt = Now.AddMonths(-2), DataAsOf = Now.AddDays(-3) };
         var jobId = await SeedJobAsync();
 
         await ProcessAsync(tool, jobId);
