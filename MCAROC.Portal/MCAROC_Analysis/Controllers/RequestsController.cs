@@ -17,6 +17,7 @@ using MCAROC_Analysis.Services.Excel;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authorization;
 using MCAROC_Analysis.Services.LitigationData;
+using MCAROC_Analysis.Services.AnalystAccess;
 
 namespace MCAROC_Analysis.Controllers;
 
@@ -32,7 +33,8 @@ public class RequestsController(
     CorporateTimelineBuilder corporateTimelineBuilder,
     ILogger<RequestsController>? logger = null,
     IWorkbookDerivativeService? derivativeService = null,
-    MCAROC_Analysis.Services.Documents.ISignedDownloadTokenService? tokenService = null) : Controller
+    MCAROC_Analysis.Services.Documents.ISignedDownloadTokenService? tokenService = null,
+    IAnalystRequestAccessService? analystAccess = null) : Controller
 {
     [HttpGet("/Requests")]
     public async Task<IActionResult> Index([FromQuery] RequestListFilterCriteria filters)
@@ -1456,9 +1458,23 @@ public class RequestsController(
             isReviewer = HttpContext.User?.Identities.Any(i => i.AuthenticationType == "InternalReviewer" && i.IsAuthenticated) == true;
         }
 
+        var isAnalyst = false;
+        try
+        {
+            var analystAuth = await HttpContext.AuthenticateAsync(AnalystAccessConstants.AuthenticationScheme);
+            isAnalyst = analystAuth?.Succeeded == true
+                && analystAuth.Principal?.IsInRole(AnalystAccessConstants.Role) == true
+                && analystAccess is not null
+                && await analystAccess.CanAccessAsync(analystAuth.Principal, requestId, ct);
+        }
+        catch (InvalidOperationException)
+        {
+            // Without a configured Analyst scheme and access service, this route remains unavailable to Analysts.
+        }
+
         var isTokenValid = tokenService?.ValidateToken(requestId, docId, token) ?? false;
 
-        if (!isReviewer && !isTokenValid)
+        if (!isReviewer && !isAnalyst && !isTokenValid)
         {
             // Telemetry: Record denial without leaking the token value
             logger?.LogWarning(
@@ -1557,7 +1573,7 @@ public class RequestsController(
         }
 
         // ── Step 6: Telemetry & Security Headers ──────────────────────────────
-        var authMethod = isReviewer ? "ReviewerSession" : "SignedToken";
+        var authMethod = isReviewer ? "ReviewerSession" : isAnalyst ? "AnalystSession" : "SignedToken";
         logger?.LogInformation(
             "Audit: Uploaded document download AUTHORIZED ({AuthMethod}). RequestId={RequestId}, DocumentId={DocId}, IsQuarantined={IsQuarantined}",
             authMethod, requestId, docId, doc.UploadStatus == DocumentUploadStatus.Quarantined);

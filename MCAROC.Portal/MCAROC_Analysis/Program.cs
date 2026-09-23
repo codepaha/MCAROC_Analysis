@@ -47,6 +47,7 @@ builder.Services.Configure<FormOptions>(options =>
 builder.Services.AddControllersWithViews(options =>
 {
     options.Filters.Add<AuditLogFilter>();
+    options.Filters.AddService<AnalystRequestBoundaryFilter>();
 });
 builder.Services.AddScoped<IAuditLogService, AuditLogService>();
 builder.Services.AddScoped<AuditLogFilter>();
@@ -55,6 +56,8 @@ builder.Services.AddScoped<AnalystProvisioningService>();
 builder.Services.AddScoped<AnalystAssignmentOperationService>();
 builder.Services.AddScoped<IAnalystRequestAccessService, AnalystRequestAccessService>();
 builder.Services.AddScoped<AnalystDashboardQueryService>();
+builder.Services.AddScoped<AnalystRequestDetailsQueryService>();
+builder.Services.AddScoped<AnalystRequestBoundaryFilter>();
 builder.Services.AddScoped<IAuthorizationHandler, AnalystRequestAuthorizationHandler>();
 builder.Services.AddMemoryCache();
 builder.Services.AddHttpClient<InstaFinancialsClient>(client => client.Timeout = TimeSpan.FromMinutes(10));

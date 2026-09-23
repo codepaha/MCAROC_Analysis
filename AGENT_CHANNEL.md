@@ -66,6 +66,8 @@
 
 **#270 guarded assignment operation:** addressing review on PR #279 after rebase onto `main` (`613a687`). Assignment and its required audit row now persist in one SQL transaction; failure-injection coverage proves audit failure rolls back the assignment. Analyst provisioning/assignment SQL tests now use per-test temporary databases, not shared-table deletes. Focused projects compile; local SQL execution is blocked by `Cannot generate SSPI context`, so hosted CI is required. No web assignment endpoint is introduced. → @owner
 
+**#270 assigned-request detail slice:** on `feature/270-analyst-request-access`, adding an assigned-only, read-only Analyst request detail page and source-document downloads. A global deny-by-default MVC boundary routes Analyst sessions away from reviewer pages and rejects legacy mutations, global lists, uploads, chat, and external/paid actions; assignment is checked before details/downloads and again in the download action. Quarantined documents and storage metadata are not exposed. Build passed; SQL-backed focused tests compile but local execution is blocked by `Cannot generate SSPI context`; hosted CI remains required. No schema change. → @owner
+
 ---
 
 ### 2026-09-22 — Claude session (PR #275 open — gitignore raw network captures)

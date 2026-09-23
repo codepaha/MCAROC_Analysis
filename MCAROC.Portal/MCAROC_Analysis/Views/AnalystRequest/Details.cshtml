@@ -1,0 +1,76 @@
+@model MCAROC_Analysis.Models.AnalystRequestDetailViewModel
+@using MCAROC_Analysis.Data.Entities
+@{
+    ViewData["Title"] = Model.RequestNumber;
+    Layout = "_AnalystLayout";
+}
+
+<p><a href="/analyst">&larr; Back to my queue</a></p>
+<section class="analyst-intro">
+    <div>
+        <div class="pi-kicker">Assigned request &middot; @Model.RequestNumber</div>
+        <h1>@Model.CompanyName</h1>
+        <p>@Model.EntityType &middot; Assigned work details</p>
+    </div>
+    <span class="analyst-status">@Model.Status</span>
+</section>
+
+<section class="analyst-detail-summary" aria-label="Request summary">
+    <dl>
+        @if (!string.IsNullOrWhiteSpace(Model.Cin ?? Model.Llpin))
+        {
+            <div><dt>CIN / LLPIN</dt><dd>@(Model.Cin ?? Model.Llpin)</dd></div>
+        }
+        @if (!string.IsNullOrWhiteSpace(Model.Pan))
+        {
+            <div><dt>PAN</dt><dd>@Model.Pan</dd></div>
+        }
+        <div><dt>Created</dt><dd>@Model.CreatedUtc.ToString("d MMM yyyy HH:mm")</dd></div>
+        @if (Model.UpdatedUtc is { } updated)
+        {
+            <div><dt>Updated</dt><dd>@updated.ToString("d MMM yyyy HH:mm")</dd></div>
+        }
+    </dl>
+    @if (Model.NeedsReview)
+    {
+        <p class="alert alert-warning" role="status">@(Model.AttentionReason ?? "This request needs attention.")</p>
+    }
+</section>
+
+<section class="analyst-documents" aria-labelledby="documents-heading">
+    <h2 id="documents-heading">Source documents</h2>
+    @if (Model.Documents.Count == 0)
+    {
+        <p class="text-muted">No available source documents are listed for this request.</p>
+    }
+    else
+    {
+        <div class="table-responsive">
+            <table class="table align-middle">
+                <thead><tr><th scope="col">File</th><th scope="col">Type</th><th scope="col">Status</th><th scope="col">Uploaded</th><th scope="col"><span class="visually-hidden">Action</span></th></tr></thead>
+                <tbody>
+                @foreach (var document in Model.Documents)
+                {
+                    <tr>
+                        <td>@document.FileName</td>
+                        <td>@document.Type</td>
+                        <td>@document.Status</td>
+                        <td>@document.UploadedUtc.ToString("d MMM yyyy HH:mm")</td>
+                        <td><a class="btn btn-sm btn-outline-secondary" href="/Requests/@Model.RequestId/uploaded-documents/@document.DocumentId/download">Download</a></td>
+                    </tr>
+                }
+                </tbody>
+            </table>
+        </div>
+    }
+</section>
+
+<style>
+    .analyst-detail-summary { max-width: 900px; margin: 28px 0 40px; }
+    .analyst-detail-summary dl { display: grid; grid-template-columns: repeat(auto-fit,minmax(190px,1fr)); border-top: 1px solid var(--border,#e5e7eb); border-left: 1px solid var(--border,#e5e7eb); }
+    .analyst-detail-summary dl div { padding: 14px 16px; border-right: 1px solid var(--border,#e5e7eb); border-bottom: 1px solid var(--border,#e5e7eb); }
+    .analyst-detail-summary dt { color: var(--text-2,#64748b); font-size: .78rem; text-transform: uppercase; letter-spacing: .05em; }
+    .analyst-detail-summary dd { margin: 4px 0 0; color: var(--text-1,#162235); font-weight: 600; }
+    .analyst-documents { max-width: 1100px; }
+    .analyst-documents h2 { margin-bottom: 14px; font-size: 1.25rem; }
+</style>
