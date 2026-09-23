@@ -1,6 +1,7 @@
 using MCAROC_Analysis.Data;
 using MCAROC_Analysis.Data.Entities;
 using MCAROC_Analysis.Services;
+using MCAROC_Analysis.Services.Analysis;
 using MCAROC_Analysis.Services.AutoFetch;
 using MCAROC_Analysis.Services.Excel;
 using MCAROC_Analysis.Services.McaFilings;
@@ -10,6 +11,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Logging.Abstractions;
+using static MCAROC_Analysis.Tests.TestHelpers;
 
 namespace MCAROC_Analysis.Tests;
 
@@ -375,13 +377,86 @@ public sealed class CompanyRefreshServiceTests : IAsyncLifetime
         Assert.Equal(oldRunId, (await verify.Requests.AsNoTracking().SingleAsync(r => r.RequestId == requestId)).LatestCompletedIngestionRunId);
     }
 
+    [Fact]
+    public async Task Restart_after_ingestion_commit_uses_the_atomic_job_checkpoint_and_does_not_ingest_again()
+    {
+        var jobId = await SeedJobAsync();
+        long requestId;
+        long oldRunId;
+        long newRunId;
+        await using (var db = CreateContext())
+        {
+            var job = await db.AutoFetchJobs.SingleAsync(j => j.AutoFetchJobId == jobId);
+            requestId = job.RequestId;
+            var request = await db.Requests.SingleAsync(r => r.RequestId == requestId);
+            var oldRun = new IngestionRun { RequestId = requestId, RunNumber = 1, StartedDate = DateTime.UtcNow.AddDays(-1),
+                CompletedDate = DateTime.UtcNow.AddDays(-1), Status = IngestionRunStatus.CompletedClean };
+            db.IngestionRuns.Add(oldRun);
+            await db.SaveChangesAsync();
+            oldRunId = oldRun.IngestionRunId;
+            request.LatestCompletedIngestionRunId = oldRunId;
+            request.RequestStatus = RequestStatus.DocumentsUploaded;
+            var roc = new RequestDocument
+            {
+                RequestId = requestId, DocumentType = DocumentType.McaRocReport, OriginalFileName = "recheck.xls",
+                StoredFileName = "recheck.xls", StoragePath = $@"C:\fake\{Guid.NewGuid():N}.xls",
+                FileHash = "recheck", UploadedDate = DateTime.UtcNow
+            };
+            db.RequestDocuments.Add(roc);
+            await db.SaveChangesAsync();
+            job.Status = AutoFetchJobStatus.Ingesting;
+            job.RocDocumentId = roc.DocumentId;
+            await db.SaveChangesAsync();
+
+            var reader = new FakeExcelSheetReader(new Dictionary<string, IReadOnlyList<SheetData>>
+            {
+                [roc.StoragePath] = [Sheet("About the Company",
+                    Row("Printed at", "23 Sep, 2026 10:00 Hours"),
+                    Row("Legal Name", "REFRESH TEST COMPANY"), Row("CIN", _cin),
+                    Row("PAN", "AAAAA0000A"), Row("Company Status", "Active")),
+                    Sheet("Directors",
+                        Row("NAME", "DIN", "PRESENT DESIGNATION", "PRESENT DESIGNATION APPOINTMENT DATE", "ORIGINAL APPOINTMENT DATE", "DATE OF CESSATION", "FLAGS"),
+                        Row("TEST DIRECTOR", 12345678.0, "Director", "1 Jan, 2020", "1 Jan, 2020", "-", "-"))]
+            });
+            var run = await new IngestionOrchestrator(db, reader, NullLogger<IngestionOrchestrator>.Instance)
+                .RunAsync(requestId, roc.DocumentId, chargeDocumentId: null, autoFetchJobId: jobId);
+            Assert.NotEqual(IngestionRunStatus.Failed, run.Status);
+            newRunId = run.IngestionRunId;
+            // Stop here: the caller has not promoted source documents, queued analysis, or saved a
+            // separate checkpoint. This is the crash point that previously created run N+2.
+        }
+
+        await using (var verify = CreateContext())
+        {
+            Assert.Equal(newRunId, (await verify.AutoFetchJobs.AsNoTracking().SingleAsync(j => j.AutoFetchJobId == jobId)).IngestionRunId);
+            Assert.Equal(newRunId, (await verify.Requests.AsNoTracking().SingleAsync(r => r.RequestId == requestId)).LatestCompletedIngestionRunId);
+        }
+
+        var services = new ServiceCollection();
+        services.AddDbContext<AppDbContext>(o => o.UseSqlServer(TestDatabase.ConnectionString));
+        using var provider = services.BuildServiceProvider();
+        var queue = new AutoFetchQueue();
+        await new AutoFetchWorker(provider.GetRequiredService<IServiceScopeFactory>(), queue,
+            FakeReferenceTool.Options(), NullLogger<AutoFetchWorker>.Instance)
+            .RecoverAsync(CancellationToken.None, requestId);
+        Assert.True(queue.TryRead(out var recoveredId));
+        Assert.Equal(jobId, recoveredId);
+        await ProcessAsync(new FakeReferenceTool(Bid), recoveredId);
+
+        await using var final = CreateContext();
+        Assert.Equal(2, await final.IngestionRuns.CountAsync(r => r.RequestId == requestId));
+        Assert.Equal(AutoFetchJobStatus.Completed, (await final.AutoFetchJobs.AsNoTracking().SingleAsync(j => j.AutoFetchJobId == jobId)).Status);
+        Assert.Equal(newRunId, (await final.Requests.AsNoTracking().SingleAsync(r => r.RequestId == requestId)).LatestCompletedIngestionRunId);
+        Assert.Equal(IngestionRunStatus.CompletedClean, (await final.IngestionRuns.AsNoTracking().SingleAsync(r => r.IngestionRunId == oldRunId)).Status);
+    }
+
     private async Task ProcessAsync(FakeReferenceTool tool, long jobId)
     {
         await using var db = CreateContext();
         var client = tool.NewClient();
         var refresh = new CompanyRefreshService(db, client, FakeReferenceTool.Options(), _time, NullLogger<CompanyRefreshService>.Instance);
         var jobs = new AutoFetchJobService(db, client, FakeReferenceTool.Options(), new FileValidationService(new ExcelSheetReader()),
-            null!, null!, new FilingProcessingQueue(), null!, new FakeEnv(Path.GetTempPath()), NullLogger<AutoFetchJobService>.Instance,
+            null!, new AnalysisQueue(), new FilingProcessingQueue(), null!, new FakeEnv(Path.GetTempPath()), NullLogger<AutoFetchJobService>.Instance,
             refresh: refresh);
         await jobs.ProcessAsync(jobId, CancellationToken.None);
     }

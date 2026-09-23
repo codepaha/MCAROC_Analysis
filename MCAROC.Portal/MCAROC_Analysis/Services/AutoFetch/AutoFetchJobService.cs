@@ -260,39 +260,49 @@ public sealed class AutoFetchJobService(
                 request.AnalysisStartedDate = DateTime.UtcNow;
                 await db.SaveChangesAsync(ct);
 
-                var run = await orchestrator.RunAsync(request.RequestId, job.RocDocumentId!.Value, job.ChargeDocumentId, ct);
+                var run = await orchestrator.RunAsync(request.RequestId, job.RocDocumentId!.Value, job.ChargeDocumentId, ct,
+                    autoFetchJobId: job.AutoFetchJobId);
                 if (run.Status == IngestionRunStatus.Failed)
                     throw new ReferenceToolException($"Workbook extraction failed: {run.FailureReason}");
 
-                await ActivateWorkbookSourcesAsync(request.RequestId, job.RocDocumentId.Value, job.ChargeDocumentId, ct);
-
-                job.IngestionRunId = run.IngestionRunId;
-                await db.SaveChangesAsync(ct);
-
-                await db.Entry(request).ReloadAsync(ct); // the orchestrator updated status/flags on its own tracked copy
-                if (NeedsCompanyName(request))
-                {
-                    var profileName = await db.CompanyProfiles
-                        .Where(p => p.IngestionRunId == run.IngestionRunId)
-                        .Select(p => p.CompanyName)
-                        .FirstOrDefaultAsync(ct);
-                    if (!string.IsNullOrWhiteSpace(profileName))
-                    {
-                        request.CompanyName = profileName;
-                        await db.SaveChangesAsync(ct);
-                    }
-                }
-
-                // Same block/don't-block line as the New-request flow: only an identity mismatch holds
-                // analysis back, never a missing optional sheet.
-                if (request.RequestStatus == RequestStatus.DataExtracted && !request.IsManualReviewRequired)
-                    analysisQueue.Enqueue(request.RequestId);
-                else if (request.IsManualReviewRequired)
-                    warnings.Add($"Manual review required after extraction: {request.ManualReviewReason}");
-                if (run.Status == IngestionRunStatus.CompletedWithWarnings)
-                    warnings.Add($"Workbook extraction completed with {run.WarningsCount} warning(s) — see the Documents tab.");
-                await SaveWarningsAsync(job, warnings, ct);
             }
+
+            // A committed run and its job checkpoint are one transaction. After a restart, finish the
+            // follow-up steps without launching another ingestion run.
+            var completedRun = await db.IngestionRuns.AsNoTracking().FirstAsync(r =>
+                r.IngestionRunId == job.IngestionRunId && r.RequestId == request.RequestId &&
+                r.SourceRocDocumentId == job.RocDocumentId && r.SourceChargeDocumentId == job.ChargeDocumentId &&
+                (r.Status == IngestionRunStatus.CompletedClean || r.Status == IngestionRunStatus.CompletedWithWarnings), ct);
+            await ActivateWorkbookSourcesAsync(request.RequestId, job.RocDocumentId!.Value, job.ChargeDocumentId, ct);
+            await db.Entry(request).ReloadAsync(ct);
+            if (NeedsCompanyName(request))
+            {
+                var profileName = await db.CompanyProfiles
+                    .Where(p => p.IngestionRunId == completedRun.IngestionRunId)
+                    .Select(p => p.CompanyName)
+                    .FirstOrDefaultAsync(ct);
+                if (!string.IsNullOrWhiteSpace(profileName))
+                {
+                    request.CompanyName = profileName;
+                    await db.SaveChangesAsync(ct);
+                }
+            }
+
+            // A resumed job may enqueue again. AnalysisOrchestrator atomically claims DataExtracted,
+            // so only one worker can create the matching analysis run.
+            if (request.RequestStatus == RequestStatus.DataExtracted && !request.IsManualReviewRequired)
+                analysisQueue.Enqueue(request.RequestId);
+            else if (request.IsManualReviewRequired)
+            {
+                var warning = $"Manual review required after extraction: {request.ManualReviewReason}";
+                if (!warnings.Contains(warning)) warnings.Add(warning);
+            }
+            if (completedRun.Status == IngestionRunStatus.CompletedWithWarnings)
+            {
+                var warning = $"Workbook extraction completed with {completedRun.WarningsCount} warning(s) — see the Documents tab.";
+                if (!warnings.Contains(warning)) warnings.Add(warning);
+            }
+            await SaveWarningsAsync(job, warnings, ct);
 
             // 5. Filings
             if (job.IncludeFilings && job.FilingsDocumentId is null)

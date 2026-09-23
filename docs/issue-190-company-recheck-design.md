@@ -14,6 +14,8 @@ The owner activated this issue on 23 September 2026 and selected **automatic ret
 
 #229 merged as `1058b51` and provides the durable company refresh gate. The reviewer POST uses a separate fresh-attempt admission method; ordinary Retry continues to preserve checkpoints. The re-check resets every workbook, ingestion, and filing checkpoint, plus counters and progress, on the existing job row. Manual-upload requests get their first auto-fetch job. It fetches workbooks only, so the existing filing batch is retained and RAG documents are not re-embedded. A provider snapshot within 24 hours may be reused, but the workbooks are exported again for the new attempt. The action requires the reference-tool freshness gate to be enabled. #266 still supplies the locked-company approval path.
 
+The auto-fetch job's `IngestionRunId` checkpoint commits in the same transaction as the completed `IngestionRun` and request pointer. On restart, the job resumes source promotion and analysis enqueue from that checkpoint. It does not launch another ingestion run. The analysis worker's request-status claim keeps repeat queue entries from creating a second analysis run.
+
 ## Acceptance checks for the action
 
 - An existing unlocked request yields a later `IngestionRun` and matching `AnalysisRun`, with freshly downloaded source documents and unchanged request ID.
