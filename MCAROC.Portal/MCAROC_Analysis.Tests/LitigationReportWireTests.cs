@@ -50,10 +50,8 @@ public sealed class LitigationReportWireTests : IAsyncLifetime
         var controller = new LitigationController(
             db: db,
             env: env,
-            analysis: null!,
-            searchJobService: null!,
-            searchQueue: null!,
             bprOptions: Options.Create(new BprLitigationOptions()),
+            starter: null!,
             logger: NullLogger<LitigationController>.Instance);
 
         controller.ControllerContext = new ControllerContext

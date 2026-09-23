@@ -2,6 +2,7 @@ using MCAROC_Analysis.Data;
 using MCAROC_Analysis.Data.Entities;
 using MCAROC_Analysis.Services.AutoFetch;
 using MCAROC_Analysis.Services.LitigationData;
+using MCAROC_Analysis.Services.Pipeline;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -14,10 +15,8 @@ namespace MCAROC_Analysis.Controllers;
 public class LitigationController(
     AppDbContext db,
     IWebHostEnvironment env,
-    LitigationAiAnalysisOrchestrator analysis,
-    LitigationSearchJobService searchJobService,
-    LitigationSearchQueue searchQueue,
     IOptions<BprLitigationOptions> bprOptions,
+    LitigationStartService starter,
     ILogger<LitigationController>? logger = null) : Controller
 {
     private readonly BprLitigationOptions _opts = bprOptions.Value;
@@ -29,8 +28,11 @@ public class LitigationController(
     [Authorize(AuthenticationSchemes = "InternalReviewer")]
     public async Task<IActionResult> StartAnalysis(long id, CancellationToken ct)
     {
-        if (!await db.Requests.AnyAsync(r => r.RequestId == id, ct)) return NotFound();
-        var run = await analysis.CreateOrJoinAsync(id, ct);
+        var clientId = await db.Requests.Where(r => r.RequestId == id).Select(r => (long?)r.ClientId).FirstOrDefaultAsync(ct);
+        if (clientId is null) return NotFound();
+        var started = await starter.StartAnalysisAsync(id, clientId, PaidCallTrigger.Manual, ct);
+        if (!started.Started) return Conflict(new { error = started.Message });
+        var run = await db.LitigationAiAnalysisRuns.AsNoTracking().SingleAsync(r => r.LitigationAiAnalysisRunId == started.ReferenceId, ct);
         return Accepted(new { run.LitigationAiAnalysisRunId, run.RunNumber, status = run.Status.ToString(), run.CreatedUtc });
     }
 
@@ -88,8 +90,10 @@ public class LitigationController(
 
         try
         {
-            var job = await searchJobService.CreateOrResetJobAsync(id, keywords, _opts.DefaultEntityType, appCustomerId, ct);
-            searchQueue.Enqueue(job.LitigationSearchJobId);
+            var started = await starter.StartSearchAsync(request, keywords, _opts.DefaultEntityType, appCustomerId, PaidCallTrigger.Manual, ct);
+            if (!started.Started)
+                throw new InvalidOperationException(started.Message);
+            var job = await db.LitigationSearchJobs.AsNoTracking().SingleAsync(j => j.LitigationSearchJobId == started.ReferenceId, ct);
 
             if (Request.Headers.Accept.ToString().Contains("application/json"))
                 return Accepted(new { job.LitigationSearchJobId, status = job.Status.ToString(), job.CreatedUtc });
