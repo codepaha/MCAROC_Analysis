@@ -301,6 +301,80 @@ public sealed class CompanyRefreshServiceTests : IAsyncLifetime
         Assert.Equal(1, tool.Count("publishProbedData"));
     }
 
+    [Fact]
+    public async Task Recheck_two_workers_and_restart_rejoin_one_refresh_without_old_checkpoints()
+    {
+        var tool = new FakeReferenceTool(Bid) { AddedAt = Now.AddMonths(-2), DataAsOf = Now.AddDays(-3) };
+        var jobId = await SeedJobAsync();
+        long requestId;
+        long oldRunId;
+        await using (var db = CreateContext())
+        {
+            var job = await db.AutoFetchJobs.SingleAsync(j => j.AutoFetchJobId == jobId);
+            requestId = job.RequestId;
+            var run = new IngestionRun { RequestId = requestId, RunNumber = 1, StartedDate = DateTime.UtcNow,
+                CompletedDate = DateTime.UtcNow, Status = IngestionRunStatus.CompletedClean };
+            db.IngestionRuns.Add(run);
+            await db.SaveChangesAsync();
+            oldRunId = run.IngestionRunId;
+            var request = await db.Requests.SingleAsync(r => r.RequestId == requestId);
+            request.LatestCompletedIngestionRunId = oldRunId;
+            request.RequestStatus = RequestStatus.AnalysisCompleted;
+            job.Status = AutoFetchJobStatus.Completed;
+            job.RocDocumentId = 987654;
+            job.IngestionRunId = oldRunId;
+            await db.SaveChangesAsync();
+        }
+
+        await using (var db = CreateContext())
+        {
+            var jobs = new AutoFetchJobService(db, tool.NewClient(), FakeReferenceTool.Options(),
+                new FileValidationService(new ExcelSheetReader()), null!, null!, new FilingProcessingQueue(),
+                null!, new FakeEnv(Path.GetTempPath()), NullLogger<AutoFetchJobService>.Instance);
+            Assert.NotNull(await jobs.TryQueueRecheckAsync(requestId, Guid.NewGuid().ToString("N"), CancellationToken.None));
+        }
+        Assert.Null((await JobAsync(jobId)).RocDocumentId);
+        Assert.Null((await JobAsync(jobId)).IngestionRunId);
+
+        using (var start = new Barrier(3))
+        {
+            async Task RunWorkerAsync()
+            {
+                Assert.True(start.SignalAndWait(TimeSpan.FromSeconds(20)));
+                await ProcessAsync(tool, jobId);
+            }
+            var first = Task.Run(RunWorkerAsync);
+            var second = Task.Run(RunWorkerAsync);
+            Assert.True(start.SignalAndWait(TimeSpan.FromSeconds(20)));
+            await Task.WhenAll(first, second);
+        }
+        Assert.Equal(AutoFetchJobStatus.WaitingForRefresh, (await JobAsync(jobId)).Status);
+        Assert.Equal(1, tool.Count("requestProbeDataUpdate"));
+        Assert.Equal(0, tool.Count("publishProbedData"));
+
+        // Simulate a new application instance: recovery moves the parked job to Queued without
+        // restoring the previous attempt's checkpoints, then processing joins the same refresh.
+        var services = new ServiceCollection();
+        services.AddDbContext<AppDbContext>(o => o.UseSqlServer(TestDatabase.ConnectionString));
+        using var provider = services.BuildServiceProvider();
+        var queue = new AutoFetchQueue();
+        var worker = new AutoFetchWorker(provider.GetRequiredService<IServiceScopeFactory>(), queue,
+            FakeReferenceTool.Options(), NullLogger<AutoFetchWorker>.Instance);
+        await worker.RecoverAsync(CancellationToken.None, requestId);
+        Assert.True(queue.TryRead(out var recoveredId));
+        Assert.Equal(jobId, recoveredId);
+        Assert.Equal(AutoFetchJobStatus.Queued, (await JobAsync(jobId)).Status);
+        await ProcessAsync(tool, recoveredId);
+        var recovered = await JobAsync(jobId);
+        Assert.Equal(AutoFetchJobStatus.WaitingForRefresh, recovered.Status);
+        Assert.Null(recovered.RocDocumentId);
+        Assert.Null(recovered.IngestionRunId);
+        Assert.Equal(1, tool.Count("requestProbeDataUpdate"));
+        Assert.Equal(0, tool.Count("publishProbedData"));
+        await using var verify = CreateContext();
+        Assert.Equal(oldRunId, (await verify.Requests.AsNoTracking().SingleAsync(r => r.RequestId == requestId)).LatestCompletedIngestionRunId);
+    }
+
     private async Task ProcessAsync(FakeReferenceTool tool, long jobId)
     {
         await using var db = CreateContext();

@@ -140,6 +140,54 @@ public class AutoFetchControllerTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Simultaneous_recheck_posts_admit_only_one_fresh_attempt()
+    {
+        long requestId;
+        await using (var seed = CreateContext())
+        {
+            var (controller, _) = NewController(seed, configured: true);
+            var created = Assert.IsType<RedirectToActionResult>(await controller.New(new AutoFetchRequestViewModel
+            {
+                ClientId = 1, Cin = NewCompanyIdentifier(), EntityType = EntityType.Company
+            }, CancellationToken.None));
+            requestId = Assert.IsType<long>(created.RouteValues!["id"]);
+            var run = new IngestionRun { RequestId = requestId, RunNumber = 1, StartedDate = DateTime.UtcNow,
+                CompletedDate = DateTime.UtcNow, Status = IngestionRunStatus.CompletedClean };
+            seed.IngestionRuns.Add(run);
+            await seed.SaveChangesAsync();
+            var request = await seed.Requests.SingleAsync(r => r.RequestId == requestId);
+            request.LatestCompletedIngestionRunId = run.IngestionRunId;
+            request.RequestStatus = RequestStatus.AnalysisCompleted;
+            var job = await seed.AutoFetchJobs.SingleAsync(j => j.RequestId == requestId);
+            job.Status = AutoFetchJobStatus.Completed;
+            job.RocDocumentId = 987654;
+            await seed.SaveChangesAsync();
+        }
+
+        using var gate = new Barrier(3);
+        async Task<(string? Message, bool Enqueued)> PostAsync()
+        {
+            await using var db = CreateContext();
+            var (controller, queue) = NewController(db, configured: true);
+            Assert.True(gate.SignalAndWait(TimeSpan.FromSeconds(20)));
+            await controller.Recheck(requestId, CancellationToken.None);
+            return (controller.TempData["AutoFetchOk"] as string, queue.TryRead(out _));
+        }
+
+        var first = Task.Run(PostAsync);
+        var second = Task.Run(PostAsync);
+        Assert.True(gate.SignalAndWait(TimeSpan.FromSeconds(20)));
+        var results = await Task.WhenAll(first, second);
+        Assert.Single(results, r => r.Enqueued);
+        Assert.Single(results, r => r.Message is not null);
+        await using var verify = CreateContext();
+        var fresh = await verify.AutoFetchJobs.AsNoTracking().SingleAsync(j => j.RequestId == requestId);
+        Assert.Equal(AutoFetchJobStatus.Queued, fresh.Status);
+        Assert.Null(fresh.RocDocumentId);
+        Assert.Equal(1, await verify.AutoFetchJobs.CountAsync(j => j.RequestId == requestId));
+    }
+
+    [Fact]
     public async Task Form_tells_the_user_when_auto_fetch_is_not_configured()
     {
         await using var db = CreateContext();
