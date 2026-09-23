@@ -90,6 +90,43 @@ public sealed class LitigationStartServiceTests : IAsyncLifetime
         Assert.Null(job.RegistrationAttemptedUtc); // reset only after the evidence was recorded
     }
 
+    /// <summary>PR #280 review: different keyword sets hash to different scopes, so the scope claim alone
+    /// can't stop two starts for the same request — and there is only one search-job row per request.</summary>
+    [Fact]
+    public async Task Concurrent_searches_with_different_keyword_sets_for_one_request_start_exactly_once()
+    {
+        var request = await SeedRequestAsync();
+        const int starts = 8;
+
+        using var gate = new ManualResetEventSlim(false);
+        var tasks = Enumerable.Range(0, starts).Select(i => Task.Run(async () =>
+        {
+            gate.Wait();
+            await using var db = CreateContext();
+            IReadOnlyList<LitigationKeyword> keywords = [new($"START SERVICE TEST CO VARIANT {i}", LitigationKeywordSource.LegalName)];
+            try
+            {
+                return await Starter(db).StartSearchAsync(request, keywords, "company", "cust", PaidCallTrigger.Manual, CancellationToken.None);
+            }
+            catch (InvalidOperationException)
+            {
+                // A loser that slipped past admission and then hit the job-reset guard — still a second admission.
+                return new LitigationStartResult(false, null, null, "reset refused");
+            }
+        })).ToArray();
+        gate.Set();
+        var results = await Task.WhenAll(tasks);
+
+        Assert.Single(results, r => r.Started);
+        Assert.All(results.Where(r => !r.Started), r => Assert.Equal(AdmissionDenial.InFlight, r.Denial));
+        await using var verify = CreateContext();
+        var admissions = await verify.PaidCallAdmissions.AsNoTracking().Where(a => a.RequestId == request.RequestId).ToListAsync();
+        var admission = Assert.Single(admissions);
+        Assert.Equal(PaidCallAdmissionState.Reserved, admission.State);
+        var job = await verify.LitigationSearchJobs.AsNoTracking().SingleAsync(j => j.RequestId == request.RequestId);
+        Assert.Equal(job.LitigationSearchJobId, admission.ReferenceId);
+    }
+
     [Fact]
     public async Task Search_start_that_fails_after_admission_releases_the_slot()
     {
