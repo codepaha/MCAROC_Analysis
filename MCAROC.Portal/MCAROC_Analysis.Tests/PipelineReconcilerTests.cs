@@ -19,6 +19,7 @@ public sealed class PipelineReconcilerTests : IAsyncLifetime
 {
     private static readonly HashSet<string> PipelineTables = ["PipelineRuns", "PipelineStageStates", "PipelineEvents"];
     private static readonly PipelineOptions Enabled = new() { Enabled = true };
+    private readonly FakeTime _time = new(DateTimeOffset.UtcNow);
 
     private static AppDbContext CreateContext(params IInterceptor[] interceptors) =>
         new(new DbContextOptionsBuilder<AppDbContext>().UseSqlServer(TestDatabase.ConnectionString).AddInterceptors(interceptors).Options);
@@ -31,9 +32,12 @@ public sealed class PipelineReconcilerTests : IAsyncLifetime
 
     public Task DisposeAsync() => Task.CompletedTask;
 
-    private static PipelineReconciler Reconciler(AppDbContext db) =>
+    private PipelineReconciler Reconciler(AppDbContext db) =>
         new(db, new PipelineSnapshotReader(db, new ConfigurationBuilder().Build(), Options.Create(new BprLitigationOptions())),
-            TimeProvider.System, NullLogger<PipelineReconciler>.Instance);
+            _time, NullLogger<PipelineReconciler>.Instance);
+
+    /// <summary>Steps past the minimum interval a released run waits before it can be reconciled again.</summary>
+    private void NextTick() => _time.Advance(PipelineReconciler.MinReconcileInterval + TimeSpan.FromSeconds(1));
 
     private static PipelineAdopter Adopter(AppDbContext db, PipelineOptions? options = null) =>
         new(db, new StaticOptionsMonitor(options ?? Enabled), TimeProvider.System, NullLogger<PipelineAdopter>.Instance);
@@ -44,7 +48,7 @@ public sealed class PipelineReconcilerTests : IAsyncLifetime
         return (await Adopter(db).EnsureRunAsync(requestId, PipelineRunTrigger.ManualUpload, null, CancellationToken.None))!.Value;
     }
 
-    private static async Task<bool> ReconcileAsync(long runId, params IInterceptor[] interceptors)
+    private async Task<bool> ReconcileAsync(long runId, params IInterceptor[] interceptors)
     {
         await using var db = CreateContext(interceptors);
         return await Reconciler(db).ReconcileAsync(runId, CancellationToken.None);
@@ -67,6 +71,7 @@ public sealed class PipelineReconcilerTests : IAsyncLifetime
         Assert.Equal(Enum.GetValues<PipelineStage>().Length, await db.PipelineStageStates.CountAsync(s => s.PipelineRunId == runId));
         Assert.Equal(Enum.GetValues<PipelineStage>().Length, await db.PipelineEvents.CountAsync(e => e.PipelineRunId == runId));
 
+        NextTick();
         Assert.False(await ReconcileAsync(runId)); // no longer live
         Assert.DoesNotContain(runId, await Reconciler(db).SelectDueRunIdsAsync(10_000, CancellationToken.None));
     }
@@ -80,6 +85,7 @@ public sealed class PipelineReconcilerTests : IAsyncLifetime
         await using var db = CreateContext();
         var events = await db.PipelineEvents.CountAsync(e => e.PipelineRunId == runId);
 
+        NextTick();
         Assert.True(await ReconcileAsync(runId));
 
         Assert.Equal(events, await db.PipelineEvents.CountAsync(e => e.PipelineRunId == runId));
@@ -107,6 +113,7 @@ public sealed class PipelineReconcilerTests : IAsyncLifetime
 
         await db.LitigationSearchJobs.Where(j => j.LitigationSearchJobId == searchJobId)
             .ExecuteUpdateAsync(s => s.SetProperty(j => j.Status, LitigationSearchJobStatus.Failed).SetProperty(j => j.FailureReason, "BPR timeout"));
+        NextTick();
         Assert.True(await ReconcileAsync(runId));
 
         var second = await db.PipelineRuns.AsNoTracking().SingleAsync(r => r.PipelineRunId == runId);
@@ -118,13 +125,11 @@ public sealed class PipelineReconcilerTests : IAsyncLifetime
         Assert.True(await db.PipelineEvents.AnyAsync(e => e.PipelineRunId == runId && e.Stage == PipelineStage.Litigation && e.Action == "Observed:NeedsAttention"));
     }
 
-    /// <summary>Sequential re-reconciles are legitimate (a finished reconcile releases the lease and the next
-    /// tick picks the run up again), so on a fast host more than one of these calls may succeed. What must never
-    /// happen is two reconciles *overlapping*: both would see no stage rows and insert them twice (a key
-    /// violation) or both would log the same transitions. So the invariant is on the effect — no exception, one
-    /// row and one event per stage.</summary>
+    /// <summary>Exactly one of ten racing reconcilers processes the run — including a competitor that lost
+    /// the race only by being slow and arrives after the winner has already released the lease (the case that
+    /// failed on the fast Linux CI host before the minimum re-reconcile interval existed).</summary>
     [Fact]
-    public async Task Ten_racing_reconcilers_never_overlap_on_a_run()
+    public async Task Ten_racing_reconcilers_process_a_run_exactly_once()
     {
         var requestId = await SeedManualRequestAsync(analysed: false);
         var runId = await NewRunAsync(requestId);
@@ -132,13 +137,28 @@ public sealed class PipelineReconcilerTests : IAsyncLifetime
         using var gate = new ManualResetEventSlim(false);
         var tasks = Enumerable.Range(0, 10).Select(_ => Task.Run(async () => { gate.Wait(); return await ReconcileAsync(runId); })).ToArray();
         gate.Set();
-        var results = await Task.WhenAll(tasks); // an overlap would surface here as a duplicate-key exception
+        var results = await Task.WhenAll(tasks);
 
-        Assert.Contains(true, results);
+        Assert.Single(results, r => r);
         await using var db = CreateContext();
         var stages = Enum.GetValues<PipelineStage>().Length;
         Assert.Equal(stages, await db.PipelineStageStates.CountAsync(s => s.PipelineRunId == runId));
         Assert.Equal(stages, await db.PipelineEvents.CountAsync(e => e.PipelineRunId == runId));
+    }
+
+    [Fact]
+    public async Task A_released_run_is_not_reconciled_again_until_the_minimum_interval_passes()
+    {
+        var requestId = await SeedManualRequestAsync(analysed: false);
+        var runId = await NewRunAsync(requestId);
+        Assert.True(await ReconcileAsync(runId));
+
+        Assert.False(await ReconcileAsync(runId)); // released, but inside the interval
+        await using (var db = CreateContext())
+            Assert.DoesNotContain(runId, await Reconciler(db).SelectDueRunIdsAsync(10_000, CancellationToken.None));
+
+        NextTick();
+        Assert.True(await ReconcileAsync(runId));
     }
 
     [Fact]
@@ -300,6 +320,13 @@ public sealed class PipelineReconcilerTests : IAsyncLifetime
 
         public override ValueTask<InterceptionResult<object>> ScalarExecutingAsync(DbCommand command, CommandEventData eventData, InterceptionResult<object> result, CancellationToken cancellationToken = default)
         { Record(command); return base.ScalarExecutingAsync(command, eventData, result, cancellationToken); }
+    }
+
+    private sealed class FakeTime(DateTimeOffset start) : TimeProvider
+    {
+        private DateTimeOffset _now = start;
+        public override DateTimeOffset GetUtcNow() => _now;
+        public void Advance(TimeSpan by) => _now = _now.Add(by);
     }
 
     private sealed class StaticOptionsMonitor(PipelineOptions value) : IOptionsMonitor<PipelineOptions>

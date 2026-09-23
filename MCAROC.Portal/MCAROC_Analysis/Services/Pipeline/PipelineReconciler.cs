@@ -12,21 +12,28 @@ namespace MCAROC_Analysis.Services.Pipeline;
 /// Concurrency: a run is claimed with a fenced lease (single conditional UPDATE, fresh token per claim), and
 /// the persisting transaction starts by re-asserting that token on the run row. That UPDATE also holds the
 /// row's lock until commit, so a second reconciler can neither claim the run mid-write nor publish after its
-/// own lease was taken over.</summary>
+/// own lease was taken over.
+///
+/// <c>ReconcileLeaseExpiresUtc</c> means "not claimable before": the lease expiry while held, and
+/// <see cref="MinReconcileInterval"/> past the release once done. Without that interval a competitor that
+/// lost the race only by being slow would find the lease already released and reconcile the run a second time
+/// straight away; with it, exactly one of any set of racing reconcilers processes a run, and the worker (whose
+/// tick is far longer) still picks it up again on its next tick.</summary>
 public sealed class PipelineReconciler(AppDbContext db, PipelineSnapshotReader reader, TimeProvider time, ILogger<PipelineReconciler> logger)
 {
     private static readonly string LeaseOwner = $"{Environment.MachineName}:{Environment.ProcessId}";
     public static readonly TimeSpan LeaseDuration = TimeSpan.FromMinutes(2);
+    public static readonly TimeSpan MinReconcileInterval = TimeSpan.FromSeconds(5);
 
     private static readonly PipelineOutcome[] LiveOutcomes = [PipelineOutcome.InProgress, PipelineOutcome.CoreReady, PipelineOutcome.NeedsAttention];
 
-    /// <summary>Live runs whose lease is free, least-recently-reconciled first (a released lease keeps its
-    /// expiry as "last reconciled at", so this rotates through every run).</summary>
+    /// <summary>Live runs that are claimable now, least-recently-reconciled first (the release time is kept
+    /// in the expiry column, so this rotates through every run).</summary>
     public Task<List<long>> SelectDueRunIdsAsync(int max, CancellationToken ct)
     {
         var now = time.GetUtcNow().UtcDateTime;
         return db.PipelineRuns.AsNoTracking()
-            .Where(r => LiveOutcomes.Contains(r.Outcome) && (r.ReconcileLeaseToken == null || r.ReconcileLeaseExpiresUtc < now))
+            .Where(r => LiveOutcomes.Contains(r.Outcome) && (r.ReconcileLeaseExpiresUtc == null || r.ReconcileLeaseExpiresUtc < now))
             .OrderBy(r => r.ReconcileLeaseExpiresUtc).ThenBy(r => r.PipelineRunId)
             .Select(r => r.PipelineRunId)
             .Take(max)
@@ -40,7 +47,7 @@ public sealed class PipelineReconciler(AppDbContext db, PipelineSnapshotReader r
         var token = Guid.NewGuid();
         var claimed = await db.PipelineRuns
             .Where(r => r.PipelineRunId == runId && LiveOutcomes.Contains(r.Outcome)
-                && (r.ReconcileLeaseToken == null || r.ReconcileLeaseExpiresUtc < now))
+                && (r.ReconcileLeaseExpiresUtc == null || r.ReconcileLeaseExpiresUtc < now))
             .ExecuteUpdateAsync(s => s
                 .SetProperty(r => r.ReconcileLeaseOwner, LeaseOwner)
                 .SetProperty(r => r.ReconcileLeaseToken, token)
@@ -113,7 +120,7 @@ public sealed class PipelineReconciler(AppDbContext db, PipelineSnapshotReader r
                 .SetProperty(r => r.CompletedUtc, completedUtc)
                 .SetProperty(r => r.ReconcileLeaseOwner, (string?)null)
                 .SetProperty(r => r.ReconcileLeaseToken, (Guid?)null)
-                .SetProperty(r => r.ReconcileLeaseExpiresUtc, now2), ct);
+                .SetProperty(r => r.ReconcileLeaseExpiresUtc, now2.Add(MinReconcileInterval)), ct);
         await tx.CommitAsync(ct);
 
         if (decision.Outcome != run.Outcome)
@@ -126,7 +133,7 @@ public sealed class PipelineReconciler(AppDbContext db, PipelineSnapshotReader r
             .ExecuteUpdateAsync(s => s
                 .SetProperty(r => r.ReconcileLeaseOwner, (string?)null)
                 .SetProperty(r => r.ReconcileLeaseToken, (Guid?)null)
-                .SetProperty(r => r.ReconcileLeaseExpiresUtc, time.GetUtcNow().UtcDateTime), ct);
+                .SetProperty(r => r.ReconcileLeaseExpiresUtc, time.GetUtcNow().UtcDateTime.Add(MinReconcileInterval)), ct);
 
     public static PipelinePolicy ParsePolicy(string policyJson)
     {
