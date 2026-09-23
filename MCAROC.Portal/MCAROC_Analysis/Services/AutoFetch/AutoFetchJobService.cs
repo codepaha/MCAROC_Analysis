@@ -34,7 +34,8 @@ public sealed class AutoFetchJobService(
     IStorageReservationManager reservations,
     IWebHostEnvironment env,
     ILogger<AutoFetchJobService> logger,
-    IWorkbookDerivativeService? derivativeService = null)
+    IWorkbookDerivativeService? derivativeService = null,
+    CompanyRefreshService? refresh = null)
 {
     /// <summary>Fallback per-file size estimate used when the registry gives no declared size for a
     /// document or an attachment — only for sizing the up-front storage reservation and the plan-time
@@ -133,6 +134,31 @@ public sealed class AutoFetchJobService(
             // 2. Company name (best effort — the workbook's own "About the Company" sheet fills it in later anyway)
             if (NeedsCompanyName(request))
                 await TryResolveCompanyNameAsync(request, job, ct);
+
+            // 2b. Unlock/refresh gate — nothing is exported until the company is unlocked and the tool's data is
+            // under 24 hours old (docs/pipeline-automation-plan.md §5.7). Only before the first export: a job
+            // resumed after its workbook was fetched already passed this gate.
+            if (job.RocDocumentId is null && refresh is not null && _opts.RefreshBeforeFetch)
+            {
+                await SetStageAsync(job, AutoFetchJobStatus.CheckingSession, 4, "Checking the company is unlocked and its data is current…", ct);
+                var gate = await refresh.EvaluateAsync(job.Cin, job.Bid, ct);
+                switch (gate.Kind)
+                {
+                    case RefreshGateKind.Waiting:
+                        // Park without holding a worker slot; CompanyRefreshWorker re-queues it once the refresh lands.
+                        job.Status = AutoFetchJobStatus.WaitingForRefresh;
+                        job.StatusMessage = gate.Message;
+                        job.HeartbeatUtc = DateTime.UtcNow;
+                        await db.SaveChangesAsync(ct);
+                        return;
+                    case RefreshGateKind.Locked:
+                        throw new ReferenceToolException(gate.Message, ReferenceToolFailureKind.CompanyLocked);
+                    case RefreshGateKind.Deferred:
+                        throw new ReferenceToolException(gate.Message, ReferenceToolFailureKind.Unavailable);
+                    case RefreshGateKind.TimedOut:
+                        throw new ReferenceToolException(gate.Message, ReferenceToolFailureKind.Other);
+                }
+            }
 
             // 3. Workbooks → documents
             if (job.RocDocumentId is null)

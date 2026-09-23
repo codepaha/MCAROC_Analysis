@@ -1,5 +1,6 @@
 using MCAROC_Analysis.Data;
 using MCAROC_Analysis.Data.Entities;
+using MCAROC_Analysis.Services.AutoFetch;
 using MCAROC_Analysis.Services.CalculationAssurance;
 using MCAROC_Analysis.Services.Dossier;
 using MCAROC_Analysis.Services.LitigationData;
@@ -10,7 +11,8 @@ namespace MCAROC_Analysis.Services.Pipeline;
 
 /// <summary>Builds a <see cref="PipelineSnapshot"/> with no-tracking reads only — it never writes, so the
 /// coordinator can't corrupt any table it observes.</summary>
-public sealed class PipelineSnapshotReader(AppDbContext db, IConfiguration config, IOptions<BprLitigationOptions> bprOptions)
+public sealed class PipelineSnapshotReader(AppDbContext db, IConfiguration config, IOptions<BprLitigationOptions> bprOptions,
+    IOptions<ReferenceToolOptions> referenceToolOptions)
 {
     public async Task<PipelineSnapshot?> ReadAsync(long requestId, CancellationToken ct)
     {
@@ -26,6 +28,14 @@ public sealed class PipelineSnapshotReader(AppDbContext db, IConfiguration confi
         var job = await db.AutoFetchJobs.AsNoTracking().Where(j => j.RequestId == requestId)
             .Select(j => new AutoFetchFacts(j.AutoFetchJobId, j.Status, j.RocDocumentId, j.IncludeFilings, j.FilingBatchId, j.FailureReason))
             .FirstOrDefaultAsync(ct);
+
+        LifecycleFacts? lifecycle = null;
+        if (job is not null)
+        {
+            var cin = await db.AutoFetchJobs.AsNoTracking().Where(j => j.RequestId == requestId).Select(j => j.Cin).FirstAsync(ct);
+            lifecycle = await db.CompanyReportLifecycles.AsNoTracking().Where(l => l.Identifier == cin)
+                .Select(l => new LifecycleFacts(l.State, l.UnlockedUtc, l.ActiveRefreshId != null)).FirstOrDefaultAsync(ct);
+        }
 
         var ingestionRunning = await db.IngestionRuns.AsNoTracking()
             .AnyAsync(i => i.RequestId == requestId && i.Status == IngestionRunStatus.Running, ct);
@@ -108,6 +118,8 @@ public sealed class PipelineSnapshotReader(AppDbContext db, IConfiguration confi
             ManualReviewReason = request.ManualReviewReason,
             RequestFailureReason = request.FailureReason,
             AutoFetch = job,
+            RefreshGateEnabled = referenceToolOptions.Value.RefreshBeforeFetch,
+            Lifecycle = lifecycle,
             LatestCompletedIngestionRunId = request.LatestCompletedIngestionRunId,
             HasIngestionWarnings = request.HasIngestionWarnings,
             IngestionRunning = ingestionRunning,

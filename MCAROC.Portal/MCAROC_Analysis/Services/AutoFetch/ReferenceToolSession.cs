@@ -17,6 +17,8 @@ public sealed class ReferenceToolSession
 
     public string? Cookie { get; private set; }
     public string? UserId { get; private set; }
+    /// <summary>The tool's own user name for the session — its refresh request takes it as a parameter.</summary>
+    public string? UserName { get; private set; }
     public byte[]? SigningKey { get; private set; }
 
     /// <summary>Bumped on every successful login. A caller that read this before waiting on <see
@@ -33,6 +35,12 @@ public sealed class ReferenceToolSession
             if (!string.IsNullOrWhiteSpace(userId)) UserId = userId;
             Generation++;
         }
+    }
+
+    public void SetUserName(string? userName)
+    {
+        if (string.IsNullOrWhiteSpace(userName)) return;
+        lock (_sync) { UserName = userName.Trim(); }
     }
 
     public void SetSigningKey(byte[] key)

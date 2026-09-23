@@ -581,6 +581,16 @@ below) needs no change.
   request proceeds. (This closes the pre-existing gap in §1: today the export runs immediately.)
 - **Timeout:** past `RefreshDeadlineUtc` the lifecycle becomes `RefreshFailed` ⇒ `NeedsAttention(REFRESH_TIMEOUT)`
   + alert; a retry (board action, or one automatic retry) moves it back to `Refreshing`.
+- **As implemented in #229** (`CompanyRefreshService`, gate in `AutoFetchJobService` before the first export,
+  `CompanyRefreshWorker` polling parked jobs; `ReferenceTool:RefreshBeforeFetch`, default on):
+  - *Freshness* is the tool's own data timestamp (`getDataStatus`), not only our own refreshes — someone else's
+    refresh counts.
+  - *Completion* requires `NO PENDING REQUEST` **and** tool data at least as new as our request; "nothing pending
+    but older data" means the request never took effect (e.g. a crash between claim and call), so it is re-sent
+    (free) until the deadline rather than treated as done.
+  - A failed refresh request gives the claim back; completion and timeout are fenced on the claim id.
+  - Until #266, a locked/expired company fails the job with `CompanyLocked` and exports nothing; #266 turns this
+    into the approval wait described below.
 - **Unlock — approval-gated today:**
   1. *Detect.* Lifecycle `Locked`/`Expired`, or a typed `CompanyLocked` from the client (§5.3). Call
      `getAssetTeams(bid)` first: if `teams[0].addedAt != null`, the company is **already unlocked by anyone** —

@@ -90,6 +90,9 @@ builder.Services.AddHttpClient<ReferenceToolClient>(client => client.Timeout = T
 builder.Services.AddSingleton<AutoFetchQueue>();
 builder.Services.AddScoped<AutoFetchJobService>();
 builder.Services.AddHostedService<AutoFetchWorker>();
+// Company unlock/refresh lifecycle (#229) — the "never store pre-refresh data" gate before any export.
+builder.Services.AddScoped<CompanyRefreshService>();
+builder.Services.AddHostedService<CompanyRefreshWorker>();
 // Circuit breaker (docs/pipeline-automation-plan.md §5.4) — scoped because it writes through the
 // request/job-scoped AppDbContext; the probe (a singleton hosted service) creates its own scope per tick.
 builder.Services.AddScoped<IIntegrationHealthService, IntegrationHealthService>();

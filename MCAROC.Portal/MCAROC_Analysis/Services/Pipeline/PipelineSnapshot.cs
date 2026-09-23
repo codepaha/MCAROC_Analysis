@@ -18,6 +18,11 @@ public sealed record PipelineSnapshot
     /// <summary>Null for a manual-upload request.</summary>
     public AutoFetchFacts? AutoFetch { get; init; }
 
+    /// <summary>Whether auto-fetch gates exports on the unlock/refresh lifecycle (#229).</summary>
+    public bool RefreshGateEnabled { get; init; }
+    /// <summary>The company's unlock/refresh lifecycle, when auto-fetch has evaluated it.</summary>
+    public LifecycleFacts? Lifecycle { get; init; }
+
     public long? LatestCompletedIngestionRunId { get; init; }
     public bool HasIngestionWarnings { get; init; }
     public bool IngestionRunning { get; init; }
@@ -45,6 +50,8 @@ public sealed record AutoFetchFacts(
 {
     public bool IsTerminal => Status is AutoFetchJobStatus.Completed or AutoFetchJobStatus.CompletedWithWarnings or AutoFetchJobStatus.Failed;
 }
+
+public sealed record LifecycleFacts(CompanyReportLifecycleState State, DateTime? UnlockedUtc, bool RefreshActive);
 
 public sealed record RunFacts<TStatus>(long Id, TStatus Status, string? FailureReason) where TStatus : struct, Enum;
 
