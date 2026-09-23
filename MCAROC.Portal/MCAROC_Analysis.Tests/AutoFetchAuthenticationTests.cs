@@ -2,7 +2,10 @@ using System.Net;
 using System.Text.RegularExpressions;
 using MCAROC_Analysis.Services.InternalAuth;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Hosting;
 
 namespace MCAROC_Analysis.Tests;
 
@@ -32,6 +35,11 @@ public partial class AutoFetchAuthenticationTests : IClassFixture<WebApplication
                     ["InternalAuth:ReviewerDisplayName"] = "Test Reviewer"
                 });
             });
+            // Pipeline-only coverage: the app's background workers would otherwise start against the shared
+            // test database, pick up other tests' Queued jobs, and process them with the developer's real
+            // reference-tool configuration — tripping the persisted IntegrationHealth breaker for every
+            // later test in the run.
+            builder.ConfigureTestServices(services => services.RemoveAll<IHostedService>());
         });
     }
 

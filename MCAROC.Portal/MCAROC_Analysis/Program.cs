@@ -1,5 +1,6 @@
 using System.Text;
 using MCAROC_Analysis.Data;
+using MCAROC_Analysis.Data.Entities;
 using MCAROC_Analysis.Services;
 using MCAROC_Analysis.Services.Analysis;
 using MCAROC_Analysis.Services.AnalystAccess;
@@ -11,6 +12,7 @@ using MCAROC_Analysis.Services.Dossier;
 using MCAROC_Analysis.Services.Excel;
 using MCAROC_Analysis.Services.LitigationData;
 using MCAROC_Analysis.Services.McaFilings;
+using MCAROC_Analysis.Services.Pipeline;
 using MCAROC_Analysis.Services.PreLoginReports;
 using Microsoft.AspNetCore.Http.Features;
 using Microsoft.EntityFrameworkCore;
@@ -65,6 +67,9 @@ builder.Services.AddHostedService<PreLoginReportWorker>();
 // are pulled from the reference tool and pushed through the same ingestion / analysis / filings pipelines
 // the manual New-request flow uses. Inert until ReferenceTool:BaseUrl + SessionCookie are configured.
 builder.Services.Configure<ReferenceToolOptions>(builder.Configuration.GetSection(ReferenceToolOptions.SectionName));
+// Singleton: the session cookie/signing key/user id must be shared across every job/request scope, not
+// re-logged-in per scope — see ReferenceToolSession's own doc comment for why this bit us before.
+builder.Services.AddSingleton<ReferenceToolSession>();
 builder.Services.AddHttpClient<ReferenceToolClient>(client => client.Timeout = TimeSpan.FromMinutes(10))
     // The session cookie is sent as an explicit header per request; the handler's own cookie container
     // must stay off or it silently drops that header.
@@ -76,6 +81,10 @@ builder.Services.AddHttpClient<ReferenceToolClient>(client => client.Timeout = T
 builder.Services.AddSingleton<AutoFetchQueue>();
 builder.Services.AddScoped<AutoFetchJobService>();
 builder.Services.AddHostedService<AutoFetchWorker>();
+// Circuit breaker (docs/pipeline-automation-plan.md §5.4) — scoped because it writes through the
+// request/job-scoped AppDbContext; the probe (a singleton hosted service) creates its own scope per tick.
+builder.Services.AddScoped<IIntegrationHealthService, IntegrationHealthService>();
+builder.Services.AddHostedService<ReferenceToolHealthProbe>();
 
 // Litigation data lake (#239, LIT-01) — authenticate/register/poll against the BPR Litigation Data API and
 // retain the raw report for #242 to persist. Inert until BprLitigation:BaseUrl/Id/SecretKey are configured
@@ -382,5 +391,44 @@ app.MapControllerRoute(
     pattern: "{controller=Dashboard}/{action=Index}/{id?}")
     .WithStaticAssets();
 
+// docs/pipeline-automation-plan.md §5.5 — breaker state for every tracked integration, plus the oldest
+// still-Queued auto-fetch job's age (a large value here, with the reference-tool breaker Healthy, points at
+// a lost enqueue rather than an upstream outage). Anonymous: no sensitive data, meant for an external
+// monitor to poll without its own credential.
+app.MapGet("/health", async (AppDbContext db, IIntegrationHealthService health, CancellationToken ct) =>
+{
+    var integrations = new List<object>();
+    foreach (var name in Enum.GetValues<IntegrationName>())
+    {
+        var row = await health.GetAsync(name, ct);
+        integrations.Add(new
+        {
+            name = name.ToString(),
+            state = (row?.State ?? IntegrationHealthState.Healthy).ToString(),
+            consecutiveFailures = row?.ConsecutiveFailures ?? 0,
+            lastSuccessUtc = row?.LastSuccessUtc,
+            lastError = row?.LastError,
+            openedUtc = row?.OpenedUtc,
+            nextProbeUtc = row?.NextProbeUtc
+        });
+    }
+
+    var oldestQueuedAutoFetchUtc = await db.AutoFetchJobs
+        .Where(j => j.Status == AutoFetchJobStatus.Queued)
+        .OrderBy(j => j.CreatedUtc)
+        .Select(j => (DateTime?)j.CreatedUtc)
+        .FirstOrDefaultAsync(ct);
+
+    return Results.Ok(new
+    {
+        utcNow = DateTime.UtcNow,
+        integrations,
+        autoFetch = new
+        {
+            oldestQueuedJobCreatedUtc = oldestQueuedAutoFetchUtc,
+            oldestQueuedJobAgeSeconds = oldestQueuedAutoFetchUtc is { } t ? (DateTime.UtcNow - t).TotalSeconds : (double?)null
+        }
+    });
+}).AllowAnonymous();
 
 app.Run();

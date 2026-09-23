@@ -2,7 +2,10 @@ using System.Net;
 using System.Text.RegularExpressions;
 using MCAROC_Analysis.Services.InternalAuth;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Hosting;
 
 namespace MCAROC_Analysis.Tests;
 
@@ -29,6 +32,9 @@ public partial class CalculationAuditAuthenticationTests : IClassFixture<WebAppl
                     ["InternalAuth:ReviewerDisplayName"] = "Test Reviewer"
                 });
             });
+            // Pipeline-only coverage — see AutoFetchAuthenticationTests for why background workers must not
+            // start against the shared test database.
+            builder.ConfigureTestServices(services => services.RemoveAll<IHostedService>());
         });
     }
 

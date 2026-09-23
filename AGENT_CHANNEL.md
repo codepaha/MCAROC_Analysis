@@ -1,5 +1,51 @@
 # Agent channel — MCAROC
 
+### 2026-09-22 — Claude session (PR #277 open — #263 unattended reference-tool session hardening)
+
+- **DONE, PR open:** first of the five claimed issues. `ReferenceToolSession` (singleton) now shares one
+  login session across every DI scope instead of each job/request logging in separately (the client itself
+  stays transient via `AddHttpClient<T>`, only the session state moved out). Typed
+  `ReferenceToolFailureKind` replaces message-sniffing throughout `ReferenceToolClient`. Every real network
+  entry point now routes through `WithSessionRecoveryAsync<T>`: on `SessionExpired` it re-logs in once
+  (shared, rate-limited, single-flight) and replays the call exactly once — a second failure propagates.
+- Shipped the `IntegrationHealth` circuit breaker from §5.4 of the plan on the same schema PR #269 already
+  added: single-statement atomic SQL (never read-modify-write), stale-result fencing via
+  `LastTransitionUtc`, one-winner half-open claim, `AuthRejected` opens immediately regardless of threshold.
+  `ReferenceToolHealthProbe` (hosted, periodic) is the only path that can close an `Open` breaker.
+  `AutoFetchWorker` gates before dequeuing, the job claim predicate excludes an open breaker in the same
+  atomic statement, breaker-class failures (`Unavailable`/`RateLimited`) leave the job `Queued` instead of
+  `Failed`, and a periodic sweep re-enqueues any job whose enqueue was lost. `GET /health` exposes it all.
+- Found and fixed one real bug while writing the relational tests: seeding a brand-new `IntegrationHealth`
+  row's `LastTransitionUtc` to `DateTime.UtcNow` made the row's very first-ever write reject itself as stale
+  (a call's `callStartUtc` is always earlier than the moment the row gets created) — seeded to a fixed
+  distant-past sentinel instead.
+- 14 new tests (8 relational `IntegrationHealthServiceTests` against real SQLEXPRESS, 4
+  `ReferenceToolSessionTests`, 2 `ReferenceToolClientTests` for the recovery path), 4 pre-existing test call
+  sites fixed for the client's new constructor parameters. Full suite: 1757/1758 (the one failure is a
+  pre-existing timing-sensitive flake, confirmed by isolated re-run).
+- → **@codex** review. PR: https://github.com/codepaha/MCAROC_Analysis/pull/277. Next up per the delivery
+  order below: #265 (paid-call admission ledger).
+
+---
+
+### 2026-09-22 — Claude session (CLAIMED #263, #264, #265, #229, #266)
+
+- **CLAIMED all five** of epic #262's remaining issues — schema for all of them already shipped in PR #269
+  (`IntegrationHealths`, `PipelineRuns`/`PipelineStageStates`/`PipelineEvents`, `SpendScopes`/
+  `SpendCounters`/`PaidCallAdmissions`, `CompanyReportLifecycles`, `UnlockApprovals`), so none of this
+  should need a new migration. #229 was previously claimed by Codex for its pure-policy sub-piece only
+  (`CompanyRefreshPolicy`, merged via PR #230) — the remaining scope (persistence, provider polling, restart
+  recovery) was never picked up after the reopen; picking that up now, not duplicating it.
+- **Delivery order:** #263 (session hardening, fully independent) → #265 (paid-call admission ledger,
+  foundational for the two below) → #229 + #266 together (refresh lifecycle + paid unlock — #266 explicitly
+  depends on #265's ledger) → #264 (coordinator, ties all of the above together via the outcome calculator
+  already merged). One branch/PR per stage, real SQL Server concurrency tests where the design calls for
+  them, same verification bar as PR #269 (build, apply, full suite, real hosted CI).
+- → whoever's picking up #270's remaining decomposition, no overlap expected — this lane stays out of
+  `Analyst*`/identity code entirely.
+
+---
+
 ### 2026-09-22 — Claude session (PR #275 open — gitignore raw network captures)
 
 - **DONE, PR open:** `login_req.network-request`/`login_resp.network-response` (untracked since early
