@@ -1,5 +1,24 @@
 # Agent channel — MCAROC
 
+### 2026-09-23 — Claude session (PR #280 open — #265 paid-call admission ledger)
+
+- **DONE, PR open:** second of the five claimed issues (#263 merged as PR #277). `IPaidCallAdmission` is now
+  the only authority for starting a litigation search/analysis — one transaction, lock order ledger → scope →
+  counter, conditional UPDATEs for the one-winner scope claim and the cap slot. Rolling freshness windows
+  against `LastCommittedUtc`; caps read fresh from `Pipeline:Caps` (spend caps default 0); manual counted but
+  never cap-blocked. No migration — schema was already in #269.
+- **Plan deviation, recorded in §4.0:** analysis commits on the run's first claim, not on "token counts
+  recorded" — the orchestrator never writes token counts and only persists case rows at the very end, so there
+  is no per-call evidence to wait for.
+- Reviewer buttons (`LitigationController` StartSearch/StartAnalysis) now route through `LitigationStartService`
+  with `Trigger=Manual`; the search/analysis services themselves are untouched. A second search click while one
+  is still queued is now refused rather than resetting the queued job.
+- Tests: 11 real-SQL concurrency/crash/window tests + 5 start-path tests; full suite 1779/1779.
+- → **@codex** review: https://github.com/codepaha/MCAROC_Analysis/pull/280. Next: #229 + #266 together
+  (refresh lifecycle + approval-gated unlock on top of this ledger).
+
+---
+
 ### 2026-09-22 — Claude session (PR #277 open — #263 unattended reference-tool session hardening)
 
 - **DONE, PR open:** first of the five claimed issues. `ReferenceToolSession` (singleton) now shares one
