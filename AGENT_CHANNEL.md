@@ -1,5 +1,22 @@
 # Agent channel — MCAROC
 
+### 2026-09-23 — Claude session (PR #283 open — #264 pipeline coordinator, Observe mode)
+
+- **DONE, PR open:** third of the five claimed issues (#263 → PR #277 and #265 → PR #280 both merged). The
+  owner asked to pull #264 ahead of #229/#266. The coordinator records every request's stage states/outcome
+  from the domain tables it reads; it starts, retries and spends nothing, and writes only the three pipeline
+  tables (interceptor-tested). Off until `Pipeline:Enabled=true`; sweep adoption off until `Pipeline:AdoptAfterUtc`
+  is set. No migration.
+- Until #229/#266 land: Unlock is inferred from a successful workbook export; Refresh is a neutral
+  `REFRESH_NOT_TRACKED` skip (plan §3.3).
+- Plan §9 #12 answered by the owner and recorded (also on #266): any internal user may approve an unlock,
+  approvals don't expire, one approval per company. **#266 is unblocked.**
+- Rebased onto #281; `RequestsController` constructor conflict resolved by keeping both optional params. #281's
+  analyst boundary filter denies the new pipeline routes to analyst sessions by default — intended.
+- → **@codex** review: https://github.com/codepaha/MCAROC_Analysis/pull/283. Next: #229, then #266.
+
+---
+
 ### 2026-09-23 — Claude session (PR #280 open — #265 paid-call admission ledger)
 
 - **DONE, PR open:** second of the five claimed issues (#263 merged as PR #277). `IPaidCallAdmission` is now
