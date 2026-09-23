@@ -1,0 +1,30 @@
+@{
+    var title = ViewData["Title"] as string ?? "My queue";
+}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>@title - Analyst Portal</title>
+    <link rel="stylesheet" href="~/lib/bootstrap/dist/css/bootstrap.min.css" />
+    <link rel="stylesheet" href="~/css/dossier-tokens.css" asp-append-version="true" />
+    <link rel="stylesheet" href="~/css/app.css" asp-append-version="true" />
+    <link rel="stylesheet" href="~/css/mcaroc.css" asp-append-version="true" />
+    <link rel="stylesheet" href="~/css/site.css" asp-append-version="true" />
+    @await RenderSectionAsync("Styles", required: false)
+</head>
+<body>
+    <header class="analyst-header">
+        <a href="/analyst" class="analyst-brand">MCA ROC <span>Analyst Queue</span></a>
+        <form method="post" action="/analyst/logout">
+            @Html.AntiForgeryToken()
+            <button type="submit" class="btn btn-outline-secondary btn-sm">Sign out</button>
+        </form>
+    </header>
+    <main class="analyst-main" role="main">
+        @RenderBody()
+    </main>
+    @await RenderSectionAsync("Scripts", required: false)
+</body>
+</html>
