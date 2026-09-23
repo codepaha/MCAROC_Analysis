@@ -441,7 +441,12 @@ public sealed class CompanyRefreshServiceTests : IAsyncLifetime
             .RecoverAsync(CancellationToken.None, requestId);
         Assert.True(queue.TryRead(out var recoveredId));
         Assert.Equal(jobId, recoveredId);
-        await ProcessAsync(new FakeReferenceTool(Bid), recoveredId);
+        var analysisQueue = new AnalysisQueue();
+        await ProcessAsync(new FakeReferenceTool(Bid), recoveredId, analysisQueue);
+        using var dequeueTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        await using var queued = analysisQueue.ReadAllAsync(dequeueTimeout.Token).GetAsyncEnumerator();
+        Assert.True(await queued.MoveNextAsync());
+        Assert.Equal(requestId, queued.Current);
 
         await using var final = CreateContext();
         Assert.Equal(2, await final.IngestionRuns.CountAsync(r => r.RequestId == requestId));
@@ -450,13 +455,13 @@ public sealed class CompanyRefreshServiceTests : IAsyncLifetime
         Assert.Equal(IngestionRunStatus.CompletedClean, (await final.IngestionRuns.AsNoTracking().SingleAsync(r => r.IngestionRunId == oldRunId)).Status);
     }
 
-    private async Task ProcessAsync(FakeReferenceTool tool, long jobId)
+    private async Task ProcessAsync(FakeReferenceTool tool, long jobId, AnalysisQueue? analysisQueue = null)
     {
         await using var db = CreateContext();
         var client = tool.NewClient();
         var refresh = new CompanyRefreshService(db, client, FakeReferenceTool.Options(), _time, NullLogger<CompanyRefreshService>.Instance);
         var jobs = new AutoFetchJobService(db, client, FakeReferenceTool.Options(), new FileValidationService(new ExcelSheetReader()),
-            null!, new AnalysisQueue(), new FilingProcessingQueue(), null!, new FakeEnv(Path.GetTempPath()), NullLogger<AutoFetchJobService>.Instance,
+            null!, analysisQueue ?? new AnalysisQueue(), new FilingProcessingQueue(), null!, new FakeEnv(Path.GetTempPath()), NullLogger<AutoFetchJobService>.Instance,
             refresh: refresh);
         await jobs.ProcessAsync(jobId, CancellationToken.None);
     }
