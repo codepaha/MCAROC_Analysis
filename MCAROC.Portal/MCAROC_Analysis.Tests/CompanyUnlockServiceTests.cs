@@ -60,8 +60,11 @@ public sealed class CompanyUnlockServiceTests : IAsyncLifetime
     private Task<UnlockResult> ExecuteAsync(ServiceProvider sp, long requestId) =>
         InScope(sp, s => s.GetRequiredService<CompanyUnlockService>().ExecuteAsync(_cin, Bid, requestId, CancellationToken.None));
 
-    private Task<UnlockApproval> ApproveAsync(ServiceProvider sp, long requestId) =>
-        InScope(sp, s => s.GetRequiredService<CompanyUnlockService>().ApproveAsync(requestId, "reviewer", "client needs the report", CancellationToken.None));
+    private async Task<UnlockApproval?> ApproveAsync(ServiceProvider sp, long requestId)
+    {
+        using var scope = sp.CreateScope();
+        return await scope.ServiceProvider.GetRequiredService<CompanyUnlockService>().ApproveAsync(requestId, "reviewer", "client needs the report", CancellationToken.None);
+    }
 
     /// <summary>The racers' last pre-spend check is staggered and the paid call is slow, so some racers read
     /// the approval as open, then reach the admission after the winner has released the scope and while its
@@ -84,7 +87,7 @@ public sealed class CompanyUnlockServiceTests : IAsyncLifetime
         Assert.Equal(1, tool.Count("addAsset"));
         Assert.Single(results, r => r.Outcome == UnlockOutcome.Unlocked);
         await using var db = CreateContext();
-        var consumed = await db.UnlockApprovals.AsNoTracking().SingleAsync(a => a.UnlockApprovalId == approval.UnlockApprovalId);
+        var consumed = await db.UnlockApprovals.AsNoTracking().SingleAsync(a => a.UnlockApprovalId == approval!.UnlockApprovalId);
         Assert.NotNull(consumed.ConsumedAdmissionId);
         var admissions = await db.PaidCallAdmissions.AsNoTracking().Where(a => a.Kind == PaidCallKind.ReferenceUnlock && a.RequestId == requestId).ToListAsync();
         var admission = Assert.Single(admissions);
@@ -106,7 +109,7 @@ public sealed class CompanyUnlockServiceTests : IAsyncLifetime
         gate.Set();
         var approvals = await Task.WhenAll(tasks);
 
-        Assert.Single(approvals.Select(a => a.UnlockApprovalId).Distinct());
+        Assert.Single(approvals.Select(a => a!.UnlockApprovalId).Distinct());
         await using var db = CreateContext();
         Assert.Equal(1, await db.UnlockApprovals.CountAsync(a => a.Identifier == _cin));
     }
@@ -162,6 +165,90 @@ public sealed class CompanyUnlockServiceTests : IAsyncLifetime
         await using var db = CreateContext();
         Assert.Equal(1, await db.PaidCallAdmissions.CountAsync(a => a.RequestId == requestId && a.Kind == PaidCallKind.ReferenceUnlock));
         Assert.False(await db.UnlockApprovals.AnyAsync(a => a.Identifier == _cin && a.ConsumedAdmissionId == null && a.ExpiresUtc > Now.UtcDateTime));
+    }
+
+    /// <summary>PR #286 re-review (barrier): a second request's approval arrives while the first paid call is
+    /// blocked in flight. It must not be stored as a fresh, never-expiring approval — it waits for the attempt,
+    /// sees the company unlocked, and is refused. Nothing may remain able to authorize a later spend, even once
+    /// the unlock lapses.</summary>
+    [Fact]
+    public async Task An_approval_requested_during_a_blocked_paid_call_is_not_stored_and_cannot_authorize_a_later_spend()
+    {
+        var tool = LockedTool();
+        tool.AddAssetGate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var sp = Services(tool);
+        var (requestA, _) = await SeedJobAsync();
+        var (requestB, _) = await SeedJobAsync();
+        await ApproveAsync(sp, requestA);
+
+        var execution = Task.Run(() => ExecuteAsync(sp, requestA));
+        await tool.AddAssetEntered.Task.WaitAsync(TimeSpan.FromSeconds(30)); // the paid call is now blocked in flight
+        var secondApproval = Task.Run(() => ApproveAsync(sp, requestB));
+        await Task.Delay(500);
+        Assert.False(secondApproval.IsCompleted, "the approval must wait for the in-flight unlock, not slip past it");
+
+        tool.AddAssetGate.SetResult();
+        var result = await execution;
+        var approvedDuringFlight = await secondApproval;
+
+        Assert.Equal(UnlockOutcome.Unlocked, result.Outcome);
+        Assert.Null(approvedDuringFlight); // already unlocked by then — nothing stored
+        await using var db = CreateContext();
+        Assert.False(await db.UnlockApprovals.AnyAsync(a => a.Identifier == _cin && a.ConsumedAdmissionId == null && a.ExpiresUtc > Now.UtcDateTime));
+
+        // A year on, the unlock lapses: nothing left over may spend again without a new approval.
+        tool.AddedAt = null;
+        _time.Advance(TimeSpan.FromDays(366));
+        Assert.Equal(UnlockOutcome.NoApproval, (await ExecuteAsync(sp, requestB)).Outcome);
+        Assert.Equal(1, tool.Count("addAsset"));
+    }
+
+    /// <summary>An outcome that can't be confirmed after the paid call (the verification call fails) must still
+    /// retire every open approval — including any that pre-dated the attempt.</summary>
+    [Fact]
+    public async Task An_unconfirmable_outcome_after_the_paid_call_retires_every_open_approval()
+    {
+        var tool = LockedTool();
+        tool.AssetStatusFailsAfterUnlock = true;
+        var sp = Services(tool);
+        var (requestId, _) = await SeedJobAsync();
+        await ApproveAsync(sp, requestId);
+        await using (var seed = CreateContext())
+        {
+            // A second open approval (e.g. left by older code) — must not survive the attempt either.
+            seed.UnlockApprovals.Add(new UnlockApproval { Identifier = _cin, RequestId = requestId, ApprovedBy = "r", ApprovedUtc = Now.UtcDateTime, ExpiresUtc = DateTime.MaxValue });
+            await seed.SaveChangesAsync();
+        }
+
+        await Assert.ThrowsAsync<ReferenceToolException>(() => ExecuteAsync(sp, requestId));
+
+        await using var db = CreateContext();
+        Assert.False(await db.UnlockApprovals.AnyAsync(a => a.Identifier == _cin && a.ConsumedAdmissionId == null && a.ExpiresUtc > Now.UtcDateTime));
+        tool.AssetStatusFailsAfterUnlock = false;
+        tool.AddedAt = null;
+        Assert.Equal(UnlockOutcome.NoApproval, (await ExecuteAsync(sp, requestId)).Outcome);
+        Assert.Equal(1, tool.Count("addAsset"));
+    }
+
+    [Fact]
+    public async Task An_unexpected_exception_from_the_paid_call_still_retires_open_approvals()
+    {
+        var tool = LockedTool();
+        tool.AddAssetException = new InvalidOperationException("socket torn down mid-call");
+        var sp = Services(tool);
+        var (requestId, _) = await SeedJobAsync();
+        await ApproveAsync(sp, requestId);
+        await using (var seed = CreateContext())
+        {
+            seed.UnlockApprovals.Add(new UnlockApproval { Identifier = _cin, RequestId = requestId, ApprovedBy = "r", ApprovedUtc = Now.UtcDateTime, ExpiresUtc = DateTime.MaxValue });
+            await seed.SaveChangesAsync();
+        }
+
+        await Assert.ThrowsAnyAsync<Exception>(() => ExecuteAsync(sp, requestId));
+
+        await using var db = CreateContext();
+        Assert.False(await db.UnlockApprovals.AnyAsync(a => a.Identifier == _cin && a.ConsumedAdmissionId == null && a.ExpiresUtc > Now.UtcDateTime));
+        Assert.Equal(1, tool.Count("addAsset"));
     }
 
     [Fact]

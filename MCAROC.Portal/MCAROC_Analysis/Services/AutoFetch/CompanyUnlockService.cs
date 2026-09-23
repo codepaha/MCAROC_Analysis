@@ -40,33 +40,40 @@ public sealed class CompanyUnlockService(
     AppDbContext db, ReferenceToolClient client, IPaidCallAdmission admission, IOptionsMonitor<PipelineOptions> pipeline,
     TimeProvider time, ILogger<CompanyUnlockService> logger)
 {
-    /// <summary>Records an approval for the company the request is for. Idempotent: an open approval for the
-    /// same company is returned rather than duplicated.</summary>
-    public async Task<UnlockApproval> ApproveAsync(long requestId, string approvedBy, string reason, CancellationToken ct)
+    /// <summary>How long an approval waits behind an unlock attempt already running for the company.</summary>
+    public static readonly TimeSpan ApprovalWait = TimeSpan.FromSeconds(60);
+
+    /// <summary>Records an approval for the company the request is for, or returns null when none is needed
+    /// because the tool already reports the company unlocked. Idempotent: an open approval for the company is
+    /// returned rather than duplicated.
+    ///
+    /// Runs under the same per-company fence as <see cref="ExecuteAsync"/>, so an approval can never be created
+    /// while an unlock attempt is in flight — neither slipping in after that attempt's final retirement (a stale,
+    /// never-expiring approval that could authorize a spend once the unlock lapses) nor being consumed
+    /// half-way. Once it holds the fence it checks the tool's live state, so an approval requested just after a
+    /// successful unlock is refused rather than stored. The fence also serialises concurrent approvals.</summary>
+    /// <exception cref="InvalidOperationException">An unlock attempt for the company is still running after
+    /// <see cref="ApprovalWait"/>.</exception>
+    public async Task<UnlockApproval?> ApproveAsync(long requestId, string approvedBy, string reason, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(reason)) throw new ArgumentException("A reason is required to approve spending a credit.", nameof(reason));
         if (string.IsNullOrWhiteSpace(approvedBy)) throw new ArgumentException("The approver must be known.", nameof(approvedBy));
-        var identifier = await db.AutoFetchJobs.AsNoTracking().Where(j => j.RequestId == requestId).Select(j => j.Cin).FirstOrDefaultAsync(ct)
+        var job = await db.AutoFetchJobs.AsNoTracking().Where(j => j.RequestId == requestId).Select(j => new { j.Cin, j.Bid }).FirstOrDefaultAsync(ct)
             ?? throw new InvalidOperationException("Only an auto-fetch request can have its company unlocked.");
+        var identifier = job.Cin.Trim().ToUpperInvariant();
+
+        await using var fence = await SqlSessionLock.TryAcquireAsync(db, ExecutionFence(identifier), ct, ApprovalWait)
+            ?? throw new InvalidOperationException("An unlock attempt for this company is still in progress; try again in a moment.");
+
+        if ((await client.GetAssetStatusAsync(job.Bid, ct)).AddedAt is not null)
+        {
+            await RetireOpenApprovalsAsync(identifier, ct);
+            return null;
+        }
 
         var now = time.GetUtcNow().UtcDateTime;
-
-        // Check-then-insert must be atomic per company: two concurrent clicks each inserting a never-expiring
-        // approval would leave one behind after the other is consumed, able to authorize a later spend nobody
-        // approved. A transaction-owned app lock serialises approvals for the company across instances.
-        await using var tx = await db.Database.BeginTransactionAsync(ct);
-        var resource = $"MCAROC:UnlockApproval:{identifier}";
-        await db.Database.ExecuteSqlInterpolatedAsync($@"
-DECLARE @r int;
-EXEC @r = sp_getapplock @Resource = {resource}, @LockMode = 'Exclusive', @LockOwner = 'Transaction', @LockTimeout = 15000;
-IF @r < 0 THROW 50001, 'Could not acquire the unlock-approval lock for this company.', 1;", ct);
-
         var open = await OpenApprovals(identifier, now).OrderBy(a => a.UnlockApprovalId).FirstOrDefaultAsync(ct);
-        if (open is not null)
-        {
-            await tx.CommitAsync(ct);
-            return open;
-        }
+        if (open is not null) return open;
 
         var approval = new UnlockApproval
         {
@@ -75,10 +82,11 @@ IF @r < 0 THROW 50001, 'Could not acquire the unlock-approval lock for this comp
         };
         db.UnlockApprovals.Add(approval);
         await db.SaveChangesAsync(ct);
-        await tx.CommitAsync(ct);
         logger.LogWarning("Unlock of {Identifier} approved by {ApprovedBy} (request {RequestId}): {Reason}", identifier, approval.ApprovedBy, requestId, approval.Reason);
         return approval;
     }
+
+    private static string ExecutionFence(string identifier) => $"MCAROC:UnlockExecution:{identifier}";
 
     /// <summary>Free checks only: the text shown on the waiting job and board, or null when the preview names a
     /// different company (which must never be unlocked on this request's say-so).</summary>
@@ -101,7 +109,7 @@ IF @r < 0 THROW 50001, 'Could not acquire the unlock-approval lock for this comp
         // cooldown, so without this a fresh approval arriving mid-call could be admitted and spend again. A
         // caller that finds it held backs off; by its next try the company is unlocked (adopted, approval
         // retired) or the attempt failed (approvals retired).
-        await using var fence = await SqlSessionLock.TryAcquireAsync(db, $"MCAROC:UnlockExecution:{identifier}", ct);
+        await using var fence = await SqlSessionLock.TryAcquireAsync(db, ExecutionFence(identifier), ct);
         if (fence is null)
             return new UnlockResult(UnlockOutcome.Deferred, "Another unlock attempt for this company is in progress.");
 
@@ -148,26 +156,37 @@ IF @r < 0 THROW 50001, 'Could not acquire the unlock-approval lock for this comp
             identifier, auto ? "auto" : "approved", admitted.AdmissionId, approvalId);
         try
         {
-            await client.AddAssetAsync(teamId, bid, preview.LegalName ?? identifier, ct);
-        }
-        catch (Exception ex) when (ex is ReferenceToolException or HttpRequestException or TaskCanceledException && !ct.IsCancellationRequested)
-        {
-            logger.LogError(ex, "Unlock call for {Identifier} failed after the admission was committed", identifier);
-            // A failed spend needs a fresh, deliberate approval — never one left over from before the attempt.
-            await RetireOpenApprovalsAsync(identifier, CancellationToken.None);
-            return new UnlockResult(UnlockOutcome.Failed,
-                $"The unlock call failed ({ex.Message}). The credit may have been spent — check the reference tool before approving again.");
-        }
+            try
+            {
+                await client.AddAssetAsync(teamId, bid, preview.LegalName ?? identifier, ct);
+            }
+            catch (Exception ex) when (ex is ReferenceToolException or HttpRequestException or TaskCanceledException && !ct.IsCancellationRequested)
+            {
+                logger.LogError(ex, "Unlock call for {Identifier} failed after the admission was committed", identifier);
+                return new UnlockResult(UnlockOutcome.Failed,
+                    $"The unlock call failed ({ex.Message}). The credit may have been spent — check the reference tool before approving again.");
+            }
 
-        var after = await client.GetAssetStatusAsync(bid, ct);
-        if (after.AddedAt is null)
-        {
-            await RetireOpenApprovalsAsync(identifier, CancellationToken.None);
-            return new UnlockResult(UnlockOutcome.Failed,
-                "The reference tool accepted the unlock but still reports the company locked. Check the tool before approving again.");
+            var after = await client.GetAssetStatusAsync(bid, ct);
+            if (after.AddedAt is null)
+                return new UnlockResult(UnlockOutcome.Failed,
+                    "The reference tool accepted the unlock but still reports the company locked. Check the tool before approving again.");
+            return new UnlockResult(UnlockOutcome.Unlocked, $"Unlocked in the reference tool on {after.AddedAt:u} (1 credit).");
         }
-        await RetireOpenApprovalsAsync(identifier, ct);
-        return new UnlockResult(UnlockOutcome.Unlocked, $"Unlocked in the reference tool on {after.AddedAt:u} (1 credit).");
+        finally
+        {
+            // Whatever happened after the ledger commit — success, a failed or unconfirmed call, an unexpected
+            // exception, cancellation — no approval may outlive this attempt: an outcome we can't confirm needs a
+            // fresh, deliberate approval. The fence is still held, so none can be created in between.
+            try
+            {
+                await RetireOpenApprovalsAsync(identifier, CancellationToken.None);
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(ex, "Could not retire open unlock approvals for {Identifier} after an unlock attempt", identifier);
+            }
+        }
     }
 
     private IQueryable<UnlockApproval> OpenApprovals(string identifier, DateTime now) =>

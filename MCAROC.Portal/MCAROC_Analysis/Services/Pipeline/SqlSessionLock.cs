@@ -3,7 +3,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace MCAROC_Analysis.Services.Pipeline;
 
-/// <summary>A session-owned SQL Server <c>sp_getapplock</c> with a zero timeout, for fencing a sequence that
+/// <summary>A session-owned SQL Server <c>sp_getapplock</c> (zero timeout unless one is given), for fencing a sequence that
 /// spans several transactions of its own (so a transaction-owned lock can't cover it) across every app
 /// instance. <see cref="TryAcquireAsync"/> returns null when another caller holds it. The context's connection
 /// stays open until the lock is disposed; a crashed process drops the lock along with its connection.</summary>
@@ -18,13 +18,15 @@ public sealed class SqlSessionLock : IAsyncDisposable
         _resource = resource;
     }
 
-    public static async Task<SqlSessionLock?> TryAcquireAsync(AppDbContext db, string resource, CancellationToken ct)
+    public static async Task<SqlSessionLock?> TryAcquireAsync(AppDbContext db, string resource, CancellationToken ct, TimeSpan? wait = null)
     {
         await db.Database.OpenConnectionAsync(ct);
         try
         {
             await using var cmd = db.Database.GetDbConnection().CreateCommand();
-            cmd.CommandText = "DECLARE @r int; EXEC @r = sp_getapplock @Resource = @resource, @LockMode = 'Exclusive', @LockOwner = 'Session', @LockTimeout = 0; SELECT @r;";
+            var timeoutMs = (int)Math.Clamp((wait ?? TimeSpan.Zero).TotalMilliseconds, 0, int.MaxValue);
+            cmd.CommandText = $"DECLARE @r int; EXEC @r = sp_getapplock @Resource = @resource, @LockMode = 'Exclusive', @LockOwner = 'Session', @LockTimeout = {timeoutMs}; SELECT @r;";
+            if (timeoutMs > 0) cmd.CommandTimeout = Math.Max(cmd.CommandTimeout, timeoutMs / 1000 + 30);
             AddResource(cmd, resource);
             if (Convert.ToInt32(await cmd.ExecuteScalarAsync(ct)) >= 0)
                 return new SqlSessionLock(db, resource);

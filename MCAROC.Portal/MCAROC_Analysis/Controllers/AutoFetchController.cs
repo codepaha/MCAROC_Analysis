@@ -273,7 +273,16 @@ public partial class AutoFetchController(
             return RedirectToAction("Details", "Requests", new { id });
         }
 
-        await unlock.ApproveAsync(id, User.Identity?.Name ?? "unknown", reason, ct);
+        try
+        {
+            // Null means the company turned out to be unlocked already — nothing to approve; just resume.
+            await unlock.ApproveAsync(id, User.Identity?.Name ?? "unknown", reason, ct);
+        }
+        catch (InvalidOperationException ex)
+        {
+            TempData["AutoFetchError"] = ex.Message;
+            return RedirectToAction("Details", "Requests", new { id });
+        }
         await gates.ResumeAsync(job.Cin, job.Bid, ct);
         var after = await db.AutoFetchJobs.AsNoTracking().Where(j => j.RequestId == id).Select(j => new { j.Status, j.StatusMessage, j.FailureReason }).FirstAsync(ct);
         if (after.Status == AutoFetchJobStatus.WaitingForUnlock)

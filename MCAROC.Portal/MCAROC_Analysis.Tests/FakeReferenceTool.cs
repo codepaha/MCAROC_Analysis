@@ -39,6 +39,14 @@ public sealed class FakeReferenceTool(string bid) : HttpMessageHandler
     /// <summary>Delays for race tests: stagger callers' last pre-spend check, and slow the paid call itself.</summary>
     public Func<TimeSpan>? UnlockCheckDelay { get; set; }
     public TimeSpan AddAssetDelay { get; set; }
+    /// <summary>When set, the paid call blocks (after being recorded) until the test completes this.</summary>
+    public TaskCompletionSource? AddAssetGate { get; set; }
+    /// <summary>Signalled when the paid call has been entered — lets a test act while it is in flight.</summary>
+    public TaskCompletionSource AddAssetEntered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    /// <summary>After a paid call, the verifying asset-status call fails (an outcome that can't be confirmed).</summary>
+    public bool AssetStatusFailsAfterUnlock { get; set; }
+    /// <summary>The paid call throws this instead of answering (an unexpected failure type).</summary>
+    public Exception? AddAssetException { get; set; }
 
     public ConcurrentQueue<string> Calls { get; } = new();
     public int Count(string action) => Calls.Count(c => c == action);
@@ -75,6 +83,8 @@ public sealed class FakeReferenceTool(string bid) : HttpMessageHandler
             return Task.FromResult(action switch
             {
                 "getUserDetails" => Json(new { id = 265271, user_name = "tester" }),
+                "getAssetTeams" when AssetStatusFailsAfterUnlock && Calls.Contains("addAsset") =>
+                    new HttpResponseMessage(HttpStatusCode.ServiceUnavailable) { Content = new StringContent("down") },
                 "getAssetTeams" => Json(new { teams = new[] { new { teamId = 42, addedAt = AddedAt?.ToString("yyyy-MM-ddTHH:mm:sszzz"), creditUsed = AddedAt is not null } } }),
                 "getUpgradeStatusForCompanies" => Json(new { mca_status = McaStatus }),
                 "getUpgradeStatusForUnlockingAsset" => Json(new { mca_status = UnlockMcaStatus }),
@@ -99,6 +109,9 @@ public sealed class FakeReferenceTool(string bid) : HttpMessageHandler
         if (payload.GetProperty("bid").GetString() != bid)
             return new HttpResponseMessage(HttpStatusCode.NotFound) { Content = new StringContent("other company") };
         Calls.Enqueue("addAsset");
+        AddAssetEntered.TrySetResult();
+        if (AddAssetGate is { } gate) await gate.Task;
+        if (AddAssetException is { } boom) throw boom;
         if (AddAssetDelay > TimeSpan.Zero) await Task.Delay(AddAssetDelay, ct);
         if (AddAssetStatus != HttpStatusCode.OK)
             return new HttpResponseMessage(AddAssetStatus) { Content = new StringContent("down") };

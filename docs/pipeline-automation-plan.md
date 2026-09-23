@@ -600,12 +600,15 @@ below) needs no change.
     reason, audited (`UnlockApproved`). Per §9 #12 it **does not expire** (`ExpiresUtc = DateTime.MaxValue`) and
     covers every request waiting on the company. Because approvals don't expire, every open approval for a company
     is retired as soon as the company is found unlocked, by us or anyone — and after a failed paid call, so a
-    failure always needs a fresh approval. Creating an approval is atomic per company (check-then-insert under a
-    transaction-owned `sp_getapplock`), so concurrent clicks can't leave a second open approval behind. Executing
-    an unlock is fenced per company too (session-owned `sp_getapplock`, zero timeout, held from the locked-check
-    through `addAsset` and its verification): committing the admission frees its scope before the paid call
-    returns and manual admissions skip the cooldown, so without the fence a fresh approval arriving mid-call
-    could spend a second credit.
+    failure always needs a fresh approval. Executing an unlock is fenced per company (session-owned
+    `sp_getapplock`, zero timeout, held from the locked-check through `addAsset` and its verification):
+    committing the admission frees its scope before the paid call returns and manual admissions skip the
+    cooldown, so without the fence a fresh approval arriving mid-call could spend a second credit. Creating an
+    approval takes the **same** fence (waiting up to 60 s behind an attempt in flight), then checks the tool's live
+    state and refuses to store an approval for a company that is already unlocked — so no approval can be created
+    during an attempt or slip in after its final retirement, and concurrent clicks serialise onto one approval.
+    Every exit after the ledger commit (success, failed or unconfirmable call, unexpected exception,
+    cancellation) retires all open approvals in a `finally`.
   - Spend: `getAssetTeams` first (anyone's unlock is adopted for free) → approval (or `Pipeline:AutoUnlock:Enabled`,
     default off, still capped by `UnlockPerDay`, default 0) → preview identity → `getUpgradeStatusForUnlockingAsset`
     → admission with the approval consumed in the same transaction (`PaidCallAdmissionRequest.WithinTransaction`;
