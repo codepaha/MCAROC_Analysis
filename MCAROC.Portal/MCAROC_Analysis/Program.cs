@@ -28,7 +28,10 @@ QuestPDF.Settings.License = QuestPDF.Infrastructure.LicenseType.Community;
 
 const long MaxUploadBytes = 2_000_000_000; // matches ArchiveSafetyLimits.MaxArchiveSizeBytes — the real sample corpus is ~700MB
 
-var builder = WebApplication.CreateBuilder(args);
+var isAnalystProvisioningCommand = args.Length > 0
+    && string.Equals(args[0], AnalystProvisioningCommand.Argument, StringComparison.Ordinal);
+var builderArgs = isAnalystProvisioningCommand ? args.Skip(1).ToArray() : args;
+var builder = WebApplication.CreateBuilder(builderArgs);
 
 // The default multipart/Kestrel body-size limits (128MB / effectively Kestrel's own default) are far below
 // the size of a real MCA Filings archive (~700MB) — both need raising for the New Search upload to work.
@@ -49,6 +52,7 @@ builder.Services.AddScoped<AuditLogFilter>();
 builder.Services.AddSingleton<IAnalystPasswordHasher, AnalystPasswordHasher>();
 builder.Services.AddScoped<AnalystProvisioningService>();
 builder.Services.AddScoped<IAnalystRequestAccessService, AnalystRequestAccessService>();
+builder.Services.AddScoped<AnalystDashboardQueryService>();
 builder.Services.AddScoped<IAuthorizationHandler, AnalystRequestAuthorizationHandler>();
 builder.Services.AddMemoryCache();
 builder.Services.AddHttpClient<InstaFinancialsClient>(client => client.Timeout = TimeSpan.FromMinutes(10));
@@ -345,7 +349,7 @@ builder.Services.AddRateLimiter(options =>
 
 var app = builder.Build();
 
-if (args.Length > 0 && string.Equals(args[0], AnalystProvisioningCommand.Argument, StringComparison.Ordinal))
+if (isAnalystProvisioningCommand)
 {
     Environment.ExitCode = await AnalystProvisioningCommand.RunAsync(app.Services, args);
     return;

@@ -1,0 +1,135 @@
+@model MCAROC_Analysis.Models.AnalystDashboardViewModel
+@using MCAROC_Analysis.Data.Entities
+@{
+    ViewData["Title"] = "My queue";
+    Layout = "_AnalystLayout";
+}
+
+<section class="analyst-intro">
+    <div>
+        <div class="pi-kicker">Assigned work</div>
+        <h1>My queue</h1>
+        <p>Requests assigned to @Model.AnalystName. Counts reflect current request status and may overlap when a request also needs attention. Request details will appear after their access checks are enabled.</p>
+    </div>
+</section>
+
+<section class="analyst-counts" aria-label="Assigned request counts">
+    <div class="analyst-count"><span>Assigned</span><strong>@Model.AssignedCount</strong></div>
+    <div class="analyst-count"><span>Awaiting upload</span><strong>@Model.AwaitingUploadCount</strong></div>
+    <div class="analyst-count"><span>Processing</span><strong>@Model.ProcessingCount</strong></div>
+    <div class="analyst-count"><span>Review needed</span><strong>@Model.ReviewNeededCount</strong></div>
+    <div class="analyst-count"><span>Ready</span><strong>@Model.ReadyCount</strong></div>
+    <div class="analyst-count"><span>Failed / attention</span><strong>@Model.FailedOrAttentionCount</strong></div>
+</section>
+
+<section class="analyst-queue" aria-labelledby="queue-heading">
+    <div class="analyst-queue-head">
+        <div>
+            <h2 id="queue-heading">Assigned requests</h2>
+            <p>@Model.TotalFilteredCount request@(Model.TotalFilteredCount == 1 ? "" : "s") match these filters.</p>
+        </div>
+        <form method="get" action="/analyst" class="analyst-filters">
+            <label class="visually-hidden" for="queue-search">Search assigned requests</label>
+            <input id="queue-search" class="form-control" type="search" name="search" value="@Model.Search" maxlength="100" placeholder="Company, CIN, LLPIN, or request" />
+            <label class="visually-hidden" for="queue-status">Filter by status</label>
+            <select id="queue-status" class="form-select" name="status">
+                <option value="">All statuses</option>
+                @foreach (var option in Enum.GetValues<RequestStatus>())
+                {
+                    <option value="@option" selected="@(Model.Status == option)">@option</option>
+                }
+            </select>
+            <button class="btn btn-primary" type="submit">Filter</button>
+            <a class="btn btn-outline-secondary" href="/analyst">Clear</a>
+        </form>
+    </div>
+
+    @if (Model.Requests.Count == 0)
+    {
+        <div class="analyst-empty" role="status">
+            <h3>@(Model.AssignedCount == 0 ? "No requests assigned yet" : "No requests match these filters")</h3>
+            <p>@(Model.AssignedCount == 0 ? "Your assigned requests will appear here." : "Clear or adjust the filters to see other assigned requests.")</p>
+        </div>
+    }
+    else
+    {
+        <div class="table-responsive">
+            <table class="table analyst-table align-middle">
+                <thead><tr><th scope="col">Request</th><th scope="col">Company / entity</th><th scope="col">Status</th><th scope="col">Assigned work age</th><th scope="col">Attention</th></tr></thead>
+                <tbody>
+                    @foreach (var request in Model.Requests)
+                    {
+                        var ageDays = Math.Max(0, (DateTime.UtcNow.Date - request.CreatedUtc.Date).Days);
+                        <tr>
+                            <td><span class="analyst-request-number">@request.RequestNumber</span><small>@request.EntityType</small></td>
+                            <td><strong>@request.CompanyName</strong><small>@(request.Cin ?? request.Llpin ?? "Identifier unavailable")</small></td>
+                            <td><span class="analyst-status">@request.Status</span></td>
+                            <td>@ageDays day@(ageDays == 1 ? "" : "s")</td>
+                            <td>@if (request.NeedsReview || !string.IsNullOrWhiteSpace(request.AttentionReason))
+                                {
+                                    <span class="text-warning-emphasis">@(request.AttentionReason ?? "Review required")</span>
+                                }
+                                else
+                                {
+                                    <span class="text-muted">—</span>
+                                }
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+        @if (Model.PageCount > 1)
+        {
+            <nav class="analyst-pagination" aria-label="Queue pages">
+                <span>Page @Model.Page of @Model.PageCount</span>
+                <div>
+                    @if (Model.Page > 1)
+                    {
+                        <a class="btn btn-outline-secondary btn-sm" href="@Url.Action("Index", new { search = Model.Search, status = Model.Status, page = Model.Page - 1 })">Previous</a>
+                    }
+                    @if (Model.Page < Model.PageCount)
+                    {
+                        <a class="btn btn-outline-secondary btn-sm" href="@Url.Action("Index", new { search = Model.Search, status = Model.Status, page = Model.Page + 1 })">Next</a>
+                    }
+                </div>
+            </nav>
+        }
+    }
+</section>
+
+<style>
+    .analyst-header { min-height: 68px; display:flex; align-items:center; justify-content:space-between; gap:20px; padding:12px clamp(20px, 5vw, 72px); background:var(--surface-1,#fff); border-bottom:1px solid var(--border,#e5e7eb); }
+    .analyst-header form { margin:0; }
+    .analyst-brand { color:var(--text-1,#162235); text-decoration:none; font-weight:700; letter-spacing:.02em; }
+    .analyst-brand span { margin-left:10px; color:var(--text-2,#64748b); font-weight:500; }
+    .analyst-main { width:min(1440px, 100%); margin:0 auto; padding:clamp(24px, 4vw, 52px); }
+    .analyst-intro { display:flex; justify-content:space-between; align-items:end; margin-bottom:28px; }
+    .analyst-intro h1 { margin:.2rem 0 .4rem; font-size:clamp(2rem,4vw,3rem); letter-spacing:-.04em; }
+    .analyst-intro p { margin:0; max-width:760px; color:var(--text-2,#64748b); }
+    .analyst-counts { display:grid; grid-template-columns:repeat(6,minmax(0,1fr)); border-top:1px solid var(--border,#e5e7eb); border-bottom:1px solid var(--border,#e5e7eb); margin-bottom:36px; }
+    .analyst-count { display:flex; flex-direction:column; gap:8px; min-height:104px; justify-content:center; padding:14px 20px; border-right:1px solid var(--border,#e5e7eb); }
+    .analyst-count:first-child { padding-left:0; }
+    .analyst-count:last-child { border:0; }
+    .analyst-count span { color:var(--text-2,#64748b); font-size:.9rem; }
+    .analyst-count strong { color:var(--text-1,#162235); font-size:1.8rem; line-height:1; font-variant-numeric:tabular-nums; }
+    .analyst-queue-head { display:flex; justify-content:space-between; align-items:end; gap:24px; margin-bottom:16px; }
+    .analyst-queue-head h2 { margin:0; font-size:1.25rem; }
+    .analyst-queue-head p { margin:4px 0 0; color:var(--text-2,#64748b); font-size:.9rem; }
+    .analyst-filters { display:flex; gap:8px; align-items:center; }
+    .analyst-filters input { width:min(330px,30vw); }
+    .analyst-filters select { min-width:180px; }
+    .analyst-table { margin:0; border-top:1px solid var(--border,#e5e7eb); }
+    .analyst-table th { color:var(--text-2,#64748b); font-size:.75rem; text-transform:uppercase; letter-spacing:.06em; font-weight:600; }
+    .analyst-table td { padding-top:15px; padding-bottom:15px; }
+    .analyst-table td small { display:block; margin-top:4px; color:var(--text-2,#64748b); }
+    .analyst-request-number { font-weight:650; font-variant-numeric:tabular-nums; }
+    .analyst-status { display:inline-block; padding:4px 9px; border-radius:999px; background:var(--surface-3,#f1f5f9); color:var(--text-1,#334155); font-size:.8rem; }
+    .analyst-empty { padding:54px 20px; text-align:center; border-top:1px solid var(--border,#e5e7eb); border-bottom:1px solid var(--border,#e5e7eb); }
+    .analyst-empty h3 { font-size:1.1rem; }
+    .analyst-empty p { margin:0; color:var(--text-2,#64748b); }
+    .analyst-pagination { display:flex; justify-content:space-between; align-items:center; padding-top:16px; color:var(--text-2,#64748b); }
+    .analyst-pagination div { display:flex; gap:8px; }
+    @@media(max-width:1000px) { .analyst-counts { grid-template-columns:repeat(3,minmax(0,1fr)); } .analyst-count:nth-child(3) { border-right:0; } .analyst-count:nth-child(4) { padding-left:0; } .analyst-queue-head { align-items:stretch; flex-direction:column; } }
+    @@media(max-width:640px) { .analyst-counts { grid-template-columns:repeat(2,minmax(0,1fr)); } .analyst-count:nth-child(3) { border-right:1px solid var(--border,#e5e7eb); } .analyst-count:nth-child(even) { border-right:0; } .analyst-count:nth-child(n+3) { padding-left:0; } .analyst-filters { display:grid; grid-template-columns:1fr 1fr; } .analyst-filters input { width:auto; grid-column:span 2; } .analyst-main { padding:22px 16px; } }
+</style>

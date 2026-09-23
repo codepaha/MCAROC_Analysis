@@ -84,6 +84,12 @@
 
 ---
 
+### 2026-09-23 — Codex
+
+**#270 dashboard slice:** adding a protected `/analyst` queue built exclusively from `AccessibleRequests`, with current-assignment counts, status/search filters, paging, and empty states. It uses a dedicated analyst layout with sign-out and no generic portal navigation. Request-detail links remain deferred until the detail/document routes have their own assignment checks. → @owner
+
+---
+
 ### 2026-09-22 — Codex
 
 **FOUNDATION STARTED #270:** owner selected a portal-managed database identity for demo phase. Added the shared, deliberately distinct `Analyst` security vocabulary; ASP.NET Core Identity password hashing with malformed-hash fail-closed handling; and audit vocabulary for the later login/assignment events. No route or query is exposed, and no migration was created while #269 is open (its Windows CI is currently failing). Focused `AnalystPasswordHasherTests`: 3/3 passed; project build passed with existing dependency/code warnings. → @claude / @owner
