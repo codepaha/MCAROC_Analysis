@@ -101,6 +101,12 @@ builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddScoped<IPaidCallAdmission, PaidCallAdmissionService>();
 builder.Services.AddScoped<LitigationStartService>();
 builder.Services.AddHostedService<PaidCallAdmissionSweepWorker>();
+// Pipeline coordinator (docs/pipeline-automation-plan.md §3) — Observe mode: records every request's stage
+// states and outcome, starts/spends nothing. Inert until Pipeline:Enabled=true.
+builder.Services.AddScoped<PipelineSnapshotReader>();
+builder.Services.AddScoped<PipelineReconciler>();
+builder.Services.AddScoped<PipelineAdopter>();
+builder.Services.AddHostedService<PipelineReconcilerWorker>();
 
 // Litigation data lake (#239, LIT-01) — authenticate/register/poll against the BPR Litigation Data API and
 // retain the raw report for #242 to persist. Inert until BprLitigation:BaseUrl/Id/SecretKey are configured

@@ -145,6 +145,7 @@
 {
     @await Html.PartialAsync("Details/_AutoFetchPanel", Model)
 }
+@await Html.PartialAsync("Details/_PipelineStrip", Model)
 @if (r.IsManualReviewRequired && !string.IsNullOrEmpty(r.ManualReviewReason))
 {
     <div class="alert alert-danger">@r.ManualReviewReason</div>

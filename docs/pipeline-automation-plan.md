@@ -157,6 +157,11 @@ Resolve ─► Unlock ─► Refresh ─► Fetch ─► Ingest ─► Analysis 
 - `Filings` needs no trigger (auto-fetch already hands the archive to the filing queue and chunking); the
   coordinator only reports it. `Skipped(NO_FILINGS_REQUESTED)` when the job had `IncludeFilings=false`.
 - `Litigation`/`LitigationAnalysis` are §4.
+- *Until #229/#266 ship (as implemented in #264's Observe mode):* nothing records unlock or refresh yet, so for an
+  auto-fetch request `Unlock` is `Succeeded(INFERRED_FROM_EXPORT)` once the workbook export succeeded (the tool
+  only exports an unlocked company) and `NotStarted(NOT_YET_TRACKED)` before that, and `Refresh` is
+  `Skipped(Neutral, REFRESH_NOT_TRACKED)` — auto-fetch today exports the tool's current data without a refresh.
+  Both are replaced by real lifecycle state when those issues land.
 
 ### 3.4 Completion semantics
 
@@ -867,8 +872,9 @@ self-hosted runner.
 11. ~~The unlock "alert"~~ — **Resolved (round 5): banner for now.** Banner + `/Pipeline` board + log + `/health`
     only; no email sink pulled forward from stage 6. Revisit if approvals sit unnoticed in practice once PR R
     is live.
-12. **Approver policy:** who may approve an unlock (role/list), approval lifetime (proposed 24 h), and whether one
-    approval covers every request waiting on that company (proposed yes).
+12. ~~Approver policy~~ — **Resolved (owner, 2026-09-23):** any authenticated user of the internal application may
+    approve (it is internal-only today; revisit if it is ever opened to clients); an approval **does not expire**
+    until consumed; one approval covers every request waiting on that company (still at most one credit spent).
 13. ~~Is a refresh billable at the tool?~~ — **Resolved (§14):** confirmed live, 0 credits, no cap/ledger needed.
 14. **Reuse details (§4.2a):** confirm (a) "already analysed report" = the search results **and** the AI analysis,
     (b) the one-week timeline runs from the *source report's* retrieval, (c) analysts must see "reused, retrieved

@@ -34,7 +34,8 @@ public class RequestsController(
     ILogger<RequestsController>? logger = null,
     IWorkbookDerivativeService? derivativeService = null,
     MCAROC_Analysis.Services.Documents.ISignedDownloadTokenService? tokenService = null,
-    IAnalystRequestAccessService? analystAccess = null) : Controller
+    IAnalystRequestAccessService? analystAccess = null,
+    MCAROC_Analysis.Services.Pipeline.PipelineAdopter? pipelineAdopter = null) : Controller
 {
     [HttpGet("/Requests")]
     public async Task<IActionResult> Index([FromQuery] RequestListFilterCriteria filters)
@@ -144,6 +145,9 @@ public class RequestsController(
             await db.SaveChangesAsync();
             filingQueue.Enqueue(new UnpackBatchWorkItem(batch.BatchId));
         }
+
+        if (pipelineAdopter is not null)
+            await pipelineAdopter.TryAdoptAsync(request.RequestId, PipelineRunTrigger.ManualUpload, CorrelationContext.GetOrCreate(HttpContext), HttpContext.RequestAborted);
 
         return RedirectToAction(nameof(Details), new { id = request.RequestId });
     }
