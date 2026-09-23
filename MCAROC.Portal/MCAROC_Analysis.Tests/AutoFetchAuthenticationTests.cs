@@ -88,6 +88,16 @@ public partial class AutoFetchAuthenticationTests : IClassFixture<WebApplication
         Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
     }
 
+    /// <summary>#266: approving an unlock spends a credit, so an anonymous caller must be sent to sign in before
+    /// the action (or even its antiforgery check) runs.</summary>
+    [Fact]
+    public async Task UnauthenticatedPost_ToApproveUnlock_IsChallenged()
+    {
+        var response = await NoRedirectClient().PostAsync("/Requests/999999999/autofetch/unlock/approve",
+            new FormUrlEncodedContent(new Dictionary<string, string> { ["reason"] = "x" }));
+        AssertChallenged(response);
+    }
+
     [Fact]
     public async Task AuthenticatedGet_ToNewForm_ReachesTheAction()
     {

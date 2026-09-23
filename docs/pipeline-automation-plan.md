@@ -591,6 +591,22 @@ below) needs no change.
   - A failed refresh request gives the claim back; completion and timeout are fenced on the claim id.
   - Until #266, a locked/expired company fails the job with `CompanyLocked` and exports nothing; #266 turns this
     into the approval wait described below.
+- **As implemented in #266** (`CompanyUnlockService`, `CompanyGateCoordinator`, approve action on the auto-fetch
+  panel):
+  - A locked company parks the job as `WaitingForUnlock` after the free `getCompanyPreview` confirms the same
+    CIN/LLPIN (a mismatch fails the job, `IDENTITY_MISMATCH`, nothing spent). The alert is the panel, the board's
+    `UNLOCK_APPROVAL_REQUIRED` stage, and a warning log.
+  - Approval: `POST /Requests/{id}/autofetch/unlock/approve` — internal-reviewer sign-in, antiforgery, mandatory
+    reason, audited (`UnlockApproved`). Per §9 #12 it **does not expire** (`ExpiresUtc = DateTime.MaxValue`) and
+    covers every request waiting on the company. Because approvals don't expire, every open approval for a company
+    is retired as soon as the company is found unlocked, by us or anyone.
+  - Spend: `getAssetTeams` first (anyone's unlock is adopted for free) → approval (or `Pipeline:AutoUnlock:Enabled`,
+    default off, still capped by `UnlockPerDay`, default 0) → preview identity → `getUpgradeStatusForUnlockingAsset`
+    → admission with the approval consumed in the same transaction (`PaidCallAdmissionRequest.WithinTransaction`;
+    exactly one row or the whole admission rolls back) → admission **committed before** `addAsset` (fail closed) →
+    `addAsset` (never retried automatically; a failure fails the waiting jobs and needs a fresh approval) → verify
+    via `getAssetTeams`.
+  - The coordinator runs on the poll and immediately on approval, so an approval takes effect on the click.
 - **Unlock — approval-gated today:**
   1. *Detect.* Lifecycle `Locked`/`Expired`, or a typed `CompanyLocked` from the client (§5.3). Call
      `getAssetTeams(bid)` first: if `teams[0].addedAt != null`, the company is **already unlocked by anyone** —

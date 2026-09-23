@@ -6,12 +6,12 @@ using Microsoft.Extensions.Options;
 
 namespace MCAROC_Analysis.Services.AutoFetch;
 
-/// <summary>Every <see cref="ReferenceToolOptions.RefreshPollMinutes"/>: for each company with parked
-/// (<see cref="AutoFetchJobStatus.WaitingForRefresh"/>) jobs, polls its refresh once and, as soon as the answer
-/// is anything but "still waiting", re-queues those jobs — <see cref="AutoFetchJobService.ProcessAsync"/>
-/// re-evaluates the gate itself and exports, fails, or defers accordingly. The pending state lives in the
-/// database, so a restart loses nothing: startup recovery re-queues parked jobs and they simply re-join.</summary>
-public sealed class CompanyRefreshWorker(IServiceScopeFactory scopes, AutoFetchQueue queue, IOptions<ReferenceToolOptions> options, ILogger<CompanyRefreshWorker> logger) : BackgroundService
+/// <summary>Every <see cref="ReferenceToolOptions.RefreshPollMinutes"/>: for each company with parked jobs
+/// (<see cref="AutoFetchJobStatus.WaitingForRefresh"/> or <see cref="AutoFetchJobStatus.WaitingForUnlock"/>),
+/// lets <see cref="CompanyGateCoordinator"/> poll the refresh, spend an approved unlock, and re-queue whatever can
+/// move on. The waiting state lives in the database, so a restart loses nothing: startup recovery re-queues
+/// parked jobs and they simply re-park or proceed.</summary>
+public sealed class CompanyRefreshWorker(IServiceScopeFactory scopes, IOptions<ReferenceToolOptions> options, ILogger<CompanyRefreshWorker> logger) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -24,7 +24,7 @@ public sealed class CompanyRefreshWorker(IServiceScopeFactory scopes, AutoFetchQ
             }
             catch (Exception ex) when (!stoppingToken.IsCancellationRequested)
             {
-                logger.LogError(ex, "Company refresh poll tick failed");
+                logger.LogError(ex, "Company refresh/unlock poll tick failed");
             }
         }
     }
@@ -38,7 +38,7 @@ public sealed class CompanyRefreshWorker(IServiceScopeFactory scopes, AutoFetchQ
             if (await health.IsOpenAsync(IntegrationName.ReferenceTool, ct)) return 0;
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
             companies = (await db.AutoFetchJobs.AsNoTracking()
-                    .Where(j => j.Status == AutoFetchJobStatus.WaitingForRefresh)
+                    .Where(j => j.Status == AutoFetchJobStatus.WaitingForRefresh || j.Status == AutoFetchJobStatus.WaitingForUnlock)
                     .Select(j => new { j.Cin, j.Bid }).Distinct().ToListAsync(ct))
                 .Select(c => (c.Cin, c.Bid)).ToList();
         }
@@ -49,29 +49,11 @@ public sealed class CompanyRefreshWorker(IServiceScopeFactory scopes, AutoFetchQ
             try
             {
                 using var scope = scopes.CreateScope();
-                var gate = await scope.ServiceProvider.GetRequiredService<CompanyRefreshService>().EvaluateAsync(cin, bid, ct);
-                if (gate.Kind == RefreshGateKind.Waiting) continue;
-
-                var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-                var ids = await db.AutoFetchJobs.Where(j => j.Cin == cin && j.Status == AutoFetchJobStatus.WaitingForRefresh)
-                    .Select(j => j.AutoFetchJobId).ToListAsync(ct);
-                foreach (var id in ids)
-                {
-                    var moved = await db.AutoFetchJobs.Where(j => j.AutoFetchJobId == id && j.Status == AutoFetchJobStatus.WaitingForRefresh)
-                        .ExecuteUpdateAsync(s => s
-                            .SetProperty(j => j.Status, AutoFetchJobStatus.Queued)
-                            .SetProperty(j => j.StatusMessage, "Refresh finished — resuming.")
-                            .SetProperty(j => j.HeartbeatUtc, DateTime.UtcNow), ct);
-                    if (moved == 1)
-                    {
-                        queue.Enqueue(id);
-                        requeued++;
-                    }
-                }
+                requeued += await scope.ServiceProvider.GetRequiredService<CompanyGateCoordinator>().ResumeAsync(cin, bid, ct);
             }
             catch (Exception ex) when (!ct.IsCancellationRequested)
             {
-                logger.LogWarning(ex, "Polling the reference-tool refresh for {Cin} failed; will retry next tick", cin);
+                logger.LogWarning(ex, "Polling the reference-tool gate for {Cin} failed; will retry next tick", cin);
             }
         }
         return requeued;

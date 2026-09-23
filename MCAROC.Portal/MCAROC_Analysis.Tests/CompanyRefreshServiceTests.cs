@@ -468,14 +468,8 @@ public sealed class CompanyRefreshServiceTests : IAsyncLifetime
 
     private CompanyRefreshWorker NewWorker(FakeReferenceTool tool, AutoFetchQueue queue)
     {
-        var services = new ServiceCollection();
-        services.AddDbContext<AppDbContext>(o => o.UseSqlServer(TestDatabase.ConnectionString));
-        services.AddScoped<IIntegrationHealthService, NoOpIntegrationHealthService>();
-        services.AddScoped(_ => tool.NewClient());
-        services.AddScoped(sp => new CompanyRefreshService(sp.GetRequiredService<AppDbContext>(), sp.GetRequiredService<ReferenceToolClient>(),
-            FakeReferenceTool.Options(), _time, NullLogger<CompanyRefreshService>.Instance));
-        var provider = services.BuildServiceProvider();
-        return new CompanyRefreshWorker(provider.GetRequiredService<IServiceScopeFactory>(), queue, FakeReferenceTool.Options(), NullLogger<CompanyRefreshWorker>.Instance);
+        var provider = tool.BuildServices(_time, queue);
+        return new CompanyRefreshWorker(provider.GetRequiredService<IServiceScopeFactory>(), FakeReferenceTool.Options(), NullLogger<CompanyRefreshWorker>.Instance);
     }
 
     private async Task<long> SeedJobAsync()
