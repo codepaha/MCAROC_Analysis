@@ -151,6 +151,7 @@ public sealed class ReferenceToolClient(HttpClient http, IOptions<ReferenceToolO
                 return new ReferenceSessionInfo(false, null, err.ToString(), ReferenceToolFailureKind.SessionExpired);
 
             var userId = FindUserId(root) ?? session.UserId;
+            session.SetUserName(FindUserName(root));
             return new ReferenceSessionInfo(true, userId, null);
         }
     }
@@ -238,6 +239,7 @@ public sealed class ReferenceToolClient(HttpClient http, IOptions<ReferenceToolO
             if (cookieList.Count > 0)
             {
                 session.SetCookie(string.Join("; ", cookieList), userId);
+                session.SetUserName(FindUserName(root));
                 logger.LogInformation("Successfully logged into the reference tool as user {UserId}", userId);
                 return new ReferenceSessionInfo(true, userId, null);
             }
@@ -249,6 +251,17 @@ public sealed class ReferenceToolClient(HttpClient http, IOptions<ReferenceToolO
         {
             session.LoginGate.Release();
         }
+    }
+
+    private static string? FindUserName(JsonElement root)
+    {
+        if (root.ValueKind != JsonValueKind.Object) return null;
+        foreach (var name in new[] { "user_name", "userName" })
+            if (Text(root, name) is { } v) return v;
+        foreach (var nested in new[] { "data", "user", "userDetails" })
+            if (root.TryGetProperty(nested, out var n) && n.ValueKind == JsonValueKind.Object && FindUserName(n) is { } inner)
+                return inner;
+        return null;
     }
 
     private static string? FindUserId(JsonElement root)
@@ -530,6 +543,110 @@ public sealed class ReferenceToolClient(HttpClient http, IOptions<ReferenceToolO
         TryDelete(destinationPath);
         File.Move(tempPath, destinationPath);
     }
+
+    // ── Unlock / refresh lifecycle (docs/reference-tool-refresh-unlock-contract.md) ─────────────────
+    // Every call here is free; the only paid call (addAsset) belongs to the approval-gated unlock (#266).
+
+    /// <summary><c>getAssetTeams</c> — the authoritative locked/unlocked check.</summary>
+    public Task<ReferenceAssetStatus> GetAssetStatusAsync(string bid, CancellationToken ct)
+    {
+        EnsureConfigured();
+        return WithSessionRecoveryAsync(async () =>
+        {
+            using var doc = await GetJsonAsync("server/user/service.php", new { action = "getAssetTeams", bid }, "asset status", ct);
+            if (!doc.RootElement.TryGetProperty("teams", out var teams) || teams.ValueKind != JsonValueKind.Array || teams.GetArrayLength() == 0)
+                throw new ReferenceToolException("The reference tool's asset-status response had no teams.", ReferenceToolFailureKind.ContractChanged);
+            var team = teams[0];
+            long? teamId = team.TryGetProperty("teamId", out var t) && t.ValueKind == JsonValueKind.Number && t.TryGetInt64(out var id) ? id : null;
+            return new ReferenceAssetStatus(teamId, ParseTimestamp(Text(team, "addedAt")));
+        }, ct);
+    }
+
+    /// <summary><c>getUpgradeStatusForCompanies</c> — false while the government MCA portal is in maintenance,
+    /// when the tool itself advises against starting a refresh.</summary>
+    public Task<bool> IsMcaAvailableForRefreshAsync(CancellationToken ct)
+    {
+        EnsureConfigured();
+        return WithSessionRecoveryAsync(async () =>
+        {
+            using var doc = await GetJsonAsync("server/common/mcastatus/service.php", new { action = "getUpgradeStatusForCompanies" }, "MCA status", ct);
+            var status = Text(doc.RootElement, "mca_status")
+                ?? throw new ReferenceToolException("The reference tool's MCA-status response had no mca_status.", ReferenceToolFailureKind.ContractChanged);
+            return string.Equals(status, "NORMAL", StringComparison.OrdinalIgnoreCase);
+        }, ct);
+    }
+
+    /// <summary><c>requestProbeDataUpdate</c> — asks the tool to refresh the company's data. Free, and safe to
+    /// repeat: the tool keeps one pending request per company.</summary>
+    public Task RequestRefreshAsync(string bid, CancellationToken ct)
+    {
+        EnsureConfigured();
+        return WithSessionRecoveryAsync(async () =>
+        {
+            var userName = session.UserName ?? (string.IsNullOrWhiteSpace(_opts.ToolUserName) ? null : _opts.ToolUserName.Trim())
+                ?? throw new ReferenceToolException(
+                    "The reference tool's user name is unknown (the session never reported one) — set ReferenceTool:ToolUserName.",
+                    ReferenceToolFailureKind.Other);
+            using var doc = await GetJsonAsync("server/common/urs/service.php",
+                new { action = "requestProbeDataUpdate", bid, userName, platform = "b2c" }, "refresh request", ct);
+            var status = Text(doc.RootElement, "status");
+            if (status is null || !(status.Equals("PENDING", StringComparison.OrdinalIgnoreCase) || status.Equals("REQUESTED", StringComparison.OrdinalIgnoreCase)))
+                throw new ReferenceToolException($"The reference tool did not accept the refresh request (status '{status ?? "none"}').", ReferenceToolFailureKind.ContractChanged);
+        }, ct);
+    }
+
+    /// <summary><c>getDataEntryRequestStatus</c> — whether a refresh is still pending at the tool.</summary>
+    public Task<ReferenceRefreshStatus> GetRefreshStatusAsync(string bid, CancellationToken ct)
+    {
+        EnsureConfigured();
+        return WithSessionRecoveryAsync(async () =>
+        {
+            using var doc = await GetJsonAsync("server/common/urs/service.php",
+                new { action = "getDataEntryRequestStatus", bid, platform = "b2c" }, "refresh status", ct);
+            var status = Text(doc.RootElement, "status");
+            if (string.Equals(status, "NO PENDING REQUEST", StringComparison.OrdinalIgnoreCase)) return ReferenceRefreshStatus.NoPendingRequest;
+            if (string.Equals(status, "REQUESTED", StringComparison.OrdinalIgnoreCase) || string.Equals(status, "PENDING", StringComparison.OrdinalIgnoreCase))
+                return ReferenceRefreshStatus.Requested;
+            throw new ReferenceToolException($"Unrecognised refresh status '{status ?? "none"}' from the reference tool.", ReferenceToolFailureKind.ContractChanged);
+        }, ct);
+    }
+
+    /// <summary><c>getDataStatus</c> — how current the tool's data for the company is: <c>downloaded</c>, else
+    /// <c>download_status.updatedAt</c>, else the date-only <c>qa.date</c> taken as the end of that India day.
+    /// Null when none is present — callers treat that as "not known to be fresh".</summary>
+    public Task<DateTimeOffset?> GetDataAsOfAsync(string bid, CancellationToken ct)
+    {
+        EnsureConfigured();
+        return WithSessionRecoveryAsync(async () =>
+        {
+            using var doc = await GetJsonAsync("server/common/api/service.php", new { action = "getDataStatus", bid }, "data status", ct);
+            var root = doc.RootElement.TryGetProperty("data", out var data) && data.ValueKind == JsonValueKind.Object ? data : doc.RootElement;
+            if (ParseTimestamp(Text(root, "downloaded")) is { } downloaded) return (DateTimeOffset?)downloaded;
+            if (root.TryGetProperty("download_status", out var ds) && ParseTimestamp(Text(ds, "updatedAt")) is { } updated) return updated;
+            if (root.TryGetProperty("qa", out var qa) && Text(qa, "date") is { } qaDate
+                && DateOnly.TryParseExact(qaDate, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var day))
+                return new DateTimeOffset(day.ToDateTime(new TimeOnly(23, 59, 59)), TimeSpan.FromHours(5.5));
+            return null;
+        }, ct);
+    }
+
+    private async Task<JsonDocument> GetJsonAsync(string path, object payload, string what, CancellationToken ct)
+    {
+        using var response = await SendSignedAsync(path, payload, ct);
+        var body = await response.Content.ReadAsStringAsync(ct);
+        if (!response.IsSuccessStatusCode)
+            throw new ReferenceToolException($"The reference tool's {what} call returned HTTP {(int)response.StatusCode}.", ClassifyHttpFailure(response.StatusCode));
+        var doc = ParseJsonOrThrow(body, what);
+        if (doc.RootElement.ValueKind != JsonValueKind.Object)
+        {
+            doc.Dispose();
+            throw new ReferenceToolException($"The reference tool's {what} response was not a JSON object.", ReferenceToolFailureKind.SessionExpired);
+        }
+        return doc;
+    }
+
+    private static DateTimeOffset? ParseTimestamp(string? value) =>
+        value is not null && DateTimeOffset.TryParse(value, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var parsed) ? parsed : null;
 
     // ── Plumbing ────────────────────────────────────────────────────────────────────────────────────
 

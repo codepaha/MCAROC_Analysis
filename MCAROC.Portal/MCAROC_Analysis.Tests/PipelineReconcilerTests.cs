@@ -33,7 +33,8 @@ public sealed class PipelineReconcilerTests : IAsyncLifetime
     public Task DisposeAsync() => Task.CompletedTask;
 
     private PipelineReconciler Reconciler(AppDbContext db) =>
-        new(db, new PipelineSnapshotReader(db, new ConfigurationBuilder().Build(), Options.Create(new BprLitigationOptions())),
+        new(db, new PipelineSnapshotReader(db, new ConfigurationBuilder().Build(), Options.Create(new BprLitigationOptions()),
+            Options.Create(new MCAROC_Analysis.Services.AutoFetch.ReferenceToolOptions())),
             _time, NullLogger<PipelineReconciler>.Instance);
 
     /// <summary>Steps past the minimum interval a released run waits before it can be reconciled again.</summary>

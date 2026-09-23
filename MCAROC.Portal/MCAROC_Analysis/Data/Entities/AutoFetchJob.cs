@@ -6,6 +6,9 @@ namespace MCAROC_Analysis.Data.Entities;
 public enum AutoFetchJobStatus
 {
     Queued,
+    /// <summary>Parked (holding no worker slot) until the reference tool finishes refreshing the company's
+    /// data; <c>CompanyRefreshWorker</c> re-queues it. Nothing has been exported yet.</summary>
+    WaitingForRefresh,
     CheckingSession,
     FetchingWorkbooks,
     Ingesting,

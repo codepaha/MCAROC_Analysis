@@ -107,6 +107,71 @@ public sealed class PipelineDeciderTests
         Assert.Equal("FILINGS_FETCH_FAILED", d.Stages[PipelineStage.Filings].ReasonCode);
     }
 
+    private static PipelineSnapshot AutoBeforeExport(AutoFetchJobStatus status, LifecycleFacts? lifecycle) => new()
+    {
+        RequestId = 1, Cin = "U45203OR1995PLC003982", RequestStatus = RequestStatus.Created, RefreshGateEnabled = true,
+        AutoFetch = new AutoFetchFacts(5, status, null, true, null, status == AutoFetchJobStatus.Failed ? "gate said no" : null),
+        Lifecycle = lifecycle
+    };
+
+    [Fact]
+    public void A_locked_company_raises_attention_on_unlock_only()
+    {
+        var d = PipelineDecider.Decide(AutoBeforeExport(AutoFetchJobStatus.Failed,
+            new LifecycleFacts(CompanyReportLifecycleState.Locked, null, false)), PolicyOff);
+
+        Assert.Equal("COMPANY_LOCKED", d.Stages[PipelineStage.Unlock].ReasonCode);
+        Assert.Equal("AWAITING_UNLOCK", d.Stages[PipelineStage.Refresh].ReasonCode);
+        Assert.Equal("BLOCKED_UPSTREAM", d.Stages[PipelineStage.Fetch].ReasonCode);
+        Assert.Single(d.Stages.Values, v => v.State == PipelineStageStateKind.NeedsAttention);
+    }
+
+    [Fact]
+    public void An_expired_unlock_raises_attention_on_unlock()
+    {
+        var d = PipelineDecider.Decide(AutoBeforeExport(AutoFetchJobStatus.Failed,
+            new LifecycleFacts(CompanyReportLifecycleState.Expired, DateTime.UtcNow.AddMonths(-13), false)), PolicyOff);
+        Assert.Equal("UNLOCK_EXPIRED", d.Stages[PipelineStage.Unlock].ReasonCode);
+    }
+
+    [Fact]
+    public void A_refresh_in_flight_shows_as_running_and_the_parked_fetch_waits_on_it()
+    {
+        var d = PipelineDecider.Decide(AutoBeforeExport(AutoFetchJobStatus.WaitingForRefresh,
+            new LifecycleFacts(CompanyReportLifecycleState.Refreshing, DateTime.UtcNow.AddMonths(-2), true)), PolicyOff);
+
+        Assert.Equal(PipelineStageStateKind.Succeeded, State(d, PipelineStage.Unlock));
+        Assert.Equal(PipelineStageStateKind.Running, State(d, PipelineStage.Refresh));
+        Assert.Equal("REFRESHING", d.Stages[PipelineStage.Refresh].ReasonCode);
+        Assert.Equal("AWAITING_REFRESH", d.Stages[PipelineStage.Fetch].ReasonCode);
+        Assert.Equal(PipelineOutcome.InProgress, d.Outcome);
+    }
+
+    [Fact]
+    public void A_timed_out_refresh_needs_attention_on_refresh_not_fetch()
+    {
+        var d = PipelineDecider.Decide(AutoBeforeExport(AutoFetchJobStatus.Failed,
+            new LifecycleFacts(CompanyReportLifecycleState.RefreshFailed, DateTime.UtcNow.AddMonths(-2), false)), PolicyOff);
+
+        Assert.Equal("REFRESH_TIMEOUT", d.Stages[PipelineStage.Refresh].ReasonCode);
+        Assert.Equal("BLOCKED_UPSTREAM", d.Stages[PipelineStage.Fetch].ReasonCode);
+        Assert.Single(d.Stages.Values, v => v.State == PipelineStageStateKind.NeedsAttention);
+    }
+
+    [Fact]
+    public void An_export_that_passed_the_gate_marks_unlock_and_refresh_as_real_successes()
+    {
+        var d = PipelineDecider.Decide(AutoDone() with
+        {
+            RefreshGateEnabled = true,
+            Lifecycle = new LifecycleFacts(CompanyReportLifecycleState.Unlocked, DateTime.UtcNow.AddMonths(-2), false)
+        }, PolicyOff);
+
+        Assert.Equal("UNLOCKED", d.Stages[PipelineStage.Unlock].ReasonCode);
+        Assert.Equal("DATA_CURRENT", d.Stages[PipelineStage.Refresh].ReasonCode);
+        Assert.Equal(PipelineOutcome.Complete, d.Outcome);
+    }
+
     [Fact]
     public void Ingestion_flagged_for_manual_review_never_gets_analysis_so_it_needs_attention_instead_of_waiting()
     {
@@ -224,6 +289,8 @@ public sealed class PipelineDeciderTests
         var rng = new Random(264);
         PipelineStage[][] edges =
         [
+            [PipelineStage.Unlock, PipelineStage.Fetch],
+            [PipelineStage.Refresh, PipelineStage.Fetch],
             [PipelineStage.Ingest, PipelineStage.Analysis],
             [PipelineStage.Analysis, PipelineStage.CalcAssurance],
             [PipelineStage.Analysis, PipelineStage.Dossier],
@@ -261,6 +328,8 @@ public sealed class PipelineDeciderTests
             RequestStatus = Pick<RequestStatus>(rng),
             IsManualReviewRequired = rng.Next(4) == 0,
             AutoFetch = Maybe(rng, () => new AutoFetchFacts(5, Pick<AutoFetchJobStatus>(rng), rng.Next(2) == 0 ? 7 : null, rng.Next(2) == 0, null, null)),
+            RefreshGateEnabled = rng.Next(2) == 0,
+            Lifecycle = Maybe(rng, () => new LifecycleFacts(Pick<CompanyReportLifecycleState>(rng), rng.Next(2) == 0 ? DateTime.UtcNow : null, rng.Next(2) == 0)),
             LatestCompletedIngestionRunId = ingested ? 10 : null,
             HasIngestionWarnings = rng.Next(3) == 0,
             IngestionRunning = rng.Next(3) == 0,

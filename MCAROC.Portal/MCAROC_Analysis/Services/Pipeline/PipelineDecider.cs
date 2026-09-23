@@ -28,11 +28,8 @@ public static class PipelineDecider
 
         v[PipelineStage.Resolve] = Resolve(s, manual);
         v[PipelineStage.Unlock] = Unlock(s, manual);
-        v[PipelineStage.Refresh] = manual
-            ? Skip(PipelineStageSkipKind.Neutral, "MANUAL_SOURCE")
-            : Skip(PipelineStageSkipKind.Neutral, "REFRESH_NOT_TRACKED",
-                "Auto-fetch exports the reference tool's current data; the refresh lifecycle is tracked from #229.");
-        v[PipelineStage.Fetch] = Fetch(s, manual);
+        v[PipelineStage.Refresh] = Refresh(s, manual);
+        v[PipelineStage.Fetch] = Fetch(s, manual, v[PipelineStage.Unlock], v[PipelineStage.Refresh]);
         v[PipelineStage.Ingest] = Ingest(s, manual, v[PipelineStage.Fetch]);
         v[PipelineStage.Analysis] = Analysis(s, v[PipelineStage.Ingest]);
         v[PipelineStage.CalcAssurance] = CalcAssurance(s, v[PipelineStage.Analysis]);
@@ -60,21 +57,53 @@ public static class PipelineDecider
     private static StageVerdict Unlock(PipelineSnapshot s, bool manual)
     {
         if (manual) return Skip(PipelineStageSkipKind.Neutral, "MANUAL_SOURCE");
-        // Until #266 records unlocks, the only evidence is indirect: the tool only exports a workbook for an
-        // unlocked company.
-        if (s.AutoFetch!.RocDocumentId is not null)
-            return Ok(s.AutoFetch.JobId, "INFERRED_FROM_EXPORT", "The workbook export succeeded, which requires an unlocked company.");
-        return new StageVerdict(PipelineStageStateKind.NotStarted, ReasonCode: "NOT_YET_TRACKED",
-            ReasonDetail: "Unlock state is tracked from #266; until then it is inferred from a successful workbook export.");
+        var job = s.AutoFetch!;
+        // Data already exported for this request stands even if the unlock has lapsed since.
+        if (job.RocDocumentId is not null)
+            return s.Lifecycle?.UnlockedUtc is not null
+                ? Ok(job.JobId, "UNLOCKED")
+                : Ok(job.JobId, "INFERRED_FROM_EXPORT", "The workbook export succeeded, which requires an unlocked company.");
+        return s.Lifecycle switch
+        {
+            { State: CompanyReportLifecycleState.Locked } => Attention("COMPANY_LOCKED", "The company is not unlocked in the reference tool."),
+            { State: CompanyReportLifecycleState.Expired } => Attention("UNLOCK_EXPIRED", "The company's 12-month unlock in the reference tool has expired."),
+            { UnlockedUtc: not null } => Ok(job.JobId, "UNLOCKED"),
+            _ => new StageVerdict(PipelineStageStateKind.NotStarted, ReasonCode: "NOT_YET_CHECKED",
+                ReasonDetail: "Checked by auto-fetch before its first export.")
+        };
     }
 
-    private static StageVerdict Fetch(PipelineSnapshot s, bool manual)
+    private static StageVerdict Refresh(PipelineSnapshot s, bool manual)
+    {
+        if (manual) return Skip(PipelineStageSkipKind.Neutral, "MANUAL_SOURCE");
+        var job = s.AutoFetch!;
+        var l = s.Lifecycle;
+        if (!s.RefreshGateEnabled || (job.RocDocumentId is not null && l is null))
+            return Skip(PipelineStageSkipKind.Neutral, "REFRESH_NOT_TRACKED",
+                "This export ran without the refresh gate (ReferenceTool:RefreshBeforeFetch off, or before it existed).");
+        // The export only runs once the gate confirmed data under 24 hours old.
+        if (job.RocDocumentId is not null) return Ok(job.JobId, "DATA_CURRENT");
+        if (l is null) return Waiting("AWAITING_REFRESH_CHECK", job.JobId);
+        if (l.State == CompanyReportLifecycleState.RefreshFailed)
+            return Attention("REFRESH_TIMEOUT", "The reference tool did not finish refreshing in time; retry to request a new refresh.", job.JobId);
+        if (l.RefreshActive) return Running(job.JobId, "REFRESHING");
+        if (l.State is CompanyReportLifecycleState.Locked or CompanyReportLifecycleState.Expired) return Waiting("AWAITING_UNLOCK", job.JobId);
+        if (job.Status == AutoFetchJobStatus.Failed) return Waiting("AWAITING_RETRY", job.JobId);
+        return Running(job.JobId, "CHECKING");
+    }
+
+    private static StageVerdict Fetch(PipelineSnapshot s, bool manual, StageVerdict unlock, StageVerdict refresh)
     {
         if (manual) return Skip(PipelineStageSkipKind.Neutral, "MANUAL_SOURCE");
         var job = s.AutoFetch!;
         if (job.RocDocumentId is not null) return Ok(job.JobId);
-        if (job.Status == AutoFetchJobStatus.Failed) return Attention("FETCH_FAILED", job.FailureReason, job.JobId);
+        if (job.Status == AutoFetchJobStatus.Failed)
+            // A locked company or a timed-out refresh is already reported on its own stage.
+            return unlock.State == PipelineStageStateKind.NeedsAttention || refresh.State == PipelineStageStateKind.NeedsAttention
+                ? Waiting("BLOCKED_UPSTREAM", job.JobId)
+                : Attention("FETCH_FAILED", job.FailureReason, job.JobId);
         if (job.Status == AutoFetchJobStatus.Queued) return Waiting("QUEUED", job.JobId);
+        if (job.Status == AutoFetchJobStatus.WaitingForRefresh) return Waiting("AWAITING_REFRESH", job.JobId);
         return Running(job.JobId);
     }
 

@@ -92,6 +92,23 @@ public sealed class ReferenceToolOptions
     /// waiting for an operator to notice (§5.4 mechanism 4).</summary>
     public int RequeueSweepMinutes { get; init; } = 2;
 
+    /// <summary>The spec's "never store pre-refresh data" rule (docs/pipeline-automation-plan.md §5.7): before
+    /// exporting anything, an auto-fetch job checks the company is unlocked and its data at the tool is under
+    /// 24 hours old, triggering (or joining) a refresh and parking the job until it lands. Set false to export
+    /// immediately, as before.</summary>
+    public bool RefreshBeforeFetch { get; init; } = true;
+
+    /// <summary>How often <see cref="CompanyRefreshWorker"/> polls pending refreshes and re-queues parked jobs.</summary>
+    public int RefreshPollMinutes { get; init; } = 10;
+
+    /// <summary>A refresh still pending this long after it was requested is timed out (<c>REFRESH_TIMEOUT</c>)
+    /// instead of polled forever — the spec's outer bound.</summary>
+    public int RefreshTimeoutHours { get; init; } = 36;
+
+    /// <summary>The tool's own user name, which its refresh request takes. Normally captured from the
+    /// session; set this only if the tool's responses don't carry it.</summary>
+    public string ToolUserName { get; init; } = string.Empty;
+
     public bool IsConfigured => !string.IsNullOrWhiteSpace(BaseUrl) &&
         (!string.IsNullOrWhiteSpace(SessionCookie) || CanAutoLogin);
 }

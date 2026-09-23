@@ -56,6 +56,19 @@ public sealed record ReferenceCompanyHint(string LegalName, string Cin, string? 
 /// (a login attempt's own error field vs. a plain HTTP/parse failure) — null otherwise, not guessed.</summary>
 public sealed record ReferenceSessionInfo(bool IsValid, string? UserId, string? Detail, ReferenceToolFailureKind? Kind = null);
 
+/// <summary><c>getAssetTeams</c>: <see cref="AddedAt"/> is the original unlock time, null when the company is
+/// locked or its 12-month unlock has expired (the tool doesn't distinguish the two). <see cref="TeamId"/> is
+/// present either way — it's what a paid unlock would be charged to.</summary>
+public sealed record ReferenceAssetStatus(long? TeamId, DateTimeOffset? AddedAt);
+
+public enum ReferenceRefreshStatus
+{
+    /// <summary>A refresh for the company is queued or running at the tool.</summary>
+    Requested,
+    /// <summary>No refresh pending — either none was ever requested or the last one finished.</summary>
+    NoPendingRequest
+}
+
 /// <summary>Which of the tool's two workbook exports to download.</summary>
 public enum ReferenceWorkbookKind
 {
