@@ -1,5 +1,6 @@
 using MCAROC_Analysis.Controllers;
 using MCAROC_Analysis.Data.Entities;
+using MCAROC_Analysis.Services.AnalystAccess;
 using MCAROC_Analysis.Services.Audit;
 
 namespace MCAROC_Analysis.Tests;
@@ -13,7 +14,7 @@ public sealed class AnalystAuthControllerTests
     [InlineData("   ", "")]
     public void NormalizeLoginName_UsesTheCanonicalDatabaseLookupForm(string? input, string expected)
     {
-        Assert.Equal(expected, AnalystAuthController.NormalizeLoginName(input));
+        Assert.Equal(expected, AnalystLoginNameNormalizer.Normalize(input));
     }
 
     [Fact]

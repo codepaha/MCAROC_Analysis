@@ -16,3 +16,8 @@ public static class AnalystAccessConstants
     /// <summary>Opaque, stable database analyst ID. Do not put a username, email address, or raw claims in it.</summary>
     public const string AnalystIdClaimType = ClaimTypes.NameIdentifier;
 }
+
+public static class AnalystLoginNameNormalizer
+{
+    public static string Normalize(string? loginName) => loginName?.Trim().ToUpperInvariant() ?? string.Empty;
+}
