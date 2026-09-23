@@ -130,6 +130,40 @@ public sealed class CompanyUnlockServiceTests : IAsyncLifetime
         Assert.False(await db.UnlockApprovals.AnyAsync(a => a.Identifier == _cin && a.ConsumedAdmissionId == null && a.ExpiresUtc > Now.UtcDateTime));
     }
 
+    /// <summary>PR #286 review: committing the admission releases the scope before the paid call returns, and
+    /// manual admissions skip the cooldown — so a second approve + resume while the first <c>addAsset</c> is still
+    /// in flight must be fenced out, or it spends a second credit.</summary>
+    [Fact]
+    public async Task A_second_approval_and_resume_while_the_paid_call_is_in_flight_does_not_spend_again()
+    {
+        var tool = LockedTool();
+        tool.AddAssetDelay = TimeSpan.FromMilliseconds(1500);
+        var sp = Services(tool);
+        var (requestId, jobId) = await SeedJobAsync();
+        await ProcessAsync(sp, jobId);
+        Assert.Equal(AutoFetchJobStatus.WaitingForUnlock, (await JobAsync(jobId)).Status);
+
+        Task ApproveAndResume() => Task.Run(async () =>
+        {
+            await ApproveAsync(sp, requestId);
+            await InScope(sp, s => s.GetRequiredService<CompanyGateCoordinator>().ResumeAsync(_cin, Bid, CancellationToken.None));
+        });
+
+        var first = ApproveAndResume();
+        var deadline = DateTime.UtcNow.AddSeconds(20);
+        while (tool.Count("addAsset") == 0 && DateTime.UtcNow < deadline) await Task.Delay(20);
+        Assert.Equal(1, tool.Count("addAsset")); // the first paid call is now in flight
+        var second = ApproveAndResume();
+        await Task.WhenAll(first, second);
+
+        Assert.Equal(1, tool.Count("addAsset"));
+        await InScope(sp, s => s.GetRequiredService<CompanyGateCoordinator>().ResumeAsync(_cin, Bid, CancellationToken.None));
+        Assert.Equal(1, tool.Count("addAsset"));
+        await using var db = CreateContext();
+        Assert.Equal(1, await db.PaidCallAdmissions.CountAsync(a => a.RequestId == requestId && a.Kind == PaidCallKind.ReferenceUnlock));
+        Assert.False(await db.UnlockApprovals.AnyAsync(a => a.Identifier == _cin && a.ConsumedAdmissionId == null && a.ExpiresUtc > Now.UtcDateTime));
+    }
+
     [Fact]
     public async Task Without_an_approval_nothing_is_spent()
     {

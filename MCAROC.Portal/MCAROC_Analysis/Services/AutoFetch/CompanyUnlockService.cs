@@ -95,6 +95,16 @@ IF @r < 0 THROW 50001, 'Could not acquire the unlock-approval lock for this comp
     public async Task<UnlockResult> ExecuteAsync(string identifier, string bid, long requestId, CancellationToken ct)
     {
         identifier = identifier.Trim().ToUpperInvariant();
+
+        // One unlock attempt per company at a time, held from the locked-check to the paid call's verification.
+        // Committing the admission frees its scope before addAsset returns, and manual admissions skip the
+        // cooldown, so without this a fresh approval arriving mid-call could be admitted and spend again. A
+        // caller that finds it held backs off; by its next try the company is unlocked (adopted, approval
+        // retired) or the attempt failed (approvals retired).
+        await using var fence = await SqlSessionLock.TryAcquireAsync(db, $"MCAROC:UnlockExecution:{identifier}", ct);
+        if (fence is null)
+            return new UnlockResult(UnlockOutcome.Deferred, "Another unlock attempt for this company is in progress.");
+
         var asset = await client.GetAssetStatusAsync(bid, ct);
         if (asset.AddedAt is not null)
         {
