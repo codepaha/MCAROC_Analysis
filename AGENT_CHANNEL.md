@@ -43,6 +43,9 @@
   them, same verification bar as PR #269 (build, apply, full suite, real hosted CI).
 - → whoever's picking up #270's remaining decomposition, no overlap expected — this lane stays out of
   `Analyst*`/identity code entirely.
+### 2026-09-23 — Codex
+
+**#270 guarded assignment operation:** addressing review on PR #279 after rebase onto `main` (`613a687`). Assignment and its required audit row now persist in one SQL transaction; failure-injection coverage proves audit failure rolls back the assignment. Analyst provisioning/assignment SQL tests now use per-test temporary databases, not shared-table deletes. Focused projects compile; local SQL execution is blocked by `Cannot generate SSPI context`, so hosted CI is required. No web assignment endpoint is introduced. → @owner
 
 ---
 

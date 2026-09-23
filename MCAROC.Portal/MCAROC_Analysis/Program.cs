@@ -28,9 +28,10 @@ QuestPDF.Settings.License = QuestPDF.Infrastructure.LicenseType.Community;
 
 const long MaxUploadBytes = 2_000_000_000; // matches ArchiveSafetyLimits.MaxArchiveSizeBytes — the real sample corpus is ~700MB
 
-var isAnalystProvisioningCommand = args.Length > 0
-    && string.Equals(args[0], AnalystProvisioningCommand.Argument, StringComparison.Ordinal);
-var builderArgs = isAnalystProvisioningCommand ? args.Skip(1).ToArray() : args;
+var analystOperationalCommand = args.FirstOrDefault() is { } command
+    && (string.Equals(command, AnalystProvisioningCommand.Argument, StringComparison.Ordinal)
+        || string.Equals(command, AnalystAssignmentCommand.Argument, StringComparison.Ordinal));
+var builderArgs = analystOperationalCommand ? args.Skip(1).ToArray() : args;
 var builder = WebApplication.CreateBuilder(builderArgs);
 
 // The default multipart/Kestrel body-size limits (128MB / effectively Kestrel's own default) are far below
@@ -51,6 +52,7 @@ builder.Services.AddScoped<IAuditLogService, AuditLogService>();
 builder.Services.AddScoped<AuditLogFilter>();
 builder.Services.AddSingleton<IAnalystPasswordHasher, AnalystPasswordHasher>();
 builder.Services.AddScoped<AnalystProvisioningService>();
+builder.Services.AddScoped<AnalystAssignmentOperationService>();
 builder.Services.AddScoped<IAnalystRequestAccessService, AnalystRequestAccessService>();
 builder.Services.AddScoped<AnalystDashboardQueryService>();
 builder.Services.AddScoped<IAuthorizationHandler, AnalystRequestAuthorizationHandler>();
@@ -349,9 +351,11 @@ builder.Services.AddRateLimiter(options =>
 
 var app = builder.Build();
 
-if (isAnalystProvisioningCommand)
+if (analystOperationalCommand)
 {
-    Environment.ExitCode = await AnalystProvisioningCommand.RunAsync(app.Services, args);
+    Environment.ExitCode = string.Equals(args[0], AnalystProvisioningCommand.Argument, StringComparison.Ordinal)
+        ? await AnalystProvisioningCommand.RunAsync(app.Services, args)
+        : await AnalystAssignmentCommand.RunAsync(app.Services, args);
     return;
 }
 
