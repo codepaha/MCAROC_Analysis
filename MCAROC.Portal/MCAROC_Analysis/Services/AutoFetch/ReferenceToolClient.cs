@@ -91,24 +91,64 @@ public sealed class ReferenceToolClient(HttpClient http, IOptions<ReferenceToolO
         return session;
     }
 
+    /// <summary>The job-side session check: <see cref="CheckSessionAsync"/> plus health reporting, throwing a
+    /// <see cref="ReferenceToolException"/> that keeps the failure's kind (an invalid session with no
+    /// classified kind is <see cref="ReferenceToolFailureKind.SessionExpired"/>; a transport failure is
+    /// <see cref="ReferenceToolFailureKind.Unavailable"/>) so the caller can tell a transient outage from a
+    /// credentials problem. <see cref="ReferenceToolHealthProbe"/> deliberately calls
+    /// <see cref="CheckSessionAsync"/> instead — it reports its own outcome, and reporting here as well
+    /// would count one failure twice.</summary>
+    public async Task<ReferenceSessionInfo> RequireValidSessionAsync(CancellationToken ct)
+    {
+        var callStartUtc = DateTime.UtcNow;
+        ReferenceSessionInfo info;
+        try
+        {
+            info = await CheckSessionAsync(ct);
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException && !ct.IsCancellationRequested)
+        {
+            await ReportHealthSafeAsync(false, callStartUtc, ex.Message, authRejected: false, ct);
+            throw new ReferenceToolException($"The reference tool could not be reached for the session check: {ex.Message}", ReferenceToolFailureKind.Unavailable, ex);
+        }
+        catch (ReferenceToolException ex) when (!ct.IsCancellationRequested)
+        {
+            await ReportHealthSafeAsync(false, callStartUtc, ex.Message, ex.Kind == ReferenceToolFailureKind.AuthRejected, ct);
+            throw;
+        }
+
+        if (info.IsValid)
+        {
+            await ReportHealthSafeAsync(true, callStartUtc, null, false, ct);
+            return info;
+        }
+
+        var kind = info.Kind ?? ReferenceToolFailureKind.SessionExpired;
+        await ReportHealthSafeAsync(false, callStartUtc, info.Detail, kind == ReferenceToolFailureKind.AuthRejected, ct);
+        var message = kind is ReferenceToolFailureKind.Unavailable or ReferenceToolFailureKind.RateLimited
+            ? $"The reference tool is temporarily unavailable ({info.Detail})."
+            : $"The reference-tool session is not valid ({info.Detail}). Sign in to the tool in a browser, copy the fresh Cookie header into ReferenceTool:SessionCookie and retry.";
+        throw new ReferenceToolException(message, kind);
+    }
+
     private async Task<ReferenceSessionInfo> TryGetUserDetailsAsync(CancellationToken ct)
     {
         using var response = await SendSignedAsync("server/user/userDetailsService.php", new { action = "getUserDetails" }, ct);
         var body = await response.Content.ReadAsStringAsync(ct);
         if (!response.IsSuccessStatusCode)
-            return new ReferenceSessionInfo(false, null, $"HTTP {(int)response.StatusCode}");
+            return new ReferenceSessionInfo(false, null, $"HTTP {(int)response.StatusCode}", ClassifyHttpFailure(response.StatusCode));
 
         JsonDocument doc;
         try { doc = JsonDocument.Parse(body); }
-        catch (JsonException) { return new ReferenceSessionInfo(false, null, "non-JSON response (logged out?)"); }
+        catch (JsonException) { return new ReferenceSessionInfo(false, null, "non-JSON response (logged out?)", ReferenceToolFailureKind.SessionExpired); }
 
         using (doc)
         {
             var root = doc.RootElement;
             if (root.ValueKind != JsonValueKind.Object)
-                return new ReferenceSessionInfo(false, null, "unexpected response shape");
+                return new ReferenceSessionInfo(false, null, "unexpected response shape", ReferenceToolFailureKind.SessionExpired);
             if (root.TryGetProperty("error", out var err) && err.ValueKind != JsonValueKind.Null)
-                return new ReferenceSessionInfo(false, null, err.ToString());
+                return new ReferenceSessionInfo(false, null, err.ToString(), ReferenceToolFailureKind.SessionExpired);
 
             var userId = FindUserId(root) ?? session.UserId;
             return new ReferenceSessionInfo(true, userId, null);
@@ -131,7 +171,8 @@ public sealed class ReferenceToolClient(HttpClient http, IOptions<ReferenceToolO
 
             if (!session.TryReserveLoginSlot(_opts.MaxLoginsPerHour, DateTime.UtcNow))
                 return new ReferenceSessionInfo(false, null,
-                    $"Reference tool login rate limit reached ({_opts.MaxLoginsPerHour}/hour) — refusing to attempt another login.");
+                    $"Reference tool login rate limit reached ({_opts.MaxLoginsPerHour}/hour) — refusing to attempt another login.",
+                    ReferenceToolFailureKind.RateLimited);
 
             var key = await GetSigningKeyAsync(ct);
             var loginPayload = new
@@ -201,7 +242,7 @@ public sealed class ReferenceToolClient(HttpClient http, IOptions<ReferenceToolO
                 return new ReferenceSessionInfo(true, userId, null);
             }
 
-            return new ReferenceSessionInfo(false, null, "No session cookies returned from login.");
+            return new ReferenceSessionInfo(false, null, "No session cookies returned from login.", ReferenceToolFailureKind.ContractChanged);
             }
         }
         finally

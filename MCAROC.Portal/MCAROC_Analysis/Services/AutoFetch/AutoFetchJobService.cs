@@ -125,9 +125,9 @@ public sealed class AutoFetchJobService(
 
             // 1. Session
             await SetStageAsync(job, AutoFetchJobStatus.CheckingSession, 2, "Checking the reference-tool session…", ct);
-            var session = await client.CheckSessionAsync(ct);
-            if (!session.IsValid)
-                throw new ReferenceToolException($"The reference-tool session is not valid ({session.Detail}). Sign in to the tool in a browser, copy the fresh Cookie header into ReferenceTool:SessionCookie and retry.");
+            // Reports to the breaker and throws with the failure's kind preserved, so a transient outage
+            // here lands in the breaker-class catch below (job stays Queued) instead of failing the job.
+            var session = await client.RequireValidSessionAsync(ct);
             var userId = !string.IsNullOrWhiteSpace(_opts.UserId) ? _opts.UserId.Trim() : session.UserId;
 
             // 2. Company name (best effort — the workbook's own "About the Company" sheet fills it in later anyway)
