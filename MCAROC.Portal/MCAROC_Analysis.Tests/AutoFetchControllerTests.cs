@@ -90,6 +90,56 @@ public class AutoFetchControllerTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Recheck_clears_prior_checkpoints_once_and_keeps_the_request()
+    {
+        await using var db = CreateContext();
+        var (controller, _) = NewController(db, configured: true);
+        var cin = NewCompanyIdentifier();
+        var created = Assert.IsType<RedirectToActionResult>(await controller.New(new AutoFetchRequestViewModel
+        {
+            ClientId = 1, Cin = cin, EntityType = EntityType.Company
+        }, CancellationToken.None));
+        var requestId = Assert.IsType<long>(created.RouteValues!["id"]);
+        var run = new IngestionRun { RequestId = requestId, RunNumber = 1, StartedDate = DateTime.UtcNow,
+            CompletedDate = DateTime.UtcNow, Status = IngestionRunStatus.CompletedClean };
+        db.IngestionRuns.Add(run);
+        await db.SaveChangesAsync();
+        var request = await db.Requests.SingleAsync(r => r.RequestId == requestId);
+        request.LatestCompletedIngestionRunId = run.IngestionRunId;
+        request.RequestStatus = RequestStatus.AnalysisCompleted;
+        var oldJob = await db.AutoFetchJobs.SingleAsync(j => j.RequestId == requestId);
+        oldJob.Status = AutoFetchJobStatus.Completed;
+        oldJob.RocDocumentId = 123;
+        oldJob.ChargeDocumentId = 124;
+        oldJob.IngestionRunId = run.IngestionRunId;
+        oldJob.FilingsDocumentId = 125;
+        oldJob.FilingBatchId = 126;
+        oldJob.FilesDownloaded = 7;
+        oldJob.IncludeFilings = true;
+        await db.SaveChangesAsync();
+        db.ChangeTracker.Clear();
+
+        Assert.IsType<RedirectToActionResult>(await controller.Recheck(requestId, CancellationToken.None));
+        var fresh = await db.AutoFetchJobs.AsNoTracking().SingleAsync(j => j.RequestId == requestId);
+        Assert.Equal(oldJob.AutoFetchJobId, fresh.AutoFetchJobId);
+        Assert.Equal(AutoFetchJobStatus.Queued, fresh.Status);
+        Assert.Null(fresh.RocDocumentId);
+        Assert.Null(fresh.ChargeDocumentId);
+        Assert.Null(fresh.IngestionRunId);
+        Assert.Null(fresh.FilingsDocumentId);
+        Assert.Null(fresh.FilingBatchId);
+        Assert.Equal(0, fresh.FilesDownloaded);
+        Assert.False(fresh.IncludeFilings);
+        Assert.Equal(run.IngestionRunId, (await db.Requests.AsNoTracking().SingleAsync(r => r.RequestId == requestId)).LatestCompletedIngestionRunId);
+
+        await db.AutoFetchJobs.Where(j => j.RequestId == requestId)
+            .ExecuteUpdateAsync(s => s.SetProperty(j => j.FilesDownloaded, 1));
+        Assert.IsType<RedirectToActionResult>(await controller.Recheck(requestId, CancellationToken.None));
+        Assert.Equal(1, await db.AutoFetchJobs.CountAsync(j => j.RequestId == requestId));
+        Assert.Equal(1, (await db.AutoFetchJobs.AsNoTracking().SingleAsync(j => j.RequestId == requestId)).FilesDownloaded);
+    }
+
+    [Fact]
     public async Task Form_tells_the_user_when_auto_fetch_is_not_configured()
     {
         await using var db = CreateContext();

@@ -91,6 +91,7 @@ public class RequestDetailsViewModel
     /// <summary>The auto-fetch job that created this request from a bare CIN, if any — the Details page
     /// shows its progress panel (polling) until it reaches a terminal state.</summary>
     public AutoFetchJob? AutoFetchJob { get; set; }
+    public bool IsInternalReviewer { get; set; }
 
     // MCA Filings (PDF) pipeline
     public McaFilingBatch? FilingBatch { get; set; }

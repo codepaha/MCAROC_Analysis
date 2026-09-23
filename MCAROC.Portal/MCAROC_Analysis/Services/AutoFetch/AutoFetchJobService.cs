@@ -78,6 +78,72 @@ public sealed class AutoFetchJobService(
         return job;
     }
 
+    /// <summary>Starts a workbook-only attempt on an already ingested request. A conditional update
+    /// admits exactly one caller for an existing job; the RequestId unique index does the same for a
+    /// request whose original workbooks were uploaded manually.</summary>
+    public async Task<AutoFetchJob?> TryQueueRecheckAsync(long requestId, string correlationId, CancellationToken ct)
+    {
+        var request = await db.Requests.AsNoTracking().FirstOrDefaultAsync(r => r.RequestId == requestId, ct);
+        if (request?.LatestCompletedIngestionRunId is null ||
+            request.RequestStatus is not (RequestStatus.AnalysisCompleted or RequestStatus.AiAnalysisFailed))
+            return null;
+
+        var identifier = (request.Cin ?? request.Llpin ?? "").Trim().ToUpperInvariant();
+        if (identifier.Length == 0) return null;
+        var now = DateTime.UtcNow;
+        var existing = await db.AutoFetchJobs.AsNoTracking().FirstOrDefaultAsync(j => j.RequestId == requestId, ct);
+        if (existing is not null)
+        {
+            var updated = await db.AutoFetchJobs
+                .Where(j => j.AutoFetchJobId == existing.AutoFetchJobId &&
+                    (j.Status == AutoFetchJobStatus.Completed || j.Status == AutoFetchJobStatus.CompletedWithWarnings || j.Status == AutoFetchJobStatus.Failed) &&
+                    db.Requests.Any(r => r.RequestId == requestId && r.LatestCompletedIngestionRunId != null &&
+                        (r.RequestStatus == RequestStatus.AnalysisCompleted || r.RequestStatus == RequestStatus.AiAnalysisFailed)))
+                .ExecuteUpdateAsync(s => s
+                    .SetProperty(j => j.Cin, identifier)
+                    .SetProperty(j => j.CorrelationId, correlationId)
+                    .SetProperty(j => j.Status, AutoFetchJobStatus.Queued)
+                    .SetProperty(j => j.ProgressPercent, 0)
+                    .SetProperty(j => j.StatusMessage, "Company re-check queued.")
+                    .SetProperty(j => j.FailureReason, (string?)null)
+                    .SetProperty(j => j.WarningsJson, "[]")
+                    .SetProperty(j => j.IncludeFilings, false)
+                    .SetProperty(j => j.MaxDocumentsPerSection, 0)
+                    .SetProperty(j => j.RegistryTotalCount, 0)
+                    .SetProperty(j => j.RegistryListedCount, 0)
+                    .SetProperty(j => j.FilesTotal, 0)
+                    .SetProperty(j => j.FilesDownloaded, 0)
+                    .SetProperty(j => j.FilesFailed, 0)
+                    .SetProperty(j => j.BytesDownloaded, 0L)
+                    .SetProperty(j => j.RocDocumentId, (long?)null)
+                    .SetProperty(j => j.ChargeDocumentId, (long?)null)
+                    .SetProperty(j => j.IngestionRunId, (long?)null)
+                    .SetProperty(j => j.FilingsDocumentId, (long?)null)
+                    .SetProperty(j => j.FilingBatchId, (long?)null)
+                    .SetProperty(j => j.AttemptCount, 0)
+                    .SetProperty(j => j.CreatedUtc, now)
+                    .SetProperty(j => j.StartedUtc, (DateTime?)null)
+                    .SetProperty(j => j.HeartbeatUtc, (DateTime?)null)
+                    .SetProperty(j => j.CompletedUtc, (DateTime?)null), ct);
+            return updated == 1 ? await db.AutoFetchJobs.AsNoTracking().FirstAsync(j => j.AutoFetchJobId == existing.AutoFetchJobId, ct) : null;
+        }
+
+        var job = new AutoFetchJob
+        {
+            RequestId = requestId, Cin = identifier, Bid = ReferenceToolClient.ComputeBid(identifier),
+            CorrelationId = correlationId, IncludeFilings = false, CreatedUtc = now,
+            StatusMessage = "Company re-check queued."
+        };
+        db.AutoFetchJobs.Add(job);
+        try { await db.SaveChangesAsync(ct); }
+        catch (DbUpdateException)
+        {
+            db.ChangeTracker.Clear();
+            return null;
+        }
+        return job;
+    }
+
     /// <summary>Puts a Failed job back in the queue keeping its checkpoints — the caller enqueues it.</summary>
     public async Task<AutoFetchJob?> RequeueAsync(long requestId, CancellationToken ct, string? correlationId = null)
     {
@@ -198,6 +264,8 @@ public sealed class AutoFetchJobService(
                 if (run.Status == IngestionRunStatus.Failed)
                     throw new ReferenceToolException($"Workbook extraction failed: {run.FailureReason}");
 
+                await ActivateWorkbookSourcesAsync(request.RequestId, job.RocDocumentId.Value, job.ChargeDocumentId, ct);
+
                 job.IngestionRunId = run.IngestionRunId;
                 await db.SaveChangesAsync(ct);
 
@@ -289,6 +357,26 @@ public sealed class AutoFetchJobService(
     }
 
     // ── Stages ─────────────────────────────────────────────────────────────────────────────────────
+
+    private async Task ActivateWorkbookSourcesAsync(long requestId, long rocId, long? chargeId, CancellationToken ct)
+    {
+        await using var transaction = await db.Database.BeginTransactionAsync(ct);
+        await ActivateSourceAsync(requestId, DocumentType.McaRocReport, rocId, ct);
+        if (chargeId is { } id)
+            await ActivateSourceAsync(requestId, DocumentType.ChargeReport, id, ct);
+        await transaction.CommitAsync(ct);
+    }
+
+    private async Task ActivateSourceAsync(long requestId, DocumentType type, long candidateId, CancellationToken ct)
+    {
+        await db.RequestDocuments
+            .Where(d => d.RequestId == requestId && d.DocumentType == type && d.IsActiveSource && d.DocumentId != candidateId)
+            .ExecuteUpdateAsync(s => s.SetProperty(d => d.IsActiveSource, false)
+                .SetProperty(d => d.SupersededByDocumentId, candidateId), ct);
+        await db.RequestDocuments.Where(d => d.DocumentId == candidateId && d.RequestId == requestId && d.DocumentType == type)
+            .ExecuteUpdateAsync(s => s.SetProperty(d => d.IsActiveSource, true)
+                .SetProperty(d => d.UploadStatus, DocumentUploadStatus.Processed), ct);
+    }
 
     private static bool NeedsCompanyName(McaRequest request) =>
         string.IsNullOrWhiteSpace(request.CompanyName)

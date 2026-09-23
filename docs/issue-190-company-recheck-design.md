@@ -10,9 +10,9 @@ The owner activated this issue on 23 September 2026 and selected **automatic ret
 4. Once the provider reports a ready snapshot, start a **new** auto-fetch attempt for the same request. Clear the previous `AutoFetchJob`'s workbook, ingestion and filing checkpoints and progress counters in an atomic admission step, while leaving old documents, ingestion runs, analysis runs, and filing batches intact. A retry of this new attempt retains only its own checkpoints. Concurrent clicks join the active attempt; neither a duplicate provider refresh nor a duplicate ingestion run is allowed.
 5. Feed the newly fetched workbooks into the existing `IngestionOrchestrator` and analysis queue. The existing run lineage and calculation assurance process remain the authority. Show the previous result until the new run completes, with an explicit re-check-in-progress state. If fetching or validation fails, keep the previous completed run and show the failure.
 
-## Integration order
+## Implementation
 
-The current `AutoFetchJobService.CreateOrResetJobAsync` leaves `RocDocumentId`, `IngestionRunId`, and other stage checkpoints intact. Calling it from a new button today would skip workbook retrieval and produce a false re-check. The current main branch also has only the pure `CompanyRefreshPolicy`; #229's provider state, polling, and readiness service has not landed. The safe route is to land the source-age display first, then wire the POST and fresh-attempt admission after #229's durable refresh API is available. #266 supplies the locked-company approval path.
+#229 merged as `1058b51` and provides the durable company refresh gate. The reviewer POST uses a separate fresh-attempt admission method; ordinary Retry continues to preserve checkpoints. The re-check resets every workbook, ingestion, and filing checkpoint, plus counters and progress, on the existing job row. Manual-upload requests get their first auto-fetch job. It fetches workbooks only, so the existing filing batch is retained and RAG documents are not re-embedded. A provider snapshot within 24 hours may be reused, but the workbooks are exported again for the new attempt. The action requires the reference-tool freshness gate to be enabled. #266 still supplies the locked-company approval path.
 
 ## Acceptance checks for the action
 

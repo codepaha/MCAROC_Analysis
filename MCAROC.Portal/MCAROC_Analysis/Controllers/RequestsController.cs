@@ -458,6 +458,7 @@ public class RequestsController(
 
         var documents = await db.RequestDocuments.Where(d => d.RequestId == id).ToListAsync();
         var vm = new RequestDetailsViewModel { Request = request, Documents = documents, FocusChargeId = charge };
+        vm.IsInternalReviewer = await CheckIsInternalReviewerAsync();
         vm.AutoFetchJob = await db.AutoFetchJobs.AsNoTracking().FirstOrDefaultAsync(j => j.RequestId == id);
 
         if (request.LatestCompletedIngestionRunId is { } runId)

@@ -68,8 +68,18 @@
                             <i class="bi bi-shield-check"></i><span>Calculation audit</span>
                         </a>
                     }
-                    @if (User.Identities.Any(i => i.AuthenticationType == "InternalReviewer" && i.IsAuthenticated))
+                    @if (Model.IsInternalReviewer)
                     {
+                        @if (r.LatestCompletedIngestionRunId is not null &&
+                             !string.IsNullOrWhiteSpace(r.Cin ?? r.Llpin) &&
+                             (Model.AutoFetchJob is null || Model.AutoFetchJob.IsTerminal) &&
+                             r.RequestStatus is RequestStatus.AnalysisCompleted or RequestStatus.AiAnalysisFailed)
+                        {
+                            <form method="post" action="/Requests/@r.RequestId/recheck">
+                                @Html.AntiForgeryToken()
+                                <button type="submit" class="btn btn-sm btn-outline-primary">Re-check this company</button>
+                            </form>
+                        }
                         <a href="/internal/audit-logs/@r.RequestId" class="btn btn-sm btn-outline-secondary" title="Internal audit logs — lifecycle events, diagnostics, and mutations">
                             <i class="bi bi-journal-text"></i><span>Audit logs</span>
                         </a>

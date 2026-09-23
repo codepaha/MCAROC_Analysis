@@ -40,6 +40,7 @@ public enum AuditActionType
     // AutoFetch
     AutoFetchRequested,
     AutoFetchRetried,
+    AutoFetchRecheckRequested,
 
     // RequestsUpload
     ArchiveUploadInitiated,

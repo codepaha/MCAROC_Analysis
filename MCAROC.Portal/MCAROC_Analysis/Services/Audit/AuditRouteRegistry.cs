@@ -22,6 +22,7 @@ public static class AuditRouteRegistry
             // AutoFetch
             { ("AutoFetch", "New"), (AuditActionType.AutoFetchRequested, AuditRulePolicy.Always) },
             { ("AutoFetch", "Retry"), (AuditActionType.AutoFetchRetried, AuditRulePolicy.Always) },
+            { ("AutoFetch", "Recheck"), (AuditActionType.AutoFetchRecheckRequested, AuditRulePolicy.Always) },
 
             // RequestsUpload
             { ("RequestsUpload", "Initiate"), (AuditActionType.ArchiveUploadInitiated, AuditRulePolicy.Always) },
