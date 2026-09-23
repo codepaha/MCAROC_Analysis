@@ -9,7 +9,7 @@
     <div>
         <div class="pi-kicker">Assigned work</div>
         <h1>My queue</h1>
-        <p>Requests assigned to @Model.AnalystName. Counts reflect current request status and may overlap when a request also needs attention. Request details will appear after their access checks are enabled.</p>
+        <p>Requests assigned to @Model.AnalystName. Counts reflect current request status and may overlap when a request also needs attention.</p>
     </div>
 </section>
 
@@ -61,7 +61,7 @@
                     {
                         var ageDays = Math.Max(0, (DateTime.UtcNow.Date - request.CreatedUtc.Date).Days);
                         <tr>
-                            <td><span class="analyst-request-number">@request.RequestNumber</span><small>@request.EntityType</small></td>
+                            <td><a class="analyst-request-number" href="/analyst/requests/@request.RequestId">@request.RequestNumber</a><small>@request.EntityType</small></td>
                             <td><strong>@request.CompanyName</strong><small>@(request.Cin ?? request.Llpin ?? "Identifier unavailable")</small></td>
                             <td><span class="analyst-status">@request.Status</span></td>
                             <td>@ageDays day@(ageDays == 1 ? "" : "s")</td>
