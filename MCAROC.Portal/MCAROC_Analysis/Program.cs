@@ -91,6 +91,13 @@ builder.Services.AddHostedService<AutoFetchWorker>();
 // request/job-scoped AppDbContext; the probe (a singleton hosted service) creates its own scope per tick.
 builder.Services.AddScoped<IIntegrationHealthService, IntegrationHealthService>();
 builder.Services.AddHostedService<ReferenceToolHealthProbe>();
+// Paid-call admission ledger (docs/pipeline-automation-plan.md §4.0) — the only authority for starting a
+// litigation search/analysis or a reference-tool unlock. IOptionsMonitor so a changed cap applies immediately.
+builder.Services.Configure<PipelineOptions>(builder.Configuration.GetSection(PipelineOptions.SectionName));
+builder.Services.AddSingleton(TimeProvider.System);
+builder.Services.AddScoped<IPaidCallAdmission, PaidCallAdmissionService>();
+builder.Services.AddScoped<LitigationStartService>();
+builder.Services.AddHostedService<PaidCallAdmissionSweepWorker>();
 
 // Litigation data lake (#239, LIT-01) — authenticate/register/poll against the BPR Litigation Data API and
 // retain the raw report for #242 to persist. Inert until BprLitigation:BaseUrl/Id/SecretKey are configured

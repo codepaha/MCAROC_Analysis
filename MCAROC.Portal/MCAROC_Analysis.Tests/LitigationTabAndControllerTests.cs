@@ -242,10 +242,8 @@ public class LitigationTabAndControllerTests : IAsyncLifetime
         var controller = new LitigationController(
             db: db,
             env: new FakeEnv(Path.GetTempPath()),
-            analysis: null!,
-            searchJobService: null!,
-            searchQueue: new LitigationSearchQueue(),
             bprOptions: unconfiguredOpts,
+            starter: null!,
             logger: NullLogger<LitigationController>.Instance);
 
         var result = await controller.StartSearch(request.RequestId, default);
@@ -267,10 +265,8 @@ public class LitigationTabAndControllerTests : IAsyncLifetime
         var controller = new LitigationController(
             db: db,
             env: new FakeEnv(Path.GetTempPath()),
-            analysis: null!,
-            searchJobService: null!,
-            searchQueue: new LitigationSearchQueue(),
             bprOptions: configuredOpts,
+            starter: null!,
             logger: NullLogger<LitigationController>.Instance);
 
         var result = await controller.StartSearch(request.RequestId, default);
@@ -292,10 +288,8 @@ public class LitigationTabAndControllerTests : IAsyncLifetime
         var controller = new LitigationController(
             db: db,
             env: new FakeEnv(Path.GetTempPath()),
-            analysis: null!,
-            searchJobService: null!,
-            searchQueue: new LitigationSearchQueue(),
             bprOptions: configuredOpts,
+            starter: null!,
             logger: NullLogger<LitigationController>.Instance);
 
         var result = await controller.StartSearch(request.RequestId, default);
@@ -544,10 +538,8 @@ public class LitigationTabAndControllerTests : IAsyncLifetime
         var controller = new LitigationController(
             db: db,
             env: new FakeEnv(Path.GetTempPath()),
-            analysis: null!,
-            searchJobService: null!,
-            searchQueue: new LitigationSearchQueue(),
             bprOptions: Options.Create(new BprLitigationOptions()),
+            starter: null!,
             logger: NullLogger<LitigationController>.Instance);
 
         var httpContext = new DefaultHttpContext();

@@ -264,8 +264,16 @@ conditional `UPDATE … WHERE State='Reserved'`, so double-resolution is a no-op
   terminal or absent (auth failure, ineligible, crash before register), or a `Reserved` admission older than
   `Pipeline:ReservationTtlMinutes` (30) with no job. Release = `Used = Used - 1` (floor 0) on the admission's
   **own** `DayKey`, clear `ActiveAdmissionId`, never touch `LastCommittedUtc`.
-- *Analysis* → `Committed` once any `LitigationCaseAiAnalysis` row of the run has token counts recorded (a model
-  call was made); otherwise `Released` when the run is terminal.
+- *Analysis* → `Committed` once the run has been claimed at least once (`AttemptCount > 0`); otherwise `Released`
+  when the run is terminal or absent. *(Implemented in #265 — deviates from the original "token counts recorded"
+  rule: the analysis orchestrator never writes token counts, and it persists case rows only after every case has
+  been analysed, so a run that dies mid-way leaves no per-call evidence at all. The first claim is the earliest
+  durable signal that a model call may follow; committing there over-counts a run that makes no call, which is
+  the fail-closed direction.)*
+- *Never linked* (a crash between creating/resetting the job or run and recording it on the admission) → the
+  resolver looks for the request's job/run instead of releasing blindly: a search job attempted, or an analysis
+  run claimed, at or after `ReservedUtc` commits the admission; only past `Pipeline:ReservationTtlMinutes` with
+  no such evidence (and no still-queued job/run it could belong to) is it released.
 - A vendor-side *failure after registration* is **not** a new purchase and **not** auto-repurchased: the stage
   goes to `NeedsAttention`; a human re-run is a `Manual` admission.
 
