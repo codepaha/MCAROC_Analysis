@@ -60,9 +60,22 @@ public class RequestListQueryService(AppDbContext db)
         };
 
         var page = Math.Max(1, filters.Page);
-        var pageRows = sorted.Skip((page - 1) * RequestListFilterCriteria.PageSize).Take(RequestListFilterCriteria.PageSize)
-            .Select(r => new RequestListRow(r.Request, r.LatestReviewPriority, r.LatestCriticalFindingsCount, DashboardQueryService.BuildAttentionReasons(r)))
-            .ToList();
+        var pageSource = sorted.Skip((page - 1) * RequestListFilterCriteria.PageSize)
+            .Take(RequestListFilterCriteria.PageSize).ToList();
+        var runIds = pageSource.Where(r => r.Request.LatestCompletedIngestionRunId.HasValue)
+            .Select(r => r.Request.LatestCompletedIngestionRunId!.Value).Distinct().ToList();
+        var snapshotDates = await db.IngestionRuns.AsNoTracking()
+            .Where(run => runIds.Contains(run.IngestionRunId))
+            .Select(run => new { run.IngestionRunId, run.SourceSnapshotDate })
+            .ToDictionaryAsync(run => run.IngestionRunId, run => run.SourceSnapshotDate, ct);
+        var pageRows = pageSource.Select(r =>
+        {
+            DateTime? sourceDate = null;
+            if (r.Request.LatestCompletedIngestionRunId is { } runId)
+                snapshotDates.TryGetValue(runId, out sourceDate);
+            return new RequestListRow(r.Request, r.LatestReviewPriority, r.LatestCriticalFindingsCount,
+                DashboardQueryService.BuildAttentionReasons(r), sourceDate);
+        }).ToList();
 
         return new RequestListViewModel { Filters = filters, Clients = clients, Rows = pageRows, TotalCount = totalCount };
     }

@@ -6,7 +6,8 @@ public record RequestListRow(
     McaRequest Request,
     ReviewPriority? Priority,
     int CriticalFindingsCount,
-    List<string> AttentionReasons);
+    List<string> AttentionReasons,
+    DateTime? SourceSnapshotDate);
 
 public class RequestListViewModel
 {

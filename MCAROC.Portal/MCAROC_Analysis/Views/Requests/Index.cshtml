@@ -106,6 +106,7 @@ else
                     <th>Review Priority</th>
                     <th>Attention</th>
                     <th>Status</th>
+                    <th>Source age</th>
                     <th>Created</th>
                     <th></th>
                 </tr>
@@ -126,6 +127,21 @@ else
                         @foreach (var reason in row.AttentionReasons) { <span class="pi-status-pill pi-status-processing me-1">@reason</span> }
                     </td>
                     <td>@row.Request.RequestStatus</td>
+                    <td class="text-nowrap">
+                        @if (row.SourceSnapshotDate is { } snapshot)
+                        {
+                            var ageDays = Math.Max(0, (DateTime.UtcNow.Date - snapshot.Date).Days);
+                            <span title="Workbook source snapshot: @snapshot.ToString("d MMM yyyy")">@ageDays day@(ageDays == 1 ? "" : "s") old</span>
+                        }
+                        else if (row.Request.LatestCompletedIngestionRunId is not null)
+                        {
+                            <span class="text-muted">Source date unknown</span>
+                        }
+                        else
+                        {
+                            <span class="text-muted">No source yet</span>
+                        }
+                    </td>
                     <td>@row.Request.CreatedDate.ToString("d MMM yyyy")</td>
                     <td class="text-nowrap">
                         <a asp-controller="Requests" asp-action="Details" asp-route-id="@row.Request.RequestId" class="btn btn-sm btn-outline-primary">View</a>

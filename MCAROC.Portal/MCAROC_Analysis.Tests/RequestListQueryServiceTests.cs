@@ -184,4 +184,36 @@ public class RequestListQueryServiceTests : IAsyncLifetime
         var row = Assert.Single(vm.Rows);
         Assert.Equal(inRangeA.RequestId, row.Request.RequestId);
     }
+
+    [Fact]
+    public async Task SourceDate_UsesLatestCompletedIngestion_NotRequestUpdateOrLaterFailedRun()
+    {
+        await using var db = CreateContext();
+        var client = await SeedClientAsync(db);
+        var request = await SeedRequestAsync(db, client);
+        var sourceDate = new DateTime(2025, 3, 4);
+        var completed = new IngestionRun
+        {
+            RequestId = request.RequestId, RunNumber = 1, Status = IngestionRunStatus.CompletedClean,
+            StartedDate = DateTime.UtcNow.AddDays(-20), CompletedDate = DateTime.UtcNow.AddDays(-20),
+            SourceSnapshotDate = sourceDate
+        };
+        var failed = new IngestionRun
+        {
+            RequestId = request.RequestId, RunNumber = 2, Status = IngestionRunStatus.Failed,
+            StartedDate = DateTime.UtcNow, SourceSnapshotDate = DateTime.UtcNow
+        };
+        db.IngestionRuns.AddRange(completed, failed);
+        await db.SaveChangesAsync();
+        request.LatestCompletedIngestionRunId = completed.IngestionRunId;
+        request.UpdatedDate = DateTime.UtcNow;
+        await db.SaveChangesAsync();
+
+        var vm = await new RequestListQueryService(db).SearchAsync(new RequestListFilterCriteria
+        {
+            ClientId = client.ClientId, DateFrom = DateOnly.FromDateTime(DateTime.UtcNow.AddDays(-1))
+        });
+
+        Assert.Equal(sourceDate, Assert.Single(vm.Rows).SourceSnapshotDate);
+    }
 }

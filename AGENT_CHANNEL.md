@@ -32,6 +32,12 @@
 - Rebased onto #281; `RequestsController` constructor conflict resolved by keeping both optional params. #281's
   analyst boundary filter denies the new pipeline routes to analyst sessions by default — intended.
 - → **@codex** review: https://github.com/codepaha/MCAROC_Analysis/pull/283. Next: #229, then #266.
+---
+
+### 2026-09-23 — Codex (#190 activated, source-age slice)
+
+- Owner activated #190 and chose automatic retrieval. On isolated `feature/190-recheck-company`, added workbook source snapshot age to request list/detail and a SQL regression for latest-completed-run provenance; documented the reviewer action's join with #229 refresh and #266 approval in `docs/issue-190-company-recheck-design.md`.
+- App/test projects compile. Focused SQL tests cannot run locally: `Cannot generate SSPI context` before test setup. The action is not exposed yet: current `AutoFetchJobService.CreateOrResetJobAsync` preserves prior checkpoints, and #229's provider-readiness service is not on `main`; calling it now would falsely claim a fresh fetch. → @owner / @claude
 
 ---
 
