@@ -118,8 +118,13 @@ public sealed class PipelineReconcilerTests : IAsyncLifetime
         Assert.True(await db.PipelineEvents.AnyAsync(e => e.PipelineRunId == runId && e.Stage == PipelineStage.Litigation && e.Action == "Observed:NeedsAttention"));
     }
 
+    /// <summary>Sequential re-reconciles are legitimate (a finished reconcile releases the lease and the next
+    /// tick picks the run up again), so on a fast host more than one of these calls may succeed. What must never
+    /// happen is two reconciles *overlapping*: both would see no stage rows and insert them twice (a key
+    /// violation) or both would log the same transitions. So the invariant is on the effect — no exception, one
+    /// row and one event per stage.</summary>
     [Fact]
-    public async Task Ten_racing_reconcilers_process_a_run_exactly_once()
+    public async Task Ten_racing_reconcilers_never_overlap_on_a_run()
     {
         var requestId = await SeedManualRequestAsync(analysed: false);
         var runId = await NewRunAsync(requestId);
@@ -127,11 +132,51 @@ public sealed class PipelineReconcilerTests : IAsyncLifetime
         using var gate = new ManualResetEventSlim(false);
         var tasks = Enumerable.Range(0, 10).Select(_ => Task.Run(async () => { gate.Wait(); return await ReconcileAsync(runId); })).ToArray();
         gate.Set();
-        var results = await Task.WhenAll(tasks);
+        var results = await Task.WhenAll(tasks); // an overlap would surface here as a duplicate-key exception
 
-        Assert.Single(results, r => r);
+        Assert.Contains(true, results);
         await using var db = CreateContext();
-        Assert.Equal(Enum.GetValues<PipelineStage>().Length, await db.PipelineEvents.CountAsync(e => e.PipelineRunId == runId));
+        var stages = Enum.GetValues<PipelineStage>().Length;
+        Assert.Equal(stages, await db.PipelineStageStates.CountAsync(s => s.PipelineRunId == runId));
+        Assert.Equal(stages, await db.PipelineEvents.CountAsync(e => e.PipelineRunId == runId));
+    }
+
+    [Fact]
+    public async Task A_run_whose_lease_is_held_by_another_reconciler_is_not_touched()
+    {
+        var requestId = await SeedManualRequestAsync(analysed: false);
+        var runId = await NewRunAsync(requestId);
+        await using var db = CreateContext();
+        await db.PipelineRuns.Where(r => r.PipelineRunId == runId).ExecuteUpdateAsync(s => s
+            .SetProperty(r => r.ReconcileLeaseOwner, "other-instance")
+            .SetProperty(r => r.ReconcileLeaseToken, Guid.NewGuid())
+            .SetProperty(r => r.ReconcileLeaseExpiresUtc, DateTime.UtcNow.AddMinutes(5)));
+
+        var results = await Task.WhenAll(Enumerable.Range(0, 5).Select(_ => ReconcileAsync(runId)));
+
+        Assert.All(results, r => Assert.False(r));
+        Assert.Equal(0, await db.PipelineStageStates.CountAsync(s => s.PipelineRunId == runId));
+        Assert.Equal(0, await db.PipelineEvents.CountAsync(e => e.PipelineRunId == runId));
+        Assert.Equal("other-instance", (await db.PipelineRuns.AsNoTracking().SingleAsync(r => r.PipelineRunId == runId)).ReconcileLeaseOwner);
+    }
+
+    [Fact]
+    public async Task An_expired_lease_is_taken_over()
+    {
+        var requestId = await SeedManualRequestAsync(analysed: false);
+        var runId = await NewRunAsync(requestId);
+        await using var db = CreateContext();
+        await db.PipelineRuns.Where(r => r.PipelineRunId == runId).ExecuteUpdateAsync(s => s
+            .SetProperty(r => r.ReconcileLeaseOwner, "crashed-instance")
+            .SetProperty(r => r.ReconcileLeaseToken, Guid.NewGuid())
+            .SetProperty(r => r.ReconcileLeaseExpiresUtc, DateTime.UtcNow.AddMinutes(-1)));
+
+        Assert.True(await ReconcileAsync(runId));
+
+        var run = await db.PipelineRuns.AsNoTracking().SingleAsync(r => r.PipelineRunId == runId);
+        Assert.Null(run.ReconcileLeaseToken);
+        Assert.Null(run.ReconcileLeaseOwner);
+        Assert.Equal(Enum.GetValues<PipelineStage>().Length, await db.PipelineStageStates.CountAsync(s => s.PipelineRunId == runId));
     }
 
     [Fact]
