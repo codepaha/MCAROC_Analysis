@@ -52,7 +52,7 @@ function renderRow(entry) {
   const createdCell = document.createElement('td');
   const created = new Date(entry.createdUtc);
   createdCell.textContent = Number.isNaN(created.getTime()) ? entry.createdUtc
-    : (window.mcaIst ? window.mcaIst(entry.createdUtc) : created.toLocaleString());
+    : (typeof window !== 'undefined' && window.mcaIst ? window.mcaIst(entry.createdUtc) : created.toLocaleString());
   tr.appendChild(createdCell);
 
   const actionCell = document.createElement('td');
