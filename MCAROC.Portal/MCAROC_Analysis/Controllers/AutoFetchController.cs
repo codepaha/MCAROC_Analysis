@@ -283,7 +283,17 @@ public partial class AutoFetchController(
             TempData["AutoFetchError"] = ex.Message;
             return RedirectToAction("Details", "Requests", new { id });
         }
-        await gates.ResumeAsync(job.Cin, job.Bid, ct);
+        try
+        {
+            await gates.ResumeAsync(job.Cin, job.Bid, ct);
+        }
+        catch (Exception ex) when (ex is ReferenceToolException or HttpRequestException or TaskCanceledException && !ct.IsCancellationRequested)
+        {
+            // The approval is stored; the poll worker will act on it — don't turn a transient tool error into an error page.
+            logger?.LogWarning(ex, "Unlock approved for request {RequestId}, but resuming immediately failed", id);
+            TempData["AutoFetchOk"] = "Unlock approved. The reference tool couldn't be reached just now; the unlock will be attempted automatically within a few minutes.";
+            return RedirectToAction("Details", "Requests", new { id });
+        }
         var after = await db.AutoFetchJobs.AsNoTracking().Where(j => j.RequestId == id).Select(j => new { j.Status, j.StatusMessage, j.FailureReason }).FirstAsync(ct);
         if (after.Status == AutoFetchJobStatus.WaitingForUnlock)
             TempData["AutoFetchOk"] = $"Unlock approved. {after.StatusMessage}";
