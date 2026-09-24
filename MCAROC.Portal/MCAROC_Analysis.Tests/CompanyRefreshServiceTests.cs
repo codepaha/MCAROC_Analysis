@@ -93,6 +93,7 @@ public sealed class CompanyRefreshServiceTests : IAsyncLifetime
         var gate = await EvaluateAsync(tool);
 
         Assert.Equal(RefreshGateKind.Ready, gate.Kind);
+        Assert.Contains($"(as of {Ist.Format(tool.DataAsOf!.Value)})", gate.Message); // shown to users: IST
         Assert.Equal(0, tool.Count("requestProbeDataUpdate"));
         var l = await LifecycleAsync();
         Assert.Equal(CompanyReportLifecycleState.Unlocked, l.State);
@@ -107,6 +108,7 @@ public sealed class CompanyRefreshServiceTests : IAsyncLifetime
 
         var started = await EvaluateAsync(tool);
         Assert.Equal(RefreshGateKind.Waiting, started.Kind);
+        Assert.Contains($"requested {Ist.Format(Now)}; times out {Ist.Format(Now.AddHours(36))}", started.Message);
         Assert.Equal(1, tool.Count("requestProbeDataUpdate"));
         var pending = await LifecycleAsync();
         Assert.Equal(CompanyReportLifecycleState.Refreshing, pending.State);
@@ -124,6 +126,7 @@ public sealed class CompanyRefreshServiceTests : IAsyncLifetime
         var done = await EvaluateAsync(tool);
 
         Assert.Equal(RefreshGateKind.Ready, done.Kind);
+        Assert.Contains($"(as of {Ist.Format(tool.DataAsOf!.Value)})", done.Message);
         var l = await LifecycleAsync();
         Assert.Equal(CompanyReportLifecycleState.Unlocked, l.State);
         Assert.Null(l.ActiveRefreshId);

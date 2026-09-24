@@ -16,7 +16,7 @@ internal static class PrrTemplateFiller
 
         var now = Ist.Now();
         FillValues(tables[0], ["", "", cin, name,
-            now.ToString("dd/MM/yyyy h:mm:ss tt", CultureInfo.InvariantCulture),
+            now.ToString("dd/MM/yyyy h:mm:ss tt", CultureInfo.InvariantCulture) + " " + Ist.Label,
             $"{data.Charges.Count} {(data.Charges.Count == 1 ? "charge" : "charges")} found."]);
         var c = data.Company;
         FillValues(tables[1], [cin, name, c.RocName, c.RegistrationNumber, c.Category, c.Subcategory,

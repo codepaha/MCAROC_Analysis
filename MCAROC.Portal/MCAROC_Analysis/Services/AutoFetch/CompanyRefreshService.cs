@@ -59,7 +59,7 @@ public sealed class CompanyRefreshService(
             await Rows(identifier).ExecuteUpdateAsync(s => s.SetProperty(r => r.State,
                 expired ? CompanyReportLifecycleState.Expired : CompanyReportLifecycleState.Locked), ct);
             return new RefreshGateResult(RefreshGateKind.Locked, expired
-                ? $"The company's 12-month unlock in the reference tool expired on {UnlockValidTill(previous!.Value):d MMM yyyy}; it must be unlocked again before its data can be fetched."
+                ? $"The company's 12-month unlock in the reference tool expired on {Ist.Date(UnlockValidTill(previous!.Value))}; it must be unlocked again before its data can be fetched."
                 : "The company is not unlocked in the reference tool, so its data can't be fetched. Unlock it there, then retry.");
         }
 
@@ -83,7 +83,7 @@ public sealed class CompanyRefreshService(
         {
             await Rows(identifier).Where(r => r.ActiveRefreshId == null)
                 .ExecuteUpdateAsync(s => s.SetProperty(r => r.State, CompanyReportLifecycleState.Unlocked), ct);
-            return new RefreshGateResult(RefreshGateKind.Ready, $"The reference tool's data is current (as of {lastFresh:u}).", lastFresh);
+            return new RefreshGateResult(RefreshGateKind.Ready, $"The reference tool's data is current (as of {Ist.Format(lastFresh)}).", lastFresh);
         }
 
         if (!await client.IsMcaAvailableForRefreshAsync(ct))
@@ -117,7 +117,7 @@ public sealed class CompanyRefreshService(
 
         logger.LogInformation("Requested a reference-tool refresh for {Identifier} (data as of {DataAsOf})", identifier, lastFresh);
         return new RefreshGateResult(RefreshGateKind.Waiting,
-            $"Waiting for the reference tool to refresh this company's data (requested {now:u}; times out {now.Add(RefreshTimeout):u}).");
+            $"Waiting for the reference tool to refresh this company's data (requested {Ist.Format(now)}; times out {Ist.Format(now.Add(RefreshTimeout))}).");
     }
 
     private async Task<RefreshGateResult> PollAsync(string identifier, string bid, long activeId, CompanyReportLifecycle row, DateTime now, CancellationToken ct)
@@ -142,7 +142,7 @@ public sealed class CompanyRefreshService(
                 // it was requested can carry data that is already stale. Only fresh data may be exported; stale
                 // data is re-evaluated like any stale company, which starts (or joins) a new refresh.
                 if (CompanyRefreshPolicy.Decide(new CompanyRefreshState(true, asOf, HasActiveRefresh: false), now) == CompanyRefreshDecision.ReuseFreshSnapshot)
-                    return new RefreshGateResult(RefreshGateKind.Ready, $"The reference tool finished refreshing this company's data (as of {asOf:u}).", asOf);
+                    return new RefreshGateResult(RefreshGateKind.Ready, $"The reference tool finished refreshing this company's data (as of {Ist.Format(asOf)}).", asOf);
                 logger.LogWarning("Reference-tool refresh for {Identifier} landed with data already over 24 hours old ({DataAsOf}); refreshing again", identifier, asOf);
                 return await EvaluateAsync(identifier, bid, ct);
             }
@@ -153,7 +153,7 @@ public sealed class CompanyRefreshService(
             {
                 await client.RequestRefreshAsync(bid, ct);
                 return new RefreshGateResult(RefreshGateKind.Waiting,
-                    $"Waiting for the reference tool to refresh this company's data (re-requested; times out {deadline:u}).");
+                    $"Waiting for the reference tool to refresh this company's data (re-requested; times out {Ist.Format(deadline)}).");
             }
         }
         else if (now <= deadline)
