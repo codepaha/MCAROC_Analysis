@@ -250,6 +250,38 @@ public sealed class PipelineEnforceTests : IAsyncLifetime
         Assert.DoesNotContain(alerts, a => a.Identifier == approvedCin);
     }
 
+    [Fact]
+    public async Task Unlock_alerts_are_not_crowded_out_by_many_waiting_jobs_for_one_company()
+    {
+        // Review note on #288: grouping after a 100-job cut hid every company past the first 100 jobs.
+        var busyCin = $"U{Random.Shared.Next(10000, 99999)}UC2026PLC{Random.Shared.Next(100000, 999999)}";
+        var laterCin = $"U{Random.Shared.Next(10000, 99999)}UD2026PLC{Random.Shared.Next(100000, 999999)}";
+        await SeedWaitingForUnlockAsync(busyCin, count: 101);
+        await SeedWaitingForUnlockAsync(laterCin);
+
+        await using var db = CreateContext();
+        var controller = new MCAROC_Analysis.Controllers.PipelineController(db, new StaticOptionsMonitor(Enforcing))
+        {
+            ControllerContext = new Microsoft.AspNetCore.Mvc.ControllerContext { HttpContext = new Microsoft.AspNetCore.Http.DefaultHttpContext() }
+        };
+        var ok = Assert.IsType<Microsoft.AspNetCore.Mvc.OkObjectResult>(await controller.UnlockAlerts(CancellationToken.None));
+        var alerts = Assert.IsAssignableFrom<IEnumerable<MCAROC_Analysis.Controllers.UnlockAlertDto>>(ok.Value).ToList();
+
+        Assert.Equal(101, Assert.Single(alerts, a => a.Identifier == busyCin).WaitingRequests);
+        Assert.Single(alerts, a => a.Identifier == laterCin);
+    }
+
+    private async Task<long> SeedWaitingForUnlockAsync(string cin, int count)
+    {
+        long first = 0;
+        for (var i = 0; i < count; i++)
+        {
+            var id = await SeedWaitingForUnlockAsync(cin);
+            if (i == 0) first = id;
+        }
+        return first;
+    }
+
     private async Task<long> SeedWaitingForUnlockAsync(string cin)
     {
         await using var db = CreateContext();

@@ -2,7 +2,7 @@
 @* Unlock alert (#266 follow-up, owner 2026-09-24): a company that needs a paid unlock pops up on every page for a
    signed-in reviewer, who can approve it right there. Approval posts to the same endpoint as the request page's
    panel, so the rules (reason required, one approval per company, 1 credit) are the same. "Later" hides a company
-   for 30 minutes in this browser only. Built with textContent only — company names are data. *@
+   for 30 minutes in this browser only. At most a few cards show at once; the rest are counted, never dropped. Built with textContent only — company names are data. *@
 @{
     var reviewer = await Context.AuthenticateAsync("InternalReviewer");
 }
@@ -19,6 +19,7 @@
             var tokenInput = root.querySelector('input[name="__RequestVerificationToken"]');
             var snoozeKey = 'mcaroc-unlock-snooze';
             var snoozeMs = 30 * 60 * 1000;
+            var maxCards = 5;
 
             function readSnoozes() {
                 try { return JSON.parse(localStorage.getItem(snoozeKey) || '{}') || {}; } catch (e) { return {}; }
@@ -101,12 +102,24 @@
             function render(alerts) {
                 // Keep a card the user is typing in; replace the rest.
                 var focused = root.contains(document.activeElement) ? document.activeElement.closest('.toast') : null;
-                root.querySelectorAll('.toast').forEach(function (t) { if (t !== focused) t.remove(); });
+                root.querySelectorAll('.toast, .mca-unlock-more').forEach(function (t) { if (t !== focused) t.remove(); });
+                var shown = focused ? 1 : 0, more = 0, snoozed = 0;
                 alerts.forEach(function (a) {
-                    if (isSnoozed(a.identifier)) return;
                     if (focused && focused.dataset.identifier === a.identifier) return;
+                    if (isSnoozed(a.identifier)) { snoozed++; return; }
+                    if (shown >= maxCards) { more++; return; }
                     root.appendChild(card(a));
+                    shown++;
                 });
+                if (more > 0 || (snoozed > 0 && shown > 0)) {
+                    var note = el('a', 'mca-unlock-more small text-body-secondary bg-body border rounded px-2 py-1 text-decoration-none shadow-sm');
+                    note.href = '/Pipeline?reasonCode=UNLOCK_APPROVAL_REQUIRED';
+                    var parts = [];
+                    if (more > 0) parts.push(more + (more === 1 ? ' more company' : ' more companies') + ' waiting to be unlocked');
+                    if (snoozed > 0) parts.push(snoozed + ' hidden for now');
+                    note.textContent = parts.join(' · ') + ' — see all';
+                    root.appendChild(note);
+                }
             }
 
             function tick() {

@@ -14,6 +14,7 @@ namespace MCAROC_Analysis.Controllers;
 public class PipelineController(AppDbContext db, IOptionsMonitor<PipelineOptions> options) : Controller
 {
     private const int TimelineLimit = 200;
+    private const int MaxUnlockAlertCompanies = 200;
 
     private static readonly PipelineOutcome[] LiveOutcomes = [PipelineOutcome.InProgress, PipelineOutcome.CoreReady, PipelineOutcome.NeedsAttention];
 
@@ -55,19 +56,26 @@ public class PipelineController(AppDbContext db, IOptionsMonitor<PipelineOptions
     public async Task<IActionResult> UnlockAlerts(CancellationToken ct)
     {
         var now = DateTime.UtcNow;
-        var waiting = await db.AutoFetchJobs.AsNoTracking()
+        // Grouped in SQL, so a backlog of waiting jobs for one company can't crowd other companies out; the page
+        // shows the first few it hasn't snoozed and counts the rest.
+        var companies = await db.AutoFetchJobs.AsNoTracking()
             .Where(j => j.Status == AutoFetchJobStatus.WaitingForUnlock
                 && !db.UnlockApprovals.Any(a => a.Identifier == j.Cin.Trim().ToUpper() && a.ConsumedAdmissionId == null && a.ExpiresUtc > now))
-            .OrderBy(j => j.AutoFetchJobId)
-            .Select(j => new { j.RequestId, j.Cin, j.StatusMessage, j.CreatedUtc, j.Request!.RequestNumber, j.Request.CompanyName })
-            .Take(100)
+            .GroupBy(j => j.Cin.Trim().ToUpper())
+            .Select(g => new { Identifier = g.Key, FirstJobId = g.Min(j => j.AutoFetchJobId), Count = g.Count(), Since = g.Min(j => j.CreatedUtc) })
+            .OrderBy(g => g.Since).ThenBy(g => g.FirstJobId)
+            .Take(MaxUnlockAlertCompanies)
             .ToListAsync(ct);
+        var firstJobIds = companies.Select(c => c.FirstJobId).ToList();
+        var firstJobs = await db.AutoFetchJobs.AsNoTracking().Where(j => firstJobIds.Contains(j.AutoFetchJobId))
+            .Select(j => new { j.AutoFetchJobId, j.RequestId, j.StatusMessage, j.Request!.RequestNumber, j.Request.CompanyName })
+            .ToDictionaryAsync(j => j.AutoFetchJobId, ct);
         Response.Headers.CacheControl = "no-store";
-        return Ok(waiting
-            .GroupBy(j => j.Cin.Trim().ToUpperInvariant())
-            .Select(g => new UnlockAlertDto(g.Key, g.First().CompanyName, g.First().RequestId, g.First().RequestNumber,
-                g.Count(), g.First().StatusMessage, g.Min(j => j.CreatedUtc)))
-            .Take(20));
+        return Ok(companies.Where(c => firstJobs.ContainsKey(c.FirstJobId)).Select(c =>
+        {
+            var j = firstJobs[c.FirstJobId];
+            return new UnlockAlertDto(c.Identifier, j.CompanyName, j.RequestId, j.RequestNumber, c.Count, j.StatusMessage, c.Since);
+        }));
     }
 
     private string CurrentMode()
