@@ -3,6 +3,7 @@ using MCAROC_Analysis.Data.Entities;
 using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
+using MCAROC_Analysis.Services;
 
 namespace MCAROC_Analysis.Services.AutoFetch;
 
@@ -158,7 +159,7 @@ public sealed class CompanyRefreshService(
         else if (now <= deadline)
         {
             return new RefreshGateResult(RefreshGateKind.Waiting,
-                $"Waiting for the reference tool to refresh this company's data (requested {requestedUtc:u}; times out {deadline:u}).");
+                $"Waiting for the reference tool to refresh this company's data (requested {Ist.Format(requestedUtc)}; times out {Ist.Format(deadline)}).");
         }
 
         await Rows(identifier).Where(r => r.ActiveRefreshId == activeId).ExecuteUpdateAsync(s => s
@@ -166,7 +167,7 @@ public sealed class CompanyRefreshService(
             .SetProperty(r => r.State, CompanyReportLifecycleState.RefreshFailed), ct);
         logger.LogWarning("Reference-tool refresh for {Identifier} timed out (requested {Requested})", identifier, requestedUtc);
         return new RefreshGateResult(RefreshGateKind.TimedOut,
-            $"REFRESH_TIMEOUT: the reference tool did not finish refreshing this company's data within {RefreshTimeout.TotalHours:0} hours of the request at {requestedUtc:u}. Retry to request a new refresh.");
+            $"REFRESH_TIMEOUT: the reference tool did not finish refreshing this company's data within {RefreshTimeout.TotalHours:0} hours of the request at {Ist.Format(requestedUtc)}. Retry to request a new refresh.");
     }
 
     private IQueryable<CompanyReportLifecycle> Rows(string identifier) =>

@@ -142,7 +142,7 @@ else
                             <span class="text-muted">No source yet</span>
                         }
                     </td>
-                    <td>@row.Request.CreatedDate.ToString("d MMM yyyy")</td>
+                    <td>@Ist.Date(row.Request.CreatedDate)</td>
                     <td class="text-nowrap">
                         <a asp-controller="Requests" asp-action="Details" asp-route-id="@row.Request.RequestId" class="btn btn-sm btn-outline-primary">View</a>
                         @if (row.Request.RequestStatus == RequestStatus.AnalysisCompleted)

@@ -39,7 +39,9 @@
         const small = d.createElement('small');
         small.className = 'text-muted ms-2';
         const dateObj = createdDate ? new Date(createdDate) : new Date();
-        small.textContent = dateObj.getHours().toString().padStart(2, '0') + ':' + dateObj.getMinutes().toString().padStart(2, '0');
+        small.textContent = window.mcaIst
+            ? window.mcaIst(createdDate || dateObj, { timeOnly: true })
+            : dateObj.getHours().toString().padStart(2, '0') + ':' + dateObj.getMinutes().toString().padStart(2, '0');
         header.appendChild(small);
 
         if (status && status.toLowerCase() === 'failed') {

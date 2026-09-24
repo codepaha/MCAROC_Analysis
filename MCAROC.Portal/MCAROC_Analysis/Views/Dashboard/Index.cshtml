@@ -227,7 +227,7 @@
                         </td>
                         <td>@row.KeyFindingTitle</td>
                         <td>@row.Request.RequestStatus</td>
-                        <td>@(row.Request.UpdatedDate?.ToString("d MMM yyyy") ?? row.Request.CreatedDate.ToString("d MMM yyyy"))</td>
+                        <td>@Ist.Date(row.Request.UpdatedDate ?? row.Request.CreatedDate)</td>
                         <td><a asp-controller="Requests" asp-action="Details" asp-route-id="@row.Request.RequestId" class="btn btn-sm btn-outline-primary">View</a></td>
                     </tr>
                 }

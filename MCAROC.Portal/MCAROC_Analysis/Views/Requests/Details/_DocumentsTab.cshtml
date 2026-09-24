@@ -82,7 +82,7 @@
                                 <span class="text-muted">—</span>
                             }
                         </td>
-                        <td>@doc.UploadedDate.ToString("d MMM yyyy HH:mm")</td>
+                        <td>@Ist.Format(doc.UploadedDate)</td>
                         <td>
                             @if (isReviewer && downloadUrl != null)
                             {

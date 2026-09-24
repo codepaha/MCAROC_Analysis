@@ -16,6 +16,24 @@
     <script type="importmap"></script>
     @* Set theme before paint to avoid a flash of the wrong theme *@
     <script>(function(){try{var t=localStorage.getItem('mcaroc-theme');if(t)document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+    <script>
+        // Every time the portal shows is IST, whatever the viewer's own time zone (Ist.cs is the server-side twin).
+        // Accepts a Date or an ISO string; a string without a zone is a stored UTC value. opts: { seconds, dateOnly, timeOnly }.
+        // Same shape as Ist.Format's default, "24 Sep 2026 09:38 IST". IST is a fixed +05:30 (no daylight saving).
+        window.mcaIst = function (value, opts) {
+            opts = opts || {};
+            var d = value instanceof Date ? value
+                : new Date(typeof value === 'string' && !/(?:[zZ]|[+-]\d\d:?\d\d)$/.test(value) ? value + 'Z' : value);
+            if (isNaN(d.getTime())) return String(value);
+            var t = new Date(d.getTime() + 330 * 60000);
+            var two = function (n) { return (n < 10 ? '0' : '') + n; };
+            var months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+            var date = t.getUTCDate() + ' ' + months[t.getUTCMonth()] + ' ' + t.getUTCFullYear();
+            if (opts.dateOnly) return date;
+            var time = two(t.getUTCHours()) + ':' + two(t.getUTCMinutes()) + (opts.seconds ? ':' + two(t.getUTCSeconds()) : '');
+            return (opts.timeOnly ? time : date + ' ' + time) + ' IST';
+        };
+    </script>
     <link rel="stylesheet" href="~/lib/bootstrap/dist/css/bootstrap.min.css" />
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@@1.11.3/font/bootstrap-icons.min.css" />
     <link rel="stylesheet" href="~/css/dossier-tokens.css" asp-append-version="true" />

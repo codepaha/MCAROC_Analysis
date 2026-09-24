@@ -253,7 +253,7 @@
                 @if (Model.IsAnalysisStaleComparedToCase)
                 {
                     <div class="alert alert-warning py-1 px-2 mb-2 small">
-                        <i class="bi bi-exclamation-triangle-fill me-1"></i><strong>Analysis Stale:</strong> This case was re-surfaced or mutated in a later search after this analysis completed (@(Model.Analysis.CompletedUtc?.ToString("dd-MMM-yyyy HH:mm")) UTC). Analysis reflects prior run evidence.
+                        <i class="bi bi-exclamation-triangle-fill me-1"></i><strong>Analysis Stale:</strong> This case was re-surfaced or mutated in a later search after this analysis completed (@Ist.Format(Model.Analysis.CompletedUtc)). Analysis reflects prior run evidence.
                     </div>
                 }
 
@@ -293,7 +293,7 @@
     </div>
     <div class="card-footer bg-light py-1 px-3 text-muted small d-flex justify-content-between align-items-center" style="font-size: 0.8rem;">
         <span>Snapshot membership anchored; metadata reflects current database state.</span>
-        <span>First seen: @Model.FirstSeenUtc.ToString("dd-MMM-yyyy") &bull; Last seen: @Model.LastSeenUtc.ToString("dd-MMM-yyyy")</span>
+        <span>First seen: @Ist.Date(Model.FirstSeenUtc) &bull; Last seen: @Ist.Date(Model.LastSeenUtc)</span>
     </div>
 </div>
 

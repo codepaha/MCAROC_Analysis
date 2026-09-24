@@ -170,7 +170,7 @@
                 <h3>Data Freshness</h3>
                 <p class="text-muted mb-0">
                     Extraction run #@lrun.RunNumber — @lrun.Status
-                    @if (lrun.CompletedDate is { } cd) { <text>, completed @cd.ToString("d MMM yyyy HH:mm")</text> }.
+                    @if (lrun.CompletedDate is { } cd) { <text>, completed @Ist.Format(cd)</text> }.
                     @if (Model.LatestFinancialYear is { } fy) { <text> Latest financial year on record: FY@(fy).</text> }
                 </p>
             </div>

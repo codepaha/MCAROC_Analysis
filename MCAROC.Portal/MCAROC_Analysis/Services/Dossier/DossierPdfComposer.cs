@@ -5,6 +5,7 @@ using MCAROC_Analysis.Services.Analysis;
 using QuestPDF.Fluent;
 using QuestPDF.Helpers;
 using QuestPDF.Infrastructure;
+using MCAROC_Analysis.Services;
 
 namespace MCAROC_Analysis.Services.Dossier;
 
@@ -135,7 +136,7 @@ public partial class DossierPdfComposer(DossierModel model, DossierVariant varia
             {
                 foot.Item().Text("Strictly Private & Confidential — prepared exclusively for the addressed institution's internal credit assessment. Not for onward circulation or use as a substitute for independent verification.")
                     .FontSize(DossierTheme.Small).FontColor(DossierTheme.InkSoft).LineHeight(1.45f);
-                foot.Item().PaddingTop(4).Text($"© {Cover.ReportDate:yyyy}   •   {AttributionLine}. All rights reserved.")
+                foot.Item().PaddingTop(4).Text($"© {Ist.Date(Cover.ReportDate, "yyyy")}   •   {AttributionLine}. All rights reserved.")
                     .FontSize(DossierTheme.Small).FontColor(DossierTheme.InkFaint);
             });
         });
@@ -285,7 +286,7 @@ public partial class DossierPdfComposer(DossierModel model, DossierVariant varia
 
             col.Item().Element(c => CoverField(c, "CIN", Cover.Cin ?? "—", mono: true));
             col.Item().Element(c => CoverField(c, "PAN", Cover.Pan ?? "—", mono: true));
-            col.Item().Element(c => CoverField(c, "Report date", Cover.ReportDate.ToString("dd MMMM yyyy")));
+            col.Item().Element(c => CoverField(c, "Report date", Ist.Date(Cover.ReportDate, "dd MMMM yyyy")));
             col.Item().Element(c => CoverField(c, "Prepared for", string.IsNullOrWhiteSpace(Cover.ClientName) ? "[Client Institution Name]" : Cover.ClientName));
             col.Item().Element(c => CoverField(c, "Prepared by", PreparedBy));
         });

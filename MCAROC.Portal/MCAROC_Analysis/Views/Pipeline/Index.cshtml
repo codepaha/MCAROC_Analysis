@@ -107,7 +107,7 @@
                             <span class="badge @OutcomeClass(r.Outcome)">@r.Outcome</span>
                             @if (r.CoreReadyUtc is { } ready)
                             {
-                                <div class="small text-muted">dossier ready @ready.ToLocalTime().ToString("d MMM HH:mm")</div>
+                                <div class="small text-muted">dossier ready @Ist.Format(ready, "d MMM HH:mm")</div>
                             }
                         </td>
                         <td>
@@ -122,7 +122,7 @@
                                 <div class="small text-danger mt-1"><strong>@a.Stage</strong>: @a.ReasonCode@(a.ReasonDetail is null ? "" : " — " + a.ReasonDetail)</div>
                             }
                         </td>
-                        <td class="small text-nowrap">@r.LastChangeUtc.ToLocalTime().ToString("d MMM HH:mm")</td>
+                        <td class="small text-nowrap">@Ist.Format(r.LastChangeUtc, "d MMM HH:mm")</td>
                     </tr>
                 }
             </tbody>

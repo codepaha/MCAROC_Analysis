@@ -63,7 +63,7 @@
                     <div class="text-muted small text-uppercase fw-semibold">Last Ingested Snapshot</div>
                     <div class="h3 mb-0">@(Model.LastSnapshotDate?.ToString("dd-MMM-yyyy") ?? "None")</div>
                     <div class="small text-muted mt-1">
-                        Completed: @(Model.LastSyncCompletedUtc?.ToString("yyyy-MM-dd HH:mm UTC") ?? "N/A")
+                        Completed: @Ist.Format(Model.LastSyncCompletedUtc, whenNull: "N/A")
                     </div>
                 </div>
             </div>
@@ -169,7 +169,7 @@
                                     }
                                     <span class="text-success">+@added.ToString("N0")</span> / <span class="text-primary">@updated.ToString("N0")</span>
                                 </td>
-                                <td>@job.LastHeartbeatUtc.ToString("HH:mm:ss UTC")</td>
+                                <td>@Ist.Format(job.LastHeartbeatUtc, "HH:mm:ss")</td>
                             </tr>
                         }
                     }
