@@ -1,3 +1,4 @@
+@using Microsoft.AspNetCore.Authentication
 @model RequestDetailsViewModel
 @{
     var job = Model.AutoFetchJob!;
@@ -52,12 +53,26 @@
                 Unlocking spends 1 credit and makes the company's data available for 12 months. One approval covers
                 every request waiting on this company; only one credit is spent.
             </div>
-            <form method="post" action="/Requests/@r.RequestId/autofetch/unlock/approve" class="d-flex flex-wrap gap-2 align-items-start">
-                @Html.AntiForgeryToken()
-                <input type="text" name="reason" class="form-control form-control-sm" style="max-width:28rem" required maxlength="1000"
-                       placeholder="Reason for spending the credit (required)" aria-label="Reason for approving the unlock" />
-                <button type="submit" class="btn btn-sm btn-warning"><i class="bi bi-unlock me-1"></i>Approve unlock</button>
-            </form>
+            @{
+                // The request page is anonymous and there's no default auth scheme, so check the reviewer cookie
+                // explicitly — only the approve action itself requires it.
+                var reviewer = await Context.AuthenticateAsync("InternalReviewer");
+            }
+            @if (reviewer.Succeeded)
+            {
+                <form method="post" action="/Requests/@r.RequestId/autofetch/unlock/approve" class="d-flex flex-wrap gap-2 align-items-start">
+                    @Html.AntiForgeryToken()
+                    <input type="text" name="reason" class="form-control form-control-sm" style="max-width:28rem" required maxlength="1000"
+                           placeholder="Reason for spending the credit (required)" aria-label="Reason for approving the unlock" />
+                    <button type="submit" class="btn btn-sm btn-warning"><i class="bi bi-unlock me-1"></i>Approve unlock</button>
+                </form>
+            }
+            else
+            {
+                <a class="btn btn-sm btn-warning" href="/internal/login?ReturnUrl=@Uri.EscapeDataString($"/Requests/{r.RequestId}")">
+                    <i class="bi bi-box-arrow-in-right me-1"></i>Sign in to approve
+                </a>
+            }
         </div>
     }
 
