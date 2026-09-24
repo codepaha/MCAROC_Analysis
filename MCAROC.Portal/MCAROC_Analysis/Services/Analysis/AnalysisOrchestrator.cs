@@ -247,9 +247,11 @@ public class AnalysisOrchestrator(
         var auditorObservations = await db.AuditorObservations
             .Where(x => x.IngestionRunId == ingestionRunId && x.Basis == FinancialBasis.Standalone).ToListAsync(ct);
         var litigations = await db.Litigations.Where(x => x.IngestionRunId == ingestionRunId).ToListAsync(ct);
+        var epfoEstablishments = await db.EpfoEstablishments.Where(x => x.IngestionRunId == ingestionRunId).ToListAsync(ct);
 
         return AnalysisContext.Build(
             request, companyProfile, directors, directorAssociations, shareholdings, financialYears, charges,
-            msmePayments, gstRegistrations, epfoContributions, auditorObservations, litigations, DateTime.UtcNow);
+            msmePayments, gstRegistrations, epfoContributions, auditorObservations, litigations, DateTime.UtcNow,
+            epfoEstablishments);
     }
 }

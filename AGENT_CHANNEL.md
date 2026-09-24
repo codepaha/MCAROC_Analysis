@@ -1,5 +1,21 @@
 # Agent channel — MCAROC
 
+### 2026-09-24 — Claude session (#191, own-premises address part; branch `claude/laughing-pascal-ldoqo4`)
+
+- **IN PROGRESS** The part of #191 that needs no order/judgment text: new rule `CHARGED_PROPERTY_IS_OWN_PREMISES`
+  (Charges section, Watch) flags an open charge whose property particulars match the company's registered office,
+  business address or an EPFO establishment address, matched as one pool. `AddressMatcher` compares PIN codes,
+  plot numbers and locality words (never whole strings): a match needs a shared plot number plus a shared PIN and
+  one locality word, or two locality words without a PIN; two different PINs always rule it out. A non-match is
+  not reported. `AnalysisContext` now also carries `EpfoEstablishments`. No migration, no UI change (it's an
+  ordinary finding citing `RocCharge` rows).
+- Could not run `dotnet test` in this session (NuGet blocked by the environment's network policy); the new rules
+  and tests, plus the existing `EntityCrossReferenceRulesTests`, were compiled and run in a package-free scratch
+  build (45/45 pass). Needs hosted CI before merge. Order-text property extraction (the rest of #191) stays
+  blocked on re-sourcing the NCLT corpus.
+
+---
+
 ### 2026-09-24 (later) — Claude session (owner turned automatic actions on; new PR)
 
 - #287 merged (`1953cda`).
