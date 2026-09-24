@@ -1,0 +1,122 @@
+@using Microsoft.AspNetCore.Authentication
+@* Unlock alert (#266 follow-up, owner 2026-09-24): a company that needs a paid unlock pops up on every page for a
+   signed-in reviewer, who can approve it right there. Approval posts to the same endpoint as the request page's
+   panel, so the rules (reason required, one approval per company, 1 credit) are the same. "Later" hides a company
+   for 30 minutes in this browser only. Built with textContent only — company names are data. *@
+@{
+    var reviewer = await Context.AuthenticateAsync("InternalReviewer");
+}
+@if (reviewer.Succeeded)
+{
+    <div id="mcaUnlockAlerts" class="position-fixed bottom-0 end-0 p-3 d-flex flex-column gap-2"
+         style="z-index:1080; width:min(380px, calc(100vw - 32px)); max-height:80vh; overflow-y:auto;"
+         aria-live="polite" data-url="/pipeline/unlock-alerts">
+        @Html.AntiForgeryToken()
+    </div>
+    <script>
+        (function () {
+            var root = document.getElementById('mcaUnlockAlerts');
+            var tokenInput = root.querySelector('input[name="__RequestVerificationToken"]');
+            var snoozeKey = 'mcaroc-unlock-snooze';
+            var snoozeMs = 30 * 60 * 1000;
+
+            function readSnoozes() {
+                try { return JSON.parse(localStorage.getItem(snoozeKey) || '{}') || {}; } catch (e) { return {}; }
+            }
+            function snooze(id) {
+                var s = readSnoozes();
+                s[id] = Date.now() + snoozeMs;
+                try { localStorage.setItem(snoozeKey, JSON.stringify(s)); } catch (e) { }
+            }
+            function isSnoozed(id) {
+                var until = readSnoozes()[id];
+                return typeof until === 'number' && until > Date.now();
+            }
+            function el(tag, cls, text) {
+                var e = document.createElement(tag);
+                if (cls) e.className = cls;
+                if (text !== undefined) e.textContent = text;
+                return e;
+            }
+
+            function card(a) {
+                var box = el('div', 'toast show border-warning shadow');
+                box.setAttribute('role', 'alert');
+                box.style.width = '100%';
+                var head = el('div', 'toast-header text-bg-warning');
+                head.appendChild(el('i', 'bi bi-lock-fill me-2'));
+                head.appendChild(el('strong', 'me-auto', 'Unlock needed'));
+                var close = el('button', 'btn-close');
+                close.type = 'button';
+                close.setAttribute('aria-label', 'Remind me later');
+                close.title = 'Remind me in 30 minutes';
+                close.addEventListener('click', function () { snooze(a.identifier); box.remove(); });
+                head.appendChild(close);
+                box.appendChild(head);
+
+                var body = el('div', 'toast-body');
+                body.appendChild(el('div', 'fw-semibold', a.companyName || a.identifier));
+                body.appendChild(el('div', 'small text-muted', 'CIN ' + a.identifier + ' · ' + a.waitingRequests +
+                    (a.waitingRequests === 1 ? ' request' : ' requests') + ' waiting'));
+                if (a.message) body.appendChild(el('div', 'small mt-1', a.message));
+                body.appendChild(el('div', 'small mt-1', 'Unlocking spends 1 credit on the reference tool.'));
+
+                var form = el('form', 'mt-2');
+                form.method = 'post';
+                form.action = '/Requests/' + a.requestId + '/autofetch/unlock/approve';
+                var token = el('input');
+                token.type = 'hidden';
+                token.name = '__RequestVerificationToken';
+                token.value = tokenInput ? tokenInput.value : '';
+                form.appendChild(token);
+                var reason = el('input', 'form-control form-control-sm mb-2');
+                reason.name = 'reason';
+                reason.required = true;
+                reason.maxLength = 500;
+                reason.value = 'Approved from the unlock alert';
+                reason.setAttribute('aria-label', 'Reason for the unlock');
+                form.appendChild(reason);
+                var actions = el('div', 'd-flex gap-2 flex-wrap');
+                var approve = el('button', 'btn btn-sm btn-warning', 'Unlock (1 credit)');
+                approve.type = 'submit';
+                actions.appendChild(approve);
+                var view = el('a', 'btn btn-sm btn-outline-secondary', 'View request');
+                view.href = '/Requests/' + a.requestId;
+                actions.appendChild(view);
+                var later = el('button', 'btn btn-sm btn-link', 'Later');
+                later.type = 'button';
+                later.addEventListener('click', function () { snooze(a.identifier); box.remove(); });
+                actions.appendChild(later);
+                form.appendChild(actions);
+                form.addEventListener('submit', function (e) {
+                    if (!confirm('Unlock ' + (a.companyName || a.identifier) + '? This spends 1 credit.')) { e.preventDefault(); return; }
+                    approve.disabled = true;
+                });
+                body.appendChild(form);
+                box.appendChild(body);
+                box.dataset.identifier = a.identifier;
+                return box;
+            }
+
+            function render(alerts) {
+                // Keep a card the user is typing in; replace the rest.
+                var focused = root.contains(document.activeElement) ? document.activeElement.closest('.toast') : null;
+                root.querySelectorAll('.toast').forEach(function (t) { if (t !== focused) t.remove(); });
+                alerts.forEach(function (a) {
+                    if (isSnoozed(a.identifier)) return;
+                    if (focused && focused.dataset.identifier === a.identifier) return;
+                    root.appendChild(card(a));
+                });
+            }
+
+            function tick() {
+                fetch(root.dataset.url, { headers: { 'Accept': 'application/json' }, credentials: 'same-origin' })
+                    .then(function (r) { return r.ok ? r.json() : null; })
+                    .then(function (alerts) { if (Array.isArray(alerts)) render(alerts); })
+                    .catch(function () { });
+            }
+            tick();
+            setInterval(tick, 60000);
+        })();
+    </script>
+}

@@ -1,13 +1,18 @@
 @model RequestDetailsViewModel
-@* Pipeline stage strip. Stays hidden unless the request has a pipeline run; polls every 5s while the run is
-   live. Built with textContent only — reason details can carry vendor/free text. *@
+@* Pipeline stage strip plus the step-by-step timeline of everything the coordinator observed or did. Stays
+   hidden unless the request has a pipeline run; polls every 5s while the run is live. Built with textContent
+   only — reason details can carry vendor/free text. *@
 <div class="pi-panel mb-3 d-none" id="mcaPipeline" data-status-url="/Requests/@Model.Request.RequestId/pipeline/status" style="padding:14px 22px;">
     <div class="d-flex justify-content-between align-items-center gap-2 flex-wrap mb-2">
-        <div class="pi-kicker mb-0">Pipeline</div>
+        <div class="pi-kicker mb-0">Pipeline <span class="badge text-bg-light border ms-1" id="plMode"></span></div>
         <span class="badge" id="plOutcome"></span>
     </div>
     <div class="d-flex flex-wrap gap-1" id="plStages"></div>
     <div class="small text-danger mt-2" id="plAttention"></div>
+    <details class="mt-2" id="plTimelineBox" open>
+        <summary class="small fw-semibold">Steps <span class="text-muted fw-normal" id="plTimelineCount"></span></summary>
+        <ol class="list-unstyled small mb-0 mt-1" id="plTimeline" style="max-height:260px; overflow-y:auto;"></ol>
+    </details>
 </div>
 <script>
     (function () {
@@ -47,7 +52,36 @@
                     attention.appendChild(line);
                 }
             });
+            var mode = document.getElementById('plMode');
+            mode.textContent = s.mode === 'Enforce' ? 'Automatic' : (s.mode === 'Observe' ? 'Observing only' : 'Off');
+            mode.title = s.mode === 'Enforce'
+                ? 'The coordinator starts the steps it is allowed to (litigation search) on its own.'
+                : 'The coordinator records each step but does not start anything.';
+            renderTimeline(s.events || []);
             if (!s.isLive && timer) { clearInterval(timer); timer = null; }
+        }
+        function renderTimeline(events) {
+            var list = document.getElementById('plTimeline');
+            var nearBottom = list.scrollHeight - list.scrollTop - list.clientHeight < 24;
+            list.replaceChildren();
+            document.getElementById('plTimelineCount').textContent = events.length ? '(' + events.length + ')' : '';
+            events.forEach(function (e) {
+                var li = document.createElement('li');
+                li.className = 'd-flex gap-2 py-1 border-bottom';
+                var at = document.createElement('span');
+                at.className = 'text-muted text-nowrap';
+                var d = new Date(e.atUtc.endsWith('Z') ? e.atUtc : e.atUtc + 'Z');
+                at.textContent = d.toLocaleString(undefined, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', second: '2-digit' });
+                at.title = d.toString();
+                li.appendChild(at);
+                var text = document.createElement('span');
+                text.textContent = e.text + (e.actor && e.actor !== 'system' ? ' (by ' + e.actor + ')' : '');
+                if (e.action === 'AutoStarted') text.className = 'fw-semibold text-primary';
+                else if (e.action === 'AutoStartDeferred' || e.action === 'Observed:NeedsAttention') text.className = 'text-danger';
+                li.appendChild(text);
+                list.appendChild(li);
+            });
+            if (nearBottom) list.scrollTop = list.scrollHeight;
         }
         function tick() {
             fetch(url, { headers: { 'Accept': 'application/json' } })

@@ -21,9 +21,20 @@ public sealed class PipelineOptions
 
     public PipelineCapOptions Caps { get; set; } = new();
 
-    /// <summary>Master switch for the coordinator (adoption + reconcile). Off by default. The coordinator
-    /// currently only observes: it records stage states and never starts, retries or spends anything.</summary>
+    /// <summary>Master switch for the coordinator (adoption + reconcile). Off by default.</summary>
     public bool Enabled { get; set; }
+
+    /// <summary><c>Observe</c> (the default) records stage states and never starts anything. <c>Enforce</c> lets
+    /// the coordinator take the actions its <see cref="Enforce"/> families allow. Switching back to <c>Observe</c>
+    /// is the kill switch: it takes effect on the next tick without a restart and leaves all state intact.</summary>
+    public PipelineMode Mode { get; set; } = PipelineMode.Observe;
+
+    /// <summary>Which action families <c>Enforce</c> mode may perform (plan §3.6) — each off unless set.</summary>
+    public PipelineEnforceOptions Enforce { get; set; } = new();
+
+    /// <summary>After an automatic start is refused (daily cap, the company was searched recently by another
+    /// request, not eligible, a transient error) the coordinator waits this long before trying again.</summary>
+    public int AutoStartRetryMinutes { get; set; } = 60;
 
     /// <summary>Requests created on or after this instant are adopted by the periodic sweep. Null (the
     /// default) disables the sweep entirely, so switching the coordinator on never back-fills legacy
@@ -41,6 +52,21 @@ public sealed class PipelineOptions
     /// company with no approval is unlocked through the same admission path with <c>Trigger=Auto</c>, still
     /// bounded by <c>Caps:UnlockPerDay</c> (which also defaults to 0).</summary>
     public AutoUnlockOptions AutoUnlock { get; set; } = new();
+
+    public bool EnforcesLitigationSearch() => Enabled && Mode == PipelineMode.Enforce && Enforce.Litigation;
+}
+
+public enum PipelineMode
+{
+    Observe,
+    Enforce
+}
+
+public sealed class PipelineEnforceOptions
+{
+    /// <summary>Start the litigation search automatically once ingestion is done (and the run's policy wants
+    /// it), through the same admission path as the reviewer's button.</summary>
+    public bool Litigation { get; set; }
 }
 
 public sealed class AutoUnlockOptions
@@ -48,8 +74,9 @@ public sealed class AutoUnlockOptions
     public bool Enabled { get; set; }
 }
 
-/// <summary>Enrichment-stage policy. Both default off (plan §9 #1/#2 are still open): a stage whose policy is
-/// off and which nobody started by hand is reported as a neutral skip, not as missing work.</summary>
+/// <summary>Enrichment-stage policy. Both default off in code; appsettings.json turns litigation search on (owner,
+/// 2026-09-24) and leaves litigation AI analysis off. A stage whose policy is off and which nobody started by hand
+/// is reported as a neutral skip, not as missing work.</summary>
 public sealed class PipelinePolicy
 {
     public bool LitigationSearch { get; set; }

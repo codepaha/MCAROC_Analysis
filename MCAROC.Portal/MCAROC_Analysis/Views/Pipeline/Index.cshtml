@@ -27,7 +27,17 @@
 <div class="d-flex flex-wrap justify-content-between align-items-start gap-3 mb-3">
     <div>
         <h1 class="h4 mb-0">Pipeline</h1>
-        <div class="text-muted">Every request's stages, end to end. Read-only: the coordinator observes and records, it doesn't act yet.</div>
+        <div class="text-muted">
+            Every request's stages, end to end.
+            @if (Model.Mode == "Enforce")
+            {
+                <text>The coordinator acts on its own where it is allowed to (litigation search); open a request to see each step it took.</text>
+            }
+            else
+            {
+                <text>The coordinator observes and records; it doesn't act.</text>
+            }
+        </div>
     </div>
 </div>
 
