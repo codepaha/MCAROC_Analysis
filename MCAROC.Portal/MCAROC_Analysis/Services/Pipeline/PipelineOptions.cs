@@ -36,6 +36,16 @@ public sealed class PipelineOptions
     /// <summary>Which optional enrichment stages a run expects; snapshotted into <c>PipelineRun.PolicyJson</c>
     /// at creation so a later config change doesn't silently alter a run already in flight.</summary>
     public PipelinePolicy Policy { get; set; } = new();
+
+    /// <summary>Unattended unlock (#266): off, so every paid unlock needs a human approval. When on, a locked
+    /// company with no approval is unlocked through the same admission path with <c>Trigger=Auto</c>, still
+    /// bounded by <c>Caps:UnlockPerDay</c> (which also defaults to 0).</summary>
+    public AutoUnlockOptions AutoUnlock { get; set; } = new();
+}
+
+public sealed class AutoUnlockOptions
+{
+    public bool Enabled { get; set; }
 }
 
 /// <summary>Enrichment-stage policy. Both default off (plan §9 #1/#2 are still open): a stage whose policy is

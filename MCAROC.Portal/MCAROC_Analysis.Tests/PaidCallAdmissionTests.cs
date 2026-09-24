@@ -222,6 +222,31 @@ public sealed class PaidCallAdmissionTests : IAsyncLifetime
         Assert.Equal(AdmissionDenial.Fresh, (await Admit(PaidCallKind.LitigationAnalysis, scope, PaidCallTrigger.Auto, requestId)).Denial);
     }
 
+    /// <summary>#266: the approval is consumed inside the admission transaction. When that step fails (the
+    /// approval was already used), nothing of the admission may survive — no ledger row, no held scope, no
+    /// counted slot — so a stale approval read can never turn into a spend.</summary>
+    [Fact]
+    public async Task A_failing_in_transaction_step_rolls_the_whole_admission_back()
+    {
+        _options.Caps.UnlockPerDay = 5;
+        var requestId = await SeedRequestAsync();
+        var scope = NewScope("unlock");
+        long? seenAdmissionId = null;
+
+        await using (var db = CreateContext())
+        {
+            var result = await Service(db).TryAdmitAsync(new PaidCallAdmissionRequest(PaidCallKind.ReferenceUnlock, scope, PaidCallTrigger.Manual, requestId,
+                WithinTransaction: (_, admissionId, _) => { seenAdmissionId = admissionId; return Task.FromResult(false); }), CancellationToken.None);
+            Assert.Equal(AdmissionDenial.PreconditionFailed, result.Denial);
+        }
+
+        Assert.NotNull(seenAdmissionId); // the step ran with the would-be admission id
+        Assert.Equal(0, await CountAdmissionsAsync(scope));
+        Assert.Null((await ScopeAsync(PaidCallKind.ReferenceUnlock, scope)).ActiveAdmissionId);
+        Assert.Equal(0, await UsedAsync(PaidCallKind.ReferenceUnlock));
+        Assert.True((await Admit(PaidCallKind.ReferenceUnlock, scope, PaidCallTrigger.Manual, requestId)).Admitted);
+    }
+
     [Fact]
     public void Search_scope_key_ignores_keyword_order_and_case()
     {

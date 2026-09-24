@@ -43,6 +43,24 @@
         </div>
     }
 
+    @if (job.Status == AutoFetchJobStatus.WaitingForUnlock)
+    {
+        <div class="alert alert-warning mt-3 mb-0">
+            <div class="fw-semibold mb-1"><i class="bi bi-lock me-1"></i>Approval needed to unlock this company (1 credit)</div>
+            <div class="small mb-2">
+                CIN @job.Cin — supplied with the request and matched against the reference tool's own preview.
+                Unlocking spends 1 credit and makes the company's data available for 12 months. One approval covers
+                every request waiting on this company; only one credit is spent.
+            </div>
+            <form method="post" action="/Requests/@r.RequestId/autofetch/unlock/approve" class="d-flex flex-wrap gap-2 align-items-start">
+                @Html.AntiForgeryToken()
+                <input type="text" name="reason" class="form-control form-control-sm" style="max-width:28rem" required maxlength="1000"
+                       placeholder="Reason for spending the credit (required)" aria-label="Reason for approving the unlock" />
+                <button type="submit" class="btn btn-sm btn-warning"><i class="bi bi-unlock me-1"></i>Approve unlock</button>
+            </form>
+        </div>
+    }
+
     @if (failed && !string.IsNullOrEmpty(job.FailureReason))
     {
         <div class="alert alert-danger mt-3 mb-0">@job.FailureReason</div>

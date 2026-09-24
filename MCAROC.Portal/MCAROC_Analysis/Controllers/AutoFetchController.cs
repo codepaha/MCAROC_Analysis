@@ -30,7 +30,9 @@ public partial class AutoFetchController(
     ReferenceToolClient client,
     IOptions<ReferenceToolOptions> options,
     ILogger<AutoFetchController>? logger = null,
-    PipelineAdopter? pipelineAdopter = null) : Controller
+    PipelineAdopter? pipelineAdopter = null,
+    CompanyUnlockService? unlock = null,
+    CompanyGateCoordinator? gates = null) : Controller
 {
     // Company CIN (21 chars) or LLPIN (AAA-1234) — same rule the pre-login flow applies.
     [GeneratedRegex("^(?:[LU][0-9]{5}[A-Z]{2}[0-9]{4}[A-Z]{3}[0-9]{6}|[A-Z]{3}-[0-9]{4})$")]
@@ -245,6 +247,50 @@ public partial class AutoFetchController(
             queue.Enqueue(job.AutoFetchJobId);
             TempData["AutoFetchOk"] = "Company re-check queued. Previous completed results remain available while fresh workbooks are retrieved.";
         }
+        return RedirectToAction("Details", "Requests", new { id });
+    }
+
+    /// <summary>Approves spending 1 credit to unlock the request's company (#266). Any signed-in internal user
+    /// may approve (owner decision, plan §9 #12); a reason is mandatory and the approver is recorded. The
+    /// approval never expires and covers every request waiting on the company. The unlock is then attempted
+    /// straight away rather than on the next poll.</summary>
+    [HttpPost("/Requests/{id:long}/autofetch/unlock/approve")]
+    [Authorize(AuthenticationSchemes = "InternalReviewer")]
+    [ValidateAntiForgeryToken]
+    public async Task<IActionResult> ApproveUnlock(long id, [FromForm] string? reason, CancellationToken ct)
+    {
+        if (unlock is null || gates is null) return StatusCode(StatusCodes.Status503ServiceUnavailable);
+        var job = await db.AutoFetchJobs.AsNoTracking().FirstOrDefaultAsync(j => j.RequestId == id, ct);
+        if (job is null) return NotFound();
+        if (string.IsNullOrWhiteSpace(reason))
+        {
+            TempData["AutoFetchError"] = "Give a reason for approving the unlock — it spends 1 credit.";
+            return RedirectToAction("Details", "Requests", new { id });
+        }
+        if (job.Status != AutoFetchJobStatus.WaitingForUnlock)
+        {
+            TempData["AutoFetchError"] = "This request isn't waiting for an unlock approval.";
+            return RedirectToAction("Details", "Requests", new { id });
+        }
+
+        try
+        {
+            // Null means the company turned out to be unlocked already — nothing to approve; just resume.
+            await unlock.ApproveAsync(id, User.Identity?.Name ?? "unknown", reason, ct);
+        }
+        catch (InvalidOperationException ex)
+        {
+            TempData["AutoFetchError"] = ex.Message;
+            return RedirectToAction("Details", "Requests", new { id });
+        }
+        await gates.ResumeAsync(job.Cin, job.Bid, ct);
+        var after = await db.AutoFetchJobs.AsNoTracking().Where(j => j.RequestId == id).Select(j => new { j.Status, j.StatusMessage, j.FailureReason }).FirstAsync(ct);
+        if (after.Status == AutoFetchJobStatus.WaitingForUnlock)
+            TempData["AutoFetchOk"] = $"Unlock approved. {after.StatusMessage}";
+        else if (after.Status == AutoFetchJobStatus.Failed)
+            TempData["AutoFetchError"] = after.FailureReason;
+        else
+            TempData["AutoFetchOk"] = "Unlock approved — the company is unlocked and auto-fetch has resumed.";
         return RedirectToAction("Details", "Requests", new { id });
     }
 

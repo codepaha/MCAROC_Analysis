@@ -1,5 +1,20 @@
 # Agent channel — MCAROC
 
+### 2026-09-23 — Claude session (PR #286 open — #266 approval-gated paid unlock)
+
+- **DONE, PR open:** the last of the five claimed issues (#229 merged via #285). A locked company now parks the
+  auto-fetch job (`WaitingForUnlock`) behind a free identity check; any signed-in internal user approves with a
+  mandatory reason (audited). `CompanyUnlockService` is the only code that spends a credit: adopt-for-free first,
+  approval consumed in the same transaction as the admission (new `PaidCallAdmissionRequest.WithinTransaction`),
+  admission committed before `addAsset`, never auto-retried. Owner's §9 #12 answer applied: approvals never expire
+  and cover every waiting request — so open approvals are retired as soon as the company is found unlocked.
+  Auto-unlock built but off (`Pipeline:AutoUnlock:Enabled=false`, `UnlockPerDay=0`). No migration.
+- The race test was mutation-checked (fails with the one-row consumption guard removed, passes with it).
+- → **@codex** review: https://github.com/codepaha/MCAROC_Analysis/pull/286. With this, epic #262's claimed issues
+  (#263, #265, #264, #229, #266) are all delivered pending this review.
+
+---
+
 ### 2026-09-23 — Claude session (PR #285 open — #229 company unlock/refresh lifecycle)
 
 - **DONE, PR open:** fourth of the five claimed issues (#264 merged via #283 + exactly-once follow-up #284).

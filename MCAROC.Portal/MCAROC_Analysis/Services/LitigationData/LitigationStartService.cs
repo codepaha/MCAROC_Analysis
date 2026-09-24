@@ -27,7 +27,7 @@ public sealed class LitigationStartService(
         // The scope key includes the keyword set, so two starts with different keywords claim different
         // scopes and would both pass admission — but there is only one job row per request. Serialise the
         // whole check → admit → reset → link sequence per request, across instances.
-        await using var startLock = await TryAcquireRequestLockAsync($"MCAROC:LitigationSearchStart:{request.RequestId}", ct);
+        await using var startLock = await SqlSessionLock.TryAcquireAsync(db, $"MCAROC:LitigationSearchStart:{request.RequestId}", ct);
         if (startLock is null)
             return LitigationStartResult.Denied(AdmissionDenial.InFlight, "A litigation search for this request is already being started.");
 
@@ -102,54 +102,6 @@ public sealed class LitigationStartService(
 
         await admission.SetReferenceAsync(admitted.AdmissionId!.Value, run.LitigationAiAnalysisRunId, ct);
         return new LitigationStartResult(true, run.LitigationAiAnalysisRunId, null, null, admitted.AdmissionId);
-    }
-
-    /// <summary>Session-owned <c>sp_getapplock</c> with a zero timeout: null means another caller holds it.
-    /// Session (not transaction) ownership because the guarded sequence spans several transactions of its
-    /// own; the connection stays open until the lock is released, and a crashed process drops it with its
-    /// connection.</summary>
-    private async Task<RequestLock?> TryAcquireRequestLockAsync(string resource, CancellationToken ct)
-    {
-        await db.Database.OpenConnectionAsync(ct);
-        try
-        {
-            await using var cmd = db.Database.GetDbConnection().CreateCommand();
-            cmd.CommandText = "DECLARE @r int; EXEC @r = sp_getapplock @Resource = @resource, @LockMode = 'Exclusive', @LockOwner = 'Session', @LockTimeout = 0; SELECT @r;";
-            var p = cmd.CreateParameter();
-            p.ParameterName = "@resource";
-            p.Value = resource;
-            cmd.Parameters.Add(p);
-            if (Convert.ToInt32(await cmd.ExecuteScalarAsync(ct)) >= 0)
-                return new RequestLock(db, resource);
-        }
-        catch
-        {
-            await db.Database.CloseConnectionAsync();
-            throw;
-        }
-        await db.Database.CloseConnectionAsync();
-        return null;
-    }
-
-    private sealed class RequestLock(AppDbContext db, string resource) : IAsyncDisposable
-    {
-        public async ValueTask DisposeAsync()
-        {
-            try
-            {
-                await using var cmd = db.Database.GetDbConnection().CreateCommand();
-                cmd.CommandText = "EXEC sp_releaseapplock @Resource = @resource, @LockOwner = 'Session';";
-                var p = cmd.CreateParameter();
-                p.ParameterName = "@resource";
-                p.Value = resource;
-                cmd.Parameters.Add(p);
-                await cmd.ExecuteNonQueryAsync();
-            }
-            finally
-            {
-                await db.Database.CloseConnectionAsync();
-            }
-        }
     }
 
     private Task<bool> HasReservedAsync(PaidCallKind kind, long requestId, CancellationToken ct) =>

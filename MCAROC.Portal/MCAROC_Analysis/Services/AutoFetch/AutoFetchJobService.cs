@@ -35,7 +35,8 @@ public sealed class AutoFetchJobService(
     IWebHostEnvironment env,
     ILogger<AutoFetchJobService> logger,
     IWorkbookDerivativeService? derivativeService = null,
-    CompanyRefreshService? refresh = null)
+    CompanyRefreshService? refresh = null,
+    CompanyUnlockService? unlock = null)
 {
     /// <summary>Fallback per-file size estimate used when the registry gives no declared size for a
     /// document or an attachment — only for sizing the up-front storage reservation and the plan-time
@@ -218,7 +219,19 @@ public sealed class AutoFetchJobService(
                         await db.SaveChangesAsync(ct);
                         return;
                     case RefreshGateKind.Locked:
-                        throw new ReferenceToolException(gate.Message, ReferenceToolFailureKind.CompanyLocked);
+                        if (unlock is null)
+                            throw new ReferenceToolException(gate.Message, ReferenceToolFailureKind.CompanyLocked);
+                        // Park for a human approval (the alert). A preview naming a different company fails the
+                        // job instead: nothing may ever be unlocked on this request's say-so.
+                        var (identityMatches, lockedMessage) = await unlock.DescribeLockedAsync(job.Cin, job.Bid, ct);
+                        if (!identityMatches)
+                            throw new ReferenceToolException(lockedMessage, ReferenceToolFailureKind.Other);
+                        job.Status = AutoFetchJobStatus.WaitingForUnlock;
+                        job.StatusMessage = lockedMessage.Length > 500 ? lockedMessage[..500] : lockedMessage;
+                        job.HeartbeatUtc = DateTime.UtcNow;
+                        await db.SaveChangesAsync(ct);
+                        logger.LogWarning("Auto-fetch job {JobId} (request {RequestId}) is waiting for approval to unlock {Cin}", job.AutoFetchJobId, job.RequestId, job.Cin);
+                        return;
                     case RefreshGateKind.Deferred:
                         throw new ReferenceToolException(gate.Message, ReferenceToolFailureKind.Unavailable);
                     case RefreshGateKind.TimedOut:

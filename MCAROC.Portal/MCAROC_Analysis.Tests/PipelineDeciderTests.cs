@@ -120,10 +120,21 @@ public sealed class PipelineDeciderTests
         var d = PipelineDecider.Decide(AutoBeforeExport(AutoFetchJobStatus.Failed,
             new LifecycleFacts(CompanyReportLifecycleState.Locked, null, false)), PolicyOff);
 
-        Assert.Equal("COMPANY_LOCKED", d.Stages[PipelineStage.Unlock].ReasonCode);
+        Assert.Equal("UNLOCK_APPROVAL_REQUIRED", d.Stages[PipelineStage.Unlock].ReasonCode);
         Assert.Equal("AWAITING_UNLOCK", d.Stages[PipelineStage.Refresh].ReasonCode);
         Assert.Equal("BLOCKED_UPSTREAM", d.Stages[PipelineStage.Fetch].ReasonCode);
         Assert.Single(d.Stages.Values, v => v.State == PipelineStageStateKind.NeedsAttention);
+    }
+
+    [Fact]
+    public void A_job_parked_for_unlock_approval_waits_on_fetch_with_attention_on_unlock()
+    {
+        var d = PipelineDecider.Decide(AutoBeforeExport(AutoFetchJobStatus.WaitingForUnlock,
+            new LifecycleFacts(CompanyReportLifecycleState.Locked, null, false)), PolicyOff);
+
+        Assert.Equal("UNLOCK_APPROVAL_REQUIRED", d.Stages[PipelineStage.Unlock].ReasonCode);
+        Assert.Equal("AWAITING_UNLOCK", d.Stages[PipelineStage.Fetch].ReasonCode);
+        Assert.Equal(PipelineOutcome.NeedsAttention, d.Outcome);
     }
 
     [Fact]

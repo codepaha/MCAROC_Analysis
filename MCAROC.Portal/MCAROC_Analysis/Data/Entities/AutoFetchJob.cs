@@ -9,6 +9,9 @@ public enum AutoFetchJobStatus
     /// <summary>Parked (holding no worker slot) until the reference tool finishes refreshing the company's
     /// data; <c>CompanyRefreshWorker</c> re-queues it. Nothing has been exported yet.</summary>
     WaitingForRefresh,
+    /// <summary>Parked because the company is locked in the reference tool: waiting for a human to approve the
+    /// 1-credit unlock (#266). Nothing has been exported yet.</summary>
+    WaitingForUnlock,
     CheckingSession,
     FetchingWorkbooks,
     Ingesting,

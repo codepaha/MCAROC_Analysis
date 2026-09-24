@@ -630,6 +630,56 @@ public sealed class ReferenceToolClient(HttpClient http, IOptions<ReferenceToolO
         }, ct);
     }
 
+    /// <summary><c>getCompanyPreview</c> — the free identity check (CIN, legal name, status, state) that works
+    /// on a locked company.</summary>
+    public Task<ReferenceCompanyPreview> GetCompanyPreviewAsync(string bid, CancellationToken ct)
+    {
+        EnsureConfigured();
+        return WithSessionRecoveryAsync(async () =>
+        {
+            using var doc = await GetJsonAsync("server/common/api/service.php", new { action = "getCompanyPreview", bid }, "company preview", ct);
+            if (!doc.RootElement.TryGetProperty("about_company", out var about) || !about.TryGetProperty("summary", out var summary))
+                throw new ReferenceToolException("The reference tool's company preview had no summary.", ReferenceToolFailureKind.ContractChanged);
+            var state = summary.TryGetProperty("registered_address", out var address) ? Text(address, "state") : null;
+            return new ReferenceCompanyPreview(Text(summary, "cin")?.ToUpperInvariant(), Text(summary, "legal_name"), Text(summary, "company_llp_status"), state);
+        }, ct);
+    }
+
+    /// <summary><c>getUpgradeStatusForUnlockingAsset</c> — false while the MCA portal is in maintenance, when
+    /// the tool itself holds off unlocks.</summary>
+    public Task<bool> IsMcaAvailableForUnlockAsync(CancellationToken ct)
+    {
+        EnsureConfigured();
+        return WithSessionRecoveryAsync(async () =>
+        {
+            using var doc = await GetJsonAsync("server/common/mcastatus/service.php", new { action = "getUpgradeStatusForUnlockingAsset" }, "MCA status", ct);
+            var status = Text(doc.RootElement, "mca_status")
+                ?? throw new ReferenceToolException("The reference tool's MCA-status response had no mca_status.", ReferenceToolFailureKind.ContractChanged);
+            return string.Equals(status, "NORMAL", StringComparison.OrdinalIgnoreCase);
+        }, ct);
+    }
+
+    /// <summary><c>addAsset</c> — <b>spends one credit</b> to unlock the company. Deliberately <em>not</em> routed
+    /// through the session-recovery wrapper: a paid call is never replayed automatically. The only caller is
+    /// <see cref="CompanyUnlockService"/>, after an admission has been committed for it.</summary>
+    public async Task AddAssetAsync(long teamId, string bid, string legalName, CancellationToken ct)
+    {
+        EnsureConfigured();
+        var token = await SignAsync(new { action = "addAsset", teamId, bid, legalName }, ct);
+        var url = BuildUrl("server/user/service.php", new Dictionary<string, string> { ["v"] = _opts.ClientVersion, ["cv"] = _opts.AppVersion });
+        using var request = NewRequest(url);
+        request.Method = HttpMethod.Post;
+        request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+        request.Content = new FormUrlEncodedContent([new KeyValuePair<string, string>("pp", token)]);
+        using var response = await http.SendAsync(request, ct);
+        var body = await response.Content.ReadAsStringAsync(ct);
+        if (!response.IsSuccessStatusCode)
+            throw new ReferenceToolException($"The reference tool's unlock call returned HTTP {(int)response.StatusCode}.", ClassifyHttpFailure(response.StatusCode));
+        using var doc = ParseJsonOrThrow(body, "unlock");
+        if (!(doc.RootElement.ValueKind == JsonValueKind.Object && doc.RootElement.TryGetProperty("statusCode", out var ok) && ok.ValueKind == JsonValueKind.True))
+            throw new ReferenceToolException($"The reference tool did not confirm the unlock: {(body.Length > 200 ? body[..200] : body)}", ReferenceToolFailureKind.ContractChanged);
+    }
+
     private async Task<JsonDocument> GetJsonAsync(string path, object payload, string what, CancellationToken ct)
     {
         using var response = await SendSignedAsync(path, payload, ct);

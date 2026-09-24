@@ -65,7 +65,7 @@ public static class PipelineDecider
                 : Ok(job.JobId, "INFERRED_FROM_EXPORT", "The workbook export succeeded, which requires an unlocked company.");
         return s.Lifecycle switch
         {
-            { State: CompanyReportLifecycleState.Locked } => Attention("COMPANY_LOCKED", "The company is not unlocked in the reference tool."),
+            { State: CompanyReportLifecycleState.Locked } => Attention("UNLOCK_APPROVAL_REQUIRED", "The company is locked in the reference tool; unlocking costs 1 credit and needs an approval."),
             { State: CompanyReportLifecycleState.Expired } => Attention("UNLOCK_EXPIRED", "The company's 12-month unlock in the reference tool has expired."),
             { UnlockedUtc: not null } => Ok(job.JobId, "UNLOCKED"),
             _ => new StageVerdict(PipelineStageStateKind.NotStarted, ReasonCode: "NOT_YET_CHECKED",
@@ -104,6 +104,7 @@ public static class PipelineDecider
                 : Attention("FETCH_FAILED", job.FailureReason, job.JobId);
         if (job.Status == AutoFetchJobStatus.Queued) return Waiting("QUEUED", job.JobId);
         if (job.Status == AutoFetchJobStatus.WaitingForRefresh) return Waiting("AWAITING_REFRESH", job.JobId);
+        if (job.Status == AutoFetchJobStatus.WaitingForUnlock) return Waiting("AWAITING_UNLOCK", job.JobId);
         return Running(job.JobId);
     }
 

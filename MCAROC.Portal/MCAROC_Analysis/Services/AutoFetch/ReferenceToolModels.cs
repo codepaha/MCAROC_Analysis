@@ -61,6 +61,10 @@ public sealed record ReferenceSessionInfo(bool IsValid, string? UserId, string? 
 /// present either way — it's what a paid unlock would be charged to.</summary>
 public sealed record ReferenceAssetStatus(long? TeamId, DateTimeOffset? AddedAt);
 
+/// <summary><c>getCompanyPreview</c> — free, and works on a locked company: the identity check made immediately
+/// before spending a credit.</summary>
+public sealed record ReferenceCompanyPreview(string? Cin, string? LegalName, string? Status, string? State);
+
 public enum ReferenceRefreshStatus
 {
     /// <summary>A refresh for the company is queued or running at the tool.</summary>

@@ -15,11 +15,18 @@ public enum AdmissionDenial
     /// <summary>The scope was committed inside its freshness window (auto only).</summary>
     Fresh,
     /// <summary>The day's auto cap for this kind is used up (auto only).</summary>
-    CostCapReached
+    CostCapReached,
+    /// <summary>The caller's in-transaction precondition failed (e.g. its approval was already consumed).</summary>
+    PreconditionFailed
 }
 
+/// <param name="WithinTransaction">Optional extra step run inside the admission transaction, after the scope and
+/// counter are taken and before commit, on the same connection — given the database and the new admission id.
+/// Returning false rolls the whole admission back (<see cref="AdmissionDenial.PreconditionFailed"/>). This is how a
+/// single-use approval is consumed atomically with the spend it authorizes.</param>
 public sealed record PaidCallAdmissionRequest(
-    PaidCallKind Kind, string ScopeKey, PaidCallTrigger Trigger, long RequestId, long? ClientId = null, string? CorrelationId = null);
+    PaidCallKind Kind, string ScopeKey, PaidCallTrigger Trigger, long RequestId, long? ClientId = null, string? CorrelationId = null,
+    Func<AppDbContext, long, CancellationToken, Task<bool>>? WithinTransaction = null);
 
 public sealed record AdmissionResult(long? AdmissionId, AdmissionDenial? Denial, DateTime ReservedUtc)
 {
@@ -118,6 +125,12 @@ public sealed class PaidCallAdmissionService(
         {
             await tx.RollbackAsync(ct);
             return new AdmissionResult(null, AdmissionDenial.CostCapReached, now);
+        }
+
+        if (r.WithinTransaction is { } step && !await step(db, id, ct))
+        {
+            await tx.RollbackAsync(ct);
+            return new AdmissionResult(null, AdmissionDenial.PreconditionFailed, now);
         }
 
         await tx.CommitAsync(ct);
