@@ -9,6 +9,7 @@ using MCAROC_Analysis.Services.McaFilings;
 using QuestPDF.Fluent;
 using QuestPDF.Helpers;
 using QuestPDF.Infrastructure;
+using MCAROC_Analysis.Services;
 
 namespace MCAROC_Analysis.Services.LitigationData;
 
@@ -45,7 +46,7 @@ public static class LitigationOrderAvailabilityResolver
         if (doc.Status == LitigationOrderDocumentStatus.Downloaded)
         {
             var deadlineStr = doc.RetainedUntilUtc > DateTime.MinValue
-                ? $" (vendor deadline: {doc.RetainedUntilUtc:dd-MMM-yyyy})"
+                ? $" (vendor deadline: {Ist.Date(doc.RetainedUntilUtc, "dd-MMM-yyyy")})"
                 : string.Empty;
             var textNote = doc.TextExtractionStatus == FilingDocumentProcessingStatus.TextExtracted
                 ? "; text extracted"
@@ -59,7 +60,7 @@ public static class LitigationOrderAvailabilityResolver
         if (isExpired)
         {
             var dateStr = doc.RetainedUntilUtc > DateTime.MinValue
-                ? $" on {doc.RetainedUntilUtc:dd-MMM-yyyy}"
+                ? $" on {Ist.Date(doc.RetainedUntilUtc, "dd-MMM-yyyy")}"
                 : string.Empty;
             var textNote = doc.TextExtractionStatus == FilingDocumentProcessingStatus.TextExtracted
                 ? "; extracted text retained in portal"
@@ -185,7 +186,7 @@ public static class LitigationReportArtifacts
         var orderDates = string.Join("; ", item.Orders.Select(o => o.OrderDate ?? "-"));
         var orderTypes = string.Join("; ", item.Orders.Select(o => o.OrderType ?? "-"));
         var orderStatuses = string.Join("; ", item.Orders.Select(o => o.CsvStatus));
-        var orderRetainedUntil = string.Join("; ", item.Orders.Select(o => o.RetainedUntilUtc?.ToString("yyyy-MM-dd") ?? "-"));
+        var orderRetainedUntil = string.Join("; ", item.Orders.Select(o => Ist.Date(o.RetainedUntilUtc, "yyyy-MM-dd", "-")));
         var orderExtraction = string.Join("; ", item.Orders.Select(o => o.ExtractionLabel));
 
         foreach (var value in new[]
@@ -298,11 +299,11 @@ internal sealed class LitigationReportPdfDocument(StandaloneLitigationReport rep
         var orders = grid.TotalOrders;
         column.Item().PaddingTop(6).Text("Litigation Due Diligence Report").Bold().FontSize(22).FontColor(Ink);
         column.Item().PaddingTop(2).Text(report.CompanyName).SemiBold().FontSize(13).FontColor(Navy);
-        column.Item().Text($"Assignment {report.AssignmentNumber}  |  Generated {report.GeneratedAtUtc:dd MMM yyyy, HH:mm} UTC").FontSize(8).FontColor(Colors.Grey.Darken1);
+        column.Item().Text($"Assignment {report.AssignmentNumber}  |  Generated {Ist.Format(report.GeneratedAtUtc, "dd MMM yyyy, HH:mm")}").FontSize(8).FontColor(Colors.Grey.Darken1);
         column.Item().PaddingTop(10).Element(container => InformationTable(container, new[]
         {
             ("SOURCE", "BPR Litigation Data Lake"),
-            ("AUTHORITATIVE SNAPSHOT", $"{report.AuthoritativeSnapshotRetrievedUtc:dd MMM yyyy, HH:mm} UTC (ID: {report.AuthoritativeSnapshotId}){(report.IsPriorRunDataShown ? " [Prior Run Snapshot]" : string.Empty)}"),
+            ("AUTHORITATIVE SNAPSHOT", $"{Ist.Format(report.AuthoritativeSnapshotRetrievedUtc, "dd MMM yyyy, HH:mm")} (ID: {report.AuthoritativeSnapshotId}){(report.IsPriorRunDataShown ? " [Prior Run Snapshot]" : string.Empty)}"),
             ("KEYWORDS SEARCHED", report.KeywordsSearched.Count == 0 ? "Not supplied by source" : string.Join(" | ", report.KeywordsSearched)),
             ("REPORT SCOPE", "Standalone litigation report; separate from the MCA ROC dossier"),
             ("SNAPSHOT ANCHORING", "Membership-only snapshot anchoring; case metadata reflects current persisted records.")

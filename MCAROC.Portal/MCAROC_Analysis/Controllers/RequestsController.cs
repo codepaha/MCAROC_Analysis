@@ -877,8 +877,8 @@ public class RequestsController(
                         Snapshots = allCompletedSnapshots,
                         IsAuthoritativeCoverage = isAuthoritativeCoverage,
                         CoverageSummaryText = isAuthoritativeCoverage
-                            ? $"Authoritative snapshot ({authoritativeSnapshot.RetrievedUtc:dd-MMM-yyyy HH:mm} UTC) de-duplicated across {keywords.Count} search keywords into {uniqueCasesCount} unique legal proceedings ({totalObservationsCount} source observations). Request history includes {allCompletedSnapshots.Count} completed search snapshot(s)."
-                            : $"Showing data from previous completed search snapshot retrieved {authoritativeSnapshot.RetrievedUtc:dd-MMM-yyyy HH:mm} UTC.",
+                            ? $"Authoritative snapshot ({Ist.Format(authoritativeSnapshot.RetrievedUtc)}) de-duplicated across {keywords.Count} search keywords into {uniqueCasesCount} unique legal proceedings ({totalObservationsCount} source observations). Request history includes {allCompletedSnapshots.Count} completed search snapshot(s)."
+                            : $"Showing data from previous completed search snapshot retrieved {Ist.Format(authoritativeSnapshot.RetrievedUtc)}.",
                         UniqueCasesCount = uniqueCasesCount,
                         TotalObservationsCount = totalObservationsCount,
                         TotalOrders = totalOrdersCount,

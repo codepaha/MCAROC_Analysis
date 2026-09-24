@@ -84,7 +84,7 @@
                     <div class="mca-chat-bubble">
                         <div class="mca-chat-bubble-header">
                             <strong>@(isUser ? "You" : "Assistant")</strong>
-                            <small class="text-muted ms-2">@m.CreatedDate.ToString("HH:mm")</small>
+                            <small class="text-muted ms-2">@Ist.Format(m.CreatedDate, "HH:mm")</small>
                             @if (m.Status == ChatMessageStatus.Failed)
                             {
                                 <span class="badge bg-danger ms-1">Failed</span>

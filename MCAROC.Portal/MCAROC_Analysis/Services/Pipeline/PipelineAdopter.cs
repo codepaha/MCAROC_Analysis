@@ -64,7 +64,9 @@ public sealed class PipelineAdopter(AppDbContext db, IOptionsMonitor<PipelineOpt
     public async Task<int> AdoptSweepAsync(int max, CancellationToken ct)
     {
         var opts = options.CurrentValue;
-        if (!opts.Enabled || opts.AdoptAfterUtc is not { } cutoff) return 0;
+        if (!opts.Enabled || opts.AdoptAfterUtc is not { } configured) return 0;
+        // The configuration binder turns "…Z" into server-local time; CreatedDate is UTC.
+        var cutoff = configured.Kind == DateTimeKind.Local ? configured.ToUniversalTime() : configured;
 
         var candidates = await db.Requests.AsNoTracking()
             .Where(r => r.CreatedDate >= cutoff && !db.PipelineRuns.Any(p => p.RequestId == r.RequestId))

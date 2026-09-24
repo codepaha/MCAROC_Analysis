@@ -46,7 +46,7 @@ else
         <table class="table table-sm table-hover align-middle">
             <thead class="table-light">
                 <tr>
-                    <th style="width: 140px;">Timestamp (UTC)</th>
+                    <th style="width: 140px;">Time (IST)</th>
                     <th style="width: 120px;">Correlation ID</th>
                     <th style="width: 180px;">Actor</th>
                     <th style="width: 150px;">Action</th>
@@ -59,7 +59,7 @@ else
                 {
                     <tr>
                         <td class="text-nowrap small">
-                            @item.TimestampUtc.ToString("yyyy-MM-dd HH:mm:ss")
+                            @Ist.Format(item.TimestampUtc, "d MMM yyyy HH:mm:ss")
                         </td>
                         <td class="small font-monospace text-truncate" style="max-width: 120px;" title="@item.CorrelationId">
                             @item.CorrelationId

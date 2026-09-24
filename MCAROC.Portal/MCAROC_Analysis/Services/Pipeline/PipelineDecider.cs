@@ -21,6 +21,10 @@ public sealed record PipelineDecision(IReadOnlyDictionary<PipelineStage, StageVe
 /// plan's eventual signature it needs neither the previous states nor the clock.</summary>
 public static class PipelineDecider
 {
+    /// <summary>A stage whose prerequisites are met and which nobody has started — the one state an
+    /// <c>Enforce</c>-mode action may act on.</summary>
+    public const string ReadyToStart = "WOULD_START";
+
     public static PipelineDecision Decide(PipelineSnapshot s, PipelinePolicy policy)
     {
         var manual = s.AutoFetch is null;
@@ -200,8 +204,8 @@ public static class PipelineDecider
         if (!policy.LitigationSearch) return Skip(PipelineStageSkipKind.Neutral, "POLICY_OFF");
         if (!s.LitigationConfigured) return Skip(PipelineStageSkipKind.Warning, "INTEGRATION_NOT_CONFIGURED");
         if (!ingest.IsDone) return Waiting("AWAITING_INGEST");
-        return new StageVerdict(PipelineStageStateKind.NotStarted, ReasonCode: "WOULD_START",
-            ReasonDetail: "Observe mode: the coordinator does not start litigation searches yet.");
+        return new StageVerdict(PipelineStageStateKind.NotStarted, ReasonCode: ReadyToStart,
+            ReasonDetail: "Ready to start. The coordinator starts it itself only in Enforce mode with Enforce:Litigation on.");
     }
 
     private static StageVerdict LitigationAnalysis(PipelineSnapshot s, PipelinePolicy policy, StageVerdict litigation)
@@ -220,8 +224,8 @@ public static class PipelineDecider
         // Any warning about the search itself is already counted on the Litigation stage.
         if (litigation.State == PipelineStageStateKind.Skipped) return Skip(PipelineStageSkipKind.Neutral, "UPSTREAM_SKIPPED");
         if (!litigation.IsDone) return Waiting("AWAITING_LITIGATION");
-        return new StageVerdict(PipelineStageStateKind.NotStarted, ReasonCode: "WOULD_START",
-            ReasonDetail: "Observe mode: the coordinator does not start litigation analysis yet.");
+        return new StageVerdict(PipelineStageStateKind.NotStarted, ReasonCode: ReadyToStart,
+            ReasonDetail: "Ready to start. The coordinator does not start litigation analysis itself.");
     }
 
     private static StageVerdict Ok(long? sourceRef = null, string? code = null, string? detail = null) =>

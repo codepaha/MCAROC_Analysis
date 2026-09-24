@@ -66,31 +66,13 @@ public class LitigationController(
         var request = await db.Requests.FirstOrDefaultAsync(r => r.RequestId == id, ct);
         if (request is null) return NotFound();
 
-        if (!_opts.IsConfigured)
-            return BadRequest("BPR Litigation API is not configured on this instance.");
-
-        if (string.IsNullOrWhiteSpace(request.CompanyName))
-            return BadRequest("Company name is required for litigation keyword planning.");
-
-        if (request.EntityType is not (EntityType.Company or EntityType.LLP))
-            return BadRequest("Unsupported entity type for litigation search.");
-
-        if (string.IsNullOrWhiteSpace(_opts.DefaultEntityType))
-            return BadRequest("Default entity type is not configured.");
-
-        var historicalNames = request.LatestCompletedIngestionRunId is { } runId
-            ? await db.CompanyNameHistories.Where(x => x.IngestionRunId == runId && !string.IsNullOrWhiteSpace(x.PreviousName))
-                .Select(x => x.PreviousName).ToListAsync(ct)
-            : [];
-
-        var keywords = LitigationKeywordPlanner.Build(request.CompanyName, historicalNames);
-        var appCustomerId = !string.IsNullOrWhiteSpace(request.RequestNumber)
-            ? request.RequestNumber.Trim()
-            : $"REQ-{request.RequestId}";
+        var (plan, problem) = await LitigationStartService.PlanSearchAsync(db, request, _opts, ct);
+        if (plan is null)
+            return BadRequest(problem);
 
         try
         {
-            var started = await starter.StartSearchAsync(request, keywords, _opts.DefaultEntityType, appCustomerId, PaidCallTrigger.Manual, ct);
+            var started = await starter.StartSearchAsync(request, plan.Keywords, plan.EntityType, plan.ApplicationCustomerId, PaidCallTrigger.Manual, ct);
             if (!started.Started)
                 throw new InvalidOperationException(started.Message);
             var job = await db.LitigationSearchJobs.AsNoTracking().SingleAsync(j => j.LitigationSearchJobId == started.ReferenceId, ct);

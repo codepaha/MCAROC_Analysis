@@ -4,6 +4,7 @@ using DocumentFormat.OpenXml;
 using DocumentFormat.OpenXml.Packaging;
 using DocumentFormat.OpenXml.Wordprocessing;
 using MCAROC_Analysis.Models;
+using MCAROC_Analysis.Services;
 
 namespace MCAROC_Analysis.Services.PreLoginReports;
 
@@ -259,7 +260,7 @@ public sealed class PreLoginReportService(InstaFinancialsClient client, IWebHost
         if (endIndex < beginIndex) return;
 
         var runProps = runs[beginIndex].RunProperties?.CloneNode(true) as RunProperties;
-        var dateText = DateTime.Now.ToString("d MMMM yyyy", CultureInfo.InvariantCulture);
+        var dateText = Ist.Now().ToString("d MMMM yyyy", CultureInfo.InvariantCulture);
         var newRun = runProps is not null ? new Run(runProps, new Text(dateText)) : new Run(new Text(dateText));
         for (var i = endIndex; i >= beginIndex; i--) runs[i].Remove();
         if (beginIndex > 0) runs[beginIndex - 1].InsertAfterSelf(newRun); else datePara.PrependChild(newRun);

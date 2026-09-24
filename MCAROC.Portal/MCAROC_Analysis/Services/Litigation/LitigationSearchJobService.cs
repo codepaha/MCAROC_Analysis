@@ -5,6 +5,7 @@ using MCAROC_Analysis.Data;
 using MCAROC_Analysis.Data.Entities;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
+using MCAROC_Analysis.Services;
 
 namespace MCAROC_Analysis.Services.LitigationData;
 
@@ -144,7 +145,7 @@ public sealed class LitigationSearchJobService(
         {
             if (job.VendorJobId is null && job.RegistrationAttemptedUtc is not null)
                 throw new LitigationRegistrationAmbiguousException(
-                    $"A previous registration attempt for job {jobId} at {job.RegistrationAttemptedUtc:O} never " +
+                    $"A previous registration attempt for job {jobId} at {Ist.Format(job.RegistrationAttemptedUtc, "d MMM yyyy HH:mm:ss")} never " +
                     "confirmed success or failure with BPR — the confirmed contract has no idempotency key and no " +
                     "way to look up a prior registration, so retrying risks a duplicate vendor-side search. Manual " +
                     "reconciliation required: check BPR directly, then set VendorJobId or clear RegistrationAttemptedUtc.");

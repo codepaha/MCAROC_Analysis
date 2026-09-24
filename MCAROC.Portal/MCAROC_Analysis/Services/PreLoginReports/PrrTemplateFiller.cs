@@ -1,6 +1,7 @@
 using System.Globalization;
 using DocumentFormat.OpenXml;
 using DocumentFormat.OpenXml.Wordprocessing;
+using MCAROC_Analysis.Services;
 
 namespace MCAROC_Analysis.Services.PreLoginReports;
 
@@ -13,9 +14,9 @@ internal static class PrrTemplateFiller
         if (tables.Length != 5)
             throw new PreLoginReportException("The selected report template is invalid.");
 
-        var now = DateTime.Now;
+        var now = Ist.Now();
         FillValues(tables[0], ["", "", cin, name,
-            now.ToString("dd/MM/yyyy h:mm:ss tt", CultureInfo.InvariantCulture),
+            now.ToString("dd/MM/yyyy h:mm:ss tt", CultureInfo.InvariantCulture) + " " + Ist.Label,
             $"{data.Charges.Count} {(data.Charges.Count == 1 ? "charge" : "charges")} found."]);
         var c = data.Company;
         FillValues(tables[1], [cin, name, c.RocName, c.RegistrationNumber, c.Category, c.Subcategory,

@@ -24,8 +24,8 @@
             <div class="text-muted small" id="afDetail">
                 CIN @job.Cin
                 @if (job.FilesTotal > 0) { <span> &middot; filings <span id="afFiles">@job.FilesDownloaded.ToString("N0") / @job.FilesTotal.ToString("N0")</span>@(job.FilesFailed > 0 ? $" ({job.FilesFailed:N0} failed)" : "")</span> }
-                @if (job.StartedUtc is { } s) { <span> &middot; started @s.ToLocalTime().ToString("d MMM HH:mm")</span> }
-                @if (job.CompletedUtc is { } c) { <span> &middot; finished @c.ToLocalTime().ToString("d MMM HH:mm")</span> }
+                @if (job.StartedUtc is { } s) { <span> &middot; started @Ist.Format(s, "d MMM HH:mm")</span> }
+                @if (job.CompletedUtc is { } c) { <span> &middot; finished @Ist.Format(c, "d MMM HH:mm")</span> }
             </div>
         </div>
         @if (failed)

@@ -203,6 +203,18 @@ The outcome is computed by one pure function, `PipelineDecider.Aggregate(stageSt
 action family (`Pipeline:Enforce:Dossier`, `:Litigation`, `:LitigationAnalysis`, `:Retries`) so the low-risk
 actions (dossier pre-render) can go live before the paid ones.
 
+*As implemented (owner decision 2026-09-24, §16):* `Pipeline:Mode` and `Pipeline:Enforce:Litigation` exist; the
+other families are not built yet. appsettings.json ships `Enabled=true`, `Mode=Enforce`, `Enforce:Litigation=true`,
+`Policy:LitigationSearch=true`, `Policy:LitigationAnalysis=false`, `Caps:LitigationAnalysisPerDay=0`,
+`AutoUnlock:Enabled=false`. In Enforce mode the reconciler, while it still holds the run's lease and after
+committing the observed states, starts the litigation search through `LitigationStartService.StartAutoSearchAsync`
+— the same admission path as the reviewer's button, with `Trigger=Auto`, never over an existing search job, and
+only for a request with a CIN/LLPIN. A refused start (cap, `FRESH`, in flight, not eligible, exception) is kept on
+the stage with its reason and `NextAttemptUtc` (`Pipeline:AutoStartRetryMinutes`, default 60) and is not retried
+before then; the same refusal repeated is not logged again. Every step is a `PipelineEvent` and is shown as a
+readable timeline on the request page (`PipelineEventText`). The hard start-up gate described in §7 was not
+needed: the admission tables are part of the schema every deployment migrates to.
+
 ---
 
 ## 4. Stage 2 — Chain the manual hand-offs
@@ -885,11 +897,11 @@ self-hosted runner.
 
 ## 9. Decisions needed from you
 
-1. ~~Auto-litigation cost policy~~ — **Partially resolved (round 5):** search is free (confirmed), so
-   `AutoLitigationSearch`'s cap is a rate-limit, not a spend guard (default `50`/day, §4.0) — **still open:**
-   on by default, or per client? **Also still open:** the real spend cap value for `LitigationAnalysisPerDay`
-   (defaults to `0` — fail-safe — until a number is set).
-2. **Auto litigation AI analysis** (paid Vertex): auto-run, or stop after search/orders and leave analysis manual?
+1. ~~Auto-litigation cost policy~~ — **Resolved (owner, 2026-09-24, §16):** search is free, so its cap is a
+   rate-limit (`50`/day); litigation search runs **automatically for every request** (on by default, not per
+   client). `LitigationAnalysisPerDay` stays **`0`**.
+2. ~~Auto litigation AI analysis~~ — **Resolved (owner, 2026-09-24, §16):** not automatic; analysis stays manual
+   (policy off, cap 0).
 3. ~~Locked companies~~ — **Resolved (§13):** alert now and unlock only after an explicit approval; auto-unlock
    later behind `Pipeline:AutoUnlock` (§5.7).
 4. **Definition of "done":** is `CoreReady` (dossier downloadable) the headline completion, with enrichment
@@ -904,9 +916,9 @@ self-hosted runner.
    day's `Used` — kept as proposed, no separate counters.
 10. ~~Cap day boundary~~ — **Defaulted (round 5):** `Asia/Kolkata`, as proposed — low-stakes and it's a config
     value (`Pipeline:CapTimeZone`), so this is a easy override later, not a redesign, if wrong.
-11. ~~The unlock "alert"~~ — **Resolved (round 5): banner for now.** Banner + `/Pipeline` board + log + `/health`
-    only; no email sink pulled forward from stage 6. Revisit if approvals sit unnoticed in practice once PR R
-    is live.
+11. ~~The unlock "alert"~~ — **Resolved (round 5), revised (owner, 2026-09-24, §16):** a pop-up on **every page**
+    for a signed-in reviewer, with an *Unlock (1 credit)* button that approves on the spot (the same endpoint and
+    rules as the request page's panel). No email sink.
 12. ~~Approver policy~~ — **Resolved (owner, 2026-09-23):** any authenticated user of the internal application may
     approve (it is internal-only today; revisit if it is ever opened to clients); an approval **does not expire**
     until consumed; one approval covers every request waiting on that company (still at most one credit spent).
@@ -1018,3 +1030,17 @@ relying on it — both the capture and a process problem during hand-off:
 
 Still open after this round: the actual `LitigationAnalysisPerDay` cap number (defaults to 0 — inert — until
 set); whether `AutoLitigationSearch` is on by default or per-client (§9 #1, second half).
+
+## 16. Owner decisions (2026-09-24) — auto actions on, step-by-step visibility
+
+| # | Input | Disposition | Where |
+|---|---|---|---|
+| 1 | Pipelines can take automatic actions in production | **Adopted.** `Pipeline:Mode=Enforce` with only the litigation family on (`Enforce:Litigation`); the kill switch is `Mode=Observe` or `Enabled=false`, applied on the next tick | §3.6 |
+| 2 | "I want to see step by step how it is unfolding" | **Adopted as a live timeline** on the request page: every observed stage change, every automatic start and every deferral (with the reason in plain words), polled every 5 s while the run is live | §3.5, §3.6 |
+| 3 | Litigation analysis cap stays 0 | **Adopted.** Policy off, cap 0 | §9 #1, #2 |
+| 4 | Litigation search automatic | **Adopted**, on by default for every request | §4.1, §9 #1 |
+| 5 | Unlock depends on the client's credit later; today it is internal and needs approval — by the user themselves, prompted by a pop-up | **Adopted.** Any signed-in reviewer sees a pop-up on every page for each company waiting on an unlock (one per company; hidden once approved; "Later" hides it for 30 min in that browser) and can approve it there. Unattended unlock stays off. Per-client credit balances are future work | §5.7, §9 #11 |
+
+Also fixed while verifying: `Pipeline:AdoptAfterUtc` written as UTC (`…Z`) is bound by the configuration binder
+as server-local time, so on an IST server the cutoff landed 5½ h late; the sweep now converts it back to UTC.
+

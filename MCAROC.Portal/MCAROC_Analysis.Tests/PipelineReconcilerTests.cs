@@ -253,6 +253,24 @@ public sealed class PipelineReconcilerTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task A_cutoff_bound_from_configuration_is_compared_as_utc()
+    {
+        // The binder turns "…Z" into server-local time; on a machine east of UTC an uncorrected cutoff lands
+        // hours late and skips a request created shortly after it.
+        var cutoff = new DateTime(2980 + Random.Shared.Next(0, 9), 1, 1, 0, 0, 0, DateTimeKind.Utc);
+        var after = await SeedManualRequestAsync(analysed: false, createdUtc: cutoff.AddMinutes(1));
+        var options = new PipelineOptions();
+        new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?> { ["Enabled"] = "true", ["AdoptAfterUtc"] = cutoff.ToString("yyyy-MM-ddTHH:mm:ssZ") })
+            .Build().Bind(options);
+
+        await using var db = CreateContext();
+        await Adopter(db, options).AdoptSweepAsync(50, CancellationToken.None);
+
+        Assert.True(await db.PipelineRuns.AnyAsync(r => r.RequestId == after));
+    }
+
+    [Fact]
     public async Task Concurrent_adoption_creates_one_live_run()
     {
         var requestId = await SeedManualRequestAsync(analysed: false);

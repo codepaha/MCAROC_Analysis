@@ -107,9 +107,11 @@ builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddScoped<IPaidCallAdmission, PaidCallAdmissionService>();
 builder.Services.AddScoped<LitigationStartService>();
 builder.Services.AddHostedService<PaidCallAdmissionSweepWorker>();
-// Pipeline coordinator (docs/pipeline-automation-plan.md §3) — Observe mode: records every request's stage
-// states and outcome, starts/spends nothing. Inert until Pipeline:Enabled=true.
+// Pipeline coordinator (docs/pipeline-automation-plan.md §3): records every request's stage states and outcome.
+// Pipeline:Mode=Enforce lets it take the actions its Pipeline:Enforce families allow (today only the litigation
+// search, through the same admission path as the reviewer's button). Inert until Pipeline:Enabled=true.
 builder.Services.AddScoped<PipelineSnapshotReader>();
+builder.Services.AddScoped<IPipelineActions, PipelineActions>();
 builder.Services.AddScoped<PipelineReconciler>();
 builder.Services.AddScoped<PipelineAdopter>();
 builder.Services.AddHostedService<PipelineReconcilerWorker>();

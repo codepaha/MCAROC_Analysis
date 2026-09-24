@@ -362,7 +362,7 @@ else if (lake is not null)
                 <i class="bi bi-clock-history text-warning fs-5"></i>
                 <div>
                     <strong>Prior Search Results Displayed:</strong>
-                    <span>Showing snapshot data retrieved @(lake.AuthoritativeSnapshot.RetrievedUtc.ToString("dd-MMM-yyyy HH:mm")) UTC. The most recent search attempt is currently active or failed. Final coverage and reconciliation claims reflect the prior run.</span>
+                    <span>Showing snapshot data retrieved @Ist.Format(lake.AuthoritativeSnapshot.RetrievedUtc). The most recent search attempt is currently active or failed. Final coverage and reconciliation claims reflect the prior run.</span>
                 </div>
             </div>
         }
@@ -531,7 +531,7 @@ else if (lake is not null)
                 }
             </div>
             <div class="card-footer bg-light py-1 px-3 text-muted small" style="font-size: 0.8rem;">
-                Run #@lake.PortfolioAnalysis.RunNumber &bull; Completed @(lake.PortfolioAnalysis.CompletedUtc?.ToString("dd-MMM-yyyy HH:mm")) UTC
+                Run #@lake.PortfolioAnalysis.RunNumber &bull; Completed @Ist.Format(lake.PortfolioAnalysis.CompletedUtc)
             </div>
         </div>
     }

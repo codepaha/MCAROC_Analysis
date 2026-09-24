@@ -3,6 +3,7 @@ using MCAROC_Analysis.Data.Entities;
 using MCAROC_Analysis.Services.Pipeline;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
+using MCAROC_Analysis.Services;
 
 namespace MCAROC_Analysis.Services.AutoFetch;
 
@@ -171,7 +172,7 @@ public sealed class CompanyUnlockService(
             if (after.AddedAt is null)
                 return new UnlockResult(UnlockOutcome.Failed,
                     "The reference tool accepted the unlock but still reports the company locked. Check the tool before approving again.");
-            return new UnlockResult(UnlockOutcome.Unlocked, $"Unlocked in the reference tool on {after.AddedAt:u} (1 credit).");
+            return new UnlockResult(UnlockOutcome.Unlocked, $"Unlocked in the reference tool on {Ist.Format(after.AddedAt)} (1 credit).");
         }
         finally
         {

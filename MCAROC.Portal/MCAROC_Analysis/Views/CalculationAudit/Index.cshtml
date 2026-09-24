@@ -42,7 +42,7 @@
         @foreach (var s in Model.Snapshots)
         {
             <option value="@s.CalculationAuditSnapshotId" selected="@(Model.Selected is not null && s.CalculationAuditSnapshotId == Model.Selected.CalculationAuditSnapshotId)">
-                @s.CreatedUtc.ToString("yyyy-MM-dd HH:mm") UTC (ingestion #@s.IngestionRunId, analysis #@s.AnalysisRunId)@(s.IsCurrent ? " — current" : "")
+                @Ist.Format(s.CreatedUtc) (ingestion #@s.IngestionRunId, analysis #@s.AnalysisRunId)@(s.IsCurrent ? " — current" : "")
             </option>
         }
     </select>
@@ -59,7 +59,7 @@
 }
 
 <div class="text-muted small mb-3">
-    Snapshot: @Model.Selected.CreatedUtc.ToString("yyyy-MM-dd HH:mm") UTC (ingestion #@Model.Selected.IngestionRunId, analysis #@Model.Selected.AnalysisRunId)
+    Snapshot: @Ist.Format(Model.Selected.CreatedUtc) (ingestion #@Model.Selected.IngestionRunId, analysis #@Model.Selected.AnalysisRunId)
     @if (!Model.Selected.IsCurrent) { <span class="badge bg-secondary ms-1">Historical — not the current snapshot</span> }
 </div>
 
@@ -211,7 +211,7 @@
                                 @foreach (var a in row.Approvals)
                                 {
                                     <tr>
-                                        <td class="small">@a.DecidedUtc.ToString("yyyy-MM-dd HH:mm")</td>
+                                        <td class="small">@Ist.Format(a.DecidedUtc)</td>
                                         <td class="small">@a.ReviewerName</td>
                                         <td class="small">@a.DecisionAction@(a.ProposedSeverity is { } ps ? $" ({ps})" : "")</td>
                                         <td class="small text-muted">@a.ReviewerNotes</td>

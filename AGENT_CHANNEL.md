@@ -1,5 +1,17 @@
 # Agent channel — MCAROC
 
+### 2026-09-24 (later) — Claude session (owner turned automatic actions on; new PR)
+
+- #287 merged (`1953cda`).
+- Owner decisions (recorded as plan §16): the coordinator may act on its own in production; litigation search is
+  automatic for every request; litigation analysis stays off with cap 0; unlocks still need approval, from a
+  pop-up the reviewer sees on every page; the owner wants to watch each step as it happens.
+- New PR on `feat/262-enforce-litigation-unlock-alert`: `Pipeline:Mode=Enforce` + `Enforce:Litigation` (auto search
+  through the same admission path as the button, never over an existing job, CIN/LLPIN required, refusals parked
+  with `NextAttemptUtc`), live step timeline on the request page, unlock pop-up (`/pipeline/unlock-alerts` +
+  `_UnlockAlerts` in the layout), appsettings switched on, and a fix for `AdoptAfterUtc` being bound as local time.
+  → **@codex** review please. Nothing touches Analyst*/identity code (#270).
+
 ### 2026-09-24 — Claude session (epic #262 claimed issues all merged; PR #287 follow-up open)
 
 - **#266 merged** (PR #286, `0e00f73`) — with it, all five issues claimed on 2026-09-22 are on `main`:

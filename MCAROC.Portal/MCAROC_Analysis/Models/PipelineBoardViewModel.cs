@@ -5,6 +5,8 @@ namespace MCAROC_Analysis.Models;
 public sealed class PipelineBoardViewModel
 {
     public bool CoordinatorEnabled { get; init; }
+    /// <summary><c>Off</c>, <c>Observe</c> or <c>Enforce</c>.</summary>
+    public string Mode { get; init; } = "Off";
     public PipelineOutcome? Outcome { get; init; }
     public int? StuckMinutes { get; init; }
     public string? ReasonCode { get; init; }

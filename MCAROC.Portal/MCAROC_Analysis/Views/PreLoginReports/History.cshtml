@@ -22,7 +22,7 @@
     <tr>
         <td class="report-id">@job.Cin</td><td>@job.Format</td><td>@job.Status</td>
         <td style="min-width:130px"><div class="progress" role="progressbar" aria-valuenow="@job.ProgressPercent" aria-valuemin="0" aria-valuemax="100"><div class="progress-bar" style="width:@job.ProgressPercent%">@job.ProgressPercent%</div></div></td>
-        <td>@job.AttemptCount / 3</td><td>@job.CreatedUtc.ToLocalTime().ToString("g")</td><td>@job.FailureReason</td>
+        <td>@job.AttemptCount / 3</td><td>@Ist.Format(job.CreatedUtc)</td><td>@job.FailureReason</td>
         <td>
             @if (isCompleted)
             {

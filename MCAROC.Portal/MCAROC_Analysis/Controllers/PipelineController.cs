@@ -10,9 +10,12 @@ using Microsoft.Extensions.Options;
 namespace MCAROC_Analysis.Controllers;
 
 /// <summary>Read-only views of the pipeline coordinator (docs/pipeline-automation-plan.md §3.5). No action
-/// here changes any state — Observe mode ships no mutating routes.</summary>
+/// here changes any state.</summary>
 public class PipelineController(AppDbContext db, IOptionsMonitor<PipelineOptions> options) : Controller
 {
+    private const int TimelineLimit = 200;
+    private const int MaxUnlockAlertCompanies = 200;
+
     private static readonly PipelineOutcome[] LiveOutcomes = [PipelineOutcome.InProgress, PipelineOutcome.CoreReady, PipelineOutcome.NeedsAttention];
 
     /// <summary>The request's most recent run and its stage states; 404 when the request has none. Same
@@ -24,6 +27,10 @@ public class PipelineController(AppDbContext db, IOptionsMonitor<PipelineOptions
             .OrderByDescending(r => r.PipelineRunId).FirstOrDefaultAsync(ct);
         if (run is null) return NotFound();
         var stages = await StagesAsync([run.PipelineRunId], ct);
+        // Newest TimelineLimit steps, returned oldest first so the page reads top to bottom.
+        var events = await db.PipelineEvents.AsNoTracking().Where(e => e.PipelineRunId == run.PipelineRunId)
+            .OrderByDescending(e => e.PipelineEventId).Take(TimelineLimit).ToListAsync(ct);
+        events.Reverse();
         Response.Headers.CacheControl = "no-store";
         return Ok(new
         {
@@ -34,8 +41,47 @@ public class PipelineController(AppDbContext db, IOptionsMonitor<PipelineOptions
             run.CreatedUtc,
             run.CoreReadyUtc,
             run.CompletedUtc,
-            stages = stages.GetValueOrDefault(run.PipelineRunId, [])
+            stages = stages.GetValueOrDefault(run.PipelineRunId, []),
+            mode = CurrentMode(),
+            events = events.Select(e => new PipelineEventDto(e.AtUtc, e.Stage.ToString(), e.Action, e.Actor, e.ReasonCode,
+                PipelineEventText.Describe(e)))
         });
+    }
+
+    /// <summary>Companies waiting for someone to approve a paid unlock, for the alert shown on every page. One
+    /// entry per company (an approval covers every request waiting on it); a company that already has an open
+    /// approval is being unlocked and isn't listed.</summary>
+    [HttpGet("/pipeline/unlock-alerts")]
+    [Authorize(AuthenticationSchemes = "InternalReviewer")]
+    public async Task<IActionResult> UnlockAlerts(CancellationToken ct)
+    {
+        var now = DateTime.UtcNow;
+        // Grouped in SQL, so a backlog of waiting jobs for one company can't crowd other companies out; the page
+        // shows the first few it hasn't snoozed and counts the rest.
+        var companies = await db.AutoFetchJobs.AsNoTracking()
+            .Where(j => j.Status == AutoFetchJobStatus.WaitingForUnlock
+                && !db.UnlockApprovals.Any(a => a.Identifier == j.Cin.Trim().ToUpper() && a.ConsumedAdmissionId == null && a.ExpiresUtc > now))
+            .GroupBy(j => j.Cin.Trim().ToUpper())
+            .Select(g => new { Identifier = g.Key, FirstJobId = g.Min(j => j.AutoFetchJobId), Count = g.Count(), Since = g.Min(j => j.CreatedUtc) })
+            .OrderBy(g => g.Since).ThenBy(g => g.FirstJobId)
+            .Take(MaxUnlockAlertCompanies)
+            .ToListAsync(ct);
+        var firstJobIds = companies.Select(c => c.FirstJobId).ToList();
+        var firstJobs = await db.AutoFetchJobs.AsNoTracking().Where(j => firstJobIds.Contains(j.AutoFetchJobId))
+            .Select(j => new { j.AutoFetchJobId, j.RequestId, j.StatusMessage, j.Request!.RequestNumber, j.Request.CompanyName })
+            .ToDictionaryAsync(j => j.AutoFetchJobId, ct);
+        Response.Headers.CacheControl = "no-store";
+        return Ok(companies.Where(c => firstJobs.ContainsKey(c.FirstJobId)).Select(c =>
+        {
+            var j = firstJobs[c.FirstJobId];
+            return new UnlockAlertDto(c.Identifier, j.CompanyName, j.RequestId, j.RequestNumber, c.Count, j.StatusMessage, c.Since);
+        }));
+    }
+
+    private string CurrentMode()
+    {
+        var o = options.CurrentValue;
+        return !o.Enabled ? "Off" : o.Mode.ToString();
     }
 
     [HttpGet("/Pipeline")]
@@ -70,6 +116,7 @@ public class PipelineController(AppDbContext db, IOptionsMonitor<PipelineOptions
         return View(new PipelineBoardViewModel
         {
             CoordinatorEnabled = options.CurrentValue.Enabled,
+            Mode = CurrentMode(),
             Outcome = outcome,
             StuckMinutes = stuckMinutes,
             ReasonCode = reasonCode,
@@ -99,3 +146,8 @@ public class PipelineController(AppDbContext db, IOptionsMonitor<PipelineOptions
                 .ToList());
     }
 }
+
+public sealed record PipelineEventDto(DateTime AtUtc, string Stage, string Action, string Actor, string? ReasonCode, string Text);
+
+public sealed record UnlockAlertDto(string Identifier, string CompanyName, long RequestId, string RequestNumber,
+    int WaitingRequests, string? Message, DateTime WaitingSinceUtc);
