@@ -1,8 +1,10 @@
 using System.Net;
 using System.Text.RegularExpressions;
+using MCAROC_Analysis.Data;
 using MCAROC_Analysis.Services.InternalAuth;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
@@ -17,9 +19,22 @@ namespace MCAROC_Analysis.Tests;
 /// private helpers, so this file's coverage doesn't depend on that unrelated file's internals): assert the
 /// real request pipeline (routing → auth → MVC) rejects an unauthenticated caller, not just that
 /// [Authorize] is present as an attribute.</summary>
-public partial class AutoFetchAuthenticationTests : IClassFixture<WebApplicationFactory<Program>>
+public partial class AutoFetchAuthenticationTests : IClassFixture<WebApplicationFactory<Program>>, IAsyncLifetime
 {
     private readonly WebApplicationFactory<Program> _factory;
+
+    /// <summary>The app's pages query the shared test database, which only exists once some fixture has
+    /// migrated it. Relying on another class to run first made this class fail with HTTP 500 whenever
+    /// xunit's collection order put it earlier (it did on #289, after two unrelated test classes were
+    /// added) — so it migrates for itself, as every other DB-backed class does.</summary>
+    public async Task InitializeAsync()
+    {
+        await using var db = new AppDbContext(new DbContextOptionsBuilder<AppDbContext>()
+            .UseSqlServer(TestDatabase.ConnectionString).Options);
+        await TestDatabase.MigrateAsync(db);
+    }
+
+    public Task DisposeAsync() => Task.CompletedTask;
 
     public AutoFetchAuthenticationTests(WebApplicationFactory<Program> factory)
     {
