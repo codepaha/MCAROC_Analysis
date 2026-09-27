@@ -7,6 +7,9 @@ using Microsoft.EntityFrameworkCore;
 
 namespace MCAROC_Analysis.Services.Analysis;
 
+public sealed class AnalysisRunCancelledException(long analysisRunId)
+    : Exception($"Analysis run {analysisRunId} was cancelled by a pipeline cancellation.");
+
 /// <summary>Drives one analysis pass for a request: atomic claim, rule engine, AI synthesis, persistence.
 /// Mirrors IngestionOrchestrator's structure and Phase 2's FilingBatchProcessor's claim/recovery patterns.</summary>
 public class AnalysisOrchestrator(
@@ -27,6 +30,22 @@ public class AnalysisOrchestrator(
     /// any finding with this prefix so it never disagrees with the stored priority.</summary>
     public const string AiCrossSectionCodePrefix = "AI_CROSS_";
 
+    private IQueryable<AnalysisRun> AnalysisRunGuarded(long analysisRunId, long requestId) =>
+        db.AnalysisRuns
+            .Where(a => a.AnalysisRunId == analysisRunId
+                && a.Status == AnalysisRunStatus.Running
+                && !db.Requests.Any(r => r.RequestId == requestId && r.RequestStatus == RequestStatus.Cancelled));
+
+    private async Task EnsureNotCancelledAsync(long analysisRunId, long requestId, CancellationToken ct)
+    {
+        var valid = await AnalysisRunGuarded(analysisRunId, requestId).AnyAsync(ct);
+        if (!valid)
+        {
+            db.ChangeTracker.Clear();
+            throw new AnalysisRunCancelledException(analysisRunId);
+        }
+    }
+
     public async Task RunAnalysisAsync(long requestId, CancellationToken ct)
     {
         // Atomic claim, mirroring Phase 2's exact ExecuteUpdateAsync-based claim pattern: only the caller
@@ -44,10 +63,15 @@ public class AnalysisOrchestrator(
         if (request.LatestCompletedIngestionRunId is not { } ingestionRunId)
         {
             logger.LogError("Request {RequestId} claimed for analysis but has no LatestCompletedIngestionRunId.", requestId);
-            await db.Requests.Where(r => r.RequestId == requestId)
+            await db.Requests.Where(r => r.RequestId == requestId && r.RequestStatus != RequestStatus.Cancelled)
                 .ExecuteUpdateAsync(s => s.SetProperty(r => r.RequestStatus, RequestStatus.AiAnalysisFailed), ct);
             return;
         }
+
+        var requestStillValid = await db.Requests
+            .AnyAsync(r => r.RequestId == requestId && r.RequestStatus != RequestStatus.Cancelled, ct);
+        if (!requestStillValid)
+            return;
 
         var run = new AnalysisRun
         {
@@ -64,6 +88,8 @@ public class AnalysisOrchestrator(
 
         try
         {
+            await EnsureNotCancelledAsync(run.AnalysisRunId, requestId, ct);
+
             var ctx = await BuildContextAsync(request, ingestionRunId, ct);
             var result = RuleEngine.Evaluate(ctx, Thresholds);
 
@@ -86,20 +112,28 @@ public class AnalysisOrchestrator(
             }).ToList();
             db.AnalysisFindings.AddRange(findingEntities);
 
-            run.CriticalFindingsCount = result.Findings.Count(f => f.Severity == FindingSeverity.Critical);
-            run.ReviewFindingsCount = result.Findings.Count(f => f.Severity == FindingSeverity.Review);
-            run.WatchFindingsCount = result.Findings.Count(f => f.Severity == FindingSeverity.Watch);
-            run.PositiveFindingsCount = result.Findings.Count(f => f.Severity == FindingSeverity.Positive);
-            run.OverallReviewPriority = result.OverallReviewPriority;
-            run.DataSufficiencyNotesJson = result.DataSufficiencyNotes.Count > 0
-                ? JsonSerializer.Serialize(result.DataSufficiencyNotes.Select(n => new { code = n.Code, reason = n.Reason }))
-                : null;
-
-            // Findings + run metadata persist BEFORE the AI call — a crash mid-AI-call still leaves the
-            // deterministic rule-engine results intact for the next request to this request (recovery
-            // resets and re-runs from scratch rather than resuming, but even if it didn't, nothing here is
-            // lost by persisting early).
+            // Detach run so that SaveChangesAsync will NOT write in-memory run status,
+            // which could overwrite an operator cancellation.
+            await EnsureNotCancelledAsync(run.AnalysisRunId, requestId, ct);
+            db.Entry(run).State = EntityState.Detached;
             await db.SaveChangesAsync(ct);
+
+            var metadataUpdated = await AnalysisRunGuarded(run.AnalysisRunId, requestId)
+                .ExecuteUpdateAsync(s => s
+                    .SetProperty(a => a.CriticalFindingsCount, result.Findings.Count(f => f.Severity == FindingSeverity.Critical))
+                    .SetProperty(a => a.ReviewFindingsCount, result.Findings.Count(f => f.Severity == FindingSeverity.Review))
+                    .SetProperty(a => a.WatchFindingsCount, result.Findings.Count(f => f.Severity == FindingSeverity.Watch))
+                    .SetProperty(a => a.PositiveFindingsCount, result.Findings.Count(f => f.Severity == FindingSeverity.Positive))
+                    .SetProperty(a => a.OverallReviewPriority, result.OverallReviewPriority)
+                    .SetProperty(a => a.DataSufficiencyNotesJson, result.DataSufficiencyNotes.Count > 0
+                        ? JsonSerializer.Serialize(result.DataSufficiencyNotes.Select(n => new { code = n.Code, reason = n.Reason }))
+                        : null), ct);
+
+            if (metadataUpdated == 0)
+            {
+                db.ChangeTracker.Clear();
+                throw new AnalysisRunCancelledException(run.AnalysisRunId);
+            }
 
             // Calculation-assurance ledger persistence (#164) — deliberately BEFORE the AI call, for the
             // exact same reason as the findings save just above: an AI timeout/crash must never leave a
@@ -108,6 +142,7 @@ public class AnalysisOrchestrator(
             // entirely when CalculationAssurance:Mode is Off (see CalculationLedgerService).
             try
             {
+                await EnsureNotCancelledAsync(run.AnalysisRunId, requestId, ct);
                 await calculationLedgerService.PersistSnapshotAsync(requestId, ingestionRunId, run.AnalysisRunId, ct);
                 await calculationCheckRunnerService.RunChecksAsync(requestId, ingestionRunId, run.AnalysisRunId, ct);
                 // AI second-line review (#164 PR3) is enqueued, never awaited-to-completion, here — it must
@@ -115,13 +150,23 @@ public class AnalysisOrchestrator(
                 // do run synchronously. A no-op when Mode is Off or AiAuditEnabled is false.
                 await calculationAiAuditOrchestrator.EnqueueForSnapshotAsync(requestId, ingestionRunId, run.AnalysisRunId, ct);
             }
+            catch (AnalysisRunCancelledException)
+            {
+                throw;
+            }
             catch (Exception ex)
             {
                 logger.LogError(ex, "Calculation-assurance ledger/check/AI-audit-enqueue persistence failed for request {RequestId}, analysis run {AnalysisRunId} — analysis itself still proceeding.",
                     requestId, run.AnalysisRunId);
             }
 
+            await EnsureNotCancelledAsync(run.AnalysisRunId, requestId, ct);
             var aiOutcome = await aiService.SynthesizeAsync(findingEntities, result.OverallReviewPriority, result.DataSufficiencyNotes, ct);
+            await EnsureNotCancelledAsync(run.AnalysisRunId, requestId, ct);
+
+            string? executiveSummaryJson = null;
+            AnalysisRunStatus finalStatus;
+            string? failureReason = null;
 
             if (aiOutcome.Success)
             {
@@ -149,29 +194,35 @@ public class AnalysisOrchestrator(
                     });
                 }
 
-                run.ExecutiveSummaryJson = aiOutcome.ExecutiveSummary is { } summary ? JsonSerializer.Serialize(summary) : null;
-                run.Status = AnalysisRunStatus.Completed;
+                executiveSummaryJson = aiOutcome.ExecutiveSummary is { } summary ? JsonSerializer.Serialize(summary) : null;
+                finalStatus = AnalysisRunStatus.Completed;
             }
             else
             {
                 // Rule-engine findings are still persisted and shown — an AI failure never hides the
                 // deterministic result, mirroring Phase 2's "AI failure doesn't stop the batch" precedent.
-                run.Status = AnalysisRunStatus.CompletedWithErrors;
-                run.FailureReason = aiOutcome.FailureReason;
+                finalStatus = AnalysisRunStatus.CompletedWithErrors;
+                failureReason = aiOutcome.FailureReason;
             }
 
             // Charges narrative (Feature 2) — a wholly separate AI call from the cross-section synthesis
             // above, in its own try/catch: a failure here must never turn an otherwise-successful analysis
             // into CompletedWithErrors, so run.Status is never touched in this block.
+            string? chargesNarrativeJson = null;
             try
             {
+                await EnsureNotCancelledAsync(run.AnalysisRunId, requestId, ct);
                 var runCharges = await db.RocCharges.Include(c => c.Events)
                     .Where(c => c.RequestId == requestId && c.IngestionRunId == ingestionRunId).ToListAsync(ct);
                 var openCharges = DossierComputations.OpenChargesByAmount(runCharges);
                 var selected = AiChargesNarrativeService.SelectChargesForNarrative(openCharges);
                 var chargesOutcome = await chargesNarrativeService.SynthesizeAsync(selected, openCharges.Count, ct);
                 if (chargesOutcome.Success)
-                    run.ChargesNarrativeJson = JsonSerializer.Serialize(chargesOutcome.Narrative);
+                    chargesNarrativeJson = JsonSerializer.Serialize(chargesOutcome.Narrative);
+            }
+            catch (AnalysisRunCancelledException)
+            {
+                throw;
             }
             catch (Exception ex)
             {
@@ -179,25 +230,65 @@ public class AnalysisOrchestrator(
                     requestId, run.AnalysisRunId);
             }
 
-            run.CompletedDate = DateTime.UtcNow;
+            await EnsureNotCancelledAsync(run.AnalysisRunId, requestId, ct);
+
+            // Persist narrative updates to findings and new cross-section findings (run entity is detached)
             await db.SaveChangesAsync(ct);
 
-            await db.Requests.Where(r => r.RequestId == requestId)
+            var completedNow = DateTime.UtcNow;
+            var updatedRun = await AnalysisRunGuarded(run.AnalysisRunId, requestId)
+                .ExecuteUpdateAsync(s => s
+                    .SetProperty(a => a.Status, finalStatus)
+                    .SetProperty(a => a.FailureReason, failureReason)
+                    .SetProperty(a => a.ExecutiveSummaryJson, executiveSummaryJson)
+                    .SetProperty(a => a.ChargesNarrativeJson, chargesNarrativeJson)
+                    .SetProperty(a => a.CompletedDate, completedNow), ct);
+
+            if (updatedRun == 0)
+            {
+                db.ChangeTracker.Clear();
+                throw new AnalysisRunCancelledException(run.AnalysisRunId);
+            }
+
+            var updatedReq = await db.Requests
+                .Where(r => r.RequestId == requestId && r.RequestStatus != RequestStatus.Cancelled)
                 .ExecuteUpdateAsync(s => s.SetProperty(r => r.RequestStatus, RequestStatus.AnalysisCompleted), ct);
+
+            if (updatedReq == 0)
+            {
+                db.ChangeTracker.Clear();
+                throw new AnalysisRunCancelledException(run.AnalysisRunId);
+            }
+        }
+        catch (AnalysisRunCancelledException)
+        {
+            logger.LogWarning("Analysis run {AnalysisRunId} for request {RequestId} was cancelled mid-processing; stopping without writing state.",
+                run.AnalysisRunId, requestId);
+            db.ChangeTracker.Clear();
+
+            await db.AnalysisRuns
+                .Where(a => a.AnalysisRunId == run.AnalysisRunId && a.Status == AnalysisRunStatus.Running)
+                .ExecuteUpdateAsync(s => s
+                    .SetProperty(a => a.Status, AnalysisRunStatus.Failed)
+                    .SetProperty(a => a.FailureReason, "Run cancelled: Pipeline run was cancelled")
+                    .SetProperty(a => a.CompletedDate, DateTime.UtcNow), CancellationToken.None);
         }
         catch (Exception ex)
         {
             logger.LogError(ex, "Analysis failed for request {RequestId}, run {RunNumber}", requestId, runNumber);
             db.ChangeTracker.Clear();
 
-            await db.AnalysisRuns.Where(a => a.AnalysisRunId == run.AnalysisRunId)
+            var updatedRun = await AnalysisRunGuarded(run.AnalysisRunId, requestId)
                 .ExecuteUpdateAsync(s => s
                     .SetProperty(a => a.Status, AnalysisRunStatus.Failed)
                     .SetProperty(a => a.FailureReason, ex.Message)
-                    .SetProperty(a => a.CompletedDate, DateTime.UtcNow), ct);
+                    .SetProperty(a => a.CompletedDate, DateTime.UtcNow), CancellationToken.None);
 
-            await db.Requests.Where(r => r.RequestId == requestId)
-                .ExecuteUpdateAsync(s => s.SetProperty(r => r.RequestStatus, RequestStatus.AiAnalysisFailed), ct);
+            if (updatedRun > 0)
+            {
+                await db.Requests.Where(r => r.RequestId == requestId && r.RequestStatus != RequestStatus.Cancelled)
+                    .ExecuteUpdateAsync(s => s.SetProperty(r => r.RequestStatus, RequestStatus.AiAnalysisFailed), CancellationToken.None);
+            }
         }
     }
 
@@ -231,10 +322,13 @@ public class AnalysisOrchestrator(
                 .SetProperty(a => a.FailureReason, reason ?? "Manual retry triggered.")
                 .SetProperty(a => a.CompletedDate, DateTime.UtcNow), ct);
 
-        await db.Requests.Where(r => r.RequestId == requestId)
+        var updated = await db.Requests.Where(r => r.RequestId == requestId && r.RequestStatus != RequestStatus.Cancelled)
             .ExecuteUpdateAsync(s => s.SetProperty(r => r.RequestStatus, RequestStatus.DataExtracted), ct);
 
-        queue.Enqueue(requestId);
+        if (updated > 0)
+        {
+            queue.Enqueue(requestId);
+        }
     }
 
     private async Task<AnalysisContext> BuildContextAsync(McaRequest request, long ingestionRunId, CancellationToken ct)

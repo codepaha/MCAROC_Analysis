@@ -7,6 +7,7 @@ using MCAROC_Analysis.Models;
 using MCAROC_Analysis.Services;
 using MCAROC_Analysis.Services.Analysis;
 using MCAROC_Analysis.Services.AutoFetch;
+using MCAROC_Analysis.Services.CalculationAssurance;
 using MCAROC_Analysis.Services.Dossier;
 using MCAROC_Analysis.Services.Excel;
 using MCAROC_Analysis.Services.LitigationData;
@@ -53,7 +54,9 @@ public class PipelineNeedsAttentionBoardTests : IAsyncLifetime
             await db.AutoFetchJobs.Where(j => reqIds.Contains(j.RequestId)).ExecuteDeleteAsync();
             await db.LitigationSearchJobs.Where(j => reqIds.Contains(j.RequestId)).ExecuteDeleteAsync();
             await db.LitigationAiAnalysisRuns.Where(r => reqIds.Contains(r.RequestId)).ExecuteDeleteAsync();
+            await db.AnalysisFindings.Where(f => reqIds.Contains(f.RequestId)).ExecuteDeleteAsync();
             await db.AnalysisRuns.Where(a => reqIds.Contains(a.RequestId)).ExecuteDeleteAsync();
+            await db.CompanyProfiles.Where(c => db.IngestionRuns.Any(i => reqIds.Contains(i.RequestId) && i.IngestionRunId == c.IngestionRunId)).ExecuteDeleteAsync();
             await db.Requests.Where(r => reqIds.Contains(r.RequestId)).ExecuteUpdateAsync(s => s.SetProperty(r => r.LatestCompletedIngestionRunId, (long?)null));
             await db.IngestionRuns.Where(i => reqIds.Contains(i.RequestId)).ExecuteDeleteAsync();
             await db.Requests.Where(r => reqIds.Contains(r.RequestId)).ExecuteDeleteAsync();
@@ -556,7 +559,8 @@ public class PipelineNeedsAttentionBoardTests : IAsyncLifetime
             db, client, new LitigationSearchQueue(), casePersistenceQueue, casePersistenceService, Options.Create(bprOpts),
             NullLogger<LitigationSearchJobService>.Instance);
 
-        var controller = CreateController(db);
+        await using var controllerDb = CreateContext();
+        var controller = CreateController(controllerDb);
 
         // When authenticate is called, worker has claimed the job. Interleave CancelRun here!
         handler.OnPath("sec/authenticate", _ =>
@@ -619,7 +623,8 @@ public class PipelineNeedsAttentionBoardTests : IAsyncLifetime
             var autoFetchService = new AutoFetchJobService(db, client, refOpts, new FileValidationService(new ExcelSheetReader()),
                 null!, null!, null!, null!, new FakeEnv(tempDir), NullLogger<AutoFetchJobService>.Instance);
 
-            var controller = CreateController(db);
+            await using var controllerDb = CreateContext();
+            var controller = CreateController(controllerDb);
 
             // When userDetailsService.php is called, worker has claimed the job. Interleave CancelRun here!
             handler.OnPath("userDetailsService.php", _ =>
@@ -650,6 +655,79 @@ public class PipelineNeedsAttentionBoardTests : IAsyncLifetime
         {
             try { Directory.Delete(tempDir, recursive: true); } catch { }
         }
+    }
+
+    [Fact]
+    public async Task CancelRun_ActiveAnalysisOrchestratorPausedAfterClaim_WorkerCannotContinueOrOverwriteCancelledState()
+    {
+        await using var db = CreateContext();
+        var (req, run) = await SeedRunAsync(db, PipelineOutcome.NeedsAttention);
+
+        var ingRun = new IngestionRun
+        {
+            RequestId = req.RequestId,
+            Status = IngestionRunStatus.CompletedClean,
+            StartedDate = DateTime.UtcNow,
+            CompletedDate = DateTime.UtcNow
+        };
+        db.IngestionRuns.Add(ingRun);
+        await db.SaveChangesAsync();
+
+        var profile = new CompanyProfile
+        {
+            IngestionRunId = ingRun.IngestionRunId,
+            CompanyName = req.CompanyName,
+            Cin = req.Cin!,
+            CompanyStatus = "Active",
+            IncorporationDate = new DateOnly(2020, 1, 1),
+            PaidUpCapital = 100000,
+            AuthorisedCapital = 100000
+        };
+        db.CompanyProfiles.Add(profile);
+
+        req.RequestStatus = RequestStatus.DataExtracted;
+        req.LatestCompletedIngestionRunId = ingRun.IngestionRunId;
+        await db.SaveChangesAsync();
+
+        var config = new ConfigurationBuilder().Build();
+        var assembler = new DossierAssembler(db);
+        var ledgerService = new CalculationLedgerService(db, assembler, config, NullLogger<CalculationLedgerService>.Instance);
+        var checkRunner = new CalculationCheckRunnerService(db, assembler, config, NullLogger<CalculationCheckRunnerService>.Instance);
+        var aiAuditQueue = new CalculationAiAuditQueue();
+        var aiAuditOrchestrator = new CalculationAiAuditOrchestrator(db, null!, aiAuditQueue, config, NullLogger<CalculationAiAuditOrchestrator>.Instance);
+
+        await using var controllerDb = CreateContext();
+        var controller = CreateController(controllerDb);
+
+        // When SynthesizeAsync is called, worker is mid-processing. Interleave CancelRun here!
+        var aiService = new CallbackAiCrossSectionAnalysisService(async () =>
+        {
+            await controller.CancelRun(run.PipelineRunId, reason: "Operator cancelled work", returnUrl: "/Pipeline", CancellationToken.None);
+            if (controller.TempData.ContainsKey("PipelineError"))
+            {
+                throw new Exception("CancelRun failed: " + controller.TempData["PipelineError"]);
+            }
+        });
+        var chargesService = new StubAiChargesNarrativeService();
+        var queue = new AnalysisQueue();
+
+        var orchestrator = new AnalysisOrchestrator(
+            db, aiService, chargesService, queue, ledgerService, checkRunner, aiAuditOrchestrator,
+            NullLogger<AnalysisOrchestrator>.Instance);
+
+        // Worker resumes and executes
+        await orchestrator.RunAnalysisAsync(req.RequestId, CancellationToken.None);
+
+        await using var verifyDb = CreateContext();
+        var reloadedRun = await verifyDb.PipelineRuns.AsNoTracking().SingleAsync(r => r.PipelineRunId == run.PipelineRunId);
+        Assert.Equal(PipelineOutcome.Cancelled, reloadedRun.Outcome);
+
+        var reloadedReq = await verifyDb.Requests.AsNoTracking().SingleAsync(r => r.RequestId == req.RequestId);
+        Assert.Equal(RequestStatus.Cancelled, reloadedReq.RequestStatus);
+
+        var reloadedAnalysisRun = await verifyDb.AnalysisRuns.AsNoTracking().SingleAsync(a => a.RequestId == req.RequestId);
+        Assert.Equal(AnalysisRunStatus.Failed, reloadedAnalysisRun.Status);
+        Assert.Equal("Run cancelled: Operator cancelled work", reloadedAnalysisRun.FailureReason);
     }
 
     private sealed class InterleavingSnapshotReader(
@@ -732,5 +810,25 @@ public class PipelineNeedsAttentionBoardTests : IAsyncLifetime
         public Microsoft.Extensions.FileProviders.IFileProvider WebRootFileProvider { get; set; } = new Microsoft.Extensions.FileProviders.NullFileProvider();
         public string ContentRootPath { get; set; } = contentRoot;
         public Microsoft.Extensions.FileProviders.IFileProvider ContentRootFileProvider { get; set; } = new Microsoft.Extensions.FileProviders.NullFileProvider();
+    }
+
+    private sealed class CallbackAiCrossSectionAnalysisService(Func<Task> onSynthesize) : AiCrossSectionAnalysisService
+    {
+        public override async Task<AiSynthesisOutcome> SynthesizeAsync(
+            IReadOnlyList<AnalysisFinding> findings, ReviewPriority priority,
+            IReadOnlyList<(string Code, string Reason)> dataSufficiencyNotes, CancellationToken ct)
+        {
+            await onSynthesize();
+            return new AiSynthesisOutcome(true, new ExecutiveSummary("biz", "fin", "sec", "gov", []), [], [], null);
+        }
+    }
+
+    private sealed class StubAiChargesNarrativeService : AiChargesNarrativeService
+    {
+        public override Task<ChargesNarrativeOutcome> SynthesizeAsync(
+            IReadOnlyList<SelectedCharge> selectedCharges, int totalOpenChargeCount, CancellationToken ct)
+        {
+            return Task.FromResult(new ChargesNarrativeOutcome(true, new ChargesNarrative("summary", [], 0, 0), null));
+        }
     }
 }

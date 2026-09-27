@@ -39,6 +39,12 @@ public partial class AiCrossSectionAnalysisService
     private readonly GenAiClient _client;
     private readonly ILogger<AiCrossSectionAnalysisService> _logger;
 
+    protected AiCrossSectionAnalysisService()
+    {
+        _client = null!;
+        _logger = null!;
+    }
+
     public AiCrossSectionAnalysisService(string projectId, string location, string credentialsPath, ILogger<AiCrossSectionAnalysisService> logger)
     {
         _logger = logger;
@@ -46,7 +52,7 @@ public partial class AiCrossSectionAnalysisService
         _client = new GenAiClient(vertexAI: true, project: projectId, location: location, credential: credential);
     }
 
-    public async Task<AiSynthesisOutcome> SynthesizeAsync(
+    public virtual async Task<AiSynthesisOutcome> SynthesizeAsync(
         IReadOnlyList<AnalysisFinding> findings, ReviewPriority priority,
         IReadOnlyList<(string Code, string Reason)> dataSufficiencyNotes, CancellationToken ct)
     {
