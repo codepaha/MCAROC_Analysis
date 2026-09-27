@@ -91,7 +91,12 @@ public static partial class AddressMatcher
 
         // ── PIN code ──
         var addressPin = ExtractPinCodes(address).LastOrDefault(); // the PIN closes an Indian address
-        var pinMatched = addressPin is not null && ExtractPinCodes(text).Contains(addressPin);
+        var textPinCodes = ExtractPinCodes(text);
+        var pinMatched = addressPin is not null && textPinCodes.Contains(addressPin);
+        // A property text that states a PIN and it isn't the known address's PIN is naming a different
+        // place outright — a shared plot number or locality name is then coincidence (both recur across
+        // cities), never corroboration. Reject rather than downgrade: this is disconfirming, not just weak.
+        var pinConflict = addressPin is not null && textPinCodes.Count > 0 && !pinMatched;
 
         // ── Plot / survey / door numbers ──
         var textTokens = Tokenize(text);
@@ -111,8 +116,8 @@ public static partial class AddressMatcher
             .Distinct(StringComparer.Ordinal)
             .ToList();
 
-        var strength =
-            matchedPlots.Count > 0 && (pinMatched || matchedLocalities.Count > 0) ? AddressMatchStrength.Strong
+        var strength = pinConflict ? AddressMatchStrength.None
+            : matchedPlots.Count > 0 && (pinMatched || matchedLocalities.Count > 0) ? AddressMatchStrength.Strong
             : pinMatched && matchedLocalities.Count > 0 ? AddressMatchStrength.Partial
             : AddressMatchStrength.None;
 

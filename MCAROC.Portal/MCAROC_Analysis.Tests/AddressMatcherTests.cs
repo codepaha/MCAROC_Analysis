@@ -109,6 +109,27 @@ public class AddressMatcherTests
         Assert.Equal(AddressMatchStrength.None, result.Strength);
     }
 
+    [Fact]
+    public void ConflictingPinCode_OverridesPlotAndLocalityMatch_NoMatch()
+    {
+        // Same plot number and locality spelling as CoastalRegistered, but an explicitly different PIN —
+        // locality names and plot numbers both recur across cities, so a stated, conflicting PIN means this
+        // is someone else's "Plot A-36, Nayapalli", not the company's own premises in Bhubaneswar.
+        var result = AddressMatcher.Match(CoastalRegistered, "Mortgage of premises at Plot No A-36, Nayapalli, Raipur, 492001");
+
+        Assert.Equal(AddressMatchStrength.None, result.Strength);
+    }
+
+    [Fact]
+    public void ConflictingPinCode_WithoutLocalityMatch_StillNoMatch()
+    {
+        // Belt-and-braces: a conflicting PIN rejects the match even when the plot number alone would
+        // otherwise have been insufficient (no second signal) — the conflict isn't masked by other logic.
+        var result = AddressMatcher.Match(CoastalRegistered, "Plot No A-36, 492001");
+
+        Assert.Equal(AddressMatchStrength.None, result.Strength);
+    }
+
     [Theory]
     [InlineData(null, "anything")]
     [InlineData("Plot 1, Kanpur", null)]
