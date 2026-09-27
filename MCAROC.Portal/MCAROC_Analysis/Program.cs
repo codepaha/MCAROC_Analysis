@@ -311,6 +311,7 @@ builder.Services.AddScoped<DossierAssembler>();
 builder.Services.AddScoped<DossierCache>();
 builder.Services.AddScoped<CorporateTimelineBuilder>();
 builder.Services.AddSingleton<DossierPdfRenderer>();
+builder.Services.AddScoped<DossierArtifactService>();
 builder.Services.AddAntiforgery(options =>
 {
     options.HeaderName = "RequestVerificationToken";

@@ -9,6 +9,7 @@ public static class PipelineEventActions
     public const string ObservedPrefix = "Observed:";
     public const string AutoStarted = "AutoStarted";
     public const string AutoStartDeferred = "AutoStartDeferred";
+    public const string DossierPreRendered = "DossierPreRendered";
 
     /// <summary>Stage reason code while an automatically started job hasn't been observed yet.</summary>
     public const string AutoStartedCode = "AUTO_STARTED";
@@ -63,7 +64,12 @@ public static class PipelineEventText
         ["INTEGRATION_NOT_CONFIGURED"] = "integration not configured",
         ["MANUAL_SOURCE"] = "manual upload",
         ["DATA_CURRENT"] = "data is current",
-        ["INFERRED_FROM_EXPORT"] = "the export succeeded, so the company is unlocked"
+        ["INFERRED_FROM_EXPORT"] = "the export succeeded, so the company is unlocked",
+        ["ORDER_DOWNLOAD_STALLED"] = "an order document has been waiting to download for 5+ days",
+        ["AWAITING_ORDER_PROCESSING"] = "awaiting order download/chunking",
+        ["LITIGATION_ANALYSIS_NOT_ELIGIBLE"] = "the request can't be analysed automatically",
+        ["LITIGATION_ANALYSIS_ALREADY_RUN"] = "this report was already analysed",
+        ["LITIGATION_ANALYSIS_IN_FLIGHT"] = "an analysis for this request is already running"
     };
 
     public static string StageLabel(PipelineStage stage) => StageLabels.GetValueOrDefault(stage, stage.ToString());
@@ -80,6 +86,8 @@ public static class PipelineEventText
             text = $"{stage} started automatically";
         else if (e.Action == PipelineEventActions.AutoStartDeferred)
             text = $"{stage}: automatic start deferred";
+        else if (e.Action == PipelineEventActions.DossierPreRendered)
+            text = $"{stage}: pre-rendered automatically";
         else if (e.Action.StartsWith(PipelineEventActions.ObservedPrefix, StringComparison.Ordinal)
                  && Enum.TryParse<PipelineStageStateKind>(e.Action[PipelineEventActions.ObservedPrefix.Length..], out var state))
             text = $"{stage}: {StateLabels.GetValueOrDefault(state, state.ToString())}";

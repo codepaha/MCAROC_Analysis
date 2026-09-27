@@ -271,6 +271,55 @@ public sealed class PipelineDeciderTests
     }
 
     [Fact]
+    public void LitigationAnalysis_is_not_ready_while_order_documents_are_still_being_processed()
+    {
+        var s = ManualDone() with
+        {
+            LitigationConfigured = true,
+            LitigationSearch = new LitigationSearchFacts(40, LitigationSearchJobStatus.Completed, null, 41, LitigationReportSnapshotStatus.Completed,
+                OrdersFullyProcessed: false)
+        };
+        var d = PipelineDecider.Decide(s, new PipelinePolicy { LitigationSearch = true, LitigationAnalysis = true });
+
+        Assert.Equal(PipelineStageStateKind.Succeeded, State(d, PipelineStage.Litigation));
+        Assert.Equal(PipelineStageStateKind.Waiting, State(d, PipelineStage.LitigationAnalysis));
+        Assert.Equal("AWAITING_ORDER_PROCESSING", d.Stages[PipelineStage.LitigationAnalysis].ReasonCode);
+    }
+
+    [Fact]
+    public void LitigationAnalysis_is_ready_once_the_search_is_done_and_orders_are_fully_processed()
+    {
+        var s = ManualDone() with
+        {
+            LitigationConfigured = true,
+            LitigationSearch = new LitigationSearchFacts(40, LitigationSearchJobStatus.Completed, null, 41, LitigationReportSnapshotStatus.Completed,
+                OrdersFullyProcessed: true)
+        };
+        var d = PipelineDecider.Decide(s, new PipelinePolicy { LitigationSearch = true, LitigationAnalysis = true });
+
+        Assert.Equal(PipelineStageStateKind.NotStarted, State(d, PipelineStage.LitigationAnalysis));
+        Assert.Equal(PipelineDecider.ReadyToStart, d.Stages[PipelineStage.LitigationAnalysis].ReasonCode);
+    }
+
+    [Fact]
+    public void A_stalled_order_download_flags_the_litigation_stage_even_though_the_search_itself_succeeded()
+    {
+        var s = ManualDone() with
+        {
+            LitigationConfigured = true,
+            LitigationSearch = new LitigationSearchFacts(40, LitigationSearchJobStatus.Completed, null, 41, LitigationReportSnapshotStatus.Completed,
+                OrdersFullyProcessed: false, HasStalledOrderDownload: true)
+        };
+        var d = PipelineDecider.Decide(s, new PipelinePolicy { LitigationSearch = true, LitigationAnalysis = true });
+
+        Assert.Equal(PipelineStageStateKind.NeedsAttention, State(d, PipelineStage.Litigation));
+        Assert.Equal("ORDER_DOWNLOAD_STALLED", d.Stages[PipelineStage.Litigation].ReasonCode);
+        // Not done upstream, so analysis still waits rather than reporting its own, separate reason.
+        Assert.Equal(PipelineStageStateKind.Waiting, State(d, PipelineStage.LitigationAnalysis));
+        Assert.Equal(PipelineOutcome.NeedsAttention, d.Outcome);
+    }
+
+    [Fact]
     public void A_manually_started_litigation_search_is_tracked_even_with_the_policy_off()
     {
         var s = ManualDone() with
@@ -353,7 +402,7 @@ public sealed class PipelineDeciderTests
             Filings = Maybe(rng, () => new FilingFacts(9, Pick<FilingBatchStatus>(rng), null, rng.Next(3), rng.Next(2))),
             LitigationConfigured = rng.Next(2) == 0,
             LitigationSearch = Maybe(rng, () => new LitigationSearchFacts(40, Pick<LitigationSearchJobStatus>(rng), null, 41,
-                rng.Next(3) == 0 ? null : Pick<LitigationReportSnapshotStatus>(rng))),
+                rng.Next(3) == 0 ? null : Pick<LitigationReportSnapshotStatus>(rng), rng.Next(2) == 0, rng.Next(3) == 0)),
             LitigationAnalysis = Maybe(rng, () => new RunFacts<LitigationAiAnalysisRunStatus>(50, Pick<LitigationAiAnalysisRunStatus>(rng), null))
         };
     }

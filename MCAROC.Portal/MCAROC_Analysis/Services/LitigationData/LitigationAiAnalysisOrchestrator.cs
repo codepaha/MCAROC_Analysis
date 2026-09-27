@@ -1,6 +1,7 @@
 using System.Text.Json;
 using MCAROC_Analysis.Data;
 using MCAROC_Analysis.Data.Entities;
+using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 
@@ -15,20 +16,43 @@ public sealed class LitigationAiAnalysisOrchestrator(AppDbContext db, ILitigatio
     private const int LeaseMarginSeconds = 60;
     private int LeaseSeconds => options.Value.TimeoutSeconds + LeaseMarginSeconds;
 
-    public async Task<LitigationAiAnalysisRun> CreateOrJoinAsync(long requestId, CancellationToken ct)
+    /// <summary>Plan §4.2. <paramref name="originSnapshotId"/> is the snapshot this run's admission scope is keyed
+    /// on (<c>analysis|{OriginSnapshotId}</c>) — null only for a manual start with no completed snapshot yet
+    /// (still deduped in flight via the per-request <see cref="Active"/> check below, just not against the
+    /// database-level "one Auto run per snapshot" index). No reuse yet (§4.2a/#291): <c>TriggerSnapshotId</c>
+    /// and <c>OriginSnapshotId</c> are always equal here.</summary>
+    public async Task<LitigationAiAnalysisRun> CreateOrJoinAsync(long requestId, LitigationAiAnalysisTrigger trigger, long? originSnapshotId, CancellationToken ct)
     {
         var active = await Active(requestId, ct); if (active is not null) return active;
         for (var i = 0; i < 3; i++)
         {
             var run = new LitigationAiAnalysisRun { RequestId = requestId, CreatedUtc = DateTime.UtcNow,
                 RunNumber = (await db.LitigationAiAnalysisRuns.Where(x => x.RequestId == requestId).Select(x => (int?)x.RunNumber).MaxAsync(ct) ?? 0) + 1,
-                ModelId = VertexLitigationAiAnalysisClient.ModelId, PromptVersion = LitigationAnalysisPromptBuilder.PromptVersion };
+                ModelId = VertexLitigationAiAnalysisClient.ModelId, PromptVersion = LitigationAnalysisPromptBuilder.PromptVersion,
+                Trigger = trigger, TriggerSnapshotId = originSnapshotId, OriginSnapshotId = originSnapshotId };
             db.LitigationAiAnalysisRuns.Add(run);
             try { await db.SaveChangesAsync(ct); queue.Enqueue(run.LitigationAiAnalysisRunId); return run; }
-            catch (DbUpdateException) { db.Entry(run).State = EntityState.Detached; active = await Active(requestId, ct); if (active is not null) return active; }
+            catch (DbUpdateException ex)
+            {
+                db.Entry(run).State = EntityState.Detached;
+                active = await Active(requestId, ct);
+                if (active is not null) return active;
+                // Another request's Auto run already claims this OriginSnapshotId (the filtered unique index,
+                // plan §4.2) — the paid-call admission ledger should already have refused a second Auto start
+                // for the same scope key before this is ever reached, so this is defence in depth, not the
+                // primary guarantee. Join that run rather than retrying a create that will fail again; true
+                // cross-request sharing of the analysed result is #291's job, not this one's.
+                if (trigger == LitigationAiAnalysisTrigger.Auto && originSnapshotId is not null && IsUniqueViolation(ex)
+                    && await db.LitigationAiAnalysisRuns.Where(x => x.OriginSnapshotId == originSnapshotId && x.Trigger == LitigationAiAnalysisTrigger.Auto)
+                        .OrderByDescending(x => x.LitigationAiAnalysisRunId).FirstOrDefaultAsync(ct) is { } shared)
+                    return shared;
+            }
         }
         throw new InvalidOperationException("Unable to admit analysis run after concurrent updates.");
     }
+
+    private static bool IsUniqueViolation(DbUpdateException ex) =>
+        ex.InnerException is SqlException { Number: 2627 or 2601 };
     private Task<LitigationAiAnalysisRun?> Active(long id, CancellationToken ct) => db.LitigationAiAnalysisRuns.Where(x => x.RequestId == id && (x.Status == LitigationAiAnalysisRunStatus.Pending || x.Status == LitigationAiAnalysisRunStatus.InProgress)).OrderByDescending(x => x.LitigationAiAnalysisRunId).FirstOrDefaultAsync(ct);
 
     public async Task RunAsync(long runId, CancellationToken ct)

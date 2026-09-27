@@ -59,5 +59,13 @@ public sealed record RunFacts<TStatus>(long Id, TStatus Status, string? FailureR
 /// Pending or InProgress — the same eligibility rule the chunking orchestrator uses.</param>
 public sealed record FilingFacts(long BatchId, FilingBatchStatus Status, string? FailureReason, int OutstandingChunks, int FailedChunks);
 
+/// <param name="OrdersFullyProcessed">True once every order document for the request's cases has finished
+/// downloading (terminal: Downloaded/Expired) and, where text was actually retrieved, finished chunking
+/// (terminal: Chunked/Failed) — an Expired document never gets text, so chunking is trivially done for it.
+/// True (nothing to wait for) when the request has no orders at all. Gates litigation-analysis auto-start
+/// (plan §4.2); a manual start is never gated by this.</param>
+/// <param name="HasStalledOrderDownload">An order document still <c>Pending</c> five or more days after it
+/// was first recorded — plan §4.2's <c>ORDER_DOWNLOAD_STALLED</c> signal.</param>
 public sealed record LitigationSearchFacts(
-    long JobId, LitigationSearchJobStatus Status, string? FailureReason, long? SnapshotId, LitigationReportSnapshotStatus? SnapshotStatus);
+    long JobId, LitigationSearchJobStatus Status, string? FailureReason, long? SnapshotId, LitigationReportSnapshotStatus? SnapshotStatus,
+    bool OrdersFullyProcessed = true, bool HasStalledOrderDownload = false);

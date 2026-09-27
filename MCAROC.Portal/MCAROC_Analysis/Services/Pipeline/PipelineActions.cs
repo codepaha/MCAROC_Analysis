@@ -1,4 +1,5 @@
 using MCAROC_Analysis.Data.Entities;
+using MCAROC_Analysis.Services.Dossier;
 using MCAROC_Analysis.Services.LitigationData;
 
 namespace MCAROC_Analysis.Services.Pipeline;
@@ -18,9 +19,11 @@ public sealed record PipelineActionResult(bool Started, bool AlreadyExists, long
 public interface IPipelineActions
 {
     Task<PipelineActionResult> StartLitigationSearchAsync(long requestId, string correlationId, CancellationToken ct);
+    Task<PipelineActionResult> StartLitigationAnalysisAsync(long requestId, string correlationId, CancellationToken ct);
+    Task<DossierRenderResult> EnsureDossierRenderedAsync(long requestId, CancellationToken ct);
 }
 
-public sealed class PipelineActions(LitigationStartService litigation) : IPipelineActions
+public sealed class PipelineActions(LitigationStartService litigation, DossierArtifactService dossier) : IPipelineActions
 {
     public async Task<PipelineActionResult> StartLitigationSearchAsync(long requestId, string correlationId, CancellationToken ct)
     {
@@ -37,4 +40,23 @@ public sealed class PipelineActions(LitigationStartService litigation) : IPipeli
             ? "Another request searched this company in the last 7 days. Reusing that report isn't built yet — start the search by hand if this request needs its own."
             : result.Message);
     }
+
+    public async Task<PipelineActionResult> StartLitigationAnalysisAsync(long requestId, string correlationId, CancellationToken ct)
+    {
+        var result = await litigation.StartAutoAnalysisAsync(requestId, correlationId, ct);
+        // StartAnalysisAsync's Started=true covers both "created" and "joined an already-active run" — either
+        // way nothing was refused, so both map to the coordinator's Started (never AlreadyExists: unlike
+        // search, analysis has no pre-existing-job short-circuit before admission is even attempted).
+        if (result.Started) return new PipelineActionResult(true, false, result.ReferenceId, null, null);
+        if (result.NotEligible) return PipelineActionResult.Deferred("LITIGATION_ANALYSIS_NOT_ELIGIBLE", result.Message);
+        return PipelineActionResult.Deferred(result.Denial switch
+        {
+            AdmissionDenial.CostCapReached => "COST_CAP_REACHED",
+            AdmissionDenial.Fresh => "LITIGATION_ANALYSIS_ALREADY_RUN",
+            _ => "LITIGATION_ANALYSIS_IN_FLIGHT"
+        }, result.Message);
+    }
+
+    public Task<DossierRenderResult> EnsureDossierRenderedAsync(long requestId, CancellationToken ct) =>
+        dossier.EnsureRenderedAsync(requestId, DossierVariant.Executive, ct);
 }
