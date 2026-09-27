@@ -90,17 +90,19 @@ public partial class AutoFetchAuthenticationTests : IClassFixture<WebApplication
     }
 
     [Fact]
-    public async Task UnauthenticatedGet_ToNewForm_ReachesTheActionDirectly()
+    public async Task UnauthenticatedGet_ToNewForm_IsChallengedToApplicationLogin()
     {
         var response = await NoRedirectClient().GetAsync("/Requests/AutoFetch");
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(HttpStatusCode.Redirect, response.StatusCode);
+        Assert.Contains("/login?", response.Headers.Location!.ToString());
     }
 
     [Fact]
-    public async Task UnauthenticatedGet_ToStatus_ReachesTheAction_AndGets404ForAnUnknownRequest()
+    public async Task UnauthenticatedGet_ToStatus_IsChallengedToApplicationLogin()
     {
         var response = await NoRedirectClient().GetAsync("/Requests/999999999/autofetch/status");
-        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+        Assert.Equal(HttpStatusCode.Redirect, response.StatusCode);
+        Assert.Contains("/login?", response.Headers.Location!.ToString());
     }
 
     /// <summary>#266: approving an unlock spends a credit, so an anonymous caller must be sent to sign in before

@@ -35,6 +35,10 @@ public static class AuditRouteRegistry
             // Clients
             { ("Clients", "Edit"), (AuditActionType.ClientEdited, AuditRulePolicy.Always) },
 
+            // ApplicationAuth: the generic mutation filter records these without retaining credentials.
+            { ("ApplicationAuth", "Login"), (AuditActionType.ApplicationLoginAttempted, AuditRulePolicy.Always) },
+            { ("ApplicationAuth", "Logout"), (AuditActionType.ApplicationLoggedOut, AuditRulePolicy.Always) },
+
             // InternalAuth
             { ("InternalAuth", "Login"), (AuditActionType.InternalLoginAttempted, AuditRulePolicy.Always) },
             { ("InternalAuth", "Logout"), (AuditActionType.InternalLoggedOut, AuditRulePolicy.Always) },

@@ -33,6 +33,9 @@ var analystOperationalCommand = args.FirstOrDefault() is { } command
         || string.Equals(command, AnalystAssignmentCommand.Argument, StringComparison.Ordinal));
 var builderArgs = analystOperationalCommand ? args.Skip(1).ToArray() : args;
 var builder = WebApplication.CreateBuilder(builderArgs);
+// Host-local credentials are excluded from source and publishing. Environment variables take precedence.
+builder.Configuration.AddJsonFile("appsettings.ApplicationLogin.json", optional: true, reloadOnChange: true)
+    .AddEnvironmentVariables();
 
 // The default multipart/Kestrel body-size limits (128MB / effectively Kestrel's own default) are far below
 // the size of a real MCA Filings archive (~700MB) — both need raising for the New Search upload to work.
@@ -328,11 +331,27 @@ builder.Services.AddScoped<MCAROC_Analysis.Services.CompanyMaster.ISyncLockLease
 builder.Services.AddScoped<MCAROC_Analysis.Services.CompanyMaster.ICompanyMasterDeltaService, MCAROC_Analysis.Services.CompanyMaster.CompanyMasterDeltaService>();
 builder.Services.AddHostedService<MCAROC_Analysis.Services.CompanyMaster.CompanyMasterSyncWorker>();
 
-// #164 internal calculation-audit access gate — a feature-scoped cookie scheme, deliberately NOT the
-// application's default authentication scheme (AddAuthentication() with no scheme name argument). Every
-// existing endpoint in this app stays exactly as unauthenticated as it is today; only
-// [Authorize(AuthenticationSchemes = "InternalReviewer")] on CalculationAuditController is affected.
-builder.Services.AddAuthentication()
+// The application account has no Analyst or InternalReviewer role.
+builder.Services.AddSingleton<MCAROC_Analysis.Services.ApplicationAuth.ApplicationCredentialChecker>();
+builder.Services.AddAuthentication("Portal")
+    .AddPolicyScheme("Portal", "Portal session", o =>
+    {
+        o.ForwardDefaultSelector = context => context.Request.Cookies.ContainsKey("mcaroc_analyst_auth")
+            ? AnalystAccessConstants.AuthenticationScheme
+            : context.Request.Cookies.ContainsKey("mcaroc_internal_auth") ? "InternalReviewer" : "ApplicationUser";
+    })
+    .AddCookie("ApplicationUser", o =>
+    {
+        o.LoginPath = "/login";
+        o.AccessDeniedPath = "/login";
+        o.Cookie.Name = "mcaroc_application_auth";
+        o.Cookie.HttpOnly = true;
+        o.Cookie.SecurePolicy = CookieSecurePolicy.Always;
+        o.Cookie.SameSite = SameSiteMode.Lax;
+        o.ExpireTimeSpan = TimeSpan.FromHours(8);
+        o.SlidingExpiration = false;
+        o.Events = new MCAROC_Analysis.Services.ApplicationAuth.ApplicationCookieEvents();
+    })
     .AddCookie(AnalystAccessConstants.AuthenticationScheme, o =>
     {
         o.LoginPath = "/analyst/login";
@@ -355,6 +374,9 @@ builder.Services.AddAuthentication()
     });
 builder.Services.AddAuthorization(options =>
 {
+    // AnalystRequestBoundaryFilter still restricts analyst identities on legacy MVC routes.
+    options.FallbackPolicy = new AuthorizationPolicyBuilder("Portal")
+        .RequireAuthenticatedUser().Build();
     options.AddPolicy(AnalystAccessConstants.Policy, policy =>
     {
         policy.AuthenticationSchemes.Add(AnalystAccessConstants.AuthenticationScheme);
@@ -365,6 +387,12 @@ builder.Services.AddAuthorization(options =>
 builder.Services.AddRateLimiter(options =>
 {
     options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+    options.AddPolicy("ApplicationLogin", httpContext => System.Threading.RateLimiting.RateLimitPartition.GetFixedWindowLimiter(
+        httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+        _ => new System.Threading.RateLimiting.FixedWindowRateLimiterOptions
+        {
+            PermitLimit = 5, Window = TimeSpan.FromMinutes(5), QueueLimit = 0
+        }));
     options.AddPolicy("InternalLogin", httpContext => System.Threading.RateLimiting.RateLimitPartition.GetFixedWindowLimiter(
         httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown",
         _ => new System.Threading.RateLimiting.FixedWindowRateLimiterOptions
@@ -426,7 +454,7 @@ app.UseStaticFiles(new StaticFileOptions
     ContentTypeProvider = staticFileContentTypeProvider
 });
 
-app.MapStaticAssets();
+app.MapStaticAssets().AllowAnonymous();
 
 app.MapControllerRoute(
     name: "default",
@@ -435,8 +463,8 @@ app.MapControllerRoute(
 
 // docs/pipeline-automation-plan.md §5.5 — breaker state for every tracked integration, plus the oldest
 // still-Queued auto-fetch job's age (a large value here, with the reference-tool breaker Healthy, points at
-// a lost enqueue rather than an upstream outage). Anonymous: no sensitive data, meant for an external
-// monitor to poll without its own credential.
+// a lost enqueue rather than an upstream outage). Includes operational errors, so application/reviewer
+// authentication is required. External uptime monitors should use /health/live.
 app.MapGet("/health", async (AppDbContext db, IIntegrationHealthService health, CancellationToken ct) =>
 {
     var integrations = new List<object>();
@@ -471,6 +499,10 @@ app.MapGet("/health", async (AppDbContext db, IIntegrationHealthService health, 
             oldestQueuedJobAgeSeconds = oldestQueuedAutoFetchUtc is { } t ? (DateTime.UtcNow - t).TotalSeconds : (double?)null
         }
     });
-}).AllowAnonymous();
+}).RequireAuthorization(new AuthorizationPolicyBuilder("InternalReviewer", "ApplicationUser")
+    .RequireAuthenticatedUser().Build());
+
+// Anonymous liveness reveals no integration errors or job data.
+app.MapGet("/health/live", () => Results.Ok(new { status = "ok" })).AllowAnonymous();
 
 app.Run();

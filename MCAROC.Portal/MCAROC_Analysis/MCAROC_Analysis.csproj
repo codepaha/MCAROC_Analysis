@@ -35,4 +35,8 @@
     </Content>
   </ItemGroup>
 
+  <ItemGroup>
+    <Content Remove="appsettings.ApplicationLogin.json" />
+    <None Include="appsettings.ApplicationLogin.json" CopyToOutputDirectory="Never" CopyToPublishDirectory="Never" />
+  </ItemGroup>
 </Project>

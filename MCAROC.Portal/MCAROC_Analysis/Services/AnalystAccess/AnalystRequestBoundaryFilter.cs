@@ -13,6 +13,9 @@ public sealed class AnalystRequestBoundaryFilter(IAnalystRequestAccessService ac
 {
     public async Task OnAuthorizationAsync(AuthorizationFilterContext context)
     {
+        // Public login remains available when switching from an analyst session.
+        if (RouteValue(context, "controller") == "ApplicationAuth" && RouteValue(context, "action") == "Login")
+            return;
         var auth = await context.HttpContext.AuthenticateAsync(AnalystAccessConstants.AuthenticationScheme);
         if (!auth.Succeeded || auth.Principal?.Identity?.IsAuthenticated != true)
             return;

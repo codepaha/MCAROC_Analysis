@@ -1,0 +1,26 @@
+@font-face{font-family:Plex;src:url('/fonts/IBMPlexSans-Regular.ttf') format('truetype');font-display:swap}
+:root{color-scheme:light;--ink:#152d44;--accent:#0868a0;--muted:#5a6b70}
+*{box-sizing:border-box}
+body{margin:0;min-height:100svh;display:flex;align-items:center;padding:32px 0;background:#073c74 url('/images/login-background.png') center bottom/cover no-repeat;color:var(--ink);font-family:Plex,system-ui,sans-serif}
+.login-shell{width:min(calc(100% - 40px),480px);margin:auto;padding:36px 40px 24px;display:flex;flex-direction:column;background:#fff;border-radius:10px}
+.brand{display:flex;align-items:center;justify-content:center;text-decoration:none}
+.brand img{object-fit:contain;max-width:100%;height:auto}
+.login-content{width:100%;padding:32px 0;animation:arrive .35s ease-out}
+.eyebrow{color:var(--accent);font-size:12px;text-transform:uppercase;letter-spacing:1.8px;margin:0 0 14px;font-weight:600}
+h1{font-size:44px;letter-spacing:-1.8px;line-height:1.1;margin:0 0 16px;font-weight:600}
+.intro{color:var(--muted);font-size:16px;line-height:1.6;margin:0 0 36px;max-width:340px}
+label{display:block;font-size:14px;font-weight:600;margin-bottom:9px}
+input{font:inherit;color:var(--ink);background:#fff;border:1px solid #bcc8c8;border-radius:6px;width:100%;height:50px;padding:12px 14px;transition:border-color .15s,box-shadow .15s}
+input:focus{outline:2px solid var(--accent);outline-offset:2px;border-color:var(--accent)}
+#username{margin-bottom:24px}
+.password-field{position:relative}.password-field input{padding-right:76px}
+button{font:inherit;cursor:pointer}
+#password-toggle{position:absolute;right:8px;top:7px;height:36px;padding:0 10px;border:0;background:transparent;color:var(--accent);font-size:13px;font-weight:600;border-radius:4px}
+button:focus-visible,.brand:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
+.submit{display:flex;align-items:center;justify-content:space-between;width:100%;height:50px;margin-top:30px;padding:0 18px;border:0;border-radius:6px;background:var(--accent);color:white;font-weight:600;transition:background .15s}
+.submit:hover{background:#075280}.submit span{transition:transform .15s}.submit:hover span{transform:translateX(3px)}
+.error{color:#8c2525;background:#f9e9e6;border-left:3px solid #b7493c;padding:12px 14px;margin-bottom:24px;font-size:14px;line-height:1.5}
+.error ul{margin:0;padding:0;list-style:none}footer{font-size:12px;color:var(--muted);padding-top:16px;border-top:1px solid #dbe1df}
+@keyframes arrive{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+@media(max-width:600px){body{padding:20px 0}.login-shell{padding:28px 24px 20px}.brand img{width:240px}.login-content{padding:28px 0}h1{font-size:38px}}
+@media(prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important}}
