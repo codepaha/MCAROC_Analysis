@@ -1,5 +1,6 @@
 using MCAROC_Analysis.Data;
 using MCAROC_Analysis.Data.Entities;
+using MCAROC_Analysis.Services.CompanyMaster;
 using MCAROC_Analysis.Services.Pipeline;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
@@ -39,7 +40,7 @@ public sealed record UnlockResult(UnlockOutcome Outcome, string Message);
 /// otherwise a year-old approval could silently authorize the next unlock.</summary>
 public sealed class CompanyUnlockService(
     AppDbContext db, ReferenceToolClient client, IPaidCallAdmission admission, IOptionsMonitor<PipelineOptions> pipeline,
-    TimeProvider time, ILogger<CompanyUnlockService> logger)
+    TimeProvider time, ILogger<CompanyUnlockService> logger, IOptions<ResolverOptions>? resolver = null)
 {
     /// <summary>How long an approval waits behind an unlock attempt already running for the company.</summary>
     public static readonly TimeSpan ApprovalWait = TimeSpan.FromSeconds(60);
@@ -124,6 +125,15 @@ public sealed class CompanyUnlockService(
         var now = time.GetUtcNow().UtcDateTime;
         var approval = await OpenApprovals(identifier, now).OrderBy(a => a.UnlockApprovalId).FirstOrDefaultAsync(ct);
         var auto = approval is null && pipeline.CurrentValue.AutoUnlock.Enabled;
+        if (auto)
+        {
+            // Trust ladder (#295, plan §5A.3): an unattended spend needs an identity a person named, or an
+            // auto-selection at or above Resolve:SpendThreshold. Anything less waits for a human approval.
+            var trust = IdentityTrust.Evaluate(await IdentityFacts.LatestAsync(db, requestId, appliedOnly: true, ct),
+                (resolver?.Value ?? new ResolverOptions()).SpendThreshold);
+            if (!trust.Trusted)
+                return new UnlockResult(UnlockOutcome.NoApproval, $"Waiting for an approval to spend 1 credit on the unlock. {trust.Detail}");
+        }
         if (approval is null && !auto)
             return new UnlockResult(UnlockOutcome.NoApproval, "Waiting for an approval to spend 1 credit on the unlock.");
         if (asset.TeamId is not { } teamId)

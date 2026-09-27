@@ -9,6 +9,8 @@ public static class PipelineEventActions
     public const string ObservedPrefix = "Observed:";
     public const string AutoStarted = "AutoStarted";
     public const string AutoStartDeferred = "AutoStartDeferred";
+    /// <summary>A person selected the company on the ambiguity queue (#295).</summary>
+    public const string IdentitySelected = "IdentitySelected";
 
     /// <summary>Stage reason code while an automatically started job hasn't been observed yet.</summary>
     public const string AutoStartedCode = "AUTO_STARTED";
@@ -63,7 +65,20 @@ public static class PipelineEventText
         ["INTEGRATION_NOT_CONFIGURED"] = "integration not configured",
         ["MANUAL_SOURCE"] = "manual upload",
         ["DATA_CURRENT"] = "data is current",
-        ["INFERRED_FROM_EXPORT"] = "the export succeeded, so the company is unlocked"
+        ["INFERRED_FROM_EXPORT"] = "the export succeeded, so the company is unlocked",
+        ["IDENTITY_AMBIGUOUS"] = "several companies match the name; select the company",
+        ["IDENTITY_NOT_FOUND"] = "no matching company found; select the company",
+        ["IDENTITY_NEEDS_CONFIRMATION"] = "a likely company was found; confirm it",
+        ["IDENTITY_FALSE_ACCEPT"] = "the reference tool named a different company than the one auto-selected; select the company",
+        ["IDENTITY_NOT_RESOLVED"] = "the request has no CIN/LLPIN",
+        ["DUPLICATE_REQUEST"] = "this client already has a request for that company",
+        ["REQUEST_ALREADY_IDENTIFIED"] = "the request already names a different company",
+        ["AWAITING_RESOLVE"] = "waiting for the company to be identified",
+        ["AWAITING_TRUSTED_IDENTITY"] = "not started automatically: the company was auto-selected below the spend threshold; a reviewer can start it",
+        ["RESOLVED_USER_PROVIDED_CIN"] = "CIN/LLPIN supplied by the requester",
+        ["RESOLVED_AUTO_SELECTED"] = "company selected automatically",
+        ["RESOLVED_SOLE_ACTIVE"] = "the only active company with that name was selected automatically",
+        ["RESOLVED_HUMAN_SELECTED"] = "company selected by a person"
     };
 
     public static string StageLabel(PipelineStage stage) => StageLabels.GetValueOrDefault(stage, stage.ToString());
@@ -80,6 +95,8 @@ public static class PipelineEventText
             text = $"{stage} started automatically";
         else if (e.Action == PipelineEventActions.AutoStartDeferred)
             text = $"{stage}: automatic start deferred";
+        else if (e.Action == PipelineEventActions.IdentitySelected)
+            text = $"{stage}: company selected by {e.Actor}";
         else if (e.Action.StartsWith(PipelineEventActions.ObservedPrefix, StringComparison.Ordinal)
                  && Enum.TryParse<PipelineStageStateKind>(e.Action[PipelineEventActions.ObservedPrefix.Length..], out var state))
             text = $"{stage}: {StateLabels.GetValueOrDefault(state, state.ToString())}";

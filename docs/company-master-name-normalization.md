@@ -74,7 +74,9 @@ never writes anything. Case categories:
 - **CompanyLlpTwin:** a company and an LLP with the same core name. Asked for the company, the strategy
   must not pick the LLP.
 
-It compares three strategies: today's AutoFetch prefix search, the normalized lookup and the #294 resolver.
+It compares three strategies: today's AutoFetch prefix search, the normalized lookup and the #294 resolver. The report ends with
+the live metrics from `IdentityResolutions` (#295): auto-select rate, how often a person chose a different
+company than the resolver, and false accepts (auto-selections the reference tool's preview refuted).
 The resolver's auto-select stays disabled until precision on the auto-selected subset reaches ≥ 99.5%,
 judged on the lower bound of the confidence interval (plan §5A.4). Its `AutoSelectThreshold` and
 `MinimumMargin` should then be set from this report.
@@ -89,6 +91,7 @@ judged on the lower bound of the confidence interval (plan §5A.4). Its `AutoSel
 | `Resolve:AllowSoleActive` | `false` | Among same-name twins, allow the only Active one to be chosen. |
 | `Resolve:SuggestionFloor` | `0.5` | Below this top score the name counts as not found. |
 | `Resolve:MaxCandidates` | `10` | Candidates kept on each resolution record. |
+| `Resolve:SpendThreshold` | `0.99` | Minimum score for an auto-selected company to drive an unattended spend (auto-unlock, automatic litigation search). Below it, only free steps run on their own (#295). |
 
 Every resolution is recorded in `IdentityResolutions` with its candidates, scores, reasons, the settings in
 force and the algorithm version.

@@ -120,6 +120,8 @@ builder.Services.AddScoped<PipelineSnapshotReader>();
 builder.Services.AddScoped<IPipelineActions, PipelineActions>();
 builder.Services.AddScoped<PipelineReconciler>();
 builder.Services.AddScoped<PipelineAdopter>();
+// Board "Select this CIN" (#295): records a person's company selection and unblocks the Resolve stage.
+builder.Services.AddScoped<IdentitySelectionService>();
 builder.Services.AddHostedService<PipelineReconcilerWorker>();
 
 // Litigation data lake (#239, LIT-01) — authenticate/register/poll against the BPR Litigation Data API and

@@ -725,6 +725,37 @@ former names are not in the master (only `CompanyNameHistories` for already-inge
   `Unlock`, comparing its returned CIN against the resolved one. Then the post-ingestion identity check
   (`IDENTITY_MISMATCH`). A mismatch on an `AutoSelected` resolution is recorded as a **false accept**, reopens
   `Resolve` as `NeedsAttention`, and feeds the metrics.
+- *As implemented in #295 (coordinator half; the board's ambiguity queue and its button are the UI half):*
+  - **Resolve stage.** `PipelineDecider` reads the request's latest `IdentityResolutions` row. With no CIN/LLPIN,
+    `Ambiguous` ⇒ `NeedsAttention(IDENTITY_AMBIGUOUS)`, `NotFound`/`InvalidInput` ⇒ `IDENTITY_NOT_FOUND`,
+    `NeedsConfirmation` ⇒ `IDENTITY_NEEDS_CONFIRMATION`, and a selection that couldn't be applied keeps its own code
+    (`DUPLICATE_REQUEST`, `REQUEST_ALREADY_IDENTIFIED`). The stage's `SourceRef` is that resolution row, whose
+    candidates the queue shows. A request identified at intake (no resolution row) resolves as before.
+  - **Gate.** While Resolve is unresolved, `Unlock`, `Refresh`, `Fetch`, `Ingest` (unless already ingested) and a
+    not-yet-started `Litigation` are `Waiting(AWAITING_RESOLVE)`. Nothing is ever `WOULD_START` then, which a
+    generated test checks.
+  - **Trust ladder.** `IdentityTrust`:
+    - Trusted: `UserProvidedCin`, `HumanSelected`, no resolution row (the CIN was typed or picked at intake), or
+      `AutoSelected` with a score at or above `Resolve:SpendThreshold` (`T_spend`, default 0.99).
+    - Anything else doesn't start the litigation search on its own; the stage stays
+      `NotStarted(AWAITING_TRUSTED_IDENTITY)` and a reviewer can start it.
+    - Anything else doesn't auto-unlock either (`CompanyUnlockService` returns `NoApproval`), so it waits for an
+      approval. Free steps are never gated.
+  - **Safety net.** Before the unlock/refresh gate, auto-fetch calls `getCompanyPreview` for any request whose
+    identifier came from a resolution row.
+    - A different CIN on an `AutoSelected` identity is recorded as `IDENTITY_FALSE_ACCEPT`, a new row with the
+      original candidates. The request's identifier is withdrawn and the job fails before anything is exported
+      or spent. Resolve then reopens as `NeedsAttention(IDENTITY_FALSE_ACCEPT)`, and the refuted company is never
+      auto-selected for that request again.
+    - On a person-named identity, the same mismatch is `IDENTITY_MISMATCH`, as before.
+  - **Select this CIN** (`IdentitySelectionService.SelectAsync`, for the board action to call):
+    - Records `HumanSelected` against the same input and hints.
+    - Re-points and queues an auto-fetch job that failed before exporting.
+    - Writes an `IdentitySelected` pipeline event and reconciles the run at once, so the stage unblocks on the
+      click.
+    - The calling action owns authorization, antiforgery and the audit-log row.
+  - **Live metrics.** `IdentityResolutionMetrics` (auto-select rate, human-override rate, false-accept count) is
+    appended to the `Tools/EvaluateNameResolution` report.
 
 ### 5A.4 Calibration before auto-select may be enabled
 

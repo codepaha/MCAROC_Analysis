@@ -2,6 +2,7 @@ using MCAROC_Analysis.Data;
 using MCAROC_Analysis.Data.Entities;
 using MCAROC_Analysis.Services.AutoFetch;
 using MCAROC_Analysis.Services.CalculationAssurance;
+using MCAROC_Analysis.Services.CompanyMaster;
 using MCAROC_Analysis.Services.Dossier;
 using MCAROC_Analysis.Services.LitigationData;
 using Microsoft.EntityFrameworkCore;
@@ -12,7 +13,7 @@ namespace MCAROC_Analysis.Services.Pipeline;
 /// <summary>Builds a <see cref="PipelineSnapshot"/> with no-tracking reads only — it never writes, so the
 /// coordinator can't corrupt any table it observes.</summary>
 public sealed class PipelineSnapshotReader(AppDbContext db, IConfiguration config, IOptions<BprLitigationOptions> bprOptions,
-    IOptions<ReferenceToolOptions> referenceToolOptions)
+    IOptions<ReferenceToolOptions> referenceToolOptions, IOptions<ResolverOptions>? resolverOptions = null)
 {
     public async Task<PipelineSnapshot?> ReadAsync(long requestId, CancellationToken ct)
     {
@@ -36,6 +37,11 @@ public sealed class PipelineSnapshotReader(AppDbContext db, IConfiguration confi
             lifecycle = await db.CompanyReportLifecycles.AsNoTracking().Where(l => l.Identifier == cin)
                 .Select(l => new LifecycleFacts(l.State, l.UnlockedUtc, l.ActiveRefreshId != null)).FirstOrDefaultAsync(ct);
         }
+
+        var latestResolution = await IdentityFacts.LatestAsync(db, requestId, appliedOnly: false, ct);
+        var appliedResolution = latestResolution is { AppliedToRequest: true }
+            ? latestResolution
+            : await IdentityFacts.LatestAsync(db, requestId, appliedOnly: true, ct);
 
         var ingestionRunning = await db.IngestionRuns.AsNoTracking()
             .AnyAsync(i => i.RequestId == requestId && i.Status == IngestionRunStatus.Running, ct);
@@ -117,6 +123,9 @@ public sealed class PipelineSnapshotReader(AppDbContext db, IConfiguration confi
             IsManualReviewRequired = request.IsManualReviewRequired,
             ManualReviewReason = request.ManualReviewReason,
             RequestFailureReason = request.FailureReason,
+            LatestResolution = latestResolution,
+            AppliedResolution = appliedResolution,
+            SpendThreshold = (resolverOptions?.Value ?? new ResolverOptions()).SpendThreshold,
             AutoFetch = job,
             RefreshGateEnabled = referenceToolOptions.Value.RefreshBeforeFetch,
             Lifecycle = lifecycle,

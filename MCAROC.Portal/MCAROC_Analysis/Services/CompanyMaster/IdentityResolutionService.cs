@@ -23,7 +23,7 @@ public sealed record IdentityResolutionResult(
 public sealed class IdentityResolutionService(AppDbContext db, IOptions<ResolverOptions> options)
 {
     public const string DuplicateRequestReason = ResolutionReasonCodes.DuplicateRequest;
-    public const string IdentifierConflictReason = "REQUEST_ALREADY_IDENTIFIED";
+    public const string IdentifierConflictReason = ResolutionReasonCodes.RequestAlreadyIdentified;
 
     // Enums as names ("LLP", "Company"), so the audit JSON stays readable without the code at hand.
     private static readonly JsonSerializerOptions Json = new() { Converters = { new System.Text.Json.Serialization.JsonStringEnumConverter() } };
@@ -84,6 +84,15 @@ public sealed class IdentityResolutionService(AppDbContext db, IOptions<Resolver
         var snapshot = await db.CompanyMasterSyncJobs.AsNoTracking()
             .Where(j => j.Status == CompanyMasterSyncJobStatus.Completed)
             .MaxAsync(j => j.PublishedDate, ct);
+        // A company the reference tool already refuted for this request is never auto-selected for it again.
+        if (decision is { Status: ResolutionStatus.Resolved, Method: ResolutionMethod.AutoSelected, ChosenIdentifier: { } auto }
+            && await db.IdentityResolutions.AnyAsync(r => r.RequestId == requestId && r.ReasonCode == ResolutionReasonCodes.FalseAccept
+                && r.InputIdentifier == auto, ct))
+            decision = decision with
+            {
+                Status = ResolutionStatus.NeedsConfirmation, Method = null, ChosenIdentifier = null, RecommendedIdentifier = null,
+                AutoSelectEligible = false, ReasonCode = ResolutionReasonCodes.NeedsConfirmation
+            };
         var chosen = decision.Status == ResolutionStatus.Resolved ? decision.ChosenIdentifier : null;
         var chosenRow = chosen is null ? null : decision.Candidates.FirstOrDefault(c => c.Candidate.Identifier == chosen)?.Candidate;
 
@@ -165,6 +174,72 @@ public sealed class IdentityResolutionService(AppDbContext db, IOptions<Resolver
         }
 
         return new IdentityResolutionResult(decision, resolution.IdentityResolutionId, resolution.AppliedToRequest, resolution.ExistingRequestId);
+    }
+
+    /// <summary>The reference tool's free preview named a different company than an <c>AutoSelected</c> resolution
+    /// (issue #295, plan §5A.3 safety net). In one transaction: a new resolution row records the false accept
+    /// (<see cref="ResolutionReasonCodes.FalseAccept"/>, the refuted identifier as its input, the original's
+    /// candidates, hints and versions copied so the ambiguity queue can offer them again), and the request's
+    /// identifier is withdrawn — so the Resolve stage reopens and a person's selection is not refused as
+    /// <c>REQUEST_ALREADY_IDENTIFIED</c>. The identifier is only withdrawn while it is still the refuted one.</summary>
+    public async Task<long> RecordFalseAcceptAsync(
+        long requestId, long refutedResolutionId, string refutedIdentifier, string actor, CancellationToken ct = default)
+    {
+        refutedIdentifier = refutedIdentifier.Trim().ToUpperInvariant();
+        var refuted = await db.IdentityResolutions.AsNoTracking().SingleAsync(r => r.IdentityResolutionId == refutedResolutionId, ct);
+
+        await using var transaction = await db.Database.BeginTransactionAsync(ct);
+        var request = await db.Requests.SingleAsync(r => r.RequestId == requestId, ct);
+        if (string.Equals(request.AutoFetchCompanyIdentifier, refutedIdentifier, StringComparison.OrdinalIgnoreCase))
+        {
+            request.Cin = null;
+            request.Llpin = null;
+            request.AutoFetchCompanyIdentifier = null;
+        }
+
+        var row = new IdentityResolution
+        {
+            RequestId = requestId,
+            InputName = refuted.InputName,
+            InputIdentifier = refutedIdentifier,
+            HintsJson = refuted.HintsJson,
+            NormalizedInput = refuted.NormalizedInput,
+            Status = ResolutionStatus.NeedsConfirmation,
+            Method = null,
+            ChosenIdentifier = null,
+            // The preview's own CIN is unverified against the master, so it is never recommended.
+            RecommendedIdentifier = null,
+            AutoSelectEligible = false,
+            TopScore = refuted.TopScore,
+            Margin = refuted.Margin,
+            ReasonCode = ResolutionReasonCodes.FalseAccept,
+            CandidatesJson = refuted.CandidatesJson,
+            AlgorithmVersion = refuted.AlgorithmVersion,
+            NormalizerVersion = refuted.NormalizerVersion,
+            OptionsJson = refuted.OptionsJson,
+            MasterSnapshotDate = refuted.MasterSnapshotDate,
+            AppliedToRequest = false,
+            CreatedBy = actor,
+            CreatedUtc = DateTime.UtcNow,
+        };
+        db.IdentityResolutions.Add(row);
+        await db.SaveChangesAsync(ct);
+        await transaction.CommitAsync(ct);
+        return row.IdentityResolutionId;
+    }
+
+    /// <summary>The name and hints the request was last resolved with, for a person's selection to be recorded
+    /// against the same input.</summary>
+    public async Task<(string? Name, ResolutionHints Hints)> LatestInputAsync(long requestId, CancellationToken ct = default)
+    {
+        var latest = await db.IdentityResolutions.AsNoTracking().Where(r => r.RequestId == requestId)
+            .OrderByDescending(r => r.CreatedUtc).ThenByDescending(r => r.IdentityResolutionId)
+            .Select(r => new { r.InputName, r.HintsJson }).FirstOrDefaultAsync(ct);
+        if (latest is null) return (null, ResolutionHints.None);
+        ResolutionHints? hints = null;
+        try { hints = latest.HintsJson is null ? null : JsonSerializer.Deserialize<ResolutionHints>(latest.HintsJson, Json); }
+        catch (JsonException) { }
+        return (latest.InputName, hints ?? ResolutionHints.None);
     }
 
     /// <summary>Same identity rule as AutoFetch intake: CIN goes to <c>Cin</c> for both entity types (the existing

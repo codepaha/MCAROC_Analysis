@@ -3,6 +3,7 @@ using System.Text.Json;
 using MCAROC_Analysis.Data;
 using MCAROC_Analysis.Data.Entities;
 using MCAROC_Analysis.Services.Analysis;
+using MCAROC_Analysis.Services.CompanyMaster;
 using MCAROC_Analysis.Services.Excel;
 using MCAROC_Analysis.Services.McaFilings;
 using Microsoft.EntityFrameworkCore;
@@ -36,7 +37,8 @@ public sealed class AutoFetchJobService(
     ILogger<AutoFetchJobService> logger,
     IWorkbookDerivativeService? derivativeService = null,
     CompanyRefreshService? refresh = null,
-    CompanyUnlockService? unlock = null)
+    CompanyUnlockService? unlock = null,
+    IdentityResolutionService? identity = null)
 {
     /// <summary>Fallback per-file size estimate used when the registry gives no declared size for a
     /// document or an attachment — only for sizing the up-front storage reservation and the plan-time
@@ -201,6 +203,14 @@ public sealed class AutoFetchJobService(
             // 2. Company name (best effort — the workbook's own "About the Company" sheet fills it in later anyway)
             if (NeedsCompanyName(request))
                 await TryResolveCompanyNameAsync(request, job, ct);
+
+            // 2a. Identity safety net (#295, plan §5A.3) — the last check before Resolve hands off to Unlock. For a
+            // request whose identifier came from a recorded resolution, the tool's free preview must name the same
+            // CIN/LLPIN. A mismatch on an auto-selected identity is a false accept: it is recorded, the identity
+            // goes back to a person, and nothing is unlocked, exported or spent. Requests identified at intake
+            // keep the existing checks (the preview before an unlock, the post-ingestion identity check).
+            if (job.RocDocumentId is null && identity is not null)
+                await VerifyResolvedIdentityAsync(request, job, ct);
 
             // 2b. Unlock/refresh gate — nothing is exported until the company is unlocked and the tool's data is
             // under 24 hours old (docs/pipeline-automation-plan.md §5.7). Only before the first export: a job
@@ -399,6 +409,29 @@ public sealed class AutoFetchJobService(
         await db.RequestDocuments.Where(d => d.DocumentId == candidateId && d.RequestId == requestId && d.DocumentType == type)
             .ExecuteUpdateAsync(s => s.SetProperty(d => d.IsActiveSource, true)
                 .SetProperty(d => d.UploadStatus, DocumentUploadStatus.Processed), ct);
+    }
+
+    private async Task VerifyResolvedIdentityAsync(McaRequest request, AutoFetchJob job, CancellationToken ct)
+    {
+        var applied = await IdentityFacts.LatestAsync(db, request.RequestId, appliedOnly: true, ct);
+        if (applied is null || !string.Equals(applied.ChosenIdentifier, job.Cin, StringComparison.OrdinalIgnoreCase)) return;
+
+        var preview = await client.GetCompanyPreviewAsync(job.Bid, ct);
+        if (string.Equals(preview.Cin, job.Cin, StringComparison.OrdinalIgnoreCase)) return;
+
+        var found = preview.Cin ?? "none";
+        if (applied.Method == ResolutionMethod.AutoSelected)
+        {
+            await identity!.RecordFalseAcceptAsync(request.RequestId, applied.ResolutionId, job.Cin, "auto-fetch", ct);
+            logger.LogWarning("False accept on request {RequestId}: auto-selected {Cin}, but the reference tool's preview is CIN {PreviewCin}",
+                request.RequestId, job.Cin, found);
+            throw new ReferenceToolException(
+                $"{ResolutionReasonCodes.FalseAccept}: {job.Cin} was selected automatically, but the reference tool's preview is CIN '{found}'. " +
+                "Nothing was fetched or spent; the company must be selected by a person.", ReferenceToolFailureKind.Other);
+        }
+        throw new ReferenceToolException(
+            $"IDENTITY_MISMATCH: the reference tool's preview for this company is CIN '{found}', not '{job.Cin}'. Nothing was fetched or spent.",
+            ReferenceToolFailureKind.Other);
     }
 
     private static bool NeedsCompanyName(McaRequest request) =>

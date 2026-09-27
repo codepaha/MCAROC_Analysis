@@ -1,4 +1,5 @@
 using MCAROC_Analysis.Data.Entities;
+using MCAROC_Analysis.Services.CompanyMaster;
 
 namespace MCAROC_Analysis.Services.Pipeline;
 
@@ -25,21 +26,41 @@ public static class PipelineDecider
     /// <c>Enforce</c>-mode action may act on.</summary>
     public const string ReadyToStart = "WOULD_START";
 
+    /// <summary>Every stage that needs the company's identity waits on <c>Resolve</c> with this code while it is
+    /// unresolved — so nothing that fetches, spends or searches can run for an uncertain company (plan §5.7, §5A.3).</summary>
+    public const string AwaitingResolve = "AWAITING_RESOLVE";
+    /// <summary>The litigation search is ready, but the identity isn't trusted for an unattended start (§5A.3 trust
+    /// ladder); a reviewer can still start it by hand.</summary>
+    public const string AwaitingTrustedIdentity = "AWAITING_TRUSTED_IDENTITY";
+
+    public const string IdentityAmbiguous = ResolutionReasonCodes.Ambiguous;
+    public const string IdentityNotFound = ResolutionReasonCodes.NotFound;
+    public const string IdentityNeedsConfirmation = ResolutionReasonCodes.NeedsConfirmation;
+    public const string IdentityNotResolved = "IDENTITY_NOT_RESOLVED";
+
     public static PipelineDecision Decide(PipelineSnapshot s, PipelinePolicy policy)
     {
         var manual = s.AutoFetch is null;
         var v = new Dictionary<PipelineStage, StageVerdict>();
 
         v[PipelineStage.Resolve] = Resolve(s, manual);
-        v[PipelineStage.Unlock] = Unlock(s, manual);
-        v[PipelineStage.Refresh] = Refresh(s, manual);
-        v[PipelineStage.Fetch] = Fetch(s, manual, v[PipelineStage.Unlock], v[PipelineStage.Refresh]);
-        v[PipelineStage.Ingest] = Ingest(s, manual, v[PipelineStage.Fetch]);
+        // An unresolved identity holds back everything that would act on the company. Ingestion that already
+        // happened stands (a manual upload identifies itself), so only a request with nothing ingested waits.
+        var identityPending = !v[PipelineStage.Resolve].IsDone && v[PipelineStage.Resolve].State != PipelineStageStateKind.Skipped;
+        v[PipelineStage.Unlock] = identityPending ? Waiting(AwaitingResolve) : Unlock(s, manual);
+        v[PipelineStage.Refresh] = identityPending ? Waiting(AwaitingResolve) : Refresh(s, manual);
+        v[PipelineStage.Fetch] = identityPending ? Waiting(AwaitingResolve) : Fetch(s, manual, v[PipelineStage.Unlock], v[PipelineStage.Refresh]);
+        v[PipelineStage.Ingest] = identityPending && s.LatestCompletedIngestionRunId is null
+            ? Waiting(AwaitingResolve)
+            : Ingest(s, manual, v[PipelineStage.Fetch]);
         v[PipelineStage.Analysis] = Analysis(s, v[PipelineStage.Ingest]);
         v[PipelineStage.CalcAssurance] = CalcAssurance(s, v[PipelineStage.Analysis]);
         v[PipelineStage.Dossier] = Dossier(s, v[PipelineStage.Analysis], v[PipelineStage.CalcAssurance]);
         v[PipelineStage.Filings] = Filings(s);
-        v[PipelineStage.Litigation] = Litigation(s, policy, v[PipelineStage.Ingest]);
+        // A search that already exists is still reported; nothing new starts for an unresolved company.
+        v[PipelineStage.Litigation] = identityPending && s.LitigationSearch is null
+            ? Waiting(AwaitingResolve)
+            : Litigation(s, policy, v[PipelineStage.Ingest]);
         v[PipelineStage.LitigationAnalysis] = LitigationAnalysis(s, policy, v[PipelineStage.Litigation]);
 
         var states = v.ToDictionary(kv => kv.Key, kv => kv.Value.State);
@@ -50,12 +71,46 @@ public static class PipelineDecider
             !cancelled && PipelineOutcomeCalculator.IsCoreReady(states, skipKinds));
     }
 
+    /// <summary>Issue #295: the request's identity, from the resolutions recorded for it (#294). A false accept —
+    /// the reference tool's free preview naming a different company than an auto-selected one — reopens the stage
+    /// even though it had succeeded; so do an ambiguous, unmatched or unconfirmed name. Each parks as
+    /// <c>NeedsAttention</c> for a human to select the company on the board's ambiguity queue.</summary>
     private static StageVerdict Resolve(PipelineSnapshot s, bool manual)
     {
-        if (!string.IsNullOrWhiteSpace(s.Cin) || !string.IsNullOrWhiteSpace(s.Llpin)) return Ok();
+        var latest = s.LatestResolution;
+        if (latest is { IsFalseAccept: true })
+            return Attention(ResolutionReasonCodes.FalseAccept,
+                "The reference tool's preview named a different company than the auto-selected one; nothing was fetched or spent. Select the correct company.",
+                latest.ResolutionId);
+
+        if (!string.IsNullOrWhiteSpace(s.Cin) || !string.IsNullOrWhiteSpace(s.Llpin))
+            return s.AppliedResolution is { } applied ? Ok(applied.ResolutionId, applied.ReasonCode) : Ok();
+
+        if (latest is not null)
+            return latest.Status switch
+            {
+                ResolutionStatus.Ambiguous => Attention(IdentityAmbiguous,
+                    "Several companies match the name and nothing distinguishes them. Select the company.", latest.ResolutionId),
+                ResolutionStatus.NotFound or ResolutionStatus.InvalidInput => Attention(IdentityNotFound,
+                    latest.ReasonCode == IdentityNotFound
+                        ? "No company in the master data matches the name. Select the company or correct the request."
+                        : $"{latest.ReasonCode}: the company could not be identified. Select the company or correct the request.",
+                    latest.ResolutionId),
+                ResolutionStatus.NeedsConfirmation => Attention(IdentityNeedsConfirmation,
+                    $"One company stands out{(latest.RecommendedIdentifier is { } r ? $" ({r})" : "")}, but a person must confirm it.",
+                    latest.ResolutionId),
+                // Resolved but not written to the request: a collision with the client's existing request, or a
+                // request that already names a different company.
+                _ => Attention(latest.ReasonCode,
+                    latest.ExistingRequestId is { } other
+                        ? $"This client already has request {other} for {latest.ChosenIdentifier}."
+                        : $"{latest.ChosenIdentifier} was selected but not applied to the request.",
+                    latest.ResolutionId)
+            };
+
         // A manual upload is identified by the workbook itself.
         if (manual) return Skip(PipelineStageSkipKind.Neutral, "MANUAL_SOURCE");
-        return Attention("IDENTITY_NOT_RESOLVED", "The request has no CIN/LLPIN.");
+        return Attention(IdentityNotResolved, "The request has no CIN/LLPIN.");
     }
 
     private static StageVerdict Unlock(PipelineSnapshot s, bool manual)
@@ -204,6 +259,10 @@ public static class PipelineDecider
         if (!policy.LitigationSearch) return Skip(PipelineStageSkipKind.Neutral, "POLICY_OFF");
         if (!s.LitigationConfigured) return Skip(PipelineStageSkipKind.Warning, "INTEGRATION_NOT_CONFIGURED");
         if (!ingest.IsDone) return Waiting("AWAITING_INGEST");
+        var trust = IdentityTrust.Evaluate(s.AppliedResolution, s.SpendThreshold);
+        if (!trust.Trusted)
+            return new StageVerdict(PipelineStageStateKind.NotStarted, ReasonCode: AwaitingTrustedIdentity,
+                ReasonDetail: $"{trust.Detail} A reviewer can start the search by hand.");
         return new StageVerdict(PipelineStageStateKind.NotStarted, ReasonCode: ReadyToStart,
             ReasonDetail: "Ready to start. The coordinator starts it itself only in Enforce mode with Enforce:Litigation on.");
     }
