@@ -25,14 +25,16 @@ public static class AnalysisTestHelpers
         List<AuditorObservation>? auditorObservations = null,
         List<Litigation>? litigations = null,
         DateTime? analysisDate = null,
-        Client? client = null)
+        Client? client = null,
+        List<EpfoEstablishment>? epfoEstablishments = null)
     {
         var request = Request();
         request.Client = client;
         return AnalysisContext.Build(
             request, companyProfile, directors ?? [], directorAssociations ?? [], shareholdings ?? [],
             financialYears ?? [], charges ?? [], msmePayments ?? [], gstRegistrations ?? [],
-            epfoContributions ?? [], auditorObservations ?? [], litigations ?? [], analysisDate ?? AnalysisDate);
+            epfoContributions ?? [], auditorObservations ?? [], litigations ?? [], analysisDate ?? AnalysisDate,
+            epfoEstablishments);
     }
 
     public static FinancialYearData Fy(

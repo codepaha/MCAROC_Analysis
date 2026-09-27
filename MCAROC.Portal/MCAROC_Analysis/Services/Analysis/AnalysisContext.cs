@@ -21,6 +21,9 @@ public class AnalysisContext
     public required IReadOnlyList<AuditorObservation> AuditorObservations { get; init; }
     public required IReadOnlyList<Litigation> Litigations { get; init; }
 
+    /// <summary>Only the address pool for ChargedPropertyAddressRules (issue #191) reads this today.</summary>
+    public IReadOnlyList<EpfoEstablishment> EpfoEstablishments { get; init; } = [];
+
     public required DateTime AnalysisDate { get; init; }
     public required MaterialityContext Materiality { get; init; }
 
@@ -40,7 +43,8 @@ public class AnalysisContext
         IReadOnlyList<FinancialYearData> financialYears, IReadOnlyList<RocCharge> charges,
         IReadOnlyList<MsmePayment> msmePayments, IReadOnlyList<GstRegistration> gstRegistrations,
         IReadOnlyList<EpfoContribution> epfoContributions, IReadOnlyList<AuditorObservation> auditorObservations,
-        IReadOnlyList<Litigation> litigations, DateTime analysisDate)
+        IReadOnlyList<Litigation> litigations, DateTime analysisDate,
+        IReadOnlyList<EpfoEstablishment>? epfoEstablishments = null)
     {
         var orderedYears = financialYears.OrderByDescending(f => f.FinancialYear).ToList();
         var latest = orderedYears.ElementAtOrDefault(0);
@@ -70,6 +74,7 @@ public class AnalysisContext
             EpfoContributions = epfoContributions,
             AuditorObservations = auditorObservations,
             Litigations = litigations,
+            EpfoEstablishments = epfoEstablishments ?? [],
             AnalysisDate = analysisDate,
             Materiality = MaterialityContext.FromLatestYear(latest),
             LatestFinancialYear = latest,

@@ -244,12 +244,14 @@ public class AnalysisOrchestrator(
         var msmePayments = await db.MsmePayments.Where(x => x.IngestionRunId == ingestionRunId).ToListAsync(ct);
         var gstRegistrations = await db.GstRegistrations.Include(g => g.Filings).Where(x => x.IngestionRunId == ingestionRunId).ToListAsync(ct);
         var epfoContributions = await db.EpfoContributions.Where(x => x.IngestionRunId == ingestionRunId).ToListAsync(ct);
+        var epfoEstablishments = await db.EpfoEstablishments.Where(x => x.IngestionRunId == ingestionRunId).ToListAsync(ct);
         var auditorObservations = await db.AuditorObservations
             .Where(x => x.IngestionRunId == ingestionRunId && x.Basis == FinancialBasis.Standalone).ToListAsync(ct);
         var litigations = await db.Litigations.Where(x => x.IngestionRunId == ingestionRunId).ToListAsync(ct);
 
         return AnalysisContext.Build(
             request, companyProfile, directors, directorAssociations, shareholdings, financialYears, charges,
-            msmePayments, gstRegistrations, epfoContributions, auditorObservations, litigations, DateTime.UtcNow);
+            msmePayments, gstRegistrations, epfoContributions, auditorObservations, litigations, DateTime.UtcNow,
+            epfoEstablishments);
     }
 }

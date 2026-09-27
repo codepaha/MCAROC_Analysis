@@ -1,8 +1,10 @@
 using System.Net;
 using System.Text.RegularExpressions;
+using MCAROC_Analysis.Data;
 using MCAROC_Analysis.Services.InternalAuth;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
@@ -14,9 +16,22 @@ namespace MCAROC_Analysis.Tests;
 /// caller, not just that [Authorize] is present as an attribute. A unit test that calls a controller action
 /// directly (as most other tests in this project do) never exercises this middleware layer at all — only a
 /// real hosted test server does.</summary>
-public partial class CalculationAuditAuthenticationTests : IClassFixture<WebApplicationFactory<Program>>
+public partial class CalculationAuditAuthenticationTests : IClassFixture<WebApplicationFactory<Program>>, IAsyncLifetime
 {
     private readonly WebApplicationFactory<Program> _factory;
+
+    /// <summary>The app's pages query the shared test database, which only exists once some fixture has
+    /// migrated it. Relying on another class to run first fails with HTTP 500 whenever xunit's collection
+    /// order puts this class earlier (AutoFetchAuthenticationTests hit exactly that on #289) — so it
+    /// migrates for itself, as every other DB-backed class does.</summary>
+    public async Task InitializeAsync()
+    {
+        await using var db = new AppDbContext(new DbContextOptionsBuilder<AppDbContext>()
+            .UseSqlServer(TestDatabase.ConnectionString).Options);
+        await TestDatabase.MigrateAsync(db);
+    }
+
+    public Task DisposeAsync() => Task.CompletedTask;
 
     public CalculationAuditAuthenticationTests(WebApplicationFactory<Program> factory)
     {
