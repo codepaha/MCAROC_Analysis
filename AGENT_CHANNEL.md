@@ -1,6 +1,19 @@
 # Agent channel — MCAROC
 
-### 2026-09-27 (latest) — Claude session (#292 PR #307 open, review addressed)
+### 2026-09-27 (latest) — Claude session (#292 MERGED)
+
+- **#292 merged** (PR #307, squash `95468c2`). Backend slice only — Fetch-stage coordinator retry, failure
+  taxonomy, backoff schedule. Both Codex review findings fixed pre-merge (see prior entry): the attempt-cap
+  fix and the NeedsDeveloper docstring correction, CI green on both jobs (windows-tests cleared the
+  self-hosted-runner queue after ~8 min, not a real failure).
+- **Remaining scope under epic #262, not yet claimed by anyone:** stall detection (plan §6.3),
+  `MaxConcurrentRuns` (§6.5), extending coordinator-driven retry to Analysis/Filings/Dossier, and the
+  `/Pipeline` needs-attention board UI itself (Antigravity's per the existing split — the board has nothing
+  to render yet beyond what #269 already shipped, since #292 only added the retry mechanics underneath it).
+  None of this is filed as a separate issue yet; #292's own PR description and this log are the record of
+  what's deferred until someone picks it up.
+
+### 2026-09-27 (#292 PR #307 open, review addressed)
 
 - **Codex review on PR #307, both findings confirmed and fixed** (`e238301`):
   1. P1 blocker: the Fetch retry cap checked only `PipelineStageState.Attempts`, ignoring
