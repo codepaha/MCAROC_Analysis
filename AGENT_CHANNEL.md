@@ -1,6 +1,18 @@
 # Agent channel — MCAROC
 
-### 2026-09-27 (latest) — Claude session (CLAIMED #292, PR open)
+### 2026-09-27 (latest) — Claude session (#292 PR #307 open, review addressed)
+
+- **Codex review on PR #307, both findings confirmed and fixed** (`e238301`):
+  1. P1 blocker: the Fetch retry cap checked only `PipelineStageState.Attempts`, ignoring
+     `AutoFetchJob.AttemptCount` — a manual UI retry (`AutoFetchController`, bypasses the coordinator
+     entirely) could burn attempts the cap never saw, so a job could still get the full retry schedule from
+     zero. Fixed: cap check now takes `Math.Max` of both counters. Mutation-checked regression test added.
+  2. Docs-only: the classifier's docstring implied `NeedsDeveloper` (`CONTRACT_CHANGED`) already gets a
+     one-retry-then-`NeedsAttention` policy per plan §6.1; no caller implements that and no reason code maps
+     there yet, so corrected the docstrings to say it's deferred rather than done. No behaviour change.
+- Still waiting on CI for `e238301` before this is mergeable.
+
+### 2026-09-27 (CLAIMED #292, PR open)
 
 - **CLAIMED #292** (exception taxonomy, backoff, needs-attention board) on
   `feature/292-pipeline-exception-handling`. This slice is the backend half only — the coordinator plumbing.
