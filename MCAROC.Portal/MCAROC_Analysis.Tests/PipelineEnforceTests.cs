@@ -124,6 +124,101 @@ public sealed class PipelineEnforceTests : IAsyncLifetime
         Assert.Null(run.ReconcileLeaseToken); // released after acting
     }
 
+    /// <summary>#292 (plan §6.5): MaxConcurrentRuns bounds how many requests may actively search or analyse
+    /// litigation at once — protecting BPR's/Vertex's own limits from a burst of requests all becoming ready
+    /// together. These tests share a real database with every other test in this class (and its own leftover
+    /// Running rows from earlier runs), so each one measures the ambient count first and sets the cap
+    /// relative to it rather than assuming the pool starts empty.</summary>
+    private async Task<int> ActiveEnrichmentCountAsync()
+    {
+        await using var db = CreateContext();
+        return await db.PipelineStageStates.AsNoTracking()
+            .Where(s => (s.Stage == PipelineStage.Litigation || s.Stage == PipelineStage.LitigationAnalysis) && s.State == PipelineStageStateKind.Running)
+            .Select(s => s.PipelineRunId).Distinct().CountAsync();
+    }
+
+    /// <summary>A throwaway run with one stage forced straight to Running, bypassing any real start — cheap
+    /// stand-in for "some other request is already actively enriching," which is all the concurrency cap
+    /// itself looks at.</summary>
+    private async Task SeedActiveEnrichmentBlockerAsync(PipelineStage stage)
+    {
+        // SeedIngestedRequestWithRunAsync only adopts the PipelineRun row — PipelineStageState rows are
+        // created lazily by the reconciler's own first tick, so there is nothing yet to UPDATE; insert one
+        // directly instead of relying on a real reconcile to materialise it first.
+        var (_, blockerRunId) = await SeedIngestedRequestWithRunAsync();
+        await using var db = CreateContext();
+        db.PipelineStageStates.Add(new PipelineStageState { PipelineRunId = blockerRunId, Stage = stage, State = PipelineStageStateKind.Running, UpdatedUtc = DateTime.UtcNow });
+        await db.SaveChangesAsync();
+    }
+
+    [Fact]
+    public async Task A_new_search_is_deferred_without_ever_calling_the_action_once_the_concurrency_cap_is_reached()
+    {
+        var ambient = await ActiveEnrichmentCountAsync();
+        await SeedActiveEnrichmentBlockerAsync(PipelineStage.Litigation);
+        var capped = new PipelineOptions { Enabled = true, Mode = PipelineMode.Enforce, Enforce = { Litigation = true }, Policy = { LitigationSearch = true }, MaxConcurrentRuns = ambient + 1 };
+        var (_, runId) = await SeedIngestedRequestWithRunAsync();
+        var actions = new RecordingActions(PipelineActionResult.Deferred("SHOULD_NOT_BE_CALLED", null));
+
+        Assert.True(await ReconcileAsync(runId, capped, actions));
+
+        Assert.Equal(0, actions.Calls);
+        await using var db = CreateContext();
+        var stage = await db.PipelineStageStates.AsNoTracking().SingleAsync(s => s.PipelineRunId == runId && s.Stage == PipelineStage.Litigation);
+        Assert.Equal(PipelineStageStateKind.NotStarted, stage.State);
+        Assert.Equal("CONCURRENCY_CAP_REACHED", stage.ReasonCode);
+        Assert.NotNull(stage.NextAttemptUtc);
+    }
+
+    /// <summary>The pool is shared across both litigation stages — a LitigationAnalysis already running
+    /// counts against a brand-new Litigation search too, not just against other analyses.</summary>
+    [Fact]
+    public async Task An_active_litigation_analysis_counts_against_a_new_search_in_the_same_shared_pool()
+    {
+        var ambient = await ActiveEnrichmentCountAsync();
+        await SeedActiveEnrichmentBlockerAsync(PipelineStage.LitigationAnalysis);
+        var capped = new PipelineOptions { Enabled = true, Mode = PipelineMode.Enforce, Enforce = { Litigation = true }, Policy = { LitigationSearch = true }, MaxConcurrentRuns = ambient + 1 };
+        var (_, runId) = await SeedIngestedRequestWithRunAsync();
+        var actions = new RecordingActions(PipelineActionResult.Deferred("SHOULD_NOT_BE_CALLED", null));
+
+        Assert.True(await ReconcileAsync(runId, capped, actions));
+
+        Assert.Equal(0, actions.Calls);
+        await using var db = CreateContext();
+        Assert.Equal("CONCURRENCY_CAP_REACHED",
+            (await db.PipelineStageStates.AsNoTracking().SingleAsync(s => s.PipelineRunId == runId && s.Stage == PipelineStage.Litigation)).ReasonCode);
+    }
+
+    [Fact]
+    public async Task A_new_search_starts_normally_while_comfortably_below_the_concurrency_cap()
+    {
+        var ambient = await ActiveEnrichmentCountAsync();
+        var roomy = new PipelineOptions { Enabled = true, Mode = PipelineMode.Enforce, Enforce = { Litigation = true }, Policy = { LitigationSearch = true }, MaxConcurrentRuns = ambient + 10 };
+        var (_, runId) = await SeedIngestedRequestWithRunAsync();
+        var actions = new RecordingActions(new PipelineActionResult(true, false, 1, null, null));
+
+        Assert.True(await ReconcileAsync(runId, roomy, actions));
+
+        Assert.Equal(1, actions.Calls);
+        await using var db = CreateContext();
+        var stage = await db.PipelineStageStates.AsNoTracking().SingleAsync(s => s.PipelineRunId == runId && s.Stage == PipelineStage.Litigation);
+        Assert.Equal(PipelineStageStateKind.Running, stage.State);
+        Assert.Equal(PipelineEventActions.AutoStartedCode, stage.ReasonCode);
+    }
+
+    [Fact]
+    public async Task The_concurrency_cap_is_off_by_default_no_matter_how_much_else_is_running()
+    {
+        await SeedActiveEnrichmentBlockerAsync(PipelineStage.Litigation);
+        await SeedActiveEnrichmentBlockerAsync(PipelineStage.LitigationAnalysis);
+        var (_, runId) = await SeedIngestedRequestWithRunAsync(); // Enforcing: MaxConcurrentRuns left at its 0 default
+        var actions = new RecordingActions(new PipelineActionResult(true, false, 1, null, null));
+
+        Assert.True(await ReconcileAsync(runId, Enforcing, actions));
+
+        Assert.Equal(1, actions.Calls);
+    }
+
     [Fact]
     public async Task Observe_mode_never_starts_anything_even_with_actions_available()
     {

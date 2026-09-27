@@ -221,20 +221,40 @@ public sealed class PipelineReconciler(AppDbContext db, PipelineSnapshotReader r
     private static bool IsReadyToStart(StageVerdict verdict) =>
         verdict.State == PipelineStageStateKind.NotStarted && verdict.ReasonCode == PipelineDecider.ReadyToStart;
 
+    /// <summary>Plan §6.5: counts distinct runs currently actively searching or analysing litigation —
+    /// across every request, not just this one — so a burst of requests all becoming ready at once can't
+    /// all start together and overrun BPR's/Vertex's own limits. A manual start (never routed through
+    /// <see cref="StartAsync"/>) is deliberately not counted against or bound by this cap.</summary>
+    private async Task<bool> ConcurrencyCapReachedAsync(int maxConcurrentRuns, CancellationToken ct)
+    {
+        var active = await db.PipelineStageStates.AsNoTracking()
+            .Where(s => (s.Stage == PipelineStage.Litigation || s.Stage == PipelineStage.LitigationAnalysis) && s.State == PipelineStageStateKind.Running)
+            .Select(s => s.PipelineRunId).Distinct().CountAsync(ct);
+        return active >= maxConcurrentRuns;
+    }
+
     private async Task StartAsync(PipelineStage stage, long runId, Guid token, long requestId, string correlationId, PipelineOptions opts, CancellationToken ct)
     {
         PipelineActionResult result;
-        try
+        if (opts.MaxConcurrentRuns > 0 && await ConcurrencyCapReachedAsync(opts.MaxConcurrentRuns, ct))
         {
-            result = stage == PipelineStage.Litigation
-                ? await actions!.StartLitigationSearchAsync(requestId, correlationId, ct)
-                : await actions!.StartLitigationAnalysisAsync(requestId, correlationId, ct);
+            result = PipelineActionResult.Deferred("CONCURRENCY_CAP_REACHED",
+                $"At the coordinator's concurrent-enrichment cap ({opts.MaxConcurrentRuns}); will retry shortly.");
         }
-        catch (Exception ex) when (!ct.IsCancellationRequested)
+        else
         {
-            logger.LogError(ex, "Automatic {Stage} start failed for request {RequestId}", stage, requestId);
-            db.ChangeTracker.Clear();
-            result = PipelineActionResult.Deferred("AUTO_START_FAILED", ex.Message);
+            try
+            {
+                result = stage == PipelineStage.Litigation
+                    ? await actions!.StartLitigationSearchAsync(requestId, correlationId, ct)
+                    : await actions!.StartLitigationAnalysisAsync(requestId, correlationId, ct);
+            }
+            catch (Exception ex) when (!ct.IsCancellationRequested)
+            {
+                logger.LogError(ex, "Automatic {Stage} start failed for request {RequestId}", stage, requestId);
+                db.ChangeTracker.Clear();
+                result = PipelineActionResult.Deferred("AUTO_START_FAILED", ex.Message);
+            }
         }
         if (result.AlreadyExists) return; // the next tick observes that job
 
