@@ -1,5 +1,6 @@
 using MCAROC_Analysis.Data;
 using MCAROC_Analysis.Data.Entities;
+using MCAROC_Analysis.Services.Dossier;
 using MCAROC_Analysis.Services.LitigationData;
 using MCAROC_Analysis.Services.Pipeline;
 using Microsoft.EntityFrameworkCore;
@@ -20,6 +21,21 @@ public sealed class PipelineEnforceTests : IAsyncLifetime
         Enabled = true, Mode = PipelineMode.Enforce, Enforce = { Litigation = true }, Policy = { LitigationSearch = true },
         // The cap counter is per day across the whole shared test database — keep it out of these tests' way.
         Caps = { LitigationSearchPerDay = 1_000_000 }
+    };
+
+    private static readonly PipelineOptions EnforcingAnalysis = new()
+    {
+        Enabled = true, Mode = PipelineMode.Enforce, Enforce = { Litigation = true, LitigationAnalysis = true },
+        Policy = { LitigationSearch = true, LitigationAnalysis = true },
+        Caps = { LitigationSearchPerDay = 1_000_000, LitigationAnalysisPerDay = 1_000_000 }
+    };
+
+    // Policy.LitigationSearch stays on (but Enforce.Litigation off) purely so the run has an enrichment stage
+    // that never reaches "done" — otherwise a manual-upload request with everything else Completed reaches
+    // Outcome.Complete on the very first tick and is no longer "live" for a second reconcile to observe.
+    private static readonly PipelineOptions EnforcingDossier = new()
+    {
+        Enabled = true, Mode = PipelineMode.Enforce, Enforce = { Dossier = true }, Policy = { LitigationSearch = true }
     };
 
     private readonly FakeTime _time = new(DateTimeOffset.UtcNow);
@@ -51,20 +67,22 @@ public sealed class PipelineEnforceTests : IAsyncLifetime
                 Options.Create(new MCAROC_Analysis.Services.AutoFetch.ReferenceToolOptions())),
             _time, NullLogger<PipelineReconciler>.Instance, new StaticOptionsMonitor(options), actions);
 
-    private static PipelineActions RealActions(AppDbContext db)
+    private static PipelineActions RealActions(AppDbContext db, PipelineOptions? adminOptions = null)
     {
-        var admission = new PaidCallAdmissionService(db, new StaticOptionsMonitor(Enforcing), TimeProvider.System, NullLogger<PaidCallAdmissionService>.Instance);
+        var admission = new PaidCallAdmissionService(db, new StaticOptionsMonitor(adminOptions ?? Enforcing), TimeProvider.System, NullLogger<PaidCallAdmissionService>.Instance);
         var search = new LitigationSearchJobService(db, null!, new LitigationSearchQueue(), null!, null!,
             Options.Create(Bpr), NullLogger<LitigationSearchJobService>.Instance);
         var analysis = new LitigationAiAnalysisOrchestrator(db, null!, new LitigationAiAnalysisQueue(),
             Options.Create(new LitigationAiAnalysisOptions()), NullLogger<LitigationAiAnalysisOrchestrator>.Instance);
-        return new PipelineActions(new LitigationStartService(db, admission, search, new LitigationSearchQueue(), analysis, Options.Create(Bpr)));
+        // Dossier pre-render is exercised separately (RecordingActions below) — none of this file's
+        // litigation-focused tests touch it.
+        return new PipelineActions(new LitigationStartService(db, admission, search, new LitigationSearchQueue(), analysis, Options.Create(Bpr)), null!);
     }
 
-    private async Task<bool> ReconcileAsync(long runId, PipelineOptions options, IPipelineActions? actions = null)
+    private async Task<bool> ReconcileAsync(long runId, PipelineOptions options, IPipelineActions? actions = null, PipelineOptions? adminOptions = null)
     {
         await using var db = CreateContext();
-        return await Reconciler(db, options, actions ?? RealActions(db)).ReconcileAsync(runId, CancellationToken.None);
+        return await Reconciler(db, options, actions ?? RealActions(db, adminOptions ?? options)).ReconcileAsync(runId, CancellationToken.None);
     }
 
     private void NextTick() => _time.Advance(PipelineReconciler.MinReconcileInterval + TimeSpan.FromSeconds(1));
@@ -201,6 +219,69 @@ public sealed class PipelineEnforceTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Enforce_starts_litigation_analysis_once_the_search_is_done_and_orders_are_processed()
+    {
+        var (requestId, runId) = await SeedIngestedRequestWithRunAsync(adoptOptions: EnforcingAnalysis);
+        long snapshotId;
+        await using (var seed = CreateContext())
+        {
+            var job = new LitigationSearchJob { RequestId = requestId, KeywordsJson = "[]", Status = LitigationSearchJobStatus.Completed, CreatedUtc = DateTime.UtcNow };
+            seed.LitigationSearchJobs.Add(job);
+            await seed.SaveChangesAsync();
+            var snapshot = new LitigationReportSnapshot
+            {
+                LitigationSearchJobId = job.LitigationSearchJobId, ReportHash = Guid.NewGuid().ToString("N")[..16],
+                Status = LitigationReportSnapshotStatus.Completed, RetrievedUtc = DateTime.UtcNow, CreatedUtc = DateTime.UtcNow
+            };
+            seed.LitigationReportSnapshots.Add(snapshot);
+            await seed.SaveChangesAsync();
+            snapshotId = snapshot.LitigationReportSnapshotId;
+        }
+
+        Assert.True(await ReconcileAsync(runId, EnforcingAnalysis));
+        NextTick();
+        Assert.True(await ReconcileAsync(runId, EnforcingAnalysis));
+
+        await using var db = CreateContext();
+        var run = await db.LitigationAiAnalysisRuns.AsNoTracking().SingleAsync(r => r.RequestId == requestId);
+        Assert.Equal(LitigationAiAnalysisTrigger.Auto, run.Trigger);
+        Assert.Equal(snapshotId, run.OriginSnapshotId);
+        var admission = await db.PaidCallAdmissions.AsNoTracking().SingleAsync(a => a.RequestId == requestId && a.Kind == PaidCallKind.LitigationAnalysis);
+        Assert.Equal(PaidCallTrigger.Auto, admission.Trigger);
+
+        var stage = await db.PipelineStageStates.AsNoTracking().SingleAsync(s => s.PipelineRunId == runId && s.Stage == PipelineStage.LitigationAnalysis);
+        Assert.Equal(PipelineStageStateKind.Running, stage.State);
+        Assert.Equal(run.LitigationAiAnalysisRunId, stage.SourceRef);
+    }
+
+    [Fact]
+    public async Task Enforce_dossier_pre_renders_exactly_once_when_the_stage_first_becomes_done()
+    {
+        var (_, runId) = await SeedIngestedRequestWithRunAsync(adoptOptions: EnforcingDossier);
+        var actions = new RecordingActions(null);
+
+        Assert.True(await ReconcileAsync(runId, EnforcingDossier, actions));
+        Assert.Equal(1, actions.DossierCalls);
+
+        NextTick();
+        Assert.True(await ReconcileAsync(runId, EnforcingDossier, actions));
+        // Dossier's State stays Succeeded on the second tick (nothing changed) — no repeat call.
+        Assert.Equal(1, actions.DossierCalls);
+    }
+
+    [Fact]
+    public async Task Dossier_pre_render_is_never_attempted_when_the_family_is_off()
+    {
+        var (_, runId) = await SeedIngestedRequestWithRunAsync();
+        var offOptions = new PipelineOptions { Enabled = true, Mode = PipelineMode.Enforce };
+        var actions = new RecordingActions(null);
+
+        Assert.True(await ReconcileAsync(runId, offOptions, actions));
+
+        Assert.Equal(0, actions.DossierCalls);
+    }
+
+    [Fact]
     public async Task Status_returns_the_step_timeline_in_order()
     {
         var (requestId, runId) = await SeedIngestedRequestWithRunAsync();
@@ -326,7 +407,7 @@ public sealed class PipelineEnforceTests : IAsyncLifetime
 
     /// <summary>An analysed manual-upload request (ingestion done, so the litigation search is ready) with a run
     /// whose policy wants the search. Unique CIN per test: admission scopes are company-level.</summary>
-    private async Task<(long RequestId, long RunId)> SeedIngestedRequestWithRunAsync(string? cin = "unique")
+    private async Task<(long RequestId, long RunId)> SeedIngestedRequestWithRunAsync(string? cin = "unique", PipelineOptions? adoptOptions = null)
     {
         await using var db = CreateContext();
         if (cin == "unique") cin = $"U{Random.Shared.Next(10000, 99999)}EN2026PLC{Random.Shared.Next(100000, 999999)}";
@@ -351,7 +432,7 @@ public sealed class PipelineEnforceTests : IAsyncLifetime
         });
         await db.SaveChangesAsync();
 
-        var adopter = new PipelineAdopter(db, new StaticOptionsMonitor(Enforcing), TimeProvider.System, NullLogger<PipelineAdopter>.Instance);
+        var adopter = new PipelineAdopter(db, new StaticOptionsMonitor(adoptOptions ?? Enforcing), TimeProvider.System, NullLogger<PipelineAdopter>.Instance);
         var runId = (await adopter.EnsureRunAsync(request.RequestId, PipelineRunTrigger.ManualUpload, null, CancellationToken.None))!.Value;
         return (request.RequestId, runId);
     }
@@ -359,11 +440,26 @@ public sealed class PipelineEnforceTests : IAsyncLifetime
     private sealed class RecordingActions(PipelineActionResult? result, Exception? throws = null) : IPipelineActions
     {
         public int Calls { get; private set; }
+        public int AnalysisCalls { get; private set; }
+        public int DossierCalls { get; private set; }
+        public DossierRenderResult DossierResult { get; set; } = new(true, false, false, "unused.pdf");
 
         public Task<PipelineActionResult> StartLitigationSearchAsync(long requestId, string correlationId, CancellationToken ct)
         {
             Calls++;
             return throws is not null ? Task.FromException<PipelineActionResult>(throws) : Task.FromResult(result!);
+        }
+
+        public Task<PipelineActionResult> StartLitigationAnalysisAsync(long requestId, string correlationId, CancellationToken ct)
+        {
+            AnalysisCalls++;
+            return throws is not null ? Task.FromException<PipelineActionResult>(throws) : Task.FromResult(result!);
+        }
+
+        public Task<DossierRenderResult> EnsureDossierRenderedAsync(long requestId, CancellationToken ct)
+        {
+            DossierCalls++;
+            return Task.FromResult(DossierResult);
         }
     }
 

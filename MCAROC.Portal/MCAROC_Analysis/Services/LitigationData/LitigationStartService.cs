@@ -113,6 +113,19 @@ public sealed class LitigationStartService(
         return new LitigationStartResult(true, job.LitigationSearchJobId, null, null, admitted.AdmissionId);
     }
 
+    /// <summary>The pipeline's automatic start (plan §4.2), mirroring <see cref="StartAutoSearchAsync"/>: fetches
+    /// the request only for its <see cref="McaRequest.ClientId"/>, then defers to <see cref="StartAnalysisAsync"/>
+    /// with <see cref="PaidCallTrigger.Auto"/>. Eligibility (search complete, orders/chunking terminal) is the
+    /// coordinator's own decision (plan §3.3/§4.2) — reached here only once true, but this never assumes that
+    /// and simply reports whatever the shared admission/join path decides.</summary>
+    public async Task<LitigationStartResult> StartAutoAnalysisAsync(long requestId, string? correlationId, CancellationToken ct)
+    {
+        var clientId = await db.Requests.AsNoTracking().Where(r => r.RequestId == requestId).Select(r => (long?)r.ClientId).FirstOrDefaultAsync(ct);
+        if (clientId is null && !await db.Requests.AsNoTracking().AnyAsync(r => r.RequestId == requestId, ct))
+            return LitigationStartResult.Ineligible("The request no longer exists.");
+        return await StartAnalysisAsync(requestId, clientId, PaidCallTrigger.Auto, ct, correlationId);
+    }
+
     public async Task<LitigationStartResult> StartAnalysisAsync(long requestId, long? clientId, PaidCallTrigger trigger, CancellationToken ct, string? correlationId = null)
     {
         // Joining a run that's already active costs nothing new — no admission.
@@ -137,7 +150,7 @@ public sealed class LitigationStartService(
         LitigationAiAnalysisRun run;
         try
         {
-            run = await analysis.CreateOrJoinAsync(requestId, ct);
+            run = await analysis.CreateOrJoinAsync(requestId, trigger == PaidCallTrigger.Auto ? LitigationAiAnalysisTrigger.Auto : LitigationAiAnalysisTrigger.Manual, snapshotId, ct);
         }
         catch
         {

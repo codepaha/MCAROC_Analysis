@@ -194,7 +194,9 @@ public static class PipelineDecider
                 LitigationSearchJobStatus.Failed => Attention("LITIGATION_SEARCH_FAILED", job.FailureReason, job.JobId),
                 LitigationSearchJobStatus.Completed => job.SnapshotStatus switch
                 {
-                    LitigationReportSnapshotStatus.Completed => Ok(job.SnapshotId),
+                    LitigationReportSnapshotStatus.Completed => job.HasStalledOrderDownload
+                        ? Attention("ORDER_DOWNLOAD_STALLED", "An order document has been waiting to download for 5 or more days.", job.SnapshotId)
+                        : Ok(job.SnapshotId),
                     LitigationReportSnapshotStatus.Failed => Attention("LITIGATION_IMPORT_FAILED", null, job.SnapshotId),
                     _ => Running(job.JobId, "IMPORTING")
                 },
@@ -224,8 +226,12 @@ public static class PipelineDecider
         // Any warning about the search itself is already counted on the Litigation stage.
         if (litigation.State == PipelineStageStateKind.Skipped) return Skip(PipelineStageSkipKind.Neutral, "UPSTREAM_SKIPPED");
         if (!litigation.IsDone) return Waiting("AWAITING_LITIGATION");
+        // §4.2: every order document must be terminal for download and (where it has text) for chunking
+        // before analysis reads the evidence — an in-flight download/chunk would otherwise be silently
+        // missing from the prompt the AI actually sees.
+        if (s.LitigationSearch?.OrdersFullyProcessed != true) return Waiting("AWAITING_ORDER_PROCESSING");
         return new StageVerdict(PipelineStageStateKind.NotStarted, ReasonCode: ReadyToStart,
-            ReasonDetail: "Ready to start. The coordinator does not start litigation analysis itself.");
+            ReasonDetail: "Ready to start. The coordinator starts it itself only in Enforce mode with Enforce:LitigationAnalysis on.");
     }
 
     private static StageVerdict Ok(long? sourceRef = null, string? code = null, string? detail = null) =>

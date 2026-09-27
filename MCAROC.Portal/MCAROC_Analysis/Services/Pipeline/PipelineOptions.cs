@@ -54,6 +54,8 @@ public sealed class PipelineOptions
     public AutoUnlockOptions AutoUnlock { get; set; } = new();
 
     public bool EnforcesLitigationSearch() => Enabled && Mode == PipelineMode.Enforce && Enforce.Litigation;
+    public bool EnforcesLitigationAnalysis() => Enabled && Mode == PipelineMode.Enforce && Enforce.LitigationAnalysis;
+    public bool EnforcesDossierPreRender() => Enabled && Mode == PipelineMode.Enforce && Enforce.Dossier;
 }
 
 public enum PipelineMode
@@ -67,6 +69,17 @@ public sealed class PipelineEnforceOptions
     /// <summary>Start the litigation search automatically once ingestion is done (and the run's policy wants
     /// it), through the same admission path as the reviewer's button.</summary>
     public bool Litigation { get; set; }
+
+    /// <summary>Start litigation AI analysis automatically once the search is done and every order document has
+    /// finished downloading/chunking (plan §4.2), through the same admission path as the reviewer's button.
+    /// Off by default — owner decision 2026-09-24 (plan §16) keeps litigation analysis off with cap 0 even
+    /// with the rest of Enforce mode on.</summary>
+    public bool LitigationAnalysis { get; set; }
+
+    /// <summary>Pre-render the dossier PDF once <c>CalcAssurance</c> succeeds (plan §4.3), through the same
+    /// cache path <c>DossierController.Download</c> uses — purely a latency optimisation for the first
+    /// download; a render failure here never blocks the on-demand render the controller still falls back to.</summary>
+    public bool Dossier { get; set; }
 }
 
 public sealed class AutoUnlockOptions
