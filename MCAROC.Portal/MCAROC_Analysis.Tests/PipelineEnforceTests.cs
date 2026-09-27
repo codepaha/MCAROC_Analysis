@@ -38,6 +38,16 @@ public sealed class PipelineEnforceTests : IAsyncLifetime
         Enabled = true, Mode = PipelineMode.Enforce, Enforce = { Dossier = true }, Policy = { LitigationSearch = true }
     };
 
+    private static readonly PipelineOptions EnforcingRetries = new()
+    {
+        Enabled = true, Mode = PipelineMode.Enforce, Enforce = { Retries = true }, MaxCoordinatorAttempts = 4
+    };
+
+    private static readonly PipelineOptions NotEnforcingRetries = new()
+    {
+        Enabled = true, Mode = PipelineMode.Enforce, MaxCoordinatorAttempts = 4 // Enforce.Retries left off
+    };
+
     private readonly FakeTime _time = new(DateTimeOffset.UtcNow);
     private readonly List<long> _requestIds = [];
 
@@ -76,7 +86,10 @@ public sealed class PipelineEnforceTests : IAsyncLifetime
             Options.Create(new LitigationAiAnalysisOptions()), NullLogger<LitigationAiAnalysisOrchestrator>.Instance);
         // Dossier pre-render is exercised separately (RecordingActions below) — none of this file's
         // litigation-focused tests touch it.
-        return new PipelineActions(new LitigationStartService(db, admission, search, new LitigationSearchQueue(), analysis, Options.Create(Bpr)), null!);
+        var autoFetch = new MCAROC_Analysis.Services.AutoFetch.AutoFetchJobService(db, null!, Options.Create(new MCAROC_Analysis.Services.AutoFetch.ReferenceToolOptions()),
+            null!, null!, null!, null!, null!, null!, NullLogger<MCAROC_Analysis.Services.AutoFetch.AutoFetchJobService>.Instance);
+        return new PipelineActions(new LitigationStartService(db, admission, search, new LitigationSearchQueue(), analysis, Options.Create(Bpr)), null!,
+            autoFetch, new MCAROC_Analysis.Services.AutoFetch.AutoFetchQueue());
     }
 
     private async Task<bool> ReconcileAsync(long runId, PipelineOptions options, IPipelineActions? actions = null, PipelineOptions? adminOptions = null)
@@ -281,6 +294,130 @@ public sealed class PipelineEnforceTests : IAsyncLifetime
         Assert.Equal(0, actions.DossierCalls);
     }
 
+    /// <summary>#292 (plan §6.2): the coordinator retries a Transient-classified Fetch failure with backoff,
+    /// counting toward Pipeline:MaxCoordinatorAttempts, and gives up with RETRIES_EXHAUSTED once that cap is
+    /// hit — never a 5th attempt. Isolated from the real AutoFetchJobService via RecordingActions so this
+    /// tests exactly the coordinator's own attempt/backoff bookkeeping, not the requeue call itself (that's
+    /// the next test).</summary>
+    [Fact]
+    public async Task Enforce_retries_a_failed_fetch_with_backoff_then_gives_up_after_the_cap()
+    {
+        var (requestId, runId) = await SeedFailedFetchRequestWithRunAsync();
+        var actions = new RecordingActions(new PipelineActionResult(true, false, 1, null, null));
+        var expectedMinutes = new[] { 2.0, 10.0, 30.0, 120.0 };
+
+        for (var attempt = 1; attempt <= 4; attempt++)
+        {
+            Assert.True(await ReconcileAsync(runId, EnforcingRetries, actions));
+            Assert.Equal(attempt, actions.RetryCalls);
+
+            await using var db = CreateContext();
+            var stage = await db.PipelineStageStates.AsNoTracking().SingleAsync(s => s.PipelineRunId == runId && s.Stage == PipelineStage.Fetch);
+            Assert.Equal(attempt, stage.Attempts);
+            Assert.Equal(PipelineStageStateKind.Running, stage.State);
+            Assert.NotNull(stage.NextAttemptUtc);
+            var delay = stage.NextAttemptUtc!.Value - _time.GetUtcNow().UtcDateTime;
+            Assert.InRange(delay, TimeSpan.FromMinutes(expectedMinutes[attempt - 1] * 0.8), TimeSpan.FromMinutes(expectedMinutes[attempt - 1] * 1.2));
+
+            _time.Advance(delay + TimeSpan.FromSeconds(1));
+            // The stage was left "Running" (queued again) — but nothing in this test ever really requeues
+            // the DB row via RecordingActions, so the decider still reports FETCH_FAILED next tick, exactly
+            // as if the retried attempt failed again just as fast. That's deliberate: it is what lets a
+            // single test walk the whole schedule without waiting on anything real.
+            await using var reset = CreateContext();
+            await reset.AutoFetchJobs.Where(j => j.RequestId == requestId)
+                .ExecuteUpdateAsync(s => s.SetProperty(j => j.Status, AutoFetchJobStatus.Failed));
+        }
+
+        // 5th tick, well past the 4th backoff: the cap is reached — no 5th retry call, and the stage now
+        // reads RETRIES_EXHAUSTED instead of the raw FETCH_FAILED.
+        Assert.True(await ReconcileAsync(runId, EnforcingRetries, actions));
+        Assert.Equal(4, actions.RetryCalls);
+        await using var final = CreateContext();
+        var finalStage = await final.PipelineStageStates.AsNoTracking().SingleAsync(s => s.PipelineRunId == runId && s.Stage == PipelineStage.Fetch);
+        Assert.Equal(PipelineStageStateKind.NeedsAttention, finalStage.State);
+        Assert.Equal("RETRIES_EXHAUSTED", finalStage.ReasonCode);
+    }
+
+    [Fact]
+    public async Task Fetch_retry_is_never_attempted_when_the_family_is_off()
+    {
+        var (_, runId) = await SeedFailedFetchRequestWithRunAsync();
+        var actions = new RecordingActions(new PipelineActionResult(true, false, 1, null, null));
+
+        Assert.True(await ReconcileAsync(runId, NotEnforcingRetries, actions));
+
+        Assert.Equal(0, actions.RetryCalls);
+        await using var db = CreateContext();
+        var stage = await db.PipelineStageStates.AsNoTracking().SingleAsync(s => s.PipelineRunId == runId && s.Stage == PipelineStage.Fetch);
+        Assert.Equal("FETCH_FAILED", stage.ReasonCode);
+        Assert.Equal(0, stage.Attempts);
+    }
+
+    /// <summary>End to end with the real AutoFetchJobService/AutoFetchQueue (RealActions, no mock): the
+    /// coordinator's retry actually requeues the real job row and hands its id to the real in-process queue —
+    /// not just that the reconciler believes it did.</summary>
+    [Fact]
+    public async Task Enforce_retry_actually_requeues_the_real_auto_fetch_job()
+    {
+        var (requestId, runId) = await SeedFailedFetchRequestWithRunAsync();
+
+        Assert.True(await ReconcileAsync(runId, EnforcingRetries));
+
+        await using var db = CreateContext();
+        var job = await db.AutoFetchJobs.AsNoTracking().SingleAsync(j => j.RequestId == requestId);
+        Assert.Equal(AutoFetchJobStatus.Queued, job.Status);
+        Assert.Null(job.FailureReason);
+    }
+
+    /// <summary>The coordinator's own bookkeeping (PipelineStageState.Attempts) starts fresh even when the
+    /// underlying AutoFetchJob has already burned attempts some other way — e.g. a human clicking "Retry" on
+    /// the AutoFetch UI (AutoFetchController.RetryJob), which calls AutoFetchJobService.RequeueAsync directly
+    /// and never touches the coordinator. Plan §6.2: internal attempts count toward the same cap regardless
+    /// of who triggered them, so a job that already arrives at MaxCoordinatorAttempts worth of AttemptCount
+    /// must not get the full schedule again from zero.</summary>
+    [Fact]
+    public async Task Coordinator_retry_cap_counts_the_workers_own_prior_attempts_too()
+    {
+        var (_, runId) = await SeedFailedFetchRequestWithRunAsync(jobAttemptCount: 4);
+        var actions = new RecordingActions(new PipelineActionResult(true, false, 1, null, null));
+
+        Assert.True(await ReconcileAsync(runId, EnforcingRetries, actions));
+
+        Assert.Equal(0, actions.RetryCalls);
+        await using var db = CreateContext();
+        var stage = await db.PipelineStageStates.AsNoTracking().SingleAsync(s => s.PipelineRunId == runId && s.Stage == PipelineStage.Fetch);
+        Assert.Equal(PipelineStageStateKind.NeedsAttention, stage.State);
+        Assert.Equal("RETRIES_EXHAUSTED", stage.ReasonCode);
+    }
+
+    /// <summary>An auto-fetch request whose job has already failed once — the Fetch stage's own
+    /// NeedsAttention(FETCH_FAILED), the one #292 wires to coordinator-driven retry.</summary>
+    private async Task<(long RequestId, long RunId)> SeedFailedFetchRequestWithRunAsync(int jobAttemptCount = 0)
+    {
+        await using var db = CreateContext();
+        var cin = $"U{Random.Shared.Next(10000, 99999)}RF2026PLC{Random.Shared.Next(100000, 999999)}";
+        var client = new Client { ClientCode = "PLF" + Guid.NewGuid().ToString("N")[..7], ClientName = "Retry Fetch Co", CreatedDate = DateTime.UtcNow };
+        var request = new McaRequest
+        {
+            Client = client, EntityType = EntityType.Company, CompanyName = "Retry Fetch Company", Cin = cin,
+            RequestNumber = $"PLF-{Guid.NewGuid():N}", RequestStatus = RequestStatus.ExtractionFailed, CreatedDate = DateTime.UtcNow
+        };
+        db.Requests.Add(request);
+        await db.SaveChangesAsync();
+        _requestIds.Add(request.RequestId);
+        db.AutoFetchJobs.Add(new AutoFetchJob
+        {
+            RequestId = request.RequestId, Cin = cin, Bid = "b" + request.RequestId, Status = AutoFetchJobStatus.Failed,
+            FailureReason = "Transient tool timeout.", CreatedUtc = DateTime.UtcNow, AttemptCount = jobAttemptCount
+        });
+        await db.SaveChangesAsync();
+
+        var adopter = new PipelineAdopter(db, new StaticOptionsMonitor(EnforcingRetries), TimeProvider.System, NullLogger<PipelineAdopter>.Instance);
+        var runId = (await adopter.EnsureRunAsync(request.RequestId, PipelineRunTrigger.AutoFetch, null, CancellationToken.None))!.Value;
+        return (request.RequestId, runId);
+    }
+
     [Fact]
     public async Task Status_returns_the_step_timeline_in_order()
     {
@@ -442,6 +579,7 @@ public sealed class PipelineEnforceTests : IAsyncLifetime
         public int Calls { get; private set; }
         public int AnalysisCalls { get; private set; }
         public int DossierCalls { get; private set; }
+        public int RetryCalls { get; private set; }
         public DossierRenderResult DossierResult { get; set; } = new(true, false, false, "unused.pdf");
 
         public Task<PipelineActionResult> StartLitigationSearchAsync(long requestId, string correlationId, CancellationToken ct)
@@ -460,6 +598,12 @@ public sealed class PipelineEnforceTests : IAsyncLifetime
         {
             DossierCalls++;
             return Task.FromResult(DossierResult);
+        }
+
+        public Task<PipelineActionResult> RetryFetchAsync(long requestId, string correlationId, CancellationToken ct)
+        {
+            RetryCalls++;
+            return throws is not null ? Task.FromException<PipelineActionResult>(throws) : Task.FromResult(result!);
         }
     }
 

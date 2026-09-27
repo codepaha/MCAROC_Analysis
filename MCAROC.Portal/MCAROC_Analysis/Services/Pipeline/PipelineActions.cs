@@ -1,4 +1,5 @@
 using MCAROC_Analysis.Data.Entities;
+using MCAROC_Analysis.Services.AutoFetch;
 using MCAROC_Analysis.Services.Dossier;
 using MCAROC_Analysis.Services.LitigationData;
 
@@ -21,9 +22,12 @@ public interface IPipelineActions
     Task<PipelineActionResult> StartLitigationSearchAsync(long requestId, string correlationId, CancellationToken ct);
     Task<PipelineActionResult> StartLitigationAnalysisAsync(long requestId, string correlationId, CancellationToken ct);
     Task<DossierRenderResult> EnsureDossierRenderedAsync(long requestId, CancellationToken ct);
+    /// <summary>Plan §6.2: requeue a Failed auto-fetch job — the one coordinator-retryable stage this PR
+    /// wires (Analysis/Filings/Dossier retry are a documented fast-follow, not this action's job).</summary>
+    Task<PipelineActionResult> RetryFetchAsync(long requestId, string correlationId, CancellationToken ct);
 }
 
-public sealed class PipelineActions(LitigationStartService litigation, DossierArtifactService dossier) : IPipelineActions
+public sealed class PipelineActions(LitigationStartService litigation, DossierArtifactService dossier, AutoFetchJobService autoFetch, AutoFetchQueue autoFetchQueue) : IPipelineActions
 {
     public async Task<PipelineActionResult> StartLitigationSearchAsync(long requestId, string correlationId, CancellationToken ct)
     {
@@ -59,4 +63,16 @@ public sealed class PipelineActions(LitigationStartService litigation, DossierAr
 
     public Task<DossierRenderResult> EnsureDossierRenderedAsync(long requestId, CancellationToken ct) =>
         dossier.EnsureRenderedAsync(requestId, DossierVariant.Executive, ct);
+
+    public async Task<PipelineActionResult> RetryFetchAsync(long requestId, string correlationId, CancellationToken ct)
+    {
+        var job = await autoFetch.RequeueAsync(requestId, ct, correlationId);
+        if (job is null) return PipelineActionResult.Deferred("FETCH_RETRY_NOT_FOUND", "No auto-fetch job exists for this request.");
+        // RequeueAsync is a no-op (returns the job unchanged) when it isn't Failed — e.g. a racing reviewer
+        // already retried it by hand, or it moved on since the decision was made. Either way, nothing further
+        // to enqueue; the next tick observes whatever it's actually doing now.
+        if (job.Status != AutoFetchJobStatus.Queued) return new PipelineActionResult(false, true, job.AutoFetchJobId, null, null);
+        autoFetchQueue.Enqueue(job.AutoFetchJobId);
+        return new PipelineActionResult(true, false, job.AutoFetchJobId, null, null);
+    }
 }
