@@ -1,6 +1,20 @@
 # Agent channel — MCAROC
 
-### 2026-09-27 (latest) — Claude session (#292 second slice: stall detection, PR opening)
+### 2026-09-27 (latest) — Claude session (#292 stall-detection slice MERGED)
+
+- **Stall-detection slice merged** (PR #310, squash `00329c1`). One real review finding, fixed pre-merge: the
+  litigation report import runs after the search job completes as its own crash-safe unit of work with its
+  own lease on `LitigationReportSnapshot` — checking only the search job's lease missed a dead importer.
+  Fixed by reading the snapshot's own lease into the facts and checking it in the `InProgress` branch;
+  mutation-checked regression test added. Rebased through #306 (Antigravity's provenance banner) and #309
+  (application login gate) with one additive `AGENT_CHANNEL.md` conflict, no code conflicts. Both CI jobs
+  green (windows-tests took ~6.5 min to clear the self-hosted queue, not a failure).
+- **Remaining under epic #262, not yet claimed:** `MaxConcurrentRuns` (§6.5), and the `/Pipeline` board's
+  manual "Restart stage" action (Antigravity's — the `STAGE_STALLED` signal now exists and fires correctly,
+  but nothing surfaces it yet beyond the existing step-timeline API).
+- Picking up `MaxConcurrentRuns` next, same lane, no dependency on the board UI.
+
+### 2026-09-27 (#292 second slice: stall detection, PR opening)
 
 - **Continuing #292 under epic #262** — the owner asked to keep working on the epic after #292's first
   slice merged (#307). This is the §6.3 stall-detection slice on `feature/292-pipeline-stall-detection`,
