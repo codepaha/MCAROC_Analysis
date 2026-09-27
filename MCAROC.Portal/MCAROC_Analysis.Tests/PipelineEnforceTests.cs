@@ -2,6 +2,7 @@ using MCAROC_Analysis.Data;
 using MCAROC_Analysis.Data.Entities;
 using MCAROC_Analysis.Services.Dossier;
 using MCAROC_Analysis.Services.LitigationData;
+using MCAROC_Analysis.Services.McaFilings;
 using MCAROC_Analysis.Services.Pipeline;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
@@ -75,7 +76,8 @@ public sealed class PipelineEnforceTests : IAsyncLifetime
     private PipelineReconciler Reconciler(AppDbContext db, PipelineOptions options, IPipelineActions? actions) =>
         new(db, new PipelineSnapshotReader(db, new ConfigurationBuilder().Build(), Options.Create(Bpr),
                 Options.Create(new MCAROC_Analysis.Services.AutoFetch.ReferenceToolOptions())),
-            _time, NullLogger<PipelineReconciler>.Instance, new StaticOptionsMonitor(options), actions);
+            _time, NullLogger<PipelineReconciler>.Instance, new StaticOptionsMonitor(options), actions,
+            SlotLeases(db));
 
     private static PipelineActions RealActions(AppDbContext db, PipelineOptions? adminOptions = null)
     {
@@ -124,75 +126,69 @@ public sealed class PipelineEnforceTests : IAsyncLifetime
         Assert.Null(run.ReconcileLeaseToken); // released after acting
     }
 
-    /// <summary>#292 (plan §6.5): MaxConcurrentRuns bounds how many requests may actively search or analyse
-    /// litigation at once — protecting BPR's/Vertex's own limits from a burst of requests all becoming ready
-    /// together. These tests share a real database with every other test in this class (and its own leftover
-    /// Running rows from earlier runs), so each one measures the ambient count first and sets the cap
-    /// relative to it rather than assuming the pool starts empty.</summary>
-    private async Task<int> ActiveEnrichmentCountAsync()
+    /// <summary>#292 (plan §6.5, hardened after PR #311 review): MaxConcurrentRuns bounds how many requests
+    /// may actively search or analyse litigation at once — protecting BPR's/Vertex's own limits from a burst
+    /// of requests all becoming ready together. Enforced via the real, sp_getapplock-fenced
+    /// <see cref="OperationalSlotLeaseService"/> (same one LargeUpload/LargeUnpack use), not a plain count —
+    /// a plain count-then-start races across reconciler instances, which is exactly the gap the review
+    /// caught. These tests use that real service directly to seed/inspect/clean up slot holders, and always
+    /// release whatever they acquire so a 4-hour-lease slot never leaks into a later test on this shared
+    /// database.</summary>
+    private static OperationalSlotLeaseService SlotLeases(AppDbContext db) => new(db, NullLogger<OperationalSlotLeaseService>.Instance);
+
+    private async Task<int> ActiveEnrichmentSlotCountAsync()
     {
         await using var db = CreateContext();
-        return await db.PipelineStageStates.AsNoTracking()
-            .Where(s => (s.Stage == PipelineStage.Litigation || s.Stage == PipelineStage.LitigationAnalysis) && s.State == PipelineStageStateKind.Running)
-            .Select(s => s.PipelineRunId).Distinct().CountAsync();
+        return await db.OperationalSlotLeases.AsNoTracking().CountAsync(l => l.SlotType == PipelineReconciler.LitigationEnrichmentSlot);
     }
 
-    /// <summary>A throwaway run with one stage forced straight to Running, bypassing any real start — cheap
-    /// stand-in for "some other request is already actively enriching," which is all the concurrency cap
-    /// itself looks at.</summary>
-    private async Task SeedActiveEnrichmentBlockerAsync(PipelineStage stage)
+    /// <summary>Occupies one slot directly through the same real mechanism the coordinator itself uses —
+    /// nothing about the run behind <paramref name="holderId"/> needs to exist; the cap only ever looks at
+    /// the lease table. Returns the holder id so the caller can release it when done.</summary>
+    private async Task<string> SeedActiveEnrichmentBlockerAsync()
     {
-        // SeedIngestedRequestWithRunAsync only adopts the PipelineRun row — PipelineStageState rows are
-        // created lazily by the reconciler's own first tick, so there is nothing yet to UPDATE; insert one
-        // directly instead of relying on a real reconcile to materialise it first.
-        var (_, blockerRunId) = await SeedIngestedRequestWithRunAsync();
+        var holderId = $"blocker:{Guid.NewGuid():N}";
         await using var db = CreateContext();
-        db.PipelineStageStates.Add(new PipelineStageState { PipelineRunId = blockerRunId, Stage = stage, State = PipelineStageStateKind.Running, UpdatedUtc = DateTime.UtcNow });
-        await db.SaveChangesAsync();
+        var acquired = await SlotLeases(db).TryAcquireSlotAsync(PipelineReconciler.LitigationEnrichmentSlot, holderId, PipelineReconciler.LitigationEnrichmentSlotDuration, int.MaxValue, CancellationToken.None);
+        Assert.True(acquired.Success);
+        return holderId;
+    }
+
+    private async Task ReleaseSlotAsync(string holderId)
+    {
+        await using var db = CreateContext();
+        await SlotLeases(db).ReleaseSlotAsync(PipelineReconciler.LitigationEnrichmentSlot, holderId, CancellationToken.None);
     }
 
     [Fact]
     public async Task A_new_search_is_deferred_without_ever_calling_the_action_once_the_concurrency_cap_is_reached()
     {
-        var ambient = await ActiveEnrichmentCountAsync();
-        await SeedActiveEnrichmentBlockerAsync(PipelineStage.Litigation);
-        var capped = new PipelineOptions { Enabled = true, Mode = PipelineMode.Enforce, Enforce = { Litigation = true }, Policy = { LitigationSearch = true }, MaxConcurrentRuns = ambient + 1 };
-        var (_, runId) = await SeedIngestedRequestWithRunAsync();
-        var actions = new RecordingActions(PipelineActionResult.Deferred("SHOULD_NOT_BE_CALLED", null));
+        var ambient = await ActiveEnrichmentSlotCountAsync();
+        var blocker = await SeedActiveEnrichmentBlockerAsync();
+        try
+        {
+            var capped = new PipelineOptions { Enabled = true, Mode = PipelineMode.Enforce, Enforce = { Litigation = true }, Policy = { LitigationSearch = true }, MaxConcurrentRuns = ambient + 1 };
+            var (_, runId) = await SeedIngestedRequestWithRunAsync();
+            var actions = new RecordingActions(PipelineActionResult.Deferred("SHOULD_NOT_BE_CALLED", null));
 
-        Assert.True(await ReconcileAsync(runId, capped, actions));
+            Assert.True(await ReconcileAsync(runId, capped, actions));
 
-        Assert.Equal(0, actions.Calls);
-        await using var db = CreateContext();
-        var stage = await db.PipelineStageStates.AsNoTracking().SingleAsync(s => s.PipelineRunId == runId && s.Stage == PipelineStage.Litigation);
-        Assert.Equal(PipelineStageStateKind.NotStarted, stage.State);
-        Assert.Equal("CONCURRENCY_CAP_REACHED", stage.ReasonCode);
-        Assert.NotNull(stage.NextAttemptUtc);
-    }
-
-    /// <summary>The pool is shared across both litigation stages — a LitigationAnalysis already running
-    /// counts against a brand-new Litigation search too, not just against other analyses.</summary>
-    [Fact]
-    public async Task An_active_litigation_analysis_counts_against_a_new_search_in_the_same_shared_pool()
-    {
-        var ambient = await ActiveEnrichmentCountAsync();
-        await SeedActiveEnrichmentBlockerAsync(PipelineStage.LitigationAnalysis);
-        var capped = new PipelineOptions { Enabled = true, Mode = PipelineMode.Enforce, Enforce = { Litigation = true }, Policy = { LitigationSearch = true }, MaxConcurrentRuns = ambient + 1 };
-        var (_, runId) = await SeedIngestedRequestWithRunAsync();
-        var actions = new RecordingActions(PipelineActionResult.Deferred("SHOULD_NOT_BE_CALLED", null));
-
-        Assert.True(await ReconcileAsync(runId, capped, actions));
-
-        Assert.Equal(0, actions.Calls);
-        await using var db = CreateContext();
-        Assert.Equal("CONCURRENCY_CAP_REACHED",
-            (await db.PipelineStageStates.AsNoTracking().SingleAsync(s => s.PipelineRunId == runId && s.Stage == PipelineStage.Litigation)).ReasonCode);
+            Assert.Equal(0, actions.Calls);
+            await using var db = CreateContext();
+            var stage = await db.PipelineStageStates.AsNoTracking().SingleAsync(s => s.PipelineRunId == runId && s.Stage == PipelineStage.Litigation);
+            Assert.Equal(PipelineStageStateKind.NotStarted, stage.State);
+            Assert.Equal("CONCURRENCY_CAP_REACHED", stage.ReasonCode);
+            Assert.NotNull(stage.NextAttemptUtc);
+            // The refusal never touched the lease table for this run — nothing was reserved to release.
+            Assert.Equal(ambient + 1, await ActiveEnrichmentSlotCountAsync());
+        }
+        finally { await ReleaseSlotAsync(blocker); }
     }
 
     [Fact]
-    public async Task A_new_search_starts_normally_while_comfortably_below_the_concurrency_cap()
+    public async Task A_new_search_starts_normally_while_comfortably_below_the_concurrency_cap_and_holds_a_real_slot()
     {
-        var ambient = await ActiveEnrichmentCountAsync();
+        var ambient = await ActiveEnrichmentSlotCountAsync();
         var roomy = new PipelineOptions { Enabled = true, Mode = PipelineMode.Enforce, Enforce = { Litigation = true }, Policy = { LitigationSearch = true }, MaxConcurrentRuns = ambient + 10 };
         var (_, runId) = await SeedIngestedRequestWithRunAsync();
         var actions = new RecordingActions(new PipelineActionResult(true, false, 1, null, null));
@@ -204,19 +200,67 @@ public sealed class PipelineEnforceTests : IAsyncLifetime
         var stage = await db.PipelineStageStates.AsNoTracking().SingleAsync(s => s.PipelineRunId == runId && s.Stage == PipelineStage.Litigation);
         Assert.Equal(PipelineStageStateKind.Running, stage.State);
         Assert.Equal(PipelineEventActions.AutoStartedCode, stage.ReasonCode);
+        // The successful start really did reserve a slot — cap enforcement has teeth, not just bookkeeping.
+        Assert.Equal(ambient + 1, await ActiveEnrichmentSlotCountAsync());
+        await ReleaseSlotAsync(PipelineReconciler.EnrichmentSlotHolderId(runId, PipelineStage.Litigation));
     }
 
     [Fact]
     public async Task The_concurrency_cap_is_off_by_default_no_matter_how_much_else_is_running()
     {
-        await SeedActiveEnrichmentBlockerAsync(PipelineStage.Litigation);
-        await SeedActiveEnrichmentBlockerAsync(PipelineStage.LitigationAnalysis);
-        var (_, runId) = await SeedIngestedRequestWithRunAsync(); // Enforcing: MaxConcurrentRuns left at its 0 default
-        var actions = new RecordingActions(new PipelineActionResult(true, false, 1, null, null));
+        var blocker = await SeedActiveEnrichmentBlockerAsync();
+        try
+        {
+            var (_, runId) = await SeedIngestedRequestWithRunAsync(); // Enforcing: MaxConcurrentRuns left at its 0 default
+            var actions = new RecordingActions(new PipelineActionResult(true, false, 1, null, null));
 
-        Assert.True(await ReconcileAsync(runId, Enforcing, actions));
+            Assert.True(await ReconcileAsync(runId, Enforcing, actions));
 
-        Assert.Equal(1, actions.Calls);
+            Assert.Equal(1, actions.Calls);
+            // MaxConcurrentRuns=0 never touches the lease mechanism at all — no slot taken for this start.
+            Assert.Equal(1, await ActiveEnrichmentSlotCountAsync());
+        }
+        finally { await ReleaseSlotAsync(blocker); }
+    }
+
+    /// <summary>PR #311 review's own regression case: force two starts to race at the cap and confirm the
+    /// atomic reservation — not a plain count-then-start — is what actually decides the outcome. A cap of 1
+    /// with two callers hammering TryAcquireSlotAsync concurrently must admit exactly one, never both and
+    /// never neither; sp_getapplock inside the real service is what makes that true regardless of timing.</summary>
+    [Fact]
+    public async Task Two_concurrent_starts_racing_at_a_cap_of_one_never_both_get_admitted()
+    {
+        var ambient = await ActiveEnrichmentSlotCountAsync();
+        var cap = ambient + 1;
+        var holderA = $"race-a:{Guid.NewGuid():N}";
+        var holderB = $"race-b:{Guid.NewGuid():N}";
+
+        await using var dbA = CreateContext();
+        await using var dbB = CreateContext();
+        var barrier = new TaskCompletionSource();
+        var taskA = Task.Run(async () =>
+        {
+            await barrier.Task;
+            return await SlotLeases(dbA).TryAcquireSlotAsync(PipelineReconciler.LitigationEnrichmentSlot, holderA, PipelineReconciler.LitigationEnrichmentSlotDuration, cap, CancellationToken.None);
+        });
+        var taskB = Task.Run(async () =>
+        {
+            await barrier.Task;
+            return await SlotLeases(dbB).TryAcquireSlotAsync(PipelineReconciler.LitigationEnrichmentSlot, holderB, PipelineReconciler.LitigationEnrichmentSlotDuration, cap, CancellationToken.None);
+        });
+        barrier.SetResult(); // release both at once rather than however the scheduler happened to queue them
+        var (resultA, resultB) = (await taskA, await taskB);
+
+        try
+        {
+            Assert.NotEqual(resultA.Success, resultB.Success); // exactly one, not both, not neither
+            Assert.Equal(cap, await ActiveEnrichmentSlotCountAsync());
+        }
+        finally
+        {
+            if (resultA.Success) await ReleaseSlotAsync(holderA);
+            if (resultB.Success) await ReleaseSlotAsync(holderB);
+        }
     }
 
     [Fact]

@@ -2,6 +2,7 @@ using System.Text.Json;
 using MCAROC_Analysis.Data;
 using MCAROC_Analysis.Data.Entities;
 using MCAROC_Analysis.Services.Dossier;
+using MCAROC_Analysis.Services.McaFilings;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 
@@ -26,10 +27,21 @@ namespace MCAROC_Analysis.Services.Pipeline;
 /// straight away; with it, exactly one of any set of racing reconcilers processes a run, and the worker (whose
 /// tick is far longer) still picks it up again on its next tick.</summary>
 public sealed class PipelineReconciler(AppDbContext db, PipelineSnapshotReader reader, TimeProvider time, ILogger<PipelineReconciler> logger,
-    IOptionsMonitor<PipelineOptions>? options = null, IPipelineActions? actions = null)
+    IOptionsMonitor<PipelineOptions>? options = null, IPipelineActions? actions = null, IOperationalSlotLeaseService? slotLeases = null)
 {
     private static readonly string LeaseOwner = $"{Environment.MachineName}:{Environment.ProcessId}";
     public static readonly TimeSpan LeaseDuration = TimeSpan.FromMinutes(2);
+
+    /// <summary>Plan §6.5's concurrency cap, atomically enforced (PR #311 review: a plain count-then-start
+    /// races across reconciler instances) via the same sp_getapplock-fenced multi-holder lease
+    /// <see cref="OperationalSlotLeaseService"/> already uses for LargeUpload/LargeUnpack — two concurrent
+    /// acquire attempts for this slot type serialize against each other, so one always sees the other's
+    /// commit before deciding. Litigation and LitigationAnalysis share one pool (both draw on the same pair
+    /// of external dependencies the cap protects). A generous fixed duration is the self-healing fallback if
+    /// the explicit release below (on the stage actually leaving Running) is ever missed — same fail-safe
+    /// shape as every other <c>OperationalSlotLease</c> holder, never the primary path.</summary>
+    internal const string LitigationEnrichmentSlot = "PipelineLitigationEnrichment";
+    internal static readonly TimeSpan LitigationEnrichmentSlotDuration = TimeSpan.FromHours(4);
     public static readonly TimeSpan MinReconcileInterval = TimeSpan.FromSeconds(5);
 
     private static readonly PipelineOutcome[] LiveOutcomes = [PipelineOutcome.InProgress, PipelineOutcome.CoreReady, PipelineOutcome.NeedsAttention];
@@ -90,6 +102,7 @@ public sealed class PipelineReconciler(AppDbContext db, PipelineSnapshotReader r
         var enforceRetries = actions is not null && opts is not null && opts.EnforcesRetries();
         var toStart = new List<PipelineStage>();
         var toRetry = new List<PipelineStage>();
+        var toReleaseSlots = new List<PipelineStage>();
         var preRenderDossier = false;
         var existing = await db.PipelineStageStates.Where(s => s.PipelineRunId == runId).ToDictionaryAsync(s => s.Stage, ct);
         foreach (var (stage, verdict0) in decision.Stages)
@@ -171,6 +184,13 @@ public sealed class PipelineReconciler(AppDbContext db, PipelineSnapshotReader r
             }
 
             var stateChanged = row.State != verdict.State || db.Entry(row).State == EntityState.Added;
+            // The matching half of StartAsync's reservation: once a litigation stage that was actively
+            // Running leaves that state (succeeds, fails, needs attention — anything), whatever slot it may
+            // have held is released. Harmless to call for a manually-started run that never held one —
+            // ReleaseSlotAsync is a delete-where-matching, a no-op when nothing matches.
+            if (stage is PipelineStage.Litigation or PipelineStage.LitigationAnalysis
+                && row.State == PipelineStageStateKind.Running && verdict.State != PipelineStageStateKind.Running)
+                toReleaseSlots.Add(stage);
             row.State = verdict.State;
             row.SkipKind = verdict.SkipKind;
             row.ReasonCode = reasonCode;
@@ -209,6 +229,9 @@ public sealed class PipelineReconciler(AppDbContext db, PipelineSnapshotReader r
             await StartAsync(stage, runId, token, run.RequestId, run.CorrelationId, opts!, ct);
         foreach (var stage in toRetry)
             await RetryAsync(stage, runId, token, run.RequestId, run.CorrelationId, ct);
+        if (slotLeases is not null)
+            foreach (var stage in toReleaseSlots)
+                await slotLeases.ReleaseSlotAsync(LitigationEnrichmentSlot, EnrichmentSlotHolderId(runId, stage), ct);
         if (preRenderDossier)
             await PreRenderDossierAsync(runId, token, run.RequestId, run.CorrelationId, ct);
         await ReleaseAsync(runId, token, ct);
@@ -221,42 +244,63 @@ public sealed class PipelineReconciler(AppDbContext db, PipelineSnapshotReader r
     private static bool IsReadyToStart(StageVerdict verdict) =>
         verdict.State == PipelineStageStateKind.NotStarted && verdict.ReasonCode == PipelineDecider.ReadyToStart;
 
-    /// <summary>Plan §6.5: counts distinct runs currently actively searching or analysing litigation —
-    /// across every request, not just this one — so a burst of requests all becoming ready at once can't
-    /// all start together and overrun BPR's/Vertex's own limits. A manual start (never routed through
-    /// <see cref="StartAsync"/>) is deliberately not counted against or bound by this cap.</summary>
-    private async Task<bool> ConcurrencyCapReachedAsync(int maxConcurrentRuns, CancellationToken ct)
-    {
-        var active = await db.PipelineStageStates.AsNoTracking()
-            .Where(s => (s.Stage == PipelineStage.Litigation || s.Stage == PipelineStage.LitigationAnalysis) && s.State == PipelineStageStateKind.Running)
-            .Select(s => s.PipelineRunId).Distinct().CountAsync(ct);
-        return active >= maxConcurrentRuns;
-    }
+    /// <summary>The lease holder id for one run's occupancy of the shared litigation-enrichment slot — one
+    /// row per (run, stage), so Litigation and LitigationAnalysis on the same run each hold their own slot
+    /// rather than being conflated into one.</summary>
+    internal static string EnrichmentSlotHolderId(long runId, PipelineStage stage) => $"{runId}:{stage}";
 
     private async Task StartAsync(PipelineStage stage, long runId, Guid token, long requestId, string correlationId, PipelineOptions opts, CancellationToken ct)
     {
         PipelineActionResult result;
-        if (opts.MaxConcurrentRuns > 0 && await ConcurrencyCapReachedAsync(opts.MaxConcurrentRuns, ct))
+        var holderId = EnrichmentSlotHolderId(runId, stage);
+        var slotAcquired = false;
+        if (opts.MaxConcurrentRuns > 0)
         {
-            result = PipelineActionResult.Deferred("CONCURRENCY_CAP_REACHED",
-                $"At the coordinator's concurrent-enrichment cap ({opts.MaxConcurrentRuns}); will retry shortly.");
+            // Reserve BEFORE calling the real action, and only release again immediately below if the start
+            // didn't actually happen — the reservation must exist for the whole time real work might be
+            // running, not just for the instant of starting it, or the cap would only ever bound concurrent
+            // *start attempts* rather than concurrent *enrichment*, which is what plan §6.5 asks for. The
+            // matching release for a start that DID succeed lives in ReconcileAsync's own stage loop, fired
+            // when the stage is later observed leaving Running — a separate reconcile, possibly a separate
+            // reconciler instance, which is exactly why this can't be a plain SELECT COUNT then start (PR
+            // #311 review): two concurrent StartAsync calls would both read "under cap" before either's
+            // start is visible to the other. sp_getapplock inside TryAcquireSlotAsync fences that race.
+            if (slotLeases is null)
+            {
+                // No fail-open here: without the real mechanism to enforce it, the only safe answer to a
+                // configured cap is to defer, never to silently let concurrency go unbounded.
+                result = PipelineActionResult.Deferred("CONCURRENCY_CAP_REACHED",
+                    "Concurrency limiter is not available; deferring to stay within the configured cap.");
+            }
+            else
+            {
+                var lease = await slotLeases.TryAcquireSlotAsync(LitigationEnrichmentSlot, holderId, LitigationEnrichmentSlotDuration, opts.MaxConcurrentRuns, ct);
+                if (!lease.Success)
+                {
+                    result = PipelineActionResult.Deferred("CONCURRENCY_CAP_REACHED",
+                        $"At the coordinator's concurrent-enrichment cap ({opts.MaxConcurrentRuns}); will retry shortly.");
+                }
+                else
+                {
+                    slotAcquired = true;
+                    result = await InvokeStartActionAsync(stage, requestId, correlationId, ct);
+                    if (!result.Started)
+                    {
+                        await slotLeases.ReleaseSlotAsync(LitigationEnrichmentSlot, holderId, ct);
+                        slotAcquired = false;
+                    }
+                }
+            }
         }
         else
         {
-            try
-            {
-                result = stage == PipelineStage.Litigation
-                    ? await actions!.StartLitigationSearchAsync(requestId, correlationId, ct)
-                    : await actions!.StartLitigationAnalysisAsync(requestId, correlationId, ct);
-            }
-            catch (Exception ex) when (!ct.IsCancellationRequested)
-            {
-                logger.LogError(ex, "Automatic {Stage} start failed for request {RequestId}", stage, requestId);
-                db.ChangeTracker.Clear();
-                result = PipelineActionResult.Deferred("AUTO_START_FAILED", ex.Message);
-            }
+            result = await InvokeStartActionAsync(stage, requestId, correlationId, ct);
         }
-        if (result.AlreadyExists) return; // the next tick observes that job
+        if (result.AlreadyExists)
+        {
+            if (slotAcquired) await slotLeases!.ReleaseSlotAsync(LitigationEnrichmentSlot, holderId, ct);
+            return; // the next tick observes that job
+        }
 
         await using var tx = await db.Database.BeginTransactionAsync(ct);
         var now = time.GetUtcNow().UtcDateTime;
@@ -299,6 +343,22 @@ public sealed class PipelineReconciler(AppDbContext db, PipelineSnapshotReader r
             logger.LogInformation("Pipeline run {RunId}: started {Stage} {JobId} for request {RequestId} automatically", runId, stage, result.SourceRef, requestId);
         else
             logger.LogInformation("Pipeline run {RunId}: automatic {Stage} start for request {RequestId} deferred ({Code}): {Detail}", runId, stage, requestId, result.ReasonCode, result.ReasonDetail);
+    }
+
+    private async Task<PipelineActionResult> InvokeStartActionAsync(PipelineStage stage, long requestId, string correlationId, CancellationToken ct)
+    {
+        try
+        {
+            return stage == PipelineStage.Litigation
+                ? await actions!.StartLitigationSearchAsync(requestId, correlationId, ct)
+                : await actions!.StartLitigationAnalysisAsync(requestId, correlationId, ct);
+        }
+        catch (Exception ex) when (!ct.IsCancellationRequested)
+        {
+            logger.LogError(ex, "Automatic {Stage} start failed for request {RequestId}", stage, requestId);
+            db.ChangeTracker.Clear();
+            return PipelineActionResult.Deferred("AUTO_START_FAILED", ex.Message);
+        }
     }
 
     /// <summary>Plan §6.2. Unlike <see cref="StartAsync"/>, both outcomes set <c>NextAttemptUtc</c> from
