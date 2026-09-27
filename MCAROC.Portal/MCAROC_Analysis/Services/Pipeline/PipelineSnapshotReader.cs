@@ -105,8 +105,18 @@ public sealed class PipelineSnapshotReader(AppDbContext db, IConfiguration confi
                 .Where(s => s.LitigationSearchJobId == search.LitigationSearchJobId)
                 .OrderByDescending(s => s.LitigationReportSnapshotId)
                 .Select(s => new { s.LitigationReportSnapshotId, s.Status }).FirstOrDefaultAsync(ct);
+
+            var orderDocs = await db.LitigationOrderDocuments.AsNoTracking()
+                .Where(d => d.Order!.Case!.RequestId == requestId)
+                .Select(d => new { d.Status, d.ChunkingStatus, d.CreatedUtc }).ToListAsync(ct);
+            var ordersFullyProcessed = orderDocs.All(d =>
+                d.Status is LitigationOrderDocumentStatus.Downloaded or LitigationOrderDocumentStatus.Expired
+                && (d.Status == LitigationOrderDocumentStatus.Expired || d.ChunkingStatus is ChunkingStatus.Chunked or ChunkingStatus.Failed));
+            var staleCutoff = DateTime.UtcNow.AddDays(-5);
+            var hasStalledOrderDownload = orderDocs.Any(d => d.Status == LitigationOrderDocumentStatus.Pending && d.CreatedUtc <= staleCutoff);
+
             searchFacts = new LitigationSearchFacts(search.LitigationSearchJobId, search.Status, search.FailureReason,
-                snapshot?.LitigationReportSnapshotId, snapshot?.Status);
+                snapshot?.LitigationReportSnapshotId, snapshot?.Status, ordersFullyProcessed, hasStalledOrderDownload);
         }
 
         var litigationAnalysis = await db.LitigationAiAnalysisRuns.AsNoTracking().Where(r => r.RequestId == requestId)

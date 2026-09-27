@@ -27,9 +27,9 @@ public sealed class LitigationStartServiceTests : IAsyncLifetime
 
     public Task DisposeAsync() => Task.CompletedTask;
 
-    private static LitigationStartService Starter(AppDbContext db)
+    private static LitigationStartService Starter(AppDbContext db, PipelineOptions? adminOptions = null)
     {
-        var admission = new PaidCallAdmissionService(db, new StaticOptionsMonitor(new PipelineOptions()), TimeProvider.System, NullLogger<PaidCallAdmissionService>.Instance);
+        var admission = new PaidCallAdmissionService(db, new StaticOptionsMonitor(adminOptions ?? new PipelineOptions()), TimeProvider.System, NullLogger<PaidCallAdmissionService>.Instance);
         var search = new LitigationSearchJobService(db, null!, new LitigationSearchQueue(), null!, null!,
             Options.Create(new BprLitigationOptions()), NullLogger<LitigationSearchJobService>.Instance);
         var analysis = new LitigationAiAnalysisOrchestrator(db, null!, new LitigationAiAnalysisQueue(),
@@ -170,6 +170,49 @@ public sealed class LitigationStartServiceTests : IAsyncLifetime
         Assert.Equal(PaidCallKind.LitigationAnalysis, admission.Kind);
         Assert.Equal(first.ReferenceId, admission.ReferenceId);
         Assert.Equal($"analysis|request:{request.RequestId}", admission.ScopeKey); // no completed snapshot yet
+    }
+
+    [Fact]
+    public async Task Manual_analysis_with_no_completed_snapshot_persists_no_snapshot_linkage()
+    {
+        var request = await SeedRequestAsync();
+        await using var db = CreateContext();
+
+        var result = await Starter(db).StartAnalysisAsync(request.RequestId, request.ClientId, PaidCallTrigger.Manual, CancellationToken.None);
+
+        var run = await db.LitigationAiAnalysisRuns.AsNoTracking().SingleAsync(r => r.LitigationAiAnalysisRunId == result.ReferenceId);
+        Assert.Equal(LitigationAiAnalysisTrigger.Manual, run.Trigger);
+        Assert.Null(run.TriggerSnapshotId);
+        Assert.Null(run.OriginSnapshotId);
+    }
+
+    [Fact]
+    public async Task Auto_analysis_persists_the_snapshot_as_both_trigger_and_origin_and_scopes_admission_by_it()
+    {
+        var request = await SeedRequestAsync();
+        long snapshotId;
+        await using (var seed = CreateContext())
+        {
+            var job = new LitigationSearchJob { RequestId = request.RequestId, KeywordsJson = "[]", Status = LitigationSearchJobStatus.Completed, CreatedUtc = DateTime.UtcNow };
+            seed.LitigationSearchJobs.Add(job);
+            await seed.SaveChangesAsync();
+            var snapshot = new LitigationReportSnapshot { LitigationSearchJobId = job.LitigationSearchJobId, ReportHash = "h1", Status = LitigationReportSnapshotStatus.Completed, RetrievedUtc = DateTime.UtcNow, CreatedUtc = DateTime.UtcNow };
+            seed.LitigationReportSnapshots.Add(snapshot);
+            await seed.SaveChangesAsync();
+            snapshotId = snapshot.LitigationReportSnapshotId;
+        }
+
+        await using var db = CreateContext();
+        var adminOptions = new PipelineOptions { Caps = { LitigationAnalysisPerDay = 1_000_000 } };
+        var result = await Starter(db, adminOptions).StartAnalysisAsync(request.RequestId, request.ClientId, PaidCallTrigger.Auto, CancellationToken.None);
+
+        Assert.True(result.Started);
+        var run = await db.LitigationAiAnalysisRuns.AsNoTracking().SingleAsync(r => r.LitigationAiAnalysisRunId == result.ReferenceId);
+        Assert.Equal(LitigationAiAnalysisTrigger.Auto, run.Trigger);
+        Assert.Equal(snapshotId, run.TriggerSnapshotId);
+        Assert.Equal(snapshotId, run.OriginSnapshotId);
+        var admission = await db.PaidCallAdmissions.AsNoTracking().SingleAsync(a => a.RequestId == request.RequestId);
+        Assert.Equal($"analysis|{snapshotId}", admission.ScopeKey);
     }
 
     private static async Task<McaRequest> SeedRequestAsync()

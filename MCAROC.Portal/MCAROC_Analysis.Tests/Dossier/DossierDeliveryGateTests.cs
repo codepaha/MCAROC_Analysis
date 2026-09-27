@@ -291,7 +291,8 @@ public class DossierDeliveryGateTests : IAsyncLifetime
             new Microsoft.Extensions.Caching.Memory.MemoryCache(new Microsoft.Extensions.Caching.Memory.MemoryCacheOptions { SizeLimit = 256 }));
         var webRoot = Path.Combine(FindRepoRoot(), "MCAROC.Portal", "MCAROC_Analysis", "wwwroot");
         var gate = new CalculationArtifactGateService(db, calculationAssuranceConfig, NullLogger<CalculationArtifactGateService>.Instance);
-        return new DossierController(db, cache, new DossierPdfRenderer(webRoot), gate, new FakeEnv(_contentRoot, webRoot));
+        var artifacts = new DossierArtifactService(cache, new DossierPdfRenderer(webRoot), gate, new FakeEnv(_contentRoot, webRoot));
+        return new DossierController(db, artifacts);
     }
 
     private static string FindRepoRoot()

@@ -43,10 +43,10 @@ public sealed class PipelineReconcilerTests : IAsyncLifetime
     private static PipelineAdopter Adopter(AppDbContext db, PipelineOptions? options = null) =>
         new(db, new StaticOptionsMonitor(options ?? Enabled), TimeProvider.System, NullLogger<PipelineAdopter>.Instance);
 
-    private static async Task<long> NewRunAsync(long requestId)
+    private static async Task<long> NewRunAsync(long requestId, PipelineOptions? options = null)
     {
         await using var db = CreateContext();
-        return (await Adopter(db).EnsureRunAsync(requestId, PipelineRunTrigger.ManualUpload, null, CancellationToken.None))!.Value;
+        return (await Adopter(db, options).EnsureRunAsync(requestId, PipelineRunTrigger.ManualUpload, null, CancellationToken.None))!.Value;
     }
 
     private async Task<bool> ReconcileAsync(long runId, params IInterceptor[] interceptors)
@@ -124,6 +124,86 @@ public sealed class PipelineReconcilerTests : IAsyncLifetime
         Assert.Equal("LITIGATION_SEARCH_FAILED", litigation.ReasonCode);
         Assert.Equal("BPR timeout", litigation.ReasonDetail);
         Assert.True(await db.PipelineEvents.AnyAsync(e => e.PipelineRunId == runId && e.Stage == PipelineStage.Litigation && e.Action == "Observed:NeedsAttention"));
+    }
+
+    /// <summary>Plan §4.2, against the real database: an order document still <c>Pending</c> five-plus days
+    /// after it was first recorded flags the Litigation stage even though the search itself completed
+    /// cleanly — real order-document rows, not the hand-built facts <c>PipelineDeciderTests</c> uses.</summary>
+    [Fact]
+    public async Task Litigation_reports_a_stalled_order_download_even_though_the_search_completed()
+    {
+        var requestId = await SeedManualRequestAsync(analysed: true);
+        await using (var seed = CreateContext())
+        {
+            var (_, orderId) = await SeedCompletedSearchWithOneOrderAsync(seed, requestId);
+            seed.LitigationOrderDocuments.Add(new LitigationOrderDocument
+            {
+                LitigationCaseOrderId = orderId, Status = LitigationOrderDocumentStatus.Pending,
+                RetainedUntilUtc = DateTime.UtcNow.AddDays(1), CreatedUtc = DateTime.UtcNow.AddDays(-6)
+            });
+            await seed.SaveChangesAsync();
+        }
+        var runId = await NewRunAsync(requestId);
+
+        Assert.True(await ReconcileAsync(runId));
+
+        await using var db = CreateContext();
+        var litigation = await db.PipelineStageStates.AsNoTracking().SingleAsync(s => s.PipelineRunId == runId && s.Stage == PipelineStage.Litigation);
+        Assert.Equal(PipelineStageStateKind.NeedsAttention, litigation.State);
+        Assert.Equal("ORDER_DOWNLOAD_STALLED", litigation.ReasonCode);
+        Assert.Equal(PipelineOutcome.NeedsAttention, (await db.PipelineRuns.AsNoTracking().SingleAsync(r => r.PipelineRunId == runId)).Outcome);
+    }
+
+    /// <summary>Plan §4.2's evidence-completeness gate, against the real database: a recently-created (not yet
+    /// stalled) order document still in flight holds LitigationAnalysis at "waiting", never "ready to start" —
+    /// the AI must never read a case whose orders are still being assembled.</summary>
+    [Fact]
+    public async Task LitigationAnalysis_waits_while_a_recent_order_document_is_still_being_processed()
+    {
+        var requestId = await SeedManualRequestAsync(analysed: true);
+        await using (var seed = CreateContext())
+        {
+            var (_, orderId) = await SeedCompletedSearchWithOneOrderAsync(seed, requestId);
+            seed.LitigationOrderDocuments.Add(new LitigationOrderDocument
+            {
+                LitigationCaseOrderId = orderId, Status = LitigationOrderDocumentStatus.Pending,
+                RetainedUntilUtc = DateTime.UtcNow.AddDays(6), CreatedUtc = DateTime.UtcNow.AddHours(-1)
+            });
+            await seed.SaveChangesAsync();
+        }
+        var runId = await NewRunAsync(requestId, new PipelineOptions { Enabled = true, Policy = { LitigationAnalysis = true } });
+
+        Assert.True(await ReconcileAsync(runId));
+
+        await using var db = CreateContext();
+        var litigation = await db.PipelineStageStates.AsNoTracking().SingleAsync(s => s.PipelineRunId == runId && s.Stage == PipelineStage.Litigation);
+        Assert.Equal(PipelineStageStateKind.Succeeded, litigation.State); // not stalled — recent
+        var analysis = await db.PipelineStageStates.AsNoTracking().SingleAsync(s => s.PipelineRunId == runId && s.Stage == PipelineStage.LitigationAnalysis);
+        Assert.Equal(PipelineStageStateKind.Waiting, analysis.State);
+        Assert.Equal("AWAITING_ORDER_PROCESSING", analysis.ReasonCode);
+    }
+
+    /// <summary>A Completed search job + Completed snapshot + one case + one order — the shared setup every
+    /// order-document test in this class builds on before adding its own document row.</summary>
+    private static async Task<(long CaseId, long OrderId)> SeedCompletedSearchWithOneOrderAsync(AppDbContext db, long requestId)
+    {
+        var job = new LitigationSearchJob { RequestId = requestId, KeywordsJson = "[]", Status = LitigationSearchJobStatus.Completed, CreatedUtc = DateTime.UtcNow };
+        db.LitigationSearchJobs.Add(job);
+        await db.SaveChangesAsync();
+        var snapshot = new LitigationReportSnapshot
+        {
+            LitigationSearchJobId = job.LitigationSearchJobId, ReportHash = Guid.NewGuid().ToString("N")[..16],
+            Status = LitigationReportSnapshotStatus.Completed, RetrievedUtc = DateTime.UtcNow, CreatedUtc = DateTime.UtcNow
+        };
+        db.LitigationReportSnapshots.Add(snapshot);
+        await db.SaveChangesAsync();
+        var c = new LitigationCase { RequestId = requestId, CaseNumber = "CASE-STALL-001", Court = "High Court", FirstSeenUtc = DateTime.UtcNow, LastSeenUtc = DateTime.UtcNow };
+        db.LitigationCases.Add(c);
+        await db.SaveChangesAsync();
+        var order = new LitigationCaseOrder { LitigationCaseId = c.LitigationCaseId, OrderDate = "2025-01-01", OrderType = "Order", CreatedUtc = DateTime.UtcNow };
+        db.LitigationCaseOrders.Add(order);
+        await db.SaveChangesAsync();
+        return (c.LitigationCaseId, order.LitigationCaseOrderId);
     }
 
     /// <summary>Exactly one of ten racing reconcilers processes the run — including a competitor that lost

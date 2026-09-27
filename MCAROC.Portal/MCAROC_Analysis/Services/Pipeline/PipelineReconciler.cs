@@ -1,6 +1,7 @@
 using System.Text.Json;
 using MCAROC_Analysis.Data;
 using MCAROC_Analysis.Data.Entities;
+using MCAROC_Analysis.Services.Dossier;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 
@@ -84,24 +85,28 @@ public sealed class PipelineReconciler(AppDbContext db, PipelineSnapshotReader r
 
         var opts = options?.CurrentValue;
         var enforceLitigation = actions is not null && opts is not null && opts.EnforcesLitigationSearch();
-        var startLitigation = false;
+        var enforceAnalysis = actions is not null && opts is not null && opts.EnforcesLitigationAnalysis();
+        var enforceDossier = actions is not null && opts is not null && opts.EnforcesDossierPreRender();
+        var toStart = new List<PipelineStage>();
+        var preRenderDossier = false;
         var existing = await db.PipelineStageStates.Where(s => s.PipelineRunId == runId).ToDictionaryAsync(s => s.Stage, ct);
         foreach (var (stage, verdict) in decision.Stages)
         {
-            if (stage == PipelineStage.Litigation && IsReadyToStart(verdict))
+            if (stage is PipelineStage.Litigation or PipelineStage.LitigationAnalysis && IsReadyToStart(verdict))
             {
+                var enforce = stage == PipelineStage.Litigation ? enforceLitigation : enforceAnalysis;
                 // A refused automatic start keeps its reason on the row until it is due again, and while it is
                 // retried — so a repeat of the same refusal isn't logged as a new step.
                 if (existing.TryGetValue(stage, out var deferred) && deferred.NextAttemptUtc is { } due)
                 {
                     if (due > now2) continue;
-                    if (enforceLitigation)
+                    if (enforce)
                     {
-                        startLitigation = true;
+                        toStart.Add(stage);
                         continue;
                     }
                 }
-                startLitigation = enforceLitigation;
+                else if (enforce) toStart.Add(stage);
             }
 
             var reasonCode = Truncate(verdict.ReasonCode, 60);
@@ -133,6 +138,13 @@ public sealed class PipelineReconciler(AppDbContext db, PipelineSnapshotReader r
                     PipelineRunId = runId, Stage = stage, Action = PipelineEventActions.Observed(verdict.State), Actor = "system",
                     ReasonCode = reasonCode, CorrelationId = run.CorrelationId, AtUtc = now2
                 });
+
+            // Trigger only on the tick Dossier first becomes done — a later rerun that changes SourceRef
+            // without the State enum value itself changing (e.g. a new analysis after re-ingestion) falls
+            // back to the controller's own on-demand render instead; this is a latency optimisation, not a
+            // correctness requirement, so missing that case is an accepted, documented gap (plan §4.3).
+            if (stage == PipelineStage.Dossier && enforceDossier && verdict.IsDone && stateChanged)
+                preRenderDossier = true;
         }
         await db.SaveChangesAsync(ct);
 
@@ -145,8 +157,10 @@ public sealed class PipelineReconciler(AppDbContext db, PipelineSnapshotReader r
                 .SetProperty(r => r.CompletedUtc, completedUtc), ct);
         await tx.CommitAsync(ct);
 
-        if (startLitigation)
-            await StartLitigationAsync(runId, token, run.RequestId, run.CorrelationId, opts!, ct);
+        foreach (var stage in toStart)
+            await StartAsync(stage, runId, token, run.RequestId, run.CorrelationId, opts!, ct);
+        if (preRenderDossier)
+            await PreRenderDossierAsync(runId, token, run.RequestId, run.CorrelationId, ct);
         await ReleaseAsync(runId, token, ct);
 
         if (decision.Outcome != run.Outcome)
@@ -157,16 +171,18 @@ public sealed class PipelineReconciler(AppDbContext db, PipelineSnapshotReader r
     private static bool IsReadyToStart(StageVerdict verdict) =>
         verdict.State == PipelineStageStateKind.NotStarted && verdict.ReasonCode == PipelineDecider.ReadyToStart;
 
-    private async Task StartLitigationAsync(long runId, Guid token, long requestId, string correlationId, PipelineOptions opts, CancellationToken ct)
+    private async Task StartAsync(PipelineStage stage, long runId, Guid token, long requestId, string correlationId, PipelineOptions opts, CancellationToken ct)
     {
         PipelineActionResult result;
         try
         {
-            result = await actions!.StartLitigationSearchAsync(requestId, correlationId, ct);
+            result = stage == PipelineStage.Litigation
+                ? await actions!.StartLitigationSearchAsync(requestId, correlationId, ct)
+                : await actions!.StartLitigationAnalysisAsync(requestId, correlationId, ct);
         }
         catch (Exception ex) when (!ct.IsCancellationRequested)
         {
-            logger.LogError(ex, "Automatic litigation search start failed for request {RequestId}", requestId);
+            logger.LogError(ex, "Automatic {Stage} start failed for request {RequestId}", stage, requestId);
             db.ChangeTracker.Clear();
             result = PipelineActionResult.Deferred("AUTO_START_FAILED", ex.Message);
         }
@@ -176,7 +192,7 @@ public sealed class PipelineReconciler(AppDbContext db, PipelineSnapshotReader r
         var now = time.GetUtcNow().UtcDateTime;
         var fenced = await db.PipelineRuns.Where(r => r.PipelineRunId == runId && r.ReconcileLeaseToken == token)
             .ExecuteUpdateAsync(s => s.SetProperty(r => r.ReconcileLeaseExpiresUtc, now.Add(LeaseDuration)), ct);
-        var row = await db.PipelineStageStates.SingleOrDefaultAsync(s => s.PipelineRunId == runId && s.Stage == PipelineStage.Litigation, ct);
+        var row = await db.PipelineStageStates.SingleOrDefaultAsync(s => s.PipelineRunId == runId && s.Stage == stage, ct);
         var previousCode = row?.ReasonCode;
         if (fenced == 1 && row is not null)
         {
@@ -202,7 +218,7 @@ public sealed class PipelineReconciler(AppDbContext db, PipelineSnapshotReader r
         if (result.Started || result.ReasonCode != previousCode)
             db.PipelineEvents.Add(new PipelineEvent
             {
-                PipelineRunId = runId, Stage = PipelineStage.Litigation, Actor = "system", CorrelationId = correlationId, AtUtc = now,
+                PipelineRunId = runId, Stage = stage, Actor = "system", CorrelationId = correlationId, AtUtc = now,
                 Action = result.Started ? PipelineEventActions.AutoStarted : PipelineEventActions.AutoStartDeferred,
                 ReasonCode = result.Started ? null : Truncate(result.ReasonCode, 60)
             });
@@ -210,9 +226,42 @@ public sealed class PipelineReconciler(AppDbContext db, PipelineSnapshotReader r
         await tx.CommitAsync(ct);
 
         if (result.Started)
-            logger.LogInformation("Pipeline run {RunId}: started litigation search {JobId} for request {RequestId} automatically", runId, result.SourceRef, requestId);
+            logger.LogInformation("Pipeline run {RunId}: started {Stage} {JobId} for request {RequestId} automatically", runId, stage, result.SourceRef, requestId);
         else
-            logger.LogInformation("Pipeline run {RunId}: automatic litigation search for request {RequestId} deferred ({Code}): {Detail}", runId, requestId, result.ReasonCode, result.ReasonDetail);
+            logger.LogInformation("Pipeline run {RunId}: automatic {Stage} start for request {RequestId} deferred ({Code}): {Detail}", runId, stage, requestId, result.ReasonCode, result.ReasonDetail);
+    }
+
+    /// <summary>Plan §4.3. Best-effort: a failure here is logged and left for the controller's own on-demand
+    /// render to cover — it never touches the Dossier stage's row (already correctly Succeeded from the
+    /// decision above) and it is never retried by this coordinator before the state changes again. Full
+    /// retry/backoff for a genuine render failure is #292's job, not this optimisation's.</summary>
+    private async Task PreRenderDossierAsync(long runId, Guid token, long requestId, string correlationId, CancellationToken ct)
+    {
+        DossierRenderResult result;
+        try
+        {
+            result = await actions!.EnsureDossierRenderedAsync(requestId, ct);
+        }
+        catch (Exception ex) when (!ct.IsCancellationRequested)
+        {
+            logger.LogWarning(ex, "Automatic dossier pre-render failed for request {RequestId}; the next download renders on demand instead.", requestId);
+            return;
+        }
+        if (!result.Rendered) return; // not ready / held — nothing to log, the Dossier stage row already says why
+
+        var now = time.GetUtcNow().UtcDateTime;
+        var fenced = await db.PipelineRuns.Where(r => r.PipelineRunId == runId && r.ReconcileLeaseToken == token)
+            .ExecuteUpdateAsync(s => s.SetProperty(r => r.ReconcileLeaseExpiresUtc, now.Add(LeaseDuration)), ct);
+        if (fenced == 1)
+        {
+            db.PipelineEvents.Add(new PipelineEvent
+            {
+                PipelineRunId = runId, Stage = PipelineStage.Dossier, Actor = "system", CorrelationId = correlationId, AtUtc = now,
+                Action = PipelineEventActions.DossierPreRendered
+            });
+            await db.SaveChangesAsync(ct);
+        }
+        logger.LogInformation("Pipeline run {RunId}: pre-rendered the dossier for request {RequestId}.", runId, requestId);
     }
 
     private Task ReleaseAsync(long runId, Guid token, CancellationToken ct) =>

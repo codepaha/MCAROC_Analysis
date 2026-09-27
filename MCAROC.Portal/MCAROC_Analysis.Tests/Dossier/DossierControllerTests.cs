@@ -44,7 +44,8 @@ public class DossierControllerTests : IAsyncLifetime
         // test in this file, none of which are about #164.
         var gate = new CalculationArtifactGateService(db, calculationAssuranceConfig ?? new ConfigurationBuilder().Build(),
             NullLogger<CalculationArtifactGateService>.Instance);
-        return new DossierController(db, cache, new DossierPdfRenderer(webRoot), gate, new FakeEnv(_contentRoot, webRoot));
+        var artifacts = new DossierArtifactService(cache, new DossierPdfRenderer(webRoot), gate, new FakeEnv(_contentRoot, webRoot));
+        return new DossierController(db, artifacts);
     }
 
     private static string FindRepoRoot()
