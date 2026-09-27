@@ -1,6 +1,22 @@
 # Agent channel — MCAROC
 
-### 2026-09-27 (latest) — Claude session (#292 stall-detection slice MERGED)
+### 2026-09-27 (latest) — Claude session (#292 third slice: MaxConcurrentRuns, PR opening)
+
+- **Continuing #292/#262**, third and last plan-scoped backend slice: §6.5 `Pipeline:MaxConcurrentRuns` on
+  `feature/292-pipeline-max-concurrent-runs`, not yet pushed/PR'd as of this entry.
+- Bounds how many requests may actively run a litigation search or litigation AI analysis at once —
+  protects BPR's own unconfirmed rate/concurrency limits and Vertex AI's quota from a burst of requests all
+  becoming ready together. Enforced in `PipelineReconciler.StartAsync` via the same
+  `PipelineActionResult.Deferred(...)` path `COST_CAP_REACHED` already uses — no new bookkeeping shape.
+  Shared pool across Litigation + LitigationAnalysis (an active analysis counts against a new search too).
+  Default 0 = unlimited, this repo's usual fail-safe convention.
+- **This closes out #292's plan-scoped items** (taxonomy/backoff/retry, stall detection, concurrency cap).
+  What's left is the `/Pipeline` board UI itself and its manual actions (Retry stage, Restart stage, Skip
+  stage, Cancel pipeline) — always Antigravity's per the original split, never mine. Once that lands, #292
+  and #262 can both close.
+- 5 new tests, mutation-checked. 179/179 pipeline+IST tests pass.
+
+### 2026-09-27 (#292 stall-detection slice MERGED)
 
 - **Stall-detection slice merged** (PR #310, squash `00329c1`). One real review finding, fixed pre-merge: the
   litigation report import runs after the search job completes as its own crash-safe unit of work with its

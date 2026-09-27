@@ -66,6 +66,15 @@ public sealed class PipelineOptions
     /// safe in Observe mode as every other decider verdict.</summary>
     public PipelineStallOptions Stall { get; set; } = new();
 
+    /// <summary>Plan §6.5: bounds how many requests the coordinator lets actively run a litigation search or
+    /// litigation AI analysis at once — the two stages that call an external, rate/quota-limited dependency
+    /// on the coordinator's own initiative (BPR's unconfirmed rate limits per epic #262's own scope note;
+    /// Vertex AI's quota for the analysis). 0 (the default) means unlimited — inert until an operator sets a
+    /// positive number, this repo's usual fail-safe convention. A request over the cap is deferred exactly
+    /// like any other refused auto-start (same <c>AutoStartRetryMinutes</c> backoff), never blocked outright —
+    /// a human's manual start is never subject to this cap.</summary>
+    public int MaxConcurrentRuns { get; set; }
+
     public bool EnforcesLitigationSearch() => Enabled && Mode == PipelineMode.Enforce && Enforce.Litigation;
     public bool EnforcesLitigationAnalysis() => Enabled && Mode == PipelineMode.Enforce && Enforce.LitigationAnalysis;
     public bool EnforcesDossierPreRender() => Enabled && Mode == PipelineMode.Enforce && Enforce.Dossier;

@@ -64,6 +64,7 @@ public static class PipelineEventText
         ["UNLOCK_APPROVAL_REQUIRED"] = "company is locked; approval needed to unlock (1 credit)",
         ["UNLOCK_EXPIRED"] = "unlock window expired; approval needed to unlock again (1 credit)",
         ["COST_CAP_REACHED"] = "today's automatic limit is used up",
+        ["CONCURRENCY_CAP_REACHED"] = "the coordinator's concurrent-enrichment limit is in use; will retry shortly",
         ["LITIGATION_RECENTLY_SEARCHED"] = "this company was searched by another request in the last 7 days",
         ["LITIGATION_SEARCH_IN_FLIGHT"] = "a search for this company is already running",
         ["LITIGATION_NOT_ELIGIBLE"] = "the request can't be searched automatically",
