@@ -321,10 +321,10 @@ public static partial class LitigationOrderAddressMatcher
             }
         }
 
-        // Deduplicate: If the same target address matched multiple times on the same page or order,
-        // preserve the highest strength and distinct page numbers
+        // Deduplicate: If the same target address matched multiple times on the same page,
+        // preserve the highest strength and distinct page numbers across distinct target addresses.
         return matches
-            .GroupBy(m => (m.LitigationCaseOrderId, m.SourceLabel, m.PageNumber))
+            .GroupBy(m => (m.LitigationCaseOrderId, m.SourceLabel, m.AddressText, m.PageNumber))
             .Select(g => g.OrderByDescending(m => m.Strength).First())
             .ToList();
     }

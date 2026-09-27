@@ -387,6 +387,60 @@ public class LitigationOrderAddressMatcherTests
         Assert.Equal(51, matched.LitigationCaseOrderId);
     }
 
+    [Fact]
+    public void MatchOrders_preserves_multiple_distinct_properties_from_same_charge_on_same_page()
+    {
+        // Regression test for review finding [P2]:
+        // When multiple distinct property addresses from the same charge share a source label (e.g. "Charge CHG-200")
+        // and match on the same order page, deduplication must not collapse them.
+        var target1 = new LitigationAddressTarget(
+            SourceLabel: "Charge CHG-200",
+            AddressText: "Plot 101, Financial District, Nanakramguda, Hyderabad 500032",
+            ExcludedPlaceNames: ["Hyderabad"],
+            IsCompanyPremises: false,
+            RocChargeId: 200,
+            RocChargeNumber: "CHG-200");
+
+        var target2 = new LitigationAddressTarget(
+            SourceLabel: "Charge CHG-200",
+            AddressText: "Plot 202, Jubilee Hills, Hyderabad 500033",
+            ExcludedPlaceNames: ["Hyderabad"],
+            IsCompanyPremises: false,
+            RocChargeId: 200,
+            RocChargeNumber: "CHG-200");
+
+        var order = new LitigationCaseOrder
+        {
+            LitigationCaseOrderId = 99,
+            OrderDate = "15-05-2024",
+            Case = new LitigationCase { LitigationCaseId = 1, CourtCategory = "district_court" }
+        };
+
+        const string orderText = """
+            --- Page 1 (native) ---
+            The first mortgaged property being Plot 101, Financial District, Nanakramguda, Hyderabad 500032.
+            The second mortgaged property being Plot 202, Jubilee Hills, Hyderabad 500033.
+            """;
+
+        var docs = new Dictionary<long, LitigationOrderDocument>
+        {
+            [99] = new()
+            {
+                LitigationCaseOrderId = 99,
+                Status = LitigationOrderDocumentStatus.Downloaded,
+                TextExtractionStatus = FilingDocumentProcessingStatus.TextExtracted,
+                ExtractedText = orderText
+            }
+        };
+
+        var matches = LitigationOrderAddressMatcher.MatchOrders([target1, target2], [order], docs);
+
+        Assert.Equal(2, matches.Count);
+        Assert.All(matches, m => Assert.Equal("Charge CHG-200", m.SourceLabel));
+        Assert.Contains(matches, m => m.AddressText.Contains("Plot 101"));
+        Assert.Contains(matches, m => m.AddressText.Contains("Plot 202"));
+    }
+
     private static CompanyProfile CreateCompanyProfile() => new()
     {
         RegisteredAddress = CoastalRegistered,
