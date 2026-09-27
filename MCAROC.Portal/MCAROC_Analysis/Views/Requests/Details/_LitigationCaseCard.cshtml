@@ -1,5 +1,6 @@
 @using MCAROC_Analysis.Models
 @using MCAROC_Analysis.Data.Entities
+@using MCAROC_Analysis.Services.Analysis
 @model LitigationCaseCardViewModel
 @{
     var statusBadgeClass = Model.StatusBucket switch
@@ -151,6 +152,65 @@
             </div>
         </div>
 
+        <!-- Contested Property / Premises Matches -->
+        @if (Model.PropertyMatches.Count > 0)
+        {
+            <div class="border rounded p-3 mb-3 bg-light border-warning">
+                <div class="d-flex align-items-center justify-content-between mb-2">
+                    <span class="small fw-bold text-uppercase text-warning-emphasis">
+                        <i class="bi bi-geo-alt-fill me-1"></i>Contested Property / Premises References (@Model.PropertyMatches.Count)
+                    </span>
+                    <span class="badge bg-warning text-dark">Address Match Detected</span>
+                </div>
+                <div class="small text-muted mb-2">
+                    Extracted court order text matches known company premises or mortgaged charge property:
+                </div>
+                <div class="list-group list-group-flush border rounded bg-white">
+                    @foreach (var match in Model.PropertyMatches)
+                    {
+                        <div class="list-group-item p-2">
+                            <div class="d-flex align-items-center justify-content-between">
+                                <div>
+                                    <span class="badge @(match.IsCompanyPremises ? "bg-warning text-dark" : "bg-info text-dark") me-1">
+                                        @(match.IsCompanyPremises ? "Company Premises" : "Mortgaged Property")
+                                    </span>
+                                    <strong class="text-dark">@match.SourceLabel</strong>
+                                    <span class="text-muted ms-1">— @match.AddressText</span>
+                                </div>
+                                <div class="text-end">
+                                    <span class="badge bg-secondary">
+                                        @(string.IsNullOrWhiteSpace(match.OrderDate) ? "Order" : "Order " + match.OrderDate) (p. @match.PageNumber)
+                                    </span>
+                                </div>
+                            </div>
+                            <div class="text-muted mt-1" style="font-size: 0.825rem;">
+                                <span><strong>Matched Signals:</strong></span>
+                                @if (match.MatchedPlotNumbers.Count > 0)
+                                {
+                                    <span class="badge bg-light text-dark border ms-1">Plot: @string.Join(", ", match.MatchedPlotNumbers)</span>
+                                }
+                                @if (!string.IsNullOrWhiteSpace(match.MatchedPinCode))
+                                {
+                                    <span class="badge bg-light text-dark border ms-1">PIN: @match.MatchedPinCode</span>
+                                }
+                                @if (match.MatchedLocalities.Count > 0)
+                                {
+                                    <span class="badge bg-light text-dark border ms-1">Locality: @string.Join(", ", match.MatchedLocalities)</span>
+                                }
+                                <span class="ms-1 badge @(match.Strength == AddressMatchStrength.Strong ? "bg-success" : "bg-secondary")">@match.Strength</span>
+                            </div>
+                            @if (!string.IsNullOrWhiteSpace(match.Excerpt))
+                            {
+                                <div class="mt-1 p-2 rounded bg-light border text-secondary fst-italic font-monospace" style="font-size: 0.8rem;">
+                                    "@match.Excerpt"
+                                </div>
+                            }
+                        </div>
+                    }
+                </div>
+            </div>
+        }
+
         <!-- Orders & Documents Table -->
         <div class="mb-3">
             <div class="d-flex align-items-center justify-content-between mb-2">
@@ -172,7 +232,18 @@
                             @foreach (var order in Model.Orders)
                             {
                                 <tr>
-                                    <td>@(string.IsNullOrWhiteSpace(order.OrderDate) ? "—" : order.OrderDate)</td>
+                                    <td>
+                                        <div>@(string.IsNullOrWhiteSpace(order.OrderDate) ? "—" : order.OrderDate)</div>
+                                        @if (order.PropertyMatches.Count > 0)
+                                        {
+                                            @foreach (var m in order.PropertyMatches)
+                                            {
+                                                <span class="badge bg-warning text-dark mt-1" title="@m.SourceLabel (p. @m.PageNumber)">
+                                                    <i class="bi bi-geo-alt-fill me-1"></i>@m.SourceLabel (p. @m.PageNumber)
+                                                </span>
+                                            }
+                                        }
+                                    </td>
                                     <td>@(string.IsNullOrWhiteSpace(order.OrderType) ? "Order" : order.OrderType)</td>
                                     <td>
                                         @switch (order.DocumentStatus)

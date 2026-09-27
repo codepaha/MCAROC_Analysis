@@ -5,6 +5,7 @@ using CsvHelper;
 using CsvHelper.Configuration;
 using MCAROC_Analysis.Data.Entities;
 using MCAROC_Analysis.Models;
+using MCAROC_Analysis.Services.Analysis;
 using MCAROC_Analysis.Services.McaFilings;
 using QuestPDF.Fluent;
 using QuestPDF.Helpers;
@@ -75,6 +76,23 @@ public static class LitigationOrderAvailabilityResolver
     }
 }
 
+public sealed record StandaloneReportPropertyMatchDto(
+    long LitigationCaseOrderId,
+    string? OrderDate,
+    string? OrderType,
+    int PageNumber,
+    string SourceLabel,
+    string AddressText,
+    AddressMatchStrength Strength,
+    string? MatchedPinCode,
+    IReadOnlyList<string> MatchedPlotNumbers,
+    IReadOnlyList<string> MatchedLocalities,
+    string Excerpt,
+    bool IsCompanyPremises,
+    long? RocChargeId = null,
+    string? RocChargeNumber = null,
+    string? ChargeHolder = null);
+
 public sealed record StandaloneReportOrderDto(
     long LitigationCaseOrderId,
     string? OrderDate,
@@ -85,7 +103,8 @@ public sealed record StandaloneReportOrderDto(
     DateTime? RetainedUntilUtc,
     string AvailabilityDisclosure,
     string CsvStatus,
-    string ExtractionLabel);
+    string ExtractionLabel,
+    IReadOnlyList<StandaloneReportPropertyMatchDto>? PropertyMatches = null);
 
 public sealed record StandaloneReportCaseDto(
     long LitigationCaseId,
@@ -114,7 +133,8 @@ public sealed record StandaloneReportCaseDto(
     string? RespondentsJson,
     string? PetitionerAdvocatesJson,
     string? RespondentAdvocatesJson,
-    IReadOnlyList<StandaloneReportOrderDto> Orders);
+    IReadOnlyList<StandaloneReportOrderDto> Orders,
+    IReadOnlyList<StandaloneReportPropertyMatchDto>? PropertyMatches = null);
 
 public sealed record StandaloneLitigationReport(
     string AssignmentNumber,
@@ -175,6 +195,7 @@ public static class LitigationReportArtifacts
         "Last Hearing Date", "Next Hearing Date", "Decision Date", "State", "District", "Petitioners", "Respondents",
         "Petitioner Advocates", "Respondent Advocates", "Order Count", "Downloaded Order Count", "Expired Order Count",
         "Order Dates", "Order Types", "Order Availability Statuses", "Order Retained Until Dates", "Order Text Extraction Statuses",
+        "Contested Property Match Count", "Contested Property Details",
         "Analysis Status", "Analysis Risk", "Analysis Summary", "Analysis Key Issues", "Analysis Recommended Action"
     ];
 
@@ -188,6 +209,11 @@ public static class LitigationReportArtifacts
         var orderStatuses = string.Join("; ", item.Orders.Select(o => o.CsvStatus));
         var orderRetainedUntil = string.Join("; ", item.Orders.Select(o => Ist.Date(o.RetainedUntilUtc, "yyyy-MM-dd", "-")));
         var orderExtraction = string.Join("; ", item.Orders.Select(o => o.ExtractionLabel));
+        var propertyMatches = item.PropertyMatches ?? [];
+        var propertyMatchCount = propertyMatches.Count.ToString(CultureInfo.InvariantCulture);
+        var propertyMatchDetails = propertyMatches.Count > 0
+            ? string.Join("; ", propertyMatches.Select(m => $"Order {m.OrderDate ?? "-"} (p. {m.PageNumber}): [{m.SourceLabel}] {m.AddressText}"))
+            : "-";
 
         foreach (var value in new[]
         {
@@ -199,6 +225,7 @@ public static class LitigationReportArtifacts
             PartyText(item.RespondentAdvocatesJson), item.Orders.Count.ToString(CultureInfo.InvariantCulture),
             downloadedCount.ToString(CultureInfo.InvariantCulture), expiredCount.ToString(CultureInfo.InvariantCulture),
             orderDates, orderTypes, orderStatuses, orderRetainedUntil, orderExtraction,
+            propertyMatchCount, propertyMatchDetails,
             analysis?.Status ?? "Pending", analysis?.RiskLevel, analysis?.Summary,
             analysis is null ? null : string.Join("; ", analysis.KeyIssues ?? []), analysis?.RecommendedAction
         }) csv.WriteField(SafeCsv(value));
@@ -429,9 +456,37 @@ internal sealed class LitigationReportPdfDocument(StandaloneLitigationReport rep
             body.Item().Text("CASE PARTICULARS").Bold().FontSize(8).FontColor(Navy);
             body.Item().PaddingTop(5).Element(c => CaseDetailsGrid(c, item));
             body.Item().PaddingTop(9).Element(c => PartiesPanel(c, item));
+            if (item.PropertyMatches is { Count: > 0 })
+                body.Item().PaddingTop(9).Element(c => PropertyMatchesPanel(c, item.PropertyMatches));
             body.Item().PaddingTop(9).Element(c => AnalysisPanel(c, analysis));
             body.Item().PaddingTop(9).Element(c => OrdersPanel(c, item.Orders));
         });
+    });
+
+    private static void PropertyMatchesPanel(IContainer container, IReadOnlyList<StandaloneReportPropertyMatchDto> matches) => container.Background("#FFFDF5").BorderLeft(4).BorderColor(Amber).Border(0.8f).BorderColor("#FFE8A3").Padding(8).Column(panel =>
+    {
+        panel.Item().Row(row =>
+        {
+            row.RelativeItem().Text("CONTESTED PROPERTY / PREMISES REFERENCE").Bold().FontSize(8.5f).FontColor(Amber);
+            row.AutoItem().Element(c => Pill(c, "ADDRESS MATCH", Amber));
+        });
+        panel.Item().PaddingTop(3).Text("Extracted court order text matches known company premises or mortgaged charge property:").FontSize(7.8f).FontColor(Colors.Grey.Darken2);
+        foreach (var match in matches)
+        {
+            panel.Item().PaddingTop(4).Column(col =>
+            {
+                col.Item().Text(text =>
+                {
+                    text.Span($"• Order {Display(match.OrderDate)} (p. {match.PageNumber}): ").Bold().FontSize(7.8f).FontColor(Navy);
+                    text.Span($"[{match.SourceLabel}] ").Bold().FontSize(7.8f).FontColor(match.IsCompanyPremises ? Amber : Navy);
+                    text.Span(match.AddressText).FontSize(7.8f);
+                });
+                if (!string.IsNullOrWhiteSpace(match.Excerpt))
+                {
+                    col.Item().PaddingTop(2).PaddingLeft(8).Text($"\"{match.Excerpt}\"").Italic().FontSize(7.2f).FontColor(Colors.Grey.Darken1);
+                }
+            });
+        }
     });
 
     private static void CaseDetailsGrid(IContainer container, StandaloneReportCaseDto item) => container.Table(table =>
@@ -475,13 +530,24 @@ internal sealed class LitigationReportPdfDocument(StandaloneLitigationReport rep
         if (orders.Count == 0) { panel.Item().PaddingTop(4).Text("No order record was returned for this case.").FontSize(8).FontColor(Colors.Grey.Darken1); return; }
         foreach (var order in orders)
         {
-            panel.Item().PaddingTop(4).Background("#FFFCF4").BorderLeft(3).BorderColor(Amber).Padding(5).Text(text =>
+            panel.Item().PaddingTop(4).Background("#FFFCF4").BorderLeft(3).BorderColor(Amber).Padding(5).Column(entry =>
             {
-                text.Span(Display(order.OrderDate)).Bold().FontColor(Amber);
-                text.Span("  |  ");
-                text.Span(Display(order.OrderType));
-                text.Span("  |  ");
-                text.Span(order.AvailabilityDisclosure).FontColor(Colors.Grey.Darken1);
+                entry.Item().Text(text =>
+                {
+                    text.Span(Display(order.OrderDate)).Bold().FontColor(Amber);
+                    text.Span("  |  ");
+                    text.Span(Display(order.OrderType));
+                    text.Span("  |  ");
+                    text.Span(order.AvailabilityDisclosure).FontColor(Colors.Grey.Darken1);
+                });
+                if (order.PropertyMatches is { Count: > 0 })
+                {
+                    entry.Item().PaddingTop(2).Text(text =>
+                    {
+                        text.Span("Property Match: ").Bold().FontSize(7.2f).FontColor(Amber);
+                        text.Span(string.Join("; ", order.PropertyMatches.Select(m => $"[{m.SourceLabel}] {m.AddressText} (p. {m.PageNumber})"))).FontSize(7.2f).FontColor(Colors.Grey.Darken2);
+                    });
+                }
             });
         }
     });

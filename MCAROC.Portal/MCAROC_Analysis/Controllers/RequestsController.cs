@@ -906,6 +906,20 @@ public class RequestsController(
                         .ToListAsync();
                     var orderDocByOrderId = orderDocs.ToDictionary(d => d.LitigationCaseOrderId);
 
+                    var companyProfile = await db.CompanyProfiles.AsNoTracking().FirstOrDefaultAsync(p => p.RequestId == id);
+                    var epfoEsts = await db.EpfoEstablishments.AsNoTracking().Where(e => e.RequestId == id).ToListAsync();
+                    var charges = await db.RocCharges.AsNoTracking()
+                        .Where(c => c.RequestId == id && c.SatisfactionDate == null)
+                        .Include(c => c.Events)
+                        .ToListAsync();
+
+                    var addressPool = LitigationOrderAddressMatcher.BuildAddressPool(companyProfile, epfoEsts, charges);
+                    var allPagedOrders = pagedCases.SelectMany(c => c.Orders).ToList();
+                    var propertyMatches = LitigationOrderAddressMatcher.MatchOrders(addressPool, allPagedOrders, orderDocByOrderId);
+                    var propertyMatchesByOrderId = propertyMatches
+                        .GroupBy(m => m.LitigationCaseOrderId)
+                        .ToDictionary(g => g.Key, g => g.ToList());
+
                     var latestAiRun = await db.LitigationAiAnalysisRuns
                         .AsNoTracking()
                         .Where(r => r.RequestId == id)
@@ -1000,6 +1014,7 @@ public class RequestsController(
                         foreach (var o in c.Orders.OrderByDescending(o => o.OrderDate))
                         {
                             orderDocByOrderId.TryGetValue(o.LitigationCaseOrderId, out var od);
+                            var orderMatches = propertyMatchesByOrderId.TryGetValue(o.LitigationCaseOrderId, out var omList) ? omList : [];
                             card.Orders.Add(new LitigationOrderRowViewModel
                             {
                                 LitigationCaseOrderId = o.LitigationCaseOrderId,
@@ -1008,9 +1023,28 @@ public class RequestsController(
                                 OrderType = o.OrderType,
                                 DocumentStatus = od?.Status,
                                 FailureReason = od?.FailureReason,
-                                RefreshCount = od?.RefreshCount ?? 0
+                                RefreshCount = od?.RefreshCount ?? 0,
+                                PropertyMatches = orderMatches.Select(m => new LitigationPropertyMatchViewModel
+                                {
+                                    LitigationCaseOrderId = m.LitigationCaseOrderId,
+                                    OrderDate = m.OrderDate,
+                                    OrderType = m.OrderType,
+                                    PageNumber = m.PageNumber,
+                                    SourceLabel = m.SourceLabel,
+                                    AddressText = m.AddressText,
+                                    Strength = m.Strength,
+                                    MatchedPinCode = m.MatchedPinCode,
+                                    MatchedPlotNumbers = [..m.MatchedPlotNumbers],
+                                    MatchedLocalities = [..m.MatchedLocalities],
+                                    Excerpt = m.Excerpt,
+                                    IsCompanyPremises = m.IsCompanyPremises,
+                                    RocChargeId = m.RocChargeId,
+                                    RocChargeNumber = m.RocChargeNumber,
+                                    ChargeHolder = m.ChargeHolder
+                                }).ToList()
                             });
                         }
+                        card.PropertyMatches = card.Orders.SelectMany(o => o.PropertyMatches).ToList();
 
                         if (caseAiByCaseId.TryGetValue(c.LitigationCaseId, out var ca))
                         {
