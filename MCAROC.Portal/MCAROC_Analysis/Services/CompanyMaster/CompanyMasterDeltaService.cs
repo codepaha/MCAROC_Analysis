@@ -252,6 +252,9 @@ public partial class CompanyMasterDeltaService : ICompanyMasterDeltaService
         table.Columns.Add("Status", typeof(string));
         table.Columns.Add("SubCategory", typeof(string));
         table.Columns.Add("IndustrialClassification", typeof(string));
+        table.Columns.Add("NameNormalized", typeof(string));
+        table.Columns.Add("NameCore", typeof(string));
+        table.Columns.Add("EntityForm", typeof(string));
         return table;
     }
 
@@ -283,6 +286,12 @@ public partial class CompanyMasterDeltaService : ICompanyMasterDeltaService
         row["Status"] = (object?)r.Status ?? DBNull.Value;
         row["SubCategory"] = (object?)r.SubCategory ?? DBNull.Value;
         row["IndustrialClassification"] = (object?)r.IndustrialClassification ?? DBNull.Value;
+
+        // Issue #293: derived here, before staging, so promotion copies them with the row it came from.
+        var normalized = CompanyNameNormalizer.Normalize(r.Name);
+        row["NameNormalized"] = normalized.NameNormalized;
+        row["NameCore"] = normalized.NameCore;
+        row["EntityForm"] = normalized.EntityForm.ToString();
 
         table.Rows.Add(row);
     }
@@ -541,6 +550,11 @@ public partial class CompanyMasterDeltaService : ICompanyMasterDeltaService
               OR ISNULL(c.Status, '') <> ISNULL(s.Status, '')
               OR ISNULL(c.SubCategory, '') <> ISNULL(s.SubCategory, '')
               OR ISNULL(c.IndustrialClassification, '') <> ISNULL(s.IndustrialClassification, '')
+              -- Derived name columns (#293): also refreshes a row whose Name is unchanged but whose derived
+              -- columns are missing (not yet backfilled) or were computed by an older normalizer version.
+              OR ISNULL(c.NameNormalized, '') <> ISNULL(s.NameNormalized, '')
+              OR ISNULL(c.NameCore, '') <> ISNULL(s.NameCore, '')
+              OR ISNULL(c.EntityForm, '') <> ISNULL(s.EntityForm, '')
             );
 
             UPDATE c
@@ -559,7 +573,10 @@ public partial class CompanyMasterDeltaService : ICompanyMasterDeltaService
                 c.Country = s.Country,
                 c.Status = s.Status,
                 c.SubCategory = s.SubCategory,
-                c.IndustrialClassification = s.IndustrialClassification
+                c.IndustrialClassification = s.IndustrialClassification,
+                c.NameNormalized = s.NameNormalized,
+                c.NameCore = s.NameCore,
+                c.EntityForm = s.EntityForm
             FROM dbo.CompanyMasterRecords c
             INNER JOIN dbo.Staging_CompanyMasterRecords s
                 ON c.Identifier = s.Identifier AND c.RecordType = s.RecordType
@@ -584,12 +601,14 @@ public partial class CompanyMasterDeltaService : ICompanyMasterDeltaService
             INSERT INTO dbo.CompanyMasterRecords (
                 Identifier, RecordType, Name, RegistrationDate, Category, Class, ListingStatus,
                 AuthorizedCapital, PaidupCapital, Roc, Address, PinCode, State, District,
-                Country, Status, SubCategory, IndustrialClassification
+                Country, Status, SubCategory, IndustrialClassification,
+                NameNormalized, NameCore, EntityForm
             )
             SELECT
                 s.Identifier, s.RecordType, s.Name, s.RegistrationDate, s.Category, s.Class, s.ListingStatus,
                 s.AuthorizedCapital, s.PaidupCapital, s.Roc, s.Address, s.PinCode, s.State, s.District,
-                s.Country, s.Status, s.SubCategory, s.IndustrialClassification
+                s.Country, s.Status, s.SubCategory, s.IndustrialClassification,
+                s.NameNormalized, s.NameCore, s.EntityForm
             FROM dbo.Staging_CompanyMasterRecords s
             INNER JOIN @InsertedIds i
                 ON s.StagingId = i.StagingId;

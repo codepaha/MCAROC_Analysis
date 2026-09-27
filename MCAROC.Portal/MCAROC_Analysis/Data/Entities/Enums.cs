@@ -349,6 +349,20 @@ public enum CompanyMasterRecordType
     Foreign
 }
 
+/// <summary>The legal form a company's <b>name</b> declares through its suffix ("... PRIVATE LIMITED",
+/// "... LLP") — parsed by <c>CompanyNameNormalizer</c> (issue #293). Not the registry's own Class/Category:
+/// a name-only input has no registry row yet, and comparing the two is itself a resolver signal.</summary>
+public enum EntityForm
+{
+    Unknown,
+    Private,
+    Public,
+    OnePerson,
+    Llp,
+    Producer,
+    Foreign
+}
+
 public enum CompanyMasterSyncJobStatus
 {
     Pending,

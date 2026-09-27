@@ -19,12 +19,18 @@
 //     "<folder of company_master_data_*.csv parts>" "<llp_master_data.csv>" "<foreign_master_data.csv>" [--connection="..."]
 //
 // With no arguments, defaults to the paths the 2026-09-19 MCA extract was downloaded to.
+//
+// Backfill mode (issue #293) — fills NameNormalized/NameCore/EntityForm on the rows already in the table,
+// without re-importing. Run once after the AddCompanyMasterNameNormalization migration; add --all after a
+// CompanyNameNormalizer.Version change to recompute every row, not just the missing ones:
+//   dotnet run --project Tools/ImportCompanyMasterData -- --backfill-names [--all] [--connection="..."]
 
 using System.Data;
 using System.Globalization;
 using CsvHelper;
 using CsvHelper.Configuration;
 using MCAROC_Analysis.Data.Entities;
+using MCAROC_Analysis.Services.CompanyMaster;
 using Microsoft.Data.SqlClient;
 
 const int BatchSize = 100_000;
@@ -39,6 +45,18 @@ var foreignFile = positional.ElementAtOrDefault(2) ?? @"E:\Downloads\foreign_mas
 // or production database).
 var connectionString = args.FirstOrDefault(a => a.StartsWith("--connection=", StringComparison.Ordinal))?["--connection=".Length..]
     ?? @"Server=.\SQLEXPRESS;Database=MCAROC_Analysis;Trusted_Connection=True;TrustServerCertificate=True;";
+
+if (args.Contains("--backfill-names"))
+{
+    var onlyMissing = !args.Contains("--all");
+    Console.WriteLine($"Backfilling derived name columns ({(onlyMissing ? "rows missing them" : "every row")}, normalizer v{CompanyNameNormalizer.Version}).");
+    Console.WriteLine($"Target: {RedactedConnectionSummary(connectionString)}");
+    await using var backfillConnection = new SqlConnection(connectionString);
+    var result = await CompanyMasterNameBackfill.RunAsync(backfillConnection, onlyMissing,
+        progress: (scanned, updated) => Console.WriteLine($"  ...{scanned:N0} rows scanned, {updated:N0} updated"));
+    Console.WriteLine($"Done. {result.RowsScanned:N0} scanned, {result.RowsUpdated:N0} updated, {result.RowsStillMissing:N0} still missing derived columns.");
+    return result.RowsStillMissing == 0 ? 0 : 2;
+}
 
 if (!Directory.Exists(companyFolder))
 {
@@ -85,7 +103,12 @@ await using (var dropOldStaging = new SqlCommand(
 await using (var createStaging = new SqlCommand(
     "SELECT TOP (0) * INTO dbo.CompanyMasterRecords_Staging FROM dbo.CompanyMasterRecords; " +
     "ALTER TABLE dbo.CompanyMasterRecords_Staging ADD CONSTRAINT PK_CompanyMasterRecords_Staging PRIMARY KEY (Identifier); " +
-    "CREATE INDEX IX_CompanyMasterRecords_Staging_RecordType_Name ON dbo.CompanyMasterRecords_Staging (RecordType, Name);",
+    "CREATE INDEX IX_CompanyMasterRecords_Staging_RecordType_Name ON dbo.CompanyMasterRecords_Staging (RecordType, Name); " +
+    // Identity-resolution lookup indexes (issue #293) — SELECT INTO copies columns, not indexes, so every
+    // index on the live table has to be recreated here and renamed in the swap below, or a re-import would
+    // silently drop it.
+    "CREATE INDEX IX_CompanyMasterRecords_Staging_RecordType_NameNormalized ON dbo.CompanyMasterRecords_Staging (RecordType, NameNormalized); " +
+    "CREATE INDEX IX_CompanyMasterRecords_Staging_RecordType_NameCore ON dbo.CompanyMasterRecords_Staging (RecordType, NameCore);",
     connection))
     await createStaging.ExecuteNonQueryAsync();
 Console.WriteLine("Created staging table — loading into it (live CompanyMasterRecords is untouched until the load fully succeeds).");
@@ -121,19 +144,25 @@ await using (var swap = new SqlCommand(
     DECLARE @rc int;
 
     EXEC @rc = sp_rename 'dbo.CompanyMasterRecords', 'CompanyMasterRecords_Old';
-    IF @rc <> 0 BEGIN ROLLBACK TRANSACTION; THROW 50000, 'Swap step 1/5 failed: rename live table to _Old.', 1; END
+    IF @rc <> 0 BEGIN ROLLBACK TRANSACTION; THROW 50000, 'Swap step 1/7 failed: rename live table to _Old.', 1; END
 
     EXEC @rc = sp_rename 'dbo.PK_CompanyMasterRecords', 'PK_CompanyMasterRecords_Old', 'OBJECT';
-    IF @rc <> 0 BEGIN ROLLBACK TRANSACTION; THROW 50000, 'Swap step 2/5 failed: rename old table''s PK out of the way.', 1; END
+    IF @rc <> 0 BEGIN ROLLBACK TRANSACTION; THROW 50000, 'Swap step 2/7 failed: rename old table''s PK out of the way.', 1; END
 
     EXEC @rc = sp_rename 'dbo.CompanyMasterRecords_Staging', 'CompanyMasterRecords';
-    IF @rc <> 0 BEGIN ROLLBACK TRANSACTION; THROW 50000, 'Swap step 3/5 failed: rename staging table live.', 1; END
+    IF @rc <> 0 BEGIN ROLLBACK TRANSACTION; THROW 50000, 'Swap step 3/7 failed: rename staging table live.', 1; END
 
     EXEC @rc = sp_rename 'dbo.PK_CompanyMasterRecords_Staging', 'PK_CompanyMasterRecords', 'OBJECT';
-    IF @rc <> 0 BEGIN ROLLBACK TRANSACTION; THROW 50000, 'Swap step 4/5 failed: rename new table''s PK to canonical name.', 1; END
+    IF @rc <> 0 BEGIN ROLLBACK TRANSACTION; THROW 50000, 'Swap step 4/7 failed: rename new table''s PK to canonical name.', 1; END
 
     EXEC @rc = sp_rename 'dbo.CompanyMasterRecords.IX_CompanyMasterRecords_Staging_RecordType_Name', 'IX_CompanyMasterRecords_RecordType_Name', 'INDEX';
-    IF @rc <> 0 BEGIN ROLLBACK TRANSACTION; THROW 50000, 'Swap step 5/5 failed: rename new table''s index to canonical name.', 1; END
+    IF @rc <> 0 BEGIN ROLLBACK TRANSACTION; THROW 50000, 'Swap step 5/7 failed: rename new table''s index to canonical name.', 1; END
+
+    EXEC @rc = sp_rename 'dbo.CompanyMasterRecords.IX_CompanyMasterRecords_Staging_RecordType_NameNormalized', 'IX_CompanyMasterRecords_RecordType_NameNormalized', 'INDEX';
+    IF @rc <> 0 BEGIN ROLLBACK TRANSACTION; THROW 50000, 'Swap step 6/7 failed: rename new table''s NameNormalized index to canonical name.', 1; END
+
+    EXEC @rc = sp_rename 'dbo.CompanyMasterRecords.IX_CompanyMasterRecords_Staging_RecordType_NameCore', 'IX_CompanyMasterRecords_RecordType_NameCore', 'INDEX';
+    IF @rc <> 0 BEGIN ROLLBACK TRANSACTION; THROW 50000, 'Swap step 7/7 failed: rename new table''s NameCore index to canonical name.', 1; END
 
     COMMIT;
     """,
@@ -315,6 +344,9 @@ static DataTable NewTable()
     table.Columns.Add("Status", typeof(string));
     table.Columns.Add("SubCategory", typeof(string));
     table.Columns.Add("IndustrialClassification", typeof(string));
+    table.Columns.Add("NameNormalized", typeof(string));
+    table.Columns.Add("NameCore", typeof(string));
+    table.Columns.Add("EntityForm", typeof(string));
     return table;
 }
 
@@ -339,6 +371,10 @@ static void AddRow(DataTable table, CompanyMasterRecord record)
     row["Status"] = (object?)record.Status ?? DBNull.Value;
     row["SubCategory"] = (object?)record.SubCategory ?? DBNull.Value;
     row["IndustrialClassification"] = (object?)record.IndustrialClassification ?? DBNull.Value;
+    var normalized = CompanyNameNormalizer.Normalize(record.Name); // issue #293 — every loaded row gets them
+    row["NameNormalized"] = normalized.NameNormalized;
+    row["NameCore"] = normalized.NameCore;
+    row["EntityForm"] = normalized.EntityForm.ToString();
     table.Rows.Add(row);
 }
 
