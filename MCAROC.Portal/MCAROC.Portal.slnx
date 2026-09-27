@@ -1,5 +1,7 @@
 <Solution>
   <Folder Name="/Tools/">
+    <Project Path="Tools/EvaluateNameResolution/EvaluateNameResolution.csproj" />
+    <Project Path="Tools/ImportCompanyMasterData/ImportCompanyMasterData.csproj" />
     <Project Path="Tools/IngestionValidationRunner/IngestionValidationRunner.csproj" />
     <Project Path="Tools/LitigationCorpusDedupeScanner/LitigationCorpusDedupeScanner.csproj" />
   </Folder>

@@ -63,4 +63,9 @@ public sealed class StagingCompanyMasterRecord
     public string? SubCategory { get; set; }
 
     public string? IndustrialClassification { get; set; }
+
+    // Derived name columns (issue #293), computed from Name before the bulk copy and promoted with the row.
+    public string? NameNormalized { get; set; }
+    public string? NameCore { get; set; }
+    public EntityForm? EntityForm { get; set; }
 }

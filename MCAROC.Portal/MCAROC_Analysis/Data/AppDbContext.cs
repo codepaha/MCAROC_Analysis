@@ -1134,6 +1134,14 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             // filtered to RecordType first — Foreign records are looked up here but never surfaced to
             // AutoFetch, since neither its identifier regex nor EntityType accepts an FCRN.
             e.HasIndex(x => new { x.RecordType, x.Name });
+
+            // Identity resolution (issue #293): exact lookups on the normalized and suffix-stripped name.
+            // The import tool rebuilds this table from a copy, so it recreates these indexes by these names.
+            e.Property(x => x.NameNormalized).HasMaxLength(450);
+            e.Property(x => x.NameCore).HasMaxLength(450);
+            e.Property(x => x.EntityForm).HasConversion<string>().HasMaxLength(20);
+            e.HasIndex(x => new { x.RecordType, x.NameNormalized });
+            e.HasIndex(x => new { x.RecordType, x.NameCore });
         });
 
         modelBuilder.Entity<CompanyMasterSyncJob>(e =>
@@ -1185,6 +1193,9 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             e.Property(x => x.Status).HasMaxLength(30);
             e.Property(x => x.SubCategory).HasMaxLength(80);
             e.Property(x => x.IndustrialClassification).HasMaxLength(200);
+            e.Property(x => x.NameNormalized).HasMaxLength(450);
+            e.Property(x => x.NameCore).HasMaxLength(450);
+            e.Property(x => x.EntityForm).HasConversion<string>().HasMaxLength(20);
 
             e.HasIndex(x => new { x.SyncRunId, x.FencingToken, x.ValidationState, x.IsPromoted });
         });

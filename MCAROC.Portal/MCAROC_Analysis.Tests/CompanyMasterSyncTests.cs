@@ -892,6 +892,11 @@ public class CompanyMasterSyncTests : IAsyncLifetime
             var liveRecord = await db.CompanyMasterRecords.FindAsync(cin);
             Assert.NotNull(liveRecord);
             Assert.Equal("Worker Test Company Ltd", liveRecord.Name);
+
+            // Issue #293: a row promoted by the sync carries its derived name columns with it.
+            Assert.Equal("WORKER TEST COMPANY LIMITED", liveRecord.NameNormalized);
+            Assert.Equal("WORKER TEST COMPANY", liveRecord.NameCore);
+            Assert.Equal(EntityForm.Public, liveRecord.EntityForm);
         }
         finally
         {

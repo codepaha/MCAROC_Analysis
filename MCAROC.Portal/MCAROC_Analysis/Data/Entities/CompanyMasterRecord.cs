@@ -52,4 +52,17 @@ public sealed class CompanyMasterRecord
     public string? SubCategory { get; set; }
 
     public string? IndustrialClassification { get; set; }
+
+    // Derived from Name by CompanyNameNormalizer (issue #293) so a name lookup is an index seek rather than
+    // a scan of ~3.7M rows. Written by every path that writes Name — the bulk import tool, the MCA sync
+    // promotion and the one-off backfill — never by hand. Null only on a row that predates the backfill.
+
+    /// <summary>Case/punctuation-folded name with abbreviations expanded ("ABC Pvt. Ltd." → "ABC PRIVATE LIMITED").</summary>
+    public string? NameNormalized { get; set; }
+
+    /// <summary><see cref="NameNormalized"/> without its legal-form suffix ("ABC").</summary>
+    public string? NameCore { get; set; }
+
+    /// <summary>The legal form the name's suffix declares.</summary>
+    public EntityForm? EntityForm { get; set; }
 }
