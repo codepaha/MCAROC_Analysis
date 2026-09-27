@@ -44,6 +44,12 @@ public sealed class PipelineOptions
     public int TickSeconds { get; set; } = 30;
     public int MaxRunsPerTick { get; set; } = 20;
 
+    /// <summary>Plan §6.2: how many coordinator-driven retries a stage gets (each stage's own internal
+    /// retries — a job's download attempts, an analysis run's FailOrRetry — already happened before the
+    /// stage ever reaches the coordinator as terminal-Failed; this caps retries of that terminal outcome).
+    /// The 4th exhausted attempt becomes <c>NeedsAttention(RETRIES_EXHAUSTED)</c> instead of a 5th try.</summary>
+    public int MaxCoordinatorAttempts { get; set; } = 4;
+
     /// <summary>Which optional enrichment stages a run expects; snapshotted into <c>PipelineRun.PolicyJson</c>
     /// at creation so a later config change doesn't silently alter a run already in flight.</summary>
     public PipelinePolicy Policy { get; set; } = new();
@@ -56,6 +62,7 @@ public sealed class PipelineOptions
     public bool EnforcesLitigationSearch() => Enabled && Mode == PipelineMode.Enforce && Enforce.Litigation;
     public bool EnforcesLitigationAnalysis() => Enabled && Mode == PipelineMode.Enforce && Enforce.LitigationAnalysis;
     public bool EnforcesDossierPreRender() => Enabled && Mode == PipelineMode.Enforce && Enforce.Dossier;
+    public bool EnforcesRetries() => Enabled && Mode == PipelineMode.Enforce && Enforce.Retries;
 }
 
 public enum PipelineMode
@@ -80,6 +87,12 @@ public sealed class PipelineEnforceOptions
     /// cache path <c>DossierController.Download</c> uses — purely a latency optimisation for the first
     /// download; a render failure here never blocks the on-demand render the controller still falls back to.</summary>
     public bool Dossier { get; set; }
+
+    /// <summary>Plan §6.2/rollout order (§7: "...→ C3 → D with Enforce:Retries"): let the coordinator retry a
+    /// <see cref="PipelineFailureClass.Transient"/> stage failure on its own, with backoff, up to
+    /// <see cref="PipelineOptions.MaxCoordinatorAttempts"/>. Off by default — a reviewer's manual Retry stays
+    /// the only path until this is turned on.</summary>
+    public bool Retries { get; set; }
 }
 
 public sealed class AutoUnlockOptions

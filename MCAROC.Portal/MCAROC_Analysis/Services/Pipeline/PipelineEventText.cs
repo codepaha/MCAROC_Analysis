@@ -12,9 +12,15 @@ public static class PipelineEventActions
     /// <summary>A person selected the company on the ambiguity queue (#295).</summary>
     public const string IdentitySelected = "IdentitySelected";
     public const string DossierPreRendered = "DossierPreRendered";
+    /// <summary>The coordinator retried a Transient-classified failure on its own (#292, plan §6.2) —
+    /// distinct from AutoStarted/AutoStartDeferred, which are about a stage that had never run at all.</summary>
+    public const string AutoRetried = "AutoRetried";
+    public const string AutoRetryDeferred = "AutoRetryDeferred";
 
     /// <summary>Stage reason code while an automatically started job hasn't been observed yet.</summary>
     public const string AutoStartedCode = "AUTO_STARTED";
+    /// <summary>Stage reason code while an automatically retried job hasn't been observed yet.</summary>
+    public const string AutoRetriedCode = "AUTO_RETRIED";
 
     public static string Observed(PipelineStageStateKind state) => ObservedPrefix + state;
 }
@@ -84,7 +90,10 @@ public static class PipelineEventText
         ["AWAITING_ORDER_PROCESSING"] = "awaiting order download/chunking",
         ["LITIGATION_ANALYSIS_NOT_ELIGIBLE"] = "the request can't be analysed automatically",
         ["LITIGATION_ANALYSIS_ALREADY_RUN"] = "this report was already analysed",
-        ["LITIGATION_ANALYSIS_IN_FLIGHT"] = "an analysis for this request is already running"
+        ["LITIGATION_ANALYSIS_IN_FLIGHT"] = "an analysis for this request is already running",
+        ["AUTO_RETRIED"] = "retried automatically",
+        ["RETRIES_EXHAUSTED"] = "automatic retries exhausted; a person needs to retry this",
+        ["FETCH_RETRY_NOT_FOUND"] = "no fetch job exists to retry"
     };
 
     public static string StageLabel(PipelineStage stage) => StageLabels.GetValueOrDefault(stage, stage.ToString());
@@ -105,6 +114,10 @@ public static class PipelineEventText
             text = $"{stage}: company selected by {e.Actor}";
         else if (e.Action == PipelineEventActions.DossierPreRendered)
             text = $"{stage}: pre-rendered automatically";
+        else if (e.Action == PipelineEventActions.AutoRetried)
+            text = $"{stage} retried automatically";
+        else if (e.Action == PipelineEventActions.AutoRetryDeferred)
+            text = $"{stage}: automatic retry deferred";
         else if (e.Action.StartsWith(PipelineEventActions.ObservedPrefix, StringComparison.Ordinal)
                  && Enum.TryParse<PipelineStageStateKind>(e.Action[PipelineEventActions.ObservedPrefix.Length..], out var state))
             text = $"{stage}: {StateLabels.GetValueOrDefault(state, state.ToString())}";
