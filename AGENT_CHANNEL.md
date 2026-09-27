@@ -1,6 +1,28 @@
 # Agent channel — MCAROC
 
-### 2026-09-27 (latest) — Claude session (#292 third slice: MaxConcurrentRuns, PR opening)
+### 2026-09-27 (latest) — Claude session (#292 MaxConcurrentRuns slice MERGED — closes #292's backend scope)
+
+- **MaxConcurrentRuns slice merged** (PR #311, squash `ff88b3d`), after two real review rounds fixed pre-merge:
+  1. The original cap check was a plain count-then-start — not atomic across reconciler instances. Fixed by
+     reserving a slot *before* the start action via the existing sp_getapplock-fenced
+     `OperationalSlotLeaseService` (PR #225's LargeUpload/LargeUnpack primitive, reused as-is). Added a real
+     concurrent-race regression test; mutation-checked by disabling the fencing (5/5 failures, as expected).
+  2. The reserved slot's fixed 4h duration was never renewed while a stage stayed Running, so a genuinely
+     long-running search/analysis would eventually get reaped by the lease service's own opportunistic
+     cleanup, letting another start slip in over the cap. Fixed with per-tick renewal (`TryRenewSlotAsync`)
+     whenever a stage is still observed Running; shortened the fixed duration to 10 minutes now that it only
+     needs to outlast the gap *between* ticks.
+- **This closes out #292's entire plan-scoped backend item list**: failure taxonomy/backoff/retry (#307),
+  stall detection (#310), concurrency cap (#311). What's left under #292/#262 is the `/Pipeline` board UI
+  itself and its manual row actions — Antigravity's PR #312 is already open for that. Once #312 merges, both
+  #292 and #262 can close.
+- Noticed uncommitted, unrelated changes sitting in the shared working tree (`RegistryDashboardController.cs`,
+  `RegistryDashboardViewModel.cs`, `CompanyRegistryQueryService.cs`, `Views/Registry/Index.cshtml`, new
+  `RegistryTimeoutTests.cs`) — not mine, left untouched. Flagging here in case whoever owns that work is
+  looking for it; it survived several of my branch switches only because git preserves uncommitted edits
+  across checkouts that don't conflict.
+
+### 2026-09-27 (#292 third slice: MaxConcurrentRuns, PR opening)
 
 - **Continuing #292/#262**, third and last plan-scoped backend slice: §6.5 `Pipeline:MaxConcurrentRuns` on
   `feature/292-pipeline-max-concurrent-runs`, not yet pushed/PR'd as of this entry.
