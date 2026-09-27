@@ -3,6 +3,7 @@ using System.Linq.Expressions;
 using System.Reflection;
 using System.Text.Json;
 using MCAROC_Analysis.Data.Entities;
+using MCAROC_Analysis.Services.Analysis;
 using MCAROC_Analysis.Services.LitigationData;
 
 namespace MCAROC_Analysis.Models;
@@ -256,6 +257,7 @@ public sealed class LitigationCaseCardViewModel
     public List<string> RespondentAdvocates { get; set; } = [];
 
     public List<LitigationOrderRowViewModel> Orders { get; set; } = [];
+    public List<LitigationPropertyMatchViewModel> PropertyMatches { get; set; } = [];
     public LitigationCaseAiAnalysisViewModel? Analysis { get; set; }
     public bool IsAnalysisStaleComparedToCase { get; set; }
 
@@ -273,6 +275,26 @@ public sealed class LitigationOrderRowViewModel
     public bool IsExpired => DocumentStatus == LitigationOrderDocumentStatus.Expired;
     public string? FailureReason { get; set; }
     public int RefreshCount { get; set; }
+    public List<LitigationPropertyMatchViewModel> PropertyMatches { get; set; } = [];
+}
+
+public sealed class LitigationPropertyMatchViewModel
+{
+    public long LitigationCaseOrderId { get; set; }
+    public string? OrderDate { get; set; }
+    public string? OrderType { get; set; }
+    public int PageNumber { get; set; }
+    public string SourceLabel { get; set; } = string.Empty;
+    public string AddressText { get; set; } = string.Empty;
+    public AddressMatchStrength Strength { get; set; }
+    public string? MatchedPinCode { get; set; }
+    public List<string> MatchedPlotNumbers { get; set; } = [];
+    public List<string> MatchedLocalities { get; set; } = [];
+    public string Excerpt { get; set; } = string.Empty;
+    public bool IsCompanyPremises { get; set; }
+    public long? RocChargeId { get; set; }
+    public string? RocChargeNumber { get; set; }
+    public string? ChargeHolder { get; set; }
 }
 
 public sealed class LitigationCaseAiAnalysisViewModel

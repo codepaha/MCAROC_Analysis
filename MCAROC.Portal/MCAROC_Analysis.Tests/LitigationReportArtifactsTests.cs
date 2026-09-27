@@ -66,7 +66,77 @@ public sealed class LitigationReportArtifactsTests
         Assert.Contains("BENCH", text);
     }
 
-    private static StandaloneLitigationReport ReportWithSingleCase(string cspId)
+    [Fact]
+    public void RenderCsv_includes_contested_property_columns_and_values()
+    {
+        var match = new StandaloneReportPropertyMatchDto(
+            LitigationCaseOrderId: 101,
+            OrderDate: "09-01-2025",
+            OrderType: "Judgment",
+            PageNumber: 3,
+            SourceLabel: "Registered office",
+            AddressText: "Plot 42, Kharavela Nagar, Bhubaneswar 751001",
+            Strength: MCAROC_Analysis.Services.Analysis.AddressMatchStrength.Strong,
+            MatchedPinCode: "751001",
+            MatchedPlotNumbers: ["42"],
+            MatchedLocalities: ["Kharavela Nagar"],
+            Excerpt: "office situated at Plot 42, Kharavela Nagar, Bhubaneswar 751001",
+            IsCompanyPremises: true);
+
+        var report = ReportWithSingleCase("csp-42", [match]);
+        var csv = Encoding.UTF8.GetString(LitigationReportArtifacts.RenderCsv(report));
+        using var reader = new StringReader(csv);
+        using var csvReader = new CsvHelper.CsvReader(reader, System.Globalization.CultureInfo.InvariantCulture);
+        csvReader.Read();
+        csvReader.ReadHeader();
+        var headers = csvReader.HeaderRecord!;
+
+        Assert.Contains("Contested Property Match Count", headers);
+        Assert.Contains("Contested Property Details", headers);
+
+        csvReader.Read();
+        Assert.Equal("1", csvReader.GetField("Contested Property Match Count"));
+        var details = csvReader.GetField("Contested Property Details")!;
+        Assert.Contains("Plot 42, Kharavela Nagar", details);
+        Assert.Contains("[Registered office]", details);
+    }
+
+    [SkippableFact]
+    public void RenderPdf_includes_contested_property_panel_and_order_annotation()
+    {
+        Skip.IfNot(OperatingSystem.IsWindows(),
+            "PdfPig text extraction is unreliable off Windows fonts; covered by the windows-tests CI job.");
+
+        var match = new StandaloneReportPropertyMatchDto(
+            LitigationCaseOrderId: 101,
+            OrderDate: "09-01-2025",
+            OrderType: "Judgment",
+            PageNumber: 2,
+            SourceLabel: "Charge CHG-99",
+            AddressText: "Sy No 115, Financial District, Nanakramguda, Hyderabad",
+            Strength: MCAROC_Analysis.Services.Analysis.AddressMatchStrength.Strong,
+            MatchedPinCode: null,
+            MatchedPlotNumbers: ["115"],
+            MatchedLocalities: ["Financial District", "Nanakramguda"],
+            Excerpt: "schedule property at Sy No 115, Financial District, Nanakramguda",
+            IsCompanyPremises: false,
+            RocChargeId: 99,
+            RocChargeNumber: "CHG-99",
+            ChargeHolder: "State Bank of India");
+
+        var report = ReportWithSingleCase("csp-42", [match]);
+        var pdf = LitigationReportArtifacts.RenderPdf(report);
+        using var doc = PdfDocument.Open(new MemoryStream(pdf));
+        var text = string.Concat(doc.GetPages().Select(p => p.Text));
+
+        Assert.Contains("PROPERTY ADDRESS MENTIONS", text);
+        Assert.Contains("TEXT OVERLAP", text);
+        Assert.Contains("does not legally establish", text);
+        Assert.Contains("Charge CHG-99", text);
+        Assert.Contains("Financial District", text);
+    }
+
+    private static StandaloneLitigationReport ReportWithSingleCase(string cspId, IReadOnlyList<StandaloneReportPropertyMatchDto>? propertyMatches = null)
     {
         var orders = new List<StandaloneReportOrderDto>
         {
@@ -80,7 +150,8 @@ public sealed class LitigationReportArtifactsTests
                 RetainedUntilUtc: DateTime.Parse("2025-01-16T12:00:00Z"),
                 AvailabilityDisclosure: "Available via portal (retained until 16-Jan-2025); text extracted",
                 CsvStatus: "Downloaded",
-                ExtractionLabel: "TextExtracted")
+                ExtractionLabel: "TextExtracted",
+                PropertyMatches: propertyMatches)
         };
 
         var caseDto = new StandaloneReportCaseDto(
@@ -110,7 +181,8 @@ public sealed class LitigationReportArtifactsTests
             RespondentsJson: "[\"Respondent One\"]",
             PetitionerAdvocatesJson: "[\"Advocate One\"]",
             RespondentAdvocatesJson: null,
-            Orders: orders);
+            Orders: orders,
+            PropertyMatches: propertyMatches);
 
         var grid = new MCAROC_Analysis.Models.LitigationCourtSummaryGrid();
         grid.Rows.Add(new MCAROC_Analysis.Models.LitigationCourtSummaryRow

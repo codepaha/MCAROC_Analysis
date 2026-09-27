@@ -110,6 +110,19 @@ public class LitigationReportAssembler(
 
         var docByOrderId = docs.ToDictionary(d => d.LitigationCaseOrderId);
 
+        var companyProfile = await db.CompanyProfiles.AsNoTracking().FirstOrDefaultAsync(p => p.RequestId == requestId, ct);
+        var epfoEsts = await db.EpfoEstablishments.AsNoTracking().Where(e => e.RequestId == requestId).ToListAsync(ct);
+        var charges = await db.RocCharges.AsNoTracking()
+            .Where(c => c.RequestId == requestId && c.SatisfactionDate == null)
+            .Include(c => c.Events)
+            .ToListAsync(ct);
+
+        var addressPool = LitigationOrderAddressMatcher.BuildAddressPool(companyProfile, epfoEsts, charges);
+        var propertyMatches = LitigationOrderAddressMatcher.MatchCases(addressPool, cases, docByOrderId);
+        var propertyMatchesByOrderId = propertyMatches
+            .GroupBy(m => m.LitigationCaseOrderId)
+            .ToDictionary(g => g.Key, g => g.ToList());
+
         // AI Analysis (stable LitigationCaseId join)
         var latestAiRun = await db.LitigationAiAnalysisRuns
             .AsNoTracking()
@@ -189,6 +202,24 @@ public class LitigationReportAssembler(
                 {
                     docByOrderId.TryGetValue(o.LitigationCaseOrderId, out var doc);
                     var (bucket, disclosure, csvStatus, extractionLabel) = LitigationOrderAvailabilityResolver.Resolve(doc, asOfUtc);
+                    var orderMatches = propertyMatchesByOrderId.TryGetValue(o.LitigationCaseOrderId, out var omList) ? omList : [];
+                    var orderMatchDtos = orderMatches.Select(m => new StandaloneReportPropertyMatchDto(
+                        m.LitigationCaseOrderId,
+                        m.OrderDate,
+                        m.OrderType,
+                        m.PageNumber,
+                        m.SourceLabel,
+                        m.AddressText,
+                        m.Strength,
+                        m.MatchedPinCode,
+                        m.MatchedPlotNumbers,
+                        m.MatchedLocalities,
+                        m.Excerpt,
+                        m.IsCompanyPremises,
+                        m.RocChargeId,
+                        m.RocChargeNumber,
+                        m.ChargeHolder)).ToList();
+
                     return new StandaloneReportOrderDto(
                         o.LitigationCaseOrderId,
                         o.OrderDate,
@@ -199,10 +230,12 @@ public class LitigationReportAssembler(
                         doc?.RetainedUntilUtc > DateTime.MinValue ? doc.RetainedUntilUtc : null,
                         disclosure,
                         csvStatus,
-                        extractionLabel);
+                        extractionLabel,
+                        orderMatchDtos);
                 })
                 .ToList();
 
+            var casePropertyMatches = sortedOrders.SelectMany(o => o.PropertyMatches ?? []).ToList();
             reportCases.Add(new StandaloneReportCaseDto(
                 c.LitigationCaseId,
                 c.ProviderCaseId,
@@ -230,7 +263,8 @@ public class LitigationReportAssembler(
                 c.RespondentsJson,
                 c.PetitionerAdvocatesJson,
                 c.RespondentAdvocatesJson,
-                sortedOrders));
+                sortedOrders,
+                casePropertyMatches));
         }
 
         // Build Court Summary Grid
