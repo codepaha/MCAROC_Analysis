@@ -112,7 +112,7 @@ public sealed class LitigationReuseService(AppDbContext db, IWebHostEnvironment 
 
         await tx.CommitAsync(ct);
         logger.LogInformation(
-            "Litigation report reused: request {RequestId} copied snapshot {SourceSnapshotId} from request {SourceRequestId} (retrieved {RetrievedUtc:u}) into new snapshot {NewSnapshotId}.",
+            "Litigation report reused: request {RequestId} copied snapshot {SourceSnapshotId} from request {SourceRequestId} (retrieved {RetrievedUtc}) into new snapshot {NewSnapshotId}.",
             requestId, sourceSnapshotId, source.RequestId, source.RetrievedUtc, snapshot.LitigationReportSnapshotId);
         return new LitigationReuseResult(true, job.LitigationSearchJobId, snapshot.LitigationReportSnapshotId, source.RequestId, source.RetrievedUtc);
     }

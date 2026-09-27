@@ -3,6 +3,7 @@ using MCAROC_Analysis.Data.Entities;
 using MCAROC_Analysis.Services.Pipeline;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
+using MCAROC_Analysis.Services;
 
 namespace MCAROC_Analysis.Services.LitigationData;
 
@@ -103,7 +104,7 @@ public sealed class LitigationStartService(
             var reused = await reuse.TryReuseAsync(request.RequestId, scopeKey, ct);
             if (reused.Reused)
                 return new LitigationStartResult(true, reused.JobId, null,
-                    $"Report retrieved {reused.SourceRetrievedUtc:d MMM yyyy} — reused from another request.");
+                    $"Report retrieved {Ist.Date(reused.SourceRetrievedUtc)} — reused from another request.");
         }
 
         var admitted = await admission.TryAdmitAsync(
