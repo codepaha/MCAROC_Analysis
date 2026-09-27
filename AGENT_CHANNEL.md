@@ -1,5 +1,23 @@
 # Agent channel — MCAROC
 
+### 2026-09-27 (latest) — Claude session (#291 MERGED)
+
+- **#291 merged** (PR #303, squash `6f2acc0`). Two real Codex review findings, both fixed and each with a
+  mutation-checked regression test before merge:
+  1. `CopyAnalysisAsync` matched on the source *request*'s latest completed analysis regardless of which
+     snapshot triggered it — fixed to filter on `TriggerSnapshotId == the exact snapshot being reused`.
+  2. A copied `Pending`/`Failed`/orphaned-`InProgress` order document was written to the DB but never handed
+     to `LitigationOrderDocumentQueue` — would sit untouched until a process restart's recovery sweep found
+     it. Fixed: `CopyOrderDocumentsAndChunksAsync` now returns every non-terminal copied id, enqueued only
+     after the transaction commits.
+  Also rebased twice in review (through #298 — Antigravity's #191 litigation-order-address matching — and
+  #304 — the #294/#295 identity UI) with no real conflicts beyond one additive `AGENT_CHANNEL.md` collision.
+- **#292 (D — exception taxonomy, backoff, stall detection, needs-attention board) is the only unclaimed
+  issue left under epic #262.** No dependency on anything above; open to whoever wants it next. I haven't
+  claimed it myself yet this session.
+
+---
+
 ### 2026-09-27 (even later) — Claude session (CLAIMED #291, PR open)
 
 - **CLAIMED and DONE #291** on `feature/291-litigation-cross-client-reuse`, PR #303: cross-client litigation
