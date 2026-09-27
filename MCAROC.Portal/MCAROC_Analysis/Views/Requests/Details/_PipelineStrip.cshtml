@@ -49,6 +49,14 @@
                     name.textContent = st.stage + ': ';
                     line.appendChild(name);
                     line.appendChild(document.createTextNode((st.reasonCode || '') + (st.reasonDetail ? ' — ' + st.reasonDetail : '')));
+                    if (st.stage === 'Resolve') {
+                        var resolveLink = document.createElement('a');
+                        resolveLink.href = '/Pipeline/AmbiguityQueue?requestId=@Model.Request.RequestId';
+                        resolveLink.className = 'btn btn-sm btn-outline-danger ms-2 py-0 px-1';
+                        resolveLink.style.fontSize = '12px';
+                        resolveLink.textContent = 'Resolve in Ambiguity Queue';
+                        line.appendChild(resolveLink);
+                    }
                     attention.appendChild(line);
                 }
             });

@@ -1,6 +1,10 @@
+using System.Text.Json;
 using MCAROC_Analysis.Data;
 using MCAROC_Analysis.Data.Entities;
 using MCAROC_Analysis.Models;
+using MCAROC_Analysis.Services.Audit;
+using MCAROC_Analysis.Services.AutoFetch;
+using MCAROC_Analysis.Services.CompanyMaster;
 using MCAROC_Analysis.Services.Pipeline;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -9,9 +13,14 @@ using Microsoft.Extensions.Options;
 
 namespace MCAROC_Analysis.Controllers;
 
-/// <summary>Read-only views of the pipeline coordinator (docs/pipeline-automation-plan.md §3.5). No action
-/// here changes any state.</summary>
-public class PipelineController(AppDbContext db, IOptionsMonitor<PipelineOptions> options) : Controller
+/// <summary>Pipeline coordinator board and ambiguity queue (docs/pipeline-automation-plan.md §3.5, §5A.3).</summary>
+public class PipelineController(
+    AppDbContext db,
+    IOptionsMonitor<PipelineOptions> options,
+    IdentitySelectionService? identitySelection = null,
+    AutoFetchJobService? autoFetchJobs = null,
+    AutoFetchQueue? autoFetchQueue = null,
+    IOptions<ReferenceToolOptions>? referenceToolOptions = null) : Controller
 {
     private const int TimelineLimit = 200;
     private const int MaxUnlockAlertCompanies = 200;
@@ -113,6 +122,15 @@ public class PipelineController(AppDbContext db, IOptionsMonitor<PipelineOptions
         var counts = await db.PipelineRuns.AsNoTracking().GroupBy(r => r.Outcome)
             .Select(g => new { g.Key, Count = g.Count() }).ToDictionaryAsync(x => x.Key, x => x.Count, ct);
 
+        var ambiguityCount = await db.PipelineStageStates.AsNoTracking()
+            .Where(s => s.Stage == PipelineStage.Resolve && s.State == PipelineStageStateKind.NeedsAttention)
+            .Join(db.PipelineRuns.AsNoTracking().Where(r => LiveOutcomes.Contains(r.Outcome)),
+                  s => s.PipelineRunId,
+                  r => r.PipelineRunId,
+                  (s, r) => s.PipelineRunId)
+            .Distinct()
+            .CountAsync(ct);
+
         return View(new PipelineBoardViewModel
         {
             CoordinatorEnabled = options.CurrentValue.Enabled,
@@ -121,6 +139,7 @@ public class PipelineController(AppDbContext db, IOptionsMonitor<PipelineOptions
             StuckMinutes = stuckMinutes,
             ReasonCode = reasonCode,
             Counts = counts,
+            AmbiguityCount = ambiguityCount,
             Rows = runs.Select(r =>
             {
                 var s = stages.GetValueOrDefault(r.PipelineRunId, []);
@@ -133,6 +152,231 @@ public class PipelineController(AppDbContext db, IOptionsMonitor<PipelineOptions
                 };
             }).ToList()
         });
+    }
+
+    /// <summary>Ambiguity queue board (issue #295, plan §5A.3): requests whose Resolve stage needs
+    /// attention, showing ranked candidates with disambiguators and "Select this CIN" actions.</summary>
+    [HttpGet("/Pipeline/AmbiguityQueue")]
+    [Authorize(AuthenticationSchemes = "InternalReviewer")]
+    public async Task<IActionResult> AmbiguityQueue([FromQuery] long? requestId, CancellationToken ct)
+    {
+        var query = db.PipelineStageStates.AsNoTracking()
+            .Where(s => s.Stage == PipelineStage.Resolve && s.State == PipelineStageStateKind.NeedsAttention)
+            .Join(db.PipelineRuns.AsNoTracking().Where(r => LiveOutcomes.Contains(r.Outcome)),
+                  s => s.PipelineRunId,
+                  r => r.PipelineRunId,
+                  (s, r) => new { StageState = s, Run = r });
+
+        if (requestId is long targetId)
+            query = query.Where(x => x.Run.RequestId == targetId);
+
+        var stageRows = await query
+            .OrderByDescending(x => x.StageState.UpdatedUtc)
+            .Take(100)
+            .Select(x => new
+            {
+                x.Run.RequestId,
+                x.Run.Request!.RequestNumber,
+                ClientName = x.Run.Request.Client != null ? x.Run.Request.Client.ClientName : null,
+                x.Run.Request.CompanyName,
+                CurrentCin = x.Run.Request.Cin ?? x.Run.Request.Llpin,
+                x.StageState.ReasonCode,
+                x.StageState.ReasonDetail,
+                x.StageState.SourceRef,
+                x.StageState.UpdatedUtc
+            })
+            .ToListAsync(ct);
+
+        var distinctRequests = stageRows
+            .GroupBy(x => x.RequestId)
+            .Select(g => g.First())
+            .ToList();
+
+        var requestIds = distinctRequests.Select(x => x.RequestId).ToList();
+
+        var sourceResolutionIds = distinctRequests
+            .Select(x => x.SourceRef ?? 0)
+            .Where(id => id > 0)
+            .Distinct()
+            .ToList();
+
+        var resolutions = await db.IdentityResolutions.AsNoTracking()
+            .Where(r => (r.RequestId != null && requestIds.Contains(r.RequestId.Value)) || sourceResolutionIds.Contains(r.IdentityResolutionId))
+            .OrderByDescending(r => r.CreatedUtc)
+            .ToListAsync(ct);
+
+        var resolutionsBySource = resolutions.ToDictionary(r => r.IdentityResolutionId);
+        var resolutionsByRequest = resolutions
+            .Where(r => r.RequestId != null)
+            .GroupBy(r => r.RequestId!.Value)
+            .ToDictionary(g => g.Key, g => g.First());
+
+        var items = new List<AmbiguityQueueItemViewModel>();
+
+        foreach (var row in distinctRequests)
+        {
+            IdentityResolution? res = null;
+            if (row.SourceRef is { } srcId && resolutionsBySource.TryGetValue(srcId, out var bySource))
+                res = bySource;
+            else if (resolutionsByRequest.TryGetValue(row.RequestId, out var byReq))
+                res = byReq;
+
+            var candidates = new List<AmbiguityCandidateViewModel>();
+            ResolutionHints hints = ResolutionHints.None;
+
+            if (res is not null)
+            {
+                if (!string.IsNullOrWhiteSpace(res.HintsJson))
+                {
+                    try { hints = JsonSerializer.Deserialize<ResolutionHints>(res.HintsJson, CandidateJsonOptions) ?? ResolutionHints.None; }
+                    catch (JsonException) { }
+                }
+
+                if (!string.IsNullOrWhiteSpace(res.CandidatesJson))
+                {
+                    try
+                    {
+                        var rawCandidates = JsonSerializer.Deserialize<List<SerializedCandidateDto>>(res.CandidatesJson, CandidateJsonOptions);
+                        if (rawCandidates is not null)
+                        {
+                            candidates = rawCandidates.Select(c => new AmbiguityCandidateViewModel
+                            {
+                                Identifier = c.Identifier ?? "",
+                                Name = c.Name ?? "",
+                                RecordType = c.RecordType,
+                                Status = c.Status,
+                                State = c.State,
+                                District = c.District,
+                                RegistrationDate = c.RegistrationDate,
+                                ToolOnly = c.ToolOnly,
+                                Score = c.Score,
+                                Reasons = c.Reasons ?? [],
+                                IsRecommended = !string.IsNullOrWhiteSpace(res.RecommendedIdentifier)
+                                    && string.Equals(res.RecommendedIdentifier, c.Identifier, StringComparison.OrdinalIgnoreCase)
+                            }).ToList();
+                        }
+                    }
+                    catch (JsonException) { }
+                }
+            }
+
+            items.Add(new AmbiguityQueueItemViewModel
+            {
+                RequestId = row.RequestId,
+                RequestNumber = row.RequestNumber,
+                ClientName = row.ClientName,
+                InputName = res?.InputName ?? row.CompanyName,
+                CurrentCin = row.CurrentCin,
+                Hints = hints,
+                ReasonCode = row.ReasonCode ?? res?.ReasonCode ?? "IDENTITY_AMBIGUOUS",
+                ReasonDetail = row.ReasonDetail,
+                RecommendedIdentifier = res?.RecommendedIdentifier,
+                UpdatedUtc = row.UpdatedUtc,
+                Candidates = candidates
+            });
+        }
+
+        return View(new AmbiguityQueueViewModel
+        {
+            Items = items,
+            FilterRequestId = requestId
+        });
+    }
+
+    /// <summary>Select this CIN action (issue #295, plan §5A.3). Human selection of a company identifier
+    /// for a request whose Resolve stage needs attention.</summary>
+    [HttpPost("/Pipeline/Identity/Select")]
+    [Authorize(AuthenticationSchemes = "InternalReviewer")]
+    [ValidateAntiForgeryToken]
+    public async Task<IActionResult> SelectCin(
+        [FromForm] long requestId,
+        [FromForm] string identifier,
+        [FromForm] string? returnUrl = null,
+        CancellationToken ct = default)
+    {
+        var id = (identifier ?? "").Trim().ToUpperInvariant();
+        if (string.IsNullOrWhiteSpace(id))
+        {
+            TempData["PipelineError"] = "Select or enter a valid company identifier.";
+            return SafeRedirect(returnUrl);
+        }
+
+        if (identitySelection is null)
+        {
+            TempData["PipelineError"] = "Identity selection service is unavailable.";
+            return SafeRedirect(returnUrl);
+        }
+
+        var actor = User.Identity?.Name ?? "reviewer";
+        try
+        {
+            var result = await identitySelection.SelectAsync(requestId, id, actor, ct);
+            if (result.Resolution.AppliedToRequest)
+            {
+                // If the request had no auto-fetch job (e.g. name-only intake), create and enqueue one now.
+                var hasJob = await db.AutoFetchJobs.AnyAsync(j => j.RequestId == requestId, ct);
+                if (!hasJob && autoFetchJobs is not null && autoFetchQueue is not null)
+                {
+                    var request = await db.Requests.FirstAsync(r => r.RequestId == requestId, ct);
+                    var opts = referenceToolOptions?.Value;
+                    var correlationId = CorrelationContext.GetOrCreate(HttpContext);
+                    var newJob = await autoFetchJobs.CreateOrResetJobAsync(
+                        request,
+                        opts?.IncludeFilingsByDefault ?? true,
+                        opts?.DefaultMaxDocumentsPerSection > 0 ? opts.DefaultMaxDocumentsPerSection : 0,
+                        ct,
+                        correlationId);
+                    autoFetchQueue.Enqueue(newJob.AutoFetchJobId);
+                }
+
+                TempData["PipelineOk"] = $"Successfully selected {id} for request.";
+            }
+            else
+            {
+                var reason = result.Resolution.ExistingRequestId is not null
+                    ? $"This client already has request #{result.Resolution.ExistingRequestId} for {id}."
+                    : $"Could not apply {id}: {result.Resolution.Decision.ReasonCode}.";
+                TempData["PipelineError"] = reason;
+            }
+        }
+        catch (Exception ex)
+        {
+            TempData["PipelineError"] = $"Selection failed: {ex.Message}";
+        }
+
+        return SafeRedirect(returnUrl);
+    }
+
+    private IActionResult SafeRedirect(string? returnUrl)
+    {
+        if (!string.IsNullOrWhiteSpace(returnUrl))
+        {
+            if (returnUrl.StartsWith('/') && !returnUrl.StartsWith("//") && !returnUrl.StartsWith("/\\"))
+                return Redirect(returnUrl);
+            if (Url is not null && Url.IsLocalUrl(returnUrl))
+                return Redirect(returnUrl);
+        }
+        return RedirectToAction(nameof(AmbiguityQueue));
+    }
+
+    private static readonly JsonSerializerOptions CandidateJsonOptions = new()
+    {
+        PropertyNameCaseInsensitive = true,
+        Converters = { new System.Text.Json.Serialization.JsonStringEnumConverter() }
+    };
+
+    private sealed class SerializedCandidateDto
+    {
+        public string? Identifier { get; set; }
+        public string? Name { get; set; }
+        public string? RecordType { get; set; }
+        public string? Status { get; set; }
+        public string? State { get; set; }
+        public string? District { get; set; }
+        public DateOnly? RegistrationDate { get; set; }
+        public bool ToolOnly { get; set; }
+        public double Score { get; set; }
+        public List<string>? Reasons { get; set; }
     }
 
     private async Task<Dictionary<long, List<PipelineStageStatusDto>>> StagesAsync(List<long> runIds, CancellationToken ct)
