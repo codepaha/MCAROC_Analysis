@@ -19,11 +19,21 @@ public class AutoFetchRequestViewModel
     [Display(Name = "Company / LLP Name")]
     public string? CompanyName { get; set; }
 
-    [Required]
     [Display(Name = "CIN / LLPIN")]
     public string? Cin { get; set; }
 
     public string? Pan { get; set; }
+
+    public string? State { get; set; }
+    public string? District { get; set; }
+    [Display(Name = "PIN Code")]
+    public string? PinCode { get; set; }
+    [Display(Name = "Incorporation Year")]
+    [Range(1800, 2100)]
+    public int? IncorporationYear { get; set; }
+
+    /// <summary>Set when a candidate is chosen from interactive search suggestions (Method=HumanSelected).</summary>
+    public string? SelectedIdentifier { get; set; }
 
     [Display(Name = "Also fetch the filing PDFs")]
     public bool IncludeFilings { get; set; } = true;
@@ -40,6 +50,29 @@ public class AutoFetchRequestViewModel
     public long? ExistingRequestId { get; set; }
     public string? ExistingRequestNumber { get; set; }
     public string? ExistingRequestStatus { get; set; }
+}
+
+/// <summary>Ranked candidate returned by interactive company search (issue #294, plan §5A.3).</summary>
+public sealed record CompanySearchCandidateDto(
+    string Identifier,
+    string Name,
+    string? RecordType,
+    string? Status,
+    string? State,
+    string? District,
+    string? PinCode,
+    string? RegistrationDate,
+    string? Category,
+    string? Class,
+    string? ListingStatus,
+    double Score,
+    int MatchPercent,
+    IReadOnlyList<string> Reasons,
+    bool IsToolOnly)
+{
+    // Backwards-compatibility aliases for existing JavaScript and tests:
+    public string Cin => Identifier;
+    public string LegalName => Name;
 }
 
 /// <summary>JSON shape the Details page polls while a job runs.</summary>

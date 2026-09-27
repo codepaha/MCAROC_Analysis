@@ -54,22 +54,49 @@
             </div>
         </div>
 
+        <input type="hidden" asp-for="SelectedIdentifier" id="afSelectedIdentifier" />
+
         <div class="mb-3 position-relative">
-            <label asp-for="Cin" class="form-label"></label>
-            <input asp-for="Cin" class="form-control" id="afCin" placeholder="U24246DL2003PTC118255" data-search-url="/Requests/AutoFetch/search" />
-            <div class="form-text">Type a CIN, LLPIN or company name — matches from the reference tool appear below; pick one to fill the fields.</div>
-            <ul class="list-group position-absolute w-100 shadow-sm" id="afHints" hidden style="z-index:20;max-height:280px;overflow:auto;"></ul>
+            <label asp-for="CompanyName" class="form-label">Company / LLP Name</label>
+            <input asp-for="CompanyName" class="form-control" id="afName" placeholder="Type company name to search" data-search-url="/Requests/AutoFetch/search" />
+            <div class="form-text">Type a name or CIN — ranked suggestions appear below with match score, location, and status.</div>
+            <ul class="list-group position-absolute w-100 shadow-sm" id="afHints" hidden style="z-index:20;max-height:360px;overflow:auto;"></ul>
         </div>
 
-        <div class="mb-3">
-            <label asp-for="CompanyName" class="form-label"></label>
-            <input asp-for="CompanyName" class="form-control" id="afName" placeholder="Filled automatically from the reference tool" />
-            <div class="form-text">Optional. Filled from the reference tool, or from the workbook once extracted.</div>
+        <div class="mb-3 position-relative">
+            <label asp-for="Cin" class="form-label">CIN / LLPIN (Optional if Company Name is provided)</label>
+            <input asp-for="Cin" class="form-control" id="afCin" placeholder="e.g. U24246DL2003PTC118255 or AAA-1234" data-search-url="/Requests/AutoFetch/search" />
+            <div class="form-text">Optional if name is given above. If you know the exact CIN or LLPIN, provide it here.</div>
         </div>
+
+        <details class="mb-3 border rounded p-3 bg-light">
+            <summary class="fw-semibold text-primary" style="cursor:pointer">
+                <i class="bi bi-sliders me-1"></i> Disambiguation Hints (Optional)
+            </summary>
+            <div class="row g-2 mt-2">
+                <div class="col-md-6">
+                    <label asp-for="State" class="form-label small"></label>
+                    <input asp-for="State" class="form-control form-control-sm" id="afHintState" placeholder="e.g. Maharashtra" />
+                </div>
+                <div class="col-md-6">
+                    <label asp-for="District" class="form-label small"></label>
+                    <input asp-for="District" class="form-control form-control-sm" id="afHintDistrict" placeholder="e.g. Mumbai" />
+                </div>
+                <div class="col-md-6">
+                    <label asp-for="PinCode" class="form-label small"></label>
+                    <input asp-for="PinCode" class="form-control form-control-sm" id="afHintPin" placeholder="e.g. 400001" />
+                </div>
+                <div class="col-md-6">
+                    <label asp-for="IncorporationYear" class="form-label small"></label>
+                    <input asp-for="IncorporationYear" class="form-control form-control-sm" id="afHintYear" type="number" min="1800" max="2100" placeholder="e.g. 2005" />
+                </div>
+            </div>
+            <div class="form-text mt-1">If the company name is common, these hints help identify the exact entity.</div>
+        </details>
 
         <div class="mb-3">
             <label asp-for="Pan" class="form-label"></label>
-            <input asp-for="Pan" class="form-control" placeholder="AABCV6369H" />
+            <input asp-for="Pan" class="form-control" id="afPan" placeholder="AABCV6369H" />
             <div class="form-text">Optional. If given, it is checked against the extracted workbook.</div>
         </div>
 
@@ -100,8 +127,13 @@
         (function () {
             var cin = document.getElementById('afCin');
             var name = document.getElementById('afName');
+            var selectedId = document.getElementById('afSelectedIdentifier');
             var hints = document.getElementById('afHints');
-            var url = cin.dataset.searchUrl;
+            var hintState = document.getElementById('afHintState');
+            var hintDistrict = document.getElementById('afHintDistrict');
+            var hintPin = document.getElementById('afHintPin');
+            var hintYear = document.getElementById('afHintYear');
+            var url = name.dataset.searchUrl || cin.dataset.searchUrl;
             var timer = null, lastQuery = '';
 
             function hide() { hints.hidden = true; hints.innerHTML = ''; }
@@ -111,21 +143,88 @@
                 if (!items || items.length === 0) { hide(); return; }
                 items.forEach(function (h) {
                     var li = document.createElement('li');
-                    li.className = 'list-group-item list-group-item-action';
+                    li.className = 'list-group-item list-group-item-action py-2';
                     li.style.cursor = 'pointer';
+
+                    var topRow = document.createElement('div');
+                    topRow.className = 'd-flex justify-content-between align-items-center gap-2';
+
                     var strong = document.createElement('strong');
-                    strong.textContent = h.legalName || h.LegalName || '';
-                    var small = document.createElement('div');
-                    small.className = 'small text-muted';
-                    small.textContent = (h.cin || h.Cin || '') + ((h.status || h.Status) ? ' · ' + (h.status || h.Status) : '');
-                    li.appendChild(strong); li.appendChild(small);
+                    strong.className = 'text-truncate';
+                    strong.textContent = h.name || h.legalName || h.Name || h.LegalName || '';
+                    topRow.appendChild(strong);
+
+                    var badgeGroup = document.createElement('div');
+                    badgeGroup.className = 'd-flex gap-1 align-items-center flex-shrink-0';
+
+                    var score = h.matchPercent ?? (h.MatchPercent || (h.score ? Math.round(h.score * 100) : null));
+                    if (score !== null && score !== undefined) {
+                        var scoreBadge = document.createElement('span');
+                        var bgClass = score >= 90 ? 'text-bg-success' : (score >= 70 ? 'text-bg-primary' : 'text-bg-warning');
+                        scoreBadge.className = 'badge ' + bgClass;
+                        scoreBadge.textContent = score + '% match';
+                        badgeGroup.appendChild(scoreBadge);
+                    }
+
+                    var status = h.status || h.Status;
+                    if (status) {
+                        var statusBadge = document.createElement('span');
+                        statusBadge.className = 'badge ' + (status.toLowerCase() === 'active' ? 'bg-success-subtle text-success border border-success-subtle' : 'bg-secondary-subtle text-secondary border');
+                        statusBadge.textContent = status;
+                        badgeGroup.appendChild(statusBadge);
+                    }
+
+                    topRow.appendChild(badgeGroup);
+                    li.appendChild(topRow);
+
+                    var detailsRow = document.createElement('div');
+                    detailsRow.className = 'small text-muted d-flex flex-wrap gap-2 mt-1';
+
+                    var identifier = h.identifier || h.cin || h.Identifier || h.Cin || '';
+                    var idSpan = document.createElement('span');
+                    idSpan.className = 'font-monospace fw-semibold';
+                    idSpan.textContent = identifier;
+                    detailsRow.appendChild(idSpan);
+
+                    var loc = [];
+                    if (h.district || h.District) loc.push(h.district || h.District);
+                    if (h.state || h.State) loc.push(h.state || h.State);
+                    if (loc.length > 0) {
+                        var locSpan = document.createElement('span');
+                        locSpan.textContent = '· ' + loc.join(', ');
+                        detailsRow.appendChild(locSpan);
+                    }
+
+                    var regDate = h.registrationDate || h.RegistrationDate;
+                    if (regDate) {
+                        var regSpan = document.createElement('span');
+                        regSpan.textContent = '· Inc: ' + regDate;
+                        detailsRow.appendChild(regSpan);
+                    }
+
+                    li.appendChild(detailsRow);
+
+                    var reasons = h.reasons || h.Reasons;
+                    if (reasons && reasons.length > 0) {
+                        var reasonsRow = document.createElement('div');
+                        reasonsRow.className = 'small text-secondary mt-1';
+                        reasonsRow.textContent = reasons.join(' · ');
+                        li.appendChild(reasonsRow);
+                    }
+
                     li.addEventListener('mousedown', function (e) {
                         e.preventDefault();
-                        var id = (h.cin || h.Cin || '').toUpperCase();
+                        var id = identifier.toUpperCase();
                         cin.value = id;
-                        name.value = h.legalName || h.LegalName || '';
+                        name.value = h.name || h.legalName || h.Name || h.LegalName || '';
+                        selectedId.value = id;
+
                         var isLlp = id.indexOf('-') >= 0;
                         document.getElementById(isLlp ? 'entityLlp' : 'entityCompany').checked = true;
+
+                        if (h.state || h.State) hintState.value = h.state || h.State;
+                        if (h.district || h.District) hintDistrict.value = h.district || h.District;
+
                         hide();
                     });
                     hints.appendChild(li);
@@ -133,19 +232,49 @@
                 hints.hidden = false;
             }
 
-            cin.addEventListener('input', function () {
-                var q = cin.value.trim();
+            function triggerSearch(q) {
                 if (timer) clearTimeout(timer);
                 if (q.length < 3) { hide(); return; }
                 timer = setTimeout(function () {
                     lastQuery = q;
-                    fetch(url + '?q=' + encodeURIComponent(q), { headers: { 'Accept': 'application/json' } })
+                    var reqUrl = url + '?q=' + encodeURIComponent(q);
+                    if (hintState.value.trim()) reqUrl += '&state=' + encodeURIComponent(hintState.value.trim());
+                    if (hintDistrict.value.trim()) reqUrl += '&district=' + encodeURIComponent(hintDistrict.value.trim());
+                    if (hintPin.value.trim()) reqUrl += '&pin=' + encodeURIComponent(hintPin.value.trim());
+                    if (hintYear.value.trim()) reqUrl += '&year=' + encodeURIComponent(hintYear.value.trim());
+
+                    var isLlp = document.getElementById('entityLlp').checked;
+                    reqUrl += '&entityType=' + (isLlp ? 'LLP' : 'Company');
+
+                    fetch(reqUrl, { headers: { 'Accept': 'application/json' } })
                         .then(function (r) { return r.ok ? r.json() : []; })
-                        .then(function (items) { if (cin.value.trim() === lastQuery) render(items); })
+                        .then(function (items) {
+                            if (q === lastQuery) render(items);
+                        })
                         .catch(hide);
                 }, 300);
+            }
+
+            name.addEventListener('input', function () {
+                selectedId.value = '';
+                triggerSearch(name.value.trim());
             });
-            cin.addEventListener('blur', function () { setTimeout(hide, 150); });
+
+            cin.addEventListener('input', function () {
+                selectedId.value = '';
+                triggerSearch(cin.value.trim());
+            });
+
+            [hintState, hintDistrict, hintPin, hintYear].forEach(function (el) {
+                el.addEventListener('input', function () {
+                    var q = (name.value || cin.value || '').trim();
+                    if (q.length >= 3) triggerSearch(q);
+                });
+            });
+
+            name.addEventListener('blur', function () { setTimeout(hide, 200); });
+            cin.addEventListener('blur', function () { setTimeout(hide, 200); });
+            name.addEventListener('keydown', function (e) { if (e.key === 'Escape') hide(); });
             cin.addEventListener('keydown', function (e) { if (e.key === 'Escape') hide(); });
         })();
     </script>

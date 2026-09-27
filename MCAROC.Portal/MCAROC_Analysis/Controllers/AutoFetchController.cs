@@ -5,6 +5,7 @@ using MCAROC_Analysis.Data.Entities;
 using MCAROC_Analysis.Models;
 using MCAROC_Analysis.Services.Audit;
 using MCAROC_Analysis.Services.AutoFetch;
+using MCAROC_Analysis.Services.CompanyMaster;
 using MCAROC_Analysis.Services.Pipeline;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -32,7 +33,8 @@ public partial class AutoFetchController(
     ILogger<AutoFetchController>? logger = null,
     PipelineAdopter? pipelineAdopter = null,
     CompanyUnlockService? unlock = null,
-    CompanyGateCoordinator? gates = null) : Controller
+    CompanyGateCoordinator? gates = null,
+    IdentityResolutionService? identity = null) : Controller
 {
     // Company CIN (21 chars) or LLPIN (AAA-1234) — same rule the pre-login flow applies.
     [GeneratedRegex("^(?:[LU][0-9]{5}[A-Z]{2}[0-9]{4}[A-Z]{3}[0-9]{6}|[A-Z]{3}-[0-9]{4})$")]
@@ -76,107 +78,296 @@ public partial class AutoFetchController(
         if (!model.IsConfigured)
             return Fail(model, "Auto-fetch is not configured on this server — set ReferenceTool:BaseUrl and ReferenceTool:SessionCookie (see README, \"Configuring secrets\").");
 
-        var identifier = (model.Cin ?? "").Trim().ToUpperInvariant();
-        if (identifier.Length == 0)
-            return Fail(model, "A CIN or LLPIN is required.");
-        if (!IdentifierPattern().IsMatch(identifier))
-            return Fail(model, "Enter a valid company CIN (e.g. U24246DL2003PTC118255) or LLPIN (e.g. AAA-1234).");
-
-        var isLlpin = identifier.Contains('-');
-        if (model.EntityType == EntityType.LLP != isLlpin)
-            return Fail(model, isLlpin ? "That identifier is an LLPIN — select LLP as the entity type." : "That identifier is a company CIN — select Company as the entity type.");
+        if (model.ClientId <= 0 || model.Clients.All(c => c.ClientId != model.ClientId))
+            return Fail(model, "Select a client.");
 
         var pan = string.IsNullOrWhiteSpace(model.Pan) ? null : model.Pan.Trim().ToUpperInvariant();
         if (pan is not null && !PanPattern().IsMatch(pan))
             return Fail(model, "PAN must be 10 characters, e.g. AABCV6369H.");
 
-        if (model.ClientId <= 0 || model.Clients.All(c => c.ClientId != model.ClientId))
-            return Fail(model, "Select a client.");
+        var hasCin = !string.IsNullOrWhiteSpace(model.Cin);
+        var hasName = !string.IsNullOrWhiteSpace(model.CompanyName);
 
-        // This lookup is scoped to ClientId on purpose. A matching company for another client is not a
-        // duplicate and must never be surfaced here: its request, documents and results belong only to
-        // that other client. The unique index below is the concurrency-safe backstop for this friendly
-        // pre-check.
-        var existing = await FindExistingRequestAsync(model.ClientId, identifier, ct);
-        if (existing is not null)
-            return Existing(model, existing);
+        if (!hasCin && !hasName)
+            return Fail(model, "A company name or a CIN / LLPIN is required.");
 
-        var request = new McaRequest
+        var hints = new ResolutionHints(
+            State: string.IsNullOrWhiteSpace(model.State) ? null : model.State.Trim(),
+            District: string.IsNullOrWhiteSpace(model.District) ? null : model.District.Trim(),
+            PinCode: string.IsNullOrWhiteSpace(model.PinCode) ? null : model.PinCode.Trim(),
+            IncorporationYear: model.IncorporationYear,
+            EntityType: model.EntityType,
+            Pan: pan);
+
+        var actor = User.Identity?.Name ?? "auto-fetch";
+
+        if (hasCin)
         {
-            ClientId = model.ClientId,
-            EntityType = model.EntityType,
-            // The tool's search / the workbook fills this in during the job; the identifier stands in until then.
-            CompanyName = string.IsNullOrWhiteSpace(model.CompanyName) ? identifier : model.CompanyName.Trim(),
-            Cin = identifier,
-            Llpin = model.EntityType == EntityType.LLP ? identifier : null,
-            Pan = pan,
-            AutoFetchCompanyIdentifier = identifier,
-            // RequestNumber has a unique index. Give the first insert its own value so concurrent
-            // submissions can race only on the client-scoped AutoFetch identifier, not on an empty
-            // request number shared by every newly-created request.
-            RequestNumber = $"PENDING-{Guid.NewGuid():N}",
-            RequestStatus = RequestStatus.Created,
-            CreatedDate = DateTime.UtcNow,
-            CreatedBy = "auto-fetch"
-        };
-        try
+            var identifier = model.Cin!.Trim().ToUpperInvariant();
+            if (!IdentifierPattern().IsMatch(identifier))
+                return Fail(model, "Enter a valid company CIN (e.g. U24246DL2003PTC118255) or LLPIN (e.g. AAA-1234).");
+
+            var isLlpin = identifier.Contains('-');
+            if (model.EntityType == EntityType.LLP != isLlpin)
+                return Fail(model, isLlpin ? "That identifier is an LLPIN — select LLP as the entity type." : "That identifier is a company CIN — select Company as the entity type.");
+
+            // This lookup is scoped to ClientId on purpose. A matching company for another client is not a
+            // duplicate and must never be surfaced here: its request, documents and results belong only to
+            // that other client. The unique index below is the concurrency-safe backstop for this friendly
+            // pre-check.
+            var existing = await FindExistingRequestAsync(model.ClientId, identifier, ct);
+            if (existing is not null)
+                return Existing(model, existing);
+
+            var request = new McaRequest
+            {
+                ClientId = model.ClientId,
+                EntityType = model.EntityType,
+                // The tool's search / the workbook fills this in during the job; the identifier stands in until then.
+                CompanyName = string.IsNullOrWhiteSpace(model.CompanyName) ? identifier : model.CompanyName.Trim(),
+                Cin = identifier,
+                Llpin = model.EntityType == EntityType.LLP ? identifier : null,
+                Pan = pan,
+                AutoFetchCompanyIdentifier = identifier,
+                // RequestNumber has a unique index. Give the first insert its own value so concurrent
+                // submissions can race only on the client-scoped AutoFetch identifier, not on an empty
+                // request number shared by every newly-created request.
+                RequestNumber = $"PENDING-{Guid.NewGuid():N}",
+                RequestStatus = RequestStatus.Created,
+                CreatedDate = DateTime.UtcNow,
+                CreatedBy = actor
+            };
+            try
+            {
+                // The identity claim, request, and job are one logical unit. In particular, do not enqueue
+                // until after the database transaction commits: a crash after commit is recovered from the
+                // durable Queued job, while any job-creation failure rolls the request and its unique claim back.
+                await using var transaction = await db.Database.BeginTransactionAsync(ct);
+                db.Requests.Add(request);
+                await db.SaveChangesAsync(ct);
+                request.RequestNumber = $"MCA-{request.CreatedDate:yyyyMMdd}-{request.RequestId:D6}";
+                await db.SaveChangesAsync(ct);
+
+                var correlationId = CorrelationContext.GetOrCreate(HttpContext);
+                var job = await jobs.CreateOrResetJobAsync(request, model.IncludeFilings, model.MaxDocumentsPerSection ?? 0, ct, correlationId);
+                await transaction.CommitAsync(ct);
+                queue.Enqueue(job.AutoFetchJobId);
+
+                if (identity is not null)
+                {
+                    try
+                    {
+                        var isHumanPick = !string.IsNullOrWhiteSpace(model.SelectedIdentifier)
+                            && string.Equals(model.SelectedIdentifier.Trim(), identifier, StringComparison.OrdinalIgnoreCase);
+
+                        if (isHumanPick)
+                            await identity.ApplyHumanSelectionAsync(request.RequestId, identifier, model.CompanyName, hints, actor, ct);
+                        else
+                            await identity.ResolveForRequestAsync(request.RequestId, model.CompanyName, identifier, hints, actor, ct);
+                    }
+                    catch (Exception ex)
+                    {
+                        logger?.LogWarning(ex, "Failed to record identity resolution for request {RequestId}", request.RequestId);
+                    }
+                }
+
+                if (pipelineAdopter is not null)
+                    await pipelineAdopter.TryAdoptAsync(request.RequestId, PipelineRunTrigger.AutoFetch, correlationId, ct);
+
+                return RedirectToAction("Details", "Requests", new { id = request.RequestId });
+            }
+            catch (DbUpdateException)
+            {
+                // Two submissions can both pass the read above. The database's filtered unique index is the
+                // actual idempotency guarantee; after its expected collision, show the request created by the
+                // other submission instead of creating/enqueueing another fetch job.
+                db.ChangeTracker.Clear();
+                existing = await FindExistingRequestAsync(model.ClientId, identifier, ct);
+                if (existing is not null)
+                    return Existing(model, existing);
+                throw;
+            }
+        }
+        else
         {
-            // The identity claim, request, and job are one logical unit. In particular, do not enqueue
-            // until after the database transaction commits: a crash after commit is recovered from the
-            // durable Queued job, while any job-creation failure rolls the request and its unique claim back.
-            await using var transaction = await db.Database.BeginTransactionAsync(ct);
-            db.Requests.Add(request);
-            await db.SaveChangesAsync(ct);
-            request.RequestNumber = $"MCA-{request.CreatedDate:yyyyMMdd}-{request.RequestId:D6}";
-            await db.SaveChangesAsync(ct);
+            // Name-only intake (Issue #294, plan §5A.3)
+            var inputName = model.CompanyName!.Trim();
+            var request = new McaRequest
+            {
+                ClientId = model.ClientId,
+                EntityType = model.EntityType,
+                CompanyName = inputName,
+                Cin = null,
+                Llpin = null,
+                Pan = pan,
+                AutoFetchCompanyIdentifier = null,
+                RequestNumber = $"PENDING-{Guid.NewGuid():N}",
+                RequestStatus = RequestStatus.Created,
+                CreatedDate = DateTime.UtcNow,
+                CreatedBy = actor
+            };
+
+            await using (var transaction = await db.Database.BeginTransactionAsync(ct))
+            {
+                db.Requests.Add(request);
+                await db.SaveChangesAsync(ct);
+                request.RequestNumber = $"MCA-{request.CreatedDate:yyyyMMdd}-{request.RequestId:D6}";
+                await db.SaveChangesAsync(ct);
+                await transaction.CommitAsync(ct);
+            }
 
             var correlationId = CorrelationContext.GetOrCreate(HttpContext);
-            var job = await jobs.CreateOrResetJobAsync(request, model.IncludeFilings, model.MaxDocumentsPerSection ?? 0, ct, correlationId);
-            await transaction.CommitAsync(ct);
-            queue.Enqueue(job.AutoFetchJobId);
+            if (identity is not null)
+            {
+                var resolution = await identity.ResolveForRequestAsync(request.RequestId, inputName, null, hints, actor, ct);
+                if (resolution.AppliedToRequest && resolution.Decision.Status == ResolutionStatus.Resolved && !string.IsNullOrWhiteSpace(request.Cin))
+                {
+                    // AutoSelected and applied to request; create and enqueue job
+                    var job = await jobs.CreateOrResetJobAsync(request, model.IncludeFilings, model.MaxDocumentsPerSection ?? 0, ct, correlationId);
+                    queue.Enqueue(job.AutoFetchJobId);
+                }
+            }
+
             if (pipelineAdopter is not null)
                 await pipelineAdopter.TryAdoptAsync(request.RequestId, PipelineRunTrigger.AutoFetch, correlationId, ct);
 
             return RedirectToAction("Details", "Requests", new { id = request.RequestId });
         }
-        catch (DbUpdateException)
-        {
-            // Two submissions can both pass the read above. The database's filtered unique index is the
-            // actual idempotency guarantee; after its expected collision, show the request created by the
-            // other submission instead of creating/enqueueing another fetch job.
-            db.ChangeTracker.Clear();
-            existing = await FindExistingRequestAsync(model.ClientId, identifier, ct);
-            if (existing is not null)
-                return Existing(model, existing);
-            throw;
-        }
-
     }
 
-    /// <summary>Auto-complete for the form. Tries the locally bulk-imported MCA master data first — it's
-    /// instant and needs no external session — and only falls back to the reference tool's live search
-    /// when the local table has nothing (e.g. the name master hasn't been imported yet, or a genuinely
-    /// unmatched query). Returns an empty list (not an error) whenever neither source can help, so the
-    /// form still works by CIN alone.</summary>
+    /// <summary>Interactive company search (issue #294, plan §5A.3). When <see cref="IdentityResolutionService"/>
+    /// is available, resolves and ranks candidates against master data with disambiguators (state, district,
+    /// incorporation date, status, score, reasons). Otherwise falls back to prefix matching and reference tool.</summary>
     [HttpGet("/Requests/AutoFetch/search")]
-    public async Task<IActionResult> Search([FromQuery] string? q, CancellationToken ct)
+    public async Task<IActionResult> Search(
+        [FromQuery] string? q,
+        CancellationToken ct = default,
+        [FromQuery] string? state = null,
+        [FromQuery] string? district = null,
+        [FromQuery] string? pin = null,
+        [FromQuery] int? year = null,
+        [FromQuery] string? entityType = null)
     {
         var query = (q ?? "").Trim();
-        if (query.Length < 3) return Ok(Array.Empty<ReferenceCompanyHint>());
+        if (query.Length < 3)
+        {
+            if (identity is null) return Ok(Array.Empty<ReferenceCompanyHint>());
+            return Ok(Array.Empty<CompanySearchCandidateDto>());
+        }
+
+        if (identity is not null)
+        {
+            EntityType? parsedEntityType = null;
+            if (Enum.TryParse<EntityType>(entityType, true, out var et))
+                parsedEntityType = et;
+
+            var hints = new ResolutionHints(
+                State: string.IsNullOrWhiteSpace(state) ? null : state.Trim(),
+                District: string.IsNullOrWhiteSpace(district) ? null : district.Trim(),
+                PinCode: string.IsNullOrWhiteSpace(pin) ? null : pin.Trim(),
+                IncorporationYear: year,
+                EntityType: parsedEntityType);
+
+            var isIdentifier = IdentifierPattern().IsMatch(query.ToUpperInvariant());
+            var decision = await identity.SuggestAsync(
+                isIdentifier ? null : query,
+                isIdentifier ? query.ToUpperInvariant() : null,
+                hints,
+                ct);
+
+            if (decision.Candidates.Count > 0)
+            {
+                var dtos = decision.Candidates.Select(c => new CompanySearchCandidateDto(
+                    Identifier: c.Candidate.Identifier,
+                    Name: c.Candidate.Name,
+                    RecordType: c.Candidate.RecordType.ToString(),
+                    Status: c.Candidate.Status,
+                    State: c.Candidate.State,
+                    District: c.Candidate.District,
+                    PinCode: c.Candidate.PinCode,
+                    RegistrationDate: c.Candidate.RegistrationDate?.ToString("yyyy-MM-dd"),
+                    Category: c.Candidate.Category,
+                    Class: c.Candidate.Class,
+                    ListingStatus: c.Candidate.ListingStatus,
+                    Score: c.Score,
+                    MatchPercent: (int)Math.Round(c.Score * 100),
+                    Reasons: c.Reasons,
+                    IsToolOnly: c.Candidate.IsToolOnly
+                )).ToList();
+                return Ok(dtos);
+            }
+        }
 
         var localHits = await SearchLocalMasterDataAsync(query, 10, ct);
-        if (localHits.Count > 0) return Ok(localHits);
+        if (localHits.Count > 0)
+        {
+            if (identity is null) return Ok(localHits);
 
-        if (!client.IsConfigured) return Ok(Array.Empty<ReferenceCompanyHint>());
+            // The prefix-match fallback is unfiltered: it cannot honour state, district, pin, year, or
+            // entity-type hints.  Return empty rather than misleading the user with unfiltered candidates
+            // labelled "100% match" when they have narrowed the search.
+            var hintsPresent = !string.IsNullOrWhiteSpace(state)
+                || !string.IsNullOrWhiteSpace(district)
+                || !string.IsNullOrWhiteSpace(pin)
+                || year.HasValue
+                || !string.IsNullOrWhiteSpace(entityType);
+            if (hintsPresent) return Ok(Array.Empty<CompanySearchCandidateDto>());
+
+            var dtos = localHits.Select(h => new CompanySearchCandidateDto(
+                Identifier: h.Cin,
+                Name: h.LegalName,
+                RecordType: h.CompanyType,
+                Status: h.Status,
+                State: null,
+                District: null,
+                PinCode: null,
+                RegistrationDate: null,
+                Category: null,
+                Class: null,
+                ListingStatus: null,
+                Score: 1.0,
+                MatchPercent: 100,
+                Reasons: ["Prefix match"],
+                IsToolOnly: false
+            )).ToList();
+            return Ok(dtos);
+        }
+
+        if (!client.IsConfigured)
+        {
+            if (identity is null) return Ok(Array.Empty<ReferenceCompanyHint>());
+            return Ok(Array.Empty<CompanySearchCandidateDto>());
+        }
+
         try
         {
             var hits = await client.SearchCompaniesAsync(query, 10, ct);
-            return Ok(hits);
+            if (identity is null) return Ok(hits);
+
+            var dtos = hits.Select(h => new CompanySearchCandidateDto(
+                Identifier: h.Cin,
+                Name: h.LegalName,
+                RecordType: h.CompanyType,
+                Status: h.Status,
+                State: null,
+                District: null,
+                PinCode: null,
+                RegistrationDate: null,
+                Category: null,
+                Class: null,
+                ListingStatus: null,
+                Score: 0.8,
+                MatchPercent: 80,
+                Reasons: ["Reference tool match"],
+                IsToolOnly: true
+            )).ToList();
+            return Ok(dtos);
         }
         catch (Exception ex) when (ex is ReferenceToolException or HttpRequestException or TaskCanceledException && !ct.IsCancellationRequested)
         {
             logger?.LogWarning(ex, "Reference-tool search failed for '{Query}'", query);
-            return Ok(Array.Empty<ReferenceCompanyHint>());
+            if (identity is null) return Ok(Array.Empty<ReferenceCompanyHint>());
+            return Ok(Array.Empty<CompanySearchCandidateDto>());
         }
     }
 

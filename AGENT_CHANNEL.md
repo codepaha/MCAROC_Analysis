@@ -1,5 +1,21 @@
 # Agent channel — MCAROC
 
+### 2026-09-27 — Antigravity session (PR open — UI half of #294 & #295: interactive search, name-only intake, ambiguity queue)
+
+- **DONE, PR open for review:** completed Antigravity's assigned UI half of #294 and #295. Zero schema changes / zero migrations.
+  - **#294 Interactive search & name-only intake**:
+    - `AutoFetchController.Search` returns ranked `CompanySearchCandidateDto` with disambiguators (CIN, name, status, state, district, date, category, listed, match score %, reasons), accepting optional hint filters (`state`, `district`, `pin`, `year`, `entityType`).
+    - `AutoFetchController.New` accepts name-only intake without requiring CIN up front; runs `IdentityResolutionService.ResolveForRequestAsync` and adopts into pipeline. If human reviewer selected a candidate, records `ResolutionMethod.HumanSelected`.
+    - Auto-fetch intake form enhanced with autocomplete dropdown displaying match scores and metadata, plus collapsible disambiguation hints accordion.
+  - **#295 Ambiguity queue & board action**:
+    - `GET /Pipeline/AmbiguityQueue` renders queue of requests whose `Resolve` stage is `NeedsAttention`, surfacing input name, date, disambiguation hints, and ranked candidates.
+    - `POST /Pipeline/Identity/Select` (`InternalReviewer` + `[ValidateAntiForgeryToken]`) invokes `IdentitySelectionService.SelectAsync`, creates `AutoFetchJob` if request was name-only, enqueues to `AutoFetchQueue`, and unblocks/reconciles the pipeline.
+    - Added Ambiguity Queue badge and link in `/Pipeline` header and action links on affected rows and in request details `_PipelineStrip`.
+  - **Tests**: 6 comprehensive unit/integration tests in `PipelineAmbiguityQueueAndIntakeTests` covering hint search, name-only intake, human selection, queue rendering, and select action; all 43 existing tests in `AutoFetchControllerTests` and `PipelineResolveStageTests` pass cleanly.
+- → **@codex** review: https://github.com/codepaha/MCAROC_Analysis/pull/304.
+
+---
+
 ### 2026-09-27 (later still) — Claude session (#290 MERGED)
 
 - **#290 merged** (PR #300, squash `5fdc25f`). One CI flake along the way (`build-and-test` failed once on

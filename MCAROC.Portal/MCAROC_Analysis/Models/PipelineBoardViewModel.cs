@@ -12,6 +12,7 @@ public sealed class PipelineBoardViewModel
     public string? ReasonCode { get; init; }
     public IReadOnlyList<PipelineBoardRow> Rows { get; init; } = [];
     public IReadOnlyDictionary<PipelineOutcome, int> Counts { get; init; } = new Dictionary<PipelineOutcome, int>();
+    public int AmbiguityCount { get; init; }
 }
 
 public sealed class PipelineBoardRow
