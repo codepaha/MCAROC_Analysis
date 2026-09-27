@@ -573,9 +573,19 @@ public class PipelineController(
         {
             run.Outcome = PipelineOutcome.Cancelled;
             run.CompletedUtc ??= now;
+            // Fence out any in-flight reconciler by invalidating the lease token and clearing lease fields
+            run.ReconcileLeaseToken = Guid.NewGuid();
+            run.ReconcileLeaseOwner = null;
+            run.ReconcileLeaseExpiresUtc = null;
+
             if (run.Request is not null)
             {
                 run.Request.RequestStatus = RequestStatus.Cancelled;
+            }
+            else
+            {
+                await db.Requests.Where(r => r.RequestId == run.RequestId)
+                    .ExecuteUpdateAsync(s => s.SetProperty(r => r.RequestStatus, RequestStatus.Cancelled), ct);
             }
 
             var stages = await db.PipelineStageStates.Where(s => s.PipelineRunId == runId).ToListAsync(ct);

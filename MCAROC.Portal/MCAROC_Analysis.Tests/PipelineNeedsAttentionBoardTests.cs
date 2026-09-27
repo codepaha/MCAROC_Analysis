@@ -283,6 +283,127 @@ public class PipelineNeedsAttentionBoardTests : IAsyncLifetime
         Assert.Equal("MANUAL_CANCEL", evt.ReasonCode);
     }
 
+    [Fact]
+    public async Task CancelRun_ConcurrentWithReconcile_InterleavedAfterSnapshotRead_RunRemainsCancelledAndNoStagesStart()
+    {
+        await using var db = CreateContext();
+        var (req, run) = await SeedRunAsync(db, PipelineOutcome.InProgress);
+
+        // Seed successful core stages so Litigation is ready to start
+        var ingestion = new IngestionRun
+        {
+            RequestId = req.RequestId, RunNumber = 1, StartedDate = DateTime.UtcNow,
+            CompletedDate = DateTime.UtcNow, Status = IngestionRunStatus.CompletedClean
+        };
+        db.IngestionRuns.Add(ingestion);
+        await db.SaveChangesAsync();
+
+        req.LatestCompletedIngestionRunId = ingestion.IngestionRunId;
+        req.RequestStatus = RequestStatus.AnalysisCompleted;
+        db.AnalysisRuns.Add(new AnalysisRun
+        {
+            RequestId = req.RequestId, IngestionRunId = ingestion.IngestionRunId, RunNumber = 1,
+            Status = AnalysisRunStatus.Completed, StartedDate = DateTime.UtcNow, CompletedDate = DateTime.UtcNow
+        });
+        await db.SaveChangesAsync();
+
+        var bprOptions = new BprLitigationOptions { BaseUrl = "https://bpr.test", Id = "id", SecretKey = "secret" };
+        var pipelineOptions = new PipelineOptions
+        {
+            Enabled = true,
+            Mode = PipelineMode.Enforce,
+            Enforce = { Litigation = true },
+            Policy = { LitigationSearch = true }
+        };
+        var spyActions = new SpyPipelineActions();
+
+        var interleavedFired = false;
+        var snapshotReader = new InterleavingSnapshotReader(
+            db, new ConfigurationBuilder().Build(), Options.Create(bprOptions),
+            Options.Create(new ReferenceToolOptions()),
+            onAfterRead: () =>
+            {
+                interleavedFired = true;
+                // Concurrent cancellation lands while reconciler holds its initial lease and snapshot
+                using var cancelDb = CreateContext();
+                var cancelController = CreateController(cancelDb);
+                var cancelResult = cancelController.CancelRun(run.PipelineRunId, reason: "Concurrent user cancellation", returnUrl: "/Pipeline", CancellationToken.None).GetAwaiter().GetResult();
+                Assert.IsType<RedirectResult>(cancelResult);
+            });
+
+        var reconciler = new PipelineReconciler(
+            db, snapshotReader, TimeProvider.System, NullLogger<PipelineReconciler>.Instance,
+            new TestOptionsMonitor<PipelineOptions>(pipelineOptions), spyActions);
+
+        // Reconciler runs: claims lease, reads snapshot, interleaved CancelRun fires, then reconciler enters write path
+        var reconcileSucceeded = await reconciler.ReconcileAsync(run.PipelineRunId, CancellationToken.None);
+
+        Assert.True(interleavedFired, "The interleaving hook must have fired");
+        Assert.False(reconcileSucceeded, "Reconcile must be fenced out and return false because the run was cancelled");
+
+        // Verify no new stage was started by the reconciler
+        Assert.Equal(0, spyActions.LitigationSearchStarts);
+        Assert.Equal(0, spyActions.LitigationAnalysisStarts);
+        Assert.Equal(0, spyActions.DossierPreRenders);
+        Assert.Equal(0, spyActions.RetryFetchCalls);
+
+        // Verify database state: run remains Cancelled, Request is Cancelled, and Cancelled event is recorded
+        await using var verifyDb = CreateContext();
+        var reloadedRun = await verifyDb.PipelineRuns.AsNoTracking().Include(r => r.Request).SingleAsync(r => r.PipelineRunId == run.PipelineRunId);
+        Assert.Equal(PipelineOutcome.Cancelled, reloadedRun.Outcome);
+        Assert.NotNull(reloadedRun.CompletedUtc);
+        Assert.Equal(RequestStatus.Cancelled, reloadedRun.Request!.RequestStatus);
+
+        var cancelEvent = await verifyDb.PipelineEvents.AsNoTracking().FirstOrDefaultAsync(e => e.PipelineRunId == run.PipelineRunId && e.Action == "Cancelled");
+        Assert.NotNull(cancelEvent);
+        Assert.Equal("MANUAL_CANCEL", cancelEvent.ReasonCode);
+    }
+
+    private sealed class InterleavingSnapshotReader(
+        AppDbContext db, IConfiguration config, IOptions<BprLitigationOptions> bprOptions,
+        IOptions<ReferenceToolOptions> referenceToolOptions, Action onAfterRead)
+        : PipelineSnapshotReader(db, config, bprOptions, referenceToolOptions)
+    {
+        public override async Task<PipelineSnapshot?> ReadAsync(long requestId, CancellationToken ct)
+        {
+            var snapshot = await base.ReadAsync(requestId, ct);
+            onAfterRead();
+            return snapshot;
+        }
+    }
+
+    private sealed class SpyPipelineActions : IPipelineActions
+    {
+        public int LitigationSearchStarts { get; private set; }
+        public int LitigationAnalysisStarts { get; private set; }
+        public int DossierPreRenders { get; private set; }
+        public int RetryFetchCalls { get; private set; }
+
+        public Task<PipelineActionResult> StartLitigationSearchAsync(long requestId, string correlationId, CancellationToken ct)
+        {
+            LitigationSearchStarts++;
+            return Task.FromResult(new PipelineActionResult(true, false, 1, null, null));
+        }
+
+        public Task<PipelineActionResult> StartLitigationAnalysisAsync(long requestId, string correlationId, CancellationToken ct)
+        {
+            LitigationAnalysisStarts++;
+            return Task.FromResult(new PipelineActionResult(true, false, 1, null, null));
+        }
+
+        public Task<DossierRenderResult> EnsureDossierRenderedAsync(long requestId, CancellationToken ct)
+        {
+            DossierPreRenders++;
+            return Task.FromResult(new DossierRenderResult(true, false, false, "unused.pdf"));
+        }
+
+        public Task<PipelineActionResult> RetryFetchAsync(long requestId, string correlationId, CancellationToken ct)
+        {
+            RetryFetchCalls++;
+            return Task.FromResult(new PipelineActionResult(true, false, 1, null, null));
+        }
+    }
+
     private sealed class DictionaryTempDataProvider : ITempDataProvider
     {
         public IDictionary<string, object> LoadTempData(HttpContext context) => new Dictionary<string, object>();

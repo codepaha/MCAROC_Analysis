@@ -94,12 +94,21 @@ public sealed class PipelineReconciler(AppDbContext db, PipelineSnapshotReader r
         var decision = PipelineDecider.Decide(snapshot, ParsePolicy(run.PolicyJson), now2, options?.CurrentValue.Stall);
 
         await using var tx = await db.Database.BeginTransactionAsync(ct);
-        var fenced = await db.PipelineRuns.Where(r => r.PipelineRunId == runId && r.ReconcileLeaseToken == token)
+        var fenced = await db.PipelineRuns.Where(r => r.PipelineRunId == runId && r.ReconcileLeaseToken == token && r.Outcome != PipelineOutcome.Cancelled)
             .ExecuteUpdateAsync(s => s.SetProperty(r => r.ReconcileLeaseExpiresUtc, now2.Add(LeaseDuration)), ct);
         if (fenced == 0)
         {
             await tx.RollbackAsync(ct);
-            logger.LogInformation("Pipeline run {RunId} lease was taken over; discarding this reconcile.", runId);
+            logger.LogInformation("Pipeline run {RunId} lease was taken over or run was cancelled; discarding this reconcile.", runId);
+            return false;
+        }
+
+        var requestCancelled = await db.Requests.AsNoTracking().Where(r => r.RequestId == run.RequestId)
+            .Select(r => r.RequestStatus == RequestStatus.Cancelled).FirstOrDefaultAsync(ct);
+        if (requestCancelled)
+        {
+            await tx.RollbackAsync(ct);
+            logger.LogInformation("Pipeline run {RunId} request is cancelled; discarding this reconcile.", runId);
             return false;
         }
 
@@ -255,11 +264,17 @@ public sealed class PipelineReconciler(AppDbContext db, PipelineSnapshotReader r
 
         var coreReadyUtc = run.CoreReadyUtc ?? (finalCoreReady ? now2 : null);
         DateTime? completedUtc = finalOutcome is PipelineOutcome.Complete or PipelineOutcome.CompleteWithWarnings or PipelineOutcome.Cancelled ? now2 : null;
-        await db.PipelineRuns.Where(r => r.PipelineRunId == runId && r.ReconcileLeaseToken == token)
+        var updated = await db.PipelineRuns.Where(r => r.PipelineRunId == runId && r.ReconcileLeaseToken == token && r.Outcome != PipelineOutcome.Cancelled)
             .ExecuteUpdateAsync(s => s
                 .SetProperty(r => r.Outcome, finalOutcome)
                 .SetProperty(r => r.CoreReadyUtc, coreReadyUtc)
                 .SetProperty(r => r.CompletedUtc, completedUtc), ct);
+        if (updated == 0)
+        {
+            await tx.RollbackAsync(ct);
+            logger.LogInformation("Pipeline run {RunId} lease fence lost or run was cancelled before commit; discarding this reconcile.", runId);
+            return false;
+        }
         await tx.CommitAsync(ct);
 
         if (finalCancelled)
