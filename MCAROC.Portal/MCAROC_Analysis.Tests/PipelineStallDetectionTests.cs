@@ -179,6 +179,54 @@ public sealed class PipelineStallDetectionTests
         Assert.Equal(PipelineStageStateKind.Running, d.Stages[PipelineStage.Litigation].State);
     }
 
+    /// <summary>PR #310 review: the import that runs after the search job completes is a separate crash-safe
+    /// unit of work with its own lease on LitigationReportSnapshot — checking only the search job's own
+    /// (already-released) lease missed exactly the crash this feature exists to catch.</summary>
+    [Fact]
+    public void A_report_import_whose_own_lease_expired_while_still_importing_needs_attention_as_stalled()
+    {
+        var s = ManualDone() with
+        {
+            LitigationConfigured = true,
+            LitigationSearch = new LitigationSearchFacts(40, LitigationSearchJobStatus.Completed, null, 41, LitigationReportSnapshotStatus.InProgress,
+                LeaseExpiresUtc: Now.AddDays(-1), // the search job's own lease — long since released, irrelevant to this check
+                SnapshotLeaseExpiresUtc: Now.AddMinutes(-1))
+        };
+        var d = PipelineDecider.Decide(s, new PipelinePolicy { LitigationSearch = true }, Now, DefaultStall);
+
+        Assert.Equal(PipelineStageStateKind.NeedsAttention, d.Stages[PipelineStage.Litigation].State);
+        Assert.Equal("STAGE_STALLED", d.Stages[PipelineStage.Litigation].ReasonCode);
+        Assert.Equal(41, d.Stages[PipelineStage.Litigation].SourceRef);
+    }
+
+    [Fact]
+    public void A_report_import_with_a_lease_still_valid_is_just_importing()
+    {
+        var s = ManualDone() with
+        {
+            LitigationConfigured = true,
+            LitigationSearch = new LitigationSearchFacts(40, LitigationSearchJobStatus.Completed, null, 41, LitigationReportSnapshotStatus.InProgress,
+                SnapshotLeaseExpiresUtc: Now.AddMinutes(1))
+        };
+        var d = PipelineDecider.Decide(s, new PipelinePolicy { LitigationSearch = true }, Now, DefaultStall);
+
+        Assert.Equal(PipelineStageStateKind.Running, d.Stages[PipelineStage.Litigation].State);
+        Assert.Equal("IMPORTING", d.Stages[PipelineStage.Litigation].ReasonCode);
+    }
+
+    [Fact]
+    public void A_report_import_with_no_lease_recorded_is_never_flagged_as_stalled()
+    {
+        var s = ManualDone() with
+        {
+            LitigationConfigured = true,
+            LitigationSearch = new LitigationSearchFacts(40, LitigationSearchJobStatus.Completed, null, 41, LitigationReportSnapshotStatus.InProgress)
+        };
+        var d = PipelineDecider.Decide(s, new PipelinePolicy { LitigationSearch = true }, Now.AddYears(10), DefaultStall);
+
+        Assert.Equal(PipelineStageStateKind.Running, d.Stages[PipelineStage.Litigation].State);
+    }
+
     [Fact]
     public void A_litigation_analysis_run_whose_lease_expired_needs_attention_as_stalled()
     {

@@ -287,7 +287,12 @@ public static class PipelineDecider
                         ? Attention("ORDER_DOWNLOAD_STALLED", "An order document has been waiting to download for 5 or more days.", job.SnapshotId)
                         : Ok(job.SnapshotId),
                     LitigationReportSnapshotStatus.Failed => Attention("LITIGATION_IMPORT_FAILED", null, job.SnapshotId),
-                    _ => Running(job.JobId, "IMPORTING")
+                    // The import is a separate crash-safe unit of work from the search job itself, claimed
+                    // with its own lease on LitigationReportSnapshot — the job's own lease (checked below)
+                    // says nothing about whether the import that started after it finished is still alive.
+                    _ => IsLeaseExpired(job.SnapshotLeaseExpiresUtc, now)
+                        ? Attention(StageStalled, "The import's lease expired without finishing; its worker may have crashed. Restart the stage.", job.SnapshotId)
+                        : Running(job.JobId, "IMPORTING")
                 },
                 _ => IsLeaseExpired(job.LeaseExpiresUtc, now)
                     ? Attention(StageStalled, "The search's lease expired without finishing; its worker may have crashed. Restart the stage.", job.JobId)

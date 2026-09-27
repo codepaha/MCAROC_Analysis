@@ -86,8 +86,13 @@ public sealed record FilingFacts(long BatchId, FilingBatchStatus Status, string?
 /// (plan §4.2); a manual start is never gated by this.</param>
 /// <param name="HasStalledOrderDownload">An order document still <c>Pending</c> five or more days after it
 /// was first recorded — plan §4.2's <c>ORDER_DOWNLOAD_STALLED</c> signal.</param>
-/// <param name="LeaseExpiresUtc">Plan §6.3's runtime-stall signal — see <see cref="RunFacts{TStatus}"/>'s
-/// own doc for why an expired lease on a nominally-running row means the worker died mid-task.</param>
+/// <param name="LeaseExpiresUtc">Plan §6.3's runtime-stall signal for the search job itself — see
+/// <see cref="RunFacts{TStatus}"/>'s own doc for why an expired lease on a nominally-running row means the
+/// worker died mid-task.</param>
+/// <param name="SnapshotLeaseExpiresUtc">The same signal for the import that follows the search job — a
+/// separate crash-safe unit of work with its own lease on <c>LitigationReportSnapshot</c>. The job's own
+/// lease (above) is already released by the time the import claims this one, so it says nothing about
+/// whether the import itself is still alive.</param>
 public sealed record LitigationSearchFacts(
     long JobId, LitigationSearchJobStatus Status, string? FailureReason, long? SnapshotId, LitigationReportSnapshotStatus? SnapshotStatus,
-    bool OrdersFullyProcessed = true, bool HasStalledOrderDownload = false, DateTime? LeaseExpiresUtc = null);
+    bool OrdersFullyProcessed = true, bool HasStalledOrderDownload = false, DateTime? LeaseExpiresUtc = null, DateTime? SnapshotLeaseExpiresUtc = null);
