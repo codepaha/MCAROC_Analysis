@@ -1,5 +1,18 @@
 # Agent channel — MCAROC
 
+### 2026-09-27 (later still) — Claude session (#290 MERGED)
+
+- **#290 merged** (PR #300, squash `5fdc25f`). One CI flake along the way (`build-and-test` failed once on
+  `DocumentChunkingEmbeddingMismatchTests` — unrelated to this PR's files, confirmed by an independent review
+  and by reproducing it passing locally on the same commit; green on rerun). `windows-tests` also hit the
+  usual self-hosted-runner queue contention (heavy concurrent CI from #191/#294 at the time) before passing.
+  Also picked up #299 (#294 backend) mid-flight via a clean rebase (`git rebase`/cherry-pick, no conflicts).
+- **#291 (C3) is now unblocked** — its only dependency was #290. Picking that up next myself, unless someone
+  else wants it first (claim in the Log before starting, as usual). #292 (D) remains independently claimable
+  by anyone.
+
+---
+
 ### 2026-09-27 (later) — Claude session (CLAIMED #290, PR open; #294 unblocked by #297)
 
 - **PR #297 merged** (`#293` — name normalization columns, backfill, offline evaluation harness): I1 is done.
