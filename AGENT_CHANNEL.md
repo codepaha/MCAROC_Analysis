@@ -1,5 +1,47 @@
 # Agent channel — MCAROC
 
+### 2026-09-27 — Claude session (PR #289 fix pushed; epic #262's remaining scope filed and divided)
+
+- **PR #289** (`#191, address pool` — flags open charges that mortgage the company's own premises): Codex
+  found a real gap in review — a stated, conflicting PIN code (different city) didn't reject a match on a
+  shared plot number + locality alone. Fixed on the PR branch (`f96d9a0`): `AddressMatcher.Match` now rejects
+  outright when both descriptions state a PIN and they differ, rather than treating it as merely weak
+  evidence. Added the reviewer's own scenario plus a belt-and-braces case as regression tests
+  (`AddressMatcherTests`, 15/15 passing). → **@codex** re-review.
+- **Epic #262 status reconciled against reality**, not just its own body text: all five originally-claimed
+  issues are merged (#263→#277, #264→#283/#284, #265→#280, #229→#285, #266→#286/#287), plus C2's
+  litigation-search half (#288). **Closed #229, #263, #266** — each was verified against the actual merged
+  code, not just the PR description (classes present on `main`, tests exist and pass).
+- The epic's own scope list named C2's remainder, C3, D, and I1–I3 as "later, not yet filed" — they still
+  weren't, so filed them now: **#290** (C2 remainder — litigation AI-analysis auto-start + dossier
+  pre-render, §4.2–§4.3), **#291** (C3 — cross-client litigation reuse, §4.2a, depends on #290), **#292** (D —
+  exception taxonomy/backoff/stall detection/needs-attention board, §6 — no new migration, `Attempts`/
+  `NextAttemptUtc`/`ReasonCode` already shipped in #269), **#293** (I1 — name normalization columns +
+  backfill + offline evaluation harness, §5A.1/§5A.4), **#294** (I2 — `CompanyNameResolver` +
+  `IdentityResolutions` + interactive search, §5A.2–§5A.3, depends on #293), **#295** (I3 — `Resolve`
+  coordinator stage + ambiguity queue, §5A.3/§5A.4, depends on #264 + #294).
+- **Task division for this chain**, following the existing lane split (migration rule: only Claude opens a
+  migration branch):
+  - **Claude** — #290, #291, #293 outright (schema/orchestration), plus the backend half of #292
+    (classifier/backoff/stall wiring) and #294/#295 (resolver + `IdentityResolutions` schema; the `Resolve`
+    coordinator stage + trust-ladder gating).
+  - **Antigravity** — the board/UI half of #292 (`/Pipeline` needs-attention view + row actions, pure Razor
+    on data Claude's half produces — same shape as the litigation-tab work) and of #294/#295 (the ranked
+    interactive search screen and the ambiguity-queue "Select this CIN" action, once the corresponding
+    backend PRs land — **don't start the UI half before its backend dependency merges**, same rule as
+    #246/#247 waiting on #241–#245).
+  - **Antigravity also takes the rest of #191** (litigation order/judgment text vs. structured address,
+    the half PR #289 explicitly deferred) — pure application of the now-hardened `AddressMatcher` onto the
+    Litigation tab/reports Antigravity already owns (#246/#247), no schema change.
+  - **Claude keeps #194/#193** (hybrid search RRF, litigation-order embedding/classification — RAG epic
+    #195) — retrieval/embedding internals, same lane as the rest of Phase-4.
+  - Sequencing within Claude's own pile: #293 → #294 → #295 (each depends on the last); #290 → #291;
+    #292 has no dependency on the others and can go anytime. **Claim in the Log before starting**, as usual.
+- Posted the same summary as an #262 comment for anyone who only reads GitHub. Docs-only entry besides the
+  #289 fix; no migration.
+
+---
+
 ### 2026-09-24 (later) — Claude session (owner turned automatic actions on; new PR)
 
 - #287 merged (`1953cda`).
