@@ -1,10 +1,14 @@
+using System.Net;
+using System.Text;
 using MCAROC_Analysis.Controllers;
 using MCAROC_Analysis.Data;
 using MCAROC_Analysis.Data.Entities;
 using MCAROC_Analysis.Models;
+using MCAROC_Analysis.Services;
 using MCAROC_Analysis.Services.Analysis;
 using MCAROC_Analysis.Services.AutoFetch;
 using MCAROC_Analysis.Services.Dossier;
+using MCAROC_Analysis.Services.Excel;
 using MCAROC_Analysis.Services.LitigationData;
 using MCAROC_Analysis.Services.Pipeline;
 using Microsoft.AspNetCore.Http;
@@ -518,6 +522,136 @@ public class PipelineNeedsAttentionBoardTests : IAsyncLifetime
         Assert.Equal("Run cancelled: Operator cancelled work", analysisRun.FailureReason);
     }
 
+    [Fact]
+    public async Task CancelRun_ActiveLitigationSearchWorkerPausedAfterClaim_WorkerCannotContinueOrOverwriteCancelledState()
+    {
+        await using var db = CreateContext();
+        var (req, run) = await SeedRunAsync(db, PipelineOutcome.NeedsAttention);
+
+        var job = new LitigationSearchJob
+        {
+            RequestId = req.RequestId,
+            Status = LitigationSearchJobStatus.Pending,
+            EntityType = "company",
+            ApplicationCustomerId = "1",
+            KeywordsJson = "[]",
+            CreatedUtc = DateTime.UtcNow
+        };
+        db.LitigationSearchJobs.Add(job);
+        await db.SaveChangesAsync();
+
+        var bprOpts = new BprLitigationOptions
+        {
+            BaseUrl = "https://bpr.test/", Id = "app", SecretKey = "secret",
+            PollIntervalSeconds = 1, PollTimeoutMinutes = 1, MaxAttempts = 2
+        };
+        var handler = new StubHttpHandler();
+        var client = new BprLitigationClient(
+            new HttpClient(handler) { BaseAddress = new Uri(bprOpts.BaseUrl) }, Options.Create(bprOpts), NullLogger<BprLitigationClient>.Instance);
+        var casePersistenceQueue = new LitigationCasePersistenceQueue();
+        var casePersistenceService = new LitigationCasePersistenceService(
+            db, casePersistenceQueue, new LitigationOrderDocumentQueue(), Options.Create(bprOpts),
+            NullLogger<LitigationCasePersistenceService>.Instance);
+        var service = new LitigationSearchJobService(
+            db, client, new LitigationSearchQueue(), casePersistenceQueue, casePersistenceService, Options.Create(bprOpts),
+            NullLogger<LitigationSearchJobService>.Instance);
+
+        var controller = CreateController(db);
+
+        // When authenticate is called, worker has claimed the job. Interleave CancelRun here!
+        handler.OnPath("sec/authenticate", _ =>
+        {
+            controller.CancelRun(run.PipelineRunId, reason: "Operator cancelled work", returnUrl: "/Pipeline", CancellationToken.None).GetAwaiter().GetResult();
+            return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("""{"jwt":"token-1"}""", Encoding.UTF8, "application/json") };
+        });
+
+        // Worker resumes and executes
+        await service.ProcessAsync(job.LitigationSearchJobId, CancellationToken.None);
+
+        await using var verifyDb = CreateContext();
+        var reloadedJob = await verifyDb.LitigationSearchJobs.AsNoTracking().SingleAsync(j => j.LitigationSearchJobId == job.LitigationSearchJobId);
+        Assert.Equal(LitigationSearchJobStatus.Failed, reloadedJob.Status);
+        Assert.Equal("Run cancelled: Operator cancelled work", reloadedJob.FailureReason);
+        Assert.Null(reloadedJob.VendorJobId);
+
+        var reloadedReq = await verifyDb.Requests.AsNoTracking().SingleAsync(r => r.RequestId == req.RequestId);
+        Assert.Equal(RequestStatus.Cancelled, reloadedReq.RequestStatus);
+
+        var reloadedRun = await verifyDb.PipelineRuns.AsNoTracking().SingleAsync(r => r.PipelineRunId == run.PipelineRunId);
+        Assert.Equal(PipelineOutcome.Cancelled, reloadedRun.Outcome);
+    }
+
+    [Fact]
+    public async Task CancelRun_ActiveAutoFetchWorkerPausedAfterClaim_WorkerCannotContinueOrOverwriteCancelledState()
+    {
+        await using var db = CreateContext();
+        var (req, run) = await SeedRunAsync(db, PipelineOutcome.NeedsAttention);
+
+        var job = new AutoFetchJob
+        {
+            RequestId = req.RequestId,
+            Cin = req.Cin!,
+            Bid = ReferenceToolClient.ComputeBid(req.Cin!),
+            Status = AutoFetchJobStatus.Queued,
+            WarningsJson = "[]",
+            CreatedUtc = DateTime.UtcNow
+        };
+        db.AutoFetchJobs.Add(job);
+        await db.SaveChangesAsync();
+
+        var tempDir = Path.Combine(Path.GetTempPath(), "af_cancel_" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tempDir);
+        try
+        {
+            var refOpts = Options.Create(new ReferenceToolOptions
+            {
+                BaseUrl = "https://reference-tool.test",
+                SessionCookie = "PHPSESSID=abc"
+            });
+            var refSession = new ReferenceToolSession();
+            refSession.SetSigningKey([1, 2, 3, 4]);
+            var handler = new StubHttpHandler();
+            handler.OnPath("jwt/service.php", _ => new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("""{"jwtToken":"01020304"}""", Encoding.UTF8, "application/json")
+            });
+            var client = new ReferenceToolClient(new HttpClient(handler), refOpts, refSession, null!, NullLogger<ReferenceToolClient>.Instance);
+            var autoFetchService = new AutoFetchJobService(db, client, refOpts, new FileValidationService(new ExcelSheetReader()),
+                null!, null!, null!, null!, new FakeEnv(tempDir), NullLogger<AutoFetchJobService>.Instance);
+
+            var controller = CreateController(db);
+
+            // When userDetailsService.php is called, worker has claimed the job. Interleave CancelRun here!
+            handler.OnPath("userDetailsService.php", _ =>
+            {
+                controller.CancelRun(run.PipelineRunId, reason: "Operator cancelled work", returnUrl: "/Pipeline", CancellationToken.None).GetAwaiter().GetResult();
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("""{"id":"123","user_id":"123","username":"test"}""", Encoding.UTF8, "application/json")
+                };
+            });
+
+            // Worker resumes and executes
+            await autoFetchService.ProcessAsync(job.AutoFetchJobId, CancellationToken.None);
+
+            await using var verifyDb = CreateContext();
+            var reloadedJob = await verifyDb.AutoFetchJobs.AsNoTracking().SingleAsync(j => j.AutoFetchJobId == job.AutoFetchJobId);
+            Assert.Equal(AutoFetchJobStatus.Failed, reloadedJob.Status);
+            Assert.Equal("Run cancelled: Operator cancelled work", reloadedJob.FailureReason);
+            Assert.Null(reloadedJob.RocDocumentId);
+
+            var reloadedReq = await verifyDb.Requests.AsNoTracking().SingleAsync(r => r.RequestId == req.RequestId);
+            Assert.Equal(RequestStatus.Cancelled, reloadedReq.RequestStatus);
+
+            var reloadedRun = await verifyDb.PipelineRuns.AsNoTracking().SingleAsync(r => r.PipelineRunId == run.PipelineRunId);
+            Assert.Equal(PipelineOutcome.Cancelled, reloadedRun.Outcome);
+        }
+        finally
+        {
+            try { Directory.Delete(tempDir, recursive: true); } catch { }
+        }
+    }
+
     private sealed class InterleavingSnapshotReader(
         AppDbContext db, IConfiguration config, IOptions<BprLitigationOptions> bprOptions,
         IOptions<ReferenceToolOptions> referenceToolOptions, Action onAfterRead)
@@ -574,5 +708,29 @@ public class PipelineNeedsAttentionBoardTests : IAsyncLifetime
         public T CurrentValue => current;
         public T Get(string? name) => current;
         public IDisposable? OnChange(Action<T, string?> listener) => null;
+    }
+
+    private sealed class StubHttpHandler : HttpMessageHandler
+    {
+        private readonly List<(string PathSuffix, Func<HttpRequestMessage, HttpResponseMessage> Respond)> _routes = [];
+        public void OnPath(string pathSuffix, Func<HttpRequestMessage, HttpResponseMessage> respond) => _routes.Add((pathSuffix, respond));
+
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+        {
+            var route = _routes.FirstOrDefault(r => request.RequestUri!.AbsolutePath.Contains(r.PathSuffix, StringComparison.Ordinal));
+            return Task.FromResult(route.Respond is null
+                ? new HttpResponseMessage(HttpStatusCode.NotFound) { Content = new StringContent("no stub for " + request.RequestUri) }
+                : route.Respond(request));
+        }
+    }
+
+    private sealed class FakeEnv(string contentRoot) : Microsoft.AspNetCore.Hosting.IWebHostEnvironment
+    {
+        public string EnvironmentName { get; set; } = "Test";
+        public string ApplicationName { get; set; } = "Tests";
+        public string WebRootPath { get; set; } = contentRoot;
+        public Microsoft.Extensions.FileProviders.IFileProvider WebRootFileProvider { get; set; } = new Microsoft.Extensions.FileProviders.NullFileProvider();
+        public string ContentRootPath { get; set; } = contentRoot;
+        public Microsoft.Extensions.FileProviders.IFileProvider ContentRootFileProvider { get; set; } = new Microsoft.Extensions.FileProviders.NullFileProvider();
     }
 }

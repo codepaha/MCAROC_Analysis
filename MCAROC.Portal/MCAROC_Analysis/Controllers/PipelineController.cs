@@ -627,33 +627,44 @@ public class PipelineController(
                         .SetProperty(r => r.FailureReason, $"Run cancelled: {reason.Trim()}"), ct);
             }
 
-            // Cancel queued / waiting domain jobs so workers do not pick them up
+            // Cancel queued / waiting / in-flight domain jobs and invalidate active leases so workers cannot continue or overwrite
             await db.AutoFetchJobs.Where(j => j.RequestId == run.RequestId
                 && j.Status != AutoFetchJobStatus.Completed
                 && j.Status != AutoFetchJobStatus.CompletedWithWarnings
                 && j.Status != AutoFetchJobStatus.Failed)
                 .ExecuteUpdateAsync(s => s
                     .SetProperty(j => j.Status, AutoFetchJobStatus.Failed)
-                    .SetProperty(j => j.FailureReason, $"Run cancelled: {reason.Trim()}"), ct);
+                    .SetProperty(j => j.FailureReason, $"Run cancelled: {reason.Trim()}")
+                    .SetProperty(j => j.CorrelationId, $"CANCELLED:{Guid.NewGuid():N}")
+                    .SetProperty(j => j.CompletedUtc, now), ct);
 
             await db.LitigationSearchJobs.Where(j => j.RequestId == run.RequestId
                 && j.Status != LitigationSearchJobStatus.Completed
                 && j.Status != LitigationSearchJobStatus.Failed)
                 .ExecuteUpdateAsync(s => s
                     .SetProperty(j => j.Status, LitigationSearchJobStatus.Failed)
-                    .SetProperty(j => j.FailureReason, $"Run cancelled: {reason.Trim()}"), ct);
+                    .SetProperty(j => j.FailureReason, $"Run cancelled: {reason.Trim()}")
+                    .SetProperty(j => j.CompletedUtc, now)
+                    .SetProperty(j => j.LeaseToken, Guid.NewGuid())
+                    .SetProperty(j => j.LeaseOwner, (string?)null)
+                    .SetProperty(j => j.LeaseExpiresUtc, (DateTime?)null), ct);
 
             await db.LitigationAiAnalysisRuns.Where(r => r.RequestId == run.RequestId
                 && (r.Status == LitigationAiAnalysisRunStatus.Pending || r.Status == LitigationAiAnalysisRunStatus.InProgress))
                 .ExecuteUpdateAsync(s => s
                     .SetProperty(r => r.Status, LitigationAiAnalysisRunStatus.Failed)
-                    .SetProperty(r => r.FailureReason, $"Run cancelled: {reason.Trim()}"), ct);
+                    .SetProperty(r => r.FailureReason, $"Run cancelled: {reason.Trim()}")
+                    .SetProperty(r => r.CompletedUtc, now)
+                    .SetProperty(r => r.LeaseToken, Guid.NewGuid())
+                    .SetProperty(r => r.LeaseOwner, (string?)null)
+                    .SetProperty(r => r.LeaseExpiresUtc, (DateTime?)null), ct);
 
             await db.AnalysisRuns.Where(a => a.RequestId == run.RequestId
                 && a.Status == AnalysisRunStatus.Running)
                 .ExecuteUpdateAsync(s => s
                     .SetProperty(a => a.Status, AnalysisRunStatus.Failed)
-                    .SetProperty(a => a.FailureReason, $"Run cancelled: {reason.Trim()}"), ct);
+                    .SetProperty(a => a.FailureReason, $"Run cancelled: {reason.Trim()}")
+                    .SetProperty(a => a.CompletedDate, now), ct);
 
             var stages = await db.PipelineStageStates.Where(s => s.PipelineRunId == runId).ToListAsync(ct);
             foreach (var s in stages)
