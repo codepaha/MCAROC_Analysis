@@ -2,6 +2,7 @@ using MCAROC_Analysis.Data;
 using MCAROC_Analysis.Data.Entities;
 using MCAROC_Analysis.Services;
 using MCAROC_Analysis.Services.AutoFetch;
+using MCAROC_Analysis.Services.CompanyMaster;
 using MCAROC_Analysis.Services.Excel;
 using MCAROC_Analysis.Services.McaFilings;
 using MCAROC_Analysis.Services.Pipeline;
@@ -10,6 +11,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 
 namespace MCAROC_Analysis.Tests;
 
@@ -24,6 +26,9 @@ public sealed class CompanyUnlockServiceTests : IAsyncLifetime
     private readonly string _cin = $"U{Random.Shared.Next(10000, 99999)}KA2021PTC{Random.Shared.Next(100000, 999999)}";
     private string Bid => ReferenceToolClient.ComputeBid(_cin);
     private DateTimeOffset Now => _time.GetUtcNow();
+    // Requests whose identifier a test withdraws or re-points are no longer found by _cin at cleanup.
+    private readonly List<long> _requestIds = [];
+    private readonly List<string> _otherCins = [];
 
     private static AppDbContext CreateContext() =>
         new(new DbContextOptionsBuilder<AppDbContext>().UseSqlServer(TestDatabase.ConnectionString).Options);
@@ -38,11 +43,13 @@ public sealed class CompanyUnlockServiceTests : IAsyncLifetime
     {
         await using var db = CreateContext();
         var requestIds = await db.Requests.Where(r => r.Cin == _cin).Select(r => r.RequestId).ToListAsync();
-        await db.AutoFetchJobs.Where(j => j.Cin == _cin).ExecuteDeleteAsync();
+        requestIds = requestIds.Union(_requestIds).ToList();
+        await db.AutoFetchJobs.Where(j => j.Cin == _cin || requestIds.Contains(j.RequestId)).ExecuteDeleteAsync();
         await db.PaidCallAdmissions.Where(a => requestIds.Contains(a.RequestId)).ExecuteDeleteAsync();
         await db.SpendScopes.Where(s => s.ScopeKey == "unlock|" + _cin).ExecuteDeleteAsync();
         await db.UnlockApprovals.Where(a => a.Identifier == _cin).ExecuteDeleteAsync();
-        await db.Requests.Where(r => r.Cin == _cin).ExecuteDeleteAsync();
+        await db.Requests.Where(r => r.Cin == _cin || requestIds.Contains(r.RequestId)).ExecuteDeleteAsync();
+        await db.CompanyMasterRecords.Where(r => _otherCins.Contains(r.Identifier)).ExecuteDeleteAsync();
         await db.CompanyReportLifecycles.Where(l => l.Identifier == _cin).ExecuteDeleteAsync();
     }
 
@@ -381,6 +388,144 @@ public sealed class CompanyUnlockServiceTests : IAsyncLifetime
             (await db.PaidCallAdmissions.AsNoTracking().SingleAsync(a => a.RequestId == requestId && a.Kind == PaidCallKind.ReferenceUnlock)).Trigger);
     }
 
+    // ── Identity (#295): trust ladder and the preview safety net ─────────────────────────────────────
+
+    private async Task AddResolutionAsync(long requestId, ResolutionMethod method, double? score, bool identifyRequest = false)
+    {
+        await using var db = CreateContext();
+        if (identifyRequest)
+            await db.Requests.Where(r => r.RequestId == requestId).ExecuteUpdateAsync(s => s.SetProperty(r => r.AutoFetchCompanyIdentifier, _cin));
+        db.IdentityResolutions.Add(new IdentityResolution
+        {
+            RequestId = requestId, InputName = "Unlock Test Company", Status = ResolutionStatus.Resolved, Method = method,
+            ChosenIdentifier = _cin, TopScore = score, ReasonCode = "RESOLVED_" + method.ToString().ToUpperInvariant(), AppliedToRequest = true,
+            CandidatesJson = "[]", CreatedBy = "test", CreatedUtc = DateTime.UtcNow
+        });
+        await db.SaveChangesAsync();
+    }
+
+    [Fact]
+    public async Task Auto_unlock_waits_for_an_approval_when_the_identity_was_auto_selected_below_the_spend_threshold()
+    {
+        var capOne = new PipelineOptions { AutoUnlock = { Enabled = true }, Caps = { UnlockPerDay = 1 } };
+        var (requestId, _) = await SeedJobAsync();
+        await AddResolutionAsync(requestId, ResolutionMethod.AutoSelected, 0.97);
+
+        var tool = LockedTool();
+        var held = await ExecuteAsync(Services(tool, capOne), requestId);
+        Assert.Equal(UnlockOutcome.NoApproval, held.Outcome);
+        Assert.Contains("spend threshold", held.Message);
+        Assert.Equal(0, tool.Count("addAsset"));
+
+        // A person confirming the company makes it trusted; the same auto-unlock now spends.
+        await AddResolutionAsync(requestId, ResolutionMethod.HumanSelected, null);
+        var unlocked = await ExecuteAsync(Services(tool, capOne), requestId);
+        Assert.Equal(UnlockOutcome.Unlocked, unlocked.Outcome);
+        Assert.Equal(1, tool.Count("addAsset"));
+    }
+
+    [Fact]
+    public async Task A_preview_naming_another_company_is_a_false_accept_for_an_auto_selected_identity_and_nothing_is_fetched()
+    {
+        var other = OtherCin();
+        var tool = LockedTool();
+        tool.AddedAt = Now.AddDays(-5); // unlocked: without the safety net the export would run
+        tool.DataAsOf = Now.AddHours(-1);
+        tool.PreviewCin = other;
+        var sp = Services(tool);
+        var (requestId, jobId) = await SeedJobAsync();
+        await AddResolutionAsync(requestId, ResolutionMethod.AutoSelected, 0.999, identifyRequest: true);
+
+        await ProcessAsync(sp, jobId, withIdentity: true);
+
+        var job = await JobAsync(jobId);
+        Assert.Equal(AutoFetchJobStatus.Failed, job.Status);
+        Assert.StartsWith(ResolutionReasonCodes.FalseAccept, job.FailureReason);
+        Assert.Contains(other, job.FailureReason);
+        Assert.Equal(0, tool.Count("publishProbedData"));
+        Assert.Equal(0, tool.Count("addAsset"));
+
+        await using var db = CreateContext();
+        var request = await db.Requests.AsNoTracking().SingleAsync(r => r.RequestId == requestId);
+        Assert.Null(request.Cin);
+        Assert.Null(request.AutoFetchCompanyIdentifier);
+        var latest = await IdentityFacts.LatestAsync(db, requestId, appliedOnly: false, CancellationToken.None);
+        Assert.True(latest!.IsFalseAccept);
+        Assert.Equal(1, IdentityResolutionMetrics.Compute(await db.IdentityResolutions.AsNoTracking().Where(r => r.RequestId == requestId)
+            .OrderBy(r => r.IdentityResolutionId)
+            .Select(r => new ResolutionMetricRow(r.RequestId!.Value, r.Method, r.ReasonCode, r.InputIdentifier, r.ChosenIdentifier, r.RecommendedIdentifier, r.AutoSelectEligible))
+            .ToListAsync()).FalseAccepts);
+    }
+
+    [Fact]
+    public async Task A_preview_mismatch_on_a_person_named_identity_fails_the_job_without_reopening_resolve()
+    {
+        var tool = LockedTool();
+        tool.AddedAt = Now.AddDays(-5);
+        tool.DataAsOf = Now.AddHours(-1);
+        tool.PreviewCin = OtherCin();
+        var (requestId, jobId) = await SeedJobAsync();
+        await AddResolutionAsync(requestId, ResolutionMethod.HumanSelected, null, identifyRequest: true);
+
+        await ProcessAsync(Services(tool), jobId, withIdentity: true);
+
+        var job = await JobAsync(jobId);
+        Assert.StartsWith("IDENTITY_MISMATCH", job.FailureReason);
+        await using var db = CreateContext();
+        Assert.Equal(_cin, (await db.Requests.AsNoTracking().SingleAsync(r => r.RequestId == requestId)).AutoFetchCompanyIdentifier);
+        Assert.False((await IdentityFacts.LatestAsync(db, requestId, appliedOnly: false, CancellationToken.None))!.IsFalseAccept);
+    }
+
+    [Fact]
+    public async Task After_a_false_accept_a_person_selecting_the_company_re_points_the_job_and_queues_it()
+    {
+        var other = OtherCin();
+        await using (var seed = CreateContext())
+        {
+            seed.CompanyMasterRecords.Add(new CompanyMasterRecord { Identifier = other, RecordType = CompanyMasterRecordType.Company, Name = "RIGHT TEST COMPANY PRIVATE LIMITED", Status = "Active" });
+            await seed.SaveChangesAsync();
+        }
+        var tool = LockedTool();
+        tool.AddedAt = Now.AddDays(-5);
+        tool.DataAsOf = Now.AddHours(-1);
+        tool.PreviewCin = other;
+        var queue = new AutoFetchQueue();
+        var sp = Services(tool, queue: queue);
+        var (requestId, jobId) = await SeedJobAsync();
+        await AddResolutionAsync(requestId, ResolutionMethod.AutoSelected, 0.999, identifyRequest: true);
+        await ProcessAsync(sp, jobId, withIdentity: true);
+
+        using (var scope = sp.CreateScope())
+        {
+            var s = scope.ServiceProvider;
+            var db = s.GetRequiredService<AppDbContext>();
+            var identity = new IdentityResolutionService(db, Options.Create(new ResolverOptions()));
+            var selection = new IdentitySelectionService(db, identity, Jobs(s, identity), queue, _time, NullLogger<IdentitySelectionService>.Instance);
+            var result = await selection.SelectAsync(requestId, other, "reviewer@test", CancellationToken.None);
+
+            Assert.True(result.Resolution.AppliedToRequest);
+            Assert.Equal(jobId, result.RequeuedJobId);
+        }
+
+        var job = await JobAsync(jobId);
+        Assert.Equal(other, job.Cin);
+        Assert.Equal(ReferenceToolClient.ComputeBid(other), job.Bid);
+        Assert.Equal(AutoFetchJobStatus.Queued, job.Status);
+        Assert.True(queue.TryRead(out var queued));
+        Assert.Equal(jobId, queued);
+        await using var check = CreateContext();
+        Assert.Equal(other, (await check.Requests.AsNoTracking().SingleAsync(r => r.RequestId == requestId)).AutoFetchCompanyIdentifier);
+        var latest = await IdentityFacts.LatestAsync(check, requestId, appliedOnly: false, CancellationToken.None);
+        Assert.Equal(ResolutionMethod.HumanSelected, latest!.Method);
+    }
+
+    private string OtherCin()
+    {
+        var other = $"U{Random.Shared.Next(10000, 99999)}KA2022PTC{Random.Shared.Next(100000, 999999)}";
+        _otherCins.Add(other);
+        return other;
+    }
+
     // ── Through the job and the coordinator ─────────────────────────────────────────────────────────
 
     [Fact]
@@ -470,15 +615,21 @@ public sealed class CompanyUnlockServiceTests : IAsyncLifetime
         Assert.Equal(0, tool.Count("addAsset"));
     }
 
-    private async Task ProcessAsync(ServiceProvider sp, long jobId)
+    private async Task ProcessAsync(ServiceProvider sp, long jobId, bool withIdentity = false)
     {
         using var scope = sp.CreateScope();
         var s = scope.ServiceProvider;
-        var jobs = new AutoFetchJobService(s.GetRequiredService<AppDbContext>(), s.GetRequiredService<ReferenceToolClient>(), FakeReferenceTool.Options(),
-            new FileValidationService(new ExcelSheetReader()), null!, null!, new FilingProcessingQueue(), null!, new FakeEnv(Path.GetTempPath()),
-            NullLogger<AutoFetchJobService>.Instance, refresh: s.GetRequiredService<CompanyRefreshService>(), unlock: s.GetRequiredService<CompanyUnlockService>());
-        await jobs.ProcessAsync(jobId, CancellationToken.None);
+        var identity = withIdentity
+            ? new IdentityResolutionService(s.GetRequiredService<AppDbContext>(), Options.Create(new ResolverOptions()))
+            : null;
+        await Jobs(s, identity).ProcessAsync(jobId, CancellationToken.None);
     }
+
+    private static AutoFetchJobService Jobs(IServiceProvider s, IdentityResolutionService? identity) =>
+        new(s.GetRequiredService<AppDbContext>(), s.GetRequiredService<ReferenceToolClient>(), FakeReferenceTool.Options(),
+            new FileValidationService(new ExcelSheetReader()), null!, null!, new FilingProcessingQueue(), null!, new FakeEnv(Path.GetTempPath()),
+            NullLogger<AutoFetchJobService>.Instance, refresh: s.GetRequiredService<CompanyRefreshService>(), unlock: s.GetRequiredService<CompanyUnlockService>(),
+            identity: identity);
 
     private async Task<(long RequestId, long JobId)> SeedJobAsync()
     {
@@ -491,6 +642,7 @@ public sealed class CompanyUnlockServiceTests : IAsyncLifetime
         };
         db.Requests.Add(request);
         await db.SaveChangesAsync();
+        _requestIds.Add(request.RequestId);
         var job = new AutoFetchJob
         {
             RequestId = request.RequestId, Cin = _cin, Bid = Bid, Status = AutoFetchJobStatus.Queued,

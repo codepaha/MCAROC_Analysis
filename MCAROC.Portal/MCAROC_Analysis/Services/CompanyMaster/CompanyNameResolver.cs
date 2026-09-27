@@ -60,6 +60,10 @@ public sealed class ResolverOptions
     /// <summary>Below this top score the name counts as not found (candidates still returned as suggestions).</summary>
     public double SuggestionFloor { get; set; } = 0.5;
     public int MaxCandidates { get; set; } = 10;
+    /// <summary><c>Resolve:SpendThreshold</c> (plan §5A.3 <c>T_spend</c>): an <c>AutoSelected</c> identity may drive an
+    /// unattended spend (auto-unlock, auto litigation search) only at or above this score — stricter than
+    /// <see cref="AutoSelectThreshold"/>. A lower-confidence auto-selection still proceeds through the free steps.</summary>
+    public double SpendThreshold { get; set; } = 0.99;
 }
 
 public sealed record ResolutionDecision(
@@ -90,6 +94,11 @@ public static class ResolutionReasonCodes
     public const string IdentifierNotInMaster = "IDENTIFIER_NOT_IN_MASTER";
     public const string NameMissing = "NAME_MISSING";
     public const string DuplicateRequest = "DUPLICATE_REQUEST";
+    /// <summary>The request already carries a different identifier; a resolution never re-points it.</summary>
+    public const string RequestAlreadyIdentified = "REQUEST_ALREADY_IDENTIFIED";
+    /// <summary>The reference tool's free preview named a different company than an <c>AutoSelected</c>
+    /// resolution (issue #295): recorded as a false accept, and the identity goes back to a human.</summary>
+    public const string FalseAccept = "IDENTITY_FALSE_ACCEPT";
 }
 
 /// <summary>Name → CIN/LLPIN resolution, pure part (issue #294, plan §5A.2 steps 3–4): rank retrieved master

@@ -1,7 +1,8 @@
 // Offline name-resolution harness (issue #293, plan §5A.4). Read-only: it queries CompanyMasterRecords and
 // Requests, changes nothing, and prints a precision/recall report per threshold for each retrieval strategy.
 // This is the number the resolver's auto-select stays switched off behind (≥ 99.5% precision on the
-// auto-selected subset, read against the 95% CI's lower bound); the third strategy is the #294 resolver.
+// auto-selected subset, read against the 95% CI's lower bound); the third strategy is the #294 resolver. It ends
+// with the live metrics (#295): auto-select rate, human-override rate and false accepts from IdentityResolutions.
 //
 // Run after the AddCompanyMasterNameNormalization migration and the name backfill:
 //   dotnet run --project Tools/EvaluateNameResolution -- [--connection="..."] [--sample-modulus=1000] [--out=report.md]
@@ -56,8 +57,10 @@ var reports = new[]
         (name, ct) => NameResolutionHarness.ResolverAsync(connection, name, ct), cases),
 };
 
+var live = await IdentityResolutionMetrics.ReadAsync(connection);
 var text = $"# Name-resolution harness — {DateTime.UtcNow:yyyy-MM-dd HH:mm} UTC, normalizer v{CompanyNameNormalizer.Version}\n\n"
-    + string.Join("\n", reports.Select(NameResolutionEvaluator.FormatReport));
+    + string.Join("\n", reports.Select(NameResolutionEvaluator.FormatReport))
+    + "\n" + IdentityResolutionMetrics.Format(live);
 Console.WriteLine();
 Console.WriteLine(text);
 if (outPath is not null)

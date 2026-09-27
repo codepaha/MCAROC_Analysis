@@ -1,4 +1,5 @@
 using MCAROC_Analysis.Data.Entities;
+using MCAROC_Analysis.Services.CompanyMaster;
 
 namespace MCAROC_Analysis.Services.Pipeline;
 
@@ -14,6 +15,14 @@ public sealed record PipelineSnapshot
     public bool IsManualReviewRequired { get; init; }
     public string? ManualReviewReason { get; init; }
     public string? RequestFailureReason { get; init; }
+
+    /// <summary>The request's most recent identity resolution (#294/#295), applied or not — what the Resolve stage
+    /// reports while the request has no identifier, and a false accept that reopened it.</summary>
+    public IdentityFacts? LatestResolution { get; init; }
+    /// <summary>The most recent resolution that wrote the request's identifier — the input to the spend trust ladder.</summary>
+    public IdentityFacts? AppliedResolution { get; init; }
+    /// <summary><c>Resolve:SpendThreshold</c> at read time.</summary>
+    public double SpendThreshold { get; init; } = new ResolverOptions().SpendThreshold;
 
     /// <summary>Null for a manual-upload request.</summary>
     public AutoFetchFacts? AutoFetch { get; init; }
