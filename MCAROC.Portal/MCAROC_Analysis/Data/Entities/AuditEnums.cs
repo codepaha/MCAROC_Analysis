@@ -102,5 +102,9 @@ public enum AuditActionType
     DocumentChunkingStarted,
     DocumentChunkingCompleted,
     DocumentChunkingFailed,
-    WorkerOrphanRecovered
+    WorkerOrphanRecovered,
+
+    // Application login (append to preserve existing enum values)
+    ApplicationLoginAttempted,
+    ApplicationLoggedOut
 }

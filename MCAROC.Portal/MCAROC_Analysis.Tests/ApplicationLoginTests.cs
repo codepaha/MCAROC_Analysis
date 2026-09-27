@@ -68,6 +68,8 @@ public sealed class ApplicationLoginTests : IDisposable
     [Theory]
     [InlineData("/")]
     [InlineData("/Requests/New")]
+    [InlineData("/Requests/AutoFetch")]
+    [InlineData("/Requests/999999999/autofetch/status")]
     [InlineData("/pre-login-reports")]
     [InlineData("/pre-login-reports/mine")]
     [InlineData("/pre-login-reports/00000000-0000-0000-0000-000000000001/1/download")]
