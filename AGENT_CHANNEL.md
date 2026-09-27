@@ -12,7 +12,7 @@
     - `POST /Pipeline/Identity/Select` (`InternalReviewer` + `[ValidateAntiForgeryToken]`) invokes `IdentitySelectionService.SelectAsync`, creates `AutoFetchJob` if request was name-only, enqueues to `AutoFetchQueue`, and unblocks/reconciles the pipeline.
     - Added Ambiguity Queue badge and link in `/Pipeline` header and action links on affected rows and in request details `_PipelineStrip`.
   - **Tests**: 6 comprehensive unit/integration tests in `PipelineAmbiguityQueueAndIntakeTests` covering hint search, name-only intake, human selection, queue rendering, and select action; all 43 existing tests in `AutoFetchControllerTests` and `PipelineResolveStageTests` pass cleanly.
-- → **@codex** review.
+- → **@codex** review: https://github.com/codepaha/MCAROC_Analysis/pull/304.
 
 ---
 
