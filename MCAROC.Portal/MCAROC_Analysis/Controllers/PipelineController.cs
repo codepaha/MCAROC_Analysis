@@ -374,6 +374,18 @@ public class PipelineController(
         if (run is null) return NotFound();
         var requestId = run.RequestId;
 
+        if (run.Outcome == PipelineOutcome.Cancelled || run.Request?.RequestStatus == RequestStatus.Cancelled)
+        {
+            TempData["PipelineError"] = "Cannot retry a stage on a cancelled pipeline run.";
+            return SafeRedirect(returnUrl);
+        }
+
+        if (run.Outcome is PipelineOutcome.Complete or PipelineOutcome.CompleteWithWarnings)
+        {
+            TempData["PipelineError"] = "Cannot retry a stage on a completed pipeline run.";
+            return SafeRedirect(returnUrl);
+        }
+
         var reviewer = User?.Identity?.Name ?? "InternalReviewer";
         var correlationId = CorrelationContext.GetOrCreate(HttpContext);
         var now = (time ?? TimeProvider.System).GetUtcNow().UtcDateTime;
@@ -501,8 +513,20 @@ public class PipelineController(
             return SafeRedirect(returnUrl);
         }
 
-        var run = await db.PipelineRuns.FirstOrDefaultAsync(r => r.PipelineRunId == runId, ct);
+        var run = await db.PipelineRuns.Include(r => r.Request).FirstOrDefaultAsync(r => r.PipelineRunId == runId, ct);
         if (run is null) return NotFound();
+
+        if (run.Outcome == PipelineOutcome.Cancelled || run.Request?.RequestStatus == RequestStatus.Cancelled)
+        {
+            TempData["PipelineError"] = "Cannot skip a stage on a cancelled pipeline run.";
+            return SafeRedirect(returnUrl);
+        }
+
+        if (run.Outcome is PipelineOutcome.Complete or PipelineOutcome.CompleteWithWarnings)
+        {
+            TempData["PipelineError"] = "Cannot skip a stage on a completed pipeline run.";
+            return SafeRedirect(returnUrl);
+        }
 
         var reviewer = User?.Identity?.Name ?? "InternalReviewer";
         var correlationId = CorrelationContext.GetOrCreate(HttpContext);
@@ -565,6 +589,18 @@ public class PipelineController(
         var run = await db.PipelineRuns.Include(r => r.Request).FirstOrDefaultAsync(r => r.PipelineRunId == runId, ct);
         if (run is null) return NotFound();
 
+        if (run.Outcome == PipelineOutcome.Cancelled || run.Request?.RequestStatus == RequestStatus.Cancelled)
+        {
+            TempData["PipelineError"] = "Pipeline run is already cancelled.";
+            return SafeRedirect(returnUrl);
+        }
+
+        if (run.Outcome is PipelineOutcome.Complete or PipelineOutcome.CompleteWithWarnings)
+        {
+            TempData["PipelineError"] = "Cannot cancel a completed pipeline run.";
+            return SafeRedirect(returnUrl);
+        }
+
         var reviewer = User?.Identity?.Name ?? "InternalReviewer";
         var correlationId = CorrelationContext.GetOrCreate(HttpContext);
         var now = (time ?? TimeProvider.System).GetUtcNow().UtcDateTime;
@@ -581,12 +617,43 @@ public class PipelineController(
             if (run.Request is not null)
             {
                 run.Request.RequestStatus = RequestStatus.Cancelled;
+                run.Request.FailureReason = $"Run cancelled: {reason.Trim()}";
             }
             else
             {
                 await db.Requests.Where(r => r.RequestId == run.RequestId)
-                    .ExecuteUpdateAsync(s => s.SetProperty(r => r.RequestStatus, RequestStatus.Cancelled), ct);
+                    .ExecuteUpdateAsync(s => s
+                        .SetProperty(r => r.RequestStatus, RequestStatus.Cancelled)
+                        .SetProperty(r => r.FailureReason, $"Run cancelled: {reason.Trim()}"), ct);
             }
+
+            // Cancel queued / waiting domain jobs so workers do not pick them up
+            await db.AutoFetchJobs.Where(j => j.RequestId == run.RequestId
+                && j.Status != AutoFetchJobStatus.Completed
+                && j.Status != AutoFetchJobStatus.CompletedWithWarnings
+                && j.Status != AutoFetchJobStatus.Failed)
+                .ExecuteUpdateAsync(s => s
+                    .SetProperty(j => j.Status, AutoFetchJobStatus.Failed)
+                    .SetProperty(j => j.FailureReason, $"Run cancelled: {reason.Trim()}"), ct);
+
+            await db.LitigationSearchJobs.Where(j => j.RequestId == run.RequestId
+                && j.Status != LitigationSearchJobStatus.Completed
+                && j.Status != LitigationSearchJobStatus.Failed)
+                .ExecuteUpdateAsync(s => s
+                    .SetProperty(j => j.Status, LitigationSearchJobStatus.Failed)
+                    .SetProperty(j => j.FailureReason, $"Run cancelled: {reason.Trim()}"), ct);
+
+            await db.LitigationAiAnalysisRuns.Where(r => r.RequestId == run.RequestId
+                && (r.Status == LitigationAiAnalysisRunStatus.Pending || r.Status == LitigationAiAnalysisRunStatus.InProgress))
+                .ExecuteUpdateAsync(s => s
+                    .SetProperty(r => r.Status, LitigationAiAnalysisRunStatus.Failed)
+                    .SetProperty(r => r.FailureReason, $"Run cancelled: {reason.Trim()}"), ct);
+
+            await db.AnalysisRuns.Where(a => a.RequestId == run.RequestId
+                && a.Status == AnalysisRunStatus.Running)
+                .ExecuteUpdateAsync(s => s
+                    .SetProperty(a => a.Status, AnalysisRunStatus.Failed)
+                    .SetProperty(a => a.FailureReason, $"Run cancelled: {reason.Trim()}"), ct);
 
             var stages = await db.PipelineStageStates.Where(s => s.PipelineRunId == runId).ToListAsync(ct);
             foreach (var s in stages)
@@ -612,7 +679,7 @@ public class PipelineController(
             });
 
             await db.SaveChangesAsync(ct);
-            TempData["PipelineOk"] = "Pipeline run cancelled.";
+            TempData["PipelineOk"] = "Pipeline run cancelled; future coordinator actions and queued jobs halted.";
         }
         catch (Exception ex)
         {

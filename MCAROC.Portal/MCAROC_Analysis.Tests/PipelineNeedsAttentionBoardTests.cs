@@ -45,8 +45,10 @@ public class PipelineNeedsAttentionBoardTests : IAsyncLifetime
             await db.PipelineEvents.Where(e => db.PipelineRuns.Any(r => reqIds.Contains(r.RequestId) && r.PipelineRunId == e.PipelineRunId)).ExecuteDeleteAsync();
             await db.PipelineStageStates.Where(s => db.PipelineRuns.Any(r => reqIds.Contains(r.RequestId) && r.PipelineRunId == s.PipelineRunId)).ExecuteDeleteAsync();
             await db.PipelineRuns.Where(r => reqIds.Contains(r.RequestId)).ExecuteDeleteAsync();
+            await db.PaidCallAdmissions.Where(a => reqIds.Contains(a.RequestId)).ExecuteDeleteAsync();
             await db.AutoFetchJobs.Where(j => reqIds.Contains(j.RequestId)).ExecuteDeleteAsync();
             await db.LitigationSearchJobs.Where(j => reqIds.Contains(j.RequestId)).ExecuteDeleteAsync();
+            await db.LitigationAiAnalysisRuns.Where(r => reqIds.Contains(r.RequestId)).ExecuteDeleteAsync();
             await db.AnalysisRuns.Where(a => reqIds.Contains(a.RequestId)).ExecuteDeleteAsync();
             await db.Requests.Where(r => reqIds.Contains(r.RequestId)).ExecuteUpdateAsync(s => s.SetProperty(r => r.LatestCompletedIngestionRunId, (long?)null));
             await db.IngestionRuns.Where(i => reqIds.Contains(i.RequestId)).ExecuteDeleteAsync();
@@ -95,7 +97,14 @@ public class PipelineNeedsAttentionBoardTests : IAsyncLifetime
         return (req, run);
     }
 
-    private static PipelineController CreateController(AppDbContext db, PipelineReconciler? reconciler = null, AutoFetchJobService? autoFetchJobs = null, AutoFetchQueue? autoFetchQueue = null, AnalysisOrchestrator? analysisOrchestrator = null)
+    private static PipelineController CreateController(
+        AppDbContext db,
+        PipelineReconciler? reconciler = null,
+        AutoFetchJobService? autoFetchJobs = null,
+        AutoFetchQueue? autoFetchQueue = null,
+        AnalysisOrchestrator? analysisOrchestrator = null,
+        LitigationStartService? litigation = null,
+        IOptions<BprLitigationOptions>? bprOptions = null)
     {
         var optsMonitor = new TestOptionsMonitor<PipelineOptions>(new PipelineOptions { Enabled = true, Mode = PipelineMode.Enforce });
         var controller = new PipelineController(
@@ -104,7 +113,9 @@ public class PipelineNeedsAttentionBoardTests : IAsyncLifetime
             autoFetchJobs: autoFetchJobs,
             autoFetchQueue: autoFetchQueue,
             reconciler: reconciler,
-            analysisOrchestrator: analysisOrchestrator);
+            analysisOrchestrator: analysisOrchestrator,
+            litigation: litigation,
+            bprOptions: bprOptions);
 
         var httpContext = new DefaultHttpContext();
         controller.ControllerContext = new ControllerContext { HttpContext = httpContext };
@@ -260,7 +271,7 @@ public class PipelineNeedsAttentionBoardTests : IAsyncLifetime
         var result = await controller.CancelRun(run.PipelineRunId, reason: "Client requested termination", returnUrl: "/Pipeline", CancellationToken.None);
 
         var redirect = Assert.IsType<RedirectResult>(result);
-        Assert.Equal("Pipeline run cancelled.", controller.TempData["PipelineOk"]);
+        Assert.Equal("Pipeline run cancelled; future coordinator actions and queued jobs halted.", controller.TempData["PipelineOk"]);
 
         var updatedRun = await db.PipelineRuns.Include(r => r.Request).SingleAsync(r => r.PipelineRunId == run.PipelineRunId);
         Assert.Equal(PipelineOutcome.Cancelled, updatedRun.Outcome);
@@ -357,6 +368,154 @@ public class PipelineNeedsAttentionBoardTests : IAsyncLifetime
         var cancelEvent = await verifyDb.PipelineEvents.AsNoTracking().FirstOrDefaultAsync(e => e.PipelineRunId == run.PipelineRunId && e.Action == "Cancelled");
         Assert.NotNull(cancelEvent);
         Assert.Equal("MANUAL_CANCEL", cancelEvent.ReasonCode);
+    }
+
+    [Fact]
+    public async Task RetryStage_CancelledRun_RejectsAndNeverCallsActions()
+    {
+        await using var db = CreateContext();
+        var (req, run) = await SeedRunAsync(db, PipelineOutcome.Cancelled);
+        req.RequestStatus = RequestStatus.Cancelled;
+        await db.SaveChangesAsync();
+
+        var bpr = new BprLitigationOptions { BaseUrl = "https://bpr.test", Id = "id", SecretKey = "secret" };
+        var admission = new PaidCallAdmissionService(db, new TestOptionsMonitor<PipelineOptions>(new PipelineOptions { Enabled = true, Mode = PipelineMode.Enforce }), TimeProvider.System, NullLogger<PaidCallAdmissionService>.Instance);
+        var search = new LitigationSearchJobService(db, null!, new LitigationSearchQueue(), null!, null!, Options.Create(bpr), NullLogger<LitigationSearchJobService>.Instance);
+        var analysis = new LitigationAiAnalysisOrchestrator(db, null!, new LitigationAiAnalysisQueue(), Options.Create(new LitigationAiAnalysisOptions()), NullLogger<LitigationAiAnalysisOrchestrator>.Instance);
+        var litigationService = new LitigationStartService(db, admission, search, new LitigationSearchQueue(), analysis, Options.Create(bpr));
+
+        var controller = CreateController(db, litigation: litigationService, bprOptions: Options.Create(bpr));
+        var result = await controller.RetryStage(run.PipelineRunId, PipelineStage.Litigation, reason: "Retry after cancel", returnUrl: "/Pipeline", CancellationToken.None);
+
+        var redirect = Assert.IsType<RedirectResult>(result);
+        Assert.Equal("/Pipeline", redirect.Url);
+        Assert.Equal("Cannot retry a stage on a cancelled pipeline run.", controller.TempData["PipelineError"]);
+
+        // Proves litigation action was never called: no search job, no admission, no event
+        Assert.False(await db.LitigationSearchJobs.AnyAsync(j => j.RequestId == req.RequestId));
+        Assert.False(await db.PaidCallAdmissions.AnyAsync(a => a.RequestId == req.RequestId));
+        Assert.False(await db.PipelineEvents.AnyAsync(e => e.PipelineRunId == run.PipelineRunId && e.Action == "RetryManual"));
+
+        var reloadedRun = await db.PipelineRuns.AsNoTracking().SingleAsync(r => r.PipelineRunId == run.PipelineRunId);
+        Assert.Equal(PipelineOutcome.Cancelled, reloadedRun.Outcome);
+    }
+
+    [Theory]
+    [InlineData(PipelineOutcome.Complete)]
+    [InlineData(PipelineOutcome.CompleteWithWarnings)]
+    public async Task RetryStage_CompletedRun_Rejects(PipelineOutcome completedOutcome)
+    {
+        await using var db = CreateContext();
+        var (req, run) = await SeedRunAsync(db, completedOutcome);
+
+        var controller = CreateController(db);
+        var result = await controller.RetryStage(run.PipelineRunId, PipelineStage.Fetch, reason: "Retry completed", returnUrl: "/Pipeline", CancellationToken.None);
+
+        var redirect = Assert.IsType<RedirectResult>(result);
+        Assert.Equal("/Pipeline", redirect.Url);
+        Assert.Equal("Cannot retry a stage on a completed pipeline run.", controller.TempData["PipelineError"]);
+    }
+
+    [Theory]
+    [InlineData(PipelineOutcome.Cancelled, "Cannot skip a stage on a cancelled pipeline run.")]
+    [InlineData(PipelineOutcome.Complete, "Cannot skip a stage on a completed pipeline run.")]
+    [InlineData(PipelineOutcome.CompleteWithWarnings, "Cannot skip a stage on a completed pipeline run.")]
+    public async Task SkipStage_TerminalRun_Rejects(PipelineOutcome terminalOutcome, string expectedError)
+    {
+        await using var db = CreateContext();
+        var (req, run) = await SeedRunAsync(db, terminalOutcome);
+        if (terminalOutcome == PipelineOutcome.Cancelled)
+        {
+            req.RequestStatus = RequestStatus.Cancelled;
+            await db.SaveChangesAsync();
+        }
+
+        var controller = CreateController(db);
+        var result = await controller.SkipStage(run.PipelineRunId, PipelineStage.Litigation, reason: "Skip terminal", returnUrl: "/Pipeline", CancellationToken.None);
+
+        var redirect = Assert.IsType<RedirectResult>(result);
+        Assert.Equal("/Pipeline", redirect.Url);
+        Assert.Equal(expectedError, controller.TempData["PipelineError"]);
+    }
+
+    [Theory]
+    [InlineData(PipelineOutcome.Cancelled, "Pipeline run is already cancelled.")]
+    [InlineData(PipelineOutcome.Complete, "Cannot cancel a completed pipeline run.")]
+    [InlineData(PipelineOutcome.CompleteWithWarnings, "Cannot cancel a completed pipeline run.")]
+    public async Task CancelRun_TerminalRun_Rejects(PipelineOutcome terminalOutcome, string expectedError)
+    {
+        await using var db = CreateContext();
+        var (req, run) = await SeedRunAsync(db, terminalOutcome);
+        if (terminalOutcome == PipelineOutcome.Cancelled)
+        {
+            req.RequestStatus = RequestStatus.Cancelled;
+            await db.SaveChangesAsync();
+        }
+
+        var controller = CreateController(db);
+        var result = await controller.CancelRun(run.PipelineRunId, reason: "Cancel terminal", returnUrl: "/Pipeline", CancellationToken.None);
+
+        var redirect = Assert.IsType<RedirectResult>(result);
+        Assert.Equal("/Pipeline", redirect.Url);
+        Assert.Equal(expectedError, controller.TempData["PipelineError"]);
+    }
+
+    [Fact]
+    public async Task CancelRun_CancelsQueuedDomainJobs()
+    {
+        await using var db = CreateContext();
+        var (req, run) = await SeedRunAsync(db, PipelineOutcome.NeedsAttention);
+
+        db.AutoFetchJobs.Add(new AutoFetchJob
+        {
+            RequestId = req.RequestId,
+            Status = AutoFetchJobStatus.Queued,
+            CreatedUtc = DateTime.UtcNow
+        });
+        db.LitigationSearchJobs.Add(new LitigationSearchJob
+        {
+            RequestId = req.RequestId,
+            Status = LitigationSearchJobStatus.Pending,
+            CreatedUtc = DateTime.UtcNow
+        });
+        db.LitigationAiAnalysisRuns.Add(new LitigationAiAnalysisRun
+        {
+            RequestId = req.RequestId,
+            RunNumber = 1,
+            Status = LitigationAiAnalysisRunStatus.Pending,
+            CreatedUtc = DateTime.UtcNow
+        });
+        db.AnalysisRuns.Add(new AnalysisRun
+        {
+            RequestId = req.RequestId,
+            RunNumber = 1,
+            Status = AnalysisRunStatus.Running,
+            StartedDate = DateTime.UtcNow
+        });
+        await db.SaveChangesAsync();
+
+        var controller = CreateController(db);
+        var result = await controller.CancelRun(run.PipelineRunId, reason: "Operator cancelled work", returnUrl: "/Pipeline", CancellationToken.None);
+
+        var redirect = Assert.IsType<RedirectResult>(result);
+        Assert.Equal("Pipeline run cancelled; future coordinator actions and queued jobs halted.", controller.TempData["PipelineOk"]);
+
+        await using var verifyDb = CreateContext();
+        var autoFetch = await verifyDb.AutoFetchJobs.AsNoTracking().SingleAsync(j => j.RequestId == req.RequestId);
+        Assert.Equal(AutoFetchJobStatus.Failed, autoFetch.Status);
+        Assert.Equal("Run cancelled: Operator cancelled work", autoFetch.FailureReason);
+
+        var litSearch = await verifyDb.LitigationSearchJobs.AsNoTracking().SingleAsync(j => j.RequestId == req.RequestId);
+        Assert.Equal(LitigationSearchJobStatus.Failed, litSearch.Status);
+        Assert.Equal("Run cancelled: Operator cancelled work", litSearch.FailureReason);
+
+        var litAnalysis = await verifyDb.LitigationAiAnalysisRuns.AsNoTracking().SingleAsync(r => r.RequestId == req.RequestId);
+        Assert.Equal(LitigationAiAnalysisRunStatus.Failed, litAnalysis.Status);
+        Assert.Equal("Run cancelled: Operator cancelled work", litAnalysis.FailureReason);
+
+        var analysisRun = await verifyDb.AnalysisRuns.AsNoTracking().SingleAsync(a => a.RequestId == req.RequestId);
+        Assert.Equal(AnalysisRunStatus.Failed, analysisRun.Status);
+        Assert.Equal("Run cancelled: Operator cancelled work", analysisRun.FailureReason);
     }
 
     private sealed class InterleavingSnapshotReader(
