@@ -118,6 +118,13 @@
                 </div>
 
                 <div class="pi-topbar-actions">
+                    @if (User.Identities.Any(i => i.AuthenticationType == "ApplicationUser" && i.IsAuthenticated))
+                    {
+                        <form method="post" action="/logout">
+                            @Html.AntiForgeryToken()
+                            <button class="btn btn-sm btn-outline-secondary" type="submit">Sign out</button>
+                        </form>
+                    }
                     <button type="button" class="pi-icon-btn" id="piThemeToggle" title="Toggle theme" aria-label="Toggle dark mode">
                         <i class="bi bi-moon-stars"></i>
                     </button>

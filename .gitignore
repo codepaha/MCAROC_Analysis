@@ -59,3 +59,6 @@ MCAROC.Portal/MCAROC_Analysis.Tests/Fixtures/workbooks/
 # Raw browser network captures (session cookies, auth tokens, passwords — never committed)
 *.network-request
 *.network-response
+
+# Host-local application login hash
+**/appsettings.ApplicationLogin.json

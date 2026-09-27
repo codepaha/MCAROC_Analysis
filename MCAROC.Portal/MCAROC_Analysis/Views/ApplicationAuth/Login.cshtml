@@ -1,0 +1,45 @@
+@{
+    Layout = null;
+    ViewData["Title"] = "Sign in";
+}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Sign in · MCA ROC Analysis</title>
+    <link rel="icon" href="~/images/login-favicon.png" />
+    <link rel="stylesheet" href="~/css/login.css" asp-append-version="true" />
+</head>
+<body>
+    <main class="login-shell">
+        <a class="brand" href="/login" aria-label="MCA ROC Analysis sign in">
+            <img src="~/images/login-logo.png" alt="Cubictree Technology Solutions" width="270" height="75" />
+        </a>
+        <div class="login-content">
+            <p class="eyebrow">MCA ROC Analysis</p>
+            <h1>Sign in</h1>
+            <p class="intro">Access company searches, reports, and credit risk analysis.</p>
+            <form method="post" action="/login">
+                @Html.AntiForgeryToken()
+                <input type="hidden" name="returnUrl" value="@ViewData["ReturnUrl"]" />
+                @if (!ViewData.ModelState.IsValid)
+                {
+                    <div class="error" role="alert" asp-validation-summary="All"></div>
+                }
+                <label for="username">Login ID</label>
+                <input id="username" name="username" type="email" autocomplete="username" required
+                       value="@ViewData["Username"]" autofocus />
+                <label for="password">Password</label>
+                <div class="password-field">
+                    <input id="password" name="password" type="password" autocomplete="current-password" required />
+                    <button id="password-toggle" type="button" aria-controls="password" aria-pressed="false">Show</button>
+                </div>
+                <button class="submit" type="submit">Sign in <span aria-hidden="true">→</span></button>
+            </form>
+        </div>
+        <footer>© @DateTime.UtcNow.Year Cubictree</footer>
+    </main>
+    <script src="~/js/login.js" asp-append-version="true"></script>
+</body>
+</html>
