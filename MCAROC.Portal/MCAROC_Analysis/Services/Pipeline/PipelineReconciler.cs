@@ -103,7 +103,16 @@ public sealed class PipelineReconciler(AppDbContext db, PipelineSnapshotReader r
                 && opts is not null && PipelineFailureClassifier.IsAutoRetryable(verdict.ReasonCode))
             {
                 existing.TryGetValue(stage, out var retryRow);
-                var attempts = retryRow?.Attempts ?? 0;
+                // The fetch worker has no internal retry loop of its own (one claim = one AttemptCount++,
+                // terminal either way) — but it IS claimed again by a manual UI retry
+                // (AutoFetchController.RetryJob) without ever going through this coordinator, so
+                // AutoFetchJob.AttemptCount can run ahead of PipelineStageState.Attempts. Plan §6.2: internal
+                // attempts count toward the same cap, so the worst case stays bounded regardless of who
+                // triggered them. Max, not sum: a coordinator-driven retry advances both counters for the
+                // same attempt, and summing would double-count it.
+                var jobAttemptCount = await db.AutoFetchJobs.AsNoTracking()
+                    .Where(j => j.RequestId == run.RequestId).Select(j => j.AttemptCount).FirstOrDefaultAsync(ct);
+                var attempts = Math.Max(retryRow?.Attempts ?? 0, jobAttemptCount);
                 if (attempts >= opts.MaxCoordinatorAttempts)
                 {
                     // Re-applied every tick (not just once): the decider keeps reporting the underlying

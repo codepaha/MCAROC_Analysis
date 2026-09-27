@@ -33,8 +33,12 @@ public enum PipelineFailureClass
     /// would, if not already) and nothing about retrying fixes a config problem.</summary>
     NeedsHumanConfig,
 
-    /// <summary>The vendor's contract changed underneath us, or an exception type nothing anticipated — worth
-    /// one retry in case it was a fluke, but if it recurs a developer needs to look, not a reviewer.</summary>
+    /// <summary>The vendor's contract changed underneath us, or an exception type nothing anticipated. Plan
+    /// §6.1 calls for exactly one retry before <c>NeedsAttention</c>, on the theory that it might be a fluke;
+    /// that one-retry behaviour is NOT wired up by <see cref="PipelineFailureClassifier.IsAutoRetryable"/> or
+    /// any coordinator caller yet (deferred — no reason code maps here today, so it has never had a live
+    /// caller to build against). Treated as never-auto-retryable in the meantime, same as any other
+    /// non-Transient class — the safer default until that one-retry path is actually implemented and tested.</summary>
     NeedsDeveloper
 }
 
@@ -94,9 +98,9 @@ public static class PipelineFailureClassifier
     public static PipelineFailureClass Classify(string? reasonCode) =>
         reasonCode is not null && Map.TryGetValue(reasonCode, out var cls) ? cls : PipelineFailureClass.NeedsHumanData;
 
-    /// <summary>Only <see cref="PipelineFailureClass.Transient"/> stages are ever retried by the coordinator
-    /// on its own (plan §6.2) — every other class either needs a human decision or, for
-    /// <see cref="PipelineFailureClass.NeedsDeveloper"/>, gets exactly one retry before that (handled by the
-    /// caller's own attempt count, not by this classifier reclassifying itself after one try).</summary>
+    /// <summary>Only <see cref="PipelineFailureClass.Transient"/> codes are auto-retried by the coordinator
+    /// today (plan §6.2). <see cref="PipelineFailureClass.NeedsDeveloper"/>'s plan-specified one-retry-then-
+    /// NeedsAttention policy is deferred (see that enum member's doc) — until it is implemented,
+    /// NeedsDeveloper is treated the same as every other non-Transient class: never auto-retried.</summary>
     public static bool IsAutoRetryable(string? reasonCode) => Classify(reasonCode) == PipelineFailureClass.Transient;
 }

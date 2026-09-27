@@ -370,9 +370,30 @@ public sealed class PipelineEnforceTests : IAsyncLifetime
         Assert.Null(job.FailureReason);
     }
 
+    /// <summary>The coordinator's own bookkeeping (PipelineStageState.Attempts) starts fresh even when the
+    /// underlying AutoFetchJob has already burned attempts some other way — e.g. a human clicking "Retry" on
+    /// the AutoFetch UI (AutoFetchController.RetryJob), which calls AutoFetchJobService.RequeueAsync directly
+    /// and never touches the coordinator. Plan §6.2: internal attempts count toward the same cap regardless
+    /// of who triggered them, so a job that already arrives at MaxCoordinatorAttempts worth of AttemptCount
+    /// must not get the full schedule again from zero.</summary>
+    [Fact]
+    public async Task Coordinator_retry_cap_counts_the_workers_own_prior_attempts_too()
+    {
+        var (_, runId) = await SeedFailedFetchRequestWithRunAsync(jobAttemptCount: 4);
+        var actions = new RecordingActions(new PipelineActionResult(true, false, 1, null, null));
+
+        Assert.True(await ReconcileAsync(runId, EnforcingRetries, actions));
+
+        Assert.Equal(0, actions.RetryCalls);
+        await using var db = CreateContext();
+        var stage = await db.PipelineStageStates.AsNoTracking().SingleAsync(s => s.PipelineRunId == runId && s.Stage == PipelineStage.Fetch);
+        Assert.Equal(PipelineStageStateKind.NeedsAttention, stage.State);
+        Assert.Equal("RETRIES_EXHAUSTED", stage.ReasonCode);
+    }
+
     /// <summary>An auto-fetch request whose job has already failed once — the Fetch stage's own
     /// NeedsAttention(FETCH_FAILED), the one #292 wires to coordinator-driven retry.</summary>
-    private async Task<(long RequestId, long RunId)> SeedFailedFetchRequestWithRunAsync()
+    private async Task<(long RequestId, long RunId)> SeedFailedFetchRequestWithRunAsync(int jobAttemptCount = 0)
     {
         await using var db = CreateContext();
         var cin = $"U{Random.Shared.Next(10000, 99999)}RF2026PLC{Random.Shared.Next(100000, 999999)}";
@@ -388,7 +409,7 @@ public sealed class PipelineEnforceTests : IAsyncLifetime
         db.AutoFetchJobs.Add(new AutoFetchJob
         {
             RequestId = request.RequestId, Cin = cin, Bid = "b" + request.RequestId, Status = AutoFetchJobStatus.Failed,
-            FailureReason = "Transient tool timeout.", CreatedUtc = DateTime.UtcNow
+            FailureReason = "Transient tool timeout.", CreatedUtc = DateTime.UtcNow, AttemptCount = jobAttemptCount
         });
         await db.SaveChangesAsync();
 
