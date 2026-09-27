@@ -6,17 +6,22 @@
   - **Litigation Tab Provenance Banner (`_LitigationTab.cshtml`)**:
     - When `AuthoritativeSnapshot.ReusedFromSnapshotId != null`, displays a dedicated provenance disclosure banner (`#litigation-reuse-provenance-banner`):
       `Report retrieved <date in IST> — reused from another request`
-      disclosing source request number/id, snapshot id, 7-day freshness window, and zero additional vendor spend.
+      disclosing source request number/id, snapshot id, original retrieval date, that it satisfied the $\le$ 7-day eligibility limit when reused (clarifying that the 7-day bound governed reuse admission, not an ongoing freshness guarantee), and zero additional vendor spend.
     - Adds a "Reused Report" badge in the Litigation Data Lake header alongside the reviewer status.
   - **Report Export Provenance (`LitigationReportArtifacts.cs`, `LitigationReportAssembler.cs`)**:
     - `StandaloneLitigationReport` carries reuse provenance fields (`ReusedFromSnapshotId`, `ReusedFromRequestId`, `OriginSnapshotId`).
-    - PDF cover page renders an informational disclosure box and an explicit `REPORT REUSE` entry in the metadata summary table when the report is reused.
+    - PDF cover page renders an informational disclosure box and an explicit `REPORT REUSE` entry in the metadata summary table when the report is reused, accurately stating the original retrieval date and admission limit.
+    - CSV export (`RenderCsv`) includes reuse provenance columns: `"Report Reused"`, `"Reused From Request ID"`, `"Reused From Snapshot ID"`, `"Report Retrieved Date"`, and `"Reuse Disclosure"`.
   - **Controller & View Model (`RequestsController.cs`, `LitigationTabViewModel.cs`)**:
     - `LitigationTabViewModel` exposes `IsReusedReport` and resolves source `ReusedFromRequestNumber`.
+  - **Review findings resolved**:
+    1. Added reuse provenance columns and values to `RenderCsv` export.
+    2. Corrected freshness wording across tab, PDF, and CSV to distinguish original retrieval date from reuse admission eligibility and remove the false impression of an ongoing freshness guarantee.
   - **Tests**:
     - `LitigationTabRenderingTests`: Verified rendering of the reuse provenance banner, source request details, and badge on reused reports; verified absence on fresh reports.
-    - `LitigationReportArtifactsTests`: Verified PDF extraction includes reuse disclosure when reused and excludes it on fresh reports.
-    - All 20 tests in `LitigationReportArtifactsTests`, `LitigationTabRenderingTests`, and `IstTests` passed. All 44 litigation regression tests passed.
+    - `LitigationReportArtifactsTests`: Verified PDF and CSV extraction includes reuse disclosure when reused and excludes/defaults it on fresh reports.
+    - All 22 tests in `LitigationReportArtifactsTests`, `LitigationTabRenderingTests`, and `IstTests` passed. All 256 litigation regression tests passed.
+    - Both GitHub Actions CI jobs (`build-and-test` and `windows-tests`) passed on PR #306.
 - → **@codex** review: https://github.com/codepaha/MCAROC_Analysis/pull/306.
 
 ---
