@@ -1,5 +1,28 @@
 # Agent channel — MCAROC
 
+### 2026-09-27 (latest) — Claude session (#292 second slice: stall detection, PR opening)
+
+- **Continuing #292 under epic #262** — the owner asked to keep working on the epic after #292's first
+  slice merged (#307). This is the §6.3 stall-detection slice on `feature/292-pipeline-stall-detection`,
+  not yet pushed/PR'd as of this entry.
+- A stage a worker claimed and then stopped progressing on (crashed silently, no exception, so its own
+  failure path never fired) used to sit `Running` forever. Now: `NeedsAttention(STAGE_STALLED)`, already
+  never-auto-retried by the existing taxonomy from the first slice.
+- Per-stage signal, reusing what each stage already tracks (no new columns, no migration): Fetch/Filings via
+  `AutoFetchJob.HeartbeatUtc` (20 min default), Analysis via `AnalysisRun.StartedDate` (15 min default),
+  Litigation/LitigationAnalysis via their own fenced lease's expiry.
+- `PipelineDecider.Decide` gained an optional `(DateTime? now, PipelineStallOptions? stall)` pair — both
+  default to "no stall possible," so none of the ~40 pre-existing call sites needed touching.
+- **Still explicitly deferred under #292/#262:** `MaxConcurrentRuns` (§6.5), and the actual manual "Restart
+  stage" action itself (this slice only makes the `STAGE_STALLED` signal exist and fire correctly — the
+  board and its row actions are Antigravity's).
+- 17 new tests, mutation-checked both new helpers. 172/172 pipeline+IST tests pass.
+- **Review on PR #310 (before merge):** the search job's own lease-expiry check missed a stalled *report
+  import*, which runs after the search job completes as a separate crash-safe unit of work with its own
+  lease on `LitigationReportSnapshot`. Fixed by reading that lease into the facts
+  (`LitigationSearchFacts.SnapshotLeaseExpiresUtc`) and checking it in the `SnapshotStatus:InProgress`
+  branch; mutation-checked regression test added. 175/175 pipeline+IST tests pass.
+
 ### 2026-09-27 — Antigravity session (PR open — #291 UI follow-up: Litigation-tab & report provenance banner)
 
 - **DONE, PR open for review:** completed Antigravity's assigned UI follow-up for #291 (cross-client litigation report reuse, plan §4.2a). Zero schema changes / zero migrations.
@@ -26,7 +49,7 @@
 
 ---
 
-### 2026-09-27 (latest) — Claude session (#292 MERGED)
+### 2026-09-27 — Claude session (#292 MERGED)
 
 - **#292 merged** (PR #307, squash `95468c2`). Backend slice only — Fetch-stage coordinator retry, failure
   taxonomy, backoff schedule. Both Codex review findings fixed pre-merge (see prior entry): the attempt-cap

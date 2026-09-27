@@ -93,7 +93,8 @@ public static class PipelineEventText
         ["LITIGATION_ANALYSIS_IN_FLIGHT"] = "an analysis for this request is already running",
         ["AUTO_RETRIED"] = "retried automatically",
         ["RETRIES_EXHAUSTED"] = "automatic retries exhausted; a person needs to retry this",
-        ["FETCH_RETRY_NOT_FOUND"] = "no fetch job exists to retry"
+        ["FETCH_RETRY_NOT_FOUND"] = "no fetch job exists to retry",
+        ["STAGE_STALLED"] = "no progress for longer than expected; the worker may have crashed"
     };
 
     public static string StageLabel(PipelineStage stage) => StageLabels.GetValueOrDefault(stage, stage.ToString());

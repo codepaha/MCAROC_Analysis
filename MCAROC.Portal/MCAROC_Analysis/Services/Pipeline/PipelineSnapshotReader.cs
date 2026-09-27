@@ -27,7 +27,7 @@ public sealed class PipelineSnapshotReader(AppDbContext db, IConfiguration confi
         if (request is null) return null;
 
         var job = await db.AutoFetchJobs.AsNoTracking().Where(j => j.RequestId == requestId)
-            .Select(j => new AutoFetchFacts(j.AutoFetchJobId, j.Status, j.RocDocumentId, j.IncludeFilings, j.FilingBatchId, j.FailureReason))
+            .Select(j => new AutoFetchFacts(j.AutoFetchJobId, j.Status, j.RocDocumentId, j.IncludeFilings, j.FilingBatchId, j.FailureReason, j.HeartbeatUtc))
             .FirstOrDefaultAsync(ct);
 
         LifecycleFacts? lifecycle = null;
@@ -58,7 +58,7 @@ public sealed class PipelineSnapshotReader(AppDbContext db, IConfiguration confi
             analysis = await db.AnalysisRuns.AsNoTracking()
                 .Where(a => a.RequestId == requestId && a.IngestionRunId == ingestionRunId)
                 .OrderByDescending(a => a.AnalysisRunId)
-                .Select(a => new RunFacts<AnalysisRunStatus>(a.AnalysisRunId, a.Status, a.FailureReason))
+                .Select(a => new RunFacts<AnalysisRunStatus>(a.AnalysisRunId, a.Status, a.FailureReason, a.StartedDate))
                 .FirstOrDefaultAsync(ct);
 
             if (analysis is not null)
@@ -97,14 +97,14 @@ public sealed class PipelineSnapshotReader(AppDbContext db, IConfiguration confi
         }
 
         var search = await db.LitigationSearchJobs.AsNoTracking().Where(j => j.RequestId == requestId)
-            .Select(j => new { j.LitigationSearchJobId, j.Status, j.FailureReason }).FirstOrDefaultAsync(ct);
+            .Select(j => new { j.LitigationSearchJobId, j.Status, j.FailureReason, j.LeaseExpiresUtc }).FirstOrDefaultAsync(ct);
         LitigationSearchFacts? searchFacts = null;
         if (search is not null)
         {
             var snapshot = await db.LitigationReportSnapshots.AsNoTracking()
                 .Where(s => s.LitigationSearchJobId == search.LitigationSearchJobId)
                 .OrderByDescending(s => s.LitigationReportSnapshotId)
-                .Select(s => new { s.LitigationReportSnapshotId, s.Status }).FirstOrDefaultAsync(ct);
+                .Select(s => new { s.LitigationReportSnapshotId, s.Status, s.LeaseExpiresUtc }).FirstOrDefaultAsync(ct);
 
             var orderDocs = await db.LitigationOrderDocuments.AsNoTracking()
                 .Where(d => d.Order!.Case!.RequestId == requestId)
@@ -116,12 +116,13 @@ public sealed class PipelineSnapshotReader(AppDbContext db, IConfiguration confi
             var hasStalledOrderDownload = orderDocs.Any(d => d.Status == LitigationOrderDocumentStatus.Pending && d.CreatedUtc <= staleCutoff);
 
             searchFacts = new LitigationSearchFacts(search.LitigationSearchJobId, search.Status, search.FailureReason,
-                snapshot?.LitigationReportSnapshotId, snapshot?.Status, ordersFullyProcessed, hasStalledOrderDownload);
+                snapshot?.LitigationReportSnapshotId, snapshot?.Status, ordersFullyProcessed, hasStalledOrderDownload,
+                search.LeaseExpiresUtc, snapshot?.LeaseExpiresUtc);
         }
 
         var litigationAnalysis = await db.LitigationAiAnalysisRuns.AsNoTracking().Where(r => r.RequestId == requestId)
             .OrderByDescending(r => r.LitigationAiAnalysisRunId)
-            .Select(r => new RunFacts<LitigationAiAnalysisRunStatus>(r.LitigationAiAnalysisRunId, r.Status, r.FailureReason))
+            .Select(r => new RunFacts<LitigationAiAnalysisRunStatus>(r.LitigationAiAnalysisRunId, r.Status, r.FailureReason, null, r.LeaseExpiresUtc))
             .FirstOrDefaultAsync(ct);
 
         return new PipelineSnapshot
