@@ -59,6 +59,13 @@ public sealed class PipelineOptions
     /// bounded by <c>Caps:UnlockPerDay</c> (which also defaults to 0).</summary>
     public AutoUnlockOptions AutoUnlock { get; set; } = new();
 
+    /// <summary>Plan §6.3: per-stage staleness thresholds for detecting a runtime stall — a worker that
+    /// claimed a stage and then died mid-task without its own failure path ever firing, so the stage would
+    /// otherwise sit "Running" forever. Always evaluated (not gated by <see cref="Mode"/> or <see cref="Enforce"/>):
+    /// stall detection only ever produces <c>NeedsAttention(STAGE_STALLED)</c>, never an action, so it is as
+    /// safe in Observe mode as every other decider verdict.</summary>
+    public PipelineStallOptions Stall { get; set; } = new();
+
     public bool EnforcesLitigationSearch() => Enabled && Mode == PipelineMode.Enforce && Enforce.Litigation;
     public bool EnforcesLitigationAnalysis() => Enabled && Mode == PipelineMode.Enforce && Enforce.LitigationAnalysis;
     public bool EnforcesDossierPreRender() => Enabled && Mode == PipelineMode.Enforce && Enforce.Dossier;
@@ -118,4 +125,19 @@ public sealed class PipelineCapOptions
     public int LitigationSearchPerDay { get; set; } = 50;
     public int LitigationAnalysisPerDay { get; set; } = 0;
     public int UnlockPerDay { get; set; } = 0;
+}
+
+/// <summary>Plan §6.3's per-stage thresholds. Litigation and LitigationAnalysis aren't here — their signal
+/// is a fenced lease's own expiry (already a deadline, not a duration to configure).</summary>
+public sealed class PipelineStallOptions
+{
+    /// <summary>Fetch, and — while filing documents download after the main export completes — Filings too;
+    /// both read the same <c>AutoFetchJob.HeartbeatUtc</c>. Downloads flush progress often enough that 20
+    /// minutes of silence means the worker is gone, not just slow.</summary>
+    public int FetchMinutes { get; set; } = 20;
+
+    /// <summary>Analysis, from <c>AnalysisRun.StartedDate</c> — a fixed start time rather than a renewing
+    /// heartbeat (the orchestrator has no progress column), so this is simply "running longer than a normal
+    /// pass ever takes."</summary>
+    public int AnalysisMinutes { get; set; } = 15;
 }

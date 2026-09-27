@@ -54,15 +54,26 @@ public sealed record PipelineSnapshot
     public RunFacts<LitigationAiAnalysisRunStatus>? LitigationAnalysis { get; init; }
 }
 
+/// <param name="HeartbeatUtc">The worker's last progress signal while the job is claimed — updated
+/// repeatedly through a download, not just once at claim time. Plan §6.3's stall signal for Fetch (and,
+/// while filings download after the main export, for Filings too — see <see cref="PipelineDecider"/>).</param>
 public sealed record AutoFetchFacts(
-    long JobId, AutoFetchJobStatus Status, long? RocDocumentId, bool IncludeFilings, long? FilingBatchId, string? FailureReason)
+    long JobId, AutoFetchJobStatus Status, long? RocDocumentId, bool IncludeFilings, long? FilingBatchId, string? FailureReason,
+    DateTime? HeartbeatUtc = null)
 {
     public bool IsTerminal => Status is AutoFetchJobStatus.Completed or AutoFetchJobStatus.CompletedWithWarnings or AutoFetchJobStatus.Failed;
 }
 
 public sealed record LifecycleFacts(CompanyReportLifecycleState State, DateTime? UnlockedUtc, bool RefreshActive);
 
-public sealed record RunFacts<TStatus>(long Id, TStatus Status, string? FailureReason) where TStatus : struct, Enum;
+/// <param name="StartedUtc">Plan §6.3's stall signal for Analysis (AnalysisRun.StartedDate) — a fixed start
+/// time, not a renewing heartbeat: the orchestrator is a single synchronous-ish pass with no progress
+/// column, so "running longer than the threshold" is itself the stall signal.</param>
+/// <param name="LeaseExpiresUtc">Plan §6.3's stall signal for Litigation/LitigationAnalysis: a fenced lease
+/// (same pattern as <see cref="PipelineReconciler"/>'s own) that expired while the row still reads as
+/// actively running means its holder died without finishing and without releasing it.</param>
+public sealed record RunFacts<TStatus>(long Id, TStatus Status, string? FailureReason, DateTime? StartedUtc = null, DateTime? LeaseExpiresUtc = null)
+    where TStatus : struct, Enum;
 
 /// <param name="OutstandingChunks">Chunk-eligible documents (non-duplicate, processing completed) still
 /// Pending or InProgress — the same eligibility rule the chunking orchestrator uses.</param>
@@ -75,6 +86,8 @@ public sealed record FilingFacts(long BatchId, FilingBatchStatus Status, string?
 /// (plan §4.2); a manual start is never gated by this.</param>
 /// <param name="HasStalledOrderDownload">An order document still <c>Pending</c> five or more days after it
 /// was first recorded — plan §4.2's <c>ORDER_DOWNLOAD_STALLED</c> signal.</param>
+/// <param name="LeaseExpiresUtc">Plan §6.3's runtime-stall signal — see <see cref="RunFacts{TStatus}"/>'s
+/// own doc for why an expired lease on a nominally-running row means the worker died mid-task.</param>
 public sealed record LitigationSearchFacts(
     long JobId, LitigationSearchJobStatus Status, string? FailureReason, long? SnapshotId, LitigationReportSnapshotStatus? SnapshotStatus,
-    bool OrdersFullyProcessed = true, bool HasStalledOrderDownload = false);
+    bool OrdersFullyProcessed = true, bool HasStalledOrderDownload = false, DateTime? LeaseExpiresUtc = null);

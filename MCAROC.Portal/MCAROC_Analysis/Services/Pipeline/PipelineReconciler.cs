@@ -70,10 +70,10 @@ public sealed class PipelineReconciler(AppDbContext db, PipelineSnapshotReader r
             return true;
         }
 
-        var decision = PipelineDecider.Decide(snapshot, ParsePolicy(run.PolicyJson));
+        var now2 = time.GetUtcNow().UtcDateTime;
+        var decision = PipelineDecider.Decide(snapshot, ParsePolicy(run.PolicyJson), now2, options?.CurrentValue.Stall);
 
         await using var tx = await db.Database.BeginTransactionAsync(ct);
-        var now2 = time.GetUtcNow().UtcDateTime;
         var fenced = await db.PipelineRuns.Where(r => r.PipelineRunId == runId && r.ReconcileLeaseToken == token)
             .ExecuteUpdateAsync(s => s.SetProperty(r => r.ReconcileLeaseExpiresUtc, now2.Add(LeaseDuration)), ct);
         if (fenced == 0)

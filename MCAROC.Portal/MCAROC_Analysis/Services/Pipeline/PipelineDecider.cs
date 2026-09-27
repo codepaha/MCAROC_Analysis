@@ -38,8 +38,19 @@ public static class PipelineDecider
     public const string IdentityNeedsConfirmation = ResolutionReasonCodes.NeedsConfirmation;
     public const string IdentityNotResolved = "IDENTITY_NOT_RESOLVED";
 
-    public static PipelineDecision Decide(PipelineSnapshot s, PipelinePolicy policy)
+    /// <summary>A stage the decider found genuinely stuck — a worker claimed it and stopped making progress
+    /// without ever reaching its own failure path (plan §6.3). Never auto-retried
+    /// (<see cref="PipelineFailureClassifier"/>); the board's manual "Restart stage" is the only way out.</summary>
+    public const string StageStalled = "STAGE_STALLED";
+
+    /// <summary>Pure except for the clock and the configured thresholds, both optional so every existing
+    /// caller — none of which populates the heartbeat/lease facts §6.3 reads — is unaffected: no fact means
+    /// no possible stall regardless of what <paramref name="now"/> resolves to. Production always passes both
+    /// explicitly (<see cref="PipelineReconciler"/>, from its own injected clock) to stay fully deterministic.</summary>
+    public static PipelineDecision Decide(PipelineSnapshot s, PipelinePolicy policy, DateTime? now = null, PipelineStallOptions? stall = null)
     {
+        var clock = now ?? DateTime.UtcNow;
+        var stallOpts = stall ?? new PipelineStallOptions();
         var manual = s.AutoFetch is null;
         var v = new Dictionary<PipelineStage, StageVerdict>();
 
@@ -49,21 +60,21 @@ public static class PipelineDecider
         var identityPending = !v[PipelineStage.Resolve].IsDone && v[PipelineStage.Resolve].State != PipelineStageStateKind.Skipped;
         v[PipelineStage.Unlock] = identityPending ? Waiting(AwaitingResolve) : Unlock(s, manual);
         v[PipelineStage.Refresh] = identityPending ? Waiting(AwaitingResolve) : Refresh(s, manual);
-        v[PipelineStage.Fetch] = identityPending ? Waiting(AwaitingResolve) : Fetch(s, manual, v[PipelineStage.Unlock], v[PipelineStage.Refresh]);
+        v[PipelineStage.Fetch] = identityPending ? Waiting(AwaitingResolve) : Fetch(s, manual, v[PipelineStage.Unlock], v[PipelineStage.Refresh], clock, stallOpts);
         v[PipelineStage.Ingest] = identityPending && s.LatestCompletedIngestionRunId is null
             ? Waiting(AwaitingResolve)
             : Ingest(s, manual, v[PipelineStage.Fetch]);
-        v[PipelineStage.Analysis] = Analysis(s, v[PipelineStage.Ingest]);
+        v[PipelineStage.Analysis] = Analysis(s, v[PipelineStage.Ingest], clock, stallOpts);
         v[PipelineStage.CalcAssurance] = CalcAssurance(s, v[PipelineStage.Analysis]);
         v[PipelineStage.Dossier] = Dossier(s, v[PipelineStage.Analysis], v[PipelineStage.CalcAssurance]);
-        v[PipelineStage.Filings] = Filings(s);
+        v[PipelineStage.Filings] = Filings(s, clock, stallOpts);
         // A search that already exists is still reported; nothing new starts for an unresolved company.
         v[PipelineStage.Litigation] = identityPending && s.LitigationSearch is null
             ? Waiting(AwaitingResolve)
-            : Litigation(s, policy, v[PipelineStage.Ingest]);
+            : Litigation(s, policy, v[PipelineStage.Ingest], clock);
         v[PipelineStage.LitigationAnalysis] = identityPending && s.LitigationAnalysis is null
             ? Waiting(AwaitingResolve)
-            : LitigationAnalysis(s, policy, v[PipelineStage.Litigation]);
+            : LitigationAnalysis(s, policy, v[PipelineStage.Litigation], clock);
 
         var states = v.ToDictionary(kv => kv.Key, kv => kv.Value.State);
         var skipKinds = v.ToDictionary(kv => kv.Key, kv => kv.Value.SkipKind);
@@ -164,7 +175,7 @@ public static class PipelineDecider
         return Running(job.JobId, "CHECKING");
     }
 
-    private static StageVerdict Fetch(PipelineSnapshot s, bool manual, StageVerdict unlock, StageVerdict refresh)
+    private static StageVerdict Fetch(PipelineSnapshot s, bool manual, StageVerdict unlock, StageVerdict refresh, DateTime now, PipelineStallOptions stall)
     {
         if (manual) return Skip(PipelineStageSkipKind.Neutral, "MANUAL_SOURCE");
         var job = s.AutoFetch!;
@@ -177,6 +188,8 @@ public static class PipelineDecider
         if (job.Status == AutoFetchJobStatus.Queued) return Waiting("QUEUED", job.JobId);
         if (job.Status == AutoFetchJobStatus.WaitingForRefresh) return Waiting("AWAITING_REFRESH", job.JobId);
         if (job.Status == AutoFetchJobStatus.WaitingForUnlock) return Waiting("AWAITING_UNLOCK", job.JobId);
+        if (IsStalled(job.HeartbeatUtc, now, stall.FetchMinutes))
+            return Attention(StageStalled, $"No download progress for over {stall.FetchMinutes} minute(s); the worker may have crashed. Restart the stage.", job.JobId);
         return Running(job.JobId);
     }
 
@@ -192,7 +205,7 @@ public static class PipelineDecider
         return Waiting("AWAITING_INGESTION");
     }
 
-    private static StageVerdict Analysis(PipelineSnapshot s, StageVerdict ingest)
+    private static StageVerdict Analysis(PipelineSnapshot s, StageVerdict ingest, DateTime now, PipelineStallOptions stall)
     {
         if (!ingest.IsDone) return Waiting("AWAITING_INGEST");
         if (s.Analysis is { } a)
@@ -201,7 +214,9 @@ public static class PipelineDecider
                 AnalysisRunStatus.Completed => Ok(a.Id),
                 AnalysisRunStatus.CompletedWithErrors => Warn("ANALYSIS_COMPLETED_WITH_ERRORS", a.FailureReason, a.Id),
                 AnalysisRunStatus.Failed => Attention("ANALYSIS_FAILED", a.FailureReason, a.Id),
-                _ => Running(a.Id)
+                _ => IsStalled(a.StartedUtc, now, stall.AnalysisMinutes)
+                    ? Attention(StageStalled, $"Still running after over {stall.AnalysisMinutes} minute(s), longer than a normal pass takes. Restart the stage.", a.Id)
+                    : Running(a.Id)
             };
         // Analysis is only auto-enqueued when ingestion didn't flag the request for manual review.
         if (s.IsManualReviewRequired) return Attention("MANUAL_REVIEW_REQUIRED", s.ManualReviewReason);
@@ -231,7 +246,7 @@ public static class PipelineDecider
         return Ok(s.Analysis?.Id);
     }
 
-    private static StageVerdict Filings(PipelineSnapshot s)
+    private static StageVerdict Filings(PipelineSnapshot s, DateTime now, PipelineStallOptions stall)
     {
         var job = s.AutoFetch;
         if (s.Filings is { } f)
@@ -250,10 +265,16 @@ public static class PipelineDecider
         if (job.Status == AutoFetchJobStatus.Failed)
             return job.RocDocumentId is null ? Waiting("AWAITING_FETCH") : Attention("FILINGS_FETCH_FAILED", job.FailureReason, job.JobId);
         if (job.IsTerminal) return Skip(PipelineStageSkipKind.Warning, "NO_FILINGS_AVAILABLE", "The reference tool listed no filings to download.");
+        // Once the main export is done the job keeps running to fetch filing documents — the same worker,
+        // the same heartbeat, just a phase Fetch itself no longer reports on (it already returned Ok once
+        // RocDocumentId was set). Before that point this is a genuine wait on Fetch, whose own stall check
+        // already covers it, so only check staleness once there's a filing-download phase to actually stall in.
+        if (job.RocDocumentId is not null && IsStalled(job.HeartbeatUtc, now, stall.FetchMinutes))
+            return Attention(StageStalled, $"No progress downloading filing documents for over {stall.FetchMinutes} minute(s); the worker may have crashed. Restart the stage.", job.JobId);
         return Waiting("AWAITING_FETCH");
     }
 
-    private static StageVerdict Litigation(PipelineSnapshot s, PipelinePolicy policy, StageVerdict ingest)
+    private static StageVerdict Litigation(PipelineSnapshot s, PipelinePolicy policy, StageVerdict ingest, DateTime now)
     {
         if (s.LitigationSearch is { } job)
         {
@@ -268,7 +289,9 @@ public static class PipelineDecider
                     LitigationReportSnapshotStatus.Failed => Attention("LITIGATION_IMPORT_FAILED", null, job.SnapshotId),
                     _ => Running(job.JobId, "IMPORTING")
                 },
-                _ => Running(job.JobId)
+                _ => IsLeaseExpired(job.LeaseExpiresUtc, now)
+                    ? Attention(StageStalled, "The search's lease expired without finishing; its worker may have crashed. Restart the stage.", job.JobId)
+                    : Running(job.JobId)
             };
         }
         if (!policy.LitigationSearch) return Skip(PipelineStageSkipKind.Neutral, "POLICY_OFF");
@@ -282,7 +305,7 @@ public static class PipelineDecider
             ReasonDetail: "Ready to start. The coordinator starts it itself only in Enforce mode with Enforce:Litigation on.");
     }
 
-    private static StageVerdict LitigationAnalysis(PipelineSnapshot s, PipelinePolicy policy, StageVerdict litigation)
+    private static StageVerdict LitigationAnalysis(PipelineSnapshot s, PipelinePolicy policy, StageVerdict litigation, DateTime now)
     {
         if (s.LitigationAnalysis is { } run)
         {
@@ -291,7 +314,9 @@ public static class PipelineDecider
                 LitigationAiAnalysisRunStatus.Completed => Ok(run.Id),
                 LitigationAiAnalysisRunStatus.CompletedWithErrors => Warn("LITIGATION_ANALYSIS_COMPLETED_WITH_ERRORS", run.FailureReason, run.Id),
                 LitigationAiAnalysisRunStatus.Failed => Attention("LITIGATION_ANALYSIS_FAILED", run.FailureReason, run.Id),
-                _ => Running(run.Id)
+                _ => IsLeaseExpired(run.LeaseExpiresUtc, now)
+                    ? Attention(StageStalled, "The analysis's lease expired without finishing; its worker may have crashed. Restart the stage.", run.Id)
+                    : Running(run.Id)
             };
         }
         if (!policy.LitigationAnalysis) return Skip(PipelineStageSkipKind.Neutral, "POLICY_OFF");
@@ -310,6 +335,15 @@ public static class PipelineDecider
         return new StageVerdict(PipelineStageStateKind.NotStarted, ReasonCode: ReadyToStart,
             ReasonDetail: "Ready to start. The coordinator starts it itself only in Enforce mode with Enforce:LitigationAnalysis on.");
     }
+
+    /// <summary>No heartbeat recorded means no stall signal exists yet (a fresh claim, or an older row from
+    /// before this field existed) — never treated as stalled, since there is nothing to measure against.</summary>
+    private static bool IsStalled(DateTime? heartbeatUtc, DateTime now, int thresholdMinutes) =>
+        heartbeatUtc is { } h && now - h > TimeSpan.FromMinutes(thresholdMinutes);
+
+    /// <summary>No lease recorded (not yet claimed, or a row from before leases existed) is never a stall —
+    /// same reasoning as <see cref="IsStalled"/>.</summary>
+    private static bool IsLeaseExpired(DateTime? leaseExpiresUtc, DateTime now) => leaseExpiresUtc is { } exp && now > exp;
 
     private static StageVerdict Ok(long? sourceRef = null, string? code = null, string? detail = null) =>
         new(PipelineStageStateKind.Succeeded, null, code, detail, sourceRef);
