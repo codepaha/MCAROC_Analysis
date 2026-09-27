@@ -467,10 +467,10 @@ internal sealed class LitigationReportPdfDocument(StandaloneLitigationReport rep
     {
         panel.Item().Row(row =>
         {
-            row.RelativeItem().Text("CONTESTED PROPERTY / PREMISES REFERENCE").Bold().FontSize(8.5f).FontColor(Amber);
-            row.AutoItem().Element(c => Pill(c, "ADDRESS MATCH", Amber));
+            row.RelativeItem().Text("PREMISES & PROPERTY ADDRESS MENTIONS").Bold().FontSize(8.5f).FontColor(Amber);
+            row.AutoItem().Element(c => Pill(c, "TEXT OVERLAP (UNVERIFIED)", Amber));
         });
-        panel.Item().PaddingTop(3).Text("Extracted court order text matches known company premises or mortgaged charge property:").FontSize(7.8f).FontColor(Colors.Grey.Darken2);
+        panel.Item().PaddingTop(3).Text("Extracted court order text matches known company premises or mortgaged charge property. Note: Text overlap in party cause titles or service memos does not legally establish that the property is the contested subject of litigation without analyst verification:").FontSize(7.8f).FontColor(Colors.Grey.Darken2);
         foreach (var match in matches)
         {
             panel.Item().PaddingTop(4).Column(col =>
@@ -544,7 +544,7 @@ internal sealed class LitigationReportPdfDocument(StandaloneLitigationReport rep
                 {
                     entry.Item().PaddingTop(2).Text(text =>
                     {
-                        text.Span("Property Match: ").Bold().FontSize(7.2f).FontColor(Amber);
+                        text.Span("Address Overlap: ").Bold().FontSize(7.2f).FontColor(Amber);
                         text.Span(string.Join("; ", order.PropertyMatches.Select(m => $"[{m.SourceLabel}] {m.AddressText} (p. {m.PageNumber})"))).FontSize(7.2f).FontColor(Colors.Grey.Darken2);
                     });
                 }

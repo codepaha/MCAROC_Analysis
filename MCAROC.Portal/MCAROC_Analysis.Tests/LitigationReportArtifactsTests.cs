@@ -129,8 +129,9 @@ public sealed class LitigationReportArtifactsTests
         using var doc = PdfDocument.Open(new MemoryStream(pdf));
         var text = string.Concat(doc.GetPages().Select(p => p.Text));
 
-        Assert.Contains("CONTESTED PROPERTY", text);
-        Assert.Contains("ADDRESS MATCH", text);
+        Assert.Contains("PROPERTY ADDRESS MENTIONS", text);
+        Assert.Contains("TEXT OVERLAP", text);
+        Assert.Contains("does not legally establish", text);
         Assert.Contains("Charge CHG-99", text);
         Assert.Contains("Financial District", text);
     }
