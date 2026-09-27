@@ -160,6 +160,8 @@ public sealed class LitigationTabViewModel
     public SnapshotImportState ImportState { get; set; } = SnapshotImportState.NotCreated;
 
     public bool IsPriorRunDataShown { get; set; }
+    public string? ReusedFromRequestNumber { get; set; }
+    public bool IsReusedReport => AuthoritativeSnapshot?.ReusedFromSnapshotId is not null;
     public bool IsCurrentAttemptFailed =>
         SearchJob is { Status: LitigationSearchJobStatus.Failed } ||
         CurrentAttemptSnapshot is { Status: LitigationReportSnapshotStatus.Failed } ||

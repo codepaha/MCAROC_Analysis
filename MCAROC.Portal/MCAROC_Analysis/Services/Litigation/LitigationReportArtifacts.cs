@@ -147,8 +147,13 @@ public sealed record StandaloneLitigationReport(
     LitigationCourtSummaryGrid CourtSummaryGrid,
     IReadOnlyList<StandaloneReportCaseDto> Cases,
     LitigationPortfolioAnalysis? PortfolioAnalysis = null,
-    IReadOnlyDictionary<long, LitigationCaseAnalysis>? CaseAnalysesByCaseId = null)
+    IReadOnlyDictionary<long, LitigationCaseAnalysis>? CaseAnalysesByCaseId = null,
+    long? ReusedFromSnapshotId = null,
+    long? ReusedFromRequestId = null,
+    long? OriginSnapshotId = null)
 {
+    public bool IsReused => ReusedFromSnapshotId.HasValue;
+
     public LitigationCaseAnalysis? AnalysisFor(long litigationCaseId) =>
         CaseAnalysesByCaseId is not null && CaseAnalysesByCaseId.TryGetValue(litigationCaseId, out var analysis)
             ? analysis
@@ -196,7 +201,8 @@ public static class LitigationReportArtifacts
         "Petitioner Advocates", "Respondent Advocates", "Order Count", "Downloaded Order Count", "Expired Order Count",
         "Order Dates", "Order Types", "Order Availability Statuses", "Order Retained Until Dates", "Order Text Extraction Statuses",
         "Contested Property Match Count", "Contested Property Details",
-        "Analysis Status", "Analysis Risk", "Analysis Summary", "Analysis Key Issues", "Analysis Recommended Action"
+        "Analysis Status", "Analysis Risk", "Analysis Summary", "Analysis Key Issues", "Analysis Recommended Action",
+        "Report Reused", "Reused From Request ID", "Reused From Snapshot ID", "Report Retrieved Date", "Reuse Disclosure"
     ];
 
     private static void WriteRow(CsvWriter csv, int serial, StandaloneLitigationReport report, StandaloneReportCaseDto item)
@@ -215,6 +221,14 @@ public static class LitigationReportArtifacts
             ? string.Join("; ", propertyMatches.Select(m => $"Order {m.OrderDate ?? "-"} (p. {m.PageNumber}): [{m.SourceLabel}] {m.AddressText}"))
             : "-";
 
+        var isReused = report.IsReused ? "Yes" : "No";
+        var reusedReqId = report.ReusedFromRequestId?.ToString(CultureInfo.InvariantCulture) ?? "-";
+        var reusedSnapId = report.ReusedFromSnapshotId?.ToString(CultureInfo.InvariantCulture) ?? "-";
+        var retrievedDate = Ist.Date(report.AuthoritativeSnapshotRetrievedUtc);
+        var reuseDisclosure = report.IsReused
+            ? $"Report retrieved {retrievedDate} — reused from another request. Originated from Request #{report.ReusedFromRequestId} (Snapshot #{report.ReusedFromSnapshotId}), originally retrieved on {retrievedDate}. Satisfied the <= 7-day eligibility limit when reused; the 7-day bound governed reuse admission, not an ongoing freshness guarantee."
+            : "-";
+
         foreach (var value in new[]
         {
             serial.ToString(CultureInfo.InvariantCulture), report.AssignmentNumber, report.CompanyName,
@@ -227,7 +241,8 @@ public static class LitigationReportArtifacts
             orderDates, orderTypes, orderStatuses, orderRetainedUntil, orderExtraction,
             propertyMatchCount, propertyMatchDetails,
             analysis?.Status ?? "Pending", analysis?.RiskLevel, analysis?.Summary,
-            analysis is null ? null : string.Join("; ", analysis.KeyIssues ?? []), analysis?.RecommendedAction
+            analysis is null ? null : string.Join("; ", analysis.KeyIssues ?? []), analysis?.RecommendedAction,
+            isReused, reusedReqId, reusedSnapId, retrievedDate, reuseDisclosure
         }) csv.WriteField(SafeCsv(value));
         csv.NextRecord();
     }
@@ -327,14 +342,33 @@ internal sealed class LitigationReportPdfDocument(StandaloneLitigationReport rep
         column.Item().PaddingTop(6).Text("Litigation Due Diligence Report").Bold().FontSize(22).FontColor(Ink);
         column.Item().PaddingTop(2).Text(report.CompanyName).SemiBold().FontSize(13).FontColor(Navy);
         column.Item().Text($"Assignment {report.AssignmentNumber}  |  Generated {Ist.Format(report.GeneratedAtUtc, "dd MMM yyyy, HH:mm")}").FontSize(8).FontColor(Colors.Grey.Darken1);
-        column.Item().PaddingTop(10).Element(container => InformationTable(container, new[]
+
+        if (report.IsReused)
+        {
+            column.Item().PaddingTop(6).Background("#EFF6FF").Border(1f).BorderColor("#3B82F6").Padding(8).Row(row =>
+            {
+                row.AutoItem().PaddingRight(8).Text("ℹ").FontSize(14).FontColor("#1D4ED8");
+                row.RelativeItem().Column(c =>
+                {
+                    c.Item().Text($"Report retrieved {Ist.Date(report.AuthoritativeSnapshotRetrievedUtc)} — reused from another request").Bold().FontSize(8.5f).FontColor("#1E40AF");
+                    c.Item().PaddingTop(2).Text($"Data originated from Request #{report.ReusedFromRequestId} (Snapshot #{report.ReusedFromSnapshotId}), originally retrieved on {Ist.Date(report.AuthoritativeSnapshotRetrievedUtc)}. It satisfied the ≤ 7-day eligibility limit when reused; the 7-day bound governed reuse admission, not an ongoing freshness guarantee. Reused with zero new vendor spend.").FontSize(7.8f).FontColor("#1E3A8A");
+                });
+            });
+        }
+
+        var infoRows = new List<(string Label, string Value)>
         {
             ("SOURCE", "BPR Litigation Data Lake"),
             ("AUTHORITATIVE SNAPSHOT", $"{Ist.Format(report.AuthoritativeSnapshotRetrievedUtc, "dd MMM yyyy, HH:mm")} (ID: {report.AuthoritativeSnapshotId}){(report.IsPriorRunDataShown ? " [Prior Run Snapshot]" : string.Empty)}"),
-            ("KEYWORDS SEARCHED", report.KeywordsSearched.Count == 0 ? "Not supplied by source" : string.Join(" | ", report.KeywordsSearched)),
-            ("REPORT SCOPE", "Standalone litigation report; separate from the MCA ROC dossier"),
-            ("SNAPSHOT ANCHORING", "Membership-only snapshot anchoring; case metadata reflects current persisted records.")
-        }));
+        };
+        if (report.IsReused)
+        {
+            infoRows.Add(("REPORT REUSE", $"Reused from Request #{report.ReusedFromRequestId} (Snapshot #{report.ReusedFromSnapshotId}); original retrieval {Ist.Date(report.AuthoritativeSnapshotRetrievedUtc)} (met ≤ 7-day admission limit)"));
+        }
+        infoRows.Add(("KEYWORDS SEARCHED", report.KeywordsSearched.Count == 0 ? "Not supplied by source" : string.Join(" | ", report.KeywordsSearched)));
+        infoRows.Add(("REPORT SCOPE", "Standalone litigation report; separate from the MCA ROC dossier"));
+        infoRows.Add(("SNAPSHOT ANCHORING", "Membership-only snapshot anchoring; case metadata reflects current persisted records."));
+        column.Item().PaddingTop(10).Element(container => InformationTable(container, infoRows));
         column.Item().PaddingTop(12).Row(row =>
         {
             Metric(row.RelativeItem(), "CASES", grid.TotalCases.ToString(CultureInfo.InvariantCulture), Navy); row.ConstantItem(7);

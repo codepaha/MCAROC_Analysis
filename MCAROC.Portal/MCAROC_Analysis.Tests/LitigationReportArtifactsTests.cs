@@ -66,6 +66,96 @@ public sealed class LitigationReportArtifactsTests
         Assert.Contains("BENCH", text);
     }
 
+    [SkippableFact]
+    public void RenderPdf_includes_reuse_provenance_banner_when_reused()
+    {
+        Skip.IfNot(OperatingSystem.IsWindows(),
+            "PdfPig text extraction is unreliable off Windows fonts; covered by the windows-tests CI job.");
+
+        var report = ReportWithSingleCase("csp-42") with
+        {
+            ReusedFromSnapshotId = 123,
+            ReusedFromRequestId = 456
+        };
+
+        var pdf = LitigationReportArtifacts.RenderPdf(report);
+        using var doc = PdfDocument.Open(new MemoryStream(pdf));
+        var text = string.Concat(doc.GetPages().Select(p => p.Text));
+
+        Assert.Contains("reused from another request", text);
+        Assert.Contains("Request #456", text);
+        Assert.Contains("Snapshot #123", text);
+        Assert.Contains("governed reuse admission", text);
+        Assert.DoesNotContain("within the 7-day freshness window", text);
+        Assert.Contains("REPORT REUSE", text);
+    }
+
+    [SkippableFact]
+    public void RenderPdf_does_not_include_reuse_banner_when_not_reused()
+    {
+        Skip.IfNot(OperatingSystem.IsWindows(),
+            "PdfPig text extraction is unreliable off Windows fonts; covered by the windows-tests CI job.");
+
+        var report = ReportWithSingleCase("csp-42");
+
+        var pdf = LitigationReportArtifacts.RenderPdf(report);
+        using var doc = PdfDocument.Open(new MemoryStream(pdf));
+        var text = string.Concat(doc.GetPages().Select(p => p.Text));
+
+        Assert.DoesNotContain("reused from another request", text);
+        Assert.DoesNotContain("REPORT REUSE", text);
+    }
+
+    [Fact]
+    public void RenderCsv_includes_reuse_provenance_columns_and_values()
+    {
+        var reusedReport = ReportWithSingleCase("csp-42") with
+        {
+            ReusedFromSnapshotId = 123,
+            ReusedFromRequestId = 456
+        };
+        var csv = Encoding.UTF8.GetString(LitigationReportArtifacts.RenderCsv(reusedReport));
+        using var reader = new StringReader(csv);
+        using var csvReader = new CsvHelper.CsvReader(reader, System.Globalization.CultureInfo.InvariantCulture);
+        csvReader.Read();
+        csvReader.ReadHeader();
+        var headers = csvReader.HeaderRecord!;
+
+        Assert.Contains("Report Reused", headers);
+        Assert.Contains("Reused From Request ID", headers);
+        Assert.Contains("Reused From Snapshot ID", headers);
+        Assert.Contains("Report Retrieved Date", headers);
+        Assert.Contains("Reuse Disclosure", headers);
+
+        csvReader.Read();
+        Assert.Equal("Yes", csvReader.GetField("Report Reused"));
+        Assert.Equal("456", csvReader.GetField("Reused From Request ID"));
+        Assert.Equal("123", csvReader.GetField("Reused From Snapshot ID"));
+        var disclosure = csvReader.GetField("Reuse Disclosure")!;
+        Assert.Contains("reused from another request", disclosure);
+        Assert.Contains("Request #456", disclosure);
+        Assert.Contains("Snapshot #123", disclosure);
+        Assert.Contains("governed reuse admission", disclosure);
+        Assert.DoesNotContain("within the 7-day freshness window", disclosure);
+    }
+
+    [Fact]
+    public void RenderCsv_shows_unreused_metadata_for_fresh_report()
+    {
+        var freshReport = ReportWithSingleCase("csp-42");
+        var csv = Encoding.UTF8.GetString(LitigationReportArtifacts.RenderCsv(freshReport));
+        using var reader = new StringReader(csv);
+        using var csvReader = new CsvHelper.CsvReader(reader, System.Globalization.CultureInfo.InvariantCulture);
+        csvReader.Read();
+        csvReader.ReadHeader();
+
+        csvReader.Read();
+        Assert.Equal("No", csvReader.GetField("Report Reused"));
+        Assert.Equal("'-", csvReader.GetField("Reused From Request ID"));
+        Assert.Equal("'-", csvReader.GetField("Reused From Snapshot ID"));
+        Assert.Equal("'-", csvReader.GetField("Reuse Disclosure"));
+    }
+
     [Fact]
     public void RenderCsv_includes_contested_property_columns_and_values()
     {

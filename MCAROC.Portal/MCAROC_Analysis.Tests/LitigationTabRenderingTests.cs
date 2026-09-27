@@ -244,4 +244,78 @@ public class LitigationTabRenderingTests
         var html = await RenderLitigationTabAsync(CreateViewModel());
         Assert.Contains("No financial dispute cases were reported", html);
     }
+
+    // ── #291 — Reused report provenance banner ──
+
+    [Fact]
+    public async Task Reused_litigation_report_renders_provenance_banner_and_header_badge()
+    {
+        var vm = CreateViewModel();
+        var retrievedUtc = new DateTime(2026, 9, 20, 10, 30, 0, DateTimeKind.Utc);
+        vm.LitigationDataLake = new LitigationTabViewModel
+        {
+            Request = vm.Request,
+            IsReviewer = true,
+            SearchJob = new LitigationSearchJob
+            {
+                LitigationSearchJobId = 1,
+                Status = LitigationSearchJobStatus.Completed
+            },
+            AuthoritativeSnapshot = new LitigationReportSnapshot
+            {
+                LitigationReportSnapshotId = 10,
+                LitigationSearchJobId = 1,
+                RequestId = 2,
+                ReusedFromRequestId = 1,
+                ReusedFromSnapshotId = 5,
+                OriginSnapshotId = 5,
+                RetrievedUtc = retrievedUtc,
+                Status = LitigationReportSnapshotStatus.Completed
+            },
+            ReusedFromRequestNumber = "REQ-SRC-001"
+        };
+
+        var html = await RenderLitigationTabAsync(vm);
+
+        Assert.Contains("litigation-reuse-provenance-banner", html);
+        Assert.Contains("Report retrieved", html);
+        Assert.Contains("reused from another request", html);
+        Assert.Contains("request #REQ-SRC-001", html);
+        Assert.Contains("snapshot #5", html);
+        Assert.Contains("governed reuse admission", html);
+        Assert.DoesNotContain("within the 7-day freshness window", html);
+        Assert.Contains("Reused Report", html);
+    }
+
+    [Fact]
+    public async Task Freshly_purchased_litigation_report_does_not_render_reuse_provenance_banner()
+    {
+        var vm = CreateViewModel();
+        vm.LitigationDataLake = new LitigationTabViewModel
+        {
+            Request = vm.Request,
+            IsReviewer = true,
+            SearchJob = new LitigationSearchJob
+            {
+                LitigationSearchJobId = 1,
+                Status = LitigationSearchJobStatus.Completed
+            },
+            AuthoritativeSnapshot = new LitigationReportSnapshot
+            {
+                LitigationReportSnapshotId = 10,
+                LitigationSearchJobId = 1,
+                RequestId = 1,
+                ReusedFromRequestId = null,
+                ReusedFromSnapshotId = null,
+                OriginSnapshotId = null,
+                RetrievedUtc = DateTime.UtcNow,
+                Status = LitigationReportSnapshotStatus.Completed
+            }
+        };
+
+        var html = await RenderLitigationTabAsync(vm);
+
+        Assert.DoesNotContain("litigation-reuse-provenance-banner", html);
+        Assert.DoesNotContain("reused from another request", html);
+    }
 }

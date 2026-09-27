@@ -707,6 +707,15 @@ public class RequestsController(
                 litVm.AuthoritativeSnapshot = authoritativeSnapshot;
                 litVm.IsPriorRunDataShown = isPriorRun;
 
+                if (authoritativeSnapshot?.ReusedFromRequestId is { } reusedReqId)
+                {
+                    litVm.ReusedFromRequestNumber = await db.Requests
+                        .AsNoTracking()
+                        .Where(r => r.RequestId == reusedReqId)
+                        .Select(r => r.RequestNumber)
+                        .FirstOrDefaultAsync();
+                }
+
                 if (authoritativeSnapshot is not null)
                 {
                     var authoritativeSnapshotId = authoritativeSnapshot.LitigationReportSnapshotId;

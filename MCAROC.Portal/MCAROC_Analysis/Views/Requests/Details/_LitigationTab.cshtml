@@ -257,6 +257,10 @@ else if (lake is not null)
             <h3 class="mb-1 d-flex align-items-center gap-2">
                 <i class="bi bi-bank text-primary"></i>Litigation Data Lake
                 <span class="badge bg-primary fs-6">Internal Reviewer Mode</span>
+                @if (lake.IsReusedReport)
+                {
+                    <span class="badge bg-info text-dark fs-6" title="Reused from request #@(lake.ReusedFromRequestNumber ?? lake.AuthoritativeSnapshot?.ReusedFromRequestId?.ToString())"><i class="bi bi-recycle me-1"></i>Reused Report</span>
+                }
             </h3>
             <p class="text-muted small mb-0">Direct BPR court records, CNR tracking, order PDF retrieval, and evidence-grounded AI analysis.</p>
         </div>
@@ -364,6 +368,22 @@ else if (lake is not null)
                     <strong>Prior Search Results Displayed:</strong>
                     <span>Showing snapshot data retrieved @Ist.Format(lake.AuthoritativeSnapshot.RetrievedUtc). The most recent search attempt is currently active or failed. Final coverage and reconciliation claims reflect the prior run.</span>
                 </div>
+            </div>
+        }
+
+        @if (lake.IsReusedReport && lake.AuthoritativeSnapshot is not null)
+        {
+            <div class="alert alert-info py-2 px-3 mb-4 d-flex align-items-center justify-content-between gap-3 shadow-sm border-info" role="alert" id="litigation-reuse-provenance-banner">
+                <div class="d-flex align-items-center gap-2">
+                    <i class="bi bi-recycle fs-4 text-info"></i>
+                    <div>
+                        <div class="fw-semibold">Report retrieved @Ist.Date(lake.AuthoritativeSnapshot.RetrievedUtc) — reused from another request</div>
+                        <div class="small text-muted">
+                            Data originated from @(lake.ReusedFromRequestNumber is not null ? $"request #{lake.ReusedFromRequestNumber}" : $"request #{lake.AuthoritativeSnapshot.ReusedFromRequestId}") (snapshot #@lake.AuthoritativeSnapshot.ReusedFromSnapshotId), originally retrieved on @Ist.Date(lake.AuthoritativeSnapshot.RetrievedUtc). It satisfied the &le; 7-day eligibility limit when reused; the 7-day bound governed reuse admission, not an ongoing freshness guarantee. Reused with zero new vendor spend.
+                        </div>
+                    </div>
+                </div>
+                <span class="badge bg-info text-dark text-nowrap"><i class="bi bi-recycle me-1"></i>Reused Report</span>
             </div>
         }
     }
