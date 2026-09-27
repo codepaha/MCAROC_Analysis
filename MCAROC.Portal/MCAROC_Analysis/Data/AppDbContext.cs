@@ -117,6 +117,8 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
 
     // Company master lookup (bulk-imported MCA name→CIN/LLPIN/FCRN reference data)
     public DbSet<CompanyMasterRecord> CompanyMasterRecords => Set<CompanyMasterRecord>();
+    public DbSet<CompanyNameToken> CompanyNameTokens => Set<CompanyNameToken>();
+    public DbSet<IdentityResolution> IdentityResolutions => Set<IdentityResolution>();
 
     // Company master automated sync pipeline & observability
     public DbSet<CompanyMasterSyncJob> CompanyMasterSyncJobs => Set<CompanyMasterSyncJob>();
@@ -1169,6 +1171,32 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
                 .OnDelete(DeleteBehavior.Cascade);
 
             e.HasIndex(x => new { x.JobId, x.RecordType });
+        });
+
+        // Identity resolution (issue #294).
+        modelBuilder.Entity<CompanyNameToken>(e =>
+        {
+            e.HasKey(x => new { x.Token, x.Identifier });
+            e.Property(x => x.Token).HasMaxLength(100);
+            e.Property(x => x.Identifier).HasMaxLength(25);
+            // CompanyNameTokenIndex refreshes a changed company's words by identifier.
+            e.HasIndex(x => x.Identifier);
+        });
+
+        modelBuilder.Entity<IdentityResolution>(e =>
+        {
+            e.HasKey(x => x.IdentityResolutionId);
+            e.HasOne(x => x.Request).WithMany().HasForeignKey(x => x.RequestId).OnDelete(DeleteBehavior.Cascade);
+            e.HasIndex(x => new { x.RequestId, x.CreatedUtc });
+            e.Property(x => x.InputName).HasMaxLength(400);
+            e.Property(x => x.InputIdentifier).HasMaxLength(30);
+            e.Property(x => x.NormalizedInput).HasMaxLength(450);
+            e.Property(x => x.Status).HasConversion<string>().HasMaxLength(30);
+            e.Property(x => x.Method).HasConversion<string>().HasMaxLength(30);
+            e.Property(x => x.ChosenIdentifier).HasMaxLength(25);
+            e.Property(x => x.RecommendedIdentifier).HasMaxLength(25);
+            e.Property(x => x.ReasonCode).HasMaxLength(60);
+            e.Property(x => x.CreatedBy).HasMaxLength(200);
         });
 
         modelBuilder.Entity<StagingCompanyMasterRecord>(e =>

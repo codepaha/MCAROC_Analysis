@@ -103,6 +103,12 @@ builder.Services.AddHostedService<ReferenceToolHealthProbe>();
 // Paid-call admission ledger (docs/pipeline-automation-plan.md §4.0) — the only authority for starting a
 // litigation search/analysis or a reference-tool unlock. IOptionsMonitor so a changed cap applies immediately.
 builder.Services.Configure<PipelineOptions>(builder.Configuration.GetSection(PipelineOptions.SectionName));
+// Name → CIN/LLPIN resolution (issue #294). Auto-select ships off: "Resolve:AutoSelect:Enabled" (plan §5A.4)
+// takes precedence over the flat "Resolve:AutoSelectEnabled" key the options class binds by default.
+builder.Services.AddOptions<MCAROC_Analysis.Services.CompanyMaster.ResolverOptions>()
+    .Bind(builder.Configuration.GetSection(MCAROC_Analysis.Services.CompanyMaster.ResolverOptions.SectionName))
+    .PostConfigure(o => o.AutoSelectEnabled = builder.Configuration.GetValue("Resolve:AutoSelect:Enabled", o.AutoSelectEnabled));
+builder.Services.AddScoped<MCAROC_Analysis.Services.CompanyMaster.IdentityResolutionService>();
 builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddScoped<IPaidCallAdmission, PaidCallAdmissionService>();
 builder.Services.AddScoped<LitigationStartService>();
