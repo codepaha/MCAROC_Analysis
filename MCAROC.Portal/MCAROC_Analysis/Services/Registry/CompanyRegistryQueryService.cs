@@ -10,8 +10,11 @@ using MCAROC_Analysis.Data.Entities;
 using MCAROC_Analysis.Models.Dossier;
 using MCAROC_Analysis.Models.Registry;
 using MCAROC_Analysis.Models.Viz;
+using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Memory;
+using Microsoft.Extensions.Configuration;
+using System.Linq.Expressions;
 using Microsoft.Extensions.Logging;
 
 namespace MCAROC_Analysis.Services.Registry;
@@ -19,6 +22,7 @@ namespace MCAROC_Analysis.Services.Registry;
 public sealed partial class CompanyRegistryQueryService
 {
     private readonly AppDbContext _db;
+    private readonly bool _allowImportedBaseline;
     private readonly IMemoryCache _cache;
     private readonly IRegistryPromotionCoordinator _promotionCoordinator;
     private readonly IRegistrySnapshotStore _snapshotStore;
@@ -44,8 +48,10 @@ public sealed partial class CompanyRegistryQueryService
         IRegistryPromotionCoordinator promotionCoordinator,
         IRegistrySnapshotStore snapshotStore,
         ILogger<CompanyRegistryQueryService> logger,
-        SemaphoreSlim? localRebuildLock = null)
+        SemaphoreSlim? localRebuildLock = null,
+        IConfiguration? configuration = null)
     {
+        _allowImportedBaseline = configuration?.GetValue<bool>("RegistryAnalytics:AllowImportedBaseline") == true;
         _db = db;
         _cache = cache;
         _promotionCoordinator = promotionCoordinator;
@@ -60,6 +66,24 @@ public sealed partial class CompanyRegistryQueryService
         => GetDashboardAsync("overview", explorerCriteria, ct);
 
     public async Task<RegistryDashboardViewModel> GetDashboardAsync(string? activeTab, RegistryExplorerCriteria? explorerCriteria, CancellationToken ct = default)
+    {
+        try
+        {
+            return await GetDashboardCoreAsync(activeTab, explorerCriteria, ct);
+        }
+        catch (SqlException ex) when (ex.Number == -2 && !ct.IsCancellationRequested)
+        {
+            _logger.LogWarning(ex, "Registry dashboard SQL request timed out. No registry metrics will be displayed.");
+            return new RegistryDashboardViewModel
+            {
+                ActiveTab = string.IsNullOrWhiteSpace(activeTab) ? "overview" : activeTab.ToLowerInvariant(),
+                State = RegistrySnapshotState.DatabaseUnavailable,
+                StatusMessage = "Registry data is taking longer than expected to load. Please try again shortly."
+            };
+        }
+    }
+
+    private async Task<RegistryDashboardViewModel> GetDashboardCoreAsync(string? activeTab, RegistryExplorerCriteria? explorerCriteria, CancellationToken ct)
     {
         var vm = new RegistryDashboardViewModel
         {
@@ -94,6 +118,21 @@ public sealed partial class CompanyRegistryQueryService
                 vm.StatusMessage = "No records found in registry. A master data sync or bulk import is required to initialize registry intelligence.";
             }
 
+            if (recordsExist && _allowImportedBaseline && activePromotionJob == null)
+            {
+                vm.Aggregates = await GetImportedBaselineAsync(ct);
+                if (vm.Aggregates == null)
+                {
+                    vm.State = RegistrySnapshotState.SyncColdUnavailable;
+                    vm.StatusMessage = "Imported registry analytics are being prepared in the background or a sync is in progress. Please try again shortly. The Explorer remains available.";
+                }
+                else
+                {
+                    vm.State = RegistrySnapshotState.ImportedBaseline;
+                    vm.StatusMessage = "Analytics reflect the currently imported records. Source publication date and import history are unavailable; these are not a verified MCA published snapshot.";
+                }
+            }
+
             if (explorerCriteria != null && (!string.IsNullOrWhiteSpace(explorerCriteria.Q) || explorerCriteria.HasSecondaryFilters))
             {
                 vm.Explorer = await SearchExplorerAsync(explorerCriteria, ct);
@@ -112,7 +151,7 @@ public sealed partial class CompanyRegistryQueryService
             if (cachedData != null)
             {
                 hasWarmCache = true;
-                _cache.Set(cacheKey, cachedData, TimeSpan.FromHours(24));
+                _cache.Set(cacheKey, cachedData, new MemoryCacheEntryOptions().SetAbsoluteExpiration(TimeSpan.FromHours(24)).SetSize(1));
             }
         }
 
@@ -164,7 +203,7 @@ public sealed partial class CompanyRegistryQueryService
                     cachedData = await _snapshotStore.GetSnapshotAsync(latestCompleted.JobId, ct);
                     if (cachedData != null)
                     {
-                        _cache.Set(cacheKey, cachedData, TimeSpan.FromHours(24));
+                        _cache.Set(cacheKey, cachedData, new MemoryCacheEntryOptions().SetAbsoluteExpiration(TimeSpan.FromHours(24)).SetSize(1));
                     }
                     else
                     {
@@ -213,7 +252,7 @@ public sealed partial class CompanyRegistryQueryService
                             return vm;
                         }
 
-                        _cache.Set(cacheKey, cachedData, TimeSpan.FromHours(24));
+                        _cache.Set(cacheKey, cachedData, new MemoryCacheEntryOptions().SetAbsoluteExpiration(TimeSpan.FromHours(24)).SetSize(1));
                     }
                 }
 
@@ -278,11 +317,12 @@ public sealed partial class CompanyRegistryQueryService
             var exactMatch = await _db.CompanyMasterRecords
                 .AsNoTracking()
                 .Where(r => r.Identifier == upperQ)
+                .Select(ExplorerProjection)
                 .FirstOrDefaultAsync(ct);
 
             if (exactMatch != null)
             {
-                result.Items = [ToRow(exactMatch)];
+                result.Items = [exactMatch];
                 result.HasNextPage = false;
                 return result;
             }
@@ -326,6 +366,7 @@ public sealed partial class CompanyRegistryQueryService
             .OrderBy(r => r.Name)
             .ThenBy(r => r.Identifier)
             .Take(pageSize + 1)
+            .Select(ExplorerProjection)
             .ToListAsync(ct);
 
         if (rows.Count > pageSize)
@@ -334,18 +375,18 @@ public sealed partial class CompanyRegistryQueryService
             var lastKept = rows[pageSize - 1];
             result.NextCursorName = lastKept.Name;
             result.NextCursorIdentifier = lastKept.Identifier;
-            result.Items = rows.Take(pageSize).Select(ToRow).ToList();
+            result.Items = rows.Take(pageSize).ToList();
         }
         else
         {
             result.HasNextPage = false;
-            result.Items = rows.Select(ToRow).ToList();
+            result.Items = rows.ToList();
         }
 
         return result;
     }
 
-    private static RegistryRecordRow ToRow(CompanyMasterRecord r) => new()
+    internal static readonly Expression<Func<CompanyMasterRecord, RegistryRecordRow>> ExplorerProjection = r => new RegistryRecordRow()
     {
         Identifier = r.Identifier,
         Name = r.Name,
@@ -366,8 +407,11 @@ public sealed partial class CompanyRegistryQueryService
     {
         return new RegistryAggregateData
         {
+            EntityAnalytics = source.EntityAnalytics,
             Metadata = new RegistrySnapshotMetadata
             {
+                CalculatedUtc = source.Metadata.CalculatedUtc,
+                IsImportedBaseline = source.Metadata.IsImportedBaseline,
                 PublishedDate = source.Metadata.PublishedDate,
                 CompletedUtc = source.Metadata.CompletedUtc,
                 Source = source.Metadata.Source,
@@ -392,184 +436,6 @@ public sealed partial class CompanyRegistryQueryService
             ListingStatusSplit = source.ListingStatusSplit,
             CapitalDistribution = source.CapitalDistribution
         };
-    }
-
-    private async Task<RegistryAggregateData> BuildAggregatesFromDatabaseAsync(CompanyMasterSyncJob completedJob, CancellationToken ct)
-    {
-        _logger.LogInformation("Building verified RegistryAggregates for completed Job {JobId} (Published {Date})...", completedJob.JobId, completedJob.PublishedDate);
-
-        var data = new RegistryAggregateData
-        {
-            Metadata = new RegistrySnapshotMetadata
-            {
-                PublishedDate = completedJob.PublishedDate,
-                CompletedUtc = completedJob.CompletedUtc,
-                Source = "MCA Corporate Data Management (mcacdm.nic.in)",
-                IsSyncInProgress = false
-            }
-        };
-
-        // 1. Dynamic vocabulary check across datasets
-        var observedVocabulary = await _db.CompanyMasterRecords
-            .AsNoTracking()
-            .Where(r => r.Status != null)
-            .Select(r => new { r.RecordType, Status = r.Status! })
-            .Distinct()
-            .ToListAsync(ct);
-
-        var observedCompanyStatuses = new HashSet<string>(observedVocabulary.Where(v => v.RecordType == CompanyMasterRecordType.Company).Select(v => v.Status), StringComparer.OrdinalIgnoreCase);
-        var observedLlpStatuses = new HashSet<string>(observedVocabulary.Where(v => v.RecordType == CompanyMasterRecordType.Llp).Select(v => v.Status), StringComparer.OrdinalIgnoreCase);
-        var observedForeignStatuses = new HashSet<string>(observedVocabulary.Where(v => v.RecordType == CompanyMasterRecordType.Foreign).Select(v => v.Status), StringComparer.OrdinalIgnoreCase);
-
-        // 2. Status counts grouped by RecordType and Status
-        var statusGroups = await _db.CompanyMasterRecords
-            .AsNoTracking()
-            .GroupBy(r => new { r.RecordType, r.Status })
-            .Select(g => new { g.Key.RecordType, g.Key.Status, Count = g.Count() })
-            .ToListAsync(ct);
-
-        data.CompanyStatus = MapStatusMetrics(statusGroups.Where(g => g.RecordType == CompanyMasterRecordType.Company).Select(g => (g.Status, g.Count)), observedCompanyStatuses, isForeign: false);
-        data.LlpStatus = MapStatusMetrics(statusGroups.Where(g => g.RecordType == CompanyMasterRecordType.Llp).Select(g => (g.Status, g.Count)), observedLlpStatuses, isForeign: false);
-        data.ForeignStatus = MapStatusMetrics(statusGroups.Where(g => g.RecordType == CompanyMasterRecordType.Foreign).Select(g => (g.Status, g.Count)), observedForeignStatuses, isForeign: true);
-
-        // Overall status
-        data.OverallStatus = new RegistryStatusMetrics
-        {
-            Active = data.CompanyStatus.Active + data.LlpStatus.Active + data.ForeignStatus.Active,
-            StrikeOff = data.CompanyStatus.StrikeOff + data.LlpStatus.StrikeOff + data.ForeignStatus.StrikeOff,
-            UnderCirp = data.CompanyStatus.UnderCirp + data.LlpStatus.UnderCirp,
-            UnderLiquidation = data.CompanyStatus.UnderLiquidation + data.LlpStatus.UnderLiquidation,
-            OtherUnclassified = data.CompanyStatus.OtherUnclassified + data.LlpStatus.OtherUnclassified + data.ForeignStatus.OtherUnclassified,
-            HasObservedCirp = data.CompanyStatus.HasObservedCirp || data.LlpStatus.HasObservedCirp,
-            HasObservedLiquidation = data.CompanyStatus.HasObservedLiquidation || data.LlpStatus.HasObservedLiquidation
-        };
-
-        data.Metadata.CompanyCount = data.CompanyStatus.Total;
-        data.Metadata.LlpCount = data.LlpStatus.Total;
-        data.Metadata.ForeignCount = data.ForeignStatus.Total;
-        data.Metadata.TotalRecords = data.OverallStatus.Total;
-
-        // 3. Top 10 States (Companies)
-        var topStates = await _db.CompanyMasterRecords
-            .AsNoTracking()
-            .Where(r => r.RecordType == CompanyMasterRecordType.Company && !string.IsNullOrWhiteSpace(r.State))
-            .GroupBy(r => r.State!)
-            .Select(g => new { State = g.Key, Count = g.Count() })
-            .OrderByDescending(x => x.Count)
-            .Take(10)
-            .ToListAsync(ct);
-
-        if (topStates.Count > 0)
-        {
-            var statePoints = topStates
-                .Select(s => new ChartCategoryPoint(s.State, s.Count, null, null, ChartAccent.Brand))
-                .ToList();
-            data.TopStatesChart = ChartCategorySeries.Create("Top States by Companies", MetricUnit.Count, ["CompanyMasterRecord.State"], statePoints);
-        }
-
-        // 4. Top 10 Industries (Companies)
-        var topIndustries = await _db.CompanyMasterRecords
-            .AsNoTracking()
-            .Where(r => r.RecordType == CompanyMasterRecordType.Company && !string.IsNullOrWhiteSpace(r.IndustrialClassification))
-            .GroupBy(r => r.IndustrialClassification!)
-            .Select(g => new { Industry = g.Key, Count = g.Count() })
-            .OrderByDescending(x => x.Count)
-            .Take(10)
-            .ToListAsync(ct);
-
-        if (topIndustries.Count > 0)
-        {
-            var indPoints = topIndustries
-                .Select(i => new ChartCategoryPoint(Truncate(i.Industry, 25), i.Count, null, null, ChartAccent.Brand))
-                .ToList();
-            data.TopIndustriesChart = ChartCategorySeries.Create("Top Industries", MetricUnit.Count, ["CompanyMasterRecord.IndustrialClassification"], indPoints);
-        }
-
-        // 5. Foreign Countries (Foreign entities)
-        var topCountries = await _db.CompanyMasterRecords
-            .AsNoTracking()
-            .Where(r => r.RecordType == CompanyMasterRecordType.Foreign && !string.IsNullOrWhiteSpace(r.Country))
-            .GroupBy(r => r.Country!)
-            .Select(g => new { Country = g.Key, Count = g.Count() })
-            .OrderByDescending(x => x.Count)
-            .Take(10)
-            .ToListAsync(ct);
-
-        if (topCountries.Count > 0)
-        {
-            var ctryPoints = topCountries
-                .Select(c => new ChartCategoryPoint(c.Country, c.Count, null, null, ChartAccent.Warning))
-                .ToList();
-            data.ForeignCountriesChart = ChartCategorySeries.Create("Foreign Origin Countries", MetricUnit.Count, ["CompanyMasterRecord.Country"], ctryPoints);
-        }
-
-        // 6. Registration Years (Companies & LLPs - safe incorporation period only)
-        var companyYearData = await _db.CompanyMasterRecords
-            .AsNoTracking()
-            .Where(r => r.RecordType == CompanyMasterRecordType.Company && r.RegistrationDate != null && r.RegistrationDate.Value.Year >= 2000)
-            .GroupBy(r => r.RegistrationDate!.Value.Year)
-            .Select(g => new { Year = g.Key, Count = g.Count() })
-            .OrderBy(x => x.Year)
-            .ToListAsync(ct);
-
-        if (companyYearData.Count > 0)
-        {
-            var points = companyYearData
-                .Select(y => new ChartTimePoint(ChartPeriod.ForDate(new DateOnly(y.Year, 1, 1), y.Year.ToString(CultureInfo.InvariantCulture)), y.Count))
-                .ToList();
-            data.CompanyRegistrationYearSeries = ChartSeries.Create("Company Incorporations by Year", MetricUnit.Count, ["CompanyMasterRecord.RegistrationDate"], points);
-        }
-
-        // 7. Company Class Breakdown
-        var classGroups = await _db.CompanyMasterRecords
-            .AsNoTracking()
-            .Where(r => r.RecordType == CompanyMasterRecordType.Company && !string.IsNullOrWhiteSpace(r.Class))
-            .GroupBy(r => r.Class!)
-            .Select(g => new { Class = g.Key, Count = g.Count() })
-            .OrderByDescending(x => x.Count)
-            .ToListAsync(ct);
-
-        long totalCo = Math.Max(1, data.CompanyStatus.Total);
-        data.CompanyClasses = classGroups
-            .Select(g => (g.Class, g.Count, (double)g.Count / totalCo * 100.0))
-            .ToList();
-
-        // 8. Listing Status Split
-        var listingGroups = await _db.CompanyMasterRecords
-            .AsNoTracking()
-            .Where(r => r.RecordType == CompanyMasterRecordType.Company && !string.IsNullOrWhiteSpace(r.ListingStatus))
-            .GroupBy(r => r.ListingStatus!)
-            .Select(g => new { Listing = g.Key, Count = g.Count() })
-            .OrderByDescending(x => x.Count)
-            .ToListAsync(ct);
-
-        data.ListingStatusSplit = listingGroups
-            .Select(g => (g.Listing, g.Count, (double)g.Count / totalCo * 100.0))
-            .ToList();
-
-        // 9. Capital Distribution (Authorized Capital)
-        var capitalGroups = await _db.CompanyMasterRecords
-            .AsNoTracking()
-            .Where(r => r.RecordType == CompanyMasterRecordType.Company && r.AuthorizedCapital != null)
-            .GroupBy(r => r.AuthorizedCapital < 100000 ? "< ₹1 Lakh"
-                        : r.AuthorizedCapital < 1000000 ? "₹1L – ₹10L"
-                        : r.AuthorizedCapital < 10000000 ? "₹10L – ₹1 Crore"
-                        : r.AuthorizedCapital < 100000000 ? "₹1Cr – ₹10 Crore"
-                        : r.AuthorizedCapital < 1000000000 ? "₹10Cr – ₹100 Crore"
-                        : "> ₹100 Crore")
-            .Select(g => new { Range = g.Key, Count = g.Count() })
-            .ToListAsync(ct);
-
-        var capitalSortOrder = new List<string> { "< ₹1 Lakh", "₹1L – ₹10L", "₹10L – ₹1 Crore", "₹1Cr – ₹10 Crore", "₹10Cr – ₹100 Crore", "> ₹100 Crore" };
-        data.CapitalDistribution = capitalSortOrder
-            .Select(range =>
-            {
-                int count = capitalGroups.FirstOrDefault(c => c.Range == range)?.Count ?? 0;
-                return (range, count, (double)count / totalCo * 100.0);
-            })
-            .ToList();
-
-        return data;
     }
 
     public static RegistryStatusMetrics MapStatusMetrics(

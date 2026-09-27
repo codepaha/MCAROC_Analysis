@@ -1,0 +1,107 @@
+@model (RegistryEntityAnalytics Analytics, DateOnly ReferenceDate, string Title)
+@using MCAROC_Analysis.Models.Registry
+@using MCAROC_Analysis.Models.Viz
+@using MCAROC_Analysis.Models.Dossier
+@{
+    var a = Model.Analytics;
+    var reference = Model.ReferenceDate;
+    var lastMonth = new DateOnly(reference.Year, reference.Month, 1).AddMonths(-1);
+    var previousMonth = lastMonth.AddMonths(-1);
+    int MonthCount(DateOnly month) => a.Registrations.Where(r => r.Year == month.Year && r.Month == month.Month).Sum(r => r.Count);
+    int StatusCount(string status) => a.Statuses.Where(s => string.Equals(s.Label, status, StringComparison.OrdinalIgnoreCase)).Sum(s => s.Count);
+    var lastCount = MonthCount(lastMonth);
+    var previousCount = MonthCount(previousMonth);
+    var growth = previousCount == 0 ? "Unavailable" : ((lastCount - previousCount) * 100d / previousCount).ToString("+0.0;-0.0;0.0") + "%";
+    var monthly = Enumerable.Range(0, 12).Select(i => lastMonth.AddMonths(i - 11))
+        .Select(d => new RegistryMetricBucket(d.ToString("MMM yyyy"), MonthCount(d))).ToList();
+    var yearly = a.Registrations.Where(r => r.Year >= reference.Year - 29 && r.Year <= reference.Year).GroupBy(r => r.Year).OrderBy(r => r.Key)
+        .Select(g => new RegistryMetricBucket(g.Key.ToString(), g.Sum(r => r.Count))).ToList();
+    var sections = new (string Title, List<RegistryMetricBucket> Rows)[] {
+        ("Current status distribution", a.Statuses), ("Registrations by year · last 30 years", yearly),
+        ("Top 10 states / UTs", a.States), ("Top 10 industries", a.Industries),
+        ("Top 10 ROC offices", a.Rocs), ("Top 10 districts", a.Districts),
+        ("Monthly registrations · last 12 complete months", monthly), ("Distressed entities by state", a.DistressedStates)
+    };
+    var kpis = new (string Label, string Value, string Detail)[] {
+        ("Total " + Model.Title, a.Total.ToString("N0"), "Current imported records"),
+        ("Active", StatusCount("Active").ToString("N0"), "Current recorded status"),
+        ("Struck off", StatusCount("Strike Off").ToString("N0"), "Current recorded status"),
+        ("Distressed", a.Distressed.ToString("N0"), "CIRP, liquidation or pending strike-off"),
+        ("Registered in " + reference.Year, a.Registrations.Where(r => r.Year == reference.Year && r.Month <= reference.Month).Sum(r => r.Count).ToString("N0"), "Calendar year to reference month"),
+        ("New · " + lastMonth.ToString("MMM yyyy"), lastCount.ToString("N0"), "Registration date in last complete month"),
+        ("New · " + previousMonth.ToString("MMM yyyy"), previousCount.ToString("N0"), "Registration date in preceding month"),
+        ("Month-on-month", growth, lastMonth.ToString("MMM") + " versus " + previousMonth.ToString("MMM"))
+    };
+}
+<section class="registry-analytics" aria-label="@Model.Title analytics">
+    <div class="d-flex justify-content-between flex-wrap align-items-end gap-2 mb-3">
+        <h2 class="h4 mb-0">@Model.Title · registry snapshot</h2>
+        <span class="small text-muted">Registration windows referenced to @reference.ToString("dd MMM yyyy")</span>
+    </div>
+    <div class="row g-0 border-top border-bottom mb-4">
+        @foreach (var kpi in kpis)
+        {
+            <div class="col-6 col-lg-3 p-3">
+                <div class="text-muted small">@kpi.Label</div>
+                <div class="h3 fw-semibold my-1">@kpi.Value</div>
+                <div class="small text-muted">@kpi.Detail</div>
+            </div>
+        }
+    </div>
+    <div class="row g-4">
+        @foreach (var chartSection in sections)
+        {
+            <div class="col-12 col-xl-6">
+                <section class="border-top pt-3 h-100" aria-label="@chartSection.Title">
+                    <h3 class="h6 fw-semibold mb-3">@chartSection.Title</h3>
+                    @if (chartSection.Rows.Count > 0)
+                    {
+                        if (chartSection.Title.StartsWith("Registrations by year"))
+                        {
+                            var years = ChartSeries.Create(chartSection.Title, MetricUnit.Count, ["CompanyMasterRecord.RegistrationDate"],
+                                chartSection.Rows.Select(r => new ChartTimePoint(ChartPeriod.ForDate(new DateOnly(int.Parse(r.Label), 1, 1), r.Label), r.Count)).ToList());
+                            @await Html.PartialAsync("~/Views/Shared/_Sparkline.cshtml", years, new ViewDataDictionary(ViewData) { ["Width"] = 720d, ["Height"] = 160d, ["ExtraClass"] = "mca-sparkline--wide" })
+                        }
+                        else
+                        {
+                            var chart = ChartCategorySeries.Create(chartSection.Title, MetricUnit.Count, ["CompanyMasterRecords"],
+                                chartSection.Rows.Select(r => new ChartCategoryPoint(r.Label, r.Count, null, null)).ToList());
+                            @await Html.PartialAsync("~/Views/Shared/_HorizontalBars.cshtml", chart)
+                        }
+                    }
+                    else
+                    {
+                        <p class="text-muted small">No records with this field in the current dataset.</p>
+                    }
+                </section>
+            </div>
+        }
+    </div>
+    <div class="row g-4 mt-2">
+        <section class="col-12 col-xl-6">
+            <h3 class="h6 fw-semibold">Active and struck-off entities by state</h3>
+            <div class="table-responsive">
+                <table class="table table-sm"><caption class="small">Current statuses, grouped by state.</caption>
+                    <thead><tr><th>State</th><th class="text-end">Active</th><th class="text-end">Struck off</th><th class="text-end">Total</th></tr></thead>
+                    <tbody>@foreach (var state in a.States)
+                    {
+                        <tr><td>@state.Label</td><td class="text-end">@a.StateStatuses.Where(r => r.State == state.Label && r.Status.Equals("Active", StringComparison.OrdinalIgnoreCase)).Sum(r => r.Count).ToString("N0")</td><td class="text-end">@a.StateStatuses.Where(r => r.State == state.Label && r.Status.Equals("Strike Off", StringComparison.OrdinalIgnoreCase)).Sum(r => r.Count).ToString("N0")</td><td class="text-end">@state.Count.ToString("N0")</td></tr>
+                    }</tbody>
+                </table>
+            </div>
+        </section>
+        <section class="col-12 col-xl-6">
+            <h3 class="h6 fw-semibold">Distressed status breakdown</h3>
+            <div class="table-responsive">
+                <table class="table table-sm"><caption class="small">Current CIRP, liquidation, dissolved-under-section and pending strike-off statuses. Total: @a.Distressed.ToString("N0").</caption>
+                    <thead><tr><th>Status</th><th class="text-end">Entities</th></tr></thead>
+                    <tbody>@foreach (var status in a.Statuses.Where(s => RegistryEntityAnalytics.IsDistressed(s.Label)))
+                    {
+                        <tr><td>@status.Label</td><td class="text-end">@status.Count.ToString("N0")</td></tr>
+                    }</tbody>
+                </table>
+            </div>
+        </section>
+    </div>
+    <p class="small text-muted mt-3">Registration charts use incorporation dates recorded in the current dataset. Records without a registration date are excluded from those charts. Historical strike-off dates, entity lifespan and status-change trends are unavailable.</p>
+</section>
