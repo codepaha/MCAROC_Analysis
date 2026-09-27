@@ -914,8 +914,7 @@ public class RequestsController(
                         .ToListAsync();
 
                     var addressPool = LitigationOrderAddressMatcher.BuildAddressPool(companyProfile, epfoEsts, charges);
-                    var allPagedOrders = pagedCases.SelectMany(c => c.Orders).ToList();
-                    var propertyMatches = LitigationOrderAddressMatcher.MatchOrders(addressPool, allPagedOrders, orderDocByOrderId);
+                    var propertyMatches = LitigationOrderAddressMatcher.MatchCases(addressPool, pagedCases, orderDocByOrderId);
                     var propertyMatchesByOrderId = propertyMatches
                         .GroupBy(m => m.LitigationCaseOrderId)
                         .ToDictionary(g => g.Key, g => g.ToList());

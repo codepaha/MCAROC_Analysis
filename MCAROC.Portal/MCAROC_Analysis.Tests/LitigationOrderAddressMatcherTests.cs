@@ -282,4 +282,141 @@ public class LitigationOrderAddressMatcherTests
         Assert.Contains("428", matches[0].MatchedPlotNumbers);
         Assert.Contains("429", matches[0].MatchedPlotNumbers);
     }
+
+    [Fact]
+    public void MatchCases_excludes_nclt_and_nclat_orders_per_issue_191_hard_prerequisite()
+    {
+        // Issue #191 hard prerequisite: "The Coastal litigation-orders corpus is not usable as-is:
+        // the dedupe scanner from #189 found NCLT 93% duplicate/mislabeled (205 of 221 files)...
+        // Do not start property-extraction work against NCLT until that archive is re-sourced".
+        var pool = LitigationOrderAddressMatcher.BuildAddressPool(
+            CreateCompanyProfile(),
+            CreateEpfoEstablishments(),
+            CreateOpenCharges());
+
+        var hcOrder = new LitigationCaseOrder { LitigationCaseOrderId = 10, OrderDate = "10-02-2024", OrderType = "Order" };
+        var ncltCourtOrder = new LitigationCaseOrder { LitigationCaseOrderId = 20, OrderDate = "15-03-2024", OrderType = "Order" };
+        var ncltBenchOrder = new LitigationCaseOrder { LitigationCaseOrderId = 30, OrderDate = "20-04-2024", OrderType = "Order" };
+        var nclatOrder = new LitigationCaseOrder { LitigationCaseOrderId = 40, OrderDate = "25-05-2024", OrderType = "Order" };
+
+        var hcCase = new LitigationCase
+        {
+            LitigationCaseId = 1,
+            CourtCategory = "high_court",
+            Court = "High Court of Orissa",
+            Orders = [hcOrder]
+        };
+
+        var ncltCourtCase = new LitigationCase
+        {
+            LitigationCaseId = 2,
+            CourtCategory = "tribunal_cases",
+            Court = "National Company Law Tribunal, Cuttack Bench",
+            Orders = [ncltCourtOrder]
+        };
+
+        var ncltBenchCase = new LitigationCase
+        {
+            LitigationCaseId = 3,
+            CourtCategory = "nclt",
+            Bench = "nclt,cuttack bench.",
+            Orders = [ncltBenchOrder]
+        };
+
+        var nclatCase = new LitigationCase
+        {
+            LitigationCaseId = 4,
+            CourtCategory = "nclat",
+            Court = "National Company Law Appellate Tribunal",
+            Orders = [nclatOrder]
+        };
+
+        const string matchingText = "--- Page 1 (native) ---\nThe registered premises at Plot No. A-36, Nilakantha Nagar, Nayapalli, Bhubaneswar, 751012.";
+
+        var docs = new Dictionary<long, LitigationOrderDocument>
+        {
+            [10] = new() { LitigationCaseOrderId = 10, Status = LitigationOrderDocumentStatus.Downloaded, TextExtractionStatus = FilingDocumentProcessingStatus.TextExtracted, ExtractedText = matchingText },
+            [20] = new() { LitigationCaseOrderId = 20, Status = LitigationOrderDocumentStatus.Downloaded, TextExtractionStatus = FilingDocumentProcessingStatus.TextExtracted, ExtractedText = matchingText },
+            [30] = new() { LitigationCaseOrderId = 30, Status = LitigationOrderDocumentStatus.Downloaded, TextExtractionStatus = FilingDocumentProcessingStatus.TextExtracted, ExtractedText = matchingText },
+            [40] = new() { LitigationCaseOrderId = 40, Status = LitigationOrderDocumentStatus.Downloaded, TextExtractionStatus = FilingDocumentProcessingStatus.TextExtracted, ExtractedText = matchingText }
+        };
+
+        var matches = LitigationOrderAddressMatcher.MatchCases(pool, [hcCase, ncltCourtCase, ncltBenchCase, nclatCase], docs);
+
+        // Only High Court order matches; all NCLT/NCLAT orders are excluded
+        var matched = Assert.Single(matches);
+        Assert.Equal(10, matched.LitigationCaseOrderId);
+        Assert.Equal("Registered office", matched.SourceLabel);
+    }
+
+    [Fact]
+    public void MatchOrders_excludes_orders_with_nclt_url_or_case()
+    {
+        var pool = LitigationOrderAddressMatcher.BuildAddressPool(
+            CreateCompanyProfile(),
+            CreateEpfoEstablishments(),
+            CreateOpenCharges());
+
+        var order1 = new LitigationCaseOrder
+        {
+            LitigationCaseOrderId = 50,
+            OrderDate = "10-02-2024",
+            PdfUrl = "https://storage.example/orders/nclt/cuttack/cp_12_2020.pdf",
+            Case = new LitigationCase { LitigationCaseId = 5, CourtCategory = "district_court" } // even if mislabeled as district_court
+        };
+
+        var order2 = new LitigationCaseOrder
+        {
+            LitigationCaseOrderId = 51,
+            OrderDate = "10-02-2024",
+            PdfUrl = "https://storage.example/orders/high_court/delhi/wp_123.pdf",
+            Case = new LitigationCase { LitigationCaseId = 6, CourtCategory = "high_court", Court = "High Court of Delhi" }
+        };
+
+        const string matchingText = "--- Page 1 (native) ---\nThe registered premises at Plot No. A-36, Nilakantha Nagar, Nayapalli, Bhubaneswar, 751012.";
+
+        var docs = new Dictionary<long, LitigationOrderDocument>
+        {
+            [50] = new() { LitigationCaseOrderId = 50, Status = LitigationOrderDocumentStatus.Downloaded, TextExtractionStatus = FilingDocumentProcessingStatus.TextExtracted, ExtractedText = matchingText },
+            [51] = new() { LitigationCaseOrderId = 51, Status = LitigationOrderDocumentStatus.Downloaded, TextExtractionStatus = FilingDocumentProcessingStatus.TextExtracted, ExtractedText = matchingText }
+        };
+
+        var matches = LitigationOrderAddressMatcher.MatchOrders(pool, [order1, order2], docs);
+
+        var matched = Assert.Single(matches);
+        Assert.Equal(51, matched.LitigationCaseOrderId);
+    }
+
+    private static CompanyProfile CreateCompanyProfile() => new()
+    {
+        RegisteredAddress = CoastalRegistered,
+        RegisteredAddressCity = "Bhubaneswar",
+        RegisteredAddressState = "Orissa",
+        BusinessAddress = "Different Office, Unit 4, Bhubaneswar"
+    };
+
+    private static List<EpfoEstablishment> CreateEpfoEstablishments() =>
+    [
+        new() { EstablishmentId = "ORBBU00123", Address = "Plot 10, Chandaka Industrial Estate, Bhubaneswar, 751024", City = "Bhubaneswar" }
+    ];
+
+    private static List<RocCharge> CreateOpenCharges() =>
+    [
+        new()
+        {
+            ChargeId = 101,
+            RocChargeNumber = "CHG-101",
+            LatestChargeHolderRaw = "State Bank of India",
+            SatisfactionDate = null,
+            Events =
+            [
+                new()
+                {
+                    ChargeEventId = 1,
+                    PropertyType = "Immovable property",
+                    PropertyParticulars = CoastalHyderabadMortgage
+                }
+            ]
+        }
+    ];
 }

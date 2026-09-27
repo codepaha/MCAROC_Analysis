@@ -118,8 +118,7 @@ public class LitigationReportAssembler(
             .ToListAsync(ct);
 
         var addressPool = LitigationOrderAddressMatcher.BuildAddressPool(companyProfile, epfoEsts, charges);
-        var allCasesOrders = cases.SelectMany(c => c.Orders).ToList();
-        var propertyMatches = LitigationOrderAddressMatcher.MatchOrders(addressPool, allCasesOrders, docByOrderId);
+        var propertyMatches = LitigationOrderAddressMatcher.MatchCases(addressPool, cases, docByOrderId);
         var propertyMatchesByOrderId = propertyMatches
             .GroupBy(m => m.LitigationCaseOrderId)
             .ToDictionary(g => g.Key, g => g.ToList());

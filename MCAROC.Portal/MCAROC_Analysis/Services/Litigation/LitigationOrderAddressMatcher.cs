@@ -132,12 +132,91 @@ public static partial class LitigationOrderAddressMatcher
     }
 
     /// <summary>
+    /// Checks whether a litigation case belongs to the NCLT / NCLAT forum.
+    /// Per issue #191 hard prerequisite: "The Coastal litigation-orders corpus is not usable as-is:
+    /// the dedupe scanner from #189 found NCLT 93% duplicate/mislabeled (205 of 221 files)...
+    /// Do not start property-extraction work against NCLT until that archive is re-sourced".
+    /// </summary>
+    public static bool IsNcltCase(LitigationCase? c)
+    {
+        if (c is null) return false;
+
+        return IsNcltText(c.CourtCategory)
+            || IsNcltText(c.Court)
+            || IsNcltText(c.Bench)
+            || IsNcltText(c.Type)
+            || IsNcltText(c.CaseType);
+    }
+
+    /// <summary>
+    /// Checks whether a litigation order belongs to an NCLT / NCLAT case or archive.
+    /// </summary>
+    public static bool IsNcltOrder(LitigationCaseOrder? order, IReadOnlyDictionary<long, LitigationCase>? casesByOrderId = null)
+    {
+        if (order is null) return false;
+        var caseItem = order.Case ?? (casesByOrderId != null && casesByOrderId.TryGetValue(order.LitigationCaseOrderId, out var c) ? c : null);
+        if (IsNcltCase(caseItem)) return true;
+        if (IsNcltText(order.OrderType)) return true;
+        if (IsNcltText(order.PdfUrl)) return true;
+        return false;
+    }
+
+    private static bool IsNcltText(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return false;
+        return text.Contains("NCLT", StringComparison.OrdinalIgnoreCase)
+            || text.Contains("NCLAT", StringComparison.OrdinalIgnoreCase)
+            || text.Contains("National Company Law", StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// Matches a collection of litigation cases and their orders against the address pool,
+    /// skipping NCLT cases whose order corpus is known to be corrupted (#191).
+    /// </summary>
+    public static List<LitigationPropertyMatchResult> MatchCases(
+        IReadOnlyList<LitigationAddressTarget> addressPool,
+        IReadOnlyList<LitigationCase> cases,
+        IReadOnlyDictionary<long, LitigationOrderDocument> orderDocuments)
+    {
+        if (addressPool.Count == 0 || cases.Count == 0)
+            return [];
+
+        var results = new List<LitigationPropertyMatchResult>();
+
+        foreach (var c in cases)
+        {
+            if (IsNcltCase(c))
+                continue;
+
+            foreach (var order in c.Orders)
+            {
+                if (IsNcltOrder(order))
+                    continue;
+
+                if (!orderDocuments.TryGetValue(order.LitigationCaseOrderId, out var doc))
+                    continue;
+
+                if (string.IsNullOrWhiteSpace(doc.ExtractedText) ||
+                    doc.TextExtractionStatus != FilingDocumentProcessingStatus.TextExtracted)
+                    continue;
+
+                var orderMatches = MatchText(addressPool, order.LitigationCaseOrderId, order.OrderDate, order.OrderType, doc.ExtractedText);
+                results.AddRange(orderMatches);
+            }
+        }
+
+        return results;
+    }
+
+    /// <summary>
     /// Matches a collection of litigation case orders against the address pool.
+    /// Excludes orders from NCLT / NCLAT cases (#191).
     /// </summary>
     public static List<LitigationPropertyMatchResult> MatchOrders(
         IReadOnlyList<LitigationAddressTarget> addressPool,
         IReadOnlyList<LitigationCaseOrder> orders,
-        IReadOnlyDictionary<long, LitigationOrderDocument> orderDocuments)
+        IReadOnlyDictionary<long, LitigationOrderDocument> orderDocuments,
+        IReadOnlyDictionary<long, LitigationCase>? casesByOrderId = null)
     {
         if (addressPool.Count == 0 || orders.Count == 0)
             return [];
@@ -146,6 +225,9 @@ public static partial class LitigationOrderAddressMatcher
 
         foreach (var order in orders)
         {
+            if (IsNcltOrder(order, casesByOrderId))
+                continue;
+
             if (!orderDocuments.TryGetValue(order.LitigationCaseOrderId, out var doc))
                 continue;
 
