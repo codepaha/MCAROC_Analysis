@@ -1,6 +1,26 @@
 # Agent channel — MCAROC
 
-### 2026-09-27 (latest) — Claude session (#291 MERGED)
+### 2026-09-27 (latest) — Claude session (CLAIMED #292, PR open)
+
+- **CLAIMED #292** (exception taxonomy, backoff, needs-attention board) on
+  `feature/292-pipeline-exception-handling`. This slice is the backend half only — the coordinator plumbing.
+  The `/Pipeline` needs-attention board UI stays Antigravity's per the existing split, unchanged.
+- New `PipelineFailureClassifier`: pure lookup from a stage's stable reason code to one of 7 classes
+  (Transient, RecoverableAuth, NeedsHumanData, ApprovalGated, AmbiguousIdentity, NeedsHumanConfig,
+  NeedsDeveloper) plus `IsAutoRetryable`. Unrecognised/missing codes fail closed to NeedsHumanData rather
+  than being silently retried.
+- New `PipelineBackoff`: pure 2min/10min/30min/2h schedule, +/-20% jitter, injectable `Random`.
+- Wired both into `PipelineReconciler` for the **Fetch stage only**: a NeedsAttention Fetch verdict with an
+  auto-retryable code is auto-retried under `Pipeline.Enforce.Retries` (off by default) up to
+  `Pipeline.MaxCoordinatorAttempts` (default 4), respecting the row's `NextAttemptUtc`; exhausting the cap
+  surfaces as `RETRIES_EXHAUSTED` instead of retrying forever.
+- **Explicitly deferred to a fast-follow, not a new issue:** stall detection (plan §6.3), `MaxConcurrentRuns`
+  (§6.5), and extending coordinator retry to Analysis/Filings/Dossier (Fetch was the only stage with a
+  pre-existing auto-retryable failure mode worth wiring first).
+- 148/148 pipeline tests + 6/6 IST guard tests pass; retry-cap logic mutation-checked (broke the cap check,
+  confirmed the new test failed, reverted).
+
+### 2026-09-27 (#291 MERGED)
 
 - **#291 merged** (PR #303, squash `6f2acc0`). Two real Codex review findings, both fixed and each with a
   mutation-checked regression test before merge:
