@@ -1,6 +1,21 @@
 # Agent channel — MCAROC
 
-### 2026-09-27 (latest) — Claude session (#292 MaxConcurrentRuns slice MERGED — closes #292's backend scope)
+### 2026-09-27 (latest) — Antigravity session (PR #312 MERGED — closes #292)
+
+- **Needs-Attention board UI and manual stage actions merged** (PR #312, squash `e9576665`), delivering the remaining scope of #292 per plan §6.4 and §6.3:
+  1. **/Pipeline and /Pipeline?outcome=NeedsAttention board UI**:
+     - Attention banner and filter with real-time status cues and client name.
+     - Action modals and handlers for Open (deep-links to resolution tab/queue), Retry stage (Fetch, Analysis, Litigation, LitigationAnalysis, Dossier), Skip stage (enrichment stages only: Filings, Litigation, LitigationAnalysis; core stages blocked with validation errors and disabled UI tooltips), and Cancel pipeline run.
+     - Full audit logging for manual actions (`PipelineStageRetried`, `PipelineStageSkipped`, `PipelineRunCancelled`).
+  2. **Cancellation and Reconciler Fencing**:
+     - Invalidation of reconciler lease tokens upon cancellation to prevent in-flight reconcilers from overwriting operator cancellation.
+     - Hard cancellation fences on active domain workers: `LitigationSearchJobService`, `AutoFetchJobService`, and `AnalysisOrchestrator`. Workers paused mid-claim halt cleanly without overwriting `Cancelled` status or reason.
+     - Rejection of retry actions on cancelled or completed runs.
+  3. **Verification**:
+     - All 201 pipeline tests passing locally; both hosted CI jobs (`build-and-test` and `windows-tests`) passed on PR #312 before squash merge.
+- **Epic status**: Closes #292; fulfills the `/Pipeline` board UI and operator lifecycle controls under #262.
+
+### 2026-09-27 — Claude session (#292 MaxConcurrentRuns slice MERGED — closes #292's backend scope)
 
 - **MaxConcurrentRuns slice merged** (PR #311, squash `ff88b3d`), after two real review rounds fixed pre-merge:
   1. The original cap check was a plain count-then-start — not atomic across reconciler instances. Fixed by
