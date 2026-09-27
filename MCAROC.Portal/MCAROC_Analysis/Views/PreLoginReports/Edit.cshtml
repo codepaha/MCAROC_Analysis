@@ -14,6 +14,17 @@
             <input asp-for="LegalCases.ConsumerForum" type="hidden" /><input asp-for="LegalCases.ItatTax" type="hidden" /><input asp-for="LegalCases.NcltNclat" type="hidden" />
             <input asp-for="LegalCases.DrtDrat" type="hidden" /><input asp-for="LegalCases.Rera" type="hidden" /><input asp-for="LegalCases.NgtOthers" type="hidden" />
         }
+        @if (Model.IsPartnership)
+        {
+            <h3 class="h5 mb-3">Litigation-only borrower details</h3>
+            <div class="row g-3 mb-4">
+                <div class="col-md-6"><label asp-for="Company.Name" class="form-label">Borrower name</label><input asp-for="Company.Name" class="form-control" /></div>
+                <div class="col-md-6"><label asp-for="Company.RegistrationNumber" class="form-label">PAN / registration number</label><input asp-for="Company.RegistrationNumber" class="form-control" maxlength="30" /></div>
+                <div class="col-12"><label asp-for="Company.Address" class="form-label">Address</label><textarea asp-for="Company.Address" class="form-control" rows="3"></textarea></div>
+            </div>
+        }
+        else
+        {
         <h3 class="h5 mb-3">Company details</h3>
         <div class="row g-3 mb-4">
             <div class="col-md-6"><label asp-for="Company.Name" class="form-label">Company name</label><input asp-for="Company.Name" class="form-control" /></div>
@@ -45,6 +56,7 @@
         <button type="button" class="btn btn-sm btn-outline-secondary mb-4" id="addChargeRow"><i class="bi bi-plus-lg me-1"></i>Add charge</button>
         <template id="chargeRowTemplate"><tr>@if (Model.Format == PreLoginReportFormat.Sbi) { <td><input name="Charges[0].Srn" class="form-control form-control-sm" value="-" /></td> }<td><input name="Charges[0].Id" class="form-control form-control-sm" value="-" /></td><td><input name="Charges[0].Holder" class="form-control form-control-sm" value="-" /></td><td><input name="Charges[0].Created" class="form-control form-control-sm" value="-" /></td><td><input name="Charges[0].Modified" class="form-control form-control-sm" value="-" /></td><td><input name="Charges[0].Satisfied" class="form-control form-control-sm" value="-" /></td><td><input name="Charges[0].Amount" class="form-control form-control-sm" value="-" /></td><td class="text-center"><input type="checkbox" name="Charges[0].IsOpen" class="form-check-input" value="true" /></td><td><button type="button" class="btn btn-sm btn-outline-danger row-remove">&times;</button></td></tr></template>
 
+        }
         @if (Model.Format == PreLoginReportFormat.Sbi)
         {
             <h3 class="h5 mb-3">Legal cases</h3>

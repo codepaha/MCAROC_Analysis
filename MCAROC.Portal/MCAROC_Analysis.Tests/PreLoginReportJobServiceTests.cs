@@ -301,6 +301,88 @@ public class PreLoginReportJobServiceTests : IAsyncLifetime
         finally { await CleanupGeneratedReportAsync(jobId); }
     }
 
+    [Fact]
+    public async Task Uploaded_request_creates_a_durable_litigation_assignment_then_generates_without_MCA_calls()
+    {
+        await using var db = CreateContext();
+        var ai = new AssignmentAi();
+        var reader = new BorrowerRequestDocumentReader(null!, new Microsoft.Extensions.Configuration.ConfigurationBuilder().Build());
+        var environment = new TestEnvironment();
+        var service = new PreLoginReportJobService(db, new PreLoginReportQueue(), new PreLoginReportService(NeverCalledClient(), environment), environment, new BorrowerAssignmentIntake(reader, ai));
+        var batch = await service.QueueRequestAsync(null, "Borrower Name: Example Trust", CancellationToken.None);
+        var job = (await service.HistoryAsync(batch, CancellationToken.None)).Single();
+        var id = job.PreLoginReportJobId;
+        string? source = BorrowerAssignmentIntake.PendingSource(job.DataJson)?.SourceStoragePath;
+        try
+        {
+            Assert.True(File.Exists(source));
+            Assert.Equal(PreLoginReportJobStatus.Queued, job.Status);
+            await service.ProcessAsync(id, CancellationToken.None);
+            await db.Entry(job).ReloadAsync();
+            Assert.Equal(PreLoginReportJobStatus.AwaitingReview, job.Status);
+            Assert.Contains("Litigation-only", job.FailureReason);
+            var data = service.AssignmentData(job)!;
+            Assert.True(data.Company.LitigationOnly);
+            Assert.Null(data.LegalCases);
+            Assert.Equal("Example Trust", data.Assignment!.CompanyDetails.CompanyName);
+            await service.ProcessAsync(id, CancellationToken.None);
+            Assert.Equal(1, ai.Calls);
+            await Assert.ThrowsAsync<PreLoginReportException>(() => service.CompleteAssignmentAsync(Guid.NewGuid(), id, "Example Trust", "Trust", null, null, true, CancellationToken.None));
+            await Assert.ThrowsAsync<PreLoginReportException>(() => service.CompleteAssignmentAsync(batch, id, "Example Trust", "Trust", null, null, false, CancellationToken.None));
+            await service.CompleteAssignmentAsync(batch, id, "Example Trust", "Trust", null, null, true, CancellationToken.None);
+            await service.ProcessAsync(id, CancellationToken.None);
+            job = (await service.FindAsync(id, CancellationToken.None))!;
+            Assert.Equal(PreLoginReportJobStatus.Completed, job.Status);
+            Assert.True(File.Exists(job.ReportStoragePath));
+            await service.RerunAsync(batch, id, CancellationToken.None);
+            await service.ProcessAsync(id, CancellationToken.None);
+            await db.Entry(job).ReloadAsync();
+            Assert.Equal(PreLoginReportJobStatus.Completed, job.Status);
+            Assert.Equal(1, ai.Calls);
+        }
+        finally
+        {
+            await CleanupGeneratedReportAsync(id);
+            if (source is not null && File.Exists(source)) File.Delete(source);
+        }
+    }
+
+    [Fact]
+    public async Task Recognition_failure_preserves_the_uploaded_request_for_retry()
+    {
+        await using var db = CreateContext();
+        var environment = new TestEnvironment();
+        var reader = new BorrowerRequestDocumentReader(null!, new Microsoft.Extensions.Configuration.ConfigurationBuilder().Build());
+        var service = new PreLoginReportJobService(db, new PreLoginReportQueue(), new PreLoginReportService(NeverCalledClient(), environment), environment,
+            new BorrowerAssignmentIntake(reader, new AssignmentAi { Fail = true }));
+        var batch = await service.QueueRequestAsync(null, "Borrower Name: Example Trust", CancellationToken.None);
+        var job = (await service.HistoryAsync(batch, CancellationToken.None)).Single();
+        var source = BorrowerAssignmentIntake.PendingSource(job.DataJson)!.SourceStoragePath!;
+        try
+        {
+            await service.ProcessAsync(job.PreLoginReportJobId, CancellationToken.None);
+            await db.Entry(job).ReloadAsync();
+            Assert.Equal(PreLoginReportJobStatus.Queued, job.Status);
+            Assert.Equal(1, job.AttemptCount);
+            Assert.NotNull(job.NextAttemptUtc);
+            Assert.True(File.Exists(source));
+            Assert.Equal(source, BorrowerAssignmentIntake.PendingSource(job.DataJson)!.SourceStoragePath);
+        }
+        finally { if (File.Exists(source)) File.Delete(source); }
+    }
+
+    private sealed class AssignmentAi : IBorrowerAssignmentAiExtractor
+    {
+        public int Calls { get; private set; }
+        public bool Fail { get; init; }
+        public Task<(BorrowerAssignmentDetails Details, string Model)> ExtractAsync(string text, CancellationToken ct, string? imagePath = null)
+        {
+            Calls++;
+            if (Fail) throw new PreLoginReportException("Transient recognition failure", retryable: true);
+            return Task.FromResult((new BorrowerAssignmentDetails { CompanyDetails = new() { CompanyName = "Example Trust", EntityType = "Trust" } }, "gemini-3.1-flash-lite"));
+        }
+    }
+
     private sealed class TestEnvironment : IWebHostEnvironment
     {
         private static readonly string Root = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "../../../../MCAROC_Analysis"));

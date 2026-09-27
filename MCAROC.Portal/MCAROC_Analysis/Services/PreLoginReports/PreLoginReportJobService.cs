@@ -8,8 +8,109 @@ using Microsoft.EntityFrameworkCore;
 
 namespace MCAROC_Analysis.Services.PreLoginReports;
 
-public sealed class PreLoginReportJobService(AppDbContext db, PreLoginReportQueue queue, PreLoginReportService reports, IWebHostEnvironment environment)
+public sealed class PreLoginReportJobService(AppDbContext db, PreLoginReportQueue queue, PreLoginReportService reports, IWebHostEnvironment environment,
+    BorrowerAssignmentIntake? intake = null)
 {
+    public async Task<Guid> QueueRequestAsync(IFormFile? requestFile, string? requestText, CancellationToken ct)
+    {
+        if (requestFile is not { Length: > 0 } && string.IsNullOrWhiteSpace(requestText))
+            throw new PreLoginReportException("Upload a request document or paste the request text.");
+        if (requestText?.Length > 100_000) throw new PreLoginReportException("Request text exceeds 100,000 characters.");
+        var batch = Guid.NewGuid();
+        string? storagePath = null;
+        string? fileName = null;
+        if (requestFile is { Length: > 0 })
+        {
+            var extension = Path.GetExtension(requestFile.FileName).ToLowerInvariant();
+            if (requestFile.Length > BorrowerRequestDocumentReader.MaxBytes || extension is not (".pdf" or ".png" or ".jpg" or ".jpeg" or ".doc" or ".docx" or ".eml" or ".txt"))
+                throw new PreLoginReportException("Upload PDF, screenshot, Word, .eml email, or .txt up to 10 MB.");
+            var directory = Path.Combine(environment.ContentRootPath, "App_Data", "BorrowerAssignments", batch.ToString("N"));
+            Directory.CreateDirectory(directory);
+            storagePath = Path.Combine(directory, "request" + extension);
+            fileName = Path.GetFileName(requestFile.FileName);
+            try
+            {
+                await using var target = File.Create(storagePath);
+                await requestFile.CopyToAsync(target, ct);
+                if (target.Length > BorrowerRequestDocumentReader.MaxBytes) throw new PreLoginReportException("Upload a document up to 10 MB.");
+            }
+            catch { if (File.Exists(storagePath)) File.Delete(storagePath); throw; }
+        }
+        if (storagePath is null)
+        {
+            var directory = Path.Combine(environment.ContentRootPath, "App_Data", "BorrowerAssignments", batch.ToString("N"));
+            Directory.CreateDirectory(directory);
+            storagePath = Path.Combine(directory, "request.txt"); fileName = "pasted-request.txt";
+            await File.WriteAllTextAsync(storagePath, requestText!, ct);
+            requestText = null;
+        }
+        else if (!string.IsNullOrWhiteSpace(requestText))
+            await File.WriteAllTextAsync(Path.Combine(Path.GetDirectoryName(storagePath)!, "supplemental-text.txt"), requestText, ct);
+        var job = new PreLoginReportJob
+        {
+            BatchId = batch, Cin = "ASSIGN-" + batch.ToString("N")[..20], Format = nameof(PreLoginReportFormat.Sbi),
+            DataJson = JsonSerializer.Serialize(new BorrowerIntakePayload(new(storagePath, fileName, requestText?.Trim()))),
+            Status = PreLoginReportJobStatus.Queued, CreatedUtc = DateTime.UtcNow
+        };
+        db.PreLoginReportJobs.Add(job);
+        try { await db.SaveChangesAsync(ct); }
+        catch { if (storagePath is not null && File.Exists(storagePath)) File.Delete(storagePath); throw; }
+        queue.Enqueue(job.PreLoginReportJobId);
+        return batch;
+    }
+
+    public InstaReportData? AssignmentData(PreLoginReportJob job) => BorrowerAssignmentIntake.PendingSource(job.DataJson) is null
+        ? DeserializeStoredData(job.DataJson) : null;
+
+    public async Task CompleteAssignmentAsync(Guid batch, long id, string? borrowerName, string? entityType,
+        string? mcaIdentifier, IFormFile? legalCasesFile, bool noCasesConfirmed, CancellationToken ct)
+    {
+        var job = await FindInBatchAsync(batch, id, ct) ?? throw new PreLoginReportException("Assignment not found.");
+        if (job.Status != PreLoginReportJobStatus.AwaitingReview) throw new PreLoginReportException("This assignment is not awaiting details or results.");
+        var stored = AssignmentData(job) ?? throw new PreLoginReportException("Assignment recognition has not completed.");
+        var details = stored.Assignment ?? throw new PreLoginReportException("Assignment details are unavailable.");
+        if (string.IsNullOrWhiteSpace(borrowerName) || borrowerName.Length > 250 || string.IsNullOrWhiteSpace(entityType) || entityType.Length > 100)
+            throw new PreLoginReportException("A borrower name and entity type are required to complete this assignment.");
+        details.CompanyDetails.CompanyName = borrowerName.Trim();
+        details.CompanyDetails.EntityType = entityType.Trim();
+        var recognized = BorrowerAssignmentIntake.CreateData(details, new(stored.SourceStoragePath, stored.SourceFileName, null), stored.ExtractionModel ?? "manual correction");
+        var data = recognized.Data;
+        if (data.Company.LitigationOnly)
+        {
+            if (legalCasesFile is { Length: > 0 })
+            {
+                if (legalCasesFile.Length > BorrowerRequestDocumentReader.MaxBytes || Path.GetExtension(legalCasesFile.FileName).ToLowerInvariant() is not (".csv" or ".xls" or ".xlsx"))
+                    throw new PreLoginReportException("Use a litigation results .xlsx/.xls/.csv up to 10 MB.");
+                await using var stream = legalCasesFile.OpenReadStream();
+                data = data with { LegalCases = LegalCaseFileParser.ToInstaLegalCases(LegalCaseFileParser.Parse(stream, legalCasesFile.FileName)) };
+            }
+            else if (noCasesConfirmed) data = data with { LegalCases = new(0, 0, 0, 0, 0, 0, 0, 0, 0, []) };
+            else throw new PreLoginReportException("Attach litigation results, or confirm that a completed litigation search returned no cases.");
+            job.Cin = details.CompanyDetails.Pan ?? "ASSIGN-" + batch.ToString("N")[..20];
+        }
+        else
+        {
+            var identifier = ValidateCins([mcaIdentifier ?? details.CompanyDetails.Cin ?? ""])[0];
+            var entity = BorrowerRequestParser.EntityType(details);
+            if (entity == PreLoginReportEntityType.Llp && !Regex.IsMatch(identifier, @"^[A-Z]{3}-[0-9]{4}$"))
+                throw new PreLoginReportException("Enter an LLPIN for an LLP assignment.");
+            if (entity != PreLoginReportEntityType.Llp && !Regex.IsMatch(identifier, @"^[UL]"))
+                throw new PreLoginReportException("Enter an identifier supported by the current MCA report-data service.");
+            job.Cin = identifier;
+        }
+        job.DataJson = JsonSerializer.Serialize(data);
+        job.SubmittedCompanyName = details.CompanyDetails.CompanyName;
+        job.Status = PreLoginReportJobStatus.Queued; job.ProgressPercent = 0; job.FailureReason = null; job.AttemptCount = 0; job.NextAttemptUtc = null;
+        var changed = await db.PreLoginReportJobs.Where(x => x.PreLoginReportJobId == id && x.BatchId == batch && x.Status == PreLoginReportJobStatus.AwaitingReview)
+            .ExecuteUpdateAsync(update => update.SetProperty(x => x.DataJson, job.DataJson).SetProperty(x => x.Cin, job.Cin)
+                .SetProperty(x => x.SubmittedCompanyName, job.SubmittedCompanyName).SetProperty(x => x.Status, PreLoginReportJobStatus.Queued)
+                .SetProperty(x => x.ProgressPercent, 0).SetProperty(x => x.FailureReason, (string?)null)
+                .SetProperty(x => x.AttemptCount, 0).SetProperty(x => x.NextAttemptUtc, (DateTime?)null), ct);
+        db.Entry(job).State = EntityState.Detached;
+        if (changed == 0) throw new PreLoginReportException("This assignment has already been submitted for processing.");
+        queue.Enqueue(job.PreLoginReportJobId);
+    }
+
     public async Task<Guid> QueueBatchAsync(IEnumerable<string> cins, PreLoginReportFormat format, CancellationToken cancellationToken)
     {
         var normalized = ValidateCins(cins.Take(25));
@@ -45,10 +146,16 @@ public sealed class PreLoginReportJobService(AppDbContext db, PreLoginReportQueu
     /// are supplied by the user and serialized before the worker runs, so this path cannot call the MCA API.</summary>
     public async Task<Guid> QueuePartnershipAsync(PreLoginReportViewModel model, CancellationToken cancellationToken)
     {
+        var validation = new List<System.ComponentModel.DataAnnotations.ValidationResult>();
+        if (!model.IsLitigationOnly || !System.ComponentModel.DataAnnotations.Validator.TryValidateObject(model,
+            new System.ComponentModel.DataAnnotations.ValidationContext(model), validation, true))
+            throw new PreLoginReportException("Enter valid litigation-only assignment details.");
         var registrationNumber = model.PartnershipRegistrationNumber!.Trim().ToUpperInvariant();
+        var entityType = model.EntityType == PreLoginReportEntityType.Other ? model.OtherEntityType?.Trim() ?? "Other" : model.EntityType.ToString();
         var data = new InstaReportData(
-            new InstaCompany(model.PartnershipName!.Trim(), "-", registrationNumber, "Partnership", "-", "-", "-", "-", "-", "-",
-                model.PartnershipAddress!.Trim(), "-", "-", "-", "-", "-", IsPartnership: true),
+            new InstaCompany(model.PartnershipName!.Trim(), "-", registrationNumber, entityType, "-", "-", "-", "-", "-", "-",
+                model.PartnershipAddress!.Trim(), "-", "-", "-", "-", "-", IsPartnership: model.EntityType == PreLoginReportEntityType.Partnership,
+                IsLitigationOnly: true, EntityType: entityType),
             [], [], ToLegalCases(model.LegalCases));
         var batch = Guid.NewGuid();
         db.PreLoginReportJobs.Add(new PreLoginReportJob
@@ -123,7 +230,10 @@ public sealed class PreLoginReportJobService(AppDbContext db, PreLoginReportQueu
         // IsPartnership is a fixed identity fact set at job creation (#217/#221), never form-editable —
         // re-attach it from the stored job rather than trust the posted draft.
         var stored = string.IsNullOrWhiteSpace(job.DataJson) ? null : JsonSerializer.Deserialize<InstaReportData>(job.DataJson);
-        data = data with { Company = data.Company with { IsPartnership = stored?.Company.IsPartnership ?? false } };
+        data = data with { Company = data.Company with { IsPartnership = stored?.Company.IsPartnership ?? false,
+            IsLitigationOnly = stored?.Company.IsLitigationOnly ?? false, EntityType = stored?.Company.EntityType },
+            Assignment = stored?.Assignment, SourceFileName = stored?.SourceFileName, SourceStoragePath = stored?.SourceStoragePath, ExtractionModel = stored?.ExtractionModel };
+        if (data.Company.LitigationOnly) data = data with { Charges = [], Directors = [] };
 
         if (legalCasesFile is { Length: > 0 })
         {
@@ -142,7 +252,7 @@ public sealed class PreLoginReportJobService(AppDbContext db, PreLoginReportQueu
         // A partnership has no immutable MCA identifier: its PAN/registration number is a manually editable
         // field, so both identity rows in the regenerated document must use the edited value. This must key
         // off Company.IsPartnership, not LegalCases — Company/LLP jobs can carry LegalCases too now (#221).
-        var identifier = data.Company.IsPartnership ? data.Company.RegistrationNumber : job.Cin;
+        var identifier = data.Company.LitigationOnly ? data.Company.RegistrationNumber : job.Cin;
         var generated = await reports.GenerateFromDataAsync(identifier, format, data, cancellationToken);
         if (!string.IsNullOrWhiteSpace(job.ReportStoragePath) && File.Exists(job.ReportStoragePath)) File.Delete(job.ReportStoragePath);
         job.ReportStoragePath = await StoreReportAsync(job.PreLoginReportJobId, generated, cancellationToken);
@@ -165,6 +275,7 @@ public sealed class PreLoginReportJobService(AppDbContext db, PreLoginReportQueu
     public async Task RerunAsync(Guid batch, long id, CancellationToken cancellationToken)
     {
         var job = await FindInBatchAsync(batch, id, cancellationToken) ?? throw new PreLoginReportException("Report request not found.");
+        if (job.Status == PreLoginReportJobStatus.AwaitingReview) throw new PreLoginReportException("This assignment is waiting for details or litigation results; rerunning cannot supply them.");
         job.Status = PreLoginReportJobStatus.Queued; job.ProgressPercent = 0; job.AttemptCount = 0; job.FailureReason = null; job.NextAttemptUtc = null; job.ReportStoragePath = null; job.CompletedUtc = null;
         await db.SaveChangesAsync(cancellationToken); queue.Enqueue(job.PreLoginReportJobId);
     }
@@ -172,14 +283,37 @@ public sealed class PreLoginReportJobService(AppDbContext db, PreLoginReportQueu
     public async Task ProcessAsync(long id, CancellationToken cancellationToken)
     {
         var job = await FindAsync(id, cancellationToken);
-        if (job is null || job.Status is PreLoginReportJobStatus.Completed or PreLoginReportJobStatus.Generating) return;
+        if (job is null || job.Status != PreLoginReportJobStatus.Queued) return;
         if (job.NextAttemptUtc is { } next && next > DateTime.UtcNow) { Schedule(id, next - DateTime.UtcNow); return; }
-        job.Status = PreLoginReportJobStatus.Fetching; job.ProgressPercent = 10; job.StartedUtc ??= DateTime.UtcNow; job.AttemptCount++;
-        await db.SaveChangesAsync(cancellationToken);
+        var now = DateTime.UtcNow;
+        var claimed = await db.PreLoginReportJobs.Where(x => x.PreLoginReportJobId == id && x.Status == PreLoginReportJobStatus.Queued)
+            .ExecuteUpdateAsync(update => update.SetProperty(x => x.Status, PreLoginReportJobStatus.Fetching).SetProperty(x => x.ProgressPercent, 10)
+                .SetProperty(x => x.StartedUtc, x => x.StartedUtc ?? now).SetProperty(x => x.AttemptCount, x => x.AttemptCount + 1), cancellationToken);
+        if (claimed == 0) return;
+        await db.Entry(job).ReloadAsync(cancellationToken);
         try
         {
             var format = Enum.Parse<PreLoginReportFormat>(job.Format);
-            var data = DeserializeManualPartnership(job.DataJson) ?? await reports.FetchDataAsync(job.Cin, job.SubmittedCompanyName, cancellationToken);
+            var source = BorrowerAssignmentIntake.PendingSource(job.DataJson);
+            if (source is not null)
+            {
+                var recognized = await (intake ?? throw new PreLoginReportException("Assignment recognition is not configured.")).RecognizeAsync(source, cancellationToken);
+                job.DataJson = JsonSerializer.Serialize(recognized.Data);
+                job.SubmittedCompanyName = recognized.Data.Assignment?.CompanyDetails.CompanyName;
+                job.Cin = recognized.Data.McaIdentifier ?? recognized.Data.Assignment?.CompanyDetails.Cin ?? recognized.Data.Company.RegistrationNumber;
+                if (job.Cin == "-") job.Cin = "ASSIGN-" + job.BatchId.ToString("N")[..20];
+                if (recognized.MissingDetails is not null || recognized.Data.Company.LitigationOnly)
+                {
+                    job.Status = PreLoginReportJobStatus.AwaitingReview; job.ProgressPercent = 100;
+                    job.FailureReason = recognized.MissingDetails ?? "Assignment created. Litigation-only scope; awaiting litigation results.";
+                    await db.SaveChangesAsync(cancellationToken);
+                    return;
+                }
+            }
+            var stored = DeserializeStoredData(job.DataJson);
+            var data = stored?.Company.LitigationOnly == true || stored?.LegalCases is not null ? stored! :
+                (await reports.FetchDataAsync(job.Cin, job.SubmittedCompanyName, cancellationToken)) with
+                { Assignment = stored?.Assignment, SourceFileName = stored?.SourceFileName, SourceStoragePath = stored?.SourceStoragePath, ExtractionModel = stored?.ExtractionModel, McaIdentifier = stored?.McaIdentifier };
             job.DataJson = JsonSerializer.Serialize(data); job.Status = PreLoginReportJobStatus.Generating; job.ProgressPercent = 60;
             await db.SaveChangesAsync(cancellationToken);
             var generated = await reports.GenerateFromDataAsync(job.Cin, format, data, cancellationToken);
@@ -207,11 +341,11 @@ public sealed class PreLoginReportJobService(AppDbContext db, PreLoginReportQueu
 
     private void Schedule(long jobId, TimeSpan delay) => _ = Task.Run(async () => { await Task.Delay(delay); queue.Enqueue(jobId); });
 
-    private static InstaReportData? DeserializeManualPartnership(string? dataJson)
+    private static InstaReportData? DeserializeStoredData(string? dataJson)
     {
         if (string.IsNullOrWhiteSpace(dataJson)) return null;
         var data = JsonSerializer.Deserialize<InstaReportData>(dataJson);
-        return data?.LegalCases is not null ? data : null;
+        return data;
     }
 
     private static InstaLegalCases ToLegalCases(EditableLegalCasesViewModel cases) => new(

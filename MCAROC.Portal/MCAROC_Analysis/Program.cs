@@ -73,6 +73,9 @@ builder.Services.AddScoped<FinalizationRecoveryService>();
 builder.Services.AddScoped<PreLoginReportService>();
 builder.Services.AddSingleton<PreLoginReportQueue>();
 builder.Services.AddScoped<PreLoginReportJobService>();
+builder.Services.AddScoped<BorrowerRequestDocumentReader>();
+builder.Services.AddScoped<IBorrowerAssignmentAiExtractor, BorrowerAssignmentAiExtractor>();
+builder.Services.AddScoped<BorrowerAssignmentIntake>();
 builder.Services.AddHostedService<PreLoginReportWorker>();
 
 // Auto-fetch (reference tool) — a request created from just a CIN/LLPIN: workbooks + every filing PDF

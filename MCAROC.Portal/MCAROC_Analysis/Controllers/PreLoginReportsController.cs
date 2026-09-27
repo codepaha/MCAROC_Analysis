@@ -19,6 +19,66 @@ public sealed class PreLoginReportsController(PreLoginReportJobService jobs) : C
     [HttpGet("mine")]
     public IActionResult Mine() => View();
 
+    [HttpPost("assignment")]
+    [ValidateAntiForgeryToken]
+    [RequestSizeLimit(11 * 1024 * 1024)]
+    [RequestFormLimits(MultipartBodyLengthLimit = 11 * 1024 * 1024)]
+    public async Task<IActionResult> CreateAssignment(IFormFile? requestFile, string? requestText, CancellationToken cancellationToken)
+    {
+        if (!ModelState.IsValid) return View("Index", new PreLoginReportViewModel());
+        try
+        {
+            var batchId = await jobs.QueueRequestAsync(requestFile, requestText, cancellationToken);
+            return RedirectToAction(nameof(History), new { batch = batchId });
+        }
+        catch (PreLoginReportException ex)
+        {
+            ModelState.AddModelError(string.Empty, ex.Message);
+            ViewBag.RequestText = requestText;
+            return View("Index", new PreLoginReportViewModel());
+        }
+    }
+
+    [HttpGet("{batch:guid}/{id:long}/assignment")]
+    public async Task<IActionResult> Assignment(Guid batch, long id, CancellationToken cancellationToken)
+    {
+        var job = await jobs.FindInBatchAsync(batch, id, cancellationToken);
+        if (job is null) return NotFound();
+        ViewBag.Job = job;
+        return View(jobs.AssignmentData(job));
+    }
+
+    [HttpGet("{batch:guid}/{id:long}/assignment-json")]
+    public async Task<IActionResult> AssignmentJson(Guid batch, long id, CancellationToken cancellationToken)
+    {
+        var job = await jobs.FindInBatchAsync(batch, id, cancellationToken);
+        if (job is null || jobs.AssignmentData(job)?.Assignment is not { } details) return NotFound();
+        return Json(details);
+    }
+
+    [HttpGet("{batch:guid}/{id:long}/source")]
+    public async Task<IActionResult> AssignmentSource(Guid batch, long id, CancellationToken cancellationToken)
+    {
+        var job = await jobs.FindInBatchAsync(batch, id, cancellationToken);
+        if (job is null) return NotFound();
+        var data = jobs.AssignmentData(job);
+        var source = BorrowerAssignmentIntake.PendingSource(job.DataJson);
+        var path = data?.SourceStoragePath ?? source?.SourceStoragePath;
+        if (path is null || !System.IO.File.Exists(path)) return NotFound();
+        return PhysicalFile(path, "application/octet-stream", data?.SourceFileName ?? source?.SourceFileName ?? "request");
+    }
+
+    [HttpPost("{batch:guid}/{id:long}/assignment")]
+    [ValidateAntiForgeryToken]
+    [RequestSizeLimit(11 * 1024 * 1024)]
+    public async Task<IActionResult> CompleteAssignment(Guid batch, long id, string? borrowerName, string? entityType,
+        string? mcaIdentifier, IFormFile? legalCasesFile, bool noCasesConfirmed, CancellationToken cancellationToken)
+    {
+        try { await jobs.CompleteAssignmentAsync(batch, id, borrowerName, entityType, mcaIdentifier, legalCasesFile, noCasesConfirmed, cancellationToken); }
+        catch (PreLoginReportException ex) { TempData["ReportError"] = ex.Message; return RedirectToAction(nameof(Assignment), new { batch, id }); }
+        return RedirectToAction(nameof(History), new { batch });
+    }
+
     [HttpPost("")]
     [ValidateAntiForgeryToken]
     public async Task<IActionResult> Fetch(PreLoginReportViewModel model, CancellationToken cancellationToken)
@@ -28,7 +88,7 @@ public sealed class PreLoginReportsController(PreLoginReportJobService jobs) : C
 
         try
         {
-            var batchId = model.EntityType == PreLoginReportEntityType.Partnership
+            var batchId = model.IsLitigationOnly
                 ? await jobs.QueuePartnershipAsync(model, cancellationToken)
                 : await jobs.QueueSingleAsync(model.Cin, model.CompanyName, model.Format, cancellationToken);
             return RedirectToAction(nameof(History), new { batch = batchId });

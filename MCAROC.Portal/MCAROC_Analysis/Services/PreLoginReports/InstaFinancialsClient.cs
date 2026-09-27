@@ -31,7 +31,11 @@ public sealed record InstaCompany(
     // edit — see PreLoginReportJobService.ApplyEditAndRegenerateAsync) is a fixed fact about the job, set
     // once at creation (#217/#221) — kept independent of whether LegalCases happens to be populated, since
     // Company/LLP jobs can now carry uploaded litigation data too (#221).
-    bool IsPartnership = false);
+    bool IsPartnership = false, bool IsLitigationOnly = false, string? EntityType = null)
+{
+    [System.Text.Json.Serialization.JsonIgnore]
+    public bool LitigationOnly => IsPartnership || IsLitigationOnly;
+}
 
 public sealed record InstaCharge(string Id, string Holder, string Created, string Modified, string Satisfied, string Amount, bool IsOpen, string Srn = "-");
 public sealed record InstaDirector(string Name, string DinOrPan, string Designation, string Appointed);
@@ -39,7 +43,9 @@ public sealed record InstaDirector(string Name, string DinOrPan, string Designat
 /// flow); once a litigation file is uploaded (#221), it holds every parsed case and the 9 counts become a
 /// rollup of <see cref="LegalCaseRecord.Category"/> — see <see cref="LegalCaseFileParser.ToInstaLegalCases"/>.</summary>
 public sealed record InstaLegalCases(int SupremeCourt, int HighCourt, int DistrictCourt, int ConsumerForum, int ItatTax, int NcltNclat, int DrtDrat, int Rera, int NgtOthers, IReadOnlyList<LegalCaseRecord>? Cases = null);
-public sealed record InstaReportData(InstaCompany Company, IReadOnlyList<InstaCharge> Charges, IReadOnlyList<InstaDirector> Directors, InstaLegalCases? LegalCases = null);
+public sealed record InstaReportData(InstaCompany Company, IReadOnlyList<InstaCharge> Charges, IReadOnlyList<InstaDirector> Directors, InstaLegalCases? LegalCases = null,
+    MCAROC_Analysis.Models.BorrowerAssignmentDetails? Assignment = null, string? SourceFileName = null,
+    string? SourceStoragePath = null, string? ExtractionModel = null, string? McaIdentifier = null);
 
 public sealed class InstaFinancialsClient(HttpClient http, IOptions<InstaFinancialsOptions> options)
 {
