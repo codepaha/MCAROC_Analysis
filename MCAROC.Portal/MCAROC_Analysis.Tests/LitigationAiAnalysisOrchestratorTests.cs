@@ -34,7 +34,7 @@ public sealed class LitigationAiAnalysisOrchestratorTests : IAsyncLifetime
         var request = await SeedRequestAsync();
         await using var db = CreateContext();
 
-        var run = await Orchestrator(db).CreateOrJoinAsync(request.RequestId, LitigationAiAnalysisTrigger.Manual, null, CancellationToken.None);
+        var run = await Orchestrator(db).CreateOrJoinAsync(request.RequestId, LitigationAiAnalysisTrigger.Manual, null, null, CancellationToken.None);
 
         Assert.Equal(LitigationAiAnalysisTrigger.Manual, run.Trigger);
         Assert.Null(run.TriggerSnapshotId);
@@ -48,7 +48,7 @@ public sealed class LitigationAiAnalysisOrchestratorTests : IAsyncLifetime
         var snapshotId = await SeedSnapshotAsync(request.RequestId);
         await using var db = CreateContext();
 
-        var run = await Orchestrator(db).CreateOrJoinAsync(request.RequestId, LitigationAiAnalysisTrigger.Auto, snapshotId, CancellationToken.None);
+        var run = await Orchestrator(db).CreateOrJoinAsync(request.RequestId, LitigationAiAnalysisTrigger.Auto, snapshotId, snapshotId, CancellationToken.None);
 
         Assert.Equal(LitigationAiAnalysisTrigger.Auto, run.Trigger);
         Assert.Equal(snapshotId, run.TriggerSnapshotId);
@@ -67,10 +67,10 @@ public sealed class LitigationAiAnalysisOrchestratorTests : IAsyncLifetime
         var snapshotId = await SeedSnapshotAsync(requestA.RequestId);
 
         await using var dbA = CreateContext();
-        var runA = await Orchestrator(dbA).CreateOrJoinAsync(requestA.RequestId, LitigationAiAnalysisTrigger.Auto, snapshotId, CancellationToken.None);
+        var runA = await Orchestrator(dbA).CreateOrJoinAsync(requestA.RequestId, LitigationAiAnalysisTrigger.Auto, snapshotId, snapshotId, CancellationToken.None);
 
         await using var dbB = CreateContext();
-        var runB = await Orchestrator(dbB).CreateOrJoinAsync(requestB.RequestId, LitigationAiAnalysisTrigger.Auto, snapshotId, CancellationToken.None);
+        var runB = await Orchestrator(dbB).CreateOrJoinAsync(requestB.RequestId, LitigationAiAnalysisTrigger.Auto, snapshotId, snapshotId, CancellationToken.None);
 
         Assert.Equal(runA.LitigationAiAnalysisRunId, runB.LitigationAiAnalysisRunId);
         Assert.Equal(requestA.RequestId, runB.RequestId); // the joined run is still A's — sharing the result is #291's job
@@ -86,9 +86,9 @@ public sealed class LitigationAiAnalysisOrchestratorTests : IAsyncLifetime
         var snapshotId = await SeedSnapshotAsync(request.RequestId);
 
         await using var db1 = CreateContext();
-        var first = await Orchestrator(db1).CreateOrJoinAsync(request.RequestId, LitigationAiAnalysisTrigger.Auto, snapshotId, CancellationToken.None);
+        var first = await Orchestrator(db1).CreateOrJoinAsync(request.RequestId, LitigationAiAnalysisTrigger.Auto, snapshotId, snapshotId, CancellationToken.None);
         await using var db2 = CreateContext();
-        var second = await Orchestrator(db2).CreateOrJoinAsync(request.RequestId, LitigationAiAnalysisTrigger.Auto, snapshotId, CancellationToken.None);
+        var second = await Orchestrator(db2).CreateOrJoinAsync(request.RequestId, LitigationAiAnalysisTrigger.Auto, snapshotId, snapshotId, CancellationToken.None);
 
         Assert.Equal(first.LitigationAiAnalysisRunId, second.LitigationAiAnalysisRunId);
         Assert.Equal(1, await db2.LitigationAiAnalysisRuns.CountAsync(r => r.RequestId == request.RequestId));
@@ -102,7 +102,7 @@ public sealed class LitigationAiAnalysisOrchestratorTests : IAsyncLifetime
         await db.SaveChangesAsync();
         var snapshot = new LitigationReportSnapshot
         {
-            LitigationSearchJobId = job.LitigationSearchJobId, ReportHash = Guid.NewGuid().ToString("N")[..16],
+            LitigationSearchJobId = job.LitigationSearchJobId, RequestId = requestId, ReportHash = Guid.NewGuid().ToString("N")[..16],
             Status = LitigationReportSnapshotStatus.Completed, RetrievedUtc = DateTime.UtcNow, CreatedUtc = DateTime.UtcNow
         };
         db.LitigationReportSnapshots.Add(snapshot);

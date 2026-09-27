@@ -54,6 +54,7 @@ public sealed class LitigationAiAnalysisSnapshotForeignKeyTests : IAsyncLifetime
         var snapshot = new LitigationReportSnapshot
         {
             LitigationSearchJobId = job.LitigationSearchJobId,
+            RequestId = request.RequestId,
             ReportHash = job.RawResponseHash!,
             Status = LitigationReportSnapshotStatus.Completed,
             RetrievedUtc = DateTime.UtcNow,

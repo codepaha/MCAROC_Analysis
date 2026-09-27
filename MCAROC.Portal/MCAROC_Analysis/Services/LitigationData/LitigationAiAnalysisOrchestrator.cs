@@ -16,12 +16,15 @@ public sealed class LitigationAiAnalysisOrchestrator(AppDbContext db, ILitigatio
     private const int LeaseMarginSeconds = 60;
     private int LeaseSeconds => options.Value.TimeoutSeconds + LeaseMarginSeconds;
 
-    /// <summary>Plan §4.2. <paramref name="originSnapshotId"/> is the snapshot this run's admission scope is keyed
-    /// on (<c>analysis|{OriginSnapshotId}</c>) — null only for a manual start with no completed snapshot yet
+    /// <summary>Plan §4.2/§4.2a. <paramref name="triggerSnapshotId"/> is this request's own newest
+    /// fully-imported snapshot at admission time; <paramref name="originSnapshotId"/> is the snapshot this
+    /// run's admission scope is actually keyed on (<c>analysis|{OriginSnapshotId}</c>) — the two differ only
+    /// when the trigger snapshot was itself reused (#291), in which case <c>OriginSnapshotId</c> is copied
+    /// forward from the source so N requests reusing one purchased report still resolve to the same scope.
+    /// <paramref name="originSnapshotId"/> is null only for a manual start with no completed snapshot yet
     /// (still deduped in flight via the per-request <see cref="Active"/> check below, just not against the
-    /// database-level "one Auto run per snapshot" index). No reuse yet (§4.2a/#291): <c>TriggerSnapshotId</c>
-    /// and <c>OriginSnapshotId</c> are always equal here.</summary>
-    public async Task<LitigationAiAnalysisRun> CreateOrJoinAsync(long requestId, LitigationAiAnalysisTrigger trigger, long? originSnapshotId, CancellationToken ct)
+    /// database-level "one Auto run per snapshot" index).</summary>
+    public async Task<LitigationAiAnalysisRun> CreateOrJoinAsync(long requestId, LitigationAiAnalysisTrigger trigger, long? triggerSnapshotId, long? originSnapshotId, CancellationToken ct)
     {
         var active = await Active(requestId, ct); if (active is not null) return active;
         for (var i = 0; i < 3; i++)
@@ -29,7 +32,7 @@ public sealed class LitigationAiAnalysisOrchestrator(AppDbContext db, ILitigatio
             var run = new LitigationAiAnalysisRun { RequestId = requestId, CreatedUtc = DateTime.UtcNow,
                 RunNumber = (await db.LitigationAiAnalysisRuns.Where(x => x.RequestId == requestId).Select(x => (int?)x.RunNumber).MaxAsync(ct) ?? 0) + 1,
                 ModelId = VertexLitigationAiAnalysisClient.ModelId, PromptVersion = LitigationAnalysisPromptBuilder.PromptVersion,
-                Trigger = trigger, TriggerSnapshotId = originSnapshotId, OriginSnapshotId = originSnapshotId };
+                Trigger = trigger, TriggerSnapshotId = triggerSnapshotId, OriginSnapshotId = originSnapshotId };
             db.LitigationAiAnalysisRuns.Add(run);
             try { await db.SaveChangesAsync(ct); queue.Enqueue(run.LitigationAiAnalysisRunId); return run; }
             catch (DbUpdateException ex)

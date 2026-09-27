@@ -88,6 +88,7 @@ public sealed class LitigationReportWireTests : IAsyncLifetime
         var snapshot = new LitigationReportSnapshot
         {
             LitigationSearchJobId = job.LitigationSearchJobId,
+            RequestId = request.RequestId,
             ReportHash = "hash-lg-001",
             Status = LitigationReportSnapshotStatus.Completed,
             RetrievedUtc = DateTime.UtcNow,
@@ -177,6 +178,7 @@ public sealed class LitigationReportWireTests : IAsyncLifetime
         var snapshot = new LitigationReportSnapshot
         {
             LitigationSearchJobId = job.LitigationSearchJobId,
+            RequestId = request.RequestId,
             ReportHash = "hash-lk-001",
             Status = LitigationReportSnapshotStatus.Completed,
             RetrievedUtc = DateTime.UtcNow,
@@ -297,6 +299,7 @@ public sealed class LitigationReportWireTests : IAsyncLifetime
         var snapshot = new LitigationReportSnapshot
         {
             LitigationSearchJobId = job.LitigationSearchJobId,
+            RequestId = request.RequestId,
             ReportHash = "hash-rt-001",
             Status = LitigationReportSnapshotStatus.Completed,
             RetrievedUtc = DateTime.UtcNow,
@@ -436,6 +439,7 @@ public sealed class LitigationReportWireTests : IAsyncLifetime
         var snapshot = new LitigationReportSnapshot
         {
             LitigationSearchJobId = job.LitigationSearchJobId,
+            RequestId = request.RequestId,
             ReportHash = "hash-sr-001",
             Status = LitigationReportSnapshotStatus.Completed,
             RetrievedUtc = DateTime.UtcNow,
@@ -513,6 +517,7 @@ public sealed class LitigationReportWireTests : IAsyncLifetime
         var snapshot = new LitigationReportSnapshot
         {
             LitigationSearchJobId = job.LitigationSearchJobId,
+            RequestId = request.RequestId,
             ReportHash = "hash-clean-001",
             Status = LitigationReportSnapshotStatus.Completed,
             RetrievedUtc = DateTime.UtcNow,
@@ -610,6 +615,7 @@ public sealed class LitigationReportWireTests : IAsyncLifetime
         var snapshot = new LitigationReportSnapshot
         {
             LitigationSearchJobId = job.LitigationSearchJobId,
+            RequestId = request.RequestId,
             ReportHash = "hash-hd-001",
             Status = LitigationReportSnapshotStatus.Completed,
             RetrievedUtc = DateTime.UtcNow,
@@ -658,6 +664,7 @@ public sealed class LitigationReportWireTests : IAsyncLifetime
         var snapshot = new LitigationReportSnapshot
         {
             LitigationSearchJobId = job.LitigationSearchJobId,
+            RequestId = request.RequestId,
             ReportHash = "hash-cg-001",
             Status = LitigationReportSnapshotStatus.Completed,
             RetrievedUtc = DateTime.UtcNow,
@@ -780,6 +787,7 @@ public sealed class LitigationReportWireTests : IAsyncLifetime
         var snapshot = new LitigationReportSnapshot
         {
             LitigationSearchJobId = job.LitigationSearchJobId,
+            RequestId = request.RequestId,
             ReportHash = "hash-mc-001",
             Status = LitigationReportSnapshotStatus.Completed,
             RetrievedUtc = DateTime.UtcNow,
