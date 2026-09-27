@@ -78,9 +78,11 @@ public class LitigationController(
             var job = await db.LitigationSearchJobs.AsNoTracking().SingleAsync(j => j.LitigationSearchJobId == started.ReferenceId, ct);
 
             if (Request.Headers.Accept.ToString().Contains("application/json"))
-                return Accepted(new { job.LitigationSearchJobId, status = job.Status.ToString(), job.CreatedUtc });
+                return Accepted(new { job.LitigationSearchJobId, status = job.Status.ToString(), job.CreatedUtc, reused = started.Message });
 
-            TempData["LitigationSearchOk"] = "Litigation search has been queued.";
+            // #291: a reuse completes synchronously (nothing was queued) and started.Message carries the
+            // disclosure text — a fuller on-tab provenance banner is a separate, later piece of work.
+            TempData["LitigationSearchOk"] = started.Message ?? "Litigation search has been queued.";
             return Redirect($"/Requests/{id}#tab-litigation");
         }
         catch (InvalidOperationException ex)

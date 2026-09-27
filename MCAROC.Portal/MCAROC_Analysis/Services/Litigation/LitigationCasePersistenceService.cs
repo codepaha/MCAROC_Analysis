@@ -67,15 +67,18 @@ public sealed class LitigationCasePersistenceService(
             .FirstOrDefaultAsync(ct);
         if (existingId is not null) return existingId.Value;
 
+        var requestId = await db.LitigationSearchJobs.Where(j => j.LitigationSearchJobId == jobId).Select(j => j.RequestId).SingleAsync(ct);
         var snapshot = new LitigationReportSnapshot
         {
-            LitigationSearchJobId = jobId, ReportHash = reportHash, ReportFormat = reportFormat,
+            LitigationSearchJobId = jobId, RequestId = requestId, ReportHash = reportHash, ReportFormat = reportFormat,
             RawReportBytes = rawReportBytes, RawReportByteLength = rawReportBytes.LongLength,
             RetrievedUtc = retrievedUtc, Status = LitigationReportSnapshotStatus.Pending, CreatedUtc = DateTime.UtcNow
         };
         db.LitigationReportSnapshots.Add(snapshot);
         try
         {
+            // #291: OriginSnapshotId stays null — null means "this row is its own lineage root," so a
+            // freshly-purchased snapshot needs no explicit self-reference (see the entity's own remarks).
             await db.SaveChangesAsync(ct);
             return snapshot.LitigationReportSnapshotId;
         }

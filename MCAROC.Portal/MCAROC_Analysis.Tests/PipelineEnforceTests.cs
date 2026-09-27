@@ -230,7 +230,7 @@ public sealed class PipelineEnforceTests : IAsyncLifetime
             await seed.SaveChangesAsync();
             var snapshot = new LitigationReportSnapshot
             {
-                LitigationSearchJobId = job.LitigationSearchJobId, ReportHash = Guid.NewGuid().ToString("N")[..16],
+                LitigationSearchJobId = job.LitigationSearchJobId, RequestId = requestId, ReportHash = Guid.NewGuid().ToString("N")[..16],
                 Status = LitigationReportSnapshotStatus.Completed, RetrievedUtc = DateTime.UtcNow, CreatedUtc = DateTime.UtcNow
             };
             seed.LitigationReportSnapshots.Add(snapshot);

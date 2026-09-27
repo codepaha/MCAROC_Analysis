@@ -307,6 +307,11 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
         {
             e.HasKey(x => x.LitigationReportSnapshotId);
             e.HasIndex(x => new { x.LitigationSearchJobId, x.ReportHash }).IsUnique();
+            // #291's idempotency guard: a retried/racing reuse of the same origin for the same request is a
+            // no-op join, never a second copy. A null OriginSnapshotId (every non-reused snapshot) never
+            // collides with another null here — same convention as LitigationCase's own unique index on a
+            // nullable Cnr — so this constrains only the rows that actually matter: reuse copies.
+            e.HasIndex(x => new { x.RequestId, x.OriginSnapshotId }).IsUnique();
             e.Property(x => x.ReportHash).HasMaxLength(64).IsRequired();
             e.Property(x => x.Status).HasConversion<string>().HasMaxLength(20);
             e.Property(x => x.ReportFormat).HasConversion<string>().HasMaxLength(20);
@@ -319,6 +324,11 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             // (it refuses to create such a constraint). LitigationSearchJob rows aren't deleted in normal
             // operation, so NoAction costs nothing here.
             e.HasOne(x => x.SearchJob).WithMany().HasForeignKey(x => x.LitigationSearchJobId).OnDelete(DeleteBehavior.NoAction);
+            // Same NoAction reasoning as LitigationAiAnalysisRun's TriggerSnapshotId/OriginSnapshotId below —
+            // anchors provenance to a real row without adding another cascade path onto this table.
+            e.HasOne<LitigationReportSnapshot>().WithMany().HasForeignKey(x => x.OriginSnapshotId).OnDelete(DeleteBehavior.NoAction);
+            e.HasOne<LitigationReportSnapshot>().WithMany().HasForeignKey(x => x.ReusedFromSnapshotId).OnDelete(DeleteBehavior.NoAction);
+            e.HasOne<McaRequest>().WithMany().HasForeignKey(x => x.ReusedFromRequestId).OnDelete(DeleteBehavior.NoAction);
         });
 
         modelBuilder.Entity<LitigationCaseSourceReport>(e =>

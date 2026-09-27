@@ -192,7 +192,7 @@ public sealed class PipelineReconcilerTests : IAsyncLifetime
         await db.SaveChangesAsync();
         var snapshot = new LitigationReportSnapshot
         {
-            LitigationSearchJobId = job.LitigationSearchJobId, ReportHash = Guid.NewGuid().ToString("N")[..16],
+            LitigationSearchJobId = job.LitigationSearchJobId, RequestId = requestId, ReportHash = Guid.NewGuid().ToString("N")[..16],
             Status = LitigationReportSnapshotStatus.Completed, RetrievedUtc = DateTime.UtcNow, CreatedUtc = DateTime.UtcNow
         };
         db.LitigationReportSnapshots.Add(snapshot);

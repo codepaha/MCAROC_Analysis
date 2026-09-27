@@ -332,6 +332,7 @@ public class LitigationTabAndControllerTests : IAsyncLifetime
         var snapshot1 = new LitigationReportSnapshot
         {
             LitigationSearchJobId = job.LitigationSearchJobId,
+            RequestId = request.RequestId,
             ReportHash = "hash_snapshot_1",
             Status = LitigationReportSnapshotStatus.Completed,
             RetrievedUtc = DateTime.UtcNow.AddDays(-2),
@@ -343,6 +344,7 @@ public class LitigationTabAndControllerTests : IAsyncLifetime
         var snapshot2 = new LitigationReportSnapshot
         {
             LitigationSearchJobId = job.LitigationSearchJobId,
+            RequestId = request.RequestId,
             ReportHash = "hash_snapshot_2",
             Status = LitigationReportSnapshotStatus.InProgress,
             RetrievedUtc = DateTime.UtcNow,
@@ -456,6 +458,7 @@ public class LitigationTabAndControllerTests : IAsyncLifetime
         var snapshot = new LitigationReportSnapshot
         {
             LitigationSearchJobId = job.LitigationSearchJobId,
+            RequestId = request.RequestId,
             ReportHash = "hash_stale_1",
             Status = LitigationReportSnapshotStatus.Completed,
             RetrievedUtc = DateTime.UtcNow.AddDays(-1)
@@ -591,6 +594,7 @@ public class LitigationTabAndControllerTests : IAsyncLifetime
         var snapshot = new LitigationReportSnapshot
         {
             LitigationSearchJobId = job.LitigationSearchJobId,
+            RequestId = request.RequestId,
             ReportHash = "hash_auth_full_graph",
             Status = LitigationReportSnapshotStatus.Completed,
             RetrievedUtc = DateTime.UtcNow.AddHours(-2),
@@ -854,8 +858,8 @@ public class LitigationTabAndControllerTests : IAsyncLifetime
         db.LitigationSearchJobs.Add(job);
         await db.SaveChangesAsync();
 
-        var snapPrior = new LitigationReportSnapshot { LitigationSearchJobId = job.LitigationSearchJobId, ReportHash = "hash_prior", Status = LitigationReportSnapshotStatus.Completed, RetrievedUtc = DateTime.UtcNow.AddDays(-2), CasesPersistedCount = 1 };
-        var snapAuth = new LitigationReportSnapshot { LitigationSearchJobId = job.LitigationSearchJobId, ReportHash = "hash_auth", Status = LitigationReportSnapshotStatus.Completed, RetrievedUtc = DateTime.UtcNow, CasesPersistedCount = 1 };
+        var snapPrior = new LitigationReportSnapshot { LitigationSearchJobId = job.LitigationSearchJobId, RequestId = request.RequestId, ReportHash = "hash_prior", Status = LitigationReportSnapshotStatus.Completed, RetrievedUtc = DateTime.UtcNow.AddDays(-2), CasesPersistedCount = 1 };
+        var snapAuth = new LitigationReportSnapshot { LitigationSearchJobId = job.LitigationSearchJobId, RequestId = request.RequestId, ReportHash = "hash_auth", Status = LitigationReportSnapshotStatus.Completed, RetrievedUtc = DateTime.UtcNow, CasesPersistedCount = 1 };
         db.LitigationReportSnapshots.AddRange(snapPrior, snapAuth);
         await db.SaveChangesAsync();
 

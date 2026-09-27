@@ -25,7 +25,8 @@ public sealed class LitigationStartService(
     LitigationSearchJobService searchJobs,
     LitigationSearchQueue searchQueue,
     LitigationAiAnalysisOrchestrator analysis,
-    IOptions<BprLitigationOptions>? bprOptions = null)
+    IOptions<BprLitigationOptions>? bprOptions = null,
+    LitigationReuseService? reuse = null)
 {
     /// <summary>Eligibility and keyword planning, shared by the reviewer's button and the pipeline's automatic
     /// start so the two can't drift. Returns the problem as text when the request can't be searched.</summary>
@@ -92,6 +93,19 @@ public sealed class LitigationStartService(
             return LitigationStartResult.Denied(AdmissionDenial.InFlight, "A litigation search for this request is already queued or in progress.");
 
         var scopeKey = PaidCallScopeKeys.LitigationSearch(PaidCallScopeKeys.CanonicalIdentifier(request), keywords.Select(k => k.Value));
+
+        // #291 (plan §4.2a): another request may already hold this exact scope's report, retrieved within
+        // the reuse window — take that instead of buying and analysing again. No admission at all: nothing
+        // is spent, so there is nothing to admit for. Checked after the in-flight/reserved guards above (a
+        // search already queued/running for THIS request wins over reuse) but before any purchase.
+        if (reuse is not null)
+        {
+            var reused = await reuse.TryReuseAsync(request.RequestId, scopeKey, ct);
+            if (reused.Reused)
+                return new LitigationStartResult(true, reused.JobId, null,
+                    $"Report retrieved {reused.SourceRetrievedUtc:d MMM yyyy} — reused from another request.");
+        }
+
         var admitted = await admission.TryAdmitAsync(
             new PaidCallAdmissionRequest(PaidCallKind.LitigationSearch, scopeKey, trigger, request.RequestId, request.ClientId, correlationId), ct);
         if (!admitted.Admitted)
@@ -136,21 +150,27 @@ public sealed class LitigationStartService(
         if (await HasReservedAsync(PaidCallKind.LitigationAnalysis, requestId, ct))
             return LitigationStartResult.Denied(AdmissionDenial.InFlight, "A litigation analysis for this request is already being started.");
 
-        var snapshotId = await db.LitigationReportSnapshots.AsNoTracking()
+        // OriginSnapshotId is what the admission scope and the "one Auto run per snapshot" index (#269) are
+        // keyed on — for a reused snapshot (#291) that's the lineage root, not this row's own id, so N
+        // requests that all reused the same purchased report resolve to the same scope. Null means the
+        // snapshot is its own root (every non-reused snapshot).
+        var snapshot = await db.LitigationReportSnapshots.AsNoTracking()
             .Where(s => s.SearchJob!.RequestId == requestId && s.Status == LitigationReportSnapshotStatus.Completed)
             .OrderByDescending(s => s.LitigationReportSnapshotId)
-            .Select(s => (long?)s.LitigationReportSnapshotId)
+            .Select(s => new { s.LitigationReportSnapshotId, s.OriginSnapshotId })
             .FirstOrDefaultAsync(ct);
+        var triggerSnapshotId = (long?)snapshot?.LitigationReportSnapshotId;
+        var originSnapshotId = snapshot is null ? null : (long?)(snapshot.OriginSnapshotId ?? snapshot.LitigationReportSnapshotId);
 
         var admitted = await admission.TryAdmitAsync(new PaidCallAdmissionRequest(
-            PaidCallKind.LitigationAnalysis, PaidCallScopeKeys.LitigationAnalysis(snapshotId, requestId), trigger, requestId, clientId, correlationId), ct);
+            PaidCallKind.LitigationAnalysis, PaidCallScopeKeys.LitigationAnalysis(originSnapshotId, requestId), trigger, requestId, clientId, correlationId), ct);
         if (!admitted.Admitted)
             return LitigationStartResult.Denied(admitted.Denial!.Value, DenialMessage(admitted.Denial.Value, "litigation analysis"));
 
         LitigationAiAnalysisRun run;
         try
         {
-            run = await analysis.CreateOrJoinAsync(requestId, trigger == PaidCallTrigger.Auto ? LitigationAiAnalysisTrigger.Auto : LitigationAiAnalysisTrigger.Manual, snapshotId, ct);
+            run = await analysis.CreateOrJoinAsync(requestId, trigger == PaidCallTrigger.Auto ? LitigationAiAnalysisTrigger.Auto : LitigationAiAnalysisTrigger.Manual, triggerSnapshotId, originSnapshotId, ct);
         }
         catch
         {

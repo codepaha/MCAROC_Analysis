@@ -125,6 +125,30 @@ public sealed class LitigationReportSnapshot
     public long LitigationSearchJobId { get; set; }
     public LitigationSearchJob? SearchJob { get; set; }
 
+    /// <summary>Denormalized from <see cref="SearchJob"/> — every reuse/idempotency query below needs to
+    /// filter by request without a join, same reasoning as <see cref="LitigationCase.RequestId"/>. Backfilled
+    /// for pre-#291 rows from their job's own <c>RequestId</c> (never ambiguous — one job per request).</summary>
+    public long RequestId { get; set; }
+
+    /// <summary>#291 (plan §4.2a): the snapshot this one was copied from, when this request took an
+    /// already-purchased report instead of buying and analysing again — null for an originally-purchased
+    /// snapshot.</summary>
+    public long? ReusedFromSnapshotId { get; set; }
+    /// <summary>The request <see cref="ReusedFromSnapshotId"/> belongs to — kept alongside it because the
+    /// snapshot id alone doesn't tell a reader *whose* request this was reused from without another join.</summary>
+    public long? ReusedFromRequestId { get; set; }
+    /// <summary>The snapshot at the root of this lineage. <b>Null means "this row is its own root"</b> — a
+    /// freshly-purchased snapshot never has to self-reference (its id doesn't exist yet at insert time
+    /// anyway), and every pre-#291 row is correctly "its own root" with no backfill needed, the same way
+    /// <c>LitigationCase</c>'s unique index already treats a null <c>Cnr</c> as never colliding with another
+    /// null. Set explicitly only when <see cref="ReusedFromSnapshotId"/> is set too, copied forward from the
+    /// source (a reuse of a reuse still traces to the one real purchase). This is what
+    /// <c>PaidCallScopeKeys.LitigationAnalysis</c> and the "one Auto analysis run per origin snapshot" index
+    /// (#269) key on — resolved via <c>OriginSnapshotId ?? LitigationReportSnapshotId</c>, never
+    /// <see cref="LitigationReportSnapshotId"/> directly, so N requests reusing one purchased report still
+    /// resolve to the same analysis scope.</summary>
+    public long? OriginSnapshotId { get; set; }
+
     /// <summary>Copied from <c>LitigationSearchJob.RawResponseHash</c> at snapshot-creation time — see this
     /// type's remarks for why the job's own copy cannot be relied on after a rerun.</summary>
     public string ReportHash { get; set; } = string.Empty;

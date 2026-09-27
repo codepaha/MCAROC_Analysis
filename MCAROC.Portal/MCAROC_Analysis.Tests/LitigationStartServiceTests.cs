@@ -27,14 +27,14 @@ public sealed class LitigationStartServiceTests : IAsyncLifetime
 
     public Task DisposeAsync() => Task.CompletedTask;
 
-    private static LitigationStartService Starter(AppDbContext db, PipelineOptions? adminOptions = null)
+    private static LitigationStartService Starter(AppDbContext db, PipelineOptions? adminOptions = null, LitigationReuseService? reuse = null)
     {
         var admission = new PaidCallAdmissionService(db, new StaticOptionsMonitor(adminOptions ?? new PipelineOptions()), TimeProvider.System, NullLogger<PaidCallAdmissionService>.Instance);
         var search = new LitigationSearchJobService(db, null!, new LitigationSearchQueue(), null!, null!,
             Options.Create(new BprLitigationOptions()), NullLogger<LitigationSearchJobService>.Instance);
         var analysis = new LitigationAiAnalysisOrchestrator(db, null!, new LitigationAiAnalysisQueue(),
             Options.Create(new LitigationAiAnalysisOptions()), NullLogger<LitigationAiAnalysisOrchestrator>.Instance);
-        return new LitigationStartService(db, admission, search, new LitigationSearchQueue(), analysis);
+        return new LitigationStartService(db, admission, search, new LitigationSearchQueue(), analysis, reuse: reuse);
     }
 
     [Fact]
@@ -51,6 +51,56 @@ public sealed class LitigationStartServiceTests : IAsyncLifetime
         Assert.Equal(PaidCallTrigger.Manual, admission.Trigger);
         Assert.Equal(result.ReferenceId, admission.ReferenceId);
         Assert.StartsWith($"search|{request.Cin}|", admission.ScopeKey);
+    }
+
+    /// <summary>#291 wiring: StartSearchAsync itself checks for a reusable source before ever admitting a
+    /// fresh purchase — no code path outside LitigationReuseService is a second place this rule could drift.</summary>
+    [Fact]
+    public async Task A_reusable_source_is_taken_instead_of_a_fresh_admission()
+    {
+        var request = await SeedRequestAsync();
+        var scopeKey = PaidCallScopeKeys.LitigationSearch(PaidCallScopeKeys.CanonicalIdentifier(request), Keywords.Select(k => k.Value));
+
+        await using (var seed = CreateContext())
+        {
+            var sourceRequest = await SeedRequestAsync();
+            var job = new LitigationSearchJob { RequestId = sourceRequest.RequestId, KeywordsJson = "[]", Status = LitigationSearchJobStatus.Completed, CreatedUtc = DateTime.UtcNow };
+            seed.LitigationSearchJobs.Add(job);
+            await seed.SaveChangesAsync();
+            var snapshot = new LitigationReportSnapshot
+            {
+                LitigationSearchJobId = job.LitigationSearchJobId, RequestId = sourceRequest.RequestId, ReportHash = "reuse-hash",
+                Status = LitigationReportSnapshotStatus.Completed, RetrievedUtc = DateTime.UtcNow.AddHours(-1), CreatedUtc = DateTime.UtcNow
+            };
+            seed.LitigationReportSnapshots.Add(snapshot);
+            await seed.SaveChangesAsync();
+            seed.PaidCallAdmissions.Add(new PaidCallAdmission
+            {
+                Kind = PaidCallKind.LitigationSearch, ScopeKey = scopeKey, DayKey = DateOnly.FromDateTime(DateTime.UtcNow),
+                Trigger = PaidCallTrigger.Manual, RequestId = sourceRequest.RequestId, State = PaidCallAdmissionState.Committed,
+                ReferenceId = job.LitigationSearchJobId, ReservedUtc = DateTime.UtcNow, ResolvedUtc = DateTime.UtcNow
+            });
+            await seed.SaveChangesAsync();
+        }
+
+        await using var db = CreateContext();
+        var reuse = new LitigationReuseService(db, new StubEnv(), TimeProvider.System, NullLogger<LitigationReuseService>.Instance);
+        var result = await Starter(db, reuse: reuse).StartSearchAsync(request, Keywords, "company", "cust", PaidCallTrigger.Manual, CancellationToken.None);
+
+        Assert.True(result.Started);
+        Assert.Contains("reused from another request", result.Message);
+        Assert.False(await db.PaidCallAdmissions.AnyAsync(a => a.RequestId == request.RequestId)); // no spend
+        Assert.True(await db.LitigationReportSnapshots.AnyAsync(s => s.RequestId == request.RequestId && s.ReusedFromRequestId != null));
+    }
+
+    private sealed class StubEnv : Microsoft.AspNetCore.Hosting.IWebHostEnvironment
+    {
+        public string WebRootPath { get; set; } = Path.GetTempPath();
+        public Microsoft.Extensions.FileProviders.IFileProvider WebRootFileProvider { get; set; } = new Microsoft.Extensions.FileProviders.NullFileProvider();
+        public string ContentRootPath { get; set; } = Path.GetTempPath();
+        public Microsoft.Extensions.FileProviders.IFileProvider ContentRootFileProvider { get; set; } = new Microsoft.Extensions.FileProviders.NullFileProvider();
+        public string ApplicationName { get; set; } = "Tests";
+        public string EnvironmentName { get; set; } = "Test";
     }
 
     [Fact]
@@ -196,7 +246,7 @@ public sealed class LitigationStartServiceTests : IAsyncLifetime
             var job = new LitigationSearchJob { RequestId = request.RequestId, KeywordsJson = "[]", Status = LitigationSearchJobStatus.Completed, CreatedUtc = DateTime.UtcNow };
             seed.LitigationSearchJobs.Add(job);
             await seed.SaveChangesAsync();
-            var snapshot = new LitigationReportSnapshot { LitigationSearchJobId = job.LitigationSearchJobId, ReportHash = "h1", Status = LitigationReportSnapshotStatus.Completed, RetrievedUtc = DateTime.UtcNow, CreatedUtc = DateTime.UtcNow };
+            var snapshot = new LitigationReportSnapshot { LitigationSearchJobId = job.LitigationSearchJobId, RequestId = request.RequestId, ReportHash = "h1", Status = LitigationReportSnapshotStatus.Completed, RetrievedUtc = DateTime.UtcNow, CreatedUtc = DateTime.UtcNow };
             seed.LitigationReportSnapshots.Add(snapshot);
             await seed.SaveChangesAsync();
             snapshotId = snapshot.LitigationReportSnapshotId;

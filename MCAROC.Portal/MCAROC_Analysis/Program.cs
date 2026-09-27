@@ -111,6 +111,7 @@ builder.Services.AddOptions<MCAROC_Analysis.Services.CompanyMaster.ResolverOptio
 builder.Services.AddScoped<MCAROC_Analysis.Services.CompanyMaster.IdentityResolutionService>();
 builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddScoped<IPaidCallAdmission, PaidCallAdmissionService>();
+builder.Services.AddScoped<LitigationReuseService>();
 builder.Services.AddScoped<LitigationStartService>();
 builder.Services.AddHostedService<PaidCallAdmissionSweepWorker>();
 // Pipeline coordinator (docs/pipeline-automation-plan.md §3): records every request's stage states and outcome.

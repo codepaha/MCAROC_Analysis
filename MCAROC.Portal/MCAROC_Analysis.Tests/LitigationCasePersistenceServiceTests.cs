@@ -241,7 +241,7 @@ public class LitigationCasePersistenceServiceTests : IAsyncLifetime
 
         var snapshot = new LitigationReportSnapshot
         {
-            LitigationSearchJobId = job.LitigationSearchJobId, ReportHash = job.RawResponseHash!, ReportFormat = BprReportFormat.Json,
+            LitigationSearchJobId = job.LitigationSearchJobId, RequestId = request.RequestId, ReportHash = job.RawResponseHash!, ReportFormat = BprReportFormat.Json,
             RawReportBytes = job.RawReportBytes!, RawReportByteLength = job.RawReportBytes!.LongLength, RetrievedUtc = DateTime.UtcNow,
             Status = LitigationReportSnapshotStatus.InProgress, AttemptCount = 1, CasesPersistedCount = 1,
             LeaseOwner = "crashed-worker:111", LeaseExpiresUtc = DateTime.UtcNow.AddMinutes(-5), // expired — reclaimable
@@ -458,7 +458,7 @@ public class LitigationCasePersistenceServiceTests : IAsyncLifetime
         var expiredJob = await SeedCompletedJobAsync(db, expiredRequest.RequestId, ReportJson("TNKP070001332025", "OS"));
         var expiredSnapshot = new LitigationReportSnapshot
         {
-            LitigationSearchJobId = expiredJob.LitigationSearchJobId, ReportHash = expiredJob.RawResponseHash!, ReportFormat = BprReportFormat.Json,
+            LitigationSearchJobId = expiredJob.LitigationSearchJobId, RequestId = expiredRequest.RequestId, ReportHash = expiredJob.RawResponseHash!, ReportFormat = BprReportFormat.Json,
             RawReportBytes = expiredJob.RawReportBytes!, RawReportByteLength = expiredJob.RawReportBytes!.LongLength, RetrievedUtc = DateTime.UtcNow,
             Status = LitigationReportSnapshotStatus.InProgress, AttemptCount = 1, CasesPersistedCount = 0,
             LeaseOwner = "crashed-worker", LeaseExpiresUtc = DateTime.UtcNow.AddMinutes(-5),
