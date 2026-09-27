@@ -201,7 +201,8 @@ public static class LitigationReportArtifacts
         "Petitioner Advocates", "Respondent Advocates", "Order Count", "Downloaded Order Count", "Expired Order Count",
         "Order Dates", "Order Types", "Order Availability Statuses", "Order Retained Until Dates", "Order Text Extraction Statuses",
         "Contested Property Match Count", "Contested Property Details",
-        "Analysis Status", "Analysis Risk", "Analysis Summary", "Analysis Key Issues", "Analysis Recommended Action"
+        "Analysis Status", "Analysis Risk", "Analysis Summary", "Analysis Key Issues", "Analysis Recommended Action",
+        "Report Reused", "Reused From Request ID", "Reused From Snapshot ID", "Report Retrieved Date", "Reuse Disclosure"
     ];
 
     private static void WriteRow(CsvWriter csv, int serial, StandaloneLitigationReport report, StandaloneReportCaseDto item)
@@ -220,6 +221,14 @@ public static class LitigationReportArtifacts
             ? string.Join("; ", propertyMatches.Select(m => $"Order {m.OrderDate ?? "-"} (p. {m.PageNumber}): [{m.SourceLabel}] {m.AddressText}"))
             : "-";
 
+        var isReused = report.IsReused ? "Yes" : "No";
+        var reusedReqId = report.ReusedFromRequestId?.ToString(CultureInfo.InvariantCulture) ?? "-";
+        var reusedSnapId = report.ReusedFromSnapshotId?.ToString(CultureInfo.InvariantCulture) ?? "-";
+        var retrievedDate = Ist.Date(report.AuthoritativeSnapshotRetrievedUtc);
+        var reuseDisclosure = report.IsReused
+            ? $"Report retrieved {retrievedDate} — reused from another request. Originated from Request #{report.ReusedFromRequestId} (Snapshot #{report.ReusedFromSnapshotId}), originally retrieved on {retrievedDate}. Satisfied the <= 7-day eligibility limit when reused; the 7-day bound governed reuse admission, not an ongoing freshness guarantee."
+            : "-";
+
         foreach (var value in new[]
         {
             serial.ToString(CultureInfo.InvariantCulture), report.AssignmentNumber, report.CompanyName,
@@ -232,7 +241,8 @@ public static class LitigationReportArtifacts
             orderDates, orderTypes, orderStatuses, orderRetainedUntil, orderExtraction,
             propertyMatchCount, propertyMatchDetails,
             analysis?.Status ?? "Pending", analysis?.RiskLevel, analysis?.Summary,
-            analysis is null ? null : string.Join("; ", analysis.KeyIssues ?? []), analysis?.RecommendedAction
+            analysis is null ? null : string.Join("; ", analysis.KeyIssues ?? []), analysis?.RecommendedAction,
+            isReused, reusedReqId, reusedSnapId, retrievedDate, reuseDisclosure
         }) csv.WriteField(SafeCsv(value));
         csv.NextRecord();
     }
@@ -341,7 +351,7 @@ internal sealed class LitigationReportPdfDocument(StandaloneLitigationReport rep
                 row.RelativeItem().Column(c =>
                 {
                     c.Item().Text($"Report retrieved {Ist.Date(report.AuthoritativeSnapshotRetrievedUtc)} — reused from another request").Bold().FontSize(8.5f).FontColor("#1E40AF");
-                    c.Item().PaddingTop(2).Text($"Data originated from Request #{report.ReusedFromRequestId} (Snapshot #{report.ReusedFromSnapshotId}) and was retrieved within the 7-day freshness window. Reused with zero additional vendor spend.").FontSize(7.8f).FontColor("#1E3A8A");
+                    c.Item().PaddingTop(2).Text($"Data originated from Request #{report.ReusedFromRequestId} (Snapshot #{report.ReusedFromSnapshotId}), originally retrieved on {Ist.Date(report.AuthoritativeSnapshotRetrievedUtc)}. It satisfied the ≤ 7-day eligibility limit when reused; the 7-day bound governed reuse admission, not an ongoing freshness guarantee. Reused with zero new vendor spend.").FontSize(7.8f).FontColor("#1E3A8A");
                 });
             });
         }
@@ -353,7 +363,7 @@ internal sealed class LitigationReportPdfDocument(StandaloneLitigationReport rep
         };
         if (report.IsReused)
         {
-            infoRows.Add(("REPORT REUSE", $"Reused from Request #{report.ReusedFromRequestId} (Snapshot #{report.ReusedFromSnapshotId}) retrieved {Ist.Date(report.AuthoritativeSnapshotRetrievedUtc)} (within 7-day freshness window)"));
+            infoRows.Add(("REPORT REUSE", $"Reused from Request #{report.ReusedFromRequestId} (Snapshot #{report.ReusedFromSnapshotId}); original retrieval {Ist.Date(report.AuthoritativeSnapshotRetrievedUtc)} (met ≤ 7-day admission limit)"));
         }
         infoRows.Add(("KEYWORDS SEARCHED", report.KeywordsSearched.Count == 0 ? "Not supplied by source" : string.Join(" | ", report.KeywordsSearched)));
         infoRows.Add(("REPORT SCOPE", "Standalone litigation report; separate from the MCA ROC dossier"));

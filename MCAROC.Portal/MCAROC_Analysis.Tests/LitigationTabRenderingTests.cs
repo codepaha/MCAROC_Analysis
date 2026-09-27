@@ -282,6 +282,8 @@ public class LitigationTabRenderingTests
         Assert.Contains("reused from another request", html);
         Assert.Contains("request #REQ-SRC-001", html);
         Assert.Contains("snapshot #5", html);
+        Assert.Contains("governed reuse admission", html);
+        Assert.DoesNotContain("within the 7-day freshness window", html);
         Assert.Contains("Reused Report", html);
     }
 
