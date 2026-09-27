@@ -303,6 +303,16 @@ public partial class AutoFetchController(
         {
             if (identity is null) return Ok(localHits);
 
+            // The prefix-match fallback is unfiltered: it cannot honour state, district, pin, year, or
+            // entity-type hints.  Return empty rather than misleading the user with unfiltered candidates
+            // labelled "100% match" when they have narrowed the search.
+            var hintsPresent = !string.IsNullOrWhiteSpace(state)
+                || !string.IsNullOrWhiteSpace(district)
+                || !string.IsNullOrWhiteSpace(pin)
+                || year.HasValue
+                || !string.IsNullOrWhiteSpace(entityType);
+            if (hintsPresent) return Ok(Array.Empty<CompanySearchCandidateDto>());
+
             var dtos = localHits.Select(h => new CompanySearchCandidateDto(
                 Identifier: h.Cin,
                 Name: h.LegalName,
