@@ -12,10 +12,10 @@ namespace MCAROC_Analysis.Services.Pipeline;
 
 /// <summary>Builds a <see cref="PipelineSnapshot"/> with no-tracking reads only — it never writes, so the
 /// coordinator can't corrupt any table it observes.</summary>
-public sealed class PipelineSnapshotReader(AppDbContext db, IConfiguration config, IOptions<BprLitigationOptions> bprOptions,
+public class PipelineSnapshotReader(AppDbContext db, IConfiguration config, IOptions<BprLitigationOptions> bprOptions,
     IOptions<ReferenceToolOptions> referenceToolOptions, IOptions<ResolverOptions>? resolverOptions = null)
 {
-    public async Task<PipelineSnapshot?> ReadAsync(long requestId, CancellationToken ct)
+    public virtual async Task<PipelineSnapshot?> ReadAsync(long requestId, CancellationToken ct)
     {
         var request = await db.Requests.AsNoTracking().Where(r => r.RequestId == requestId)
             .Select(r => new

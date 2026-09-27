@@ -47,6 +47,12 @@ public partial class AiChargesNarrativeService
     private readonly GenAiClient _client;
     private readonly ILogger<AiChargesNarrativeService> _logger;
 
+    protected AiChargesNarrativeService()
+    {
+        _client = null!;
+        _logger = null!;
+    }
+
     public AiChargesNarrativeService(string projectId, string location, string credentialsPath, ILogger<AiChargesNarrativeService> logger)
     {
         _logger = logger;
@@ -58,7 +64,7 @@ public partial class AiChargesNarrativeService
     /// character budget have both been applied — <see cref="SelectChargesForNarrative"/> builds this list.</summary>
     public record SelectedCharge(RocCharge Charge, RocChargeEvent? RepresentativeEvent);
 
-    public async Task<ChargesNarrativeOutcome> SynthesizeAsync(
+    public virtual async Task<ChargesNarrativeOutcome> SynthesizeAsync(
         IReadOnlyList<SelectedCharge> selectedCharges, int totalOpenChargeCount, CancellationToken ct)
     {
         var prompt = BuildPrompt(selectedCharges, totalOpenChargeCount);

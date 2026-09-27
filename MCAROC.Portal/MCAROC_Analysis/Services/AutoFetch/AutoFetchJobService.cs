@@ -11,6 +11,9 @@ using Microsoft.Extensions.Options;
 
 namespace MCAROC_Analysis.Services.AutoFetch;
 
+public sealed class AutoFetchJobCancelledException(long jobId)
+    : Exception($"Auto-fetch job {jobId} was cancelled by a pipeline cancellation.");
+
 /// <summary>Runs one <see cref="AutoFetchJob"/> end to end. Given only a CIN/LLPIN it:
 /// <list type="number">
 /// <item>checks the reference-tool session is alive (fails fast with an actionable message if not);</item>
@@ -184,7 +187,15 @@ public sealed class AutoFetchJobService(
                 .SetProperty(j => j.AttemptCount, j => j.AttemptCount + 1), ct);
         if (claimed == 0) return;
 
-        var job = await db.AutoFetchJobs.FirstAsync(j => j.AutoFetchJobId == jobId, ct);
+        var job = await db.AutoFetchJobs.AsNoTracking().FirstAsync(j => j.AutoFetchJobId == jobId, ct);
+        if (string.IsNullOrWhiteSpace(job.CorrelationId))
+        {
+            var generated = Guid.NewGuid().ToString("N");
+            await db.AutoFetchJobs.Where(j => j.AutoFetchJobId == jobId && j.CorrelationId == null)
+                .ExecuteUpdateAsync(s => s.SetProperty(j => j.CorrelationId, generated), ct);
+            job.CorrelationId = generated;
+        }
+        var correlationId = job.CorrelationId;
         var request = await db.Requests.FirstAsync(r => r.RequestId == job.RequestId, ct);
         var warnings = ReadWarnings(job);
 
@@ -194,7 +205,7 @@ public sealed class AutoFetchJobService(
                 throw new ReferenceToolException("Auto-fetch is not configured: set ReferenceTool:BaseUrl and ReferenceTool:SessionCookie.");
 
             // 1. Session
-            await SetStageAsync(job, AutoFetchJobStatus.CheckingSession, 2, "Checking the reference-tool session…", ct);
+            await SetStageAsync(job, correlationId, AutoFetchJobStatus.CheckingSession, 2, "Checking the reference-tool session…", ct);
             // Reports to the breaker and throws with the failure's kind preserved, so a transient outage
             // here lands in the breaker-class catch below (job stays Queued) instead of failing the job.
             var session = await client.RequireValidSessionAsync(ct);
@@ -202,7 +213,7 @@ public sealed class AutoFetchJobService(
 
             // 2. Company name (best effort — the workbook's own "About the Company" sheet fills it in later anyway)
             if (NeedsCompanyName(request))
-                await TryResolveCompanyNameAsync(request, job, ct);
+                await TryResolveCompanyNameAsync(request, job, correlationId, ct);
 
             // 2a. Identity safety net (#295, plan §5A.3) — the last check before Resolve hands off to Unlock. For a
             // request whose identifier came from a recorded resolution, the tool's free preview must name the same
@@ -217,16 +228,18 @@ public sealed class AutoFetchJobService(
             // resumed after its workbook was fetched already passed this gate.
             if (job.RocDocumentId is null && refresh is not null && _opts.RefreshBeforeFetch)
             {
-                await SetStageAsync(job, AutoFetchJobStatus.CheckingSession, 4, "Checking the company is unlocked and its data is current…", ct);
+                await SetStageAsync(job, correlationId, AutoFetchJobStatus.CheckingSession, 4, "Checking the company is unlocked and its data is current…", ct);
                 var gate = await refresh.EvaluateAsync(job.Cin, job.Bid, ct);
                 switch (gate.Kind)
                 {
                     case RefreshGateKind.Waiting:
                         // Park without holding a worker slot; CompanyRefreshWorker re-queues it once the refresh lands.
-                        job.Status = AutoFetchJobStatus.WaitingForRefresh;
-                        job.StatusMessage = gate.Message;
-                        job.HeartbeatUtc = DateTime.UtcNow;
-                        await db.SaveChangesAsync(ct);
+                        var parkedWaiting = await AutoFetchGuarded(job.AutoFetchJobId, correlationId)
+                            .ExecuteUpdateAsync(s => s
+                                .SetProperty(j => j.Status, AutoFetchJobStatus.WaitingForRefresh)
+                                .SetProperty(j => j.StatusMessage, gate.Message)
+                                .SetProperty(j => j.HeartbeatUtc, DateTime.UtcNow), ct);
+                        if (parkedWaiting == 0) throw new AutoFetchJobCancelledException(job.AutoFetchJobId);
                         return;
                     case RefreshGateKind.Locked:
                         if (unlock is null)
@@ -236,10 +249,12 @@ public sealed class AutoFetchJobService(
                         var (identityMatches, lockedMessage) = await unlock.DescribeLockedAsync(job.Cin, job.Bid, ct);
                         if (!identityMatches)
                             throw new ReferenceToolException(lockedMessage, ReferenceToolFailureKind.Other);
-                        job.Status = AutoFetchJobStatus.WaitingForUnlock;
-                        job.StatusMessage = lockedMessage.Length > 500 ? lockedMessage[..500] : lockedMessage;
-                        job.HeartbeatUtc = DateTime.UtcNow;
-                        await db.SaveChangesAsync(ct);
+                        var parkedLocked = await AutoFetchGuarded(job.AutoFetchJobId, correlationId)
+                            .ExecuteUpdateAsync(s => s
+                                .SetProperty(j => j.Status, AutoFetchJobStatus.WaitingForUnlock)
+                                .SetProperty(j => j.StatusMessage, lockedMessage.Length > 500 ? lockedMessage[..500] : lockedMessage)
+                                .SetProperty(j => j.HeartbeatUtc, DateTime.UtcNow), ct);
+                        if (parkedLocked == 0) throw new AutoFetchJobCancelledException(job.AutoFetchJobId);
                         logger.LogWarning("Auto-fetch job {JobId} (request {RequestId}) is waiting for approval to unlock {Cin}", job.AutoFetchJobId, job.RequestId, job.Cin);
                         return;
                     case RefreshGateKind.Deferred:
@@ -252,31 +267,43 @@ public sealed class AutoFetchJobService(
             // 3. Workbooks → documents
             if (job.RocDocumentId is null)
             {
-                await SetStageAsync(job, AutoFetchJobStatus.FetchingWorkbooks, 8, "Exporting the MCA / ROC workbook…", ct);
-                job.RocDocumentId = (await FetchWorkbookAsync(request, job, ReferenceWorkbookKind.Corporate, ct)).DocumentId;
-                await db.SaveChangesAsync(ct);
+                await EnsureNotCancelledAsync(job.AutoFetchJobId, correlationId, ct);
+                await SetStageAsync(job, correlationId, AutoFetchJobStatus.FetchingWorkbooks, 8, "Exporting the MCA / ROC workbook…", ct);
+                var rocDoc = await FetchWorkbookAsync(request, job, ReferenceWorkbookKind.Corporate, ct);
+                await EnsureNotCancelledAsync(job.AutoFetchJobId, correlationId, ct);
+                var updatedRoc = await AutoFetchGuarded(job.AutoFetchJobId, correlationId)
+                    .ExecuteUpdateAsync(s => s.SetProperty(j => j.RocDocumentId, rocDoc.DocumentId), ct);
+                if (updatedRoc == 0) throw new AutoFetchJobCancelledException(job.AutoFetchJobId);
+                job.RocDocumentId = rocDoc.DocumentId;
             }
             if (job.ChargeDocumentId is null && job.IngestionRunId is null)
             {
-                await SetStageAsync(job, AutoFetchJobStatus.FetchingWorkbooks, 18, "Exporting the detailed charge workbook…", ct);
+                await EnsureNotCancelledAsync(job.AutoFetchJobId, correlationId, ct);
+                await SetStageAsync(job, correlationId, AutoFetchJobStatus.FetchingWorkbooks, 18, "Exporting the detailed charge workbook…", ct);
                 try
                 {
-                    job.ChargeDocumentId = (await FetchWorkbookAsync(request, job, ReferenceWorkbookKind.Charge, ct)).DocumentId;
-                    await db.SaveChangesAsync(ct);
+                    var chargeDoc = await FetchWorkbookAsync(request, job, ReferenceWorkbookKind.Charge, ct);
+                    await EnsureNotCancelledAsync(job.AutoFetchJobId, correlationId, ct);
+                    var updatedCharge = await AutoFetchGuarded(job.AutoFetchJobId, correlationId)
+                        .ExecuteUpdateAsync(s => s.SetProperty(j => j.ChargeDocumentId, chargeDoc.DocumentId), ct);
+                    if (updatedCharge == 0) throw new AutoFetchJobCancelledException(job.AutoFetchJobId);
+                    job.ChargeDocumentId = chargeDoc.DocumentId;
                 }
                 catch (ReferenceToolException ex)
                 {
                     // The charge annexure is an enrichment: ingestion runs ROC-only without it and flags
                     // ChargeReportMissing itself, so this is a warning, not a failure.
                     warnings.Add($"Detailed charge workbook not exported: {ex.Message}");
-                    await SaveWarningsAsync(job, warnings, ct);
+                    await SaveWarningsAsync(job, correlationId, warnings, ct);
                 }
             }
 
             // 4. Ingestion (+ analysis)
             if (job.IngestionRunId is null)
             {
-                await SetStageAsync(job, AutoFetchJobStatus.Ingesting, 28, "Extracting workbook data…", ct);
+                await EnsureNotCancelledAsync(job.AutoFetchJobId, correlationId, ct);
+                await SetStageAsync(job, correlationId, AutoFetchJobStatus.Ingesting, 28, "Extracting workbook data…", ct);
+                await EnsureNotCancelledAsync(job.AutoFetchJobId, correlationId, ct);
                 request.IsManualReviewRequired = false;
                 request.ManualReviewReason = null;
                 request.RequestStatus = RequestStatus.DocumentsUploaded;
@@ -287,8 +314,10 @@ public sealed class AutoFetchJobService(
                     autoFetchJobId: job.AutoFetchJobId);
                 if (run.Status == IngestionRunStatus.Failed)
                     throw new ReferenceToolException($"Workbook extraction failed: {run.FailureReason}");
-
+                job.IngestionRunId = run.IngestionRunId;
             }
+
+            await EnsureNotCancelledAsync(job.AutoFetchJobId, correlationId, ct);
 
             // A committed run and its job checkpoint are one transaction. After a restart, finish the
             // follow-up steps without launching another ingestion run.
@@ -325,25 +354,44 @@ public sealed class AutoFetchJobService(
                 var warning = $"Workbook extraction completed with {completedRun.WarningsCount} warning(s) — see the Documents tab.";
                 if (!warnings.Contains(warning)) warnings.Add(warning);
             }
-            await SaveWarningsAsync(job, warnings, ct);
+            await SaveWarningsAsync(job, correlationId, warnings, ct);
 
             // 5. Filings
             if (job.IncludeFilings && job.FilingsDocumentId is null)
             {
+                await EnsureNotCancelledAsync(job.AutoFetchJobId, correlationId, ct);
                 if (string.IsNullOrWhiteSpace(userId))
                     throw new ReferenceToolException("The reference tool's user id could not be determined from the session — set ReferenceTool:UserId.");
-                await FetchFilingsAsync(request, job, userId, warnings, ct);
+                await FetchFilingsAsync(request, job, correlationId, userId, warnings, ct);
             }
 
-            job.Status = warnings.Count > 0 ? AutoFetchJobStatus.CompletedWithWarnings : AutoFetchJobStatus.Completed;
-            job.ProgressPercent = 100;
-            job.StatusMessage = job.IncludeFilings
+            var finalStatus = warnings.Count > 0 ? AutoFetchJobStatus.CompletedWithWarnings : AutoFetchJobStatus.Completed;
+            var finalMessage = job.IncludeFilings
                 ? "Done — workbook data extracted, analysis queued, filings handed to the document pipeline."
                 : "Done — workbook data extracted and analysis queued.";
-            job.CompletedUtc = DateTime.UtcNow;
-            job.HeartbeatUtc = DateTime.UtcNow;
-            job.WarningsJson = JsonSerializer.Serialize(warnings);
-            await db.SaveChangesAsync(ct);
+            var completedNow = DateTime.UtcNow;
+            var warningsJson = JsonSerializer.Serialize(warnings);
+
+            var completed = await AutoFetchGuarded(job.AutoFetchJobId, correlationId)
+                .ExecuteUpdateAsync(s => s
+                    .SetProperty(j => j.Status, finalStatus)
+                    .SetProperty(j => j.ProgressPercent, 100)
+                    .SetProperty(j => j.StatusMessage, finalMessage)
+                    .SetProperty(j => j.CompletedUtc, completedNow)
+                    .SetProperty(j => j.HeartbeatUtc, completedNow)
+                    .SetProperty(j => j.WarningsJson, warningsJson), ct);
+
+            if (completed == 0)
+            {
+                db.ChangeTracker.Clear();
+                throw new AutoFetchJobCancelledException(job.AutoFetchJobId);
+            }
+        }
+        catch (AutoFetchJobCancelledException)
+        {
+            db.ChangeTracker.Clear();
+            logger.LogInformation("Auto-fetch job {JobId} stopped because the run was cancelled.", jobId);
+            return;
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
@@ -359,7 +407,13 @@ public sealed class AutoFetchJobService(
             logger.LogWarning(ex, "Auto-fetch job {JobId} (request {RequestId}) hit a breaker-class reference-tool failure ({Kind}); leaving it retryable",
                 job.AutoFetchJobId, job.RequestId, ex.Kind);
             db.ChangeTracker.Clear();
-            await db.AutoFetchJobs.Where(j => j.AutoFetchJobId == jobId)
+            var guarded = await AutoFetchGuarded(jobId, correlationId).AnyAsync(CancellationToken.None);
+            if (!guarded)
+            {
+                logger.LogInformation("Auto-fetch job {JobId} hit transient error after cancellation; ignoring.", jobId);
+                return;
+            }
+            await AutoFetchGuarded(jobId, correlationId)
                 .ExecuteUpdateAsync(s => s
                     .SetProperty(j => j.Status, AutoFetchJobStatus.Queued)
                     .SetProperty(j => j.StatusMessage, "The reference tool is temporarily unavailable — will retry automatically.")
@@ -369,22 +423,33 @@ public sealed class AutoFetchJobService(
         {
             logger.LogError(ex, "Auto-fetch job {JobId} (request {RequestId}) failed", job.AutoFetchJobId, job.RequestId);
             db.ChangeTracker.Clear();
-            var failed = await db.AutoFetchJobs.FirstAsync(j => j.AutoFetchJobId == jobId, CancellationToken.None);
-            failed.Status = AutoFetchJobStatus.Failed;
-            failed.FailureReason = ex is ReferenceToolException ? ex.Message : $"{ex.GetType().Name}: {ex.Message}";
-            failed.StatusMessage = "Failed.";
-            failed.CompletedUtc = DateTime.UtcNow;
-            failed.HeartbeatUtc = DateTime.UtcNow;
-            failed.WarningsJson = JsonSerializer.Serialize(warnings);
-            await db.SaveChangesAsync(CancellationToken.None);
+            var guarded = await AutoFetchGuarded(jobId, correlationId).AnyAsync(CancellationToken.None);
+            if (!guarded)
+            {
+                logger.LogInformation("Auto-fetch job {JobId} failed after cancellation; suppressing overwrite.", jobId);
+                return;
+            }
+
+            var failedReason = ex is ReferenceToolException ? ex.Message : $"{ex.GetType().Name}: {ex.Message}";
+            var failedNow = DateTime.UtcNow;
+            var warningsJson = JsonSerializer.Serialize(warnings);
+
+            var updatedFailed = await AutoFetchGuarded(jobId, correlationId)
+                .ExecuteUpdateAsync(s => s
+                    .SetProperty(j => j.Status, AutoFetchJobStatus.Failed)
+                    .SetProperty(j => j.FailureReason, failedReason)
+                    .SetProperty(j => j.StatusMessage, "Failed.")
+                    .SetProperty(j => j.CompletedUtc, failedNow)
+                    .SetProperty(j => j.HeartbeatUtc, failedNow)
+                    .SetProperty(j => j.WarningsJson, warningsJson), CancellationToken.None);
 
             // Before ingestion ever ran there is nothing on the request to look at; say why on the request too.
-            if (failed.IngestionRunId is null)
+            if (updatedFailed > 0 && job.IngestionRunId is null)
             {
-                await db.Requests.Where(r => r.RequestId == failed.RequestId && r.LatestCompletedIngestionRunId == null)
+                await db.Requests.Where(r => r.RequestId == job.RequestId && r.LatestCompletedIngestionRunId == null && r.RequestStatus != RequestStatus.Cancelled)
                     .ExecuteUpdateAsync(s => s
                         .SetProperty(r => r.RequestStatus, RequestStatus.ExtractionFailed)
-                        .SetProperty(r => r.FailureReason, failed.FailureReason), CancellationToken.None);
+                        .SetProperty(r => r.FailureReason, failedReason), CancellationToken.None);
             }
         }
     }
@@ -439,18 +504,21 @@ public sealed class AutoFetchJobService(
         || string.Equals(request.CompanyName.Trim(), request.Cin, StringComparison.OrdinalIgnoreCase)
         || string.Equals(request.CompanyName.Trim(), request.Llpin, StringComparison.OrdinalIgnoreCase);
 
-    private async Task TryResolveCompanyNameAsync(McaRequest request, AutoFetchJob job, CancellationToken ct)
+    private async Task TryResolveCompanyNameAsync(McaRequest request, AutoFetchJob job, string correlationId, CancellationToken ct)
     {
         try
         {
             var hits = await client.SearchCompaniesAsync(job.Cin, 5, ct);
             var match = hits.FirstOrDefault(h => string.Equals(h.Cin, job.Cin, StringComparison.OrdinalIgnoreCase));
             if (match is null) return;
+            await EnsureNotCancelledAsync(job.AutoFetchJobId, correlationId, ct);
             request.CompanyName = match.LegalName;
             if (!string.IsNullOrWhiteSpace(match.Bid) && !string.Equals(match.Bid, job.Bid, StringComparison.OrdinalIgnoreCase))
             {
                 logger.LogWarning("Reference tool bid {SearchBid} for {Cin} differs from sha256(CIN) {ComputedBid}; using the tool's", match.Bid, job.Cin, job.Bid);
                 job.Bid = match.Bid;
+                await AutoFetchGuarded(job.AutoFetchJobId, correlationId)
+                    .ExecuteUpdateAsync(s => s.SetProperty(j => j.Bid, match.Bid), ct);
             }
             await db.SaveChangesAsync(ct);
         }
@@ -481,14 +549,14 @@ public sealed class AutoFetchJobService(
         return document;
     }
 
-    private async Task FetchFilingsAsync(McaRequest request, AutoFetchJob job, string userId, List<string> warnings, CancellationToken ct)
+    private async Task FetchFilingsAsync(McaRequest request, AutoFetchJob job, string correlationId, string userId, List<string> warnings, CancellationToken ct)
     {
         // Registry — cached in the staging folder so a resumed job packages exactly the same set.
         var stagingDir = StagingDir(job);
         Directory.CreateDirectory(stagingDir);
         var registryPath = Path.Combine(stagingDir, "registry.json");
 
-        await SetStageAsync(job, AutoFetchJobStatus.FetchingRegistry, 36, "Listing the filing documents…", ct);
+        await SetStageAsync(job, correlationId, AutoFetchJobStatus.FetchingRegistry, 36, "Listing the filing documents…", ct);
         ReferenceDocumentRegistry registry;
         if (File.Exists(registryPath))
         {
@@ -511,12 +579,12 @@ public sealed class AutoFetchJobService(
         job.FilesTotal = plan.Sum(f => f.Files.Count);
         job.FilesDownloaded = plan.Sum(f => f.Files.Count(x => IsStaged(x.LocalPath)));
         job.FilesFailed = 0;
-        await SaveWarningsAsync(job, warnings, ct);
+        await SaveWarningsAsync(job, correlationId, warnings, ct);
 
         if (plan.Count == 0)
         {
             warnings.Add("The reference tool listed no filing documents for this company; no filings archive was created.");
-            await SaveWarningsAsync(job, warnings, ct);
+            await SaveWarningsAsync(job, correlationId, warnings, ct);
             return;
         }
 
@@ -539,7 +607,7 @@ public sealed class AutoFetchJobService(
         {
             // Parallel download with a bounded degree of concurrency; progress flushed on a timer from this
             // (single) DbContext-owning flow — the download tasks never touch the DbContext.
-            await SetStageAsync(job, AutoFetchJobStatus.DownloadingFilings, 40, $"Downloading filings 0 / {job.FilesTotal:N0}…", ct);
+            await SetStageAsync(job, correlationId, AutoFetchJobStatus.DownloadingFilings, 40, $"Downloading filings 0 / {job.FilesTotal:N0}…", ct);
             var allFiles = plan.SelectMany(f => f.Files.Select(x => (Filing: f, File: x))).ToList();
             // A resumed job's already-staged bytes must count toward the aggregate cap from the start —
             // otherwise a job retried enough times could accumulate past the cap one resume at a time.
@@ -594,10 +662,10 @@ public sealed class AutoFetchJobService(
             while (!downloadTask.IsCompleted)
             {
                 await Task.WhenAny(downloadTask, Task.Delay(ProgressFlushInterval, ct));
-                await FlushDownloadProgressAsync(job, Volatile.Read(ref downloadedCount), Volatile.Read(ref failedCount), Interlocked.Read(ref bytes), ct);
+                await FlushDownloadProgressAsync(job, correlationId, Volatile.Read(ref downloadedCount), Volatile.Read(ref failedCount), Interlocked.Read(ref bytes), ct);
             }
             await downloadTask; // surfaces cancellation / unexpected exceptions
-            await FlushDownloadProgressAsync(job, downloadedCount, failedCount, Interlocked.Read(ref bytes), ct);
+            await FlushDownloadProgressAsync(job, correlationId, downloadedCount, failedCount, Interlocked.Read(ref bytes), ct);
 
             if (failedCount > 0)
             {
@@ -611,7 +679,7 @@ public sealed class AutoFetchJobService(
                 throw new ReferenceToolException("None of the filing PDFs could be downloaded — the session cookie has probably expired, or the reference documents are not unlocked for this company.");
 
             // Package → RequestDocument → McaFilingBatch → unpack queue
-            await SetStageAsync(job, AutoFetchJobStatus.Packaging, 88, "Packaging the filings archive…", ct);
+            await SetStageAsync(job, correlationId, AutoFetchJobStatus.Packaging, 88, "Packaging the filings archive…", ct);
             var outerZipPath = Path.Combine(stagingDir, $"{job.Cin}_filings.zip");
             AutoFetchArchiveBuilder.Build(outerZipPath, request.CompanyName, job.Cin, plan.Select(p => p.ToArchiveFiling()), ct);
 
@@ -619,22 +687,33 @@ public sealed class AutoFetchJobService(
             if (!safety.IsValid)
                 throw new ReferenceToolException($"The packaged filings archive failed the safety check: {safety.Error}");
 
+            await EnsureNotCancelledAsync(job.AutoFetchJobId, correlationId, ct);
             var filingsDocument = await StoreDocumentAsync(request.RequestId, outerZipPath, $"{job.Cin}_MCA_Filings.zip", DocumentType.McaFilingsArchive, validateAsExcel: false, ct);
+            await EnsureNotCancelledAsync(job.AutoFetchJobId, correlationId, ct);
             var batch = new McaFilingBatch
             {
                 RequestId = request.RequestId,
                 SourceDocumentId = filingsDocument.DocumentId,
-                CorrelationId = !string.IsNullOrWhiteSpace(job.CorrelationId) ? job.CorrelationId : Guid.NewGuid().ToString("N"),
+                CorrelationId = !string.IsNullOrWhiteSpace(correlationId) ? correlationId : Guid.NewGuid().ToString("N"),
                 Status = FilingBatchStatus.Uploaded,
                 StartedDate = DateTime.UtcNow
             };
             db.McaFilingBatches.Add(batch);
-            job.FilingsDocumentId = filingsDocument.DocumentId;
             await db.SaveChangesAsync(ct);
+
+            var updatedBatch = await AutoFetchGuarded(job.AutoFetchJobId, correlationId)
+                .ExecuteUpdateAsync(s => s
+                    .SetProperty(j => j.FilingsDocumentId, filingsDocument.DocumentId)
+                    .SetProperty(j => j.FilingBatchId, batch.BatchId)
+                    .SetProperty(j => j.ProgressPercent, 96)
+                    .SetProperty(j => j.StatusMessage, "Filings archive queued for OCR, extraction and indexing."), ct);
+            if (updatedBatch == 0) throw new AutoFetchJobCancelledException(job.AutoFetchJobId);
+
+            job.FilingsDocumentId = filingsDocument.DocumentId;
             job.FilingBatchId = batch.BatchId;
             job.ProgressPercent = 96;
             job.StatusMessage = "Filings archive queued for OCR, extraction and indexing.";
-            await SaveWarningsAsync(job, warnings, ct);
+            await SaveWarningsAsync(job, correlationId, warnings, ct);
             filingQueue.Enqueue(new UnpackBatchWorkItem(batch.BatchId));
 
             // The archive is stored under App_Data/Uploads now; the staged PDFs are no longer needed.
@@ -795,26 +874,73 @@ public sealed class AutoFetchJobService(
         return document;
     }
 
-    private async Task SetStageAsync(AutoFetchJob job, AutoFetchJobStatus status, int percent, string message, CancellationToken ct)
+    private IQueryable<AutoFetchJob> AutoFetchGuarded(long jobId, string correlationId) =>
+        db.AutoFetchJobs.Where(j => j.AutoFetchJobId == jobId
+            && j.CorrelationId == correlationId
+            && j.Status != AutoFetchJobStatus.Failed
+            && !db.Requests.Any(r => r.RequestId == j.RequestId && r.RequestStatus == RequestStatus.Cancelled));
+
+    private async Task EnsureNotCancelledAsync(long jobId, string correlationId, CancellationToken ct)
     {
+        var guarded = await AutoFetchGuarded(jobId, correlationId).AnyAsync(ct);
+        if (!guarded)
+        {
+            db.ChangeTracker.Clear();
+            throw new AutoFetchJobCancelledException(jobId);
+        }
+    }
+
+    private async Task SetStageAsync(AutoFetchJob job, string correlationId, AutoFetchJobStatus status, int percent, string message, CancellationToken ct)
+    {
+        var now = DateTime.UtcNow;
+        var updated = await AutoFetchGuarded(job.AutoFetchJobId, correlationId)
+            .ExecuteUpdateAsync(s => s
+                .SetProperty(j => j.Status, status)
+                .SetProperty(j => j.ProgressPercent, percent)
+                .SetProperty(j => j.StatusMessage, message)
+                .SetProperty(j => j.HeartbeatUtc, now), ct);
+
+        if (updated == 0)
+        {
+            db.ChangeTracker.Clear();
+            throw new AutoFetchJobCancelledException(job.AutoFetchJobId);
+        }
+
         job.Status = status;
         job.ProgressPercent = percent;
         job.StatusMessage = message;
-        job.HeartbeatUtc = DateTime.UtcNow;
-        await db.SaveChangesAsync(ct);
+        job.HeartbeatUtc = now;
     }
 
-    private async Task FlushDownloadProgressAsync(AutoFetchJob job, int downloaded, int failed, long bytes, CancellationToken ct)
+    private async Task FlushDownloadProgressAsync(AutoFetchJob job, string correlationId, int downloaded, int failed, long bytes, CancellationToken ct)
     {
+        var done = downloaded + failed;
+        var fraction = job.FilesTotal == 0 ? 1 : Math.Min(1.0, (double)done / job.FilesTotal);
+        var percent = 40 + (int)Math.Round(fraction * 46);
+        var message = $"Downloading filings {done:N0} / {job.FilesTotal:N0} ({bytes / (1024.0 * 1024.0):N0} MB)…";
+        var now = DateTime.UtcNow;
+
+        var updated = await AutoFetchGuarded(job.AutoFetchJobId, correlationId)
+            .ExecuteUpdateAsync(s => s
+                .SetProperty(j => j.FilesDownloaded, downloaded)
+                .SetProperty(j => j.FilesFailed, failed)
+                .SetProperty(j => j.BytesDownloaded, bytes)
+                .SetProperty(j => j.ProgressPercent, percent)
+                .SetProperty(j => j.StatusMessage, message)
+                .SetProperty(j => j.HeartbeatUtc, now), ct);
+
+        if (updated == 0)
+        {
+            db.ChangeTracker.Clear();
+            throw new AutoFetchJobCancelledException(job.AutoFetchJobId);
+        }
+
         job.FilesDownloaded = downloaded;
         job.FilesFailed = failed;
         job.BytesDownloaded = bytes;
-        var done = downloaded + failed;
-        var fraction = job.FilesTotal == 0 ? 1 : Math.Min(1.0, (double)done / job.FilesTotal);
-        job.ProgressPercent = 40 + (int)Math.Round(fraction * 46);
-        job.StatusMessage = $"Downloading filings {done:N0} / {job.FilesTotal:N0} ({bytes / (1024.0 * 1024.0):N0} MB)…";
-        job.HeartbeatUtc = DateTime.UtcNow;
-        await db.SaveChangesAsync(ct);
+        job.ProgressPercent = percent;
+        job.StatusMessage = message;
+        job.HeartbeatUtc = now;
     }
 
     private static List<string> ReadWarnings(AutoFetchJob job)
@@ -823,11 +949,23 @@ public sealed class AutoFetchJobService(
         catch (JsonException) { return []; }
     }
 
-    private async Task SaveWarningsAsync(AutoFetchJob job, List<string> warnings, CancellationToken ct)
+    private async Task SaveWarningsAsync(AutoFetchJob job, string correlationId, List<string> warnings, CancellationToken ct)
     {
-        job.WarningsJson = JsonSerializer.Serialize(warnings.Distinct().ToList());
-        job.HeartbeatUtc = DateTime.UtcNow;
-        await db.SaveChangesAsync(ct);
+        var warningsJson = JsonSerializer.Serialize(warnings.Distinct().ToList());
+        var now = DateTime.UtcNow;
+        var updated = await AutoFetchGuarded(job.AutoFetchJobId, correlationId)
+            .ExecuteUpdateAsync(s => s
+                .SetProperty(j => j.WarningsJson, warningsJson)
+                .SetProperty(j => j.HeartbeatUtc, now), ct);
+
+        if (updated == 0)
+        {
+            db.ChangeTracker.Clear();
+            throw new AutoFetchJobCancelledException(job.AutoFetchJobId);
+        }
+
+        job.WarningsJson = warningsJson;
+        job.HeartbeatUtc = now;
     }
 
     private sealed record PlannedFile(string EntryName, string LocalPath, string AwsPath, string Did);

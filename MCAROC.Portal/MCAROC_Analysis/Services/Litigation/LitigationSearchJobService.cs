@@ -150,7 +150,13 @@ public sealed class LitigationSearchJobService(
                     "way to look up a prior registration, so retrying risks a duplicate vendor-side search. Manual " +
                     "reconciliation required: check BPR directly, then set VendorJobId or clear RegistrationAttemptedUtc.");
 
+            if (!await LeaseGuarded(jobId, leaseToken).AnyAsync(ct))
+                throw new LitigationSearchJobLeaseLostException(jobId);
+
             var token = await client.AuthenticateAsync(ct);
+
+            if (!await LeaseGuarded(jobId, leaseToken).AnyAsync(ct))
+                throw new LitigationSearchJobLeaseLostException(jobId);
 
             var vendorJobId = job.VendorJobId;
             if (vendorJobId is null)
@@ -187,15 +193,21 @@ public sealed class LitigationSearchJobService(
         catch (LitigationSearchJobLeaseLostException)
         {
             // Another worker has since reclaimed this job (this attempt's lease expired and recovery
-            // reassigned it) — we must stop touching the row entirely, including retry/backoff bookkeeping,
-            // which would itself be an unguarded write racing the new owner.
+            // reassigned it), or the run was cancelled — we must stop touching the row entirely,
+            // including retry/backoff bookkeeping, which would itself be an unguarded write racing the new owner.
             logger.LogWarning(
-                "Litigation search job {JobId} lost its lease mid-processing (attempt {Attempt}) — another worker has taken over.",
+                "Litigation search job {JobId} lost its lease or was cancelled mid-processing (attempt {Attempt}) — stopping.",
                 jobId, job.AttemptCount);
         }
         catch (Exception ex)
         {
             logger.LogWarning(ex, "BPR litigation search failed for job {JobId} (attempt {Attempt})", jobId, job.AttemptCount);
+
+            if (!await LeaseGuarded(jobId, leaseToken).AnyAsync(CancellationToken.None))
+            {
+                logger.LogWarning("Litigation search job {JobId} lost its lease or was cancelled during failure handling; skipping write.", jobId);
+                return;
+            }
 
             // An ambiguous-registration failure must never be auto-retried — see LitigationRegistrationAmbiguousException.
             if (ex is not LitigationRegistrationAmbiguousException && job.AttemptCount < _opts.MaxAttempts)
@@ -315,7 +327,12 @@ public sealed class LitigationSearchJobService(
     {
         var now = DateTime.UtcNow;
         return db.LitigationSearchJobs
-            .Where(j => j.LitigationSearchJobId == jobId && j.LeaseToken == leaseToken && j.LeaseExpiresUtc != null && j.LeaseExpiresUtc > now);
+            .Where(j => j.LitigationSearchJobId == jobId
+                && j.LeaseToken == leaseToken
+                && j.LeaseExpiresUtc != null
+                && j.LeaseExpiresUtc > now
+                && j.Status != LitigationSearchJobStatus.Failed
+                && !db.Requests.Any(r => r.RequestId == j.RequestId && r.RequestStatus == RequestStatus.Cancelled));
     }
 
     /// <summary>Exponential backoff, capped at 5 minutes — identical formula to

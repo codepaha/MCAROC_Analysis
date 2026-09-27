@@ -2,9 +2,12 @@ using System.Text.Json;
 using MCAROC_Analysis.Data;
 using MCAROC_Analysis.Data.Entities;
 using MCAROC_Analysis.Models;
+using MCAROC_Analysis.Services.Analysis;
 using MCAROC_Analysis.Services.Audit;
 using MCAROC_Analysis.Services.AutoFetch;
 using MCAROC_Analysis.Services.CompanyMaster;
+using MCAROC_Analysis.Services.Dossier;
+using MCAROC_Analysis.Services.LitigationData;
 using MCAROC_Analysis.Services.Pipeline;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -13,14 +16,21 @@ using Microsoft.Extensions.Options;
 
 namespace MCAROC_Analysis.Controllers;
 
-/// <summary>Pipeline coordinator board and ambiguity queue (docs/pipeline-automation-plan.md §3.5, §5A.3).</summary>
+/// <summary>Pipeline coordinator board and ambiguity queue (docs/pipeline-automation-plan.md §3.5, §5A.3, §6.4).</summary>
 public class PipelineController(
     AppDbContext db,
     IOptionsMonitor<PipelineOptions> options,
     IdentitySelectionService? identitySelection = null,
     AutoFetchJobService? autoFetchJobs = null,
     AutoFetchQueue? autoFetchQueue = null,
-    IOptions<ReferenceToolOptions>? referenceToolOptions = null) : Controller
+    IOptions<ReferenceToolOptions>? referenceToolOptions = null,
+    PipelineReconciler? reconciler = null,
+    AnalysisOrchestrator? analysisOrchestrator = null,
+    DossierArtifactService? dossier = null,
+    LitigationStartService? litigation = null,
+    IOptions<BprLitigationOptions>? bprOptions = null,
+    TimeProvider? time = null,
+    ILogger<PipelineController>? logger = null) : Controller
 {
     private const int TimelineLimit = 200;
     private const int MaxUnlockAlertCompanies = 200;
@@ -115,7 +125,8 @@ public class PipelineController(
             .Select(r => new
             {
                 r.PipelineRunId, r.RequestId, r.Trigger, r.Outcome, r.CreatedUtc, r.CoreReadyUtc,
-                r.Request!.RequestNumber, r.Request.CompanyName
+                r.Request!.RequestNumber, r.Request.CompanyName,
+                ClientName = r.Request.Client != null ? r.Request.Client.ClientName : null
             })
             .ToListAsync(ct);
         var stages = await StagesAsync(runs.Select(r => r.PipelineRunId).ToList(), ct);
@@ -146,7 +157,7 @@ public class PipelineController(
                 return new PipelineBoardRow
                 {
                     PipelineRunId = r.PipelineRunId, RequestId = r.RequestId, RequestNumber = r.RequestNumber,
-                    CompanyName = r.CompanyName, Trigger = r.Trigger, Outcome = r.Outcome, CreatedUtc = r.CreatedUtc,
+                    CompanyName = r.CompanyName, ClientName = r.ClientName, Trigger = r.Trigger, Outcome = r.Outcome, CreatedUtc = r.CreatedUtc,
                     CoreReadyUtc = r.CoreReadyUtc, Stages = s,
                     LastChangeUtc = s.Count == 0 ? r.CreatedUtc : s.Max(x => x.UpdatedUtc)
                 };
@@ -344,10 +355,353 @@ public class PipelineController(
             TempData["PipelineError"] = $"Selection failed: {ex.Message}";
         }
 
+        return SafeRedirect(returnUrl, nameof(AmbiguityQueue));
+    }
+
+    /// <summary>Retries a pipeline stage manually from the Needs-Attention board (plan §6.4).</summary>
+    [HttpPost("/Pipeline/Runs/{runId:long}/Stages/{stage}/Retry")]
+    [Authorize(AuthenticationSchemes = "InternalReviewer")]
+    [ValidateAntiForgeryToken]
+    public async Task<IActionResult> RetryStage(long runId, PipelineStage stage, [FromForm] string? reason, [FromForm] string? returnUrl, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(reason))
+        {
+            TempData["PipelineError"] = "A reason is required to retry a stage.";
+            return SafeRedirect(returnUrl);
+        }
+
+        var run = await db.PipelineRuns.Include(r => r.Request).FirstOrDefaultAsync(r => r.PipelineRunId == runId, ct);
+        if (run is null) return NotFound();
+        var requestId = run.RequestId;
+
+        if (run.Outcome == PipelineOutcome.Cancelled || run.Request?.RequestStatus == RequestStatus.Cancelled)
+        {
+            TempData["PipelineError"] = "Cannot retry a stage on a cancelled pipeline run.";
+            return SafeRedirect(returnUrl);
+        }
+
+        if (run.Outcome is PipelineOutcome.Complete or PipelineOutcome.CompleteWithWarnings)
+        {
+            TempData["PipelineError"] = "Cannot retry a stage on a completed pipeline run.";
+            return SafeRedirect(returnUrl);
+        }
+
+        var reviewer = User?.Identity?.Name ?? "InternalReviewer";
+        var correlationId = CorrelationContext.GetOrCreate(HttpContext);
+        var now = (time ?? TimeProvider.System).GetUtcNow().UtcDateTime;
+
+        try
+        {
+            switch (stage)
+            {
+                case PipelineStage.Fetch:
+                    if (autoFetchJobs is not null)
+                    {
+                        var job = await autoFetchJobs.RequeueAsync(requestId, ct, correlationId);
+                        if (job is not null && job.Status == AutoFetchJobStatus.Queued && autoFetchQueue is not null)
+                            autoFetchQueue.Enqueue(job.AutoFetchJobId);
+                    }
+                    break;
+
+                case PipelineStage.Analysis:
+                    if (analysisOrchestrator is not null)
+                    {
+                        await analysisOrchestrator.RetryAsync(requestId, reason.Trim(), ct);
+                    }
+                    break;
+
+                case PipelineStage.Litigation:
+                    if (litigation is not null)
+                    {
+                        var request = run.Request ?? await db.Requests.FirstOrDefaultAsync(r => r.RequestId == requestId, ct);
+                        if (request is not null)
+                        {
+                            var (plan, problem) = await LitigationStartService.PlanSearchAsync(db, request, bprOptions?.Value ?? new(), ct);
+                            if (plan is not null)
+                            {
+                                await litigation.StartSearchAsync(request, plan.Keywords, plan.EntityType, plan.ApplicationCustomerId, PaidCallTrigger.Manual, ct);
+                            }
+                            else
+                            {
+                                TempData["PipelineError"] = $"Cannot retry litigation search: {problem}";
+                                return SafeRedirect(returnUrl);
+                            }
+                        }
+                    }
+                    break;
+
+                case PipelineStage.LitigationAnalysis:
+                    if (litigation is not null)
+                    {
+                        var clientId = run.Request?.ClientId ?? await db.Requests.Where(r => r.RequestId == requestId).Select(r => r.ClientId).FirstOrDefaultAsync(ct);
+                        var started = await litigation.StartAnalysisAsync(requestId, clientId, PaidCallTrigger.Manual, ct);
+                        if (!started.Started)
+                        {
+                            TempData["PipelineError"] = $"Cannot retry litigation analysis: {started.Message}";
+                            return SafeRedirect(returnUrl);
+                        }
+                    }
+                    break;
+
+                case PipelineStage.Dossier:
+                    if (dossier is not null)
+                    {
+                        await dossier.EnsureRenderedAsync(requestId, DossierVariant.Executive, ct);
+                    }
+                    break;
+            }
+
+            var stageRow = await db.PipelineStageStates.FirstOrDefaultAsync(s => s.PipelineRunId == runId && s.Stage == stage, ct);
+            if (stageRow is null)
+            {
+                stageRow = new PipelineStageState { PipelineRunId = runId, Stage = stage, Attempts = 1, StartedUtc = now };
+                db.PipelineStageStates.Add(stageRow);
+            }
+            else
+            {
+                stageRow.Attempts++;
+            }
+            stageRow.State = PipelineStageStateKind.Running;
+            stageRow.ReasonCode = PipelineEventActions.ManualRetriedCode;
+            stageRow.ReasonDetail = reason.Trim();
+            stageRow.NextAttemptUtc = null;
+            stageRow.UpdatedUtc = now;
+
+            db.PipelineEvents.Add(new PipelineEvent
+            {
+                PipelineRunId = runId,
+                Stage = stage,
+                Action = PipelineEventActions.ManualRetried,
+                Actor = reviewer,
+                ReasonCode = PipelineEventActions.ManualRetriedCode,
+                CorrelationId = correlationId,
+                AtUtc = now
+            });
+            await db.SaveChangesAsync(ct);
+
+            if (reconciler is not null)
+            {
+                await reconciler.ReconcileAsync(runId, ct);
+            }
+
+            TempData["PipelineOk"] = $"Stage {stage} retried successfully.";
+        }
+        catch (Exception ex)
+        {
+            logger?.LogError(ex, "Failed to retry stage {Stage} for run {RunId}", stage, runId);
+            TempData["PipelineError"] = $"Failed to retry stage {stage}: {ex.Message}";
+        }
+
         return SafeRedirect(returnUrl);
     }
 
-    private IActionResult SafeRedirect(string? returnUrl)
+    /// <summary>Skips an enrichment pipeline stage manually from the Needs-Attention board (plan §6.4). Core stages cannot be skipped.</summary>
+    [HttpPost("/Pipeline/Runs/{runId:long}/Stages/{stage}/Skip")]
+    [Authorize(AuthenticationSchemes = "InternalReviewer")]
+    [ValidateAntiForgeryToken]
+    public async Task<IActionResult> SkipStage(long runId, PipelineStage stage, [FromForm] string? reason, [FromForm] string? returnUrl, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(reason))
+        {
+            TempData["PipelineError"] = "A reason is required to skip a stage.";
+            return SafeRedirect(returnUrl);
+        }
+
+        if (PipelineOutcomeCalculator.CoreStages.Contains(stage))
+        {
+            TempData["PipelineError"] = $"Core stage '{stage}' cannot be skipped.";
+            return SafeRedirect(returnUrl);
+        }
+
+        var run = await db.PipelineRuns.Include(r => r.Request).FirstOrDefaultAsync(r => r.PipelineRunId == runId, ct);
+        if (run is null) return NotFound();
+
+        if (run.Outcome == PipelineOutcome.Cancelled || run.Request?.RequestStatus == RequestStatus.Cancelled)
+        {
+            TempData["PipelineError"] = "Cannot skip a stage on a cancelled pipeline run.";
+            return SafeRedirect(returnUrl);
+        }
+
+        if (run.Outcome is PipelineOutcome.Complete or PipelineOutcome.CompleteWithWarnings)
+        {
+            TempData["PipelineError"] = "Cannot skip a stage on a completed pipeline run.";
+            return SafeRedirect(returnUrl);
+        }
+
+        var reviewer = User?.Identity?.Name ?? "InternalReviewer";
+        var correlationId = CorrelationContext.GetOrCreate(HttpContext);
+        var now = (time ?? TimeProvider.System).GetUtcNow().UtcDateTime;
+
+        try
+        {
+            var stageRow = await db.PipelineStageStates.FirstOrDefaultAsync(s => s.PipelineRunId == runId && s.Stage == stage, ct);
+            if (stageRow is null)
+            {
+                stageRow = new PipelineStageState { PipelineRunId = runId, Stage = stage, StartedUtc = now };
+                db.PipelineStageStates.Add(stageRow);
+            }
+            stageRow.State = PipelineStageStateKind.Skipped;
+            stageRow.SkipKind = PipelineStageSkipKind.Warning;
+            stageRow.ReasonCode = PipelineEventActions.ManualSkippedCode;
+            stageRow.ReasonDetail = reason.Trim();
+            stageRow.UpdatedUtc = now;
+
+            db.PipelineEvents.Add(new PipelineEvent
+            {
+                PipelineRunId = runId,
+                Stage = stage,
+                Action = PipelineEventActions.ManualSkipped,
+                Actor = reviewer,
+                ReasonCode = PipelineEventActions.ManualSkippedCode,
+                CorrelationId = correlationId,
+                AtUtc = now
+            });
+            await db.SaveChangesAsync(ct);
+
+            if (reconciler is not null)
+            {
+                await reconciler.ReconcileAsync(runId, ct);
+            }
+
+            TempData["PipelineOk"] = $"Stage {stage} skipped.";
+        }
+        catch (Exception ex)
+        {
+            logger?.LogError(ex, "Failed to skip stage {Stage} for run {RunId}", stage, runId);
+            TempData["PipelineError"] = $"Failed to skip stage {stage}: {ex.Message}";
+        }
+
+        return SafeRedirect(returnUrl);
+    }
+
+    /// <summary>Cancels a pipeline run manually from the Needs-Attention board (plan §6.4).</summary>
+    [HttpPost("/Pipeline/Runs/{runId:long}/Cancel")]
+    [Authorize(AuthenticationSchemes = "InternalReviewer")]
+    [ValidateAntiForgeryToken]
+    public async Task<IActionResult> CancelRun(long runId, [FromForm] string? reason, [FromForm] string? returnUrl, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(reason))
+        {
+            TempData["PipelineError"] = "A reason is required to cancel a pipeline run.";
+            return SafeRedirect(returnUrl);
+        }
+
+        var run = await db.PipelineRuns.Include(r => r.Request).FirstOrDefaultAsync(r => r.PipelineRunId == runId, ct);
+        if (run is null) return NotFound();
+
+        if (run.Outcome == PipelineOutcome.Cancelled || run.Request?.RequestStatus == RequestStatus.Cancelled)
+        {
+            TempData["PipelineError"] = "Pipeline run is already cancelled.";
+            return SafeRedirect(returnUrl);
+        }
+
+        if (run.Outcome is PipelineOutcome.Complete or PipelineOutcome.CompleteWithWarnings)
+        {
+            TempData["PipelineError"] = "Cannot cancel a completed pipeline run.";
+            return SafeRedirect(returnUrl);
+        }
+
+        var reviewer = User?.Identity?.Name ?? "InternalReviewer";
+        var correlationId = CorrelationContext.GetOrCreate(HttpContext);
+        var now = (time ?? TimeProvider.System).GetUtcNow().UtcDateTime;
+
+        try
+        {
+            run.Outcome = PipelineOutcome.Cancelled;
+            run.CompletedUtc ??= now;
+            // Fence out any in-flight reconciler by invalidating the lease token and clearing lease fields
+            run.ReconcileLeaseToken = Guid.NewGuid();
+            run.ReconcileLeaseOwner = null;
+            run.ReconcileLeaseExpiresUtc = null;
+
+            if (run.Request is not null)
+            {
+                run.Request.RequestStatus = RequestStatus.Cancelled;
+                run.Request.FailureReason = $"Run cancelled: {reason.Trim()}";
+            }
+            else
+            {
+                await db.Requests.Where(r => r.RequestId == run.RequestId)
+                    .ExecuteUpdateAsync(s => s
+                        .SetProperty(r => r.RequestStatus, RequestStatus.Cancelled)
+                        .SetProperty(r => r.FailureReason, $"Run cancelled: {reason.Trim()}"), ct);
+            }
+
+            // Cancel queued / waiting / in-flight domain jobs and invalidate active leases so workers cannot continue or overwrite
+            await db.AutoFetchJobs.Where(j => j.RequestId == run.RequestId
+                && j.Status != AutoFetchJobStatus.Completed
+                && j.Status != AutoFetchJobStatus.CompletedWithWarnings
+                && j.Status != AutoFetchJobStatus.Failed)
+                .ExecuteUpdateAsync(s => s
+                    .SetProperty(j => j.Status, AutoFetchJobStatus.Failed)
+                    .SetProperty(j => j.FailureReason, $"Run cancelled: {reason.Trim()}")
+                    .SetProperty(j => j.CorrelationId, $"CANCELLED:{Guid.NewGuid():N}")
+                    .SetProperty(j => j.CompletedUtc, now), ct);
+
+            await db.LitigationSearchJobs.Where(j => j.RequestId == run.RequestId
+                && j.Status != LitigationSearchJobStatus.Completed
+                && j.Status != LitigationSearchJobStatus.Failed)
+                .ExecuteUpdateAsync(s => s
+                    .SetProperty(j => j.Status, LitigationSearchJobStatus.Failed)
+                    .SetProperty(j => j.FailureReason, $"Run cancelled: {reason.Trim()}")
+                    .SetProperty(j => j.CompletedUtc, now)
+                    .SetProperty(j => j.LeaseToken, Guid.NewGuid())
+                    .SetProperty(j => j.LeaseOwner, (string?)null)
+                    .SetProperty(j => j.LeaseExpiresUtc, (DateTime?)null), ct);
+
+            await db.LitigationAiAnalysisRuns.Where(r => r.RequestId == run.RequestId
+                && (r.Status == LitigationAiAnalysisRunStatus.Pending || r.Status == LitigationAiAnalysisRunStatus.InProgress))
+                .ExecuteUpdateAsync(s => s
+                    .SetProperty(r => r.Status, LitigationAiAnalysisRunStatus.Failed)
+                    .SetProperty(r => r.FailureReason, $"Run cancelled: {reason.Trim()}")
+                    .SetProperty(r => r.CompletedUtc, now)
+                    .SetProperty(r => r.LeaseToken, Guid.NewGuid())
+                    .SetProperty(r => r.LeaseOwner, (string?)null)
+                    .SetProperty(r => r.LeaseExpiresUtc, (DateTime?)null), ct);
+
+            await db.AnalysisRuns.Where(a => a.RequestId == run.RequestId
+                && a.Status == AnalysisRunStatus.Running)
+                .ExecuteUpdateAsync(s => s
+                    .SetProperty(a => a.Status, AnalysisRunStatus.Failed)
+                    .SetProperty(a => a.FailureReason, $"Run cancelled: {reason.Trim()}")
+                    .SetProperty(a => a.CompletedDate, now), ct);
+
+            var stages = await db.PipelineStageStates.Where(s => s.PipelineRunId == runId).ToListAsync(ct);
+            foreach (var s in stages)
+            {
+                if (s.State is not (PipelineStageStateKind.Succeeded or PipelineStageStateKind.SucceededWithWarnings or PipelineStageStateKind.Skipped or PipelineStageStateKind.Cancelled))
+                {
+                    s.State = PipelineStageStateKind.Cancelled;
+                    s.ReasonCode = PipelineEventActions.CancelledCode;
+                    s.ReasonDetail = reason.Trim();
+                    s.UpdatedUtc = now;
+                }
+            }
+
+            db.PipelineEvents.Add(new PipelineEvent
+            {
+                PipelineRunId = runId,
+                Stage = stages.FirstOrDefault(s => s.State == PipelineStageStateKind.Cancelled)?.Stage ?? PipelineStage.Resolve,
+                Action = PipelineEventActions.Cancelled,
+                Actor = reviewer,
+                ReasonCode = PipelineEventActions.CancelledCode,
+                CorrelationId = correlationId,
+                AtUtc = now
+            });
+
+            await db.SaveChangesAsync(ct);
+            TempData["PipelineOk"] = "Pipeline run cancelled; future coordinator actions and queued jobs halted.";
+        }
+        catch (Exception ex)
+        {
+            logger?.LogError(ex, "Failed to cancel pipeline run {RunId}", runId);
+            TempData["PipelineError"] = $"Failed to cancel run {runId}: {ex.Message}";
+        }
+
+        return SafeRedirect(returnUrl);
+    }
+
+    private IActionResult SafeRedirect(string? returnUrl, string defaultAction = nameof(Index))
     {
         if (!string.IsNullOrWhiteSpace(returnUrl))
         {
@@ -356,7 +710,7 @@ public class PipelineController(
             if (Url is not null && Url.IsLocalUrl(returnUrl))
                 return Redirect(returnUrl);
         }
-        return RedirectToAction(nameof(AmbiguityQueue));
+        return RedirectToAction(defaultAction);
     }
 
     private static readonly JsonSerializerOptions CandidateJsonOptions = new()
