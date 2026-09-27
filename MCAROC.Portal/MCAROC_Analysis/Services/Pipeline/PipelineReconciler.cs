@@ -41,7 +41,15 @@ public sealed class PipelineReconciler(AppDbContext db, PipelineSnapshotReader r
     /// the explicit release below (on the stage actually leaving Running) is ever missed — same fail-safe
     /// shape as every other <c>OperationalSlotLease</c> holder, never the primary path.</summary>
     internal const string LitigationEnrichmentSlot = "PipelineLitigationEnrichment";
-    internal static readonly TimeSpan LitigationEnrichmentSlotDuration = TimeSpan.FromHours(4);
+    // PR #311 second review: a fixed duration with no renewal meant genuinely long-running work would
+    // eventually get reaped by TryAcquireSlotAsync's own opportunistic expired-lease cleanup and let another
+    // start over the cap. Renewed every tick a stage is observed Running (below), so this only needs to
+    // outlast the gap BETWEEN ticks, not the stage's total runtime — a lease-based mechanism can only ever
+    // guarantee correctness as long as its holder keeps renewing before expiry (same tradeoff every other
+    // lease in this codebase already accepts: PipelineRun's own 2-minute reconcile lease, the domain-level
+    // litigation leases). Missing every renewal for this long straight would mean the coordinator itself has
+    // stopped ticking this run entirely, at which point cap correctness is the least of the problems.
+    internal static readonly TimeSpan LitigationEnrichmentSlotDuration = TimeSpan.FromMinutes(10);
     public static readonly TimeSpan MinReconcileInterval = TimeSpan.FromSeconds(5);
 
     private static readonly PipelineOutcome[] LiveOutcomes = [PipelineOutcome.InProgress, PipelineOutcome.CoreReady, PipelineOutcome.NeedsAttention];
@@ -103,11 +111,19 @@ public sealed class PipelineReconciler(AppDbContext db, PipelineSnapshotReader r
         var toStart = new List<PipelineStage>();
         var toRetry = new List<PipelineStage>();
         var toReleaseSlots = new List<PipelineStage>();
+        var toRenewSlots = new List<PipelineStage>();
         var preRenderDossier = false;
         var existing = await db.PipelineStageStates.Where(s => s.PipelineRunId == runId).ToDictionaryAsync(s => s.Stage, ct);
         foreach (var (stage, verdict0) in decision.Stages)
         {
             var verdict = verdict0;
+            // Evaluated unconditionally (not just on a state change) so a stage that stays Running tick after
+            // tick — the common case for a long-running search/analysis — still gets here even when the
+            // per-stage row-upsert below takes its "nothing changed" early exit. A holder id that was never
+            // actually reserved (a manually-started search) renews nothing — TryRenewSlotAsync is a no-op
+            // when it finds no matching row, same as ReleaseSlotAsync.
+            if (stage is PipelineStage.Litigation or PipelineStage.LitigationAnalysis && verdict.State == PipelineStageStateKind.Running)
+                toRenewSlots.Add(stage);
             // Plan §6.2: only Fetch is wired to a coordinator-driven retry today (#292's first slice —
             // Analysis/Filings/Dossier retry are a documented fast-follow, not a design decision that they
             // never should be). Paid stages (Litigation/LitigationAnalysis) are deliberately never in this
@@ -230,8 +246,12 @@ public sealed class PipelineReconciler(AppDbContext db, PipelineSnapshotReader r
         foreach (var stage in toRetry)
             await RetryAsync(stage, runId, token, run.RequestId, run.CorrelationId, ct);
         if (slotLeases is not null)
+        {
+            foreach (var stage in toRenewSlots)
+                await slotLeases.TryRenewSlotAsync(LitigationEnrichmentSlot, EnrichmentSlotHolderId(runId, stage), LitigationEnrichmentSlotDuration, ct);
             foreach (var stage in toReleaseSlots)
                 await slotLeases.ReleaseSlotAsync(LitigationEnrichmentSlot, EnrichmentSlotHolderId(runId, stage), ct);
+        }
         if (preRenderDossier)
             await PreRenderDossierAsync(runId, token, run.RequestId, run.CorrelationId, ct);
         await ReleaseAsync(runId, token, ct);
