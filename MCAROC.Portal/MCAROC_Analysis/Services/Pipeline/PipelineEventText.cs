@@ -16,11 +16,20 @@ public static class PipelineEventActions
     /// distinct from AutoStarted/AutoStartDeferred, which are about a stage that had never run at all.</summary>
     public const string AutoRetried = "AutoRetried";
     public const string AutoRetryDeferred = "AutoRetryDeferred";
+    /// <summary>A person retried a stage from the manual-review queue (#292, plan §6.4).</summary>
+    public const string ManualRetried = "ManualRetried";
+    /// <summary>A person skipped an enrichment stage from the manual-review queue (#292, plan §6.4).</summary>
+    public const string ManualSkipped = "ManualSkipped";
+    /// <summary>A person cancelled the pipeline run from the manual-review queue (#292, plan §6.4).</summary>
+    public const string Cancelled = "Cancelled";
 
     /// <summary>Stage reason code while an automatically started job hasn't been observed yet.</summary>
     public const string AutoStartedCode = "AUTO_STARTED";
     /// <summary>Stage reason code while an automatically retried job hasn't been observed yet.</summary>
     public const string AutoRetriedCode = "AUTO_RETRIED";
+    public const string ManualRetriedCode = "MANUAL_RETRY";
+    public const string ManualSkippedCode = "MANUAL_SKIP";
+    public const string CancelledCode = "MANUAL_CANCEL";
 
     public static string Observed(PipelineStageStateKind state) => ObservedPrefix + state;
 }
@@ -95,7 +104,10 @@ public static class PipelineEventText
         ["AUTO_RETRIED"] = "retried automatically",
         ["RETRIES_EXHAUSTED"] = "automatic retries exhausted; a person needs to retry this",
         ["FETCH_RETRY_NOT_FOUND"] = "no fetch job exists to retry",
-        ["STAGE_STALLED"] = "no progress for longer than expected; the worker may have crashed"
+        ["STAGE_STALLED"] = "no progress for longer than expected; the worker may have crashed",
+        ["MANUAL_RETRY"] = "manually retried by reviewer",
+        ["MANUAL_SKIP"] = "manually skipped by reviewer",
+        ["MANUAL_CANCEL"] = "manually cancelled by reviewer"
     };
 
     public static string StageLabel(PipelineStage stage) => StageLabels.GetValueOrDefault(stage, stage.ToString());
@@ -120,11 +132,24 @@ public static class PipelineEventText
             text = $"{stage} retried automatically";
         else if (e.Action == PipelineEventActions.AutoRetryDeferred)
             text = $"{stage}: automatic retry deferred";
+        else if (e.Action == PipelineEventActions.ManualRetried)
+            text = $"{stage} retried by {e.Actor}";
+        else if (e.Action == PipelineEventActions.ManualSkipped)
+            text = $"{stage} skipped by {e.Actor}";
+        else if (e.Action == PipelineEventActions.Cancelled)
+            text = $"{stage}: pipeline cancelled by {e.Actor}";
         else if (e.Action.StartsWith(PipelineEventActions.ObservedPrefix, StringComparison.Ordinal)
                  && Enum.TryParse<PipelineStageStateKind>(e.Action[PipelineEventActions.ObservedPrefix.Length..], out var state))
             text = $"{stage}: {StateLabels.GetValueOrDefault(state, state.ToString())}";
         else
             text = $"{stage}: {e.Action}";
+
+        if (e.Action is PipelineEventActions.ManualRetried or PipelineEventActions.ManualSkipped or PipelineEventActions.Cancelled
+            && e.ReasonCode is PipelineEventActions.ManualRetriedCode or PipelineEventActions.ManualSkippedCode or PipelineEventActions.CancelledCode)
+        {
+            reason = null;
+        }
+
         return reason is null ? text : $"{text} — {reason}";
     }
 

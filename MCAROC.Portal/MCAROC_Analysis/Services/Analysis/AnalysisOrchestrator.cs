@@ -215,20 +215,26 @@ public class AnalysisOrchestrator(
 
         foreach (var requestId in stuckRequestIds)
         {
-            await db.AnalysisRuns
-                .Where(a => a.RequestId == requestId && a.Status == AnalysisRunStatus.Running)
-                .ExecuteUpdateAsync(s => s
-                    .SetProperty(a => a.Status, AnalysisRunStatus.Failed)
-                    .SetProperty(a => a.FailureReason, "Application restarted mid-analysis.")
-                    .SetProperty(a => a.CompletedDate, DateTime.UtcNow), ct);
-
-            await db.Requests.Where(r => r.RequestId == requestId)
-                .ExecuteUpdateAsync(s => s.SetProperty(r => r.RequestStatus, RequestStatus.DataExtracted), ct);
-
-            queue.Enqueue(requestId);
+            await RetryAsync(requestId, "Application restarted mid-analysis.", ct);
         }
 
         return stuckRequestIds.Count;
+    }
+
+    /// <summary>Resets any running analysis run to Failed and re-queues the request for analysis.</summary>
+    public async Task RetryAsync(long requestId, string? reason = null, CancellationToken ct = default)
+    {
+        await db.AnalysisRuns
+            .Where(a => a.RequestId == requestId && a.Status == AnalysisRunStatus.Running)
+            .ExecuteUpdateAsync(s => s
+                .SetProperty(a => a.Status, AnalysisRunStatus.Failed)
+                .SetProperty(a => a.FailureReason, reason ?? "Manual retry triggered.")
+                .SetProperty(a => a.CompletedDate, DateTime.UtcNow), ct);
+
+        await db.Requests.Where(r => r.RequestId == requestId)
+            .ExecuteUpdateAsync(s => s.SetProperty(r => r.RequestStatus, RequestStatus.DataExtracted), ct);
+
+        queue.Enqueue(requestId);
     }
 
     private async Task<AnalysisContext> BuildContextAsync(McaRequest request, long ingestionRunId, CancellationToken ct)

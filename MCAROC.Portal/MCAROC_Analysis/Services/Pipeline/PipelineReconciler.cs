@@ -117,6 +117,20 @@ public sealed class PipelineReconciler(AppDbContext db, PipelineSnapshotReader r
         foreach (var (stage, verdict0) in decision.Stages)
         {
             var verdict = verdict0;
+            existing.TryGetValue(stage, out var existingRow);
+
+            var isEnrichmentStage = !PipelineOutcomeCalculator.CoreStages.Contains(stage);
+            if (isEnrichmentStage && existingRow?.State == PipelineStageStateKind.Skipped && existingRow.ReasonCode == PipelineEventActions.ManualSkippedCode
+                && verdict0.State is not (PipelineStageStateKind.Succeeded or PipelineStageStateKind.SucceededWithWarnings or PipelineStageStateKind.Running))
+            {
+                verdict = new StageVerdict(PipelineStageStateKind.Skipped, PipelineStageSkipKind.Warning, PipelineEventActions.ManualSkippedCode, existingRow.ReasonDetail, existingRow.SourceRef);
+            }
+            else if (existingRow?.State == PipelineStageStateKind.Cancelled && existingRow.ReasonCode == PipelineEventActions.CancelledCode
+                && (run.Outcome == PipelineOutcome.Cancelled || snapshot.RequestStatus == RequestStatus.Cancelled))
+            {
+                verdict = new StageVerdict(PipelineStageStateKind.Cancelled, null, PipelineEventActions.CancelledCode, existingRow.ReasonDetail, existingRow.SourceRef);
+            }
+
             // Evaluated unconditionally (not just on a state change) so a stage that stays Running tick after
             // tick — the common case for a long-running search/analysis — still gets here even when the
             // per-stage row-upsert below takes its "nothing changed" early exit. A holder id that was never
@@ -131,7 +145,7 @@ public sealed class PipelineReconciler(AppDbContext db, PipelineSnapshotReader r
             if (stage == PipelineStage.Fetch && verdict.State == PipelineStageStateKind.NeedsAttention
                 && opts is not null && PipelineFailureClassifier.IsAutoRetryable(verdict.ReasonCode))
             {
-                existing.TryGetValue(stage, out var retryRow);
+                var retryRow = existingRow;
                 // The fetch worker has no internal retry loop of its own (one claim = one AttemptCount++,
                 // terminal either way) — but it IS claimed again by a manual UI retry
                 // (AutoFetchController.RetryJob) without ever going through this coordinator, so
@@ -192,6 +206,7 @@ public sealed class PipelineReconciler(AppDbContext db, PipelineSnapshotReader r
             {
                 row = new PipelineStageState { PipelineRunId = runId, Stage = stage };
                 db.PipelineStageStates.Add(row);
+                existing[stage] = row;
             }
             else if (row.State == verdict.State && row.SkipKind == verdict.SkipKind && row.ReasonCode == reasonCode
                      && row.ReasonDetail == reasonDetail && row.SourceRef == verdict.SourceRef)
@@ -232,14 +247,27 @@ public sealed class PipelineReconciler(AppDbContext db, PipelineSnapshotReader r
         }
         await db.SaveChangesAsync(ct);
 
-        var coreReadyUtc = run.CoreReadyUtc ?? (decision.CoreReady ? now2 : null);
-        DateTime? completedUtc = decision.Outcome is PipelineOutcome.Complete or PipelineOutcome.CompleteWithWarnings or PipelineOutcome.Cancelled ? now2 : null;
+        var finalStates = decision.Stages.Keys.ToDictionary(k => k, k => existing.TryGetValue(k, out var r) ? r.State : decision.Stages[k].State);
+        var finalSkipKinds = decision.Stages.Keys.ToDictionary(k => k, k => existing.TryGetValue(k, out var r) ? r.SkipKind : decision.Stages[k].SkipKind);
+        var finalCancelled = snapshot.RequestStatus == RequestStatus.Cancelled || run.Outcome == PipelineOutcome.Cancelled;
+        var finalOutcome = PipelineOutcomeCalculator.Aggregate(finalStates, finalSkipKinds, finalCancelled);
+        var finalCoreReady = !finalCancelled && PipelineOutcomeCalculator.IsCoreReady(finalStates, finalSkipKinds);
+
+        var coreReadyUtc = run.CoreReadyUtc ?? (finalCoreReady ? now2 : null);
+        DateTime? completedUtc = finalOutcome is PipelineOutcome.Complete or PipelineOutcome.CompleteWithWarnings or PipelineOutcome.Cancelled ? now2 : null;
         await db.PipelineRuns.Where(r => r.PipelineRunId == runId && r.ReconcileLeaseToken == token)
             .ExecuteUpdateAsync(s => s
-                .SetProperty(r => r.Outcome, decision.Outcome)
+                .SetProperty(r => r.Outcome, finalOutcome)
                 .SetProperty(r => r.CoreReadyUtc, coreReadyUtc)
                 .SetProperty(r => r.CompletedUtc, completedUtc), ct);
         await tx.CommitAsync(ct);
+
+        if (finalCancelled)
+        {
+            toStart.Clear();
+            toRetry.Clear();
+            preRenderDossier = false;
+        }
 
         foreach (var stage in toStart)
             await StartAsync(stage, runId, token, run.RequestId, run.CorrelationId, opts!, ct);
@@ -256,8 +284,8 @@ public sealed class PipelineReconciler(AppDbContext db, PipelineSnapshotReader r
             await PreRenderDossierAsync(runId, token, run.RequestId, run.CorrelationId, ct);
         await ReleaseAsync(runId, token, ct);
 
-        if (decision.Outcome != run.Outcome)
-            logger.LogInformation("Pipeline run {RunId} (request {RequestId}): {Old} -> {New}", runId, run.RequestId, run.Outcome, decision.Outcome);
+        if (finalOutcome != run.Outcome)
+            logger.LogInformation("Pipeline run {RunId} (request {RequestId}): {Old} -> {New}", runId, run.RequestId, run.Outcome, finalOutcome);
         return true;
     }
 

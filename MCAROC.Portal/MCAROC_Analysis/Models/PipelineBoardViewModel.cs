@@ -21,6 +21,7 @@ public sealed class PipelineBoardRow
     public long RequestId { get; init; }
     public string RequestNumber { get; init; } = string.Empty;
     public string CompanyName { get; init; } = string.Empty;
+    public string? ClientName { get; init; }
     public PipelineRunTrigger Trigger { get; init; }
     public PipelineOutcome Outcome { get; init; }
     public DateTime CreatedUtc { get; init; }
@@ -28,6 +29,11 @@ public sealed class PipelineBoardRow
     /// <summary>When any stage last changed — the basis for "stuck for more than N minutes".</summary>
     public DateTime LastChangeUtc { get; init; }
     public IReadOnlyList<PipelineStageStatusDto> Stages { get; init; } = [];
+
+    public IReadOnlyList<PipelineStageStatusDto> AttentionStages =>
+        Stages.Where(s => s.State == "NeedsAttention").ToList();
+
+    public bool HasAttention => AttentionStages.Count > 0;
 }
 
 public sealed record PipelineStageStatusDto(

@@ -78,6 +78,9 @@ public static class AuditRouteRegistry
 
             // Pipeline
             { ("Pipeline", "SelectCin"), (AuditActionType.IdentitySelected, AuditRulePolicy.Always) },
+            { ("Pipeline", "RetryStage"), (AuditActionType.PipelineStageRetried, AuditRulePolicy.Always) },
+            { ("Pipeline", "SkipStage"), (AuditActionType.PipelineStageSkipped, AuditRulePolicy.Always) },
+            { ("Pipeline", "CancelRun"), (AuditActionType.PipelineRunCancelled, AuditRulePolicy.Always) },
         };
 
     public static (AuditActionType ActionType, AuditRulePolicy Policy) Resolve(string controller, string action)

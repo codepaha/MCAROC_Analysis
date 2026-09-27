@@ -88,6 +88,9 @@ public enum AuditActionType
 
     // Pipeline / Identity
     IdentitySelected,
+    PipelineStageRetried,
+    PipelineStageSkipped,
+    PipelineRunCancelled,
 
     // Fallback
     OtherMutation,
