@@ -324,7 +324,10 @@ public class LitigationReportAssembler(
             courtGrid,
             reportCases,
             portfolioAnalysis,
-            caseAnalysesByCaseId);
+            caseAnalysesByCaseId,
+            authoritativeSnapshot.ReusedFromSnapshotId,
+            authoritativeSnapshot.ReusedFromRequestId,
+            authoritativeSnapshot.OriginSnapshotId);
     }
 
     internal static DateTime? ParseOrderDate(string? raw)

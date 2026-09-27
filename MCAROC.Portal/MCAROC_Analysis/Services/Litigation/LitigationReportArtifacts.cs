@@ -147,8 +147,13 @@ public sealed record StandaloneLitigationReport(
     LitigationCourtSummaryGrid CourtSummaryGrid,
     IReadOnlyList<StandaloneReportCaseDto> Cases,
     LitigationPortfolioAnalysis? PortfolioAnalysis = null,
-    IReadOnlyDictionary<long, LitigationCaseAnalysis>? CaseAnalysesByCaseId = null)
+    IReadOnlyDictionary<long, LitigationCaseAnalysis>? CaseAnalysesByCaseId = null,
+    long? ReusedFromSnapshotId = null,
+    long? ReusedFromRequestId = null,
+    long? OriginSnapshotId = null)
 {
+    public bool IsReused => ReusedFromSnapshotId.HasValue;
+
     public LitigationCaseAnalysis? AnalysisFor(long litigationCaseId) =>
         CaseAnalysesByCaseId is not null && CaseAnalysesByCaseId.TryGetValue(litigationCaseId, out var analysis)
             ? analysis
@@ -327,14 +332,33 @@ internal sealed class LitigationReportPdfDocument(StandaloneLitigationReport rep
         column.Item().PaddingTop(6).Text("Litigation Due Diligence Report").Bold().FontSize(22).FontColor(Ink);
         column.Item().PaddingTop(2).Text(report.CompanyName).SemiBold().FontSize(13).FontColor(Navy);
         column.Item().Text($"Assignment {report.AssignmentNumber}  |  Generated {Ist.Format(report.GeneratedAtUtc, "dd MMM yyyy, HH:mm")}").FontSize(8).FontColor(Colors.Grey.Darken1);
-        column.Item().PaddingTop(10).Element(container => InformationTable(container, new[]
+
+        if (report.IsReused)
+        {
+            column.Item().PaddingTop(6).Background("#EFF6FF").Border(1f).BorderColor("#3B82F6").Padding(8).Row(row =>
+            {
+                row.AutoItem().PaddingRight(8).Text("ℹ").FontSize(14).FontColor("#1D4ED8");
+                row.RelativeItem().Column(c =>
+                {
+                    c.Item().Text($"Report retrieved {Ist.Date(report.AuthoritativeSnapshotRetrievedUtc)} — reused from another request").Bold().FontSize(8.5f).FontColor("#1E40AF");
+                    c.Item().PaddingTop(2).Text($"Data originated from Request #{report.ReusedFromRequestId} (Snapshot #{report.ReusedFromSnapshotId}) and was retrieved within the 7-day freshness window. Reused with zero additional vendor spend.").FontSize(7.8f).FontColor("#1E3A8A");
+                });
+            });
+        }
+
+        var infoRows = new List<(string Label, string Value)>
         {
             ("SOURCE", "BPR Litigation Data Lake"),
             ("AUTHORITATIVE SNAPSHOT", $"{Ist.Format(report.AuthoritativeSnapshotRetrievedUtc, "dd MMM yyyy, HH:mm")} (ID: {report.AuthoritativeSnapshotId}){(report.IsPriorRunDataShown ? " [Prior Run Snapshot]" : string.Empty)}"),
-            ("KEYWORDS SEARCHED", report.KeywordsSearched.Count == 0 ? "Not supplied by source" : string.Join(" | ", report.KeywordsSearched)),
-            ("REPORT SCOPE", "Standalone litigation report; separate from the MCA ROC dossier"),
-            ("SNAPSHOT ANCHORING", "Membership-only snapshot anchoring; case metadata reflects current persisted records.")
-        }));
+        };
+        if (report.IsReused)
+        {
+            infoRows.Add(("REPORT REUSE", $"Reused from Request #{report.ReusedFromRequestId} (Snapshot #{report.ReusedFromSnapshotId}) retrieved {Ist.Date(report.AuthoritativeSnapshotRetrievedUtc)} (within 7-day freshness window)"));
+        }
+        infoRows.Add(("KEYWORDS SEARCHED", report.KeywordsSearched.Count == 0 ? "Not supplied by source" : string.Join(" | ", report.KeywordsSearched)));
+        infoRows.Add(("REPORT SCOPE", "Standalone litigation report; separate from the MCA ROC dossier"));
+        infoRows.Add(("SNAPSHOT ANCHORING", "Membership-only snapshot anchoring; case metadata reflects current persisted records."));
+        column.Item().PaddingTop(10).Element(container => InformationTable(container, infoRows));
         column.Item().PaddingTop(12).Row(row =>
         {
             Metric(row.RelativeItem(), "CASES", grid.TotalCases.ToString(CultureInfo.InvariantCulture), Navy); row.ConstantItem(7);

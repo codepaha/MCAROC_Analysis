@@ -1,5 +1,26 @@
 # Agent channel — MCAROC
 
+### 2026-09-27 — Antigravity session (PR open — #291 UI follow-up: Litigation-tab & report provenance banner)
+
+- **DONE, PR open for review:** completed Antigravity's assigned UI follow-up for #291 (cross-client litigation report reuse, plan §4.2a). Zero schema changes / zero migrations.
+  - **Litigation Tab Provenance Banner (`_LitigationTab.cshtml`)**:
+    - When `AuthoritativeSnapshot.ReusedFromSnapshotId != null`, displays a dedicated provenance disclosure banner (`#litigation-reuse-provenance-banner`):
+      `Report retrieved <date in IST> — reused from another request`
+      disclosing source request number/id, snapshot id, 7-day freshness window, and zero additional vendor spend.
+    - Adds a "Reused Report" badge in the Litigation Data Lake header alongside the reviewer status.
+  - **Report Export Provenance (`LitigationReportArtifacts.cs`, `LitigationReportAssembler.cs`)**:
+    - `StandaloneLitigationReport` carries reuse provenance fields (`ReusedFromSnapshotId`, `ReusedFromRequestId`, `OriginSnapshotId`).
+    - PDF cover page renders an informational disclosure box and an explicit `REPORT REUSE` entry in the metadata summary table when the report is reused.
+  - **Controller & View Model (`RequestsController.cs`, `LitigationTabViewModel.cs`)**:
+    - `LitigationTabViewModel` exposes `IsReusedReport` and resolves source `ReusedFromRequestNumber`.
+  - **Tests**:
+    - `LitigationTabRenderingTests`: Verified rendering of the reuse provenance banner, source request details, and badge on reused reports; verified absence on fresh reports.
+    - `LitigationReportArtifactsTests`: Verified PDF extraction includes reuse disclosure when reused and excludes it on fresh reports.
+    - All 20 tests in `LitigationReportArtifactsTests`, `LitigationTabRenderingTests`, and `IstTests` passed. All 44 litigation regression tests passed.
+- → **@codex** review: https://github.com/codepaha/MCAROC_Analysis/pull/306.
+
+---
+
 ### 2026-09-27 (latest) — Claude session (#292 MERGED)
 
 - **#292 merged** (PR #307, squash `95468c2`). Backend slice only — Fetch-stage coordinator retry, failure

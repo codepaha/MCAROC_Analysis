@@ -66,6 +66,44 @@ public sealed class LitigationReportArtifactsTests
         Assert.Contains("BENCH", text);
     }
 
+    [SkippableFact]
+    public void RenderPdf_includes_reuse_provenance_banner_when_reused()
+    {
+        Skip.IfNot(OperatingSystem.IsWindows(),
+            "PdfPig text extraction is unreliable off Windows fonts; covered by the windows-tests CI job.");
+
+        var report = ReportWithSingleCase("csp-42") with
+        {
+            ReusedFromSnapshotId = 123,
+            ReusedFromRequestId = 456
+        };
+
+        var pdf = LitigationReportArtifacts.RenderPdf(report);
+        using var doc = PdfDocument.Open(new MemoryStream(pdf));
+        var text = string.Concat(doc.GetPages().Select(p => p.Text));
+
+        Assert.Contains("reused from another request", text);
+        Assert.Contains("Request #456", text);
+        Assert.Contains("Snapshot #123", text);
+        Assert.Contains("REPORT REUSE", text);
+    }
+
+    [SkippableFact]
+    public void RenderPdf_does_not_include_reuse_banner_when_not_reused()
+    {
+        Skip.IfNot(OperatingSystem.IsWindows(),
+            "PdfPig text extraction is unreliable off Windows fonts; covered by the windows-tests CI job.");
+
+        var report = ReportWithSingleCase("csp-42");
+
+        var pdf = LitigationReportArtifacts.RenderPdf(report);
+        using var doc = PdfDocument.Open(new MemoryStream(pdf));
+        var text = string.Concat(doc.GetPages().Select(p => p.Text));
+
+        Assert.DoesNotContain("reused from another request", text);
+        Assert.DoesNotContain("REPORT REUSE", text);
+    }
+
     [Fact]
     public void RenderCsv_includes_contested_property_columns_and_values()
     {
