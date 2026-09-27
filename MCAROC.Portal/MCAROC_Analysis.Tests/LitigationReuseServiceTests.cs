@@ -16,6 +16,7 @@ namespace MCAROC_Analysis.Tests;
 public sealed class LitigationReuseServiceTests : IAsyncLifetime
 {
     private string _contentRoot = "";
+    private readonly LitigationOrderDocumentQueue DocumentQueue = new();
 
     private static AppDbContext CreateContext() =>
         new(new DbContextOptionsBuilder<AppDbContext>().UseSqlServer(TestDatabase.ConnectionString).Options);
@@ -35,7 +36,7 @@ public sealed class LitigationReuseServiceTests : IAsyncLifetime
     }
 
     private LitigationReuseService Service(AppDbContext db) =>
-        new(db, new FakeEnv(_contentRoot), TimeProvider.System, NullLogger<LitigationReuseService>.Instance);
+        new(db, new FakeEnv(_contentRoot), TimeProvider.System, DocumentQueue, NullLogger<LitigationReuseService>.Instance);
 
     [Fact]
     public async Task Reuses_a_recent_source_and_copies_cases_orders_the_retained_file_and_chunks()
@@ -78,6 +79,70 @@ public sealed class LitigationReuseServiceTests : IAsyncLifetime
         Assert.Equal(request.RequestId, newChunk.RequestId);
         Assert.Equal(newCase.LitigationCaseId, newChunk.LitigationCaseId);
         Assert.Equal("reused chunk text", newChunk.ChunkText);
+    }
+
+    /// <summary>Review finding on PR #303: a copied nonterminal order document (never downloaded, or failed
+    /// and still retryable) must be enqueued to the real in-process worker queue the moment the copy commits
+    /// — not left to sit until the process happens to restart and its recovery sweep finds it. Real SQL
+    /// Server, a real (non-mock) <see cref="LitigationOrderDocumentQueue"/>: this proves the id is actually
+    /// on the queue, not just that the code compiles a call to Enqueue.</summary>
+    [Fact]
+    public async Task A_reused_pending_order_document_is_enqueued_for_download_without_a_restart()
+    {
+        await using var db = CreateContext();
+        var sourceRequest = await SeedRequestAsync(db, "pendingdoc");
+        var job = new LitigationSearchJob { RequestId = sourceRequest.RequestId, KeywordsJson = "[]", Status = LitigationSearchJobStatus.Completed, CreatedUtc = DateTime.UtcNow };
+        db.LitigationSearchJobs.Add(job);
+        await db.SaveChangesAsync();
+        var snapshot = new LitigationReportSnapshot
+        {
+            LitigationSearchJobId = job.LitigationSearchJobId, RequestId = sourceRequest.RequestId, ReportHash = "pending-doc-hash",
+            Status = LitigationReportSnapshotStatus.Completed, RetrievedUtc = DateTime.UtcNow.AddHours(-1), CreatedUtc = DateTime.UtcNow
+        };
+        db.LitigationReportSnapshots.Add(snapshot);
+        await db.SaveChangesAsync();
+        var c = new LitigationCase { RequestId = sourceRequest.RequestId, Cnr = $"CNR{Guid.NewGuid():N}"[..16], CaseNumber = "1/2024", Court = "High Court", FirstSeenUtc = DateTime.UtcNow, LastSeenUtc = DateTime.UtcNow };
+        db.LitigationCases.Add(c);
+        await db.SaveChangesAsync();
+        db.LitigationCaseSourceReports.Add(new LitigationCaseSourceReport { LitigationCaseId = c.LitigationCaseId, LitigationReportSnapshotId = snapshot.LitigationReportSnapshotId, FirstSeenUtc = DateTime.UtcNow });
+        var order = new LitigationCaseOrder { LitigationCaseId = c.LitigationCaseId, OrderDate = "2024-01-01", OrderType = "Order", CreatedUtc = DateTime.UtcNow };
+        db.LitigationCaseOrders.Add(order);
+        await db.SaveChangesAsync();
+        // Never downloaded in the source — exactly the "genuine gap" the copy is meant to preserve, but the
+        // gap must still be actively worked on under the reusing request's own id.
+        db.LitigationOrderDocuments.Add(new LitigationOrderDocument
+        {
+            LitigationCaseOrderId = order.LitigationCaseOrderId, Status = LitigationOrderDocumentStatus.Pending,
+            RetainedUntilUtc = DateTime.UtcNow.AddDays(5), CreatedUtc = DateTime.UtcNow
+        });
+        await db.SaveChangesAsync();
+
+        var scopeKey = $"search|SEED-{Guid.NewGuid():N}|hash";
+        db.PaidCallAdmissions.Add(new PaidCallAdmission
+        {
+            Kind = PaidCallKind.LitigationSearch, ScopeKey = scopeKey, DayKey = DateOnly.FromDateTime(DateTime.UtcNow),
+            Trigger = PaidCallTrigger.Manual, RequestId = sourceRequest.RequestId, State = PaidCallAdmissionState.Committed,
+            ReferenceId = job.LitigationSearchJobId, ReservedUtc = DateTime.UtcNow, ResolvedUtc = DateTime.UtcNow
+        });
+        await db.SaveChangesAsync();
+
+        var requester = await SeedRequestAsync(db, "reuser7");
+        var result = await Service(db).TryReuseAsync(requester.RequestId, scopeKey, CancellationToken.None);
+        Assert.True(result.Reused);
+
+        await using var verify = CreateContext();
+        var newDoc = await verify.LitigationOrderDocuments.AsNoTracking()
+            .SingleAsync(d => d.Order!.Case!.RequestId == requester.RequestId);
+        Assert.Equal(LitigationOrderDocumentStatus.Pending, newDoc.Status);
+
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        long enqueuedId = 0;
+        await foreach (var id in DocumentQueue.ReadAllAsync(cts.Token))
+        {
+            enqueuedId = id;
+            break;
+        }
+        Assert.Equal(newDoc.LitigationOrderDocumentId, enqueuedId); // the COPY's id, never the source's
     }
 
     [Fact]

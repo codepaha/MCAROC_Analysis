@@ -24,7 +24,8 @@ public sealed record LitigationReuseResult(bool Reused, long? JobId, long? Snaps
 /// chunks incl. their embeddings, and — if present — the AI analysis) rather than teaching every reader to
 /// resolve "borrowed" rows. Nothing here spends a credit or calls Vertex/BPR; it is pure database and file
 /// I/O, which is exactly why it costs nothing to the reusing request.</summary>
-public sealed class LitigationReuseService(AppDbContext db, IWebHostEnvironment env, TimeProvider time, ILogger<LitigationReuseService> logger)
+public sealed class LitigationReuseService(
+    AppDbContext db, IWebHostEnvironment env, TimeProvider time, LitigationOrderDocumentQueue documentQueue, ILogger<LitigationReuseService> logger)
 {
     private const int ReuseWindowDays = 7;
 
@@ -107,10 +108,13 @@ public sealed class LitigationReuseService(AppDbContext db, IWebHostEnvironment 
 
         var caseIdMap = await CopyCasesAsync(source.RequestId, sourceSnapshotId, requestId, snapshot.LitigationReportSnapshotId, ct);
         var orderIdMap = await CopyOrdersAsync(caseIdMap, ct);
-        await CopyOrderDocumentsAndChunksAsync(requestId, orderIdMap, caseIdMap, ct);
+        var toEnqueue = await CopyOrderDocumentsAndChunksAsync(requestId, orderIdMap, caseIdMap, ct);
         await CopyAnalysisAsync(sourceSnapshotId, requestId, snapshot.LitigationReportSnapshotId, originId, caseIdMap, ct);
 
         await tx.CommitAsync(ct);
+        // Only now that the copies are actually committed — the worker reads through a fresh connection and
+        // would silently find nothing (READ COMMITTED) for an id enqueued before commit.
+        foreach (var id in toEnqueue) documentQueue.Enqueue(id);
         logger.LogInformation(
             "Litigation report reused: request {RequestId} copied snapshot {SourceSnapshotId} from request {SourceRequestId} (retrieved {RetrievedUtc}) into new snapshot {NewSnapshotId}.",
             requestId, sourceSnapshotId, source.RequestId, source.RetrievedUtc, snapshot.LitigationReportSnapshotId);
@@ -174,12 +178,15 @@ public sealed class LitigationReuseService(AppDbContext db, IWebHostEnvironment 
 
     /// <summary>Documents already <see cref="LitigationOrderDocumentStatus.Downloaded"/> get their retained
     /// PDF file-copied too — everything else (<c>Failed</c>/<c>Expired</c>/<c>Pending</c>) copies its status
-    /// and reasoning verbatim but never re-attempts a download: a <c>Pending</c> row in the source is a
-    /// genuine gap that stays a gap in the copy, resolved the same way it would be for an original request
-    /// (the normal download worker still picks it up under the reusing request's own id).</summary>
-    private async Task CopyOrderDocumentsAndChunksAsync(long requestId, Dictionary<long, long> orderIdMap, Dictionary<long, long> caseIdMap, CancellationToken ct)
+    /// and reasoning verbatim. A copied row that is not terminal (<c>Pending</c>, <c>Failed</c>, or an
+    /// orphaned <c>InProgress</c> — the copy never carries the source's lease fields, so it always reads as
+    /// orphaned) needs its id handed back to the caller to enqueue once the copy actually commits: the
+    /// in-process <see cref="LitigationOrderDocumentQueue"/> has no idea a new row exists otherwise, and would
+    /// otherwise sit untouched until the next process restart's recovery sweep.</summary>
+    private async Task<List<long>> CopyOrderDocumentsAndChunksAsync(long requestId, Dictionary<long, long> orderIdMap, Dictionary<long, long> caseIdMap, CancellationToken ct)
     {
-        if (orderIdMap.Count == 0) return;
+        var toEnqueue = new List<long>();
+        if (orderIdMap.Count == 0) return toEnqueue;
         var sourceDocs = await db.LitigationOrderDocuments.AsNoTracking()
             .Where(d => orderIdMap.Keys.Contains(d.LitigationCaseOrderId)).ToListAsync(ct);
         var docIdMap = new Dictionary<long, long>();
@@ -196,6 +203,7 @@ public sealed class LitigationReuseService(AppDbContext db, IWebHostEnvironment 
             db.LitigationOrderDocuments.Add(copy);
             await db.SaveChangesAsync(ct);
             docIdMap[d.LitigationOrderDocumentId] = copy.LitigationOrderDocumentId;
+            if (!copy.IsTerminal) toEnqueue.Add(copy.LitigationOrderDocumentId);
 
             if (d.Status == LitigationOrderDocumentStatus.Downloaded && !string.IsNullOrWhiteSpace(d.StoragePath))
             {
@@ -225,6 +233,7 @@ public sealed class LitigationReuseService(AppDbContext db, IWebHostEnvironment 
                 CreatedDate = c.CreatedDate
             });
         await db.SaveChangesAsync(ct);
+        return toEnqueue;
     }
 
     /// <summary>Deferred, §10: a content-addressed shared store would let two requests reusing the same

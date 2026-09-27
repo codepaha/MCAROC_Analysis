@@ -84,7 +84,7 @@ public sealed class LitigationStartServiceTests : IAsyncLifetime
         }
 
         await using var db = CreateContext();
-        var reuse = new LitigationReuseService(db, new StubEnv(), TimeProvider.System, NullLogger<LitigationReuseService>.Instance);
+        var reuse = new LitigationReuseService(db, new StubEnv(), TimeProvider.System, new LitigationOrderDocumentQueue(), NullLogger<LitigationReuseService>.Instance);
         var result = await Starter(db, reuse: reuse).StartSearchAsync(request, Keywords, "company", "cust", PaidCallTrigger.Manual, CancellationToken.None);
 
         Assert.True(result.Started);
