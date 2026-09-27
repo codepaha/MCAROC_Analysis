@@ -29,8 +29,8 @@ public static class PipelineDecider
     /// <summary>Every stage that needs the company's identity waits on <c>Resolve</c> with this code while it is
     /// unresolved — so nothing that fetches, spends or searches can run for an uncertain company (plan §5.7, §5A.3).</summary>
     public const string AwaitingResolve = "AWAITING_RESOLVE";
-    /// <summary>The litigation search is ready, but the identity isn't trusted for an unattended start (§5A.3 trust
-    /// ladder); a reviewer can still start it by hand.</summary>
+    /// <summary>The litigation search or analysis is ready, but the identity isn't trusted for an unattended start
+    /// (§5A.3 trust ladder); a reviewer can still start it by hand.</summary>
     public const string AwaitingTrustedIdentity = "AWAITING_TRUSTED_IDENTITY";
 
     public const string IdentityAmbiguous = ResolutionReasonCodes.Ambiguous;
@@ -61,7 +61,9 @@ public static class PipelineDecider
         v[PipelineStage.Litigation] = identityPending && s.LitigationSearch is null
             ? Waiting(AwaitingResolve)
             : Litigation(s, policy, v[PipelineStage.Ingest]);
-        v[PipelineStage.LitigationAnalysis] = LitigationAnalysis(s, policy, v[PipelineStage.Litigation]);
+        v[PipelineStage.LitigationAnalysis] = identityPending && s.LitigationAnalysis is null
+            ? Waiting(AwaitingResolve)
+            : LitigationAnalysis(s, policy, v[PipelineStage.Litigation]);
 
         var states = v.ToDictionary(kv => kv.Key, kv => kv.Value.State);
         var skipKinds = v.ToDictionary(kv => kv.Key, kv => kv.Value.SkipKind);
@@ -84,7 +86,18 @@ public static class PipelineDecider
                 latest.ResolutionId);
 
         if (!string.IsNullOrWhiteSpace(s.Cin) || !string.IsNullOrWhiteSpace(s.Llpin))
+        {
+            // A later selection of a different company was refused (REQUEST_ALREADY_IDENTIFIED, or a collision):
+            // the existing identifier is now disputed, so it must not carry the pipeline on until a person
+            // confirms which company the request is for.
+            if (latest is { Status: ResolutionStatus.Resolved, AppliedToRequest: false, ChosenIdentifier: { } rejected }
+                && !string.Equals(rejected, s.Cin, StringComparison.OrdinalIgnoreCase)
+                && !string.Equals(rejected, s.Llpin, StringComparison.OrdinalIgnoreCase))
+                return Attention(latest.ReasonCode,
+                    $"{rejected} was selected, but the request already names {s.Cin ?? s.Llpin}; nothing was changed. " +
+                    "Confirm which company this request is for.", latest.ResolutionId);
             return s.AppliedResolution is { } applied ? Ok(applied.ResolutionId, applied.ReasonCode) : Ok();
+        }
 
         if (latest is not null)
             return latest.Status switch
@@ -289,6 +302,11 @@ public static class PipelineDecider
         // before analysis reads the evidence — an in-flight download/chunk would otherwise be silently
         // missing from the prompt the AI actually sees.
         if (s.LitigationSearch?.OrdersFullyProcessed != true) return Waiting("AWAITING_ORDER_PROCESSING");
+        // The analysis is a real (Vertex AI) spend: same trust ladder as the automatic search (§5A.3).
+        var trust = IdentityTrust.Evaluate(s.AppliedResolution, s.SpendThreshold);
+        if (!trust.Trusted)
+            return new StageVerdict(PipelineStageStateKind.NotStarted, ReasonCode: AwaitingTrustedIdentity,
+                ReasonDetail: $"{trust.Detail} A reviewer can start the analysis by hand.");
         return new StageVerdict(PipelineStageStateKind.NotStarted, ReasonCode: ReadyToStart,
             ReasonDetail: "Ready to start. The coordinator starts it itself only in Enforce mode with Enforce:LitigationAnalysis on.");
     }

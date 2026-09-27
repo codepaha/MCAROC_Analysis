@@ -123,6 +123,64 @@ public sealed class PipelineResolveStageTests
         Assert.Equal("QUEUED", d.Stages[PipelineStage.Fetch].ReasonCode);
     }
 
+    [Theory]
+    [InlineData(ResolutionReasonCodes.RequestAlreadyIdentified, null)]
+    [InlineData(ResolutionReasonCodes.DuplicateRequest, 44L)]
+    public void A_refused_selection_of_another_company_disputes_the_existing_identifier_and_holds_everything_back(string code, long? existing)
+    {
+        const string other = "U12345KA2022PTC654321";
+        var refused = Facts(ResolutionStatus.Resolved, code, ResolutionMethod.HumanSelected, applied: false, chosen: other, existing: existing, id: 73);
+        var s = new PipelineSnapshot
+        {
+            RequestId = 1, Cin = Cin, RequestStatus = RequestStatus.Created,
+            AutoFetch = new AutoFetchFacts(5, AutoFetchJobStatus.Queued, null, false, null, null),
+            LatestResolution = refused, LitigationConfigured = true
+        };
+        var d = PipelineDecider.Decide(s, SearchOn);
+
+        var resolve = d.Stages[PipelineStage.Resolve];
+        Assert.Equal(PipelineStageStateKind.NeedsAttention, resolve.State);
+        Assert.Equal(code, resolve.ReasonCode);
+        Assert.Equal(73, resolve.SourceRef);
+        Assert.Contains(other, resolve.ReasonDetail);
+        Assert.Contains(Cin, resolve.ReasonDetail);
+        foreach (var stage in Gated)
+            Assert.Equal(PipelineDecider.AwaitingResolve, d.Stages[stage].ReasonCode);
+        Assert.Equal(PipelineOutcome.NeedsAttention, d.Outcome);
+    }
+
+    [Fact]
+    public void Confirming_the_existing_company_after_a_refused_selection_unblocks_the_stage()
+    {
+        var confirmed = Facts(ResolutionStatus.Resolved, ResolutionReasonCodes.HumanSelected, ResolutionMethod.HumanSelected, true, Cin, id: 74);
+        var s = Ingested(confirmed);
+        var d = PipelineDecider.Decide(s, SearchOn);
+        Assert.Equal(PipelineStageStateKind.Succeeded, d.Stages[PipelineStage.Resolve].State);
+
+        // A refused re-selection of the same company the request already names is not a dispute.
+        var same = Facts(ResolutionStatus.Resolved, ResolutionReasonCodes.DuplicateRequest, ResolutionMethod.HumanSelected, false, Cin, existing: 44);
+        Assert.Equal(PipelineStageStateKind.Succeeded,
+            PipelineDecider.Decide(s with { LatestResolution = same }, SearchOn).Stages[PipelineStage.Resolve].State);
+    }
+
+    [Theory]
+    [InlineData(ResolutionMethod.HumanSelected, null, true)]
+    [InlineData(ResolutionMethod.AutoSelected, 0.995, true)]
+    [InlineData(ResolutionMethod.AutoSelected, 0.97, false)]
+    public void The_litigation_analysis_starts_on_its_own_only_for_a_trusted_identity(ResolutionMethod method, double? score, bool autoStarts)
+    {
+        var applied = Facts(ResolutionStatus.Resolved, "RESOLVED", method, true, Cin, score: score);
+        var s = Ingested(applied) with
+        {
+            LitigationSearch = new LitigationSearchFacts(40, LitigationSearchJobStatus.Completed, null, 41, LitigationReportSnapshotStatus.Completed)
+        };
+        var d = PipelineDecider.Decide(s, new PipelinePolicy { LitigationSearch = true, LitigationAnalysis = true });
+
+        var analysis = d.Stages[PipelineStage.LitigationAnalysis];
+        Assert.Equal(PipelineStageStateKind.NotStarted, analysis.State);
+        Assert.Equal(autoStarts ? PipelineDecider.ReadyToStart : PipelineDecider.AwaitingTrustedIdentity, analysis.ReasonCode);
+    }
+
     [Fact]
     public void A_request_identified_at_intake_resolves_as_before()
     {
@@ -179,7 +237,8 @@ public sealed class PipelineResolveStageTests
         {
             var status = Enum.GetValues<ResolutionStatus>()[rng.Next(5)];
             var latest = rng.Next(4) == 0 ? null : Facts(status, rng.Next(3) == 0 ? ResolutionReasonCodes.FalseAccept : "X",
-                status == ResolutionStatus.Resolved ? ResolutionMethod.AutoSelected : null, rng.Next(2) == 0, Cin, score: rng.NextDouble());
+                status == ResolutionStatus.Resolved ? ResolutionMethod.AutoSelected : null, rng.Next(2) == 0,
+                rng.Next(3) == 0 ? "U12345KA2022PTC654321" : Cin, score: rng.NextDouble());
             var s = new PipelineSnapshot
             {
                 RequestId = 1,
@@ -189,15 +248,21 @@ public sealed class PipelineResolveStageTests
                     null, false, null, null),
                 LatestResolution = latest,
                 AppliedResolution = latest is { AppliedToRequest: true } ? latest : null,
-                LitigationConfigured = true
+                LitigationConfigured = true,
+                LatestCompletedIngestionRunId = rng.Next(3) == 0 ? 10 : null,
+                LitigationSearch = rng.Next(3) == 0
+                    ? new LitigationSearchFacts(40, LitigationSearchJobStatus.Completed, null, 41, LitigationReportSnapshotStatus.Completed)
+                    : null
             };
             var d = PipelineDecider.Decide(s, new PipelinePolicy { LitigationSearch = true, LitigationAnalysis = true });
 
             var resolve = d.Stages[PipelineStage.Resolve];
             if (resolve.IsDone || resolve.State == PipelineStageStateKind.Skipped) continue;
             Assert.DoesNotContain(d.Stages.Values, v => v.ReasonCode == PipelineDecider.ReadyToStart);
-            foreach (var stage in new[] { PipelineStage.Unlock, PipelineStage.Refresh, PipelineStage.Fetch, PipelineStage.Ingest })
+            foreach (var stage in new[] { PipelineStage.Unlock, PipelineStage.Refresh, PipelineStage.Fetch })
                 Assert.False(d.Stages[stage].IsDone, $"trial {i}: {stage} done while Resolve is {resolve.State}");
+            if (s.LatestCompletedIngestionRunId is null)
+                Assert.False(d.Stages[PipelineStage.Ingest].IsDone, $"trial {i}: Ingest done while Resolve is {resolve.State}");
         }
     }
 }

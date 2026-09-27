@@ -731,14 +731,17 @@ former names are not in the master (only `CompanyNameHistories` for already-inge
     `NeedsConfirmation` ⇒ `IDENTITY_NEEDS_CONFIRMATION`, and a selection that couldn't be applied keeps its own code
     (`DUPLICATE_REQUEST`, `REQUEST_ALREADY_IDENTIFIED`). The stage's `SourceRef` is that resolution row, whose
     candidates the queue shows. A request identified at intake (no resolution row) resolves as before.
+  - **Disputed identifier.** A request that already has a CIN/LLPIN reopens Resolve when its latest resolution
+    chose a *different* company that couldn't be applied (`REQUEST_ALREADY_IDENTIFIED`, `DUPLICATE_REQUEST`). It
+    stays reopened until a person confirms a company.
   - **Gate.** While Resolve is unresolved, `Unlock`, `Refresh`, `Fetch`, `Ingest` (unless already ingested) and a
-    not-yet-started `Litigation` are `Waiting(AWAITING_RESOLVE)`. Nothing is ever `WOULD_START` then, which a
+    not-yet-started `Litigation` or `LitigationAnalysis` are `Waiting(AWAITING_RESOLVE)`. Nothing is ever `WOULD_START` then, which a
     generated test checks.
   - **Trust ladder.** `IdentityTrust`:
     - Trusted: `UserProvidedCin`, `HumanSelected`, no resolution row (the CIN was typed or picked at intake), or
       `AutoSelected` with a score at or above `Resolve:SpendThreshold` (`T_spend`, default 0.99).
-    - Anything else doesn't start the litigation search on its own; the stage stays
-      `NotStarted(AWAITING_TRUSTED_IDENTITY)` and a reviewer can start it.
+    - Anything else doesn't start the litigation search or the litigation AI analysis (#290's auto-start, a real
+      spend) on its own; the stage stays `NotStarted(AWAITING_TRUSTED_IDENTITY)` and a reviewer can start it.
     - Anything else doesn't auto-unlock either (`CompanyUnlockService` returns `NoApproval`), so it waits for an
       approval. Free steps are never gated.
   - **Safety net.** Before the unlock/refresh gate, auto-fetch calls `getCompanyPreview` for any request whose
