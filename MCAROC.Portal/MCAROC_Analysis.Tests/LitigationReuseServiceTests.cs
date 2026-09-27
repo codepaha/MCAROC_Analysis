@@ -148,6 +148,95 @@ public sealed class LitigationReuseServiceTests : IAsyncLifetime
         Assert.Equal("source-portfolio-hash", portfolio.EvidenceHash);
     }
 
+    /// <summary>Review finding on PR #303: CopyAnalysisAsync must not just take the source request's *latest*
+    /// completed analysis — a request whose report was re-fetched (a new snapshot under the same job; a
+    /// request has at most one job, reused in place) since an earlier analysis has an analysis that belongs
+    /// to a DIFFERENT, older snapshot than the one actually being reused. Naively taking "the request's
+    /// latest analysis, regardless of which snapshot triggered it" would copy that older, unrelated run's
+    /// evidence — and, sharpest of all, its portfolio synthesis, which carries no case-id link to check —
+    /// onto a request whose own cases don't match it at all.</summary>
+    [Fact]
+    public async Task Reusing_a_snapshot_with_no_analysis_of_its_own_never_borrows_an_older_unrelated_one()
+    {
+        await using var db = CreateContext();
+        var sourceRequest = await SeedRequestAsync(db, "multisnap");
+        var job = new LitigationSearchJob { RequestId = sourceRequest.RequestId, KeywordsJson = "[]", Status = LitigationSearchJobStatus.Completed, CreatedUtc = DateTime.UtcNow };
+        db.LitigationSearchJobs.Add(job);
+        await db.SaveChangesAsync();
+
+        // An old, unrelated snapshot from a much earlier fetch — analysed at the time, but outside today's
+        // 7-day reuse window and not what this reuse call is about at all.
+        var staleSnapshot = new LitigationReportSnapshot
+        {
+            LitigationSearchJobId = job.LitigationSearchJobId, RequestId = sourceRequest.RequestId, ReportHash = "stale-hash",
+            Status = LitigationReportSnapshotStatus.Completed, RetrievedUtc = DateTime.UtcNow.AddDays(-30), CreatedUtc = DateTime.UtcNow.AddDays(-30)
+        };
+        db.LitigationReportSnapshots.Add(staleSnapshot);
+        await db.SaveChangesAsync();
+        var staleCase = new LitigationCase { RequestId = sourceRequest.RequestId, Cnr = $"CNR{Guid.NewGuid():N}"[..16], CaseNumber = "OLD/2020", Court = "High Court", FirstSeenUtc = DateTime.UtcNow, LastSeenUtc = DateTime.UtcNow };
+        db.LitigationCases.Add(staleCase);
+        await db.SaveChangesAsync();
+        db.LitigationCaseSourceReports.Add(new LitigationCaseSourceReport { LitigationCaseId = staleCase.LitigationCaseId, LitigationReportSnapshotId = staleSnapshot.LitigationReportSnapshotId, FirstSeenUtc = DateTime.UtcNow });
+        var staleRun = new LitigationAiAnalysisRun
+        {
+            RequestId = sourceRequest.RequestId, RunNumber = 1, Trigger = LitigationAiAnalysisTrigger.Manual,
+            TriggerSnapshotId = staleSnapshot.LitigationReportSnapshotId, OriginSnapshotId = staleSnapshot.LitigationReportSnapshotId,
+            Status = LitigationAiAnalysisRunStatus.Completed, ModelId = "m", PromptVersion = "v1",
+            CreatedUtc = DateTime.UtcNow.AddDays(-30), StartedUtc = DateTime.UtcNow.AddDays(-30), CompletedUtc = DateTime.UtcNow.AddDays(-30)
+        };
+        db.LitigationAiAnalysisRuns.Add(staleRun);
+        await db.SaveChangesAsync();
+        db.LitigationCaseAiAnalyses.Add(new LitigationCaseAiAnalysis
+        {
+            LitigationAiAnalysisRunId = staleRun.LitigationAiAnalysisRunId, LitigationCaseId = staleCase.LitigationCaseId,
+            Status = LitigationAiAnalysisItemStatus.Completed, EvidenceJson = "{}", EvidenceHash = "stale-unrelated-hash",
+            PromptHash = "p", AnalysisJson = "{\"status\":\"Completed\"}", CompletedUtc = DateTime.UtcNow.AddDays(-30)
+        });
+        // A portfolio synthesis carries no per-case id — it is exactly what the buggy code would copy
+        // wholesale onto the reusing request with nothing to catch the mismatch.
+        db.LitigationPortfolioAiAnalyses.Add(new LitigationPortfolioAiAnalysis
+        {
+            LitigationAiAnalysisRunId = staleRun.LitigationAiAnalysisRunId, Status = LitigationAiAnalysisItemStatus.Completed,
+            EvidenceJson = "{}", EvidenceHash = "stale-unrelated-portfolio-hash", PromptHash = "p",
+            AnalysisJson = "{\"status\":\"Completed\"}", CompletedUtc = DateTime.UtcNow.AddDays(-30)
+        });
+        await db.SaveChangesAsync();
+
+        // The report actually being reused: recent, within the window, its own case, no analysis at all yet.
+        var currentSnapshot = new LitigationReportSnapshot
+        {
+            LitigationSearchJobId = job.LitigationSearchJobId, RequestId = sourceRequest.RequestId, ReportHash = "current-hash",
+            Status = LitigationReportSnapshotStatus.Completed, RetrievedUtc = DateTime.UtcNow.AddHours(-2), CreatedUtc = DateTime.UtcNow
+        };
+        db.LitigationReportSnapshots.Add(currentSnapshot);
+        await db.SaveChangesAsync();
+        var currentCase = new LitigationCase { RequestId = sourceRequest.RequestId, Cnr = $"CNR{Guid.NewGuid():N}"[..16], CaseNumber = "NEW/2026", Court = "High Court", FirstSeenUtc = DateTime.UtcNow, LastSeenUtc = DateTime.UtcNow };
+        db.LitigationCases.Add(currentCase);
+        await db.SaveChangesAsync();
+        db.LitigationCaseSourceReports.Add(new LitigationCaseSourceReport { LitigationCaseId = currentCase.LitigationCaseId, LitigationReportSnapshotId = currentSnapshot.LitigationReportSnapshotId, FirstSeenUtc = DateTime.UtcNow });
+
+        var scopeKey = $"search|SEED-{Guid.NewGuid():N}|hash";
+        db.PaidCallAdmissions.Add(new PaidCallAdmission
+        {
+            Kind = PaidCallKind.LitigationSearch, ScopeKey = scopeKey, DayKey = DateOnly.FromDateTime(DateTime.UtcNow),
+            Trigger = PaidCallTrigger.Manual, RequestId = sourceRequest.RequestId, State = PaidCallAdmissionState.Committed,
+            ReferenceId = job.LitigationSearchJobId, ReservedUtc = DateTime.UtcNow, ResolvedUtc = DateTime.UtcNow
+        });
+        await db.SaveChangesAsync();
+
+        var requester = await SeedRequestAsync(db, "reuser6");
+        var result = await Service(db).TryReuseAsync(requester.RequestId, scopeKey, CancellationToken.None);
+
+        Assert.True(result.Reused);
+        var copiedSnapshot = await db.LitigationReportSnapshots.AsNoTracking().SingleAsync(s => s.LitigationReportSnapshotId == result.SnapshotId);
+        Assert.Equal(currentSnapshot.LitigationReportSnapshotId, copiedSnapshot.ReusedFromSnapshotId); // the recent one, not the stale one
+
+        await using var verify = CreateContext();
+        Assert.False(await verify.LitigationAiAnalysisRuns.AnyAsync(r => r.RequestId == requester.RequestId),
+            "no analysis run should be copied — the reused snapshot has none of its own");
+        Assert.Equal("NEW/2026", (await verify.LitigationCases.AsNoTracking().SingleAsync(c => c.RequestId == requester.RequestId)).CaseNumber);
+    }
+
     private sealed record SourceHandles(long RequestId, long SnapshotId, long CaseId, DateTime RetrievedUtc, string? DocumentPath);
 
     private async Task<SourceHandles> SeedSourceAsync(
@@ -236,6 +325,7 @@ public sealed class LitigationReuseServiceTests : IAsyncLifetime
             var run = new LitigationAiAnalysisRun
             {
                 RequestId = request.RequestId, RunNumber = 1, Trigger = LitigationAiAnalysisTrigger.Manual,
+                TriggerSnapshotId = snapshot.LitigationReportSnapshotId, OriginSnapshotId = snapshot.LitigationReportSnapshotId,
                 Status = LitigationAiAnalysisRunStatus.Completed, ModelId = "m", PromptVersion = "v1",
                 CreatedUtc = DateTime.UtcNow, StartedUtc = DateTime.UtcNow, CompletedUtc = DateTime.UtcNow
             };

@@ -108,7 +108,7 @@ public sealed class LitigationReuseService(AppDbContext db, IWebHostEnvironment 
         var caseIdMap = await CopyCasesAsync(source.RequestId, sourceSnapshotId, requestId, snapshot.LitigationReportSnapshotId, ct);
         var orderIdMap = await CopyOrdersAsync(caseIdMap, ct);
         await CopyOrderDocumentsAndChunksAsync(requestId, orderIdMap, caseIdMap, ct);
-        await CopyAnalysisAsync(source.RequestId, requestId, snapshot.LitigationReportSnapshotId, originId, caseIdMap, ct);
+        await CopyAnalysisAsync(sourceSnapshotId, requestId, snapshot.LitigationReportSnapshotId, originId, caseIdMap, ct);
 
         await tx.CommitAsync(ct);
         logger.LogInformation(
@@ -242,14 +242,18 @@ public sealed class LitigationReuseService(AppDbContext db, IWebHostEnvironment 
         return newPath;
     }
 
-    /// <summary>Only when the source has a completed analysis — an in-flight or never-started one is left
-    /// alone; the reusing request's own subsequent analysis auto-start (plan §4.2) will find the copied
-    /// snapshot's <see cref="LitigationReportSnapshot.OriginSnapshotId"/> and join whatever is (or becomes)
-    /// the one Auto run for that origin, exactly as if it had bought the report itself.</summary>
-    private async Task CopyAnalysisAsync(long sourceRequestId, long requestId, long newSnapshotId, long originId, Dictionary<long, long> caseIdMap, CancellationToken ct)
+    /// <summary>Only when the specific snapshot being reused was itself the trigger of a completed analysis —
+    /// never just "the source request's latest analysis," which could belong to a different, later or
+    /// earlier report of the same request (same company re-searched, or re-analysed after a rerun) and would
+    /// then attach unrelated evidence to the cases actually being copied. An in-flight or never-started
+    /// analysis for this snapshot is left alone; the reusing request's own subsequent analysis auto-start
+    /// (plan §4.2) will find the copied snapshot's <see cref="LitigationReportSnapshot.OriginSnapshotId"/> and
+    /// join whatever is (or becomes) the one Auto run for that origin, exactly as if it had bought the report
+    /// itself.</summary>
+    private async Task CopyAnalysisAsync(long sourceSnapshotId, long requestId, long newSnapshotId, long originId, Dictionary<long, long> caseIdMap, CancellationToken ct)
     {
         var sourceRun = await db.LitigationAiAnalysisRuns.AsNoTracking()
-            .Where(r => r.RequestId == sourceRequestId
+            .Where(r => r.TriggerSnapshotId == sourceSnapshotId
                 && (r.Status == LitigationAiAnalysisRunStatus.Completed || r.Status == LitigationAiAnalysisRunStatus.CompletedWithErrors))
             .OrderByDescending(r => r.LitigationAiAnalysisRunId).FirstOrDefaultAsync(ct);
         if (sourceRun is null) return;
