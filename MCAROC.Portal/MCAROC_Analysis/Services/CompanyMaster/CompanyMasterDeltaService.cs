@@ -482,7 +482,7 @@ public partial class CompanyMasterDeltaService : ICompanyMasterDeltaService
         int totalUpdated = 0;
         int totalInserted = 0;
 
-        const string batchSql = @"
+        string batchSql = @"
             SET XACT_ABORT ON;
             BEGIN TRANSACTION;
 
@@ -614,6 +614,9 @@ public partial class CompanyMasterDeltaService : ICompanyMasterDeltaService
                 ON s.StagingId = i.StagingId;
 
             DECLARE @InsertedCount int = @@ROWCOUNT;
+
+            -- 3b. Refresh the resolver's word index (#294) for every row this batch changed, in this transaction.
+" + CompanyNameTokenIndex.RefreshForBatchSql + @"
 
             -- 4. Mark ONLY and EXACTLY this batch of StagingIds as promoted, tagging their exact transition state
             UPDATE s

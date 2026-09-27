@@ -363,6 +363,29 @@ public enum EntityForm
     Foreign
 }
 
+public enum ResolutionStatus
+{
+    /// <summary>An identifier is chosen and may be written to the request.</summary>
+    Resolved,
+    /// <summary>One candidate clearly ahead of the rest, recommended for a human to confirm. Either it would
+    /// qualify for auto-select but auto-select is disabled (<c>AutoSelectEligible</c>), or it can never be
+    /// auto-selected (not an exact/hint-confirmed match, or tool-only).</summary>
+    NeedsConfirmation,
+    /// <summary>Several plausible candidates and nothing to choose between them — ranked, no choice made.</summary>
+    Ambiguous,
+    /// <summary>Nothing plausible in the master (which may be stale) — suggestions only.</summary>
+    NotFound,
+    /// <summary>The supplied identifier is not a valid CIN/LLPIN, or no name was given.</summary>
+    InvalidInput
+}
+
+public enum ResolutionMethod
+{
+    UserProvidedCin,
+    AutoSelected,
+    HumanSelected
+}
+
 public enum CompanyMasterSyncJobStatus
 {
     Pending,

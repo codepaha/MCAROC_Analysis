@@ -14,6 +14,7 @@ public static class NameResolutionHarness
 {
     public const string LegacyPrefix = "Legacy prefix search (today's AutoFetch)";
     public const string NormalizedLookup = "Normalized-name lookup (I1 baseline)";
+    public const string Resolver = "CompanyNameResolver (I2)";
 
     public const string Labelled = "Labelled";
     public const string Duplicate = "Duplicate";
@@ -85,6 +86,18 @@ public static class NameResolutionHarness
             best[id] = Math.Max(best.GetValueOrDefault(id), score);
         }
         return best.Select(kv => new NameCandidate(kv.Key, kv.Value)).OrderByDescending(c => c.Score).ToList();
+    }
+
+    /// <summary>The #294 resolver's ranking: full retrieval (exact, core, prefix, rare-word overlap) scored by
+    /// <see cref="CompanyNameResolver.Rank"/>, no hints. The report's thresholds and tie rule then show where its
+    /// <c>AutoSelectThreshold</c> and <c>MinimumMargin</c> should sit.</summary>
+    public static async Task<IReadOnlyList<NameCandidate>> ResolverAsync(
+        SqlConnection connection, string input, CancellationToken cancellationToken = default)
+    {
+        var candidates = await CompanyNameCandidateRetriever.RetrieveAsync(connection, input, cancellationToken);
+        return CompanyNameResolver.Rank(input, ResolutionHints.None, candidates)
+            .Select(s => new NameCandidate(s.Candidate.Identifier, s.Score))
+            .ToList();
     }
 
     /// <summary>Real requests whose company was actually ingested (so the identifier is confirmed) and whose

@@ -897,6 +897,10 @@ public class CompanyMasterSyncTests : IAsyncLifetime
             Assert.Equal("WORKER TEST COMPANY LIMITED", liveRecord.NameNormalized);
             Assert.Equal("WORKER TEST COMPANY", liveRecord.NameCore);
             Assert.Equal(EntityForm.Public, liveRecord.EntityForm);
+
+            // Issue #294: the promotion refreshed the resolver's word index for this row, in the same transaction.
+            var words = await db.CompanyNameTokens.Where(t => t.Identifier == cin).Select(t => t.Token).OrderBy(t => t).ToListAsync();
+            Assert.Equal(new[] { "COMPANY", "TEST", "WORKER" }, words);
         }
         finally
         {

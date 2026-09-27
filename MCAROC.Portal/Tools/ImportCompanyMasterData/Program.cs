@@ -21,7 +21,7 @@
 // With no arguments, defaults to the paths the 2026-09-19 MCA extract was downloaded to.
 //
 // Backfill mode (issue #293) — fills NameNormalized/NameCore/EntityForm on the rows already in the table,
-// without re-importing. Run once after the AddCompanyMasterNameNormalization migration; add --all after a
+// without re-importing, then rebuilds the resolver's word index (CompanyNameTokens, #294) from them. Run once after the AddCompanyMasterNameNormalization migration; add --all after a
 // CompanyNameNormalizer.Version change to recompute every row, not just the missing ones:
 //   dotnet run --project Tools/ImportCompanyMasterData -- --backfill-names [--all] [--connection="..."]
 
@@ -55,6 +55,11 @@ if (args.Contains("--backfill-names"))
     var result = await CompanyMasterNameBackfill.RunAsync(backfillConnection, onlyMissing,
         progress: (scanned, updated) => Console.WriteLine($"  ...{scanned:N0} rows scanned, {updated:N0} updated"));
     Console.WriteLine($"Done. {result.RowsScanned:N0} scanned, {result.RowsUpdated:N0} updated, {result.RowsStillMissing:N0} still missing derived columns.");
+
+    // The resolver's word index (#294) is derived from NameCore, so it is rebuilt after every backfill.
+    Console.WriteLine("Rebuilding the name word index (CompanyNameTokens)...");
+    var tokens = await CompanyNameTokenIndex.RebuildAsync(backfillConnection, progress: n => Console.WriteLine($"  ...{n:N0} words indexed"));
+    Console.WriteLine($"Word index rebuilt: {tokens:N0} rows.");
     return result.RowsStillMissing == 0 ? 0 : 2;
 }
 
@@ -181,6 +186,11 @@ catch (SqlException ex)
     // disk space, not correctness, so this is a warning, not a failed run.
     Console.WriteLine($"Warning: swap succeeded but couldn't drop the old table copy ({ex.Message}). Drop dbo.CompanyMasterRecords_Old manually when convenient.");
 }
+
+// The resolver's word index (#294) is derived from the table just replaced, so rebuild it to match.
+Console.WriteLine("Rebuilding the name word index (CompanyNameTokens)...");
+var indexed = await CompanyNameTokenIndex.RebuildAsync(connection, progress: n => Console.WriteLine($"  ...{n:N0} words indexed"));
+Console.WriteLine($"Word index rebuilt: {indexed:N0} rows.");
 
 Console.WriteLine($"Done. {total:N0} rows loaded into CompanyMasterRecords.");
 return 0;

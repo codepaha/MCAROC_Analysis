@@ -1,7 +1,7 @@
 // Offline name-resolution harness (issue #293, plan §5A.4). Read-only: it queries CompanyMasterRecords and
 // Requests, changes nothing, and prints a precision/recall report per threshold for each retrieval strategy.
 // This is the number the resolver's auto-select stays switched off behind (≥ 99.5% precision on the
-// auto-selected subset, read against the 95% CI's lower bound) — I2 adds its resolver as a third strategy.
+// auto-selected subset, read against the 95% CI's lower bound); the third strategy is the #294 resolver.
 //
 // Run after the AddCompanyMasterNameNormalization migration and the name backfill:
 //   dotnet run --project Tools/EvaluateNameResolution -- [--connection="..."] [--sample-modulus=1000] [--out=report.md]
@@ -26,6 +26,16 @@ if (missing > 0)
     return 2;
 }
 
+await using (var tokenCount = new SqlCommand("SELECT COUNT_BIG(*) FROM dbo.CompanyNameTokens;", connection))
+{
+    if ((long)(await tokenCount.ExecuteScalarAsync())! == 0)
+    {
+        Console.Error.WriteLine("The resolver's word index (CompanyNameTokens) is empty, so the resolver strategy would be " +
+            "measured without its word-overlap retrieval. Run: dotnet run --project Tools/ImportCompanyMasterData -- --backfill-names");
+        return 2;
+    }
+}
+
 Console.WriteLine("Building the case set...");
 var sample = await NameResolutionHarness.SampleMasterAsync(connection, modulus);
 var cases = new List<NameResolutionCase>();
@@ -42,6 +52,8 @@ var reports = new[]
         (name, ct) => NameResolutionHarness.LegacyPrefixAsync(connection, name, ct), cases),
     await NameResolutionHarness.EvaluateAsync(NameResolutionHarness.NormalizedLookup,
         (name, ct) => NameResolutionHarness.NormalizedLookupAsync(connection, name, ct), cases),
+    await NameResolutionHarness.EvaluateAsync(NameResolutionHarness.Resolver,
+        (name, ct) => NameResolutionHarness.ResolverAsync(connection, name, ct), cases),
 };
 
 var text = $"# Name-resolution harness — {DateTime.UtcNow:yyyy-MM-dd HH:mm} UTC, normalizer v{CompanyNameNormalizer.Version}\n\n"
