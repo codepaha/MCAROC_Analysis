@@ -140,7 +140,14 @@
                                     </td>
                                     <td class="small">
                                         <div>@(item.State ?? item.Country ?? "—")</div>
-                                        <div class="text-muted">@(item.District ?? item.Roc ?? "")</div>
+                                        @if (!string.IsNullOrWhiteSpace(item.District))
+                                        {
+                                            <div class="text-muted">District: @item.District</div>
+                                        }
+                                        @if (!string.IsNullOrWhiteSpace(item.Roc))
+                                        {
+                                            <div class="text-muted">ROC: @item.Roc</div>
+                                        }
                                     </td>
                                     <td class="small">
                                         <div>@(item.Class ?? "—")</div>
