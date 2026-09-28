@@ -14,6 +14,7 @@
     var b = details.RequestingBranchDetails;
     <div class="pi-panel" style="padding:24px;">
         <h2 class="h5">Recognized request</h2>
+        <p class="form-text">These fields were extracted from the uploaded request@(Model?.ExtractionModel is { } extractionModel ? $" using {extractionModel}" : ""). Review them against the original request. An MCA identity marked Confirmed was checked against the local company master; the remaining request fields have not been independently verified.</p>
         <p><strong>Scope:</strong> @(Model!.Company.LitigationOnly ? "Litigation only" : "MCA and litigation") · <strong>Entity:</strong> @(c.EntityType ?? "Not recognized")</p>
         @if (Model.IdentityResolution is { } identity)
         { <p><strong>MCA identity:</strong> @(identity.Identifier is null ? "Needs review" : $"Confirmed: {identity.Identifier}") · @identity.ReasonCode</p> }

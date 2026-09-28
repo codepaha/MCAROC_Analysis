@@ -342,6 +342,10 @@ public sealed class PreLoginReportJobService(AppDbContext db, PreLoginReportQueu
                     await db.SaveChangesAsync(cancellationToken);
                     return;
                 }
+                // Recognition and the verified identifier must be visible on the assignment page while
+                // the external details request runs. Persisting here also lets restart recovery resume
+                // the fetch without repeating OCR if the worker stops at this boundary.
+                await db.SaveChangesAsync(cancellationToken);
             }
             var stored = DeserializeStoredData(job.DataJson);
             var data = stored?.Company.LitigationOnly == true || stored?.LegalCases is not null ? stored! :
