@@ -134,9 +134,15 @@
             var hintPin = document.getElementById('afHintPin');
             var hintYear = document.getElementById('afHintYear');
             var url = name.dataset.searchUrl || cin.dataset.searchUrl;
-            var timer = null, searchVersion = 0;
+            var timer = null, blurTimer = null, searchVersion = 0;
 
-            function hide() { searchVersion++; hints.hidden = true; hints.innerHTML = ''; }
+            function hide() {
+                if (timer !== null) { clearTimeout(timer); timer = null; }
+                if (blurTimer !== null) { clearTimeout(blurTimer); blurTimer = null; }
+                searchVersion++;
+                hints.hidden = true;
+                hints.innerHTML = '';
+            }
 
             function showMessage(message) {
                 hints.innerHTML = '';
@@ -242,11 +248,13 @@
             }
 
             function triggerSearch(q) {
-                if (timer) clearTimeout(timer);
+                if (timer !== null) clearTimeout(timer);
+                if (blurTimer !== null) { clearTimeout(blurTimer); blurTimer = null; }
                 var version = ++searchVersion;
                 if (q.length < 3) { hide(); return; }
                 showMessage('Searching...');
                 timer = setTimeout(function () {
+                    timer = null;
                     var reqUrl = url + '?fastOnly=true&q=' + encodeURIComponent(q);
                     if (hintState.value.trim()) reqUrl += '&state=' + encodeURIComponent(hintState.value.trim());
                     if (hintDistrict.value.trim()) reqUrl += '&district=' + encodeURIComponent(hintDistrict.value.trim());
@@ -293,8 +301,12 @@
                 });
             });
 
-            name.addEventListener('blur', function () { setTimeout(hide, 200); });
-            cin.addEventListener('blur', function () { setTimeout(hide, 200); });
+            function scheduleHide() {
+                if (blurTimer !== null) clearTimeout(blurTimer);
+                blurTimer = setTimeout(function () { blurTimer = null; hide(); }, 200);
+            }
+            name.addEventListener('blur', scheduleHide);
+            cin.addEventListener('blur', scheduleHide);
             name.addEventListener('keydown', function (e) { if (e.key === 'Escape') hide(); });
             cin.addEventListener('keydown', function (e) { if (e.key === 'Escape') hide(); });
         })();
