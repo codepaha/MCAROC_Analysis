@@ -1,73 +1,75 @@
-using System.Data;
 using System.Globalization;
 using MCAROC_Analysis.Data.Entities;
 using MCAROC_Analysis.Models.Dossier;
 using MCAROC_Analysis.Models.Registry;
 using MCAROC_Analysis.Models.Viz;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.EntityFrameworkCore.Storage;
 
 namespace MCAROC_Analysis.Services.Registry;
 
 public sealed partial class CompanyRegistryQueryService
 {
     // GROUPING SETS shares the master-table input across dimensions. Only grouped counts leave SQL.
-    private const string AggregateSql = """
-        WITH master AS (
-            SELECT RecordType, Status, State, IndustrialClassification AS Industry, Roc, District,
-                DATEPART(year, RegistrationDate) AS RegistrationYear,
-                DATEPART(month, RegistrationDate) AS RegistrationMonth, Class, ListingStatus,
-                CASE WHEN AuthorizedCapital IS NULL THEN NULL WHEN AuthorizedCapital < 100000 THEN 0
-                    WHEN AuthorizedCapital < 1000000 THEN 1 WHEN AuthorizedCapital < 10000000 THEN 2
-                    WHEN AuthorizedCapital < 100000000 THEN 3 WHEN AuthorizedCapital < 1000000000 THEN 4 ELSE 5 END AS CapitalBand,
-                Country
-            FROM dbo.CompanyMasterRecords
-        )
-        SELECT RecordType,
-            CASE WHEN GROUPING(Status)=0 THEN 'StateStatus' WHEN GROUPING(Industry)=0 THEN 'Industry'
-                WHEN GROUPING(Roc)=0 THEN 'Roc' WHEN GROUPING(District)=0 THEN 'District'
-                WHEN GROUPING(RegistrationYear)=0 THEN 'Registration' WHEN GROUPING(Class)=0 THEN 'Class'
-                WHEN GROUPING(ListingStatus)=0 THEN 'Listing' WHEN GROUPING(CapitalBand)=0 THEN 'Capital'
-                ELSE 'Country' END AS Dimension,
-            Status, State, Industry, Roc, District, RegistrationYear, RegistrationMonth,
-            Class, ListingStatus, CapitalBand, Country, COUNT_BIG(*) AS EntityCount
-        FROM master
-        GROUP BY GROUPING SETS (
-            (RecordType, Status, State), (RecordType, Industry), (RecordType, Roc), (RecordType, District),
-            (RecordType, RegistrationYear, RegistrationMonth), (RecordType, Class),
-            (RecordType, ListingStatus), (RecordType, CapitalBand), (RecordType, Country))
-        """;
-
     private sealed record AggregateRow(CompanyMasterRecordType Type, string Dimension, string? Label,
         string? State, int? Year, int? Month, int Count);
 
+    // Column names match AggregateSql's SELECT list exactly — Database.SqlQuery<T> maps by name, not
+    // ordinal, so this is also self-documenting about what the query actually returns.
+    private sealed record AggregateSqlRow(string RecordType, string Dimension, string? Status, string? State,
+        string? Industry, string? Roc, string? District, int? RegistrationYear, int? RegistrationMonth,
+        string? Class, string? ListingStatus, int? CapitalBand, string? Country, long EntityCount);
+
     private async Task<RegistryAggregateData> BuildAggregateCoreAsync(CompanyMasterSyncJob? job, CancellationToken ct)
     {
-        var rows = new List<AggregateRow>();
-        var connection = _db.Database.GetDbConnection();
-        var openedHere = connection.State != ConnectionState.Open;
-        if (openedHere) await _db.Database.OpenConnectionAsync(ct);
+        // Database.SqlQuery<T> (not a raw ADO.NET command against Database.GetDbConnection()) — the query
+        // still needs to run through EF's own command pipeline so its interceptors, command-timeout
+        // configuration and ambient-transaction handling all still apply to it like any other EF query.
+        // A raw command bypassed all three silently; the pipeline also handles opening/closing the
+        // connection and joining the current transaction on its own, so none of that needs doing by hand.
+        var previousTimeout = _db.Database.GetCommandTimeout();
+        _db.Database.SetCommandTimeout(previousTimeout ?? 300);
+        List<AggregateSqlRow> sqlRows;
         try
         {
-            await using var command = connection.CreateCommand();
-            command.CommandText = AggregateSql;
-            command.Transaction = _db.Database.CurrentTransaction?.GetDbTransaction();
-            command.CommandTimeout = _db.Database.GetCommandTimeout() ?? 300;
-            await using var reader = await command.ExecuteReaderAsync(ct);
-            while (await reader.ReadAsync(ct))
-            {
-                var type = Enum.Parse<CompanyMasterRecordType>(reader.GetString(0), ignoreCase: true);
-                var dimension = reader.GetString(1);
-                string? Text(int index) => reader.IsDBNull(index) ? null : reader.GetString(index).Trim();
-                int? Number(int index) => reader.IsDBNull(index) ? null : reader.GetInt32(index);
-                var label = dimension switch {
-                    "StateStatus" => Text(2), "Industry" => Text(4), "Roc" => Text(5), "District" => Text(6),
-                    "Class" => Text(9), "Listing" => Text(10), "Capital" => Number(11)?.ToString(),
-                    "Country" => Text(12), _ => null };
-                rows.Add(new(type, dimension, label, Text(3), Number(7), Number(8), checked((int)reader.GetInt64(13))));
-            }
+            sqlRows = await _db.Database.SqlQuery<AggregateSqlRow>($"""
+                WITH master AS (
+                    SELECT RecordType, Status, State, IndustrialClassification AS Industry, Roc, District,
+                        DATEPART(year, RegistrationDate) AS RegistrationYear,
+                        DATEPART(month, RegistrationDate) AS RegistrationMonth, Class, ListingStatus,
+                        CASE WHEN AuthorizedCapital IS NULL THEN NULL WHEN AuthorizedCapital < 100000 THEN 0
+                            WHEN AuthorizedCapital < 1000000 THEN 1 WHEN AuthorizedCapital < 10000000 THEN 2
+                            WHEN AuthorizedCapital < 100000000 THEN 3 WHEN AuthorizedCapital < 1000000000 THEN 4 ELSE 5 END AS CapitalBand,
+                        Country
+                    FROM dbo.CompanyMasterRecords
+                )
+                SELECT RecordType,
+                    CASE WHEN GROUPING(Status)=0 THEN 'StateStatus' WHEN GROUPING(Industry)=0 THEN 'Industry'
+                        WHEN GROUPING(Roc)=0 THEN 'Roc' WHEN GROUPING(District)=0 THEN 'District'
+                        WHEN GROUPING(RegistrationYear)=0 THEN 'Registration' WHEN GROUPING(Class)=0 THEN 'Class'
+                        WHEN GROUPING(ListingStatus)=0 THEN 'Listing' WHEN GROUPING(CapitalBand)=0 THEN 'Capital'
+                        ELSE 'Country' END AS Dimension,
+                    Status, State, Industry, Roc, District, RegistrationYear, RegistrationMonth,
+                    Class, ListingStatus, CapitalBand, Country, COUNT_BIG(*) AS EntityCount
+                FROM master
+                GROUP BY GROUPING SETS (
+                    (RecordType, Status, State), (RecordType, Industry), (RecordType, Roc), (RecordType, District),
+                    (RecordType, RegistrationYear, RegistrationMonth), (RecordType, Class),
+                    (RecordType, ListingStatus), (RecordType, CapitalBand), (RecordType, Country))
+                """).ToListAsync(ct);
         }
-        finally { if (openedHere) await _db.Database.CloseConnectionAsync(); }
+        finally { _db.Database.SetCommandTimeout(previousTimeout); }
+
+        var rows = sqlRows.Select(r =>
+        {
+            var type = Enum.Parse<CompanyMasterRecordType>(r.RecordType, ignoreCase: true);
+            string? Trim(string? s) => string.IsNullOrEmpty(s) ? null : s.Trim();
+            var label = r.Dimension switch {
+                "StateStatus" => Trim(r.Status), "Industry" => Trim(r.Industry), "Roc" => Trim(r.Roc),
+                "District" => Trim(r.District), "Class" => Trim(r.Class), "Listing" => Trim(r.ListingStatus),
+                "Capital" => r.CapitalBand?.ToString(), "Country" => Trim(r.Country), _ => null };
+            return new AggregateRow(type, r.Dimension, label, Trim(r.State), r.RegistrationYear, r.RegistrationMonth,
+                checked((int)r.EntityCount));
+        }).ToList();
 
         List<RegistryMetricBucket> Buckets(IEnumerable<AggregateRow> source, Func<AggregateRow, string?> label) => source
             .Where(r => !string.IsNullOrWhiteSpace(label(r))).GroupBy(r => label(r)!, StringComparer.OrdinalIgnoreCase)
