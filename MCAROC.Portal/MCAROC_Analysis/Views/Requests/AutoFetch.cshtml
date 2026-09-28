@@ -134,7 +134,7 @@
             var hintPin = document.getElementById('afHintPin');
             var hintYear = document.getElementById('afHintYear');
             var url = name.dataset.searchUrl || cin.dataset.searchUrl;
-            var timer = null, lastQuery = '';
+            var timer = null, searchVersion = 0;
 
             function hide() { hints.hidden = true; hints.innerHTML = ''; }
 
@@ -243,9 +243,10 @@
 
             function triggerSearch(q) {
                 if (timer) clearTimeout(timer);
+                var version = ++searchVersion;
                 if (q.length < 3) { hide(); return; }
+                showMessage('Searching...');
                 timer = setTimeout(function () {
-                    lastQuery = q;
                     var reqUrl = url + '?q=' + encodeURIComponent(q);
                     if (hintState.value.trim()) reqUrl += '&state=' + encodeURIComponent(hintState.value.trim());
                     if (hintDistrict.value.trim()) reqUrl += '&district=' + encodeURIComponent(hintDistrict.value.trim());
@@ -261,10 +262,10 @@
                             return r.json();
                         })
                         .then(function (items) {
-                            if (q === lastQuery) render(items);
+                            if (version === searchVersion) render(items);
                         })
                         .catch(function () {
-                            if (q === lastQuery) showMessage('Suggestions are temporarily unavailable. Please try again.');
+                            if (version === searchVersion) showMessage('Suggestions are temporarily unavailable. Please try again.');
                         });
                 }, 300);
             }
@@ -283,6 +284,12 @@
                 el.addEventListener('input', function () {
                     var q = (name.value || cin.value || '').trim();
                     if (q.length >= 3) triggerSearch(q);
+                });
+            });
+
+            [document.getElementById('entityCompany'), document.getElementById('entityLlp')].forEach(function (el) {
+                el.addEventListener('change', function () {
+                    triggerSearch((name.value || cin.value || '').trim());
                 });
             });
 
