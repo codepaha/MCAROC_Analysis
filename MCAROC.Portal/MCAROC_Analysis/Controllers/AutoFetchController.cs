@@ -7,6 +7,7 @@ using MCAROC_Analysis.Services.Audit;
 using MCAROC_Analysis.Services.AutoFetch;
 using MCAROC_Analysis.Services.CompanyMaster;
 using MCAROC_Analysis.Services.Pipeline;
+using Microsoft.Data.SqlClient;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -235,9 +236,9 @@ public partial class AutoFetchController(
         }
     }
 
-    /// <summary>Interactive company search (issue #294, plan §5A.3). When <see cref="IdentityResolutionService"/>
-    /// is available, resolves and ranks candidates against master data with disambiguators (state, district,
-    /// incorporation date, status, score, reasons). Otherwise falls back to prefix matching and reference tool.</summary>
+    /// <summary>Interactive company search (issue #294, plan §5A.3). Live typing uses a bounded indexed
+    /// prefix lookup; broader requests can resolve and rank candidates with disambiguators or consult the
+    /// reference tool.</summary>
     [HttpGet("/Requests/AutoFetch/search")]
     public async Task<IActionResult> Search(
         [FromQuery] string? q,
@@ -246,7 +247,8 @@ public partial class AutoFetchController(
         [FromQuery] string? district = null,
         [FromQuery] string? pin = null,
         [FromQuery] int? year = null,
-        [FromQuery] string? entityType = null)
+        [FromQuery] string? entityType = null,
+        [FromQuery] bool fastOnly = false)
     {
         var query = (q ?? "").Trim();
         if (query.Length < 3)
@@ -254,6 +256,11 @@ public partial class AutoFetchController(
             if (identity is null) return Ok(Array.Empty<ReferenceCompanyHint>());
             return Ok(Array.Empty<CompanySearchCandidateDto>());
         }
+
+        // Live typing uses one bounded indexed prefix query. The richer resolver and external tool remain
+        // available to callers that explicitly request the broader search path.
+        if (fastOnly && !IdentifierPattern().IsMatch(query.ToUpperInvariant()))
+            return LocalSearchResult(await SearchLocalMasterDataAsync(query, 10, entityType, state, district, pin, year, ct));
 
         if (identity is not null)
         {
@@ -269,69 +276,45 @@ public partial class AutoFetchController(
                 EntityType: parsedEntityType);
 
             var isIdentifier = IdentifierPattern().IsMatch(query.ToUpperInvariant());
-            var decision = await identity.SuggestAsync(
-                isIdentifier ? null : query,
-                isIdentifier ? query.ToUpperInvariant() : null,
-                hints,
-                ct);
-
-            if (decision.Candidates.Count > 0)
+            try
             {
-                var dtos = decision.Candidates.Select(c => new CompanySearchCandidateDto(
-                    Identifier: c.Candidate.Identifier,
-                    Name: c.Candidate.Name,
-                    RecordType: c.Candidate.RecordType.ToString(),
-                    Status: c.Candidate.Status,
-                    State: c.Candidate.State,
-                    District: c.Candidate.District,
-                    PinCode: c.Candidate.PinCode,
-                    RegistrationDate: c.Candidate.RegistrationDate?.ToString("yyyy-MM-dd"),
-                    Category: c.Candidate.Category,
-                    Class: c.Candidate.Class,
-                    ListingStatus: c.Candidate.ListingStatus,
-                    Score: c.Score,
-                    MatchPercent: (int)Math.Round(c.Score * 100),
-                    Reasons: c.Reasons,
-                    IsToolOnly: c.Candidate.IsToolOnly
-                )).ToList();
-                return Ok(dtos);
+                var decision = await identity.SuggestAsync(
+                    isIdentifier ? null : query,
+                    isIdentifier ? query.ToUpperInvariant() : null,
+                    hints,
+                    ct);
+
+                if (decision.Candidates.Count > 0)
+                {
+                    var dtos = decision.Candidates.Select(c => new CompanySearchCandidateDto(
+                        Identifier: c.Candidate.Identifier,
+                        Name: c.Candidate.Name,
+                        RecordType: c.Candidate.RecordType.ToString(),
+                        Status: c.Candidate.Status,
+                        State: c.Candidate.State,
+                        District: c.Candidate.District,
+                        PinCode: c.Candidate.PinCode,
+                        RegistrationDate: c.Candidate.RegistrationDate?.ToString("yyyy-MM-dd"),
+                        Category: c.Candidate.Category,
+                        Class: c.Candidate.Class,
+                        ListingStatus: c.Candidate.ListingStatus,
+                        Score: c.Score,
+                        MatchPercent: (int)Math.Round(c.Score * 100),
+                        Reasons: c.Reasons,
+                        IsToolOnly: c.Candidate.IsToolOnly
+                    )).ToList();
+                    return Ok(dtos);
+                }
+            }
+            catch (SqlException ex) when (ex.Number == -2 && !ct.IsCancellationRequested)
+            {
+                logger?.LogWarning(ex, "Name resolution timed out for Auto-fetch suggestion query");
             }
         }
 
-        var localHits = await SearchLocalMasterDataAsync(query, 10, ct);
+        var localHits = await SearchLocalMasterDataAsync(query, 10, entityType, state, district, pin, year, ct);
         if (localHits.Count > 0)
-        {
-            if (identity is null) return Ok(localHits);
-
-            // The prefix-match fallback is unfiltered: it cannot honour state, district, pin, year, or
-            // entity-type hints.  Return empty rather than misleading the user with unfiltered candidates
-            // labelled "100% match" when they have narrowed the search.
-            var hintsPresent = !string.IsNullOrWhiteSpace(state)
-                || !string.IsNullOrWhiteSpace(district)
-                || !string.IsNullOrWhiteSpace(pin)
-                || year.HasValue
-                || !string.IsNullOrWhiteSpace(entityType);
-            if (hintsPresent) return Ok(Array.Empty<CompanySearchCandidateDto>());
-
-            var dtos = localHits.Select(h => new CompanySearchCandidateDto(
-                Identifier: h.Cin,
-                Name: h.LegalName,
-                RecordType: h.CompanyType,
-                Status: h.Status,
-                State: null,
-                District: null,
-                PinCode: null,
-                RegistrationDate: null,
-                Category: null,
-                Class: null,
-                ListingStatus: null,
-                Score: 1.0,
-                MatchPercent: 100,
-                Reasons: ["Prefix match"],
-                IsToolOnly: false
-            )).ToList();
-            return Ok(dtos);
-        }
+            return LocalSearchResult(localHits);
 
         if (!client.IsConfigured)
         {
@@ -371,19 +354,76 @@ public partial class AutoFetchController(
         }
     }
 
-    /// <summary>Prefix match against the bulk-imported CompanyMasterRecords table (see
-    /// Tools/ImportCompanyMasterData), indexed on (RecordType, Name) so this is a seek, not a scan, even
-    /// at the table's ~3.7M-row scale. Foreign-company (FCRN) records are excluded: neither the identifier
-    /// regex above nor <see cref="EntityType"/> accepts that format, so surfacing them here would only
-    /// let a caller pick a hint that then fails validation.</summary>
-    private async Task<List<ReferenceCompanyHint>> SearchLocalMasterDataAsync(string query, int limit, CancellationToken ct) =>
-        await db.CompanyMasterRecords
+    private IActionResult LocalSearchResult(IReadOnlyList<CompanyMasterRecord> localHits)
+    {
+        if (identity is null) return Ok(localHits.Select(h => new ReferenceCompanyHint(
+            h.Name, h.Identifier, null, h.Status, h.RecordType.ToString())).ToList());
+
+        return Ok(localHits.Select(h => new CompanySearchCandidateDto(
+            Identifier: h.Identifier,
+            Name: h.Name,
+            RecordType: h.RecordType.ToString(),
+            Status: h.Status,
+            State: h.State,
+            District: h.District,
+            PinCode: h.PinCode,
+            RegistrationDate: h.RegistrationDate?.ToString("yyyy-MM-dd"),
+            Category: h.Category,
+            Class: h.Class,
+            ListingStatus: h.ListingStatus,
+            Score: 0.8,
+            MatchPercent: 80,
+            Reasons: ["Prefix match"],
+            IsToolOnly: false
+        )).ToList());
+    }
+
+    /// <summary>Indexed prefix match over Company/LLP master rows. Foreign-company (FCRN) records are
+    /// excluded because the Auto-fetch form does not accept their identifiers.</summary>
+    private async Task<List<CompanyMasterRecord>> SearchLocalMasterDataAsync(
+        string query, int limit, string? entityType, string? state, string? district, string? pin, int? year, CancellationToken ct)
+    {
+        var rows = db.CompanyMasterRecords.AsNoTracking()
             .Where(r => (r.RecordType == CompanyMasterRecordType.Company || r.RecordType == CompanyMasterRecordType.Llp)
-                && r.Name.StartsWith(query))
-            .OrderBy(r => r.Name)
-            .Take(limit)
-            .Select(r => new ReferenceCompanyHint(r.Name, r.Identifier, null, r.Status, r.RecordType.ToString()))
+                && r.Name.StartsWith(query));
+
+        if (Enum.TryParse<EntityType>(entityType, true, out var requestedType))
+        {
+            if (requestedType == EntityType.Company)
+                rows = rows.Where(r => r.RecordType == CompanyMasterRecordType.Company);
+            else if (requestedType == EntityType.LLP)
+                rows = rows.Where(r => r.RecordType == CompanyMasterRecordType.Llp);
+        }
+        if (!string.IsNullOrWhiteSpace(state))
+            rows = rows.Where(r => r.State == state.Trim());
+        if (!string.IsNullOrWhiteSpace(district))
+            rows = rows.Where(r => r.District == district.Trim());
+        if (!string.IsNullOrWhiteSpace(pin))
+            rows = rows.Where(r => r.PinCode == pin.Trim());
+        if (year is >= 1 and <= 9998)
+        {
+            var start = new DateOnly(year.Value, 1, 1);
+            var end = start.AddYears(1);
+            rows = rows.Where(r => r.RegistrationDate >= start && r.RegistrationDate < end);
+        }
+
+        return await rows.OrderBy(r => r.Name).ThenBy(r => r.Identifier).Take(limit)
+            .Select(r => new CompanyMasterRecord
+            {
+                Identifier = r.Identifier,
+                Name = r.Name,
+                RecordType = r.RecordType,
+                Status = r.Status,
+                State = r.State,
+                District = r.District,
+                PinCode = r.PinCode,
+                RegistrationDate = r.RegistrationDate,
+                Category = r.Category,
+                Class = r.Class,
+                ListingStatus = r.ListingStatus
+            })
             .ToListAsync(ct);
+    }
 
     [HttpGet("/Requests/{id:long}/autofetch/status")]
     public async Task<IActionResult> Status(long id, CancellationToken ct)

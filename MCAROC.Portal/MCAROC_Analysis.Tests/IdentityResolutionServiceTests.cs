@@ -1,6 +1,10 @@
 using MCAROC_Analysis.Data;
 using MCAROC_Analysis.Data.Entities;
+using MCAROC_Analysis.Controllers;
+using MCAROC_Analysis.Models;
+using MCAROC_Analysis.Services.AutoFetch;
 using MCAROC_Analysis.Services.CompanyMaster;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
@@ -55,6 +59,36 @@ public class IdentityResolutionServiceTests : IAsyncLifetime
         await using var connection = new SqlConnection(ConnectionString);
         await CompanyMasterNameBackfill.RunAsync(connection, onlyMissing: true);
         await CompanyNameTokenIndex.RebuildAsync(connection);
+    }
+
+    [Fact]
+    public async Task AutoFetchSearch_UsesTypedPrefixFallback_WhenNameBackfillIsMissing()
+    {
+        var companyName = $"RELIANCE {_word} PRIVATE LIMITED";
+        await using var db = CreateContext();
+        db.CompanyMasterRecords.AddRange(
+            new CompanyMasterRecord { Identifier = Cin(1), RecordType = CompanyMasterRecordType.Company, Name = companyName, Status = "Active" },
+            new CompanyMasterRecord { Identifier = _llpin, RecordType = CompanyMasterRecordType.Llp, Name = $"RELIANCE {_word} LLP", Status = "Active" });
+        await db.SaveChangesAsync();
+
+        var controller = new AutoFetchController(db, null!, null!, null!,
+            Options.Create(new ReferenceToolOptions()), identity: Service(db, autoSelect: false));
+        var response = await controller.Search($"reliance {_word}", entityType: "Company", fastOnly: true);
+
+        var dto = Assert.Single(Assert.IsType<List<CompanySearchCandidateDto>>(
+            Assert.IsType<OkObjectResult>(response).Value));
+        Assert.Equal(Cin(1), dto.Identifier);
+        Assert.Equal("Company", dto.RecordType);
+        Assert.Equal(80, dto.MatchPercent);
+
+        var identifierResponse = await controller.Search(Cin(1), fastOnly: true);
+        var identifierMatch = Assert.Single(Assert.IsType<List<CompanySearchCandidateDto>>(
+            Assert.IsType<OkObjectResult>(identifierResponse).Value));
+        Assert.Equal(Cin(1), identifierMatch.Identifier);
+
+        var missingResponse = await controller.Search($"{_word} DOES NOT EXIST", fastOnly: true);
+        Assert.Empty(Assert.IsType<List<CompanySearchCandidateDto>>(
+            Assert.IsType<OkObjectResult>(missingResponse).Value));
     }
 
     private async Task<long> NewRequestAsync(string? identifier = null)

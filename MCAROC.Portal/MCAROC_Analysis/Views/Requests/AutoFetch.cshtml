@@ -59,7 +59,7 @@
         <div class="mb-3 position-relative">
             <label asp-for="CompanyName" class="form-label">Company / LLP Name</label>
             <input asp-for="CompanyName" class="form-control" id="afName" placeholder="Type company name to search" data-search-url="/Requests/AutoFetch/search" />
-            <div class="form-text">Type a name or CIN — ranked suggestions appear below with match score, location, and status.</div>
+            <div class="form-text">Type at least 3 letters for matching Company or LLP names. Suggestions update as you type.</div>
             <ul class="list-group position-absolute w-100 shadow-sm" id="afHints" hidden style="z-index:20;max-height:360px;overflow:auto;"></ul>
         </div>
 
@@ -134,13 +134,28 @@
             var hintPin = document.getElementById('afHintPin');
             var hintYear = document.getElementById('afHintYear');
             var url = name.dataset.searchUrl || cin.dataset.searchUrl;
-            var timer = null, lastQuery = '';
+            var timer = null, blurTimer = null, searchVersion = 0;
 
-            function hide() { hints.hidden = true; hints.innerHTML = ''; }
+            function hide() {
+                if (timer !== null) { clearTimeout(timer); timer = null; }
+                if (blurTimer !== null) { clearTimeout(blurTimer); blurTimer = null; }
+                searchVersion++;
+                hints.hidden = true;
+                hints.innerHTML = '';
+            }
+
+            function showMessage(message) {
+                hints.innerHTML = '';
+                var item = document.createElement('li');
+                item.className = 'list-group-item text-muted';
+                item.textContent = message;
+                hints.appendChild(item);
+                hints.hidden = false;
+            }
 
             function render(items) {
                 hints.innerHTML = '';
-                if (!items || items.length === 0) { hide(); return; }
+                if (!items || items.length === 0) { showMessage('No matching names found.'); return; }
                 items.forEach(function (h) {
                     var li = document.createElement('li');
                     li.className = 'list-group-item list-group-item-action py-2';
@@ -233,11 +248,14 @@
             }
 
             function triggerSearch(q) {
-                if (timer) clearTimeout(timer);
+                if (timer !== null) clearTimeout(timer);
+                if (blurTimer !== null) { clearTimeout(blurTimer); blurTimer = null; }
+                var version = ++searchVersion;
                 if (q.length < 3) { hide(); return; }
+                showMessage('Searching...');
                 timer = setTimeout(function () {
-                    lastQuery = q;
-                    var reqUrl = url + '?q=' + encodeURIComponent(q);
+                    timer = null;
+                    var reqUrl = url + '?fastOnly=true&q=' + encodeURIComponent(q);
                     if (hintState.value.trim()) reqUrl += '&state=' + encodeURIComponent(hintState.value.trim());
                     if (hintDistrict.value.trim()) reqUrl += '&district=' + encodeURIComponent(hintDistrict.value.trim());
                     if (hintPin.value.trim()) reqUrl += '&pin=' + encodeURIComponent(hintPin.value.trim());
@@ -247,12 +265,17 @@
                     reqUrl += '&entityType=' + (isLlp ? 'LLP' : 'Company');
 
                     fetch(reqUrl, { headers: { 'Accept': 'application/json' } })
-                        .then(function (r) { return r.ok ? r.json() : []; })
-                        .then(function (items) {
-                            if (q === lastQuery) render(items);
+                        .then(function (r) {
+                            if (!r.ok) throw new Error('Suggestion request failed');
+                            return r.json();
                         })
-                        .catch(hide);
-                }, 300);
+                        .then(function (items) {
+                            if (version === searchVersion) render(items);
+                        })
+                        .catch(function () {
+                            if (version === searchVersion) showMessage('Suggestions are temporarily unavailable. Please try again.');
+                        });
+                }, 200);
             }
 
             name.addEventListener('input', function () {
@@ -272,8 +295,18 @@
                 });
             });
 
-            name.addEventListener('blur', function () { setTimeout(hide, 200); });
-            cin.addEventListener('blur', function () { setTimeout(hide, 200); });
+            [document.getElementById('entityCompany'), document.getElementById('entityLlp')].forEach(function (el) {
+                el.addEventListener('change', function () {
+                    triggerSearch((name.value || cin.value || '').trim());
+                });
+            });
+
+            function scheduleHide() {
+                if (blurTimer !== null) clearTimeout(blurTimer);
+                blurTimer = setTimeout(function () { blurTimer = null; hide(); }, 200);
+            }
+            name.addEventListener('blur', scheduleHide);
+            cin.addEventListener('blur', scheduleHide);
             name.addEventListener('keydown', function (e) { if (e.key === 'Escape') hide(); });
             cin.addEventListener('keydown', function (e) { if (e.key === 'Escape') hide(); });
         })();
