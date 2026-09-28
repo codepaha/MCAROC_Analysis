@@ -113,7 +113,8 @@ await using (var createStaging = new SqlCommand(
     // index on the live table has to be recreated here and renamed in the swap below, or a re-import would
     // silently drop it.
     "CREATE INDEX IX_CompanyMasterRecords_Staging_RecordType_NameNormalized ON dbo.CompanyMasterRecords_Staging (RecordType, NameNormalized); " +
-    "CREATE INDEX IX_CompanyMasterRecords_Staging_RecordType_NameCore ON dbo.CompanyMasterRecords_Staging (RecordType, NameCore);",
+    "CREATE INDEX IX_CompanyMasterRecords_Staging_RecordType_NameCore ON dbo.CompanyMasterRecords_Staging (RecordType, NameCore); " +
+    "CREATE INDEX IX_CompanyMasterRecords_Staging_RecordType_Status_Name ON dbo.CompanyMasterRecords_Staging (RecordType, Status, Name);",
     connection))
     await createStaging.ExecuteNonQueryAsync();
 Console.WriteLine("Created staging table — loading into it (live CompanyMasterRecords is untouched until the load fully succeeds).");
@@ -149,25 +150,28 @@ await using (var swap = new SqlCommand(
     DECLARE @rc int;
 
     EXEC @rc = sp_rename 'dbo.CompanyMasterRecords', 'CompanyMasterRecords_Old';
-    IF @rc <> 0 BEGIN ROLLBACK TRANSACTION; THROW 50000, 'Swap step 1/7 failed: rename live table to _Old.', 1; END
+    IF @rc <> 0 BEGIN ROLLBACK TRANSACTION; THROW 50000, 'Swap step 1/8 failed: rename live table to _Old.', 1; END
 
     EXEC @rc = sp_rename 'dbo.PK_CompanyMasterRecords', 'PK_CompanyMasterRecords_Old', 'OBJECT';
-    IF @rc <> 0 BEGIN ROLLBACK TRANSACTION; THROW 50000, 'Swap step 2/7 failed: rename old table''s PK out of the way.', 1; END
+    IF @rc <> 0 BEGIN ROLLBACK TRANSACTION; THROW 50000, 'Swap step 2/8 failed: rename old table''s PK out of the way.', 1; END
 
     EXEC @rc = sp_rename 'dbo.CompanyMasterRecords_Staging', 'CompanyMasterRecords';
-    IF @rc <> 0 BEGIN ROLLBACK TRANSACTION; THROW 50000, 'Swap step 3/7 failed: rename staging table live.', 1; END
+    IF @rc <> 0 BEGIN ROLLBACK TRANSACTION; THROW 50000, 'Swap step 3/8 failed: rename staging table live.', 1; END
 
     EXEC @rc = sp_rename 'dbo.PK_CompanyMasterRecords_Staging', 'PK_CompanyMasterRecords', 'OBJECT';
-    IF @rc <> 0 BEGIN ROLLBACK TRANSACTION; THROW 50000, 'Swap step 4/7 failed: rename new table''s PK to canonical name.', 1; END
+    IF @rc <> 0 BEGIN ROLLBACK TRANSACTION; THROW 50000, 'Swap step 4/8 failed: rename new table''s PK to canonical name.', 1; END
 
     EXEC @rc = sp_rename 'dbo.CompanyMasterRecords.IX_CompanyMasterRecords_Staging_RecordType_Name', 'IX_CompanyMasterRecords_RecordType_Name', 'INDEX';
-    IF @rc <> 0 BEGIN ROLLBACK TRANSACTION; THROW 50000, 'Swap step 5/7 failed: rename new table''s index to canonical name.', 1; END
+    IF @rc <> 0 BEGIN ROLLBACK TRANSACTION; THROW 50000, 'Swap step 5/8 failed: rename new table''s index to canonical name.', 1; END
 
     EXEC @rc = sp_rename 'dbo.CompanyMasterRecords.IX_CompanyMasterRecords_Staging_RecordType_NameNormalized', 'IX_CompanyMasterRecords_RecordType_NameNormalized', 'INDEX';
-    IF @rc <> 0 BEGIN ROLLBACK TRANSACTION; THROW 50000, 'Swap step 6/7 failed: rename new table''s NameNormalized index to canonical name.', 1; END
+    IF @rc <> 0 BEGIN ROLLBACK TRANSACTION; THROW 50000, 'Swap step 6/8 failed: rename new table''s NameNormalized index to canonical name.', 1; END
 
     EXEC @rc = sp_rename 'dbo.CompanyMasterRecords.IX_CompanyMasterRecords_Staging_RecordType_NameCore', 'IX_CompanyMasterRecords_RecordType_NameCore', 'INDEX';
-    IF @rc <> 0 BEGIN ROLLBACK TRANSACTION; THROW 50000, 'Swap step 7/7 failed: rename new table''s NameCore index to canonical name.', 1; END
+    IF @rc <> 0 BEGIN ROLLBACK TRANSACTION; THROW 50000, 'Swap step 7/8 failed: rename new table''s NameCore index to canonical name.', 1; END
+
+    EXEC @rc = sp_rename 'dbo.CompanyMasterRecords.IX_CompanyMasterRecords_Staging_RecordType_Status_Name', 'IX_CompanyMasterRecords_RecordType_Status_Name', 'INDEX';
+    IF @rc <> 0 BEGIN ROLLBACK TRANSACTION; THROW 50000, 'Swap step 8/8 failed: rename new table''s status index to canonical name.', 1; END
 
     COMMIT;
     """,

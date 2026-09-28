@@ -287,21 +287,15 @@ public sealed partial class CompanyRegistryQueryService
             SearchExecuted = true
         };
 
-        // Query-plan gate rule: Reject secondary filters in v1
-        if (criteria.HasSecondaryFilters)
-        {
-            result.ValidationErrorMessage = "Secondary filtering on State, Status, Industry, Class, or Year is disabled in v1 to protect database performance. Search by exact CIN/LLPIN/FCRN or Entity Type with a 3+ character Name prefix.";
-            return result;
-        }
-
         var rawQ = criteria.Q?.Trim();
-        if (string.IsNullOrWhiteSpace(rawQ))
+        var status = criteria.Status?.Trim();
+        if (string.IsNullOrWhiteSpace(rawQ) && string.IsNullOrWhiteSpace(status))
         {
-            result.ValidationErrorMessage = "Enter an exact Identifier (CIN, LLPIN, FCRN) or select an Entity Type and enter at least 3 letters of a company name.";
+            result.ValidationErrorMessage = "Enter an exact identifier, a 3+ character name prefix, or select an entity type and status.";
             return result;
         }
 
-        var upperQ = rawQ.ToUpperInvariant();
+        var upperQ = rawQ?.ToUpperInvariant() ?? "";
 
         // 1. Check if input is formatted like an exact Identifier
         // CIN: 21 chars, LLPIN: AAA-1234, Standard FCRN: F00000.
@@ -313,6 +307,11 @@ public sealed partial class CompanyRegistryQueryService
 
         if (isCin || isLlpin || isStandardFcrn || isExplicitForeignNumeric)
         {
+            if (criteria.HasSecondaryFilters)
+            {
+                result.ValidationErrorMessage = "Clear the filters when looking up an exact identifier.";
+                return result;
+            }
             // Exact PK Seek on Identifier
             var exactMatch = await _db.CompanyMasterRecords
                 .AsNoTracking()
@@ -333,26 +332,33 @@ public sealed partial class CompanyRegistryQueryService
             return result;
         }
 
-        // 2. Name-prefix seek requires EntityType and at least 3 characters
+        // 2. List lookup requires an entity type and either a name prefix or an indexed status.
         if (!criteria.RecordType.HasValue)
         {
-            result.ValidationErrorMessage = "Searching by name prefix requires selecting an Entity Type (Company, LLP, or Foreign).";
+            result.ValidationErrorMessage = "List search requires selecting an Entity Type (Company, LLP, or Foreign).";
             return result;
         }
 
-        if (rawQ.Length < 3)
+        if (!Enum.IsDefined(criteria.RecordType.Value) ||
+            (!string.IsNullOrWhiteSpace(rawQ) && rawQ.Length < 3) ||
+            (string.IsNullOrWhiteSpace(status) && string.IsNullOrWhiteSpace(rawQ)))
         {
-            result.ValidationErrorMessage = "Name prefix search requires at least 3 characters.";
+            result.ValidationErrorMessage = "Name prefix search requires at least 3 characters, or choose a status.";
             return result;
         }
 
-        var targetType = criteria.RecordType.Value;
+        if (status?.Length > 30 || criteria.State?.Length > 80 || criteria.District?.Length > 80 ||
+            criteria.Country?.Length > 80 || criteria.Industry?.Length > 200 ||
+            criteria.Class?.Length > 50 || criteria.Year is < 1800 or > 2100)
+        {
+            result.ValidationErrorMessage = "One or more filters are too long or outside the supported year range.";
+            return result;
+        }
+
         int pageSize = Math.Clamp(criteria.PageSize, 1, 50);
 
-        // Bounded index seek on (RecordType, Name) with deterministic keyset tie-breaker (Name, Identifier)
-        var query = _db.CompanyMasterRecords
-            .AsNoTracking()
-            .Where(r => r.RecordType == targetType && r.Name.StartsWith(rawQ));
+        // Status-only lists use (RecordType, Status, Name); name searches use (RecordType, Name).
+        var query = BuildExplorerListQuery(criteria);
 
         if (!string.IsNullOrWhiteSpace(criteria.CursorName) && !string.IsNullOrWhiteSpace(criteria.CursorIdentifier))
         {
@@ -386,6 +392,56 @@ public sealed partial class CompanyRegistryQueryService
         return result;
     }
 
+    private IQueryable<CompanyMasterRecord> BuildExplorerListQuery(RegistryExplorerCriteria criteria)
+    {
+        var query = _db.CompanyMasterRecords.AsNoTracking()
+            .Where(r => r.RecordType == criteria.RecordType!.Value);
+        var q = criteria.Q?.Trim();
+        var status = criteria.Status?.Trim();
+        if (!string.IsNullOrWhiteSpace(q)) query = query.Where(r => r.Name.StartsWith(q));
+        if (!string.IsNullOrWhiteSpace(status)) query = query.Where(r => r.Status == status);
+        if (!string.IsNullOrWhiteSpace(criteria.State)) query = query.Where(r => r.State == criteria.State.Trim());
+        if (!string.IsNullOrWhiteSpace(criteria.District)) query = query.Where(r => r.District == criteria.District.Trim());
+        if (!string.IsNullOrWhiteSpace(criteria.Country)) query = query.Where(r => r.Country == criteria.Country.Trim());
+        if (!string.IsNullOrWhiteSpace(criteria.Industry)) query = query.Where(r => r.IndustrialClassification != null && r.IndustrialClassification.StartsWith(criteria.Industry.Trim()));
+        if (!string.IsNullOrWhiteSpace(criteria.Class)) query = query.Where(r => r.Class == criteria.Class.Trim());
+        if (criteria.Year.HasValue)
+        {
+            var first = new DateOnly(criteria.Year.Value, 1, 1);
+            var next = first.AddYears(1);
+            query = query.Where(r => r.RegistrationDate >= first && r.RegistrationDate < next);
+        }
+        return query;
+    }
+
+    public async Task<(IReadOnlyList<RegistryRecordRow> Rows, string? Error)> ExportExplorerAsync(RegistryExplorerCriteria criteria, CancellationToken ct = default)
+    {
+        var validation = await SearchExplorerAsync(new RegistryExplorerCriteria
+        {
+            Q = criteria.Q, RecordType = criteria.RecordType, Status = criteria.Status,
+            State = criteria.State, District = criteria.District, Country = criteria.Country,
+            Industry = criteria.Industry, Class = criteria.Class, Year = criteria.Year,
+            PageSize = 1
+        }, ct);
+        if (validation.ValidationErrorMessage != null) return ([], validation.ValidationErrorMessage);
+
+        const int maxRows = 10000;
+        IQueryable<CompanyMasterRecord> query;
+        if (criteria.Q is { } q &&
+            (CinPattern().IsMatch(q.Trim().ToUpperInvariant()) || LlpinPattern().IsMatch(q.Trim().ToUpperInvariant()) ||
+             StandardFcrnPattern().IsMatch(q.Trim().ToUpperInvariant()) ||
+             (criteria.RecordType == CompanyMasterRecordType.Foreign && NumericFcrnPattern().IsMatch(q.Trim().ToUpperInvariant()))))
+            query = _db.CompanyMasterRecords.AsNoTracking().Where(r => r.Identifier == q.Trim().ToUpperInvariant());
+        else
+            query = BuildExplorerListQuery(criteria);
+
+        var rows = await query.OrderBy(r => r.Name).ThenBy(r => r.Identifier)
+            .Take(maxRows + 1).Select(ExplorerProjection).ToListAsync(ct);
+        if (rows.Count > maxRows)
+            return ([], $"More than {maxRows:N0} records match. Narrow the filters before downloading Excel.");
+        return (rows, null);
+    }
+
     internal static readonly Expression<Func<CompanyMasterRecord, RegistryRecordRow>> ExplorerProjection = r => new RegistryRecordRow()
     {
         Identifier = r.Identifier,
@@ -394,6 +450,7 @@ public sealed partial class CompanyRegistryQueryService
         Status = r.Status,
         RegistrationDate = r.RegistrationDate,
         State = r.State,
+        District = r.District,
         Roc = r.Roc,
         Class = r.Class,
         Industry = r.IndustrialClassification,

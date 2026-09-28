@@ -38,6 +38,10 @@
         <h2 class="h4 mb-0">@Model.Title · registry snapshot</h2>
         <span class="small text-muted">Registration windows referenced to @reference.ToString("dd MMM yyyy")</span>
     </div>
+    @if (Model.Title == "Companies")
+    {
+        <p class="small mb-3"><a asp-controller="RegistryDashboard" asp-action="Explorer" asp-route-RecordType="Company" asp-route-Status="Under CIRP">View companies under CIRP and download Excel <i class="bi bi-arrow-right"></i></a></p>
+    }
     <div class="row g-0 border-top border-bottom mb-4">
         @foreach (var kpi in kpis)
         {

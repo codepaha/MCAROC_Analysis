@@ -21,6 +21,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
+using NPOI.XSSF.UserModel;
 using Xunit;
 
 namespace MCAROC_Analysis.Tests;
@@ -218,7 +219,7 @@ public class RegistryDashboardTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task RegistryExplorer_RejectsSecondaryFilters_InV1()
+    public async Task RegistryExplorer_RequiresNameOrStatusToAnchorSecondaryFilters()
     {
         await using var db = CreateContext();
         var cache = new MemoryCache(new MemoryCacheOptions());
@@ -226,14 +227,83 @@ public class RegistryDashboardTests : IAsyncLifetime
 
         var result = await service.SearchExplorerAsync(new RegistryExplorerCriteria
         {
-            Q = "TATA",
             RecordType = CompanyMasterRecordType.Company,
-            State = "Maharashtra" // Secondary unindexed filter
+            State = "Maharashtra"
         });
 
         Assert.NotNull(result.ValidationErrorMessage);
-        Assert.Contains("Secondary filtering on State, Status, Industry, Class, or Year is disabled in v1", result.ValidationErrorMessage);
+        Assert.Contains("name prefix, or select an entity type and status", result.ValidationErrorMessage);
         Assert.Empty(result.Items);
+    }
+
+    [Fact]
+    public async Task RegistryExplorer_CirpStatusFiltersAndExportsAllMatchingRows()
+    {
+        await using var db = CreateContext();
+        var prefix = $"CIRPTEST{Guid.NewGuid():N}"[..16].ToUpperInvariant();
+        var state = $"Test State {Guid.NewGuid():N}";
+        await SeedRecordAsync(db, $"U11111DL2026PTC{Random.Shared.Next(100000, 999999)}", prefix + " Alpha", CompanyMasterRecordType.Company, "Under CIRP", state, new DateOnly(2022, 5, 15), "Private", "Trading");
+        await SeedRecordAsync(db, $"U22222DL2026PTC{Random.Shared.Next(100000, 999999)}", prefix + " Beta", CompanyMasterRecordType.Company, "Under CIRP", state, new DateOnly(2022, 5, 15), "Private", "Trading");
+        await SeedRecordAsync(db, $"U33333DL2026PTC{Random.Shared.Next(100000, 999999)}", prefix + " Active", CompanyMasterRecordType.Company, "Active", state, new DateOnly(2022, 5, 15), "Private", "Trading");
+        var cache = new MemoryCache(new MemoryCacheOptions());
+        var service = CreateQueryService(db, cache);
+        var criteria = new RegistryExplorerCriteria
+        {
+            RecordType = CompanyMasterRecordType.Company, Status = "Under CIRP",
+            State = state, Industry = "Trad", Class = "Private", Year = 2022,
+            PageSize = 1
+        };
+        var page = await service.SearchExplorerAsync(criteria);
+        Assert.Null(page.ValidationErrorMessage);
+        Assert.Single(page.Items);
+        Assert.True(page.HasNextPage);
+
+        var (exportRows, error) = await service.ExportExplorerAsync(criteria);
+        Assert.Null(error);
+        Assert.Equal(2, exportRows.Count);
+        Assert.All(exportRows, row => Assert.Equal("Under CIRP", row.Status));
+
+        var controller = new RegistryDashboardController(service)
+        {
+            ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() }
+        };
+        var file = Assert.IsType<FileContentResult>(await controller.Export(criteria));
+        Assert.EndsWith(".xlsx", file.FileDownloadName);
+        using var stream = new MemoryStream(file.FileContents);
+        using var workbook = new XSSFWorkbook(stream);
+        var sheet = workbook.GetSheet("Registry Records");
+        Assert.Equal(2, sheet.LastRowNum);
+        Assert.Equal("Current Status", sheet.GetRow(0).GetCell(3).StringCellValue);
+        Assert.Equal("Under CIRP", sheet.GetRow(1).GetCell(3).StringCellValue);
+    }
+
+    [Fact]
+    public async Task RegistryExplorer_LlpDistrictAndForeignCountryFilters()
+    {
+        await using var db = CreateContext();
+        var llpId = $"TST-{Random.Shared.Next(1000, 9999)}";
+        var foreignId = $"F{Random.Shared.Next(10000, 99999)}";
+        await SeedRecordAsync(db, llpId, "Test LLP District Filter", CompanyMasterRecordType.Llp, "Active");
+        await SeedRecordAsync(db, foreignId, "Test Foreign Country Filter", CompanyMasterRecordType.Foreign, "Active", country: "France");
+        var llp = await db.CompanyMasterRecords.FindAsync(llpId);
+        Assert.NotNull(llp);
+        llp.District = "Test District " + Guid.NewGuid().ToString("N");
+        await db.SaveChangesAsync();
+
+        var service = CreateQueryService(db, new MemoryCache(new MemoryCacheOptions()));
+        var llpResult = await service.SearchExplorerAsync(new RegistryExplorerCriteria
+        {
+            RecordType = CompanyMasterRecordType.Llp, Status = "Active", District = llp.District,
+            Q = "Test LLP District Filter"
+        });
+        Assert.Contains(llpResult.Items, row => row.Identifier == llpId && row.District == llp.District);
+
+        var foreignResult = await service.SearchExplorerAsync(new RegistryExplorerCriteria
+        {
+            RecordType = CompanyMasterRecordType.Foreign, Status = "Active", Country = "France",
+            Q = "Test Foreign Country Filter"
+        });
+        Assert.Contains(foreignResult.Items, row => row.Identifier == foreignId && row.Country == "France");
     }
 
     [Fact]
@@ -618,9 +688,8 @@ public class RegistryDashboardTests : IAsyncLifetime
 
         var invalidCriteria = new RegistryExplorerCriteria
         {
-            Q = "TATA",
             RecordType = CompanyMasterRecordType.Company,
-            State = "Delhi" // Secondary unindexed filter rejected in v1
+            State = "Delhi" // Unanchored secondary filter rejected
         };
 
         // 1. Explorer action with invalid criteria
@@ -630,7 +699,7 @@ public class RegistryDashboardTests : IAsyncLifetime
         Assert.Equal("~/Views/Registry/Index.cshtml", viewResult.ViewName);
         var model = Assert.IsType<RegistryDashboardViewModel>(viewResult.Model);
         Assert.NotNull(model.Explorer?.ValidationErrorMessage);
-        Assert.Contains("Secondary filtering", model.Explorer.ValidationErrorMessage);
+        Assert.Contains("name prefix, or select an entity type and status", model.Explorer.ValidationErrorMessage);
 
         // 2. Index action with invalid criteria
         controller.Response.StatusCode = 200; // reset
@@ -640,7 +709,7 @@ public class RegistryDashboardTests : IAsyncLifetime
         Assert.Equal("~/Views/Registry/Index.cshtml", indexViewResult.ViewName);
         var indexModel = Assert.IsType<RegistryDashboardViewModel>(indexViewResult.Model);
         Assert.NotNull(indexModel.Explorer?.ValidationErrorMessage);
-        Assert.Contains("Secondary filtering", indexModel.Explorer.ValidationErrorMessage);
+        Assert.Contains("name prefix, or select an entity type and status", indexModel.Explorer.ValidationErrorMessage);
     }
 
     private sealed class TestBarrierPromotionCoordinator : IRegistryPromotionCoordinator

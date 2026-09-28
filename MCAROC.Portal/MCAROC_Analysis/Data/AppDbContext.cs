@@ -1146,6 +1146,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             // filtered to RecordType first — Foreign records are looked up here but never surfaced to
             // AutoFetch, since neither its identifier regex nor EntityType accepts an FCRN.
             e.HasIndex(x => new { x.RecordType, x.Name });
+            e.HasIndex(x => new { x.RecordType, x.Status, x.Name });
 
             // Identity resolution (issue #293): exact lookups on the normalized and suffix-stripped name.
             // The import tool rebuilds this table from a copy, so it recreates these indexes by these names.
