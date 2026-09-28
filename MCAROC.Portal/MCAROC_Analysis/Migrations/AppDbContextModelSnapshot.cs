@@ -1396,6 +1396,8 @@ namespace MCAROC_Analysis.Migrations
 
                     b.HasIndex("RecordType", "Name");
 
+                    b.HasIndex("RecordType", "Status", "Name");
+
                     b.HasIndex("RecordType", "NameCore");
 
                     b.HasIndex("RecordType", "NameNormalized");

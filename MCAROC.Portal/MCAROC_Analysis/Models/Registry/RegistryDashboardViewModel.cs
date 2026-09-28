@@ -89,8 +89,10 @@ public sealed class RegistryExplorerCriteria
     public string? CursorIdentifier { get; set; }
     public int PageSize { get; set; } = 50;
 
-    // Secondary filters unsupported in v1:
+    // Optional filters. Status or a name prefix anchors list queries to an index.
     public string? State { get; set; }
+    public string? District { get; set; }
+    public string? Country { get; set; }
     public string? Status { get; set; }
     public string? Industry { get; set; }
     public string? Class { get; set; }
@@ -98,6 +100,8 @@ public sealed class RegistryExplorerCriteria
 
     public bool HasSecondaryFilters =>
         !string.IsNullOrWhiteSpace(State) ||
+        !string.IsNullOrWhiteSpace(District) ||
+        !string.IsNullOrWhiteSpace(Country) ||
         !string.IsNullOrWhiteSpace(Status) ||
         !string.IsNullOrWhiteSpace(Industry) ||
         !string.IsNullOrWhiteSpace(Class) ||
@@ -112,6 +116,7 @@ public sealed class RegistryRecordRow
     public string? Status { get; set; }
     public DateOnly? RegistrationDate { get; set; }
     public string? State { get; set; }
+    public string? District { get; set; }
     public string? Roc { get; set; }
     public string? Class { get; set; }
     public string? Industry { get; set; }
