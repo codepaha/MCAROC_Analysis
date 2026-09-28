@@ -666,9 +666,27 @@ public partial class DossierPdfComposer
             // narrower than this and it wraps to two lines, found via a real regression test (#216).
             new Col<CreditRating>("Action", 1.7f, r => r.IsAccepted ? r.Action ?? "-" : "Not accepted"),
             new Col<CreditRating>("Outlook", 1.1f, r => r.Outlook ?? "-"),
-            new Col<CreditRating>("Amount", 1.1f, r => r.Amount?.ToString("0.##") ?? "-", true),
+            new Col<CreditRating>("Amount", 1.4f, r => Money(r.Amount, r.Currency), true),
             new Col<CreditRating>("Date", 1.1f, r => D(r.RatingDate), true));
+        // #216 review: the two source sheets share this one table, and the table's own row count is
+        // already non-zero once either sheet contributes a row — the empty-state branch above only fires
+        // on a genuinely empty result, so a run missing just one of the two sheets would otherwise render
+        // silently as if both had been supplied.
+        var ratingsAbsenceNote = model.SourceCoverage.PartialAbsenceNote(SheetAliases.CreditRatings, SheetAliases.UnacceptedRatings);
+        if (ratingsAbsenceNote is not null)
+            col.Item().PaddingTop(3).Text(ratingsAbsenceNote).FontSize(DossierTheme.Small).FontColor(DossierTheme.Amber);
     });
+
+    /// <summary>An amount with its stored currency prefixed — without it, a USD-denominated rated
+    /// instrument and an INR one show as the same bare number (PR #216 review). The source sheet's
+    /// currency text is kept verbatim (whatever the workbook cell held, e.g. "INR"/"USD"/"Rs."), not
+    /// normalised, so nothing is invented when it's genuinely absent.</summary>
+    private static string Money(decimal? amount, string? currency) => amount switch
+    {
+        null => "-",
+        { } a when string.IsNullOrWhiteSpace(currency) => a.ToString("0.##"),
+        { } a => $"{currency.Trim()} {a:0.##}"
+    };
 
     // ── E. Litigation ─────────────────────────────────────────────────────
 
@@ -719,7 +737,7 @@ public partial class DossierPdfComposer
             new Col<FinancialDisputeCase>("Court", 1.8f, x => x.Court ?? "-"),
             new Col<FinancialDisputeCase>("Litigants", 2.2f, x => Clip(x.Litigants, 90)),
             new Col<FinancialDisputeCase>("Case no.", 1.4f, x => x.CaseNumber ?? "-"),
-            new Col<FinancialDisputeCase>("Amount", 1.1f, x => x.AmountUnderDefault?.ToString("0.##") ?? "-", true),
+            new Col<FinancialDisputeCase>("Amount", 1.4f, x => Money(x.AmountUnderDefault, x.Currency), true),
             new Col<FinancialDisputeCase>("Verdict", 1.3f, x => x.Verdict ?? "-"));
     });
 

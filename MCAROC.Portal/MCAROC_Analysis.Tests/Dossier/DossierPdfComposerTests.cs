@@ -557,6 +557,103 @@ public class DossierPdfComposerTests : IAsyncLifetime
         Assert.DoesNotContain("no dedicated section in this dossier", absentText);
     }
 
+    /// <summary>PR #216 review (P1): Credit Ratings and Unaccepted Ratings share one table and one
+    /// row-count check, so the "not in this upload" disclosure above only ever fires when BOTH sheets are
+    /// absent (a genuinely empty table). A run missing just one of the two — real rows from the sheet that
+    /// WAS provided, nothing from the one that wasn't — used to render with no sign the second source was
+    /// ever missing. Proves the new, separate partial-coverage note fills exactly that gap, and only that
+    /// gap: it must not appear when both sheets are present, and must differ from the all-absent wording
+    /// above so a reader never confuses "some data, one source missing" with "no data at all".</summary>
+    [SkippableFact]
+    public async Task A_ratings_table_fed_by_one_present_sheet_discloses_the_other_missing_sheet()
+    {
+        Skip.IfNot(OperatingSystem.IsWindows(),
+            "PdfPig text extraction from SkiaSharp subset fonts is unreliable on Linux; covered by the windows-tests job.");
+
+        await using var seed = DossierGoldenMasterTests.CreateContext();
+        var (requestId, ingestionRunId, _) = await DossierTestSeed.SeedAsync(seed);
+        seed.CreditRatings.Add(new CreditRating
+        {
+            RequestId = requestId, IngestionRunId = ingestionRunId,
+            Agency = "OnlySourceAgency", Instrument = "NCD", Rating = "AA",
+            Action = "Reaffirmed", Outlook = "Stable", Amount = 10m,
+            RatingDate = new DateOnly(2025, 8, 1), IsAccepted = true
+        });
+        await seed.SaveChangesAsync();
+
+        await using var db = DossierGoldenMasterTests.CreateContext();
+        var model = await new DossierAssembler(db).BuildAsync(requestId);
+        Assert.NotNull(model);
+
+        // Only "Unaccepted Ratings" is absent — "Credit Ratings" (the sheet the seeded row above came
+        // from) was present, so the table's row count is non-zero and the whole-table EmptyState branch
+        // never runs; this is exactly the case that branch alone cannot disclose.
+        var fakeRun = new IngestionRun
+        {
+            AbsentOptionalSheetsJson = JsonSerializer.Serialize(new[] { SheetAliases.CanonicalName(SheetAliases.UnacceptedRatings) })
+        };
+        var partialModel = model! with { SourceCoverage = SheetCoverage.From(fakeRun) };
+        var partialText = TextOf(new DossierPdfRenderer(WebRoot()).Render(partialModel, DossierVariant.Executive));
+
+        Assert.Contains("OnlySourceAgency", partialText); // the present sheet's row still renders
+        Assert.Contains("This upload did not include “Unaccepted Ratings” — rows below reflect only the source(s) provided.", partialText);
+        // Distinct from the all-absent wording — never both notes for the same table.
+        Assert.DoesNotContain("This upload did not include “Credit Ratings” or “Unaccepted Ratings”.", partialText);
+
+        // Control: both sheets present (SourceCoverage.Empty) — no partial note at all.
+        var bothPresentText = TextOf(new DossierPdfRenderer(WebRoot()).Render(model!, DossierVariant.Executive));
+        Assert.DoesNotContain("rows below reflect only the source(s) provided", bothPresentText);
+    }
+
+    /// <summary>PR #216 review (P2): the Amount columns for Credit Ratings and Legal Cases - Financial
+    /// Dispute rendered a bare number with no currency, so a USD-denominated instrument and an INR one
+    /// looked identical. CreditRating.Currency/FinancialDisputeCase.Currency are real, independently
+    /// stored per-row fields (verbatim from the source workbook) — proves both now render prefixed with
+    /// their own stored currency, and that a row with no stored currency still falls back to the bare
+    /// number rather than inventing one.</summary>
+    [SkippableFact]
+    public async Task Rating_and_financial_dispute_amounts_render_with_their_own_stored_currency()
+    {
+        Skip.IfNot(OperatingSystem.IsWindows(),
+            "PdfPig text extraction from SkiaSharp subset fonts is unreliable on Linux; covered by the windows-tests job.");
+
+        await using var seed = DossierGoldenMasterTests.CreateContext();
+        var (requestId, ingestionRunId, _) = await DossierTestSeed.SeedAsync(seed);
+        seed.CreditRatings.Add(new CreditRating
+        {
+            RequestId = requestId, IngestionRunId = ingestionRunId,
+            Agency = "CurrencyAgency", Instrument = "Bond", Rating = "A",
+            Action = "Assigned", Outlook = "Stable", Amount = 55.5m, Currency = "USD",
+            RatingDate = new DateOnly(2025, 6, 1), IsAccepted = true
+        });
+        seed.CreditRatings.Add(new CreditRating
+        {
+            // No stored currency at all — must fall back to the bare number, not "null 12".
+            RequestId = requestId, IngestionRunId = ingestionRunId,
+            Agency = "NoCurrencyAgency", Instrument = "CP", Rating = "A1", Action = "Assigned",
+            Amount = 12m, Currency = null, RatingDate = new DateOnly(2025, 6, 2), IsAccepted = true
+        });
+        seed.FinancialDisputeCases.Add(new FinancialDisputeCase
+        {
+            RequestId = requestId, IngestionRunId = ingestionRunId,
+            Direction = "PAYABLE", DisputeType = "Money Claim", Court = "CurrencyCourt",
+            Litigants = "GML vs Claimant", CaseNumber = "TFD/2025/CUR",
+            AmountUnderDefault = 7.89m, Currency = "INR", Verdict = "Pending", DateOfDefault = new DateOnly(2025, 1, 15)
+        });
+        await seed.SaveChangesAsync();
+
+        await using var db = DossierGoldenMasterTests.CreateContext();
+        var model = await new DossierAssembler(db).BuildAsync(requestId);
+        Assert.NotNull(model);
+        var text = TextOf(new DossierPdfRenderer(WebRoot()).Render(model!, DossierVariant.Executive));
+
+        Assert.Contains("USD 55.5", text);
+        Assert.Contains("INR 7.89", text);
+        // The no-currency row's bare number, and specifically not a stray "null" from a naive interpolation.
+        Assert.Contains("NoCurrencyAgency", text);
+        Assert.DoesNotContain("null 12", text);
+    }
+
     // ── Feature: per-client Litigation toggle ────────────────────────────────
 
     /// <summary>When the client's IncludeLitigationInDossier flag is off, the PDF is a genuinely different

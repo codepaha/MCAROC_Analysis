@@ -78,6 +78,20 @@ public sealed class SheetCoverage
             ? $"This upload did not include {Humanise([.. aliasSets.Select(SheetAliases.CanonicalName)])}."
             : presentButEmptyText;
 
+    /// <summary>For a table fed by more than one sheet whose combined row count is already non-zero — so
+    /// <see cref="EmptyState"/>'s own "not in this upload" branch never fires, since that only triggers on
+    /// an empty result — which of the named sheets were absent anyway (PR #216 review: a table backed by
+    /// two sheets that shows rows from only one gives no sign the other source was ever missing). Null when
+    /// every sheet was present (the common case, nothing to say) or every one was absent (a genuinely empty
+    /// table — <see cref="EmptyState"/> already covers that case with its own wording); only the "some yes,
+    /// some no" gap between those two needs this separate note.</summary>
+    public string? PartialAbsenceNote(params IReadOnlyList<string>[] aliasSets)
+    {
+        var absent = aliasSets.Where(WasAbsent).Select(SheetAliases.CanonicalName).ToList();
+        if (absent.Count == 0 || absent.Count == aliasSets.Length) return null;
+        return $"This upload did not include {Humanise(absent)} — rows below reflect only the source(s) provided.";
+    }
+
     private static string Humanise(IReadOnlyList<string> names)
     {
         var quoted = names.Select(n => $"“{n}”").ToList();
