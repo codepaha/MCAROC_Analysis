@@ -39,7 +39,7 @@
             <div class="card-body">
                 @if (Model.ForeignCountriesChart != null)
                 {
-                    @await Html.PartialAsync("_HorizontalBars", Model.ForeignCountriesChart)
+                    @await Html.PartialAsync("~/Views/Registry/_RegistryHorizontalBars.cshtml", Model.ForeignCountriesChart)
                 }
                 else
                 {

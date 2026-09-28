@@ -1,0 +1,25 @@
+@using System.Globalization
+@using MCAROC_Analysis.Models.Dossier
+@using MCAROC_Analysis.Models.Viz
+@model ChartCategorySeries
+@{
+    if (Model.Points.Any(p => p.Value < 0))
+        throw new InvalidOperationException("Registry bars require non-negative values.");
+
+    var maxValue = Model.Points.Max(p => p.Value);
+}
+<ol class="registry-bars" aria-label="@Model.Label">
+    @foreach (var point in Model.Points)
+    {
+        var width = maxValue > 0 ? point.Value / maxValue * 100 : 0;
+        <li class="registry-bars__row">
+            <div class="registry-bars__heading">
+                <span class="registry-bars__label">@point.Category</span>
+                <span class="registry-bars__value">@MetricUnitFormat.Format(point.Value, Model.Unit)</span>
+            </div>
+            <div class="registry-bars__track" aria-hidden="true">
+                <div class="registry-bars__fill" style="width: @width.ToString("0.###", CultureInfo.InvariantCulture)%; background-color: @ChartAccentCss.CssVariable(point.Accent)"></div>
+            </div>
+        </li>
+    }
+</ol>

@@ -66,7 +66,7 @@
                         {
                             var chart = ChartCategorySeries.Create(chartSection.Title, MetricUnit.Count, ["CompanyMasterRecords"],
                                 chartSection.Rows.Select(r => new ChartCategoryPoint(r.Label, r.Count, null, null)).ToList());
-                            @await Html.PartialAsync("~/Views/Shared/_HorizontalBars.cshtml", chart)
+                            @await Html.PartialAsync("~/Views/Registry/_RegistryHorizontalBars.cshtml", chart)
                         }
                     }
                     else
