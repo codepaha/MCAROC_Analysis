@@ -8,7 +8,7 @@
             <div class="card-body">
                 @if (Model.TopStatesChart != null)
                 {
-                    @await Html.PartialAsync("_HorizontalBars", Model.TopStatesChart)
+                    @await Html.PartialAsync("~/Views/Registry/_RegistryHorizontalBars.cshtml", Model.TopStatesChart)
                 }
                 else
                 {
@@ -23,7 +23,7 @@
             <div class="card-body">
                 @if (Model.TopIndustriesChart != null)
                 {
-                    @await Html.PartialAsync("_HorizontalBars", Model.TopIndustriesChart)
+                    @await Html.PartialAsync("~/Views/Registry/_RegistryHorizontalBars.cshtml", Model.TopIndustriesChart)
                 }
                 else
                 {

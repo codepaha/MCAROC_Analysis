@@ -57,7 +57,7 @@ public class HorizontalBarsRenderingTests
         return services.BuildServiceProvider();
     }
 
-    private static async Task<string> RenderAsync(ChartCategorySeries model)
+    private static async Task<string> RenderAsync(ChartCategorySeries model, string viewPath = "/Views/Shared/_HorizontalBars.cshtml")
     {
         var sp = CreateServices();
         var viewEngine = sp.GetRequiredService<IRazorViewEngine>();
@@ -68,7 +68,6 @@ public class HorizontalBarsRenderingTests
         routeData.Values["controller"] = "Dashboard";
         var actionContext = new ActionContext(httpContext, routeData, new ActionDescriptor());
 
-        var viewPath = "/Views/Shared/_HorizontalBars.cshtml";
         var viewResult = viewEngine.GetView(executingFilePath: null, viewPath: viewPath, isMainPage: false);
         if (!viewResult.Success)
         {
@@ -115,6 +114,23 @@ public class HorizontalBarsRenderingTests
     private static ChartCategorySeries Series(params (string Category, decimal Value)[] points) =>
         ChartCategorySeries.Create("Test", MetricUnit.Count, ["Entity.Field"],
             points.Select(p => new ChartCategoryPoint(p.Category, p.Value, null, null)).ToList());
+
+    [Fact]
+    public async Task Registry_bars_keep_long_labels_and_values_in_separate_text_elements()
+    {
+        var series = Series(
+            ("Manufacturing (Machinery and equipment, products thereof)", 10m),
+            ("<script>alert(1)</script>", 0m));
+        var html = await RenderAsync(series, "/Views/Registry/_RegistryHorizontalBars.cshtml");
+
+        Assert.Contains("<span class=\"registry-bars__label\">Manufacturing (Machinery and equipment, products thereof)</span>", html);
+        Assert.Contains("<span class=\"registry-bars__value\">10</span>", html);
+        Assert.Contains("width: 100%", html);
+        Assert.Contains("width: 0%", html);
+        Assert.DoesNotContain("<script>", html);
+        Assert.Contains("&lt;script&gt;", html);
+        Assert.DoesNotContain("<svg", html);
+    }
 
     [Fact]
     public async Task A_hostile_category_renders_html_encoded_never_executed()
