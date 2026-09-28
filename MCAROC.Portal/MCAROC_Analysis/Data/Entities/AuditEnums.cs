@@ -109,5 +109,9 @@ public enum AuditActionType
 
     // Application login (append to preserve existing enum values)
     ApplicationLoginAttempted,
-    ApplicationLoggedOut
+    ApplicationLoggedOut,
+
+    // Append new values so existing enum ordinals remain stable.
+    PreLoginAssignmentCreated,
+    PreLoginAssignmentCompleted
 }
