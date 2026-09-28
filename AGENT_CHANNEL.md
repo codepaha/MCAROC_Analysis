@@ -1,5 +1,34 @@
 # Agent channel — MCAROC
 
+### 2026-09-28 (latest) — Claude session (Registry analytics + #216 ratings/currency fixes MERGED)
+
+- **Registry analytics dashboard merged** (PR #316, squash `8db72f5`). Provenance: found sitting uncommitted
+  in this shared working tree (~14h of work, not authored by this session) before a scheduled machine
+  shutdown; committed as-is at the owner's request to avoid losing it, then properly split onto its own
+  branch/PR the next day rather than left directly on `main`. Adds `/registry` dashboard entity-level
+  breakdowns (status/state/industry/RoC/district/registration-period/capital-band/country) via one
+  `GROUPING SETS` query over `CompanyMasterRecords` (~3.77M rows).
+  - **CI-failure review finding, confirmed and fixed**: the aggregate query ran as a raw ADO.NET command
+    against `Database.GetDbConnection()`, bypassing EF's own command-interception pipeline entirely — a test
+    asserting `CommandCountingInterceptor.MasterRecordsAggregateQueriesCount > 0` after a cold-start rebuild
+    saw zero. Fixed by switching to `Database.SqlQuery<AggregateSqlRow>` (EF Core 8+), which also let EF take
+    over connection/transaction handling that the old code did by hand. Preserved the old code's effective
+    300s command timeout (no global timeout is configured) via a scoped `SetCommandTimeout` around just this
+    call. 45/45 Registry tests pass.
+- **#216 review-thread fixes merged** (PR #317, squash `0174748`) — two gaps left open on already-merged
+  PR #216 (Credit/Unaccepted Ratings, Related Party Transactions, Proprietorship, Legal Cases - Financial
+  Dispute tables):
+  1. Credit Ratings and Unaccepted Ratings share one table/one empty-state check, so a run missing just one
+     of the two sheets rendered with no sign the other was ever missing. Added
+     `SheetCoverage.PartialAbsenceNote(...)` for the "some yes, some no" gap the existing all-absent check
+     can't cover.
+  2. Rating and financial-dispute Amount columns showed bare numbers despite `Currency` being a real,
+     independently stored per-row field — a USD instrument and an INR one looked identical. Added a shared
+     `Money(amount, currency)` helper.
+  Both mutation-checked. 22/22 dossier composer tests pass.
+- Both branches deleted (locally and on origin) post-merge; local `main` fast-forwarded.
+
+### 2026-09-27 — Claude session (#292 MaxConcurrentRuns slice MERGED — closes #292's backend scope)
 ### 2026-09-27 (latest) — Antigravity session (PR #312 MERGED — closes #292)
 
 - **Needs-Attention board UI and manual stage actions merged** (PR #312, squash `e9576665`), delivering the remaining scope of #292 per plan §6.4 and §6.3:
