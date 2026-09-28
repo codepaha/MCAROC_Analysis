@@ -27,6 +27,7 @@
             <a asp-action="Assignment" asp-route-batch="@batch" asp-route-id="@job.PreLoginReportJobId" class="btn btn-sm btn-outline-primary">Assignment</a>
             @if (isCompleted)
             {
+                <a asp-action="Preview" asp-route-batch="@batch" asp-route-id="@job.PreLoginReportJobId" class="btn btn-sm btn-outline-primary">Preview</a>
                 <a asp-action="Download" asp-route-batch="@batch" asp-route-id="@job.PreLoginReportJobId" class="btn btn-sm btn-outline-primary">Download</a>
                 <a asp-action="Edit" asp-route-batch="@batch" asp-route-id="@job.PreLoginReportJobId" class="btn btn-sm btn-outline-secondary">Edit</a>
             }

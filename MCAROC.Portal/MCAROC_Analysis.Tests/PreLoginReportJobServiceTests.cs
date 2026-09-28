@@ -6,8 +6,10 @@ using MCAROC_Analysis.Data.Entities;
 using MCAROC_Analysis.Models;
 using MCAROC_Analysis.Services.PreLoginReports;
 using MCAROC_Analysis.Services.CompanyMaster;
+using MCAROC_Analysis.Controllers;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Options;
@@ -69,6 +71,41 @@ public class PreLoginReportJobServiceTests : IAsyncLifetime
     private const string SamplePayload = """
     { "ReportData": { "companyData": { "company":"Example Private Limited" }, "indexChargesData":[], "directorData":[] } }
     """;
+
+    [Fact]
+    public async Task Preview_and_download_expose_the_completed_report_and_attached_cases_only_in_its_batch()
+    {
+        var caseRecord = new LegalCaseRecord("district", "Labour Court, Sangli", "-", "ECA/15/2024", "ECA", "2024",
+            "Hearing", "-", "-", "Maharashtra", "Sangli", "Borrower vs claimant", "-", "Pending");
+        var data = new InstaReportData(new InstaCompany("Example Private Limited", "ROC Pune", "123456", "-", "-", "-",
+            "-", "-", "-", "01-01-2020", "Sangli", "-", "Unlisted", "-", "-", "Active"), [], [],
+            LegalCaseFileParser.ToInstaLegalCases([caseRecord]));
+        var (jobId, batchId) = await SeedJobAsync(PreLoginReportJobStatus.Completed, JsonSerializer.Serialize(data));
+        var reportPath = Path.Combine(Path.GetTempPath(), $"{jobId}-Example_SBI.docx");
+        await File.WriteAllBytesAsync(reportPath, [1, 2, 3]);
+        try
+        {
+            await using var db = CreateContext();
+            var job = await db.PreLoginReportJobs.SingleAsync(x => x.PreLoginReportJobId == jobId);
+            job.ReportStoragePath = reportPath;
+            await db.SaveChangesAsync();
+            var controller = new PreLoginReportsController(CreateService(db))
+            { ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() } };
+
+            var preview = Assert.IsType<ViewResult>(await controller.Preview(batchId, jobId, CancellationToken.None));
+            var visible = Assert.IsType<InstaReportData>(preview.Model);
+            Assert.Equal("ECA/15/2024", Assert.Single(visible.LegalCases!.Cases!).CaseNo);
+            Assert.Equal(1, visible.LegalCases.DistrictCourt);
+            Assert.True((bool)controller.ViewBag.DownloadAvailable);
+            Assert.IsType<NotFoundResult>(await controller.Preview(Guid.NewGuid(), jobId, CancellationToken.None));
+
+            var download = Assert.IsType<PhysicalFileResult>(await controller.Download(batchId, jobId, CancellationToken.None));
+            Assert.Equal(reportPath, download.FileName);
+            Assert.Equal("Example_SBI.docx", download.FileDownloadName);
+            Assert.IsType<NotFoundResult>(await controller.Download(Guid.NewGuid(), jobId, CancellationToken.None));
+        }
+        finally { File.Delete(reportPath); }
+    }
 
     [Theory]
     [InlineData(PreLoginReportJobStatus.Queued)]

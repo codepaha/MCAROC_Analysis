@@ -7,6 +7,8 @@
 }
 <div class="pi-page-head"><div><div class="pi-kicker">Assignment @job.PreLoginReportJobId</div><h1>@(details?.CompanyDetails.CompanyName ?? job.SubmittedCompanyName ?? "Recognizing request")</h1><p>@job.Status · @job.FailureReason</p></div></div>
 <p><a asp-action="History" asp-route-batch="@job.BatchId">Back to assignment history</a> · <a asp-action="AssignmentSource" asp-route-batch="@job.BatchId" asp-route-id="@job.PreLoginReportJobId">Download original request</a></p>
+@if (job.Status == PreLoginReportJobStatus.Completed)
+{ <p><a asp-action="Preview" asp-route-batch="@job.BatchId" asp-route-id="@job.PreLoginReportJobId" class="btn btn-outline-primary">Preview generated report and cases</a></p> }
 @if (TempData["ReportError"] is string error) { <div class="alert alert-danger">@error</div> }
 @if (details is not null)
 {

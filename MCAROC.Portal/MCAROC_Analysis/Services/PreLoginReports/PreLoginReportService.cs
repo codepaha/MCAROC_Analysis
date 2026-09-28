@@ -202,10 +202,10 @@ public sealed class PreLoginReportService(InstaFinancialsClient client, IWebHost
 
                 foreach (var (field, fieldIndex) in fields.Select((field, fieldIndex) => (field, fieldIndex)))
                     legalCaseDetailsTable.Append(CreateLegalCaseFieldRow(
-                        prototypeCells[0], prototypeCells[1], field.Label, field.Value,
+                        field.Label, field.Value,
                         isFirst: fieldIndex == 0, isLast: fieldIndex == fields.Length - 1));
 
-                legalCaseDetailsTable.Append(CreateLegalCaseSpacerRow(prototypeCells[0], prototypeCells[1]));
+                legalCaseDetailsTable.Append(CreateLegalCaseSpacerRow());
             }
             StyleLegalCaseTable(legalCaseDetailsTable);
         }
@@ -290,7 +290,7 @@ public sealed class PreLoginReportService(InstaFinancialsClient client, IWebHost
         {
             var precedingProperties = precedingParagraph.GetFirstChild<ParagraphProperties>()
                 ?? precedingParagraph.PrependChild(new ParagraphProperties());
-            precedingProperties.AppendChild(new KeepNext());
+            precedingProperties.PrependChild(new KeepNext());
             var firstSection = (SectionProperties)finalSection.CloneNode(true);
             firstSection.InsertBefore(new SectionType { Val = SectionMarkValues.NextPage }, firstSection.GetFirstChild<PageSize>());
             precedingProperties.AppendChild(firstSection);
@@ -399,12 +399,13 @@ public sealed class PreLoginReportService(InstaFinancialsClient client, IWebHost
         }
     }
 
-    private static TableRow CreateLegalCaseFieldRow(
-        TableCell labelPrototype, TableCell valuePrototype, string label, string value, bool isFirst, bool isLast)
+    private static TableRow CreateLegalCaseFieldRow(string label, string value, bool isFirst, bool isLast)
     {
         var row = new TableRow(new TableRowProperties(new CantSplit()));
-        var labelCell = (TableCell)labelPrototype.CloneNode(true);
-        var valueCell = (TableCell)valuePrototype.CloneNode(true);
+        // The sample cells carry legacy border markup that becomes invalid when cloned for every
+        // case row. Build clean cells, then apply the report's case-card style explicitly.
+        var labelCell = new TableCell(new Paragraph());
+        var valueCell = new TableCell(new Paragraph());
         SetCellText(labelCell, $"{label} : ");
         SetCellText(valueCell, value);
         StyleLegalCaseCell(labelCell, bold: true, width: "1900", isFirst, isLast);
@@ -416,16 +417,17 @@ public sealed class PreLoginReportService(InstaFinancialsClient client, IWebHost
             properties.SpacingBetweenLines = new SpacingBetweenLines
                 { Before = "0", After = "0", Line = "240", LineRule = LineSpacingRuleValues.Auto };
             properties.RemoveAllChildren<KeepNext>();
-            if (!isLast) properties.AppendChild(new KeepNext());
+            // In pPr, keepNext precedes spacing. Appending it after spacing produces invalid Word XML.
+            if (!isLast) properties.PrependChild(new KeepNext());
         }
 
         row.Append(labelCell, valueCell);
         return row;
     }
 
-    private static TableRow CreateLegalCaseSpacerRow(TableCell labelPrototype, TableCell valuePrototype)
+    private static TableRow CreateLegalCaseSpacerRow()
     {
-        var row = CreateLegalCaseFieldRow(labelPrototype, valuePrototype, string.Empty, string.Empty, isFirst: false, isLast: true);
+        var row = CreateLegalCaseFieldRow(string.Empty, string.Empty, isFirst: false, isLast: true);
         row.TableRowProperties!.RemoveAllChildren<TableRowHeight>();
         row.TableRowProperties.AppendChild(new TableRowHeight { Val = 180U, HeightType = HeightRuleValues.Exact });
         foreach (var cell in row.Elements<TableCell>())
@@ -447,12 +449,12 @@ public sealed class PreLoginReportService(InstaFinancialsClient client, IWebHost
     {
         var properties = cell.GetFirstChild<TableCellProperties>() ?? cell.PrependChild(new TableCellProperties());
         properties.TableCellWidth = new TableCellWidth { Type = TableWidthUnitValues.Dxa, Width = width };
-        properties.Shading = new Shading { Val = ShadingPatternValues.Clear, Color = "auto", Fill = "FFFFFF" };
         properties.TableCellBorders = new TableCellBorders(
             new TopBorder { Val = isFirst ? BorderValues.Single : BorderValues.Nil, Color = "7F8C8D", Size = 6U },
             new LeftBorder { Val = BorderValues.Nil },
             new BottomBorder { Val = isLast ? BorderValues.Single : BorderValues.Nil, Color = "7F8C8D", Size = 6U },
             new RightBorder { Val = BorderValues.Nil });
+        properties.Shading = new Shading { Val = ShadingPatternValues.Clear, Color = "auto", Fill = "FFFFFF" };
         foreach (var run in cell.Descendants<Run>())
         {
             var runProperties = run.GetFirstChild<RunProperties>() ?? run.PrependChild(new RunProperties());
@@ -470,28 +472,33 @@ public sealed class PreLoginReportService(InstaFinancialsClient client, IWebHost
         var horizontal = showHorizontalSeparators
             ? new InsideHorizontalBorder { Val = BorderValues.Single, Color = "B4C7E7", Size = 4U }
             : new InsideHorizontalBorder { Val = BorderValues.Nil };
-        properties.AppendChild(new TableBorders(
+        properties.TableBorders = new TableBorders(
             new TopBorder { Val = BorderValues.Nil },
             new LeftBorder { Val = BorderValues.Nil },
             new BottomBorder { Val = BorderValues.Nil },
             new RightBorder { Val = BorderValues.Nil },
             horizontal,
-            new InsideVerticalBorder { Val = BorderValues.Nil }));
+            new InsideVerticalBorder { Val = BorderValues.Nil });
     }
 
     private static void SetCellVisualStyle(TableCell cell, string fill, bool showBottomBorder, string fontSize)
     {
         var properties = cell.GetFirstChild<TableCellProperties>() ?? cell.PrependChild(new TableCellProperties());
         properties.RemoveAllChildren<Shading>();
-        properties.AppendChild(new Shading { Val = ShadingPatternValues.Clear, Color = "auto", Fill = fill });
         properties.RemoveAllChildren<TableCellBorders>();
-        properties.AppendChild(new TableCellBorders(
+        var borders = new TableCellBorders(
             new TopBorder { Val = BorderValues.Nil },
             new LeftBorder { Val = BorderValues.Nil },
             showBottomBorder
                 ? new BottomBorder { Val = BorderValues.Single, Color = "B4C7E7", Size = 4U }
                 : new BottomBorder { Val = BorderValues.Nil },
-            new RightBorder { Val = BorderValues.Nil }));
+            new RightBorder { Val = BorderValues.Nil });
+        // tcBorders and shd belong before vAlign in tcPr. The sample charge cells contain vAlign,
+        // so appending these styles at the end creates a document Word may need to repair.
+        var verticalAlignment = properties.ChildElements.FirstOrDefault(x => x.LocalName == "vAlign");
+        if (verticalAlignment is null) properties.AppendChild(borders);
+        else properties.InsertBefore(borders, verticalAlignment);
+        borders.InsertAfterSelf(new Shading { Val = ShadingPatternValues.Clear, Color = "auto", Fill = fill });
         foreach (var run in cell.Descendants<Run>())
         {
             var runProperties = run.GetFirstChild<RunProperties>() ?? run.PrependChild(new RunProperties());
