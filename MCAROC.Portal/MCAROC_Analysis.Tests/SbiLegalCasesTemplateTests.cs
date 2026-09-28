@@ -1,5 +1,6 @@
 using DocumentFormat.OpenXml.Packaging;
 using DocumentFormat.OpenXml.Wordprocessing;
+using DocumentFormat.OpenXml.Validation;
 using WP = DocumentFormat.OpenXml.Drawing.Wordprocessing;
 using MCAROC_Analysis.Models;
 using MCAROC_Analysis.Services.PreLoginReports;
@@ -103,6 +104,17 @@ public class SbiLegalCasesTemplateTests
         using var doc = WordprocessingDocument.Open(new MemoryStream(result.Bytes), false);
         var body = doc.MainDocumentPart!.Document.Body!;
         Assert.Equal(2, body.Descendants<SectionProperties>().Count());
+
+        using var template = WordprocessingDocument.Open(Path.Combine(new DirectoryInfo(AppContext.BaseDirectory).Parent!.Parent!.Parent!.Parent!.FullName,
+            "MCAROC_Analysis", "ReportTemplates", "SBI", "sbi-template.docx"), false);
+        var generatedErrors = new OpenXmlValidator().Validate(doc).Select(x => x.Description).ToList();
+        var templateErrors = new OpenXmlValidator().Validate(template).Select(x => x.Description).ToList();
+        // The supplied Word template has legacy validation warnings. Adding case cards must not add
+        // any new kind of XML error or multiply an existing one.
+        var baseline = templateErrors.GroupBy(x => x).ToDictionary(x => x.Key, x => x.Count());
+        foreach (var group in generatedErrors.GroupBy(x => x))
+            Assert.True(baseline.TryGetValue(group.Key, out var count) && group.Count() <= count,
+                $"Case cards introduced {group.Count()} validation errors: {group.Key}");
 
         var text = body.InnerText;
         Assert.Contains("Sr No : 1", text);

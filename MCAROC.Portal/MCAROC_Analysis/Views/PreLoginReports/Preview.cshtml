@@ -1,0 +1,95 @@
+@model MCAROC_Analysis.Services.PreLoginReports.InstaReportData
+@using MCAROC_Analysis.Data.Entities
+@{
+    var job = (PreLoginReportJob)ViewBag.Job;
+    var canDownload = (bool)ViewBag.DownloadAvailable;
+    var company = Model.Company;
+    var cases = Model.LegalCases?.Cases;
+    ViewData["Title"] = "Report preview";
+}
+<div class="pi-page-head"><div><div class="pi-kicker">Report @job.PreLoginReportJobId</div><h1>Report preview</h1><p>Review the saved report data and attached litigation cases. The downloaded Word file has the final page layout.</p></div></div>
+<p><a asp-action="History" asp-route-batch="@job.BatchId">Back to history</a> · <a asp-action="Assignment" asp-route-batch="@job.BatchId" asp-route-id="@job.PreLoginReportJobId">Recognized request</a></p>
+@if (TempData["ReportError"] is string error) { <div class="alert alert-danger">@error</div> }
+<div class="mb-4">
+    @if (canDownload) { <a asp-action="Download" asp-route-batch="@job.BatchId" asp-route-id="@job.PreLoginReportJobId" class="btn btn-primary">Download Word report</a> }
+    else { <span class="text-danger">The Word file is unavailable. Rerun the assignment from history to regenerate it.</span> }
+    <a asp-action="Edit" asp-route-batch="@job.BatchId" asp-route-id="@job.PreLoginReportJobId" class="btn btn-outline-secondary">Edit report data</a>
+</div>
+<div class="pi-panel" style="padding:24px;">
+    <h2 class="h5">@(company.LitigationOnly ? "Borrower details" : "Company details")</h2>
+    <dl class="row mb-0">
+        <dt class="col-sm-3">Name</dt><dd class="col-sm-9">@company.Name</dd>
+        <dt class="col-sm-3">@(company.LitigationOnly ? "PAN / registration number" : "CIN / LLPIN")</dt><dd class="col-sm-9">@job.Cin</dd>
+        <dt class="col-sm-3">Entity type</dt><dd class="col-sm-9">@(company.EntityType ?? company.Class)</dd>
+        <dt class="col-sm-3">Registered address</dt><dd class="col-sm-9">@company.Address</dd>
+        @if (!company.LitigationOnly)
+        {
+            <dt class="col-sm-3">ROC</dt><dd class="col-sm-9">@company.RocName</dd>
+            <dt class="col-sm-3">Incorporated</dt><dd class="col-sm-9">@company.Incorporated</dd>
+            <dt class="col-sm-3">Company status</dt><dd class="col-sm-9">@company.Status</dd>
+            <dt class="col-sm-3">Authorised / paid-up capital</dt><dd class="col-sm-9">@company.AuthorisedCapital / @company.PaidUpCapital</dd>
+        }
+    </dl>
+</div>
+@if (!company.LitigationOnly)
+{
+    <div class="pi-panel mt-3" style="padding:24px;">
+        <h2 class="h5">MCA-ROC charges (@Model.Charges.Count)</h2>
+        @if (Model.Charges.Count == 0) { <p class="mb-0">No charges returned.</p> }
+        else
+        {
+            <div class="table-responsive"><table class="table table-sm"><thead><tr><th>Charge ID</th><th>Holder</th><th>Created</th><th>Amount</th><th>Open</th></tr></thead><tbody>
+            @foreach (var charge in Model.Charges) { <tr><td>@charge.Id</td><td>@charge.Holder</td><td>@charge.Created</td><td>@charge.Amount</td><td>@(charge.IsOpen ? "Yes" : "No")</td></tr> }
+            </tbody></table></div>
+        }
+    </div>
+}
+@if (job.Format == "Prr")
+{
+    <div class="pi-panel mt-3" style="padding:24px;">
+        <h2 class="h5">Directors / signatories (@Model.Directors.Count)</h2>
+        @if (Model.Directors.Count == 0) { <p class="mb-0">No directors or signatories returned.</p> }
+        else
+        {
+            <div class="table-responsive"><table class="table table-sm"><thead><tr><th>Name</th><th>DIN / PAN</th><th>Designation</th><th>Appointment</th></tr></thead><tbody>
+            @foreach (var director in Model.Directors) { <tr><td>@director.Name</td><td>@director.DinOrPan</td><td>@director.Designation</td><td>@director.Appointed</td></tr> }
+            </tbody></table></div>
+        }
+    </div>
+}
+@if (job.Format == "Sbi")
+{
+    <div class="pi-panel mt-3" style="padding:24px;">
+        <h2 class="h5">Legal cases</h2>
+        @if (Model.LegalCases is null) { <p class="mb-0">Litigation results have not been supplied.</p> }
+        else
+        {
+            <div class="table-responsive"><table class="table table-sm"><thead><tr><th>Supreme Court</th><th>High Court</th><th>District Court</th><th>Consumer</th><th>ITAT / CESTAT</th><th>NCLT / NCLAT</th><th>DRT / DRAT</th><th>RERA</th><th>NGT / Others</th></tr></thead><tbody><tr>
+                <td>@Model.LegalCases.SupremeCourt</td><td>@Model.LegalCases.HighCourt</td><td>@Model.LegalCases.DistrictCourt</td><td>@Model.LegalCases.ConsumerForum</td><td>@Model.LegalCases.ItatTax</td><td>@Model.LegalCases.NcltNclat</td><td>@Model.LegalCases.DrtDrat</td><td>@Model.LegalCases.Rera</td><td>@Model.LegalCases.NgtOthers</td>
+            </tr></tbody></table></div>
+            @if (cases is null) { <p class="mb-0">Case-level details were not supplied; the counts were entered manually.</p> }
+            else if (cases.Count == 0) { <p class="mb-0">No litigation cases found.</p> }
+            else
+            {
+                <h3 class="h6 mt-4">Attached cases (@cases.Count)</h3>
+                @for (var i = 0; i < cases.Count; i++)
+                {
+                    var legalCase = cases[i];
+                    <section class="border rounded p-3 mb-3" aria-label="Case @(i + 1)">
+                        <h4 class="h6">Case @(i + 1): @legalCase.CaseNo</h4>
+                        <dl class="row mb-0">
+                            <dt class="col-sm-3">Court</dt><dd class="col-sm-9">@legalCase.Court</dd>
+                            <dt class="col-sm-3">Type / year</dt><dd class="col-sm-9">@legalCase.CaseType / @legalCase.CaseYear</dd>
+                            <dt class="col-sm-3">Stage / status</dt><dd class="col-sm-9">@legalCase.CaseStage / @legalCase.Status</dd>
+                            <dt class="col-sm-3">Act</dt><dd class="col-sm-9">@legalCase.Act</dd>
+                            <dt class="col-sm-3">Filing date</dt><dd class="col-sm-9">@legalCase.DateOfFiling</dd>
+                            <dt class="col-sm-3">State / district</dt><dd class="col-sm-9">@legalCase.State / @legalCase.District</dd>
+                            <dt class="col-sm-3">Next hearing</dt><dd class="col-sm-9">@legalCase.DateOfHearing</dd>
+                            <dt class="col-sm-3">Case details</dt><dd class="col-sm-9">@legalCase.CaseDetails</dd>
+                        </dl>
+                    </section>
+                }
+            }
+        }
+    </div>
+}

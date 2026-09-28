@@ -163,6 +163,18 @@ public sealed class PreLoginReportsController(PreLoginReportJobService jobs, App
         catch (PreLoginReportException ex) { TempData["ReportError"] = ex.Message; return RedirectToAction(nameof(History), new { batch }); }
     }
 
+    [HttpGet("{batch:guid}/{id:long}/preview")]
+    public async Task<IActionResult> Preview(Guid batch, long id, CancellationToken cancellationToken)
+    {
+        var job = await jobs.FindInBatchAsync(batch, id, cancellationToken);
+        if (job is null || job.Status != PreLoginReportJobStatus.Completed) return NotFound();
+        var data = jobs.AssignmentData(job);
+        if (data is null) return NotFound();
+        ViewBag.Job = job;
+        ViewBag.DownloadAvailable = !string.IsNullOrWhiteSpace(job.ReportStoragePath) && System.IO.File.Exists(job.ReportStoragePath);
+        return View(data);
+    }
+
     [HttpPost("{batch:guid}/{id:long}/edit")]
     [ValidateAntiForgeryToken]
     public async Task<IActionResult> Edit(Guid batch, long id, PreLoginReportDraftViewModel model, IFormFile? legalCasesFile, CancellationToken cancellationToken)
@@ -194,7 +206,14 @@ public sealed class PreLoginReportsController(PreLoginReportJobService jobs, App
     public async Task<IActionResult> Download(Guid batch, long id, CancellationToken cancellationToken)
     {
         var job = await jobs.FindInBatchAsync(batch, id, cancellationToken);
-        if (job is null || job.Status != MCAROC_Analysis.Data.Entities.PreLoginReportJobStatus.Completed || string.IsNullOrWhiteSpace(job.ReportStoragePath) || !System.IO.File.Exists(job.ReportStoragePath)) return NotFound();
-        return File(await System.IO.File.ReadAllBytesAsync(job.ReportStoragePath, cancellationToken), "application/vnd.openxmlformats-officedocument.wordprocessingml.document", Path.GetFileName(job.ReportStoragePath).Split('-', 2).Last());
+        if (job is null || job.Status != PreLoginReportJobStatus.Completed) return NotFound();
+        if (string.IsNullOrWhiteSpace(job.ReportStoragePath) || !System.IO.File.Exists(job.ReportStoragePath))
+        {
+            TempData["ReportError"] = "The generated Word file is unavailable. The report data can still be reviewed below; rerun the assignment to regenerate the file.";
+            return RedirectToAction(nameof(Preview), new { batch, id });
+        }
+        Response.Headers.CacheControl = "no-store";
+        return PhysicalFile(job.ReportStoragePath, "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            Path.GetFileName(job.ReportStoragePath).Split('-', 2).Last());
     }
 }
