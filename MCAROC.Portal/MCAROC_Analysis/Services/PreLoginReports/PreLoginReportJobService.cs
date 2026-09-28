@@ -9,7 +9,7 @@ using Microsoft.EntityFrameworkCore;
 namespace MCAROC_Analysis.Services.PreLoginReports;
 
 public sealed class PreLoginReportJobService(AppDbContext db, PreLoginReportQueue queue, PreLoginReportService reports, IWebHostEnvironment environment,
-    BorrowerAssignmentIntake? intake = null)
+    BorrowerAssignmentIntake? intake = null, BorrowerAssignmentIdentityResolver? identityResolver = null)
 {
     public async Task<Guid> QueueRequestAsync(IFormFile? requestFile, string? requestText, CancellationToken ct)
     {
@@ -96,6 +96,15 @@ public sealed class PreLoginReportJobService(AppDbContext db, PreLoginReportQueu
                 throw new PreLoginReportException("Enter an LLPIN for an LLP assignment.");
             if (entity != PreLoginReportEntityType.Llp && !Regex.IsMatch(identifier, @"^[UL]"))
                 throw new PreLoginReportException("Enter an identifier supported by the current MCA report-data service.");
+            if (entity is PreLoginReportEntityType.Company or PreLoginReportEntityType.Llp)
+            {
+                if (entity == PreLoginReportEntityType.Company) details.CompanyDetails.Cin = identifier;
+                var confirmed = await (identityResolver ?? throw new PreLoginReportException("MCA identity resolution is not configured."))
+                    .ResolveAsync(details, entity == PreLoginReportEntityType.Llp ? identifier : null, ct);
+                if (confirmed.Identifier != identifier)
+                    throw new PreLoginReportException("The selected CIN / LLPIN and borrower name do not match a company in the MCA master database.");
+                data = data with { IdentityResolution = confirmed };
+            }
             job.Cin = identifier;
             if (entity == PreLoginReportEntityType.Llp)
                 data = data with { McaIdentifier = identifier };
@@ -236,7 +245,9 @@ public sealed class PreLoginReportJobService(AppDbContext db, PreLoginReportQueu
         var stored = string.IsNullOrWhiteSpace(job.DataJson) ? null : JsonSerializer.Deserialize<InstaReportData>(job.DataJson);
         data = data with { Company = data.Company with { IsPartnership = stored?.Company.IsPartnership ?? false,
             IsLitigationOnly = stored?.Company.IsLitigationOnly ?? false, EntityType = stored?.Company.EntityType },
-            Assignment = stored?.Assignment, SourceFileName = stored?.SourceFileName, SourceStoragePath = stored?.SourceStoragePath, ExtractionModel = stored?.ExtractionModel };
+            Assignment = stored?.Assignment, SourceFileName = stored?.SourceFileName, SourceStoragePath = stored?.SourceStoragePath,
+            ExtractionModel = stored?.ExtractionModel, McaIdentifier = stored?.McaIdentifier,
+            IdentityResolution = stored?.IdentityResolution };
         if (data.Company.LitigationOnly) data = data with { Charges = [], Directors = [] };
 
         if (legalCasesFile is { Length: > 0 })
@@ -302,14 +313,32 @@ public sealed class PreLoginReportJobService(AppDbContext db, PreLoginReportQueu
             if (source is not null)
             {
                 var recognized = await (intake ?? throw new PreLoginReportException("Assignment recognition is not configured.")).RecognizeAsync(source, cancellationToken);
-                job.DataJson = JsonSerializer.Serialize(recognized.Data);
-                job.SubmittedCompanyName = recognized.Data.Assignment?.CompanyDetails.CompanyName;
-                job.Cin = recognized.Data.McaIdentifier ?? recognized.Data.Assignment?.CompanyDetails.Cin ?? recognized.Data.Company.RegistrationNumber;
+                var intakeData = recognized.Data;
+                var assignment = intakeData.Assignment!;
+                var entity = BorrowerRequestParser.EntityType(assignment);
+                string? reviewReason = recognized.MissingDetails;
+                if (!intakeData.Company.LitigationOnly && entity is PreLoginReportEntityType.Company or PreLoginReportEntityType.Llp)
+                {
+                    var resolution = await (identityResolver ?? throw new PreLoginReportException("MCA identity resolution is not configured.", true))
+                        .ResolveAsync(assignment, intakeData.McaIdentifier, cancellationToken);
+                    intakeData = intakeData with { IdentityResolution = resolution, McaIdentifier = resolution.Identifier ?? intakeData.McaIdentifier };
+                    if (resolution.Identifier is { } confirmed)
+                    {
+                        if (entity == PreLoginReportEntityType.Company) assignment.CompanyDetails.Cin = confirmed;
+                        reviewReason = null;
+                    }
+                    else reviewReason = $"MCA identity needs review ({resolution.ReasonCode}). Select the correct database match before requesting details.";
+                }
+                else if (entity == PreLoginReportEntityType.ForeignCompany)
+                    reviewReason = "Foreign-company identity needs review: the current report-data service has no verified FCRN lookup.";
+                job.DataJson = JsonSerializer.Serialize(intakeData);
+                job.SubmittedCompanyName = assignment.CompanyDetails.CompanyName;
+                job.Cin = intakeData.McaIdentifier ?? assignment.CompanyDetails.Cin ?? intakeData.Company.RegistrationNumber;
                 if (job.Cin == "-") job.Cin = "ASSIGN-" + job.BatchId.ToString("N")[..20];
-                if (recognized.MissingDetails is not null || recognized.Data.Company.LitigationOnly)
+                if (reviewReason is not null || intakeData.Company.LitigationOnly)
                 {
                     job.Status = PreLoginReportJobStatus.AwaitingReview; job.ProgressPercent = 100;
-                    job.FailureReason = recognized.MissingDetails ?? "Assignment created. Litigation-only scope; awaiting litigation results.";
+                    job.FailureReason = reviewReason ?? "Assignment created. Litigation-only scope; awaiting litigation results.";
                     await db.SaveChangesAsync(cancellationToken);
                     return;
                 }
@@ -317,7 +346,8 @@ public sealed class PreLoginReportJobService(AppDbContext db, PreLoginReportQueu
             var stored = DeserializeStoredData(job.DataJson);
             var data = stored?.Company.LitigationOnly == true || stored?.LegalCases is not null ? stored! :
                 (await reports.FetchDataAsync(job.Cin, job.SubmittedCompanyName, cancellationToken)) with
-                { Assignment = stored?.Assignment, SourceFileName = stored?.SourceFileName, SourceStoragePath = stored?.SourceStoragePath, ExtractionModel = stored?.ExtractionModel, McaIdentifier = stored?.McaIdentifier };
+                { Assignment = stored?.Assignment, SourceFileName = stored?.SourceFileName, SourceStoragePath = stored?.SourceStoragePath,
+                    ExtractionModel = stored?.ExtractionModel, McaIdentifier = stored?.McaIdentifier, IdentityResolution = stored?.IdentityResolution };
             job.DataJson = JsonSerializer.Serialize(data); job.Status = PreLoginReportJobStatus.Generating; job.ProgressPercent = 60;
             await db.SaveChangesAsync(cancellationToken);
             var generated = await reports.GenerateFromDataAsync(job.Cin, format, data, cancellationToken);

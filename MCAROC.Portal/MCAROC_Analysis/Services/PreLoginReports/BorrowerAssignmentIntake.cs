@@ -36,9 +36,10 @@ public sealed class BorrowerAssignmentIntake(BorrowerRequestDocumentReader reade
         var recognized = CreateData(details, source, model);
         if (BorrowerRequestParser.EntityType(details) == PreLoginReportEntityType.Llp)
         {
-            var llpin = System.Text.RegularExpressions.Regex.Match(text.ToUpperInvariant(), @"(?<![A-Z0-9])[A-Z]{3}-[0-9]{4}(?![A-Z0-9])");
+            var llpin = System.Text.RegularExpressions.Regex.Match(text.ToUpperInvariant(),
+                @"\b(?:LLPIN|LLP\s+IDENTIFICATION\s+(?:NO|NUMBER))\s*[:#-]?\s*([A-Z]{3}-[0-9]{4})\b");
             if (llpin.Success && details.CompanyDetails.CompanyName is not null)
-                recognized = recognized with { Data = recognized.Data with { McaIdentifier = llpin.Value }, MissingDetails = null };
+                recognized = recognized with { Data = recognized.Data with { McaIdentifier = llpin.Groups[1].Value }, MissingDetails = null };
         }
         return recognized;
     }

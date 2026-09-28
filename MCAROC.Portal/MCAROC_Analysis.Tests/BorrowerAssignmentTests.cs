@@ -267,4 +267,64 @@ public class BorrowerIdentityLookupTests : IAsyncLifetime
             await db.CompanyMasterRecords.Where(x => x.Identifier == companyId || x.Identifier == llpId).ExecuteDeleteAsync();
         }
     }
+
+    [Fact]
+    public async Task LLPIN_is_taken_only_from_an_explicitly_labelled_source_field()
+    {
+        var reader = new BorrowerRequestDocumentReader(null!, new ConfigurationBuilder().Build());
+        var intake = new BorrowerAssignmentIntake(reader, new LlpAi());
+        var unrelated = await intake.RecognizeAsync(new(null, null, "Reference code ABC-1234"), CancellationToken.None);
+        Assert.Null(unrelated.Data.McaIdentifier);
+        var labelled = await intake.RecognizeAsync(new(null, null, "LLPIN: XYZ-9876"), CancellationToken.None);
+        Assert.Equal("XYZ-9876", labelled.Data.McaIdentifier);
+    }
+
+    private sealed class LlpAi : IBorrowerAssignmentAiExtractor
+    {
+        public Task<(BorrowerAssignmentDetails Details, string Model)> ExtractAsync(string text, CancellationToken ct, string? imagePath = null) =>
+            Task.FromResult((new BorrowerAssignmentDetails { CompanyDetails = new() { CompanyName = "Example LLP", EntityType = "LLP" } }, "test"));
+    }
+
+    [Fact]
+    public async Task OCR_identifier_with_a_different_legal_name_is_not_sent_for_details()
+    {
+        await using var db = Context();
+        var cin = $"U12345MH2026PTC{Random.Shared.Next(100000, 999999)}";
+        var masterName = $"ZZMASTER {Guid.NewGuid():N} PRIVATE LIMITED".ToUpperInvariant();
+        db.CompanyMasterRecords.Add(new CompanyMasterRecord { Identifier = cin, RecordType = CompanyMasterRecordType.Company,
+            Name = masterName, Status = "Active" });
+        await db.SaveChangesAsync();
+        try
+        {
+            var details = new BorrowerAssignmentDetails { CompanyDetails = new()
+            { CompanyName = "Different Borrower Private Limited", EntityType = "Private Limited", Cin = cin } };
+            var result = await new BorrowerAssignmentIdentityResolver(db).ResolveAsync(details, null, CancellationToken.None);
+            Assert.Null(result.Identifier);
+            Assert.Equal(ResolutionReasonCodes.NeedsConfirmation, result.ReasonCode);
+            Assert.Equal(cin, Assert.Single(result.Candidates).Identifier);
+        }
+        finally { await db.CompanyMasterRecords.Where(x => x.Identifier == cin).ExecuteDeleteAsync(); }
+    }
+
+    [Fact]
+    public async Task LLP_name_without_an_extracted_LLPIN_resolves_exact_unique_master_row()
+    {
+        await using var db = Context();
+        var llpin = "ZZZ-" + Random.Shared.Next(1000, 9999);
+        var name = $"ZZLLP {Guid.NewGuid():N} LLP".ToUpperInvariant();
+        var normalized = CompanyNameNormalizer.Normalize(name);
+        db.CompanyMasterRecords.Add(new CompanyMasterRecord { Identifier = llpin, RecordType = CompanyMasterRecordType.Llp,
+            Name = name, NameNormalized = normalized.NameNormalized, NameCore = normalized.NameCore,
+            EntityForm = normalized.EntityForm, Status = "Active" });
+        await db.SaveChangesAsync();
+        try
+        {
+            var details = new BorrowerAssignmentDetails { CompanyDetails = new() { CompanyName = name, EntityType = "LLP" } };
+            var result = await new BorrowerAssignmentIdentityResolver(db).ResolveAsync(details, null, CancellationToken.None);
+            Assert.Equal(llpin, result.Identifier);
+            Assert.Equal(ResolutionReasonCodes.AutoSelected, result.ReasonCode);
+            Assert.Null(details.CompanyDetails.Cin);
+        }
+        finally { await db.CompanyMasterRecords.Where(x => x.Identifier == llpin).ExecuteDeleteAsync(); }
+    }
 }

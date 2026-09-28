@@ -45,7 +45,8 @@ public sealed record InstaDirector(string Name, string DinOrPan, string Designat
 public sealed record InstaLegalCases(int SupremeCourt, int HighCourt, int DistrictCourt, int ConsumerForum, int ItatTax, int NcltNclat, int DrtDrat, int Rera, int NgtOthers, IReadOnlyList<LegalCaseRecord>? Cases = null);
 public sealed record InstaReportData(InstaCompany Company, IReadOnlyList<InstaCharge> Charges, IReadOnlyList<InstaDirector> Directors, InstaLegalCases? LegalCases = null,
     MCAROC_Analysis.Models.BorrowerAssignmentDetails? Assignment = null, string? SourceFileName = null,
-    string? SourceStoragePath = null, string? ExtractionModel = null, string? McaIdentifier = null);
+    string? SourceStoragePath = null, string? ExtractionModel = null, string? McaIdentifier = null,
+    BorrowerIdentityResolution? IdentityResolution = null);
 
 public sealed class InstaFinancialsClient(HttpClient http, IOptions<InstaFinancialsOptions> options)
 {

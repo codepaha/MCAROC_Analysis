@@ -1,9 +1,11 @@
 using System.Text;
 using System.Text.Json;
+using System.Net;
 using MCAROC_Analysis.Data;
 using MCAROC_Analysis.Data.Entities;
 using MCAROC_Analysis.Models;
 using MCAROC_Analysis.Services.PreLoginReports;
+using MCAROC_Analysis.Services.CompanyMaster;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
@@ -369,6 +371,109 @@ public class PreLoginReportJobServiceTests : IAsyncLifetime
             Assert.Equal(source, BorrowerAssignmentIntake.PendingSource(job.DataJson)!.SourceStoragePath);
         }
         finally { if (File.Exists(source)) File.Delete(source); }
+    }
+
+    [Fact]
+    public async Task OCR_name_resolves_unique_master_CIN_and_requests_details_automatically()
+    {
+        await using var db = CreateContext();
+        var suffix = Random.Shared.Next(100000, 999999);
+        var cin = $"U12345MH2026PTC{suffix}";
+        var name = $"ZZOCR {Guid.NewGuid():N} PRIVATE LIMITED".ToUpperInvariant();
+        var normalized = CompanyNameNormalizer.Normalize(name);
+        db.CompanyMasterRecords.Add(new CompanyMasterRecord { Identifier = cin, RecordType = CompanyMasterRecordType.Company,
+            Name = name, NameNormalized = normalized.NameNormalized, NameCore = normalized.NameCore, EntityForm = normalized.EntityForm, Status = "Active" });
+        await db.SaveChangesAsync();
+        var handler = new CountingReportHandler(name);
+        var environment = new TestEnvironment();
+        var ai = new CompanyAssignmentAi(name);
+        var reader = new BorrowerRequestDocumentReader(null!, new Microsoft.Extensions.Configuration.ConfigurationBuilder().Build());
+        var reports = new PreLoginReportService(new InstaFinancialsClient(new HttpClient(handler),
+            Options.Create(new InstaFinancialsOptions { ApiKey = "test" })), environment);
+        var service = new PreLoginReportJobService(db, new PreLoginReportQueue(), reports, environment,
+            new BorrowerAssignmentIntake(reader, ai), new BorrowerAssignmentIdentityResolver(db));
+        var batch = await service.QueueRequestAsync(null, name, CancellationToken.None);
+        var job = (await service.HistoryAsync(batch, CancellationToken.None)).Single();
+        var source = BorrowerAssignmentIntake.PendingSource(job.DataJson)!.SourceStoragePath!;
+        try
+        {
+            await service.ProcessAsync(job.PreLoginReportJobId, CancellationToken.None);
+            await db.Entry(job).ReloadAsync();
+            Assert.Equal(PreLoginReportJobStatus.Completed, job.Status);
+            Assert.Equal(cin, job.Cin);
+            Assert.Equal(1, handler.Calls);
+            Assert.Contains(cin, handler.LastUrl);
+            var data = service.AssignmentData(job)!;
+            Assert.Equal(cin, data.Assignment!.CompanyDetails.Cin);
+            Assert.Equal(ResolutionReasonCodes.AutoSelected, data.IdentityResolution!.ReasonCode);
+            Assert.True(File.Exists(job.ReportStoragePath));
+        }
+        finally
+        {
+            await CleanupGeneratedReportAsync(job.PreLoginReportJobId);
+            if (File.Exists(source)) File.Delete(source);
+            await db.CompanyMasterRecords.Where(x => x.Identifier == cin).ExecuteDeleteAsync();
+        }
+    }
+
+    [Fact]
+    public async Task Exact_name_twins_remain_awaiting_review_without_requesting_details()
+    {
+        await using var db = CreateContext();
+        var name = $"ZZOCR {Guid.NewGuid():N} PRIVATE LIMITED".ToUpperInvariant();
+        var normalized = CompanyNameNormalizer.Normalize(name);
+        var cin1 = $"U12345MH2026PTC{Random.Shared.Next(100000, 999999)}";
+        var cin2 = $"U12345DL2026PTC{Random.Shared.Next(100000, 999999)}";
+        foreach (var cin in new[] { cin1, cin2 })
+            db.CompanyMasterRecords.Add(new CompanyMasterRecord { Identifier = cin, RecordType = CompanyMasterRecordType.Company,
+                Name = name, NameNormalized = normalized.NameNormalized, NameCore = normalized.NameCore,
+                EntityForm = normalized.EntityForm, Status = "Active" });
+        await db.SaveChangesAsync();
+        var handler = new CountingReportHandler(name);
+        var environment = new TestEnvironment();
+        var reader = new BorrowerRequestDocumentReader(null!, new Microsoft.Extensions.Configuration.ConfigurationBuilder().Build());
+        var service = new PreLoginReportJobService(db, new PreLoginReportQueue(),
+            new PreLoginReportService(new InstaFinancialsClient(new HttpClient(handler), Options.Create(new InstaFinancialsOptions { ApiKey = "test" })), environment),
+            environment, new BorrowerAssignmentIntake(reader, new CompanyAssignmentAi(name)), new BorrowerAssignmentIdentityResolver(db));
+        var batch = await service.QueueRequestAsync(null, name, CancellationToken.None);
+        var job = (await service.HistoryAsync(batch, CancellationToken.None)).Single();
+        var source = BorrowerAssignmentIntake.PendingSource(job.DataJson)!.SourceStoragePath!;
+        try
+        {
+            await service.ProcessAsync(job.PreLoginReportJobId, CancellationToken.None);
+            await db.Entry(job).ReloadAsync();
+            Assert.Equal(PreLoginReportJobStatus.AwaitingReview, job.Status);
+            Assert.Equal(0, handler.Calls);
+            var candidates = service.AssignmentData(job)!.IdentityResolution!.Candidates;
+            Assert.Contains(candidates, x => x.Identifier == cin1);
+            Assert.Contains(candidates, x => x.Identifier == cin2);
+            await Assert.ThrowsAsync<PreLoginReportException>(() => service.CompleteAssignmentAsync(batch, job.PreLoginReportJobId,
+                name, "Private Limited", "U12345MH2026PTC000000", null, false, CancellationToken.None));
+        }
+        finally
+        {
+            if (File.Exists(source)) File.Delete(source);
+            await db.CompanyMasterRecords.Where(x => x.Identifier == cin1 || x.Identifier == cin2).ExecuteDeleteAsync();
+        }
+    }
+
+    private sealed class CompanyAssignmentAi(string name) : IBorrowerAssignmentAiExtractor
+    {
+        public Task<(BorrowerAssignmentDetails Details, string Model)> ExtractAsync(string text, CancellationToken ct, string? imagePath = null) =>
+            Task.FromResult((new BorrowerAssignmentDetails { CompanyDetails = new() { CompanyName = name, EntityType = "Private Limited" } }, "gemini-3.1-flash-lite"));
+    }
+
+    private sealed class CountingReportHandler(string name) : HttpMessageHandler
+    {
+        public int Calls { get; private set; }
+        public string? LastUrl { get; private set; }
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            Calls++;
+            LastUrl = request.RequestUri?.ToString();
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            { Content = new StringContent(JsonSerializer.Serialize(new { ReportData = new { companyData = new { company = name }, indexChargesData = Array.Empty<object>(), directorData = Array.Empty<object>() } })) });
+        }
     }
 
     private sealed class AssignmentAi : IBorrowerAssignmentAiExtractor
