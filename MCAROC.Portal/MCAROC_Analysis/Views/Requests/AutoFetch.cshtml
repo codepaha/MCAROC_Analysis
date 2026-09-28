@@ -59,7 +59,7 @@
         <div class="mb-3 position-relative">
             <label asp-for="CompanyName" class="form-label">Company / LLP Name</label>
             <input asp-for="CompanyName" class="form-control" id="afName" placeholder="Type company name to search" data-search-url="/Requests/AutoFetch/search" />
-            <div class="form-text">Type a name or CIN — ranked suggestions appear below with match score, location, and status.</div>
+            <div class="form-text">Type at least 3 letters for matching Company or LLP names. Suggestions update as you type.</div>
             <ul class="list-group position-absolute w-100 shadow-sm" id="afHints" hidden style="z-index:20;max-height:360px;overflow:auto;"></ul>
         </div>
 
@@ -149,7 +149,7 @@
 
             function render(items) {
                 hints.innerHTML = '';
-                if (!items || items.length === 0) { showMessage('No matching companies found.'); return; }
+                if (!items || items.length === 0) { showMessage('No matching names found.'); return; }
                 items.forEach(function (h) {
                     var li = document.createElement('li');
                     li.className = 'list-group-item list-group-item-action py-2';
@@ -247,7 +247,7 @@
                 if (q.length < 3) { hide(); return; }
                 showMessage('Searching...');
                 timer = setTimeout(function () {
-                    var reqUrl = url + '?q=' + encodeURIComponent(q);
+                    var reqUrl = url + '?fastOnly=true&q=' + encodeURIComponent(q);
                     if (hintState.value.trim()) reqUrl += '&state=' + encodeURIComponent(hintState.value.trim());
                     if (hintDistrict.value.trim()) reqUrl += '&district=' + encodeURIComponent(hintDistrict.value.trim());
                     if (hintPin.value.trim()) reqUrl += '&pin=' + encodeURIComponent(hintPin.value.trim());
@@ -267,7 +267,7 @@
                         .catch(function () {
                             if (version === searchVersion) showMessage('Suggestions are temporarily unavailable. Please try again.');
                         });
-                }, 300);
+                }, 200);
             }
 
             name.addEventListener('input', function () {

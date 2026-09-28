@@ -73,13 +73,22 @@ public class IdentityResolutionServiceTests : IAsyncLifetime
 
         var controller = new AutoFetchController(db, null!, null!, null!,
             Options.Create(new ReferenceToolOptions()), identity: Service(db, autoSelect: false));
-        var response = await controller.Search($"reliance {_word}", entityType: "Company");
+        var response = await controller.Search($"reliance {_word}", entityType: "Company", fastOnly: true);
 
         var dto = Assert.Single(Assert.IsType<List<CompanySearchCandidateDto>>(
             Assert.IsType<OkObjectResult>(response).Value));
         Assert.Equal(Cin(1), dto.Identifier);
         Assert.Equal("Company", dto.RecordType);
         Assert.Equal(80, dto.MatchPercent);
+
+        var identifierResponse = await controller.Search(Cin(1), fastOnly: true);
+        var identifierMatch = Assert.Single(Assert.IsType<List<CompanySearchCandidateDto>>(
+            Assert.IsType<OkObjectResult>(identifierResponse).Value));
+        Assert.Equal(Cin(1), identifierMatch.Identifier);
+
+        var missingResponse = await controller.Search($"{_word} DOES NOT EXIST", fastOnly: true);
+        Assert.Empty(Assert.IsType<List<CompanySearchCandidateDto>>(
+            Assert.IsType<OkObjectResult>(missingResponse).Value));
     }
 
     private async Task<long> NewRequestAsync(string? identifier = null)

@@ -236,9 +236,9 @@ public partial class AutoFetchController(
         }
     }
 
-    /// <summary>Interactive company search (issue #294, plan §5A.3). When <see cref="IdentityResolutionService"/>
-    /// is available, resolves and ranks candidates against master data with disambiguators (state, district,
-    /// incorporation date, status, score, reasons). Otherwise falls back to prefix matching and reference tool.</summary>
+    /// <summary>Interactive company search (issue #294, plan §5A.3). Live typing uses a bounded indexed
+    /// prefix lookup; broader requests can resolve and rank candidates with disambiguators or consult the
+    /// reference tool.</summary>
     [HttpGet("/Requests/AutoFetch/search")]
     public async Task<IActionResult> Search(
         [FromQuery] string? q,
@@ -247,7 +247,8 @@ public partial class AutoFetchController(
         [FromQuery] string? district = null,
         [FromQuery] string? pin = null,
         [FromQuery] int? year = null,
-        [FromQuery] string? entityType = null)
+        [FromQuery] string? entityType = null,
+        [FromQuery] bool fastOnly = false)
     {
         var query = (q ?? "").Trim();
         if (query.Length < 3)
@@ -255,6 +256,11 @@ public partial class AutoFetchController(
             if (identity is null) return Ok(Array.Empty<ReferenceCompanyHint>());
             return Ok(Array.Empty<CompanySearchCandidateDto>());
         }
+
+        // Live typing uses one bounded indexed prefix query. The richer resolver and external tool remain
+        // available to callers that explicitly request the broader search path.
+        if (fastOnly && !IdentifierPattern().IsMatch(query.ToUpperInvariant()))
+            return LocalSearchResult(await SearchLocalMasterDataAsync(query, 10, entityType, state, district, pin, year, ct));
 
         if (identity is not null)
         {
@@ -308,29 +314,7 @@ public partial class AutoFetchController(
 
         var localHits = await SearchLocalMasterDataAsync(query, 10, entityType, state, district, pin, year, ct);
         if (localHits.Count > 0)
-        {
-            if (identity is null) return Ok(localHits.Select(h => new ReferenceCompanyHint(
-                h.Name, h.Identifier, null, h.Status, h.RecordType.ToString())).ToList());
-
-            var dtos = localHits.Select(h => new CompanySearchCandidateDto(
-                Identifier: h.Identifier,
-                Name: h.Name,
-                RecordType: h.RecordType.ToString(),
-                Status: h.Status,
-                State: h.State,
-                District: h.District,
-                PinCode: h.PinCode,
-                RegistrationDate: h.RegistrationDate?.ToString("yyyy-MM-dd"),
-                Category: h.Category,
-                Class: h.Class,
-                ListingStatus: h.ListingStatus,
-                Score: 0.8,
-                MatchPercent: 80,
-                Reasons: ["Prefix match"],
-                IsToolOnly: false
-            )).ToList();
-            return Ok(dtos);
-        }
+            return LocalSearchResult(localHits);
 
         if (!client.IsConfigured)
         {
@@ -370,11 +354,32 @@ public partial class AutoFetchController(
         }
     }
 
-    /// <summary>Prefix match against the bulk-imported CompanyMasterRecords table (see
-    /// Tools/ImportCompanyMasterData), indexed on (RecordType, Name) so this is a seek, not a scan, even
-    /// at the table's ~3.7M-row scale. Foreign-company (FCRN) records are excluded: neither the identifier
-    /// regex above nor <see cref="EntityType"/> accepts that format, so surfacing them here would only
-    /// let a caller pick a hint that then fails validation.</summary>
+    private IActionResult LocalSearchResult(IReadOnlyList<CompanyMasterRecord> localHits)
+    {
+        if (identity is null) return Ok(localHits.Select(h => new ReferenceCompanyHint(
+            h.Name, h.Identifier, null, h.Status, h.RecordType.ToString())).ToList());
+
+        return Ok(localHits.Select(h => new CompanySearchCandidateDto(
+            Identifier: h.Identifier,
+            Name: h.Name,
+            RecordType: h.RecordType.ToString(),
+            Status: h.Status,
+            State: h.State,
+            District: h.District,
+            PinCode: h.PinCode,
+            RegistrationDate: h.RegistrationDate?.ToString("yyyy-MM-dd"),
+            Category: h.Category,
+            Class: h.Class,
+            ListingStatus: h.ListingStatus,
+            Score: 0.8,
+            MatchPercent: 80,
+            Reasons: ["Prefix match"],
+            IsToolOnly: false
+        )).ToList());
+    }
+
+    /// <summary>Indexed prefix match over Company/LLP master rows. Foreign-company (FCRN) records are
+    /// excluded because the Auto-fetch form does not accept their identifiers.</summary>
     private async Task<List<CompanyMasterRecord>> SearchLocalMasterDataAsync(
         string query, int limit, string? entityType, string? state, string? district, string? pin, int? year, CancellationToken ct)
     {
@@ -402,7 +407,22 @@ public partial class AutoFetchController(
             rows = rows.Where(r => r.RegistrationDate >= start && r.RegistrationDate < end);
         }
 
-        return await rows.OrderBy(r => r.Name).ThenBy(r => r.Identifier).Take(limit).ToListAsync(ct);
+        return await rows.OrderBy(r => r.Name).ThenBy(r => r.Identifier).Take(limit)
+            .Select(r => new CompanyMasterRecord
+            {
+                Identifier = r.Identifier,
+                Name = r.Name,
+                RecordType = r.RecordType,
+                Status = r.Status,
+                State = r.State,
+                District = r.District,
+                PinCode = r.PinCode,
+                RegistrationDate = r.RegistrationDate,
+                Category = r.Category,
+                Class = r.Class,
+                ListingStatus = r.ListingStatus
+            })
+            .ToListAsync(ct);
     }
 
     [HttpGet("/Requests/{id:long}/autofetch/status")]
