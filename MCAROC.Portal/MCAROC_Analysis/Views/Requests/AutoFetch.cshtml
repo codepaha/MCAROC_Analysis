@@ -138,9 +138,18 @@
 
             function hide() { hints.hidden = true; hints.innerHTML = ''; }
 
+            function showMessage(message) {
+                hints.innerHTML = '';
+                var item = document.createElement('li');
+                item.className = 'list-group-item text-muted';
+                item.textContent = message;
+                hints.appendChild(item);
+                hints.hidden = false;
+            }
+
             function render(items) {
                 hints.innerHTML = '';
-                if (!items || items.length === 0) { hide(); return; }
+                if (!items || items.length === 0) { showMessage('No matching companies found.'); return; }
                 items.forEach(function (h) {
                     var li = document.createElement('li');
                     li.className = 'list-group-item list-group-item-action py-2';
@@ -247,11 +256,16 @@
                     reqUrl += '&entityType=' + (isLlp ? 'LLP' : 'Company');
 
                     fetch(reqUrl, { headers: { 'Accept': 'application/json' } })
-                        .then(function (r) { return r.ok ? r.json() : []; })
+                        .then(function (r) {
+                            if (!r.ok) throw new Error('Suggestion request failed');
+                            return r.json();
+                        })
                         .then(function (items) {
                             if (q === lastQuery) render(items);
                         })
-                        .catch(hide);
+                        .catch(function () {
+                            if (q === lastQuery) showMessage('Suggestions are temporarily unavailable. Please try again.');
+                        });
                 }, 300);
             }
 

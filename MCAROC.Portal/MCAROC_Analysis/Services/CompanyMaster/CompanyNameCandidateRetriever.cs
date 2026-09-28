@@ -43,7 +43,9 @@ public static class CompanyNameCandidateRetriever
         Add(await IdentifiersAsync(connection, "NameNormalized = @Value", input.NameNormalized, cancellationToken));
         Add(await IdentifiersAsync(connection, "NameCore = @Value", input.NameCore, cancellationToken));
         if (found.Count < MaxCandidates)
-            Add(await IdentifiersAsync(connection, @"NameCore LIKE @Value ESCAPE '\'", EscapeLike(input.NameCore) + "%", cancellationToken));
+            // A cached plan can scan the identifier index across millions of unbackfilled NULL cores.
+            // Recompile for this prefix and order by the NameCore index keys so SQL can seek it.
+            Add(await IdentifiersAsync(connection, @"NameCore LIKE @Value ESCAPE '\'", EscapeLike(input.NameCore) + "%", cancellationToken, recompile: true));
         if (found.Count < MaxCandidates)
             Add(await TokenOverlapAsync(connection, input.NameCore, cancellationToken));
 
@@ -60,13 +62,13 @@ public static class CompanyNameCandidateRetriever
     }
 
     private static async Task<List<string>> IdentifiersAsync(
-        SqlConnection connection, string predicate, string value, CancellationToken cancellationToken)
+        SqlConnection connection, string predicate, string value, CancellationToken cancellationToken, bool recompile = false)
     {
         await using var command = new SqlCommand($"""
             SELECT TOP (@Limit) Identifier
             FROM dbo.CompanyMasterRecords
             WHERE RecordType IN ('Company', 'Llp') AND {predicate}
-            ORDER BY Identifier;
+            ORDER BY {(recompile ? "RecordType, NameCore, Identifier" : "Identifier")}{(recompile ? " OPTION (RECOMPILE)" : "")};
             """, connection);
         command.Parameters.Add("@Limit", SqlDbType.Int).Value = MaxCandidates;
         command.Parameters.Add("@Value", SqlDbType.NVarChar, CompanyNameNormalizer.MaxLength + 1).Value = value;
