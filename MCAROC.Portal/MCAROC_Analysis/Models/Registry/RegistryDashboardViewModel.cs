@@ -17,11 +17,19 @@ public enum RegistrySnapshotState
     UnverifiedLegacyImport,
 
     /// <summary>Zero records and zero sync jobs.</summary>
-    EmptyRegistry
+    EmptyRegistry,
+
+    /// <summary>Database query timed out; no aggregates or explorer results are presented.</summary>
+    DatabaseUnavailable,
+
+    /// <summary>Explicitly enabled analytics for imported records with unknown publication provenance.</summary>
+    ImportedBaseline
 }
 
 public sealed class RegistrySnapshotMetadata
 {
+    public DateTime? CalculatedUtc { get; set; }
+    public bool IsImportedBaseline { get; set; }
     public DateOnly? PublishedDate { get; set; }
     public DateTime? CompletedUtc { get; set; }
     public string Source { get; set; } = "MCA Corporate Data Management (mcacdm.nic.in)";
@@ -55,6 +63,7 @@ public sealed class RegistryStatusMetrics
 
 public sealed class RegistryAggregateData
 {
+    public List<RegistryEntityAnalytics> EntityAnalytics { get; set; } = [];
     public RegistrySnapshotMetadata Metadata { get; set; } = new();
     public RegistryStatusMetrics OverallStatus { get; set; } = new();
     public RegistryStatusMetrics CompanyStatus { get; set; } = new();

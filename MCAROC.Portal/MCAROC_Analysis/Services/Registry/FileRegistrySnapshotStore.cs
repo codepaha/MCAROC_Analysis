@@ -110,7 +110,7 @@ public sealed class FileRegistrySnapshotStore : IRegistrySnapshotStore
         await File.WriteAllBytesAsync(tempFile, envelopeBytes, ct);
         File.Move(tempFile, targetFile, overwrite: true);
 
-        _logger?.LogInformation("Successfully persisted verified aggregate snapshot envelope for Job {JobId} at '{TargetFile}'",
+        _logger?.LogInformation("Successfully persisted registry aggregate snapshot envelope for Job {JobId} at '{TargetFile}'",
             jobId, targetFile);
 
         PruneOldSnapshots(_resolvedRoot, _options.RetentionCount);
@@ -166,7 +166,7 @@ public sealed class FileRegistrySnapshotStore : IRegistrySnapshotStore
             }
 
             var dto = JsonSerializer.Deserialize<RegistryAggregateSnapshotDto>(rawBytes, JsonOptions);
-            if (dto == null)
+            if (dto == null || dto.AnalyticsVersion != RegistryAggregateSnapshotDto.CurrentAnalyticsVersion)
             {
                 _logger?.LogWarning("Failed to deserialize DTO from snapshot envelope in '{TargetFile}'", targetFile);
                 return null;

@@ -12,12 +12,13 @@
     <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
         <div>
             <div class="text-uppercase small fw-bold tracking-wide" style="color: var(--brand); letter-spacing: 1.2px;">
-                MCA Registry Universe &bull; @(meta.PublishedDate?.ToString("dd MMM yyyy") ?? "Latest Snapshot")
+                MCA Registry Universe &bull; @(meta.PublishedDate?.ToString("dd MMM yyyy") ?? "Publication date unknown")
             </div>
             <h2 class="h4 mb-1 fw-bold">
                 India Corporate &amp; Entity Master Registry
             </h2>
             <div class="text-muted small">
+                Calculated: @(meta.CalculatedUtc.HasValue ? Ist.Format(meta.CalculatedUtc.Value) : "Unavailable") &bull;
                 Source: <strong>@meta.Source</strong> &bull; Total Tracked: <strong>@meta.TotalRecords.ToString("N0")</strong> entities
             </div>
         </div>

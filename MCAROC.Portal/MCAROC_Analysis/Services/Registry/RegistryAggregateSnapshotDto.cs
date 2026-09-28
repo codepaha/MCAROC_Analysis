@@ -29,6 +29,9 @@ public sealed class RankedPercentDto
 
 public sealed class RegistryAggregateSnapshotDto
 {
+    public const int CurrentAnalyticsVersion = 2;
+    public int AnalyticsVersion { get; set; }
+    public List<RegistryEntityAnalytics> EntityAnalytics { get; set; } = [];
     public RegistrySnapshotMetadata Metadata { get; set; } = new();
     public RegistryStatusMetrics OverallStatus { get; set; } = new();
     public RegistryStatusMetrics CompanyStatus { get; set; } = new();
@@ -49,6 +52,8 @@ public sealed class RegistryAggregateSnapshotDto
     {
         var dto = new RegistryAggregateSnapshotDto
         {
+            AnalyticsVersion = CurrentAnalyticsVersion,
+            EntityAnalytics = model.EntityAnalytics,
             Metadata = model.Metadata,
             OverallStatus = model.OverallStatus,
             CompanyStatus = model.CompanyStatus,
@@ -109,6 +114,7 @@ public sealed class RegistryAggregateSnapshotDto
     {
         var model = new RegistryAggregateData
         {
+            EntityAnalytics = EntityAnalytics,
             Metadata = Metadata,
             OverallStatus = OverallStatus,
             CompanyStatus = CompanyStatus,

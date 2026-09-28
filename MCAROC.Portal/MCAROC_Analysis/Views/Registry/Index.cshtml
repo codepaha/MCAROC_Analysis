@@ -15,7 +15,15 @@
     </div>
 </div>
 
-@if (Model.State == RegistrySnapshotState.EmptyRegistry)
+@if (Model.State == RegistrySnapshotState.DatabaseUnavailable)
+{
+    <div class="alert alert-warning p-4 my-4" role="alert">
+        <h2 class="h5 alert-heading fw-bold">Registry data temporarily unavailable</h2>
+        <p>@Model.StatusMessage</p>
+        <a class="btn btn-outline-primary" href="@(Context.Request.PathBase + Context.Request.Path + Context.Request.QueryString)">Try again</a>
+    </div>
+}
+else if (Model.State == RegistrySnapshotState.EmptyRegistry)
 {
     <div class="alert alert-info d-flex align-items-center gap-3 p-4 my-4">
         <i class="bi bi-info-circle-fill fs-2"></i>
@@ -36,24 +44,28 @@ else if (Model.State == RegistrySnapshotState.UnverifiedLegacyImport)
         </div>
     </div>
 
-    @await Html.PartialAsync("_RegistryExplorer", Model.Explorer)
+    @await Html.PartialAsync("~/Views/Registry/_RegistryExplorer.cshtml", Model.Explorer)
 }
 else if (Model.State == RegistrySnapshotState.SyncColdUnavailable)
 {
     <div class="alert alert-warning d-flex align-items-center gap-3 p-4 mb-4">
         <i class="bi bi-hourglass-split fs-2 flex-shrink-0"></i>
         <div>
-            <h5 class="alert-heading fw-bold mb-1">Verified Aggregates Temporarily Unavailable During Sync</h5>
+            <h5 class="alert-heading fw-bold mb-1">Registry analytics temporarily unavailable</h5>
             <p class="mb-2">@Model.StatusMessage</p>
-            <div class="small text-muted">Live table scanning is disabled during batch promotions to maintain snapshot consistency. The Explorer remains active below for direct queries.</div>
+            <div class="small text-muted">Use the Explorer below while analytics are prepared or a sync completes.</div>
         </div>
     </div>
 
-    @await Html.PartialAsync("_RegistryExplorer", Model.Explorer)
+    @await Html.PartialAsync("~/Views/Registry/_RegistryExplorer.cshtml", Model.Explorer)
 }
-else if (Model.State == RegistrySnapshotState.VerifiedSnapshot && agg != null)
+else if ((Model.State == RegistrySnapshotState.VerifiedSnapshot || Model.State == RegistrySnapshotState.ImportedBaseline) && agg != null)
 {
-    @await Html.PartialAsync("_HeadlineKpiBand", Model)
+    @if (Model.State == RegistrySnapshotState.ImportedBaseline)
+    {
+        <div class="alert alert-warning small" role="status"><strong>Imported data baseline.</strong> @Model.StatusMessage</div>
+    }
+    @await Html.PartialAsync("~/Views/Registry/_HeadlineKpiBand.cshtml", Model)
 
     <!-- Navigation Tabs -->
     <ul class="nav nav-pills mb-4 gap-2" id="registryTabs" role="tablist">
@@ -88,25 +100,33 @@ else if (Model.State == RegistrySnapshotState.VerifiedSnapshot && agg != null)
     <div class="tab-content">
         @if (tab == "overview")
         {
-            @await Html.PartialAsync("_StatusBreakdown", (agg.OverallStatus, "All Entities Status Breakdown", "Aggregated across Companies, LLPs, and Foreign entities."))
-            @await Html.PartialAsync("_GeographyIndustrySection", agg)
+            @await Html.PartialAsync("~/Views/Registry/_StatusBreakdown.cshtml", (agg.OverallStatus, "All Entities Status Breakdown", "Aggregated across Companies, LLPs, and Foreign entities."))
+            @await Html.PartialAsync("~/Views/Registry/_GeographyIndustrySection.cshtml", agg)
         }
         else if (tab == "companies")
         {
-            @await Html.PartialAsync("_StatusBreakdown", (agg.CompanyStatus, "Company Master Status Breakdown", "Current status breakdown for registered public, private, and OPC companies."))
-            @await Html.PartialAsync("_GeographyIndustrySection", agg)
+            var company = agg.EntityAnalytics.FirstOrDefault(a => a.RecordType == CompanyMasterRecordType.Company);
+            if (company != null)
+            {
+                @await Html.PartialAsync("~/Views/Registry/_EntityAnalytics.cshtml", (company, agg.Metadata.PublishedDate ?? DateOnly.FromDateTime(Ist.FromUtc(agg.Metadata.CalculatedUtc ?? DateTime.UtcNow)), "Companies"))
+            }
+            @await Html.PartialAsync("~/Views/Registry/_CompanyDistributions.cshtml", agg)
         }
         else if (tab == "llps")
         {
-            @await Html.PartialAsync("_StatusBreakdown", (agg.LlpStatus, "LLP Master Status Breakdown", "Current status distribution across Limited Liability Partnerships."))
+            var llp = agg.EntityAnalytics.FirstOrDefault(a => a.RecordType == CompanyMasterRecordType.Llp);
+            if (llp != null)
+            {
+                @await Html.PartialAsync("~/Views/Registry/_EntityAnalytics.cshtml", (llp, agg.Metadata.PublishedDate ?? DateOnly.FromDateTime(Ist.FromUtc(agg.Metadata.CalculatedUtc ?? DateTime.UtcNow)), "LLPs"))
+            }
         }
         else if (tab == "foreign")
         {
-            @await Html.PartialAsync("_ForeignPresenceSection", agg)
+            @await Html.PartialAsync("~/Views/Registry/_ForeignPresenceSection.cshtml", agg)
         }
         else if (tab == "explorer")
         {
-            @await Html.PartialAsync("_RegistryExplorer", Model.Explorer)
+            @await Html.PartialAsync("~/Views/Registry/_RegistryExplorer.cshtml", Model.Explorer)
         }
     </div>
 }
