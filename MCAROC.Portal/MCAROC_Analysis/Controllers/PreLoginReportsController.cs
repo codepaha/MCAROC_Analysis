@@ -1,7 +1,11 @@
 using MCAROC_Analysis.Models;
 using MCAROC_Analysis.Services.PreLoginReports;
+using MCAROC_Analysis.Services.CompanyMaster;
+using MCAROC_Analysis.Data;
+using MCAROC_Analysis.Data.Entities;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 
 namespace MCAROC_Analysis.Controllers;
 
@@ -11,13 +15,102 @@ namespace MCAROC_Analysis.Controllers;
 /// Mine renders the browser's localStorage history without a server-side batch enumeration.</summary>
 [Authorize]
 [Route("pre-login-reports")]
-public sealed class PreLoginReportsController(PreLoginReportJobService jobs) : Controller
+public sealed class PreLoginReportsController(PreLoginReportJobService jobs, AppDbContext? db = null) : Controller
 {
     [HttpGet("")]
     public IActionResult Index() => View(new PreLoginReportViewModel());
 
     [HttpGet("mine")]
     public IActionResult Mine() => View();
+
+    /// <summary>Bounded, indexed lookup in the local MCA master for a human to select a CIN or LLPIN.</summary>
+    [HttpGet("borrower-lookup")]
+    public async Task<IActionResult> BorrowerLookup(string? name, string? entityType, CancellationToken cancellationToken)
+    {
+        if (db is null) return StatusCode(503);
+        if (string.IsNullOrWhiteSpace(name) || name.Length > 100) return BadRequest();
+        var normalized = CompanyNameNormalizer.Normalize(name).NameNormalized;
+        if (normalized.Length < 3) return BadRequest();
+        var recordType = entityType?.Trim().ToLowerInvariant() switch
+        {
+            "company" or "limited" or "private limited" => CompanyMasterRecordType.Company,
+            "llp" => CompanyMasterRecordType.Llp,
+            "foreigncompany" or "foreign company" => CompanyMasterRecordType.Foreign,
+            _ => (CompanyMasterRecordType?)null
+        };
+        if (recordType is null) return BadRequest();
+        var matches = await db.CompanyMasterRecords.AsNoTracking()
+            .Where(x => x.RecordType == recordType && x.NameNormalized != null && x.NameNormalized.StartsWith(normalized))
+            .OrderBy(x => x.NameNormalized).ThenBy(x => x.Identifier).Take(8)
+            .Select(x => new { x.Name, x.Identifier, x.RecordType, x.Status, x.State }).ToListAsync(cancellationToken);
+        if (matches.Count == 0)
+            matches = await db.CompanyMasterRecords.AsNoTracking()
+                .Where(x => x.RecordType == recordType && x.Name.StartsWith(name.Trim()))
+                .OrderBy(x => x.Name).ThenBy(x => x.Identifier).Take(8)
+                .Select(x => new { x.Name, x.Identifier, x.RecordType, x.Status, x.State }).ToListAsync(cancellationToken);
+        Response.Headers.CacheControl = "no-store";
+        return Json(matches);
+    }
+
+    [HttpPost("assignment")]
+    [ValidateAntiForgeryToken]
+    [RequestSizeLimit(11 * 1024 * 1024)]
+    [RequestFormLimits(MultipartBodyLengthLimit = 11 * 1024 * 1024)]
+    public async Task<IActionResult> CreateAssignment(IFormFile? requestFile, string? requestText, CancellationToken cancellationToken)
+    {
+        if (!ModelState.IsValid) return View("Index", new PreLoginReportViewModel());
+        try
+        {
+            var batchId = await jobs.QueueRequestAsync(requestFile, requestText, cancellationToken);
+            return RedirectToAction(nameof(History), new { batch = batchId });
+        }
+        catch (PreLoginReportException ex)
+        {
+            ModelState.AddModelError(string.Empty, ex.Message);
+            ViewBag.RequestText = requestText;
+            return View("Index", new PreLoginReportViewModel());
+        }
+    }
+
+    [HttpGet("{batch:guid}/{id:long}/assignment")]
+    public async Task<IActionResult> Assignment(Guid batch, long id, CancellationToken cancellationToken)
+    {
+        var job = await jobs.FindInBatchAsync(batch, id, cancellationToken);
+        if (job is null) return NotFound();
+        ViewBag.Job = job;
+        return View(jobs.AssignmentData(job));
+    }
+
+    [HttpGet("{batch:guid}/{id:long}/assignment-json")]
+    public async Task<IActionResult> AssignmentJson(Guid batch, long id, CancellationToken cancellationToken)
+    {
+        var job = await jobs.FindInBatchAsync(batch, id, cancellationToken);
+        if (job is null || jobs.AssignmentData(job)?.Assignment is not { } details) return NotFound();
+        return Json(details);
+    }
+
+    [HttpGet("{batch:guid}/{id:long}/source")]
+    public async Task<IActionResult> AssignmentSource(Guid batch, long id, CancellationToken cancellationToken)
+    {
+        var job = await jobs.FindInBatchAsync(batch, id, cancellationToken);
+        if (job is null) return NotFound();
+        var data = jobs.AssignmentData(job);
+        var source = BorrowerAssignmentIntake.PendingSource(job.DataJson);
+        var path = data?.SourceStoragePath ?? source?.SourceStoragePath;
+        if (path is null || !System.IO.File.Exists(path)) return NotFound();
+        return PhysicalFile(path, "application/octet-stream", data?.SourceFileName ?? source?.SourceFileName ?? "request");
+    }
+
+    [HttpPost("{batch:guid}/{id:long}/assignment")]
+    [ValidateAntiForgeryToken]
+    [RequestSizeLimit(11 * 1024 * 1024)]
+    public async Task<IActionResult> CompleteAssignment(Guid batch, long id, string? borrowerName, string? entityType,
+        string? mcaIdentifier, IFormFile? legalCasesFile, bool noCasesConfirmed, CancellationToken cancellationToken)
+    {
+        try { await jobs.CompleteAssignmentAsync(batch, id, borrowerName, entityType, mcaIdentifier, legalCasesFile, noCasesConfirmed, cancellationToken); }
+        catch (PreLoginReportException ex) { TempData["ReportError"] = ex.Message; return RedirectToAction(nameof(Assignment), new { batch, id }); }
+        return RedirectToAction(nameof(History), new { batch });
+    }
 
     [HttpPost("")]
     [ValidateAntiForgeryToken]
@@ -28,7 +121,7 @@ public sealed class PreLoginReportsController(PreLoginReportJobService jobs) : C
 
         try
         {
-            var batchId = model.EntityType == PreLoginReportEntityType.Partnership
+            var batchId = model.IsLitigationOnly
                 ? await jobs.QueuePartnershipAsync(model, cancellationToken)
                 : await jobs.QueueSingleAsync(model.Cin, model.CompanyName, model.Format, cancellationToken);
             return RedirectToAction(nameof(History), new { batch = batchId });

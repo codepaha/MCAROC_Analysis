@@ -25,6 +25,8 @@ public sealed class PreLoginReportService(InstaFinancialsClient client, IWebHost
 
     public async Task<GeneratedReport> GenerateFromDataAsync(string cin, PreLoginReportFormat format, InstaReportData data, CancellationToken cancellationToken)
     {
+        if (data.Company.LitigationOnly && format != PreLoginReportFormat.Sbi)
+            throw new PreLoginReportException("Litigation-only assignments support SBI format only.");
         var companyName = data.Company.Name;
         var template = Path.Combine(environment.ContentRootPath, "ReportTemplates", format == PreLoginReportFormat.Sbi ? "SBI" : "PRR",
             format == PreLoginReportFormat.Sbi ? "sbi-template.docx" : "prr-template.docx");
@@ -80,10 +82,15 @@ public sealed class PreLoginReportService(InstaFinancialsClient client, IWebHost
             ("Date of last AGM", c.LastAgm), ("Date of Balance Sheet", c.BalanceSheetDate), ("Company Status", c.Status)
         };
         foreach (var (label, value) in companyFields) ReplaceCellValue(companyDetails, label, value);
-        if (c.IsPartnership)
+        if (c.LitigationOnly)
         {
             ReplaceCellLabel(companyDetails, "CIN", "PAN / Registration Number");
-            ReplaceCellLabel(companyDetails, "Company Name", "Partnership Name");
+            ReplaceCellLabel(companyDetails, "Company Name", c.IsPartnership ? "Partnership Name" : "Borrower Name");
+            var keptLabels = new[] { "PAN / Registration Number", c.IsPartnership ? "Partnership Name" : "Borrower Name", "Registered Address" };
+            foreach (var row in companyDetails.Elements<TableRow>().ToList())
+                if (!keptLabels.Contains(GetElementText(row.Elements<TableCell>().First()).Trim(), StringComparer.OrdinalIgnoreCase)) row.Remove();
+            var heading = body.Elements<Paragraph>().FirstOrDefault(p => GetElementText(p).Trim() == "Company Details");
+            if (heading is not null) SetParagraphText(heading, "Borrower Details - " + (c.EntityType ?? (c.IsPartnership ? "Partnership" : "Litigation only")));
         }
 
         var summary = FindTableAfterHeading(body, "SUMMARY")
@@ -91,6 +98,13 @@ public sealed class PreLoginReportService(InstaFinancialsClient client, IWebHost
         var summaryRows = summary.Elements<TableRow>().ToList();
         SetCellText(summaryRows[0].Elements<TableCell>().Last(), cin);
         SetCellText(summaryRows[1].Elements<TableCell>().Last(), companyName);
+        if (c.LitigationOnly)
+        {
+            var identityCells = summaryRows[0].Elements<TableCell>().ToList();
+            var nameCells = summaryRows[1].Elements<TableCell>().ToList();
+            SetCellText(identityCells[0], "PAN / Registration Number :" + (identityCells.Count == 1 ? " " + cin : ""));
+            SetCellText(nameCells[0], "Borrower Name:" + (nameCells.Count == 1 ? " " + companyName : ""));
+        }
 
         // The remaining occurrence(s) of the company name are Word content controls (Quick Parts) — one was in
         // the SUMMARY line (already handled above: SetCellText strips SdtElement children too, so that one no
@@ -201,8 +215,50 @@ public sealed class PreLoginReportService(InstaFinancialsClient client, IWebHost
         StyleDetailHeading(body, "Details of MCA-ROC CHARGES");
         StyleDetailHeading(body, "Details of legal cases");
 
+        if (c.LitigationOnly)
+        {
+            RemoveSection(body, "MCA-ROC Details", mcaRocDetails);
+            RemoveSection(body, "Details of MCA-ROC CHARGES", chargesTable);
+            if (data.LegalCases is null)
+            {
+                foreach (var cell in FindTableAfterHeading(body, "Legal Cases")!.Elements<TableRow>().Skip(1).SelectMany(r => r.Elements<TableCell>()))
+                    SetCellText(cell, "Not supplied");
+                foreach (var text in legalCaseDetailsTable.Descendants<Text>().Where(t => t.Text.Contains("No litigation cases on file.")).ToList())
+                    text.Text = "Litigation results have not been supplied.";
+            }
+            else if (data.LegalCases.Cases is null)
+            {
+                foreach (var text in legalCaseDetailsTable.Descendants<Text>().Where(t => t.Text.Contains("No litigation cases on file.")).ToList())
+                    text.Text = "Case-level details have not been supplied; counts were entered manually.";
+            }
+            // Removing MCA tables leaves their empty page-break paragraphs behind. Drop only empty
+            // body spacers in this report variant, then reserve a spacer AFTER the case cards for the
+            // Disclaimer section marker; company/LLP template pagination is preserved.
+            foreach (var paragraph in body.Elements<Paragraph>().Where(p => string.IsNullOrWhiteSpace(GetElementText(p))
+                && !p.Descendants<Drawing>().Any() && !p.Descendants<Picture>().Any()).ToList()) paragraph.Remove();
+            foreach (var table in body.Elements<Table>().Where(t => string.IsNullOrWhiteSpace(GetElementText(t))
+                && !t.Descendants<Drawing>().Any() && !t.Descendants<Picture>().Any()).ToList()) table.Remove();
+            var disclaimer = body.Elements<Paragraph>().First(p => GetElementText(p).Trim() == "Disclaimer");
+            disclaimer.InsertBeforeSelf(new Paragraph());
+        }
+
         ReplacePreparedOnDateField(body);
         ReserveLetterheadSpaceForDisclaimer(body);
+    }
+
+    private static void SetParagraphText(Paragraph paragraph, string value)
+    {
+        var run = paragraph.Descendants<Run>().FirstOrDefault();
+        var properties = run?.RunProperties?.CloneNode(true) as RunProperties;
+        paragraph.RemoveAllChildren<Run>();
+        paragraph.Append(properties is null ? new Run(new Text(value)) : new Run(properties, new Text(value)));
+    }
+
+    private static void RemoveSection(Body body, string heading, Table table)
+    {
+        var paragraph = body.Elements<Paragraph>().FirstOrDefault(p => GetElementText(p).Trim() == heading);
+        paragraph?.Remove();
+        table.Remove();
     }
 
     // The default letterhead artwork is page-relative, square-wrapped content. Its lower edge reaches below
@@ -459,7 +515,7 @@ public sealed class PreLoginReportService(InstaFinancialsClient client, IWebHost
     public static PreLoginReportDraftViewModel ToDraft(long jobId, Guid batchId, string cin, PreLoginReportFormat format, InstaReportData data) => new()
     {
         JobId = jobId, BatchId = batchId, Cin = cin, Format = format, Company = ToEditable(data.Company),
-        IsPartnership = data.Company.IsPartnership,
+        IsPartnership = data.Company.LitigationOnly,
         LegalCases = data.LegalCases is null ? null : ToEditable(data.LegalCases),
         AttachedLegalCaseCount = data.LegalCases?.Cases?.Count,
         Charges = data.Charges.Select(c => new EditableChargeViewModel { Srn = c.Srn, Id = c.Id, Holder = c.Holder, Created = c.Created, Modified = c.Modified, Satisfied = c.Satisfied, Amount = c.Amount, IsOpen = c.IsOpen }).ToList(),

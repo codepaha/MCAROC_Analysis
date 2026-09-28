@@ -450,6 +450,15 @@ public class AuditFrameworkTests : IAsyncLifetime
         Assert.Empty(missingRoutes);
     }
 
+    [Fact]
+    public void Borrower_assignment_mutations_have_distinct_always_audited_actions()
+    {
+        Assert.Equal((AuditActionType.PreLoginAssignmentCreated, AuditRulePolicy.Always),
+            AuditRouteRegistry.Resolve("PreLoginReports", "CreateAssignment"));
+        Assert.Equal((AuditActionType.PreLoginAssignmentCompleted, AuditRulePolicy.Always),
+            AuditRouteRegistry.Resolve("PreLoginReports", "CompleteAssignment"));
+    }
+
     // ─────────────────────────────────────────────────────────────────────────────────
     // 11. Verified Action Names & Non-Nullable Safe Fallback
     // ─────────────────────────────────────────────────────────────────────────────────

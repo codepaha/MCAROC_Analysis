@@ -1,0 +1,75 @@
+@model MCAROC_Analysis.Services.PreLoginReports.InstaReportData?
+@using MCAROC_Analysis.Data.Entities
+@{
+    var job = (PreLoginReportJob)ViewBag.Job;
+    var details = Model?.Assignment;
+    ViewData["Title"] = "Borrower assignment";
+}
+<div class="pi-page-head"><div><div class="pi-kicker">Assignment @job.PreLoginReportJobId</div><h1>@(details?.CompanyDetails.CompanyName ?? job.SubmittedCompanyName ?? "Recognizing request")</h1><p>@job.Status · @job.FailureReason</p></div></div>
+<p><a asp-action="History" asp-route-batch="@job.BatchId">Back to assignment history</a> · <a asp-action="AssignmentSource" asp-route-batch="@job.BatchId" asp-route-id="@job.PreLoginReportJobId">Download original request</a></p>
+@if (TempData["ReportError"] is string error) { <div class="alert alert-danger">@error</div> }
+@if (details is not null)
+{
+    var c = details.CompanyDetails;
+    var b = details.RequestingBranchDetails;
+    <div class="pi-panel" style="padding:24px;">
+        <h2 class="h5">Recognized request</h2>
+        <p><strong>Scope:</strong> @(Model!.Company.LitigationOnly ? "Litigation only" : "MCA and litigation") · <strong>Entity:</strong> @(c.EntityType ?? "Not recognized")</p>
+        @if (Model.IdentityResolution is { } identity)
+        { <p><strong>MCA identity:</strong> @(identity.Identifier is null ? "Needs review" : $"Confirmed: {identity.Identifier}") · @identity.ReasonCode</p> }
+        <dl class="row">
+            <dt class="col-sm-3">Request date</dt><dd class="col-sm-9">@(details.RequestDetails.DateOfRequest ?? "Not stated")</dd>
+            <dt class="col-sm-3">Branch</dt><dd class="col-sm-9">@(b.BranchName ?? "Not stated") @b.BranchCode</dd>
+            <dt class="col-sm-3">Branch address</dt><dd class="col-sm-9">@(b.Address ?? "Not stated")</dd>
+            <dt class="col-sm-3">Branch contact</dt><dd class="col-sm-9">@b.ContactPerson.Name @b.ContactPerson.Designation<br />@b.ContactPerson.PhoneLandline @b.ContactPerson.PhoneMobile @b.ContactPerson.Email</dd>
+            <dt class="col-sm-3">Borrower identifiers</dt><dd class="col-sm-9">CIN: @(c.Cin ?? "Not stated") · PAN: @(c.Pan ?? "Not stated") · GSTIN: @(c.Gstin ?? "Not stated")</dd>
+            <dt class="col-sm-3">Incorporation date</dt><dd class="col-sm-9">@(c.IncorporationDate ?? "Not stated")</dd>
+            <dt class="col-sm-3">Registered address</dt><dd class="col-sm-9">@(c.RegisteredOfficeAddress ?? "Not stated")</dd>
+            <dt class="col-sm-3">Plant address</dt><dd class="col-sm-9">@(c.PlantAddress ?? "Not stated")</dd>
+        </dl>
+        <h3 class="h6">Directors, partners, trustees or proprietor</h3>
+        @if (c.DirectorsOrPartners.Count == 0) { <p>No individuals recognized.</p> }
+        else
+        {
+            <div class="table-responsive"><table class="table"><thead><tr><th>Name</th><th>PAN</th><th>DIN</th></tr></thead><tbody>
+            @foreach (var person in c.DirectorsOrPartners) { <tr><td>@person.Name</td><td>@(person.Pan ?? "Not stated / unreadable")</td><td>@(person.Din ?? "Not stated / unreadable")</td></tr> }
+            </tbody></table></div>
+        }
+        <a asp-action="AssignmentJson" asp-route-batch="@job.BatchId" asp-route-id="@job.PreLoginReportJobId" class="btn btn-outline-secondary">View extracted JSON</a>
+    </div>
+    @if (job.Status == PreLoginReportJobStatus.AwaitingReview)
+    {
+        <div class="pi-panel mt-3" style="padding:24px;">
+            <h2 class="h5">Complete the report</h2>
+            <p>The assignment is already created. Correct unreadable details here if needed. Litigation results are required before a litigation-only report can be generated.</p>
+            <form asp-action="CompleteAssignment" asp-route-batch="@job.BatchId" asp-route-id="@job.PreLoginReportJobId" method="post" enctype="multipart/form-data">
+                <div class="row g-3 mb-3">
+                    <div class="col-md-6"><label for="borrowerName" class="form-label">Borrower name</label><input id="borrowerName" name="borrowerName" class="form-control" value="@c.CompanyName" maxlength="250" autocomplete="off" required /><div id="assignmentBorrowerMatches" class="list-group mt-1" role="listbox" aria-label="Matching registered borrowers"></div><div id="assignmentBorrowerLookupStatus" class="form-text" role="status"></div></div>
+                    <div class="col-md-6"><label for="entityType" class="form-label">Entity type</label><input id="entityType" name="entityType" class="form-control" value="@c.EntityType" maxlength="100" list="assignmentEntityTypes" required /><datalist id="assignmentEntityTypes"><option>Limited</option><option>Private Limited</option><option>LLP</option><option>Foreign Company</option><option>Partnership</option><option>Proprietorship</option><option>Trust</option><option>Society</option><option>Individual</option></datalist></div>
+                </div>
+                <div class="mb-3"><label for="mcaIdentifier" class="form-label">CIN / LLPIN (MCA entities only)</label><input id="mcaIdentifier" name="mcaIdentifier" class="form-control" value="@(Model.McaIdentifier ?? c.Cin)" maxlength="30" /><div class="form-text">Select a database match to confirm the borrower identity. Foreign companies require an identifier supported by the existing report-data service.</div></div>
+                @if (Model.IdentityResolution is { Identifier: null, Candidates.Count: > 0 } resolution)
+                {
+                    <div class="mb-3"><strong>Possible MCA master matches</strong><div class="list-group mt-2">
+                        @foreach (var candidate in resolution.Candidates)
+                        { <button type="button" class="list-group-item list-group-item-action identity-candidate" data-name="@candidate.Name" data-identifier="@candidate.Identifier">@candidate.Name · @candidate.Identifier · @(candidate.State ?? "State not stated") · @(candidate.Status ?? "Status not stated")</button> }
+                    </div><div class="form-text">Select the matching registered borrower; ambiguous identities never request company details automatically.</div></div>
+                }
+                <div class="mb-3"><label for="legalCasesFile" class="form-label">Litigation results (.xlsx, .xls or .csv)</label><input id="legalCasesFile" name="legalCasesFile" type="file" class="form-control" accept=".xlsx,.xls,.csv" /></div>
+                <div class="form-check mb-3"><input id="noCasesConfirmed" name="noCasesConfirmed" type="checkbox" value="true" class="form-check-input" /><label for="noCasesConfirmed" class="form-check-label">A completed litigation search returned no cases.</label></div>
+                <button class="btn btn-primary" type="submit">Generate report</button>
+            </form>
+        </div>
+    }
+}
+else
+{
+    <p>Request recognition is queued or running. This assignment page will refresh automatically while recognition is active.</p>
+}
+@section Scripts {
+    @if (job.Status == PreLoginReportJobStatus.AwaitingReview)
+    { <script src="~/js/borrower-identity-lookup.js" asp-append-version="true"></script>
+      <script>borrowerIdentityLookup({url:'@Url.Action("BorrowerLookup")',name:'borrowerName',identifier:'mcaIdentifier',results:'assignmentBorrowerMatches',status:'assignmentBorrowerLookupStatus',entity:function(){return document.getElementById('entityType').value;}});document.querySelectorAll('.identity-candidate').forEach(function(button){button.addEventListener('click',function(){document.getElementById('borrowerName').value=button.dataset.name;document.getElementById('mcaIdentifier').value=button.dataset.identifier;document.getElementById('assignmentBorrowerLookupStatus').textContent='Selected '+button.dataset.name+' ('+button.dataset.identifier+') from the MCA master database.';});});</script> }
+    @if (job.Status is PreLoginReportJobStatus.Queued or PreLoginReportJobStatus.Fetching or PreLoginReportJobStatus.Generating)
+    { <script>setTimeout(() => location.reload(), 5000);</script> }
+}

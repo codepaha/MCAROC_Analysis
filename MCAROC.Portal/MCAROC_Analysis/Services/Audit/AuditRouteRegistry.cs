@@ -50,6 +50,8 @@ public static class AuditRouteRegistry
             { ("AnalystAuth", "Logout"), (AuditActionType.AnalystLoggedOut, AuditRulePolicy.Never) },
 
             // PreLoginReports
+            { ("PreLoginReports", "CreateAssignment"), (AuditActionType.PreLoginAssignmentCreated, AuditRulePolicy.Always) },
+            { ("PreLoginReports", "CompleteAssignment"), (AuditActionType.PreLoginAssignmentCompleted, AuditRulePolicy.Always) },
             { ("PreLoginReports", "Fetch"), (AuditActionType.PreLoginReportFetched, AuditRulePolicy.Always) },
             { ("PreLoginReports", "Batch"), (AuditActionType.PreLoginReportBatched, AuditRulePolicy.Always) },
             { ("PreLoginReports", "Edit"), (AuditActionType.PreLoginReportEdited, AuditRulePolicy.Always) },

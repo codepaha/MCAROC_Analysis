@@ -12,18 +12,19 @@
         formats = string.Join(", ", Model.Select(x => x.Format).Distinct())
     }))</script>
 }
-<div class="pi-page-head"><div><div class="pi-kicker">Durable requests</div><h1>Report history</h1><p>Queued reports refresh automatically while in progress. Completed or failed reports can be rerun (re-fetch this CIN fresh from the API — no need to fill the form again) or edited (change a field, add or remove a charge, and regenerate in place without a fresh fetch). <strong>Bookmark this page</strong> — its link is the only way back to these reports; there is no login to browse them from. This browser also remembers it under <a asp-action="Mine">My Reports</a>.</p></div></div>
+<div class="pi-page-head"><div><div class="pi-kicker">Durable requests</div><h1>Assignment and report history</h1><p>Request recognition and report generation run in the background. Litigation-only assignments wait for actual litigation results. Open an assignment to view recognized details, attach results, or resolve missing information. Rerun retries failed recognition or report generation. <strong>Bookmark this page</strong> or return through <a asp-action="Mine">My Reports</a> in this browser.</p></div></div>
 @if (TempData["ReportError"] is string error) { <div class="alert alert-danger">@error</div> }
-<div class="pi-table-wrap"><table class="pi-results-table"><thead><tr><th>CIN</th><th>Format</th><th>Status</th><th>Progress</th><th>Attempts</th><th>Created</th><th>Failure</th><th></th></tr></thead><tbody>
+<div class="pi-table-wrap"><table class="pi-results-table"><thead><tr><th>Borrower / identifier</th><th>Format</th><th>Status</th><th>Progress</th><th>Attempts</th><th>Created</th><th>Notes / failure</th><th></th></tr></thead><tbody>
 @foreach (var job in Model)
 {
     var isCompleted = job.Status == MCAROC_Analysis.Data.Entities.PreLoginReportJobStatus.Completed;
     var isFinished = isCompleted || job.Status == MCAROC_Analysis.Data.Entities.PreLoginReportJobStatus.Failed;
     <tr>
-        <td class="report-id">@job.Cin</td><td>@job.Format</td><td>@job.Status</td>
+        <td class="report-id">@job.SubmittedCompanyName<br /><small>@job.Cin</small></td><td>@job.Format</td><td>@job.Status</td>
         <td style="min-width:130px"><div class="progress" role="progressbar" aria-valuenow="@job.ProgressPercent" aria-valuemin="0" aria-valuemax="100"><div class="progress-bar" style="width:@job.ProgressPercent%">@job.ProgressPercent%</div></div></td>
         <td>@job.AttemptCount / 3</td><td>@Ist.Format(job.CreatedUtc)</td><td>@job.FailureReason</td>
         <td>
+            <a asp-action="Assignment" asp-route-batch="@batch" asp-route-id="@job.PreLoginReportJobId" class="btn btn-sm btn-outline-primary">Assignment</a>
             @if (isCompleted)
             {
                 <a asp-action="Download" asp-route-batch="@batch" asp-route-id="@job.PreLoginReportJobId" class="btn btn-sm btn-outline-primary">Download</a>
@@ -31,7 +32,7 @@
             }
             @if (isFinished)
             {
-                <form asp-action="Rerun" asp-route-batch="@batch" asp-route-id="@job.PreLoginReportJobId" method="post" class="d-inline"><button class="btn btn-sm btn-outline-secondary" title="Fetch this CIN fresh from the API again">Rerun</button></form>
+                <form asp-action="Rerun" asp-route-batch="@batch" asp-route-id="@job.PreLoginReportJobId" method="post" class="d-inline"><button class="btn btn-sm btn-outline-secondary" title="Retry recognition or regenerate the report">Rerun</button></form>
             }
         </td>
     </tr>

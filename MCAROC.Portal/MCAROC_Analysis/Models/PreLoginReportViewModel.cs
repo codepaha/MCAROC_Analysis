@@ -12,7 +12,11 @@ public enum PreLoginReportEntityType
 {
     Company,
     Llp,
-    Partnership
+    Partnership,
+    Proprietorship,
+    Trust,
+    Other,
+    ForeignCompany
 }
 
 public sealed class PreLoginReportViewModel : IValidatableObject
@@ -31,12 +35,15 @@ public sealed class PreLoginReportViewModel : IValidatableObject
     [Display(Name = "Entity type")]
     public PreLoginReportEntityType EntityType { get; set; } = PreLoginReportEntityType.Company;
 
-    [Display(Name = "Partnership name")]
+    public bool IsLitigationOnly => EntityType is not (PreLoginReportEntityType.Company or PreLoginReportEntityType.Llp or PreLoginReportEntityType.ForeignCompany);
+    [StringLength(100)] public string? OtherEntityType { get; set; }
+
+    [Display(Name = "Borrower name")]
     [StringLength(250)]
     public string? PartnershipName { get; set; }
 
     [Display(Name = "PAN / Registration Number")]
-    [StringLength(100)]
+    [StringLength(30)]
     public string? PartnershipRegistrationNumber { get; set; }
 
     [Display(Name = "Address")]
@@ -51,12 +58,14 @@ public sealed class PreLoginReportViewModel : IValidatableObject
 
     public IEnumerable<ValidationResult> Validate(ValidationContext validationContext)
     {
-        if (EntityType == PreLoginReportEntityType.Partnership)
+        if (!Enum.IsDefined(EntityType) || !Enum.IsDefined(Format))
+            yield return new ValidationResult("Select a valid entity type and report format.");
+        if (IsLitigationOnly)
         {
             if (Format != PreLoginReportFormat.Sbi)
-                yield return new ValidationResult("Partnership reports are available in SBI format only.", [nameof(Format)]);
+                yield return new ValidationResult("Litigation-only reports are available in SBI format only.", [nameof(Format)]);
             if (string.IsNullOrWhiteSpace(PartnershipName))
-                yield return new ValidationResult("Partnership name is required.", [nameof(PartnershipName)]);
+                yield return new ValidationResult("Borrower name is required.", [nameof(PartnershipName)]);
             if (string.IsNullOrWhiteSpace(PartnershipRegistrationNumber))
                 yield return new ValidationResult("PAN / Registration Number is required.", [nameof(PartnershipRegistrationNumber)]);
             if (string.IsNullOrWhiteSpace(PartnershipAddress))
