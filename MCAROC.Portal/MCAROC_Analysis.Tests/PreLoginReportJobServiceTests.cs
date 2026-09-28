@@ -384,7 +384,7 @@ public class PreLoginReportJobServiceTests : IAsyncLifetime
         db.CompanyMasterRecords.Add(new CompanyMasterRecord { Identifier = cin, RecordType = CompanyMasterRecordType.Company,
             Name = name, NameNormalized = normalized.NameNormalized, NameCore = normalized.NameCore, EntityForm = normalized.EntityForm, Status = "Active" });
         await db.SaveChangesAsync();
-        var handler = new CountingReportHandler(name);
+        var handler = new CountingReportHandler(name) { PauseBeforeResponse = true };
         var environment = new TestEnvironment();
         var ai = new CompanyAssignmentAi(name);
         var reader = new BorrowerRequestDocumentReader(null!, new Microsoft.Extensions.Configuration.ConfigurationBuilder().Build());
@@ -397,7 +397,23 @@ public class PreLoginReportJobServiceTests : IAsyncLifetime
         var source = BorrowerAssignmentIntake.PendingSource(job.DataJson)!.SourceStoragePath!;
         try
         {
-            await service.ProcessAsync(job.PreLoginReportJobId, CancellationToken.None);
+            var processing = service.ProcessAsync(job.PreLoginReportJobId, CancellationToken.None);
+            await handler.Started.WaitAsync(TimeSpan.FromSeconds(20));
+            try
+            {
+                await using var snapshotDb = CreateContext();
+                var snapshot = await snapshotDb.PreLoginReportJobs.AsNoTracking()
+                    .SingleAsync(x => x.PreLoginReportJobId == job.PreLoginReportJobId);
+                Assert.Equal(PreLoginReportJobStatus.Fetching, snapshot.Status);
+                Assert.Equal(cin, snapshot.Cin);
+                Assert.Null(BorrowerAssignmentIntake.PendingSource(snapshot.DataJson));
+                var visible = JsonSerializer.Deserialize<InstaReportData>(snapshot.DataJson!)!;
+                Assert.Equal(name, visible.Assignment!.CompanyDetails.CompanyName);
+                Assert.Equal(cin, visible.Assignment.CompanyDetails.Cin);
+                Assert.Equal(ResolutionReasonCodes.AutoSelected, visible.IdentityResolution!.ReasonCode);
+            }
+            finally { handler.Release(); }
+            await processing;
             await db.Entry(job).ReloadAsync();
             Assert.Equal(PreLoginReportJobStatus.Completed, job.Status);
             Assert.Equal(cin, job.Cin);
@@ -465,14 +481,21 @@ public class PreLoginReportJobServiceTests : IAsyncLifetime
 
     private sealed class CountingReportHandler(string name) : HttpMessageHandler
     {
+        private readonly TaskCompletionSource _started = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource _release = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public int Calls { get; private set; }
         public string? LastUrl { get; private set; }
-        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        public bool PauseBeforeResponse { get; init; }
+        public Task Started => _started.Task;
+        public void Release() => _release.TrySetResult();
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             Calls++;
             LastUrl = request.RequestUri?.ToString();
-            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
-            { Content = new StringContent(JsonSerializer.Serialize(new { ReportData = new { companyData = new { company = name }, indexChargesData = Array.Empty<object>(), directorData = Array.Empty<object>() } })) });
+            _started.TrySetResult();
+            if (PauseBeforeResponse) await _release.Task.WaitAsync(cancellationToken);
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            { Content = new StringContent(JsonSerializer.Serialize(new { ReportData = new { companyData = new { company = name }, indexChargesData = Array.Empty<object>(), directorData = Array.Empty<object>() } })) };
         }
     }
 
