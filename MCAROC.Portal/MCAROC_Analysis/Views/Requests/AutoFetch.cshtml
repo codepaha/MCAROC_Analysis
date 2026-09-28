@@ -136,7 +136,7 @@
             var url = name.dataset.searchUrl || cin.dataset.searchUrl;
             var timer = null, searchVersion = 0;
 
-            function hide() { hints.hidden = true; hints.innerHTML = ''; }
+            function hide() { searchVersion++; hints.hidden = true; hints.innerHTML = ''; }
 
             function showMessage(message) {
                 hints.innerHTML = '';
