@@ -42,10 +42,10 @@
             <p>The assignment is already created. Correct unreadable details here if needed. Litigation results are required before a litigation-only report can be generated.</p>
             <form asp-action="CompleteAssignment" asp-route-batch="@job.BatchId" asp-route-id="@job.PreLoginReportJobId" method="post" enctype="multipart/form-data">
                 <div class="row g-3 mb-3">
-                    <div class="col-md-6"><label for="borrowerName" class="form-label">Borrower name</label><input id="borrowerName" name="borrowerName" class="form-control" value="@c.CompanyName" maxlength="250" required /></div>
+                    <div class="col-md-6"><label for="borrowerName" class="form-label">Borrower name</label><input id="borrowerName" name="borrowerName" class="form-control" value="@c.CompanyName" maxlength="250" autocomplete="off" required /><div id="assignmentBorrowerMatches" class="list-group mt-1" role="listbox" aria-label="Matching registered borrowers"></div><div id="assignmentBorrowerLookupStatus" class="form-text" role="status"></div></div>
                     <div class="col-md-6"><label for="entityType" class="form-label">Entity type</label><input id="entityType" name="entityType" class="form-control" value="@c.EntityType" maxlength="100" list="assignmentEntityTypes" required /><datalist id="assignmentEntityTypes"><option>Limited</option><option>Private Limited</option><option>LLP</option><option>Foreign Company</option><option>Partnership</option><option>Proprietorship</option><option>Trust</option><option>Society</option><option>Individual</option></datalist></div>
                 </div>
-                <div class="mb-3"><label for="mcaIdentifier" class="form-label">CIN / LLPIN (MCA entities only)</label><input id="mcaIdentifier" name="mcaIdentifier" class="form-control" value="@c.Cin" maxlength="30" /><div class="form-text">Foreign companies require an identifier supported by the existing report-data service.</div></div>
+                <div class="mb-3"><label for="mcaIdentifier" class="form-label">CIN / LLPIN (MCA entities only)</label><input id="mcaIdentifier" name="mcaIdentifier" class="form-control" value="@(Model.McaIdentifier ?? c.Cin)" maxlength="30" /><div class="form-text">Select a database match to confirm the borrower identity. Foreign companies require an identifier supported by the existing report-data service.</div></div>
                 <div class="mb-3"><label for="legalCasesFile" class="form-label">Litigation results (.xlsx, .xls or .csv)</label><input id="legalCasesFile" name="legalCasesFile" type="file" class="form-control" accept=".xlsx,.xls,.csv" /></div>
                 <div class="form-check mb-3"><input id="noCasesConfirmed" name="noCasesConfirmed" type="checkbox" value="true" class="form-check-input" /><label for="noCasesConfirmed" class="form-check-label">A completed litigation search returned no cases.</label></div>
                 <button class="btn btn-primary" type="submit">Generate report</button>
@@ -58,6 +58,9 @@ else
     <p>Request recognition is queued or running. This assignment page will refresh automatically while recognition is active.</p>
 }
 @section Scripts {
+    @if (job.Status == PreLoginReportJobStatus.AwaitingReview)
+    { <script src="~/js/borrower-identity-lookup.js" asp-append-version="true"></script>
+      <script>borrowerIdentityLookup({url:'@Url.Action("BorrowerLookup")',name:'borrowerName',identifier:'mcaIdentifier',results:'assignmentBorrowerMatches',status:'assignmentBorrowerLookupStatus',entity:function(){return document.getElementById('entityType').value;}});</script> }
     @if (job.Status is PreLoginReportJobStatus.Queued or PreLoginReportJobStatus.Fetching or PreLoginReportJobStatus.Generating)
     { <script>setTimeout(() => location.reload(), 5000);</script> }
 }

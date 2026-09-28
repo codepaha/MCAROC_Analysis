@@ -97,6 +97,10 @@ public sealed class PreLoginReportJobService(AppDbContext db, PreLoginReportQueu
             if (entity != PreLoginReportEntityType.Llp && !Regex.IsMatch(identifier, @"^[UL]"))
                 throw new PreLoginReportException("Enter an identifier supported by the current MCA report-data service.");
             job.Cin = identifier;
+            if (entity == PreLoginReportEntityType.Llp)
+                data = data with { McaIdentifier = identifier };
+            else
+                details.CompanyDetails.Cin = identifier;
         }
         job.DataJson = JsonSerializer.Serialize(data);
         job.SubmittedCompanyName = details.CompanyDetails.CompanyName;

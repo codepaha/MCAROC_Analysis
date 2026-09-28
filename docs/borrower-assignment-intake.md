@@ -2,6 +2,8 @@
 
 At `/pre-login-reports`, upload a request document or paste request/email text and choose **Create assignment automatically**. The application records the assignment immediately; the existing durable worker recognizes it in the background. The assignment page displays requesting-branch details, borrower identity, addresses and directors/partners/trustees/proprietors, and exposes the exact three-section extraction JSON contract.
 
+For company/LLP assignments that need an identifier, typing a borrower name searches the local MCA master database after three characters and shows registered names alongside CINs or LLPINs. Select the correct row to fill both fields. This also works in the existing manual report form. Search results are suggestions, not an automatic identity decision; foreign-company FCRNs are shown for reference but the current report-data service still requires a supported identifier. No external lookup or paid call is made while typing.
+
 Supported uploads are PDF (maximum 10 pages), PNG/JPG screenshots, Word `.doc` (Word 97–2003) and `.docx`, `.eml` emails (body plus supported base64 request attachments), and `.txt`. Uploads are limited to 10 MB, images to 25 megapixels, and combined extracted/pasted text to 100,000 characters. Pasted screenshots are accepted by the upload form. Original requests stay under `App_Data/BorrowerAssignments`, outside the web root; source downloads and extracted JSON use the existing application authentication and batch-scoped access contract.
 
 ## Recognition configuration

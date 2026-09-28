@@ -1,7 +1,11 @@
 using MCAROC_Analysis.Models;
 using MCAROC_Analysis.Services.PreLoginReports;
+using MCAROC_Analysis.Services.CompanyMaster;
+using MCAROC_Analysis.Data;
+using MCAROC_Analysis.Data.Entities;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 
 namespace MCAROC_Analysis.Controllers;
 
@@ -11,13 +15,42 @@ namespace MCAROC_Analysis.Controllers;
 /// Mine renders the browser's localStorage history without a server-side batch enumeration.</summary>
 [Authorize]
 [Route("pre-login-reports")]
-public sealed class PreLoginReportsController(PreLoginReportJobService jobs) : Controller
+public sealed class PreLoginReportsController(PreLoginReportJobService jobs, AppDbContext? db = null) : Controller
 {
     [HttpGet("")]
     public IActionResult Index() => View(new PreLoginReportViewModel());
 
     [HttpGet("mine")]
     public IActionResult Mine() => View();
+
+    /// <summary>Bounded, indexed lookup in the local MCA master for a human to select a CIN or LLPIN.</summary>
+    [HttpGet("borrower-lookup")]
+    public async Task<IActionResult> BorrowerLookup(string? name, string? entityType, CancellationToken cancellationToken)
+    {
+        if (db is null) return StatusCode(503);
+        if (string.IsNullOrWhiteSpace(name) || name.Length > 100) return BadRequest();
+        var normalized = CompanyNameNormalizer.Normalize(name).NameNormalized;
+        if (normalized.Length < 3) return BadRequest();
+        var recordType = entityType?.Trim().ToLowerInvariant() switch
+        {
+            "company" or "limited" or "private limited" => CompanyMasterRecordType.Company,
+            "llp" => CompanyMasterRecordType.Llp,
+            "foreigncompany" or "foreign company" => CompanyMasterRecordType.Foreign,
+            _ => (CompanyMasterRecordType?)null
+        };
+        if (recordType is null) return BadRequest();
+        var matches = await db.CompanyMasterRecords.AsNoTracking()
+            .Where(x => x.RecordType == recordType && x.NameNormalized != null && x.NameNormalized.StartsWith(normalized))
+            .OrderBy(x => x.NameNormalized).ThenBy(x => x.Identifier).Take(8)
+            .Select(x => new { x.Name, x.Identifier, x.RecordType, x.Status, x.State }).ToListAsync(cancellationToken);
+        if (matches.Count == 0)
+            matches = await db.CompanyMasterRecords.AsNoTracking()
+                .Where(x => x.RecordType == recordType && x.Name.StartsWith(name.Trim()))
+                .OrderBy(x => x.Name).ThenBy(x => x.Identifier).Take(8)
+                .Select(x => new { x.Name, x.Identifier, x.RecordType, x.Status, x.State }).ToListAsync(cancellationToken);
+        Response.Headers.CacheControl = "no-store";
+        return Json(matches);
+    }
 
     [HttpPost("assignment")]
     [ValidateAntiForgeryToken]

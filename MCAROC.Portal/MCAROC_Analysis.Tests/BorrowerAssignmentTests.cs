@@ -5,12 +5,17 @@ using System.Text.Json;
 using DocumentFormat.OpenXml.Packaging;
 using DocumentFormat.OpenXml.Wordprocessing;
 using MCAROC_Analysis.Controllers;
+using MCAROC_Analysis.Data;
+using MCAROC_Analysis.Data.Entities;
 using MCAROC_Analysis.Models;
+using MCAROC_Analysis.Services.CompanyMaster;
 using MCAROC_Analysis.Services.PreLoginReports;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Mvc.Controllers;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -212,5 +217,54 @@ public class BorrowerAssignmentTests
         public string WebRootPath { get; set; } = "";
         public IFileProvider ContentRootFileProvider { get; set; } = new NullFileProvider();
         public IFileProvider WebRootFileProvider { get; set; } = new NullFileProvider();
+    }
+}
+
+public class BorrowerIdentityLookupTests : IAsyncLifetime
+{
+    private static AppDbContext Context() => new(new DbContextOptionsBuilder<AppDbContext>()
+        .UseSqlServer(TestDatabase.ConnectionString).Options);
+
+    public async Task InitializeAsync()
+    {
+        await using var db = Context();
+        await TestDatabase.MigrateAsync(db);
+    }
+    public Task DisposeAsync() => Task.CompletedTask;
+
+    [Fact]
+    public async Task Name_lookup_returns_bounded_type_specific_master_matches_and_preserves_identifiers()
+    {
+        await using var db = Context();
+        var prefix = "ZZBORROWER" + Guid.NewGuid().ToString("N")[..12].ToUpperInvariant();
+        var companyId = "U12345MH2026PTC" + Random.Shared.Next(100000, 999999);
+        var llpId = "ZZZ-" + Random.Shared.Next(1000, 9999);
+        var companyName = prefix + " PRIVATE LIMITED";
+        var llpName = prefix + " LLP";
+        db.CompanyMasterRecords.AddRange(
+            new CompanyMasterRecord { Identifier = companyId, RecordType = CompanyMasterRecordType.Company,
+                Name = companyName, NameNormalized = CompanyNameNormalizer.Normalize(companyName).NameNormalized, Status = "Active" },
+            new CompanyMasterRecord { Identifier = llpId, RecordType = CompanyMasterRecordType.Llp,
+                Name = llpName, NameNormalized = CompanyNameNormalizer.Normalize(llpName).NameNormalized, Status = "Active" });
+        await db.SaveChangesAsync();
+        try
+        {
+            var controller = new PreLoginReportsController(null!, db)
+            { ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() } };
+            var company = Assert.IsType<JsonResult>(await controller.BorrowerLookup(prefix, "Company", CancellationToken.None));
+            var companyJson = JsonSerializer.Serialize(company.Value);
+            Assert.Contains(companyId, companyJson);
+            Assert.DoesNotContain(llpId, companyJson);
+            var llp = Assert.IsType<JsonResult>(await controller.BorrowerLookup(prefix, "Llp", CancellationToken.None));
+            var llpJson = JsonSerializer.Serialize(llp.Value);
+            Assert.Contains(llpId, llpJson);
+            Assert.DoesNotContain(companyId, llpJson);
+            Assert.IsType<BadRequestResult>(await controller.BorrowerLookup("ZZ", "Company", CancellationToken.None));
+            Assert.IsType<BadRequestResult>(await controller.BorrowerLookup(prefix, "Trust", CancellationToken.None));
+        }
+        finally
+        {
+            await db.CompanyMasterRecords.Where(x => x.Identifier == companyId || x.Identifier == llpId).ExecuteDeleteAsync();
+        }
     }
 }
