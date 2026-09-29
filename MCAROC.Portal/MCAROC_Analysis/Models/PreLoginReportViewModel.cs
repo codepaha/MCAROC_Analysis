@@ -33,7 +33,10 @@ public sealed class PreLoginReportViewModel : IValidatableObject
     public PreLoginReportFormat Format { get; set; } = PreLoginReportFormat.Sbi;
 
     [Display(Name = "Entity type")]
-    public PreLoginReportEntityType EntityType { get; set; } = PreLoginReportEntityType.Company;
+    [Required]
+    public PreLoginReportEntityType? EntityType { get; set; }
+
+    public bool EntityTypeConfirmed { get; set; }
 
     public bool IsLitigationOnly => EntityType is not (PreLoginReportEntityType.Company or PreLoginReportEntityType.Llp or PreLoginReportEntityType.ForeignCompany);
     [StringLength(100)] public string? OtherEntityType { get; set; }
@@ -58,8 +61,10 @@ public sealed class PreLoginReportViewModel : IValidatableObject
 
     public IEnumerable<ValidationResult> Validate(ValidationContext validationContext)
     {
-        if (!Enum.IsDefined(EntityType) || !Enum.IsDefined(Format))
+        if (EntityType is not { } entityType || !Enum.IsDefined(entityType) || !Enum.IsDefined(Format))
             yield return new ValidationResult("Select a valid entity type and report format.");
+        if (!EntityTypeConfirmed)
+            yield return new ValidationResult("Confirm the borrower's legal entity type before generating the report.", [nameof(EntityTypeConfirmed)]);
         if (IsLitigationOnly)
         {
             if (Format != PreLoginReportFormat.Sbi)

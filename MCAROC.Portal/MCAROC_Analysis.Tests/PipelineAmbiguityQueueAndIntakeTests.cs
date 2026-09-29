@@ -169,7 +169,8 @@ public class PipelineAmbiguityQueueAndIntakeTests : IAsyncLifetime
             {
                 ClientId = 1,
                 CompanyName = $"{_token} UNREGISTERED VENTURE",
-                EntityType = EntityType.Company
+                EntityType = EntityType.Company,
+                EntityTypeConfirmed = true
             };
 
             var actionResult = await controller.New(model, CancellationToken.None);
@@ -217,7 +218,8 @@ public class PipelineAmbiguityQueueAndIntakeTests : IAsyncLifetime
                 CompanyName = $"{_token} ENTERPRISES PRIVATE LIMITED",
                 Cin = cin,
                 SelectedIdentifier = cin,
-                EntityType = EntityType.Company
+                EntityType = EntityType.Company,
+                EntityTypeConfirmed = true
             };
 
             var actionResult = await controller.New(model, CancellationToken.None);
@@ -259,7 +261,8 @@ public class PipelineAmbiguityQueueAndIntakeTests : IAsyncLifetime
             {
                 ClientId = 1,
                 CompanyName = $"{_token} Trading Pvt Ltd",
-                EntityType = EntityType.Company
+                EntityType = EntityType.Company,
+                EntityTypeConfirmed = true
             };
             var result = await afController.New(model, CancellationToken.None);
             var reqId = (long)((RedirectToActionResult)result).RouteValues!["id"]!;
@@ -305,7 +308,8 @@ public class PipelineAmbiguityQueueAndIntakeTests : IAsyncLifetime
             {
                 ClientId = 1,
                 CompanyName = $"{_token} Motors",
-                EntityType = EntityType.Company
+                EntityType = EntityType.Company,
+                EntityTypeConfirmed = true
             };
             var result = await afController.New(model, CancellationToken.None);
             var reqId = (long)((RedirectToActionResult)result).RouteValues!["id"]!;

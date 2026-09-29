@@ -25,6 +25,24 @@ namespace MCAROC_Analysis.Tests;
 
 public class BorrowerAssignmentTests
 {
+    [Fact]
+    public void Direct_report_intake_requires_an_asserted_entity_type()
+    {
+        var model = new PreLoginReportViewModel { Cin = "U45203OR1995PLC003982" };
+        var errors = new List<System.ComponentModel.DataAnnotations.ValidationResult>();
+        Assert.False(Validator.TryValidateObject(model, new ValidationContext(model), errors, true));
+        Assert.Contains(errors, error => error.MemberNames.Contains(nameof(model.EntityType)));
+
+        model.EntityType = PreLoginReportEntityType.Company;
+        errors.Clear();
+        Assert.False(Validator.TryValidateObject(model, new ValidationContext(model), errors, true));
+        Assert.Contains(errors, error => error.MemberNames.Contains(nameof(model.EntityTypeConfirmed)));
+
+        model.EntityTypeConfirmed = true;
+        errors.Clear();
+        Assert.True(Validator.TryValidateObject(model, new ValidationContext(model), errors, true));
+    }
+
     private static BorrowerAssignmentDetails Trust() => new()
     {
         RequestDetails = new() { DocumentTitle = "Annexure I Request Form for Borrower Profiling Report", DateOfRequest = "12.09.2026" },

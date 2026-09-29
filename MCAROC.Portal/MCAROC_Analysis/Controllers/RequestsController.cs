@@ -59,6 +59,12 @@ public class RequestsController(
     {
         model.Clients = await db.Clients.Where(c => c.IsActive).OrderBy(c => c.ClientName).ToListAsync();
 
+        if (model.EntityType is not { } entityType || !Enum.IsDefined(entityType) || !model.EntityTypeConfirmed)
+        {
+            model.ErrorMessage = "Select and confirm the borrower's legal entity type before creating the request.";
+            return View(model);
+        }
+
         if (string.IsNullOrWhiteSpace(model.Cin) && string.IsNullOrWhiteSpace(model.Pan))
         {
             model.ErrorMessage = "At least one of CIN/LLPIN or PAN is required.";
@@ -95,11 +101,11 @@ public class RequestsController(
         var request = new McaRequest
         {
             ClientId = model.ClientId,
-            EntityType = model.EntityType,
+            EntityType = entityType,
             CompanyName = model.CompanyName,
             Cin = string.IsNullOrWhiteSpace(model.Cin) ? null : model.Cin.Trim().ToUpperInvariant(),
             Pan = string.IsNullOrWhiteSpace(model.Pan) ? null : model.Pan.Trim().ToUpperInvariant(),
-            Llpin = model.EntityType == EntityType.LLP ? model.Cin?.Trim().ToUpperInvariant() : null,
+            Llpin = entityType == EntityType.LLP ? model.Cin?.Trim().ToUpperInvariant() : null,
             RequestStatus = RequestStatus.Created,
             CreatedDate = DateTime.UtcNow
         };

@@ -76,6 +76,9 @@ public partial class AutoFetchController(
         model.Clients = await ActiveClientsAsync();
         model.IsConfigured = options.Value.IsConfigured;
 
+        if (model.EntityType is not { } entityType || !Enum.IsDefined(entityType) || !model.EntityTypeConfirmed)
+            return Fail(model, "Select and confirm the borrower's legal entity type before creating the request.");
+
         if (!model.IsConfigured)
             return Fail(model, "Auto-fetch is not configured on this server — set ReferenceTool:BaseUrl and ReferenceTool:SessionCookie (see README, \"Configuring secrets\").");
 
@@ -97,7 +100,7 @@ public partial class AutoFetchController(
             District: string.IsNullOrWhiteSpace(model.District) ? null : model.District.Trim(),
             PinCode: string.IsNullOrWhiteSpace(model.PinCode) ? null : model.PinCode.Trim(),
             IncorporationYear: model.IncorporationYear,
-            EntityType: model.EntityType,
+            EntityType: entityType,
             Pan: pan);
 
         var actor = User.Identity?.Name ?? "auto-fetch";
@@ -109,7 +112,7 @@ public partial class AutoFetchController(
                 return Fail(model, "Enter a valid company CIN (e.g. U24246DL2003PTC118255) or LLPIN (e.g. AAA-1234).");
 
             var isLlpin = identifier.Contains('-');
-            if (model.EntityType == EntityType.LLP != isLlpin)
+            if ((entityType == EntityType.LLP) != isLlpin)
                 return Fail(model, isLlpin ? "That identifier is an LLPIN — select LLP as the entity type." : "That identifier is a company CIN — select Company as the entity type.");
 
             // This lookup is scoped to ClientId on purpose. A matching company for another client is not a
@@ -123,11 +126,11 @@ public partial class AutoFetchController(
             var request = new McaRequest
             {
                 ClientId = model.ClientId,
-                EntityType = model.EntityType,
+                EntityType = entityType,
                 // The tool's search / the workbook fills this in during the job; the identifier stands in until then.
                 CompanyName = string.IsNullOrWhiteSpace(model.CompanyName) ? identifier : model.CompanyName.Trim(),
                 Cin = identifier,
-                Llpin = model.EntityType == EntityType.LLP ? identifier : null,
+                Llpin = entityType == EntityType.LLP ? identifier : null,
                 Pan = pan,
                 AutoFetchCompanyIdentifier = identifier,
                 // RequestNumber has a unique index. Give the first insert its own value so concurrent
@@ -196,7 +199,7 @@ public partial class AutoFetchController(
             var request = new McaRequest
             {
                 ClientId = model.ClientId,
-                EntityType = model.EntityType,
+                EntityType = entityType,
                 CompanyName = inputName,
                 Cin = null,
                 Llpin = null,
