@@ -436,7 +436,7 @@ public class PreLoginReportJobServiceTests : IAsyncLifetime
         try
         {
             await service.ProcessAsync(job.PreLoginReportJobId, CancellationToken.None);
-            await db.Entry(job).ReloadAsync();
+            job = (await service.FindAsync(job.PreLoginReportJobId, CancellationToken.None))!;
             Assert.Equal(PreLoginReportJobStatus.AwaitingReview, job.Status);
             Assert.Equal(0, handler.Calls);
             Assert.Equal(cin, job.Cin);
@@ -446,14 +446,14 @@ public class PreLoginReportJobServiceTests : IAsyncLifetime
             await service.CompleteAssignmentAsync(batch, job.PreLoginReportJobId,
                 name, "Private Limited", cin, null, false, true, CancellationToken.None);
             await service.ProcessAsync(job.PreLoginReportJobId, CancellationToken.None);
-            await db.Entry(job).ReloadAsync();
+            job = (await service.FindAsync(job.PreLoginReportJobId, CancellationToken.None))!;
             Assert.Equal(PreLoginReportJobStatus.Completed, job.Status);
             Assert.Equal(cin, job.Cin);
             Assert.Equal(1, handler.Calls);
             Assert.Contains(cin, handler.LastUrl);
             var data = service.AssignmentData(job)!;
             Assert.Equal(cin, data.Assignment!.CompanyDetails.Cin);
-            Assert.Equal(ResolutionReasonCodes.AutoSelected, data.IdentityResolution!.ReasonCode);
+            Assert.Equal(ResolutionReasonCodes.UserProvidedIdentifier, data.IdentityResolution!.ReasonCode);
             Assert.True(File.Exists(job.ReportStoragePath));
         }
         finally

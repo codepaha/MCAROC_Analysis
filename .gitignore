@@ -55,7 +55,6 @@ MCAROC.Portal/MCAROC_Analysis.Tests/Fixtures/workbooks/
 # Temporary review worktrees
 .work-pr*/
 .work-*/
-.worktrees/
 
 # Raw browser network captures (session cookies, auth tokens, passwords — never committed)
 *.network-request
