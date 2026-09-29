@@ -63,12 +63,14 @@ public sealed class PreLoginReportJobService(AppDbContext db, PreLoginReportQueu
         ? DeserializeStoredData(job.DataJson) : null;
 
     public async Task CompleteAssignmentAsync(Guid batch, long id, string? borrowerName, string? entityType,
-        string? mcaIdentifier, IFormFile? legalCasesFile, bool noCasesConfirmed, CancellationToken ct)
+        string? mcaIdentifier, IFormFile? legalCasesFile, bool noCasesConfirmed, bool entityTypeConfirmed, CancellationToken ct)
     {
         var job = await FindInBatchAsync(batch, id, ct) ?? throw new PreLoginReportException("Assignment not found.");
         if (job.Status != PreLoginReportJobStatus.AwaitingReview) throw new PreLoginReportException("This assignment is not awaiting details or results.");
         var stored = AssignmentData(job) ?? throw new PreLoginReportException("Assignment recognition has not completed.");
         var details = stored.Assignment ?? throw new PreLoginReportException("Assignment details are unavailable.");
+        if (!entityTypeConfirmed)
+            throw new PreLoginReportException("Confirm the borrower's legal entity type before generating the report.");
         if (string.IsNullOrWhiteSpace(borrowerName) || borrowerName.Length > 250 || string.IsNullOrWhiteSpace(entityType) || entityType.Length > 100)
             throw new PreLoginReportException("A borrower name and entity type are required to complete this assignment.");
         details.CompanyDetails.CompanyName = borrowerName.Trim();
@@ -164,7 +166,7 @@ public sealed class PreLoginReportJobService(AppDbContext db, PreLoginReportQueu
             new System.ComponentModel.DataAnnotations.ValidationContext(model), validation, true))
             throw new PreLoginReportException("Enter valid litigation-only assignment details.");
         var registrationNumber = model.PartnershipRegistrationNumber!.Trim().ToUpperInvariant();
-        var entityType = model.EntityType == PreLoginReportEntityType.Other ? model.OtherEntityType?.Trim() ?? "Other" : model.EntityType.ToString();
+        var entityType = model.EntityType == PreLoginReportEntityType.Other ? model.OtherEntityType?.Trim() ?? "Other" : model.EntityType!.Value.ToString();
         var data = new InstaReportData(
             new InstaCompany(model.PartnershipName!.Trim(), "-", registrationNumber, entityType, "-", "-", "-", "-", "-", "-",
                 model.PartnershipAddress!.Trim(), "-", "-", "-", "-", "-", IsPartnership: model.EntityType == PreLoginReportEntityType.Partnership,
@@ -335,17 +337,13 @@ public sealed class PreLoginReportJobService(AppDbContext db, PreLoginReportQueu
                 job.SubmittedCompanyName = assignment.CompanyDetails.CompanyName;
                 job.Cin = intakeData.McaIdentifier ?? assignment.CompanyDetails.Cin ?? intakeData.Company.RegistrationNumber;
                 if (job.Cin == "-") job.Cin = "ASSIGN-" + job.BatchId.ToString("N")[..20];
-                if (reviewReason is not null || intakeData.Company.LitigationOnly)
-                {
-                    job.Status = PreLoginReportJobStatus.AwaitingReview; job.ProgressPercent = 100;
-                    job.FailureReason = reviewReason ?? "Assignment created. Litigation-only scope; awaiting litigation results.";
-                    await db.SaveChangesAsync(cancellationToken);
-                    return;
-                }
-                // Recognition and the verified identifier must be visible on the assignment page while
-                // the external details request runs. Persisting here also lets restart recovery resume
-                // the fetch without repeating OCR if the worker stops at this boundary.
+                // Extraction and local identity lookup are suggestions, not a legal-form assertion.
+                // Every uploaded assignment waits for the reviewer before any external report-data fetch.
+                reviewReason ??= "Confirm the borrower entity type before report generation.";
+                job.Status = PreLoginReportJobStatus.AwaitingReview; job.ProgressPercent = 100;
+                job.FailureReason = reviewReason;
                 await db.SaveChangesAsync(cancellationToken);
+                return;
             }
             var stored = DeserializeStoredData(job.DataJson);
             var data = stored?.Company.LitigationOnly == true || stored?.LegalCases is not null ? stored! :

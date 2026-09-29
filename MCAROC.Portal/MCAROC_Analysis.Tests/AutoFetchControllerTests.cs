@@ -97,7 +97,7 @@ public class AutoFetchControllerTests : IAsyncLifetime
         var cin = NewCompanyIdentifier();
         var created = Assert.IsType<RedirectToActionResult>(await controller.New(new AutoFetchRequestViewModel
         {
-            ClientId = 1, Cin = cin, EntityType = EntityType.Company
+            ClientId = 1, Cin = cin, EntityType = EntityType.Company, EntityTypeConfirmed = true
         }, CancellationToken.None));
         var requestId = Assert.IsType<long>(created.RouteValues!["id"]);
         var run = new IngestionRun { RequestId = requestId, RunNumber = 1, StartedDate = DateTime.UtcNow,
@@ -148,7 +148,7 @@ public class AutoFetchControllerTests : IAsyncLifetime
             var (controller, _) = NewController(seed, configured: true);
             var created = Assert.IsType<RedirectToActionResult>(await controller.New(new AutoFetchRequestViewModel
             {
-                ClientId = 1, Cin = NewCompanyIdentifier(), EntityType = EntityType.Company
+                ClientId = 1, Cin = NewCompanyIdentifier(), EntityType = EntityType.Company, EntityTypeConfirmed = true
             }, CancellationToken.None));
             requestId = Assert.IsType<long>(created.RouteValues!["id"]);
             var run = new IngestionRun { RequestId = requestId, RunNumber = 1, StartedDate = DateTime.UtcNow,
@@ -199,10 +199,29 @@ public class AutoFetchControllerTests : IAsyncLifetime
 
         var requestsBefore = await db.Requests.CountAsync();
         var jobsBefore = await db.AutoFetchJobs.CountAsync();
-        var post = Assert.IsType<ViewResult>(await controller.New(new AutoFetchRequestViewModel { ClientId = 1, Cin = "U45203OR1995PLC003982" }, CancellationToken.None));
+        var post = Assert.IsType<ViewResult>(await controller.New(new AutoFetchRequestViewModel { ClientId = 1, Cin = "U45203OR1995PLC003982", EntityType = EntityType.Company, EntityTypeConfirmed = true }, CancellationToken.None));
         Assert.Contains("not configured", Assert.IsType<AutoFetchRequestViewModel>(post.Model).ErrorMessage);
         Assert.Equal(requestsBefore, await db.Requests.CountAsync());
         Assert.Equal(jobsBefore, await db.AutoFetchJobs.CountAsync());
+    }
+
+    [Theory]
+    [InlineData(null, true)]
+    [InlineData(EntityType.Company, false)]
+    public async Task Does_not_create_or_fetch_without_an_asserted_entity_type(EntityType? entityType, bool confirmed)
+    {
+        await using var db = CreateContext();
+        var (controller, _) = NewController(db, configured: true);
+        var before = await db.Requests.CountAsync();
+
+        var result = Assert.IsType<ViewResult>(await controller.New(new AutoFetchRequestViewModel
+        {
+            ClientId = 1, Cin = "U45203OR1995PLC003982", EntityType = entityType, EntityTypeConfirmed = confirmed
+        }, CancellationToken.None));
+
+        Assert.Contains("confirm", Assert.IsType<AutoFetchRequestViewModel>(result.Model).ErrorMessage, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(before, await db.Requests.CountAsync());
+        Assert.Empty(db.AutoFetchJobs.Local);
     }
 
     [Theory]
@@ -216,7 +235,7 @@ public class AutoFetchControllerTests : IAsyncLifetime
         var before = await db.Requests.CountAsync();
         var (controller, _) = NewController(db, configured: true);
 
-        var result = Assert.IsType<ViewResult>(await controller.New(new AutoFetchRequestViewModel { ClientId = 1, Cin = cin, EntityType = entityType }, CancellationToken.None));
+        var result = Assert.IsType<ViewResult>(await controller.New(new AutoFetchRequestViewModel { ClientId = 1, Cin = cin, EntityType = entityType, EntityTypeConfirmed = true }, CancellationToken.None));
 
         Assert.Contains(expectedError, Assert.IsType<AutoFetchRequestViewModel>(result.Model).ErrorMessage);
         Assert.Equal(before, await db.Requests.CountAsync());
@@ -230,7 +249,7 @@ public class AutoFetchControllerTests : IAsyncLifetime
 
         var result = await controller.New(new AutoFetchRequestViewModel
         {
-            ClientId = 1, Cin = " u45203or1995plc003982 ", Pan = "aabcc1234d", EntityType = EntityType.Company,
+            ClientId = 1, Cin = " u45203or1995plc003982 ", Pan = "aabcc1234d", EntityType = EntityType.Company, EntityTypeConfirmed = true,
             IncludeFilings = true, MaxDocumentsPerSection = 50
         }, CancellationToken.None);
 
@@ -270,7 +289,7 @@ public class AutoFetchControllerTests : IAsyncLifetime
 
         var redirect = Assert.IsType<RedirectToActionResult>(await controller.New(new AutoFetchRequestViewModel
         {
-            ClientId = 1, Cin = "AAB-9876", EntityType = EntityType.LLP, CompanyName = "Some LLP", IncludeFilings = false
+            ClientId = 1, Cin = "AAB-9876", EntityType = EntityType.LLP, EntityTypeConfirmed = true, CompanyName = "Some LLP", IncludeFilings = false
         }, CancellationToken.None));
         var request = await db.Requests.AsNoTracking().SingleAsync(r => r.RequestId == (long)redirect.RouteValues!["id"]!);
         Assert.Equal("AAB-9876", request.Cin);
@@ -288,13 +307,13 @@ public class AutoFetchControllerTests : IAsyncLifetime
 
         var first = Assert.IsType<RedirectToActionResult>(await controller.New(new AutoFetchRequestViewModel
         {
-            ClientId = 1, Cin = cin, EntityType = EntityType.Company
+            ClientId = 1, Cin = cin, EntityType = EntityType.Company, EntityTypeConfirmed = true
         }, CancellationToken.None));
         var firstId = Assert.IsType<long>(first.RouteValues!["id"]);
 
         var duplicate = Assert.IsType<ViewResult>(await controller.New(new AutoFetchRequestViewModel
         {
-            ClientId = 1, Cin = $" {cin.ToLowerInvariant()} ", EntityType = EntityType.Company
+            ClientId = 1, Cin = $" {cin.ToLowerInvariant()} ", EntityType = EntityType.Company, EntityTypeConfirmed = true
         }, CancellationToken.None));
         var model = Assert.IsType<AutoFetchRequestViewModel>(duplicate.Model);
 
@@ -329,11 +348,11 @@ public class AutoFetchControllerTests : IAsyncLifetime
 
         var first = Assert.IsType<RedirectToActionResult>(await controller.New(new AutoFetchRequestViewModel
         {
-            ClientId = 1, Cin = cin, EntityType = EntityType.Company
+            ClientId = 1, Cin = cin, EntityType = EntityType.Company, EntityTypeConfirmed = true
         }, CancellationToken.None));
         var second = Assert.IsType<RedirectToActionResult>(await controller.New(new AutoFetchRequestViewModel
         {
-            ClientId = otherClient.ClientId, Cin = cin, EntityType = EntityType.Company
+            ClientId = otherClient.ClientId, Cin = cin, EntityType = EntityType.Company, EntityTypeConfirmed = true
         }, CancellationToken.None));
 
         Assert.NotEqual(first.RouteValues!["id"], second.RouteValues!["id"]);
@@ -376,8 +395,8 @@ public class AutoFetchControllerTests : IAsyncLifetime
         var (secondController, _) = NewController(secondDb, configured: true);
 
         var results = await Task.WhenAll(
-            firstController.New(new AutoFetchRequestViewModel { ClientId = 1, Cin = cin, EntityType = EntityType.Company }, CancellationToken.None),
-            secondController.New(new AutoFetchRequestViewModel { ClientId = 1, Cin = cin, EntityType = EntityType.Company }, CancellationToken.None));
+            firstController.New(new AutoFetchRequestViewModel { ClientId = 1, Cin = cin, EntityType = EntityType.Company, EntityTypeConfirmed = true }, CancellationToken.None),
+            secondController.New(new AutoFetchRequestViewModel { ClientId = 1, Cin = cin, EntityType = EntityType.Company, EntityTypeConfirmed = true }, CancellationToken.None));
 
         Assert.Single(results, result => result is RedirectToActionResult);
         var existing = Assert.Single(results, result => result is ViewResult);
@@ -399,7 +418,7 @@ public class AutoFetchControllerTests : IAsyncLifetime
 
         var failure = await Assert.ThrowsAsync<DbUpdateException>(() => controller.New(new AutoFetchRequestViewModel
         {
-            ClientId = 1, Cin = cin, EntityType = EntityType.Company
+            ClientId = 1, Cin = cin, EntityType = EntityType.Company, EntityTypeConfirmed = true
         }, CancellationToken.None));
         Assert.Contains("Injected AutoFetch job insert failure", failure.InnerException?.Message);
 

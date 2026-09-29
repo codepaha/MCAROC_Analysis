@@ -359,16 +359,17 @@ public class PreLoginReportJobServiceTests : IAsyncLifetime
             await service.ProcessAsync(id, CancellationToken.None);
             await db.Entry(job).ReloadAsync();
             Assert.Equal(PreLoginReportJobStatus.AwaitingReview, job.Status);
-            Assert.Contains("Litigation-only", job.FailureReason);
+            Assert.Contains("Confirm", job.FailureReason);
             var data = service.AssignmentData(job)!;
             Assert.True(data.Company.LitigationOnly);
             Assert.Null(data.LegalCases);
             Assert.Equal("Example Trust", data.Assignment!.CompanyDetails.CompanyName);
             await service.ProcessAsync(id, CancellationToken.None);
             Assert.Equal(1, ai.Calls);
-            await Assert.ThrowsAsync<PreLoginReportException>(() => service.CompleteAssignmentAsync(Guid.NewGuid(), id, "Example Trust", "Trust", null, null, true, CancellationToken.None));
-            await Assert.ThrowsAsync<PreLoginReportException>(() => service.CompleteAssignmentAsync(batch, id, "Example Trust", "Trust", null, null, false, CancellationToken.None));
-            await service.CompleteAssignmentAsync(batch, id, "Example Trust", "Trust", null, null, true, CancellationToken.None);
+            await Assert.ThrowsAsync<PreLoginReportException>(() => service.CompleteAssignmentAsync(batch, id, "Example Trust", "Trust", null, null, true, false, CancellationToken.None));
+            await Assert.ThrowsAsync<PreLoginReportException>(() => service.CompleteAssignmentAsync(Guid.NewGuid(), id, "Example Trust", "Trust", null, null, true, true, CancellationToken.None));
+            await Assert.ThrowsAsync<PreLoginReportException>(() => service.CompleteAssignmentAsync(batch, id, "Example Trust", "Trust", null, null, false, true, CancellationToken.None));
+            await service.CompleteAssignmentAsync(batch, id, "Example Trust", "Trust", null, null, true, true, CancellationToken.None);
             await service.ProcessAsync(id, CancellationToken.None);
             job = (await service.FindAsync(id, CancellationToken.None))!;
             Assert.Equal(PreLoginReportJobStatus.Completed, job.Status);
@@ -411,7 +412,7 @@ public class PreLoginReportJobServiceTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task OCR_name_resolves_unique_master_CIN_and_requests_details_automatically()
+    public async Task OCR_name_resolves_unique_master_CIN_but_waits_for_type_confirmation()
     {
         await using var db = CreateContext();
         var suffix = Random.Shared.Next(100000, 999999);
@@ -421,7 +422,7 @@ public class PreLoginReportJobServiceTests : IAsyncLifetime
         db.CompanyMasterRecords.Add(new CompanyMasterRecord { Identifier = cin, RecordType = CompanyMasterRecordType.Company,
             Name = name, NameNormalized = normalized.NameNormalized, NameCore = normalized.NameCore, EntityForm = normalized.EntityForm, Status = "Active" });
         await db.SaveChangesAsync();
-        var handler = new CountingReportHandler(name) { PauseBeforeResponse = true };
+        var handler = new CountingReportHandler(name);
         var environment = new TestEnvironment();
         var ai = new CompanyAssignmentAi(name);
         var reader = new BorrowerRequestDocumentReader(null!, new Microsoft.Extensions.Configuration.ConfigurationBuilder().Build());
@@ -434,23 +435,17 @@ public class PreLoginReportJobServiceTests : IAsyncLifetime
         var source = BorrowerAssignmentIntake.PendingSource(job.DataJson)!.SourceStoragePath!;
         try
         {
-            var processing = service.ProcessAsync(job.PreLoginReportJobId, CancellationToken.None);
-            await handler.Started.WaitAsync(TimeSpan.FromSeconds(20));
-            try
-            {
-                await using var snapshotDb = CreateContext();
-                var snapshot = await snapshotDb.PreLoginReportJobs.AsNoTracking()
-                    .SingleAsync(x => x.PreLoginReportJobId == job.PreLoginReportJobId);
-                Assert.Equal(PreLoginReportJobStatus.Fetching, snapshot.Status);
-                Assert.Equal(cin, snapshot.Cin);
-                Assert.Null(BorrowerAssignmentIntake.PendingSource(snapshot.DataJson));
-                var visible = JsonSerializer.Deserialize<InstaReportData>(snapshot.DataJson!)!;
-                Assert.Equal(name, visible.Assignment!.CompanyDetails.CompanyName);
-                Assert.Equal(cin, visible.Assignment.CompanyDetails.Cin);
-                Assert.Equal(ResolutionReasonCodes.AutoSelected, visible.IdentityResolution!.ReasonCode);
-            }
-            finally { handler.Release(); }
-            await processing;
+            await service.ProcessAsync(job.PreLoginReportJobId, CancellationToken.None);
+            await db.Entry(job).ReloadAsync();
+            Assert.Equal(PreLoginReportJobStatus.AwaitingReview, job.Status);
+            Assert.Equal(0, handler.Calls);
+            Assert.Equal(cin, job.Cin);
+            Assert.Equal(ResolutionReasonCodes.AutoSelected, service.AssignmentData(job)!.IdentityResolution!.ReasonCode);
+            await Assert.ThrowsAsync<PreLoginReportException>(() => service.CompleteAssignmentAsync(batch, job.PreLoginReportJobId,
+                name, "Private Limited", cin, null, false, false, CancellationToken.None));
+            await service.CompleteAssignmentAsync(batch, job.PreLoginReportJobId,
+                name, "Private Limited", cin, null, false, true, CancellationToken.None);
+            await service.ProcessAsync(job.PreLoginReportJobId, CancellationToken.None);
             await db.Entry(job).ReloadAsync();
             Assert.Equal(PreLoginReportJobStatus.Completed, job.Status);
             Assert.Equal(cin, job.Cin);
@@ -501,7 +496,7 @@ public class PreLoginReportJobServiceTests : IAsyncLifetime
             Assert.Contains(candidates, x => x.Identifier == cin1);
             Assert.Contains(candidates, x => x.Identifier == cin2);
             await Assert.ThrowsAsync<PreLoginReportException>(() => service.CompleteAssignmentAsync(batch, job.PreLoginReportJobId,
-                name, "Private Limited", "U12345MH2026PTC000000", null, false, CancellationToken.None));
+                name, "Private Limited", "U12345MH2026PTC000000", null, false, true, CancellationToken.None));
         }
         finally
         {

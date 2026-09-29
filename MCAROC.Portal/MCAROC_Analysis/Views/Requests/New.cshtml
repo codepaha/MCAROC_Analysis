@@ -28,14 +28,16 @@
         <div class="mb-3">
             <label class="form-label d-block">Entity Type</label>
             <div class="form-check form-check-inline">
-                <input class="form-check-input" type="radio" asp-for="EntityType" value="Company" id="entityCompany" checked />
+                <input class="form-check-input" type="radio" asp-for="EntityType" value="Company" id="entityCompany" required />
                 <label class="form-check-label" for="entityCompany">Company</label>
             </div>
             <div class="form-check form-check-inline">
-                <input class="form-check-input" type="radio" asp-for="EntityType" value="LLP" id="entityLlp" />
+                <input class="form-check-input" type="radio" asp-for="EntityType" value="LLP" id="entityLlp" required />
                 <label class="form-check-label" for="entityLlp">LLP</label>
             </div>
         </div>
+
+        <div class="form-check mb-3"><input class="form-check-input" type="checkbox" asp-for="EntityTypeConfirmed" required /><label class="form-check-label" asp-for="EntityTypeConfirmed">I have checked and confirmed the borrower's legal entity type.</label></div>
 
         <div class="mb-3">
             <label asp-for="CompanyName" class="form-label"></label>
