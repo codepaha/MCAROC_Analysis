@@ -36,20 +36,31 @@ public sealed class PreLoginReportsController(PreLoginReportJobService jobs, App
             "company" or "limited" or "private limited" => CompanyMasterRecordType.Company,
             "llp" => CompanyMasterRecordType.Llp,
             "foreigncompany" or "foreign company" => CompanyMasterRecordType.Foreign,
+            null or "" => (CompanyMasterRecordType?)null,
             _ => (CompanyMasterRecordType?)null
         };
-        if (recordType is null) return BadRequest();
-        var matches = await db.CompanyMasterRecords.AsNoTracking()
-            .Where(x => x.RecordType == recordType && x.NameNormalized != null && x.NameNormalized.StartsWith(normalized))
-            .OrderBy(x => x.NameNormalized).ThenBy(x => x.Identifier).Take(8)
-            .Select(x => new { x.Name, x.Identifier, x.RecordType, x.Status, x.State }).ToListAsync(cancellationToken);
-        if (matches.Count == 0)
-            matches = await db.CompanyMasterRecords.AsNoTracking()
-                .Where(x => x.RecordType == recordType && x.Name.StartsWith(name.Trim()))
-                .OrderBy(x => x.Name).ThenBy(x => x.Identifier).Take(8)
-                .Select(x => new { x.Name, x.Identifier, x.RecordType, x.Status, x.State }).ToListAsync(cancellationToken);
+        if (recordType is null && !string.IsNullOrWhiteSpace(entityType)) return BadRequest();
+        async Task<List<CompanyMasterRecord>> LookupTypeAsync(CompanyMasterRecordType type, int limit)
+        {
+            var records = db.CompanyMasterRecords.AsNoTracking().Where(x => x.RecordType == type);
+            var matches = await records
+                .Where(x => x.NameNormalized != null && x.NameNormalized.StartsWith(normalized))
+                .OrderBy(x => x.NameNormalized).ThenBy(x => x.Identifier).Take(limit)
+                .Select(x => new CompanyMasterRecord { Name = x.Name, Identifier = x.Identifier,
+                    RecordType = x.RecordType, Status = x.Status, State = x.State }).ToListAsync(cancellationToken);
+            if (matches.Count == 0)
+                matches = await records.Where(x => x.Name.StartsWith(name.Trim()))
+                    .OrderBy(x => x.Name).ThenBy(x => x.Identifier).Take(limit)
+                    .Select(x => new CompanyMasterRecord { Name = x.Name, Identifier = x.Identifier,
+                        RecordType = x.RecordType, Status = x.Status, State = x.State }).ToListAsync(cancellationToken);
+            return matches;
+        }
+        var matches = recordType is { } selectedType
+            ? await LookupTypeAsync(selectedType, 8)
+            : (await LookupTypeAsync(CompanyMasterRecordType.Company, 4))
+                .Concat(await LookupTypeAsync(CompanyMasterRecordType.Llp, 4)).ToList();
         Response.Headers.CacheControl = "no-store";
-        return Json(matches);
+        return Json(matches.Select(x => new { x.Name, x.Identifier, RecordType = x.RecordType.ToString(), x.Status, x.State }));
     }
 
     [HttpPost("assignment")]
@@ -123,6 +134,15 @@ public sealed class PreLoginReportsController(PreLoginReportJobService jobs, App
 
         try
         {
+            if (!model.IsLitigationOnly && string.IsNullOrWhiteSpace(model.Cin))
+            {
+                var match = await jobs.ResolveExactCorporateNameAsync(model.CompanyName, model.EntityType!.Value, cancellationToken);
+                model.Cin = match.Identifier;
+                model.CompanyName = match.Name;
+            }
+            if ((model.EntityType == PreLoginReportEntityType.Company && model.Cin.Contains('-')) ||
+                (model.EntityType == PreLoginReportEntityType.Llp && !model.Cin.Contains('-')))
+                throw new PreLoginReportException("The confirmed entity type does not match the CIN / LLPIN.");
             var batchId = model.IsLitigationOnly
                 ? await jobs.QueuePartnershipAsync(model, cancellationToken)
                 : await jobs.QueueSingleAsync(model.Cin, model.CompanyName, model.Format, cancellationToken);

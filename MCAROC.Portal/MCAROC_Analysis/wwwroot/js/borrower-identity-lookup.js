@@ -13,7 +13,8 @@ function borrowerIdentityLookup(options) {
         if (request) request.abort();
         clear();
         const entity = options.entity();
-        if (!['Company', 'Llp', 'ForeignCompany', 'Limited', 'Private Limited', 'LLP', 'Foreign Company'].includes(entity)) {
+        if (!(options.allowAllTypes && !entity) &&
+            !['Company', 'Llp', 'ForeignCompany', 'Limited', 'Private Limited', 'LLP', 'Foreign Company'].includes(entity)) {
             status.textContent = 'MCA name lookup applies to companies, LLPs and foreign companies.';
             return;
         }
@@ -28,7 +29,7 @@ function borrowerIdentityLookup(options) {
             try {
                 const url = new URL(options.url, window.location.href);
                 url.searchParams.set('name', name.value.trim());
-                url.searchParams.set('entityType', options.entity());
+                if (entity) url.searchParams.set('entityType', entity);
                 const response = await fetch(url, { signal: current.signal, headers: { Accept: 'application/json' } });
                 if (!response.ok) throw new Error('lookup failed');
                 const matches = await response.json();
@@ -39,11 +40,12 @@ function borrowerIdentityLookup(options) {
                     button.type = 'button';
                     button.className = 'list-group-item list-group-item-action';
                     button.setAttribute('role', 'option');
-                    button.textContent = `${match.name} — ${match.identifier}${match.state ? ` · ${match.state}` : ''}${match.status ? ` · ${match.status}` : ''}`;
+                    button.textContent = `${match.name} — ${match.identifier}${match.recordType ? ` | ${match.recordType}` : ''}${match.state ? ` · ${match.state}` : ''}${match.status ? ` · ${match.status}` : ''}`;
                     button.addEventListener('click', function () {
                         name.value = match.name;
                         identifier.value = match.identifier;
                         selectedName = match.name;
+                        options.onSelect?.(match);
                         clear();
                         status.textContent = `Selected ${match.name} (${match.identifier}) from the MCA master database.`;
                     });
@@ -57,10 +59,14 @@ function borrowerIdentityLookup(options) {
     }
     name.addEventListener('input', function () {
         if (selectedName && name.value !== selectedName) { identifier.value = ''; selectedName = null; }
+        options.onNameChange?.();
         search();
     });
     const typeInputs = document.querySelectorAll('input[name="EntityType"]');
-    typeInputs.forEach(input => input.addEventListener('change', search));
+    typeInputs.forEach(input => input.addEventListener('change', function () {
+        if (selectedName) { identifier.value = ''; selectedName = null; }
+        search();
+    }));
     document.getElementById('entityType')?.addEventListener('change', search);
     search();
 }

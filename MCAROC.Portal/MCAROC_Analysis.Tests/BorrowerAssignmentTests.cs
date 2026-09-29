@@ -43,6 +43,28 @@ public class BorrowerAssignmentTests
         Assert.True(Validator.TryValidateObject(model, new ValidationContext(model), errors, true));
     }
 
+    [Fact]
+    public void Direct_report_accepts_a_registered_name_without_an_identifier_after_type_confirmation()
+    {
+        var model = new PreLoginReportViewModel
+        {
+            CompanyName = "SILVER PORCH DEVELOPERS PRIVATE LIMITED",
+            EntityType = PreLoginReportEntityType.Company,
+            EntityTypeConfirmed = true,
+            Format = PreLoginReportFormat.Prr
+        };
+        var errors = new List<System.ComponentModel.DataAnnotations.ValidationResult>();
+        Assert.True(Validator.TryValidateObject(model, new ValidationContext(model), errors, true));
+
+        model.CompanyName = "Si";
+        Assert.False(Validator.TryValidateObject(model, new ValidationContext(model), errors, true));
+
+        model.CompanyName = "SILVER PORCH DEVELOPERS PRIVATE LIMITED";
+        model.EntityType = PreLoginReportEntityType.ForeignCompany;
+        errors.Clear();
+        Assert.False(Validator.TryValidateObject(model, new ValidationContext(model), errors, true));
+    }
+
     private static BorrowerAssignmentDetails Trust() => new()
     {
         RequestDetails = new() { DocumentTitle = "Annexure I Request Form for Borrower Profiling Report", DateOfRequest = "12.09.2026" },
@@ -277,6 +299,10 @@ public class BorrowerIdentityLookupTests : IAsyncLifetime
             var llpJson = JsonSerializer.Serialize(llp.Value);
             Assert.Contains(llpId, llpJson);
             Assert.DoesNotContain(companyId, llpJson);
+            var untyped = Assert.IsType<JsonResult>(await controller.BorrowerLookup(prefix, null, CancellationToken.None));
+            var untypedJson = JsonSerializer.Serialize(untyped.Value);
+            Assert.Contains(companyId, untypedJson);
+            Assert.Contains(llpId, untypedJson);
             Assert.IsType<BadRequestResult>(await controller.BorrowerLookup("ZZ", "Company", CancellationToken.None));
             Assert.IsType<BadRequestResult>(await controller.BorrowerLookup(prefix, "Trust", CancellationToken.None));
         }

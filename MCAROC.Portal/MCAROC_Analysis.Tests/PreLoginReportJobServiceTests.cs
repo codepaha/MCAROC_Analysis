@@ -68,6 +68,57 @@ public class PreLoginReportJobServiceTests : IAsyncLifetime
             throw new InvalidOperationException("The report data client must not be called for a job the Completed-only guard should have rejected.");
     }
 
+    [Fact]
+    public async Task Name_only_PRR_resolves_one_master_identity_and_never_guesses_between_twins()
+    {
+        await using var db = CreateContext();
+        var token = Guid.NewGuid().ToString("N")[..12].ToUpperInvariant();
+        var companyName = $"SILVER PORCH {token} DEVELOPERS PRIVATE LIMITED";
+        var llpName = $"SHEKAR {token} LOGISTICS LLP";
+        var companyId = $"U12345MH2026PTC{Random.Shared.Next(100000, 999999)}";
+        var twinId = $"U12345DL2026PTC{Random.Shared.Next(100000, 999999)}";
+        var llpId = $"ZZZ-{Random.Shared.Next(1000, 9999)}";
+        db.CompanyMasterRecords.AddRange(
+            new CompanyMasterRecord { Identifier = companyId, RecordType = CompanyMasterRecordType.Company,
+                Name = companyName, NameNormalized = CompanyNameNormalizer.Normalize(companyName).NameNormalized },
+            new CompanyMasterRecord { Identifier = llpId, RecordType = CompanyMasterRecordType.Llp,
+                Name = llpName, NameNormalized = CompanyNameNormalizer.Normalize(llpName).NameNormalized });
+        await db.SaveChangesAsync();
+        try
+        {
+            var service = CreateService(db);
+            var company = await service.ResolveExactCorporateNameAsync(companyName.ToLowerInvariant(), PreLoginReportEntityType.Company, CancellationToken.None);
+            Assert.Equal(companyId, company.Identifier);
+            Assert.Equal(companyName, company.Name);
+            var llp = await service.ResolveExactCorporateNameAsync(llpName, PreLoginReportEntityType.Llp, CancellationToken.None);
+            Assert.Equal(llpId, llp.Identifier);
+
+            var controller = new PreLoginReportsController(service, db);
+            var result = Assert.IsType<RedirectToActionResult>(await controller.Fetch(new PreLoginReportViewModel
+            {
+                CompanyName = companyName, EntityType = PreLoginReportEntityType.Company,
+                EntityTypeConfirmed = true, Format = PreLoginReportFormat.Prr
+            }, CancellationToken.None));
+            Assert.Equal(nameof(PreLoginReportsController.History), result.ActionName);
+            var batch = Assert.IsType<Guid>(result.RouteValues!["batch"]);
+            var queued = Assert.Single(await service.HistoryAsync(batch, CancellationToken.None));
+            Assert.Equal(companyId, queued.Cin);
+            Assert.Equal(PreLoginReportFormat.Prr.ToString(), queued.Format);
+
+            db.CompanyMasterRecords.Add(new CompanyMasterRecord { Identifier = twinId,
+                RecordType = CompanyMasterRecordType.Company, Name = companyName,
+                NameNormalized = CompanyNameNormalizer.Normalize(companyName).NameNormalized });
+            await db.SaveChangesAsync();
+            await Assert.ThrowsAsync<PreLoginReportException>(() => service.ResolveExactCorporateNameAsync(
+                companyName, PreLoginReportEntityType.Company, CancellationToken.None));
+        }
+        finally
+        {
+            await db.PreLoginReportJobs.Where(x => x.Cin == companyId).ExecuteDeleteAsync();
+            await db.CompanyMasterRecords.Where(x => x.Identifier == companyId || x.Identifier == twinId || x.Identifier == llpId).ExecuteDeleteAsync();
+        }
+    }
+
     private const string SamplePayload = """
     { "ReportData": { "companyData": { "company":"Example Private Limited" }, "indexChargesData":[], "directorData":[] } }
     """;
