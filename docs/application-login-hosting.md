@@ -20,6 +20,6 @@ To change the password, repeat the command with `-Rotate`. Existing application 
 
 Serve HTTPS; the authentication cookie is always Secure and HttpOnly. When hosting behind a reverse proxy, configure forwarded headers only for trusted proxy addresses in the hosting environment so the app recognizes the original HTTPS scheme. Keep the ASP.NET data-protection key ring persistent and restricted to the service identity (see existing Program.cs data-protection configuration).
 
-`/login`, `/internal/login`, `/analyst/login`, bundled static assets, and `/health/live` are anonymous. `/health` requires login because it includes operational error details. Generated/client documents must remain outside `wwwroot`; their controller downloads require authentication. No anonymous exception is provided for report generation.
+`/login`, `/analyst/login`, bundled static assets, and `/health/live` are anonymous. `/health` requires login because it includes operational error details. Generated/client documents must remain outside `wwwroot`; their controller downloads require authentication. No anonymous exception is provided for report generation.
 
 Verify on the actual HTTPS host: anonymous home/report/download/API access is rejected; correct credentials sign in; wrong credentials fail; logout and expiry block subsequent access; reviewer and analyst permissions still hold; the minimal liveness endpoint remains available. Deployment and production smoke verification are separate from local implementation checks.

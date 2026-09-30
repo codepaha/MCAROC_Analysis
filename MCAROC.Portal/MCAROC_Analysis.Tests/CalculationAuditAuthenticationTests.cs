@@ -1,11 +1,11 @@
 using System.Net;
 using System.Text.RegularExpressions;
 using MCAROC_Analysis.Data;
-using MCAROC_Analysis.Services.InternalAuth;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 
@@ -42,9 +42,8 @@ public partial class CalculationAuditAuthenticationTests : IClassFixture<WebAppl
                 cfg.AddInMemoryCollection(new Dictionary<string, string?>
                 {
                     ["ConnectionStrings:Default"] = TestDatabase.ConnectionString,
-                    ["InternalAuth:ReviewerUsername"] = "testreviewer",
-                    ["InternalAuth:ReviewerPasswordHash"] = InternalReviewerCredentialChecker.Hash("Correct-Horse-Battery-Staple-1"),
-                    ["InternalAuth:ReviewerDisplayName"] = "Test Reviewer"
+                    ["ApplicationAuth:Username"] = "test@example.test",
+                    ["ApplicationAuth:PasswordHash"] = new Microsoft.AspNetCore.Identity.PasswordHasher<string>().HashPassword("test@example.test", "Correct-Horse-Battery-Staple-1")
                 });
             });
             // Pipeline-only coverage — see AutoFetchAuthenticationTests for why background workers must not
@@ -54,32 +53,6 @@ public partial class CalculationAuditAuthenticationTests : IClassFixture<WebAppl
     }
 
     private HttpClient NoRedirectClient() => _factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
-
-    [GeneratedRegex("name=\"__RequestVerificationToken\"[^>]*value=\"([^\"]+)\"")]
-    private static partial Regex AntiForgeryTokenRegex();
-
-    /// <summary>Fetches the login page on the given client (so its antiforgery cookie lands on that same
-    /// client) and extracts the matching form token — real token handling, not a bypass, so a 400 from
-    /// antiforgery would fail these tests loudly rather than silently passing for the wrong reason.</summary>
-    private static async Task<string> FetchAntiForgeryTokenAsync(HttpClient client)
-    {
-        var page = await client.GetAsync("/internal/login");
-        var html = await page.Content.ReadAsStringAsync();
-        var match = AntiForgeryTokenRegex().Match(html);
-        Assert.True(match.Success, "Antiforgery token not found in the rendered login page.");
-        return match.Groups[1].Value;
-    }
-
-    private static async Task<HttpResponseMessage> PostLoginAsync(HttpClient client, string username, string password)
-    {
-        var token = await FetchAntiForgeryTokenAsync(client);
-        return await client.PostAsync("/internal/login", new FormUrlEncodedContent(new Dictionary<string, string>
-        {
-            ["username"] = username,
-            ["password"] = password,
-            ["__RequestVerificationToken"] = token
-        }));
-    }
 
     [Fact]
     public async Task UnauthenticatedGet_ToCalcAuditIndex_IsChallengedToLogin_NeverReachesTheAction()
@@ -125,69 +98,15 @@ public partial class CalculationAuditAuthenticationTests : IClassFixture<WebAppl
     }
 
     [Fact]
-    public async Task LoginPage_IsReachableAnonymously()
+    public async Task TheOldReviewerLogin_NoLongerExists()
     {
-        var response = await _factory.CreateClient().GetAsync("/internal/login");
-        response.EnsureSuccessStatusCode();
-    }
+        // The controller and its cookie scheme are gone, so nothing can sign a caller in as a "reviewer".
+        Assert.Null(typeof(Program).Assembly.GetType("MCAROC_Analysis.Controllers.InternalAuthController"));
+        var schemes = _factory.Services.GetRequiredService<Microsoft.AspNetCore.Authentication.IAuthenticationSchemeProvider>();
+        Assert.Null(await schemes.GetSchemeAsync("InternalReviewer"));
 
-    [Fact]
-    public async Task Login_WithWrongPassword_NeverIssuesTheAuthCookie()
-    {
-        var client = NoRedirectClient();
-        var response = await PostLoginAsync(client, "testreviewer", "wrong-password");
-
-        var body = await response.Content.ReadAsStringAsync();
-        Assert.Contains("Invalid username or password", body);
-        Assert.False(response.Headers.TryGetValues("Set-Cookie", out var cookies)
-            && cookies.Any(c => c.StartsWith("mcaroc_internal_auth", StringComparison.Ordinal)));
-    }
-
-    [Fact]
-    public async Task Login_WithUnknownUsername_GetsTheSameGenericFailure_AsAWrongPassword()
-    {
-        // No username enumeration — both failure modes must be indistinguishable to the caller.
-        var wrongPassword = await PostLoginAsync(NoRedirectClient(), "testreviewer", "wrong-password");
-        var unknownUser = await PostLoginAsync(NoRedirectClient(), "nobody", "whatever");
-
-        var wrongPasswordBody = await wrongPassword.Content.ReadAsStringAsync();
-        var unknownUserBody = await unknownUser.Content.ReadAsStringAsync();
-        Assert.Equal(wrongPassword.StatusCode, unknownUser.StatusCode);
-        Assert.Contains("Invalid username or password", wrongPasswordBody);
-        Assert.Contains("Invalid username or password", unknownUserBody);
-    }
-
-    [Fact]
-    public async Task Login_WithCorrectCredentials_IssuesTheAuthCookie_HttpOnlyAndSameSiteStrict()
-    {
-        var client = NoRedirectClient();
-        var response = await PostLoginAsync(client, "testreviewer", "Correct-Horse-Battery-Staple-1");
-
-        Assert.True(response.Headers.TryGetValues("Set-Cookie", out var cookies));
-        var authCookie = cookies!.FirstOrDefault(c => c.StartsWith("mcaroc_internal_auth", StringComparison.Ordinal));
-        Assert.NotNull(authCookie);
-        Assert.Contains("httponly", authCookie, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("samesite=strict", authCookie, StringComparison.OrdinalIgnoreCase);
-    }
-
-    [Fact]
-    public async Task Login_RateLimited_SixthRapidAttemptInTheWindowIsRejected()
-    {
-        // Fixed-window rate limiting is keyed on the remote IP (loopback for every TestServer call), so
-        // reusing one client/token across attempts mirrors what six real rapid browser submissions from the
-        // same machine would look like.
-        var client = NoRedirectClient();
-        var token = await FetchAntiForgeryTokenAsync(client);
-
-        HttpResponseMessage last = null!;
-        for (var i = 0; i < 6; i++)
-        {
-            last = await client.PostAsync("/internal/login", new FormUrlEncodedContent(new Dictionary<string, string>
-            {
-                ["username"] = "testreviewer", ["password"] = "wrong-password", ["__RequestVerificationToken"] = token
-            }));
-        }
-
-        Assert.Equal(HttpStatusCode.TooManyRequests, last.StatusCode);
+        // ...and the old URL is just an unknown page that sends anonymous callers to the portal sign-in.
+        var response = await NoRedirectClient().GetAsync("/internal/login");
+        Assert.NotEqual(HttpStatusCode.OK, response.StatusCode);
     }
 }

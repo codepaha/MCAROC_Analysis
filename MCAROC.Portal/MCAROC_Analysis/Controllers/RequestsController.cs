@@ -1502,17 +1502,6 @@ public class RequestsController(
         // Fast-fail with uniform 404 BEFORE touching the database or verifying document existence.
         // This prevents document-ID enumeration and guarantees unauthenticated anonymous callers
         // without a valid signed token cannot probe the system.
-        var isReviewer = false;
-        try
-        {
-            var authResult = await HttpContext.AuthenticateAsync("InternalReviewer");
-            isReviewer = authResult?.Succeeded == true && authResult.Principal?.Identity?.IsAuthenticated == true;
-        }
-        catch (InvalidOperationException)
-        {
-            isReviewer = HttpContext.User?.Identities.Any(i => i.AuthenticationType == "InternalReviewer" && i.IsAuthenticated) == true;
-        }
-
         var isAnalyst = false;
         try
         {
@@ -1532,7 +1521,7 @@ public class RequestsController(
         // full access until UAM is introduced with client onboarding.
         var isPortalUser = User?.Identity?.IsAuthenticated == true;
 
-        if (!isReviewer && !isAnalyst && !isPortalUser && !isTokenValid)
+        if (!isAnalyst && !isPortalUser && !isTokenValid)
         {
             // Telemetry: Record denial without leaking the token value
             logger?.LogWarning(
@@ -1624,7 +1613,7 @@ public class RequestsController(
         }
 
         // ── Step 6: Telemetry & Security Headers ──────────────────────────────
-        var authMethod = isReviewer ? "ReviewerSession" : isAnalyst ? "AnalystSession" : isPortalUser ? "PortalSession" : "SignedToken";
+        var authMethod = isAnalyst ? "AnalystSession" : isPortalUser ? "PortalSession" : "SignedToken";
         logger?.LogInformation(
             "Audit: Uploaded document download AUTHORIZED ({AuthMethod}). RequestId={RequestId}, DocumentId={DocId}, IsQuarantined={IsQuarantined}",
             authMethod, requestId, docId, doc.UploadStatus == DocumentUploadStatus.Quarantined);

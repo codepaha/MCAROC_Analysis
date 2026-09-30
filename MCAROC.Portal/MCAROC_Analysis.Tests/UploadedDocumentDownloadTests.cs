@@ -95,6 +95,9 @@ public class UploadedDocumentDownloadTests : IAsyncLifetime, IDisposable
         {
             RequestServices = serviceProvider
         };
+        // "Signed in" = any authenticated portal user (the old reviewer cookie no longer exists).
+        if (isInternalReviewer)
+            httpContext.User = new ClaimsPrincipal(new ClaimsIdentity([new Claim(ClaimTypes.Name, "portal-user")], "ApplicationUser"));
 
         controller.ControllerContext = new ControllerContext
         {
@@ -629,13 +632,6 @@ public class UploadedDocumentDownloadTests : IAsyncLifetime, IDisposable
     {
         public Task<AuthenticateResult> AuthenticateAsync(HttpContext context, string? scheme)
         {
-            if (isReviewer && scheme == "InternalReviewer")
-            {
-                var identity = new ClaimsIdentity([new Claim(ClaimTypes.Role, "InternalReviewer")], "InternalReviewer");
-                var principal = new ClaimsPrincipal(identity);
-                var ticket = new AuthenticationTicket(principal, "InternalReviewer");
-                return Task.FromResult(AuthenticateResult.Success(ticket));
-            }
             return Task.FromResult(AuthenticateResult.NoResult());
         }
 

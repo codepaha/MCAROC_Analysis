@@ -138,17 +138,6 @@ public class AuditLogFilter(IAuditLogService auditService) : IAsyncActionFilter,
 
     public static (ActorType ActorType, string ActorId) ResolveActor(HttpContext context)
     {
-        var reviewerIdentity = context.User?.Identities
-            ?.FirstOrDefault(i => i.AuthenticationType == "InternalReviewer" && i.IsAuthenticated);
-
-        if (reviewerIdentity != null)
-        {
-            var actorId = reviewerIdentity.Name
-                ?? context.User?.FindFirst(ClaimTypes.NameIdentifier)?.Value
-                ?? "InternalReviewer";
-            return (ActorType.AuthenticatedReviewer, actorId);
-        }
-
         // Single full-access portal user (no roles until UAM): record who acted rather than "Anonymous".
         if (MCAROC_Analysis.Services.AnalystAccess.PortalAccess.HasFullAccess(context.User))
         {

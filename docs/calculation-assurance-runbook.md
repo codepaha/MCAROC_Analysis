@@ -5,9 +5,8 @@ The feature's own code was reviewed and merged across six PRs (#170, #171, #173,
 document is the last piece from the original plan's §8 sequencing: how to actually turn it on somewhere.
 
 **Current state as of this writing: fully inert everywhere.** `CalculationAssurance:Mode` defaults to
-`"Off"` in the committed `appsettings.json`, and `InternalAuth:ReviewerUsername`/`ReviewerPasswordHash` are
-committed empty. Nothing in this feature does anything — no ledger rows, no checks, no AI calls, no holds,
-and nobody can sign in to the review panel — until an operator deliberately configures one environment.
+`"Off"` in the committed `appsettings.json`. Nothing in this feature does anything — no ledger rows, no
+checks, no AI calls, no holds — until an operator deliberately configures one environment.
 
 ## 1. What each mode does
 
@@ -39,65 +38,15 @@ download while you're still learning what the checks actually find on your real 
    optional.** It will hold reports you did not expect to be held on the very first request after the
    flip, unless you've planned for it.
 
-## 3. Setting up the reviewer credential
+## 3. Signing in to the review panel
 
-There is no seed data, no admin UI, and no self-service reset for this — the credential lives entirely in
-config (deliberate: with exactly one reviewer role today, a DB table for it would just be another place a
-hash could leak into source control).
-
-1. Pick a username and a strong password for the shared reviewer account. (Decision #2 from the original
-   issue: single reviewer role today; see §6 for what raising this to two reviewers later would take.)
-2. Generate the password hash. There's no CLI wired up for this — the simplest way is a one-off script
-   referencing the existing hasher directly:
-
-   ```csharp
-   // scratch.csx or a throwaway Program.cs in a scratch console project that references MCAROC_Analysis
-   Console.WriteLine(MCAROC_Analysis.Services.InternalAuth.InternalReviewerCredentialChecker.Hash("your-chosen-password"));
-   ```
-
-   This prints a string shaped `iterations.saltBase64.hashBase64` (PBKDF2-SHA256, 210,000 iterations,
-   32-byte output) — that whole string is the value for `ReviewerPasswordHash`, not the raw password.
-3. Set these three values in that environment's config (user-secrets locally, environment variables or an
-   App Service configuration blade / secret store in a real deployment — **never** commit real values to
-   `appsettings.json`):
-   - `InternalAuth__ReviewerUsername`
-   - `InternalAuth__ReviewerPasswordHash` (the string from step 2)
-   - `InternalAuth__ReviewerDisplayName` (shown in the panel's "Signed in as ..." line and recorded as
-     `ReviewerName` on every `CalculationDiscrepancyApproval` row — see the known limitation in §6)
-4. Sign in at `/internal/login`. The cookie (`mcaroc_internal_auth`) is `HttpOnly`, `Secure`, and
-   `SameSite=Strict`, expires after 8 hours, and is scoped to this one feature only — no other page in the
-   app is affected by this scheme being registered (`AddAuthentication()` is called with no default scheme
-   name, deliberately).
-5. Login attempts are rate-limited to 5 per 5 minutes per client IP (`429` beyond that) — if you're testing
-   and lock yourself out, wait 5 minutes rather than restarting the app to reset it (the limiter is
-   in-memory per-process, so a restart does reset it, but don't rely on that in a real deployment with
-   multiple instances).
-
-### Rotating the credential
-
-Generate a new hash (step 2 above) and update `ReviewerPasswordHash` in that environment's config. No code
-change and no migration — but **whether it takes effect without a restart depends entirely on which config
-provider holds it**, not on anything this app does at login time:
-
-- **Environment variables** (`InternalAuth__ReviewerPasswordHash` set directly on the process/container) are
-  read once when the host starts. ASP.NET Core's environment-variable provider does not watch for changes —
-  a rotated value has no effect until the app process restarts.
-- **Azure App Service Application Settings** are also environment variables under the hood, with the same
-  no-reload behavior in the app itself — but changing a setting in the Azure portal/CLI triggers App
-  Service to recycle the app for you, so it works, just because Azure restarts the process, not because
-  the app noticed the change.
-- **User secrets** (local development) are likewise read once at startup — restart `dotnet run` after
-  changing them.
-- The only way a rotation would apply live, with no restart, is a config source that explicitly supports
-  reload (e.g. Azure App Configuration or Key Vault wired up with its reload-on-change provider) — this app
-  does not currently use one for `InternalAuth`.
-
-**After rotating, always verify with a fresh sign-in attempt** (confirm the old password now fails and the
-new one succeeds) rather than assuming the change is live — if the environment needs an explicit
-restart/recycle and it wasn't done, the old credential will silently keep working. The same restart
-dependency applies to changing `CalculationAssurance:Mode` (§2) — after flipping it, verify with a quick
-check (e.g. confirm a fresh `ObserveOnly`/`Enforced`-only log line appears, or that the delivery gate's
-behavior actually changed on a test request) rather than assuming the flip took effect immediately.
+The separate reviewer login (`/internal/login`, `InternalAuth:*` config, `mcaroc_internal_auth` cookie) has been
+removed. The review panel at `/internal/calc-audit/{requestId}` is available to the single portal user who signs
+in at `/login` (`ApplicationAuth:Username` / `ApplicationAuth:PasswordHash`; see `docs/application-login-hosting.md`).
+The restricted Analyst role cannot reach it. Rotating the credential is done there, not here. The name shown in
+"Signed in as ..." is the signed-in user's name; the reviewer name recorded on a confirm/reject action is still
+typed into that form by hand (see the known limitation in §6). When user access management is
+introduced with client onboarding, this panel is one of the pages that will need role checks.
 
 ## 4. What to check in `ObserveOnly` before ever proposing `Enforced`
 
@@ -148,7 +97,7 @@ The `ObserveOnly` missing-snapshot log lines from §4 are exactly how you size t
 
 - **`ReviewerName` on every approval is free text, not derived from the login.** Signing in only gates
   *access* to the panel; the "Your name" field on every triage/confirm/reject/accept-exception/mark-fixed/
-  resolve form is manually typed and not cross-checked against `InternalAuth:ReviewerDisplayName`. With a
+  resolve form is manually typed and not cross-checked against the signed-in user. With a
   single shared reviewer credential (decision #2), this is a real but bounded gap — anyone with the one
   shared login can attribute a decision to any name. If this stops being acceptable (e.g. once real
   per-person accounts exist), the form should prefill from `User.Identity.Name` and the server should

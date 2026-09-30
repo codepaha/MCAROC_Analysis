@@ -336,14 +336,14 @@ builder.Services.AddScoped<MCAROC_Analysis.Services.CompanyMaster.ISyncLockLease
 builder.Services.AddScoped<MCAROC_Analysis.Services.CompanyMaster.ICompanyMasterDeltaService, MCAROC_Analysis.Services.CompanyMaster.CompanyMasterDeltaService>();
 builder.Services.AddHostedService<MCAROC_Analysis.Services.CompanyMaster.CompanyMasterSyncWorker>();
 
-// The application account has no Analyst or InternalReviewer role.
+// The application account is the single full-access portal user; the Analyst role stays restricted.
 builder.Services.AddSingleton<MCAROC_Analysis.Services.ApplicationAuth.ApplicationCredentialChecker>();
 builder.Services.AddAuthentication("Portal")
     .AddPolicyScheme("Portal", "Portal session", o =>
     {
         o.ForwardDefaultSelector = context => context.Request.Cookies.ContainsKey("mcaroc_analyst_auth")
             ? AnalystAccessConstants.AuthenticationScheme
-            : context.Request.Cookies.ContainsKey("mcaroc_internal_auth") ? "InternalReviewer" : "ApplicationUser";
+            : "ApplicationUser";
     })
     .AddCookie("ApplicationUser", o =>
     {
@@ -361,16 +361,6 @@ builder.Services.AddAuthentication("Portal")
     {
         o.LoginPath = "/analyst/login";
         o.Cookie.Name = "mcaroc_analyst_auth";
-        o.Cookie.HttpOnly = true;
-        o.Cookie.SecurePolicy = CookieSecurePolicy.Always;
-        o.Cookie.SameSite = SameSiteMode.Strict;
-        o.ExpireTimeSpan = TimeSpan.FromHours(8);
-        o.SlidingExpiration = true;
-    })
-    .AddCookie("InternalReviewer", o =>
-    {
-        o.LoginPath = "/internal/login";
-        o.Cookie.Name = "mcaroc_internal_auth";
         o.Cookie.HttpOnly = true;
         o.Cookie.SecurePolicy = CookieSecurePolicy.Always;
         o.Cookie.SameSite = SameSiteMode.Strict;
@@ -397,14 +387,6 @@ builder.Services.AddRateLimiter(options =>
         _ => new System.Threading.RateLimiting.FixedWindowRateLimiterOptions
         {
             PermitLimit = 5, Window = TimeSpan.FromMinutes(5), QueueLimit = 0
-        }));
-    options.AddPolicy("InternalLogin", httpContext => System.Threading.RateLimiting.RateLimitPartition.GetFixedWindowLimiter(
-        httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown",
-        _ => new System.Threading.RateLimiting.FixedWindowRateLimiterOptions
-        {
-            PermitLimit = 5,
-            Window = TimeSpan.FromMinutes(5),
-            QueueLimit = 0
         }));
     options.AddPolicy("AnalystLogin", httpContext => System.Threading.RateLimiting.RateLimitPartition.GetFixedWindowLimiter(
         httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown",
@@ -504,7 +486,7 @@ app.MapGet("/health", async (AppDbContext db, IIntegrationHealthService health, 
             oldestQueuedJobAgeSeconds = oldestQueuedAutoFetchUtc is { } t ? (DateTime.UtcNow - t).TotalSeconds : (double?)null
         }
     });
-}).RequireAuthorization(new AuthorizationPolicyBuilder("InternalReviewer", "ApplicationUser")
+}).RequireAuthorization(new AuthorizationPolicyBuilder("ApplicationUser")
     .RequireAuthenticatedUser().Build());
 
 // Anonymous liveness reveals no integration errors or job data.

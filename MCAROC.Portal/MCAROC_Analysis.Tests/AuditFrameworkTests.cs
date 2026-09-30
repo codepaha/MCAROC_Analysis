@@ -474,10 +474,10 @@ public class AuditFrameworkTests : IAsyncLifetime
     // 12. Logout Mapping Verified
     // ─────────────────────────────────────────────────────────────────────────────────
     [Fact]
-    public void AuditRouteRegistry_LogoutMapping_ResolvesToInternalLoggedOut()
+    public void AuditRouteRegistry_LogoutMapping_ResolvesToApplicationLoggedOut()
     {
-        var result = AuditRouteRegistry.Resolve("InternalAuth", "Logout");
-        Assert.Equal(AuditActionType.InternalLoggedOut, result.ActionType);
+        var result = AuditRouteRegistry.Resolve("ApplicationAuth", "Logout");
+        Assert.Equal(AuditActionType.ApplicationLoggedOut, result.ActionType);
         Assert.Equal(AuditRulePolicy.Always, result.Policy);
     }
 
@@ -564,7 +564,7 @@ public class AuditFrameworkTests : IAsyncLifetime
         var httpContext = new DefaultHttpContext();
         var identity = new ClaimsIdentity(
             [new Claim(ClaimTypes.Name, "AliceReviewer")],
-            "InternalReviewer");
+            "ApplicationUser");
         httpContext.User = new ClaimsPrincipal(identity);
 
         var (actorType, actorId) = AuditLogFilter.ResolveActor(httpContext);

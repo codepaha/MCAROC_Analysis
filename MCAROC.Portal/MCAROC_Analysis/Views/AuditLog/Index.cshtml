@@ -11,11 +11,11 @@
         <div class="text-muted">@Model.CompanyName &middot; @Model.RequestNumber &middot; Request #@Model.RequestId</div>
     </div>
     <div class="d-flex align-items-center gap-2">
-        <span class="small text-muted">Signed in as @(User.Identity?.Name ?? "InternalReviewer")</span>
+        <span class="small text-muted">Signed in as @(User.Identity?.Name ?? "Signed-in user")</span>
         <a class="btn btn-outline-secondary btn-sm" asp-controller="Requests" asp-action="Details" asp-route-id="@Model.RequestId">
             <i class="bi bi-arrow-left me-1"></i>Back to request
         </a>
-        <form method="post" action="@Url.Action("Logout", "InternalAuth")" class="d-inline">
+        <form method="post" action="/logout" class="d-inline">
             @Html.AntiForgeryToken()
             <button type="submit" class="btn btn-outline-dark btn-sm">Sign out</button>
         </form>
