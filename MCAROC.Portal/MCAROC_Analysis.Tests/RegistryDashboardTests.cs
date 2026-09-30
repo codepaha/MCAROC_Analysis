@@ -145,16 +145,15 @@ public class RegistryDashboardTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task RegistryExplorer_NamePrefix_RequiresRecordTypeAndMinLength()
+    public async Task RegistryExplorer_NamePrefix_EntityTypeIsOptional_ButMinLengthIsRequired()
     {
         await using var db = CreateContext();
         var cache = new MemoryCache(new MemoryCacheOptions());
         var service = CreateQueryService(db, cache);
 
-        // Missing record type
+        // No entity type means "All": a valid search, not a validation error
         var noType = await service.SearchExplorerAsync(new RegistryExplorerCriteria { Q = "ABC" });
-        Assert.NotNull(noType.ValidationErrorMessage);
-        Assert.Contains("requires selecting an Entity Type", noType.ValidationErrorMessage);
+        Assert.Null(noType.ValidationErrorMessage);
 
         // Prefix too short (< 3 chars)
         var tooShort = await service.SearchExplorerAsync(new RegistryExplorerCriteria
@@ -232,7 +231,7 @@ public class RegistryDashboardTests : IAsyncLifetime
         });
 
         Assert.NotNull(result.ValidationErrorMessage);
-        Assert.Contains("name prefix, or select an entity type and status", result.ValidationErrorMessage);
+        Assert.Contains("name prefix, or choose a status", result.ValidationErrorMessage);
         Assert.Empty(result.Items);
     }
 
@@ -654,10 +653,11 @@ public class RegistryDashboardTests : IAsyncLifetime
         Assert.Single(res2.Items);
         Assert.Equal("F123456", res2.Items[0].Identifier);
 
-        // 3. Non-conforming numeric FCRN without Foreign entity type routes to name search and requires entity type
+        // 3. With no entity type chosen (All, the default) a numeric FCRN is also an exact lookup
         var res3 = await service.SearchExplorerAsync(new RegistryExplorerCriteria { Q = "F123456" });
-        Assert.NotNull(res3.ValidationErrorMessage);
-        Assert.Contains("requires selecting an Entity Type", res3.ValidationErrorMessage);
+        Assert.Null(res3.ValidationErrorMessage);
+        Assert.Single(res3.Items);
+        Assert.Equal("F123456", res3.Items[0].Identifier);
 
         // 4. Name prefix "FEDERAL" routes to name search, NOT FCRN lookup
         var res4 = await service.SearchExplorerAsync(new RegistryExplorerCriteria
@@ -669,6 +669,112 @@ public class RegistryDashboardTests : IAsyncLifetime
         Assert.Single(res4.Items);
         Assert.Equal(cin, res4.Items[0].Identifier);
         Assert.Equal("Federal Security Services Private Limited", res4.Items[0].Name);
+    }
+
+    [Fact]
+    public async Task RegistryExplorer_AllEntityTypes_MergesTypesInNameOrder_AndPagesAcrossThem()
+    {
+        await using var db = CreateContext();
+        var tag = Guid.NewGuid().ToString("N")[..8].ToUpperInvariant();
+        var status = $"Status {tag}";
+        var cin = $"U{Random.Shared.Next(10000, 99999)}DL2003PTC{Random.Shared.Next(100000, 999999)}";
+        var llpin = $"AAA-{Random.Shared.Next(1000, 9999)}";
+        var fcrn = $"F{Random.Shared.Next(10000, 99999)}";
+        await SeedRecordAsync(db, llpin, $"Alpha {tag} LLP", CompanyMasterRecordType.Llp, status: status);
+        await SeedRecordAsync(db, cin, $"Bravo {tag} Pvt Ltd", CompanyMasterRecordType.Company, status: status);
+        await SeedRecordAsync(db, fcrn, $"Charlie {tag} Inc", CompanyMasterRecordType.Foreign, status: status, country: "Japan");
+        var service = CreateQueryService(db, new MemoryCache(new MemoryCacheOptions()));
+
+        // No entity type chosen: every type is searched and the result is one list in name order.
+        var all = await service.SearchExplorerAsync(new RegistryExplorerCriteria { Status = status });
+        Assert.Null(all.ValidationErrorMessage);
+        Assert.Equal([llpin, cin, fcrn], all.Items.Select(i => i.Identifier).ToArray());
+
+        // Choosing a type still narrows to that type.
+        var onlyLlp = await service.SearchExplorerAsync(new RegistryExplorerCriteria { Status = status, RecordType = CompanyMasterRecordType.Llp });
+        Assert.Equal([llpin], onlyLlp.Items.Select(i => i.Identifier).ToArray());
+
+        // Paging walks across the types without skipping or repeating a row.
+        var page1 = await service.SearchExplorerAsync(new RegistryExplorerCriteria { Status = status, PageSize = 2 });
+        Assert.True(page1.HasNextPage);
+        Assert.Equal([llpin, cin], page1.Items.Select(i => i.Identifier).ToArray());
+        var page2 = await service.SearchExplorerAsync(new RegistryExplorerCriteria
+        {
+            Status = status, PageSize = 2, CursorName = page1.NextCursorName, CursorIdentifier = page1.NextCursorIdentifier
+        });
+        Assert.False(page2.HasNextPage);
+        Assert.Equal([fcrn], page2.Items.Select(i => i.Identifier).ToArray());
+
+        // Excel export uses the same rows.
+        var (rows, error) = await service.ExportExplorerAsync(new RegistryExplorerCriteria { Status = status });
+        Assert.Null(error);
+        Assert.Equal([llpin, cin, fcrn], rows.Select(r => r.Identifier).ToArray());
+    }
+
+    [Fact]
+    public async Task RegistryExplorer_NumericFcrn_UnderAll_IsExact_ExportsIt_AndFallsBackToNameWhenNothingMatches()
+    {
+        await using var db = CreateContext();
+        var digits = Random.Shared.Next(1000000, 9999999);
+        var fcrn = $"F{digits}";
+        await SeedRecordAsync(db, fcrn, $"Numeric Foreign {digits} Inc", CompanyMasterRecordType.Foreign, country: "Japan");
+        // A company whose *name* looks like a numeric FCRN but whose identifier is a CIN.
+        var lookalikeDigits = digits + 1;
+        var cin = $"U{Random.Shared.Next(10000, 99999)}DL2003PTC{Random.Shared.Next(100000, 999999)}";
+        await SeedRecordAsync(db, cin, $"F{lookalikeDigits} Holdings Pvt Ltd", CompanyMasterRecordType.Company);
+        var service = CreateQueryService(db, new MemoryCache(new MemoryCacheOptions()));
+
+        // Default All: exact FCRN lookup, in the search and in the Excel export.
+        var exact = await service.SearchExplorerAsync(new RegistryExplorerCriteria { Q = fcrn });
+        Assert.Null(exact.ValidationErrorMessage);
+        Assert.Equal([fcrn], exact.Items.Select(i => i.Identifier).ToArray());
+        var (exported, exportError) = await service.ExportExplorerAsync(new RegistryExplorerCriteria { Q = fcrn });
+        Assert.Null(exportError);
+        Assert.Equal([fcrn], exported.Select(r => r.Identifier).ToArray());
+
+        // No such FCRN, but a name starts with it: the name search still finds the company (search and export).
+        var byName = await service.SearchExplorerAsync(new RegistryExplorerCriteria { Q = $"F{lookalikeDigits}" });
+        Assert.Null(byName.ValidationErrorMessage);
+        Assert.Equal([cin], byName.Items.Select(i => i.Identifier).ToArray());
+        var (byNameExport, byNameError) = await service.ExportExplorerAsync(new RegistryExplorerCriteria { Q = $"F{lookalikeDigits}" });
+        Assert.Null(byNameError);
+        Assert.Equal([cin], byNameExport.Select(r => r.Identifier).ToArray());
+
+        // A secondary filter means "list", not "look one up": no "clear the filters" error under All.
+        var filtered = await service.SearchExplorerAsync(new RegistryExplorerCriteria { Q = fcrn, Status = "Active" });
+        Assert.Null(filtered.ValidationErrorMessage);
+    }
+
+    [Fact]
+    public async Task RegistryExplorer_StatusOptions_ListEveryRecordedStatus_AndTheCommonOnes()
+    {
+        await using var db = CreateContext();
+        var status = $"Odd Status {Guid.NewGuid().ToString("N")[..8]}";
+        await SeedRecordAsync(db, $"U{Random.Shared.Next(10000, 99999)}DL2003PTC{Random.Shared.Next(100000, 999999)}",
+            "Status Options Co Pvt Ltd", CompanyMasterRecordType.Company, status: status);
+        var service = CreateQueryService(db, new MemoryCache(new MemoryCacheOptions()));
+
+        var options = await service.GetStatusOptionsAsync();
+
+        Assert.Contains(status, options);
+        foreach (var common in new[] { "Active", "Strike Off", "Under CIRP", "Under Liquidation", "Amalgamated" })
+            Assert.Contains(common, options);
+        Assert.Equal(options.OrderBy(o => o, StringComparer.OrdinalIgnoreCase).ToArray(), options.ToArray());
+        Assert.Equal(options.Count, options.Distinct(StringComparer.OrdinalIgnoreCase).Count());
+    }
+
+    [Fact]
+    public async Task RegistryExplorer_View_UsesAStatusDropdown_AndDefaultsEntityTypeToAll()
+    {
+        var root = new DirectoryInfo(AppContext.BaseDirectory);
+        while (root is not null && !Directory.Exists(Path.Combine(root.FullName, "MCAROC.Portal"))) root = root.Parent;
+        var html = await File.ReadAllTextAsync(Path.Combine(root!.FullName, "MCAROC.Portal", "MCAROC_Analysis", "Views", "Registry", "_RegistryExplorer.cshtml"));
+
+        Assert.Contains("<select id=\"registry-status\" name=\"Status\"", html);
+        Assert.Contains("All Statuses", html);
+        Assert.DoesNotContain("registry-status-options", html); // the old tooltip-style datalist is gone
+        Assert.Contains("All Entity Types", html);
+        Assert.DoesNotContain("Select Type...", html);
     }
 
     [Fact]
@@ -699,7 +805,7 @@ public class RegistryDashboardTests : IAsyncLifetime
         Assert.Equal("~/Views/Registry/Index.cshtml", viewResult.ViewName);
         var model = Assert.IsType<RegistryDashboardViewModel>(viewResult.Model);
         Assert.NotNull(model.Explorer?.ValidationErrorMessage);
-        Assert.Contains("name prefix, or select an entity type and status", model.Explorer.ValidationErrorMessage);
+        Assert.Contains("name prefix, or choose a status", model.Explorer.ValidationErrorMessage);
 
         // 2. Index action with invalid criteria
         controller.Response.StatusCode = 200; // reset
@@ -709,7 +815,7 @@ public class RegistryDashboardTests : IAsyncLifetime
         Assert.Equal("~/Views/Registry/Index.cshtml", indexViewResult.ViewName);
         var indexModel = Assert.IsType<RegistryDashboardViewModel>(indexViewResult.Model);
         Assert.NotNull(indexModel.Explorer?.ValidationErrorMessage);
-        Assert.Contains("name prefix, or select an entity type and status", indexModel.Explorer.ValidationErrorMessage);
+        Assert.Contains("name prefix, or choose a status", indexModel.Explorer.ValidationErrorMessage);
     }
 
     private sealed class TestBarrierPromotionCoordinator : IRegistryPromotionCoordinator

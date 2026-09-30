@@ -69,7 +69,10 @@ public sealed partial class CompanyRegistryQueryService
     {
         try
         {
-            return await GetDashboardCoreAsync(activeTab, explorerCriteria, ct);
+            var vm = await GetDashboardCoreAsync(activeTab, explorerCriteria, ct);
+            if (vm.ActiveTab == "explorer")
+                vm.Explorer.StatusOptions = await GetStatusOptionsAsync(ct);
+            return vm;
         }
         catch (SqlException ex) when (ex.Number == -2 && !ct.IsCancellationRequested)
         {
@@ -291,7 +294,7 @@ public sealed partial class CompanyRegistryQueryService
         var status = criteria.Status?.Trim();
         if (string.IsNullOrWhiteSpace(rawQ) && string.IsNullOrWhiteSpace(status))
         {
-            result.ValidationErrorMessage = "Enter an exact identifier, a 3+ character name prefix, or select an entity type and status.";
+            result.ValidationErrorMessage = "Enter an exact identifier, a 3+ character name prefix, or choose a status.";
             return result;
         }
 
@@ -299,13 +302,10 @@ public sealed partial class CompanyRegistryQueryService
 
         // 1. Check if input is formatted like an exact Identifier
         // CIN: 21 chars, LLPIN: AAA-1234, Standard FCRN: F00000.
-        // For explicitly selected Foreign entity type, also accept numeric FCRN variations (e.g. F123456).
-        bool isCin = CinPattern().IsMatch(upperQ);
-        bool isLlpin = LlpinPattern().IsMatch(upperQ);
-        bool isStandardFcrn = StandardFcrnPattern().IsMatch(upperQ);
-        bool isExplicitForeignNumeric = criteria.RecordType == CompanyMasterRecordType.Foreign && NumericFcrnPattern().IsMatch(upperQ);
+        // Numeric FCRN variations (e.g. F123456) count when Foreign is chosen or no type is (the default, All).
+        var (isExactIdentifier, fallBackToName) = ClassifyIdentifierQuery(criteria, upperQ);
 
-        if (isCin || isLlpin || isStandardFcrn || isExplicitForeignNumeric)
+        if (isExactIdentifier)
         {
             if (criteria.HasSecondaryFilters)
             {
@@ -326,20 +326,19 @@ public sealed partial class CompanyRegistryQueryService
                 return result;
             }
 
-            // Also check if they passed CIN/LLPIN without exact match
-            result.Items = [];
-            result.HasNextPage = false;
-            return result;
+            // A numeric FCRN under All may just be the start of a name: carry on to the name search.
+            if (!fallBackToName)
+            {
+                // Also check if they passed CIN/LLPIN without exact match
+                result.Items = [];
+                result.HasNextPage = false;
+                return result;
+            }
         }
 
-        // 2. List lookup requires an entity type and either a name prefix or an indexed status.
-        if (!criteria.RecordType.HasValue)
-        {
-            result.ValidationErrorMessage = "List search requires selecting an Entity Type (Company, LLP, or Foreign).";
-            return result;
-        }
-
-        if (!Enum.IsDefined(criteria.RecordType.Value) ||
+        // 2. List lookup needs either a name prefix or an indexed status. Entity type is optional: left as
+        // "All" it is searched one type at a time (each keeps its own index seek) and merged.
+        if ((criteria.RecordType.HasValue && !Enum.IsDefined(criteria.RecordType.Value)) ||
             (!string.IsNullOrWhiteSpace(rawQ) && rawQ.Length < 3) ||
             (string.IsNullOrWhiteSpace(status) && string.IsNullOrWhiteSpace(rawQ)))
         {
@@ -358,21 +357,7 @@ public sealed partial class CompanyRegistryQueryService
         int pageSize = Math.Clamp(criteria.PageSize, 1, 50);
 
         // Status-only lists use (RecordType, Status, Name); name searches use (RecordType, Name).
-        var query = BuildExplorerListQuery(criteria);
-
-        if (!string.IsNullOrWhiteSpace(criteria.CursorName) && !string.IsNullOrWhiteSpace(criteria.CursorIdentifier))
-        {
-            var cursorName = criteria.CursorName;
-            var cursorId = criteria.CursorIdentifier;
-            query = query.Where(r => string.Compare(r.Name, cursorName) > 0
-                || (r.Name == cursorName && string.Compare(r.Identifier, cursorId) > 0));
-        }
-
-        var rows = await query
-            .OrderBy(r => r.Name)
-            .ThenBy(r => r.Identifier)
-            .Take(pageSize + 1)
-            .Select(ExplorerProjection)
+        var rows = await BuildExplorerRows(criteria, pageSize + 1, criteria.CursorName, criteria.CursorIdentifier)
             .ToListAsync(ct);
 
         if (rows.Count > pageSize)
@@ -392,10 +377,80 @@ public sealed partial class CompanyRegistryQueryService
         return result;
     }
 
-    private IQueryable<CompanyMasterRecord> BuildExplorerListQuery(RegistryExplorerCriteria criteria)
+    /// <summary>Whether the query is an exact-identifier lookup rather than a name prefix. A numeric FCRN
+    /// (e.g. F123456) is exact when Foreign is chosen, and also when no type is chosen (the default, "All").
+    /// In that All case the text could equally be the start of a company name, so
+    /// <c>FallBackToName</c> lets the caller continue to the name search when no identifier matches, and any
+    /// secondary filter means the user is listing rather than looking one up, so it is not treated as exact.</summary>
+    private static (bool IsExact, bool FallBackToName) ClassifyIdentifierQuery(RegistryExplorerCriteria criteria, string upperQ)
+    {
+        bool isCin = CinPattern().IsMatch(upperQ);
+        bool isLlpin = LlpinPattern().IsMatch(upperQ);
+        bool isStandardFcrn = StandardFcrnPattern().IsMatch(upperQ);
+        if (isCin || isLlpin || isStandardFcrn) return (true, false);
+        if (!NumericFcrnPattern().IsMatch(upperQ)) return (false, false);
+        if (criteria.RecordType == CompanyMasterRecordType.Foreign) return (true, false);
+        if (criteria.RecordType is null && !criteria.HasSecondaryFilters) return (true, true);
+        return (false, false);
+    }
+
+    private static readonly CompanyMasterRecordType[] AllRecordTypes =
+        [CompanyMasterRecordType.Company, CompanyMasterRecordType.Llp, CompanyMasterRecordType.Foreign];
+
+    private static readonly string[] BaselineStatuses = ["Active", "Amalgamated", "Strike Off", "Under CIRP", "Under Liquidation"];
+
+    /// <summary>Every current-status value recorded in the registry (any entity type), alphabetical, for the
+    /// Explorer dropdown. One distinct scan, cached for an hour; on failure the common statuses are offered so
+    /// the page still works.</summary>
+    public async Task<IReadOnlyList<string>> GetStatusOptionsAsync(CancellationToken ct = default)
+    {
+        const string key = "RegistryExplorerStatusOptions";
+        if (_cache.TryGetValue(key, out IReadOnlyList<string>? cached) && cached is not null) return cached;
+        try
+        {
+            var found = await _db.CompanyMasterRecords.AsNoTracking()
+                .Where(r => r.Status != null && r.Status != "")
+                .Select(r => r.Status!).Distinct().ToListAsync(ct);
+            var options = found.Select(x => x.Trim()).Where(x => x.Length > 0)
+                .Concat(BaselineStatuses)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .OrderBy(x => x, StringComparer.OrdinalIgnoreCase).ToList();
+            _cache.Set(key, (IReadOnlyList<string>)options, TimeSpan.FromHours(1));
+            return options;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex, "Could not load registry status options; offering the common statuses.");
+            return BaselineStatuses;
+        }
+    }
+
+    /// <summary>The first <paramref name="take"/> matching rows in (Name, Identifier) order after the cursor. With
+    /// no entity type chosen, each type is queried separately, so each keeps its (RecordType, Status, Name) index
+    /// seek and the whole table is never sorted. The per-type top rows are then merged and re-ordered in SQL,
+    /// which keeps the ordering (and so the keyset cursor) on one collation.</summary>
+    private IQueryable<RegistryRecordRow> BuildExplorerRows(RegistryExplorerCriteria criteria, int take, string? cursorName, string? cursorId)
+    {
+        var types = criteria.RecordType.HasValue ? [criteria.RecordType.Value] : AllRecordTypes;
+        IQueryable<RegistryRecordRow>? merged = null;
+        foreach (var type in types)
+        {
+            var query = BuildExplorerListQuery(criteria, type);
+            if (!string.IsNullOrWhiteSpace(cursorName) && !string.IsNullOrWhiteSpace(cursorId))
+            {
+                query = query.Where(r => string.Compare(r.Name, cursorName) > 0
+                    || (r.Name == cursorName && string.Compare(r.Identifier, cursorId) > 0));
+            }
+            var branch = query.OrderBy(r => r.Name).ThenBy(r => r.Identifier).Take(take).Select(ExplorerProjection);
+            merged = merged is null ? branch : merged.Concat(branch);
+        }
+        return types.Length == 1 ? merged! : merged!.OrderBy(r => r.Name).ThenBy(r => r.Identifier).Take(take);
+    }
+
+    private IQueryable<CompanyMasterRecord> BuildExplorerListQuery(RegistryExplorerCriteria criteria, CompanyMasterRecordType recordType)
     {
         var query = _db.CompanyMasterRecords.AsNoTracking()
-            .Where(r => r.RecordType == criteria.RecordType!.Value);
+            .Where(r => r.RecordType == recordType);
         var q = criteria.Q?.Trim();
         var status = criteria.Status?.Trim();
         if (!string.IsNullOrWhiteSpace(q)) query = query.Where(r => r.Name.StartsWith(q));
@@ -426,17 +481,16 @@ public sealed partial class CompanyRegistryQueryService
         if (validation.ValidationErrorMessage != null) return ([], validation.ValidationErrorMessage);
 
         const int maxRows = 10000;
-        IQueryable<CompanyMasterRecord> query;
-        if (criteria.Q is { } q &&
-            (CinPattern().IsMatch(q.Trim().ToUpperInvariant()) || LlpinPattern().IsMatch(q.Trim().ToUpperInvariant()) ||
-             StandardFcrnPattern().IsMatch(q.Trim().ToUpperInvariant()) ||
-             (criteria.RecordType == CompanyMasterRecordType.Foreign && NumericFcrnPattern().IsMatch(q.Trim().ToUpperInvariant()))))
-            query = _db.CompanyMasterRecords.AsNoTracking().Where(r => r.Identifier == q.Trim().ToUpperInvariant());
-        else
-            query = BuildExplorerListQuery(criteria);
-
-        var rows = await query.OrderBy(r => r.Name).ThenBy(r => r.Identifier)
-            .Take(maxRows + 1).Select(ExplorerProjection).ToListAsync(ct);
+        var upperQ = criteria.Q?.Trim().ToUpperInvariant() ?? "";
+        var (isExactIdentifier, fallBackToName) = ClassifyIdentifierQuery(criteria, upperQ);
+        List<RegistryRecordRow> rows = [];
+        if (isExactIdentifier)
+        {
+            rows = await _db.CompanyMasterRecords.AsNoTracking().Where(r => r.Identifier == upperQ)
+                .OrderBy(r => r.Name).ThenBy(r => r.Identifier).Take(maxRows + 1).Select(ExplorerProjection).ToListAsync(ct);
+        }
+        if (!isExactIdentifier || (fallBackToName && rows.Count == 0))
+            rows = await BuildExplorerRows(criteria, maxRows + 1, null, null).ToListAsync(ct);
         if (rows.Count > maxRows)
             return ([], $"More than {maxRows:N0} records match. Narrow the filters before downloading Excel.");
         return (rows, null);

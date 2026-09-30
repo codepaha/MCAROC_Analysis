@@ -137,6 +137,8 @@ public sealed class RegistryExplorerResult
     public string? ValidationErrorMessage { get; set; }
     public bool SearchExecuted { get; set; }
     public RegistryExplorerCriteria Criteria { get; set; } = new();
+    /// <summary>Every current-status value present in the registry, for the Explorer's status dropdown.</summary>
+    public IReadOnlyList<string> StatusOptions { get; set; } = [];
 }
 
 public sealed class RegistryDashboardViewModel

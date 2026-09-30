@@ -6,19 +6,19 @@
     <div class="card-header">
         <div class="fw-bold">Registry Data Explorer</div>
         <div class="text-muted small">
-            Search by exact CIN/LLPIN/FCRN, or choose an entity type with a status or 3+ character name prefix. Narrow by state, LLP district, foreign country, industry, class, or registration year.
+            Search by exact CIN/LLPIN/FCRN, or by a status or a 3+ character name prefix. Entity type defaults to All. Narrow by state, LLP district, foreign country, industry, class, or registration year.
         </div>
     </div>
     <div class="card-body">
         <form method="get" asp-controller="RegistryDashboard" asp-action="Explorer" class="row g-2 align-items-end mb-3">
             <div class="col-md-5">
                 <label class="form-label small fw-semibold" for="registry-q">Identifier or Name Prefix</label>
-                <input id="registry-q" type="text" name="Q" value="@Model.Criteria.Q" class="form-control" placeholder="Optional when status is selected" />
+                <input id="registry-q" type="text" name="Q" value="@Model.Criteria.Q" class="form-control" placeholder="Optional when a status is selected" />
             </div>
             <div class="col-md-3">
                 <label class="form-label small fw-semibold" for="registry-type">Entity Type</label>
                 <select id="registry-type" name="RecordType" class="form-select">
-                    <option value="">Select Type...</option>
+                    <option value="">All Entity Types</option>
                     <option value="Company" selected="@(Model.Criteria.RecordType == CompanyMasterRecordType.Company)">Company</option>
                     <option value="Llp" selected="@(Model.Criteria.RecordType == CompanyMasterRecordType.Llp)">LLP</option>
                     <option value="Foreign" selected="@(Model.Criteria.RecordType == CompanyMasterRecordType.Foreign)">Foreign Company</option>
@@ -26,8 +26,21 @@
             </div>
             <div class="col-md-4">
                 <label class="form-label small fw-semibold" for="registry-status">Current Status</label>
-                <input id="registry-status" name="Status" list="registry-status-options" value="@Model.Criteria.Status" class="form-control" placeholder="e.g. Under CIRP" />
-                <datalist id="registry-status-options"><option value="Under CIRP"></option><option value="Under Liquidation"></option><option value="Active"></option><option value="Strike Off"></option><option value="Amalgamated"></option></datalist>
+                <select id="registry-status" name="Status" class="form-select">
+                    <option value="">All Statuses</option>
+                    @{
+                        var currentStatus = Model.Criteria.Status?.Trim();
+                        var statusOptions = Model.StatusOptions.ToList();
+                        if (!string.IsNullOrEmpty(currentStatus) && !statusOptions.Contains(currentStatus, StringComparer.OrdinalIgnoreCase))
+                        {
+                            statusOptions.Add(currentStatus);
+                        }
+                    }
+                    @foreach (var statusOption in statusOptions)
+                    {
+                        <option value="@statusOption" selected="@string.Equals(statusOption, currentStatus, StringComparison.OrdinalIgnoreCase)">@statusOption</option>
+                    }
+                </select>
             </div>
             <div class="col-md-3">
                 <label class="form-label small fw-semibold" for="registry-state">State / UT</label>
