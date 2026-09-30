@@ -419,6 +419,10 @@ public static partial class LitigationOrderAddressMatcher
 
     private sealed record PageSegment(int PageNumber, string Text);
 
+    /// <summary>An order's extracted text split at its page markers (page number + text).</summary>
+    public static IReadOnlyList<(int PageNumber, string Text)> PagesOf(string extractedText) =>
+        string.IsNullOrWhiteSpace(extractedText) ? [] : SegmentPages(extractedText).Select(p => (p.PageNumber, p.Text)).ToList();
+
     private static List<PageSegment> SegmentPages(string text)
     {
         var matches = PageMarkerRegex().Matches(text);

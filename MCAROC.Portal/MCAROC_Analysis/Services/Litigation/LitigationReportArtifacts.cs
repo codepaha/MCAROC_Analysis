@@ -150,7 +150,8 @@ public sealed record StandaloneLitigationReport(
     IReadOnlyDictionary<long, LitigationCaseAnalysis>? CaseAnalysesByCaseId = null,
     long? ReusedFromSnapshotId = null,
     long? ReusedFromRequestId = null,
-    long? OriginSnapshotId = null)
+    long? OriginSnapshotId = null,
+    ChargeLitigationSummary? ChargeLinks = null)
 {
     public bool IsReused => ReusedFromSnapshotId.HasValue;
 
@@ -200,7 +201,7 @@ public static class LitigationReportArtifacts
         "Last Hearing Date", "Next Hearing Date", "Decision Date", "State", "District", "Petitioners", "Respondents",
         "Petitioner Advocates", "Respondent Advocates", "Order Count", "Downloaded Order Count", "Expired Order Count",
         "Order Dates", "Order Types", "Order Availability Statuses", "Order Retained Until Dates", "Order Text Extraction Statuses",
-        "Contested Property Match Count", "Contested Property Details",
+        "Contested Property Match Count", "Contested Property Details", "Charge Link Count", "Charge Links",
         "Analysis Status", "Analysis Risk", "Analysis Summary", "Analysis Key Issues", "Analysis Recommended Action",
         "Report Reused", "Reused From Request ID", "Reused From Snapshot ID", "Report Retrieved Date", "Reuse Disclosure"
     ];
@@ -221,6 +222,13 @@ public static class LitigationReportArtifacts
             ? string.Join("; ", propertyMatches.Select(m => $"Order {m.OrderDate ?? "-"} (p. {m.PageNumber}): [{m.SourceLabel}] {m.AddressText}"))
             : "-";
 
+        // Links between this case and the company's open charges (charged property, named assets, lender recovery case).
+        var chargeLinks = (report.ChargeLinks?.Links ?? []).Where(l => l.Case.LitigationCaseId == item.LitigationCaseId).ToList();
+        var chargeLinkCount = chargeLinks.Count.ToString(CultureInfo.InvariantCulture);
+        var chargeLinkDetails = chargeLinks.Count > 0
+            ? string.Join("; ", chargeLinks.Select(l => $"{l.ChargeNumber} ({l.ChargeHolder}) [{ChargeLitigationLabels.Phrase(l.Signal)}]{(l.PageNumber is { } p ? $" p. {p}" : "")}: {l.Explanation}"))
+            : "-";
+
         var isReused = report.IsReused ? "Yes" : "No";
         var reusedReqId = report.ReusedFromRequestId?.ToString(CultureInfo.InvariantCulture) ?? "-";
         var reusedSnapId = report.ReusedFromSnapshotId?.ToString(CultureInfo.InvariantCulture) ?? "-";
@@ -239,7 +247,7 @@ public static class LitigationReportArtifacts
             PartyText(item.RespondentAdvocatesJson), item.Orders.Count.ToString(CultureInfo.InvariantCulture),
             downloadedCount.ToString(CultureInfo.InvariantCulture), expiredCount.ToString(CultureInfo.InvariantCulture),
             orderDates, orderTypes, orderStatuses, orderRetainedUntil, orderExtraction,
-            propertyMatchCount, propertyMatchDetails,
+            propertyMatchCount, propertyMatchDetails, chargeLinkCount, chargeLinkDetails,
             analysis?.Status ?? "Pending", analysis?.RiskLevel, analysis?.Summary,
             analysis is null ? null : string.Join("; ", analysis.KeyIssues ?? []), analysis?.RecommendedAction,
             isReused, reusedReqId, reusedSnapId, retrievedDate, reuseDisclosure
@@ -389,6 +397,9 @@ internal sealed class LitigationReportPdfDocument(StandaloneLitigationReport rep
             column.Item().PaddingTop(4).Element(c => ComposeCourtGridTable(c, grid));
         }
 
+        if (report.ChargeLinks is { } chargeLinks)
+            column.Item().PaddingTop(12).Element(container => ChargeLinksSection(container, chargeLinks));
+
         column.Item().PaddingTop(12).Element(container => PortfolioPanel(container, report.PortfolioAnalysis));
         column.Item().PaddingTop(10).Background("#FAFCFF").Border(0.8f).BorderColor(Border).Padding(9).Column(note =>
         {
@@ -440,6 +451,68 @@ internal sealed class LitigationReportPdfDocument(StandaloneLitigationReport rep
         table.Cell().Background("#F0F4FA").BorderTop(1).BorderColor(Navy).Padding(4).AlignRight().Text(grid.TotalDisposedCases.ToString(CultureInfo.InvariantCulture)).Bold().FontSize(7.5f).FontColor(Navy);
         table.Cell().Background("#F0F4FA").BorderTop(1).BorderColor(Navy).Padding(4).AlignRight().Text(grid.TotalUnknownCases.ToString(CultureInfo.InvariantCulture)).Bold().FontSize(7.5f).FontColor(Navy);
         table.Cell().Background("#F0F4FA").BorderTop(1).BorderColor(Navy).Padding(4).AlignRight().Text(grid.TotalOrders.ToString(CultureInfo.InvariantCulture)).Bold().FontSize(7.5f).FontColor(Navy);
+    });
+
+    /// <summary>The cases that touch what the company's open charges secure, or an honest statement of what was
+    /// compared when there are none (never a bare "clean").</summary>
+    private static void ChargeLinksSection(IContainer container, ChargeLitigationSummary summary) => container.Column(section =>
+    {
+        section.Item().Text("CHARGED PROPERTY & LITIGATION").Bold().FontSize(8.5f).FontColor(Navy);
+
+        var caveats = new List<string> { "Only strong matches are shown." };
+        if (summary.NcltOrdersSkipped) caveats.Add("NCLT/NCLAT orders are not scanned.");
+        if (summary.OrdersWithoutText > 0) caveats.Add($"{summary.OrdersWithoutText} order(s) had no extractable text and could not be compared.");
+        if (summary.MovableChargesWithoutIdentifiers > 0) caveats.Add($"{summary.MovableChargesWithoutIdentifiers} movable-asset charge(s) name no vehicle or serial numbers, so could not be compared.");
+
+        if (!summary.HasAny)
+        {
+            section.Item().PaddingTop(4).Background("#FAFCFF").Border(0.8f).BorderColor(Border).Padding(8).Column(c =>
+            {
+                c.Item().Text("No case was tied to a charged property, a named asset or a charge holder's recovery proceeding.").FontSize(8.2f);
+                c.Item().PaddingTop(2).Text($"{summary.OrdersScanned} order(s) with text were compared. Charges that name no specific property or asset cannot be compared. " + string.Join(" ", caveats.Skip(1))).FontSize(7.5f).FontColor(Colors.Grey.Darken1);
+            });
+            return;
+        }
+
+        section.Item().PaddingTop(4).Background("#FFF7F7").BorderLeft(4).BorderColor(Red).Border(0.8f).BorderColor("#F3C7C7").Padding(8).Column(c =>
+        {
+            c.Item().Text($"{summary.ChargesWithLinks} open charge(s) have litigation linked: {summary.CasesNamingAssets} case(s) name charged property or assets; {summary.CasesFor(ChargeLitigationSignal.LenderRecoveryCase)} are recovery proceedings by a charge holder.").Bold().FontSize(8.2f);
+            c.Item().PaddingTop(5).Table(table =>
+            {
+                table.ColumnsDefinition(columns =>
+                {
+                    columns.RelativeColumn(2);   // Charge
+                    columns.RelativeColumn(2);   // Link
+                    columns.RelativeColumn(2.4f); // Case
+                    columns.RelativeColumn(4);   // Evidence
+                });
+                foreach (var h in new[] { "CHARGE", "LINK", "CASE", "EVIDENCE" })
+                    table.Cell().Background("#EAF2FD").BorderBottom(1).BorderColor(Navy).Padding(4).Text(h).Bold().FontSize(7).FontColor(Navy);
+
+                foreach (var l in summary.Links)
+                {
+                    var asset = ChargeLitigationLabels.NamesTheAsset(l.Signal);
+                    table.Cell().BorderBottom(0.5f).BorderColor("#E4D0D0").Padding(4).Column(x =>
+                    {
+                        x.Item().Text(Display(l.ChargeNumber)).Bold().FontSize(7.6f);
+                        x.Item().Text(Display(l.ChargeHolder)).FontSize(7).FontColor(Colors.Grey.Darken1);
+                    });
+                    table.Cell().BorderBottom(0.5f).BorderColor("#E4D0D0").Padding(4).Text(ChargeLitigationLabels.Heading(l.Signal)).SemiBold().FontSize(7.4f).FontColor(asset ? Red : Amber);
+                    table.Cell().BorderBottom(0.5f).BorderColor("#E4D0D0").Padding(4).Column(x =>
+                    {
+                        x.Item().Text(Display(l.Case.CaseNumber)).FontSize(7.6f);
+                        x.Item().Text($"{Display(l.Case.Court)} · {l.Case.Source}").FontSize(7).FontColor(Colors.Grey.Darken1);
+                    });
+                    table.Cell().BorderBottom(0.5f).BorderColor("#E4D0D0").Padding(4).Column(x =>
+                    {
+                        x.Item().Text(l.Explanation).FontSize(7.4f);
+                        if (!string.IsNullOrWhiteSpace(l.Excerpt))
+                            x.Item().PaddingTop(2).Text($"“{l.Excerpt}”{(l.PageNumber is { } pg ? $" (page {pg})" : "")}").Italic().FontSize(7).FontColor(Colors.Grey.Darken2);
+                    });
+                }
+            });
+            c.Item().PaddingTop(4).Text(string.Join(" ", caveats)).FontSize(7).FontColor(Colors.Grey.Darken1);
+        });
     });
 
     private static void Metric(IContainer container, string label, string value, string color) => container.Background(BlueTint).Border(0.8f).BorderColor(Border).Padding(8).Column(card =>

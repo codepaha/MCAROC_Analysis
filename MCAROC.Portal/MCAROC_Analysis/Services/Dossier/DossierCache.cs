@@ -25,7 +25,12 @@ public class DossierCache(AppDbContext db, DossierAssembler assembler, IMemoryCa
                     .Where(a => a.RequestId == requestId
                         && a.IngestionRunId == r.LatestCompletedIngestionRunId
                         && (a.Status == AnalysisRunStatus.Completed || a.Status == AnalysisRunStatus.CompletedWithErrors))
-                    .OrderByDescending(a => a.RunNumber).Select(a => (long?)a.AnalysisRunId).FirstOrDefault()
+                    .OrderByDescending(a => a.RunNumber).Select(a => (long?)a.AnalysisRunId).FirstOrDefault(),
+                // The newest completed litigation snapshot: a refresh changes it, so links computed from the
+                // old one are never served (the dossier carries charge-to-case links built from it).
+                LitigationSnapshotId = db.LitigationReportSnapshots
+                    .Where(s => s.SearchJob!.RequestId == requestId && s.Status == LitigationReportSnapshotStatus.Completed)
+                    .OrderByDescending(s => s.RetrievedUtc).Select(s => (long?)s.LitigationReportSnapshotId).FirstOrDefault()
             })
             .FirstOrDefaultAsync(ct);
 
@@ -34,7 +39,7 @@ public class DossierCache(AppDbContext db, DossierAssembler assembler, IMemoryCa
         if (keyParts.AnalysisRunId is not { } analysisRunId)
             return null; // completed ingestion but no matching completed analysis ⇒ dossier not ready
 
-        var key = $"dossier:{requestId}:{ingestionRunId}:{analysisRunId}";
+        var key = $"dossier:{requestId}:{ingestionRunId}:{analysisRunId}:{keyParts.LitigationSnapshotId}";
         if (cache.TryGetValue(key, out DossierModel? cached) && cached is not null)
             return cached;
 
@@ -64,12 +69,15 @@ public class DossierCache(AppDbContext db, DossierAssembler assembler, IMemoryCa
                     .Where(a => a.RequestId == requestId
                         && a.IngestionRunId == r.LatestCompletedIngestionRunId
                         && (a.Status == AnalysisRunStatus.Completed || a.Status == AnalysisRunStatus.CompletedWithErrors))
-                    .OrderByDescending(a => a.RunNumber).Select(a => (long?)a.AnalysisRunId).FirstOrDefault()
+                    .OrderByDescending(a => a.RunNumber).Select(a => (long?)a.AnalysisRunId).FirstOrDefault(),
+                LitigationSnapshotId = db.LitigationReportSnapshots
+                    .Where(s => s.SearchJob!.RequestId == requestId && s.Status == LitigationReportSnapshotStatus.Completed)
+                    .OrderByDescending(s => s.RetrievedUtc).Select(s => (long?)s.LitigationReportSnapshotId).FirstOrDefault()
             })
             .FirstOrDefaultAsync(ct);
 
         if (keyParts is { LatestCompletedIngestionRunId: { } ingestionRunId, AnalysisRunId: { } analysisRunId })
-            cache.Remove($"dossier:{requestId}:{ingestionRunId}:{analysisRunId}");
+            cache.Remove($"dossier:{requestId}:{ingestionRunId}:{analysisRunId}:{keyParts.LitigationSnapshotId}");
 
         var dir = Path.Combine(contentRootPath, "App_Data", "Dossiers", requestId.ToString());
         if (Directory.Exists(dir))
