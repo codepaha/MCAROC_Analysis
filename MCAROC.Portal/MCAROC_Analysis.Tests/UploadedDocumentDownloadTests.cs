@@ -193,7 +193,7 @@ public class UploadedDocumentDownloadTests : IAsyncLifetime, IDisposable
     }
 
     [Fact]
-    public async Task DownloadUploadedDocument_QuarantinedDocument_DeniedForAnonymous_AllowedForReviewer()
+    public async Task DownloadUploadedDocument_QuarantinedDocument_DeniedWithoutAuthorisation_AllowedWithTokenOrReviewer()
     {
         await using var db = CreateContext();
 
@@ -224,10 +224,14 @@ public class UploadedDocumentDownloadTests : IAsyncLifetime, IDisposable
         var tokenService = new MCAROC_Analysis.Services.Documents.TimeLimitedSignedDownloadTokenService(dp);
         var token = tokenService.GenerateToken(req.RequestId, doc.DocumentId);
 
-        // 1. Anonymous / token-bearer attempting to download quarantined file must receive 404
+        // 1. No session and no token: still a uniform 404 (no document-ID probing).
         var anonController = CreateController(db, isInternalReviewer: false, tokenService: tokenService);
-        var anonResult = await anonController.DownloadUploadedDocument(req.RequestId, doc.DocumentId, token, default);
+        var anonResult = await anonController.DownloadUploadedDocument(req.RequestId, doc.DocumentId, token: null, default);
         Assert.IsType<NotFoundResult>(anonResult);
+
+        // 1b. Single-user deployment: a valid signed token opens even a quarantined file.
+        var tokenResult = await anonController.DownloadUploadedDocument(req.RequestId, doc.DocumentId, token, default);
+        Assert.IsType<PhysicalFileResult>(tokenResult);
 
         // 2. Authenticated reviewer receives 200 PhysicalFileResult
         var reviewerController = CreateController(db, isInternalReviewer: true, tokenService: tokenService);
@@ -404,7 +408,7 @@ public class UploadedDocumentDownloadTests : IAsyncLifetime, IDisposable
     }
 
     [Fact]
-    public async Task DocumentsTab_RendersDownloadButtons_OnlyForReviewer()
+    public async Task DocumentsTab_RendersDownloadButtons_ForEverySignedInUser()
     {
         var request = new McaRequest
         {
@@ -459,20 +463,16 @@ public class UploadedDocumentDownloadTests : IAsyncLifetime, IDisposable
             FilingBatch = batch
         };
 
-        // 1. Render as Anonymous visitor: MUST NOT contain any tokens or download links
-        var anonHtml = await RenderDocumentsTabAsync(vm, isReviewer: false);
-        Assert.DoesNotContain("token=", anonHtml);
-        Assert.DoesNotContain("/download", anonHtml);
-        Assert.DoesNotContain("Download Archive (.zip)", anonHtml);
-        Assert.Contains("Reviewer Only", anonHtml);
-
-        // 2. Render as Reviewer: MUST contain tokens and download links
-        var reviewerHtml = await RenderDocumentsTabAsync(vm, isReviewer: true);
-        Assert.Contains("token=", reviewerHtml);
-        Assert.Contains("/download?token=", reviewerHtml);
-        Assert.Contains("Download", reviewerHtml);
-        Assert.Contains("Download Quarantined", reviewerHtml);
-        Assert.Contains("Download Archive (.zip)", reviewerHtml);
+        // Every signed-in user (single-user deployment, no roles yet) gets tokens and download links,
+        // with or without the legacy reviewer cookie.
+        foreach (var asReviewer in new[] { false, true })
+        {
+            var html = await RenderDocumentsTabAsync(vm, isReviewer: asReviewer);
+            Assert.Contains("/download?token=", html);
+            Assert.Contains("Download Quarantined", html);
+            Assert.Contains("Download Archive (.zip)", html);
+            Assert.DoesNotContain("Reviewer Only", html);
+        }
     }
 
     private static string FindRepoRoot()

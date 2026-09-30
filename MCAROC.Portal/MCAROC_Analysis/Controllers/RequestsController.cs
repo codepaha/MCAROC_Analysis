@@ -1525,8 +1525,11 @@ public class RequestsController(
         }
 
         var isTokenValid = tokenService?.ValidateToken(requestId, docId, token) ?? false;
+        // The portal's fallback policy already requires a signed-in user for this route; that user has
+        // full access until UAM is introduced with client onboarding.
+        var isPortalUser = User?.Identity?.IsAuthenticated == true;
 
-        if (!isReviewer && !isAnalyst && !isTokenValid)
+        if (!isReviewer && !isAnalyst && !isPortalUser && !isTokenValid)
         {
             // Telemetry: Record denial without leaking the token value
             logger?.LogWarning(
@@ -1543,16 +1546,9 @@ public class RequestsController(
             return NotFound();
         }
 
-        // ── Step 3: Quarantine Enforcement ────────────────────────────────────
-        // Quarantined files are strictly reviewer-only for diagnostic inspection; token bearers cannot download quarantined files.
-        if (doc.UploadStatus == DocumentUploadStatus.Quarantined)
-        {
-            if (!isReviewer)
-            {
-                logger?.LogWarning("Audit: Quarantined document download DENIED for non-reviewer. RequestId={RequestId}, DocumentId={DocId}", requestId, docId);
-                return NotFound();
-            }
-        }
+        // ── Step 3: Quarantine ────────────────────────────────────────────────
+        // Single-user deployment: every authorised caller may download, quarantined files included. The
+        // download is logged (Step 6) with IsQuarantined so it stays auditable until UAM restricts it.
 
         // ── Step 4: Extension Allowlist ───────────────────────────────────────
         var ext = Path.GetExtension(doc.OriginalFileName).ToLowerInvariant();
@@ -1625,7 +1621,7 @@ public class RequestsController(
         }
 
         // ── Step 6: Telemetry & Security Headers ──────────────────────────────
-        var authMethod = isReviewer ? "ReviewerSession" : isAnalyst ? "AnalystSession" : "SignedToken";
+        var authMethod = isReviewer ? "ReviewerSession" : isAnalyst ? "AnalystSession" : isPortalUser ? "PortalSession" : "SignedToken";
         logger?.LogInformation(
             "Audit: Uploaded document download AUTHORIZED ({AuthMethod}). RequestId={RequestId}, DocumentId={DocId}, IsQuarantined={IsQuarantined}",
             authMethod, requestId, docId, doc.UploadStatus == DocumentUploadStatus.Quarantined);
