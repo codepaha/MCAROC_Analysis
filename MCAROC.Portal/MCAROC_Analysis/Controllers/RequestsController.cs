@@ -1822,26 +1822,4 @@ public class RequestsController(
 
         return dto;
     }
-
-    /// <summary>Gate for the litigation tab: a full-access portal user (see <see cref="PortalAccess"/>) or a legacy
-    /// reviewer session qualifies.</summary>
-    private async Task<bool> CheckIsInternalReviewerAsync()
-    {
-        if (PortalAccess.HasFullAccess(User)) return true;
-        var authService = HttpContext?.RequestServices?.GetService<IAuthenticationService>();
-        if (authService is null)
-        {
-            return HttpContext?.User?.Identities.Any(i => i.AuthenticationType == "InternalReviewer" && i.IsAuthenticated) == true;
-        }
-
-        try
-        {
-            var authResult = await HttpContext!.AuthenticateAsync("InternalReviewer");
-            return authResult?.Succeeded == true && authResult.Principal?.Identity?.IsAuthenticated == true;
-        }
-        catch (Exception)
-        {
-            return HttpContext?.User?.Identities.Any(i => i.AuthenticationType == "InternalReviewer" && i.IsAuthenticated) == true;
-        }
-    }
 }
