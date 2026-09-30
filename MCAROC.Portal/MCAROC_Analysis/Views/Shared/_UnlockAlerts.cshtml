@@ -3,10 +3,7 @@
    signed-in reviewer, who can approve it right there. Approval posts to the same endpoint as the request page's
    panel, so the rules (reason required, one approval per company, 1 credit) are the same. "Later" hides a company
    for 30 minutes in this browser only. At most a few cards show at once; the rest are counted, never dropped. Built with textContent only — company names are data. *@
-@{
-    var reviewer = await Context.AuthenticateAsync("InternalReviewer");
-}
-@if (reviewer.Succeeded)
+@if (MCAROC_Analysis.Services.AnalystAccess.PortalAccess.HasFullAccess(User))
 {
     <div id="mcaUnlockAlerts" class="position-fixed bottom-0 end-0 p-3 d-flex flex-column gap-2"
          style="z-index:1080; width:min(380px, calc(100vw - 32px)); max-height:80vh; overflow-y:auto;"

@@ -9,7 +9,6 @@ using NPOI.XSSF.UserModel;
 
 namespace MCAROC_Analysis.Controllers;
 
-[Authorize(AuthenticationSchemes = "InternalReviewer")]
 [Route("registry")]
 public sealed class RegistryDashboardController : Controller
 {

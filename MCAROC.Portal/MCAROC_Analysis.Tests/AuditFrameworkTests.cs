@@ -733,11 +733,12 @@ public class AuditFrameworkTests : IAsyncLifetime
     // 22. Viewer Endpoint Authorization Attribute
     // ─────────────────────────────────────────────────────────────────────────────────
     [Fact]
-    public void AuditLogController_HasInternalReviewerAuthorizeAttribute()
+    public void AuditLogController_IsProtectedByPortalLogin_NotAReviewerOnlyScheme()
     {
+        // Single full-access user: the fallback portal policy protects it; no reviewer-only pin, never anonymous.
         var authAttr = typeof(AuditLogController).GetCustomAttribute<AuthorizeAttribute>();
-        Assert.NotNull(authAttr);
-        Assert.Equal("InternalReviewer", authAttr.AuthenticationSchemes);
+        Assert.True(authAttr is null || authAttr.AuthenticationSchemes != "InternalReviewer");
+        Assert.Null(typeof(AuditLogController).GetCustomAttribute<AllowAnonymousAttribute>());
     }
 
     // ─────────────────────────────────────────────────────────────────────────────────

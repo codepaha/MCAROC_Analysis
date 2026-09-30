@@ -15,7 +15,6 @@ namespace MCAROC_Analysis.Controllers;
 /// Internal audit log viewer strictly gated behind the feature-scoped "InternalReviewer" cookie scheme.
 /// Enforces exact RequestId scoping and deterministic pagination.
 /// </summary>
-[Authorize(AuthenticationSchemes = "InternalReviewer")]
 public class AuditLogController(AppDbContext db) : Controller
 {
     [HttpGet("/internal/audit-logs/{requestId:long}")]

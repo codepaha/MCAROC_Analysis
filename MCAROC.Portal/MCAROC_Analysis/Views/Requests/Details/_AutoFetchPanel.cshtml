@@ -53,12 +53,7 @@
                 Unlocking spends 1 credit and makes the company's data available for 12 months. One approval covers
                 every request waiting on this company; only one credit is spent.
             </div>
-            @{
-                // The request page is anonymous and there's no default auth scheme, so check the reviewer cookie
-                // explicitly — only the approve action itself requires it.
-                var reviewer = await Context.AuthenticateAsync("InternalReviewer");
-            }
-            @if (reviewer.Succeeded)
+            @if (MCAROC_Analysis.Services.AnalystAccess.PortalAccess.HasFullAccess(User))
             {
                 <form method="post" action="/Requests/@r.RequestId/autofetch/unlock/approve" class="d-flex flex-wrap gap-2 align-items-start">
                     @Html.AntiForgeryToken()
@@ -69,9 +64,7 @@
             }
             else
             {
-                <a class="btn btn-sm btn-warning" href="/internal/login?ReturnUrl=@Uri.EscapeDataString($"/Requests/{r.RequestId}")">
-                    <i class="bi bi-box-arrow-in-right me-1"></i>Sign in to approve
-                </a>
+                <span class="small text-muted">A full-access user must approve this unlock.</span>
             }
         </div>
     }

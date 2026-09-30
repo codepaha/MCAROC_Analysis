@@ -68,7 +68,7 @@
                             <i class="bi bi-shield-check"></i><span>Calculation audit</span>
                         </a>
                     }
-                    @if (Model.IsInternalReviewer)
+                    @if (Model.HasFullAccess)
                     {
                         @if (r.LatestCompletedIngestionRunId is not null &&
                              !string.IsNullOrWhiteSpace(r.Cin ?? r.Llpin) &&

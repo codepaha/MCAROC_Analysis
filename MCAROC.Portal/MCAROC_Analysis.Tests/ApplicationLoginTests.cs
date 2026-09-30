@@ -133,13 +133,13 @@ public sealed class ApplicationLoginTests : IDisposable
     }
 
     [Fact]
-    public async Task ApplicationAccountCannotAcquireReviewerOrAnalystAccess()
+    public async Task ApplicationAccountReachesInternalFeatures_ButNotTheAnalystArea()
     {
         var client = Client();
         await Login(client);
+        // The single application user has full access: the former reviewer-only pages no longer bounce to a login.
         var reviewer = await client.GetAsync("/internal/calc-audit/1");
-        Assert.Equal(HttpStatusCode.Redirect, reviewer.StatusCode);
-        Assert.Contains("/internal/login", reviewer.Headers.Location!.ToString());
+        Assert.NotEqual(HttpStatusCode.Redirect, reviewer.StatusCode);
         var analyst = await client.GetAsync("/analyst");
         Assert.Equal(HttpStatusCode.Redirect, analyst.StatusCode);
         Assert.Contains("/analyst/login", analyst.Headers.Location!.ToString());

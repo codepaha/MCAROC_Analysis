@@ -71,7 +71,6 @@ public class PipelineController(
     /// entry per company (an approval covers every request waiting on it); a company that already has an open
     /// approval is being unlocked and isn't listed.</summary>
     [HttpGet("/pipeline/unlock-alerts")]
-    [Authorize(AuthenticationSchemes = "InternalReviewer")]
     public async Task<IActionResult> UnlockAlerts(CancellationToken ct)
     {
         var now = DateTime.UtcNow;
@@ -104,7 +103,6 @@ public class PipelineController(
     }
 
     [HttpGet("/Pipeline")]
-    [Authorize(AuthenticationSchemes = "InternalReviewer")]
     public async Task<IActionResult> Index(PipelineOutcome? outcome, int? stuckMinutes, string? reasonCode, CancellationToken ct)
     {
         var query = db.PipelineRuns.AsNoTracking().AsQueryable();
@@ -168,7 +166,6 @@ public class PipelineController(
     /// <summary>Ambiguity queue board (issue #295, plan §5A.3): requests whose Resolve stage needs
     /// attention, showing ranked candidates with disambiguators and "Select this CIN" actions.</summary>
     [HttpGet("/Pipeline/AmbiguityQueue")]
-    [Authorize(AuthenticationSchemes = "InternalReviewer")]
     public async Task<IActionResult> AmbiguityQueue([FromQuery] long? requestId, CancellationToken ct)
     {
         var query = db.PipelineStageStates.AsNoTracking()
@@ -297,7 +294,6 @@ public class PipelineController(
     /// <summary>Select this CIN action (issue #295, plan §5A.3). Human selection of a company identifier
     /// for a request whose Resolve stage needs attention.</summary>
     [HttpPost("/Pipeline/Identity/Select")]
-    [Authorize(AuthenticationSchemes = "InternalReviewer")]
     [ValidateAntiForgeryToken]
     public async Task<IActionResult> SelectCin(
         [FromForm] long requestId,
@@ -360,7 +356,6 @@ public class PipelineController(
 
     /// <summary>Retries a pipeline stage manually from the Needs-Attention board (plan §6.4).</summary>
     [HttpPost("/Pipeline/Runs/{runId:long}/Stages/{stage}/Retry")]
-    [Authorize(AuthenticationSchemes = "InternalReviewer")]
     [ValidateAntiForgeryToken]
     public async Task<IActionResult> RetryStage(long runId, PipelineStage stage, [FromForm] string? reason, [FromForm] string? returnUrl, CancellationToken ct)
     {
@@ -497,7 +492,6 @@ public class PipelineController(
 
     /// <summary>Skips an enrichment pipeline stage manually from the Needs-Attention board (plan §6.4). Core stages cannot be skipped.</summary>
     [HttpPost("/Pipeline/Runs/{runId:long}/Stages/{stage}/Skip")]
-    [Authorize(AuthenticationSchemes = "InternalReviewer")]
     [ValidateAntiForgeryToken]
     public async Task<IActionResult> SkipStage(long runId, PipelineStage stage, [FromForm] string? reason, [FromForm] string? returnUrl, CancellationToken ct)
     {
@@ -576,7 +570,6 @@ public class PipelineController(
 
     /// <summary>Cancels a pipeline run manually from the Needs-Attention board (plan §6.4).</summary>
     [HttpPost("/Pipeline/Runs/{runId:long}/Cancel")]
-    [Authorize(AuthenticationSchemes = "InternalReviewer")]
     [ValidateAntiForgeryToken]
     public async Task<IActionResult> CancelRun(long runId, [FromForm] string? reason, [FromForm] string? returnUrl, CancellationToken ct)
     {

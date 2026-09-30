@@ -70,8 +70,14 @@ public partial class AutoFetchAuthenticationTests : IClassFixture<WebApplication
 
     private static void AssertChallenged(HttpResponseMessage response)
     {
-        Assert.Equal(HttpStatusCode.Redirect, response.StatusCode);
-        Assert.Contains("/internal/login", response.Headers.Location!.ToString());
+        // Anonymous callers are refused before the action runs: a redirect to the portal sign-in, or a 401
+        // for a POST. There is no separate reviewer login any more.
+        Assert.True(response.StatusCode is HttpStatusCode.Redirect or HttpStatusCode.Unauthorized, $"Unexpected {response.StatusCode}");
+        if (response.StatusCode == HttpStatusCode.Redirect)
+        {
+            Assert.Contains("/login", response.Headers.Location!.ToString());
+            Assert.DoesNotContain("/internal/login", response.Headers.Location!.ToString());
+        }
     }
 
     [GeneratedRegex("name=\"__RequestVerificationToken\"[^>]*value=\"([^\"]+)\"")]

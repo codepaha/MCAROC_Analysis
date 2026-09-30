@@ -87,7 +87,8 @@ public partial class CalculationAuditAuthenticationTests : IClassFixture<WebAppl
         var response = await NoRedirectClient().GetAsync("/internal/calc-audit/1");
 
         Assert.Equal(HttpStatusCode.Redirect, response.StatusCode);
-        Assert.Contains("/internal/login", response.Headers.Location!.ToString());
+        Assert.Contains("/login", response.Headers.Location!.ToString());
+        Assert.DoesNotContain("/internal/login", response.Headers.Location!.ToString());
     }
 
     [Fact]
@@ -104,8 +105,9 @@ public partial class CalculationAuditAuthenticationTests : IClassFixture<WebAppl
                 ["requestId"] = "1", ["reviewerName"] = "anonymous-attacker", ["severity"] = "Minor"
             }));
 
-        Assert.Equal(HttpStatusCode.Redirect, response.StatusCode);
-        Assert.Contains("/internal/login", response.Headers.Location!.ToString());
+        // Refused before the action runs: a 401 for a POST (or a redirect to the portal sign-in).
+        Assert.True(response.StatusCode is HttpStatusCode.Redirect or HttpStatusCode.Unauthorized, $"Unexpected {response.StatusCode}");
+        if (response.StatusCode == HttpStatusCode.Redirect) Assert.DoesNotContain("/internal/login", response.Headers.Location!.ToString());
     }
 
     [Fact]
@@ -118,8 +120,8 @@ public partial class CalculationAuditAuthenticationTests : IClassFixture<WebAppl
                 ["requestId"] = "1", ["reviewerName"] = "anonymous-attacker", ["reason"] = "x"
             }));
 
-        Assert.Equal(HttpStatusCode.Redirect, response.StatusCode);
-        Assert.Contains("/internal/login", response.Headers.Location!.ToString());
+        Assert.True(response.StatusCode is HttpStatusCode.Redirect or HttpStatusCode.Unauthorized, $"Unexpected {response.StatusCode}");
+        if (response.StatusCode == HttpStatusCode.Redirect) Assert.DoesNotContain("/internal/login", response.Headers.Location!.ToString());
     }
 
     [Fact]
