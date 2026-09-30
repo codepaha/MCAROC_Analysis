@@ -1,19 +1,8 @@
 @model RequestDetailsViewModel
-@using Microsoft.AspNetCore.Authentication
 @inject MCAROC_Analysis.Services.Documents.ISignedDownloadTokenService TokenService
 @{
     var r = Model.Request;
     var hasBatch = Model.FilingBatch is not null;
-    var isReviewer = false;
-    try
-    {
-        var authResult = await Context.AuthenticateAsync("InternalReviewer");
-        isReviewer = authResult?.Succeeded == true;
-    }
-    catch (InvalidOperationException)
-    {
-        isReviewer = Context.User?.Identities.Any(i => i.AuthenticationType == "InternalReviewer" && i.IsAuthenticated) == true;
-    }
     var chatSuggestions = new[]
     {
         "Who are the current directors?",
@@ -46,13 +35,13 @@
                 <tbody>
                 @foreach (var doc in Model.Documents.OrderByDescending(d => d.UploadedDate))
                 {
-                    var token = isReviewer ? TokenService?.GenerateToken(r.RequestId, doc.DocumentId) : null;
-                    var downloadUrl = isReviewer && !string.IsNullOrEmpty(token)
+                    var token = TokenService?.GenerateToken(r.RequestId, doc.DocumentId);
+                    var downloadUrl = !string.IsNullOrEmpty(token)
                         ? $"/Requests/{r.RequestId}/uploaded-documents/{doc.DocumentId}/download?token={Uri.EscapeDataString(token)}"
                         : null;
                     <tr>
                         <td>
-                            @if (isReviewer && downloadUrl != null && doc.UploadStatus != DocumentUploadStatus.Quarantined)
+                            @if (downloadUrl != null && doc.UploadStatus != DocumentUploadStatus.Quarantined)
                             {
                                 <a href="@downloadUrl" class="text-decoration-none fw-semibold" title="Download @doc.OriginalFileName">
                                     <i class="bi bi-file-earmark me-1"></i>@doc.OriginalFileName
@@ -84,7 +73,7 @@
                         </td>
                         <td>@Ist.Format(doc.UploadedDate)</td>
                         <td>
-                            @if (isReviewer && downloadUrl != null)
+                            @if (downloadUrl != null)
                             {
                                 if (doc.UploadStatus != DocumentUploadStatus.Quarantined)
                                 {
@@ -94,16 +83,14 @@
                                 }
                                 else
                                 {
-                                    <a href="@downloadUrl" class="btn btn-sm btn-outline-danger" title="Download quarantined file (Reviewer only)">
+                                    <a href="@downloadUrl" class="btn btn-sm btn-outline-danger" title="This file failed an upload check. Download only if you trust it.">
                                         <i class="bi bi-shield-exclamation me-1"></i> Download Quarantined
                                     </a>
                                 }
                             }
                             else
                             {
-                                <span class="badge bg-light text-muted border" title="Reviewer authorization required to download uploaded source files">
-                                    <i class="bi bi-lock me-1"></i> Reviewer Only
-                                </span>
+                                <span class="badge bg-light text-muted border">Unavailable</span>
                             }
                         </td>
                     </tr>
@@ -180,7 +167,7 @@
                     <a class="mca-chip" data-mca-docs-load href="@Url.Action("Documents", "Requests", new { id = r.RequestId })">
                         <i class="bi bi-list-ul"></i> Browse @Model.FilingCategoryCounts.Values.Sum() filed document(s)
                     </a>
-                    @if (isReviewer && archiveDoc != null && (archiveDoc.UploadStatus != DocumentUploadStatus.Quarantined || isReviewer))
+                    @if (archiveDoc != null)
                     {
                         var archiveToken = TokenService?.GenerateToken(r.RequestId, archiveDoc.DocumentId);
                         if (!string.IsNullOrEmpty(archiveToken))
