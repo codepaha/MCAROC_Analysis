@@ -56,5 +56,57 @@ public class QuestionHintExtractorTests
         Assert.Null(hints.LenderNameKeyword);
         Assert.Null(hints.SrnMatch);
         Assert.False(hints.HasSoftHints);
+        Assert.Empty(hints.LexicalTerms!);
+    }
+
+    [Theory]
+    [InlineData("What is the status of TP 255/2019?", "TP 255/2019")]
+    [InlineData("Summarize WP/11227/2019 for me", "WP/11227/2019")]
+    [InlineData("What happened in CP(IB) No. 123/2020?", "CP(IB) No. 123/2020")]
+    [InlineData("Was IA No. 45 of 2021 allowed?", "IA No. 45 of 2021")]
+    [InlineData("Explain O.S. No. 12 of 2018", "O.S. No. 12 of 2018")]
+    public void CaseNumbers_BecomeLexicalTerms(string question, string expected)
+    {
+        var hints = QuestionHintExtractor.Extract(question, [], []);
+
+        Assert.Contains(expected, hints.LexicalTerms!);
+    }
+
+    [Theory]
+    [InlineData("Which orders cite Section 7 of the IBC?", "Section 7")]
+    [InlineData("Anything under section 13(2) of SARFAESI?", "section 13(2)")]
+    [InlineData("Is Sec. 29A relevant here?", "Sec. 29A")]
+    public void SectionReferences_BecomeLexicalTerms(string question, string expected)
+    {
+        var hints = QuestionHintExtractor.Extract(question, [], []);
+
+        Assert.Contains(expected, hints.LexicalTerms!);
+    }
+
+    [Fact]
+    public void QuotedPhrases_BecomeLexicalTerms_StraightOrCurlyQuotes()
+    {
+        var hints = QuestionHintExtractor.Extract("Where does it say \"stay is vacated\" or \u201Cpossession of the property\u201D?", [], []);
+
+        Assert.Equal(["stay is vacated", "possession of the property"], hints.LexicalTerms!);
+    }
+
+    [Fact]
+    public void OrdinaryQuestions_YieldNoLexicalTerms()
+    {
+        // Years, plain words and lower-case prose must not be mistaken for case numbers or sections.
+        var hints = QuestionHintExtractor.Extract("What was revenue in 2022 and how did the second charge in 2019 change?", [], []);
+
+        Assert.Empty(hints.LexicalTerms!);
+    }
+
+    [Fact]
+    public void LexicalTerms_AreDeduplicatedAndCapped()
+    {
+        var hints = QuestionHintExtractor.Extract(
+            "TP 1/2019, TP 1/2019, TP 2/2019, TP 3/2019, TP 4/2019, TP 5/2019, TP 6/2019", [], []);
+
+        Assert.Equal(QuestionHintExtractor.MaxLexicalTerms, hints.LexicalTerms!.Count);
+        Assert.Equal(hints.LexicalTerms.Count, hints.LexicalTerms.Distinct().Count());
     }
 }

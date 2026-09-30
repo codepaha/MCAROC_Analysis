@@ -742,6 +742,39 @@ public class LitigationOrderChunkingTests : IAsyncLifetime
         Assert.DoesNotContain(matchesForB, m => m.Chunk.LitigationOrderDocumentId == docA.LitigationOrderDocumentId);
     }
 
+    // ── #194 hybrid retrieval (full-text + vector, RRF) ──────────────────────────────────────────────
+
+    [SkippableFact]
+    public async Task SearchRequestOrdersAsync_finds_an_exact_case_number_that_semantic_search_alone_misses()
+    {
+        await FullTextTestSupport.RequireFullTextIndexAsync("dbo.LitigationOrderChunks");
+        await using var db = CreateContext();
+        var (request, _, order) = await SeedOrderAsync(db, "FT");
+        var document = await SeedDownloadedDocumentAsync(db, order.LitigationCaseOrderId,
+            "--- Page 1 (native) ---\nIn TP 255/2019 the Tribunal heard IA 12/2020 and reserved orders on the stay application.");
+
+        // Orthogonal to the query vector: cosine distance 1, past the 0.5 threshold below, so only the lexical
+        // path can surface this chunk.
+        var stub = new StubEmbeddingService(n => Enumerable.Range(0, n).Select(_ => Axis(1)).ToList());
+        var orchestrator = new LitigationOrderChunkingOrchestrator(db, stub, new LitigationOrderChunkingQueue(), NullLogger<LitigationOrderChunkingOrchestrator>.Instance);
+        await orchestrator.ChunkOrderDocumentAsync(document.LitigationOrderDocumentId, CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var chunkId = await verify.LitigationOrderChunks.Where(c => c.LitigationOrderDocumentId == document.LitigationOrderDocumentId)
+            .Select(c => c.LitigationOrderChunkId).FirstAsync();
+        await FullTextTestSupport.WaitUntilIndexedAsync("LitigationOrderChunks", "LitigationOrderChunkId", chunkId, "\"TP 255/2019\"");
+
+        var retriever = new LitigationDocumentRetriever(verify, ChatRetrievalOptions.Default with { MaxCosineDistance = 0.5 });
+
+        var semanticOnly = await retriever.SearchRequestOrdersAsync(request.RequestId, Axis(0), CancellationToken.None);
+        Assert.Empty(semanticOnly);
+
+        var hybrid = await retriever.SearchRequestOrdersAsync(request.RequestId, Axis(0), CancellationToken.None, ["TP 255/2019"]);
+        var match = Assert.Single(hybrid);
+        Assert.Equal(chunkId, match.Chunk.LitigationOrderChunkId);
+        Assert.Equal(request.RequestId, match.Chunk.RequestId);
+    }
+
     // ── Citation shape (RetrievalContextBuilder -> RetrievedSource) ──────────────────────────────────
 
     [Fact]
