@@ -138,6 +138,25 @@ public static partial class AddressMatcher
             .Where(t => t.Length > 0)
             .ToList();
 
+    /// <summary>Plot/survey/door keys found in a free text. A <see cref="AddressMatchStrength.Strong"/> match needs
+    /// a key shared with the known address, so a text with no key in common cannot be Strong: callers use this to
+    /// skip the full comparison (which is costly) for the vast majority of order paragraphs.</summary>
+    public static HashSet<string> PlotKeysIn(string? text) =>
+        string.IsNullOrWhiteSpace(text)
+            ? []
+            : Tokenize(Normalize(text)).Where(IsPlotToken).Select(PlotKey).ToHashSet(StringComparer.Ordinal);
+
+    /// <summary>The plot keys of a known address, exactly as <see cref="Match"/> counts them (PIN digits and
+    /// one-character keys are not plot evidence).</summary>
+    public static HashSet<string> PlotKeysOfAddress(string? address)
+    {
+        if (string.IsNullOrWhiteSpace(address)) return [];
+        var normalized = Normalize(address);
+        var pin = ExtractPinCodes(normalized).LastOrDefault() ?? "";
+        return Tokenize(normalized).Where(IsPlotToken).Select(PlotKey)
+            .Where(k => k != pin && k.Length >= 2).ToHashSet(StringComparer.Ordinal);
+    }
+
     private static bool IsPlotToken(string token) => token.Any(char.IsDigit);
 
     /// <summary>"A-36", "A/36" and "A36" are the same plot written three ways.</summary>
