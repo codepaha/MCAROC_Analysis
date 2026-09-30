@@ -147,6 +147,12 @@ public sealed class LitigationStartService(
         var active = await ActiveRunAsync(requestId, ct);
         if (active is not null) return new LitigationStartResult(true, active.Value, null, null);
 
+        // Nothing new since the last analysis (same cases, same order evidence): refuse rather than pay to
+        // repeat it. Auto starts keep their own one-run-per-snapshot dedupe, so this only gates Manual.
+        if (trigger == PaidCallTrigger.Manual && await analysis.IsUpToDateAsync(requestId, ct))
+            return LitigationStartResult.Denied(AdmissionDenial.Fresh,
+                "Every case has already been analysed and nothing has changed since. Refresh the litigation data to pick up new cases or orders.");
+
         await admission.ResolveOutstandingAsync(PaidCallKind.LitigationAnalysis, requestId, ct);
         if (await HasReservedAsync(PaidCallKind.LitigationAnalysis, requestId, ct))
             return LitigationStartResult.Denied(AdmissionDenial.InFlight, "A litigation analysis for this request is already being started.");

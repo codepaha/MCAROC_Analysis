@@ -634,7 +634,7 @@ public sealed class LitigationReportWireTests : IAsyncLifetime
         Assert.Equal("no-referrer", response.Headers["Referrer-Policy"].ToString());
         Assert.Equal("no-store, private", response.Headers.CacheControl.ToString());
         Assert.Equal("nosniff", response.Headers["X-Content-Type-Options"].ToString());
-        Assert.Contains("LitigationReport_HEADER_TEST_CO_", response.Headers.ContentDisposition.ToString());
+        Assert.Contains("LitigationReport_PreAnalysis_HEADER_TEST_CO_", response.Headers.ContentDisposition.ToString());
         Assert.Contains(".pdf", response.Headers.ContentDisposition.ToString());
     }
     // ── 7. Court-Grid Grouping Parity (one court → one row, category from first non-null) ─────

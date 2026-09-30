@@ -68,6 +68,12 @@ public sealed class BprLitigationOptions
     /// match only, no wildcards.</summary>
     public IReadOnlyList<string> AllowedOrderDocumentHosts { get; init; } = [];
 
+    /// <summary>How many times a client may refresh a request's litigation data after the initial search.</summary>
+    public int MaxRefreshes { get; init; } = 3;
+
+    /// <summary>Minimum days between two searches for one request (15, 20 or 90 per product decision).</summary>
+    public int RefreshIntervalDays { get; init; } = 15;
+
     public bool IsConfigured =>
         !string.IsNullOrWhiteSpace(BaseUrl) && !string.IsNullOrWhiteSpace(Id) && !string.IsNullOrWhiteSpace(SecretKey);
 }
