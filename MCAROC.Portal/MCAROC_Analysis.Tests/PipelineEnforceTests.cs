@@ -697,6 +697,22 @@ public sealed class PipelineEnforceTests : IAsyncLifetime
         Assert.Single(alerts, a => a.Identifier == laterCin);
     }
 
+    [Fact]
+    public async Task Unlock_alerts_poll_cancelled_by_a_navigation_returns_quietly_instead_of_throwing()
+    {
+        await using var db = CreateContext();
+        var controller = new MCAROC_Analysis.Controllers.PipelineController(db, new StaticOptionsMonitor(Enforcing))
+        {
+            ControllerContext = new Microsoft.AspNetCore.Mvc.ControllerContext { HttpContext = new Microsoft.AspNetCore.Http.DefaultHttpContext() }
+        };
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        var result = await controller.UnlockAlerts(cts.Token);
+
+        Assert.IsType<Microsoft.AspNetCore.Mvc.EmptyResult>(result);
+    }
+
     private async Task<long> SeedWaitingForUnlockAsync(string cin, int count)
     {
         long first = 0;
