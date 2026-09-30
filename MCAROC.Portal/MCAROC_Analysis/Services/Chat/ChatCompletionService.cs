@@ -74,6 +74,7 @@ public class ChatCompletionService
         sb.AppendLine("- Cite every material component of your answer, not just one supporting source (e.g. a question combining revenue and charge data should cite both).");
         sb.AppendLine("- Cite only the tags given (e.g. \"F1\", \"D2\") in citedTags — never invent a filename, page, or entity id yourself.");
         sb.AppendLine("- Distinguish current vs. historical facts, and filed-by vs. filed-against for litigation, explicitly in your answer.");
+        sb.AppendLine("- \"O\" sources are an exact, structured order-outcome lookup. When the question asks which or how many orders had an outcome, list every matching O source (not a sample), cite each, and cite and repeat the coverage note's wording if it says the list is not exhaustive.");
         sb.AppendLine("- Never treat earlier chat turns as evidence — only the [FACT]/[SOURCE] blocks below, freshly retrieved for this question.");
         sb.AppendLine($"- Document index status for this request: {context.IndexingStatusLabel}. If not Complete, never conclude a document 'does not exist' — only that it was 'not found in the currently indexed records.'");
         sb.AppendLine("- Respond with ONLY a JSON object matching this exact shape (no markdown fences, no commentary):");
@@ -141,6 +142,9 @@ public class ChatCompletionService
                     new ResolvedCitation("DocumentChunk", s.ChunkId, s.DocumentName, s.PageNumber, null, null, s.DisplayLabel, s.DocumentId),
                 SourceType.LitigationChunk =>
                     new ResolvedCitation("LitigationChunk", s.ChunkId, s.DocumentName, s.PageNumber, null, null, s.DisplayLabel, s.DocumentId,
+                        s.LitigationCaseId, s.LitigationCaseOrderId),
+                SourceType.OrderOutcome =>
+                    new ResolvedCitation("OrderOutcome", null, null, null, s.EntityType, s.EntityId, s.DisplayLabel, s.DocumentId,
                         s.LitigationCaseId, s.LitigationCaseOrderId),
                 _ => new ResolvedCitation("StructuredFact", null, null, null, s.EntityType, s.EntityId, s.DisplayLabel)
             };

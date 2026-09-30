@@ -92,6 +92,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<LitigationOrderChunk> LitigationOrderChunks => Set<LitigationOrderChunk>();
     public DbSet<LitigationAiAnalysisRun> LitigationAiAnalysisRuns => Set<LitigationAiAnalysisRun>();
     public DbSet<LitigationCaseAiAnalysis> LitigationCaseAiAnalyses => Set<LitigationCaseAiAnalysis>();
+    public DbSet<LitigationOrderClassification> LitigationOrderClassifications => Set<LitigationOrderClassification>();
     public DbSet<LitigationPortfolioAiAnalysis> LitigationPortfolioAiAnalyses => Set<LitigationPortfolioAiAnalysis>();
 
     // #164 Calculation assurance
@@ -429,6 +430,26 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             e.Property(x => x.FailureReason).HasMaxLength(1000);
             e.HasOne<LitigationAiAnalysisRun>().WithMany(x => x.CaseAnalyses).HasForeignKey(x => x.LitigationAiAnalysisRunId).OnDelete(DeleteBehavior.Cascade);
             e.HasOne<LitigationCase>().WithMany().HasForeignKey(x => x.LitigationCaseId).OnDelete(DeleteBehavior.NoAction);
+        });
+
+        modelBuilder.Entity<LitigationOrderClassification>(e =>
+        {
+            e.HasKey(x => x.LitigationOrderClassificationId);
+            e.HasIndex(x => new { x.LitigationAiAnalysisRunId, x.LitigationOrderDocumentId }).IsUnique();
+            // "Current classification per order for this request" — the order-outcome lookup's only access path.
+            e.HasIndex(x => new { x.RequestId, x.LitigationOrderDocumentId, x.Status });
+            e.Property(x => x.Status).HasConversion<string>().HasMaxLength(30);
+            e.Property(x => x.Confidence).HasConversion<string>().HasMaxLength(10);
+            e.Property(x => x.OutcomeTypesJson).HasMaxLength(500).IsRequired();
+            e.Property(x => x.FineAmount).HasPrecision(18, 2);
+            e.Property(x => x.EvidenceHash).HasMaxLength(64).IsRequired();
+            e.Property(x => x.PromptHash).HasMaxLength(64).IsRequired();
+            e.Property(x => x.ResponseHash).HasMaxLength(64);
+            e.Property(x => x.FailureReason).HasMaxLength(1000);
+            e.HasOne<LitigationAiAnalysisRun>().WithMany().HasForeignKey(x => x.LitigationAiAnalysisRunId).OnDelete(DeleteBehavior.Cascade);
+            // NoAction, same as LitigationCaseAiAnalysis → LitigationCase: the classification is an audit record of
+            // what the model was shown and said, and must never be silently deleted with (or block) its source row.
+            e.HasOne<LitigationOrderDocument>().WithMany().HasForeignKey(x => x.LitigationOrderDocumentId).OnDelete(DeleteBehavior.NoAction);
         });
 
         modelBuilder.Entity<LitigationPortfolioAiAnalysis>(e =>

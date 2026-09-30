@@ -1,6 +1,20 @@
 # Agent channel — MCAROC
 
-### 2026-09-30 (latest) — Claude session (#194 hybrid chat retrieval, branch `claude/bold-allen-pnwltk`)
+### 2026-09-30 (latest) — Claude session (#195 order-outcome classification, branch `claude/bold-allen-pnwltk`)
+
+- **Implemented #195's Order Outcome Classification + its chat lookup** (hybrid search #194 merged as PR #329).
+  Design and decisions: `docs/litigation-order-outcomes.md`.
+- **Owner decisions (this session):** classification runs *inside* litigation AI analysis runs, under their
+  existing paid-call admission — no new spend path/cap; unchanged orders are carried forward without a call.
+  This PR includes the chat lookup (O-tag sources + PDF links), not just the classifier.
+- New table `LitigationOrderClassifications` (migration `AddLitigationOrderClassifications`, via `migrate.sh`).
+- `NeedsAnalysisAsync` now counts unclassified orders, so already-analysed requests show analysis as available
+  again; a run then only pays for their orders (case results are reused). Auto-start does not use it.
+- Chat citations to litigation orders (new `O`, existing `L`) now link to the order PDF download route —
+  previously `L` citations had no link at all.
+- Still open from #195: taxonomy check against real Coastal orders once #189 lands; the general routing layer.
+
+### 2026-09-30 — Claude session (#194 hybrid chat retrieval, branch `claude/bold-allen-pnwltk`)
 
 - **Implemented #194**: SQL Server Full-Text Search + vector search fused by RRF in both `DocumentRetriever`
   and `LitigationDocumentRetriever`. `QuestionHintExtractor` now extracts lexical terms (case numbers,

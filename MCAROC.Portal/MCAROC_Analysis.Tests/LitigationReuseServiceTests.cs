@@ -213,6 +213,32 @@ public sealed class LitigationReuseServiceTests : IAsyncLifetime
         Assert.Equal("source-portfolio-hash", portfolio.EvidenceHash);
     }
 
+    /// <summary>#195: order-outcome classifications travel with the analysis they belong to — content verbatim, owning
+    /// ids remapped to the copied case/order/document, so the reusing request's outcome lookup finds them.</summary>
+    [Fact]
+    public async Task A_completed_analysis_copies_its_order_classifications_onto_the_copied_orders()
+    {
+        await using var db = CreateContext();
+        var scope = $"search|SEED-{Guid.NewGuid():N}|hash";
+        await SeedSourceAsync(db, scope, retrievedUtc: DateTime.UtcNow.AddHours(-2), withChunk: true, withAnalysis: true, withClassification: true);
+        var request = await SeedRequestAsync(db, "reuser6");
+
+        await Service(db).TryReuseAsync(request.RequestId, scope, CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var run = await verify.LitigationAiAnalysisRuns.AsNoTracking().SingleAsync(r => r.RequestId == request.RequestId);
+        var newDoc = await verify.LitigationOrderDocuments.AsNoTracking().SingleAsync(d => d.Order!.Case!.RequestId == request.RequestId);
+        var classification = await verify.LitigationOrderClassifications.AsNoTracking().SingleAsync(c => c.LitigationAiAnalysisRunId == run.LitigationAiAnalysisRunId);
+        Assert.Equal(request.RequestId, classification.RequestId);
+        Assert.Equal(newDoc.LitigationOrderDocumentId, classification.LitigationOrderDocumentId);
+        Assert.Equal(newDoc.LitigationCaseOrderId, classification.LitigationCaseOrderId);
+        Assert.Equal("source-classification-hash", classification.EvidenceHash);
+
+        var lookup = await new LitigationOrderOutcomeQuery(verify).FindAsync(request.RequestId, [LitigationOrderOutcome.FinePenalty], CancellationToken.None);
+        var match = Assert.Single(lookup.Matches);
+        Assert.Equal(25000m, match.FineAmount);
+    }
+
     /// <summary>Review finding on PR #303: CopyAnalysisAsync must not just take the source request's *latest*
     /// completed analysis — a request whose report was re-fetched (a new snapshot under the same job; a
     /// request has at most one job, reused in place) since an earlier analysis has an analysis that belongs
@@ -305,7 +331,8 @@ public sealed class LitigationReuseServiceTests : IAsyncLifetime
     private sealed record SourceHandles(long RequestId, long SnapshotId, long CaseId, DateTime RetrievedUtc, string? DocumentPath);
 
     private async Task<SourceHandles> SeedSourceAsync(
-        AppDbContext db, string scopeKey, DateTime retrievedUtc, bool withDocument = false, bool withChunk = false, bool withAnalysis = false)
+        AppDbContext db, string scopeKey, DateTime retrievedUtc, bool withDocument = false, bool withChunk = false, bool withAnalysis = false,
+        bool withClassification = false)
     {
         var request = await SeedRequestAsync(db, "source");
         var job = new LitigationSearchJob
@@ -347,6 +374,7 @@ public sealed class LitigationReuseServiceTests : IAsyncLifetime
         await db.SaveChangesAsync();
 
         string? documentPath = null;
+        LitigationOrderDocument? seededDoc = null;
         if (withDocument || withChunk)
         {
             var order = new LitigationCaseOrder { LitigationCaseId = c.LitigationCaseId, OrderDate = "2024-01-01", OrderType = "Order", CreatedUtc = DateTime.UtcNow };
@@ -370,6 +398,7 @@ public sealed class LitigationReuseServiceTests : IAsyncLifetime
             }
             db.LitigationOrderDocuments.Add(doc);
             await db.SaveChangesAsync();
+            seededDoc = doc;
 
             if (withChunk)
             {
@@ -409,6 +438,15 @@ public sealed class LitigationReuseServiceTests : IAsyncLifetime
                 EvidenceJson = "{}", EvidenceHash = "source-portfolio-hash", PromptHash = "prompt-hash",
                 AnalysisJson = "{\"status\":\"Completed\"}", CompletedUtc = DateTime.UtcNow
             });
+            if (withClassification && seededDoc is not null)
+                db.LitigationOrderClassifications.Add(new LitigationOrderClassification
+                {
+                    LitigationAiAnalysisRunId = run.LitigationAiAnalysisRunId, RequestId = request.RequestId, LitigationCaseId = c.LitigationCaseId,
+                    LitigationCaseOrderId = seededDoc.LitigationCaseOrderId, LitigationOrderDocumentId = seededDoc.LitigationOrderDocumentId,
+                    Status = LitigationAiAnalysisItemStatus.Completed, OutcomeTypesJson = "[\"FinePenalty\"]", FineAmount = 25000m,
+                    Confidence = ClassificationConfidence.High, EvidenceJson = "{}", EvidenceHash = "source-classification-hash",
+                    PromptHash = "prompt-hash", ClassificationJson = "{\"status\":\"Completed\"}", CompletedUtc = DateTime.UtcNow
+                });
             await db.SaveChangesAsync();
         }
 

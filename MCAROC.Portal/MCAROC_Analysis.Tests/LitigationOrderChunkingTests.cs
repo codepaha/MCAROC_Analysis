@@ -791,7 +791,7 @@ public class LitigationOrderChunkingTests : IAsyncLifetime
         await using var buildDb = CreateContext();
         var contextBuilder = new RetrievalContextBuilder(
             buildDb, new StructuredFactsProvider(buildDb), new DocumentRetriever(buildDb, ChatRetrievalOptions.Default),
-            new LitigationDocumentRetriever(buildDb, ChatRetrievalOptions.Default), stub);
+            new LitigationDocumentRetriever(buildDb, ChatRetrievalOptions.Default), stub, new LitigationOrderOutcomeQuery(buildDb));
 
         var context = await contextBuilder.BuildAsync(request.RequestId, "Is the charge enforceable?", CancellationToken.None);
 

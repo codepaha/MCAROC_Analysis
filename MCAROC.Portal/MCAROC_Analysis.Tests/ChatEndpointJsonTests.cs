@@ -326,7 +326,7 @@ public class ChatEndpointJsonTests : IAsyncLifetime
         var embedding = new ThrowingEmbeddingService();
         var contextBuilder = new RetrievalContextBuilder(
             db, new StructuredFactsProvider(db), new DocumentRetriever(db, ChatRetrievalOptions.Default),
-            new LitigationDocumentRetriever(db, ChatRetrievalOptions.Default), embedding);
+            new LitigationDocumentRetriever(db, ChatRetrievalOptions.Default), embedding, new LitigationOrderOutcomeQuery(db));
         var completion = new ThrowIfCalledCompletionService();
         var chatService = new ChatService(db, contextBuilder, completion, NullLogger<ChatService>.Instance);
         var controller = NewController(db);
@@ -803,6 +803,62 @@ public class ChatEndpointJsonTests : IAsyncLifetime
         // 4. Structured fact
         var c4 = apiRes.Message.Citations[3];
         Assert.Null(c4.ViewerUrl);
+    }
+
+    /// <summary>#195: litigation citations (order outcomes and order chunks) link to the order PDF's download route,
+    /// but only for this request's orders whose PDF is currently retained — a foreign, purged or never-downloaded
+    /// order id stored in a message never becomes a live link.</summary>
+    [Fact]
+    public async Task PostChat_LitigationCitations_LinkOnlyToThisRequestsRetainedOrderPdfs()
+    {
+        await using var db = CreateContext();
+        var requestId = await SeedRequestAsync("Litigation Citation Corp");
+        var otherRequestId = await SeedRequestAsync("Other Litigation Corp");
+
+        async Task<long> SeedOrderDocumentAsync(long forRequestId, LitigationOrderDocumentStatus status)
+        {
+            var litigationCase = new LitigationCase
+            {
+                RequestId = forRequestId, Cnr = "CNR" + Guid.NewGuid().ToString("N")[..10], CaseNumber = "TP 255/2019",
+                FirstSeenUtc = DateTime.UtcNow, LastSeenUtc = DateTime.UtcNow
+            };
+            db.LitigationCases.Add(litigationCase);
+            await db.SaveChangesAsync();
+            var order = new LitigationCaseOrder { LitigationCaseId = litigationCase.LitigationCaseId, OrderDate = "10-02-2022", CreatedUtc = DateTime.UtcNow };
+            db.LitigationCaseOrders.Add(order);
+            await db.SaveChangesAsync();
+            var document = new LitigationOrderDocument
+            {
+                LitigationCaseOrderId = order.LitigationCaseOrderId, Status = status, RetainedUntilUtc = DateTime.UtcNow.AddDays(5), CreatedUtc = DateTime.UtcNow
+            };
+            db.LitigationOrderDocuments.Add(document);
+            await db.SaveChangesAsync();
+            return document.LitigationOrderDocumentId;
+        }
+
+        var retained = await SeedOrderDocumentAsync(requestId, LitigationOrderDocumentStatus.Downloaded);
+        var expired = await SeedOrderDocumentAsync(requestId, LitigationOrderDocumentStatus.Expired);
+        var foreign = await SeedOrderDocumentAsync(otherRequestId, LitigationOrderDocumentStatus.Downloaded);
+
+        var citations = new List<ResolvedCitation>
+        {
+            new("OrderOutcome", null, null, null, "LitigationOrderClassification", 1, "TP 255/2019 · Order 10-02-2022", retained),
+            new("LitigationChunk", 5, "TP 255/2019", 2, null, null, "TP 255/2019 · Page 2", retained),
+            new("OrderOutcome", null, null, null, "LitigationOrderClassification", 2, "Expired order", expired),
+            new("OrderOutcome", null, null, null, "LitigationOrderClassification", 3, "Another request's order", foreign),
+            new("OrderOutcome", null, null, null, "OrderOutcomeCoverage", null, "Order-outcome classification coverage", null)
+        };
+
+        var result = await NewController(db).AskChat(requestId, new AskChatJsonRequest { Question = "Which orders imposed a fine?", ClientTurnId = Guid.NewGuid() },
+            new CitationInjectingChatService(db, citations), CancellationToken.None);
+
+        var message = Assert.IsType<ChatApiResponse>(Assert.IsType<OkObjectResult>(result).Value).Message!;
+        var expectedUrl = $"/Requests/{requestId}/Litigation/Orders/{retained}/download";
+        Assert.Equal(expectedUrl, message.Citations[0].ViewerUrl);
+        Assert.Equal(expectedUrl, message.Citations[1].ViewerUrl);
+        Assert.Null(message.Citations[2].ViewerUrl);
+        Assert.Null(message.Citations[3].ViewerUrl);
+        Assert.Null(message.Citations[4].ViewerUrl);
     }
 
     [Fact]

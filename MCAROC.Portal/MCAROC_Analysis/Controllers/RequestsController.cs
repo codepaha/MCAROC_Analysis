@@ -1668,13 +1668,7 @@ public class RequestsController(
             return NotFound(ChatApiResponse.Fail("REQUEST_NOT_FOUND", "Request was not found."));
         }
 
-        var authoritativeBatch = await McaFilingBatchResolver.GetAuthoritativeBatchAsync(db, requestId, ct);
-        var validDocIds = authoritativeBatch is null
-            ? new HashSet<long>()
-            : (await db.McaFilingDocuments
-                .Where(d => d.BatchId == authoritativeBatch.BatchId && d.RequestId == requestId)
-                .Select(d => d.FilingDocumentId)
-                .ToListAsync(ct)).ToHashSet();
+        var (validDocIds, validLitigationDocIds) = await LoadCitableDocumentIdsAsync(requestId, ct);
 
         var result = await chatService.AskTurnAsync(requestId, trimmed, model.ClientTurnId.Value, ct);
 
@@ -1685,11 +1679,11 @@ public class RequestsController(
 
         if (result.Outcome == ChatTurnOutcome.UpstreamFailure)
         {
-            var failedDto = result.Message is not null ? MapMessageDto(result.Message, requestId, validDocIds, model.ClientTurnId.Value) : null;
+            var failedDto = result.Message is not null ? MapMessageDto(result.Message, requestId, validDocIds, validLitigationDocIds, model.ClientTurnId.Value) : null;
             return StatusCode(502, ChatApiResponse.Fail("AI_FAILURE", "Sorry, something went wrong answering that question. Please try again.", failedDto));
         }
 
-        var messageDto = MapMessageDto(result.Message!, requestId, validDocIds, model.ClientTurnId.Value);
+        var messageDto = MapMessageDto(result.Message!, requestId, validDocIds, validLitigationDocIds, model.ClientTurnId.Value);
         return Ok(ChatApiResponse.Ok(messageDto));
     }
 
@@ -1704,13 +1698,7 @@ public class RequestsController(
             return NotFound(ChatApiResponse.Fail("REQUEST_NOT_FOUND", "Request was not found."));
         }
 
-        var authoritativeBatch = await McaFilingBatchResolver.GetAuthoritativeBatchAsync(db, requestId, ct);
-        var validDocIds = authoritativeBatch is null
-            ? new HashSet<long>()
-            : (await db.McaFilingDocuments
-                .Where(d => d.BatchId == authoritativeBatch.BatchId && d.RequestId == requestId)
-                .Select(d => d.FilingDocumentId)
-                .ToListAsync(ct)).ToHashSet();
+        var (validDocIds, validLitigationDocIds) = await LoadCitableDocumentIdsAsync(requestId, ct);
 
         var session = await db.ChatSessions.FirstOrDefaultAsync(s => s.RequestId == requestId, ct);
         if (session is null)
@@ -1730,13 +1718,33 @@ public class RequestsController(
         var dtos = messages.Select(m =>
         {
             var turnId = m.ClientTurnId ?? (m.InReplyToChatMessageId.HasValue ? userTurnIdsByMsgId.GetValueOrDefault(m.InReplyToChatMessageId.Value) : null);
-            return MapMessageDto(m, requestId, validDocIds, turnId);
+            return MapMessageDto(m, requestId, validDocIds, validLitigationDocIds, turnId);
         }).ToList();
 
         return Ok(new { success = true, messages = dtos });
     }
 
-    private static ChatMessageDto MapMessageDto(ChatMessage m, long requestId, HashSet<long> validDocIds, Guid? resolvedClientTurnId = null)
+    /// <summary>The documents a chat citation may link to: MCA filing documents of the authoritative batch, and this
+    /// request's litigation order PDFs that are currently retained (Downloaded) — so a stale, foreign or purged
+    /// document id stored in an old message never becomes a live link.</summary>
+    private async Task<(HashSet<long> FilingDocIds, HashSet<long> LitigationDocIds)> LoadCitableDocumentIdsAsync(long requestId, CancellationToken ct)
+    {
+        var authoritativeBatch = await McaFilingBatchResolver.GetAuthoritativeBatchAsync(db, requestId, ct);
+        var filingDocIds = authoritativeBatch is null
+            ? new HashSet<long>()
+            : (await db.McaFilingDocuments
+                .Where(d => d.BatchId == authoritativeBatch.BatchId && d.RequestId == requestId)
+                .Select(d => d.FilingDocumentId)
+                .ToListAsync(ct)).ToHashSet();
+        var litigationDocIds = (await db.LitigationOrderDocuments
+                .Where(d => d.Order!.Case!.RequestId == requestId && d.Status == LitigationOrderDocumentStatus.Downloaded)
+                .Select(d => d.LitigationOrderDocumentId)
+                .ToListAsync(ct)).ToHashSet();
+        return (filingDocIds, litigationDocIds);
+    }
+
+    private static ChatMessageDto MapMessageDto(ChatMessage m, long requestId, HashSet<long> validDocIds, HashSet<long> validLitigationDocIds,
+        Guid? resolvedClientTurnId = null)
     {
         var dto = new ChatMessageDto
         {
@@ -1780,6 +1788,10 @@ public class RequestsController(
                             {
                                 var p = pageNumber.GetValueOrDefault(1);
                                 viewerUrl = $"/Requests/{requestId}/documents/{docId.Value}/view#page={p}";
+                            }
+                            else if ((sourceType is "LitigationChunk" or "OrderOutcome") && docId.HasValue && validLitigationDocIds.Contains(docId.Value))
+                            {
+                                viewerUrl = $"/Requests/{requestId}/Litigation/Orders/{docId.Value}/download";
                             }
 
                             dto.Citations.Add(new ChatCitationDto

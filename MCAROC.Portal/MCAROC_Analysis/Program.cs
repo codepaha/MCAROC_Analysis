@@ -313,6 +313,7 @@ builder.Services.AddHostedService<DocumentChunkingWorker>();
 builder.Services.AddScoped<StructuredFactsProvider>();
 builder.Services.AddScoped(sp => new DocumentRetriever(sp.GetRequiredService<AppDbContext>(), ChatRetrievalOptions.Default));
 builder.Services.AddScoped(sp => new LitigationDocumentRetriever(sp.GetRequiredService<AppDbContext>(), ChatRetrievalOptions.Default));
+builder.Services.AddScoped<LitigationOrderOutcomeQuery>();
 builder.Services.AddScoped<RetrievalContextBuilder>();
 builder.Services.AddScoped<ChatService>();
 
