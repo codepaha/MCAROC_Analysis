@@ -54,9 +54,7 @@
         ],
         litigation: [
             'sec-litigation-summary',
-            'sec-litigation-confirmed',
-            'sec-litigation-probable',
-            'sec-litigation-unverified',
+            'sec-litigation-cases',
             'sec-litigation-financial-disputes'
         ]
     };
@@ -111,9 +109,11 @@
         },
         litigation: {
             summary: 'sec-litigation-summary',
-            confirmed: 'sec-litigation-confirmed',
-            probable: 'sec-litigation-probable',
-            unverified: 'sec-litigation-unverified',
+            cases: 'sec-litigation-cases',
+            // Probable/Unverified sections no longer exist; old deep links land on the cases section.
+            confirmed: 'sec-litigation-cases',
+            probable: 'sec-litigation-cases',
+            unverified: 'sec-litigation-cases',
             'financial-disputes': 'sec-litigation-financial-disputes',
             'financial-dispute': 'sec-litigation-financial-disputes' // normalization
         },

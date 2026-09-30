@@ -236,6 +236,72 @@ public sealed class LitigationStartServiceTests : IAsyncLifetime
         Assert.Null(run.OriginSnapshotId);
     }
 
+    /// <summary>Seeds one case that already has a completed case analysis (evidence hash matching its current
+    /// evidence) and a completed portfolio synthesis — i.e. a request that has been fully analysed.</summary>
+    private async Task<(McaRequest Request, long CaseId)> SeedFullyAnalysedRequestAsync()
+    {
+        var request = await SeedRequestAsync();
+        await using var seed = CreateContext();
+        var litCase = new LitigationCase { RequestId = request.RequestId, Court = "High Court", CaseNumber = "CASE-1", CaseStatus = "Pending", FirstSeenUtc = DateTime.UtcNow, LastSeenUtc = DateTime.UtcNow };
+        seed.LitigationCases.Add(litCase);
+        await seed.SaveChangesAsync();
+
+        var evidence = LitigationAnalysisPromptBuilder.BuildCaseEvidence(litCase, []);
+        var json = LitigationAnalysisPromptBuilder.SerializeEvidence(evidence);
+        var run = new LitigationAiAnalysisRun { RequestId = request.RequestId, RunNumber = 1, Status = LitigationAiAnalysisRunStatus.Completed, CreatedUtc = DateTime.UtcNow, CompletedUtc = DateTime.UtcNow };
+        seed.LitigationAiAnalysisRuns.Add(run);
+        await seed.SaveChangesAsync();
+        seed.LitigationCaseAiAnalyses.Add(new LitigationCaseAiAnalysis
+        {
+            LitigationAiAnalysisRunId = run.LitigationAiAnalysisRunId, LitigationCaseId = litCase.LitigationCaseId,
+            Status = LitigationAiAnalysisItemStatus.Completed, EvidenceJson = json,
+            EvidenceHash = LitigationAnalysisPromptBuilder.ComputeHash(json),
+            PromptHash = LitigationAnalysisPromptBuilder.ComputeHash(LitigationAnalysisPromptBuilder.BuildCasePrompt(evidence)),
+            AnalysisJson = "{\"summary\":\"ok\"}", CompletedUtc = DateTime.UtcNow
+        });
+        seed.LitigationPortfolioAiAnalyses.Add(new LitigationPortfolioAiAnalysis
+        {
+            LitigationAiAnalysisRunId = run.LitigationAiAnalysisRunId, Status = LitigationAiAnalysisItemStatus.Completed,
+            AnalysisJson = "{\"summary\":\"ok\"}", CompletedUtc = DateTime.UtcNow
+        });
+        await seed.SaveChangesAsync();
+        return (request, litCase.LitigationCaseId);
+    }
+
+    [Fact]
+    public async Task Manual_analysis_is_refused_without_spending_when_every_case_is_already_analysed()
+    {
+        var (request, _) = await SeedFullyAnalysedRequestAsync();
+        await using var db = CreateContext();
+
+        var result = await Starter(db).StartAnalysisAsync(request.RequestId, request.ClientId, PaidCallTrigger.Manual, CancellationToken.None);
+
+        Assert.False(result.Started);
+        Assert.Contains("already been analysed", result.Message);
+        Assert.False(await db.PaidCallAdmissions.AnyAsync(a => a.RequestId == request.RequestId));
+        Assert.Equal(1, await db.LitigationAiAnalysisRuns.CountAsync(r => r.RequestId == request.RequestId));
+    }
+
+    [Fact]
+    public async Task Manual_analysis_runs_again_once_a_case_changes()
+    {
+        var (request, caseId) = await SeedFullyAnalysedRequestAsync();
+        await using (var mutate = CreateContext())
+        {
+            var c = await mutate.LitigationCases.SingleAsync(x => x.LitigationCaseId == caseId);
+            c.CaseStatus = "Disposed";
+            c.CaseStage = "Judgment";
+            c.LastHearingDate = "2026-09-01";
+            c.NextHearingDate = null;
+            await mutate.SaveChangesAsync();
+        }
+        await using var db = CreateContext();
+
+        var result = await Starter(db).StartAnalysisAsync(request.RequestId, request.ClientId, PaidCallTrigger.Manual, CancellationToken.None);
+
+        Assert.True(result.Started);
+    }
+
     [Fact]
     public async Task Auto_analysis_persists_the_snapshot_as_both_trigger_and_origin_and_scopes_admission_by_it()
     {

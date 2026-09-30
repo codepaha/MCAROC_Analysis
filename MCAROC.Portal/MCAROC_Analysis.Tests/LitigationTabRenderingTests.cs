@@ -255,7 +255,6 @@ public class LitigationTabRenderingTests
         vm.LitigationDataLake = new LitigationTabViewModel
         {
             Request = vm.Request,
-            IsReviewer = true,
             SearchJob = new LitigationSearchJob
             {
                 LitigationSearchJobId = 1,
@@ -294,7 +293,6 @@ public class LitigationTabRenderingTests
         vm.LitigationDataLake = new LitigationTabViewModel
         {
             Request = vm.Request,
-            IsReviewer = true,
             SearchJob = new LitigationSearchJob
             {
                 LitigationSearchJobId = 1,

@@ -1,20 +1,15 @@
-@using MCAROC_Analysis.Models
+﻿@using MCAROC_Analysis.Models
 @using MCAROC_Analysis.Data.Entities
 @model RequestDetailsViewModel
 @{
     var lake = Model.LitigationDataLake;
-    var isReviewer = lake?.IsReviewer == true;
+    var reqId = Model.Request.RequestId;
+    var reqIdJs = reqId.ToString(System.Globalization.CultureInfo.InvariantCulture);
 
-    // Legacy workbook cases
+    // Workbook-reported cases: only Confirmed matches are ever shown to clients.
     var confirmed = Model.Litigations.Where(l => l.MatchStatus == LitigationMatchStatus.Confirmed).ToList();
-    var probable = Model.Litigations.Where(l => l.MatchStatus == LitigationMatchStatus.Probable).ToList();
-    var unverified = Model.Litigations.Where(l => l.MatchStatus == LitigationMatchStatus.Uncertain).ToList();
-
-    var relevantLitigations = Model.Litigations
-        .Where(l => l.MatchStatus is LitigationMatchStatus.Confirmed or LitigationMatchStatus.Probable)
-        .ToList();
-
-    var cats = relevantLitigations
+    var showWorkbookFallback = lake?.AuthoritativeSnapshot is null && confirmed.Count > 0;
+    var workbookCats = confirmed
         .Where(l => !string.IsNullOrWhiteSpace(l.CaseCategory))
         .GroupBy(l => l.CaseCategory!)
         .OrderByDescending(g => g.Count()).ToList();
@@ -26,7 +21,7 @@
         _ => "sev-watch"
     };
 
-    void RenderCasesTable(List<Litigation> cases, bool isUnverified = false)
+    void RenderCasesTable(List<Litigation> cases)
     {
         if (cases.Count == 0)
         {
@@ -38,17 +33,10 @@
             <table class="pi-results-table">
                 <thead>
                     <tr>
-                        @if (!isUnverified)
-                        {
-                            <th>Role</th>
-                            <th>Status</th>
-                            <th>Category</th>
-                            <th>Type</th>
-                        }
-                        else
-                        {
-                            <th>Status</th>
-                        }
+                        <th>Role</th>
+                        <th>Status</th>
+                        <th>Category</th>
+                        <th>Type</th>
                         <th>Court</th>
                         <th>Parties</th>
                         <th>Case No.</th>
@@ -61,17 +49,10 @@
                 {
                     var role = Model.RoleFor(l);
                     <tr>
-                        @if (!isUnverified)
-                        {
-                            <td><span class="mca-badge @RoleBadge(role)">@RoleLabel(role)</span></td>
-                            <td>@Or(l.CaseStatus)</td>
-                            <td>@Or(l.CaseCategory)</td>
-                            <td>@Or(l.CaseType)</td>
-                        }
-                        else
-                        {
-                            <td>@Or(l.CaseStatus)</td>
-                        }
+                        <td><span class="mca-badge @RoleBadge(role)">@RoleLabel(role)</span></td>
+                        <td>@Or(l.CaseStatus)</td>
+                        <td>@Or(l.CaseCategory)</td>
+                        <td>@Or(l.CaseType)</td>
                         <td>@Or(l.Court)</td>
                         <td>@Or(l.Litigants)</td>
                         <td class="report-id">@Or(l.CaseNumber)</td>
@@ -85,206 +66,95 @@
     }
 }
 
-@if (!isReviewer)
+<nav class="mca-contents-nav" id="contents-nav-litigation" aria-label="Litigation contents">
+    <span class="mca-contents-label" aria-hidden="true">CONTENTS</span>
+    <ul class="nav mca-contents-links">
+        <li class="nav-item"><a class="nav-link active" href="#sec-litigation-summary">Summary</a></li>
+        <li class="nav-item"><a class="nav-link" href="#sec-litigation-cases">Cases <span class="badge">@(lake?.AuthoritativeSnapshot is not null ? lake.TotalCaseCount : confirmed.Count)</span></a></li>
+        <li class="nav-item"><a class="nav-link" href="#sec-litigation-financial-disputes">Financial Disputes <span class="badge">@Model.FinancialDisputeCases.Count</span></a></li>
+    </ul>
+</nav>
+
+<section class="mca-contents-section" id="sec-litigation-summary" aria-labelledby="head-litigation-summary" tabindex="-1">
+<h3 class="visually-hidden" id="head-litigation-summary">Summary</h3>
+@if (lake is not null)
 {
-    <!-- Non-Reviewer Access Restriction Notice -->
-    <div class="alert alert-warning d-flex flex-wrap align-items-center justify-content-between p-3 mb-4 shadow-sm" role="alert">
-        <div class="d-flex align-items-center gap-2">
-            <i class="bi bi-shield-lock-fill fs-4 text-warning"></i>
-            <div>
-                <strong>Internal Reviewer Access Required:</strong>
-                <span>Live court records, CNR tracking, case orders, and evidence-grounded AI analysis are restricted to authenticated internal reviewers. Showing legacy workbook data below.</span>
-            </div>
-        </div>
-        <a href="/internal/login" class="btn btn-sm btn-outline-dark mt-2 mt-md-0">Sign in as Reviewer</a>
-    </div>
-
-    <!-- Legacy Workbook Litigation View -->
-    <nav class="mca-contents-nav" id="contents-nav-litigation" aria-label="Litigation contents">
-        <span class="mca-contents-label" aria-hidden="true">CONTENTS</span>
-        <ul class="nav mca-contents-links">
-            <li class="nav-item"><a class="nav-link active" href="#sec-litigation-summary">Summary</a></li>
-            <li class="nav-item"><a class="nav-link" href="#sec-litigation-confirmed">Confirmed <span class="badge">@confirmed.Count</span></a></li>
-            <li class="nav-item"><a class="nav-link" href="#sec-litigation-probable">Probable <span class="badge">@probable.Count</span></a></li>
-            <li class="nav-item"><a class="nav-link" href="#sec-litigation-unverified">Unverified <span class="badge">@unverified.Count</span></a></li>
-            <li class="nav-item"><a class="nav-link" href="#sec-litigation-financial-disputes">Financial Disputes <span class="badge">@Model.FinancialDisputeCases.Count</span></a></li>
-        </ul>
-    </nav>
-
-    <!-- 1. SUMMARY TAB -->
-    <section class="mca-contents-section" id="sec-litigation-summary" aria-labelledby="head-litigation-summary" tabindex="-1">
-        <h3 id="head-litigation-summary">Summary</h3>
-        @if (Model.LitigationCount == 0)
-        {
-            <div class="mca-empty"><i class="bi bi-bank"></i><p>@Model.SheetCoverage.EmptyState("No litigation was matched to this entity.", SheetAliases.LegalHistory)</p></div>
-        }
-        else
-        {
-            <div class="mca-highlight-grid">
-                <div class="pi-metric">
-                    <span>Total Litigations</span>
-                    <strong>@Model.LitigationCount</strong>
-                    <small>@confirmed.Count confirmed · @probable.Count probable · @unverified.Count unverified</small>
-                </div>
-                <div class="pi-metric">
-                    <span>Confirmed Cases</span>
-                    <strong>@confirmed.Count</strong>
-                    <small>@confirmed.Count(IsPendingRow) pending · @confirmed.Count(l => !IsPendingRow(l)) disposed</small>
-                </div>
-                <div class="pi-metric">
-                    <span>Filed Against Company</span>
-                    <strong>@Model.LitigationFiledAgainstCount</strong>
-                    <small>from Phase 3 rule attribution</small>
-                </div>
-                <div class="pi-metric">
-                    <span>Filed By Company</span>
-                    <strong>@Model.LitigationFiledByCount</strong>
-                    <small>company as petitioner</small>
-                </div>
-            </div>
-        }
-
-        @await Html.PartialAsync("~/Views/Requests/Details/_KeyIndicators.cshtml", Model.KeyMetrics.Where(g => g.Title == "Legal history").ToList())
-
-        @if (Model.LitigationCount > 0)
-        {
-            @if (cats.Count > 0)
-            {
-                <div class="mca-section" style="margin-top:22px;">
-                    <h4>By Category (Confirmed &amp; Probable)</h4>
-                    <div class="pi-table-wrap">
-                        <table class="pi-results-table">
-                            <thead>
-                                <tr>
-                                    <th>Category</th>
-                                    <th class="text-end">Total Cases</th>
-                                    <th class="text-end">Pending</th>
-                                    <th class="text-end">Disposed</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                            @foreach (var g in cats)
-                            {
-                                var pending = g.Count(IsPendingRow);
-                                var disposed = g.Count() - pending;
-                                <tr>
-                                    <td><strong>@g.Key</strong></td>
-                                    <td class="text-end">@g.Count()</td>
-                                    <td class="text-end">@pending</td>
-                                    <td class="text-end">@disposed</td>
-                                </tr>
-                            }
-                            </tbody>
-                        </table>
-                    </div>
-                </div>
-            }
-            <p class="text-muted mt-2 mb-0">Role is only assigned when a Phase 3 finding maps to that exact case; a company filing suit is not treated the same as a suit filed against it.</p>
-        }
-    </section>
-
-    <!-- 2. CONFIRMED CASES TAB -->
-    <section class="mca-contents-section" id="sec-litigation-confirmed" aria-labelledby="head-litigation-confirmed" tabindex="-1">
-        <h3 id="head-litigation-confirmed">Confirmed Cases</h3>
-        @if (confirmed.Count > 0)
-        {
-            <div class="d-flex align-items-center justify-content-between mb-3">
-                <div>
-                    <span class="badge bg-primary text-white me-2">@confirmed.Count Total</span>
-                    <span class="badge bg-warning text-dark me-2">@confirmed.Count(IsPendingRow) Pending</span>
-                    <span class="badge bg-success text-white">@confirmed.Count(l => !IsPendingRow(l)) Disposed</span>
-                </div>
-            </div>
-            RenderCasesTable(confirmed);
-        }
-        else
-        {
-            <div class="mca-empty"><i class="bi bi-bank"></i><p>@Model.SheetCoverage.EmptyState("No confirmed litigation records were found.", SheetAliases.LegalHistory)</p></div>
-        }
-    </section>
-
-    <!-- 3. PROBABLE CASES TAB -->
-    <section class="mca-contents-section" id="sec-litigation-probable" aria-labelledby="head-litigation-probable" tabindex="-1">
-        <h3 id="head-litigation-probable">Probable Cases</h3>
-        <div class="alert alert-warning py-2 px-3 mb-3 d-flex align-items-center gap-2 small">
-            <i class="bi bi-exclamation-triangle-fill text-warning"></i>
-            <span><strong>Probable Match Notice:</strong> A name resembling the company appears as a party — spelling variants or multiple similarly-named entities; verify before relying on these.</span>
-        </div>
-        @if (probable.Count > 0)
-        {
-            <div class="d-flex align-items-center justify-content-between mb-3">
-                <div>
-                    <span class="badge bg-secondary text-white me-2">@probable.Count Total</span>
-                    <span class="badge bg-warning text-dark me-2">@probable.Count(IsPendingRow) Pending</span>
-                    <span class="badge bg-success text-white">@probable.Count(l => !IsPendingRow(l)) Disposed</span>
-                </div>
-            </div>
-            RenderCasesTable(probable);
-        }
-        else
-        {
-            <div class="mca-empty"><i class="bi bi-bank"></i><p>@Model.SheetCoverage.EmptyState("No probable litigation matches were found.", SheetAliases.LegalHistory)</p></div>
-        }
-    </section>
-
-    <!-- 4. UNVERIFIED COURT RECORDS TAB -->
-    <section class="mca-contents-section" id="sec-litigation-unverified" aria-labelledby="head-litigation-unverified" tabindex="-1">
-        <h3 id="head-litigation-unverified">Unverified Cases</h3>
-        <div class="alert alert-info py-2 px-3 mb-3 d-flex align-items-center gap-2 small">
-            <i class="bi bi-info-circle-fill text-info"></i>
-            <span><strong>Provisional Court Records:</strong> The court website could not be reached when this data was processed; these records are provisional.</span>
-        </div>
-        @if (unverified.Count > 0)
-        {
-            <div class="d-flex align-items-center justify-content-between mb-3">
-                <div>
-                    <span class="badge bg-secondary text-white">@unverified.Count Provisional Records</span>
-                </div>
-            </div>
-            RenderCasesTable(unverified, isUnverified: true);
-        }
-        else
-        {
-            <div class="mca-empty"><i class="bi bi-bank"></i><p>@Model.SheetCoverage.EmptyState("No unverified court records were reported.", SheetAliases.LegalHistory)</p></div>
-        }
-    </section>
-}
-else if (lake is not null)
-{
-    <!-- Reviewer BPR Litigation Data Lake View -->
-    <div class="d-flex flex-wrap justify-content-between align-items-center mb-4 pb-2 border-bottom">
+    var hasReport = lake.AuthoritativeSnapshot is not null;
+    var isRefresh = hasReport && lake.Refresh.HasSearched;
+    var searchRunning = lake.SearchJob is { IsTerminal: false } || lake.ImportState == SnapshotImportState.InProgress;
+    var refreshBlocked = isRefresh && !lake.Refresh.Allowed;
+    <!-- Litigation: live court records, reports, AI analysis and refresh (client-facing) -->
+    <div class="d-flex flex-wrap justify-content-between align-items-start gap-3 mb-4 pb-2 border-bottom">
         <div>
             <h3 class="mb-1 d-flex align-items-center gap-2">
-                <i class="bi bi-bank text-primary"></i>Litigation Data Lake
-                <span class="badge bg-primary fs-6">Internal Reviewer Mode</span>
+                <i class="bi bi-bank text-primary"></i>Litigation
                 @if (lake.IsReusedReport)
                 {
-                    <span class="badge bg-info text-dark fs-6" title="Reused from request #@(lake.ReusedFromRequestNumber ?? lake.AuthoritativeSnapshot?.ReusedFromRequestId?.ToString())"><i class="bi bi-recycle me-1"></i>Reused Report</span>
+                    <span class="badge bg-info text-dark fs-6"><i class="bi bi-recycle me-1"></i>Reused Report</span>
                 }
             </h3>
-            <p class="text-muted small mb-0">Direct BPR court records, CNR tracking, order PDF retrieval, and evidence-grounded AI analysis.</p>
+            <p class="text-muted small mb-0">
+                Court records, case orders and evidence-grounded AI analysis.
+                @if (hasReport)
+                {
+                    <span>Data retrieved @Ist.Format(lake.AuthoritativeSnapshot!.RetrievedUtc).</span>
+                }
+            </p>
         </div>
-        <div class="d-flex align-items-center gap-2">
-            @if (lake.AuthoritativeSnapshot is not null)
+        <div class="d-flex flex-wrap align-items-center gap-2">
+            @if (hasReport)
             {
-                <a href="/Requests/@Model.Request.RequestId/Litigation/Report/pdf" class="btn btn-sm btn-outline-danger" title="Download standalone litigation due diligence report (PDF)">
-                    <i class="bi bi-file-earmark-pdf me-1"></i>Litigation Report (PDF)
-                </a>
-                <a href="/Requests/@Model.Request.RequestId/Litigation/Report/csv" class="btn btn-sm btn-outline-success" title="Export case register with order availability and AI analysis (CSV)">
-                    <i class="bi bi-file-earmark-spreadsheet me-1"></i>Cases Export (CSV)
-                </a>
-                <a href="/Requests/@Model.Request.RequestId/Litigation/OrdersZip" class="btn btn-sm btn-outline-secondary" title="Download all retained order PDFs as a ZIP archive">
+                <div class="btn-group btn-group-sm" role="group" aria-label="Report before AI analysis">
+                    <a href="/Requests/@reqId/Litigation/Report/pdf" class="btn btn-outline-danger" title="Case data only, no AI analysis"><i class="bi bi-file-earmark-pdf me-1"></i>Report (PDF)</a>
+                    <a href="/Requests/@reqId/Litigation/Report/csv" class="btn btn-outline-success" title="Case register only, no AI analysis"><i class="bi bi-file-earmark-spreadsheet me-1"></i>Report (CSV)</a>
+                </div>
+                @if (lake.HasCompletedAnalysis)
+                {
+                    <div class="btn-group btn-group-sm" role="group" aria-label="Report with AI analysis">
+                        <a href="/Requests/@reqId/Litigation/Report/pdf?withAnalysis=true" class="btn btn-outline-danger" title="Includes the AI analysis"><i class="bi bi-stars me-1"></i>With AI (PDF)</a>
+                        <a href="/Requests/@reqId/Litigation/Report/csv?withAnalysis=true" class="btn btn-outline-success" title="Includes the AI analysis"><i class="bi bi-stars me-1"></i>With AI (CSV)</a>
+                    </div>
+                }
+                <a href="/Requests/@reqId/Litigation/OrdersZip" class="btn btn-sm btn-outline-secondary" title="Download all retained order PDFs as a ZIP archive">
                     <i class="bi bi-file-earmark-zip me-1"></i>All Orders (ZIP)
                 </a>
-            }
-            <form method="post" action="/Requests/@Model.Request.RequestId/Litigation/Search" class="d-inline">
-                @Html.AntiForgeryToken()
-                <button type="submit" class="btn btn-sm btn-primary">
-                    <i class="bi bi-arrow-repeat me-1"></i>@(lake.SearchJob == null ? "Run Litigation Search" : "Rerun / Refresh Search")
+                <button type="button" id="litigation-run-analysis" class="btn btn-sm btn-primary"
+                        disabled="@(lake.AnalysisInProgress || !lake.NeedsAnalysis || searchRunning)"
+                        title="@(lake.AnalysisInProgress ? "Analysis is running" : !lake.NeedsAnalysis ? "All cases are already analysed and nothing has changed" : "Run evidence-grounded AI analysis on new or changed cases")">
+                    <i class="bi bi-stars me-1"></i>@(lake.AnalysisInProgress ? "Analysing…" : lake.HasCompletedAnalysis ? "Re-run AI Analysis" : "Run AI Analysis")
                 </button>
-            </form>
+            }
+            @if (lake.SearchJob is not null || hasReport)
+            {
+                <form method="post" action="/Requests/@reqId/Litigation/Search" class="d-inline"
+                      onsubmit="return confirm('Refresh litigation data? This uses one of your @lake.Refresh.Max refreshes.');">
+                    @Html.AntiForgeryToken()
+                    <button type="submit" class="btn btn-sm btn-outline-primary" disabled="@(searchRunning || refreshBlocked)"
+                            title="@(refreshBlocked ? lake.Refresh.Reason : $"Fetch fresh court records. {lake.Refresh.Remaining} of {lake.Refresh.Max} refreshes left.")">
+                        <i class="bi bi-arrow-repeat me-1"></i>Refresh data
+                    </button>
+                </form>
+            }
         </div>
     </div>
+    @if (isRefresh)
+    {
+        <p class="small text-muted mb-3" id="litigation-refresh-note">
+            <i class="bi bi-arrow-repeat me-1"></i>@lake.Refresh.Remaining of @lake.Refresh.Max refreshes remaining.
+            @if (lake.Refresh.Remaining > 0)
+            {
+                @if (lake.Refresh.NextAllowedUtc is { } nextAt && nextAt > DateTime.UtcNow)
+                {
+                    <span>Next refresh available @Ist.Date(nextAt).</span>
+                }
+                else
+                {
+                    <span>You can refresh now; refreshes must be at least @lake.RefreshIntervalDays days apart.</span>
+                }
+            }
+        </p>
+    }
+    <div id="litigation-action-message" class="alert alert-secondary py-2 px-3 small d-none" role="status"></div>
 
     <!-- Search Status / Attempt Banners -->
     @if (lake.SearchJob is null)
@@ -292,9 +162,9 @@ else if (lake is not null)
         <div class="alert alert-info d-flex align-items-center justify-content-between p-3 mb-4">
             <div>
                 <i class="bi bi-info-circle-fill me-2"></i>
-                <span>No litigation search has been performed for this request yet.</span>
+                <span>The litigation search for this request has not started yet. It begins automatically once the request is ready; you can also start it now.</span>
             </div>
-            <form method="post" action="/Requests/@Model.Request.RequestId/Litigation/Search">
+            <form method="post" action="/Requests/@reqId/Litigation/Search">
                 @Html.AntiForgeryToken()
                 <button type="submit" class="btn btn-sm btn-primary">Run Search Now</button>
             </form>
@@ -518,7 +388,7 @@ else if (lake is not null)
 
             <div class="small text-muted border-top pt-2 mt-2">
                 <i class="bi bi-info-circle me-1"></i>
-                <strong>Vendor Order Retrieval Notice:</strong> Expired order URLs cannot be individually refreshed under the BPR API contract. To request renewed order download URLs from the vendor, trigger a full litigation search rerun.
+                <strong>Order availability:</strong> Some court orders can only be downloaded for a limited time after each search. Orders marked expired are renewed when you refresh the litigation data.
             </div>
         </div>
     </div>
@@ -556,6 +426,84 @@ else if (lake is not null)
         </div>
     }
 
+}
+@if (lake?.AuthoritativeSnapshot is null)
+{
+    <!-- Workbook summary: shown until live court records are available. Confirmed matches only. -->
+    @if (Model.LitigationCount == 0)
+    {
+        <div class="mca-empty"><i class="bi bi-bank"></i><p>@Model.SheetCoverage.EmptyState("No litigation was matched to this entity.", SheetAliases.LegalHistory)</p></div>
+    }
+    else
+    {
+        <div class="mca-highlight-grid">
+            <div class="pi-metric">
+                <span>Total Litigations</span>
+                <strong>@confirmed.Count</strong>
+                <small>confirmed matches only</small>
+            </div>
+            <div class="pi-metric">
+                <span>Confirmed Cases</span>
+                <strong>@confirmed.Count</strong>
+                <small>@confirmed.Count(IsPendingRow) pending · @confirmed.Count(l => !IsPendingRow(l)) disposed</small>
+            </div>
+            <div class="pi-metric">
+                <span>Filed Against Company</span>
+                <strong>@Model.LitigationFiledAgainstCount</strong>
+                <small>from Phase 3 rule attribution</small>
+            </div>
+            <div class="pi-metric">
+                <span>Filed By Company</span>
+                <strong>@Model.LitigationFiledByCount</strong>
+                <small>company as petitioner</small>
+            </div>
+        </div>
+    }
+
+    @await Html.PartialAsync("~/Views/Requests/Details/_KeyIndicators.cshtml", Model.KeyMetrics.Where(g => g.Title == "Legal history").ToList())
+
+    @if (workbookCats.Count > 0)
+    {
+        <div class="mca-section" style="margin-top:22px;">
+            <h4>By Category</h4>
+            <div class="pi-table-wrap">
+                <table class="pi-results-table">
+                    <thead>
+                        <tr>
+                            <th>Category</th>
+                            <th class="text-end">Total Cases</th>
+                            <th class="text-end">Pending</th>
+                            <th class="text-end">Disposed</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                    @foreach (var g in workbookCats)
+                    {
+                        var pending = g.Count(IsPendingRow);
+                        <tr>
+                            <td><strong>@g.Key</strong></td>
+                            <td class="text-end">@g.Count()</td>
+                            <td class="text-end">@pending</td>
+                            <td class="text-end">@(g.Count() - pending)</td>
+                        </tr>
+                    }
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    }
+}
+</section>
+
+<section class="mca-contents-section" id="sec-litigation-cases" aria-labelledby="head-litigation-cases" tabindex="-1">
+<h3 class="visually-hidden" id="head-litigation-cases">Cases</h3>
+@if (showWorkbookFallback)
+{
+    <p class="text-muted small">Confirmed cases reported in the ingested MCA workbook. Live court records appear here once the litigation search completes.</p>
+    RenderCasesTable(confirmed);
+}
+@if (lake is not null)
+{
     <!-- Filter Bar & Case Cards Container -->
     <div class="card mb-4 shadow-sm border">
         <div class="card-header bg-light py-2 px-3 d-flex flex-wrap justify-content-between align-items-center gap-2">
@@ -629,6 +577,47 @@ else if (lake is not null)
             }
         </div>
     </div>
+}
+
+</section>
+
+@if (lake is not null)
+{
+    <script>
+        (function () {
+            var reqId = @reqIdJs;
+            var btn = document.getElementById('litigation-run-analysis');
+            var msg = document.getElementById('litigation-action-message');
+            function say(text) { if (!msg) return; msg.textContent = text; msg.classList.remove('d-none'); }
+            function poll() {
+                var t = setInterval(function () {
+                    fetch('/Requests/' + reqId + '/Litigation/Analysis', { headers: { 'Accept': 'application/json' } })
+                        .then(function (r) { return r.ok ? r.json() : null; })
+                        .then(function (d) {
+                            if (d && d.status !== 'Pending' && d.status !== 'InProgress') { clearInterval(t); location.reload(); }
+                        }).catch(function () { });
+                }, 4000);
+            }
+            if (btn) {
+                btn.addEventListener('click', function () {
+                    btn.disabled = true;
+                    say('Starting AI analysis…');
+                    fetch('/Requests/' + reqId + '/Litigation/Analysis', { method: 'POST', headers: { 'Accept': 'application/json' } })
+                        .then(function (r) { return r.json().catch(function () { return {}; }).then(function (b) { return { ok: r.ok, body: b }; }); })
+                        .then(function (res) {
+                            if (!res.ok) { say(res.body.error || 'AI analysis could not be started.'); return; }
+                            say('AI analysis is running. This page will update when it finishes.');
+                            btn.innerHTML = '<i class="bi bi-stars me-1"></i>Analysing…';
+                            poll();
+                        }).catch(function () { btn.disabled = false; say('AI analysis could not be started.'); });
+                });
+                @if (lake.AnalysisInProgress)
+                {
+                    <text>say('AI analysis is running. This page will update when it finishes.'); poll();</text>
+                }
+            }
+        })();
+    </script>
 }
 
 <!-- Shared Financial Disputes Section -->

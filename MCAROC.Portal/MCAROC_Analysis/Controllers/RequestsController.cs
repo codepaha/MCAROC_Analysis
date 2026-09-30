@@ -35,7 +35,9 @@ public class RequestsController(
     IWorkbookDerivativeService? derivativeService = null,
     MCAROC_Analysis.Services.Documents.ISignedDownloadTokenService? tokenService = null,
     IAnalystRequestAccessService? analystAccess = null,
-    MCAROC_Analysis.Services.Pipeline.PipelineAdopter? pipelineAdopter = null) : Controller
+    MCAROC_Analysis.Services.Pipeline.PipelineAdopter? pipelineAdopter = null,
+    Microsoft.Extensions.Options.IOptions<BprLitigationOptions>? bprOptions = null,
+    LitigationAiAnalysisOrchestrator? litigationAnalysis = null) : Controller
 {
     [HttpGet("/Requests")]
     public async Task<IActionResult> Index([FromQuery] RequestListFilterCriteria filters)
@@ -644,16 +646,25 @@ public class RequestsController(
                 .ToListAsync();
         }
 
-        var isReviewer = await CheckIsInternalReviewerAsync();
-        if (isReviewer)
+        // Live court records, orders, AI analysis and reports are client-facing: every signed-in portal user
+        // sees them. Access to the request itself is enforced upstream (portal login + request boundary).
         {
             var litVm = new LitigationTabViewModel
             {
                 Request = request,
-                IsReviewer = true,
                 CurrentPage = Math.Max(1, page),
                 PageSize = 25
             };
+            var litCt = HttpContext?.RequestAborted ?? CancellationToken.None;
+            var bprOpts = bprOptions?.Value ?? new BprLitigationOptions();
+            litVm.Refresh = await LitigationRefreshPolicy.GetAsync(db, id, bprOpts, DateTime.UtcNow, litCt);
+            litVm.HasCompletedAnalysis = await db.LitigationAiAnalysisRuns.AsNoTracking().AnyAsync(r => r.RequestId == id
+                && (r.Status == LitigationAiAnalysisRunStatus.Completed || r.Status == LitigationAiAnalysisRunStatus.CompletedWithErrors));
+            litVm.AnalysisInProgress = await db.LitigationAiAnalysisRuns.AsNoTracking().AnyAsync(r => r.RequestId == id
+                && (r.Status == LitigationAiAnalysisRunStatus.Pending || r.Status == LitigationAiAnalysisRunStatus.InProgress));
+            litVm.NeedsAnalysis = !litVm.AnalysisInProgress && litigationAnalysis is not null
+                && await litigationAnalysis.NeedsAnalysisAsync(id, litCt);
+            litVm.RefreshIntervalDays = bprOpts.RefreshIntervalDays;
 
             var job = await db.LitigationSearchJobs.AsNoTracking().FirstOrDefaultAsync(j => j.RequestId == id);
             litVm.SearchJob = job;
@@ -1106,14 +1117,6 @@ public class RequestsController(
             }
 
             vm.LitigationDataLake = litVm;
-        }
-        else
-        {
-            vm.LitigationDataLake = new LitigationTabViewModel
-            {
-                Request = request,
-                IsReviewer = false
-            };
         }
 
         return View(vm);

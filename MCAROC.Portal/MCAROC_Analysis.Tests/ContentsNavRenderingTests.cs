@@ -274,9 +274,9 @@ public class ContentsNavRenderingTests
 
         // Jump links for all 5 canonical sections
         Assert.Contains("href=\"#sec-litigation-summary\"", html);
-        Assert.Contains("href=\"#sec-litigation-confirmed\"", html);
-        Assert.Contains("href=\"#sec-litigation-probable\"", html);
-        Assert.Contains("href=\"#sec-litigation-unverified\"", html);
+        Assert.Contains("href=\"#sec-litigation-cases\"", html);
+        Assert.DoesNotContain("sec-litigation-probable", html);
+        Assert.DoesNotContain("sec-litigation-unverified", html);
         Assert.Contains("href=\"#sec-litigation-financial-disputes\"", html);
 
         // Stacked continuous sections
@@ -284,17 +284,9 @@ public class ContentsNavRenderingTests
         Assert.Contains("aria-labelledby=\"head-litigation-summary\"", html);
         Assert.Contains("id=\"head-litigation-summary\">Summary</h3>", html);
 
-        Assert.Contains("id=\"sec-litigation-confirmed\"", html);
-        Assert.Contains("aria-labelledby=\"head-litigation-confirmed\"", html);
-        Assert.Contains("id=\"head-litigation-confirmed\">Confirmed Cases</h3>", html);
-
-        Assert.Contains("id=\"sec-litigation-probable\"", html);
-        Assert.Contains("aria-labelledby=\"head-litigation-probable\"", html);
-        Assert.Contains("id=\"head-litigation-probable\">Probable Cases</h3>", html);
-
-        Assert.Contains("id=\"sec-litigation-unverified\"", html);
-        Assert.Contains("aria-labelledby=\"head-litigation-unverified\"", html);
-        Assert.Contains("id=\"head-litigation-unverified\">Unverified Cases</h3>", html);
+        Assert.Contains("id=\"sec-litigation-cases\"", html);
+        Assert.Contains("aria-labelledby=\"head-litigation-cases\"", html);
+        Assert.Contains("id=\"head-litigation-cases\">Cases</h3>", html);
 
         // Exact plural: sec-litigation-financial-disputes
         Assert.Contains("id=\"sec-litigation-financial-disputes\"", html);

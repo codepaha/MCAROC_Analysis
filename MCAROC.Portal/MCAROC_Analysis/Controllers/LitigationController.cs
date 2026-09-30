@@ -25,7 +25,6 @@ public class LitigationController(
     /// deliberately lifecycle metadata; completed case/portfolio output is read from the persisted endpoint.
     /// This keeps the paid call asynchronous and prevents a browser refresh from issuing a second request.</summary>
     [HttpPost("/Requests/{id:long}/Litigation/Analysis")]
-    [Authorize(AuthenticationSchemes = "InternalReviewer")]
     public async Task<IActionResult> StartAnalysis(long id, CancellationToken ct)
     {
         var clientId = await db.Requests.Where(r => r.RequestId == id).Select(r => (long?)r.ClientId).FirstOrDefaultAsync(ct);
@@ -39,7 +38,6 @@ public class LitigationController(
     /// <summary>Returns a render-ready projection made entirely from persisted auditable records. Pending and
     /// failed states remain visible rather than being replaced by a made-up conclusion.</summary>
     [HttpGet("/Requests/{id:long}/Litigation/Analysis")]
-    [Authorize(AuthenticationSchemes = "InternalReviewer")]
     public async Task<IActionResult> GetAnalysis(long id, CancellationToken ct)
     {
         if (!await db.Requests.AnyAsync(r => r.RequestId == id, ct)) return NotFound();
@@ -59,7 +57,6 @@ public class LitigationController(
     /// <summary>Starts or reruns a BPR litigation search for the request. Evaluates fail-closed eligibility
     /// before queuing the job.</summary>
     [HttpPost("/Requests/{id:long}/Litigation/Search")]
-    [Authorize(AuthenticationSchemes = "InternalReviewer")]
     [ValidateAntiForgeryToken]
     public async Task<IActionResult> StartSearch(long id, CancellationToken ct)
     {
@@ -69,6 +66,22 @@ public class LitigationController(
         var (plan, problem) = await LitigationStartService.PlanSearchAsync(db, request, _opts, ct);
         if (plan is null)
             return BadRequest(problem);
+
+        // The first search, or a retry of one that never produced a report, is free. Once a report exists,
+        // another search is a refresh: capped in number and spaced apart.
+        var hasReport = await db.LitigationReportSnapshots.AsNoTracking()
+            .AnyAsync(s => s.SearchJob!.RequestId == id && s.Status == LitigationReportSnapshotStatus.Completed, ct);
+        if (hasReport)
+        {
+            var refresh = await LitigationRefreshPolicy.GetAsync(db, id, _opts, DateTime.UtcNow, ct);
+            if (!refresh.Allowed)
+            {
+                if (Request.Headers.Accept.ToString().Contains("application/json"))
+                    return Conflict(new { error = refresh.Reason });
+                TempData["LitigationSearchError"] = refresh.Reason;
+                return Redirect($"/Requests/{id}#tab-litigation");
+            }
+        }
 
         try
         {
@@ -99,7 +112,6 @@ public class LitigationController(
     /// <summary>Returns the current search job and snapshot import lifecycle state for live client polling.
     /// Responds with no-store to prevent proxy caching.</summary>
     [HttpGet("/Requests/{id:long}/Litigation/Status")]
-    [Authorize(AuthenticationSchemes = "InternalReviewer")]
     [ResponseCache(NoStore = true, Location = ResponseCacheLocation.None)]
     public async Task<IActionResult> GetSearchStatus(long id, CancellationToken ct)
     {
@@ -163,7 +175,6 @@ public class LitigationController(
     /// <summary>Safely streams one downloaded litigation order PDF. Validates internal reviewer authentication,
     /// canonical directory path, and physical file existence.</summary>
     [HttpGet("/Requests/{id:long}/Litigation/Orders/{documentId:long}/download")]
-    [Authorize(AuthenticationSchemes = "InternalReviewer")]
     public async Task<IActionResult> DownloadOrderDocument(long id, long documentId, CancellationToken ct)
     {
         var doc = await db.LitigationOrderDocuments
@@ -211,7 +222,6 @@ public class LitigationController(
     }
 
     [HttpGet("/Requests/{id:long}/Litigation/OrdersZip")]
-    [Authorize(AuthenticationSchemes = "InternalReviewer")]
     public async Task<IActionResult> DownloadOrdersZip(long id, CancellationToken ct)
     {
         var request = await db.Requests.Where(r => r.RequestId == id)
@@ -285,16 +295,17 @@ public class LitigationController(
 
     /// <summary>Generates and downloads the standalone litigation due diligence PDF report.</summary>
     [HttpGet("/Requests/{id:long}/Litigation/Report/pdf")]
-    [Authorize(AuthenticationSchemes = "InternalReviewer")]
-    public async Task<IActionResult> DownloadPdfReport(long id, [FromServices] LitigationReportAssembler assembler, CancellationToken ct)
+    public async Task<IActionResult> DownloadPdfReport(long id, [FromServices] LitigationReportAssembler assembler, CancellationToken ct, [FromQuery] bool withAnalysis = false)
     {
-        var report = await assembler.AssembleAsync(id, ct);
+        if (withAnalysis && !await HasCompletedAnalysisAsync(id, ct))
+            return NotFound("No completed AI analysis is available for this request yet.");
+        var report = await assembler.AssembleAsync(id, ct, includeAnalysis: withAnalysis);
         if (report is null)
             return NotFound("No completed litigation snapshot is available for this request.");
 
         var pdfBytes = LitigationReportArtifacts.RenderPdf(report);
         var safeCompany = AutoFetchArchiveBuilder.CompanyToken(report.CompanyName);
-        var fileName = $"LitigationReport_{safeCompany}_{id}.pdf";
+        var fileName = $"LitigationReport_{(withAnalysis ? "WithAnalysis" : "PreAnalysis")}_{safeCompany}_{id}.pdf";
 
         Response.Headers["Referrer-Policy"] = "no-referrer";
         Response.Headers.CacheControl = "no-store, private";
@@ -308,16 +319,17 @@ public class LitigationController(
 
     /// <summary>Generates and downloads the standalone litigation case register CSV export.</summary>
     [HttpGet("/Requests/{id:long}/Litigation/Report/csv")]
-    [Authorize(AuthenticationSchemes = "InternalReviewer")]
-    public async Task<IActionResult> DownloadCsvReport(long id, [FromServices] LitigationReportAssembler assembler, CancellationToken ct)
+    public async Task<IActionResult> DownloadCsvReport(long id, [FromServices] LitigationReportAssembler assembler, CancellationToken ct, [FromQuery] bool withAnalysis = false)
     {
-        var report = await assembler.AssembleAsync(id, ct);
+        if (withAnalysis && !await HasCompletedAnalysisAsync(id, ct))
+            return NotFound("No completed AI analysis is available for this request yet.");
+        var report = await assembler.AssembleAsync(id, ct, includeAnalysis: withAnalysis);
         if (report is null)
             return NotFound("No completed litigation snapshot is available for this request.");
 
         var csvBytes = LitigationReportArtifacts.RenderCsv(report);
         var safeCompany = AutoFetchArchiveBuilder.CompanyToken(report.CompanyName);
-        var fileName = $"LitigationReport_{safeCompany}_{id}.csv";
+        var fileName = $"LitigationReport_{(withAnalysis ? "WithAnalysis" : "PreAnalysis")}_{safeCompany}_{id}.csv";
 
         Response.Headers["Referrer-Policy"] = "no-referrer";
         Response.Headers.CacheControl = "no-store, private";
@@ -328,6 +340,10 @@ public class LitigationController(
 
         return File(csvBytes, "text/csv; charset=utf-8");
     }
+
+    private Task<bool> HasCompletedAnalysisAsync(long id, CancellationToken ct) =>
+        db.LitigationAiAnalysisRuns.AsNoTracking().AnyAsync(r => r.RequestId == id
+            && (r.Status == LitigationAiAnalysisRunStatus.Completed || r.Status == LitigationAiAnalysisRunStatus.CompletedWithErrors), ct);
 
     private static void TryDelete(string path)
     {

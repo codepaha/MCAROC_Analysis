@@ -19,7 +19,8 @@ public class LitigationReportAssembler(
     AppDbContext db,
     ILogger<LitigationReportAssembler>? logger = null)
 {
-    public async Task<StandaloneLitigationReport?> AssembleAsync(long requestId, CancellationToken ct = default)
+    /// <param name="includeAnalysis">False produces the pre-analysis report: case data only, no AI output.</param>
+    public async Task<StandaloneLitigationReport?> AssembleAsync(long requestId, CancellationToken ct = default, bool includeAnalysis = true)
     {
         var asOfUtc = DateTime.UtcNow;
         var generatedAtUtc = new DateTimeOffset(asOfUtc);
@@ -124,7 +125,7 @@ public class LitigationReportAssembler(
             .ToDictionary(g => g.Key, g => g.ToList());
 
         // AI Analysis (stable LitigationCaseId join)
-        var latestAiRun = await db.LitigationAiAnalysisRuns
+        var latestAiRun = !includeAnalysis ? null : await db.LitigationAiAnalysisRuns
             .AsNoTracking()
             .Where(r => r.RequestId == requestId && (r.Status == LitigationAiAnalysisRunStatus.Completed || r.Status == LitigationAiAnalysisRunStatus.CompletedWithErrors))
             .OrderByDescending(r => r.RunNumber)

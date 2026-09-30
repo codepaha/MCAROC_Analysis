@@ -177,7 +177,13 @@ public sealed class LitigationTabViewModel
     public int PageSize { get; set; } = 25;
 
     public LitigationPortfolioAiAnalysisViewModel? PortfolioAnalysis { get; set; }
-    public bool IsReviewer { get; set; }
+
+    public LitigationRefreshState Refresh { get; set; } = new(false, 0, 0, null, null, true, null);
+    public int RefreshIntervalDays { get; set; }
+    public bool HasCompletedAnalysis { get; set; }
+    public bool AnalysisInProgress { get; set; }
+    /// <summary>True only when a run would analyse something new — a case or order evidence not yet on file.</summary>
+    public bool NeedsAnalysis { get; set; }
 }
 
 public sealed class LitigationCourtSummaryGrid

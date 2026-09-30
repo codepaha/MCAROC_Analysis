@@ -71,20 +71,81 @@ public sealed class LitigationAiAnalysisOrchestrator(AppDbContext db, ILitigatio
             var cases = await db.LitigationCases.Where(x => x.RequestId == requestId).ToListAsync(ct);
             var chunks = await db.LitigationOrderChunks.Where(x => x.RequestId == requestId).ToListAsync(ct);
             var present = await db.LitigationCaseAiAnalyses.Where(x => x.LitigationAiAnalysisRunId == runId).Select(x => x.LitigationCaseId).ToHashSetAsync(ct);
-            var additions = new List<LitigationCaseAiAnalysis>();
-            foreach (var c in cases.Where(x => !present.Contains(x.LitigationCaseId))) additions.Add(await AnalyzeCaseAsync(runId, token, c, chunks.Where(x => x.LitigationCaseId == c.LitigationCaseId), ct));
+            // A case whose evidence is byte-identical to one already analysed is never sent to the model again:
+            // its earlier result is carried into this run. Only new or changed cases cost an AI call.
+            var prior = await LoadPriorAsync(requestId, runId, ct);
+            var additions = new List<LitigationCaseAiAnalysis>(); var reused = 0;
+            foreach (var c in cases.Where(x => !present.Contains(x.LitigationCaseId)))
+            {
+                var item = await AnalyzeCaseAsync(runId, token, c, chunks.Where(x => x.LitigationCaseId == c.LitigationCaseId), prior.GetValueOrDefault(c.LitigationCaseId), ct);
+                if (item.ReusedFromAnalysis) reused++;
+                additions.Add(item.Row);
+            }
             await PublishCasesAsync(runId, token, additions, ct);
             var persisted = await db.LitigationCaseAiAnalyses.Where(x => x.LitigationAiAnalysisRunId == runId).OrderBy(x => x.LitigationCaseAiAnalysisId).ToListAsync(ct);
-            if (!await db.LitigationPortfolioAiAnalyses.AnyAsync(x => x.LitigationAiAnalysisRunId == runId, ct)) await PublishPortfolioAsync(runId, token, persisted, ct);
+            if (!await db.LitigationPortfolioAiAnalyses.AnyAsync(x => x.LitigationAiAnalysisRunId == runId, ct))
+            {
+                LitigationPortfolioAiAnalysis? priorPortfolio = null;
+                if (reused == additions.Count && additions.Count > 0)
+                    priorPortfolio = await db.LitigationPortfolioAiAnalyses.AsNoTracking()
+                        .Where(p => p.LitigationAiAnalysisRunId != runId && p.Status == LitigationAiAnalysisItemStatus.Completed
+                            && db.LitigationAiAnalysisRuns.Any(r => r.LitigationAiAnalysisRunId == p.LitigationAiAnalysisRunId && r.RequestId == requestId))
+                        .OrderByDescending(p => p.LitigationPortfolioAiAnalysisId).FirstOrDefaultAsync(ct);
+                await PublishPortfolioAsync(runId, token, persisted, priorPortfolio, ct);
+            }
             await CompleteAsync(runId, token, ct);
         }
         catch (LeaseLostException) { logger.LogInformation("Litigation analysis {RunId} lease lost; no stale publication permitted.", runId); }
         catch (Exception ex) { await FailOrRetryAsync(runId, token, ex, ct); }
     }
 
-    private async Task<LitigationCaseAiAnalysis> AnalyzeCaseAsync(long runId, Guid token, LitigationCase c, IEnumerable<LitigationOrderChunk> chunks, CancellationToken ct)
+    private async Task<Dictionary<long, List<LitigationCaseAiAnalysis>>> LoadPriorAsync(long requestId, long excludeRunId, CancellationToken ct) =>
+        (await db.LitigationCaseAiAnalyses.AsNoTracking()
+                .Where(x => x.LitigationAiAnalysisRunId != excludeRunId && x.CompletedUtc != null
+                    && (x.Status == LitigationAiAnalysisItemStatus.Completed || x.Status == LitigationAiAnalysisItemStatus.InsufficientEvidence)
+                    && db.LitigationCases.Any(c => c.LitigationCaseId == x.LitigationCaseId && c.RequestId == requestId))
+                .ToListAsync(ct))
+            .GroupBy(x => x.LitigationCaseId).ToDictionary(g => g.Key, g => g.OrderByDescending(x => x.LitigationCaseAiAnalysisId).ToList());
+
+    /// <summary>True when the request has cases and every one is already analysed for its current evidence.</summary>
+    public async Task<bool> IsUpToDateAsync(long requestId, CancellationToken ct) =>
+        await db.LitigationCases.AsNoTracking().AnyAsync(x => x.RequestId == requestId, ct) && !await NeedsAnalysisAsync(requestId, ct);
+
+    /// <summary>False when starting a run would only repeat work already done: every case's evidence matches an
+    /// analysis already on file and a portfolio synthesis exists. Lets the start path refuse without spending.</summary>
+    public async Task<bool> NeedsAnalysisAsync(long requestId, CancellationToken ct)
+    {
+        var cases = await db.LitigationCases.AsNoTracking().Where(x => x.RequestId == requestId).ToListAsync(ct);
+        if (cases.Count == 0) return false;
+        var hasPortfolio = await db.LitigationPortfolioAiAnalyses.AsNoTracking().AnyAsync(p => p.Status == LitigationAiAnalysisItemStatus.Completed
+            && db.LitigationAiAnalysisRuns.Any(r => r.LitigationAiAnalysisRunId == p.LitigationAiAnalysisRunId && r.RequestId == requestId), ct);
+        if (!hasPortfolio) return true;
+        var chunks = await db.LitigationOrderChunks.AsNoTracking().Where(x => x.RequestId == requestId).ToListAsync(ct);
+        var prior = await LoadPriorAsync(requestId, 0, ct);
+        foreach (var c in cases)
+        {
+            var evidence = LitigationAnalysisPromptBuilder.BuildCaseEvidence(c, chunks.Where(x => x.LitigationCaseId == c.LitigationCaseId));
+            var json = LitigationAnalysisPromptBuilder.SerializeEvidence(evidence);
+            var hash = LitigationAnalysisPromptBuilder.ComputeHash(json);
+            var promptHash = LitigationAnalysisPromptBuilder.ComputeHash(LitigationAnalysisPromptBuilder.BuildCasePrompt(evidence));
+            if (!(prior.GetValueOrDefault(c.LitigationCaseId)?.Any(p => p.EvidenceHash == hash && p.PromptHash == promptHash) ?? false)) return true;
+        }
+        return false;
+    }
+
+    private async Task<(LitigationCaseAiAnalysis Row, bool ReusedFromAnalysis)> AnalyzeCaseAsync(long runId, Guid token, LitigationCase c, IEnumerable<LitigationOrderChunk> chunks, List<LitigationCaseAiAnalysis>? priorForCase, CancellationToken ct)
     {
         var evidence = LitigationAnalysisPromptBuilder.BuildCaseEvidence(c, chunks); var json = LitigationAnalysisPromptBuilder.SerializeEvidence(evidence); var prompt = LitigationAnalysisPromptBuilder.BuildCasePrompt(evidence);
+        var hash = LitigationAnalysisPromptBuilder.ComputeHash(json);
+        var promptHash = LitigationAnalysisPromptBuilder.ComputeHash(prompt);
+        if (priorForCase?.FirstOrDefault(p => p.EvidenceHash == hash && p.PromptHash == promptHash) is { } same)
+            return (new LitigationCaseAiAnalysis { LitigationAiAnalysisRunId = runId, LitigationCaseId = c.LitigationCaseId, EvidenceJson = json, EvidenceHash = hash, PromptHash = promptHash,
+                RawResponseJson = same.RawResponseJson, ResponseHash = same.ResponseHash, Status = same.Status, AnalysisJson = same.AnalysisJson, CompletedUtc = DateTime.UtcNow }, true);
+        return (await AnalyzeCaseFreshAsync(runId, token, c, evidence, json, prompt, ct), false);
+    }
+
+    private async Task<LitigationCaseAiAnalysis> AnalyzeCaseFreshAsync(long runId, Guid token, LitigationCase c, LitigationAnalysisEvidence evidence, string json, string prompt, CancellationToken ct)
+    {
         var item = new LitigationCaseAiAnalysis { LitigationAiAnalysisRunId = runId, LitigationCaseId = c.LitigationCaseId, EvidenceJson = json, EvidenceHash = LitigationAnalysisPromptBuilder.ComputeHash(json), PromptHash = LitigationAnalysisPromptBuilder.ComputeHash(prompt) };
         if (evidence.Excerpts.Count == 0) { item.Status = LitigationAiAnalysisItemStatus.InsufficientEvidence; item.AnalysisJson = "{\"status\":\"InsufficientEvidence\",\"summary\":\"No retained order text is available.\",\"unknowns\":[\"Order text unavailable\"],\"evidenceReferences\":[]}"; item.CompletedUtc = DateTime.UtcNow; return item; }
         await RenewAsync(runId, token, ct); var response = await client.CallAsync(prompt, options.Value.TimeoutSeconds, ct); await RenewAsync(runId, token, ct);
@@ -103,12 +164,17 @@ public sealed class LitigationAiAnalysisOrchestrator(AppDbContext db, ILitigatio
         var present = await db.LitigationCaseAiAnalyses.Where(x => x.LitigationAiAnalysisRunId == id).Select(x => x.LitigationCaseId).ToHashSetAsync(ct);
         db.LitigationCaseAiAnalyses.AddRange(rows.Where(x => !present.Contains(x.LitigationCaseId))); await db.SaveChangesAsync(ct); await RenewAsync(id, token, ct); await tx.CommitAsync(ct);
     }
-    private async Task PublishPortfolioAsync(long id, Guid token, List<LitigationCaseAiAnalysis> rows, CancellationToken ct)
+    private async Task PublishPortfolioAsync(long id, Guid token, List<LitigationCaseAiAnalysis> rows, LitigationPortfolioAiAnalysis? reusable, CancellationToken ct)
     {
         var evidence = JsonSerializer.Serialize(rows.Select(x => new { x.LitigationCaseAiAnalysisId, x.LitigationCaseId, x.Status, x.AnalysisJson, x.EvidenceHash })); var prompt = LitigationAnalysisPromptBuilder.BuildPortfolioPrompt(evidence);
         var item = new LitigationPortfolioAiAnalysis { LitigationAiAnalysisRunId = id, EvidenceJson = evidence, EvidenceHash = LitigationAnalysisPromptBuilder.ComputeHash(evidence), PromptHash = LitigationAnalysisPromptBuilder.ComputeHash(prompt) };
         var usable = rows.Where(x => x.Status == LitigationAiAnalysisItemStatus.Completed).Select(x => x.LitigationCaseAiAnalysisId).ToHashSet();
-        if (usable.Count == 0) { item.Status = LitigationAiAnalysisItemStatus.InsufficientEvidence; item.AnalysisJson = "{\"status\":\"InsufficientEvidence\",\"summary\":\"No completed evidence-grounded case analysis is available for synthesis.\",\"unknowns\":[\"Case analyses unavailable\"],\"caseAnalysisIds\":[]}"; }
+        if (reusable is not null)
+        {
+            // Every case result was carried over unchanged, so the earlier portfolio synthesis still holds.
+            item.RawResponseJson = reusable.RawResponseJson; item.ResponseHash = reusable.ResponseHash; item.Status = reusable.Status; item.AnalysisJson = reusable.AnalysisJson;
+        }
+        else if (usable.Count == 0) { item.Status = LitigationAiAnalysisItemStatus.InsufficientEvidence; item.AnalysisJson = "{\"status\":\"InsufficientEvidence\",\"summary\":\"No completed evidence-grounded case analysis is available for synthesis.\",\"unknowns\":[\"Case analyses unavailable\"],\"caseAnalysisIds\":[]}"; }
         else { await RenewAsync(id, token, ct); var response = await client.CallAsync(prompt, options.Value.TimeoutSeconds, ct); await RenewAsync(id, token, ct); item.RawResponseJson = response.RawResponse; item.ResponseHash = string.IsNullOrWhiteSpace(response.RawResponse) ? null : LitigationAnalysisPromptBuilder.ComputeHash(response.RawResponse); var valid = response.Success ? LitigationAnalysisResponseValidator.ValidatePortfolio(response.RawResponse, usable) : LitigationAnalysisValidationResult.Rejected(response.FailureReason ?? "Portfolio AI call failed."); item.Status = valid.IsAccepted ? LitigationAiAnalysisItemStatus.Completed : LitigationAiAnalysisItemStatus.Failed; item.AnalysisJson = valid.AnalysisJson; item.FailureReason = valid.RejectReason; }
         item.CompletedUtc = DateTime.UtcNow; await using var tx = await db.Database.BeginTransactionAsync(ct); await RenewAsync(id, token, ct); if (!await db.LitigationPortfolioAiAnalyses.AnyAsync(x => x.LitigationAiAnalysisRunId == id, ct)) db.LitigationPortfolioAiAnalyses.Add(item); await db.SaveChangesAsync(ct); await RenewAsync(id, token, ct); await tx.CommitAsync(ct);
     }

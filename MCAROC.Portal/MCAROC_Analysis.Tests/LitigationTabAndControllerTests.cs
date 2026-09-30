@@ -198,24 +198,17 @@ public class LitigationTabAndControllerTests : IAsyncLifetime
     {
         var controllerType = typeof(LitigationController);
 
-        var startSearchMethod = controllerType.GetMethod("StartSearch");
-        Assert.NotNull(startSearchMethod);
-        var searchAuth = startSearchMethod.GetCustomAttribute<AuthorizeAttribute>();
-        Assert.NotNull(searchAuth);
-        Assert.Equal("InternalReviewer", searchAuth.AuthenticationSchemes);
-        Assert.NotNull(startSearchMethod.GetCustomAttribute<ValidateAntiForgeryTokenAttribute>());
+        // Litigation is client-facing: no endpoint may be pinned to the internal-reviewer scheme.
+        // Portal login still applies through the app's fallback authorization policy.
+        foreach (var name in new[] { "StartSearch", "GetSearchStatus", "DownloadOrderDocument", "DownloadOrdersZip", "DownloadPdfReport", "DownloadCsvReport", "StartAnalysis", "GetAnalysis" })
+        {
+            var method = controllerType.GetMethod(name);
+            Assert.NotNull(method);
+            Assert.DoesNotContain(method.GetCustomAttributes<AuthorizeAttribute>(), a => a.AuthenticationSchemes == "InternalReviewer");
+        }
 
-        var statusMethod = controllerType.GetMethod("GetSearchStatus");
-        Assert.NotNull(statusMethod);
-        var statusAuth = statusMethod.GetCustomAttribute<AuthorizeAttribute>();
-        Assert.NotNull(statusAuth);
-        Assert.Equal("InternalReviewer", statusAuth.AuthenticationSchemes);
-
-        var downloadMethod = controllerType.GetMethod("DownloadOrderDocument");
-        Assert.NotNull(downloadMethod);
-        var downloadAuth = downloadMethod.GetCustomAttribute<AuthorizeAttribute>();
-        Assert.NotNull(downloadAuth);
-        Assert.Equal("InternalReviewer", downloadAuth.AuthenticationSchemes);
+        // Search still mutates state and paid spend, so it keeps CSRF protection.
+        Assert.NotNull(controllerType.GetMethod("StartSearch")!.GetCustomAttribute<ValidateAntiForgeryTokenAttribute>());
     }
 
     [Fact]
@@ -413,7 +406,6 @@ public class LitigationTabAndControllerTests : IAsyncLifetime
 
         var lake = vm.LitigationDataLake;
         Assert.NotNull(lake);
-        Assert.True(lake.IsReviewer);
         Assert.True(lake.IsPriorRunDataShown);
         Assert.Equal(snapshot1.LitigationReportSnapshotId, lake.AuthoritativeSnapshot?.LitigationReportSnapshotId);
         Assert.False(lake.SourceCoverage.IsAuthoritativeCoverage);
@@ -904,38 +896,101 @@ public class LitigationTabAndControllerTests : IAsyncLifetime
         var viewResult = Assert.IsType<ViewResult>(result);
         var vm = Assert.IsType<RequestDetailsViewModel>(viewResult.Model);
         Assert.NotNull(vm.LitigationDataLake);
-        Assert.False(vm.LitigationDataLake.IsReviewer);
     }
 
-    // ── 9. Non-Reviewer Non-Leakage Rendering Test ───────────────────────────
+    // ── 9. Client-facing rendering: no reviewer gate ─────────────────────────
+
+    private static RequestDetailsViewModel ClientModel(LitigationTabViewModel lake, List<Litigation>? workbook = null) => new()
+    {
+        Request = new McaRequest { RequestId = 7, CompanyName = "Client View Co", RequestNumber = "REQ-CLIENT-1" },
+        Documents = [],
+        Litigations = workbook ?? [],
+        LitigationDataLake = lake
+    };
 
     [Fact]
-    public async Task RenderLitigationTab_NonReviewer_ShowsLoginPromptAndZeroDataLakeData()
+    public async Task RenderLitigationTab_Client_HasNoReviewerGate_AndPromptsSearchWhenNotStarted()
     {
-        var model = new RequestDetailsViewModel
+        var html = await RenderTabAsync(ClientModel(new LitigationTabViewModel { Request = new McaRequest { CompanyName = "Client View Co" } }));
+
+        Assert.DoesNotContain("/internal/login", html);
+        Assert.DoesNotContain("Internal Reviewer", html);
+        Assert.Contains("has not started yet", html);
+        Assert.DoesNotContain("sec-litigation-probable", html);
+        Assert.DoesNotContain("sec-litigation-unverified", html);
+    }
+
+    [Fact]
+    public async Task RenderLitigationTab_Client_ShowsBothReportVariants_AnalysisButtonAndRefreshAllowance()
+    {
+        var lake = new LitigationTabViewModel
         {
-            Request = new McaRequest { CompanyName = "Leakage Guard Co", RequestNumber = "REQ-LEAK-1" },
-            Documents = [],
-            Litigations = [],
-            LitigationDataLake = new LitigationTabViewModel
-            {
-                Request = new McaRequest { CompanyName = "Leakage Guard Co" },
-                IsReviewer = false
-            }
+            Request = new McaRequest { RequestId = 7, CompanyName = "Client View Co" },
+            SearchJob = new LitigationSearchJob { Status = LitigationSearchJobStatus.Completed },
+            AuthoritativeSnapshot = new LitigationReportSnapshot { RetrievedUtc = DateTime.UtcNow.AddDays(-3) },
+            HasCompletedAnalysis = true,
+            NeedsAnalysis = true,
+            RefreshIntervalDays = 15,
+            Refresh = LitigationRefreshPolicy.Evaluate(2, DateTime.UtcNow.AddDays(-3), DateTime.UtcNow, 3, 15)
         };
 
-        var html = await RenderTabAsync(model);
+        var html = await RenderTabAsync(ClientModel(lake));
 
-        // Shows internal login prompt
-        Assert.Contains("/internal/login", html);
-        Assert.Contains("Internal Reviewer Access Required", html);
+        Assert.Contains("/Requests/7/Litigation/Report/pdf\"", html);
+        Assert.Contains("/Requests/7/Litigation/Report/csv\"", html);
+        Assert.Contains("Report/pdf?withAnalysis=true", html);
+        Assert.Contains("Report/csv?withAnalysis=true", html);
+        Assert.Contains("litigation-run-analysis", html);
+        Assert.Contains("2 of 3 refreshes remaining", html.Replace("\r", "").Replace("\n", " ").Replace("  ", " "));
+        Assert.DoesNotContain("Internal Reviewer", html);
+    }
 
-        // Must NOT leak data lake sensitive elements
-        Assert.DoesNotContain("Court Summary Grid", html);
-        Assert.DoesNotContain("Evidence-Grounded AI Analysis", html);
-        Assert.DoesNotContain("CSP ID:", html);
-        Assert.DoesNotContain("/Litigation/Orders/", html);
-        Assert.DoesNotContain("Snapshot membership anchored", html);
+    [Fact]
+    public async Task RenderLitigationTab_Client_DisablesAnalysisWhenNothingNewToAnalyse()
+    {
+        var lake = new LitigationTabViewModel
+        {
+            Request = new McaRequest { RequestId = 7, CompanyName = "Client View Co" },
+            SearchJob = new LitigationSearchJob { Status = LitigationSearchJobStatus.Completed },
+            AuthoritativeSnapshot = new LitigationReportSnapshot { RetrievedUtc = DateTime.UtcNow },
+            HasCompletedAnalysis = true,
+            NeedsAnalysis = false
+        };
+
+        var html = await RenderTabAsync(ClientModel(lake));
+        var idx = html.IndexOf("litigation-run-analysis", StringComparison.Ordinal);
+        Assert.True(idx >= 0);
+        Assert.Contains("disabled", html.Substring(idx, 200));
+    }
+
+    [Fact]
+    public async Task RenderLitigationTab_Client_WorkbookFallbackShowsConfirmedOnly()
+    {
+        var workbook = new List<Litigation>
+        {
+            new() { MatchStatus = LitigationMatchStatus.Confirmed, CaseNumber = "CONF-1", Court = "Delhi HC" },
+            new() { MatchStatus = LitigationMatchStatus.Probable, CaseNumber = "PROB-1", Court = "Delhi HC" },
+            new() { MatchStatus = LitigationMatchStatus.Uncertain, CaseNumber = "UNVER-1", Court = "Delhi HC" }
+        };
+        var html = await RenderTabAsync(ClientModel(new LitigationTabViewModel { Request = new McaRequest { CompanyName = "Client View Co" } }, workbook));
+
+        Assert.Contains("CONF-1", html);
+        Assert.DoesNotContain("PROB-1", html);
+        Assert.DoesNotContain("UNVER-1", html);
+    }
+
+    [Theory]
+    [InlineData(0, 0, true, 3)]    // nothing bought yet: the first search is free
+    [InlineData(1, 20, true, 3)]   // initial search 20 days ago: refresh allowed
+    [InlineData(1, 5, false, 3)]   // inside the 15-day gap
+    [InlineData(3, 40, true, 1)]   // two refreshes used, one left
+    [InlineData(4, 400, false, 0)] // three used: capped however long ago
+    public void RefreshPolicy_EnforcesCapAndSpacing(int committed, int daysSinceLast, bool allowed, int remaining)
+    {
+        var now = DateTime.UtcNow;
+        var state = LitigationRefreshPolicy.Evaluate(committed, committed == 0 ? null : now.AddDays(-daysSinceLast), now, 3, 15);
+        Assert.Equal(allowed, state.Allowed);
+        Assert.Equal(remaining, state.Remaining);
     }
 
     private static async Task<string> RenderTabAsync(RequestDetailsViewModel model)
