@@ -653,10 +653,11 @@ public class RegistryDashboardTests : IAsyncLifetime
         Assert.Single(res2.Items);
         Assert.Equal("F123456", res2.Items[0].Identifier);
 
-        // 3. Non-conforming numeric FCRN without Foreign entity type routes to a name-prefix search across all types
+        // 3. With no entity type chosen (All, the default) a numeric FCRN is also an exact lookup
         var res3 = await service.SearchExplorerAsync(new RegistryExplorerCriteria { Q = "F123456" });
         Assert.Null(res3.ValidationErrorMessage);
-        Assert.Empty(res3.Items);
+        Assert.Single(res3.Items);
+        Assert.Equal("F123456", res3.Items[0].Identifier);
 
         // 4. Name prefix "FEDERAL" routes to name search, NOT FCRN lookup
         var res4 = await service.SearchExplorerAsync(new RegistryExplorerCriteria
@@ -708,6 +709,40 @@ public class RegistryDashboardTests : IAsyncLifetime
         var (rows, error) = await service.ExportExplorerAsync(new RegistryExplorerCriteria { Status = status });
         Assert.Null(error);
         Assert.Equal([llpin, cin, fcrn], rows.Select(r => r.Identifier).ToArray());
+    }
+
+    [Fact]
+    public async Task RegistryExplorer_NumericFcrn_UnderAll_IsExact_ExportsIt_AndFallsBackToNameWhenNothingMatches()
+    {
+        await using var db = CreateContext();
+        var digits = Random.Shared.Next(1000000, 9999999);
+        var fcrn = $"F{digits}";
+        await SeedRecordAsync(db, fcrn, $"Numeric Foreign {digits} Inc", CompanyMasterRecordType.Foreign, country: "Japan");
+        // A company whose *name* looks like a numeric FCRN but whose identifier is a CIN.
+        var lookalikeDigits = digits + 1;
+        var cin = $"U{Random.Shared.Next(10000, 99999)}DL2003PTC{Random.Shared.Next(100000, 999999)}";
+        await SeedRecordAsync(db, cin, $"F{lookalikeDigits} Holdings Pvt Ltd", CompanyMasterRecordType.Company);
+        var service = CreateQueryService(db, new MemoryCache(new MemoryCacheOptions()));
+
+        // Default All: exact FCRN lookup, in the search and in the Excel export.
+        var exact = await service.SearchExplorerAsync(new RegistryExplorerCriteria { Q = fcrn });
+        Assert.Null(exact.ValidationErrorMessage);
+        Assert.Equal([fcrn], exact.Items.Select(i => i.Identifier).ToArray());
+        var (exported, exportError) = await service.ExportExplorerAsync(new RegistryExplorerCriteria { Q = fcrn });
+        Assert.Null(exportError);
+        Assert.Equal([fcrn], exported.Select(r => r.Identifier).ToArray());
+
+        // No such FCRN, but a name starts with it: the name search still finds the company (search and export).
+        var byName = await service.SearchExplorerAsync(new RegistryExplorerCriteria { Q = $"F{lookalikeDigits}" });
+        Assert.Null(byName.ValidationErrorMessage);
+        Assert.Equal([cin], byName.Items.Select(i => i.Identifier).ToArray());
+        var (byNameExport, byNameError) = await service.ExportExplorerAsync(new RegistryExplorerCriteria { Q = $"F{lookalikeDigits}" });
+        Assert.Null(byNameError);
+        Assert.Equal([cin], byNameExport.Select(r => r.Identifier).ToArray());
+
+        // A secondary filter means "list", not "look one up": no "clear the filters" error under All.
+        var filtered = await service.SearchExplorerAsync(new RegistryExplorerCriteria { Q = fcrn, Status = "Active" });
+        Assert.Null(filtered.ValidationErrorMessage);
     }
 
     [Fact]

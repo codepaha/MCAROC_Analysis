@@ -302,13 +302,10 @@ public sealed partial class CompanyRegistryQueryService
 
         // 1. Check if input is formatted like an exact Identifier
         // CIN: 21 chars, LLPIN: AAA-1234, Standard FCRN: F00000.
-        // For explicitly selected Foreign entity type, also accept numeric FCRN variations (e.g. F123456).
-        bool isCin = CinPattern().IsMatch(upperQ);
-        bool isLlpin = LlpinPattern().IsMatch(upperQ);
-        bool isStandardFcrn = StandardFcrnPattern().IsMatch(upperQ);
-        bool isExplicitForeignNumeric = criteria.RecordType == CompanyMasterRecordType.Foreign && NumericFcrnPattern().IsMatch(upperQ);
+        // Numeric FCRN variations (e.g. F123456) count when Foreign is chosen or no type is (the default, All).
+        var (isExactIdentifier, fallBackToName) = ClassifyIdentifierQuery(criteria, upperQ);
 
-        if (isCin || isLlpin || isStandardFcrn || isExplicitForeignNumeric)
+        if (isExactIdentifier)
         {
             if (criteria.HasSecondaryFilters)
             {
@@ -329,10 +326,14 @@ public sealed partial class CompanyRegistryQueryService
                 return result;
             }
 
-            // Also check if they passed CIN/LLPIN without exact match
-            result.Items = [];
-            result.HasNextPage = false;
-            return result;
+            // A numeric FCRN under All may just be the start of a name: carry on to the name search.
+            if (!fallBackToName)
+            {
+                // Also check if they passed CIN/LLPIN without exact match
+                result.Items = [];
+                result.HasNextPage = false;
+                return result;
+            }
         }
 
         // 2. List lookup needs either a name prefix or an indexed status. Entity type is optional: left as
@@ -374,6 +375,23 @@ public sealed partial class CompanyRegistryQueryService
         }
 
         return result;
+    }
+
+    /// <summary>Whether the query is an exact-identifier lookup rather than a name prefix. A numeric FCRN
+    /// (e.g. F123456) is exact when Foreign is chosen, and also when no type is chosen (the default, "All").
+    /// In that All case the text could equally be the start of a company name, so
+    /// <c>FallBackToName</c> lets the caller continue to the name search when no identifier matches, and any
+    /// secondary filter means the user is listing rather than looking one up, so it is not treated as exact.</summary>
+    private static (bool IsExact, bool FallBackToName) ClassifyIdentifierQuery(RegistryExplorerCriteria criteria, string upperQ)
+    {
+        bool isCin = CinPattern().IsMatch(upperQ);
+        bool isLlpin = LlpinPattern().IsMatch(upperQ);
+        bool isStandardFcrn = StandardFcrnPattern().IsMatch(upperQ);
+        if (isCin || isLlpin || isStandardFcrn) return (true, false);
+        if (!NumericFcrnPattern().IsMatch(upperQ)) return (false, false);
+        if (criteria.RecordType == CompanyMasterRecordType.Foreign) return (true, false);
+        if (criteria.RecordType is null && !criteria.HasSecondaryFilters) return (true, true);
+        return (false, false);
     }
 
     private static readonly CompanyMasterRecordType[] AllRecordTypes =
@@ -463,17 +481,16 @@ public sealed partial class CompanyRegistryQueryService
         if (validation.ValidationErrorMessage != null) return ([], validation.ValidationErrorMessage);
 
         const int maxRows = 10000;
-        IQueryable<RegistryRecordRow> rowsQuery;
-        if (criteria.Q is { } q &&
-            (CinPattern().IsMatch(q.Trim().ToUpperInvariant()) || LlpinPattern().IsMatch(q.Trim().ToUpperInvariant()) ||
-             StandardFcrnPattern().IsMatch(q.Trim().ToUpperInvariant()) ||
-             (criteria.RecordType == CompanyMasterRecordType.Foreign && NumericFcrnPattern().IsMatch(q.Trim().ToUpperInvariant()))))
-            rowsQuery = _db.CompanyMasterRecords.AsNoTracking().Where(r => r.Identifier == q.Trim().ToUpperInvariant())
-                .OrderBy(r => r.Name).ThenBy(r => r.Identifier).Take(maxRows + 1).Select(ExplorerProjection);
-        else
-            rowsQuery = BuildExplorerRows(criteria, maxRows + 1, null, null);
-
-        var rows = await rowsQuery.ToListAsync(ct);
+        var upperQ = criteria.Q?.Trim().ToUpperInvariant() ?? "";
+        var (isExactIdentifier, fallBackToName) = ClassifyIdentifierQuery(criteria, upperQ);
+        List<RegistryRecordRow> rows = [];
+        if (isExactIdentifier)
+        {
+            rows = await _db.CompanyMasterRecords.AsNoTracking().Where(r => r.Identifier == upperQ)
+                .OrderBy(r => r.Name).ThenBy(r => r.Identifier).Take(maxRows + 1).Select(ExplorerProjection).ToListAsync(ct);
+        }
+        if (!isExactIdentifier || (fallBackToName && rows.Count == 0))
+            rows = await BuildExplorerRows(criteria, maxRows + 1, null, null).ToListAsync(ct);
         if (rows.Count > maxRows)
             return ([], $"More than {maxRows:N0} records match. Narrow the filters before downloading Excel.");
         return (rows, null);
