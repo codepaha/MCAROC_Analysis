@@ -209,6 +209,8 @@ public class LitigationTabAndControllerTests : IAsyncLifetime
 
         // Search still mutates state and paid spend, so it keeps CSRF protection.
         Assert.NotNull(controllerType.GetMethod("StartSearch")!.GetCustomAttribute<ValidateAntiForgeryTokenAttribute>());
+        // So does the paid AI analysis POST; the tab's fetch sends the token in the request body.
+        Assert.NotNull(controllerType.GetMethod("StartAnalysis")!.GetCustomAttribute<ValidateAntiForgeryTokenAttribute>());
     }
 
     [Fact]
@@ -941,6 +943,7 @@ public class LitigationTabAndControllerTests : IAsyncLifetime
         Assert.Contains("Report/pdf?withAnalysis=true", html);
         Assert.Contains("Report/csv?withAnalysis=true", html);
         Assert.Contains("litigation-run-analysis", html);
+        Assert.Contains("__RequestVerificationToken", html);
         Assert.Contains("2 of 3 refreshes remaining", html.Replace("\r", "").Replace("\n", " ").Replace("  ", " "));
         Assert.DoesNotContain("Internal Reviewer", html);
     }

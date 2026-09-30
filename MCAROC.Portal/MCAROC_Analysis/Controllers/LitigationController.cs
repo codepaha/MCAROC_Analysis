@@ -25,6 +25,7 @@ public class LitigationController(
     /// deliberately lifecycle metadata; completed case/portfolio output is read from the persisted endpoint.
     /// This keeps the paid call asynchronous and prevents a browser refresh from issuing a second request.</summary>
     [HttpPost("/Requests/{id:long}/Litigation/Analysis")]
+    [ValidateAntiForgeryToken]
     public async Task<IActionResult> StartAnalysis(long id, CancellationToken ct)
     {
         var clientId = await db.Requests.Where(r => r.RequestId == id).Select(r => (long?)r.ClientId).FirstOrDefaultAsync(ct);

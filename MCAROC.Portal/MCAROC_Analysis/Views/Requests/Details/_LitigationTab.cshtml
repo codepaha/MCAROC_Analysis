@@ -154,6 +154,7 @@
             }
         </p>
     }
+    <form id="litigation-analysis-token" class="d-none">@Html.AntiForgeryToken()</form>
     <div id="litigation-action-message" class="alert alert-secondary py-2 px-3 small d-none" role="status"></div>
 
     <!-- Search Status / Attempt Banners -->
@@ -587,6 +588,7 @@
         (function () {
             var reqId = @reqIdJs;
             var btn = document.getElementById('litigation-run-analysis');
+            var tokenInput = document.querySelector('#litigation-analysis-token input[name="__RequestVerificationToken"]');
             var msg = document.getElementById('litigation-action-message');
             function say(text) { if (!msg) return; msg.textContent = text; msg.classList.remove('d-none'); }
             function poll() {
@@ -602,7 +604,11 @@
                 btn.addEventListener('click', function () {
                     btn.disabled = true;
                     say('Starting AI analysis…');
-                    fetch('/Requests/' + reqId + '/Litigation/Analysis', { method: 'POST', headers: { 'Accept': 'application/json' } })
+                    fetch('/Requests/' + reqId + '/Litigation/Analysis', {
+                        method: 'POST',
+                        headers: { 'Accept': 'application/json' },
+                        body: new URLSearchParams({ __RequestVerificationToken: tokenInput ? tokenInput.value : '' })
+                    })
                         .then(function (r) { return r.json().catch(function () { return {}; }).then(function (b) { return { ok: r.ok, body: b }; }); })
                         .then(function (res) {
                             if (!res.ok) { say(res.body.error || 'AI analysis could not be started.'); return; }
