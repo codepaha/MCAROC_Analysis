@@ -12,7 +12,6 @@ namespace MCAROC_Analysis.Controllers;
 /// (<see cref="Client.IncludeLitigationInDossier"/>). Gated behind the same "InternalReviewer" cookie
 /// scheme as <see cref="CalculationAuditController"/>: this can change what a client-facing PDF contains,
 /// which is a materially different risk than the rest of this app's read-mostly, unauthenticated surface.</summary>
-[Authorize(AuthenticationSchemes = "InternalReviewer")]
 [Route("/Clients")]
 public sealed class ClientsController(AppDbContext db, DossierCache dossierCache, IWebHostEnvironment env) : Controller
 {

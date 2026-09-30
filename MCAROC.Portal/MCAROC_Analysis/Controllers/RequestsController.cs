@@ -464,7 +464,7 @@ public class RequestsController(
 
         var documents = await db.RequestDocuments.Where(d => d.RequestId == id).ToListAsync();
         var vm = new RequestDetailsViewModel { Request = request, Documents = documents, FocusChargeId = charge };
-        vm.IsInternalReviewer = await CheckIsInternalReviewerAsync();
+        vm.HasFullAccess = PortalAccess.HasFullAccess(User);
         vm.AutoFetchJob = await db.AutoFetchJobs.AsNoTracking().FirstOrDefaultAsync(j => j.RequestId == id);
 
         if (request.LatestCompletedIngestionRunId is { } runId)
@@ -1224,7 +1224,6 @@ public class RequestsController(
     }
 
     [HttpPost("/Requests/{id:long}/documents/{documentId:long}/retry-chunking")]
-    [Authorize(AuthenticationSchemes = "InternalReviewer")]
     [ValidateAntiForgeryToken]
     public async Task<IActionResult> RetryDocumentChunking(
         long id,
@@ -1821,24 +1820,25 @@ public class RequestsController(
         return dto;
     }
 
+    /// <summary>Gate for the litigation tab: a full-access portal user (see <see cref="PortalAccess"/>) or a legacy
+    /// reviewer session qualifies.</summary>
     private async Task<bool> CheckIsInternalReviewerAsync()
     {
+        if (PortalAccess.HasFullAccess(User)) return true;
         var authService = HttpContext?.RequestServices?.GetService<IAuthenticationService>();
         if (authService is null)
         {
-            return HttpContext?.User?.Identities.Any(i => i.AuthenticationType == "InternalReviewer" && i.IsAuthenticated) == true
-                || (User?.Identity?.IsAuthenticated == true && (User.IsInRole("InternalReviewer") || User.HasClaim("role", "InternalReviewer")));
+            return HttpContext?.User?.Identities.Any(i => i.AuthenticationType == "InternalReviewer" && i.IsAuthenticated) == true;
         }
 
         try
         {
-            var authResult = await HttpContext.AuthenticateAsync("InternalReviewer");
+            var authResult = await HttpContext!.AuthenticateAsync("InternalReviewer");
             return authResult?.Succeeded == true && authResult.Principal?.Identity?.IsAuthenticated == true;
         }
         catch (Exception)
         {
-            return HttpContext?.User?.Identities.Any(i => i.AuthenticationType == "InternalReviewer" && i.IsAuthenticated) == true
-                || (User?.Identity?.IsAuthenticated == true && (User.IsInRole("InternalReviewer") || User.HasClaim("role", "InternalReviewer")));
+            return HttpContext?.User?.Identities.Any(i => i.AuthenticationType == "InternalReviewer" && i.IsAuthenticated) == true;
         }
     }
 }

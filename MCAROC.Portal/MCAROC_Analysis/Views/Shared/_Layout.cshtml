@@ -79,7 +79,7 @@
                     <span class="pi-side-icon"><i class="bi bi-clock-history"></i></span>
                     <span>Search History</span>
                 </a>
-                @if (User.Identities.Any(i => i.AuthenticationType == "InternalReviewer" && i.IsAuthenticated))
+                @if (MCAROC_Analysis.Services.AnalystAccess.PortalAccess.HasFullAccess(User))
                 {
                     <a class="pi-side-link @Active("RegistryDashboard")" asp-controller="RegistryDashboard" asp-action="Index">
                         <span class="pi-side-icon"><i class="bi bi-building"></i></span>

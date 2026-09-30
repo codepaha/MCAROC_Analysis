@@ -15,7 +15,6 @@ namespace MCAROC_Analysis.Controllers;
 /// scheme merely being registered. Both viewing and every mutating action require sign-in: a discrepancy
 /// decision here can release a delivery hold, which is a materially different risk than the rest of this
 /// app's read-mostly, unauthenticated surface.</summary>
-[Authorize(AuthenticationSchemes = "InternalReviewer")]
 public class CalculationAuditController(AppDbContext db, CalculationDiscrepancyWorkflowService workflow) : Controller
 {
     [HttpGet("/internal/calc-audit/{requestId:long}")]

@@ -544,10 +544,10 @@ public class CompanyMasterSyncTests : IAsyncLifetime
     {
         var controllerType = typeof(CompanyMasterDashboardController);
 
-        // Assert Controller-level [Authorize(AuthenticationSchemes = "InternalReviewer")]
+        // Protected by the fallback portal login: not pinned to the reviewer scheme, never anonymous.
         var authAttr = controllerType.GetCustomAttribute<AuthorizeAttribute>();
-        Assert.NotNull(authAttr);
-        Assert.Equal("InternalReviewer", authAttr.AuthenticationSchemes);
+        Assert.True(authAttr is null || authAttr.AuthenticationSchemes != "InternalReviewer");
+        Assert.Null(controllerType.GetCustomAttribute<AllowAnonymousAttribute>());
 
         // Assert all 4 POST endpoints exist and have [ValidateAntiForgeryToken]
         string[] mutatingActions = { "Probe", "TestProxies", "SyncNow", "UploadManual" };

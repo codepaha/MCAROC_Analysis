@@ -457,7 +457,6 @@ public partial class AutoFetchController(
         return RedirectToAction("Details", "Requests", new { id });
     }
 
-    [Authorize(AuthenticationSchemes = "InternalReviewer")]
     [HttpPost("/Requests/{id:long}/recheck")]
     [ValidateAntiForgeryToken]
     public async Task<IActionResult> Recheck(long id, CancellationToken ct)
@@ -489,7 +488,6 @@ public partial class AutoFetchController(
     /// approval never expires and covers every request waiting on the company. The unlock is then attempted
     /// straight away rather than on the next poll.</summary>
     [HttpPost("/Requests/{id:long}/autofetch/unlock/approve")]
-    [Authorize(AuthenticationSchemes = "InternalReviewer")]
     [ValidateAntiForgeryToken]
     public async Task<IActionResult> ApproveUnlock(long id, [FromForm] string? reason, CancellationToken ct)
     {

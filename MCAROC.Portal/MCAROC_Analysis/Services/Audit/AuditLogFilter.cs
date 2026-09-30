@@ -149,6 +149,15 @@ public class AuditLogFilter(IAuditLogService auditService) : IAsyncActionFilter,
             return (ActorType.AuthenticatedReviewer, actorId);
         }
 
+        // Single full-access portal user (no roles until UAM): record who acted rather than "Anonymous".
+        if (MCAROC_Analysis.Services.AnalystAccess.PortalAccess.HasFullAccess(context.User))
+        {
+            var portalId = context.User!.Identity!.Name
+                ?? context.User.FindFirst(ClaimTypes.NameIdentifier)?.Value
+                ?? "PortalUser";
+            return (ActorType.AuthenticatedReviewer, portalId);
+        }
+
         return (ActorType.UnverifiedOperator, "Anonymous");
     }
 

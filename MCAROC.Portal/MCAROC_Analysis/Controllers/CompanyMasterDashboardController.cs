@@ -15,7 +15,6 @@ using Microsoft.Extensions.Logging;
 
 namespace MCAROC_Analysis.Controllers;
 
-[Authorize(AuthenticationSchemes = "InternalReviewer")]
 [Route("internal/company-master")]
 public sealed class CompanyMasterDashboardController : Controller
 {
