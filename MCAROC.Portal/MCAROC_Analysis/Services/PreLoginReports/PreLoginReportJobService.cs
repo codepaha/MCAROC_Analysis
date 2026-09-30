@@ -3,6 +3,7 @@ using System.Text.RegularExpressions;
 using MCAROC_Analysis.Data;
 using MCAROC_Analysis.Data.Entities;
 using MCAROC_Analysis.Models;
+using MCAROC_Analysis.Services.CompanyMaster;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 
@@ -155,6 +156,37 @@ public sealed class PreLoginReportJobService(AppDbContext db, PreLoginReportQueu
         var id = await db.PreLoginReportJobs.Where(x => x.BatchId == batch).Select(x => x.PreLoginReportJobId).SingleAsync(cancellationToken);
         queue.Enqueue(id);
         return batch;
+    }
+
+    /// <summary>Resolve only an exact registered Company/LLP name. A non-unique name must be
+    /// disambiguated by selecting its CIN/LLPIN before any report-data request is queued.</summary>
+    public async Task<(string Identifier, string Name)> ResolveExactCorporateNameAsync(
+        string? name, PreLoginReportEntityType entityType, CancellationToken cancellationToken)
+    {
+        var recordType = entityType switch
+        {
+            PreLoginReportEntityType.Company => CompanyMasterRecordType.Company,
+            PreLoginReportEntityType.Llp => CompanyMasterRecordType.Llp,
+            _ => throw new PreLoginReportException("Name-only lookup is available for companies and LLPs only.")
+        };
+        var trimmed = name?.Trim() ?? string.Empty;
+        if (trimmed.Length < 3 || trimmed.Length > 250)
+            throw new PreLoginReportException("Enter at least 3 characters of the registered borrower name.");
+        var normalized = CompanyNameNormalizer.Normalize(trimmed).NameNormalized;
+        var matches = await db.CompanyMasterRecords.AsNoTracking()
+            .Where(x => x.RecordType == recordType && x.NameNormalized == normalized)
+            .OrderBy(x => x.Identifier).Take(2)
+            .Select(x => new { x.Identifier, x.Name }).ToListAsync(cancellationToken);
+        if (matches.Count == 0)
+            matches = await db.CompanyMasterRecords.AsNoTracking()
+                .Where(x => x.RecordType == recordType && x.Name == trimmed)
+                .OrderBy(x => x.Identifier).Take(2)
+                .Select(x => new { x.Identifier, x.Name }).ToListAsync(cancellationToken);
+        if (matches.Count == 0)
+            throw new PreLoginReportException("No exact registered borrower match was found. Select a suggestion or enter the CIN / LLPIN.");
+        if (matches.Count > 1)
+            throw new PreLoginReportException("More than one registered borrower has this name. Select the correct CIN / LLPIN from the suggestions.");
+        return (matches[0].Identifier, matches[0].Name);
     }
 
     /// <summary>Partnership reports are intentionally self-contained: their details and legal-case counts

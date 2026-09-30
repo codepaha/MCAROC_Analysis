@@ -24,7 +24,7 @@ public sealed class PreLoginReportViewModel : IValidatableObject
     [Display(Name = "CIN / LLPIN")]
     public string Cin { get; set; } = string.Empty;
 
-    [Display(Name = "Company / LLP name (optional)")]
+    [Display(Name = "Company / LLP name")]
     [StringLength(250)]
     public string? CompanyName { get; set; }
 
@@ -78,8 +78,11 @@ public sealed class PreLoginReportViewModel : IValidatableObject
             yield break;
         }
 
-        if (string.IsNullOrWhiteSpace(Cin))
-            yield return new ValidationResult("CIN / LLPIN is required.", [nameof(Cin)]);
+        if (string.IsNullOrWhiteSpace(Cin) &&
+            (EntityType == PreLoginReportEntityType.ForeignCompany || string.IsNullOrWhiteSpace(CompanyName)))
+            yield return new ValidationResult("Enter a CIN / LLPIN or a registered company / LLP name.", [nameof(Cin), nameof(CompanyName)]);
+        if (string.IsNullOrWhiteSpace(Cin) && !string.IsNullOrWhiteSpace(CompanyName) && CompanyName.Trim().Length < 3)
+            yield return new ValidationResult("Enter at least 3 characters of the registered name.", [nameof(CompanyName)]);
     }
 }
 
