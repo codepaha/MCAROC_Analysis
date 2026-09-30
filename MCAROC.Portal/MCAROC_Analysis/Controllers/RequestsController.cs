@@ -18,6 +18,7 @@ using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authorization;
 using MCAROC_Analysis.Services.LitigationData;
 using MCAROC_Analysis.Services.AnalystAccess;
+using MCAROC_Analysis.Services.PropertyParticulars;
 
 namespace MCAROC_Analysis.Controllers;
 
@@ -490,6 +491,18 @@ public class RequestsController(
             vm.Charges = await db.RocCharges
                 .Include(c => c.Events).ThenInclude(e => e.SecurityComponents)
                 .Where(x => x.IngestionRunId == runId).ToListAsync();
+            vm.PropertyExtractions = await PropertyParticularsExtractionService.LoadCompletedAsync(
+                db, vm.Charges.SelectMany(c => c.Events), HttpContext?.RequestAborted ?? CancellationToken.None);
+            // Lazy backfill for requests ingested before the Gemini extraction existed: idempotent, a no-op once every
+            // text has a row, and inert when extraction is disabled or Vertex AI is not configured.
+            if (HttpContext?.RequestServices?.GetService<PropertyParticularsExtractionService>() is { IsActive: true } propertyExtraction)
+            {
+                try { await propertyExtraction.ScheduleForRequestAsync(id, HttpContext.RequestAborted); }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    logger?.LogWarning(ex, "Scheduling property particulars extraction failed for request {RequestId}", id);
+                }
+            }
             vm.MsmePayments = await db.MsmePayments.Where(x => x.IngestionRunId == runId).ToListAsync();
             vm.GstRegistrations = await db.GstRegistrations.Include(g => g.Filings)
                 .Where(x => x.IngestionRunId == runId).ToListAsync();

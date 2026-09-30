@@ -187,6 +187,22 @@ builder.Services.AddSingleton<ILitigationAiAnalysisClient>(sp =>
 builder.Services.AddScoped<LitigationAiAnalysisOrchestrator>();
 builder.Services.AddHostedService<LitigationAiAnalysisWorker>();
 builder.Services.AddScoped<LitigationReportAssembler>();
+// Gemini split/label of charge "Particulars of Property Charged" (column M), grounded against the source text.
+// Scheduled after ingestion; skipped entirely when disabled or when Vertex AI is not configured.
+builder.Services.Configure<MCAROC_Analysis.Services.PropertyParticulars.PropertyParticularsExtractionOptions>(
+    builder.Configuration.GetSection(MCAROC_Analysis.Services.PropertyParticulars.PropertyParticularsExtractionOptions.SectionName));
+builder.Services.AddSingleton<MCAROC_Analysis.Services.PropertyParticulars.PropertyParticularsExtractionQueue>();
+builder.Services.AddSingleton<MCAROC_Analysis.Services.PropertyParticulars.IPropertyParticularsAiClient>(sp =>
+{
+    var config = sp.GetRequiredService<IConfiguration>();
+    var projectId = config["GoogleCloud:ProjectId"] ?? throw new InvalidOperationException("GoogleCloud:ProjectId is required for property particulars extraction.");
+    var location = config["GoogleCloud:Location"] ?? "us-central1";
+    var credentialsPath = config["GoogleCloud:CredentialsPath"] ?? throw new InvalidOperationException("GoogleCloud:CredentialsPath is required for property particulars extraction.");
+    return new MCAROC_Analysis.Services.PropertyParticulars.VertexPropertyParticularsAiClient(projectId, location, credentialsPath,
+        sp.GetRequiredService<ILogger<MCAROC_Analysis.Services.PropertyParticulars.VertexPropertyParticularsAiClient>>());
+});
+builder.Services.AddScoped<MCAROC_Analysis.Services.PropertyParticulars.PropertyParticularsExtractionService>();
+builder.Services.AddHostedService<MCAROC_Analysis.Services.PropertyParticulars.PropertyParticularsExtractionWorker>();
 
 builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseSqlServer(builder.Configuration.GetConnectionString("Default")));

@@ -33,7 +33,10 @@ public sealed record DossierModel(
     // AI-synthesized read of the largest open charges (AiChargesNarrativeService), computed once at
     // analysis time — null when the AI call failed or hasn't run for this analysis run yet. Appended last,
     // same append-only precedent as Profile/IncludeLitigation above.
-    Services.Analysis.ChargesNarrative? ChargesNarrative = null);
+    Services.Analysis.ChargesNarrative? ChargesNarrative = null,
+    // Completed Gemini property-particulars extractions for these charges' texts, keyed by text hash — the annexure
+    // falls back to the deterministic reading for any text without one. Appended last, same precedent as above.
+    IReadOnlyDictionary<string, Data.Entities.PropertyParticularsExtraction>? PropertyExtractions = null);
 
 public sealed record DossierCover(
     string CompanyName, string? Cin, string? Pan, DateOnly? IncorporationDate, string? Status,

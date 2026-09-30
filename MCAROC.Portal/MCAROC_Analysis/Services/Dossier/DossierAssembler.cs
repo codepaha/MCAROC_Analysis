@@ -177,7 +177,8 @@ public class DossierAssembler(AppDbContext db)
             // (see DossierCache's doc comment), so no litigation data is ever redacted here. Only
             // DossierPdfComposer reads this flag, to decide what its own PDF output shows.
             IncludeLitigation: request.Client?.IncludeLitigationInDossier ?? true,
-            ChargesNarrative: chargesNarrative);
+            ChargesNarrative: chargesNarrative,
+            PropertyExtractions: await PropertyParticulars.PropertyParticularsExtractionService.LoadCompletedAsync(db, charges.SelectMany(c => c.Events), ct));
 
         // Metrics are derived from the fully-assembled model, then folded back in.
         return model with { Metrics = DossierComputations.BuildMetricGroups(model) };

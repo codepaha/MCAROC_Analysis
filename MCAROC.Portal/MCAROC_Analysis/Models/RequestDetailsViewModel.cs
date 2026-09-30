@@ -30,6 +30,8 @@ public class RequestDetailsViewModel
     public List<FinancialYearData> FinancialYears { get; set; } = [];
     public List<FinancialYearData> ConsolidatedFinancialYears { get; set; } = [];
     public List<RocCharge> Charges { get; set; } = [];
+    /// <summary>Completed Gemini property-particulars extractions for these charges' texts, keyed by text hash.</summary>
+    public IReadOnlyDictionary<string, PropertyParticularsExtraction> PropertyExtractions { get; set; } = new Dictionary<string, PropertyParticularsExtraction>();
     public List<MsmePayment> MsmePayments { get; set; } = [];
     public List<GstRegistration> GstRegistrations { get; set; } = [];
     public List<EpfoContribution> EpfoContributions { get; set; } = [];

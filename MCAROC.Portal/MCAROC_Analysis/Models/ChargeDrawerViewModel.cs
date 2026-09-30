@@ -5,17 +5,19 @@ namespace MCAROC_Analysis.Models;
 
 /// <summary>Feeds <c>Details/_ChargeDrawer.cshtml</c> — one charge plus the Phase 3 findings that name it
 /// (via <see cref="AnalysisFinding.SourceReferenceJson"/>). Built in <c>_ChargesTab</c> from the request VM.</summary>
-public record ChargeDrawerViewModel(RocCharge Charge, IReadOnlyList<AnalysisFinding> RelatedFindings)
+public record ChargeDrawerViewModel(RocCharge Charge, IReadOnlyList<AnalysisFinding> RelatedFindings,
+    IReadOnlyDictionary<string, PropertyParticularsExtraction>? PropertyExtractions = null)
 {
     /// <summary>Charges-section findings whose SourceReferenceJson entityIds contain this charge's PK.
     /// Portfolio-level findings (lender concentration, registered exposure) name no single charge and
     /// are excluded.</summary>
-    public static ChargeDrawerViewModel For(RocCharge charge, IEnumerable<AnalysisFinding> allFindings)
+    public static ChargeDrawerViewModel For(RocCharge charge, IEnumerable<AnalysisFinding> allFindings,
+        IReadOnlyDictionary<string, PropertyParticularsExtraction>? propertyExtractions = null)
     {
         var related = allFindings
             .Where(f => f.Section == FindingSection.Charges && NamesCharge(f.SourceReferenceJson, charge.ChargeId))
             .ToList();
-        return new ChargeDrawerViewModel(charge, related);
+        return new ChargeDrawerViewModel(charge, related, propertyExtractions);
     }
 
     private static bool NamesCharge(string? sourceReferenceJson, long chargeId)

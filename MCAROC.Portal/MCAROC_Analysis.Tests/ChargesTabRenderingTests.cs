@@ -449,4 +449,68 @@ public class ChargesTabRenderingTests
         Assert.True(groupOpenIdx >= 0 && groupOpenIdx < rowIdx && rowIdx < groupCloseIdx,
             "Expected the charge's drawer row to be nested inside its holder group's collapsible <tbody>.");
     }
+
+    private const string PropertyText =
+        "All that piece or parcel of premises admeasuring about 27864.63 sq ft equivalent to 2588.68 sq m of carpet area bearing Unit No. 5c on the " +
+        "5th Floor in the building known as Godrej One along with 43 car parking spaces situated at Pirojshanagar, Vikhroli. Hypothecation of " +
+        "current assets of Godrej Real Estate Private Limited.";
+
+    private static RocCharge ChargeWithParticulars() => new()
+    {
+        ChargeId = 91, RocChargeNumber = "CHG-901", LatestChargeHolderRaw = "Catalyst Trusteeship Limited", CurrentAmount = 5550.5m,
+        Events =
+        [
+            new RocChargeEvent
+            {
+                ChargeEventId = 1, SerialNumber = "1.1", EventType = ChargeEventType.Modification, EventDate = new DateOnly(2025, 10, 3),
+                HolderNameRaw = "Catalyst Trusteeship Limited", PropertyParticulars = PropertyText, PropertyType = "Immovable property"
+            }
+        ]
+    };
+
+    [Fact]
+    public async Task Charge_drawer_shows_the_rules_reading_of_property_particulars_when_there_is_no_ai_extraction()
+    {
+        var vm = CreateViewModel();
+        vm.Charges = [ChargeWithParticulars()];
+
+        var html = await RenderChargesTabAsync(vm);
+
+        Assert.Contains("Property charged (normalised)", html);
+        Assert.Contains("read by rules from the source wording", html);
+        Assert.Contains("Unit 5C, 5th floor, Godrej One", html);
+        Assert.Contains("2,588.68 sq m (27,864.63 sq ft) carpet", html);
+        Assert.Contains("Property particulars (source wording)", html); // the raw text is still there
+    }
+
+    [Fact]
+    public async Task Charge_drawer_shows_one_card_per_property_from_a_completed_ai_extraction()
+    {
+        var result = MCAROC_Analysis.Services.PropertyParticulars.PropertyParticularsAi.Validate("""
+            {"properties":[
+              {"assetClass":"Immovable","kind":"Premises","unitNumber":"5c","floor":"5th","building":"Godrej One","parkingSpaces":43,
+               "areas":[{"value":27864.63,"unit":"SqFt","basis":"Carpet","equivalentValue":2588.68,"equivalentUnit":"SqM"}],
+               "localities":["Pirojshanagar","Vikhroli"],"surveyNumbers":[]},
+              {"assetClass":"Movable","kind":"CurrentAssets","owner":"Godrej Real Estate Private Limited","areas":[],"surveyNumbers":[],"localities":[]}]}
+            """, PropertyText).Result!;
+        var vm = CreateViewModel();
+        vm.Charges = [ChargeWithParticulars()];
+        vm.PropertyExtractions = new Dictionary<string, PropertyParticularsExtraction>
+        {
+            [MCAROC_Analysis.Services.PropertyParticulars.PropertyParticularsAi.HashOf(PropertyText, "Immovable property")] = new()
+            {
+                Status = PropertyParticularsExtractionStatus.Completed,
+                ExtractionJson = MCAROC_Analysis.Services.PropertyParticulars.PropertyParticularsAi.Serialize(result)
+            }
+        };
+
+        var html = await RenderChargesTabAsync(vm);
+
+        Assert.Contains("split by AI (Gemini)", html);
+        Assert.Contains("1 of 2", html);
+        Assert.Contains("2 of 2", html);
+        Assert.Contains("Belongs to", html);
+        Assert.Contains("Godrej Real Estate Private Limited", html);
+        Assert.Contains("43 spaces", html);
+    }
 }

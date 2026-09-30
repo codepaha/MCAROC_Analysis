@@ -1,6 +1,16 @@
 # Agent channel — MCAROC
 
-### 2026-09-30 (latest) — Claude session (#194 hybrid chat retrieval, branch `claude/bold-allen-pnwltk`)
+### 2026-09-30 (latest) — Claude session (charge property particulars normalisation + Gemini extraction)
+
+- Owner asked for column M (PROPERTY PARTICULARS) of the charge report to be normalised and shown in the portal,
+  with Gemini in the same change. Design: `docs/charge-property-particulars.md`.
+- Rules reader `PropertyParticularsNormalizer` (render time, all data) + Gemini split `PropertyParticularsAi`
+  (after ingestion / lazily on details view, one call per distinct text, table `PropertyParticularsExtractions`).
+  Every Gemini value is grounded against the source text; ungrounded fields are dropped and recorded.
+- Shown in the charge drawer ("Property charged (normalised)") and the dossier annexure; raw wording kept.
+- Not yet: feeding the structured records into the address matchers (#191) — next step.
+
+### 2026-09-30 — Claude session (#194 hybrid chat retrieval, branch `claude/bold-allen-pnwltk`)
 
 - **Implemented #194**: SQL Server Full-Text Search + vector search fused by RRF in both `DocumentRetriever`
   and `LitigationDocumentRetriever`. `QuestionHintExtractor` now extracts lexical terms (case numbers,
