@@ -19,24 +19,30 @@ jobs:
   # (no committed fixtures; PdfPig can't read Linux subset fonts) — see the `windows-tests` job.
   build-and-test:
     runs-on: ubuntu-latest
-    services:
-      sql:
-        image: mcr.microsoft.com/mssql/server:2025-latest
-        env:
-          ACCEPT_EULA: "Y"
-          MSSQL_SA_PASSWORD: "Ci_Local_Pass1"
-        ports:
-          - 1433:1433
-        options: >-
-          --health-cmd "/opt/mssql-tools18/bin/sqlcmd -C -S localhost -U sa -P 'Ci_Local_Pass1' -Q 'SELECT 1' -b -o /dev/null"
-          --health-start-period 15s
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 12
+    # SQL Server runs as a container built from .github/mssql-fts/Dockerfile rather than a `services:` entry:
+    # the stock 2025 image has no Full-Text Search, which the hybrid chat-retrieval tests (#194) need, and a
+    # service container can't be built from a Dockerfile.
     env:
       MCAROC_TEST_CONNECTION: "Server=localhost,1433;Database=MCAROC_Analysis_Test;User Id=sa;Password=Ci_Local_Pass1;TrustServerCertificate=True;"
+      # This job's SQL Server has Full-Text Search on purpose — a missing FTS install or index fails the
+      # hybrid-retrieval tests here instead of letting them skip.
+      MCAROC_REQUIRE_FULLTEXT: "true"
     steps:
       - uses: actions/checkout@v4
+
+      - name: Start SQL Server 2025 (with Full-Text Search)
+        run: |
+          docker build -t mcaroc-mssql-fts .github/mssql-fts
+          docker run -d --name sql -p 1433:1433 \
+            -e ACCEPT_EULA=Y -e MSSQL_PID=Developer -e MSSQL_SA_PASSWORD='Ci_Local_Pass1' mcaroc-mssql-fts
+          for i in $(seq 1 60); do
+            if docker exec sql /opt/mssql-tools18/bin/sqlcmd -C -S localhost -U sa -P 'Ci_Local_Pass1' -Q 'SELECT 1' -b -o /dev/null; then
+              break
+            fi
+            sleep 5
+          done
+          docker exec sql /opt/mssql-tools18/bin/sqlcmd -C -S localhost -U sa -P 'Ci_Local_Pass1' -b \
+            -Q "IF FULLTEXTSERVICEPROPERTY('IsFullTextInstalled') <> 1 THROW 50000, 'Full-Text Search is not installed', 1; SELECT @@VERSION"
 
       - uses: actions/setup-dotnet@v4
         with:

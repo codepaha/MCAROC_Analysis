@@ -28,7 +28,46 @@ public class DocumentRetriever(AppDbContext db, ChatRetrievalOptions options)
     {
         var queryVector = new SqlVector<float>(queryEmbedding);
 
-        var hinted = await SearchAsync(requestId, batchId, queryVector, hints, ct);
+        // A dedicated connection, not db.Database.GetDbConnection() — empirically, reusing EF's
+        // pooled/managed connection for this exact query made SQL Server pick a catastrophically slow plan
+        // (30s+ timeout) even though the identical parameterized query on a fresh connection runs in
+        // under a second. Root cause not fully chased down (suspected session-settings-dependent plan
+        // caching interacting badly with the brand-new VECTOR_DISTANCE optimizer path) — a dedicated
+        // connection for this specific hot path is a reasonable, defensible choice regardless.
+        await using var connection = new SqlConnection(db.Database.GetConnectionString());
+        await connection.OpenAsync(ct);
+
+        var semantic = await SearchSemanticAsync(connection, requestId, batchId, queryVector, hints, ct);
+
+        var containsQuery = HybridSearch.BuildContainsQuery(hints.LexicalTerms);
+        if (containsQuery is null || !await HybridSearch.IsFullTextIndexedAsync(connection, "dbo.DocumentChunks", ct))
+            return semantic;
+
+        // #194 hybrid retrieval: a lexical hit on an exact case number/section/quoted phrase is exactly what
+        // semantic similarity under-ranks, so it joins the fused list even past MaxCosineDistance. Only the
+        // hard filters (RequestId, batch, SRN) apply to it — soft hints never narrow an exact-term match.
+        var lexical = await RunSearchAsync(connection, LexicalSql(HardFilters(batchId, hints)), requestId, batchId, queryVector,
+            hints with { Category = null, FormTypeKeyword = null, LenderNameKeyword = null }, ct, containsQuery);
+        if (lexical.Count == 0)
+            return semantic;
+
+        var byId = new Dictionary<long, DocumentChunkMatch>();
+        foreach (var m in semantic.Concat(lexical)) byId.TryAdd(m.Chunk.ChunkId, m);
+        return HybridSearch.ReciprocalRankFusion(
+                semantic.Select(m => m.Chunk.ChunkId).ToList(), lexical.Select(m => m.Chunk.ChunkId).ToList(), options.TopK)
+            .Select(id => byId[id]).ToList();
+    }
+
+    public Task<List<DocumentChunkMatch>> SearchRequestDocumentsAsync(
+        long requestId, float[] queryEmbedding, QuestionHints hints, CancellationToken ct) =>
+        SearchRequestDocumentsAsync(requestId, null, queryEmbedding, hints, ct);
+
+    /// <summary>Today's pure vector search, unchanged in behavior: soft hints first, failing open to the hard
+    /// filters alone when they starve the result of evidence.</summary>
+    private async Task<List<DocumentChunkMatch>> SearchSemanticAsync(
+        SqlConnection connection, long requestId, long? batchId, SqlVector<float> queryVector, QuestionHints hints, CancellationToken ct)
+    {
+        var hinted = await RunSearchAsync(connection, VectorSql(Filters(batchId, hints)), requestId, batchId, queryVector, hints, ct);
         var passingHinted = hinted.Where(m => m.Distance <= options.MaxCosineDistance).ToList();
 
         if (!hints.HasSoftHints || passingHinted.Count >= options.MinAcceptableResults)
@@ -38,91 +77,109 @@ public class DocumentRetriever(AppDbContext db, ChatRetrievalOptions options)
         // (and any hard SRN match) filter, so an overly-specific hint can never silently starve the answer
         // of evidence an unfiltered search would have found.
         var fallbackHints = hints with { Category = null, FormTypeKeyword = null, LenderNameKeyword = null };
-        var fallback = await SearchAsync(requestId, batchId, queryVector, fallbackHints, ct);
+        var fallback = await RunSearchAsync(connection, VectorSql(Filters(batchId, fallbackHints)), requestId, batchId, queryVector, fallbackHints, ct);
         return fallback.Where(m => m.Distance <= options.MaxCosineDistance).ToList();
     }
 
-    public Task<List<DocumentChunkMatch>> SearchRequestDocumentsAsync(
-        long requestId, float[] queryEmbedding, QuestionHints hints, CancellationToken ct) =>
-        SearchRequestDocumentsAsync(requestId, null, queryEmbedding, hints, ct);
-
-    private async Task<List<DocumentChunkMatch>> SearchAsync(long requestId, long? batchId, SqlVector<float> queryVector, QuestionHints hints, CancellationToken ct)
+    private static List<string> HardFilters(long? batchId, QuestionHints hints)
     {
         var whereClauses = new List<string> { "RequestId = @requestId" };
         if (batchId.HasValue) whereClauses.Add("BatchId = @batchId");
         if (hints.SrnMatch is not null) whereClauses.Add("Srn = @srn");
+        return whereClauses;
+    }
+
+    private static List<string> Filters(long? batchId, QuestionHints hints)
+    {
+        var whereClauses = HardFilters(batchId, hints);
         if (hints.Category is not null) whereClauses.Add("Category = @category");
         if (hints.FormTypeKeyword is not null) whereClauses.Add("FormType IS NOT NULL AND FormType LIKE @formType");
         if (hints.LenderNameKeyword is not null) whereClauses.Add("ChunkText LIKE @lender");
+        return whereClauses;
+    }
 
-        // Rank on a narrow (ChunkId, Distance) subquery first, then join back for the wide columns only for
-        // the winning rows — found live: sorting the FULL wide row (including ChunkText, nvarchar(max)) by
-        // VECTOR_DISTANCE for every candidate row made SQL Server request a memory grant it couldn't
-        // satisfy (confirmed via sys.dm_exec_requests: wait_type=RESOURCE_SEMAPHORE), stalling for 30s+
-        // against ~13,500 rows even though the vector distance computation itself takes well under a
-        // second. Sorting only ChunkId+Distance keeps the memory grant trivial regardless of ChunkText size.
-        var sql = $"""
-            SELECT c.ChunkId, c.RequestId, c.FilingDocumentId, c.FilingId, c.BatchId, c.Srn, c.Category, c.FormType,
-                c.DocumentName, c.ChunkIndex, c.PageNumber, c.ChunkText, c.EmbeddingModel, c.EmbeddingDimensions, c.ChunkingVersion, c.CreatedDate,
-                ranked.Distance
-            FROM (
-                SELECT TOP (@topK) ChunkId, VECTOR_DISTANCE('cosine', Embedding, @queryVector) AS Distance
-                FROM DocumentChunks
-                WHERE {string.Join(" AND ", whereClauses)}
-                ORDER BY VECTOR_DISTANCE('cosine', Embedding, @queryVector)
-            ) AS ranked
-            JOIN DocumentChunks c ON c.ChunkId = ranked.ChunkId
-            ORDER BY ranked.Distance
-            """;
+    private const string WideColumns = """
+        c.ChunkId, c.RequestId, c.FilingDocumentId, c.FilingId, c.BatchId, c.Srn, c.Category, c.FormType,
+            c.DocumentName, c.ChunkIndex, c.PageNumber, c.ChunkText, c.EmbeddingModel, c.EmbeddingDimensions, c.ChunkingVersion, c.CreatedDate
+        """;
 
-        // A dedicated connection, not db.Database.GetDbConnection() — empirically, reusing EF's
-        // pooled/managed connection for this exact query made SQL Server pick a catastrophically slow plan
-        // (30s+ timeout) even though the identical parameterized query on a fresh connection runs in
-        // under a second. Root cause not fully chased down (suspected session-settings-dependent plan
-        // caching interacting badly with the brand-new VECTOR_DISTANCE optimizer path) — a dedicated
-        // connection for this specific hot path is a reasonable, defensible choice regardless.
-        await using var connection = new SqlConnection(db.Database.GetConnectionString());
-        await connection.OpenAsync(ct);
+    // Rank on a narrow (ChunkId, Distance) subquery first, then join back for the wide columns only for
+    // the winning rows — found live: sorting the FULL wide row (including ChunkText, nvarchar(max)) by
+    // VECTOR_DISTANCE for every candidate row made SQL Server request a memory grant it couldn't
+    // satisfy (confirmed via sys.dm_exec_requests: wait_type=RESOURCE_SEMAPHORE), stalling for 30s+
+    // against ~13,500 rows even though the vector distance computation itself takes well under a
+    // second. Sorting only ChunkId+Distance keeps the memory grant trivial regardless of ChunkText size.
+    private static string VectorSql(List<string> whereClauses) => $"""
+        SELECT {WideColumns},
+            ranked.Distance
+        FROM (
+            SELECT TOP (@topK) ChunkId, VECTOR_DISTANCE('cosine', Embedding, @queryVector) AS Distance
+            FROM DocumentChunks
+            WHERE {string.Join(" AND ", whereClauses)}
+            ORDER BY VECTOR_DISTANCE('cosine', Embedding, @queryVector)
+        ) AS ranked
+        JOIN DocumentChunks c ON c.ChunkId = ranked.ChunkId
+        ORDER BY ranked.Distance
+        """;
+
+    /// <summary>Same narrow-rank-then-join-wide shape as <see cref="VectorSql"/>, ranked by full-text RANK. The
+    /// cosine distance is still computed for the few winners so every match carries a real relevance score.</summary>
+    private static string LexicalSql(List<string> whereClauses) => $"""
+        SELECT {WideColumns},
+            VECTOR_DISTANCE('cosine', c.Embedding, @queryVector) AS Distance
+        FROM (
+            SELECT TOP (@topK) d.ChunkId, ft.[RANK] AS FtRank
+            FROM CONTAINSTABLE(DocumentChunks, ChunkText, @ftQuery) AS ft
+            JOIN DocumentChunks d ON d.ChunkId = ft.[KEY]
+            WHERE {string.Join(" AND ", whereClauses.Select(w => "d." + w))}
+            ORDER BY ft.[RANK] DESC, d.ChunkId
+        ) AS ranked
+        JOIN DocumentChunks c ON c.ChunkId = ranked.ChunkId
+        ORDER BY ranked.FtRank DESC, c.ChunkId
+        """;
+
+    private async Task<List<DocumentChunkMatch>> RunSearchAsync(SqlConnection connection, string sql, long requestId, long? batchId,
+        SqlVector<float> queryVector, QuestionHints hints, CancellationToken ct, string? containsQuery = null)
+    {
+        await using var cmd = connection.CreateCommand();
+        cmd.CommandText = sql;
+        cmd.Parameters.Add(new SqlParameter("@topK", SqlDbType.Int) { Value = options.TopK });
+        cmd.Parameters.Add(new SqlParameter("@requestId", SqlDbType.BigInt) { Value = requestId });
+        if (batchId.HasValue) cmd.Parameters.Add(new SqlParameter("@batchId", SqlDbType.BigInt) { Value = batchId.Value });
+        var vectorParam = cmd.Parameters.Add("@queryVector", Microsoft.Data.SqlDbTypeExtensions.Vector, EmbeddingService.Dimensions);
+        vectorParam.Value = queryVector;
+        if (containsQuery is not null) cmd.Parameters.Add(new SqlParameter("@ftQuery", SqlDbType.NVarChar, 4000) { Value = containsQuery });
+        if (hints.SrnMatch is not null) cmd.Parameters.Add(new SqlParameter("@srn", SqlDbType.NVarChar, 450) { Value = hints.SrnMatch });
+        if (hints.Category is not null) cmd.Parameters.Add(new SqlParameter("@category", SqlDbType.NVarChar, 20) { Value = hints.Category.Value.ToString() });
+        if (hints.FormTypeKeyword is not null) cmd.Parameters.Add(new SqlParameter("@formType", SqlDbType.NVarChar, 450) { Value = $"%{hints.FormTypeKeyword}%" });
+        if (hints.LenderNameKeyword is not null) cmd.Parameters.Add(new SqlParameter("@lender", SqlDbType.NVarChar, -1) { Value = $"%{hints.LenderNameKeyword}%" });
+
+        var results = new List<DocumentChunkMatch>();
+        await using var reader = await cmd.ExecuteReaderAsync(ct);
+        while (await reader.ReadAsync(ct))
         {
-            await using var cmd = connection.CreateCommand();
-            cmd.CommandText = sql;
-            cmd.Parameters.Add(new SqlParameter("@topK", SqlDbType.Int) { Value = options.TopK });
-            cmd.Parameters.Add(new SqlParameter("@requestId", SqlDbType.BigInt) { Value = requestId });
-            if (batchId.HasValue) cmd.Parameters.Add(new SqlParameter("@batchId", SqlDbType.BigInt) { Value = batchId.Value });
-            var vectorParam = cmd.Parameters.Add("@queryVector", Microsoft.Data.SqlDbTypeExtensions.Vector, EmbeddingService.Dimensions);
-            vectorParam.Value = queryVector;
-            if (hints.SrnMatch is not null) cmd.Parameters.Add(new SqlParameter("@srn", SqlDbType.NVarChar, 450) { Value = hints.SrnMatch });
-            if (hints.Category is not null) cmd.Parameters.Add(new SqlParameter("@category", SqlDbType.NVarChar, 20) { Value = hints.Category.Value.ToString() });
-            if (hints.FormTypeKeyword is not null) cmd.Parameters.Add(new SqlParameter("@formType", SqlDbType.NVarChar, 450) { Value = $"%{hints.FormTypeKeyword}%" });
-            if (hints.LenderNameKeyword is not null) cmd.Parameters.Add(new SqlParameter("@lender", SqlDbType.NVarChar, -1) { Value = $"%{hints.LenderNameKeyword}%" });
-
-            var results = new List<DocumentChunkMatch>();
-            await using var reader = await cmd.ExecuteReaderAsync(ct);
-            while (await reader.ReadAsync(ct))
+            var chunk = new DocumentChunk
             {
-                var chunk = new DocumentChunk
-                {
-                    ChunkId = reader.GetInt64(0),
-                    RequestId = reader.GetInt64(1),
-                    FilingDocumentId = reader.GetInt64(2),
-                    FilingId = reader.GetInt64(3),
-                    BatchId = reader.GetInt64(4),
-                    Srn = reader.GetString(5),
-                    Category = Enum.Parse<FilingCategory>(reader.GetString(6)),
-                    FormType = reader.IsDBNull(7) ? null : reader.GetString(7),
-                    DocumentName = reader.GetString(8),
-                    ChunkIndex = reader.GetInt32(9),
-                    PageNumber = reader.GetInt32(10),
-                    ChunkText = reader.GetString(11),
-                    EmbeddingModel = reader.GetString(12),
-                    EmbeddingDimensions = reader.GetInt32(13),
-                    ChunkingVersion = reader.GetString(14),
-                    CreatedDate = reader.GetDateTime(15)
-                };
-                var distance = reader.GetDouble(16);
-                results.Add(new DocumentChunkMatch(chunk, distance));
-            }
-            return results;
+                ChunkId = reader.GetInt64(0),
+                RequestId = reader.GetInt64(1),
+                FilingDocumentId = reader.GetInt64(2),
+                FilingId = reader.GetInt64(3),
+                BatchId = reader.GetInt64(4),
+                Srn = reader.GetString(5),
+                Category = Enum.Parse<FilingCategory>(reader.GetString(6)),
+                FormType = reader.IsDBNull(7) ? null : reader.GetString(7),
+                DocumentName = reader.GetString(8),
+                ChunkIndex = reader.GetInt32(9),
+                PageNumber = reader.GetInt32(10),
+                ChunkText = reader.GetString(11),
+                EmbeddingModel = reader.GetString(12),
+                EmbeddingDimensions = reader.GetInt32(13),
+                ChunkingVersion = reader.GetString(14),
+                CreatedDate = reader.GetDateTime(15)
+            };
+            var distance = reader.GetDouble(16);
+            results.Add(new DocumentChunkMatch(chunk, distance));
         }
+        return results;
     }
 }

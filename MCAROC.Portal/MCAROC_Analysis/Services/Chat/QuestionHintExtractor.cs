@@ -5,8 +5,12 @@ namespace MCAROC_Analysis.Services.Chat;
 
 /// <summary>Category/form-type/lender/year are soft hints — DocumentRetriever applies them but fails open
 /// to an unfiltered search if too few results pass the relevance threshold. An SRN match is the one hard
-/// filter, since it's a near-unambiguous identifier when it matches a real filing for this request.</summary>
-public record QuestionHints(FilingCategory? Category, string? FormTypeKeyword, string? LenderNameKeyword, int? Year, string? SrnMatch)
+/// filter, since it's a near-unambiguous identifier when it matches a real filing for this request.
+/// LexicalTerms are exact-match candidates (case numbers, quoted phrases, statute/section references) that
+/// pure semantic similarity tends to under-rank — they drive #194's full-text half of hybrid retrieval, never a
+/// filter.</summary>
+public record QuestionHints(FilingCategory? Category, string? FormTypeKeyword, string? LenderNameKeyword, int? Year, string? SrnMatch,
+    IReadOnlyList<string>? LexicalTerms = null)
 {
     public bool HasSoftHints => Category is not null || FormTypeKeyword is not null || LenderNameKeyword is not null;
 }
@@ -50,9 +54,47 @@ public static partial class QuestionHintExtractor
         var srn = knownSrns.FirstOrDefault(s =>
             !string.IsNullOrWhiteSpace(s) && Regex.IsMatch(question, $@"\b{Regex.Escape(s)}\b"));
 
-        return new QuestionHints(category, formType, lender, year, srn);
+        return new QuestionHints(category, formType, lender, year, srn, ExtractLexicalTerms(question));
+    }
+
+    /// <summary>Caps how many exact-match phrases one question can OR together — a question quoting a dozen
+    /// fragments is better served by the semantic search than by a sprawling full-text condition.</summary>
+    internal const int MaxLexicalTerms = 5;
+
+    internal static IReadOnlyList<string> ExtractLexicalTerms(string question)
+    {
+        var terms = new List<string>();
+        void Add(string raw)
+        {
+            var term = WhitespaceRegex().Replace(raw.Trim(), " ");
+            if (term.Length >= 2 && !terms.Contains(term, StringComparer.OrdinalIgnoreCase))
+                terms.Add(term);
+        }
+
+        foreach (Match m in QuotedPhraseRegex().Matches(question)) Add(m.Groups["phrase"].Value);
+        foreach (Match m in CaseNumberRegex().Matches(question)) Add(m.Value);
+        foreach (Match m in SectionReferenceRegex().Matches(question)) Add(m.Value);
+
+        return terms.Take(MaxLexicalTerms).ToList();
     }
 
     [GeneratedRegex(@"\b(19|20)\d{2}\b")]
     private static partial Regex YearRegex();
+
+    [GeneratedRegex(@"[""\u201C\u201D](?<phrase>[^""\u201C\u201D]{2,120})[""\u201C\u201D]")]
+    private static partial Regex QuotedPhraseRegex();
+
+    /// <summary>Court case numbers as they appear in Indian order sheets: an upper-case case-type prefix
+    /// (<c>TP</c>, <c>WP</c>, <c>CP(IB)</c>, <c>O.S.</c>, <c>IA</c>…), an optional "No.", a serial and a year
+    /// joined by "/" or "of" — e.g. <c>TP 255/2019</c>, <c>WP/11227/2019</c>, <c>CP(IB) No. 123/2020</c>,
+    /// <c>IA No. 45 of 2021</c>. Case-sensitive on the prefix so ordinary words never match.</summary>
+    [GeneratedRegex(@"\b[A-Z][A-Z.()]{0,14}(?:\s*No\.?)?[\s/.-]*\d{1,6}\s*(?:/|\bof\b)\s*(?:19|20)\d{2}\b")]
+    private static partial Regex CaseNumberRegex();
+
+    /// <summary>Statute references — <c>Section 7</c>, <c>section 138</c>, <c>Sec. 29A</c>, <c>Section 13(2)</c>.</summary>
+    [GeneratedRegex(@"\b(?:[Ss]ection|SECTION|[Ss]ec\.?)\s*\d{1,4}[A-Z]?(?:\(\w{1,4}\))*")]
+    private static partial Regex SectionReferenceRegex();
+
+    [GeneratedRegex(@"\s+")]
+    private static partial Regex WhitespaceRegex();
 }

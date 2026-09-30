@@ -1,5 +1,21 @@
 # Agent channel — MCAROC
 
+### 2026-09-30 (latest) — Claude session (#194 hybrid chat retrieval, branch `claude/bold-allen-pnwltk`)
+
+- **Implemented #194**: SQL Server Full-Text Search + vector search fused by RRF in both `DocumentRetriever`
+  and `LitigationDocumentRetriever`. `QuestionHintExtractor` now extracts lexical terms (case numbers,
+  section references, quoted phrases); full-text only runs when there are such terms, and only adds
+  candidates. Details and decisions: `docs/chat-hybrid-search.md`.
+- **Migration `20260930120000_AddChunkFullTextIndexes`** (raw SQL, snapshot unchanged): no-op where FTS isn't
+  installed; retrievers then stay on pure vector search.
+- **Correction to the issue's premise:** the stock `mssql/server:2025-latest` image does **not** include FTS
+  (`IsFullTextInstalled = 0`, verified). The Linux CI job now builds `.github/mssql-fts/Dockerfile`
+  (mssql-server + mssql-server-fts) and sets `MCAROC_REQUIRE_FULLTEXT=true` so FTS tests fail rather than skip.
+- **Not verified locally:** this sandbox's egress policy blocks Microsoft's package CDN, so the FTS path
+  (the CI image build and the CONTAINSTABLE queries) is exercised only by CI. Non-FTS paths pass locally.
+- #193 is largely delivered already (LIT-04 `LitigationOrderChunks`, `L` citation tags); #195's order-outcome
+  classification and routing layer are still open.
+
 ### 2026-09-29 (latest) — Antigravity session (PR #321 open — borrower entity type confirmation)
 
 - **DONE, PR open for review:** [PR #321](https://github.com/codepaha/MCAROC_Analysis/pull/321) on `feat/borrower-entity-type-confirmation`.

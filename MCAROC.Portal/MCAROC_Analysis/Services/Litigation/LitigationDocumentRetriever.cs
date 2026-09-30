@@ -26,20 +26,53 @@ public record LitigationOrderChunkMatch(LitigationOrderChunk Chunk, double Dista
 /// VECTOR_DISTANCE for every candidate row made SQL Server request a memory grant it couldn't satisfy
 /// (RESOURCE_SEMAPHORE waits). Also reuses DocumentRetriever's dedicated-connection choice (never
 /// db.Database.GetDbConnection()) — reusing EF's pooled connection produced a catastrophically slow plan for
-/// this same query shape.</summary>
+/// this same query shape.
+///
+/// #194: when the question carries exact-match terms (case numbers like <c>TP 255/2019</c>, section references,
+/// quoted phrases) and <c>LitigationOrderChunks</c> has a full-text index, a <c>CONTAINSTABLE</c> search runs
+/// alongside the vector one and the two rankings are fused by <see cref="HybridSearch.ReciprocalRankFusion"/> —
+/// see <see cref="HybridSearch"/> for the fail-open and population-timing decisions.</summary>
 public class LitigationDocumentRetriever(AppDbContext db, ChatRetrievalOptions options)
 {
     public virtual async Task<List<LitigationOrderChunkMatch>> SearchRequestOrdersAsync(
-        long requestId, float[] queryEmbedding, CancellationToken ct)
+        long requestId, float[] queryEmbedding, CancellationToken ct, IReadOnlyList<string>? lexicalTerms = null)
     {
         var queryVector = new SqlVector<float>(queryEmbedding);
 
-        // Rank on a narrow (LitigationOrderChunkId, Distance) subquery first, then join back for the wide
-        // columns only for the winning rows — see this type's own remarks for why.
-        var sql = """
-            SELECT c.LitigationOrderChunkId, c.RequestId, c.LitigationOrderDocumentId, c.LitigationCaseOrderId, c.LitigationCaseId,
-                c.CaseNumber, c.Cnr, c.Court, c.OrderType, c.OrderDate, c.ChunkIndex, c.PageNumber, c.ChunkText,
-                c.EmbeddingModel, c.EmbeddingDimensions, c.ChunkingVersion, c.CreatedDate,
+        await using var connection = new SqlConnection(db.Database.GetConnectionString());
+        await connection.OpenAsync(ct);
+
+        var semantic = (await RunSearchAsync(connection, VectorSql, requestId, queryVector, null, ct))
+            .Where(m => m.Distance <= options.MaxCosineDistance).ToList();
+
+        var containsQuery = HybridSearch.BuildContainsQuery(lexicalTerms);
+        if (containsQuery is null || !await HybridSearch.IsFullTextIndexedAsync(connection, "dbo.LitigationOrderChunks", ct))
+            return semantic;
+
+        // An exact case-number/section hit joins the fused list even past MaxCosineDistance — that is exactly
+        // the evidence semantic similarity under-ranks.
+        var lexical = await RunSearchAsync(connection, LexicalSql, requestId, queryVector, containsQuery, ct);
+        if (lexical.Count == 0)
+            return semantic;
+
+        var byId = new Dictionary<long, LitigationOrderChunkMatch>();
+        foreach (var m in semantic.Concat(lexical)) byId.TryAdd(m.Chunk.LitigationOrderChunkId, m);
+        return HybridSearch.ReciprocalRankFusion(
+                semantic.Select(m => m.Chunk.LitigationOrderChunkId).ToList(),
+                lexical.Select(m => m.Chunk.LitigationOrderChunkId).ToList(), options.TopK)
+            .Select(id => byId[id]).ToList();
+    }
+
+    private const string WideColumns = """
+        c.LitigationOrderChunkId, c.RequestId, c.LitigationOrderDocumentId, c.LitigationCaseOrderId, c.LitigationCaseId,
+            c.CaseNumber, c.Cnr, c.Court, c.OrderType, c.OrderDate, c.ChunkIndex, c.PageNumber, c.ChunkText,
+            c.EmbeddingModel, c.EmbeddingDimensions, c.ChunkingVersion, c.CreatedDate
+        """;
+
+    // Rank on a narrow (LitigationOrderChunkId, Distance) subquery first, then join back for the wide
+    // columns only for the winning rows — see this type's own remarks for why.
+    private const string VectorSql = $"""
+            SELECT {WideColumns},
                 ranked.Distance
             FROM (
                 SELECT TOP (@topK) LitigationOrderChunkId, VECTOR_DISTANCE('cosine', Embedding, @queryVector) AS Distance
@@ -51,44 +84,60 @@ public class LitigationDocumentRetriever(AppDbContext db, ChatRetrievalOptions o
             ORDER BY ranked.Distance
             """;
 
-        await using var connection = new SqlConnection(db.Database.GetConnectionString());
-        await connection.OpenAsync(ct);
-        {
-            await using var cmd = connection.CreateCommand();
-            cmd.CommandText = sql;
-            cmd.Parameters.Add(new SqlParameter("@topK", SqlDbType.Int) { Value = options.TopK });
-            cmd.Parameters.Add(new SqlParameter("@requestId", SqlDbType.BigInt) { Value = requestId });
-            var vectorParam = cmd.Parameters.Add("@queryVector", Microsoft.Data.SqlDbTypeExtensions.Vector, EmbeddingService.Dimensions);
-            vectorParam.Value = queryVector;
+    /// <summary>Same narrow-rank-then-join-wide shape, ranked by full-text RANK; the cosine distance is still
+    /// computed for the winners so every match carries a real relevance score.</summary>
+    private const string LexicalSql = $"""
+            SELECT {WideColumns},
+                VECTOR_DISTANCE('cosine', c.Embedding, @queryVector) AS Distance
+            FROM (
+                SELECT TOP (@topK) d.LitigationOrderChunkId, ft.[RANK] AS FtRank
+                FROM CONTAINSTABLE(LitigationOrderChunks, ChunkText, @ftQuery) AS ft
+                JOIN LitigationOrderChunks d ON d.LitigationOrderChunkId = ft.[KEY]
+                WHERE d.RequestId = @requestId
+                ORDER BY ft.[RANK] DESC, d.LitigationOrderChunkId
+            ) AS ranked
+            JOIN LitigationOrderChunks c ON c.LitigationOrderChunkId = ranked.LitigationOrderChunkId
+            ORDER BY ranked.FtRank DESC, c.LitigationOrderChunkId
+            """;
 
-            var results = new List<LitigationOrderChunkMatch>();
-            await using var reader = await cmd.ExecuteReaderAsync(ct);
-            while (await reader.ReadAsync(ct))
+    private async Task<List<LitigationOrderChunkMatch>> RunSearchAsync(SqlConnection connection, string sql, long requestId,
+        SqlVector<float> queryVector, string? containsQuery, CancellationToken ct)
+    {
+        await using var cmd = connection.CreateCommand();
+        cmd.CommandText = sql;
+        cmd.Parameters.Add(new SqlParameter("@topK", SqlDbType.Int) { Value = options.TopK });
+        cmd.Parameters.Add(new SqlParameter("@requestId", SqlDbType.BigInt) { Value = requestId });
+        var vectorParam = cmd.Parameters.Add("@queryVector", Microsoft.Data.SqlDbTypeExtensions.Vector, EmbeddingService.Dimensions);
+        vectorParam.Value = queryVector;
+        if (containsQuery is not null) cmd.Parameters.Add(new SqlParameter("@ftQuery", SqlDbType.NVarChar, 4000) { Value = containsQuery });
+
+        var results = new List<LitigationOrderChunkMatch>();
+        await using var reader = await cmd.ExecuteReaderAsync(ct);
+        while (await reader.ReadAsync(ct))
+        {
+            var chunk = new LitigationOrderChunk
             {
-                var chunk = new LitigationOrderChunk
-                {
-                    LitigationOrderChunkId = reader.GetInt64(0),
-                    RequestId = reader.GetInt64(1),
-                    LitigationOrderDocumentId = reader.GetInt64(2),
-                    LitigationCaseOrderId = reader.GetInt64(3),
-                    LitigationCaseId = reader.GetInt64(4),
-                    CaseNumber = reader.IsDBNull(5) ? null : reader.GetString(5),
-                    Cnr = reader.IsDBNull(6) ? null : reader.GetString(6),
-                    Court = reader.IsDBNull(7) ? null : reader.GetString(7),
-                    OrderType = reader.IsDBNull(8) ? null : reader.GetString(8),
-                    OrderDate = reader.IsDBNull(9) ? null : reader.GetString(9),
-                    ChunkIndex = reader.GetInt32(10),
-                    PageNumber = reader.GetInt32(11),
-                    ChunkText = reader.GetString(12),
-                    EmbeddingModel = reader.GetString(13),
-                    EmbeddingDimensions = reader.GetInt32(14),
-                    ChunkingVersion = reader.GetString(15),
-                    CreatedDate = reader.GetDateTime(16)
-                };
-                var distance = reader.GetDouble(17);
-                results.Add(new LitigationOrderChunkMatch(chunk, distance));
-            }
-            return results.Where(m => m.Distance <= options.MaxCosineDistance).ToList();
+                LitigationOrderChunkId = reader.GetInt64(0),
+                RequestId = reader.GetInt64(1),
+                LitigationOrderDocumentId = reader.GetInt64(2),
+                LitigationCaseOrderId = reader.GetInt64(3),
+                LitigationCaseId = reader.GetInt64(4),
+                CaseNumber = reader.IsDBNull(5) ? null : reader.GetString(5),
+                Cnr = reader.IsDBNull(6) ? null : reader.GetString(6),
+                Court = reader.IsDBNull(7) ? null : reader.GetString(7),
+                OrderType = reader.IsDBNull(8) ? null : reader.GetString(8),
+                OrderDate = reader.IsDBNull(9) ? null : reader.GetString(9),
+                ChunkIndex = reader.GetInt32(10),
+                PageNumber = reader.GetInt32(11),
+                ChunkText = reader.GetString(12),
+                EmbeddingModel = reader.GetString(13),
+                EmbeddingDimensions = reader.GetInt32(14),
+                ChunkingVersion = reader.GetString(15),
+                CreatedDate = reader.GetDateTime(16)
+            };
+            var distance = reader.GetDouble(17);
+            results.Add(new LitigationOrderChunkMatch(chunk, distance));
         }
+        return results;
     }
 }

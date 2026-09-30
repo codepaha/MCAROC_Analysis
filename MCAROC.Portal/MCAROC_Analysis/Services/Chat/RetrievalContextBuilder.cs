@@ -63,7 +63,7 @@ public class RetrievalContextBuilder
         var litigationMatches = new List<LitigationOrderChunkMatch>();
         if (await _db.LitigationOrderChunks.AnyAsync(c => c.RequestId == requestId, ct))
         {
-            litigationMatches = await _litigationRetriever.SearchRequestOrdersAsync(requestId, await GetQueryEmbeddingAsync(), ct);
+            litigationMatches = await _litigationRetriever.SearchRequestOrdersAsync(requestId, await GetQueryEmbeddingAsync(), ct, hints.LexicalTerms);
         }
 
         var sources = new List<RetrievedSource>(facts.Count + chunkMatches.Count + litigationMatches.Count);
