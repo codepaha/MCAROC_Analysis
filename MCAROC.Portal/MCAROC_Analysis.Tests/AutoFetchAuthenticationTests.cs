@@ -1,7 +1,6 @@
 using System.Net;
 using System.Text.RegularExpressions;
 using MCAROC_Analysis.Data;
-using MCAROC_Analysis.Services.InternalAuth;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.EntityFrameworkCore;
@@ -11,8 +10,8 @@ using Microsoft.Extensions.Hosting;
 
 namespace MCAROC_Analysis.Tests;
 
-/// <summary>Real HTTP-pipeline coverage proving every AutoFetch endpoint is behind the "InternalReviewer"
-/// cookie scheme — the finding this closes: AutoFetchController spends the app's own reference-tool
+/// <summary>Real HTTP-pipeline coverage proving every AutoFetch endpoint is behind the portal login
+/// (application cookie scheme) — the finding this closes: AutoFetchController spends the app's own reference-tool
 /// session credential and can trigger unbounded external downloads on the caller's behalf, so an anonymous
 /// caller reaching it at all is the defect, not just a missing attribute. Mirrors
 /// CalculationAuditAuthenticationTests' approach (deliberately self-contained rather than sharing its
@@ -45,9 +44,8 @@ public partial class AutoFetchAuthenticationTests : IClassFixture<WebApplication
                 cfg.AddInMemoryCollection(new Dictionary<string, string?>
                 {
                     ["ConnectionStrings:Default"] = TestDatabase.ConnectionString,
-                    ["InternalAuth:ReviewerUsername"] = "testreviewer",
-                    ["InternalAuth:ReviewerPasswordHash"] = InternalReviewerCredentialChecker.Hash("Correct-Horse-Battery-Staple-1"),
-                    ["InternalAuth:ReviewerDisplayName"] = "Test Reviewer"
+                    ["ApplicationAuth:Username"] = "test@example.test",
+                    ["ApplicationAuth:PasswordHash"] = new Microsoft.AspNetCore.Identity.PasswordHasher<string>().HashPassword("test@example.test", "Correct-Horse-Battery-Staple-1")
                 });
             });
             // Pipeline-only coverage: the app's background workers would otherwise start against the shared
@@ -58,7 +56,7 @@ public partial class AutoFetchAuthenticationTests : IClassFixture<WebApplication
         });
     }
 
-    // BaseAddress must be https:// — the InternalReviewer cookie is CookieSecurePolicy.Always, and the
+    // BaseAddress must be https:// — the application cookie is CookieSecurePolicy.Always, and the
     // client's own CookieContainer (HandleCookies defaults to true) silently drops a Secure cookie it
     // received unless subsequent requests are also seen as HTTPS. The in-memory TestServer doesn't need
     // real TLS for this to work; only the request's scheme matters for the cookie container's own check.
@@ -85,14 +83,14 @@ public partial class AutoFetchAuthenticationTests : IClassFixture<WebApplication
 
     private static async Task LoginAsync(HttpClient client, string username, string password)
     {
-        var page = await client.GetAsync("/internal/login");
+        var page = await client.GetAsync("/login");
         var html = await page.Content.ReadAsStringAsync();
         var token = AntiForgeryTokenRegex().Match(html).Groups[1].Value;
-        var response = await client.PostAsync("/internal/login", new FormUrlEncodedContent(new Dictionary<string, string>
+        var response = await client.PostAsync("/login", new FormUrlEncodedContent(new Dictionary<string, string>
         {
-            ["username"] = username, ["password"] = password, ["__RequestVerificationToken"] = token
+            ["username"] = username, ["password"] = password, ["returnUrl"] = "/", ["__RequestVerificationToken"] = token
         }));
-        Assert.Equal(HttpStatusCode.Redirect, response.StatusCode); // successful login redirects away from /internal/login
+        Assert.Equal(HttpStatusCode.Redirect, response.StatusCode); // successful login redirects away from /login
     }
 
     [Fact]
@@ -125,7 +123,7 @@ public partial class AutoFetchAuthenticationTests : IClassFixture<WebApplication
     public async Task AuthenticatedGet_ToNewForm_ReachesTheAction()
     {
         var client = NoRedirectClient();
-        await LoginAsync(client, "testreviewer", "Correct-Horse-Battery-Staple-1");
+        await LoginAsync(client, "test@example.test", "Correct-Horse-Battery-Staple-1");
 
         var response = await client.GetAsync("/Requests/AutoFetch");
 
@@ -136,7 +134,7 @@ public partial class AutoFetchAuthenticationTests : IClassFixture<WebApplication
     public async Task AuthenticatedGet_ToStatus_ReachesTheAction_AndGets404ForAnUnknownRequest_NotAChallenge()
     {
         var client = NoRedirectClient();
-        await LoginAsync(client, "testreviewer", "Correct-Horse-Battery-Staple-1");
+        await LoginAsync(client, "test@example.test", "Correct-Horse-Battery-Staple-1");
 
         var response = await client.GetAsync("/Requests/999999999/autofetch/status");
 

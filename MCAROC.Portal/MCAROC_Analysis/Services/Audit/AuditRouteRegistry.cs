@@ -39,10 +39,6 @@ public static class AuditRouteRegistry
             { ("ApplicationAuth", "Login"), (AuditActionType.ApplicationLoginAttempted, AuditRulePolicy.Always) },
             { ("ApplicationAuth", "Logout"), (AuditActionType.ApplicationLoggedOut, AuditRulePolicy.Always) },
 
-            // InternalAuth
-            { ("InternalAuth", "Login"), (AuditActionType.InternalLoginAttempted, AuditRulePolicy.Always) },
-            { ("InternalAuth", "Logout"), (AuditActionType.InternalLoggedOut, AuditRulePolicy.Always) },
-
             // AnalystAuth: these actions write their own audit events. Login needs to record the resolved
             // database analyst only after credential verification, while failures must remain anonymous;
             // suppressing the generic filter avoids a duplicate, lower-fidelity event.

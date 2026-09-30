@@ -52,7 +52,7 @@ public enum AuditActionType
     // Clients
     ClientEdited,
 
-    // InternalAuth
+    // InternalAuth: the reviewer login was removed; these values stay because stored audit rows use them.
     InternalLoginAttempted,
     InternalLoggedOut,
 

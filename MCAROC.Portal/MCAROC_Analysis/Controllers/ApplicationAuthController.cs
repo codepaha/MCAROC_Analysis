@@ -33,7 +33,6 @@ public sealed class ApplicationAuthController(ApplicationCredentialChecker crede
         }
         // Switching to the full application account must not retain a restricted analyst identity.
         await HttpContext.SignOutAsync("Analyst");
-        await HttpContext.SignOutAsync("InternalReviewer");
         var identity = new ClaimsIdentity([
             new Claim(ClaimTypes.Name, credentials.Username),
             new Claim("credential-version", credentials.Version)
