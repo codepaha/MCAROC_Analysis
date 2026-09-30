@@ -73,27 +73,36 @@ public class PipelineController(
     [HttpGet("/pipeline/unlock-alerts")]
     public async Task<IActionResult> UnlockAlerts(CancellationToken ct)
     {
-        var now = DateTime.UtcNow;
-        // Grouped in SQL, so a backlog of waiting jobs for one company can't crowd other companies out; the page
-        // shows the first few it hasn't snoozed and counts the rest.
-        var companies = await db.AutoFetchJobs.AsNoTracking()
-            .Where(j => j.Status == AutoFetchJobStatus.WaitingForUnlock
-                && !db.UnlockApprovals.Any(a => a.Identifier == j.Cin.Trim().ToUpper() && a.ConsumedAdmissionId == null && a.ExpiresUtc > now))
-            .GroupBy(j => j.Cin.Trim().ToUpper())
-            .Select(g => new { Identifier = g.Key, FirstJobId = g.Min(j => j.AutoFetchJobId), Count = g.Count(), Since = g.Min(j => j.CreatedUtc) })
-            .OrderBy(g => g.Since).ThenBy(g => g.FirstJobId)
-            .Take(MaxUnlockAlertCompanies)
-            .ToListAsync(ct);
-        var firstJobIds = companies.Select(c => c.FirstJobId).ToList();
-        var firstJobs = await db.AutoFetchJobs.AsNoTracking().Where(j => firstJobIds.Contains(j.AutoFetchJobId))
-            .Select(j => new { j.AutoFetchJobId, j.RequestId, j.StatusMessage, j.Request!.RequestNumber, j.Request.CompanyName })
-            .ToDictionaryAsync(j => j.AutoFetchJobId, ct);
-        Response.Headers.CacheControl = "no-store";
-        return Ok(companies.Where(c => firstJobs.ContainsKey(c.FirstJobId)).Select(c =>
+        // The alert polls on every page, so a navigation routinely cancels a poll mid-query. That is a client
+        // disconnect, not an error: answer nothing rather than letting the exception surface (and break the debugger).
+        try
         {
-            var j = firstJobs[c.FirstJobId];
-            return new UnlockAlertDto(c.Identifier, j.CompanyName, j.RequestId, j.RequestNumber, c.Count, j.StatusMessage, c.Since);
-        }));
+            var now = DateTime.UtcNow;
+            // Grouped in SQL, so a backlog of waiting jobs for one company can't crowd other companies out; the page
+            // shows the first few it hasn't snoozed and counts the rest.
+            var companies = await db.AutoFetchJobs.AsNoTracking()
+                .Where(j => j.Status == AutoFetchJobStatus.WaitingForUnlock
+                    && !db.UnlockApprovals.Any(a => a.Identifier == j.Cin.Trim().ToUpper() && a.ConsumedAdmissionId == null && a.ExpiresUtc > now))
+                .GroupBy(j => j.Cin.Trim().ToUpper())
+                .Select(g => new { Identifier = g.Key, FirstJobId = g.Min(j => j.AutoFetchJobId), Count = g.Count(), Since = g.Min(j => j.CreatedUtc) })
+                .OrderBy(g => g.Since).ThenBy(g => g.FirstJobId)
+                .Take(MaxUnlockAlertCompanies)
+                .ToListAsync(ct);
+            var firstJobIds = companies.Select(c => c.FirstJobId).ToList();
+            var firstJobs = await db.AutoFetchJobs.AsNoTracking().Where(j => firstJobIds.Contains(j.AutoFetchJobId))
+                .Select(j => new { j.AutoFetchJobId, j.RequestId, j.StatusMessage, j.Request!.RequestNumber, j.Request.CompanyName })
+                .ToDictionaryAsync(j => j.AutoFetchJobId, ct);
+            Response.Headers.CacheControl = "no-store";
+            return Ok(companies.Where(c => firstJobs.ContainsKey(c.FirstJobId)).Select(c =>
+            {
+                var j = firstJobs[c.FirstJobId];
+                return new UnlockAlertDto(c.Identifier, j.CompanyName, j.RequestId, j.RequestNumber, c.Count, j.StatusMessage, c.Since);
+            }));
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            return new EmptyResult();
+        }
     }
 
     private string CurrentMode()
