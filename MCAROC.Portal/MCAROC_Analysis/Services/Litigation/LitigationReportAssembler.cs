@@ -194,11 +194,15 @@ public class LitigationReportAssembler(
             }
         }
 
-        // Outcomes
-        var outcomeLookup = await new LitigationOrderOutcomeQuery(db).FindAsync(requestId, Enum.GetValues<LitigationOrderOutcome>(), ct);
-        var outcomesByOrderId = outcomeLookup.Matches
-            .GroupBy(m => m.LitigationCaseOrderId)
-            .ToDictionary(g => g.Key, g => g.First());
+        // Outcomes (AI analysis output: only included when includeAnalysis is true)
+        Dictionary<long, OrderOutcomeMatch> outcomesByOrderId = [];
+        if (includeAnalysis)
+        {
+            var outcomeLookup = await new LitigationOrderOutcomeQuery(db).FindAsync(requestId, Enum.GetValues<LitigationOrderOutcome>(), ct);
+            outcomesByOrderId = outcomeLookup.Matches
+                .GroupBy(m => m.LitigationCaseOrderId)
+                .ToDictionary(g => g.Key, g => g.First());
+        }
 
         // Build DTOs with Chronological Order Sorting
         var reportCases = new List<StandaloneReportCaseDto>(cases.Count);
@@ -233,7 +237,11 @@ public class LitigationReportAssembler(
                         m.RocChargeNumber,
                         m.ChargeHolder)).ToList();
 
-                    outcomesByOrderId.TryGetValue(o.LitigationCaseOrderId, out var outcomeMatch);
+                    OrderOutcomeMatch? outcomeMatch = null;
+                    if (includeAnalysis)
+                    {
+                        outcomesByOrderId.TryGetValue(o.LitigationCaseOrderId, out outcomeMatch);
+                    }
 
                     return new StandaloneReportOrderDto(
                         o.LitigationCaseOrderId,
