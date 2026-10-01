@@ -5,6 +5,7 @@ using Microsoft.Data.SqlTypes;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 #nullable disable
@@ -12,9 +13,11 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace MCAROC_Analysis.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260930170721_AddPropertyParticularsExtractions")]
+    partial class AddPropertyParticularsExtractions
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -3613,93 +3616,6 @@ namespace MCAROC_Analysis.Migrations
                     b.ToTable("LitigationOrderChunks");
                 });
 
-            modelBuilder.Entity("MCAROC_Analysis.Data.Entities.LitigationOrderClassification", b =>
-                {
-                    b.Property<long>("LitigationOrderClassificationId")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("bigint");
-
-                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("LitigationOrderClassificationId"));
-
-                    b.Property<string>("ClassificationJson")
-                        .HasColumnType("nvarchar(max)");
-
-                    b.Property<DateTime?>("CompletedUtc")
-                        .HasColumnType("datetime2");
-
-                    b.Property<string>("Confidence")
-                        .HasMaxLength(10)
-                        .HasColumnType("nvarchar(10)");
-
-                    b.Property<string>("EvidenceHash")
-                        .IsRequired()
-                        .HasMaxLength(64)
-                        .HasColumnType("nvarchar(64)");
-
-                    b.Property<string>("EvidenceJson")
-                        .IsRequired()
-                        .HasColumnType("nvarchar(max)");
-
-                    b.Property<bool>("EvidenceTruncated")
-                        .HasColumnType("bit");
-
-                    b.Property<string>("FailureReason")
-                        .HasMaxLength(1000)
-                        .HasColumnType("nvarchar(1000)");
-
-                    b.Property<decimal?>("FineAmount")
-                        .HasPrecision(18, 2)
-                        .HasColumnType("decimal(18,2)");
-
-                    b.Property<long>("LitigationAiAnalysisRunId")
-                        .HasColumnType("bigint");
-
-                    b.Property<long>("LitigationCaseId")
-                        .HasColumnType("bigint");
-
-                    b.Property<long>("LitigationCaseOrderId")
-                        .HasColumnType("bigint");
-
-                    b.Property<long>("LitigationOrderDocumentId")
-                        .HasColumnType("bigint");
-
-                    b.Property<string>("OutcomeTypesJson")
-                        .IsRequired()
-                        .HasMaxLength(500)
-                        .HasColumnType("nvarchar(500)");
-
-                    b.Property<string>("PromptHash")
-                        .IsRequired()
-                        .HasMaxLength(64)
-                        .HasColumnType("nvarchar(64)");
-
-                    b.Property<string>("RawResponseJson")
-                        .HasColumnType("nvarchar(max)");
-
-                    b.Property<long>("RequestId")
-                        .HasColumnType("bigint");
-
-                    b.Property<string>("ResponseHash")
-                        .HasMaxLength(64)
-                        .HasColumnType("nvarchar(64)");
-
-                    b.Property<string>("Status")
-                        .IsRequired()
-                        .HasMaxLength(30)
-                        .HasColumnType("nvarchar(30)");
-
-                    b.HasKey("LitigationOrderClassificationId");
-
-                    b.HasIndex("LitigationOrderDocumentId");
-
-                    b.HasIndex("LitigationAiAnalysisRunId", "LitigationOrderDocumentId")
-                        .IsUnique();
-
-                    b.HasIndex("RequestId", "LitigationOrderDocumentId", "Status");
-
-                    b.ToTable("LitigationOrderClassifications");
-                });
-
             modelBuilder.Entity("MCAROC_Analysis.Data.Entities.LitigationOrderDocument", b =>
                 {
                     b.Property<long>("LitigationOrderDocumentId")
@@ -6541,21 +6457,6 @@ namespace MCAROC_Analysis.Migrations
                     b.Navigation("Case");
 
                     b.Navigation("ReportSnapshot");
-                });
-
-            modelBuilder.Entity("MCAROC_Analysis.Data.Entities.LitigationOrderClassification", b =>
-                {
-                    b.HasOne("MCAROC_Analysis.Data.Entities.LitigationAiAnalysisRun", null)
-                        .WithMany()
-                        .HasForeignKey("LitigationAiAnalysisRunId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.HasOne("MCAROC_Analysis.Data.Entities.LitigationOrderDocument", null)
-                        .WithMany()
-                        .HasForeignKey("LitigationOrderDocumentId")
-                        .OnDelete(DeleteBehavior.NoAction)
-                        .IsRequired();
                 });
 
             modelBuilder.Entity("MCAROC_Analysis.Data.Entities.LitigationOrderDocument", b =>

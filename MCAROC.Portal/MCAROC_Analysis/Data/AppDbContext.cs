@@ -93,6 +93,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<LitigationAiAnalysisRun> LitigationAiAnalysisRuns => Set<LitigationAiAnalysisRun>();
     public DbSet<LitigationCaseAiAnalysis> LitigationCaseAiAnalyses => Set<LitigationCaseAiAnalysis>();
     public DbSet<LitigationOrderClassification> LitigationOrderClassifications => Set<LitigationOrderClassification>();
+    public DbSet<PropertyParticularsExtraction> PropertyParticularsExtractions => Set<PropertyParticularsExtraction>();
     public DbSet<LitigationPortfolioAiAnalysis> LitigationPortfolioAiAnalyses => Set<LitigationPortfolioAiAnalysis>();
 
     // #164 Calculation assurance
@@ -450,6 +451,20 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             // NoAction, same as LitigationCaseAiAnalysis → LitigationCase: the classification is an audit record of
             // what the model was shown and said, and must never be silently deleted with (or block) its source row.
             e.HasOne<LitigationOrderDocument>().WithMany().HasForeignKey(x => x.LitigationOrderDocumentId).OnDelete(DeleteBehavior.NoAction);
+        });
+
+        modelBuilder.Entity<PropertyParticularsExtraction>(e =>
+        {
+            e.HasKey(x => x.PropertyParticularsExtractionId);
+            // One extraction per distinct text per prompt version — the idempotency key concurrent schedulers race on.
+            e.HasIndex(x => new { x.TextHash, x.PromptVersion }).IsUnique();
+            e.HasIndex(x => new { x.Status, x.NextAttemptUtc });
+            e.Property(x => x.TextHash).HasMaxLength(64).IsRequired();
+            e.Property(x => x.PromptVersion).HasMaxLength(20).IsRequired();
+            e.Property(x => x.ModelId).HasMaxLength(100).IsRequired();
+            e.Property(x => x.Status).HasConversion<string>().HasMaxLength(20);
+            e.Property(x => x.ResponseHash).HasMaxLength(64);
+            e.Property(x => x.FailureReason).HasMaxLength(1000);
         });
 
         modelBuilder.Entity<LitigationPortfolioAiAnalysis>(e =>

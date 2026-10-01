@@ -3,6 +3,7 @@ using MCAROC_Analysis.Models;
 using MCAROC_Analysis.Models.Dossier;
 using MCAROC_Analysis.Services.Analysis;
 using MCAROC_Analysis.Services.Excel;
+using MCAROC_Analysis.Services.PropertyParticulars;
 using QuestPDF.Fluent;
 using QuestPDF.Infrastructure;
 
@@ -604,8 +605,16 @@ public partial class DossierPdfComposer
 
         var propertyEv = evs.LastOrDefault(e => !string.IsNullOrWhiteSpace(e.PropertyParticulars));
         if (propertyEv is not null)
+        {
+            // The normalised reading first (asset class, unit, area, CTS/survey nos., location — Gemini-split when an
+            // extraction exists), then the source wording it was read from; the raw text is never dropped.
+            var reading = PropertyReading.For(propertyEv.PropertyParticulars, propertyEv.PropertyType, model.PropertyExtractions);
+            if (reading.HasContent)
+                col.Item().PaddingTop(3).Text("Property (normalised): " + reading.Summarize())
+                    .FontSize(DossierTheme.Small).FontColor(DossierTheme.Ink);
             col.Item().PaddingTop(3).Text("Property particulars: " + propertyEv!.PropertyParticulars)
                 .FontSize(DossierTheme.Small).FontColor(DossierTheme.InkSoft);
+        }
         else if (labels.Count == 0)
         {
             // No normalized category and no Property Particulars — fall back to whatever raw instrument

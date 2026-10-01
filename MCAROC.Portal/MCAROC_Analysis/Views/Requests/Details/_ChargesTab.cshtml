@@ -213,7 +213,7 @@
                         <td><a class="mca-chip" data-bs-toggle="collapse" href="#charge-@c.ChargeId" role="button">Details</a></td>
                     </tr>
                     <tr class="collapse" id="charge-@c.ChargeId">
-                        <td colspan="8">@await Html.PartialAsync("Details/_ChargeDrawer", ChargeDrawerViewModel.For(c, Model.AnalysisFindings, LitigationFor(c)))</td>
+                        <td colspan="8">@await Html.PartialAsync("Details/_ChargeDrawer", ChargeDrawerViewModel.For(c, Model.AnalysisFindings, LitigationFor(c), Model.PropertyExtractions))</td>
                     </tr>
                 }
                 </tbody>
@@ -271,7 +271,7 @@
                         <td><a class="mca-chip" data-bs-toggle="collapse" href="#charge-@c.ChargeId" role="button">Details</a></td>
                     </tr>
                     <tr class="collapse" id="charge-@c.ChargeId">
-                        <td colspan="7">@await Html.PartialAsync("Details/_ChargeDrawer", ChargeDrawerViewModel.For(c, Model.AnalysisFindings))</td>
+                        <td colspan="7">@await Html.PartialAsync("Details/_ChargeDrawer", ChargeDrawerViewModel.For(c, Model.AnalysisFindings, propertyExtractions: Model.PropertyExtractions))</td>
                     </tr>
                 }
                 </tbody>

@@ -32,7 +32,10 @@ public sealed class DossierArtifactService(DossierCache cache, DossierPdfRendere
         // this file cache never expires. A refresh, or order text extracted later under the same snapshot, must
         // produce a different file rather than let File.Exists serve a PDF that is missing those links.
         var litigationPart = model.ChargeLinks?.Version is { } litigationVersion ? $"-l{litigationVersion}" : "";
-        var name = $"{flavour.ToString().ToLowerInvariant()}-{model.IngestionRunId}-{model.AnalysisRunId?.ToString() ?? "none"}{litigationPart}.pdf";
+        // Same for the property-particulars readings the annexure prints (Gemini extractions complete after ingestion).
+        var propertyPart = model.PropertyExtractions is { Count: > 0 } extractions
+            ? "-" + PropertyParticulars.PropertyParticularsExtractionService.VersionOf(extractions) : "";
+        var name = $"{flavour.ToString().ToLowerInvariant()}-{model.IngestionRunId}-{model.AnalysisRunId?.ToString() ?? "none"}{litigationPart}{propertyPart}.pdf";
         var path = Path.Combine(dir, name);
 
         if (!File.Exists(path))

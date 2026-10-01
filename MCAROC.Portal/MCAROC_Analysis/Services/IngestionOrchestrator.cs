@@ -11,7 +11,8 @@ namespace MCAROC_Analysis.Services;
 /// parser, and persists everything tagged to a new IngestionRun in one transaction. Never deletes a prior
 /// run's data — re-running creates IngestionRun N+1 and MCA_Request.LatestCompletedIngestionRunId moves
 /// forward only on success, which is what makes reprocessing idempotent (see portalplan/plan doc).</summary>
-public class IngestionOrchestrator(AppDbContext db, IExcelSheetReader sheetReader, ILogger<IngestionOrchestrator> logger)
+public class IngestionOrchestrator(AppDbContext db, IExcelSheetReader sheetReader, ILogger<IngestionOrchestrator> logger,
+    PropertyParticulars.PropertyParticularsExtractionService? propertyExtraction = null)
 {
     public async Task<IngestionRun> RunAsync(long requestId, long rocDocumentId, long? chargeDocumentId, CancellationToken ct = default,
         long? autoFetchJobId = null)
@@ -143,6 +144,18 @@ public class IngestionOrchestrator(AppDbContext db, IExcelSheetReader sheetReade
             db.Requests.Update(request);
 
             await db.SaveChangesAsync(ct);
+        }
+
+        // After commit, outside the ingestion transaction: queue the Gemini property-particulars extraction for the
+        // new charges. Best effort — a scheduling failure never fails an ingestion that already committed; the
+        // request's details page schedules any missing text again (lazy backfill).
+        if (propertyExtraction is not null && run.Status is IngestionRunStatus.CompletedClean or IngestionRunStatus.CompletedWithWarnings)
+        {
+            try { await propertyExtraction.ScheduleForRequestAsync(requestId, ct); }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                logger.LogWarning(ex, "Scheduling property particulars extraction failed for request {RequestId}", requestId);
+            }
         }
 
         return run;

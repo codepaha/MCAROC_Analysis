@@ -1,4 +1,6 @@
 @model ChargeDrawerViewModel
+@using MCAROC_Analysis.Services.Excel.Parsers
+@using MCAROC_Analysis.Services.PropertyParticulars
 @{
     var c = Model.Charge;
     var events = c.Events.OrderBy(e => e.EventDate ?? DateOnly.MinValue).ThenBy(e => e.ChargeEventId).ToList();
@@ -192,9 +194,89 @@
             <p class="text-muted">Could not confidently classify — see source wording below.</p>
         }
 
+        @{
+            // Column M ("Particulars of Property Charged") from the latest filing that states it: the grounded Gemini
+            // split when one exists, otherwise the deterministic reading. The raw wording always stays below.
+            var propertyEvent = events.LastOrDefault(e => !string.IsNullOrWhiteSpace(e.PropertyParticulars));
+            var property = propertyEvent is null
+                ? PropertyReading.None
+                : PropertyReading.For(propertyEvent.PropertyParticulars, propertyEvent.PropertyType, Model.PropertyExtractions);
+        }
+        @if (property.HasContent)
+        {
+            <div class="mca-property-normalized" style="margin-top:12px;">
+                <h4 style="font-size:1rem;">Property charged (normalised)</h4>
+                <p class="text-muted" style="margin-bottom:6px;">
+                    From the @(propertyEvent!.EventType.ToString().ToLowerInvariant()) filing@(propertyEvent.EventDate is { } pd ? " of " + pd.ToString("d MMM yyyy") : "") ·
+                    @if (property.Source == PropertyReadingSource.Ai)
+                    {
+                        <text>split by AI (Gemini); every value below was checked against the source wording@(property.RejectedFieldCount > 0 ? $" — {property.RejectedFieldCount} value(s) the AI returned were not in the source and are not shown" : "").</text>
+                    }
+                    else
+                    {
+                        <text>read by rules from the source wording below; anything not stated there is left blank.</text>
+                    }
+                </p>
+                @for (var pi = 0; pi < property.Items.Count; pi++)
+                {
+                    var item = property.Items[pi];
+                    <dl class="mca-kv" style="@(property.Items.Count > 1 ? "border-left:3px solid var(--bs-border-color, #ddd); padding-left:8px; margin-bottom:10px;" : "")">
+                        @if (property.Items.Count > 1)
+                        {
+                            <div><dt>Property</dt><dd>@(pi + 1) of @property.Items.Count</dd></div>
+                        }
+                        @if (item.AssetClasses.Count > 0)
+                        {
+                            <div><dt>Asset class</dt><dd>@foreach (var ac in item.AssetClasses) { <span class="mca-badge">@ac</span> }</dd></div>
+                        }
+                        @if (item.Kinds.Count > 0)
+                        {
+                            <div><dt>What is charged</dt><dd>@foreach (var k in item.Kinds) { <span class="mca-badge">@PropertyParticularsNormalizer.Label(k)</span> }</dd></div>
+                        }
+                        @if (item.Owner is not null)
+                        {
+                            <div><dt>Belongs to</dt><dd>@item.Owner</dd></div>
+                        }
+                        @foreach (var unitLine in item.UnitLines)
+                        {
+                            <div><dt>Unit</dt><dd>@unitLine</dd></div>
+                        }
+                        @if (item.BuildingsOrProjects.Count > 0)
+                        {
+                            <div><dt>Building / project</dt><dd>@string.Join("; ", item.BuildingsOrProjects)</dd></div>
+                        }
+                        @if (item.Areas.Count > 0)
+                        {
+                            <div><dt>Area</dt><dd>@foreach (var area in item.Areas) { <div>@PropertyParticularsNormalizer.Describe(area)</div> }</dd></div>
+                        }
+                        @if (item.ParkingSpaces is { } spaces)
+                        {
+                            <div><dt>Parking</dt><dd>@spaces space@(spaces == 1 ? "" : "s")@(item.ParkingSpaceNumbers.Count > 0 ? " — " + string.Join(", ", item.ParkingSpaceNumbers) : "")</dd></div>
+                        }
+                        @if (item.SurveyNumbers.Count > 0)
+                        {
+                            <div><dt>CTS / survey / plot no.</dt><dd>@foreach (var g in item.SurveyNumbers) { <div>@PropertyParticularsNormalizer.Describe(g)</div> }</dd></div>
+                        }
+                        @if (!item.Location.IsEmpty)
+                        {
+                            <div><dt>Location</dt><dd>@PropertyParticularsNormalizer.Describe(item.Location)</dd></div>
+                        }
+                        @if (item.NamedEntities.Count > 0)
+                        {
+                            <div><dt>Entities named</dt><dd>@string.Join("; ", item.NamedEntities)</dd></div>
+                        }
+                    </dl>
+                }
+                @if (property.DetailsOnlyInReferencedDocument)
+                {
+                    <p class="text-muted mb-0">The filing does not describe the property itself — it only refers to a schedule/annexure of the charge instrument.</p>
+                }
+            </div>
+        }
+
         @if (!string.IsNullOrWhiteSpace(narrativeEvent?.PropertyParticulars) || !string.IsNullOrWhiteSpace(narrativeEvent?.ExtentAndOperation))
         {
-            <details open="open">
+            <details open="@(property.HasContent ? null : "open")">
                 <summary class="mca-json-toggle">Property particulars (source wording)</summary>
                 <div class="mt-2">
                     @if (!string.IsNullOrWhiteSpace(narrativeEvent?.PropertyParticulars)) { <p><b>Particulars of Property Charged:</b> @narrativeEvent!.PropertyParticulars</p> }

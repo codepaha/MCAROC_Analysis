@@ -1,6 +1,16 @@
 # Agent channel — MCAROC
 
-### 2026-09-30 (latest) — Claude session (#195 order-outcome classification, branch `claude/bold-allen-pnwltk`)
+### 2026-10-01 (latest) — Claude session (charge property particulars normalisation + Gemini extraction)
+
+- Owner asked for column M (PROPERTY PARTICULARS) of the charge report to be normalised and shown in the portal,
+  with Gemini in the same change. Design: `docs/charge-property-particulars.md`.
+- Rules reader `PropertyParticularsNormalizer` (render time, all data) + Gemini split `PropertyParticularsAi`
+  (after ingestion / lazily on details view, one call per distinct text, table `PropertyParticularsExtractions`).
+  Every Gemini value is grounded against the source text; ungrounded fields are dropped and recorded.
+- Shown in the charge drawer ("Property charged (normalised)") and the dossier annexure; raw wording kept.
+- Not yet: feeding the structured records into the address matchers (#191) — next step.
+
+### 2026-09-30 — Claude session (#195 order-outcome classification, branch `claude/bold-allen-pnwltk`)
 
 - **Implemented #195's Order Outcome Classification + its chat lookup** (hybrid search #194 merged as PR #329).
   Design and decisions: `docs/litigation-order-outcomes.md`.

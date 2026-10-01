@@ -186,7 +186,8 @@ public class DossierAssembler(AppDbContext db, Services.LitigationData.ChargeLit
             // DossierPdfComposer reads this flag, to decide what its own PDF output shows.
             IncludeLitigation: request.Client?.IncludeLitigationInDossier ?? true,
             ChargesNarrative: chargesNarrative,
-            ChargeLinks: chargeLinks);
+            ChargeLinks: chargeLinks,
+            PropertyExtractions: await PropertyParticulars.PropertyParticularsExtractionService.LoadCompletedAsync(db, charges.SelectMany(c => c.Events), ct));
 
         // Metrics are derived from the fully-assembled model, then folded back in.
         return model with { Metrics = DossierComputations.BuildMetricGroups(model) };

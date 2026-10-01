@@ -39,7 +39,9 @@ public class DossierCache(AppDbContext db, DossierAssembler assembler, IMemoryCa
         // how much of its order text has been extracted (extraction finishes after the snapshot does). A refresh, or
         // text arriving under the same snapshot, changes this, so links computed from older evidence are never served.
         var litigationVersion = await ChargeLitigationService.VersionAsync(db, requestId, ct);
-        var key = $"dossier:{requestId}:{ingestionRunId}:{analysisRunId}:{litigationVersion}";
+        // Likewise for the Gemini property-particulars readings, which complete after ingestion.
+        var propertyVersion = await PropertyParticulars.PropertyParticularsExtractionService.VersionAsync(db, requestId, ct);
+        var key = $"dossier:{requestId}:{ingestionRunId}:{analysisRunId}:{litigationVersion}:{propertyVersion}";
         if (cache.TryGetValue(key, out DossierModel? cached) && cached is not null)
             return cached;
 
@@ -74,7 +76,8 @@ public class DossierCache(AppDbContext db, DossierAssembler assembler, IMemoryCa
             .FirstOrDefaultAsync(ct);
 
         if (keyParts is { LatestCompletedIngestionRunId: { } ingestionRunId, AnalysisRunId: { } analysisRunId })
-            cache.Remove($"dossier:{requestId}:{ingestionRunId}:{analysisRunId}:{await ChargeLitigationService.VersionAsync(db, requestId, ct)}");
+            cache.Remove($"dossier:{requestId}:{ingestionRunId}:{analysisRunId}:{await ChargeLitigationService.VersionAsync(db, requestId, ct)}"
+                + $":{await PropertyParticulars.PropertyParticularsExtractionService.VersionAsync(db, requestId, ct)}");
 
         var dir = Path.Combine(contentRootPath, "App_Data", "Dossiers", requestId.ToString());
         if (Directory.Exists(dir))
