@@ -1,5 +1,14 @@
 # Agent channel — MCAROC
 
+### 2026-10-01 — Claude session (#344 follow-ups, branch `fix/litigation-outcome-followups`)
+
+- Post-merge review findings on #344, fixed: the Details page no longer rereads/rehashes every order's text on each
+  load (`LitigationOrderOutcomeQuery` caches evidence hashes under the chunk version, skips text when nothing is
+  classified); InsufficientEvidence orders now read "Outcome unclear" instead of the unclassified "—".
+- Dropped as false positives: "No substantive relief" (a Completed classification always has an outcome — the
+  classifier rejects one without) and the >2100-parameter `Contains` risk (EF Core 10 switches large lists to one
+  JSON parameter on its own; verified against SQL Server with 3000 ids).
+
 ### 2026-10-01 (latest) — Antigravity session (#337 P1/P2 resolved, #339 implemented)
 
 - **#337 (PR #342 updated at `eeb7974`):**
