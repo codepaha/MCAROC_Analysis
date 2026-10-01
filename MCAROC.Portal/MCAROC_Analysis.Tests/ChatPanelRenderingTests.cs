@@ -211,4 +211,19 @@ public class ChatPanelRenderingTests
         var bannerCount = System.Text.RegularExpressions.Regex.Matches(html, "class=\"mca-partial-results-banner\"").Count;
         Assert.Equal(retrievedS1 ? 1 : 0, bannerCount);
     }
+
+    // #349: the chat panel says when keyword search is off, and only then.
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Render_KeywordSearchNote_FollowsKeywordSearchUnavailable(bool unavailable)
+    {
+        var model = CreateBaseModel();
+        model.KeywordSearchUnavailable = unavailable;
+
+        var html = await RenderChatPanelAsync(model);
+
+        Assert.Equal(unavailable, html.Contains("mcaChatKeywordSearchNote"));
+        Assert.Equal(unavailable, html.Contains("Keyword search is unavailable on this server"));
+    }
 }

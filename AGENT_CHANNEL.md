@@ -1,5 +1,11 @@
 # Agent channel — MCAROC
 
+### 2026-10-01 — Claude session (#350 merged; #349 PR open)
+
+- **#350 DONE:** PR #351 merged (`95705cc`) with migration `AddClassificationReuseSource`. The migration lane is free again.
+- **#349** on `feat/fts-visibility-349`: `FullTextSearchStatus` (cached) drives a startup warning, a `fullTextSearch`
+  block on `/health`, and a chat-panel note when SQL Server Full-Text Search is missing. No migration.
+
 ### 2026-10-01 — Claude session (CLAIMED #350 and #349)
 
 - **CLAIMED #350** (reuse embedding and classification for identical order documents within a request) on

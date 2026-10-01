@@ -40,7 +40,8 @@ public class RequestsController(
     Microsoft.Extensions.Options.IOptions<BprLitigationOptions>? bprOptions = null,
     LitigationAiAnalysisOrchestrator? litigationAnalysis = null,
     ChargeLitigationService? chargeLitigation = null,
-    LitigationOrderOutcomeQuery? orderOutcomes = null) : Controller
+    LitigationOrderOutcomeQuery? orderOutcomes = null,
+    FullTextSearchStatus? fullTextStatus = null) : Controller
 {
     [HttpGet("/Requests")]
     public async Task<IActionResult> Index([FromQuery] RequestListFilterCriteria filters)
@@ -638,6 +639,9 @@ public class RequestsController(
             vm.ChunkableDocumentCount = vm.AuthoritativeBatchChunkableCount;
             vm.ChunkedDocumentCount = vm.AuthoritativeBatchChunkedCount;
         }
+
+        if (fullTextStatus is not null)
+            vm.KeywordSearchUnavailable = !(await fullTextStatus.GetAsync(HttpContext?.RequestAborted ?? CancellationToken.None)).Available;
 
         // Computed metrics (Wave 4). The portal and the dossier PDF read the SAME assembled
         // DossierModel — DossierCache builds it once per (request, ingestion run, analysis run) and

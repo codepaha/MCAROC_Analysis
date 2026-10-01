@@ -41,6 +41,14 @@
         <button type="button" class="mca-chat-close btn-close" id="mcaChatClose" aria-label="Close assistant"></button>
     </div>
 
+    @if (Model.KeywordSearchUnavailable)
+    {
+        @* #349: retrieval silently falls back to semantic search when SQL Server Full-Text Search is missing. *@
+        <div class="alert alert-secondary py-2 px-3 m-2 small" id="mcaChatKeywordSearchNote" role="status">
+            <i class="bi bi-info-circle me-1"></i>Keyword search is unavailable on this server — answers use semantic search only, so exact case numbers or section references may be missed.
+        </div>
+    }
+
     @if (Model.FilingBatch is not null)
     {
         var chunkable = Model.AuthoritativeBatchChunkableCount > 0 ? Model.AuthoritativeBatchChunkableCount : Model.ChunkableDocumentCount;

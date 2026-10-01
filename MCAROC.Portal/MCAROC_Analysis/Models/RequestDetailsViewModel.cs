@@ -112,6 +112,8 @@ public class RequestDetailsViewModel
     // Phase 4: Ask Documents
     public List<ChatMessage> ChatMessages { get; set; } = [];
     public int ChunkableDocumentCount { get; set; }
+    /// <summary>#349: SQL Server Full-Text Search is missing on this server, so chat retrieval runs without its keyword half.</summary>
+    public bool KeywordSearchUnavailable { get; set; }
     public int ChunkedDocumentCount { get; set; }
     public int AuthoritativeBatchChunkableCount { get; set; }
     public int AuthoritativeBatchChunkedCount { get; set; }

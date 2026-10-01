@@ -331,6 +331,8 @@ builder.Services.AddScoped<StructuredFactsProvider>();
 builder.Services.AddScoped(sp => new DocumentRetriever(sp.GetRequiredService<AppDbContext>(), ChatRetrievalOptions.Default));
 builder.Services.AddScoped(sp => new LitigationDocumentRetriever(sp.GetRequiredService<AppDbContext>(), ChatRetrievalOptions.Default));
 builder.Services.AddScoped<LitigationOrderOutcomeQuery>();
+builder.Services.AddScoped<FullTextSearchStatus>();
+builder.Services.AddHostedService<FullTextSearchStartupCheck>();
 builder.Services.AddScoped<RetrievalContextBuilder>();
 builder.Services.AddScoped<ChatService>();
 
@@ -470,7 +472,7 @@ app.MapControllerRoute(
 // still-Queued auto-fetch job's age (a large value here, with the reference-tool breaker Healthy, points at
 // a lost enqueue rather than an upstream outage). Includes operational errors, so application/reviewer
 // authentication is required. External uptime monitors should use /health/live.
-app.MapGet("/health", async (AppDbContext db, IIntegrationHealthService health, CancellationToken ct) =>
+app.MapGet("/health", async (AppDbContext db, IIntegrationHealthService health, FullTextSearchStatus fullText, CancellationToken ct) =>
 {
     var integrations = new List<object>();
     foreach (var name in Enum.GetValues<IntegrationName>())
@@ -494,10 +496,20 @@ app.MapGet("/health", async (AppDbContext db, IIntegrationHealthService health, 
         .Select(j => (DateTime?)j.CreatedUtc)
         .FirstOrDefaultAsync(ct);
 
+    // #349: whether chat's keyword (Full-Text) half of hybrid retrieval can run on this database server.
+    var fts = await fullText.GetAsync(ct);
+
     return Results.Ok(new
     {
         utcNow = DateTime.UtcNow,
         integrations,
+        fullTextSearch = new
+        {
+            available = fts.Available,
+            installed = fts.Installed,
+            documentChunksIndexed = fts.DocumentChunksIndexed,
+            litigationChunksIndexed = fts.LitigationChunksIndexed
+        },
         autoFetch = new
         {
             oldestQueuedJobCreatedUtc = oldestQueuedAutoFetchUtc,
