@@ -393,6 +393,68 @@ public sealed class LitigationOrderClassificationTests : IAsyncLifetime
         Assert.Null(ia.ReusedFromClassificationId);
     }
 
+    /// <summary>Puts a finished run back to the state a worker leaves when it stops after publishing its order
+    /// classifications: the run is Pending again with no lease, and its classification rows are still on file.</summary>
+    private static async Task ReopenAsResumableAsync(AppDbContext db, long runId)
+    {
+        await db.LitigationPortfolioAiAnalyses.Where(p => p.LitigationAiAnalysisRunId == runId).ExecuteDeleteAsync();
+        await db.LitigationAiAnalysisRuns.Where(r => r.LitigationAiAnalysisRunId == runId)
+            .ExecuteUpdateAsync(u => u.SetProperty(r => r.Status, LitigationAiAnalysisRunStatus.Pending)
+                .SetProperty(r => r.NextAttemptUtc, (DateTime?)null).SetProperty(r => r.LeaseToken, (Guid?)null));
+    }
+
+    /// <summary>PR #351 review P1: a resumed run's own earlier rows must be current for their document before they are
+    /// offered for same-text reuse. Here the fine order is rechunked to dismissal text between the crash and the resume,
+    /// and a new document carries that dismissal text — it must not inherit the stale ₹50,000 fine.</summary>
+    [Fact]
+    public async Task A_resumed_run_never_copies_its_own_stale_row_to_a_document_with_the_new_text()
+    {
+        var (requestId, fineDocId, caseId) = await SeedRequestWithOrdersAsync();
+        var initial = await RunAnalysisAsync(requestId, new ScriptedClient(ClassifyByText));
+        long newDocId;
+        await using (var db = CreateContext())
+        {
+            await ReopenAsResumableAsync(db, initial.LitigationAiAnalysisRunId);
+            var replacement = await db.LitigationOrderChunks.AsNoTracking().SingleAsync(c => c.LitigationOrderDocumentId == fineDocId);
+            await db.LitigationOrderChunks.Where(c => c.LitigationOrderDocumentId == fineDocId).ExecuteDeleteAsync();
+            replacement.LitigationOrderChunkId = 0;
+            replacement.ChunkText = DismissalOrderText;
+            db.LitigationOrderChunks.Add(replacement);
+            await db.SaveChangesAsync();
+            newDocId = await SeedOrderAsync(db, requestId, caseId, DismissalOrderText, "IA 7/2021");
+        }
+
+        await RunAnalysisAsync(requestId, new ScriptedClient(ClassifyByText));
+
+        await using var verify = CreateContext();
+        var fines = await new LitigationOrderOutcomeQuery(verify).FindAsync(requestId, [LitigationOrderOutcome.FinePenalty], CancellationToken.None);
+        Assert.DoesNotContain(fines.Matches, m => m.LitigationOrderDocumentId == newDocId);
+        var dismissals = await new LitigationOrderOutcomeQuery(verify).FindAsync(requestId, [LitigationOrderOutcome.Dismissal], CancellationToken.None);
+        Assert.Contains(dismissals.Matches, m => m.LitigationOrderDocumentId == newDocId);
+    }
+
+    /// <summary>The control for the test above: when nothing changed, a resumed run's own earlier row is still a valid
+    /// source, so an identical sheet added before the resume costs no call.</summary>
+    [Fact]
+    public async Task A_resumed_run_still_copies_its_own_current_row_to_an_identical_sheet()
+    {
+        var (requestId, fineDocId, _) = await SeedRequestWithOrdersAsync();
+        var client = new ScriptedClient(ClassifyByText);
+        var initial = await RunAnalysisAsync(requestId, client);
+        await using (var db = CreateContext())
+            await ReopenAsResumableAsync(db, initial.LitigationAiAnalysisRunId);
+        var iaDocId = await SeedSameFineOrderUnderIaAsync(requestId);
+
+        await RunAnalysisAsync(requestId, client);
+
+        Assert.Equal(2, client.ClassificationCalls);
+        await using var verify = CreateContext();
+        var rows = await verify.LitigationOrderClassifications.AsNoTracking()
+            .Where(c => c.LitigationAiAnalysisRunId == initial.LitigationAiAnalysisRunId).ToListAsync();
+        Assert.Equal(rows.Single(r => r.LitigationOrderDocumentId == fineDocId).LitigationOrderClassificationId,
+            rows.Single(r => r.LitigationOrderDocumentId == iaDocId).ReusedFromClassificationId);
+    }
+
     private static async Task<(long RequestId, long FineDocId, long CaseId)> SeedRequestWithOrdersAsync()
     {
         await using var db = CreateContext();

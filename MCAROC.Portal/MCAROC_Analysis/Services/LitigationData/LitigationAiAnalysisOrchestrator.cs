@@ -152,8 +152,9 @@ public sealed class LitigationAiAnalysisOrchestrator(AppDbContext db, ILitigatio
     /// <summary>Classifies every order document with chunks. Unchanged documents carry their earlier result forward;
     /// a document whose text is identical to another document's already-classified text (#350 — the same order sheet
     /// under a parent case and its IA, or an upstream duplicate) copies that result instead of a fresh model call.
-    /// Only results that are current for their own document qualify as a source: rows written in this run, and
-    /// earlier rows whose evidence and prompt hashes still match their document's chunks now.</summary>
+    /// Only results that are current for their own document qualify as a source: a row (from this run or an earlier
+    /// one) whose evidence and prompt hashes still match its document's chunks now. That includes rows this run wrote
+    /// before a crash — the run resumes later, and the document may have been rechunked in between.</summary>
     private async Task ClassifyOrdersAsync(long runId, Guid token, long requestId, List<LitigationOrderChunk> chunks, CancellationToken ct)
     {
         var present = await db.LitigationOrderClassifications.AsNoTracking().Where(x => x.LitigationAiAnalysisRunId == runId)
@@ -172,9 +173,12 @@ public sealed class LitigationAiAnalysisOrchestrator(AppDbContext db, ILitigatio
         var presentByDocument = present.ToDictionary(x => x.LitigationOrderDocumentId);
         foreach (var d in documents)
         {
-            if (presentByDocument.TryGetValue(d.Id, out var inRun)) { Offer(d.Evidence, inRun); continue; }
             var (evidenceHash, promptHash) = LitigationOrderClassifier.Hashes(d.Evidence);
-            if (prior.GetValueOrDefault(d.Id)?.FirstOrDefault(p => p.EvidenceHash == evidenceHash && p.PromptHash == promptHash) is { } current)
+            bool IsCurrent(LitigationOrderClassification r) => r.EvidenceHash == evidenceHash && r.PromptHash == promptHash;
+            var current = presentByDocument.TryGetValue(d.Id, out var inRun)
+                ? (IsCurrent(inRun) ? inRun : null)
+                : prior.GetValueOrDefault(d.Id)?.FirstOrDefault(IsCurrent);
+            if (current is not null)
                 Offer(d.Evidence, current);
         }
 
