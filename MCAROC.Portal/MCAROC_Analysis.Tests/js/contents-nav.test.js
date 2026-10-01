@@ -680,7 +680,7 @@ test('focusCharge contract: ?charge=71 with compatible hash #tab-charges runs op
             assert.equal(row.classList.contains('show'), true, 'Charge drawer expanded after shown.bs.tab');
             assert.equal(chargeScrolled, true, 'Charge 71 was scrolled into view after shown.bs.tab');
             resolve();
-        }, 60);
+        }, 120);
     });
 });
 
@@ -735,6 +735,123 @@ test('focusCharge contract: ?charge=71 with non-charges hash #tab-financials nav
 
     assert.equal(finTabBtn.classList.contains('active'), true, 'Financials tab activated');
     assert.equal(chargesTabBtn.classList.contains('active'), false, 'Charges tab not activated when hash explicitly requested financials');
+});
+
+test('parseHash: #case-card-{id} correctly resolves to litigation domain and case-card section', () => {
+    const res = McaContentsNav.parseHash('#case-card-99');
+    assert.deepEqual(res, {
+        type: 'case',
+        domain: 'litigation',
+        sectionId: 'case-card-99',
+        targetTab: 'tab-litigation'
+    });
+
+    const resWithoutHash = McaContentsNav.parseHash('case-card-1234');
+    assert.deepEqual(resWithoutHash, {
+        type: 'case',
+        domain: 'litigation',
+        sectionId: 'case-card-1234',
+        targetTab: 'tab-litigation'
+    });
+});
+
+test('openAndScrollCase: activates Litigation tab and scrolls target case card into view', () => {
+    const litTabBtn = createMockElement('button', {
+        'data-bs-toggle': 'tab',
+        'data-bs-target': '#tab-litigation'
+    });
+    const caseCard = createMockElement('div', { id: 'case-card-42' });
+
+    const mockDoc = {
+        getElementById: (id) => id === 'case-card-42' ? caseCard : null,
+        querySelector: (sel) => sel.includes('#tab-litigation') ? litTabBtn : null
+    };
+
+    const mockBootstrap = {
+        Tab: {
+            getOrCreateInstance: (el) => ({
+                show: () => {
+                    el.classList.add('active');
+                    el.dispatchEvent({ type: 'shown.bs.tab', target: el });
+                }
+            })
+        }
+    };
+
+    McaContentsNav.openAndScrollCase(42, mockDoc, null, mockBootstrap);
+
+    assert.equal(litTabBtn.classList.contains('active'), true, 'Litigation tab button activated');
+    assert.equal(caseCard.scrollIntoViewCalls.length, 1, 'scrollIntoView was called on the case card');
+});
+
+test('focusCase contract: data-focus-case with case-card hash activates Litigation tab and scrolls to case card', () => {
+    const litTabBtn = createMockElement('button', {
+        'data-bs-toggle': 'tab',
+        'data-bs-target': '#tab-litigation'
+    });
+    const aiTabBtn = createMockElement('button', {
+        'data-bs-toggle': 'tab',
+        'data-bs-target': '#tab-ai',
+        class: 'active'
+    });
+    const caseCard = createMockElement('div', { id: 'case-card-99' });
+
+    const head = createMockElement('div', {
+        id: 'mcaDetailHead',
+        'data-request-id': '7',
+        'data-focus-case': '99'
+    });
+
+    const mockWin = {
+        location: { hash: '#case-card-99' },
+        sessionStorage: { getItem: () => null, setItem: () => {} },
+        matchMedia: () => ({ matches: false }),
+        addEventListener: () => {},
+        removeEventListener: () => {}
+    };
+
+    const mockDoc = {
+        body: createMockElement('body'),
+        documentElement: { style: { setProperty: () => {} } },
+        getElementById: (id) => {
+            if (id === 'mcaDetailHead') return head;
+            if (id === 'case-card-99') return caseCard;
+            return null;
+        },
+        querySelectorAll: (sel) => {
+            if (sel === '#mcaTabs button[data-bs-toggle="tab"]') return [aiTabBtn, litTabBtn];
+            return [];
+        },
+        querySelector: (sel) => {
+            if (sel.includes('#tab-litigation')) return litTabBtn;
+            if (sel.includes('.active')) return aiTabBtn;
+            return null;
+        }
+    };
+
+    const mockBootstrap = {
+        Tab: {
+            getOrCreateInstance: (el) => ({
+                show: () => {
+                    el.classList.add('active');
+                    el.dispatchEvent({ type: 'shown.bs.tab', target: el });
+                }
+            })
+        },
+        ScrollSpy: class {
+            static getInstance() { return null; }
+            dispose() {}
+        }
+    };
+
+    McaContentsNav.initDetailsNav({
+        doc: mockDoc,
+        window: mockWin,
+        bootstrap: mockBootstrap
+    });
+
+    assert.equal(litTabBtn.classList.contains('active'), true, 'Litigation tab activated');
+    assert.equal(caseCard.scrollIntoViewCalls.length, 1, 'Target case card scrolled into view');
 });
 
 

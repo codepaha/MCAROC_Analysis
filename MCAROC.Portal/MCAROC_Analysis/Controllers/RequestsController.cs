@@ -462,13 +462,13 @@ public class RequestsController(
     }
 
     [HttpGet("/Requests/{id:long}")]
-    public async Task<IActionResult> Details(long id, [FromQuery] long? charge, [FromQuery] string? court = null, [FromQuery] string? status = null, [FromQuery] int page = 1, [FromQuery] string? outcome = null)
+    public async Task<IActionResult> Details(long id, [FromQuery] long? charge, [FromQuery] string? court = null, [FromQuery] string? status = null, [FromQuery] int page = 1, [FromQuery] string? outcome = null, [FromQuery] long? focusCase = null)
     {
         var request = await db.Requests.Include(r => r.Client).FirstOrDefaultAsync(r => r.RequestId == id);
         if (request is null) return NotFound();
 
         var documents = await db.RequestDocuments.Where(d => d.RequestId == id).ToListAsync();
-        var vm = new RequestDetailsViewModel { Request = request, Documents = documents, FocusChargeId = charge };
+        var vm = new RequestDetailsViewModel { Request = request, Documents = documents, FocusChargeId = charge, FocusCaseId = focusCase };
         vm.HasFullAccess = PortalAccess.HasFullAccess(User);
         vm.AutoFetchJob = await db.AutoFetchJobs.AsNoTracking().FirstOrDefaultAsync(j => j.RequestId == id);
 
@@ -951,6 +951,21 @@ public class RequestsController(
                         FailedOrders = failedCount,
                         ExpiredOrders = expiredCount
                     };
+
+                    if (focusCase.HasValue)
+                    {
+                        var matchingOrderedIds = await casesQuery
+                            .OrderBy(c => (c.Court == null || c.Court.Trim() == "") ? "Unspecified Court" : c.Court.Trim())
+                            .ThenByDescending(c => c.LastHearingDate ?? string.Empty)
+                            .ThenBy(c => c.LitigationCaseId)
+                            .Select(c => c.LitigationCaseId)
+                            .ToListAsync();
+                        var caseIdx = matchingOrderedIds.IndexOf(focusCase.Value);
+                        if (caseIdx >= 0)
+                        {
+                            litVm.CurrentPage = (caseIdx / litVm.PageSize) + 1;
+                        }
+                    }
 
                     var pagedCases = await casesQuery
                         .OrderBy(c => (c.Court == null || c.Court.Trim() == "") ? "Unspecified Court" : c.Court.Trim())
@@ -1850,6 +1865,16 @@ public class RequestsController(
                             else if ((sourceType is "LitigationChunk" or "OrderOutcome") && docId.HasValue && validLitigationDocIds.Contains(docId.Value))
                             {
                                 viewerUrl = $"/Requests/{requestId}/Litigation/Orders/{docId.Value}/download";
+                            }
+                            else if (sourceType == "LitigationCase")
+                            {
+                                long? caseId = cit.TryGetProperty("LitigationCaseId", out var lci) && lci.ValueKind == JsonValueKind.Number && lci.TryGetInt64(out var lcVal) && lcVal > 0
+                                    ? lcVal
+                                    : (cit.TryGetProperty("EntityId", out var ei) && ei.ValueKind == JsonValueKind.Number && ei.TryGetInt64(out var eVal) && eVal > 0 ? eVal : null);
+                                if (caseId.HasValue)
+                                {
+                                    viewerUrl = $"/Requests/{requestId}?focusCase={caseId.Value}#case-card-{caseId.Value}";
+                                }
                             }
 
                             dto.Citations.Add(new ChatCitationDto

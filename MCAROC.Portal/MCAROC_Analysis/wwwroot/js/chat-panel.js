@@ -108,13 +108,23 @@
                 if (cit.viewerUrl) {
                     const a = d.createElement('a');
                     const isOrderOutcome = cit.sourceType === 'OrderOutcome' || cit.sourceType === 'LitigationChunk';
-                    a.className = isOrderOutcome ? 'mca-citation mca-citation-order' : 'mca-citation';
+                    const isLitigationCase = cit.sourceType === 'LitigationCase';
+                    let className = 'mca-citation';
+                    let iconClass = 'bi bi-file-earmark-pdf me-1';
+                    if (isOrderOutcome) {
+                        className = 'mca-citation mca-citation-order';
+                        iconClass = 'bi bi-gavel me-1';
+                    } else if (isLitigationCase) {
+                        className = 'mca-citation mca-citation-case';
+                        iconClass = 'bi bi-briefcase me-1';
+                    }
+                    a.className = className;
                     a.setAttribute('href', cit.viewerUrl);
                     a.setAttribute('target', '_blank');
                     a.setAttribute('rel', 'noopener');
 
                     const icon = d.createElement('i');
-                    icon.className = isOrderOutcome ? 'bi bi-gavel me-1' : 'bi bi-file-earmark-pdf me-1';
+                    icon.className = iconClass;
                     a.appendChild(icon);
 
                     a.appendChild(d.createTextNode(display));
