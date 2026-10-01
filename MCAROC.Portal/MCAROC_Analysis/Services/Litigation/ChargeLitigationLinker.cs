@@ -17,7 +17,11 @@ public enum ChargeLitigationSignal
 
     /// <summary>The charge's holder (the lender) is a party in a recovery-type proceeding against the company.
     /// Indirect: it says the lender is litigating, not that this particular asset is.</summary>
-    LenderRecoveryCase
+    LenderRecoveryCase,
+
+    /// <summary>A specific movable asset named in the charge (vehicle registration, engine/chassis or serial
+    /// number) is named in a court order. Only an exact, whole-token identifier match counts.</summary>
+    MovableIdentifier
 }
 
 /// <summary>The case half of a link. <see cref="Source"/> is "Court records" (data-lake) or "MCA workbook".</summary>
@@ -35,6 +39,7 @@ public sealed record ChargeLitigationLink(
 
 public sealed record ChargeLitigationSummary(
     IReadOnlyList<ChargeLitigationLink> Links, int CasesScanned, int OrdersScanned, int OrdersWithoutText, bool NcltOrdersSkipped,
+    int ChargesWithIdentifiers = 0, int MovableChargesWithoutIdentifiers = 0,
     long? SnapshotId = null, string? Version = null)
 {
     public static ChargeLitigationSummary Empty { get; } = new([], 0, 0, 0, false);
@@ -43,6 +48,8 @@ public sealed record ChargeLitigationSummary(
     public bool HasAny => Links.Count > 0;
     public int ChargesWithLinks => Links.Select(l => l.ChargeId).Distinct().Count();
     public int LinkedCaseCount => Links.Select(l => l.CaseKey).Distinct().Count();
+    /// <summary>Distinct cases in which a court order itself names the charged property or an asset under a charge.</summary>
+    public int CasesNamingAssets => Links.Where(l => ChargeLitigationLabels.NamesTheAsset(l.Signal)).Select(l => l.CaseKey).Distinct().Count();
     public int CasesFor(ChargeLitigationSignal s) => Links.Where(l => l.Signal == s).Select(l => l.CaseKey).Distinct().Count();
     public IReadOnlySet<string> LinkedCaseKeys => Links.Select(l => l.CaseKey).ToHashSet();
 }
@@ -71,6 +78,8 @@ public static partial class ChargeLitigationLinker
 
         links.AddRange(ImmovableAddressLinks(openCharges, cases, docsByOrderId));
         links.AddRange(LenderRecoveryLinks(openCharges, cases, workbookLitigations));
+        var identifiersByCharge = IdentifiersByCharge(openCharges);
+        links.AddRange(MovableIdentifierLinks(openCharges, identifiersByCharge, cases, docsByOrderId));
 
         var orders = cases.Where(c => !LitigationOrderAddressMatcher.IsNcltCase(c)).SelectMany(c => c.Orders).ToList();
         var withText = orders.Count(o => docsByOrderId.TryGetValue(o.LitigationCaseOrderId, out var d)
@@ -81,7 +90,78 @@ public static partial class ChargeLitigationLinker
             CasesScanned: cases.Count + workbookLitigations.Count,
             OrdersScanned: withText,
             OrdersWithoutText: orders.Count - withText,
-            NcltOrdersSkipped: cases.Any(LitigationOrderAddressMatcher.IsNcltCase));
+            NcltOrdersSkipped: cases.Any(LitigationOrderAddressMatcher.IsNcltCase),
+            ChargesWithIdentifiers: identifiersByCharge.Count,
+            MovableChargesWithoutIdentifiers: openCharges.Count(c => IsMovableCharge(c) && !identifiersByCharge.ContainsKey(c.ChargeId)));
+    }
+
+    // ── Signal: a specific movable named in the charge is named in an order ───────────────────────────────
+    private static Dictionary<long, IReadOnlyList<MovableIdentifier>> IdentifiersByCharge(IReadOnlyList<RocCharge> charges)
+    {
+        var map = new Dictionary<long, IReadOnlyList<MovableIdentifier>>();
+        foreach (var c in charges)
+        {
+            var texts = c.Events.SelectMany(e => new[] { e.PropertyParticulars, e.ExtentAndOperation, e.InstrumentDescription, e.OtherTerms }).ToArray();
+            var ids = MovableIdentifierExtractor.Extract(texts);
+            if (ids.Count > 0) map[c.ChargeId] = ids;
+        }
+        return map;
+    }
+
+    /// <summary>A charge over something other than land/buildings alone (stock, book debts, machinery, vehicles, deposits).</summary>
+    private static bool IsMovableCharge(RocCharge c)
+    {
+        if (RequestDetailsViewModel.SecurityTypeLabels(c).Any(l => !string.Equals(l, nameof(SecurityType.ImmovableProperty), StringComparison.OrdinalIgnoreCase)))
+            return true;
+        return c.Events.Any(e => !string.IsNullOrWhiteSpace(e.PropertyType)
+            && (e.PropertyType.Contains("book debt", StringComparison.OrdinalIgnoreCase)
+                || (e.PropertyType.Contains("movable", StringComparison.OrdinalIgnoreCase) && !e.PropertyType.Contains("immovable", StringComparison.OrdinalIgnoreCase))));
+    }
+
+    private static IEnumerable<ChargeLitigationLink> MovableIdentifierLinks(
+        IReadOnlyList<RocCharge> charges, IReadOnlyDictionary<long, IReadOnlyList<MovableIdentifier>> idsByCharge,
+        IReadOnlyList<LitigationCase> cases, IReadOnlyDictionary<long, LitigationOrderDocument> docs)
+    {
+        if (idsByCharge.Count == 0 || cases.Count == 0) yield break;
+
+        // One pass over every order page, looking for the identifiers of all charges at once.
+        var chargeById = charges.ToDictionary(c => c.ChargeId);
+        var all = idsByCharge.SelectMany(kv => kv.Value.Select(i => (ChargeId: kv.Key, Id: i))).ToList();
+        var byNormalized = all.GroupBy(x => x.Id.Normalized).ToDictionary(g => g.Key, g => g.Select(x => x.ChargeId).Distinct().ToList());
+        var distinctIds = all.Select(x => x.Id).GroupBy(i => i.Normalized).Select(g => g.First()).ToList();
+
+        foreach (var c in cases)
+        {
+            if (LitigationOrderAddressMatcher.IsNcltCase(c)) continue;
+            var perCharge = new Dictionary<long, List<(MovableIdentifierHit Hit, LitigationCaseOrder Order)>>();
+            foreach (var order in c.Orders)
+            {
+                if (LitigationOrderAddressMatcher.IsNcltOrder(order)) continue;
+                if (!docs.TryGetValue(order.LitigationCaseOrderId, out var doc)
+                    || string.IsNullOrWhiteSpace(doc.ExtractedText) || doc.TextExtractionStatus != FilingDocumentProcessingStatus.TextExtracted) continue;
+
+                foreach (var (pageNumber, pageText) in LitigationOrderAddressMatcher.PagesOf(doc.ExtractedText))
+                    foreach (var hit in MovableIdentifierExtractor.FindInPage(distinctIds, pageNumber, pageText))
+                        foreach (var chargeId in byNormalized[hit.Identifier.Normalized])
+                        {
+                            if (!perCharge.TryGetValue(chargeId, out var list)) perCharge[chargeId] = list = [];
+                            list.Add((hit, order));
+                        }
+            }
+
+            foreach (var (chargeId, hits) in perCharge)
+            {
+                var charge = chargeById[chargeId];
+                var first = hits.OrderBy(h => h.Hit.PageNumber).First();
+                var names = hits.Select(h => h.Hit.Identifier).GroupBy(i => i.Normalized).Select(g => g.First()).ToList();
+                var what = string.Join(", ", names.Select(i => $"{i.KindLabel} {i.Raw}"));
+                yield return new ChargeLitigationLink(
+                    chargeId, charge.RocChargeNumber, charge.LatestChargeHolderRaw, ChargeLitigationSignal.MovableIdentifier, ToLinked(c),
+                    $"The order{(string.IsNullOrWhiteSpace(first.Order.OrderDate) ? "" : $" dated {first.Order.OrderDate}")} names {what}, which is listed in the security for {charge.RocChargeNumber}.",
+                    first.Order.LitigationCaseOrderId, first.Hit.PageNumber, first.Hit.Excerpt,
+                    $"{first.Order.OrderType ?? "Order"} {first.Order.OrderDate}".Trim());
+            }
+        }
     }
 
     // ── Signal: charged immovable property named in an order ──────────────────────────────────────────────
@@ -89,7 +169,7 @@ public static partial class ChargeLitigationLinker
         IReadOnlyList<RocCharge> charges, IReadOnlyList<LitigationCase> cases, IReadOnlyDictionary<long, LitigationOrderDocument> docs)
     {
         // Charged property only: no company premises, which the case card already reports separately.
-        var pool = LitigationOrderAddressMatcher.BuildAddressPool(null, null, charges);
+        var pool = LitigationOrderAddressMatcher.BuildAddressPool(null, null, WithoutMovableIdentifiers(charges));
         if (pool.Count == 0 || cases.Count == 0) yield break;
 
         var caseByOrder = new Dictionary<long, LitigationCase>();
@@ -112,6 +192,30 @@ public static partial class ChargeLitigationLinker
                 first.LitigationCaseOrderId, first.PageNumber, first.Excerpt,
                 $"{first.OrderType ?? "Order"} {first.OrderDate}".Trim());
         }
+    }
+
+    /// <summary>A charge can name a vehicle and a plot in one clause. The address matcher counts any token with a
+    /// digit as a plot/survey number, so a registration such as MH12AB1234 would make an order that merely mentions
+    /// the vehicle look like a property match. The identifiers are blanked out of the text the address matcher sees
+    /// (they are matched separately, as their own signal); only the fields it reads are copied.</summary>
+    private static List<RocCharge> WithoutMovableIdentifiers(IReadOnlyList<RocCharge> charges)
+    {
+        var masked = new List<RocCharge>(charges.Count);
+        foreach (var c in charges)
+        {
+            var ids = MovableIdentifierExtractor.Extract(c.Events.SelectMany(e => new[] { e.PropertyParticulars, e.ExtentAndOperation, e.InstrumentDescription, e.OtherTerms }).ToArray());
+            masked.Add(new RocCharge
+            {
+                ChargeId = c.ChargeId, RocChargeNumber = c.RocChargeNumber, LatestChargeHolderRaw = c.LatestChargeHolderRaw,
+                SatisfactionDate = c.SatisfactionDate,
+                Events = c.Events.Select(e => new RocChargeEvent
+                {
+                    ChargeEventId = e.ChargeEventId, PropertyType = e.PropertyType,
+                    PropertyParticulars = ids.Count == 0 ? e.PropertyParticulars : MovableIdentifierExtractor.Mask(e.PropertyParticulars, ids)
+                }).ToList()
+            });
+        }
+        return masked;
     }
 
     // ── Signal: the lender is litigating a recovery-type case against the company ─────────────────────────

@@ -82,6 +82,7 @@ public sealed class LitigationAiAnalysisOrchestrator(AppDbContext db, ILitigatio
                 additions.Add(item.Row);
             }
             await PublishCasesAsync(runId, token, additions, ct);
+            await ClassifyOrdersAsync(runId, token, requestId, chunks, ct);
             var persisted = await db.LitigationCaseAiAnalyses.Where(x => x.LitigationAiAnalysisRunId == runId).OrderBy(x => x.LitigationCaseAiAnalysisId).ToListAsync(ct);
             if (!await db.LitigationPortfolioAiAnalyses.AnyAsync(x => x.LitigationAiAnalysisRunId == runId, ct))
             {
@@ -133,8 +134,80 @@ public sealed class LitigationAiAnalysisOrchestrator(AppDbContext db, ILitigatio
             var promptHash = LitigationAnalysisPromptBuilder.ComputeHash(LitigationAnalysisPromptBuilder.BuildCasePrompt(evidence));
             if (!(prior.GetValueOrDefault(c.LitigationCaseId)?.Any(p => p.EvidenceHash == hash && p.PromptHash == promptHash) ?? false)) return true;
         }
+        // An order with retained text but no outcome classification for its current evidence (e.g. analysed
+        // before #195's classification existed) is also work a run would do — never report "up to date" over it.
+        var priorClassifications = await LoadPriorClassificationsAsync(requestId, 0, ct);
+        foreach (var document in chunks.GroupBy(x => x.LitigationOrderDocumentId))
+        {
+            var (hash, promptHash) = LitigationOrderClassifier.Hashes(LitigationOrderClassifier.BuildEvidence(document.ToList()));
+            if (!(priorClassifications.GetValueOrDefault(document.Key)?.Any(p => p.EvidenceHash == hash && p.PromptHash == promptHash) ?? false)) return true;
+        }
         return false;
     }
+
+    /// <summary>Epic #195: one validated outcome classification per order document with retained text, under this
+    /// run's existing admission. An order whose evidence and prompt match an earlier classification is carried
+    /// forward without a model call. Each row is published as soon as it exists, so a crash or lease loss part-way
+    /// through never throws away a classification that was already paid for — a retried run skips what is present.</summary>
+    private async Task ClassifyOrdersAsync(long runId, Guid token, long requestId, List<LitigationOrderChunk> chunks, CancellationToken ct)
+    {
+        var present = await db.LitigationOrderClassifications.Where(x => x.LitigationAiAnalysisRunId == runId)
+            .Select(x => x.LitigationOrderDocumentId).ToHashSetAsync(ct);
+        var prior = await LoadPriorClassificationsAsync(requestId, runId, ct);
+        foreach (var document in chunks.GroupBy(x => x.LitigationOrderDocumentId).Where(g => !present.Contains(g.Key)).OrderBy(g => g.Key))
+        {
+            var row = await ClassifyOrderAsync(runId, token, requestId, document.ToList(), prior.GetValueOrDefault(document.Key), ct);
+            await using var tx = await db.Database.BeginTransactionAsync(ct);
+            await RenewAsync(runId, token, ct);
+            if (!await db.LitigationOrderClassifications.AnyAsync(x => x.LitigationAiAnalysisRunId == runId && x.LitigationOrderDocumentId == document.Key, ct))
+            {
+                db.LitigationOrderClassifications.Add(row);
+                await db.SaveChangesAsync(ct);
+            }
+            await tx.CommitAsync(ct);
+        }
+    }
+
+    private async Task<LitigationOrderClassification> ClassifyOrderAsync(long runId, Guid token, long requestId, List<LitigationOrderChunk> documentChunks,
+        List<LitigationOrderClassification>? priorForDocument, CancellationToken ct)
+    {
+        var evidence = LitigationOrderClassifier.BuildEvidence(documentChunks);
+        var json = LitigationOrderClassifier.SerializeEvidence(evidence);
+        var prompt = LitigationOrderClassifier.BuildPrompt(evidence);
+        var (evidenceHash, promptHash) = LitigationOrderClassifier.Hashes(evidence);
+        var row = new LitigationOrderClassification
+        {
+            LitigationAiAnalysisRunId = runId, RequestId = requestId, LitigationCaseId = evidence.LitigationCaseId,
+            LitigationCaseOrderId = evidence.LitigationCaseOrderId, LitigationOrderDocumentId = evidence.LitigationOrderDocumentId,
+            EvidenceJson = json, EvidenceHash = evidenceHash, PromptHash = promptHash, EvidenceTruncated = evidence.Truncated
+        };
+
+        if (priorForDocument?.FirstOrDefault(p => p.EvidenceHash == row.EvidenceHash && p.PromptHash == row.PromptHash) is { } same)
+        {
+            row.Status = same.Status; row.OutcomeTypesJson = same.OutcomeTypesJson; row.FineAmount = same.FineAmount;
+            row.Confidence = same.Confidence; row.RawResponseJson = same.RawResponseJson; row.ResponseHash = same.ResponseHash;
+            row.ClassificationJson = same.ClassificationJson; row.CompletedUtc = DateTime.UtcNow;
+            return row;
+        }
+
+        await RenewAsync(runId, token, ct); var response = await client.CallAsync(prompt, options.Value.TimeoutSeconds, ct); await RenewAsync(runId, token, ct);
+        row.RawResponseJson = response.RawResponse;
+        row.ResponseHash = string.IsNullOrWhiteSpace(response.RawResponse) ? null : LitigationAnalysisPromptBuilder.ComputeHash(response.RawResponse);
+        var result = response.Success
+            ? LitigationOrderClassifier.Validate(response.RawResponse, evidence)
+            : LitigationOrderClassificationResult.Rejected(response.FailureReason ?? "Order classification AI call failed.");
+        row.Status = result.Status; row.OutcomeTypesJson = LitigationOrderClassifier.SerializeOutcomeTypes(result.Outcomes);
+        row.FineAmount = result.FineAmount; row.Confidence = result.Confidence; row.ClassificationJson = result.ClassificationJson;
+        row.FailureReason = result.RejectReason; row.CompletedUtc = DateTime.UtcNow;
+        return row;
+    }
+
+    private async Task<Dictionary<long, List<LitigationOrderClassification>>> LoadPriorClassificationsAsync(long requestId, long excludeRunId, CancellationToken ct) =>
+        (await db.LitigationOrderClassifications.AsNoTracking()
+                .Where(x => x.RequestId == requestId && x.LitigationAiAnalysisRunId != excludeRunId && x.CompletedUtc != null
+                    && (x.Status == LitigationAiAnalysisItemStatus.Completed || x.Status == LitigationAiAnalysisItemStatus.InsufficientEvidence))
+                .ToListAsync(ct))
+            .GroupBy(x => x.LitigationOrderDocumentId).ToDictionary(g => g.Key, g => g.OrderByDescending(x => x.LitigationOrderClassificationId).ToList());
 
     private async Task<(LitigationCaseAiAnalysis Row, bool ReusedFromAnalysis)> AnalyzeCaseAsync(long runId, Guid token, LitigationCase c, IEnumerable<LitigationOrderChunk> chunks, List<LitigationCaseAiAnalysis>? priorForCase, CancellationToken ct)
     {
@@ -183,7 +256,8 @@ public sealed class LitigationAiAnalysisOrchestrator(AppDbContext db, ILitigatio
     }
     private async Task CompleteAsync(long id, Guid token, CancellationToken ct)
     {
-        var bad = await db.LitigationCaseAiAnalyses.AnyAsync(x => x.LitigationAiAnalysisRunId == id && x.Status == LitigationAiAnalysisItemStatus.Failed, ct) || await db.LitigationPortfolioAiAnalyses.AnyAsync(x => x.LitigationAiAnalysisRunId == id && x.Status == LitigationAiAnalysisItemStatus.Failed, ct);
+        var bad = await db.LitigationCaseAiAnalyses.AnyAsync(x => x.LitigationAiAnalysisRunId == id && x.Status == LitigationAiAnalysisItemStatus.Failed, ct) || await db.LitigationPortfolioAiAnalyses.AnyAsync(x => x.LitigationAiAnalysisRunId == id && x.Status == LitigationAiAnalysisItemStatus.Failed, ct)
+            || await db.LitigationOrderClassifications.AnyAsync(x => x.LitigationAiAnalysisRunId == id && x.Status == LitigationAiAnalysisItemStatus.Failed, ct);
         if (await db.LitigationAiAnalysisRuns.Where(x => x.LitigationAiAnalysisRunId == id && x.Status == LitigationAiAnalysisRunStatus.InProgress && x.LeaseToken == token).ExecuteUpdateAsync(s => s.SetProperty(x => x.Status, bad ? LitigationAiAnalysisRunStatus.CompletedWithErrors : LitigationAiAnalysisRunStatus.Completed).SetProperty(x => x.CompletedUtc, DateTime.UtcNow).SetProperty(x => x.LeaseToken, (Guid?)null).SetProperty(x => x.LeaseExpiresUtc, (DateTime?)null), ct) != 1) throw new LeaseLostException();
     }
     private async Task FailOrRetryAsync(long id, Guid token, Exception ex, CancellationToken ct)

@@ -13,7 +13,7 @@ namespace MCAROC_Analysis.Services.Dossier;
 /// and computes the shared derived values (<see cref="DossierComputations"/>) into a <see cref="DossierModel"/>.
 /// The same instance backs both the client PDF and the restyled company page — go through
 /// <see cref="DossierCache"/> so a page view and a PDF download for one run assemble only once.</summary>
-public class DossierAssembler(AppDbContext db)
+public class DossierAssembler(AppDbContext db, Services.LitigationData.ChargeLitigationService? chargeLitigation = null)
 {
     public async Task<DossierModel?> BuildAsync(long requestId, CancellationToken ct = default)
     {
@@ -116,6 +116,14 @@ public class DossierAssembler(AppDbContext db)
         var creditRatings = await db.CreditRatings.AsNoTracking().Where(x => x.IngestionRunId == runId)
             .OrderByDescending(x => x.RatingDate).ToListAsync(ct);
 
+        // ── Charged property & litigation ── a highlight, never a reason the dossier fails to build.
+        Services.LitigationData.ChargeLitigationSummary? chargeLinks = null;
+        if (chargeLitigation is not null)
+        {
+            try { chargeLinks = await chargeLitigation.GetAsync(request.RequestId, ct); }
+            catch (Exception ex) when (ex is not OperationCanceledException) { chargeLinks = null; }
+        }
+
         // ── Litigation ──
         var litigations = await db.Litigations.AsNoTracking().Where(x => x.IngestionRunId == runId).ToListAsync(ct);
         var financialDisputeCases = await db.FinancialDisputeCases.AsNoTracking().Where(x => x.IngestionRunId == runId)
@@ -178,6 +186,7 @@ public class DossierAssembler(AppDbContext db)
             // DossierPdfComposer reads this flag, to decide what its own PDF output shows.
             IncludeLitigation: request.Client?.IncludeLitigationInDossier ?? true,
             ChargesNarrative: chargesNarrative,
+            ChargeLinks: chargeLinks,
             PropertyExtractions: await PropertyParticulars.PropertyParticularsExtractionService.LoadCompletedAsync(db, charges.SelectMany(c => c.Events), ct));
 
         // Metrics are derived from the fully-assembled model, then folded back in.

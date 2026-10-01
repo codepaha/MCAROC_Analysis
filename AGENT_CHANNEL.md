@@ -1,6 +1,6 @@
 # Agent channel — MCAROC
 
-### 2026-09-30 (latest) — Claude session (charge property particulars normalisation + Gemini extraction)
+### 2026-10-01 (latest) — Claude session (charge property particulars normalisation + Gemini extraction)
 
 - Owner asked for column M (PROPERTY PARTICULARS) of the charge report to be normalised and shown in the portal,
   with Gemini in the same change. Design: `docs/charge-property-particulars.md`.
@@ -9,6 +9,20 @@
   Every Gemini value is grounded against the source text; ungrounded fields are dropped and recorded.
 - Shown in the charge drawer ("Property charged (normalised)") and the dossier annexure; raw wording kept.
 - Not yet: feeding the structured records into the address matchers (#191) — next step.
+
+### 2026-09-30 — Claude session (#195 order-outcome classification, branch `claude/bold-allen-pnwltk`)
+
+- **Implemented #195's Order Outcome Classification + its chat lookup** (hybrid search #194 merged as PR #329).
+  Design and decisions: `docs/litigation-order-outcomes.md`.
+- **Owner decisions (this session):** classification runs *inside* litigation AI analysis runs, under their
+  existing paid-call admission — no new spend path/cap; unchanged orders are carried forward without a call.
+  This PR includes the chat lookup (O-tag sources + PDF links), not just the classifier.
+- New table `LitigationOrderClassifications` (migration `AddLitigationOrderClassifications`, via `migrate.sh`).
+- `NeedsAnalysisAsync` now counts unclassified orders, so already-analysed requests show analysis as available
+  again; a run then only pays for their orders (case results are reused). Auto-start does not use it.
+- Chat citations to litigation orders (new `O`, existing `L`) now link to the order PDF download route —
+  previously `L` citations had no link at all.
+- Still open from #195: taxonomy check against real Coastal orders once #189 lands; the general routing layer.
 
 ### 2026-09-30 — Claude session (#194 hybrid chat retrieval, branch `claude/bold-allen-pnwltk`)
 

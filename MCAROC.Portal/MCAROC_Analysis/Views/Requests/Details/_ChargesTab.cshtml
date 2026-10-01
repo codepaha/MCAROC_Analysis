@@ -18,15 +18,17 @@
     void LitigationBadges(RocCharge c)
     {
         var links = LitigationFor(c);
-        var address = links.Where(l => l.Signal == ChargeLitigationSignal.ImmovableAddress).Select(l => l.CaseKey).Distinct().Count();
-        var lender = links.Where(l => l.Signal == ChargeLitigationSignal.LenderRecoveryCase).Select(l => l.CaseKey).Distinct().Count();
-        if (address > 0)
+        foreach (var signal in new[] { ChargeLitigationSignal.ImmovableAddress, ChargeLitigationSignal.MovableIdentifier, ChargeLitigationSignal.LenderRecoveryCase })
         {
-            <span class="mca-badge sev-critical" title="A court order names the property charged under this charge. Open Details for the case and the matching text."><i class="bi bi-bank"></i> Case found (@address)</span>
-        }
-        if (lender > 0)
-        {
-            <span class="mca-badge sev-watch" title="This charge's holder is a party in a recovery-type proceeding against the company (indirect). Open Details."><i class="bi bi-exclamation-triangle"></i> Lender dispute (@lender)</span>
+            var n = links.Where(l => l.Signal == signal).Select(l => l.CaseKey).Distinct().Count();
+            if (n == 0) continue;
+            var title = signal switch
+            {
+                ChargeLitigationSignal.ImmovableAddress => "A court order names the property charged under this charge. Open Details for the case and the matching text.",
+                ChargeLitigationSignal.MovableIdentifier => "A court order names a specific asset (vehicle, engine, chassis or serial number) listed in this charge's security. Open Details for the case and the matching text.",
+                _ => "This charge's holder is a party in a recovery-type proceeding against the company (indirect). Open Details."
+            };
+            <span class="mca-badge @ChargeLitigationLabels.Severity(signal)" title="@title"><i class="bi @(signal == ChargeLitigationSignal.LenderRecoveryCase ? "bi-exclamation-triangle" : "bi-bank")"></i> @ChargeLitigationLabels.Badge(signal) (@n)</span>
         }
     }
 
@@ -131,8 +133,9 @@
                 <i class="bi bi-bank fs-5"></i>
                 <div>
                     <strong>@cl.ChargesWithLinks open charge@(cl.ChargesWithLinks == 1 ? "" : "s") @(cl.ChargesWithLinks == 1 ? "has" : "have") litigation linked.</strong>
-                    @cl.CasesFor(ChargeLitigationSignal.ImmovableAddress) case@(cl.CasesFor(ChargeLitigationSignal.ImmovableAddress) == 1 ? "" : "s") name charged property
+                    @cl.CasesNamingAssets case@(cl.CasesNamingAssets == 1 ? "" : "s") name charged property or assets
                     · @cl.CasesFor(ChargeLitigationSignal.LenderRecoveryCase) case@(cl.CasesFor(ChargeLitigationSignal.LenderRecoveryCase) == 1 ? "" : "s") are recovery proceedings by a charge holder.
+                    @if (cl.MovableChargesWithoutIdentifiers > 0) { <span class="text-muted">@cl.MovableChargesWithoutIdentifiers movable-asset charge@(cl.MovableChargesWithoutIdentifiers == 1 ? "" : "s") name no vehicle or serial numbers, so could not be compared.</span> }
                     Look for the badges in the Open Charges table; details are in each charge's drawer and in the Litigation tab.
                 </div>
             </div>

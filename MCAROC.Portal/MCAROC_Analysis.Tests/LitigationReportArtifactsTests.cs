@@ -226,6 +226,105 @@ public sealed class LitigationReportArtifactsTests
         Assert.Contains("Financial District", text);
     }
 
+    // ── charged property & litigation ────────────────────────────────────────────────────────────────────
+
+    private static MCAROC_Analysis.Services.LitigationData.ChargeLitigationLink Link(
+        MCAROC_Analysis.Services.LitigationData.ChargeLitigationSignal signal, long? caseId, string explanation, string? excerpt = null, int? page = null) => new(
+            7, "CHG-7", "State Bank of India", signal,
+            new MCAROC_Analysis.Services.LitigationData.LinkedLitigation(caseId is null ? "MCA workbook" : "Court records", caseId, caseId is null ? 55 : null, "CS 88/2021", "High Court of Bombay", "Pending", null, null),
+            explanation, 101, page, excerpt, "Order");
+
+    [Fact]
+    public void RenderCsv_adds_charge_link_columns_per_case_and_dashes_when_none()
+    {
+        var withLink = ReportWithSingleCase("csp-1") with
+        {
+            ChargeLinks = new MCAROC_Analysis.Services.LitigationData.ChargeLitigationSummary([
+                Link(MCAROC_Analysis.Services.LitigationData.ChargeLitigationSignal.MovableIdentifier, 1, "The order names vehicle registration MH12AB1234.", page: 2),
+                Link(MCAROC_Analysis.Services.LitigationData.ChargeLitigationSignal.LenderRecoveryCase, 1, "The holder is litigating."),
+                Link(MCAROC_Analysis.Services.LitigationData.ChargeLitigationSignal.LenderRecoveryCase, 99, "A different case.")], 1, 1, 0, false)
+        };
+
+        using var reader = new StringReader(Encoding.UTF8.GetString(LitigationReportArtifacts.RenderCsv(withLink)));
+        using var csvReader = new CsvHelper.CsvReader(reader, System.Globalization.CultureInfo.InvariantCulture);
+        csvReader.Read(); csvReader.ReadHeader(); csvReader.Read();
+
+        Assert.Equal("2", csvReader.GetField("Charge Link Count"));   // only this case's links, not case 99's
+        var details = csvReader.GetField("Charge Links")!;
+        Assert.Contains("CHG-7 (State Bank of India) [order names an asset under the charge] p. 2", details);
+        Assert.Contains("vehicle registration MH12AB1234", details);
+        Assert.Contains("[lender is litigating (indirect)]", details);
+        Assert.DoesNotContain("A different case", details);
+
+        using var none = new StringReader(Encoding.UTF8.GetString(LitigationReportArtifacts.RenderCsv(ReportWithSingleCase("csp-1"))));
+        using var noneReader = new CsvHelper.CsvReader(none, System.Globalization.CultureInfo.InvariantCulture);
+        noneReader.Read(); noneReader.ReadHeader(); noneReader.Read();
+        Assert.Equal("0", noneReader.GetField("Charge Link Count"));
+        Assert.Equal("'-", noneReader.GetField("Charge Links"));
+    }
+
+    /// <summary>PdfPig drops the space at a line wrap and renders ligatures (ti, tt, fi...) as a NUL, so compare
+    /// with whitespace and NULs removed and only use phrases that avoid those letter pairs.</summary>
+    private static string Squash(string s) => new string(s.Where(c => !char.IsWhiteSpace(c) && c != '\0').ToArray());
+
+    [SkippableFact]
+    public void RenderPdf_shows_the_charged_property_section_with_links_evidence_and_caveats()
+    {
+        Skip.IfNot(OperatingSystem.IsWindows(),
+            "PdfPig text extraction is unreliable off Windows fonts; covered by the windows-tests CI job.");
+
+        var report = ReportWithSingleCase("csp-1") with
+        {
+            ChargeLinks = new MCAROC_Analysis.Services.LitigationData.ChargeLitigationSummary([
+                Link(MCAROC_Analysis.Services.LitigationData.ChargeLitigationSignal.ImmovableAddress, 1, "The order names the property charged under CHG-7.", "Plot No. A-36, Nayapalli is attached.", 2),
+                Link(MCAROC_Analysis.Services.LitigationData.ChargeLitigationSignal.LenderRecoveryCase, null, "The holder is litigating (DRT).")], 3, 2, 1, true, 1, 2)
+        };
+
+        using var doc = PdfDocument.Open(new MemoryStream(LitigationReportArtifacts.RenderPdf(report)));
+        var text = Squash(string.Concat(doc.GetPages().Select(p => p.Text)));
+
+        Assert.Contains(Squash("PROPERTY & LITIGATION"), text);
+        Assert.Contains("CHG-7", text);
+        Assert.Contains(Squash("Case names the charged"), text);
+        Assert.Contains(Squash("Lender is"), text);
+        Assert.Contains("(indirect)", text);
+        Assert.Contains("Nayapalli", text);
+        Assert.Contains(Squash("Only strong matches are shown."), text);
+        Assert.Contains(Squash("NCLT/NCLAT orders are not scanned."), text);
+        Assert.Contains(Squash("1 order(s) had no extractable text"), text);
+        Assert.Contains(Squash("2 movable-asset charge(s) name"), text);
+        Assert.Contains(Squash("vehicle or serial numbers"), text);
+    }
+
+    [SkippableFact]
+    public void RenderPdf_with_no_links_says_what_was_compared_instead_of_implying_clean()
+    {
+        Skip.IfNot(OperatingSystem.IsWindows(),
+            "PdfPig text extraction is unreliable off Windows fonts; covered by the windows-tests CI job.");
+
+        var report = ReportWithSingleCase("csp-1") with
+        {
+            ChargeLinks = new MCAROC_Analysis.Services.LitigationData.ChargeLitigationSummary([], 3, 2, 1, false)
+        };
+
+        using var doc = PdfDocument.Open(new MemoryStream(LitigationReportArtifacts.RenderPdf(report)));
+        var text = Squash(string.Concat(doc.GetPages().Select(p => p.Text)));
+
+        Assert.Contains(Squash("PROPERTY & LITIGATION"), text);
+        Assert.Contains(Squash("No case was"), text);
+        Assert.Contains(Squash("a named asset"), text);
+        Assert.Contains(Squash("2 order(s) with text were compared"), text);
+        Assert.Contains(Squash("cannot be compared"), text);
+    }
+
+    [Fact]
+    public void RenderPdf_without_a_charge_comparison_omits_the_section_and_still_renders()
+    {
+        var pdf = LitigationReportArtifacts.RenderPdf(ReportWithSingleCase("csp-1"));
+        Assert.True(pdf.Length > 1000);
+        Assert.Equal("%PDF-", Encoding.ASCII.GetString(pdf, 0, 5));
+    }
+
     private static StandaloneLitigationReport ReportWithSingleCase(string cspId, IReadOnlyList<StandaloneReportPropertyMatchDto>? propertyMatches = null)
     {
         var orders = new List<StandaloneReportOrderDto>

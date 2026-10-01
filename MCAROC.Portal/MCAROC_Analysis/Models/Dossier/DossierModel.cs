@@ -34,6 +34,10 @@ public sealed record DossierModel(
     // analysis time — null when the AI call failed or hasn't run for this analysis run yet. Appended last,
     // same append-only precedent as Profile/IncludeLitigation above.
     Services.Analysis.ChargesNarrative? ChargesNarrative = null,
+    // Cases that touch what the open charges secure (charged property, named assets, a lender's recovery case).
+    // Carried unfiltered like IncludeLitigation above: only DossierPdfComposer decides whether the PDF shows it.
+    // Its SnapshotId is part of the dossier's cache keys, so a litigation refresh never serves stale links.
+    Services.LitigationData.ChargeLitigationSummary? ChargeLinks = null,
     // Completed Gemini property-particulars extractions for these charges' texts, keyed by text hash — the annexure
     // falls back to the deterministic reading for any text without one. Appended last, same precedent as above.
     IReadOnlyDictionary<string, Data.Entities.PropertyParticularsExtraction>? PropertyExtractions = null);

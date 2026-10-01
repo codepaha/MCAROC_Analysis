@@ -80,6 +80,9 @@ Invalid JSON, or no surviving property at all, fails the extraction; the rules r
 
   Nothing is scheduled when `Enabled` is false **or** when `GoogleCloud:ProjectId` / `CredentialsPath` are not
   configured.
+- **Dossier caches:** a version derived from the request's completed extractions is part of both the in-memory
+  dossier key and the rendered PDF's file name. A dossier cached before an extraction completed is rebuilt, never
+  served stale.
 - **Prompt changes:** bump `PropertyParticularsAi.PromptVersion`, and texts get re-extracted as their requests are
   ingested or opened.
 

@@ -4,7 +4,8 @@ public enum SourceType
 {
     DocumentChunk,
     StructuredFact,
-    LitigationChunk
+    LitigationChunk,
+    OrderOutcome
 }
 
 /// <summary>One [FACT]/[SOURCE] entry offered to the model in a prompt. Tag ("F1", "D2", "L3", ...) is assigned
@@ -16,7 +17,10 @@ public enum SourceType
 /// just a label. LitigationChunk reuses ChunkId/DocumentName/PageNumber/DocumentId rather than inventing
 /// parallel fields for the parts that mean the same thing (a chunk id, a display name, a page, an owning
 /// document id) — only LitigationCaseId/LitigationCaseOrderId are genuinely litigation-specific, needed so a
-/// citation can identify "the precise case, order and page" per #244/LIT-04's acceptance criterion.</summary>
+/// citation can identify "the precise case, order and page" per #244/LIT-04's acceptance criterion.
+/// OrderOutcome (#195, tag "O1"...) is one exact order-outcome classification: DocumentId is the order's
+/// LitigationOrderDocumentId (so the citation links to the actual PDF), EntityId the classification row it came
+/// from. The coverage note that accompanies every outcome lookup is an OrderOutcome source with no DocumentId.</summary>
 public record RetrievedSource(
     string Tag,
     SourceType Type,

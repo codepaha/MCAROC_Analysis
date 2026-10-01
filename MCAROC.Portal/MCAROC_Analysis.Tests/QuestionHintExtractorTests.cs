@@ -109,4 +109,53 @@ public class QuestionHintExtractorTests
         Assert.Equal(QuestionHintExtractor.MaxLexicalTerms, hints.LexicalTerms!.Count);
         Assert.Equal(hints.LexicalTerms.Count, hints.LexicalTerms.Distinct().Count());
     }
+
+    [Theory]
+    [InlineData("Pull every order with a fine", LitigationOrderOutcome.FinePenalty)]
+    [InlineData("Which NCLT cases imposed a penalty?", LitigationOrderOutcome.FinePenalty)]
+    [InlineData("List orders directing possession of the property", LitigationOrderOutcome.PossessionOrder)]
+    [InlineData("Any injunction against the company?", LitigationOrderOutcome.Injunction)]
+    [InlineData("Which petitions were dismissed?", LitigationOrderOutcome.Dismissal)]
+    [InlineData("Which cases were settled?", LitigationOrderOutcome.DisposedSettled)]
+    [InlineData("Was any interim relief granted?", LitigationOrderOutcome.InterimRelief)]
+    [InlineData("How many hearings were adjourned?", LitigationOrderOutcome.AdjournedNoSubstantiveOrder)]
+    [InlineData("Is there a stay on the proceedings?", LitigationOrderOutcome.StayGranted)]
+    public void OrderOutcomeQuestions_AreRecognised(string question, LitigationOrderOutcome expected)
+    {
+        var hints = QuestionHintExtractor.Extract(question, [], []);
+
+        Assert.Contains(expected, hints.OrderOutcomes!);
+    }
+
+    [Theory]
+    [InlineData("Show orders where the stay was vacated")]
+    [InlineData("Was the stay lifted by the High Court?")]
+    [InlineData("Which orders set aside the stay?")]
+    public void StayReversal_MapsToStayVacated_NeverStayGranted(string question)
+    {
+        var hints = QuestionHintExtractor.Extract(question, [], []);
+
+        Assert.Contains(LitigationOrderOutcome.StayVacated, hints.OrderOutcomes!);
+        Assert.DoesNotContain(LitigationOrderOutcome.StayGranted, hints.OrderOutcomes!);
+    }
+
+    [Theory]
+    [InlineData("Is the company's financial position fine?")]
+    [InlineData("Who holds possession of the hypothecated stock?")]
+    [InlineData("Was the loan settled in 2021?")]
+    [InlineData("What was revenue in 2022?")]
+    public void OrdinaryWords_WithoutALegalContext_AreNotOrderOutcomes(string question)
+    {
+        var hints = QuestionHintExtractor.Extract(question, [], []);
+
+        Assert.Empty(hints.OrderOutcomes!);
+    }
+
+    [Fact]
+    public void SeveralOutcomes_InOneQuestion_AreAllRecognised()
+    {
+        var hints = QuestionHintExtractor.Extract("List the orders with a fine or an injunction", [], []);
+
+        Assert.Equal([LitigationOrderOutcome.FinePenalty, LitigationOrderOutcome.Injunction], hints.OrderOutcomes!);
+    }
 }

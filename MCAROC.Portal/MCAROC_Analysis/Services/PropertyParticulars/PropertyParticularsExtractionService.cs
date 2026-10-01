@@ -153,6 +153,25 @@ public class PropertyParticularsExtractionService(
             .ToDictionaryAsync(x => x.TextHash, ct);
     }
 
+    /// <summary>Identifies the set of completed extractions a reading was built from — part of the dossier's memory and
+    /// on-disk PDF cache keys, so an extraction completing after a dossier was cached produces a new dossier/PDF
+    /// instead of the stale rules-only one being served indefinitely.</summary>
+    public static string VersionOf(IReadOnlyDictionary<string, PropertyParticularsExtraction> completed) =>
+        completed.Count == 0 ? "p0" : $"p{completed.Count}-{completed.Values.Max(x => x.PropertyParticularsExtractionId)}";
+
+    /// <summary><see cref="VersionOf"/> for a request's current (latest completed ingestion) charge texts.</summary>
+    public static async Task<string> VersionAsync(AppDbContext db, long requestId, CancellationToken ct)
+    {
+        var runId = await db.Requests.AsNoTracking().Where(r => r.RequestId == requestId)
+            .Select(r => r.LatestCompletedIngestionRunId).FirstOrDefaultAsync(ct);
+        if (runId is null) return VersionOf(new Dictionary<string, PropertyParticularsExtraction>());
+        var events = await db.RocChargeEvents.AsNoTracking()
+            .Where(e => e.RequestId == requestId && e.IngestionRunId == runId && e.PropertyParticulars != null)
+            .Select(e => new RocChargeEvent { PropertyParticulars = e.PropertyParticulars, PropertyType = e.PropertyType })
+            .ToListAsync(ct);
+        return VersionOf(await LoadCompletedAsync(db, events, ct));
+    }
+
     public virtual async Task ProcessAsync(long extractionId, CancellationToken ct)
     {
         var token = Guid.NewGuid();

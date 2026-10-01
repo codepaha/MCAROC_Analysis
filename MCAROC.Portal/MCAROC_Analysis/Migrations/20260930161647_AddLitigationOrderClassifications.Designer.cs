@@ -5,6 +5,7 @@ using Microsoft.Data.SqlTypes;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 #nullable disable
@@ -12,9 +13,11 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace MCAROC_Analysis.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260930161647_AddLitigationOrderClassifications")]
+    partial class AddLitigationOrderClassifications
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -5012,86 +5015,6 @@ namespace MCAROC_Analysis.Migrations
                     b.HasIndex("RequestId", "IngestionRunId");
 
                     b.ToTable("PrincipalBusinessActivities");
-                });
-
-            modelBuilder.Entity("MCAROC_Analysis.Data.Entities.PropertyParticularsExtraction", b =>
-                {
-                    b.Property<long>("PropertyParticularsExtractionId")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("bigint");
-
-                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("PropertyParticularsExtractionId"));
-
-                    b.Property<int>("AttemptCount")
-                        .HasColumnType("int");
-
-                    b.Property<DateTime?>("CompletedUtc")
-                        .HasColumnType("datetime2");
-
-                    b.Property<DateTime>("CreatedUtc")
-                        .HasColumnType("datetime2");
-
-                    b.Property<string>("ExtractionJson")
-                        .HasColumnType("nvarchar(max)");
-
-                    b.Property<string>("FailureReason")
-                        .HasMaxLength(1000)
-                        .HasColumnType("nvarchar(1000)");
-
-                    b.Property<DateTime?>("LeaseExpiresUtc")
-                        .HasColumnType("datetime2");
-
-                    b.Property<Guid?>("LeaseToken")
-                        .HasColumnType("uniqueidentifier");
-
-                    b.Property<string>("ModelId")
-                        .IsRequired()
-                        .HasMaxLength(100)
-                        .HasColumnType("nvarchar(100)");
-
-                    b.Property<DateTime?>("NextAttemptUtc")
-                        .HasColumnType("datetime2");
-
-                    b.Property<string>("PromptVersion")
-                        .IsRequired()
-                        .HasMaxLength(20)
-                        .HasColumnType("nvarchar(20)");
-
-                    b.Property<string>("PropertyType")
-                        .HasColumnType("nvarchar(max)");
-
-                    b.Property<string>("RawResponseJson")
-                        .HasColumnType("nvarchar(max)");
-
-                    b.Property<string>("RejectedFieldsJson")
-                        .HasColumnType("nvarchar(max)");
-
-                    b.Property<string>("ResponseHash")
-                        .HasMaxLength(64)
-                        .HasColumnType("nvarchar(64)");
-
-                    b.Property<string>("SourceText")
-                        .IsRequired()
-                        .HasColumnType("nvarchar(max)");
-
-                    b.Property<string>("Status")
-                        .IsRequired()
-                        .HasMaxLength(20)
-                        .HasColumnType("nvarchar(20)");
-
-                    b.Property<string>("TextHash")
-                        .IsRequired()
-                        .HasMaxLength(64)
-                        .HasColumnType("nvarchar(64)");
-
-                    b.HasKey("PropertyParticularsExtractionId");
-
-                    b.HasIndex("Status", "NextAttemptUtc");
-
-                    b.HasIndex("TextHash", "PromptVersion")
-                        .IsUnique();
-
-                    b.ToTable("PropertyParticularsExtractions");
                 });
 
             modelBuilder.Entity("MCAROC_Analysis.Data.Entities.ProprietorshipAssociation", b =>

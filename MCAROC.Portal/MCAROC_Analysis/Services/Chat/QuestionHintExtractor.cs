@@ -8,9 +8,10 @@ namespace MCAROC_Analysis.Services.Chat;
 /// filter, since it's a near-unambiguous identifier when it matches a real filing for this request.
 /// LexicalTerms are exact-match candidates (case numbers, quoted phrases, statute/section references) that
 /// pure semantic similarity tends to under-rank — they drive #194's full-text half of hybrid retrieval, never a
-/// filter.</summary>
+/// filter. OrderOutcomes are the court-order outcomes the question asks about ("orders with a fine/stay") — they
+/// route to #195's exact order-outcome lookup, alongside (never instead of) document retrieval.</summary>
 public record QuestionHints(FilingCategory? Category, string? FormTypeKeyword, string? LenderNameKeyword, int? Year, string? SrnMatch,
-    IReadOnlyList<string>? LexicalTerms = null)
+    IReadOnlyList<string>? LexicalTerms = null, IReadOnlyList<LitigationOrderOutcome>? OrderOutcomes = null)
 {
     public bool HasSoftHints => Category is not null || FormTypeKeyword is not null || LenderNameKeyword is not null;
 }
@@ -54,7 +55,37 @@ public static partial class QuestionHintExtractor
         var srn = knownSrns.FirstOrDefault(s =>
             !string.IsNullOrWhiteSpace(s) && Regex.IsMatch(question, $@"\b{Regex.Escape(s)}\b"));
 
-        return new QuestionHints(category, formType, lender, year, srn, ExtractLexicalTerms(question));
+        return new QuestionHints(category, formType, lender, year, srn, ExtractLexicalTerms(question), ExtractOrderOutcomes(text));
+    }
+
+    /// <summary>Outcome words and whether each is unambiguous on its own. "Stay", "injunction", "dismissed" and
+    /// "adjourned" only ever mean one thing in a due-diligence question; "fine", "penalty", "possession" and
+    /// "settled" are ordinary English too ("is the company fine?", "possession of the hypothecated stock"), so
+    /// those only count when the question is also plainly about court orders.</summary>
+    private static readonly (Regex Pattern, LitigationOrderOutcome Outcome, bool SelfEvidentlyLegal)[] OutcomeKeywords =
+    [
+        (new(@"\b(fine[ds]?|penalt(y|ies)|costs (imposed|awarded)|(imposed|awarded) costs)\b"), LitigationOrderOutcome.FinePenalty, false),
+        (new(@"\bpossession\b"), LitigationOrderOutcome.PossessionOrder, false),
+        (new(@"\binjunctions?\b"), LitigationOrderOutcome.Injunction, true),
+        (new(@"\bdismiss(al|als|ed|es)?\b"), LitigationOrderOutcome.Dismissal, true),
+        (new(@"\b(disposed|settled|settlement|withdrawn)\b"), LitigationOrderOutcome.DisposedSettled, false),
+        (new(@"\binterim (relief|reliefs|orders?)\b"), LitigationOrderOutcome.InterimRelief, true),
+        (new(@"\badjourn(ed|ment|ments)?\b"), LitigationOrderOutcome.AdjournedNoSubstantiveOrder, true)
+    ];
+
+    internal static IReadOnlyList<LitigationOrderOutcome> ExtractOrderOutcomes(string lowerText)
+    {
+        var legalContext = LegalCueRegex().IsMatch(lowerText);
+        var outcomes = new List<LitigationOrderOutcome>();
+        foreach (var (pattern, outcome, selfEvident) in OutcomeKeywords)
+            if ((selfEvident || legalContext) && pattern.IsMatch(lowerText))
+                outcomes.Add(outcome);
+
+        // Negation decides which stay outcome is meant: "stay vacated/lifted/set aside" is the opposite of a stay.
+        if (StayRegex().IsMatch(lowerText))
+            outcomes.Add(StayReversalRegex().IsMatch(lowerText) ? LitigationOrderOutcome.StayVacated : LitigationOrderOutcome.StayGranted);
+
+        return outcomes.Distinct().ToList();
     }
 
     /// <summary>Caps how many exact-match phrases one question can OR together — a question quoting a dozen
@@ -97,4 +128,13 @@ public static partial class QuestionHintExtractor
 
     [GeneratedRegex(@"\s+")]
     private static partial Regex WhitespaceRegex();
+
+    [GeneratedRegex(@"\b(orders?|cases?|court|tribunal|nclt|nclat|drt|drat|judge?ments?|litigation|petitions?|proceedings?|hearings?|bench|appeals?|suits?)\b")]
+    private static partial Regex LegalCueRegex();
+
+    [GeneratedRegex(@"\bstay(s|ed)?\b")]
+    private static partial Regex StayRegex();
+
+    [GeneratedRegex(@"\b(vacat\w*|lift\w*|set aside|refus\w*|revok\w*|withdr[ae]w\w*)\b")]
+    private static partial Regex StayReversalRegex();
 }
