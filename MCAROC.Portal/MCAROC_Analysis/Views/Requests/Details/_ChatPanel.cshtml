@@ -91,6 +91,14 @@
                             }
                         </div>
                         <div class="mca-chat-text">@m.MessageText</div>
+                        @if (!isUser && MCAROC_Analysis.Services.Chat.ChatSearchCoverage.IsPartial(m.RetrievedSourcesJson))
+                        {
+                            // Partial-results banner: from what retrieval supplied (S1 in RetrievedSourcesJson), not from
+                            // whether the model cited S1.
+                            <div class="mca-partial-results-banner">
+                                <i class="bi bi-info-circle me-1"></i>Partial results &mdash; not all matching records may be shown
+                            </div>
+                        }
                         @if (!isUser && !string.IsNullOrEmpty(m.CitedSourcesJson))
                         {
                             try
@@ -98,18 +106,6 @@
                                 using var citDoc = System.Text.Json.JsonDocument.Parse(m.CitedSourcesJson);
                                 if (citDoc.RootElement.ValueKind == System.Text.Json.JsonValueKind.Array && citDoc.RootElement.GetArrayLength() > 0)
                                 {
-                                    // Partial-results banner: shown once if any source is SearchCoverage (tag S1).
-                                    var hasSearchCoverage = citDoc.RootElement.EnumerateArray().Any(c =>
-                                        c.ValueKind == System.Text.Json.JsonValueKind.Object &&
-                                        c.TryGetProperty("SourceType", out var stCheck) &&
-                                        stCheck.ValueKind == System.Text.Json.JsonValueKind.String &&
-                                        stCheck.GetString() == "SearchCoverage");
-                                    if (hasSearchCoverage)
-                                    {
-                                        <div class="mca-partial-results-banner">
-                                            <i class="bi bi-info-circle me-1"></i>Partial results &mdash; not all matching records may be shown
-                                        </div>
-                                    }
                                     <div class="mca-chat-citations">
                                         <small class="text-muted d-block mb-1">Sources:</small>
                                         @foreach (var cit in citDoc.RootElement.EnumerateArray())

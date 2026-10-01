@@ -18,7 +18,7 @@
 
     let activePanelInstance = null;
 
-    function createBubbleElement(role, text, status, citations, createdDate, doc) {
+    function createBubbleElement(role, text, status, citations, createdDate, doc, partialResults) {
         const d = doc || (typeof document !== 'undefined' ? document : null);
         if (!d) return null;
 
@@ -57,8 +57,10 @@
         textDiv.textContent = text;
         bubble.appendChild(textDiv);
 
-        // Partial-results badge: shown on the bubble if any citation has sourceType SearchCoverage (tag S1).
-        const hasSearchCoverage = citations && citations.some(function (c) { return c.sourceType === 'SearchCoverage'; });
+        // Partial-results badge: driven by the server's partialResults flag (derived from what retrieval supplied), so it
+        // shows even when the model omits S1 from its citations. A cited S1 (sourceType SearchCoverage) also implies it.
+        const hasSearchCoverage = partialResults === true
+            || (citations && citations.some(function (c) { return c.sourceType === 'SearchCoverage'; }));
         if (hasSearchCoverage) {
             const badgeWrapper = d.createElement('div');
             badgeWrapper.className = 'mca-partial-results-banner';
@@ -270,7 +272,8 @@
                         msg.status || 'Success',
                         msg.citations || [],
                         msg.createdDate,
-                        d
+                        d,
+                        msg.partialResults === true
                     );
                     if (bubble) messagesContainer.appendChild(bubble);
                 });
@@ -449,7 +452,8 @@
                         data.message.status || 'Success',
                         data.message.citations || [],
                         data.message.createdDate,
-                        d
+                        d,
+                        data.message.partialResults === true
                     );
                     messagesContainer.appendChild(assistantTurn);
                     input.value = '';

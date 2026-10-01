@@ -181,4 +181,34 @@ public class ChatPanelRenderingTests
 
         Assert.DoesNotContain("mcaChatIndexingWarning", html);
     }
+
+    // #340 review: the saved-history banner follows RetrievedSourcesJson, so it shows even when S1 was not cited.
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Render_PartialResultsBanner_FollowsRetrievedSearchCoverage_NotCitations(bool retrievedS1)
+    {
+        var model = CreateBaseModel();
+        var retrieved = retrievedS1
+            ? """[{"Tag":"D1","Type":"DocumentChunk"},{"Tag":"S1","Type":"SearchCoverage"}]"""
+            : """[{"Tag":"D1","Type":"DocumentChunk"}]""";
+        model.ChatMessages =
+        [
+            new ChatMessage
+            {
+                ChatMessageId = 7,
+                Role = ChatRole.Assistant,
+                MessageText = "Charge 1 is the only charge found.",
+                RetrievedSourcesJson = retrieved,
+                CitedSourcesJson = """[{"SourceType":"DocumentChunk","DocumentName":"CHG-1.pdf","PageNumber":2,"Label":"CHG-1.pdf"}]""",
+                Status = ChatMessageStatus.Success,
+                CreatedDate = DateTime.UtcNow
+            }
+        ];
+
+        var html = await RenderChatPanelAsync(model);
+
+        var bannerCount = System.Text.RegularExpressions.Regex.Matches(html, "class=\"mca-partial-results-banner\"").Count;
+        Assert.Equal(retrievedS1 ? 1 : 0, bannerCount);
+    }
 }

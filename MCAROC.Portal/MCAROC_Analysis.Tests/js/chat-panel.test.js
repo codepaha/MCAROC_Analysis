@@ -643,3 +643,87 @@ test('chat-panel: mixed M/O/S1/DocumentChunk citations render correct chips; ban
     assert.equal(plainChips.length, 0, 'No plain chip for SearchCoverage sources');
 });
 
+
+// #340 review: the banner follows the server's partialResults flag (from retrieved sources), not the model's citations.
+function liveAnswerFetch(partialResults) {
+    return async () => ({
+        ok: true,
+        status: 200,
+        json: async () => ({
+            success: true,
+            message: {
+                role: 'Assistant',
+                text: 'The charges found are listed below.',
+                status: 'Success',
+                partialResults: partialResults,
+                citations: [
+                    { sourceType: 'DocumentChunk', documentName: 'CHG-1.pdf', pageNumber: 2, viewerUrl: '/Requests/42/documents/10/view#page=2' }
+                ]
+            }
+        })
+    });
+}
+
+test('chat-panel: live answer flagged partialResults shows the banner even when only D1 is cited (S1 omitted)', async () => {
+    const fixture = setupFixture();
+    const controller = initChatPanel(fixture.doc, liveAnswerFetch(true));
+    fixture.input.value = 'List all charges.';
+    await controller.handleSubmit();
+
+    const turns = fixture.messagesContainer.querySelectorAll('.mca-chat-turn');
+    assert.equal(turns.length, 2);
+    assert.equal(turns[1].querySelectorAll('.mca-partial-results-banner').length, 1, 'Banner shown from the server flag');
+    assert.equal(turns[1].querySelectorAll('.mca-citation').length, 1, 'D1 chip still rendered');
+});
+
+test('chat-panel: live answer with full coverage (partialResults false) and D1 only shows no banner', async () => {
+    const fixture = setupFixture();
+    const controller = initChatPanel(fixture.doc, liveAnswerFetch(false));
+    fixture.input.value = 'Who holds charge 1?';
+    await controller.handleSubmit();
+
+    const turns = fixture.messagesContainer.querySelectorAll('.mca-chat-turn');
+    assert.equal(turns.length, 2);
+    assert.equal(turns[1].querySelectorAll('.mca-partial-results-banner').length, 0, 'No banner without the flag');
+});
+
+test('chat-panel: reloaded transcript renders the banner from partialResults when S1 was not cited', async () => {
+    const fixture = setupFixture();
+    let capturedTurnId = null;
+    const mockFetch = async (url, options) => {
+        if (options && options.method === 'POST') {
+            capturedTurnId = JSON.parse(options.body).clientTurnId;
+            const err = new Error('The operation was aborted');
+            err.name = 'AbortError';
+            throw err;
+        }
+        return {
+            ok: true,
+            status: 200,
+            json: async () => ({
+                success: true,
+                messages: [
+                    { id: 10, clientTurnId: capturedTurnId, role: 'User', text: 'List all charges.', status: 'Success' },
+                    { id: 11, inReplyToChatMessageId: 10, clientTurnId: capturedTurnId, role: 'Assistant', text: 'Charges listed.', status: 'Success',
+                      partialResults: true, citations: [{ sourceType: 'DocumentChunk', documentName: 'CHG-1.pdf', pageNumber: 2 }] }
+                ]
+            })
+        };
+    };
+
+    const controller = initChatPanel(fixture.doc, mockFetch);
+    fixture.input.value = 'List all charges.';
+    await controller.handleSubmit();
+
+    const turns = fixture.messagesContainer.querySelectorAll('.mca-chat-turn');
+    assert.equal(turns.length, 2);
+    assert.equal(turns[1].querySelectorAll('.mca-partial-results-banner').length, 1, 'Banner shown on the reloaded turn');
+});
+
+test('chat-panel: createBubbleElement shows exactly one banner when partialResults is set and S1 is also cited', () => {
+    const doc = createMockDocument();
+    const bubble = createBubbleElement('Assistant', 'Answer.', 'Success', [
+        { sourceType: 'SearchCoverage', label: 'Document search coverage' }
+    ], null, doc, true);
+    assert.equal(bubble.querySelectorAll('.mca-partial-results-banner').length, 1);
+});
