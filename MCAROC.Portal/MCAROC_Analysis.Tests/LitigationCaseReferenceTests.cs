@@ -90,6 +90,44 @@ public class LitigationCaseReferenceTests
         Assert.Equal([tp], foundPositive);
     }
 
+    [Fact]
+    public void CompanyAppeal_And_CompanyApplication_AreKeptDistinct()
+    {
+        var appeal = Case(1, "Company Appeal 935/2023");
+        var application = Case(2, "Company Application 935/2023");
+
+        // Direction 1: Question asks Company Appeal
+        // 1a. Sole wrong candidate (Company Application) -> returns empty
+        Assert.Empty(LitigationCaseReference.FindReferencedCases("What is the current status of Company Appeal 935/2023?", [application]));
+        // 1b. Both candidates present -> selects ONLY Company Appeal
+        Assert.Equal([appeal], LitigationCaseReference.FindReferencedCases("What is the current status of Company Appeal 935/2023?", [appeal, application]));
+
+        // Direction 2: Question asks Company Application
+        // 2a. Sole wrong candidate (Company Appeal) -> returns empty
+        Assert.Empty(LitigationCaseReference.FindReferencedCases("What is the current status of Company Application 935/2023?", [appeal]));
+        // 2b. Both candidates present -> selects ONLY Company Application
+        Assert.Equal([application], LitigationCaseReference.FindReferencedCases("What is the current status of Company Application 935/2023?", [appeal, application]));
+    }
+
+    [Fact]
+    public void AmbiguousCompanyAbbreviation_ResolvesAgainstSoleCandidate_RefusesConflictingCandidates()
+    {
+        var appeal = Case(1, "Company Appeal (AT) (Ins) No. 935 of 2023");
+        var application = Case(2, "Company Application 935/2023");
+
+        // Unambiguous CA variants against sole candidates
+        Assert.Equal([appeal], LitigationCaseReference.FindReferencedCases("What did NCLAT say in CA 935/2023?", [appeal]));
+        Assert.Equal([application], LitigationCaseReference.FindReferencedCases("status of CA 935/2023", [application]));
+
+        // Unambiguous COMPAPP variants against sole candidates
+        Assert.Equal([appeal], LitigationCaseReference.FindReferencedCases("status of Comp. App. 935/2023", [appeal]));
+        Assert.Equal([application], LitigationCaseReference.FindReferencedCases("status of Comp. App. 935/2023", [application]));
+
+        // Ambiguous abbreviation when both Appeal and Application candidates exist -> returns empty
+        Assert.Empty(LitigationCaseReference.FindReferencedCases("status of CA 935/2023", [appeal, application]));
+        Assert.Empty(LitigationCaseReference.FindReferencedCases("status of Comp. App. 935/2023", [appeal, application]));
+    }
+
     [Theory]
     [InlineData("09-01-2025", 2025, 1, 9)]
     [InlineData("20/07/2026", 2026, 7, 20)]

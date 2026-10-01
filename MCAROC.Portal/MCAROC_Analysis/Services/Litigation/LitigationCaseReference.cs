@@ -45,7 +45,8 @@ public sealed partial record LitigationCaseReference(string TypeLetters, string 
 
     private static readonly (string Canonical, string[] Prefixes)[] AliasGroups =
     [
-        ("CA", ["COMPANYAPPEAL", "COMPANYAPPLICATION", "COMPAPP", "COA", "CA"]),
+        ("COMPANY_APPEAL", ["COMPANYAPPEAL", "COAPPEAL", "COA", "CAAT", "COMPAPPAT"]),
+        ("COMPANY_APPLICATION", ["COMPANYAPPLICATION", "COMPAPPLICATION", "COAPPLICATION", "COMPANYAPPLN", "COMPAPPLN", "COMPANYAPPL", "COMPAPPL", "COAPPL", "COMPANYAPPN", "COMPAPPN", "COAPPN"]),
         ("CP", ["COMPANYPETITION", "COMPPET", "COMPET", "CPIB", "CP"]),
         ("TP", ["TRANSFERPETITION", "TRANSPET", "TPIB", "TP"]),
         ("IA", ["INTERLOCUTORYAPPLICATION", "INTERLOCAPP", "IAIB", "IA"]),
@@ -72,10 +73,14 @@ public sealed partial record LitigationCaseReference(string TypeLetters, string 
         return null;
     }
 
+    private static bool IsAmbiguousCompanyAbbreviation(string typeLetters) =>
+        typeLetters is "CA" or "COMPAPP" or "COMPAP" or "COAPP" or "CAIB";
+
     /// <summary>Checks whether two case-type letter strings are compatible. If either side is empty (missing type info),
-    /// they are compatible. If both map to known alias groups, they are compatible iff their groups match (e.g. "CA" and
-    /// "COMPANYAPPEALATINS"). If one or neither is in an alias group, compatibility requires one to be a prefix of the other.
-    /// Explicitly contradictory types (such as "TP" vs "IA" or "CP" vs "IA") are refused.</summary>
+    /// they are compatible. If both map to known alias groups, they are compatible iff their groups match (e.g. "COMPANY_APPEAL"
+    /// and "COMPANYAPPEALATINS"). Ambiguous abbreviations such as "CA" or "COMPAPP" can match either "Company Appeal" or
+    /// "Company Application", but explicit "Appeal" and "Application" strings are distinct semantic types and never match each other.
+    /// Explicitly contradictory types (such as "TP" vs "IA" or "Company Appeal" vs "Company Application") are refused.</summary>
     public static bool AreTypesCompatible(string a, string b)
     {
         if (a.Length == 0 || b.Length == 0) return true;
@@ -83,17 +88,28 @@ public sealed partial record LitigationCaseReference(string TypeLetters, string 
         var groupB = GetAliasGroup(b);
         if (groupA != null && groupB != null)
             return groupA == groupB;
+
+        var aAmbiguous = IsAmbiguousCompanyAbbreviation(a);
+        var bAmbiguous = IsAmbiguousCompanyAbbreviation(b);
+        if (aAmbiguous || bAmbiguous)
+        {
+            if (aAmbiguous && bAmbiguous) return true;
+            var nonAmbiguousGroup = aAmbiguous ? groupB : groupA;
+            return nonAmbiguousGroup is "COMPANY_APPEAL" or "COMPANY_APPLICATION";
+        }
+
         return a.StartsWith(b, StringComparison.Ordinal) || b.StartsWith(a, StringComparison.Ordinal);
     }
 
     /// <summary>Same serial and year; type letters must not contradict ("TP" matches "TPIB", "CP" matches "CPIB",
-    /// "CA" matches "Company Appeal", "TP" never matches "IA"). Either side having no letters is not a contradiction.</summary>
+    /// "CA" matches "Company Appeal", "TP" never matches "IA", "Company Appeal" never matches "Company Application").
+    /// Either side having no letters is not a contradiction.</summary>
     public bool Matches(LitigationCaseReference other) =>
         Serial == other.Serial && Year == other.Year && AreTypesCompatible(TypeLetters, other.TypeLetters);
 
     /// <summary>The request's cases a question refers to. Cases must match on serial, year, and type compatibility
-    /// (including supported abbreviations like "CA" for "Company Appeal"). Explicit contradictions (such as "TP" vs "IA")
-    /// are never picked, even if only one serial/year match exists.</summary>
+    /// (including supported abbreviations like "CA" for "Company Appeal"). Explicit contradictions (such as "TP" vs "IA" or
+    /// "Company Appeal" vs "Company Application") are never picked, even if only one serial/year match exists.</summary>
     public static IReadOnlyList<LitigationCase> FindReferencedCases(string question, IEnumerable<LitigationCase> cases)
     {
         var asked = Extract(question);
@@ -104,6 +120,18 @@ public sealed partial record LitigationCaseReference(string TypeLetters, string 
         {
             var sameNumber = withRefs.Where(x => x.Ref!.Serial == q.Serial && x.Ref.Year == q.Year).ToList();
             var agreeing = sameNumber.Where(x => q.Matches(x.Ref!)).ToList();
+            if (IsAmbiguousCompanyAbbreviation(q.TypeLetters))
+            {
+                var distinctGroups = agreeing
+                    .Select(x => GetAliasGroup(x.Ref!.TypeLetters))
+                    .Where(g => g is "COMPANY_APPEAL" or "COMPANY_APPLICATION")
+                    .Distinct()
+                    .ToList();
+                if (distinctGroups.Count > 1)
+                {
+                    agreeing.Clear();
+                }
+            }
             foreach (var x in agreeing)
                 if (!found.Contains(x.Case)) found.Add(x.Case);
         }

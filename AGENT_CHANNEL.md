@@ -1,17 +1,19 @@
 # Agent channel — MCAROC
 
-### 2026-10-01 (latest) — Antigravity session (#348 review feedback resolved: P1 case type compatibility & P2 case navigation)
+### 2026-10-01 (latest) — Antigravity session (#348 re-review feedback resolved: P1 Company Appeal vs Company Application separation)
 
 - **#343 (PR #348 on `feat/chat-litigation-recency-343`):**
-  - Rebased branch onto `origin/main` (`95f0489`), resolving conflict in `AGENT_CHANNEL.md`.
-  - **P1 (Case Type Contradictions):** In `LitigationCaseReference`, defined explicit supported alias groups (`CA` ↔ `Company Appeal`, `CP` ↔ `Company Petition`, `TP` ↔ `Transfer Petition`, `IA` ↔ `Interlocutory Application`, etc.) and restricted selection to agreeing candidates. Refuses contradictory types (`TP` vs `IA`, `CP` vs `IA`) even when only one candidate matches serial/year. Exact-source probe (`tmp/pr348-match-probe/Probe.csproj`) now outputs matched count: 0 (positive control: 1). Added negative unit tests in `LitigationCaseReferenceTests.cs`.
-  - **P2 (Case Citation Navigation & Pagination):**
+  - **P1 (Company Appeal vs Company Application Semantic Separation):** In `LitigationCaseReference`, separated `COMPANY_APPEAL` and `COMPANY_APPLICATION` into distinct semantic alias groups (`COMPANYAPPEAL`, `COAPPEAL`, `COA`, `CAAT`, `COMPAPPAT` vs `COMPANYAPPLICATION`, `COMPAPPLICATION`, `COMPAPPL`, etc.) so explicit Appeal and Application strings are never treated as equivalent.
+  - Ambiguous abbreviations (`CA`, `COMPAPP`, `CAIB`) resolve against unambiguous candidates when only one case type is present, but safely refuse selection when candidates of both distinct case types share the same serial and year.
+  - Probe counterexample (`What is the current status of Company Appeal 935/2023?` against stored `Company Application 935/2023`) now returns 0 matches.
+  - Added comprehensive negative and positive regressions in both directions (sole wrong candidate and both candidates) plus ambiguous abbreviation handling in `LitigationCaseReferenceTests.cs`.
+  - **P2 (Case Citation Navigation & Pagination - previously verified & accepted):**
     - Added `#case-card-{caseId}` support to `parseHash` in `contents-nav.js` returning `{ type: 'case', domain: 'litigation', sectionId: 'case-card-{caseId}', targetTab: 'tab-litigation' }`.
     - Added `openAndScrollCase` and `data-focus-case` handling in `contents-nav.js`.
-    - Added `[FromQuery] long? focusCase = null` to `RequestsController.Details`, calculating the target page in `casesQuery` (ordering by Court, LastHearingDate DESC, LitigationCaseId) when `focusCase` is provided, and setting `vm.FocusCaseId`.
+    - Added `[FromQuery] long? focusCase = null` to `RequestsController.Details`, calculating target page in `casesQuery` (ordering by Court, LastHearingDate DESC, LitigationCaseId) when `focusCase` is provided, setting `vm.FocusCaseId`.
     - Bound `data-focus-case` to `#mcaDetailHead` in `Details.cshtml`.
     - Standardized case citation URL contract across `RequestsController.MapMessageDto` and `_ChatPanel.cshtml` to `/Requests/{id}?focusCase={caseId}#case-card-{caseId}`.
-    - Added unit and controller integration tests covering multi-page case resolution and DOM navigation (all passing: 39 JS tests, 107+ .NET tests).
+  - All 108 .NET tests (including `LitigationCaseReferenceTests`, `LitigationRecencyRoutingTests`, `ChatEndpointJsonTests`, `LitigationTabAndControllerTests`) and all 39 JavaScript tests pass cleanly.
 
 ### 2026-10-01 — Claude session (CLAIMED #350 and #349)
 
