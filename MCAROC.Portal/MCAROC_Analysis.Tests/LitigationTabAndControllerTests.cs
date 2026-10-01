@@ -246,6 +246,73 @@ public class LitigationTabAndControllerTests : IAsyncLifetime
         Assert.Contains("not configured", badRequest.Value?.ToString(), StringComparison.OrdinalIgnoreCase);
     }
 
+    private async Task<McaRequest> SeedRequestWithCompletedReportAsync(AppDbContext db, bool withReport)
+    {
+        var client = new Client { ClientCode = "RFC" + Guid.NewGuid().ToString("N")[..6], ClientName = "Refresh Co", CreatedDate = DateTime.UtcNow };
+        db.Clients.Add(client);
+        var request = new McaRequest { Client = client, CompanyName = "Refresh Co", EntityType = EntityType.Company, RequestNumber = $"REQ-{Guid.NewGuid():N}", CreatedDate = DateTime.UtcNow };
+        db.Requests.Add(request);
+        await db.SaveChangesAsync();
+        if (withReport)
+        {
+            var job = new LitigationSearchJob { RequestId = request.RequestId, Status = LitigationSearchJobStatus.Completed, RawResponseHash = "hash_refresh_1" };
+            db.LitigationSearchJobs.Add(job);
+            await db.SaveChangesAsync();
+            db.LitigationReportSnapshots.Add(new LitigationReportSnapshot
+            {
+                LitigationSearchJobId = job.LitigationSearchJobId, RequestId = request.RequestId, ReportHash = "hash_refresh_1",
+                Status = LitigationReportSnapshotStatus.Completed, RetrievedUtc = DateTime.UtcNow.AddDays(-30), CasesPersistedCount = 1
+            });
+            await db.SaveChangesAsync();
+        }
+        return request;
+    }
+
+    private static LitigationController JsonController(AppDbContext db)
+    {
+        var controller = new LitigationController(
+            db: db, env: new FakeEnv(Path.GetTempPath()),
+            bprOptions: Options.Create(new BprLitigationOptions { BaseUrl = "https://bpr.example/", Id = "app", SecretKey = "secret" }),
+            starter: null!, logger: NullLogger<LitigationController>.Instance);
+        var httpContext = new DefaultHttpContext();
+        httpContext.Request.Headers.Accept = "application/json";
+        controller.ControllerContext = new ControllerContext { HttpContext = httpContext };
+        return controller;
+    }
+
+    [Fact]
+    public async Task StartSearch_RefusesARefresh_ThatWasNotConfirmedAsChargeable()
+    {
+        await using var db = CreateContext();
+        var request = await SeedRequestWithCompletedReportAsync(db, withReport: true);
+
+        var result = await JsonController(db).StartSearch(request.RequestId, default);
+
+        var conflict = Assert.IsType<ConflictObjectResult>(result);
+        Assert.Contains("chargeable", conflict.Value?.ToString(), StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(1, await db.LitigationSearchJobs.CountAsync(j => j.RequestId == request.RequestId));
+    }
+
+    [Fact]
+    public async Task StartSearch_ConfirmedRefresh_PassesTheChargeableGuard()
+    {
+        await using var db = CreateContext();
+        var request = await SeedRequestWithCompletedReportAsync(db, withReport: true);
+
+        // starter is null: getting past the guard and the refresh policy reaches it, which is all this asserts.
+        await Assert.ThrowsAsync<NullReferenceException>(() =>
+            JsonController(db).StartSearch(request.RequestId, default, confirmChargeableRefresh: true));
+    }
+
+    [Fact]
+    public async Task StartSearch_FirstSearch_NeedsNoChargeableConfirmation()
+    {
+        await using var db = CreateContext();
+        var request = await SeedRequestWithCompletedReportAsync(db, withReport: false);
+
+        await Assert.ThrowsAsync<NullReferenceException>(() => JsonController(db).StartSearch(request.RequestId, default));
+    }
+
     [Fact]
     public async Task StartSearch_RejectsBlankCompanyName()
     {
