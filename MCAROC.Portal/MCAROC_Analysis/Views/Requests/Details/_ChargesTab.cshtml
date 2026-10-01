@@ -1,3 +1,4 @@
+@using MCAROC_Analysis.Services.LitigationData
 @model RequestDetailsViewModel
 @{
     var extracted = Model.LatestRun is not null;
@@ -10,6 +11,24 @@
         ("Open Charges", "open", open.Count),
         ("Satisfied Charges", "satisfied", satisfied.Count),
     };
+
+    IReadOnlyList<ChargeLitigationLink> LitigationFor(RocCharge c) => Model.ChargeLitigation?.ForCharge(c.ChargeId) ?? [];
+
+    // Highlights a charge that a case touches. Only Strong evidence is ever a link, so a badge always means something.
+    void LitigationBadges(RocCharge c)
+    {
+        var links = LitigationFor(c);
+        var address = links.Where(l => l.Signal == ChargeLitigationSignal.ImmovableAddress).Select(l => l.CaseKey).Distinct().Count();
+        var lender = links.Where(l => l.Signal == ChargeLitigationSignal.LenderRecoveryCase).Select(l => l.CaseKey).Distinct().Count();
+        if (address > 0)
+        {
+            <span class="mca-badge sev-critical" title="A court order names the property charged under this charge. Open Details for the case and the matching text."><i class="bi bi-bank"></i> Case found (@address)</span>
+        }
+        if (lender > 0)
+        {
+            <span class="mca-badge sev-watch" title="This charge's holder is a party in a recovery-type proceeding against the company (indirect). Open Details."><i class="bi bi-exclamation-triangle"></i> Lender dispute (@lender)</span>
+        }
+    }
 
     void SecurityBadges(RocCharge c)
     {
@@ -106,6 +125,19 @@
         </div>
         <p class="text-muted mt-2">"Registered Charge Amount" is the amount on the charge register — not the current loan outstanding.</p>
 
+        @if (Model.ChargeLitigation is { HasAny: true } cl)
+        {
+            <div class="alert alert-danger py-2 px-3 small d-flex align-items-start gap-2" id="charge-litigation-summary" role="alert">
+                <i class="bi bi-bank fs-5"></i>
+                <div>
+                    <strong>@cl.ChargesWithLinks open charge@(cl.ChargesWithLinks == 1 ? "" : "s") @(cl.ChargesWithLinks == 1 ? "has" : "have") litigation linked.</strong>
+                    @cl.CasesFor(ChargeLitigationSignal.ImmovableAddress) case@(cl.CasesFor(ChargeLitigationSignal.ImmovableAddress) == 1 ? "" : "s") name charged property
+                    · @cl.CasesFor(ChargeLitigationSignal.LenderRecoveryCase) case@(cl.CasesFor(ChargeLitigationSignal.LenderRecoveryCase) == 1 ? "" : "s") are recovery proceedings by a charge holder.
+                    Look for the badges in the Open Charges table; details are in each charge's drawer and in the Litigation tab.
+                </div>
+            </div>
+        }
+
         @await Html.PartialAsync("Details/_KeyIndicators", Model.KeyMetrics.Where(g => g.Title == "Charge register").ToList())
 
         <div class="mca-section" style="margin-top:22px;">
@@ -168,7 +200,7 @@
                     var facility = c.LatestPrimaryFacilityType?.ToString();
                     var secCount = RequestDetailsViewModel.SecurityTypeLabels(c).Count;
                     <tr>
-                        <td class="report-id">@c.RocChargeNumber</td>
+                        <td class="report-id">@c.RocChargeNumber @{ LitigationBadges(c); }</td>
                         <td>@(string.IsNullOrWhiteSpace(c.LatestChargeHolderRaw) ? Html.Raw("<span class=\"mca-badge sev-watch\">Unknown Charge Holder</span>") : Html.Raw(System.Net.WebUtility.HtmlEncode(c.LatestChargeHolderRaw)))</td>
                         <td>@D(c.CreationDate)</td>
                         <td class="text-end"><partial name="Details/_Amount" model="new AmountViewModel(c.CurrentAmount)" /></td>
@@ -178,7 +210,7 @@
                         <td><a class="mca-chip" data-bs-toggle="collapse" href="#charge-@c.ChargeId" role="button">Details</a></td>
                     </tr>
                     <tr class="collapse" id="charge-@c.ChargeId">
-                        <td colspan="8">@await Html.PartialAsync("Details/_ChargeDrawer", ChargeDrawerViewModel.For(c, Model.AnalysisFindings))</td>
+                        <td colspan="8">@await Html.PartialAsync("Details/_ChargeDrawer", ChargeDrawerViewModel.For(c, Model.AnalysisFindings, LitigationFor(c)))</td>
                     </tr>
                 }
                 </tbody>
