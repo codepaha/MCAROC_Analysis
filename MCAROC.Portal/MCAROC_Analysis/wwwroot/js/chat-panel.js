@@ -18,7 +18,7 @@
 
     let activePanelInstance = null;
 
-    function createBubbleElement(role, text, status, citations, createdDate, doc) {
+    function createBubbleElement(role, text, status, citations, createdDate, doc, partialResults) {
         const d = doc || (typeof document !== 'undefined' ? document : null);
         if (!d) return null;
 
@@ -57,6 +57,23 @@
         textDiv.textContent = text;
         bubble.appendChild(textDiv);
 
+        // Partial-results badge: driven by the server's partialResults flag (derived from what retrieval supplied), so it
+        // shows even when the model omits S1 from its citations. A cited S1 (sourceType SearchCoverage) also implies it.
+        const hasSearchCoverage = partialResults === true
+            || (citations && citations.some(function (c) { return c.sourceType === 'SearchCoverage'; }));
+        if (hasSearchCoverage) {
+            const badgeWrapper = d.createElement('div');
+            badgeWrapper.className = 'mca-partial-results-banner';
+
+            const alertIcon = d.createElement('i');
+            alertIcon.className = 'bi bi-info-circle me-1';
+            badgeWrapper.appendChild(alertIcon);
+
+            const badgeText = d.createTextNode('Partial results \u2014 not all matching records may be shown');
+            badgeWrapper.appendChild(badgeText);
+            bubble.appendChild(badgeWrapper);
+        }
+
         if (citations && citations.length > 0) {
             const citationsDiv = d.createElement('div');
             citationsDiv.className = 'mca-chat-citations';
@@ -67,23 +84,40 @@
             citationsDiv.appendChild(citeTitle);
 
             citations.forEach(function (cit) {
+                if (cit.sourceType === 'SearchCoverage') {
+                    // S1: already represented by the partial-results badge above; skip inline chip.
+                    return;
+                }
+
+                if (cit.sourceType === 'Metric') {
+                    // M chip: metric group reference, no link.
+                    const span = d.createElement('span');
+                    span.className = 'mca-citation-metric';
+                    const icon = d.createElement('i');
+                    icon.className = 'bi bi-bar-chart-fill me-1';
+                    span.appendChild(icon);
+                    span.appendChild(d.createTextNode(cit.label || 'Metric'));
+                    citationsDiv.appendChild(span);
+                    return;
+                }
+
                 const display = (cit.sourceType === 'DocumentChunk' && cit.documentName && cit.pageNumber)
                     ? (cit.documentName + ', page ' + cit.pageNumber)
                     : (cit.label || 'Source reference');
 
                 if (cit.viewerUrl) {
                     const a = d.createElement('a');
-                    a.className = 'mca-citation';
-                    a.href = cit.viewerUrl;
-                    a.target = '_blank';
-                    a.rel = 'noopener';
+                    const isOrderOutcome = cit.sourceType === 'OrderOutcome' || cit.sourceType === 'LitigationChunk';
+                    a.className = isOrderOutcome ? 'mca-citation mca-citation-order' : 'mca-citation';
+                    a.setAttribute('href', cit.viewerUrl);
+                    a.setAttribute('target', '_blank');
+                    a.setAttribute('rel', 'noopener');
 
                     const icon = d.createElement('i');
-                    icon.className = 'bi bi-file-earmark-pdf me-1';
+                    icon.className = isOrderOutcome ? 'bi bi-gavel me-1' : 'bi bi-file-earmark-pdf me-1';
                     a.appendChild(icon);
 
-                    const textSpan = d.createTextNode(display);
-                    a.appendChild(textSpan);
+                    a.appendChild(d.createTextNode(display));
                     citationsDiv.appendChild(a);
                 } else {
                     const span = d.createElement('span');
@@ -238,7 +272,8 @@
                         msg.status || 'Success',
                         msg.citations || [],
                         msg.createdDate,
-                        d
+                        d,
+                        msg.partialResults === true
                     );
                     if (bubble) messagesContainer.appendChild(bubble);
                 });
@@ -417,7 +452,8 @@
                         data.message.status || 'Success',
                         data.message.citations || [],
                         data.message.createdDate,
-                        d
+                        d,
+                        data.message.partialResults === true
                     );
                     messagesContainer.appendChild(assistantTurn);
                     input.value = '';

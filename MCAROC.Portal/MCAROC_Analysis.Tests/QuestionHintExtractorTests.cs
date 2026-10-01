@@ -14,6 +14,26 @@ public class QuestionHintExtractorTests
         Assert.True(hints.HasSoftHints);
     }
 
+    [Theory]
+    [InlineData("How many open charges are there?", true, true)]
+    [InlineData("What is the revenue growth over three years?", true, false)]
+    [InlineData("What percentage of shares do promoters hold?", true, false)]
+    [InlineData("Count the cases mentioning fraud.", true, true)]
+    [InlineData("What is the number of cases mentioning fraud?", true, true)]
+    [InlineData("What is the total number of cases mentioning fraud?", true, true)]
+    [InlineData("What is the total revenue?", true, false)]
+    [InlineData("List all the lenders", false, true)]
+    [InlineData("Which ones of the cases are in NCLT? Give every case.", false, true)]
+    [InlineData("Who is the auditor?", false, false)]
+    [InlineData("Summarize the CHG-1 filing.", false, false)]
+    public void DetectsQuantityAndCompleteListQuestions(string question, bool quantity, bool completeList)
+    {
+        var hints = QuestionHintExtractor.Extract(question, [], []);
+
+        Assert.Equal(quantity, hints.AsksForQuantity);
+        Assert.Equal(completeList, hints.AsksForCompleteList);
+    }
+
     [Fact]
     public void DetectsKnownLenderName()
     {

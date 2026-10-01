@@ -1193,4 +1193,51 @@ public class ChatEndpointJsonTests : IAsyncLifetime
         Assert.Equal(clientTurnIdB, dtoAsstB.ClientTurnId);
         Assert.Equal("Answer B: Registered capital is 50 Lakhs.", dtoAsstB.Text);
     }
+
+    // ── #340 review: partial-results flag comes from retrieved sources, not the model's citations ──
+
+    private sealed class CoverageRetrievalContextBuilder(bool includeSearchCoverage) : RetrievalContextBuilder
+    {
+        public override Task<RetrievalContext> BuildAsync(long requestId, string question, CancellationToken ct)
+        {
+            List<RetrievedSource> sources = [new RetrievedSource("D1", SourceType.DocumentChunk, "Charge 1 created.", "CHG-1.pdf · p.2", ChunkId: 1, DocumentName: "CHG-1.pdf", PageNumber: 2)];
+            if (includeSearchCoverage)
+                RetrievalContextBuilder.AddSearchCoverageSource(sources, 1, 40, 0, 0);
+            return Task.FromResult(new RetrievalContext(sources, "Complete"));
+        }
+    }
+
+    /// <summary>The model cites D1 only — it omits S1 even when retrieval supplied it.</summary>
+    private sealed class CitesD1OnlyCompletionService : ChatCompletionService
+    {
+        public override Task<ChatCompletionResult> CompleteAsync(
+            string companyName, RetrievalContext context, IReadOnlyList<ChatMessage> history, string question, CancellationToken ct) =>
+            Task.FromResult(new ChatCompletionResult("Charge 1 is the only charge found.", false,
+                [new ResolvedCitation("DocumentChunk", 1, "CHG-1.pdf", 2, null, null, "CHG-1.pdf · p.2")]));
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task PostChat_PartialResults_FollowsRetrievedSearchCoverage_EvenWhenModelOmitsS1(bool retrievedS1)
+    {
+        await using var db = CreateContext();
+        var requestId = await SeedRequestAsync("Coverage Corp");
+        var chatService = new ChatService(db, new CoverageRetrievalContextBuilder(retrievedS1), new CitesD1OnlyCompletionService(),
+            NullLogger<ChatService>.Instance);
+
+        var result = await NewController(db).AskChat(requestId,
+            new AskChatJsonRequest { Question = "List all charges", ClientTurnId = Guid.NewGuid() }, chatService, CancellationToken.None);
+
+        var message = Assert.IsType<ChatApiResponse>(Assert.IsType<OkObjectResult>(result).Value).Message!;
+        Assert.DoesNotContain(message.Citations, c => c.SourceType == "SearchCoverage");
+        Assert.Equal(retrievedS1, message.PartialResults);
+
+        // Saved history reports the same flag.
+        var history = Assert.IsType<OkObjectResult>(await NewController(db).GetChatHistory(requestId, chatService, CancellationToken.None));
+        dynamic data = history.Value!;
+        var messages = (List<ChatMessageDto>)data.messages;
+        Assert.False(messages.Single(m => m.Role == "User").PartialResults);
+        Assert.Equal(retrievedS1, messages.Single(m => m.Role == "Assistant").PartialResults);
+    }
 }

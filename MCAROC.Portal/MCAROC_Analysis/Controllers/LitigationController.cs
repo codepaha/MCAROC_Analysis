@@ -56,10 +56,12 @@ public class LitigationController(
     }
 
     /// <summary>Starts or reruns a BPR litigation search for the request. Evaluates fail-closed eligibility
-    /// before queuing the job.</summary>
+    /// before queuing the job. The first search is free; once a report exists another search is a client refresh,
+    /// which is chargeable and must carry <paramref name="confirmChargeableRefresh"/> (set by the tab's confirm
+    /// pop-up) — a refresh posted without it is refused rather than run.</summary>
     [HttpPost("/Requests/{id:long}/Litigation/Search")]
     [ValidateAntiForgeryToken]
-    public async Task<IActionResult> StartSearch(long id, CancellationToken ct)
+    public async Task<IActionResult> StartSearch(long id, CancellationToken ct, [FromForm] bool confirmChargeableRefresh = false)
     {
         var request = await db.Requests.FirstOrDefaultAsync(r => r.RequestId == id, ct);
         if (request is null) return NotFound();
@@ -74,6 +76,15 @@ public class LitigationController(
             .AnyAsync(s => s.SearchJob!.RequestId == id && s.Status == LitigationReportSnapshotStatus.Completed, ct);
         if (hasReport)
         {
+            if (!confirmChargeableRefresh)
+            {
+                const string unconfirmed = "Refreshing litigation data is chargeable. Confirm the refresh to continue.";
+                if (Request.Headers.Accept.ToString().Contains("application/json"))
+                    return Conflict(new { error = unconfirmed });
+                TempData["LitigationSearchError"] = unconfirmed;
+                return Redirect($"/Requests/{id}#tab-litigation");
+            }
+
             var refresh = await LitigationRefreshPolicy.GetAsync(db, id, _opts, DateTime.UtcNow, ct);
             if (!refresh.Allowed)
             {

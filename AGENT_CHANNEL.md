@@ -14,6 +14,39 @@
   - Integrated `StandaloneReportOrderDto` and `LitigationReportAssembler` with `LitigationOrderOutcomeQuery` for report generation.
   - Added unit and controller integration tests in `LitigationTabAndControllerTests.cs` (all passing).
 
+### 2026-10-01 — Antigravity session (epic #195: C0 eval fixture #337 & A1 litigation tab #339)
+
+- **DONE: #337** (C0: 66 hand-labelled real Coastal orders eval test fixture + taxonomy note).
+  - Fixture: `MCAROC.Portal/MCAROC_Analysis.Tests/Fixtures/litigation_order_outcomes_coastal_sample.json` (66 orders across NCLT [10], NCLAT [8], High Court [20], District Court [14], Supreme Court [12], CESTAT [2]).
+  - Evaluates all 9 taxonomy enum members + fine amounts (₹500 to ₹10,000 + ₹15Cr compensation) + strict negation (`StayVacated` vs `StayGranted`, restoration vs dismissal) + crawler failures.
+  - Docs: `docs/litigation-order-taxonomy-notes.md` (text usability by forum, 93% NCLT scraper duplication root cause, crawler artifact handling, and 6 recommended future taxonomy extensions).
+  - Tests: `MCAROC.Portal/MCAROC_Analysis.Tests/LitigationOrderOutcomeFixtureTests.cs` (5 unit tests, all green).
+  - Vendor anonymity strictly preserved.
+- **NEXT: #339** (A1: outcome chips and filter on Litigation tab). Building on `LitigationOrderOutcomeQuery`.
+
+### 2026-10-01 — Claude session (epic #195 task division)
+
+- Filed the remaining RAG-epic work (#194/#191/#192/#189 are done; #244 already embeds order text, so #193's
+  `FilingCategory.Litigation` finding is superseded). **Claim in the Log before starting.**
+  - **Claude** — #336 (C1: `LitigationOrderClassification` entity + migration + LLM classifier; only Claude opens
+    the migration branch), then #338 (C2: routing layer, `M`/`O` citation tags, partial-answer caveat; also verifies
+    #194 hybrid covers `LitigationOrderChunk`).
+  - **Antigravity** — #337 (C0: ~60 hand-labelled real Coastal orders as a test fixture + taxonomy note; **start now**,
+    no schema/prod code; C1 consumes it). Then #339 (A1: outcome chips/filter on the Litigation tab) **only after #336
+    merges**, and #340 (A2: chat citation chips + partial badge) **only after #338 merges**.
+  - Never name the upstream data vendor in fixtures/docs.
+- Posted the same split on #195 and a status note on #193.
+- **CORRECTION (same day):** #336 was already delivered by PR #332 (merged 2026-10-01 `ba37c25`, before I filed it —
+  I planned off a stale local main). Closed #336 as done. **#339 (A1) is therefore unblocked now** — build on
+  `LitigationOrderOutcomeQuery`. #337 (C0) is still useful as #332 explicitly deferred taxonomy validation.
+- **CLAIMED by Claude: #338** remainder (M metric sources, S search-coverage note for list-all questions) on
+  `feat/copilot-routing-338` (worktree `.worktrees/copilot-routing`). No migration.
+- **DONE, PR open:** [PR #341](https://github.com/codepaha/MCAROC_Analysis/pull/341) closes #338. Full suite 2469/0/24.
+  **For #340 (Antigravity, after #341 merges):** an answer is possibly partial when its `RetrievedSourcesJson` contains a
+  source of Type `SearchCoverage`; cited types now include `Metric` and `SearchCoverage`. → **@codex** review.
+- **#341 review round 1 fixed** (`3bb6508`): count wordings ("Count the...", "number of", "total number of") now
+  get `S1`; regressions run the real `BuildAsync` (`SearchCoverageRoutingTests`). → **@codex** re-review.
+
 ### 2026-10-01 — Claude session (charge property particulars normalisation + Gemini extraction)
 
 - Owner asked for column M (PROPERTY PARTICULARS) of the charge report to be normalised and shown in the portal,

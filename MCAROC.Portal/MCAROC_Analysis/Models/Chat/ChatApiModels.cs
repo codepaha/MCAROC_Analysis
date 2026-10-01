@@ -26,6 +26,8 @@ public class ChatMessageDto
     public string Status { get; set; } = string.Empty;
     public DateTime CreatedDate { get; set; }
     public List<ChatCitationDto> Citations { get; set; } = [];
+    /// <summary>Server-derived from the retrieved sources (ChatSearchCoverage), independent of what the model cited.</summary>
+    public bool PartialResults { get; set; }
 }
 
 public class ChatErrorDto

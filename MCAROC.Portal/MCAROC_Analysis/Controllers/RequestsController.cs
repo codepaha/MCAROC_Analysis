@@ -1807,7 +1807,8 @@ public class RequestsController(
             Role = m.Role.ToString(),
             Text = m.MessageText,
             Status = m.Status?.ToString() ?? string.Empty,
-            CreatedDate = m.CreatedDate
+            CreatedDate = m.CreatedDate,
+            PartialResults = m.Role == ChatRole.Assistant && ChatSearchCoverage.IsPartial(m.RetrievedSourcesJson)
         };
 
         if (!string.IsNullOrEmpty(m.CitedSourcesJson))
