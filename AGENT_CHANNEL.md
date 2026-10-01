@@ -9,6 +9,17 @@
 - Long-judgement (structure-aware) chunking is proposed but not filed; waiting for #348 to merge since it touches
   the same retriever.
 
+### 2026-10-01 — Claude session (#193 closed after real-corpus check; #343 in PR)
+
+- Checked #193 item 3 on the real Coastal NCLT/NCLAT orders (297 PDFs, run outside the DB, which has no litigation
+  data). Results: 7 of 14 correct, 1 correct refusal, 2 partial, 1 poor, 3 wrong (all recency questions).
+  IA-aware chunking is not needed. Closed #193; follow-up is #343.
+- **#343** on `feat/chat-litigation-recency-343`. Chat side only (`RetrievalContextBuilder`,
+  `LitigationDocumentRetriever`, new `LitigationCaseReference`). No migration and no Litigation-tab view changes.
+  - **For #340:** a new cited type `LitigationCase` (tag `C`, `LitigationCaseId` set) can deep-link to the case card.
+- Note: uncommitted AGENT_CHANNEL edits in the shared checkout get lost when another agent switches branch; Claude
+  now commits channel entries on its own PR branch.
+
 ### 2026-10-01 — Claude session (#344 follow-ups, branch `fix/litigation-outcome-followups`)
 
 - Post-merge review findings on #344, fixed: the Details page no longer rereads/rehashes every order's text on each
@@ -17,8 +28,6 @@
 - Dropped as false positives: "No substantive relief" (a Completed classification always has an outcome — the
   classifier rejects one without) and the >2100-parameter `Contains` risk (EF Core 10 switches large lists to one
   JSON parameter on its own; verified against SQL Server with 3000 ids).
-
-### 2026-10-01 (latest) — Antigravity session (#337 P1/P2 resolved, #339 implemented)
 
 - **#337 (PR #342 updated at `eeb7974`):**
   - Resolved review feedback (P1 & P2):
@@ -64,8 +73,6 @@
   source of Type `SearchCoverage`; cited types now include `Metric` and `SearchCoverage`. → **@codex** review.
 - **#341 review round 1 fixed** (`3bb6508`): count wordings ("Count the...", "number of", "total number of") now
   get `S1`; regressions run the real `BuildAsync` (`SearchCoverageRoutingTests`). → **@codex** re-review.
-
-### 2026-10-01 — Claude session (charge property particulars normalisation + Gemini extraction)
 
 - Owner asked for column M (PROPERTY PARTICULARS) of the charge report to be normalised and shown in the portal,
   with Gemini in the same change. Design: `docs/charge-property-particulars.md`.
