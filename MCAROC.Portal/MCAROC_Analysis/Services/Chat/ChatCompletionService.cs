@@ -21,7 +21,7 @@ public record ChatCompletionResult(string Answer, bool InsufficientEvidence, Lis
 public class ChatCompletionService
 {
     public const string ModelId = "gemini-2.5-flash-lite";
-    public const string PromptVersion = "1.1";
+    public const string PromptVersion = "1.2";
     private const string InsufficientAnswer = "I could not verify this from the uploaded records.";
 
     internal static ChatCompletionResult InsufficientEvidenceResult() =>
@@ -75,6 +75,7 @@ public class ChatCompletionService
         sb.AppendLine("- Cite only the tags given (e.g. \"F1\", \"D2\") in citedTags — never invent a filename, page, or entity id yourself.");
         sb.AppendLine("- Distinguish current vs. historical facts, and filed-by vs. filed-against for litigation, explicitly in your answer.");
         sb.AppendLine("- \"O\" sources are an exact, structured order-outcome lookup. When the question asks which or how many orders had an outcome, list every matching O source (not a sample), cite each, and cite and repeat the coverage note's wording if it says the list is not exhaustive.");
+        sb.AppendLine("- \"C\" facts are the litigation record of a case the question names (status, hearing dates, newest orders). For current status, next hearing or the latest orders, answer from C and the newest-dated L sources and state the order dates; never present an older order as the latest.");
         sb.AppendLine("- \"M\" facts are exact computed metrics. For a count, total, ratio or trend, quote the M value and cite it rather than recomputing it from other facts.");
         sb.AppendLine("- If an \"S\" source is present and your list or count relies on D or L sources, cite S1 and say plainly that the list may not be complete.");
         sb.AppendLine("- Never treat earlier chat turns as evidence — only the [FACT]/[SOURCE] blocks below, freshly retrieved for this question.");
@@ -94,7 +95,7 @@ public class ChatCompletionService
         sb.AppendLine("=== FACTS AND SOURCES ===");
         foreach (var s in context.Sources)
         {
-            sb.AppendLine(s.Type is SourceType.StructuredFact or SourceType.Metric ? $"[FACT {s.Tag}] {s.DisplayLabel}" : $"[SOURCE {s.Tag}] {s.DisplayLabel}");
+            sb.AppendLine(s.Type is SourceType.StructuredFact or SourceType.Metric or SourceType.LitigationCase ? $"[FACT {s.Tag}] {s.DisplayLabel}" : $"[SOURCE {s.Tag}] {s.DisplayLabel}");
             sb.AppendLine(s.Text);
         }
 
@@ -150,6 +151,8 @@ public class ChatCompletionService
                         s.LitigationCaseId, s.LitigationCaseOrderId),
                 SourceType.Metric =>
                     new ResolvedCitation("Metric", null, null, null, s.EntityType, null, s.DisplayLabel),
+                SourceType.LitigationCase =>
+                    new ResolvedCitation("LitigationCase", null, null, null, s.EntityType, s.EntityId, s.DisplayLabel, null, s.LitigationCaseId),
                 SourceType.SearchCoverage =>
                     new ResolvedCitation("SearchCoverage", null, null, null, s.EntityType, null, s.DisplayLabel),
                 _ => new ResolvedCitation("StructuredFact", null, null, null, s.EntityType, s.EntityId, s.DisplayLabel)

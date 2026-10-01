@@ -42,25 +42,68 @@ public class LitigationDocumentRetriever(AppDbContext db, ChatRetrievalOptions o
         await using var connection = new SqlConnection(db.Database.GetConnectionString());
         await connection.OpenAsync(ct);
 
-        var semantic = (await RunSearchAsync(connection, VectorSql, requestId, queryVector, null, ct))
+        var fetchK = options.TopK * DuplicateOverFetch;
+        var semantic = (await RunSearchAsync(connection, VectorSql, requestId, queryVector, null, fetchK, ct))
             .Where(m => m.Distance <= options.MaxCosineDistance).ToList();
 
         var containsQuery = HybridSearch.BuildContainsQuery(lexicalTerms);
         if (containsQuery is null || !await HybridSearch.IsFullTextIndexedAsync(connection, "dbo.LitigationOrderChunks", ct))
-            return semantic;
+            return DropDuplicateText(semantic, options.TopK);
 
         // An exact case-number/section hit joins the fused list even past MaxCosineDistance — that is exactly
         // the evidence semantic similarity under-ranks.
-        var lexical = await RunSearchAsync(connection, LexicalSql, requestId, queryVector, containsQuery, ct);
+        var lexical = await RunSearchAsync(connection, LexicalSql, requestId, queryVector, containsQuery, fetchK, ct);
         if (lexical.Count == 0)
-            return semantic;
+            return DropDuplicateText(semantic, options.TopK);
 
         var byId = new Dictionary<long, LitigationOrderChunkMatch>();
         foreach (var m in semantic.Concat(lexical)) byId.TryAdd(m.Chunk.LitigationOrderChunkId, m);
-        return HybridSearch.ReciprocalRankFusion(
+        return DropDuplicateText(HybridSearch.ReciprocalRankFusion(
                 semantic.Select(m => m.Chunk.LitigationOrderChunkId).ToList(),
-                lexical.Select(m => m.Chunk.LitigationOrderChunkId).ToList(), options.TopK)
-            .Select(id => byId[id]).ToList();
+                lexical.Select(m => m.Chunk.LitigationOrderChunkId).ToList(), fetchK)
+            .Select(id => byId[id]).ToList(), options.TopK);
+    }
+
+    /// <summary>#343: the same order is routinely listed under both a parent case and its IA (135 of 297 real Coastal
+    /// orders had an identical twin), so identical passages took half the top-K. Each search fetches this many times
+    /// TopK, then keeps the best-ranked copy of each passage until TopK distinct ones are left.</summary>
+    internal const int DuplicateOverFetch = 2;
+
+    internal static List<LitigationOrderChunkMatch> DropDuplicateText(IEnumerable<LitigationOrderChunkMatch> ranked, int take)
+    {
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        return ranked.Where(m => seen.Add(NormalizedText(m.Chunk.ChunkText))).Take(take).ToList();
+    }
+
+    private static string NormalizedText(string text) => System.Text.RegularExpressions.Regex.Replace(text, @"\s+", " ").Trim();
+
+    /// <summary>#343's recency route: the newest <paramref name="orderCount"/> orders of the given cases by their
+    /// order date (undated orders last), with up to <paramref name="chunksPerOrder"/> leading chunks each — what a
+    /// "latest status / last orders / next hearing" question needs, which similarity ranking cannot pick out.
+    /// Request-scoped like every other retrieval here; duplicate passages are dropped the same way.</summary>
+    public virtual async Task<List<LitigationOrderChunk>> GetLatestOrderChunksAsync(
+        long requestId, IReadOnlyCollection<long> caseIds, int orderCount, int chunksPerOrder, CancellationToken ct)
+    {
+        var orders = await db.LitigationOrderChunks.AsNoTracking()
+            .Where(c => c.RequestId == requestId && caseIds.Contains(c.LitigationCaseId))
+            .Select(c => new { c.LitigationCaseOrderId, c.OrderDate })
+            .Distinct()
+            .ToListAsync(ct);
+        var newest = orders
+            .OrderByDescending(o => LitigationCaseReference.ParseDate(o.OrderDate) ?? DateOnly.MinValue)
+            .ThenByDescending(o => o.LitigationCaseOrderId)
+            .Select(o => o.LitigationCaseOrderId).Distinct().Take(orderCount).ToList();
+        if (newest.Count == 0) return [];
+
+        var chunks = await db.LitigationOrderChunks.AsNoTracking()
+            .Where(c => c.RequestId == requestId && newest.Contains(c.LitigationCaseOrderId))
+            .OrderBy(c => c.PageNumber).ThenBy(c => c.ChunkIndex)
+            .ToListAsync(ct);
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        return newest
+            .SelectMany(id => chunks.Where(c => c.LitigationCaseOrderId == id).Take(chunksPerOrder))
+            .Where(c => seen.Add(NormalizedText(c.ChunkText)))
+            .ToList();
     }
 
     private const string WideColumns = """
@@ -101,11 +144,11 @@ public class LitigationDocumentRetriever(AppDbContext db, ChatRetrievalOptions o
             """;
 
     private async Task<List<LitigationOrderChunkMatch>> RunSearchAsync(SqlConnection connection, string sql, long requestId,
-        SqlVector<float> queryVector, string? containsQuery, CancellationToken ct)
+        SqlVector<float> queryVector, string? containsQuery, int topK, CancellationToken ct)
     {
         await using var cmd = connection.CreateCommand();
         cmd.CommandText = sql;
-        cmd.Parameters.Add(new SqlParameter("@topK", SqlDbType.Int) { Value = options.TopK });
+        cmd.Parameters.Add(new SqlParameter("@topK", SqlDbType.Int) { Value = topK });
         cmd.Parameters.Add(new SqlParameter("@requestId", SqlDbType.BigInt) { Value = requestId });
         var vectorParam = cmd.Parameters.Add("@queryVector", Microsoft.Data.SqlDbTypeExtensions.Vector, EmbeddingService.Dimensions);
         vectorParam.Value = queryVector;
