@@ -1,7 +1,37 @@
 using System.Text.Json;
 using MCAROC_Analysis.Data.Entities;
+using MCAROC_Analysis.Services.PropertyParticulars;
 
 namespace MCAROC_Analysis.Services.Analysis.Rules;
+
+public enum PremisesCategory
+{
+    RegisteredOffice,
+    BusinessAddress,
+    OperatingFacility,
+    OtherCollateral
+}
+
+public sealed record CompanyPremisesAddress(
+    PremisesCategory Category,
+    string Label,
+    string Text,
+    IReadOnlyList<string?> PlaceNames);
+
+public sealed record PremisesMatchResult(
+    PremisesCategory Category,
+    string Label,
+    AddressMatchResult Result,
+    CompanyPremisesAddress? MatchedPremises = null,
+    int? MatchedItemIndex = null)
+{
+    public bool IsCompanyPremises => Result.Strength == AddressMatchStrength.Strong;
+
+    public static PremisesMatchResult OtherCollateral(string? reason = null) =>
+        new(PremisesCategory.OtherCollateral,
+            reason ?? "No match to filed company premises",
+            AddressMatchResult.NoMatch);
+}
 
 /// <summary>Flags when an open charge's mortgaged property appears to be the company's own premises — its
 /// MCA-filed registered office, its business address, or an EPFO-registered establishment (the address-pool
@@ -20,7 +50,7 @@ public static class ChargedPropertyAddressRules
     /// land/buildings is the one worth comparing to a premises address. When PropertyType IS filed and omits
     /// "Immovable", a matching address is where hypothecated stock sits, not what is mortgaged — skipped.</summary>
     private static readonly string[] ImmovableKeywords =
-        ["MORTGAGE", "LAND", "BUILDING", "PLOT", "FLAT", "PREMISES", "IMMOVABLE", "FACTORY", "SURVEY"];
+        ["MORTGAGE", "LAND", "BUILDING", "PLOT", "FLAT", "PREMISES", "IMMOVABLE", "FACTORY", "SURVEY", "ARAZI", "GATA", "KHATA"];
 
     public static List<RuleEvaluationOutcome> Evaluate(AnalysisContext ctx) => [EvaluateChargedPropertyVsOwnAddresses(ctx)];
 
@@ -29,7 +59,7 @@ public static class ChargedPropertyAddressRules
         if (ctx.Charges.Count == 0)
             return RuleEvaluationOutcome.NotEvaluated(ChargedPropertyIsCompanyPremisesCode, "No charge records available.");
 
-        var pool = OwnAddressPool(ctx);
+        var pool = BuildAddressPool(ctx.CompanyProfile, ctx.EpfoEstablishments);
         if (pool.Count == 0)
             return RuleEvaluationOutcome.NotEvaluated(ChargedPropertyIsCompanyPremisesCode,
                 "No registered, business, or EPFO establishment address on file to compare charged property against.");
@@ -48,13 +78,40 @@ public static class ChargedPropertyAddressRules
         var excludedPlaces = pool.SelectMany(p => p.PlaceNames).ToList();
 
         var matches = new List<PremisesMatch>();
-        foreach (var (charge, ev) in openEvents.Where(x => DescribesImmovableProperty(x.Event)))
+        foreach (var (charge, ev) in openEvents)
         {
-            foreach (var address in pool)
+            if (!DescribesImmovableProperty(ev)) continue;
+
+            var reading = PropertyReading.For(ev.PropertyParticulars, ev.PropertyType, ctx.PropertyExtractions);
+            var eventMatched = false;
+
+            if (reading.Items.Count > 0)
             {
-                var result = AddressMatcher.Match(address.Text, ev.PropertyParticulars, excludedPlaces);
-                if (result.Strength == AddressMatchStrength.Strong)
-                    matches.Add(new PremisesMatch(charge, ev, address, result));
+                for (var i = 0; i < reading.Items.Count; i++)
+                {
+                    var item = reading.Items[i];
+                    if (!AddressMatcher.IsImmovable(item)) continue;
+
+                    foreach (var address in pool)
+                    {
+                        var result = AddressMatcher.Match(address.Text, item, excludedPlaces);
+                        if (result.Strength == AddressMatchStrength.Strong)
+                        {
+                            matches.Add(new PremisesMatch(charge, ev, address, result, i));
+                            eventMatched = true;
+                        }
+                    }
+                }
+            }
+
+            if (!eventMatched)
+            {
+                foreach (var address in pool)
+                {
+                    var result = AddressMatcher.Match(address.Text, ev.PropertyParticulars, excludedPlaces);
+                    if (result.Strength == AddressMatchStrength.Strong)
+                        matches.Add(new PremisesMatch(charge, ev, address, result, null));
+                }
             }
         }
 
@@ -88,8 +145,10 @@ public static class ChargedPropertyAddressRules
                     chargeNumber = m.Charge.RocChargeNumber,
                     chargeHolder = m.Charge.LatestChargeHolderRaw,
                     chargeEventId = m.Event.ChargeEventId,
+                    premisesCategory = m.Address.Category.ToString(),
                     addressSource = m.Address.Label,
                     address = m.Address.Text,
+                    propertyItemIndex = m.ItemIndex,
                     matchedPlotNumbers = m.Result.MatchedPlotNumbers,
                     matchedPinCode = m.Result.MatchedPinCode,
                     matchedLocalities = m.Result.MatchedLocalities
@@ -103,37 +162,104 @@ public static class ChargedPropertyAddressRules
             })));
     }
 
-    private static bool DescribesImmovableProperty(RocChargeEvent ev)
+    public static bool DescribesImmovableProperty(RocChargeEvent ev)
     {
         if (!string.IsNullOrWhiteSpace(ev.PropertyType))
             return ev.PropertyType.Contains("immovable", StringComparison.OrdinalIgnoreCase);
 
-        var text = ev.PropertyParticulars!.ToUpperInvariant();
+        if (string.IsNullOrWhiteSpace(ev.PropertyParticulars))
+            return false;
+
+        var text = ev.PropertyParticulars.ToUpperInvariant();
         return ImmovableKeywords.Any(text.Contains);
     }
 
     /// <summary>The registered office, business address, and EPFO establishment addresses, matched together as
     /// one pool per request (issue #191). A business address identical to the registered one is dropped so a
     /// single match doesn't report twice.</summary>
-    private static List<OwnAddress> OwnAddressPool(AnalysisContext ctx)
+    public static List<CompanyPremisesAddress> BuildAddressPool(CompanyProfile? profile, IEnumerable<EpfoEstablishment>? epfoEstablishments)
     {
-        var pool = new List<OwnAddress>();
-        var profile = ctx.CompanyProfile;
+        var pool = new List<CompanyPremisesAddress>();
         if (!string.IsNullOrWhiteSpace(profile?.RegisteredAddress))
-            pool.Add(new OwnAddress("Registered office", profile.RegisteredAddress,
+            pool.Add(new CompanyPremisesAddress(PremisesCategory.RegisteredOffice, "Registered office", profile.RegisteredAddress,
                 [profile.RegisteredAddressCity, profile.RegisteredAddressState]));
 
         if (!string.IsNullOrWhiteSpace(profile?.BusinessAddress)
             && !string.Equals(profile.BusinessAddress.Trim(), profile.RegisteredAddress?.Trim(), StringComparison.OrdinalIgnoreCase))
-            pool.Add(new OwnAddress("Business address", profile.BusinessAddress, [profile.RegisteredAddressCity]));
+            pool.Add(new CompanyPremisesAddress(PremisesCategory.BusinessAddress, "Business address", profile.BusinessAddress, [profile.RegisteredAddressCity]));
 
-        foreach (var est in ctx.EpfoEstablishments.Where(e => !string.IsNullOrWhiteSpace(e.Address)))
-            pool.Add(new OwnAddress($"EPFO establishment {est.EstablishmentId}", est.Address!, [est.City]));
+        foreach (var est in (epfoEstablishments ?? []).Where(e => !string.IsNullOrWhiteSpace(e.Address)))
+            pool.Add(new CompanyPremisesAddress(PremisesCategory.OperatingFacility, $"EPFO establishment {est.EstablishmentId}", est.Address!, [est.City]));
 
         return pool;
     }
 
-    private sealed record OwnAddress(string Label, string Text, IReadOnlyList<string?> PlaceNames);
+    /// <summary>Classifies a single property reading item against the company's premises address pool.</summary>
+    public static PremisesMatchResult ClassifyItem(
+        PropertyReadingItem item,
+        IEnumerable<CompanyPremisesAddress> addressPool,
+        IEnumerable<string?>? excludedPlaces = null,
+        int? itemIndex = null)
+    {
+        if (item is null) return PremisesMatchResult.OtherCollateral();
+        var poolList = addressPool as IReadOnlyList<CompanyPremisesAddress> ?? addressPool.ToList();
+        var excluded = (excludedPlaces ?? poolList.SelectMany(p => p.PlaceNames)).ToList();
 
-    private sealed record PremisesMatch(RocCharge Charge, RocChargeEvent Event, OwnAddress Address, AddressMatchResult Result);
+        foreach (var address in poolList)
+        {
+            var result = AddressMatcher.Match(address.Text, item, excluded);
+            if (result.Strength == AddressMatchStrength.Strong)
+                return new PremisesMatchResult(address.Category, address.Label, result, address, itemIndex);
+        }
+
+        return PremisesMatchResult.OtherCollateral();
+    }
+
+    /// <summary>Classifies an entire charge (checking its property particulars events and items) against the company's
+    /// premises address pool. Returns the strongest premises match or OtherCollateral if none match.</summary>
+    public static PremisesMatchResult ClassifyCharge(
+        RocCharge charge,
+        IEnumerable<CompanyPremisesAddress> addressPool,
+        IReadOnlyDictionary<string, PropertyParticularsExtraction>? extractions = null)
+    {
+        var poolList = addressPool as IReadOnlyList<CompanyPremisesAddress> ?? addressPool.ToList();
+        if (poolList.Count == 0) return PremisesMatchResult.OtherCollateral();
+        var excluded = poolList.SelectMany(p => p.PlaceNames).ToList();
+
+        var events = charge.Events.OrderByDescending(e => e.EventDate ?? DateOnly.MinValue).ThenByDescending(e => e.ChargeEventId);
+        foreach (var ev in events)
+        {
+            if (string.IsNullOrWhiteSpace(ev.PropertyParticulars)) continue;
+            if (!DescribesImmovableProperty(ev)) continue;
+
+            var reading = PropertyReading.For(ev.PropertyParticulars, ev.PropertyType, extractions);
+            if (reading.Items.Count > 0)
+            {
+                for (var i = 0; i < reading.Items.Count; i++)
+                {
+                    var itemMatch = ClassifyItem(reading.Items[i], poolList, excluded, i);
+                    if (itemMatch.IsCompanyPremises)
+                        return itemMatch;
+                }
+            }
+            else if (DescribesImmovableProperty(ev))
+            {
+                foreach (var address in poolList)
+                {
+                    var result = AddressMatcher.Match(address.Text, ev.PropertyParticulars, excluded);
+                    if (result.Strength == AddressMatchStrength.Strong)
+                        return new PremisesMatchResult(address.Category, address.Label, result, address, null);
+                }
+            }
+        }
+
+        return PremisesMatchResult.OtherCollateral();
+    }
+
+    private sealed record PremisesMatch(
+        RocCharge Charge,
+        RocChargeEvent Event,
+        CompanyPremisesAddress Address,
+        AddressMatchResult Result,
+        int? ItemIndex = null);
 }

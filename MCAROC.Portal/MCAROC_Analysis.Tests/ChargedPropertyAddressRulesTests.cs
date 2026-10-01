@@ -1,6 +1,8 @@
 using MCAROC_Analysis.Data.Entities;
 using MCAROC_Analysis.Services.Analysis;
 using MCAROC_Analysis.Services.Analysis.Rules;
+using MCAROC_Analysis.Services.Excel.Parsers;
+using MCAROC_Analysis.Services.PropertyParticulars;
 using static MCAROC_Analysis.Tests.AnalysisTestHelpers;
 
 namespace MCAROC_Analysis.Tests;
@@ -124,5 +126,138 @@ public class ChargedPropertyAddressRulesTests
         var result = RuleEngine.Evaluate(ctx, RuleThresholds.Default);
 
         Assert.Contains(result.Findings, f => f.Code == ChargedPropertyAddressRules.ChargedPropertyIsCompanyPremisesCode);
+    }
+
+    [Fact]
+    public void ClassifyItem_RegisteredOffice_Matches()
+    {
+        var pool = ChargedPropertyAddressRules.BuildAddressPool(Profile(), null);
+        var location = new NormalizedLocation(["Bhaunti"], null, null, null, "Kanpur", "Uttar Pradesh", "209305");
+        var surveyGroups = new[] { new SurveyNumberGroup("Arazi", null, ["428", "429"]) };
+        var item = new PropertyReadingItem([PropertyAssetClass.Immovable], [PropertyKind.Land], null, [], [], [], null, [], surveyGroups, location, []);
+
+        var result = ChargedPropertyAddressRules.ClassifyItem(item, pool);
+
+        Assert.True(result.IsCompanyPremises);
+        Assert.Equal(PremisesCategory.RegisteredOffice, result.Category);
+        Assert.Equal("Registered office", result.Label);
+        Assert.Contains("428", result.Result.MatchedPlotNumbers);
+    }
+
+    [Fact]
+    public void ClassifyItem_BusinessAddress_Matches()
+    {
+        var businessAddress = "Plot 105, Sector 4, IMT Manesar, Gurugram, Haryana, 122050";
+        var pool = ChargedPropertyAddressRules.BuildAddressPool(Profile(business: businessAddress), null);
+        var location = new NormalizedLocation(["IMT Manesar"], null, null, null, "Gurugram", "Haryana", "122050");
+        var surveyGroups = new[] { new SurveyNumberGroup("Plot", null, ["105"]) };
+        var item = new PropertyReadingItem([PropertyAssetClass.Immovable], [PropertyKind.Land], null, [], [], [], null, [], surveyGroups, location, []);
+
+        var result = ChargedPropertyAddressRules.ClassifyItem(item, pool);
+
+        Assert.True(result.IsCompanyPremises);
+        Assert.Equal(PremisesCategory.BusinessAddress, result.Category);
+        Assert.Equal("Business address", result.Label);
+    }
+
+    [Fact]
+    public void ClassifyItem_EpfoEstablishment_Matches()
+    {
+        var est = new EpfoEstablishment
+        {
+            EstablishmentId = "DSNHP0056789000", City = "Baddi",
+            Address = "Plot No. 12, Phase 3, Industrial Area Baddi, Solan, Himachal Pradesh, 173205"
+        };
+        var pool = ChargedPropertyAddressRules.BuildAddressPool(Profile(), [est]);
+        var location = new NormalizedLocation(["Industrial Area"], null, null, null, "Baddi", "Himachal Pradesh", "173205");
+        var surveyGroups = new[] { new SurveyNumberGroup("Plot", null, ["12"]) };
+        var item = new PropertyReadingItem([PropertyAssetClass.Immovable], [PropertyKind.Land], null, [], [], [], null, [], surveyGroups, location, []);
+
+        var result = ChargedPropertyAddressRules.ClassifyItem(item, pool);
+
+        Assert.True(result.IsCompanyPremises);
+        Assert.Equal(PremisesCategory.OperatingFacility, result.Category);
+        Assert.Equal("EPFO establishment DSNHP0056789000", result.Label);
+    }
+
+    [Fact]
+    public void ClassifyItem_UnrelatedProperty_ReturnsOtherCollateral()
+    {
+        var pool = ChargedPropertyAddressRules.BuildAddressPool(Profile(), null);
+        var location = new NormalizedLocation(["Film Nagar"], null, null, null, "Hyderabad", "Telangana", "500033");
+        var surveyGroups = new[] { new SurveyNumberGroup("Plot", null, ["8-2-293"]) };
+        var item = new PropertyReadingItem([PropertyAssetClass.Immovable], [PropertyKind.Land], null, [], [], [], null, [], surveyGroups, location, []);
+
+        var result = ChargedPropertyAddressRules.ClassifyItem(item, pool);
+
+        Assert.False(result.IsCompanyPremises);
+        Assert.Equal(PremisesCategory.OtherCollateral, result.Category);
+        Assert.Contains("No match to filed company premises", result.Label);
+    }
+
+    [Fact]
+    public void ClassifyCharge_WithGeminiExtraction_ClassifiesRegisteredOffice()
+    {
+        var pool = ChargedPropertyAddressRules.BuildAddressPool(Profile(), null);
+        var charge = Charge(1, OwnPremisesMortgage);
+        var hash = PropertyParticularsAi.HashOf(OwnPremisesMortgage, "Immovable property");
+        var extraction = new PropertyParticularsExtraction
+        {
+            PropertyParticularsExtractionId = 1,
+            TextHash = hash,
+            Status = PropertyParticularsExtractionStatus.Completed,
+            ExtractionJson = """
+            {
+              "properties": [
+                {
+                  "assetClass": "Immovable",
+                  "kind": "Land",
+                  "surveyNumbers": [
+                    { "scheme": "Arazi", "numbers": ["428", "429"] }
+                  ],
+                  "localities": ["Bhaunti"],
+                  "city": "Kanpur",
+                  "state": "Uttar Pradesh",
+                  "pin": "209305",
+                  "areas": []
+                }
+              ]
+            }
+            """
+        };
+        var extractions = new Dictionary<string, PropertyParticularsExtraction> { [hash] = extraction };
+
+        var result = ChargedPropertyAddressRules.ClassifyCharge(charge, pool, extractions);
+
+        Assert.True(result.IsCompanyPremises);
+        Assert.Equal(PremisesCategory.RegisteredOffice, result.Category);
+        Assert.Equal(0, result.MatchedItemIndex);
+    }
+
+    [Fact]
+    public void Review356_StructuredMovableAddressMustNotBecomeAMortgagedPremisesFinding()
+    {
+        const string text = "Equitable mortgage of land at Plot No. 999, Remote Village, PIN 500033; hypothecation of current assets at Arazi No. 428 & 429, Village Bhauti, Kanpur, PIN 209305.";
+        const string propertyType = "Immovable property and movable assets";
+        var charge = Charge(1, text, propertyType);
+        var hash = PropertyParticularsAi.HashOf(text, propertyType);
+        var extraction = new PropertyParticularsExtraction
+        {
+            TextHash = hash, Status = PropertyParticularsExtractionStatus.Completed,
+            ExtractionJson = """
+            {"properties":[
+              {"assetClass":"Immovable","kind":"Land","surveyNumbers":[{"scheme":"Plot","numbers":["999"]}],"localities":["Remote Village"],"pin":"500033","areas":[]},
+              {"assetClass":"Movable","kind":"CurrentAssets","surveyNumbers":[{"scheme":"Arazi","numbers":["428","429"]}],"localities":["Bhauti"],"pin":"209305","areas":[]}
+            ]}
+            """
+        };
+        var extractions = new Dictionary<string, PropertyParticularsExtraction> { [hash] = extraction };
+        var reading = PropertyReading.For(text, propertyType, extractions);
+        Assert.Equal(PropertyReadingSource.Ai, reading.Source);
+        Assert.Equal(2, reading.Items.Count);
+        var pool = ChargedPropertyAddressRules.BuildAddressPool(Profile(), null);
+        Assert.False(ChargedPropertyAddressRules.ClassifyCharge(charge, pool, extractions).IsCompanyPremises);
+        var ctx = BuildContext(companyProfile: Profile(), charges: [charge], propertyExtractions: extractions);
+        Assert.Equal(RuleEvaluationStatus.NotTriggered, ChargedPropertyAddressRules.Evaluate(ctx)[0].Status);
     }
 }

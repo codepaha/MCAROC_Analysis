@@ -1,5 +1,23 @@
 # Agent channel — MCAROC
 
+### 2026-10-02 (latest) — Antigravity session (COMPLETED #354 & resolved review regression)
+
+- **#354 (Charges: match normalized PropertyParticulars against company registered and operating premises, #191 follow-up):**
+  - **Structured Premises Matching:**
+    - Extended `AddressMatcher` to support matching directly against structured `PropertyReadingItem`, `PropertyReading`, and `NormalizedPropertyParticulars`, extracting plot/CTS/survey/arazi/gata/khata keys, unit numbers, locality forms, and PIN codes.
+    - Added gating check `AddressMatcher.IsImmovable(PropertyReadingItem)` ensuring only immovable property kinds/asset classes are evaluated for premises matching.
+    - Updated `ChargedPropertyAddressRules` with `PremisesCategory` (`RegisteredOffice`, `BusinessAddress`, `OperatingFacility`, `OtherCollateral`), `PremisesMatchResult`, and classification helpers `ClassifyItem` and `ClassifyCharge`.
+    - Integrated with completed Gemini property extractions via `AnalysisContext.PropertyExtractions` and `AnalysisOrchestrator.BuildContextAsync`.
+    - Maintained fail-closed principle: absence of match is labeled "No match to filed company premises", never asserting third-party ownership.
+    - **Review #356 Fix:** In `EvaluateChargedPropertyVsOwnAddresses`, ensured that when structured property items are extracted (`reading.Items.Count > 0`), the rule only evaluates the structured items and never falls back to the full raw particulars clause. Added regression test `Review356_StructuredMovableAddressMustNotBecomeAMortgagedPremisesFinding`.
+  - **UI & Dossier Surfacing:**
+    - Surfaced premises classification in `_ChargeDrawer.cshtml` with badges (`Own premises: Registered office`, `No match to filed company premises (other collateral)`, or `Movable asset (not applicable to premises)`), along with matched plot/locality/PIN tokens.
+    - Updated `ChargeDrawerViewModel` and `_ChargesTab.cshtml` to supply `CompanyProfile` and `EpfoEstablishments` to drawer models.
+    - Displayed premises classification tags in the Dossier Charges Annexure (`DossierPdfComposer.Annexures.cs`).
+  - **Testing & Verification:**
+    - Added comprehensive unit tests in `AddressMatcherTests.cs` and `ChargedPropertyAddressRulesTests.cs` covering structured matching, CTS/plot variations, conflicting PIN rejection, movable-only exclusion, premises category classifications, and probe regression.
+    - All tests pass cleanly. Zero database migrations required.
+
 ### 2026-10-02 — Claude session (CLAIMED #353, PR open)
 
 - **#349 / #355 done:** PRs #352 and #357 merged.
@@ -21,7 +39,7 @@
 - **#349** on `feat/fts-visibility-349`: `FullTextSearchStatus` (cached) drives a startup warning, a `fullTextSearch`
   block on `/health`, and a chat-panel note when SQL Server Full-Text Search is missing. No migration.
 
-### 2026-10-01 — Antigravity session (#348 re-review feedback resolved: Co. App. ambiguity & COA prefix resolution)
+### 2026-10-01 — Antigravity session (#348 merged into main: Co. App. ambiguity & COA prefix resolution)
 
 - **#343 (PR #348 on `feat/chat-litigation-recency-343`):**
   - **P1 (Company Appeal vs Company Application Semantic Separation):** In `LitigationCaseReference`, separated `COMPANY_APPEAL` and `COMPANY_APPLICATION` into distinct semantic alias groups so explicit Appeal and Application strings are never treated as equivalent.

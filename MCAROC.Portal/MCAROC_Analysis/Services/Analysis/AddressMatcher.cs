@@ -1,4 +1,6 @@
 using System.Text.RegularExpressions;
+using MCAROC_Analysis.Services.Excel.Parsers;
+using MCAROC_Analysis.Services.PropertyParticulars;
 
 namespace MCAROC_Analysis.Services.Analysis;
 
@@ -126,6 +128,94 @@ public static partial class AddressMatcher
             : new AddressMatchResult(strength, pinMatched ? addressPin : null, matchedPlots, matchedLocalities);
     }
 
+    /// <summary>Checks whether a normalized property reading item represents immovable property (land, premises,
+    /// building/project), as opposed to movable-only collateral (shares, current assets, book debts, plant &amp; machinery).</summary>
+    public static bool IsImmovable(PropertyReadingItem item)
+    {
+        if (item is null) return false;
+        if (item.AssetClasses.Count > 0 && !item.AssetClasses.Contains(PropertyAssetClass.Immovable))
+            return false;
+        if (item.Kinds.Count > 0 && !item.Kinds.Any(k => k is PropertyKind.Premises or PropertyKind.Land or PropertyKind.BuildingOrProject))
+            return false;
+        return true;
+    }
+
+    /// <summary>Compares one known address against a structured property reading item (Gemini-split or deterministic).</summary>
+    public static AddressMatchResult Match(string? knownAddress, PropertyReadingItem item, IEnumerable<string?>? excludedPlaceNames = null)
+    {
+        if (string.IsNullOrWhiteSpace(knownAddress) || item is null)
+            return AddressMatchResult.NoMatch;
+
+        if (!IsImmovable(item))
+            return AddressMatchResult.NoMatch;
+
+        var address = Normalize(knownAddress);
+
+        var excluded = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var place in excludedPlaceNames ?? [])
+            if (!string.IsNullOrWhiteSpace(place))
+                foreach (var token in Tokenize(Normalize(place)))
+                    excluded.Add(token);
+        foreach (var token in InferredCityTokens(address))
+            excluded.Add(token);
+
+        // ── PIN code ──
+        var addressPin = ExtractPinCodes(address).LastOrDefault();
+        var itemPinCodes = ExtractItemPinCodes(item);
+        var pinMatched = addressPin is not null && itemPinCodes.Contains(addressPin);
+        var pinConflict = addressPin is not null && itemPinCodes.Count > 0 && !pinMatched;
+
+        // ── Plot / survey / door numbers ──
+        var itemPlotKeys = PlotKeysIn(item);
+        var addressPinDigits = addressPin ?? "";
+        var matchedPlots = Tokenize(address)
+            .Where(IsPlotToken)
+            .Where(t => PlotKey(t) != addressPinDigits && PlotKey(t).Length >= 2)
+            .Where(t => itemPlotKeys.Contains(PlotKey(t)))
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+
+        // ── Locality names ──
+        var itemLocalityForms = ItemLocalityForms(item);
+        var matchedLocalities = LocalityCandidates(Tokenize(address), excluded)
+            .Where(candidate => itemLocalityForms.Any(t => LocalityEquivalent(candidate, t)))
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+
+        var strength = pinConflict ? AddressMatchStrength.None
+            : matchedPlots.Count > 0 && (pinMatched || matchedLocalities.Count > 0) ? AddressMatchStrength.Strong
+            : pinMatched && matchedLocalities.Count > 0 ? AddressMatchStrength.Partial
+            : AddressMatchStrength.None;
+
+        return strength == AddressMatchStrength.None
+            ? AddressMatchResult.NoMatch
+            : new AddressMatchResult(strength, pinMatched ? addressPin : null, matchedPlots, matchedLocalities);
+    }
+
+    /// <summary>Compares one known address against a property reading (evaluating each immovable item and returning
+    /// the strongest match).</summary>
+    public static AddressMatchResult Match(string? knownAddress, PropertyReading reading, IEnumerable<string?>? excludedPlaceNames = null)
+    {
+        if (string.IsNullOrWhiteSpace(knownAddress) || reading is null || reading.Items.Count == 0)
+            return AddressMatchResult.NoMatch;
+
+        AddressMatchResult? bestMatch = null;
+        foreach (var item in reading.Items)
+        {
+            var res = Match(knownAddress, item, excludedPlaceNames);
+            if (res.Strength == AddressMatchStrength.Strong)
+                return res;
+            if (res.Strength == AddressMatchStrength.Partial && bestMatch is null)
+                bestMatch = res;
+        }
+
+        return bestMatch ?? AddressMatchResult.NoMatch;
+    }
+
+    /// <summary>Compares one known address against deterministic normalized property particulars.</summary>
+    public static AddressMatchResult Match(string? knownAddress, NormalizedPropertyParticulars particulars, IEnumerable<string?>? excludedPlaceNames = null) =>
+        Match(knownAddress, PropertyReading.FromRules(particulars), excludedPlaceNames);
+
     /// <summary>Uppercase; "&amp;" read as "and" so "428 &amp; 429" tokenizes like "428 and 429".</summary>
     private static string Normalize(string raw) => raw.ToUpperInvariant().Replace("&", " AND ");
 
@@ -155,6 +245,84 @@ public static partial class AddressMatcher
         var pin = ExtractPinCodes(normalized).LastOrDefault() ?? "";
         return Tokenize(normalized).Where(IsPlotToken).Select(PlotKey)
             .Where(k => k != pin && k.Length >= 2).ToHashSet(StringComparer.Ordinal);
+    }
+
+    /// <summary>Plot, survey, and unit keys found in a structured property reading item.</summary>
+    public static HashSet<string> PlotKeysIn(PropertyReadingItem item)
+    {
+        if (item is null) return [];
+        var keys = new HashSet<string>(StringComparer.Ordinal);
+
+        foreach (var g in item.SurveyNumbers)
+        {
+            foreach (var num in g.Numbers)
+            {
+                foreach (var token in Tokenize(Normalize(num)))
+                {
+                    if (IsPlotToken(token))
+                        keys.Add(PlotKey(token));
+                }
+            }
+        }
+
+        foreach (var unit in item.UnitLines)
+        {
+            foreach (var token in Tokenize(Normalize(unit)))
+            {
+                if (IsPlotToken(token))
+                    keys.Add(PlotKey(token));
+            }
+        }
+
+        foreach (var p in item.ParkingSpaceNumbers)
+        {
+            foreach (var token in Tokenize(Normalize(p)))
+            {
+                if (IsPlotToken(token))
+                    keys.Add(PlotKey(token));
+            }
+        }
+
+        foreach (var loc in item.Location.Localities)
+        {
+            foreach (var token in Tokenize(Normalize(loc)))
+            {
+                if (IsPlotToken(token))
+                    keys.Add(PlotKey(token));
+            }
+        }
+
+        return keys;
+    }
+
+    private static HashSet<string> ExtractItemPinCodes(PropertyReadingItem item)
+    {
+        var pins = new HashSet<string>(StringComparer.Ordinal);
+        if (!string.IsNullOrWhiteSpace(item.Location.Pin))
+        {
+            foreach (var pin in ExtractPinCodes(Normalize(item.Location.Pin)))
+                pins.Add(pin);
+        }
+        foreach (var loc in item.Location.Localities)
+        {
+            foreach (var pin in ExtractPinCodes(Normalize(loc)))
+                pins.Add(pin);
+        }
+        return pins;
+    }
+
+    private static List<string> ItemLocalityForms(PropertyReadingItem item)
+    {
+        var tokens = new List<string>();
+        foreach (var loc in item.Location.Localities)
+            tokens.AddRange(Tokenize(Normalize(loc)));
+        if (!string.IsNullOrWhiteSpace(item.Location.Village))
+            tokens.AddRange(Tokenize(Normalize(item.Location.Village)));
+        if (!string.IsNullOrWhiteSpace(item.Location.Taluka))
+            tokens.AddRange(Tokenize(Normalize(item.Location.Taluka)));
+        foreach (var bld in item.BuildingsOrProjects)
+            tokens.AddRange(Tokenize(Normalize(bld)));
+        return LocalityForms(tokens);
     }
 
     private static bool IsPlotToken(string token) => token.Any(char.IsDigit);
@@ -239,7 +407,7 @@ public static partial class AddressMatcher
         return edits + (b.Length - j) <= 1;
     }
 
-    [GeneratedRegex(@"[\s,;:()\[\].'""]+")]
+    [GeneratedRegex(@"[\s,;:()\[\].'""\u2013\u2014]+")]
     private static partial Regex TokenSplitRegex();
 
     [GeneratedRegex(@"(?<![\d/-])([1-9]\d{2})\s?(\d{3})(?![\d/-])")]

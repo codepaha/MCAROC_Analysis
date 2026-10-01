@@ -2,6 +2,7 @@ using MCAROC_Analysis.Data.Entities;
 using MCAROC_Analysis.Models;
 using MCAROC_Analysis.Models.Dossier;
 using MCAROC_Analysis.Services.Analysis;
+using MCAROC_Analysis.Services.Analysis.Rules;
 using MCAROC_Analysis.Services.Excel;
 using MCAROC_Analysis.Services.PropertyParticulars;
 using QuestPDF.Fluent;
@@ -614,6 +615,26 @@ public partial class DossierPdfComposer
                     .FontSize(DossierTheme.Small).FontColor(DossierTheme.Ink);
             col.Item().PaddingTop(3).Text("Property particulars: " + propertyEv!.PropertyParticulars)
                 .FontSize(DossierTheme.Small).FontColor(DossierTheme.InkSoft);
+
+            var addressPool = ChargedPropertyAddressRules.BuildAddressPool(model.Profile, model.Compliance?.EpfoEstablishments);
+            if (addressPool.Count > 0)
+            {
+                var match = ChargedPropertyAddressRules.ClassifyCharge(charge, addressPool, model.PropertyExtractions);
+                if (match.IsCompanyPremises)
+                {
+                    var evidence = string.Join(", ", match.Result.MatchedPlotNumbers.Concat(match.Result.MatchedLocalities).Append(match.Result.MatchedPinCode).Where(x => !string.IsNullOrEmpty(x)));
+                    col.Item().PaddingTop(2).Text(t =>
+                    {
+                        t.Span("Premises: ").SemiBold().FontSize(DossierTheme.Small).FontColor(DossierTheme.MaroonDeep);
+                        t.Span($"Appears to be company premises ({match.Label}) — matched {evidence}").FontSize(DossierTheme.Small).FontColor(DossierTheme.MaroonDeep);
+                    });
+                }
+                else if (reading.Items.Any(AddressMatcher.IsImmovable) || (!reading.HasContent && ChargedPropertyAddressRules.DescribesImmovableProperty(propertyEv)))
+                {
+                    col.Item().PaddingTop(2).Text("Premises: Other collateral (no match to filed company premises)")
+                        .FontSize(DossierTheme.Small).FontColor(DossierTheme.InkFaint);
+                }
+            }
         }
         else if (labels.Count == 0)
         {

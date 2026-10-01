@@ -131,7 +131,7 @@ public static partial class PropertyParticularsNormalizer
     private static readonly (Regex Pattern, PropertyKind Kind)[] KindRules =
     [
         (new(@"parcel\s+of\s+premises|\bpremises\s+(adm|admeasuring|bearing|known)|\boffice\s+premises|\b(unit|flat|shop|office)\s*no\b|\bapartment\b", RegexOptions.Compiled), PropertyKind.Premises),
-        (new(@"\bland\b|\bplot\s*no|\bacres?\b|\bsurvey\s*no|\bc\.?\s*t\.?\s*s\b|\bcst\s*no", RegexOptions.Compiled), PropertyKind.Land),
+        (new(@"\bland\b|\bplot\s*no|\bacres?\b|\bsurvey\s*no|\bc\.?\s*t\.?\s*s\b|\bcst\s*no|\barazi\b|\bgata?\b|\bkhata\b", RegexOptions.Compiled), PropertyKind.Land),
         (new(@"\bbuilding\b|\bbldg\b|\bproject\b|\bstructures?\b", RegexOptions.Compiled), PropertyKind.BuildingOrProject),
         (new(@"\bparking\b", RegexOptions.Compiled), PropertyKind.Parking),
         (new(@"current\s*assets?|\bstocks?\b|raw\s*materials?|finished\s*goods|\binventor(y|ies)\b", RegexOptions.Compiled), PropertyKind.CurrentAssets),
@@ -457,7 +457,7 @@ public static partial class PropertyParticularsNormalizer
     private static partial Regex SurveyPattern();
     [GeneratedRegex(@"\bplot\s*no\.?\s*(?<no>\d+[a-z]?(?:/\d+[a-z]?)?)\b", RegexOptions.IgnoreCase)]
     private static partial Regex PlotPattern();
-    [GeneratedRegex(@"\b(?<s>gat|khasra)\s*nos?\.?\s*(?<list>\d+[a-z]?(?:/\d+[a-z]?)*(?:\s*(?:,|and|&)\s*\d+[a-z]?(?:/\d+[a-z]?)*)*)", RegexOptions.IgnoreCase)]
+    [GeneratedRegex(@"\b(?<s>gat|gata|khasra|arazi|khata)\s*nos?\.?\s*(?<list>\d+[a-z]?(?:/\d+[a-z]?)*(?:\s*(?:,|and|&)\s*\d+[a-z]?(?:/\d+[a-z]?)*)*)", RegexOptions.IgnoreCase)]
     private static partial Regex GatKhasraPattern();
 
     [GeneratedRegex(@"\btaluka\s*(?<v>[A-Za-z]+)", RegexOptions.IgnoreCase)]
