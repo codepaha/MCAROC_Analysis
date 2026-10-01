@@ -118,7 +118,10 @@ public sealed class LitigationAiAnalysisOrchestrator(AppDbContext db, ILitigatio
     {
         var cases = await db.LitigationCases.AsNoTracking().Where(x => x.RequestId == requestId).ToListAsync(ct);
         if (cases.Count == 0) return false;
-        var hasPortfolio = await db.LitigationPortfolioAiAnalyses.AsNoTracking().AnyAsync(p => p.Status == LitigationAiAnalysisItemStatus.Completed
+        // InsufficientEvidence is a finished, deterministic portfolio outcome (no case had usable order text), so it
+        // counts as "done" too; only a Pending/Failed or missing portfolio calls for another run.
+        var hasPortfolio = await db.LitigationPortfolioAiAnalyses.AsNoTracking().AnyAsync(p =>
+            (p.Status == LitigationAiAnalysisItemStatus.Completed || p.Status == LitigationAiAnalysisItemStatus.InsufficientEvidence)
             && db.LitigationAiAnalysisRuns.Any(r => r.LitigationAiAnalysisRunId == p.LitigationAiAnalysisRunId && r.RequestId == requestId), ct);
         if (!hasPortfolio) return true;
         var chunks = await db.LitigationOrderChunks.AsNoTracking().Where(x => x.RequestId == requestId).ToListAsync(ct);

@@ -37,7 +37,8 @@ public class RequestsController(
     IAnalystRequestAccessService? analystAccess = null,
     MCAROC_Analysis.Services.Pipeline.PipelineAdopter? pipelineAdopter = null,
     Microsoft.Extensions.Options.IOptions<BprLitigationOptions>? bprOptions = null,
-    LitigationAiAnalysisOrchestrator? litigationAnalysis = null) : Controller
+    LitigationAiAnalysisOrchestrator? litigationAnalysis = null,
+    ChargeLitigationService? chargeLitigation = null) : Controller
 {
     [HttpGet("/Requests")]
     public async Task<IActionResult> Index([FromQuery] RequestListFilterCriteria filters)
@@ -1117,6 +1118,16 @@ public class RequestsController(
             }
 
             vm.LitigationDataLake = litVm;
+        }
+
+        // Never let the charge-to-case comparison take the request page down: it is a highlight, not the page.
+        if (chargeLitigation is not null)
+        {
+            try { vm.ChargeLitigation = await chargeLitigation.GetAsync(id, HttpContext?.RequestAborted ?? CancellationToken.None); }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                logger?.LogWarning(ex, "Charge-litigation comparison failed for request {RequestId}", id);
+            }
         }
 
         return View(vm);

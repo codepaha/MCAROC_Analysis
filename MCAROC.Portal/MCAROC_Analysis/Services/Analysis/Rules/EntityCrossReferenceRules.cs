@@ -238,7 +238,7 @@ public static partial class EntityCrossReferenceRules
     /// charge-holder grouping/HHI concentration metrics elsewhere and must not change), so the same lender
     /// filed as "ADITYA BIRLA FINANCE LIMITED" in one place and "ADITYA BIRLA FINANCE LTD." in another still
     /// matches here.</summary>
-    private static string NormalizeCompanyName(string raw)
+    internal static string NormalizeCompanyName(string raw)
     {
         var collapsed = string.Join(' ', raw.Trim().Split([' ', '.', ','], StringSplitOptions.RemoveEmptyEntries)).ToUpperInvariant();
         var tokens = collapsed.Split(' ', StringSplitOptions.RemoveEmptyEntries)

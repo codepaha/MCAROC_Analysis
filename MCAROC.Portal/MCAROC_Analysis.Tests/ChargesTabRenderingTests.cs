@@ -449,4 +449,72 @@ public class ChargesTabRenderingTests
         Assert.True(groupOpenIdx >= 0 && groupOpenIdx < rowIdx && rowIdx < groupCloseIdx,
             "Expected the charge's drawer row to be nested inside its holder group's collapsible <tbody>.");
     }
+
+    // ── charge-to-litigation highlights ──────────────────────────────────────────────────────────────────
+
+    private static MCAROC_Analysis.Services.LitigationData.ChargeLitigationLink AddressLink(long chargeId) => new(
+        chargeId, "CHG-101", "State Bank of India", MCAROC_Analysis.Services.LitigationData.ChargeLitigationSignal.ImmovableAddress,
+        new MCAROC_Analysis.Services.LitigationData.LinkedLitigation("Court records", 10, null, "WP(C) 11227/2019", "High Court of Orissa", "Pending", "Alpha v. Coastal", null),
+        "The order dated 15-10-2019 names the property charged under CHG-101 (A-36, NAYAPALLI).",
+        500, 2, "Plot No. A-36, Nayapalli, Bhubaneswar is under attachment.", "Order 15-10-2019");
+
+    private static MCAROC_Analysis.Services.LitigationData.ChargeLitigationLink LenderLink(long chargeId) => new(
+        chargeId, "CHG-101", "State Bank of India", MCAROC_Analysis.Services.LitigationData.ChargeLitigationSignal.LenderRecoveryCase,
+        new MCAROC_Analysis.Services.LitigationData.LinkedLitigation("MCA workbook", null, 7, "OA 12/2021", "DRT Hyderabad", "Pending", "SBI vs Coastal", "Debts Recovery Tribunal"),
+        "State Bank of India, the holder of this charge, is a party in a recovery-type proceeding (Debts Recovery Tribunal) against the company. Indirect: the assets under this charge may be contested.");
+
+    [Fact]
+    public async Task A_charge_with_linked_litigation_is_badged_summarised_and_explained_in_its_drawer()
+    {
+        var vm = CreateViewModel();
+        vm.Charges =
+        [
+            new RocCharge { ChargeId = 1, RocChargeNumber = "CHG-101", LatestChargeHolderRaw = "State Bank of India", LatestChargeHolderNormalized = "STATE BANK OF INDIA", CurrentAmount = 1m, SatisfactionDate = null },
+            new RocCharge { ChargeId = 2, RocChargeNumber = "CHG-102", LatestChargeHolderRaw = "Punjab National Bank", LatestChargeHolderNormalized = "PUNJAB NATIONAL BANK", CurrentAmount = 1m, SatisfactionDate = null }
+        ];
+        vm.ChargeLitigation = new MCAROC_Analysis.Services.LitigationData.ChargeLitigationSummary([AddressLink(1), LenderLink(1)], 2, 1, 0, false);
+
+        var html = await RenderChargesTabAsync(vm);
+
+        Assert.Contains("Case found (1)", html);
+        Assert.Contains("Lender dispute (1)", html);
+        Assert.Contains("charge-litigation-summary", html);
+        Assert.Contains("1 open charge has litigation linked", html);
+        Assert.Contains("Litigation touching this charge", html);
+        Assert.Contains("Case names the charged property", html);
+        Assert.Contains("Lender is litigating (indirect)", html);
+        Assert.Contains("Plot No. A-36, Nayapalli, Bhubaneswar is under attachment.", html);
+        Assert.Contains("(page 2)", html);
+        Assert.Contains("#case-card-10", html);
+        // Only one of the two charges has links: the other gets no badge.
+        Assert.Equal(1, System.Text.RegularExpressions.Regex.Matches(html, "Case found \\(").Count);
+    }
+
+    [Fact]
+    public async Task Charges_with_no_linked_litigation_show_no_badge_no_summary_and_no_drawer_section()
+    {
+        var vm = CreateViewModel();
+        vm.Charges = [new RocCharge { ChargeId = 1, RocChargeNumber = "CHG-101", LatestChargeHolderRaw = "State Bank of India", CurrentAmount = 1m, SatisfactionDate = null }];
+        vm.ChargeLitigation = MCAROC_Analysis.Services.LitigationData.ChargeLitigationSummary.Empty;
+
+        var html = await RenderChargesTabAsync(vm);
+
+        Assert.DoesNotContain("Case found", html);
+        Assert.DoesNotContain("Lender dispute", html);
+        Assert.DoesNotContain("charge-litigation-summary", html);
+        Assert.DoesNotContain("Litigation touching this charge", html);
+    }
+
+    [Fact]
+    public async Task A_request_whose_litigation_comparison_failed_renders_the_charges_tab_unchanged()
+    {
+        var vm = CreateViewModel();
+        vm.Charges = [new RocCharge { ChargeId = 1, RocChargeNumber = "CHG-101", LatestChargeHolderRaw = "State Bank of India", CurrentAmount = 1m, SatisfactionDate = null }];
+        vm.ChargeLitigation = null;
+
+        var html = await RenderChargesTabAsync(vm);
+
+        Assert.Contains("CHG-101", html);
+        Assert.DoesNotContain("Case found", html);
+    }
 }

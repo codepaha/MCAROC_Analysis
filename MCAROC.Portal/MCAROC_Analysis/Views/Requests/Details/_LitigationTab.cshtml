@@ -1,5 +1,6 @@
 ﻿@using MCAROC_Analysis.Models
 @using MCAROC_Analysis.Data.Entities
+@using MCAROC_Analysis.Services.LitigationData
 @model RequestDetailsViewModel
 @{
     var lake = Model.LitigationDataLake;
@@ -156,6 +157,42 @@
     }
     <form id="litigation-analysis-token" class="d-none">@Html.AntiForgeryToken()</form>
     <div id="litigation-action-message" class="alert alert-secondary py-2 px-3 small d-none" role="status"></div>
+
+    @* Charged property vs cases. Only Strong links are shown; silence is explained, never presented as "clean". *@
+    @if (Model.ChargeLitigation is { } chl)
+    {
+        if (chl.HasAny)
+        {
+            <div class="alert alert-danger small mb-4" id="charge-litigation-banner" role="alert">
+                <div class="fw-semibold mb-1"><i class="bi bi-bank me-1"></i>Litigation touches charged property or a charge holder's recovery proceedings</div>
+                <div class="mb-2">
+                    @chl.CasesFor(ChargeLitigationSignal.ImmovableAddress) case@(chl.CasesFor(ChargeLitigationSignal.ImmovableAddress) == 1 ? "" : "s") name property charged to a lender ·
+                    @chl.CasesFor(ChargeLitigationSignal.LenderRecoveryCase) recovery proceeding@(chl.CasesFor(ChargeLitigationSignal.LenderRecoveryCase) == 1 ? "" : "s") involve a charge holder.
+                </div>
+                <ul class="mb-2 ps-3">
+                    @foreach (var l in chl.Links.Take(8))
+                    {
+                        <li>
+                            <strong>@l.ChargeNumber</strong> (@l.ChargeHolder):
+                            @(string.IsNullOrWhiteSpace(l.Case.CaseNumber) ? "case" : l.Case.CaseNumber)@(string.IsNullOrWhiteSpace(l.Case.Court) ? "" : " · " + l.Case.Court) —
+                            @(l.Signal == ChargeLitigationSignal.ImmovableAddress ? "order names the charged property" : "lender is litigating (indirect)")
+                            @if (l.Case.LitigationCaseId is { } cid) { <a href="#case-card-@cid">view case</a> }
+                        </li>
+                    }
+                    @if (chl.Links.Count > 8) { <li>…and @(chl.Links.Count - 8) more, in the Charges tab.</li> }
+                </ul>
+                <div class="text-muted">Only strong matches are shown. @(chl.NcltOrdersSkipped ? "NCLT/NCLAT orders are not scanned. " : "")@(chl.OrdersWithoutText > 0 ? $"{chl.OrdersWithoutText} order(s) had no extractable text and could not be compared." : "")</div>
+            </div>
+        }
+        else if (chl.CasesScanned > 0)
+        {
+            <p class="small text-muted mb-3" id="charge-litigation-none">
+                <i class="bi bi-bank me-1"></i>Charged-property check: no case was tied to a charged property or charge holder.
+                @chl.OrdersScanned order(s) with text were compared@(chl.OrdersWithoutText > 0 ? $"; {chl.OrdersWithoutText} had no extractable text" : "")@(chl.NcltOrdersSkipped ? "; NCLT/NCLAT orders are not scanned" : "").
+                Charges that name no specific property cannot be compared.
+            </p>
+        }
+    }
 
     <!-- Search Status / Attempt Banners -->
     @if (lake.SearchJob is null)
@@ -543,7 +580,7 @@
             {
                 @foreach (var c in lake.Cases)
                 {
-                    @await Html.PartialAsync("~/Views/Requests/Details/_LitigationCaseCard.cshtml", c, new ViewDataDictionary(ViewData) { { "RequestId", Model.Request.RequestId } })
+                    @await Html.PartialAsync("~/Views/Requests/Details/_LitigationCaseCard.cshtml", c, new ViewDataDictionary(ViewData) { { "RequestId", Model.Request.RequestId }, { "ChargeLinks", Model.ChargeLitigation?.Links.Where(l => l.Case.LitigationCaseId == c.LitigationCaseId).ToList() } })
                 }
 
                 @if (lake.TotalPages > 1)

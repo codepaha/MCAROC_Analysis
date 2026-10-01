@@ -415,7 +415,8 @@ public sealed partial class CompanyRegistryQueryService
                 .Concat(BaselineStatuses)
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .OrderBy(x => x, StringComparer.OrdinalIgnoreCase).ToList();
-            _cache.Set(key, (IReadOnlyList<string>)options, TimeSpan.FromHours(1));
+            // The app cache has a SizeLimit, so every entry must declare a size.
+            _cache.Set(key, (IReadOnlyList<string>)options, new MemoryCacheEntryOptions().SetAbsoluteExpiration(TimeSpan.FromHours(1)).SetSize(1));
             return options;
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
