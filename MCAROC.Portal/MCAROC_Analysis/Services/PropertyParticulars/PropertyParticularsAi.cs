@@ -18,7 +18,8 @@ public sealed record AiProperty(
     PropertyAssetClass AssetClass, PropertyKind Kind, string? Owner,
     string? UnitNumber, string? Floor, string? Building, string? Project,
     IReadOnlyList<AiArea> Areas, int? ParkingSpaces, IReadOnlyList<SurveyNumberGroup> SurveyNumbers,
-    IReadOnlyList<string> Localities, string? Village, string? Taluka, string? District, string? City, string? State, string? Pin);
+    IReadOnlyList<string> Localities, string? Village, string? Taluka, string? District, string? City, string? State, string? Pin,
+    string? SourceText = null);
 
 public sealed record PropertyParticularsAiResult(IReadOnlyList<AiProperty> Properties);
 
@@ -31,7 +32,7 @@ public sealed record PropertyParticularsValidation(bool IsAccepted, PropertyPart
 /// so a hallucinated CTS number or area can never reach the screen or a matcher.</summary>
 public static partial class PropertyParticularsAi
 {
-    public const string PromptVersion = "1.0";
+    public const string PromptVersion = "2.0";
     public const string ModelId = "gemini-2.5-flash-lite";
     internal const int MaxProperties = 20;
     internal const string PromptMarker = "You are splitting and labelling the \"Particulars of Property Charged\"";
@@ -57,6 +58,8 @@ public static partial class PropertyParticularsAi
         - If a field is not stated for a property, use null (or [] for lists). Do not guess.
         - A large parcel the property merely "forms part of" is basis "LargerLand" on that same property, not a separate property.
         - The same area restated in another unit ("27864.63 sq ft equivalent to 2588.68 sq m") is ONE area with equivalentValue/equivalentUnit.
+        - sourceText: for each property, quote verbatim the clause of the text that describes it. Clauses of different properties
+          must not overlap. Every unit number, floor, area, parking count and CTS/survey number of a property must be inside its own sourceText.
         - owner: only when the text says the asset belongs to another named entity (e.g. "current assets of X Private Limited").
         - Parking spaces: the total count of parking spaces for that property, as written.
         - surveyNumbers: CTS / Survey / Plot / Gat / Khasra numbers exactly as written; expand "52/1 to 17" into each number.
@@ -64,7 +67,7 @@ public static partial class PropertyParticularsAi
         area unit: {{string.Join("|", Enum.GetNames<AiAreaUnit>())}}. basis: {{string.Join("|", Enum.GetNames<AreaBasis>())}}.
         scheme: CTS|Survey|Plot|Gat|Khasra. qualifier: New|Old|null.
         Respond only with JSON of this shape:
-        {"properties":[{"assetClass":"Immovable","kind":"Premises","owner":null,"unitNumber":null,"floor":null,"building":null,"project":null,
+        {"properties":[{"sourceText":"exact quote","assetClass":"Immovable","kind":"Premises","owner":null,"unitNumber":null,"floor":null,"building":null,"project":null,
           "areas":[{"value":0,"unit":"SqFt","basis":"Carpet","equivalentValue":null,"equivalentUnit":null}],"parkingSpaces":null,
           "surveyNumbers":[{"scheme":"CTS","qualifier":null,"numbers":["51/B"]}],"localities":[],"village":null,"taluka":null,
           "district":null,"city":null,"state":null,"pin":null}]}
@@ -81,9 +84,10 @@ public static partial class PropertyParticularsAi
         if (response?.Properties is null) return Failed("Response has no properties array.");
         if (response.Properties.Count > MaxProperties) return Failed($"Response split the text into {response.Properties.Count} properties (max {MaxProperties}).");
 
-        var source = new Source(sourceText);
+        var whole = new Grounding(sourceText);
         var rejected = new List<string>();
         var properties = new List<AiProperty>();
+        var claimedSpans = new List<(int Start, int End)>();
         for (var i = 0; i < response.Properties.Count; i++)
         {
             var p = response.Properties[i];
@@ -94,21 +98,37 @@ public static partial class PropertyParticularsAi
                 continue;
             }
 
-            string? Text(string? value, string field)
+            // The property's own clause: identifiers, measurements and parking must be grounded inside it, so two
+            // properties in one paragraph can never trade a unit number, an area/unit or a parking count.
+            if (whole.FindSpan(p.SourceText) is not { } span)
+            {
+                rejected.Add($"{at}: sourceText is not a verbatim quote of the source — property dropped");
+                continue;
+            }
+            if (claimedSpans.Any(c => span.Start < c.End && c.Start < span.End))
+            {
+                rejected.Add($"{at}: sourceText overlaps another property's clause — property dropped");
+                continue;
+            }
+            claimedSpans.Add(span);
+            var clause = whole.Slice(span);
+            var own = new Grounding(clause);
+
+            string? Words(Grounding g, string? value, string field)
             {
                 if (string.IsNullOrWhiteSpace(value)) return null;
                 var trimmed = Whitespace().Replace(value.Trim(), " ");
-                if (source.ContainsText(trimmed)) return trimmed;
-                rejected.Add($"{at}.{field}: '{trimmed}' not in source");
+                if (g.ContainsWords(trimmed)) return trimmed;
+                rejected.Add($"{at}.{field}: '{trimmed}' not in {(ReferenceEquals(g, own) ? "this property's clause" : "source")}");
                 return null;
             }
 
             var areas = new List<AiArea>();
             foreach (var a in p.Areas ?? [])
             {
-                if (!TryName<AiAreaUnit>(a.Unit, out var unit) || !source.ContainsNumber(a.Value) || a.Value <= 0)
+                if (!TryName<AiAreaUnit>(a.Unit, out var unit) || a.Value <= 0 || !own.ContainsArea(a.Value, unit))
                 {
-                    rejected.Add($"{at}.areas: {a.Value} {a.Unit} not in source");
+                    rejected.Add($"{at}.areas: {a.Value} {a.Unit} is not stated in this property's clause with that unit");
                     continue;
                 }
                 var basis = TryName<AreaBasis>(a.Basis, out var b) ? b : AreaBasis.Unspecified;
@@ -116,8 +136,8 @@ public static partial class PropertyParticularsAi
                 decimal? eqValue = null;
                 if (a.EquivalentValue is { } ev && TryName<AiAreaUnit>(a.EquivalentUnit, out var eu))
                 {
-                    if (source.ContainsNumber(ev) && ev > 0) { eqValue = ev; eqUnit = eu; }
-                    else rejected.Add($"{at}.areas: equivalent {ev} {a.EquivalentUnit} not in source");
+                    if (ev > 0 && eu != unit && own.ContainsArea(ev, eu)) { eqValue = ev; eqUnit = eu; }
+                    else rejected.Add($"{at}.areas: equivalent {ev} {a.EquivalentUnit} is not stated in this property's clause with that unit");
                 }
                 areas.Add(new AiArea(a.Value, unit, basis, eqValue, eqUnit));
             }
@@ -125,8 +145,8 @@ public static partial class PropertyParticularsAi
             int? parking = null;
             if (p.ParkingSpaces is { } ps)
             {
-                if (ps > 0 && source.ContainsNumber(ps)) parking = ps;
-                else rejected.Add($"{at}.parkingSpaces: {ps} not in source");
+                if (ps > 0 && own.ContainsParkingCount(ps)) parking = ps;
+                else rejected.Add($"{at}.parkingSpaces: {ps} is not stated as a parking count in this property's clause");
             }
 
             var surveys = new List<SurveyNumberGroup>();
@@ -139,31 +159,33 @@ public static partial class PropertyParticularsAi
                 var numbers = new List<string>();
                 foreach (var n in g.Numbers ?? [])
                 {
-                    var number = Whitespace().Replace(n.Trim(), "").ToUpperInvariant();
-                    if (number.Length > 0 && source.ContainsSurveyNumber(number)) numbers.Add(number);
-                    else rejected.Add($"{at}.surveyNumbers: {scheme} '{n}' not in source");
+                    var number = Grounding.NormalizeIdentifier(n);
+                    if (number.Length > 0 && own.ContainsIdentifier(number)) numbers.Add(number);
+                    else rejected.Add($"{at}.surveyNumbers: {scheme} '{n}' is not stated (or within a stated range) in this property's clause");
                 }
                 if (numbers.Count > 0) surveys.Add(new SurveyNumberGroup(scheme, qualifier, numbers.Distinct().ToList()));
             }
 
-            var pin = p.Pin is { } pinText && PinFormat().IsMatch(pinText.Trim()) && source.ContainsNumber(decimal.Parse(pinText.Trim(), CultureInfo.InvariantCulture))
-                ? pinText.Trim() : null;
-            if (p.Pin is not null && pin is null) rejected.Add($"{at}.pin: '{p.Pin}' not in source");
+            var pin = p.Pin is { } pinText && PinFormat().IsMatch(pinText.Trim()) && whole.ContainsPin(pinText.Trim()) ? pinText.Trim() : null;
+            if (p.Pin is not null && pin is null) rejected.Add($"{at}.pin: '{p.Pin}' is not stated as a PIN in source");
 
-            var unitNumber = p.UnitNumber is { } un && !string.IsNullOrWhiteSpace(un)
-                ? (source.ContainsCompact(un) ? Whitespace().Replace(un.Trim(), "").ToUpperInvariant() : Reject($"{at}.unitNumber: '{un}' not in source"))
-                : null;
+            string? unitNumber = null;
+            if (!string.IsNullOrWhiteSpace(p.UnitNumber))
+            {
+                if (own.ContainsWords(p.UnitNumber)) unitNumber = Whitespace().Replace(p.UnitNumber.Trim(), "").ToUpperInvariant();
+                else rejected.Add($"{at}.unitNumber: '{p.UnitNumber}' not in this property's clause");
+            }
 
-            properties.Add(new AiProperty(assetClass, kind, Text(p.Owner, "owner"), unitNumber, Text(p.Floor, "floor"),
-                Text(p.Building, "building"), Text(p.Project, "project"), areas, parking, surveys,
-                (p.Localities ?? []).Select((l, j) => Text(l, $"localities[{j}]")).OfType<string>().Distinct(StringComparer.OrdinalIgnoreCase).ToList(),
-                Text(p.Village, "village"), Text(p.Taluka, "taluka"), Text(p.District, "district"), Text(p.City, "city"), Text(p.State, "state"), pin));
+            properties.Add(new AiProperty(assetClass, kind, Words(whole, p.Owner, "owner"), unitNumber, Words(own, p.Floor, "floor"),
+                Words(whole, p.Building, "building"), Words(whole, p.Project, "project"), areas, parking, surveys,
+                (p.Localities ?? []).Select((l, j) => Words(whole, l, $"localities[{j}]")).OfType<string>().Distinct(StringComparer.OrdinalIgnoreCase).ToList(),
+                Words(whole, p.Village, "village"), Words(whole, p.Taluka, "taluka"), Words(whole, p.District, "district"),
+                Words(whole, p.City, "city"), Words(whole, p.State, "state"), pin,
+                clause));
         }
 
         if (properties.Count == 0) return new PropertyParticularsValidation(false, null, rejected, "No property survived validation.");
         return new PropertyParticularsValidation(true, new PropertyParticularsAiResult(properties), rejected, null);
-
-        string? Reject(string reason) { rejected.Add(reason); return null; }
     }
 
     public static string Serialize(PropertyParticularsAiResult result) => JsonSerializer.Serialize(result, JsonOptions);
@@ -188,40 +210,125 @@ public static partial class PropertyParticularsAi
         return name is not null && Enum.TryParse(name, out parsed);
     }
 
-    /// <summary>The source text in the forms the grounding checks need.</summary>
-    private sealed class Source
+    /// <summary>A piece of source text (the whole paragraph, or one property's quoted clause) and the grounding
+    /// checks run against it. Every check is aligned to word/number boundaries — a value can never be "found" by
+    /// gluing the tail of one word to the head of the next, by borrowing a number from an unrelated field, or by
+    /// matching a number while ignoring the unit it was stated in.</summary>
+    private sealed partial class Grounding
     {
-        private readonly string _normalized;
-        private readonly string _compact;
-        private readonly HashSet<string> _digitRuns;
-        private readonly HashSet<decimal> _numbers;
+        private readonly string _text;
+        private readonly string _lower;
+        private readonly List<string> _tokens;
+        private readonly HashSet<string> _identifiers;
+        private readonly List<(string Base, int From, int To)> _ranges;
 
-        public Source(string text)
+        public Grounding(string text)
         {
-            _normalized = Whitespace().Replace(text, " ").ToLowerInvariant();
-            _compact = NonAlphanumeric().Replace(_normalized, "");
-            _digitRuns = DigitRun().Matches(text).Select(m => m.Value.TrimStart('0') is { Length: > 0 } d ? d : "0").ToHashSet();
-            _numbers = Number().Matches(text)
-                .Select(m => decimal.TryParse(m.Value.Replace(",", ""), NumberStyles.Number, CultureInfo.InvariantCulture, out var d) ? d : (decimal?)null)
-                .OfType<decimal>().ToHashSet();
+            _text = Whitespace().Replace(text, " ");
+            _lower = _text.ToLowerInvariant();
+            _tokens = Token().Matches(_lower).Select(m => m.Value).ToList();
+            _identifiers = IdentifierPattern().Matches(_lower).Select(m => NormalizeIdentifier(m.Value)).ToHashSet();
+            _ranges = RangePattern().Matches(_lower)
+                .Select(m => (NormalizeIdentifier(m.Groups["base"].Value), int.Parse(m.Groups["from"].Value, CultureInfo.InvariantCulture),
+                    int.Parse(m.Groups["to"].Value, CultureInfo.InvariantCulture)))
+                .Where(r => r.Item3 >= r.Item2 && r.Item3 - r.Item2 <= 500)
+                .ToList();
         }
 
-        public bool ContainsText(string value) =>
-            _normalized.Contains(Whitespace().Replace(value, " ").ToLowerInvariant(), StringComparison.Ordinal)
-            || (NonAlphanumeric().Replace(value.ToLowerInvariant(), "") is { Length: >= 3 } c && _compact.Contains(c, StringComparison.Ordinal));
+        public string Slice((int Start, int End) span) => _text[span.Start..span.End];
 
-        public bool ContainsCompact(string value) =>
-            NonAlphanumeric().Replace(value.ToLowerInvariant(), "") is { Length: > 0 } c && _compact.Contains(c, StringComparison.Ordinal);
-
-        public bool ContainsNumber(decimal value) => _numbers.Contains(value);
-
-        /// <summary>"52/17" is grounded when its digit groups (52, 17) are each written in the source — which also
-        /// accepts an expanded range ("52/1 to 17" → 52/17) without accepting an invented number.</summary>
-        public bool ContainsSurveyNumber(string number)
+        /// <summary>Where a verbatim quote sits in this text (whitespace-insensitive), as a range of the original.</summary>
+        public (int Start, int End)? FindSpan(string? quote)
         {
-            var runs = DigitRun().Matches(number).Select(m => m.Value.TrimStart('0') is { Length: > 0 } d ? d : "0").ToList();
-            return runs.Count > 0 && runs.All(_digitRuns.Contains);
+            if (string.IsNullOrWhiteSpace(quote)) return null;
+            var words = Whitespace().Split(quote.Trim()).Where(w => w.Length > 0).Select(Regex.Escape);
+            var m = Regex.Match(_text, string.Join(@"\s+", words), RegexOptions.IgnoreCase);
+            return m.Success ? (m.Index, m.Index + m.Length) : null;
         }
+
+        /// <summary>True when the value's words are a run of whole source words — or, for values written without the
+        /// source's spacing ("5C" for "5 c"), the concatenation of a run of whole source words.</summary>
+        public bool ContainsWords(string value)
+        {
+            var words = Token().Matches(value.ToLowerInvariant()).Select(m => m.Value).ToList();
+            if (words.Count == 0) return false;
+            var compact = string.Concat(words);
+            for (var i = 0; i < _tokens.Count; i++)
+            {
+                if (i + words.Count <= _tokens.Count && words.Select((w, k) => _tokens[i + k] == w).All(x => x)) return true;
+                var joined = "";
+                for (var j = i; j < _tokens.Count && joined.Length < compact.Length; j++)
+                {
+                    joined += _tokens[j];
+                    if (joined == compact) return true;
+                }
+            }
+            return false;
+        }
+
+        /// <summary>The value must be written in this text immediately followed by that unit.</summary>
+        public bool ContainsArea(decimal value, AiAreaUnit unit)
+        {
+            var unitPattern = unit switch
+            {
+                AiAreaUnit.SqFt => SqFtUnit(),
+                AiAreaUnit.SqM => SqMUnit(),
+                AiAreaUnit.Acre => AcreUnit(),
+                AiAreaUnit.Hectare => HectareUnit(),
+                _ => SqYdUnit()
+            };
+            return Numbers().Any(n => n.Value == value && unitPattern.IsMatch(_lower[n.End..]));
+        }
+
+        /// <summary>The count must be written in this text as a parking count ("43 car parking spaces"), never
+        /// borrowed from a space number ("B-43"), an area or a survey number.</summary>
+        public bool ContainsParkingCount(int count) =>
+            Numbers().Any(n => n.Value == count && !n.Grouped && ParkingAfter().IsMatch(_lower[n.End..]));
+
+        /// <summary>Six standalone digits — not part of a comma-grouped amount and not an area.</summary>
+        public bool ContainsPin(string pin) =>
+            Numbers().Any(n => n.Raw == pin && !AnyAreaUnit().IsMatch(_lower[n.End..]));
+
+        /// <summary>The whole identifier (suffixes included) is written in this text, or falls inside a range this
+        /// text states explicitly ("52/1 to 17" → 52/1 … 52/17).</summary>
+        public bool ContainsIdentifier(string number)
+        {
+            if (_identifiers.Contains(number)) return true;
+            var cut = number.LastIndexOf('/');
+            return cut > 0 && int.TryParse(number[(cut + 1)..], NumberStyles.None, CultureInfo.InvariantCulture, out var n)
+                && _ranges.Any(r => r.Base == number[..cut] && n >= r.From && n <= r.To);
+        }
+
+        public static string NormalizeIdentifier(string value)
+        {
+            var v = Whitespace().Replace(value.Trim(), "").ToUpperInvariant();
+            v = PartSuffix().Replace(v, "(P)");
+            return v;
+        }
+
+        private IEnumerable<(decimal Value, string Raw, int End, bool Grouped)> Numbers() =>
+            NumberToken().Matches(_lower)
+                .Select(m => (Ok: decimal.TryParse(m.Value.Replace(",", ""), NumberStyles.Number, CultureInfo.InvariantCulture, out var d), d, m))
+                .Where(x => x.Ok)
+                .Select(x => (x.d, x.m.Value, x.m.Index + x.m.Length, x.m.Value.Contains(',')));
+
+        [GeneratedRegex(@"[a-z0-9]+")] private static partial Regex Token();
+        // A whole number as written: Indian/Western comma grouping kept together ("1,38,402"), never a fragment of
+        // a longer number or decimal, and never the part after a "/" (that belongs to a survey identifier).
+        [GeneratedRegex(@"(?<![\d.,/])(?:\d{1,3}(?:,\d{2,3})+|\d+)(?:\.\d+)?(?!\d)")]
+        private static partial Regex NumberToken();
+        [GeneratedRegex(@"(?<![0-9a-z/])\d+[a-z]?(?:\s*/\s*[0-9a-z]+)*(?:\s*\(\s*(?:p|part)\s*\)|\s+part\b)?")]
+        private static partial Regex IdentifierPattern();
+        [GeneratedRegex(@"(?<base>\d+[a-z]?)\s*/\s*(?<from>\d+)\s*(?:to|-|–)\s*(?:\k<base>\s*/\s*)?(?<to>\d+)\b")]
+        private static partial Regex RangePattern();
+        [GeneratedRegex(@"\(\s*PART\s*\)$|PART$|\(P\)$")] private static partial Regex PartSuffix();
+        [GeneratedRegex(@"^\s*\.?\s*(?:sq(?:uare)?\.?\s*(?:feet|fts?)\b\.?|sqft\b)")] private static partial Regex SqFtUnit();
+        [GeneratedRegex(@"^\s*\.?\s*(?:sq(?:uare)?\.?\s*/?\s*m(?:e?t(?:er|re)s?|trs?|ts|ets|t)?\b\.?|sqm\b)")] private static partial Regex SqMUnit();
+        [GeneratedRegex(@"^\s*acres?\b")] private static partial Regex AcreUnit();
+        [GeneratedRegex(@"^\s*(?:hectares?|ha)\b")] private static partial Regex HectareUnit();
+        [GeneratedRegex(@"^\s*\.?\s*sq(?:uare)?\.?\s*(?:yards?|yds?)\b")] private static partial Regex SqYdUnit();
+        [GeneratedRegex(@"^\s*\.?\s*(?:sq|square|acres?|hectares?|sqm|sqft)\b")] private static partial Regex AnyAreaUnit();
+        [GeneratedRegex(@"^\s*(?:nos?\.?\s*(?:of\s*)?)?(?:covered\s+|open\s+|stilt\s+)?(?:car\s*)?parking\b")] private static partial Regex ParkingAfter();
     }
 
     private static readonly JsonSerializerOptions JsonOptions = new()
@@ -234,15 +341,12 @@ public static partial class PropertyParticularsAi
 
     private sealed record Response(List<ResponseProperty>? Properties);
     private sealed record ResponseProperty(
-        string? AssetClass, string? Kind, string? Owner, string? UnitNumber, string? Floor, string? Building, string? Project,
+        string? SourceText, string? AssetClass, string? Kind, string? Owner, string? UnitNumber, string? Floor, string? Building, string? Project,
         List<ResponseArea>? Areas, int? ParkingSpaces, List<ResponseSurvey>? SurveyNumbers, List<string>? Localities,
         string? Village, string? Taluka, string? District, string? City, string? State, string? Pin);
     private sealed record ResponseArea(decimal Value, string? Unit, string? Basis, decimal? EquivalentValue, string? EquivalentUnit);
     private sealed record ResponseSurvey(string? Scheme, string? Qualifier, List<string>? Numbers);
 
     [GeneratedRegex(@"\s+")] private static partial Regex Whitespace();
-    [GeneratedRegex(@"[^a-z0-9]")] private static partial Regex NonAlphanumeric();
-    [GeneratedRegex(@"\d+")] private static partial Regex DigitRun();
-    [GeneratedRegex(@"\d{1,3}(?:,\d{2,3})+(?:\.\d+)?|\d+(?:\.\d+)?")] private static partial Regex Number();
     [GeneratedRegex(@"^[1-9]\d{5}$")] private static partial Regex PinFormat();
 }

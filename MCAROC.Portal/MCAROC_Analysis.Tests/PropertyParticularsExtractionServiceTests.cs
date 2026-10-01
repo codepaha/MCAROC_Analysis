@@ -92,8 +92,8 @@ public sealed class PropertyParticularsExtractionServiceTests : IAsyncLifetime
         await using var db = CreateContext();
         await Service(db).ScheduleForRequestAsync(requestId, CancellationToken.None);
         var id = await IdOf(db, text, "Immovable");
-        var client = new ScriptedClient(_ => new(true, """
-            {"properties":[{"assetClass":"Immovable","kind":"Premises","unitNumber":"5c","floor":"5th","building":"Godrej One",
+        var client = new ScriptedClient(_ => new(true, $$"""
+            {"properties":[{"sourceText":"{{text}}","assetClass":"Immovable","kind":"Premises","unitNumber":"5c","floor":"5th","building":"Godrej One",
               "localities":["Vikhroli"],"city":"Mumbai","state":"Maharashtra","areas":[],"surveyNumbers":[]}]}
             """, null));
 

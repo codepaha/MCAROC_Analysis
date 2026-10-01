@@ -41,16 +41,26 @@ For each property:
 
 ## Grounding: why Gemini cannot invent a value
 
-`PropertyParticularsAi.Validate` checks every returned value against the source text:
+`PropertyParticularsAi.Validate` (prompt version 2.0) checks every returned value against the source text, aligned to
+word and number boundaries. A value can never be "found" by gluing the end of one word to the start of the next
+("75 Church" is not unit "5C").
 
-- **Text fields** must occur in the text.
-- **Numbers** (areas, parking, PIN) must equal a number written in the text. A converted or rounded value is
-  rejected.
-- **CTS/survey numbers** must be made of digit groups that are written in the text. This allows an expanded range
-  ("52/1 to 17" becoming 52/17) but never an invented number.
+- **Each property quotes its own clause** (`sourceText`). The quote must occur verbatim in the source, and the clauses
+  of different properties must not overlap. Otherwise the property is dropped.
+- **Checked inside that property's own clause**, so two properties in one paragraph can never trade them:
+  - **Unit number and floor.**
+  - **Areas.** The number must be written **followed by the stated unit**: 100 sq m is not 100 acres. An equivalent
+    restatement is checked the same way.
+  - **Parking count.** The number must be written as a parking count ("17 parking spaces"), never borrowed from a
+    space number ("B-43") or an area.
+  - **CTS/survey/plot numbers.** The **whole identifier**, suffixes included, must be written ("52/17XYZ" is not
+    "52/17"). The only exception is a number inside a range the clause **states explicitly** ("52/1 to 17" gives
+    52/1 … 52/17).
+- **Checked against the whole source** (word-aligned): building, project, owner and location fields. The PIN must be
+  six standalone digits, not an area or a comma-grouped amount.
 
-A value that fails is **dropped and recorded** in `RejectedFieldsJson`, and the drawer states how many were
-dropped. Invalid JSON, or no surviving property at all, fails the extraction; the rules reading is then used.
+A value that fails is **dropped and recorded** in `RejectedFieldsJson`, and the drawer states how many were dropped.
+Invalid JSON, or no surviving property at all, fails the extraction; the rules reading is then used.
 
 ## Scheduling, storage, switches
 

@@ -450,10 +450,13 @@ public class ChargesTabRenderingTests
             "Expected the charge's drawer row to be nested inside its holder group's collapsible <tbody>.");
     }
 
-    private const string PropertyText =
+    private const string UnitClause =
         "All that piece or parcel of premises admeasuring about 27864.63 sq ft equivalent to 2588.68 sq m of carpet area bearing Unit No. 5c on the " +
-        "5th Floor in the building known as Godrej One along with 43 car parking spaces situated at Pirojshanagar, Vikhroli. Hypothecation of " +
-        "current assets of Godrej Real Estate Private Limited.";
+        "5th Floor in the building known as Godrej One along with 43 car parking spaces situated at Pirojshanagar, Vikhroli.";
+
+    private const string AssetsClause = "Hypothecation of current assets of Godrej Real Estate Private Limited.";
+
+    private const string PropertyText = UnitClause + " " + AssetsClause;
 
     private static RocCharge ChargeWithParticulars() => new()
     {
@@ -486,12 +489,12 @@ public class ChargesTabRenderingTests
     [Fact]
     public async Task Charge_drawer_shows_one_card_per_property_from_a_completed_ai_extraction()
     {
-        var result = MCAROC_Analysis.Services.PropertyParticulars.PropertyParticularsAi.Validate("""
+        var result = MCAROC_Analysis.Services.PropertyParticulars.PropertyParticularsAi.Validate($$"""
             {"properties":[
-              {"assetClass":"Immovable","kind":"Premises","unitNumber":"5c","floor":"5th","building":"Godrej One","parkingSpaces":43,
+              {"sourceText":"{{UnitClause}}","assetClass":"Immovable","kind":"Premises","unitNumber":"5c","floor":"5th","building":"Godrej One","parkingSpaces":43,
                "areas":[{"value":27864.63,"unit":"SqFt","basis":"Carpet","equivalentValue":2588.68,"equivalentUnit":"SqM"}],
                "localities":["Pirojshanagar","Vikhroli"],"surveyNumbers":[]},
-              {"assetClass":"Movable","kind":"CurrentAssets","owner":"Godrej Real Estate Private Limited","areas":[],"surveyNumbers":[],"localities":[]}]}
+              {"sourceText":"{{AssetsClause}}","assetClass":"Movable","kind":"CurrentAssets","owner":"Godrej Real Estate Private Limited","areas":[],"surveyNumbers":[],"localities":[]}]}
             """, PropertyText).Result!;
         var vm = CreateViewModel();
         vm.Charges = [ChargeWithParticulars()];
