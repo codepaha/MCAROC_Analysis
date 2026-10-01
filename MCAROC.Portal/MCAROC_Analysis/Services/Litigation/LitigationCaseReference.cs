@@ -43,17 +43,57 @@ public sealed partial record LitigationCaseReference(string TypeLetters, string 
         return new LitigationCaseReference(prefix.Length > 0 ? prefix : Letters(c.CaseType ?? ""), serials[0], year);
     }
 
-    /// <summary>Same serial and year; type letters must not contradict ("TP" matches "TPIB", "CP" matches "CPIB",
-    /// "TP" never matches "IA"). Either side having no letters is not a contradiction.</summary>
-    public bool Matches(LitigationCaseReference other) =>
-        Serial == other.Serial && Year == other.Year
-        && (TypeLetters.Length == 0 || other.TypeLetters.Length == 0
-            || TypeLetters.StartsWith(other.TypeLetters, StringComparison.Ordinal)
-            || other.TypeLetters.StartsWith(TypeLetters, StringComparison.Ordinal));
+    private static readonly (string Canonical, string[] Prefixes)[] AliasGroups =
+    [
+        ("CA", ["COMPANYAPPEAL", "COMPANYAPPLICATION", "COMPAPP", "COA", "CA"]),
+        ("CP", ["COMPANYPETITION", "COMPPET", "COMPET", "CPIB", "CP"]),
+        ("TP", ["TRANSFERPETITION", "TRANSPET", "TPIB", "TP"]),
+        ("IA", ["INTERLOCUTORYAPPLICATION", "INTERLOCAPP", "IAIB", "IA"]),
+        ("MA", ["MISCELLANEOUSAPPLICATION", "MISCAPP", "MAIB", "MA"]),
+        ("RA", ["REVIEWAPPLICATION", "REVAPP", "RAIB", "RA"]),
+        ("TA", ["TRANSFERAPPLICATION", "TRANSAPP", "TAIB", "TA"]),
+        ("WP", ["WRITPETITION", "WPC", "WP"]),
+        ("SLP", ["SPECIALLEAVEPETITION", "SLPC", "SLPCR", "SLP"]),
+        ("OA", ["ORIGINALAPPLICATION", "OA"]),
+        ("CS", ["CIVILSUIT", "CS"]),
+        ("OS", ["ORIGINALSUIT", "OS"])
+    ];
 
-    /// <summary>The request's cases a question refers to. When letters were given but no case agrees on them, a
-    /// serial+year that identifies exactly one case still counts — a user's "CA 935/2023" for a stored "Company
-    /// Appeal (AT)(Ins) 935/2023" — but an ambiguous one never does.</summary>
+    private static string? GetAliasGroup(string typeLetters)
+    {
+        foreach (var (canonical, prefixes) in AliasGroups)
+        {
+            foreach (var prefix in prefixes)
+            {
+                if (typeLetters.StartsWith(prefix, StringComparison.Ordinal))
+                    return canonical;
+            }
+        }
+        return null;
+    }
+
+    /// <summary>Checks whether two case-type letter strings are compatible. If either side is empty (missing type info),
+    /// they are compatible. If both map to known alias groups, they are compatible iff their groups match (e.g. "CA" and
+    /// "COMPANYAPPEALATINS"). If one or neither is in an alias group, compatibility requires one to be a prefix of the other.
+    /// Explicitly contradictory types (such as "TP" vs "IA" or "CP" vs "IA") are refused.</summary>
+    public static bool AreTypesCompatible(string a, string b)
+    {
+        if (a.Length == 0 || b.Length == 0) return true;
+        var groupA = GetAliasGroup(a);
+        var groupB = GetAliasGroup(b);
+        if (groupA != null && groupB != null)
+            return groupA == groupB;
+        return a.StartsWith(b, StringComparison.Ordinal) || b.StartsWith(a, StringComparison.Ordinal);
+    }
+
+    /// <summary>Same serial and year; type letters must not contradict ("TP" matches "TPIB", "CP" matches "CPIB",
+    /// "CA" matches "Company Appeal", "TP" never matches "IA"). Either side having no letters is not a contradiction.</summary>
+    public bool Matches(LitigationCaseReference other) =>
+        Serial == other.Serial && Year == other.Year && AreTypesCompatible(TypeLetters, other.TypeLetters);
+
+    /// <summary>The request's cases a question refers to. Cases must match on serial, year, and type compatibility
+    /// (including supported abbreviations like "CA" for "Company Appeal"). Explicit contradictions (such as "TP" vs "IA")
+    /// are never picked, even if only one serial/year match exists.</summary>
     public static IReadOnlyList<LitigationCase> FindReferencedCases(string question, IEnumerable<LitigationCase> cases)
     {
         var asked = Extract(question);
@@ -64,8 +104,7 @@ public sealed partial record LitigationCaseReference(string TypeLetters, string 
         {
             var sameNumber = withRefs.Where(x => x.Ref!.Serial == q.Serial && x.Ref.Year == q.Year).ToList();
             var agreeing = sameNumber.Where(x => q.Matches(x.Ref!)).ToList();
-            var picked = agreeing.Count > 0 ? agreeing : sameNumber.Count == 1 ? sameNumber : [];
-            foreach (var x in picked)
+            foreach (var x in agreeing)
                 if (!found.Contains(x.Case)) found.Add(x.Case);
         }
         return found;

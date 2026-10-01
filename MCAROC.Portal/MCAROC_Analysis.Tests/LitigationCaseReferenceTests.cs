@@ -72,6 +72,24 @@ public class LitigationCaseReferenceTests
         Assert.Empty(found);
     }
 
+    [Fact]
+    public void ContradictingCaseType_DoesNotMatch_EvenWhenSoleSerialAndYearCandidate()
+    {
+        // P1 regression: TP 255/2019 vs IA(IB) 255/CB/2019 must not match even if IA is the sole candidate
+        var ia = Case(7, "IA(IB) 255/CB/2019");
+        var foundTp = LitigationCaseReference.FindReferencedCases("What is the current status of TP 255/2019?", [ia]);
+        Assert.Empty(foundTp);
+
+        // CP vs IA must not match even if IA is the sole candidate
+        var foundCp = LitigationCaseReference.FindReferencedCases("status of CP 255/2019", [ia]);
+        Assert.Empty(foundCp);
+
+        // Positive control: TP matches TP(IB)
+        var tp = Case(8, "TP(IB) 255/CTB/2019");
+        var foundPositive = LitigationCaseReference.FindReferencedCases("What is the current status of TP 255/2019?", [tp]);
+        Assert.Equal([tp], foundPositive);
+    }
+
     [Theory]
     [InlineData("09-01-2025", 2025, 1, 9)]
     [InlineData("20/07/2026", 2026, 7, 20)]

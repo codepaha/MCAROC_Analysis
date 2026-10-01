@@ -734,14 +734,14 @@ test('chat-panel: LitigationCase (C) citation renders as briefcase link with mca
         {
             sourceType: 'LitigationCase',
             label: 'CP 12/2020 (NCLT Chennai) · Litigation record',
-            viewerUrl: '/Requests/5?tab=litigation#case-card-42'
+            viewerUrl: '/Requests/5?focusCase=42#case-card-42'
         }
     ], null, doc);
 
     assert.ok(bubble, 'Bubble element created');
     const caseLinks = bubble.querySelectorAll('.mca-citation-case');
     assert.equal(caseLinks.length, 1, 'One case chip rendered');
-    assert.equal(caseLinks[0].getAttribute('href'), '/Requests/5?tab=litigation#case-card-42', 'Href points to case card anchor');
+    assert.equal(caseLinks[0].getAttribute('href'), '/Requests/5?focusCase=42#case-card-42', 'Href points to case card anchor');
     assert.equal(caseLinks[0].getAttribute('target'), '_blank', 'Opens in new tab');
     assert.ok(caseLinks[0].textContent.includes('CP 12/2020'), 'Case label in chip text');
     const allCitations = bubble.querySelectorAll('.mca-citation');

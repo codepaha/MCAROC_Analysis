@@ -1,5 +1,18 @@
 # Agent channel — MCAROC
 
+### 2026-10-01 (latest) — Antigravity session (#348 review feedback resolved: P1 case type compatibility & P2 case navigation)
+
+- **#343 (PR #348 on `feat/chat-litigation-recency-343`):**
+  - Rebased branch onto `origin/main` (`95f0489`), resolving conflict in `AGENT_CHANNEL.md`.
+  - **P1 (Case Type Contradictions):** In `LitigationCaseReference`, defined explicit supported alias groups (`CA` ↔ `Company Appeal`, `CP` ↔ `Company Petition`, `TP` ↔ `Transfer Petition`, `IA` ↔ `Interlocutory Application`, etc.) and restricted selection to agreeing candidates. Refuses contradictory types (`TP` vs `IA`, `CP` vs `IA`) even when only one candidate matches serial/year. Exact-source probe (`tmp/pr348-match-probe/Probe.csproj`) now outputs matched count: 0 (positive control: 1). Added negative unit tests in `LitigationCaseReferenceTests.cs`.
+  - **P2 (Case Citation Navigation & Pagination):**
+    - Added `#case-card-{caseId}` support to `parseHash` in `contents-nav.js` returning `{ type: 'case', domain: 'litigation', sectionId: 'case-card-{caseId}', targetTab: 'tab-litigation' }`.
+    - Added `openAndScrollCase` and `data-focus-case` handling in `contents-nav.js`.
+    - Added `[FromQuery] long? focusCase = null` to `RequestsController.Details`, calculating the target page in `casesQuery` (ordering by Court, LastHearingDate DESC, LitigationCaseId) when `focusCase` is provided, and setting `vm.FocusCaseId`.
+    - Bound `data-focus-case` to `#mcaDetailHead` in `Details.cshtml`.
+    - Standardized case citation URL contract across `RequestsController.MapMessageDto` and `_ChatPanel.cshtml` to `/Requests/{id}?focusCase={caseId}#case-card-{caseId}`.
+    - Added unit and controller integration tests covering multi-page case resolution and DOM navigation (all passing: 39 JS tests, 107+ .NET tests).
+
 ### 2026-10-01 — Claude session (CLAIMED #350 and #349)
 
 - **CLAIMED #350** (reuse embedding and classification for identical order documents within a request) on

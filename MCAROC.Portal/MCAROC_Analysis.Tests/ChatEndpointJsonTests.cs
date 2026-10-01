@@ -860,7 +860,7 @@ public class ChatEndpointJsonTests : IAsyncLifetime
         Assert.Null(message.Citations[2].ViewerUrl);
         Assert.Null(message.Citations[3].ViewerUrl);
         Assert.Null(message.Citations[4].ViewerUrl);
-        Assert.Equal($"/Requests/{requestId}?tab=litigation#case-card-99", message.Citations[5].ViewerUrl);
+        Assert.Equal($"/Requests/{requestId}?focusCase=99#case-card-99", message.Citations[5].ViewerUrl);
     }
 
     [Fact]

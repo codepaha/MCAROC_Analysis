@@ -150,6 +150,16 @@
         const clean = hashStr.startsWith('#') ? hashStr.substring(1) : hashStr;
         if (!clean) return null;
 
+        // 0. Case card anchor: case-card-{id}
+        if (clean.startsWith('case-card-')) {
+            return {
+                type: 'case',
+                domain: 'litigation',
+                sectionId: clean,
+                targetTab: 'tab-litigation'
+            };
+        }
+
         // 1. Direct canonical section: sec-{domain}-{id}
         if (clean.startsWith('sec-')) {
             const parts = clean.split('-');
@@ -324,6 +334,24 @@
     }
 
     /**
+     * Focus case card and scroll, ensuring Litigation tab is active.
+     */
+    function openAndScrollCase(caseId, doc, win, bootstrapLib) {
+        const d = doc || (typeof document !== 'undefined' ? document : null);
+        if (!d) return;
+        const card = d.getElementById('case-card-' + caseId);
+        if (!card) return;
+
+        const w = win || (typeof window !== 'undefined' ? window : null);
+        const bLib = bootstrapLib || (typeof bootstrap !== 'undefined' ? bootstrap : null);
+
+        const litTabBtn = d.querySelector('#mcaTabs button[data-bs-target="#tab-litigation"]');
+        ensureTabActive(litTabBtn, function () {
+            scrollToSection(card, w);
+        }, bLib);
+    }
+
+    /**
      * Unified controller initialization.
      */
     function initDetailsNav(options) {
@@ -340,6 +368,10 @@
         const focusCharge = (options && options.focusCharge)
             || (head && head.dataset && (head.dataset.focusCharge || head.dataset.focusChargeId))
             || (head && head.getAttribute && (head.getAttribute('data-focus-charge') || head.getAttribute('data-focus-charge-id')))
+            || '';
+        const focusCase = (options && options.focusCase)
+            || (head && head.dataset && (head.dataset.focusCase || head.dataset.focusCaseId))
+            || (head && head.getAttribute && (head.getAttribute('data-focus-case') || head.getAttribute('data-focus-case-id')))
             || '';
 
         const tabKey = 'mca-v2-' + reqId + '-tab';
@@ -606,11 +638,15 @@
 
         if (focusCharge && (!parsed || parsed.domain === 'charges')) {
             openAndScrollCharge(focusCharge, d, w, bLib);
+        } else if (focusCase && (!parsed || parsed.domain === 'litigation')) {
+            openAndScrollCase(focusCase, d, w, bLib);
         } else {
             const navigated = resolveAndNavigateHash(initialHash);
             if (!navigated) {
                 if (focusCharge) {
                     openAndScrollCharge(focusCharge, d, w, bLib);
+                } else if (focusCase) {
+                    openAndScrollCase(focusCase, d, w, bLib);
                 } else {
                     let savedTab = null;
                     try {
@@ -648,6 +684,7 @@
             ensureTabActive: ensureTabActive,
             scrollToSection: scrollToSection,
             openAndScrollCharge: openAndScrollCharge,
+            openAndScrollCase: openAndScrollCase,
             resolveAndNavigateHash: resolveAndNavigateHash,
             destroy: function () {
                 if (detailHeadObserver) detailHeadObserver.disconnect();
@@ -672,6 +709,7 @@
         ensureTabActive: ensureTabActive,
         scrollToSection: scrollToSection,
         openAndScrollCharge: openAndScrollCharge,
+        openAndScrollCase: openAndScrollCase,
         initDetailsNav: initDetailsNav
     };
 }));

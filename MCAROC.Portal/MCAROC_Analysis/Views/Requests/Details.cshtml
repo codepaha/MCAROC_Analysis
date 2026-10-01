@@ -23,7 +23,8 @@
 @* ─────────────────────────  Fixed company header + domain tabs  ───────────────────────── *@
 <div class="mca-detail-head" id="mcaDetailHead"
      data-request-id="@r.RequestId"
-     data-focus-charge="@(Model.FocusChargeId?.ToString() ?? "")">
+     data-focus-charge="@(Model.FocusChargeId?.ToString() ?? "")"
+     data-focus-case="@(Model.FocusCaseId?.ToString() ?? "")">
     <div class="mca-company-head">
         <div class="mca-company-id">
             <h1>@r.CompanyName</h1>
