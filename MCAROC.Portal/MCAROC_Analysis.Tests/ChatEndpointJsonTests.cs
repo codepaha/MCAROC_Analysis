@@ -846,7 +846,8 @@ public class ChatEndpointJsonTests : IAsyncLifetime
             new("LitigationChunk", 5, "TP 255/2019", 2, null, null, "TP 255/2019 · Page 2", retained),
             new("OrderOutcome", null, null, null, "LitigationOrderClassification", 2, "Expired order", expired),
             new("OrderOutcome", null, null, null, "LitigationOrderClassification", 3, "Another request's order", foreign),
-            new("OrderOutcome", null, null, null, "OrderOutcomeCoverage", null, "Order-outcome classification coverage", null)
+            new("OrderOutcome", null, null, null, "OrderOutcomeCoverage", null, "Order-outcome classification coverage", null),
+            new("LitigationCase", null, null, null, "LitigationCase", 99, "TP 255/2019 · Litigation record", null, 99)
         };
 
         var result = await NewController(db).AskChat(requestId, new AskChatJsonRequest { Question = "Which orders imposed a fine?", ClientTurnId = Guid.NewGuid() },
@@ -859,6 +860,7 @@ public class ChatEndpointJsonTests : IAsyncLifetime
         Assert.Null(message.Citations[2].ViewerUrl);
         Assert.Null(message.Citations[3].ViewerUrl);
         Assert.Null(message.Citations[4].ViewerUrl);
+        Assert.Equal($"/Requests/{requestId}?tab=litigation#case-card-99", message.Citations[5].ViewerUrl);
     }
 
     [Fact]

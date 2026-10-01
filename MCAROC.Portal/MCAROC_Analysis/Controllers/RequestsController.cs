@@ -1851,6 +1851,16 @@ public class RequestsController(
                             {
                                 viewerUrl = $"/Requests/{requestId}/Litigation/Orders/{docId.Value}/download";
                             }
+                            else if (sourceType == "LitigationCase")
+                            {
+                                long? caseId = cit.TryGetProperty("LitigationCaseId", out var lci) && lci.ValueKind == JsonValueKind.Number && lci.TryGetInt64(out var lcVal) && lcVal > 0
+                                    ? lcVal
+                                    : (cit.TryGetProperty("EntityId", out var ei) && ei.ValueKind == JsonValueKind.Number && ei.TryGetInt64(out var eVal) && eVal > 0 ? eVal : null);
+                                if (caseId.HasValue)
+                                {
+                                    viewerUrl = $"/Requests/{requestId}?tab=litigation#case-card-{caseId.Value}";
+                                }
+                            }
 
                             dto.Citations.Add(new ChatCitationDto
                             {
