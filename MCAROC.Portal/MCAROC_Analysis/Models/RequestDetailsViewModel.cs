@@ -2,6 +2,7 @@ using System.Text.Json;
 using MCAROC_Analysis.Data.Entities;
 using MCAROC_Analysis.Services.Analysis;
 using MCAROC_Analysis.Services.Analysis.Rules;
+using MCAROC_Analysis.Services.LitigationData;
 
 namespace MCAROC_Analysis.Models;
 
@@ -40,6 +41,10 @@ public class RequestDetailsViewModel
     public List<Litigation> Litigations { get; set; } = [];
     public List<FinancialDisputeCase> FinancialDisputeCases { get; set; } = [];
     public LitigationTabViewModel? LitigationDataLake { get; set; }
+
+    /// <summary>Litigation that touches what the open charges secure (see <c>ChargeLitigationLinker</c>); null
+    /// when it could not be computed. Drives the Charges-tab badges/drawer and the Litigation-tab banner.</summary>
+    public ChargeLitigationSummary? ChargeLitigation { get; set; }
 
     // Phase 7.0 — completeness layer
     public List<CompanyOfficer> CompanyOfficers { get; set; } = [];

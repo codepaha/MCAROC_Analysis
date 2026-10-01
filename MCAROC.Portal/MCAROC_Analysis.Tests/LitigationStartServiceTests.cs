@@ -283,6 +283,26 @@ public sealed class LitigationStartServiceTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Manual_analysis_is_refused_when_the_earlier_result_was_InsufficientEvidence_and_nothing_changed()
+    {
+        // No order text yet: the case and the portfolio both finish as InsufficientEvidence. That is a finished
+        // outcome, so clicking again must not create another run until the evidence changes.
+        var (request, _) = await SeedFullyAnalysedRequestAsync();
+        await using (var mutate = CreateContext())
+        {
+            await mutate.LitigationCaseAiAnalyses.ExecuteUpdateAsync(s => s.SetProperty(x => x.Status, LitigationAiAnalysisItemStatus.InsufficientEvidence));
+            await mutate.LitigationPortfolioAiAnalyses.ExecuteUpdateAsync(s => s.SetProperty(x => x.Status, LitigationAiAnalysisItemStatus.InsufficientEvidence));
+        }
+        await using var db = CreateContext();
+
+        var result = await Starter(db).StartAnalysisAsync(request.RequestId, request.ClientId, PaidCallTrigger.Manual, CancellationToken.None);
+
+        Assert.False(result.Started);
+        Assert.Contains("already been analysed", result.Message);
+        Assert.Equal(1, await db.LitigationAiAnalysisRuns.CountAsync(r => r.RequestId == request.RequestId));
+    }
+
+    [Fact]
     public async Task Manual_analysis_runs_again_once_a_case_changes()
     {
         var (request, caseId) = await SeedFullyAnalysedRequestAsync();

@@ -209,6 +209,85 @@ public static partial class LitigationOrderAddressMatcher
     }
 
     /// <summary>
+    /// Strong matches only, for scanning a whole request (every case, not one page of cards). Produces exactly the
+    /// Strong results of <see cref="MatchCases"/> but skips the costly address comparison wherever it cannot
+    /// succeed: a Strong match needs a plot/survey/door number in common, so each paragraph is tokenised once and a
+    /// charged address is only compared when it shares a plot key with that paragraph. Addresses with no plot key
+    /// can never be Strong and are dropped. On a 22 MB corpus this is the difference between minutes and seconds.
+    /// </summary>
+    public static List<LitigationPropertyMatchResult> MatchCasesStrongOnly(
+        IReadOnlyList<LitigationAddressTarget> addressPool,
+        IReadOnlyList<LitigationCase> cases,
+        IReadOnlyDictionary<long, LitigationOrderDocument> orderDocuments)
+    {
+        var targets = addressPool
+            .Select(t => (Target: t, Keys: AddressMatcher.PlotKeysOfAddress(t.AddressText)))
+            .Where(x => x.Keys.Count > 0)
+            .ToList();
+        if (targets.Count == 0 || cases.Count == 0) return [];
+
+        var results = new List<LitigationPropertyMatchResult>();
+        foreach (var c in cases)
+        {
+            if (IsNcltCase(c)) continue;
+            foreach (var order in c.Orders)
+            {
+                if (IsNcltOrder(order)) continue;
+                if (!orderDocuments.TryGetValue(order.LitigationCaseOrderId, out var doc)) continue;
+                if (string.IsNullOrWhiteSpace(doc.ExtractedText) || doc.TextExtractionStatus != FilingDocumentProcessingStatus.TextExtracted) continue;
+                results.AddRange(MatchTextStrongOnly(targets, order.LitigationCaseOrderId, order.OrderDate, order.OrderType, doc.ExtractedText));
+            }
+        }
+        return results;
+    }
+
+    private static List<LitigationPropertyMatchResult> MatchTextStrongOnly(
+        IReadOnlyList<(LitigationAddressTarget Target, HashSet<string> Keys)> targets,
+        long orderId, string? orderDate, string? orderType, string extractedText)
+    {
+        var matches = new List<LitigationPropertyMatchResult>();
+        foreach (var page in SegmentPages(extractedText))
+        {
+            var paragraphs = SplitParagraphs(page.Text);
+            var paragraphKeys = paragraphs.Select(AddressMatcher.PlotKeysIn).ToList();
+            var pageKeys = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var k in paragraphKeys) pageKeys.UnionWith(k);
+            var wholePageKeys = paragraphs.Count > 1 ? AddressMatcher.PlotKeysIn(page.Text) : pageKeys;
+
+            foreach (var (target, keys) in targets)
+            {
+                if (!keys.Overlaps(wholePageKeys)) continue; // no shared plot number anywhere on the page: cannot be Strong
+
+                var matched = false;
+                for (var i = 0; i < paragraphs.Count; i++)
+                {
+                    if (!keys.Overlaps(paragraphKeys[i])) continue;
+                    var r = AddressMatcher.Match(target.AddressText, paragraphs[i], target.ExcludedPlaceNames);
+                    if (r.Strength != AddressMatchStrength.Strong) continue;
+                    matches.Add(ToResult(target, orderId, orderDate, orderType, page.PageNumber, r, CleanExcerpt(paragraphs[i])));
+                    matched = true;
+                    break; // one match per (page, target), as in MatchText
+                }
+                if (matched) continue;
+
+                var pageResult = AddressMatcher.Match(target.AddressText, page.Text, target.ExcludedPlaceNames);
+                if (pageResult.Strength == AddressMatchStrength.Strong)
+                    matches.Add(ToResult(target, orderId, orderDate, orderType, page.PageNumber, pageResult, ExtractSnippet(page.Text, pageResult)));
+            }
+        }
+
+        return matches
+            .GroupBy(m => (m.LitigationCaseOrderId, m.SourceLabel, m.AddressText, m.PageNumber))
+            .Select(g => g.First())
+            .ToList();
+    }
+
+    private static LitigationPropertyMatchResult ToResult(LitigationAddressTarget target, long orderId, string? orderDate, string? orderType,
+        int pageNumber, AddressMatchResult r, string excerpt) => new(
+            orderId, orderDate, orderType, pageNumber, target.SourceLabel, target.AddressText, r.Strength, r.MatchedPinCode,
+            r.MatchedPlotNumbers, r.MatchedLocalities, excerpt, target.IsCompanyPremises, target.RocChargeId, target.RocChargeNumber, target.ChargeHolder);
+
+    /// <summary>
     /// Matches a collection of litigation case orders against the address pool.
     /// Excludes orders from NCLT / NCLAT cases (#191).
     /// </summary>

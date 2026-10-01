@@ -764,6 +764,24 @@ public class RegistryDashboardTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task RegistryExplorer_StatusOptions_WorkWithTheSizeLimitedCacheTheAppUses()
+    {
+        // Program.cs registers AddMemoryCache(o => o.SizeLimit = 256): an entry with no Size throws. A cache with
+        // no limit (the other tests) hides that, and the failure is swallowed into the 5-status fallback.
+        await using var db = CreateContext();
+        var status = $"Sized Status {Guid.NewGuid().ToString("N")[..8]}";
+        await SeedRecordAsync(db, $"U{Random.Shared.Next(10000, 99999)}DL2003PTC{Random.Shared.Next(100000, 999999)}",
+            "Sized Cache Co Pvt Ltd", CompanyMasterRecordType.Company, status: status);
+        var cache = new MemoryCache(new MemoryCacheOptions { SizeLimit = 256 });
+        var service = CreateQueryService(db, cache);
+
+        var options = await service.GetStatusOptionsAsync();
+
+        Assert.Contains(status, options); // the real list, not the common-statuses fallback
+        Assert.Same(options, await service.GetStatusOptionsAsync()); // and it was cached
+    }
+
+    [Fact]
     public async Task RegistryExplorer_View_UsesAStatusDropdown_AndDefaultsEntityTypeToAll()
     {
         var root = new DirectoryInfo(AppContext.BaseDirectory);

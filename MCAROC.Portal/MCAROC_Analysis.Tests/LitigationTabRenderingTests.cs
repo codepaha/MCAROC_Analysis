@@ -316,4 +316,64 @@ public class LitigationTabRenderingTests
         Assert.DoesNotContain("litigation-reuse-provenance-banner", html);
         Assert.DoesNotContain("reused from another request", html);
     }
+
+    // ── charged-property banner and case marker ──────────────────────────────────────────────────────────
+
+    private static RequestDetailsViewModel LakeModel(MCAROC_Analysis.Services.LitigationData.ChargeLitigationSummary? summary, bool withCard = false)
+    {
+        var vm = CreateViewModel();
+        var lake = new LitigationTabViewModel { Request = new McaRequest { RequestId = 7, CompanyName = "Test Co" } };
+        if (withCard) lake.Cases.Add(new LitigationCaseCardViewModel { LitigationCaseId = 10, CaseNumber = "WP(C) 11227/2019" });
+        vm.LitigationDataLake = lake;
+        vm.ChargeLitigation = summary;
+        return vm;
+    }
+
+    [Fact]
+    public async Task Litigation_tab_shows_a_banner_listing_the_charges_a_case_touches_with_the_caveats()
+    {
+        var link = new MCAROC_Analysis.Services.LitigationData.ChargeLitigationLink(
+            1, "CHG-101", "State Bank of India", MCAROC_Analysis.Services.LitigationData.ChargeLitigationSignal.ImmovableAddress,
+            new MCAROC_Analysis.Services.LitigationData.LinkedLitigation("Court records", 10, null, "WP(C) 11227/2019", "High Court of Orissa", "Pending", null, null),
+            "The order names the property.", 500, 2, "excerpt", "Order");
+        var vm = LakeModel(new MCAROC_Analysis.Services.LitigationData.ChargeLitigationSummary([link], 1, 1, 2, true), withCard: true);
+
+        var html = await RenderLitigationTabAsync(vm);
+
+        Assert.Contains("charge-litigation-banner", html);
+        Assert.Contains("Litigation touches charged property", html);
+        Assert.Contains("CHG-101", html);
+        Assert.Contains("order names the charged property", html);
+        Assert.Contains("#case-card-10", html);
+        Assert.Contains("Only strong matches are shown", html);
+        Assert.Contains("NCLT/NCLAT orders are not scanned", html);
+        Assert.Contains("2 order(s) had no extractable text", html);
+        // and the linked case's card carries a marker, worded for the signal (this link is the property itself)
+        Assert.Contains("Touches charged property", html);
+        Assert.DoesNotContain("Charge holder's recovery case", html);
+    }
+
+    [Fact]
+    public async Task Litigation_tab_with_no_links_explains_what_was_compared_instead_of_implying_clean()
+    {
+        var vm = LakeModel(new MCAROC_Analysis.Services.LitigationData.ChargeLitigationSummary([], 3, 2, 1, true), withCard: true);
+
+        var html = await RenderLitigationTabAsync(vm);
+
+        Assert.DoesNotContain("charge-litigation-banner", html);
+        Assert.Contains("charge-litigation-none", html);
+        Assert.Contains("2 order(s) with text were compared", html);
+        Assert.Contains("1 had no extractable text", html);
+        Assert.Contains("NCLT/NCLAT orders are not scanned", html);
+        Assert.DoesNotContain("Touches charged property", html);
+    }
+
+    [Fact]
+    public async Task Litigation_tab_without_a_charge_comparison_shows_neither_banner_nor_note()
+    {
+        var html = await RenderLitigationTabAsync(LakeModel(null, withCard: true));
+
+        Assert.DoesNotContain("charge-litigation-banner", html);
+        Assert.DoesNotContain("charge-litigation-none", html);
+    }
 }

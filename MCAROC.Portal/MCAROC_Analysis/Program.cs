@@ -120,6 +120,7 @@ builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddScoped<IPaidCallAdmission, PaidCallAdmissionService>();
 builder.Services.AddScoped<LitigationReuseService>();
 builder.Services.AddScoped<LitigationStartService>();
+builder.Services.AddScoped<ChargeLitigationService>();
 builder.Services.AddHostedService<PaidCallAdmissionSweepWorker>();
 // Pipeline coordinator (docs/pipeline-automation-plan.md §3): records every request's stage states and outcome.
 // Pipeline:Mode=Enforce lets it take the actions its Pipeline:Enforce families allow (today only the litigation
