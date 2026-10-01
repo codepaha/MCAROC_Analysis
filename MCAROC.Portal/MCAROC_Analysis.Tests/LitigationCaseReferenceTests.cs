@@ -123,9 +123,14 @@ public class LitigationCaseReferenceTests
         Assert.Equal([appeal], LitigationCaseReference.FindReferencedCases("status of Comp. App. 935/2023", [appeal]));
         Assert.Equal([application], LitigationCaseReference.FindReferencedCases("status of Comp. App. 935/2023", [application]));
 
+        // Unambiguous COAPP variants (Co. App.) against sole candidates in both directions
+        Assert.Equal([appeal], LitigationCaseReference.FindReferencedCases("status of Co. App. 935/2023", [appeal]));
+        Assert.Equal([application], LitigationCaseReference.FindReferencedCases("status of Co. App. 935/2023", [application]));
+
         // Ambiguous abbreviation when both Appeal and Application candidates exist -> returns empty
         Assert.Empty(LitigationCaseReference.FindReferencedCases("status of CA 935/2023", [appeal, application]));
         Assert.Empty(LitigationCaseReference.FindReferencedCases("status of Comp. App. 935/2023", [appeal, application]));
+        Assert.Empty(LitigationCaseReference.FindReferencedCases("status of Co. App. 935/2023", [appeal, application]));
     }
 
     [Theory]

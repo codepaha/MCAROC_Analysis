@@ -1,19 +1,21 @@
 # Agent channel — MCAROC
 
-### 2026-10-01 (latest) — Antigravity session (#348 re-review feedback resolved: P1 Company Appeal vs Company Application separation)
+### 2026-10-01 (latest) — Antigravity session (#348 re-review feedback resolved: Co. App. ambiguity & COA prefix resolution)
 
 - **#343 (PR #348 on `feat/chat-litigation-recency-343`):**
-  - **P1 (Company Appeal vs Company Application Semantic Separation):** In `LitigationCaseReference`, separated `COMPANY_APPEAL` and `COMPANY_APPLICATION` into distinct semantic alias groups (`COMPANYAPPEAL`, `COAPPEAL`, `COA`, `CAAT`, `COMPAPPAT` vs `COMPANYAPPLICATION`, `COMPAPPLICATION`, `COMPAPPL`, etc.) so explicit Appeal and Application strings are never treated as equivalent.
-  - Ambiguous abbreviations (`CA`, `COMPAPP`, `CAIB`) resolve against unambiguous candidates when only one case type is present, but safely refuse selection when candidates of both distinct case types share the same serial and year.
-  - Probe counterexample (`What is the current status of Company Appeal 935/2023?` against stored `Company Application 935/2023`) now returns 0 matches.
-  - Added comprehensive negative and positive regressions in both directions (sole wrong candidate and both candidates) plus ambiguous abbreviation handling in `LitigationCaseReferenceTests.cs`.
+  - **P1 (Company Appeal vs Company Application Semantic Separation):** In `LitigationCaseReference`, separated `COMPANY_APPEAL` and `COMPANY_APPLICATION` into distinct semantic alias groups so explicit Appeal and Application strings are never treated as equivalent.
+  - **Co. App. / COA Prefix Ambiguity Resolution:** Fixed bug where `COA` prefix in `COMPANY_APPEAL` consumed `COAPP` (and potentially `COAPPLICATION`) before ambiguity handling:
+    - Constrained `COA` prefix to exact `COA` or `COAAT...`.
+    - Evaluated ambiguous abbreviations (`CA`, `COMPAPP`, `COAPP`, etc.) before alias group resolution in `AreTypesCompatible`, and ensured `GetAliasGroup` returns `null` for ambiguous abbreviations.
+    - Verified `status of Co. App. 935/2023` refuses selection when both Appeal and Application candidates exist (probe-v3 now outputs `selected: `).
+  - Added regressions in `LitigationCaseReferenceTests.cs` for `Co. App.` against sole candidates in both directions and against conflicting candidate pairs.
+  - All 108 .NET tests and all 39 JavaScript tests pass cleanly.
   - **P2 (Case Citation Navigation & Pagination - previously verified & accepted):**
     - Added `#case-card-{caseId}` support to `parseHash` in `contents-nav.js` returning `{ type: 'case', domain: 'litigation', sectionId: 'case-card-{caseId}', targetTab: 'tab-litigation' }`.
     - Added `openAndScrollCase` and `data-focus-case` handling in `contents-nav.js`.
     - Added `[FromQuery] long? focusCase = null` to `RequestsController.Details`, calculating target page in `casesQuery` (ordering by Court, LastHearingDate DESC, LitigationCaseId) when `focusCase` is provided, setting `vm.FocusCaseId`.
     - Bound `data-focus-case` to `#mcaDetailHead` in `Details.cshtml`.
     - Standardized case citation URL contract across `RequestsController.MapMessageDto` and `_ChatPanel.cshtml` to `/Requests/{id}?focusCase={caseId}#case-card-{caseId}`.
-  - All 108 .NET tests (including `LitigationCaseReferenceTests`, `LitigationRecencyRoutingTests`, `ChatEndpointJsonTests`, `LitigationTabAndControllerTests`) and all 39 JavaScript tests pass cleanly.
 
 ### 2026-10-01 — Claude session (CLAIMED #350 and #349)
 

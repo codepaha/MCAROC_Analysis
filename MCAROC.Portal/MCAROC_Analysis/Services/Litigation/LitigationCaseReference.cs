@@ -45,8 +45,8 @@ public sealed partial record LitigationCaseReference(string TypeLetters, string 
 
     private static readonly (string Canonical, string[] Prefixes)[] AliasGroups =
     [
-        ("COMPANY_APPEAL", ["COMPANYAPPEAL", "COAPPEAL", "COA", "CAAT", "COMPAPPAT"]),
-        ("COMPANY_APPLICATION", ["COMPANYAPPLICATION", "COMPAPPLICATION", "COAPPLICATION", "COMPANYAPPLN", "COMPAPPLN", "COMPANYAPPL", "COMPAPPL", "COAPPL", "COMPANYAPPN", "COMPAPPN", "COAPPN"]),
+        ("COMPANY_APPEAL", ["COMPANYAPPEAL", "COMPAPPEAL", "COAPPEAL", "CAAT", "COMPAPPAT", "COAAT", "COA"]),
+        ("COMPANY_APPLICATION", ["COMPANYAPPLICATION", "COMPAPPLICATION", "COAPPLICATION", "COMPANYAPPLN", "COMPAPPLN", "COAPPLN", "COMPANYAPPL", "COMPAPPL", "COAPPL", "COMPANYAPPN", "COMPAPPN", "COAPPN"]),
         ("CP", ["COMPANYPETITION", "COMPPET", "COMPET", "CPIB", "CP"]),
         ("TP", ["TRANSFERPETITION", "TRANSPET", "TPIB", "TP"]),
         ("IA", ["INTERLOCUTORYAPPLICATION", "INTERLOCAPP", "IAIB", "IA"]),
@@ -62,41 +62,53 @@ public sealed partial record LitigationCaseReference(string TypeLetters, string 
 
     private static string? GetAliasGroup(string typeLetters)
     {
+        if (IsAmbiguousCompanyAbbreviation(typeLetters))
+            return null;
+
         foreach (var (canonical, prefixes) in AliasGroups)
         {
             foreach (var prefix in prefixes)
             {
-                if (typeLetters.StartsWith(prefix, StringComparison.Ordinal))
+                if (prefix == "COA")
+                {
+                    if (typeLetters == "COA" || typeLetters.StartsWith("COAAT", StringComparison.Ordinal))
+                        return canonical;
+                }
+                else if (typeLetters.StartsWith(prefix, StringComparison.Ordinal))
+                {
                     return canonical;
+                }
             }
         }
         return null;
     }
 
     private static bool IsAmbiguousCompanyAbbreviation(string typeLetters) =>
-        typeLetters is "CA" or "COMPAPP" or "COMPAP" or "COAPP" or "CAIB";
+        typeLetters is "CA" or "COMPAPP" or "COMPAP" or "COAPP" or "COAP" or "CAIB";
 
     /// <summary>Checks whether two case-type letter strings are compatible. If either side is empty (missing type info),
     /// they are compatible. If both map to known alias groups, they are compatible iff their groups match (e.g. "COMPANY_APPEAL"
-    /// and "COMPANYAPPEALATINS"). Ambiguous abbreviations such as "CA" or "COMPAPP" can match either "Company Appeal" or
+    /// and "COMPANYAPPEALATINS"). Ambiguous abbreviations such as "CA", "COMPAPP", or "COAPP" can match either "Company Appeal" or
     /// "Company Application", but explicit "Appeal" and "Application" strings are distinct semantic types and never match each other.
     /// Explicitly contradictory types (such as "TP" vs "IA" or "Company Appeal" vs "Company Application") are refused.</summary>
     public static bool AreTypesCompatible(string a, string b)
     {
         if (a.Length == 0 || b.Length == 0) return true;
-        var groupA = GetAliasGroup(a);
-        var groupB = GetAliasGroup(b);
-        if (groupA != null && groupB != null)
-            return groupA == groupB;
 
         var aAmbiguous = IsAmbiguousCompanyAbbreviation(a);
         var bAmbiguous = IsAmbiguousCompanyAbbreviation(b);
         if (aAmbiguous || bAmbiguous)
         {
             if (aAmbiguous && bAmbiguous) return true;
-            var nonAmbiguousGroup = aAmbiguous ? groupB : groupA;
+            var nonAmbiguous = aAmbiguous ? b : a;
+            var nonAmbiguousGroup = GetAliasGroup(nonAmbiguous);
             return nonAmbiguousGroup is "COMPANY_APPEAL" or "COMPANY_APPLICATION";
         }
+
+        var groupA = GetAliasGroup(a);
+        var groupB = GetAliasGroup(b);
+        if (groupA != null && groupB != null)
+            return groupA == groupB;
 
         return a.StartsWith(b, StringComparison.Ordinal) || b.StartsWith(a, StringComparison.Ordinal);
     }
