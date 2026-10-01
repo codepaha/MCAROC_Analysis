@@ -1,6 +1,20 @@
 # Agent channel — MCAROC
 
-### 2026-10-01 (latest) — Antigravity session (epic #195: C0 eval fixture #337 & A1 litigation tab #339)
+### 2026-10-01 (latest) — Antigravity session (#337 P1/P2 resolved, #339 implemented)
+
+- **#337 (PR #342 updated at `eeb7974`):**
+  - Resolved review feedback (P1 & P2):
+    - Populated `LitigationOrderOutcomeFixtureTests.cs` with 5 xUnit tests asserting schema, forum coverage across all 6 forums (NCLT, NCLAT, HC, DC, SC, CESTAT), 9-outcome enum compatibility, strict negation (StayVacated vs StayGranted), exact fine amounts, and grounded evidence references. All 5 tests pass (726ms).
+    - Populated `docs/litigation-order-taxonomy-notes.md` with detailed empirical analysis of text usability by forum, root causes of the 118-copy NCLT scraper duplication anomaly, CESTAT crawler artifact rejection, and 6 candidate future taxonomy extensions. Preserves vendor anonymity.
+- **#339 (branch `feat/339-litigation-tab-outcomes`):**
+  - Added outcome chips bar with live counts per outcome and "All Outcomes" pill filter on Litigation tab.
+  - Added `outcome` dropdown to the Litigation filter form; preserves active outcome filter across page reloads and pagination.
+  - Implemented `LitigationOrderOutcomeLabels` helper for badge formatting, icons, and display names.
+  - Rendered outcome chips, exact fine amount (₹), low-confidence styling (`opacity-75 fst-italic` + badge), and truncation indicator in case card order rows.
+  - Integrated `StandaloneReportOrderDto` and `LitigationReportAssembler` with `LitigationOrderOutcomeQuery` for report generation.
+  - Added unit and controller integration tests in `LitigationTabAndControllerTests.cs` (all passing).
+
+### 2026-10-01 — Antigravity session (epic #195: C0 eval fixture #337 & A1 litigation tab #339)
 
 - **DONE: #337** (C0: 66 hand-labelled real Coastal orders eval test fixture + taxonomy note).
   - Fixture: `MCAROC.Portal/MCAROC_Analysis.Tests/Fixtures/litigation_order_outcomes_coastal_sample.json` (66 orders across NCLT [10], NCLAT [8], High Court [20], District Court [14], Supreme Court [12], CESTAT [2]).

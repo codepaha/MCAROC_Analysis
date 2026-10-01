@@ -104,7 +104,11 @@ public sealed record StandaloneReportOrderDto(
     string AvailabilityDisclosure,
     string CsvStatus,
     string ExtractionLabel,
-    IReadOnlyList<StandaloneReportPropertyMatchDto>? PropertyMatches = null);
+    IReadOnlyList<StandaloneReportPropertyMatchDto>? PropertyMatches = null,
+    IReadOnlyList<LitigationOrderOutcome>? Outcomes = null,
+    decimal? FineAmount = null,
+    ClassificationConfidence? Confidence = null,
+    bool EvidenceTruncated = false);
 
 public sealed record StandaloneReportCaseDto(
     long LitigationCaseId,
@@ -653,6 +657,23 @@ internal sealed class LitigationReportPdfDocument(StandaloneLitigationReport rep
                     {
                         text.Span("Address Overlap: ").Bold().FontSize(7.2f).FontColor(Amber);
                         text.Span(string.Join("; ", order.PropertyMatches.Select(m => $"[{m.SourceLabel}] {m.AddressText} (p. {m.PageNumber})"))).FontSize(7.2f).FontColor(Colors.Grey.Darken2);
+                    });
+                }
+                if (order.Outcomes is { Count: > 0 })
+                {
+                    entry.Item().PaddingTop(2).Text(text =>
+                    {
+                        text.Span("Outcomes: ").Bold().FontSize(7.2f).FontColor(Navy);
+                        var outcomeStrs = order.Outcomes.Select(LitigationOrderOutcomeLabels.Format).ToList();
+                        if (order.FineAmount.HasValue && order.FineAmount > 0)
+                        {
+                            outcomeStrs.Add($"Fine: ₹{order.FineAmount.Value:N0}");
+                        }
+                        if (order.Confidence == ClassificationConfidence.Low)
+                        {
+                            outcomeStrs.Add("(Low Confidence)");
+                        }
+                        text.Span(string.Join(", ", outcomeStrs)).FontSize(7.2f).FontColor(Colors.Grey.Darken2);
                     });
                 }
             });

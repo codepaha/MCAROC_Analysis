@@ -1,4 +1,4 @@
-﻿@using MCAROC_Analysis.Models
+@using MCAROC_Analysis.Models
 @using MCAROC_Analysis.Data.Entities
 @using MCAROC_Analysis.Services.LitigationData
 @model RequestDetailsViewModel
@@ -566,8 +566,19 @@
                         <option value="Disposed" selected="@(Context.Request.Query["status"] == "Disposed")">Disposed</option>
                         <option value="Unknown" selected="@(Context.Request.Query["status"] == "Unknown")">Unknown</option>
                     </select>
+                    <select name="outcome" class="form-select form-select-sm" style="max-width: 170px;">
+                        <option value="">All Outcomes</option>
+                        @foreach (var opt in Enum.GetValues<LitigationOrderOutcome>())
+                        {
+                            var optStr = opt.ToString();
+                            var count = lake.OutcomeCounts.GetValueOrDefault(opt, 0);
+                            <option value="@optStr" selected="@(string.Equals(Context.Request.Query["outcome"], optStr, StringComparison.OrdinalIgnoreCase))">
+                                @LitigationOrderOutcomeLabels.Format(opt) (@count)
+                            </option>
+                        }
+                    </select>
                     <button type="submit" class="btn btn-sm btn-outline-primary">Filter</button>
-                    @if (!string.IsNullOrWhiteSpace(Context.Request.Query["court"]) || !string.IsNullOrWhiteSpace(Context.Request.Query["status"]))
+                    @if (!string.IsNullOrWhiteSpace(Context.Request.Query["court"]) || !string.IsNullOrWhiteSpace(Context.Request.Query["status"]) || !string.IsNullOrWhiteSpace(Context.Request.Query["outcome"]))
                     {
                         <a href="/Requests/@Model.Request.RequestId" class="btn btn-sm btn-outline-secondary">Clear</a>
                     }
@@ -575,6 +586,29 @@
             </div>
         </div>
         <div class="card-body p-3">
+            @if (lake.OutcomeCounts.Count > 0 || lake.TotalClassifiedOrdersCount > 0)
+            {
+                <div class="d-flex flex-wrap align-items-center gap-2 mb-3 pb-2 border-bottom" id="litigation-outcome-chips">
+                    <span class="small fw-bold text-muted text-uppercase me-1"><i class="bi bi-funnel me-1"></i>Order Outcomes:</span>
+                    <a href="?court=@Uri.EscapeDataString(Context.Request.Query["court"].ToString())&status=@Uri.EscapeDataString(Context.Request.Query["status"].ToString())"
+                       class="badge text-decoration-none @(string.IsNullOrWhiteSpace(Context.Request.Query["outcome"]) ? "bg-primary text-white" : "bg-light text-dark border") py-2 px-2">
+                        All Outcomes (@lake.TotalClassifiedOrdersCount)
+                    </a>
+                    @foreach (var outcomeEntry in Enum.GetValues<LitigationOrderOutcome>())
+                    {
+                        var count = lake.OutcomeCounts.GetValueOrDefault(outcomeEntry, 0);
+                        if (count > 0 || string.Equals(Context.Request.Query["outcome"], outcomeEntry.ToString(), StringComparison.OrdinalIgnoreCase))
+                        {
+                            var isSelected = string.Equals(Context.Request.Query["outcome"], outcomeEntry.ToString(), StringComparison.OrdinalIgnoreCase);
+                            <a href="?outcome=@outcomeEntry&court=@Uri.EscapeDataString(Context.Request.Query["court"].ToString())&status=@Uri.EscapeDataString(Context.Request.Query["status"].ToString())"
+                               class="badge text-decoration-none @(isSelected ? "bg-primary text-white shadow-sm" : LitigationOrderOutcomeLabels.BadgeCss(outcomeEntry)) py-2 px-2"
+                               title="@LitigationOrderOutcomeLabels.Format(outcomeEntry)">
+                                <i class="bi @LitigationOrderOutcomeLabels.IconCss(outcomeEntry) me-1"></i>@LitigationOrderOutcomeLabels.Format(outcomeEntry) (@count)
+                            </a>
+                        }
+                    }
+                </div>
+            }
             @if (lake.Cases.Count == 0)
             {
                 <div class="text-muted p-4 text-center border rounded bg-light">
@@ -598,7 +632,7 @@
                         <div class="btn-group btn-group-sm">
                             @if (lake.CurrentPage > 1)
                             {
-                                <a href="?page=@(lake.CurrentPage - 1)&court=@Uri.EscapeDataString(Context.Request.Query["court"].ToString())&status=@Uri.EscapeDataString(Context.Request.Query["status"].ToString())" class="btn btn-outline-secondary">Previous</a>
+                                <a href="?page=@(lake.CurrentPage - 1)&court=@Uri.EscapeDataString(Context.Request.Query["court"].ToString())&status=@Uri.EscapeDataString(Context.Request.Query["status"].ToString())&outcome=@Uri.EscapeDataString(Context.Request.Query["outcome"].ToString())" class="btn btn-outline-secondary">Previous</a>
                             }
                             @for (int p = 1; p <= lake.TotalPages; p++)
                             {
@@ -608,12 +642,12 @@
                                 }
                                 else if (p <= 5 || p > lake.TotalPages - 2 || Math.Abs(p - lake.CurrentPage) <= 1)
                                 {
-                                    <a href="?page=@p&court=@Uri.EscapeDataString(Context.Request.Query["court"].ToString())&status=@Uri.EscapeDataString(Context.Request.Query["status"].ToString())" class="btn btn-outline-secondary">@p</a>
+                                    <a href="?page=@p&court=@Uri.EscapeDataString(Context.Request.Query["court"].ToString())&status=@Uri.EscapeDataString(Context.Request.Query["status"].ToString())&outcome=@Uri.EscapeDataString(Context.Request.Query["outcome"].ToString())" class="btn btn-outline-secondary">@p</a>
                                 }
                             }
                             @if (lake.CurrentPage < lake.TotalPages)
                             {
-                                <a href="?page=@(lake.CurrentPage + 1)&court=@Uri.EscapeDataString(Context.Request.Query["court"].ToString())&status=@Uri.EscapeDataString(Context.Request.Query["status"].ToString())" class="btn btn-outline-secondary">Next</a>
+                                <a href="?page=@(lake.CurrentPage + 1)&court=@Uri.EscapeDataString(Context.Request.Query["court"].ToString())&status=@Uri.EscapeDataString(Context.Request.Query["status"].ToString())&outcome=@Uri.EscapeDataString(Context.Request.Query["outcome"].ToString())" class="btn btn-outline-secondary">Next</a>
                             }
                         </div>
                     </div>

@@ -184,6 +184,10 @@ public sealed class LitigationTabViewModel
     public bool AnalysisInProgress { get; set; }
     /// <summary>True only when a run would analyse something new — a case or order evidence not yet on file.</summary>
     public bool NeedsAnalysis { get; set; }
+
+    public Dictionary<LitigationOrderOutcome, int> OutcomeCounts { get; set; } = [];
+    public int TotalClassifiedOrdersCount { get; set; }
+    public string? SelectedOutcome { get; set; }
 }
 
 public sealed class LitigationCourtSummaryGrid
@@ -284,6 +288,11 @@ public sealed class LitigationOrderRowViewModel
     public string? FailureReason { get; set; }
     public int RefreshCount { get; set; }
     public List<LitigationPropertyMatchViewModel> PropertyMatches { get; set; } = [];
+    public List<LitigationOrderOutcome> Outcomes { get; set; } = [];
+    public decimal? FineAmount { get; set; }
+    public ClassificationConfidence? Confidence { get; set; }
+    public bool EvidenceTruncated { get; set; }
+    public LitigationAiAnalysisItemStatus? ClassificationStatus { get; set; }
 }
 
 public sealed class LitigationPropertyMatchViewModel

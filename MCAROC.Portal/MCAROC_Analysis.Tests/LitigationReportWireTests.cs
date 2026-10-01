@@ -10,6 +10,7 @@ using MCAROC_Analysis.Services.LitigationData;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Data.SqlTypes;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -841,5 +842,178 @@ public sealed class LitigationReportWireTests : IAsyncLifetime
             r.CourtName.Equals("NCLT DELHI", StringComparison.OrdinalIgnoreCase));
         Assert.Equal(2, ncltRow.TotalCases);
         Assert.Equal(2, ncltRow.PendingCases);
+    }
+
+    // ── 10. Gated AI Outcomes: PreAnalysis vs WithAnalysis Reports ───────────
+
+    [Fact]
+    public async Task AssembleAndDownloadPdfReport_PreAnalysisVsWithAnalysis_GatesAiOutcomesAndFines()
+    {
+        await using var db = CreateContext();
+        var client = new Client { ClientCode = "OA" + Guid.NewGuid().ToString("N")[..6], ClientName = "Outcome Analysis Co", CreatedDate = DateTime.UtcNow };
+        db.Clients.Add(client);
+        var request = new McaRequest { Client = client, CompanyName = "Outcome Analysis Co", RequestNumber = $"REQ-OA-{Guid.NewGuid():N}", CreatedDate = DateTime.UtcNow };
+        db.Requests.Add(request);
+        await db.SaveChangesAsync();
+
+        var job = new LitigationSearchJob
+        {
+            RequestId = request.RequestId,
+            KeywordsJson = "[{\"Value\":\"Outcome Analysis Co\",\"Source\":0}]",
+            Status = LitigationSearchJobStatus.Completed,
+            RawResponseHash = "hash-oa-001",
+            CreatedUtc = DateTime.UtcNow,
+            CompletedUtc = DateTime.UtcNow
+        };
+        db.LitigationSearchJobs.Add(job);
+        await db.SaveChangesAsync();
+
+        var snapshot = new LitigationReportSnapshot
+        {
+            LitigationSearchJobId = job.LitigationSearchJobId,
+            RequestId = request.RequestId,
+            ReportHash = "hash-oa-001",
+            Status = LitigationReportSnapshotStatus.Completed,
+            RetrievedUtc = DateTime.UtcNow,
+            CreatedUtc = DateTime.UtcNow,
+            CompletedUtc = DateTime.UtcNow
+        };
+        db.LitigationReportSnapshots.Add(snapshot);
+        await db.SaveChangesAsync();
+
+        var litCase = new LitigationCase
+        {
+            RequestId = request.RequestId,
+            CaseNumber = "OA-CASE-101",
+            Court = "Delhi High Court",
+            CourtCategory = "high_court",
+            CaseStatus = "Pending",
+            FirstSeenUtc = DateTime.UtcNow,
+            LastSeenUtc = DateTime.UtcNow
+        };
+        db.LitigationCases.Add(litCase);
+        await db.SaveChangesAsync();
+
+        db.LitigationCaseSourceReports.Add(new LitigationCaseSourceReport
+        {
+            LitigationCaseId = litCase.LitigationCaseId,
+            LitigationReportSnapshotId = snapshot.LitigationReportSnapshotId,
+            FirstSeenUtc = DateTime.UtcNow
+        });
+        await db.SaveChangesAsync();
+
+        var order = new LitigationCaseOrder
+        {
+            LitigationCaseId = litCase.LitigationCaseId,
+            OrderDate = "2023-04-12",
+            OrderType = "Interim Order",
+            CreatedUtc = DateTime.UtcNow
+        };
+        db.LitigationCaseOrders.Add(order);
+        await db.SaveChangesAsync();
+
+        var doc = new LitigationOrderDocument
+        {
+            LitigationCaseOrderId = order.LitigationCaseOrderId,
+            Status = LitigationOrderDocumentStatus.Downloaded,
+            RetainedUntilUtc = DateTime.UtcNow.AddDays(30),
+            CreatedUtc = DateTime.UtcNow
+        };
+        db.LitigationOrderDocuments.Add(doc);
+        await db.SaveChangesAsync();
+
+        var chunk = new LitigationOrderChunk
+        {
+            RequestId = request.RequestId,
+            LitigationOrderDocumentId = doc.LitigationOrderDocumentId,
+            LitigationCaseOrderId = order.LitigationCaseOrderId,
+            LitigationCaseId = litCase.LitigationCaseId,
+            CaseNumber = litCase.CaseNumber,
+            Court = litCase.Court,
+            OrderDate = order.OrderDate,
+            ChunkIndex = 0,
+            PageNumber = 1,
+            ChunkText = "Interim stay granted. Respondents directed to pay penalty of Rs. 25,000.",
+            Embedding = new SqlVector<float>(new float[768]),
+            EmbeddingModel = "test",
+            EmbeddingDimensions = 768,
+            ChunkingVersion = "1.0",
+            CreatedDate = DateTime.UtcNow
+        };
+        db.LitigationOrderChunks.Add(chunk);
+        await db.SaveChangesAsync();
+
+        var hashes = LitigationOrderClassifier.Hashes(LitigationOrderClassifier.BuildEvidence([chunk]));
+
+        var run = new LitigationAiAnalysisRun
+        {
+            RequestId = request.RequestId,
+            Status = LitigationAiAnalysisRunStatus.Completed,
+            RunNumber = 1,
+            CreatedUtc = DateTime.UtcNow,
+            CompletedUtc = DateTime.UtcNow
+        };
+        db.LitigationAiAnalysisRuns.Add(run);
+        await db.SaveChangesAsync();
+
+        db.LitigationOrderClassifications.Add(new LitigationOrderClassification
+        {
+            RequestId = request.RequestId,
+            LitigationAiAnalysisRunId = run.LitigationAiAnalysisRunId,
+            LitigationCaseId = litCase.LitigationCaseId,
+            LitigationCaseOrderId = order.LitigationCaseOrderId,
+            LitigationOrderDocumentId = doc.LitigationOrderDocumentId,
+            Status = LitigationAiAnalysisItemStatus.Completed,
+            OutcomeTypesJson = "[\"FinePenalty\",\"StayGranted\"]",
+            FineAmount = 25000m,
+            Confidence = ClassificationConfidence.High,
+            EvidenceHash = hashes.EvidenceHash,
+            PromptHash = hashes.PromptHash
+        });
+        await db.SaveChangesAsync();
+
+        var assembler = new LitigationReportAssembler(db);
+        var controller = CreateLitigationController(db);
+
+        // 1. Default PreAnalysis Report (includeAnalysis = false / withAnalysis = false)
+        var preAnalysisReport = await assembler.AssembleAsync(request.RequestId, CancellationToken.None, includeAnalysis: false);
+        Assert.NotNull(preAnalysisReport);
+        var preOrder = Assert.Single(Assert.Single(preAnalysisReport.Cases).Orders);
+        Assert.Null(preOrder.Outcomes);
+        Assert.Null(preOrder.FineAmount);
+        Assert.Null(preOrder.Confidence);
+        Assert.False(preOrder.EvidenceTruncated);
+
+        var preAnalysisPdfResult = await controller.DownloadPdfReport(request.RequestId, assembler, CancellationToken.None, withAnalysis: false);
+        var preFile = Assert.IsType<FileContentResult>(preAnalysisPdfResult);
+        using (var prePdf = PdfDocument.Open(new MemoryStream(preFile.FileContents)))
+        {
+            var prePdfText = string.Concat(prePdf.GetPages().Select(p => p.Text));
+            Assert.DoesNotContain("Outcomes:", prePdfText);
+            Assert.DoesNotContain("Fine: ₹25,000", prePdfText);
+            Assert.DoesNotContain("Stay Granted", prePdfText);
+            Assert.DoesNotContain("Fine / Penalty", prePdfText);
+        }
+
+        // 2. WithAnalysis Report (includeAnalysis = true / withAnalysis = true)
+        var withAnalysisReport = await assembler.AssembleAsync(request.RequestId, CancellationToken.None, includeAnalysis: true);
+        Assert.NotNull(withAnalysisReport);
+        var withOrder = Assert.Single(Assert.Single(withAnalysisReport.Cases).Orders);
+        Assert.NotNull(withOrder.Outcomes);
+        Assert.Contains(LitigationOrderOutcome.FinePenalty, withOrder.Outcomes);
+        Assert.Contains(LitigationOrderOutcome.StayGranted, withOrder.Outcomes);
+        Assert.Equal(25000m, withOrder.FineAmount);
+        Assert.Equal(ClassificationConfidence.High, withOrder.Confidence);
+
+        var withAnalysisPdfResult = await controller.DownloadPdfReport(request.RequestId, assembler, CancellationToken.None, withAnalysis: true);
+        var withFile = Assert.IsType<FileContentResult>(withAnalysisPdfResult);
+        using (var withPdf = PdfDocument.Open(new MemoryStream(withFile.FileContents)))
+        {
+            var withPdfText = string.Concat(withPdf.GetPages().Select(p => p.Text));
+            Assert.Contains("Outcomes:", withPdfText);
+            Assert.Contains("Fine: ₹25,000", withPdfText);
+            Assert.Contains("Stay Granted", withPdfText);
+            Assert.Contains("Fine / Penalty", withPdfText);
+        }
     }
 }

@@ -1,6 +1,7 @@
 @using MCAROC_Analysis.Models
 @using MCAROC_Analysis.Data.Entities
 @using MCAROC_Analysis.Services.Analysis
+@using MCAROC_Analysis.Services.LitigationData
 @model LitigationCaseCardViewModel
 @{
     var statusBadgeClass = Model.StatusBucket switch
@@ -242,6 +243,7 @@
                             <tr>
                                 <th>Order Date</th>
                                 <th>Order Type</th>
+                                <th>Outcomes</th>
                                 <th>Retrieval Status</th>
                                 <th class="text-end">Action</th>
                             </tr>
@@ -263,6 +265,46 @@
                                         }
                                     </td>
                                     <td>@(string.IsNullOrWhiteSpace(order.OrderType) ? "Order" : order.OrderType)</td>
+                                    <td>
+                                        @if (order.Outcomes.Count > 0)
+                                        {
+                                            var isLowConfidence = order.Confidence == ClassificationConfidence.Low;
+                                            <div class="d-flex flex-wrap gap-1 align-items-center @(isLowConfidence ? "opacity-75 fst-italic" : "")">
+                                                @foreach (var o in order.Outcomes)
+                                                {
+                                                    <span class="badge @LitigationOrderOutcomeLabels.BadgeCss(o)" title="@LitigationOrderOutcomeLabels.Format(o)@(isLowConfidence ? " (Low Confidence)" : "")">
+                                                        <i class="bi @LitigationOrderOutcomeLabels.IconCss(o) me-1"></i>@LitigationOrderOutcomeLabels.Format(o)
+                                                    </span>
+                                                }
+                                                @if (order.FineAmount.HasValue && order.FineAmount > 0)
+                                                {
+                                                    <span class="badge bg-danger-subtle text-danger border border-danger-subtle" title="Fine / Penalty: ₹@order.FineAmount.Value.ToString("N0")">
+                                                        ₹@order.FineAmount.Value.ToString("N0")
+                                                    </span>
+                                                }
+                                                @if (isLowConfidence)
+                                                {
+                                                    <span class="badge bg-light text-secondary border" title="Low classification confidence">
+                                                        <i class="bi bi-question-circle me-1"></i>Low Confidence
+                                                    </span>
+                                                }
+                                                @if (order.EvidenceTruncated)
+                                                {
+                                                    <span class="badge bg-warning-subtle text-warning-emphasis border border-warning-subtle" title="Evidence truncated to fit prompt window">
+                                                        <i class="bi bi-scissors me-1"></i>Truncated
+                                                    </span>
+                                                }
+                                            </div>
+                                        }
+                                        else if (order.ClassificationStatus == LitigationAiAnalysisItemStatus.Completed)
+                                        {
+                                            <span class="text-muted fst-italic small">No substantive relief</span>
+                                        }
+                                        else
+                                        {
+                                            <span class="text-muted small">—</span>
+                                        }
+                                    </td>
                                     <td>
                                         @switch (order.DocumentStatus)
                                         {
