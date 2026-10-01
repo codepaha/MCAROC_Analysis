@@ -316,6 +316,83 @@ public sealed class LitigationOrderClassificationTests : IAsyncLifetime
         Assert.Equal(LitigationAiAnalysisItemStatus.InsufficientEvidence, statuses.Single(s => s.Key != fineOrderId).Value);
     }
 
+    /// <summary>#350: the same order sheet filed under a parent case and its IA. Its evidence differs only in the case
+    /// label, so it used to cost a second model call for identical text.</summary>
+    private static async Task<long> SeedSameFineOrderUnderIaAsync(long requestId)
+    {
+        await using var db = CreateContext();
+        var ia = new LitigationCase
+        {
+            RequestId = requestId, Cnr = "CNR" + Guid.NewGuid().ToString("N")[..10], CaseNumber = "IA 7/2021",
+            Court = "NCLT Chennai", ProceedingType = "IA", FirstSeenUtc = DateTime.UtcNow, LastSeenUtc = DateTime.UtcNow
+        };
+        db.LitigationCases.Add(ia);
+        await db.SaveChangesAsync();
+        return await SeedOrderAsync(db, requestId, ia.LitigationCaseId, FineOrderText, "IA 7/2021");
+    }
+
+    [Fact]
+    public async Task An_identical_order_sheet_under_another_case_is_classified_once_and_copied_with_its_source()
+    {
+        var (requestId, fineDocId, _) = await SeedRequestWithOrdersAsync();
+        var iaDocId = await SeedSameFineOrderUnderIaAsync(requestId);
+        var client = new ScriptedClient(ClassifyByText);
+
+        var run = await RunAnalysisAsync(requestId, client);
+
+        Assert.Equal(LitigationAiAnalysisRunStatus.Completed, run.Status);
+        Assert.Equal(2, client.ClassificationCalls); // three documents, two distinct texts
+        await using (var db = CreateContext())
+        {
+            var rows = await db.LitigationOrderClassifications.AsNoTracking().Where(c => c.LitigationAiAnalysisRunId == run.LitigationAiAnalysisRunId).ToListAsync();
+            var parent = rows.Single(r => r.LitigationOrderDocumentId == fineDocId);
+            var copy = rows.Single(r => r.LitigationOrderDocumentId == iaDocId);
+            Assert.Null(parent.ReusedFromClassificationId);
+            Assert.Equal(parent.LitigationOrderClassificationId, copy.ReusedFromClassificationId);
+            Assert.Equal((LitigationAiAnalysisItemStatus.Completed, "[\"FinePenalty\"]", 50000m), (copy.Status, copy.OutcomeTypesJson, copy.FineAmount));
+            Assert.NotEqual(parent.EvidenceHash, copy.EvidenceHash); // each row keeps its own (labelled) evidence
+            Assert.Contains("IA 7/2021", copy.EvidenceJson);
+
+            var lookup = await new LitigationOrderOutcomeQuery(db).FindAsync(requestId, [LitigationOrderOutcome.FinePenalty], CancellationToken.None);
+            Assert.Equal([fineDocId, iaDocId], lookup.Matches.Select(m => m.LitigationOrderDocumentId).Order());
+            Assert.True(lookup.IsComplete);
+        }
+
+        // The next run carries both forward without a call, and the copy still says where it came from.
+        var second = await RunAnalysisAsync(requestId, client);
+        Assert.Equal(2, client.ClassificationCalls);
+        await using (var db = CreateContext())
+        {
+            var firstParentId = await db.LitigationOrderClassifications.AsNoTracking()
+                .Where(c => c.LitigationAiAnalysisRunId == run.LitigationAiAnalysisRunId && c.LitigationOrderDocumentId == fineDocId)
+                .Select(c => c.LitigationOrderClassificationId).SingleAsync();
+            var carried = await db.LitigationOrderClassifications.AsNoTracking()
+                .SingleAsync(c => c.LitigationAiAnalysisRunId == second.LitigationAiAnalysisRunId && c.LitigationOrderDocumentId == iaDocId);
+            Assert.Equal(firstParentId, carried.ReusedFromClassificationId);
+        }
+    }
+
+    [Fact]
+    public async Task A_failed_classification_is_never_copied_to_an_identical_order_sheet()
+    {
+        var (requestId, fineDocId, _) = await SeedRequestWithOrdersAsync();
+        var iaDocId = await SeedSameFineOrderUnderIaAsync(requestId);
+        var fineCalls = 0;
+        var client = new ScriptedClient(prompt => prompt.Contains("costs of Rs. 50,000") && Interlocked.Increment(ref fineCalls) == 1
+            ? """{"status":"Completed","outcomes":[{"type":"FinePenalty","evidenceReferences":[{"pageNumber":9,"chunkIndex":0}]}]}"""
+            : ClassifyByText(prompt));
+
+        var run = await RunAnalysisAsync(requestId, client);
+
+        Assert.Equal(3, client.ClassificationCalls); // the IA's copy was sent itself, not given the failure
+        await using var db = CreateContext();
+        var rows = await db.LitigationOrderClassifications.AsNoTracking().Where(c => c.LitigationAiAnalysisRunId == run.LitigationAiAnalysisRunId).ToListAsync();
+        Assert.Equal(LitigationAiAnalysisItemStatus.Failed, rows.Single(r => r.LitigationOrderDocumentId == fineDocId).Status);
+        var ia = rows.Single(r => r.LitigationOrderDocumentId == iaDocId);
+        Assert.Equal(LitigationAiAnalysisItemStatus.Completed, ia.Status);
+        Assert.Null(ia.ReusedFromClassificationId);
+    }
+
     private static async Task<(long RequestId, long FineDocId, long CaseId)> SeedRequestWithOrdersAsync()
     {
         await using var db = CreateContext();
@@ -342,7 +419,7 @@ public sealed class LitigationOrderClassificationTests : IAsyncLifetime
         return (request.RequestId, fineDocId, litigationCase.LitigationCaseId);
     }
 
-    private static async Task<long> SeedOrderAsync(AppDbContext db, long requestId, long caseId, string text)
+    private static async Task<long> SeedOrderAsync(AppDbContext db, long requestId, long caseId, string text, string caseNumber = "CP 12/2020")
     {
         var order = new LitigationCaseOrder { LitigationCaseId = caseId, OrderDate = "10-02-2022", OrderType = "Order", CreatedUtc = DateTime.UtcNow };
         db.LitigationCaseOrders.Add(order);
@@ -357,7 +434,7 @@ public sealed class LitigationOrderClassificationTests : IAsyncLifetime
         db.LitigationOrderChunks.Add(new LitigationOrderChunk
         {
             RequestId = requestId, LitigationOrderDocumentId = document.LitigationOrderDocumentId, LitigationCaseOrderId = order.LitigationCaseOrderId,
-            LitigationCaseId = caseId, CaseNumber = "CP 12/2020", Court = "NCLT Chennai", OrderDate = order.OrderDate, OrderType = order.OrderType,
+            LitigationCaseId = caseId, CaseNumber = caseNumber, Court = "NCLT Chennai", OrderDate = order.OrderDate, OrderType = order.OrderType,
             ChunkIndex = 0, PageNumber = 1, ChunkText = text, Embedding = new SqlVector<float>(new float[768]),
             EmbeddingModel = "test", EmbeddingDimensions = 768, ChunkingVersion = "1.0", CreatedDate = DateTime.UtcNow
         });

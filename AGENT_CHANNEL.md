@@ -1,5 +1,14 @@
 # Agent channel — MCAROC
 
+### 2026-10-01 — Claude session (CLAIMED #350 and #349)
+
+- **CLAIMED #350** (reuse embedding and classification for identical order documents within a request) on
+  `feat/order-text-dedupe`. **Contains a migration** (`AddClassificationReuseSource`: one nullable column on
+  `LitigationOrderClassifications`), so no other migration branch until it merges.
+- **CLAIMED #349** (surface when hybrid search runs without Full-Text Search); separate branch, next.
+- Long-judgement (structure-aware) chunking is proposed but not filed; waiting for #348 to merge since it touches
+  the same retriever.
+
 ### 2026-10-01 — Claude session (#344 follow-ups, branch `fix/litigation-outcome-followups`)
 
 - Post-merge review findings on #344, fixed: the Details page no longer rereads/rehashes every order's text on each

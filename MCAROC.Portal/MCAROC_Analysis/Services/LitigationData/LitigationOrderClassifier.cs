@@ -48,6 +48,12 @@ public static class LitigationOrderClassifier
     public static (string EvidenceHash, string PromptHash) Hashes(LitigationOrderEvidence evidence) =>
         (LitigationAnalysisPromptBuilder.ComputeHash(SerializeEvidence(evidence)), LitigationAnalysisPromptBuilder.ComputeHash(BuildPrompt(evidence)));
 
+    /// <summary>#350: a hash of the order's text alone — its excerpts and truncation, without the case/court/date/type
+    /// labels <see cref="SerializeEvidence"/> adds. Two documents with the same key are the same order sheet (filed under
+    /// a parent case and its IA, or duplicated upstream), so the model would be asked to label identical text.</summary>
+    public static string ContentKey(LitigationOrderEvidence evidence) =>
+        LitigationAnalysisPromptBuilder.ComputeHash(JsonSerializer.Serialize(new { PromptVersion, evidence.Truncated, evidence.Excerpts }, JsonOptions));
+
     public static string BuildPrompt(LitigationOrderEvidence evidence)
     {
         var outcomeNames = string.Join("|", Enum.GetNames<LitigationOrderOutcome>());

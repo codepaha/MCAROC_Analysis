@@ -149,27 +149,53 @@ public sealed class LitigationAiAnalysisOrchestrator(AppDbContext db, ILitigatio
     /// run's existing admission. An order whose evidence and prompt match an earlier classification is carried
     /// forward without a model call. Each row is published as soon as it exists, so a crash or lease loss part-way
     /// through never throws away a classification that was already paid for — a retried run skips what is present.</summary>
+    /// <summary>Classifies every order document with chunks. Unchanged documents carry their earlier result forward;
+    /// a document whose text is identical to another document's already-classified text (#350 — the same order sheet
+    /// under a parent case and its IA, or an upstream duplicate) copies that result instead of a fresh model call.
+    /// Only results that are current for their own document qualify as a source: rows written in this run, and
+    /// earlier rows whose evidence and prompt hashes still match their document's chunks now.</summary>
     private async Task ClassifyOrdersAsync(long runId, Guid token, long requestId, List<LitigationOrderChunk> chunks, CancellationToken ct)
     {
-        var present = await db.LitigationOrderClassifications.Where(x => x.LitigationAiAnalysisRunId == runId)
-            .Select(x => x.LitigationOrderDocumentId).ToHashSetAsync(ct);
+        var present = await db.LitigationOrderClassifications.AsNoTracking().Where(x => x.LitigationAiAnalysisRunId == runId)
+            .ToListAsync(ct);
         var prior = await LoadPriorClassificationsAsync(requestId, runId, ct);
-        foreach (var document in chunks.GroupBy(x => x.LitigationOrderDocumentId).Where(g => !present.Contains(g.Key)).OrderBy(g => g.Key))
+        var documents = chunks.GroupBy(x => x.LitigationOrderDocumentId).OrderBy(g => g.Key)
+            .Select(g => (Id: g.Key, Chunks: g.ToList(), Evidence: LitigationOrderClassifier.BuildEvidence(g.ToList())))
+            .ToList();
+
+        var sameText = new Dictionary<string, LitigationOrderClassification>();
+        void Offer(LitigationOrderEvidence evidence, LitigationOrderClassification row)
         {
-            var row = await ClassifyOrderAsync(runId, token, requestId, document.ToList(), prior.GetValueOrDefault(document.Key), ct);
+            if (row.Status is LitigationAiAnalysisItemStatus.Completed or LitigationAiAnalysisItemStatus.InsufficientEvidence)
+                sameText.TryAdd(LitigationOrderClassifier.ContentKey(evidence), row);
+        }
+        var presentByDocument = present.ToDictionary(x => x.LitigationOrderDocumentId);
+        foreach (var d in documents)
+        {
+            if (presentByDocument.TryGetValue(d.Id, out var inRun)) { Offer(d.Evidence, inRun); continue; }
+            var (evidenceHash, promptHash) = LitigationOrderClassifier.Hashes(d.Evidence);
+            if (prior.GetValueOrDefault(d.Id)?.FirstOrDefault(p => p.EvidenceHash == evidenceHash && p.PromptHash == promptHash) is { } current)
+                Offer(d.Evidence, current);
+        }
+
+        foreach (var d in documents.Where(x => !presentByDocument.ContainsKey(x.Id)))
+        {
+            var row = await ClassifyOrderAsync(runId, token, requestId, d.Chunks, prior.GetValueOrDefault(d.Id),
+                sameText.GetValueOrDefault(LitigationOrderClassifier.ContentKey(d.Evidence)), ct);
             await using var tx = await db.Database.BeginTransactionAsync(ct);
             await RenewAsync(runId, token, ct);
-            if (!await db.LitigationOrderClassifications.AnyAsync(x => x.LitigationAiAnalysisRunId == runId && x.LitigationOrderDocumentId == document.Key, ct))
+            if (!await db.LitigationOrderClassifications.AnyAsync(x => x.LitigationAiAnalysisRunId == runId && x.LitigationOrderDocumentId == d.Id, ct))
             {
                 db.LitigationOrderClassifications.Add(row);
                 await db.SaveChangesAsync(ct);
+                Offer(d.Evidence, row);
             }
             await tx.CommitAsync(ct);
         }
     }
 
     private async Task<LitigationOrderClassification> ClassifyOrderAsync(long runId, Guid token, long requestId, List<LitigationOrderChunk> documentChunks,
-        List<LitigationOrderClassification>? priorForDocument, CancellationToken ct)
+        List<LitigationOrderClassification>? priorForDocument, LitigationOrderClassification? sameTextSource, CancellationToken ct)
     {
         var evidence = LitigationOrderClassifier.BuildEvidence(documentChunks);
         var json = LitigationOrderClassifier.SerializeEvidence(evidence);
@@ -187,6 +213,18 @@ public sealed class LitigationAiAnalysisOrchestrator(AppDbContext db, ILitigatio
             row.Status = same.Status; row.OutcomeTypesJson = same.OutcomeTypesJson; row.FineAmount = same.FineAmount;
             row.Confidence = same.Confidence; row.RawResponseJson = same.RawResponseJson; row.ResponseHash = same.ResponseHash;
             row.ClassificationJson = same.ClassificationJson; row.CompletedUtc = DateTime.UtcNow;
+            row.ReusedFromClassificationId = same.ReusedFromClassificationId;
+            return row;
+        }
+
+        // #350: another document of this request holds the same text and already has a current result — the model
+        // would be asked to label identical excerpts, so copy it and record where it came from.
+        if (sameTextSource is not null)
+        {
+            row.Status = sameTextSource.Status; row.OutcomeTypesJson = sameTextSource.OutcomeTypesJson; row.FineAmount = sameTextSource.FineAmount;
+            row.Confidence = sameTextSource.Confidence; row.RawResponseJson = sameTextSource.RawResponseJson; row.ResponseHash = sameTextSource.ResponseHash;
+            row.ClassificationJson = sameTextSource.ClassificationJson; row.CompletedUtc = DateTime.UtcNow;
+            row.ReusedFromClassificationId = sameTextSource.ReusedFromClassificationId ?? sameTextSource.LitigationOrderClassificationId;
             return row;
         }
 

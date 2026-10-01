@@ -133,7 +133,7 @@ public class LitigationOrderChunkingTests : IAsyncLifetime
     }
 
     private static async Task<LitigationOrderDocument> SeedDownloadedDocumentAsync(
-        AppDbContext db, long litigationCaseOrderId, string extractedText)
+        AppDbContext db, long litigationCaseOrderId, string extractedText, string? fileHash = null)
     {
         var document = new LitigationOrderDocument
         {
@@ -141,6 +141,7 @@ public class LitigationOrderChunkingTests : IAsyncLifetime
             Status = LitigationOrderDocumentStatus.Downloaded,
             RetainedUntilUtc = DateTime.UtcNow.AddDays(5),
             ExtractedText = extractedText,
+            FileHash = fileHash,
             TextExtractionStatus = FilingDocumentProcessingStatus.TextExtracted,
             TextExtractionMethod = TextExtractionMethod.Native,
             ChunkingStatus = ChunkingStatus.Pending,
@@ -192,6 +193,69 @@ public class LitigationOrderChunkingTests : IAsyncLifetime
             Assert.Equal(EmbeddingService.Dimensions, chunk.EmbeddingDimensions);
             Assert.Equal(LitigationOrderChunkingOrchestrator.ChunkingVersion, chunk.ChunkingVersion);
         }
+    }
+
+    // ── #350: identical order sheets reuse embeddings ──────────────────────────────────────────────
+
+    [Fact]
+    public async Task ChunkOrderDocumentAsync_reuses_embeddings_of_the_same_pdf_under_another_order_of_the_request()
+    {
+        await using var db = CreateContext();
+        var (request, parentCase, parentOrder) = await SeedOrderAsync(db, "D1");
+        var (_, iaCase, iaOrder) = await SeedOrderAsync(db, "D2", request.RequestId);
+        var text = $"--- Page 1 (native) ---\n{new string('a', 1500)}\n\n--- Page 2 (native) ---\nOrder: stay granted.";
+        var hash = Guid.NewGuid().ToString("N");
+        var parentDoc = await SeedDownloadedDocumentAsync(db, parentOrder.LitigationCaseOrderId, text, hash);
+        var iaDoc = await SeedDownloadedDocumentAsync(db, iaOrder.LitigationCaseOrderId, text, hash);
+
+        var embedCalls = 0;
+        var stub = new StubEmbeddingService(n => { embedCalls++; return Enumerable.Range(0, n).Select(i => Axis(i + 1)).ToList(); });
+        var orchestrator = new LitigationOrderChunkingOrchestrator(db, stub, new LitigationOrderChunkingQueue(), NullLogger<LitigationOrderChunkingOrchestrator>.Instance);
+
+        await orchestrator.ChunkOrderDocumentAsync(parentDoc.LitigationOrderDocumentId, CancellationToken.None);
+        Assert.Equal(1, embedCalls);
+        await orchestrator.ChunkOrderDocumentAsync(iaDoc.LitigationOrderDocumentId, CancellationToken.None);
+        Assert.Equal(1, embedCalls); // the IA's copy of the sheet cost nothing
+
+        await using var verify = CreateContext();
+        Assert.Equal(ChunkingStatus.Chunked, (await verify.LitigationOrderDocuments.AsNoTracking().FirstAsync(d => d.LitigationOrderDocumentId == iaDoc.LitigationOrderDocumentId)).ChunkingStatus);
+        var parentChunks = await verify.LitigationOrderChunks.AsNoTracking().Where(c => c.LitigationOrderDocumentId == parentDoc.LitigationOrderDocumentId).OrderBy(c => c.ChunkIndex).ToListAsync();
+        var iaChunks = await verify.LitigationOrderChunks.AsNoTracking().Where(c => c.LitigationOrderDocumentId == iaDoc.LitigationOrderDocumentId).OrderBy(c => c.ChunkIndex).ToListAsync();
+        Assert.Equal(parentChunks.Count, iaChunks.Count);
+        for (var i = 0; i < iaChunks.Count; i++)
+        {
+            Assert.Equal(parentChunks[i].ChunkText, iaChunks[i].ChunkText);
+            Assert.Equal(parentChunks[i].Embedding.Memory.ToArray(), iaChunks[i].Embedding.Memory.ToArray());
+            // Labelled as the IA's own order, not the parent's.
+            Assert.Equal(iaCase.LitigationCaseId, iaChunks[i].LitigationCaseId);
+            Assert.Equal(iaOrder.LitigationCaseOrderId, iaChunks[i].LitigationCaseOrderId);
+            Assert.Equal(iaCase.CaseNumber, iaChunks[i].CaseNumber);
+        }
+    }
+
+    [Fact]
+    public async Task ChunkOrderDocumentAsync_embeds_afresh_when_the_same_pdf_belongs_to_another_request_or_the_text_differs()
+    {
+        await using var db = CreateContext();
+        var (otherRequest, _, otherOrder) = await SeedOrderAsync(db, "E1");
+        var (request, _, order) = await SeedOrderAsync(db, "E2");
+        var (_, _, secondOrder) = await SeedOrderAsync(db, "E3", request.RequestId);
+        var text = "--- Page 1 (native) ---\nThe company petition is dismissed for non-prosecution by the petitioner.";
+        var hash = Guid.NewGuid().ToString("N");
+        var otherDoc = await SeedDownloadedDocumentAsync(db, otherOrder.LitigationCaseOrderId, text, hash);
+        var doc = await SeedDownloadedDocumentAsync(db, order.LitigationCaseOrderId, text, hash);
+        // Same recorded hash but different extracted text (e.g. re-extracted with OCR) — never reused.
+        var differentText = await SeedDownloadedDocumentAsync(db, secondOrder.LitigationCaseOrderId, text + " Costs of Rs. 5,000.", hash);
+
+        var embedCalls = 0;
+        var stub = new StubEmbeddingService(n => { embedCalls++; return Enumerable.Range(0, n).Select(_ => Axis(0)).ToList(); });
+        var orchestrator = new LitigationOrderChunkingOrchestrator(db, stub, new LitigationOrderChunkingQueue(), NullLogger<LitigationOrderChunkingOrchestrator>.Instance);
+
+        await orchestrator.ChunkOrderDocumentAsync(otherDoc.LitigationOrderDocumentId, CancellationToken.None);
+        await orchestrator.ChunkOrderDocumentAsync(doc.LitigationOrderDocumentId, CancellationToken.None);
+        await orchestrator.ChunkOrderDocumentAsync(differentText.LitigationOrderDocumentId, CancellationToken.None);
+
+        Assert.Equal(3, embedCalls);
     }
 
     [Fact]

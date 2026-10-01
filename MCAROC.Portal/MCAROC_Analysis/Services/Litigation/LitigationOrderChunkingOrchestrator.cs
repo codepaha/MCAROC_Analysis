@@ -133,8 +133,13 @@ public sealed class LitigationOrderChunkingOrchestrator(
                     $"Extracted text not found for litigation order document {orderDocumentId} — nothing to chunk.");
 
             var textChunks = TextChunker.Chunk(document.ExtractedText, ChatIndexingOptions.Default);
+            var order = document.Order;
+            var litigationCase = order.Case!;
+            // #350: the same PDF under another order of this request (a parent case and its IA share an order sheet)
+            // is already embedded — copy its vectors rather than paying Vertex again for identical text.
+            var vectors = await FindSameTextEmbeddingsAsync(document, litigationCase.RequestId, textChunks, ct);
             var embeddings = new List<float[]>(textChunks.Count);
-            for (var offset = 0; offset < textChunks.Count; offset += EmbedRenewalBatchSize)
+            for (var offset = 0; vectors is null && offset < textChunks.Count; offset += EmbedRenewalBatchSize)
             {
                 var batchTexts = textChunks.Skip(offset).Take(EmbedRenewalBatchSize).Select(c => c.Text).ToList();
                 embeddings.AddRange(await embeddingService.EmbedDocumentsAsync(batchTexts, ct));
@@ -151,13 +156,12 @@ public sealed class LitigationOrderChunkingOrchestrator(
             }
             // Positional pairing below; a mismatch means an embedding call dropped/duplicated a vector — fail
             // this document (retry, then Failed) rather than persist a misaligned or truncated index.
-            if (embeddings.Count != textChunks.Count)
+            if (vectors is null && embeddings.Count != textChunks.Count)
                 throw new InvalidOperationException(
                     $"Embedding count {embeddings.Count} does not match chunk count {textChunks.Count} " +
                     $"for litigation order document {orderDocumentId}.");
 
-            var order = document.Order;
-            var litigationCase = order.Case!;
+            vectors ??= embeddings.Select(e => new SqlVector<float>(e)).ToList();
             var newChunks = new List<LitigationOrderChunk>(textChunks.Count);
             for (var i = 0; i < textChunks.Count; i++)
             {
@@ -175,7 +179,7 @@ public sealed class LitigationOrderChunkingOrchestrator(
                     ChunkIndex = i,
                     PageNumber = textChunks[i].PageNumber,
                     ChunkText = textChunks[i].Text,
-                    Embedding = new SqlVector<float>(embeddings[i]),
+                    Embedding = vectors[i],
                     EmbeddingModel = EmbeddingService.ModelId,
                     EmbeddingDimensions = EmbeddingService.Dimensions,
                     ChunkingVersion = ChunkingVersion,
@@ -272,6 +276,46 @@ public sealed class LitigationOrderChunkingOrchestrator(
     /// #254 review round 2) independently admits an expired-lease InProgress row too, so <see cref="ScheduleRetry"/>'s
     /// delayed re-enqueue for a row that was live at sweep time but has since genuinely expired (its owning
     /// process crashed and never renewed) succeeds without this method ever running again.</summary>
+    /// <summary>#350: the embeddings of another order document of the same request whose PDF bytes
+    /// (<see cref="LitigationOrderDocument.FileHash"/>) and extracted text are identical and which is already chunked
+    /// into exactly the chunks <paramref name="textChunks"/> describes, with the current embedding model and chunking
+    /// version — or null when there is none and the text must be embedded. Every chunk is compared (page, index, text),
+    /// so a copy can only ever be reused for the very text it was computed from.</summary>
+    private async Task<List<SqlVector<float>>?> FindSameTextEmbeddingsAsync(LitigationOrderDocument document, long requestId,
+        List<TextChunk> textChunks, CancellationToken ct)
+    {
+        if (string.IsNullOrEmpty(document.FileHash) || textChunks.Count == 0)
+            return null;
+
+        var candidates = await db.LitigationOrderDocuments.AsNoTracking()
+            .Where(d => d.LitigationOrderDocumentId != document.LitigationOrderDocumentId && d.FileHash == document.FileHash
+                && d.ChunkingStatus == ChunkingStatus.Chunked && d.Order!.Case!.RequestId == requestId)
+            .OrderBy(d => d.LitigationOrderDocumentId)
+            .Select(d => new { d.LitigationOrderDocumentId, d.ExtractedText })
+            .ToListAsync(ct);
+
+        foreach (var candidate in candidates.Where(c => c.ExtractedText == document.ExtractedText))
+        {
+            var source = await db.LitigationOrderChunks.AsNoTracking()
+                .Where(c => c.LitigationOrderDocumentId == candidate.LitigationOrderDocumentId)
+                .OrderBy(c => c.ChunkIndex)
+                .Select(c => new { c.ChunkIndex, c.PageNumber, c.ChunkText, c.Embedding, c.EmbeddingModel, c.EmbeddingDimensions, c.ChunkingVersion })
+                .ToListAsync(ct);
+            var matches = source.Count == textChunks.Count && source.Select((c, i) =>
+                    c.ChunkIndex == i && c.PageNumber == textChunks[i].PageNumber && c.ChunkText == textChunks[i].Text
+                    && c.EmbeddingModel == EmbeddingService.ModelId && c.EmbeddingDimensions == EmbeddingService.Dimensions
+                    && c.ChunkingVersion == ChunkingVersion)
+                .All(ok => ok);
+            if (!matches)
+                continue;
+
+            logger.LogInformation("Litigation order document {Id} has the same text as document {SourceId}; reusing its {Count} embeddings.",
+                document.LitigationOrderDocumentId, candidate.LitigationOrderDocumentId, source.Count);
+            return source.Select(c => c.Embedding).ToList();
+        }
+        return null;
+    }
+
     public async Task<int> RecoverStaleWorkAsync(CancellationToken ct)
     {
         var now = DateTime.UtcNow;
