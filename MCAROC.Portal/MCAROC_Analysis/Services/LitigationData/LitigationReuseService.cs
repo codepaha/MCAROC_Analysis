@@ -108,8 +108,8 @@ public sealed class LitigationReuseService(
 
         var caseIdMap = await CopyCasesAsync(source.RequestId, sourceSnapshotId, requestId, snapshot.LitigationReportSnapshotId, ct);
         var orderIdMap = await CopyOrdersAsync(caseIdMap, ct);
-        var toEnqueue = await CopyOrderDocumentsAndChunksAsync(requestId, orderIdMap, caseIdMap, ct);
-        await CopyAnalysisAsync(sourceSnapshotId, requestId, snapshot.LitigationReportSnapshotId, originId, caseIdMap, ct);
+        var (toEnqueue, docIdMap) = await CopyOrderDocumentsAndChunksAsync(requestId, orderIdMap, caseIdMap, ct);
+        await CopyAnalysisAsync(sourceSnapshotId, requestId, snapshot.LitigationReportSnapshotId, originId, caseIdMap, orderIdMap, docIdMap, ct);
 
         await tx.CommitAsync(ct);
         // Only now that the copies are actually committed — the worker reads through a fresh connection and
@@ -183,13 +183,13 @@ public sealed class LitigationReuseService(
     /// orphaned) needs its id handed back to the caller to enqueue once the copy actually commits: the
     /// in-process <see cref="LitigationOrderDocumentQueue"/> has no idea a new row exists otherwise, and would
     /// otherwise sit untouched until the next process restart's recovery sweep.</summary>
-    private async Task<List<long>> CopyOrderDocumentsAndChunksAsync(long requestId, Dictionary<long, long> orderIdMap, Dictionary<long, long> caseIdMap, CancellationToken ct)
+    private async Task<(List<long> ToEnqueue, Dictionary<long, long> DocIdMap)> CopyOrderDocumentsAndChunksAsync(long requestId, Dictionary<long, long> orderIdMap, Dictionary<long, long> caseIdMap, CancellationToken ct)
     {
         var toEnqueue = new List<long>();
-        if (orderIdMap.Count == 0) return toEnqueue;
+        var docIdMap = new Dictionary<long, long>();
+        if (orderIdMap.Count == 0) return (toEnqueue, docIdMap);
         var sourceDocs = await db.LitigationOrderDocuments.AsNoTracking()
             .Where(d => orderIdMap.Keys.Contains(d.LitigationCaseOrderId)).ToListAsync(ct);
-        var docIdMap = new Dictionary<long, long>();
         foreach (var d in sourceDocs)
         {
             var copy = new LitigationOrderDocument
@@ -233,7 +233,7 @@ public sealed class LitigationReuseService(
                 CreatedDate = c.CreatedDate
             });
         await db.SaveChangesAsync(ct);
-        return toEnqueue;
+        return (toEnqueue, docIdMap);
     }
 
     /// <summary>Deferred, §10: a content-addressed shared store would let two requests reusing the same
@@ -259,7 +259,8 @@ public sealed class LitigationReuseService(
     /// (plan §4.2) will find the copied snapshot's <see cref="LitigationReportSnapshot.OriginSnapshotId"/> and
     /// join whatever is (or becomes) the one Auto run for that origin, exactly as if it had bought the report
     /// itself.</summary>
-    private async Task CopyAnalysisAsync(long sourceSnapshotId, long requestId, long newSnapshotId, long originId, Dictionary<long, long> caseIdMap, CancellationToken ct)
+    private async Task CopyAnalysisAsync(long sourceSnapshotId, long requestId, long newSnapshotId, long originId, Dictionary<long, long> caseIdMap,
+        Dictionary<long, long> orderIdMap, Dictionary<long, long> docIdMap, CancellationToken ct)
     {
         var sourceRun = await db.LitigationAiAnalysisRuns.AsNoTracking()
             .Where(r => r.TriggerSnapshotId == sourceSnapshotId
@@ -293,6 +294,25 @@ public sealed class LitigationReuseService(
                 RawResponseJson = a.RawResponseJson, ResponseHash = a.ResponseHash, AnalysisJson = a.AnalysisJson,
                 FailureReason = a.FailureReason, PromptTokenCount = a.PromptTokenCount, ResponseTokenCount = a.ResponseTokenCount,
                 CompletedUtc = a.CompletedUtc
+            });
+        }
+
+        // Order-outcome classifications (#195) copy the same way: evidence/response verbatim, only the owning
+        // request/case/order/document ids move to the copies so this request's outcome lookup finds them.
+        var classifications = await db.LitigationOrderClassifications.AsNoTracking()
+            .Where(c => c.LitigationAiAnalysisRunId == sourceRun.LitigationAiAnalysisRunId).ToListAsync(ct);
+        foreach (var c in classifications)
+        {
+            if (!caseIdMap.TryGetValue(c.LitigationCaseId, out var newCaseId) || !orderIdMap.TryGetValue(c.LitigationCaseOrderId, out var newOrderId)
+                || !docIdMap.TryGetValue(c.LitigationOrderDocumentId, out var newDocId)) continue; // defensive: every classified order was copied above
+            db.LitigationOrderClassifications.Add(new LitigationOrderClassification
+            {
+                LitigationAiAnalysisRunId = run.LitigationAiAnalysisRunId, RequestId = requestId, LitigationCaseId = newCaseId,
+                LitigationCaseOrderId = newOrderId, LitigationOrderDocumentId = newDocId, Status = c.Status,
+                OutcomeTypesJson = c.OutcomeTypesJson, FineAmount = c.FineAmount, Confidence = c.Confidence, EvidenceTruncated = c.EvidenceTruncated,
+                EvidenceJson = c.EvidenceJson, EvidenceHash = c.EvidenceHash, PromptHash = c.PromptHash,
+                RawResponseJson = c.RawResponseJson, ResponseHash = c.ResponseHash, ClassificationJson = c.ClassificationJson,
+                FailureReason = c.FailureReason, CompletedUtc = c.CompletedUtc
             });
         }
 

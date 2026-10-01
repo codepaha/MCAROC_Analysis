@@ -1,3 +1,5 @@
+using System.Globalization;
+using System.Text;
 using MCAROC_Analysis.Data;
 using MCAROC_Analysis.Data.Entities;
 using MCAROC_Analysis.Services.LitigationData;
@@ -10,7 +12,8 @@ public record RetrievalContext(IReadOnlyList<RetrievedSource> Sources, string In
 /// <summary>ChatService -> RetrievalContextBuilder -> StructuredFactsProvider + DocumentRetriever +
 /// LitigationDocumentRetriever. This separation is what makes a real question-classifying router easy to slot
 /// in later without restructuring ChatService — for now it always combines all three sources rather than
-/// choosing one.</summary>
+/// choosing one. The one routed source is #195's order-outcome lookup: a question asking for orders with a given
+/// outcome also gets the exact, exhaustive LitigationOrderOutcomeQuery result ("O" sources) on top of retrieval.</summary>
 public class RetrievalContextBuilder
 {
     private readonly AppDbContext _db = null!;
@@ -18,18 +21,20 @@ public class RetrievalContextBuilder
     private readonly DocumentRetriever _documentRetriever = null!;
     private readonly LitigationDocumentRetriever _litigationRetriever = null!;
     private readonly EmbeddingService _embeddingService = null!;
+    private readonly LitigationOrderOutcomeQuery _orderOutcomes = null!;
 
     protected RetrievalContextBuilder() { }
 
     public RetrievalContextBuilder(
         AppDbContext db, StructuredFactsProvider structuredFacts, DocumentRetriever documentRetriever,
-        LitigationDocumentRetriever litigationRetriever, EmbeddingService embeddingService)
+        LitigationDocumentRetriever litigationRetriever, EmbeddingService embeddingService, LitigationOrderOutcomeQuery orderOutcomes)
     {
         _db = db;
         _structuredFacts = structuredFacts;
         _documentRetriever = documentRetriever;
         _litigationRetriever = litigationRetriever;
         _embeddingService = embeddingService;
+        _orderOutcomes = orderOutcomes;
     }
 
     public virtual async Task<RetrievalContext> BuildAsync(long requestId, string question, CancellationToken ct)
@@ -94,8 +99,48 @@ public class RetrievalContextBuilder
                 LitigationCaseId: m.Chunk.LitigationCaseId, LitigationCaseOrderId: m.Chunk.LitigationCaseOrderId));
         }
 
+        if (hints.OrderOutcomes is { Count: > 0 } outcomes)
+            AddOrderOutcomeSources(sources, outcomes, await _orderOutcomes.FindAsync(requestId, outcomes, ct));
+
         var indexingStatus = await ComputeIndexingStatusAsync(requestId, ct);
         return new RetrievalContext(sources, indexingStatus);
+    }
+
+    /// <summary>Caps the O-sources one prompt carries. The coverage note always states the true match count, so a
+    /// capped list is reported as capped rather than passed off as complete.</summary>
+    internal const int MaxOrderOutcomeSources = 60;
+
+    /// <summary>#195's structured order-outcome lookup as prompt sources: one "O" source per matching order (exact,
+    /// not top-K), then a coverage note — always present, even with zero matches, so "no order with a fine" is only
+    /// ever said about orders that were actually classified.</summary>
+    internal static void AddOrderOutcomeSources(List<RetrievedSource> sources, IReadOnlyList<LitigationOrderOutcome> asked, OrderOutcomeLookup lookup)
+    {
+        var tag = 1;
+        foreach (var m in lookup.Matches.Take(MaxOrderOutcomeSources))
+        {
+            var caseLabel = m.CaseNumber ?? m.Cnr ?? "Unnumbered case";
+            var label = $"{caseLabel} ({m.Court ?? "court not recorded"}) · Order {m.OrderDate ?? "undated"}";
+            var text = new StringBuilder($"Order-outcome classification: order dated {m.OrderDate ?? "undated"}");
+            if (!string.IsNullOrWhiteSpace(m.OrderType)) text.Append($" ({m.OrderType})");
+            text.Append($" in {caseLabel}, {m.Court ?? "court not recorded"}. Outcomes: {string.Join(", ", m.Outcomes)}.");
+            if (m.FineAmount is { } fine) text.Append(CultureInfo.InvariantCulture, $" Fine/penalty stated: Rs {fine:N2}.");
+            if (m.Confidence is { } confidence) text.Append($" Classifier confidence: {confidence}.");
+            if (m.EvidenceTruncated) text.Append(" Classified from the leading pages only; the order is longer.");
+            if (!m.DocumentDownloaded) text.Append(" The order PDF is not currently retained for download.");
+            sources.Add(new RetrievedSource($"O{tag++}", SourceType.OrderOutcome, text.ToString(), label,
+                EntityType: nameof(LitigationOrderClassification), EntityId: m.LitigationOrderClassificationId,
+                DocumentId: m.LitigationOrderDocumentId, LitigationCaseId: m.LitigationCaseId, LitigationCaseOrderId: m.LitigationCaseOrderId));
+        }
+
+        var coverage = new StringBuilder($"Order-outcome lookup for {string.Join(", ", asked)}: {lookup.Matches.Count} matching order(s)");
+        if (lookup.Matches.Count > MaxOrderOutcomeSources) coverage.Append($" (only the first {MaxOrderOutcomeSources} are listed here)");
+        coverage.Append($". Coverage: {lookup.OrdersClassified} of {lookup.OrdersWithText} order(s) with retained text have been classified for their current text.");
+        if (lookup.OrdersOutdated > 0)
+            coverage.Append($" {lookup.OrdersOutdated} order(s) changed after they were classified; their earlier outcomes are not used until they are re-classified.");
+        if (!lookup.IsComplete)
+            coverage.Append(" The list is NOT exhaustive: unclassified orders may also have these outcomes (classification runs with the litigation AI analysis).");
+        sources.Add(new RetrievedSource($"O{tag}", SourceType.OrderOutcome, coverage.ToString(), "Order-outcome classification coverage",
+            EntityType: "OrderOutcomeCoverage"));
     }
 
     private async Task<string> ComputeIndexingStatusAsync(long requestId, CancellationToken ct)

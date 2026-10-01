@@ -234,7 +234,8 @@ public class StructuredFactsProviderTests : IAsyncLifetime
             new StructuredFactsProvider(db),
             new DocumentRetriever(db, ChatRetrievalOptions.Default),
             new LitigationDocumentRetriever(db, ChatRetrievalOptions.Default),
-            embedding);
+            embedding,
+            new LitigationOrderOutcomeQuery(db));
 
         var context = await contextBuilder.BuildAsync(requestId, "What open charges are recorded?", CancellationToken.None);
 
@@ -273,7 +274,8 @@ public class StructuredFactsProviderTests : IAsyncLifetime
             new StructuredFactsProvider(db),
             new DocumentRetriever(db, ChatRetrievalOptions.Default),
             new LitigationDocumentRetriever(db, ChatRetrievalOptions.Default),
-            embedding);
+            embedding,
+            new LitigationOrderOutcomeQuery(db));
 
         var context = await contextBuilder.BuildAsync(requestId, "What charges are recorded?", CancellationToken.None);
 
