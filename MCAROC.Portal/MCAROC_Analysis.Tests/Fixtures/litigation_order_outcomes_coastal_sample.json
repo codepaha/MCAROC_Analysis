@@ -136,7 +136,7 @@
     "ExpectedFineAmount": null,
     "ExpectedConfidence": "Medium",
     "OperativeExcerpt": "ORDER CP No. 593/KB/2017 is already disposed of bypassing order or liquidation. Corporate Debtor is already under process of liquidation. Liquidate is appointed. CA No",
-    "TaxonomyNotes": "Records that main company petition was already disposed of by passing liquidation order. Note: 118 identical copies exist across NCLT archive due to vendor scraper re-downloading case status sheet.",
+    "TaxonomyNotes": "Records that main company petition was already disposed of by passing liquidation order. Note: 118 identical copies exist across NCLT archive due to upstream scraper re-downloading case status sheet.",
     "EvidenceReferences": [
       {
         "PageNumber": 1,

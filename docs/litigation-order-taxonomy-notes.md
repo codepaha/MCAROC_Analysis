@@ -39,14 +39,22 @@ The 66 evaluated orders span the following judicial forums:
 
 ### Finding
 In the Coastal Projects NCLT corpus, there are **221 order files**, but only **15 unique orders** exist.
-Specifically, **118 files are byte-for-byte identical copies of a single 3-page order sheet** (`TP 255/CTB/2019`, Order date: 2022-02-10).
+Specifically, **118 files are byte-for-byte identical copies of a single 1-page order** (`TP 255/CB/2019 (CP 593/KB/2017)`, Order date: 2019-08-05, corresponding to Sample 6 in the fixture). In contrast, multi-page orders like the 3-page order dated 2022-02-10 (`TP 255/CTB/2019`, Sample 1) appear only once in the corpus.
 
-### Root Cause
-In corporate insolvency proceedings before the NCLT, numerous Interlocutory Applications (IAs) are filed (e.g. applications by the Resolution Professional, operational creditors, and financial creditors). When the upstream crawler scraped the case portal, it queried case history per IA listing and repeatedly downloaded the entire day's combined daily order sheet for every listed IA rather than isolating unique order documents.
+### Scraper Duplication Hypothesis
+A plausible hypothesis for this duplication pattern (based on the archive folder layout, file names, and IA listing structures) is that in corporate insolvency proceedings before the NCLT, numerous Interlocutory Applications (IAs) and connected matters are listed concurrently. When the upstream scraper queried tribunal portal endpoints for case updates across various IA numbers, it appears to have repeatedly retrieved and saved the same daily hearing/order sheet under each respective IA subfolder rather than de-duplicating by document content or tribunal order reference. This is a working hypothesis based on archive inspection rather than direct access to the crawler source code.
 
-### Ingestion & Pipeline Implications
-1. **Sha256 / Content Hash De-duplication is Mandatory:** `LitigationOrderClassifier` and `LitigationOrderOutcomeQuery` hash chunk text (`EvidenceHash` and `PromptHash`). This prevents invoking LLM inference 118 times for identical order sheets.
-2. **UI & Search Clutter Prevention:** Without de-duplication at query/retrieval time, top-K search and chat retrieval would be swamped by redundant identical chunks. The request-level deduping in `LitigationOrderOutcomeQuery` ensures each unique order document appears once.
+### Freshness, Reuse, and Upstream Deduplication
+It is critical to distinguish **same-document freshness/reuse** from **cross-document content deduplication**:
+
+1. **Same-Document Freshness & Reuse:**
+   - In the analysis orchestrator (`LitigationAiAnalysisOrchestrator`), `LoadPriorClassificationsAsync` scopes prior classification reuse strictly by `LitigationOrderDocumentId`. It reuses an existing classification only if the prior row's `EvidenceHash` and `PromptHash` match the hashes recomputed from the current document's text chunks.
+   - Similarly, `LitigationOrderOutcomeQuery` evaluates freshness per `LitigationOrderDocumentId`.
+   - Content hashes ensure that if an order document's text has not changed across runs, the system avoids redundant LLM invocations for that specific document row.
+
+2. **Cross-Document Deduplication Requires Upstream Action:**
+   - Because orchestrator reuse and outcome queries operate at the `LitigationOrderDocumentId` level, if 118 distinct document rows are created in the database for identical PDF files, each document ID will be processed and classified independently unless deduplicated before or during ingestion.
+   - Cross-document deduplication must therefore be performed upstream (for instance, via tools like `LitigationCorpusDedupeScanner` or SHA256 content deduplication prior to entity creation) so that redundant file copies do not generate hundreds of separate database rows and inflate LLM costs.
 
 ---
 
@@ -88,39 +96,39 @@ A critical requirement identified in Epic #195 is handling negation:
 
 ## 6. Identified Taxonomy Gaps & Proposed Future Extensions
 
-While the 9 existing taxonomy values cover core outcomes, analysis of real orders revealed 6 recurring legal events that currently have no dedicated enum value and are either collapsed into `ProceduralDirections` or forced into `InterimRelief`. 
+While the 9 existing taxonomy values cover core substantive outcomes, analysis of real orders revealed 6 recurring legal events that currently have no dedicated enum value. Because `LitigationOrderOutcome` does not contain a catch-all procedural outcome like `ProceduralDirections`, routine non-dispositive actions are either recorded under `AdjournedNoSubstantiveOrder` or left with no substantive outcome tags.
 
-When the next migration window opens (in Claude's migration lane), consider proposing these 6 extensions:
+When a future migration window opens (in Claude's migration lane), consider proposing these 6 extensions:
 
 1. **`NoticeIssued`**:
    - *Frequency:* Extremely common (present in ~40% of preliminary High Court / Supreme Court orders).
    - *Description:* Formal issuance of notice to respondents/defendants (e.g., "Issue notice returnable in four weeks; dasti notice permitted").
-   - *Current Workaround:* Swallowed under `ProceduralDirections` or `AdjournedNoSubstantiveOrder`.
+   - *Current Handling:* Captured under `AdjournedNoSubstantiveOrder` or left unclassified (no substantive outcome).
 
 2. **`CondonationOfDelayAllowed`**:
    - *Frequency:* Frequent in appellate and limitation applications (Section 5 Limitation Act).
    - *Description:* Court condones delay in filing appeals or applications, often subject to cost payment.
-   - *Current Workaround:* Split between `FinePenalty` (if costs imposed) and `ProceduralDirections`.
+   - *Current Handling:* Split between `FinePenalty` (if costs imposed) and `AdjournedNoSubstantiveOrder` / unclassified.
 
 3. **`ArbitratorAppointed`**:
    - *Frequency:* Prevalent in commercial and corporate disputes (Section 11 Arbitration & Conciliation Act 1996).
    - *Description:* High Court or Supreme Court appoints a sole arbitrator or arbitral tribunal to adjudicate disputes.
-   - *Current Workaround:* DisposedSettled with descriptive text in AI summary.
+   - *Current Handling:* Often forced into `DisposedSettled` with descriptive text in AI summary, even when the dispute itself remains pending before arbitration.
 
 4. **`BailOrSurety`**:
    - *Frequency:* Routine in criminal / Section 138 NI Act (cheque bounce) cases involving directors.
    - *Description:* Grant or cancellation of bail, anticipatory bail, or direction to furnish surety bonds.
-   - *Current Workaround:* Uncomfortably labelled as `InterimRelief`.
+   - *Current Handling:* Uncomfortably labelled as `InterimRelief`.
 
 5. **`InsolvencyResolution`**:
    - *Frequency:* Central to NCLT / IBC matters.
    - *Description:* Specific insolvency milestones: admission of Section 7/9/10 petition, moratorium declaration under Section 14, appointment of IRP/RP, or approval of resolution plan under Section 31.
-   - *Current Workaround:* Split between `DisposedSettled` and `InterimRelief`.
+   - *Current Handling:* Split between `DisposedSettled` and `InterimRelief`.
 
 6. **`WarrantIssued`**:
    - *Frequency:* Encountered when parties fail to appear in criminal/magistrate court proceedings.
    - *Description:* Issuance of bailable warrant (BW) or non-bailable warrant (NBW) to secure personal attendance.
-   - *Current Workaround:* ProceduralDirections.
+   - *Current Handling:* Left unclassified or placed under `AdjournedNoSubstantiveOrder`.
 
 ---
 
