@@ -202,6 +202,61 @@ public sealed class LitigationOrderClassificationTests : IAsyncLifetime
         Assert.True(await Orchestrator(db, null!).NeedsAnalysisAsync(requestId, CancellationToken.None));
     }
 
+    /// <summary>Review blocker on PR #332: the lookup must judge "current" against the order's text as it is now. Classify
+    /// an order, change that same document's text to a different outcome, and the old outcome must stop being returned and
+    /// coverage must read incomplete — before the next run, and still after a next run whose reclassification fails.</summary>
+    [Fact]
+    public async Task Changed_order_text_makes_its_old_outcome_outdated_even_when_reclassification_fails()
+    {
+        var (requestId, fineDocId, _) = await SeedRequestWithOrdersAsync();
+        await RunAnalysisAsync(requestId, new ScriptedClient(ClassifyByText));
+
+        await using (var db = CreateContext())
+        {
+            var before = await new LitigationOrderOutcomeQuery(db).FindAsync(requestId, [LitigationOrderOutcome.FinePenalty], CancellationToken.None);
+            Assert.Equal(fineDocId, Assert.Single(before.Matches).LitigationOrderDocumentId);
+            Assert.True(before.IsComplete);
+
+            // The same order document now says something else (a re-extracted / corrected order sheet).
+            await db.LitigationOrderChunks.Where(c => c.LitigationOrderDocumentId == fineDocId)
+                .ExecuteUpdateAsync(u => u.SetProperty(c => c.ChunkText, "The petition is dismissed as withdrawn. No order as to costs."));
+        }
+
+        // Before any new run: the fine is no longer current, nothing claims to be complete, and the gap is explained.
+        await using (var db = CreateContext())
+        {
+            var stale = await new LitigationOrderOutcomeQuery(db).FindAsync(requestId, [LitigationOrderOutcome.FinePenalty], CancellationToken.None);
+            Assert.Empty(stale.Matches);
+            Assert.False(stale.IsComplete);
+            Assert.Equal((1, 2, 1), (stale.OrdersClassified, stale.OrdersWithText, stale.OrdersOutdated));
+            Assert.True(await Orchestrator(db, null!).NeedsAnalysisAsync(requestId, CancellationToken.None));
+        }
+
+        // The next run's reclassification of that order fails validation.
+        var failing = new ScriptedClient(_ =>
+            """{"status":"Completed","outcomes":[{"type":"Dismissal","evidenceReferences":[{"pageNumber":9,"chunkIndex":9}]}]}""");
+        var second = await RunAnalysisAsync(requestId, failing);
+        Assert.Equal(1, failing.ClassificationCalls); // only the changed order was sent; the unchanged one was carried forward
+        Assert.Equal(LitigationAiAnalysisRunStatus.CompletedWithErrors, second.Status);
+
+        await using (var db = CreateContext())
+        {
+            var query = new LitigationOrderOutcomeQuery(db);
+            var fines = await query.FindAsync(requestId, [LitigationOrderOutcome.FinePenalty], CancellationToken.None);
+            Assert.Empty(fines.Matches); // the old outcome is never presented as current
+            Assert.False(fines.IsComplete);
+            Assert.Equal(1, fines.OrdersOutdated);
+
+            var dismissals = await query.FindAsync(requestId, [LitigationOrderOutcome.Dismissal], CancellationToken.None);
+            Assert.DoesNotContain(dismissals.Matches, m => m.LitigationOrderDocumentId == fineDocId); // nor is a guessed new one
+            Assert.Single(dismissals.Matches); // the untouched dismissal order is still current
+
+            // The earlier result is still on file for audit.
+            Assert.True(await db.LitigationOrderClassifications.AnyAsync(c => c.LitigationOrderDocumentId == fineDocId
+                && c.Status == LitigationAiAnalysisItemStatus.Completed && c.OutcomeTypesJson == "[\"FinePenalty\"]"));
+        }
+    }
+
     private static async Task<(long RequestId, long FineDocId, long CaseId)> SeedRequestWithOrdersAsync()
     {
         await using var db = CreateContext();

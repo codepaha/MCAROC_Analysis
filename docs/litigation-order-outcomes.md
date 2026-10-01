@@ -47,6 +47,23 @@ The model's JSON is rejected (row persisted as `Failed`, raw response kept for a
 
 A failed classification never replaces an earlier good one for the same order.
 
+## What counts as current
+
+A classification is an order's **current** one only while it matches the order's text **as it is now**. The lookup
+recomputes each order's evidence and prompt hashes from its current chunks, and only a Completed/InsufficientEvidence
+row with matching hashes counts.
+
+- **When an order's text changes** after it was classified (for example a re-extracted order sheet under the same
+  document):
+  - its old outcome is **not returned as current**;
+  - coverage reads **incomplete**;
+  - the chat coverage note says how many orders changed.
+- **This stays true when a later run's reclassification fails.** A Failed row never stands in, and the old result is
+  never used as a fallback.
+- **Earlier results remain in the table** for audit.
+- **The hashes cover content only:** the order's labels and excerpts, not database ids. A byte-identical copy (#291
+  report reuse) is therefore still current.
+
 ## Querying and chat
 
 `LitigationOrderOutcomeQuery.FindAsync(requestId, outcomes)` returns every order whose current classification

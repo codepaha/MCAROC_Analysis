@@ -232,7 +232,8 @@ public sealed class LitigationReuseServiceTests : IAsyncLifetime
         Assert.Equal(request.RequestId, classification.RequestId);
         Assert.Equal(newDoc.LitigationOrderDocumentId, classification.LitigationOrderDocumentId);
         Assert.Equal(newDoc.LitigationCaseOrderId, classification.LitigationCaseOrderId);
-        Assert.Equal("source-classification-hash", classification.EvidenceHash);
+        var copiedChunk = await verify.LitigationOrderChunks.AsNoTracking().SingleAsync(c => c.LitigationOrderDocumentId == newDoc.LitigationOrderDocumentId);
+        Assert.Equal(LitigationOrderClassifier.Hashes(LitigationOrderClassifier.BuildEvidence([copiedChunk])).EvidenceHash, classification.EvidenceHash);
 
         var lookup = await new LitigationOrderOutcomeQuery(verify).FindAsync(request.RequestId, [LitigationOrderOutcome.FinePenalty], CancellationToken.None);
         var match = Assert.Single(lookup.Matches);
@@ -375,6 +376,7 @@ public sealed class LitigationReuseServiceTests : IAsyncLifetime
 
         string? documentPath = null;
         LitigationOrderDocument? seededDoc = null;
+        LitigationOrderChunk? seededChunk = null;
         if (withDocument || withChunk)
         {
             var order = new LitigationCaseOrder { LitigationCaseId = c.LitigationCaseId, OrderDate = "2024-01-01", OrderType = "Order", CreatedUtc = DateTime.UtcNow };
@@ -402,14 +404,15 @@ public sealed class LitigationReuseServiceTests : IAsyncLifetime
 
             if (withChunk)
             {
-                db.LitigationOrderChunks.Add(new LitigationOrderChunk
+                seededChunk = new LitigationOrderChunk
                 {
                     RequestId = request.RequestId, LitigationOrderDocumentId = doc.LitigationOrderDocumentId,
                     LitigationCaseOrderId = order.LitigationCaseOrderId, LitigationCaseId = c.LitigationCaseId,
                     ChunkIndex = 0, PageNumber = 1, ChunkText = "reused chunk text",
                     Embedding = new SqlVector<float>(new float[768]), EmbeddingModel = "test-model",
                     EmbeddingDimensions = 768, ChunkingVersion = "v1", CreatedDate = DateTime.UtcNow
-                });
+                };
+                db.LitigationOrderChunks.Add(seededChunk);
                 await db.SaveChangesAsync();
             }
         }
@@ -438,14 +441,18 @@ public sealed class LitigationReuseServiceTests : IAsyncLifetime
                 EvidenceJson = "{}", EvidenceHash = "source-portfolio-hash", PromptHash = "prompt-hash",
                 AnalysisJson = "{\"status\":\"Completed\"}", CompletedUtc = DateTime.UtcNow
             });
+            // Real hashes of the seeded chunk's content: the outcome lookup only treats a classification of the order's
+            // current text as current, and a byte-identical copy must still match on the reusing request.
+            var (evidenceHash, promptHash) = seededChunk is null ? ("none", "none")
+                : LitigationOrderClassifier.Hashes(LitigationOrderClassifier.BuildEvidence([seededChunk]));
             if (withClassification && seededDoc is not null)
                 db.LitigationOrderClassifications.Add(new LitigationOrderClassification
                 {
                     LitigationAiAnalysisRunId = run.LitigationAiAnalysisRunId, RequestId = request.RequestId, LitigationCaseId = c.LitigationCaseId,
                     LitigationCaseOrderId = seededDoc.LitigationCaseOrderId, LitigationOrderDocumentId = seededDoc.LitigationOrderDocumentId,
                     Status = LitigationAiAnalysisItemStatus.Completed, OutcomeTypesJson = "[\"FinePenalty\"]", FineAmount = 25000m,
-                    Confidence = ClassificationConfidence.High, EvidenceJson = "{}", EvidenceHash = "source-classification-hash",
-                    PromptHash = "prompt-hash", ClassificationJson = "{\"status\":\"Completed\"}", CompletedUtc = DateTime.UtcNow
+                    Confidence = ClassificationConfidence.High, EvidenceJson = "{}", EvidenceHash = evidenceHash,
+                    PromptHash = promptHash, ClassificationJson = "{\"status\":\"Completed\"}", CompletedUtc = DateTime.UtcNow
                 });
             await db.SaveChangesAsync();
         }

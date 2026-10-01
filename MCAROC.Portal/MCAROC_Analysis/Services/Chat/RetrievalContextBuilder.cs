@@ -134,7 +134,9 @@ public class RetrievalContextBuilder
 
         var coverage = new StringBuilder($"Order-outcome lookup for {string.Join(", ", asked)}: {lookup.Matches.Count} matching order(s)");
         if (lookup.Matches.Count > MaxOrderOutcomeSources) coverage.Append($" (only the first {MaxOrderOutcomeSources} are listed here)");
-        coverage.Append($". Coverage: {lookup.OrdersClassified} of {lookup.OrdersWithText} order(s) with retained text have been classified.");
+        coverage.Append($". Coverage: {lookup.OrdersClassified} of {lookup.OrdersWithText} order(s) with retained text have been classified for their current text.");
+        if (lookup.OrdersOutdated > 0)
+            coverage.Append($" {lookup.OrdersOutdated} order(s) changed after they were classified; their earlier outcomes are not used until they are re-classified.");
         if (!lookup.IsComplete)
             coverage.Append(" The list is NOT exhaustive: unclassified orders may also have these outcomes (classification runs with the litigation AI analysis).");
         sources.Add(new RetrievedSource($"O{tag}", SourceType.OrderOutcome, coverage.ToString(), "Order-outcome classification coverage",

@@ -139,9 +139,7 @@ public sealed class LitigationAiAnalysisOrchestrator(AppDbContext db, ILitigatio
         var priorClassifications = await LoadPriorClassificationsAsync(requestId, 0, ct);
         foreach (var document in chunks.GroupBy(x => x.LitigationOrderDocumentId))
         {
-            var evidence = LitigationOrderClassifier.BuildEvidence(document.ToList());
-            var hash = LitigationAnalysisPromptBuilder.ComputeHash(LitigationOrderClassifier.SerializeEvidence(evidence));
-            var promptHash = LitigationAnalysisPromptBuilder.ComputeHash(LitigationOrderClassifier.BuildPrompt(evidence));
+            var (hash, promptHash) = LitigationOrderClassifier.Hashes(LitigationOrderClassifier.BuildEvidence(document.ToList()));
             if (!(priorClassifications.GetValueOrDefault(document.Key)?.Any(p => p.EvidenceHash == hash && p.PromptHash == promptHash) ?? false)) return true;
         }
         return false;
@@ -176,12 +174,12 @@ public sealed class LitigationAiAnalysisOrchestrator(AppDbContext db, ILitigatio
         var evidence = LitigationOrderClassifier.BuildEvidence(documentChunks);
         var json = LitigationOrderClassifier.SerializeEvidence(evidence);
         var prompt = LitigationOrderClassifier.BuildPrompt(evidence);
+        var (evidenceHash, promptHash) = LitigationOrderClassifier.Hashes(evidence);
         var row = new LitigationOrderClassification
         {
             LitigationAiAnalysisRunId = runId, RequestId = requestId, LitigationCaseId = evidence.LitigationCaseId,
             LitigationCaseOrderId = evidence.LitigationCaseOrderId, LitigationOrderDocumentId = evidence.LitigationOrderDocumentId,
-            EvidenceJson = json, EvidenceHash = LitigationAnalysisPromptBuilder.ComputeHash(json),
-            PromptHash = LitigationAnalysisPromptBuilder.ComputeHash(prompt), EvidenceTruncated = evidence.Truncated
+            EvidenceJson = json, EvidenceHash = evidenceHash, PromptHash = promptHash, EvidenceTruncated = evidence.Truncated
         };
 
         if (priorForDocument?.FirstOrDefault(p => p.EvidenceHash == row.EvidenceHash && p.PromptHash == row.PromptHash) is { } same)

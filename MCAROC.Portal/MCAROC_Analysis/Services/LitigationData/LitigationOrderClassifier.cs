@@ -34,7 +34,19 @@ public static class LitigationOrderClassifier
             first.CaseNumber, first.Court, first.OrderDate, first.OrderType, truncated, excerpts);
     }
 
-    public static string SerializeEvidence(LitigationOrderEvidence evidence) => JsonSerializer.Serialize(evidence, JsonOptions);
+    /// <summary>What the model is shown — and what the evidence hash covers. Content only: the order's own
+    /// case/court/date/type labels and excerpts, never database ids (those are columns on the classification row).
+    /// That keeps the hash a statement about the order's text, so an identical copy (#291 report reuse) is recognised
+    /// as current, while any change to the text — even under the same document id — makes earlier results outdated.</summary>
+    public static string SerializeEvidence(LitigationOrderEvidence evidence) => JsonSerializer.Serialize(new
+    {
+        evidence.CaseNumber, evidence.Court, evidence.OrderDate, evidence.OrderType, evidence.Truncated, evidence.Excerpts
+    }, JsonOptions);
+
+    /// <summary>The (evidence, prompt) hash pair a classification must match to be the order's current one —
+    /// shared by the analysis run (reuse and "needs analysis") and the outcome lookup (what counts as current).</summary>
+    public static (string EvidenceHash, string PromptHash) Hashes(LitigationOrderEvidence evidence) =>
+        (LitigationAnalysisPromptBuilder.ComputeHash(SerializeEvidence(evidence)), LitigationAnalysisPromptBuilder.ComputeHash(BuildPrompt(evidence)));
 
     public static string BuildPrompt(LitigationOrderEvidence evidence)
     {

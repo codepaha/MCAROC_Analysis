@@ -87,4 +87,14 @@ public class OrderOutcomeChatSourcesTests
         Assert.Equal(nameof(LitigationOrderClassification), order.EntityType);
         Assert.Null(result.CitedSources[1].DocumentId); // the coverage note cites, but links nowhere
     }
+
+    [Fact]
+    public void OutdatedOrders_AreCalledOut_InTheCoverageNote()
+    {
+        var coverage = Assert.Single(Build(new OrderOutcomeLookup([], OrdersWithText: 4, OrdersClassified: 3, OrdersOutdated: 1)));
+
+        Assert.Contains("3 of 4", coverage.Text);
+        Assert.Contains("1 order(s) changed after they were classified", coverage.Text);
+        Assert.Contains("NOT exhaustive", coverage.Text);
+    }
 }
