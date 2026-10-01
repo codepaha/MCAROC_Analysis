@@ -399,6 +399,25 @@ public class ChargeLitigationLinkerTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task The_report_assembler_carries_the_links_into_the_litigation_report()
+    {
+        await using var db = CreateContext();
+        var requestId = await SeedRequestWithLitigationAsync(db);
+
+        var report = await new LitigationReportAssembler(db).AssembleAsync(requestId);
+
+        Assert.NotNull(report);
+        var link = Assert.Single(report!.ChargeLinks!.Links);
+        Assert.Equal("CHG-900", link.ChargeNumber);
+        Assert.Equal(ChargeLitigationSignal.ImmovableAddress, link.Signal);
+
+        // and it reaches both deliverables
+        var csv = System.Text.Encoding.UTF8.GetString(LitigationReportArtifacts.RenderCsv(report));
+        Assert.Contains("CHG-900", csv);
+        Assert.True(LitigationReportArtifacts.RenderPdf(report).Length > 1000);
+    }
+
+    [Fact]
     public async Task Loader_ignores_satisfied_charges()
     {
         await using var db = CreateContext();

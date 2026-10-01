@@ -120,6 +120,12 @@ public class LitigationReportAssembler(
 
         var addressPool = LitigationOrderAddressMatcher.BuildAddressPool(companyProfile, epfoEsts, charges);
         var propertyMatches = LitigationOrderAddressMatcher.MatchCases(addressPool, cases, docByOrderId);
+
+        // Cases that touch what the open charges secure (charged property, named assets, a lender's recovery case).
+        var workbookLitigations = request.LatestCompletedIngestionRunId is { } ingestionRunId
+            ? await db.Litigations.AsNoTracking().Where(l => l.RequestId == requestId && l.IngestionRunId == ingestionRunId).ToListAsync(ct)
+            : [];
+        var chargeLinks = ChargeLitigationLinker.Build(charges, cases, docByOrderId, workbookLitigations);
         var propertyMatchesByOrderId = propertyMatches
             .GroupBy(m => m.LitigationCaseOrderId)
             .ToDictionary(g => g.Key, g => g.ToList());
@@ -328,7 +334,8 @@ public class LitigationReportAssembler(
             caseAnalysesByCaseId,
             authoritativeSnapshot.ReusedFromSnapshotId,
             authoritativeSnapshot.ReusedFromRequestId,
-            authoritativeSnapshot.OriginSnapshotId);
+            authoritativeSnapshot.OriginSnapshotId,
+            chargeLinks);
     }
 
     internal static DateTime? ParseOrderDate(string? raw)

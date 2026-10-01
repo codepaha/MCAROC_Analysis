@@ -166,7 +166,7 @@
             <div class="alert alert-danger small mb-4" id="charge-litigation-banner" role="alert">
                 <div class="fw-semibold mb-1"><i class="bi bi-bank me-1"></i>Litigation touches charged property or a charge holder's recovery proceedings</div>
                 <div class="mb-2">
-                    @chl.CasesFor(ChargeLitigationSignal.ImmovableAddress) case@(chl.CasesFor(ChargeLitigationSignal.ImmovableAddress) == 1 ? "" : "s") name property charged to a lender ·
+                    @chl.CasesNamingAssets case@(chl.CasesNamingAssets == 1 ? "" : "s") name property or assets charged to a lender ·
                     @chl.CasesFor(ChargeLitigationSignal.LenderRecoveryCase) recovery proceeding@(chl.CasesFor(ChargeLitigationSignal.LenderRecoveryCase) == 1 ? "" : "s") involve a charge holder.
                 </div>
                 <ul class="mb-2 ps-3">
@@ -175,13 +175,13 @@
                         <li>
                             <strong>@l.ChargeNumber</strong> (@l.ChargeHolder):
                             @(string.IsNullOrWhiteSpace(l.Case.CaseNumber) ? "case" : l.Case.CaseNumber)@(string.IsNullOrWhiteSpace(l.Case.Court) ? "" : " · " + l.Case.Court) —
-                            @(l.Signal == ChargeLitigationSignal.ImmovableAddress ? "order names the charged property" : "lender is litigating (indirect)")
+                            @ChargeLitigationLabels.Phrase(l.Signal)
                             @if (l.Case.LitigationCaseId is { } cid) { <a href="#case-card-@cid">view case</a> }
                         </li>
                     }
                     @if (chl.Links.Count > 8) { <li>…and @(chl.Links.Count - 8) more, in the Charges tab.</li> }
                 </ul>
-                <div class="text-muted">Only strong matches are shown. @(chl.NcltOrdersSkipped ? "NCLT/NCLAT orders are not scanned. " : "")@(chl.OrdersWithoutText > 0 ? $"{chl.OrdersWithoutText} order(s) had no extractable text and could not be compared." : "")</div>
+                <div class="text-muted">Only strong matches are shown. @(chl.NcltOrdersSkipped ? "NCLT/NCLAT orders are not scanned. " : "")@(chl.OrdersWithoutText > 0 ? $"{chl.OrdersWithoutText} order(s) had no extractable text and could not be compared. " : "")@(chl.MovableChargesWithoutIdentifiers > 0 ? $"{chl.MovableChargesWithoutIdentifiers} movable-asset charge(s) name no vehicle or serial numbers, so could not be compared." : "")</div>
             </div>
         }
         else if (chl.CasesScanned > 0)
@@ -189,7 +189,7 @@
             <p class="small text-muted mb-3" id="charge-litigation-none">
                 <i class="bi bi-bank me-1"></i>Charged-property check: no case was tied to a charged property or charge holder.
                 @chl.OrdersScanned order(s) with text were compared@(chl.OrdersWithoutText > 0 ? $"; {chl.OrdersWithoutText} had no extractable text" : "")@(chl.NcltOrdersSkipped ? "; NCLT/NCLAT orders are not scanned" : "").
-                Charges that name no specific property cannot be compared.
+                Charges that name no specific property or asset cannot be compared@(chl.MovableChargesWithoutIdentifiers > 0 ? $" ({chl.MovableChargesWithoutIdentifiers} movable-asset charge(s) name no vehicle or serial numbers)" : "").
             </p>
         }
     }

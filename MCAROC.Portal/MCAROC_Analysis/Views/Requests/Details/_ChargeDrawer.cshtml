@@ -244,10 +244,9 @@
             <h3>Litigation touching this charge <span class="mca-count">@Model.Litigation.Count</span></h3>
             @foreach (var l in Model.Litigation)
             {
-                var isAddress = l.Signal == MCAROC_Analysis.Services.LitigationData.ChargeLitigationSignal.ImmovableAddress;
-                <div class="mca-finding @(isAddress ? "sev-critical" : "sev-watch")">
+                <div class="mca-finding @MCAROC_Analysis.Services.LitigationData.ChargeLitigationLabels.Severity(l.Signal)">
                     <h4>
-                        <span class="mca-sev-dot"></span>@(isAddress ? "Case names the charged property" : "Lender is litigating (indirect)")
+                        <span class="mca-sev-dot"></span>@MCAROC_Analysis.Services.LitigationData.ChargeLitigationLabels.Heading(l.Signal)
                         <span class="mca-finding-meta">@l.Case.Source@(string.IsNullOrWhiteSpace(l.Case.Forum) ? "" : " · " + l.Case.Forum)</span>
                     </h4>
                     <p>

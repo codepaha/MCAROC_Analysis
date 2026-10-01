@@ -1,6 +1,7 @@
 using MCAROC_Analysis.Data;
 using MCAROC_Analysis.Data.Entities;
 using MCAROC_Analysis.Models.Dossier;
+using MCAROC_Analysis.Services.LitigationData;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Memory;
 
@@ -34,7 +35,11 @@ public class DossierCache(AppDbContext db, DossierAssembler assembler, IMemoryCa
         if (keyParts.AnalysisRunId is not { } analysisRunId)
             return null; // completed ingestion but no matching completed analysis ⇒ dossier not ready
 
-        var key = $"dossier:{requestId}:{ingestionRunId}:{analysisRunId}";
+        // The dossier carries charge-to-case links, which depend on the litigation evidence: the newest snapshot AND
+        // how much of its order text has been extracted (extraction finishes after the snapshot does). A refresh, or
+        // text arriving under the same snapshot, changes this, so links computed from older evidence are never served.
+        var litigationVersion = await ChargeLitigationService.VersionAsync(db, requestId, ct);
+        var key = $"dossier:{requestId}:{ingestionRunId}:{analysisRunId}:{litigationVersion}";
         if (cache.TryGetValue(key, out DossierModel? cached) && cached is not null)
             return cached;
 
@@ -69,7 +74,7 @@ public class DossierCache(AppDbContext db, DossierAssembler assembler, IMemoryCa
             .FirstOrDefaultAsync(ct);
 
         if (keyParts is { LatestCompletedIngestionRunId: { } ingestionRunId, AnalysisRunId: { } analysisRunId })
-            cache.Remove($"dossier:{requestId}:{ingestionRunId}:{analysisRunId}");
+            cache.Remove($"dossier:{requestId}:{ingestionRunId}:{analysisRunId}:{await ChargeLitigationService.VersionAsync(db, requestId, ct)}");
 
         var dir = Path.Combine(contentRootPath, "App_Data", "Dossiers", requestId.ToString());
         if (Directory.Exists(dir))

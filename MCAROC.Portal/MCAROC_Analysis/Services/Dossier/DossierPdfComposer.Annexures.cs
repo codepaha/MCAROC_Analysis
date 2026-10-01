@@ -500,6 +500,11 @@ public partial class DossierPdfComposer
         if (model.ChargesNarrative is { } narrative)
             ChargesNarrativeBlock(col, narrative);
 
+        // Charged property & litigation: only when the client's dossier shows litigation at all, and only ever a
+        // Strong match (what the linker produces). Silence here is not "clean" — the notes say what could not be compared.
+        if (ShowLitigation && model.ChargeLinks is { HasAny: true } links)
+            ChargeLitigationCallout(col, links);
+
         if (model.SourceCoverage.ChargeReportMissing)
             col.Item().PaddingBottom(10).Border(0.75f).BorderColor(DossierTheme.Line).BorderLeft(2.5f)
                 .BorderColor(DossierTheme.Amber).Background(DossierTheme.PaperRaised).Padding(11).Text(
@@ -520,6 +525,25 @@ public partial class DossierPdfComposer
         if (ch.Satisfied.Count == 0) col.Item().Text("No satisfied charges on record.").FontSize(DossierTheme.Small).FontColor(DossierTheme.InkFaint);
         foreach (var c in ch.Satisfied) col.Item().PaddingBottom(8).Element(x => ChargeCard(x, c));
     });
+
+    private void ChargeLitigationCallout(ColumnDescriptor col, Services.LitigationData.ChargeLitigationSummary links)
+    {
+        col.Item().PaddingBottom(10).Border(0.75f).BorderColor(DossierTheme.Line).BorderLeft(2.5f)
+            .BorderColor(DossierTheme.MaroonDeep).Background(DossierTheme.PaperRaised).Padding(11).Column(box =>
+            {
+                box.Item().Text($"Litigation touches charged property: {links.ChargesWithLinks} open charge(s) have a case linked.")
+                    .FontSize(DossierTheme.Small).Bold().FontColor(DossierTheme.MaroonDeep);
+                box.Item().PaddingTop(3).Text(
+                    $"{links.CasesNamingAssets} case(s) name property or assets charged to a lender; " +
+                    $"{links.CasesFor(Services.LitigationData.ChargeLitigationSignal.LenderRecoveryCase)} are recovery proceedings involving a charge holder (indirect). " +
+                    "Only strong matches are shown" +
+                    (links.NcltOrdersSkipped ? "; NCLT/NCLAT orders are not scanned" : "") +
+                    (links.OrdersWithoutText > 0 ? $"; {links.OrdersWithoutText} order(s) had no extractable text" : "") +
+                    (links.MovableChargesWithoutIdentifiers > 0 ? $"; {links.MovableChargesWithoutIdentifiers} movable-asset charge(s) name no vehicle or serial numbers and could not be compared" : "") +
+                    ". Each affected charge is marked below.")
+                    .FontSize(DossierTheme.Small).FontColor(DossierTheme.InkSoft).LineHeight(1.4f);
+            });
+    }
 
     private void ChargeCard(IContainer c, RocCharge charge) => c
         .Border(0.75f).BorderColor(DossierTheme.Line).Padding(11).Column(col =>
@@ -557,6 +581,26 @@ public partial class DossierPdfComposer
             col.Item().PaddingTop(5).Text("Security: " + string.Join(", ", labels.Select(SpaceCamel))
                 + (charge.LatestArrangement is { } arr and not ChargeArrangement.Unknown ? $"  ·  {arr}" : ""))
                 .FontSize(DossierTheme.Small).FontColor(DossierTheme.Ink);
+
+        // Cases linked to this charge (charged property named in an order, a named vehicle/serial number, or the
+        // holder's own recovery proceeding), shown with the evidence so a reader can check it.
+        if (ShowLitigation && model.ChargeLinks is { } chargeLinks)
+            foreach (var link in chargeLinks.ForCharge(charge.ChargeId))
+            {
+                var namesAsset = Services.LitigationData.ChargeLitigationLabels.NamesTheAsset(link.Signal);
+                col.Item().PaddingTop(5).Border(0.75f).BorderColor(DossierTheme.Line).BorderLeft(2.5f)
+                    .BorderColor(namesAsset ? DossierTheme.MaroonDeep : DossierTheme.Amber).Padding(7).Column(box =>
+                    {
+                        box.Item().Text($"Litigation: {Services.LitigationData.ChargeLitigationLabels.Heading(link.Signal)}  ·  "
+                            + $"{(string.IsNullOrWhiteSpace(link.Case.CaseNumber) ? "case" : link.Case.CaseNumber)}"
+                            + (string.IsNullOrWhiteSpace(link.Case.Court) ? "" : $", {link.Case.Court}"))
+                            .FontSize(DossierTheme.Small).Bold().FontColor(namesAsset ? DossierTheme.MaroonDeep : DossierTheme.Ink);
+                        box.Item().PaddingTop(2).Text(link.Explanation).FontSize(DossierTheme.Small).FontColor(DossierTheme.InkSoft);
+                        if (!string.IsNullOrWhiteSpace(link.Excerpt))
+                            box.Item().PaddingTop(2).Text($"“{link.Excerpt}”{(link.PageNumber is { } pg ? $" (page {pg})" : "")}")
+                                .Italic().FontSize(DossierTheme.Small).FontColor(DossierTheme.InkFaint);
+                    });
+            }
 
         var propertyEv = evs.LastOrDefault(e => !string.IsNullOrWhiteSpace(e.PropertyParticulars));
         if (propertyEv is not null)

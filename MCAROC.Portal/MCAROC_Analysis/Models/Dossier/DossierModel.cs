@@ -33,7 +33,11 @@ public sealed record DossierModel(
     // AI-synthesized read of the largest open charges (AiChargesNarrativeService), computed once at
     // analysis time — null when the AI call failed or hasn't run for this analysis run yet. Appended last,
     // same append-only precedent as Profile/IncludeLitigation above.
-    Services.Analysis.ChargesNarrative? ChargesNarrative = null);
+    Services.Analysis.ChargesNarrative? ChargesNarrative = null,
+    // Cases that touch what the open charges secure (charged property, named assets, a lender's recovery case).
+    // Carried unfiltered like IncludeLitigation above: only DossierPdfComposer decides whether the PDF shows it.
+    // Its SnapshotId is part of the dossier's cache keys, so a litigation refresh never serves stale links.
+    Services.LitigationData.ChargeLitigationSummary? ChargeLinks = null);
 
 public sealed record DossierCover(
     string CompanyName, string? Cin, string? Pan, DateOnly? IncorporationDate, string? Status,
