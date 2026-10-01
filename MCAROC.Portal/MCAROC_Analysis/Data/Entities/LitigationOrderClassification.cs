@@ -58,5 +58,12 @@ public sealed class LitigationOrderClassification
     /// <summary>The validated, normalized model output (outcomes with their evidence references).</summary>
     public string? ClassificationJson { get; set; }
     public string? FailureReason { get; set; }
+
+    /// <summary>#350: set when this row's result was copied from another order document of the same request whose
+    /// excerpts are identical (the same order sheet filed under a parent case and its IA, or an upstream duplicate),
+    /// instead of a fresh model call. <see cref="RawResponseJson"/> is then that source's response. Null for a fresh
+    /// call and for a same-document carry-forward from an earlier run.</summary>
+    public long? ReusedFromClassificationId { get; set; }
+
     public DateTime? CompletedUtc { get; set; }
 }
