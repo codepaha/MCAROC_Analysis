@@ -98,6 +98,18 @@
                                 using var citDoc = System.Text.Json.JsonDocument.Parse(m.CitedSourcesJson);
                                 if (citDoc.RootElement.ValueKind == System.Text.Json.JsonValueKind.Array && citDoc.RootElement.GetArrayLength() > 0)
                                 {
+                                    // Partial-results banner: shown once if any source is SearchCoverage (tag S1).
+                                    var hasSearchCoverage = citDoc.RootElement.EnumerateArray().Any(c =>
+                                        c.ValueKind == System.Text.Json.JsonValueKind.Object &&
+                                        c.TryGetProperty("SourceType", out var stCheck) &&
+                                        stCheck.ValueKind == System.Text.Json.JsonValueKind.String &&
+                                        stCheck.GetString() == "SearchCoverage");
+                                    if (hasSearchCoverage)
+                                    {
+                                        <div class="mca-partial-results-banner">
+                                            <i class="bi bi-info-circle me-1"></i>Partial results &mdash; not all matching records may be shown
+                                        </div>
+                                    }
                                     <div class="mca-chat-citations">
                                         <small class="text-muted d-block mb-1">Sources:</small>
                                         @foreach (var cit in citDoc.RootElement.EnumerateArray())
@@ -109,30 +121,50 @@
                                             int? pageNumber = cit.TryGetProperty("PageNumber", out var pn) && pn.ValueKind == System.Text.Json.JsonValueKind.Number && pn.TryGetInt32(out var pVal) && pVal > 0 ? pVal : null;
                                             long? docId = cit.TryGetProperty("DocumentId", out var di) && di.ValueKind == System.Text.Json.JsonValueKind.Number && di.TryGetInt64(out var dVal) && dVal > 0 ? dVal : null;
 
-                                            string display;
-                                            if (sourceType == "DocumentChunk" && !string.IsNullOrEmpty(docName) && pageNumber.HasValue)
+                                            if (sourceType == "SearchCoverage")
                                             {
-                                                display = $"Source: {docName}, page {pageNumber.Value}";
+                                                // S1: represented by the banner above; skip inline chip.
+                                                continue;
                                             }
-                                            else if (sourceType == "StructuredFact" && cit.TryGetProperty("EntityType", out var et) && et.ValueKind == System.Text.Json.JsonValueKind.String)
+                                            else if (sourceType == "Metric")
                                             {
-                                                display = $"Computed from parsed data ({et.GetString()})";
+                                                // M chip: metric group reference, no link.
+                                                <span class="mca-citation-metric"><i class="bi bi-bar-chart-fill me-1"></i>@(label ?? "Metric")</span>
                                             }
-                                            else
+                                            else if ((sourceType == "OrderOutcome" || sourceType == "LitigationChunk") && docId.HasValue)
                                             {
-                                                display = label ?? "Source not recorded";
-                                            }
-
-                                            if (sourceType == "DocumentChunk" && docId.HasValue && validDocIds.Contains(docId.Value))
-                                            {
-                                                var p = pageNumber.GetValueOrDefault(1);
-                                                <a class="mca-citation" href="/Requests/@r.RequestId/documents/@docId.Value/view#page=@p" target="_blank" rel="noopener">
-                                                    <i class="bi bi-file-earmark-pdf me-1"></i>@display
+                                                // O chip: links to the order PDF download route.
+                                                <a class="mca-citation mca-citation-order" href="/Requests/@r.RequestId/Litigation/Orders/@docId.Value/download" target="_blank" rel="noopener">
+                                                    <i class="bi bi-gavel me-1"></i>@(label ?? "Order")
                                                 </a>
                                             }
                                             else
                                             {
-                                                <span class="mca-citation-plain">@display</span>
+                                                string display;
+                                                if (sourceType == "DocumentChunk" && !string.IsNullOrEmpty(docName) && pageNumber.HasValue)
+                                                {
+                                                    display = $"Source: {docName}, page {pageNumber.Value}";
+                                                }
+                                                else if (sourceType == "StructuredFact" && cit.TryGetProperty("EntityType", out var et) && et.ValueKind == System.Text.Json.JsonValueKind.String)
+                                                {
+                                                    display = $"Computed from parsed data ({et.GetString()})";
+                                                }
+                                                else
+                                                {
+                                                    display = label ?? "Source not recorded";
+                                                }
+
+                                                if (sourceType == "DocumentChunk" && docId.HasValue && validDocIds.Contains(docId.Value))
+                                                {
+                                                    var p = pageNumber.GetValueOrDefault(1);
+                                                    <a class="mca-citation" href="/Requests/@r.RequestId/documents/@docId.Value/view#page=@p" target="_blank" rel="noopener">
+                                                        <i class="bi bi-file-earmark-pdf me-1"></i>@display
+                                                    </a>
+                                                }
+                                                else
+                                                {
+                                                    <span class="mca-citation-plain">@display</span>
+                                                }
                                             }
                                         }
                                     </div>

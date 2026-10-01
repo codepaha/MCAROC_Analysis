@@ -547,3 +547,99 @@ test('chat-panel: submitPrompt opens panel, updates charCount, populates input, 
     await new Promise(r => setImmediate(r));
     assert.equal(submittedBody.question, 'What are the director liabilities?');
 });
+
+test('chat-panel: Metric (M) citation renders as span with bar-chart icon and no link', () => {
+    const doc = createMockDocument();
+    const bubble = createBubbleElement('Assistant', 'Revenue was ₹5 Cr.', 'Success', [
+        { sourceType: 'Metric', label: 'Revenue — FY2023' }
+    ], null, doc);
+
+    assert.ok(bubble, 'Bubble element created');
+    const metricSpans = bubble.querySelectorAll('.mca-citation-metric');
+    assert.equal(metricSpans.length, 1, 'One metric chip rendered');
+    assert.ok(metricSpans[0].textContent.includes('Revenue — FY2023'), 'Metric label in chip text');
+    // Must NOT be a link
+    const links = bubble.querySelectorAll('.mca-citation');
+    assert.equal(links.length, 0, 'No anchor link for a Metric citation');
+    // Partial-results banner must NOT appear
+    const banners = bubble.querySelectorAll('.mca-partial-results-banner');
+    assert.equal(banners.length, 0, 'No partial-results banner for Metric-only citations');
+});
+
+test('chat-panel: OrderOutcome (O) citation renders as gavel link with mca-citation-order class', () => {
+    const doc = createMockDocument();
+    const bubble = createBubbleElement('Assistant', 'The order imposed a fine.', 'Success', [
+        {
+            sourceType: 'OrderOutcome',
+            label: 'Fine Penalty — TP 12/2021',
+            viewerUrl: '/Requests/5/Litigation/Orders/99/download'
+        }
+    ], null, doc);
+
+    assert.ok(bubble, 'Bubble element created');
+    const orderLinks = bubble.querySelectorAll('.mca-citation-order');
+    assert.equal(orderLinks.length, 1, 'One order chip rendered');
+    assert.equal(orderLinks[0].getAttribute('href'), '/Requests/5/Litigation/Orders/99/download', 'Href points to order download route');
+    assert.equal(orderLinks[0].getAttribute('target'), '_blank', 'Opens in new tab');
+    assert.ok(orderLinks[0].textContent.includes('Fine Penalty — TP 12/2021'), 'Order label in chip text');
+    // Must also carry the base mca-citation class
+    const allCitations = bubble.querySelectorAll('.mca-citation');
+    assert.equal(allCitations.length, 1, 'mca-citation class present on the order link');
+});
+
+test('chat-panel: SearchCoverage (S1) does not emit an inline chip but shows the partial-results banner', () => {
+    const doc = createMockDocument();
+    const bubble = createBubbleElement('Assistant', 'Here are some orders.', 'Success', [
+        { sourceType: 'SearchCoverage', label: 'Top-K sample only; results may be incomplete' }
+    ], null, doc);
+
+    assert.ok(bubble, 'Bubble element created');
+    // No inline chip for S1
+    const citationChips = bubble.querySelectorAll('.mca-citation');
+    assert.equal(citationChips.length, 0, 'No anchor chip rendered for SearchCoverage');
+    const plainChips = bubble.querySelectorAll('.mca-citation-plain');
+    assert.equal(plainChips.length, 0, 'No plain chip rendered for SearchCoverage');
+    const metricChips = bubble.querySelectorAll('.mca-citation-metric');
+    assert.equal(metricChips.length, 0, 'No metric chip rendered for SearchCoverage');
+    // Banner must be present
+    const banners = bubble.querySelectorAll('.mca-partial-results-banner');
+    assert.equal(banners.length, 1, 'Partial-results banner rendered for SearchCoverage source');
+    assert.ok(banners[0].textContent.includes('Partial results'), 'Banner contains "Partial results" text');
+});
+
+test('chat-panel: mixed M/O/S1/DocumentChunk citations render correct chips; banner appears exactly once', () => {
+    const doc = createMockDocument();
+    const bubble = createBubbleElement('Assistant', 'Summary answer.', 'Success', [
+        { sourceType: 'DocumentChunk', documentName: 'MOA.pdf', pageNumber: 3, viewerUrl: '/Requests/1/Documents/viewer?documentId=5#page=3' },
+        { sourceType: 'Metric', label: 'Paid-up Capital — FY2024' },
+        { sourceType: 'OrderOutcome', label: 'Stay Granted — TP 77/2022', viewerUrl: '/Requests/1/Litigation/Orders/44/download' },
+        { sourceType: 'SearchCoverage', label: 'Top-K sample; results may be incomplete' },
+        { sourceType: 'SearchCoverage', label: 'Duplicate coverage note' }  // Two S1 — banner still shown once
+    ], null, doc);
+
+    assert.ok(bubble, 'Bubble element created');
+
+    // Exactly one partial-results banner
+    const banners = bubble.querySelectorAll('.mca-partial-results-banner');
+    assert.equal(banners.length, 1, 'Banner rendered exactly once even with multiple S1 sources');
+
+    // DocumentChunk link
+    const docLinks = bubble.querySelectorAll('.mca-citation');
+    // Includes both the DocumentChunk link and the OrderOutcome link
+    assert.ok(docLinks.length >= 2, 'At least two citation links (DocumentChunk + OrderOutcome)');
+
+    // OrderOutcome carries order class
+    const orderLinks = bubble.querySelectorAll('.mca-citation-order');
+    assert.equal(orderLinks.length, 1, 'One order chip');
+    assert.ok(orderLinks[0].textContent.includes('Stay Granted'), 'Order chip label correct');
+
+    // Metric chip
+    const metricChips = bubble.querySelectorAll('.mca-citation-metric');
+    assert.equal(metricChips.length, 1, 'One metric chip');
+    assert.ok(metricChips[0].textContent.includes('Paid-up Capital'), 'Metric chip label correct');
+
+    // No inline plain chip for S1
+    const plainChips = bubble.querySelectorAll('.mca-citation-plain');
+    assert.equal(plainChips.length, 0, 'No plain chip for SearchCoverage sources');
+});
+
