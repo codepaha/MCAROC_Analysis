@@ -971,6 +971,69 @@ public class LitigationTabAndControllerTests : IAsyncLifetime
         Assert.NotNull(vm.LitigationDataLake);
     }
 
+    [Fact]
+    public async Task Details_WithFocusCaseOnPage2_SetsCurrentPageTo2AndLoadsTargetCaseCard()
+    {
+        await using var db = CreateContext();
+        var client = new Client { ClientCode = "PAG2" + Guid.NewGuid().ToString("N")[..6], ClientName = "Page 2 Co", CreatedDate = DateTime.UtcNow };
+        db.Clients.Add(client);
+        var request = new McaRequest { Client = client, CompanyName = "Page 2 Co", RequestNumber = $"REQ-{Guid.NewGuid():N}", CreatedDate = DateTime.UtcNow };
+        db.Requests.Add(request);
+        await db.SaveChangesAsync();
+
+        var job = new LitigationSearchJob { RequestId = request.RequestId, Status = LitigationSearchJobStatus.Completed, RawResponseHash = "hash_page2" };
+        db.LitigationSearchJobs.Add(job);
+        await db.SaveChangesAsync();
+
+        var snap = new LitigationReportSnapshot { LitigationSearchJobId = job.LitigationSearchJobId, RequestId = request.RequestId, ReportHash = "hash_page2", Status = LitigationReportSnapshotStatus.Completed, RetrievedUtc = DateTime.UtcNow, CasesPersistedCount = 30 };
+        db.LitigationReportSnapshots.Add(snap);
+        await db.SaveChangesAsync();
+
+        // Seed 30 cases across the snapshot
+        var cases = new List<LitigationCase>();
+        for (int i = 1; i <= 30; i++)
+        {
+            var c = new LitigationCase
+            {
+                RequestId = request.RequestId,
+                Court = "High Court of Delhi",
+                CaseNumber = $"CS {i}/2020",
+                CaseStatus = "Pending",
+                LastHearingDate = $"{i:D2}-01-2020",
+                FirstSeenUtc = DateTime.UtcNow
+            };
+            cases.Add(c);
+        }
+        db.LitigationCases.AddRange(cases);
+        await db.SaveChangesAsync();
+
+        foreach (var c in cases)
+        {
+            db.LitigationCaseSourceReports.Add(new LitigationCaseSourceReport
+            {
+                LitigationCaseId = c.LitigationCaseId,
+                LitigationReportSnapshotId = snap.LitigationReportSnapshotId,
+                FirstSeenUtc = DateTime.UtcNow
+            });
+        }
+        await db.SaveChangesAsync();
+
+        // Target a case that sorts onto page 2 (PageSize is 25)
+        // Cases are ordered by Court, ThenByDescending LastHearingDate, ThenBy LitigationCaseId.
+        // Cases with earlier LastHearingDate ("01-01-2020") sort towards the end, so cases[0] will be on page 2.
+        var targetCase = cases[0];
+
+        var controller = CreateRequestsController(db, isReviewer: true);
+        var result = await controller.Details(request.RequestId, charge: null, focusCase: targetCase.LitigationCaseId);
+        var viewResult = Assert.IsType<ViewResult>(result);
+        var vm = Assert.IsType<RequestDetailsViewModel>(viewResult.Model);
+
+        Assert.Equal(targetCase.LitigationCaseId, vm.FocusCaseId);
+        Assert.NotNull(vm.LitigationDataLake);
+        Assert.Equal(2, vm.LitigationDataLake.CurrentPage);
+        Assert.Contains(vm.LitigationDataLake.Cases, c => c.LitigationCaseId == targetCase.LitigationCaseId);
+    }
+
     // ── 9. Client-facing rendering: no reviewer gate ─────────────────────────
 
     private static RequestDetailsViewModel ClientModel(LitigationTabViewModel lake, List<Litigation>? workbook = null) => new()

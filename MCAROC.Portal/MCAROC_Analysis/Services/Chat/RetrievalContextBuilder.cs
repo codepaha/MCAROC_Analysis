@@ -3,6 +3,7 @@ using System.Text;
 using MCAROC_Analysis.Data;
 using MCAROC_Analysis.Data.Entities;
 using MCAROC_Analysis.Models.Dossier;
+using MCAROC_Analysis.Services;
 using MCAROC_Analysis.Services.Dossier;
 using MCAROC_Analysis.Services.LitigationData;
 using Microsoft.EntityFrameworkCore;
@@ -99,17 +100,27 @@ public class RetrievalContextBuilder
                 ChunkId: m.Chunk.ChunkId, DocumentName: m.Chunk.DocumentName, PageNumber: m.Chunk.PageNumber,
                 DocumentId: m.Chunk.FilingDocumentId));
 
+        // #343: a case the question names is matched against the structured case records (the user's "TP 255/2019"
+        // appears verbatim in no order text), and a recency question about it gets that case's newest orders by date
+        // ahead of the similarity matches — similarity alone answered "current status" from a 2023 order.
+        var referencedCases = await FindReferencedCasesAsync(requestId, question, ct);
+        var latestOrderChunks = hints.AsksForRecency && referencedCases.Count > 0
+            ? await _litigationRetriever.GetLatestOrderChunksAsync(requestId,
+                referencedCases.Select(c => c.LitigationCaseId).ToList(), LatestOrdersPerQuestion, ChunksPerLatestOrder, ct)
+            : [];
+        var litigationChunks = latestOrderChunks.Select(c => (Chunk: c, Distance: (double?)null))
+            .Concat(litigationMatches.Where(m => latestOrderChunks.All(l => l.LitigationOrderChunkId != m.Chunk.LitigationOrderChunkId))
+                .Select(m => (m.Chunk, Distance: (double?)m.Distance)))
+            .ToList();
+
         var litigationTag = 1;
-        foreach (var m in litigationMatches)
-        {
-            var label = string.IsNullOrWhiteSpace(m.Chunk.CaseNumber)
-                ? $"Litigation order · Page {m.Chunk.PageNumber}"
-                : $"{m.Chunk.CaseNumber} ({m.Chunk.Court}) · Page {m.Chunk.PageNumber}";
-            sources.Add(new RetrievedSource($"L{litigationTag++}", SourceType.LitigationChunk, m.Chunk.ChunkText, label,
-                RelevanceScore: m.Distance, ChunkId: m.Chunk.LitigationOrderChunkId, DocumentName: m.Chunk.CaseNumber,
-                PageNumber: m.Chunk.PageNumber, DocumentId: m.Chunk.LitigationOrderDocumentId,
-                LitigationCaseId: m.Chunk.LitigationCaseId, LitigationCaseOrderId: m.Chunk.LitigationCaseOrderId));
-        }
+        foreach (var (chunk, distance) in litigationChunks)
+            sources.Add(new RetrievedSource($"L{litigationTag++}", SourceType.LitigationChunk, chunk.ChunkText, LitigationChunkLabel(chunk),
+                RelevanceScore: distance, ChunkId: chunk.LitigationOrderChunkId, DocumentName: chunk.CaseNumber,
+                PageNumber: chunk.PageNumber, DocumentId: chunk.LitigationOrderDocumentId,
+                LitigationCaseId: chunk.LitigationCaseId, LitigationCaseOrderId: chunk.LitigationCaseOrderId));
+
+        AddLitigationCaseSources(sources, referencedCases);
 
         if (hints.OrderOutcomes is { Count: > 0 } outcomes)
             AddOrderOutcomeSources(sources, outcomes, await _orderOutcomes.FindAsync(requestId, outcomes, ct));
@@ -122,7 +133,7 @@ public class RetrievalContextBuilder
             var filingPassages = authoritativeBatch is { } b
                 ? await _db.DocumentChunks.CountAsync(c => c.RequestId == requestId && c.BatchId == b.BatchId, ct) : 0;
             var litigationPassages = await _db.LitigationOrderChunks.CountAsync(c => c.RequestId == requestId, ct);
-            AddSearchCoverageSource(sources, chunkMatches.Count, filingPassages, litigationMatches.Count, litigationPassages);
+            AddSearchCoverageSource(sources, chunkMatches.Count, filingPassages, litigationChunks.Count, litigationPassages);
         }
 
         var indexingStatus = await ComputeIndexingStatusAsync(requestId, ct);
@@ -164,6 +175,93 @@ public class RetrievalContextBuilder
             coverage.Append(" The list is NOT exhaustive: unclassified orders may also have these outcomes (classification runs with the litigation AI analysis).");
         sources.Add(new RetrievedSource($"O{tag}", SourceType.OrderOutcome, coverage.ToString(), "Order-outcome classification coverage",
             EntityType: "OrderOutcomeCoverage"));
+    }
+
+    internal const int LatestOrdersPerQuestion = 3;
+    internal const int ChunksPerLatestOrder = 2;
+    internal const int MaxReferencedCases = 5;
+    internal const int NewestOrdersListed = 5;
+
+    /// <summary>The order date is in every L label so the model can tell the newest order from a years-old one.</summary>
+    internal static string LitigationChunkLabel(LitigationOrderChunk c)
+    {
+        var date = $"Order {(string.IsNullOrWhiteSpace(c.OrderDate) ? "undated" : c.OrderDate)}";
+        return string.IsNullOrWhiteSpace(c.CaseNumber)
+            ? $"Litigation order · {date} · Page {c.PageNumber}"
+            : $"{c.CaseNumber} ({c.Court}) · {date} · Page {c.PageNumber}";
+    }
+
+    private async Task<List<LitigationCase>> FindReferencedCasesAsync(long requestId, string question, CancellationToken ct)
+    {
+        if (LitigationCaseReference.Extract(question).Count == 0) return [];
+        var cases = await _db.LitigationCases.AsNoTracking().Include(c => c.Orders)
+            .Where(c => c.RequestId == requestId).ToListAsync(ct);
+        return LitigationCaseReference.FindReferencedCases(question, cases).Take(MaxReferencedCases).ToList();
+    }
+
+    /// <summary>One "C" fact per case the question names: the stored status, stage, hearing dates and parties, and the
+    /// newest orders by date — exact answers to "status"/"next hearing" without relying on any order's prose.</summary>
+    internal static void AddLitigationCaseSources(List<RetrievedSource> sources, IReadOnlyList<LitigationCase> cases)
+    {
+        var tag = 1;
+        foreach (var c in cases)
+        {
+            var text = new StringBuilder($"Litigation record for case {c.CaseNumber ?? "unnumbered"}");
+            if (!string.IsNullOrWhiteSpace(c.CaseType)) text.Append($" ({c.CaseType})");
+            text.Append($", {c.Court ?? "court not recorded"}");
+            if (!string.IsNullOrWhiteSpace(c.Bench)) text.Append($", {c.Bench}");
+            text.Append('.');
+            void Field(string name, string? value) { if (!string.IsNullOrWhiteSpace(value)) text.Append($" {name}: {value}."); }
+            Field("Status", c.CaseStatus);
+            Field("Stage", c.CaseStage);
+            Field("Filed", c.FilingDate);
+            Field("Last hearing", c.LastHearingDate);
+            Field("Next hearing", c.NextHearingDate);
+            Field("Decided", c.DecisionDate);
+            Field("Petitioners", Parties(c.PetitionersJson));
+            Field("Respondents", Parties(c.RespondentsJson));
+
+            var newest = c.Orders
+                .OrderByDescending(o => LitigationCaseReference.ParseDate(o.OrderDate) ?? DateOnly.MinValue)
+                .ThenByDescending(o => o.LitigationCaseOrderId)
+                .Take(NewestOrdersListed).ToList();
+            text.Append($" {c.Orders.Count} order(s) on record");
+            if (newest.Count > 0)
+                text.Append($"; newest first: {string.Join("; ", newest.Select(o => $"{o.OrderDate ?? "undated"}{(string.IsNullOrWhiteSpace(o.OrderType) ? "" : $" ({o.OrderType})")}"))}");
+            text.Append($". Record last refreshed {Ist.FromUtc(c.LastSeenUtc):dd-MM-yyyy} (IST).");
+
+            sources.Add(new RetrievedSource($"C{tag++}", SourceType.LitigationCase, text.ToString(),
+                $"{c.CaseNumber ?? "Unnumbered case"} ({c.Court ?? "court not recorded"}) · Litigation record",
+                EntityType: nameof(LitigationCase), EntityId: c.LitigationCaseId, LitigationCaseId: c.LitigationCaseId));
+        }
+    }
+
+    /// <summary>Party lists are stored as the provider's JSON — a string array, or objects with a name field. Anything
+    /// else is shown trimmed rather than dropped.</summary>
+    internal static string? Parties(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json)) return null;
+        try
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(json);
+            if (doc.RootElement.ValueKind != System.Text.Json.JsonValueKind.Array) return Trim(json);
+            var names = doc.RootElement.EnumerateArray().Select(e => e.ValueKind switch
+            {
+                System.Text.Json.JsonValueKind.String => e.GetString(),
+                System.Text.Json.JsonValueKind.Object => e.EnumerateObject()
+                    .FirstOrDefault(p => p.Value.ValueKind == System.Text.Json.JsonValueKind.String
+                        && p.Name.Contains("name", StringComparison.OrdinalIgnoreCase)).Value is { ValueKind: System.Text.Json.JsonValueKind.String } v
+                    ? v.GetString() : null,
+                _ => null
+            }).Where(n => !string.IsNullOrWhiteSpace(n)).ToList();
+            return names.Count > 0 ? Trim(string.Join("; ", names)) : null;
+        }
+        catch (System.Text.Json.JsonException)
+        {
+            return Trim(json);
+        }
+
+        static string Trim(string s) => s.Length <= 300 ? s : s[..300] + "…";
     }
 
     /// <summary>Metrics are an extra route, never a reason to fail the turn: the dossier is only assembled once a

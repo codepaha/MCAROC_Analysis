@@ -7,7 +7,8 @@ public enum SourceType
     LitigationChunk,
     OrderOutcome,
     Metric,
-    SearchCoverage
+    SearchCoverage,
+    LitigationCase
 }
 
 /// <summary>One [FACT]/[SOURCE] entry offered to the model in a prompt. Tag ("F1", "D2", "L3", ...) is assigned
@@ -26,7 +27,8 @@ public enum SourceType
 /// Metric (#338, tag "M1"...) is one dossier metric (DossierComputations.BuildMetricGroups) — EntityType carries the
 /// metric group's title. SearchCoverage (#338, tag "S1") is the note saying the D/L passages are a top-K sample,
 /// added only when the question asks for a complete list; its presence in a message's retrieved sources is what
-/// marks the answer as possibly partial.</summary>
+/// marks the answer as possibly partial. LitigationCase (#343, tag "C1"...) is the structured record of a case the
+/// question names — status, hearing dates, parties, newest orders — with LitigationCaseId set.</summary>
 public record RetrievedSource(
     string Tag,
     SourceType Type,

@@ -1,0 +1,200 @@
+using System.Globalization;
+using System.Text.RegularExpressions;
+using MCAROC_Analysis.Data.Entities;
+
+namespace MCAROC_Analysis.Services.LitigationData;
+
+/// <summary>A case reference reduced to what both a user and a court reliably agree on: the serial and the year,
+/// plus the case-type letters as a tie-breaker. A user writes "TP 255/2019"; the order sheet says "TP No.
+/// 255/CTB/2019"; the litigation data may store "TP(IB) 255/CTB/2019", or just "255" with the year in
+/// <see cref="LitigationCase.CaseYear"/> — #343 found the user's form appears verbatim nowhere in the real corpus,
+/// so full-text search can't anchor the case and this match is done against the structured case record instead.</summary>
+public sealed partial record LitigationCaseReference(string TypeLetters, string Serial, string Year)
+{
+    /// <summary>Every case reference in a question: optional type prefix, optional "No.", a serial, an optional
+    /// bench code ("CTB", "KB", "ND"), then the year, joined by "/" or "of" — e.g. "TP 255/2019", "IA No. 45 of
+    /// 2021", "Company Appeal (AT) (Ins) No. 935 of 2023", "CP(IB) 593/KB/2017".</summary>
+    public static IReadOnlyList<LitigationCaseReference> Extract(string text)
+    {
+        var refs = new List<LitigationCaseReference>();
+        foreach (Match m in ReferenceRegex().Matches(text))
+        {
+            var r = new LitigationCaseReference(Letters(CaseTypeTokens(m.Groups["type"].Value)), TrimSerial(m.Groups["serial"].Value), m.Groups["year"].Value);
+            if (!refs.Contains(r)) refs.Add(r);
+        }
+        return refs;
+    }
+
+    /// <summary>The stored case's own reference, from <see cref="LitigationCase.CaseNumber"/> when it carries a
+    /// year, else its lone serial plus <see cref="LitigationCase.CaseYear"/>; null when no serial/year can be told
+    /// apart. Type letters come from the case number's prefix, falling back to <see cref="LitigationCase.CaseType"/>.</summary>
+    public static LitigationCaseReference? Of(LitigationCase c)
+    {
+        var number = c.CaseNumber ?? "";
+        var fromNumber = Extract(number).FirstOrDefault();
+        if (fromNumber is not null)
+            return fromNumber.TypeLetters.Length > 0 ? fromNumber : fromNumber with { TypeLetters = Letters(c.CaseType ?? "") };
+
+        if (string.IsNullOrWhiteSpace(c.CaseYear) || !YearOnlyRegex().IsMatch(c.CaseYear.Trim())) return null;
+        var year = c.CaseYear.Trim();
+        var serials = SerialRegex().Matches(number).Select(m => m.Value).Where(s => s != year).Select(TrimSerial).ToList();
+        if (serials.Count != 1) return null;
+        var prefix = Letters(LeadingTypeRegex().Match(number).Value);
+        return new LitigationCaseReference(prefix.Length > 0 ? prefix : Letters(c.CaseType ?? ""), serials[0], year);
+    }
+
+    private static readonly (string Canonical, string[] Prefixes)[] AliasGroups =
+    [
+        ("COMPANY_APPEAL", ["COMPANYAPPEAL", "COMPAPPEAL", "COAPPEAL", "CAAT", "COMPAPPAT", "COAAT", "COA"]),
+        ("COMPANY_APPLICATION", ["COMPANYAPPLICATION", "COMPAPPLICATION", "COAPPLICATION", "COMPANYAPPLN", "COMPAPPLN", "COAPPLN", "COMPANYAPPL", "COMPAPPL", "COAPPL", "COMPANYAPPN", "COMPAPPN", "COAPPN"]),
+        ("CP", ["COMPANYPETITION", "COMPPET", "COMPET", "CPIB", "CP"]),
+        ("TP", ["TRANSFERPETITION", "TRANSPET", "TPIB", "TP"]),
+        ("IA", ["INTERLOCUTORYAPPLICATION", "INTERLOCAPP", "IAIB", "IA"]),
+        ("MA", ["MISCELLANEOUSAPPLICATION", "MISCAPP", "MAIB", "MA"]),
+        ("RA", ["REVIEWAPPLICATION", "REVAPP", "RAIB", "RA"]),
+        ("TA", ["TRANSFERAPPLICATION", "TRANSAPP", "TAIB", "TA"]),
+        ("WP", ["WRITPETITION", "WPC", "WP"]),
+        ("SLP", ["SPECIALLEAVEPETITION", "SLPC", "SLPCR", "SLP"]),
+        ("OA", ["ORIGINALAPPLICATION", "OA"]),
+        ("CS", ["CIVILSUIT", "CS"]),
+        ("OS", ["ORIGINALSUIT", "OS"])
+    ];
+
+    private static string? GetAliasGroup(string typeLetters)
+    {
+        if (IsAmbiguousCompanyAbbreviation(typeLetters))
+            return null;
+
+        foreach (var (canonical, prefixes) in AliasGroups)
+        {
+            foreach (var prefix in prefixes)
+            {
+                if (prefix == "COA")
+                {
+                    if (typeLetters == "COA" || typeLetters.StartsWith("COAAT", StringComparison.Ordinal))
+                        return canonical;
+                }
+                else if (typeLetters.StartsWith(prefix, StringComparison.Ordinal))
+                {
+                    return canonical;
+                }
+            }
+        }
+        return null;
+    }
+
+    private static bool IsAmbiguousCompanyAbbreviation(string typeLetters) =>
+        typeLetters is "CA" or "COMPAPP" or "COMPAP" or "COAPP" or "COAP" or "CAIB";
+
+    /// <summary>Checks whether two case-type letter strings are compatible. If either side is empty (missing type info),
+    /// they are compatible. If both map to known alias groups, they are compatible iff their groups match (e.g. "COMPANY_APPEAL"
+    /// and "COMPANYAPPEALATINS"). Ambiguous abbreviations such as "CA", "COMPAPP", or "COAPP" can match either "Company Appeal" or
+    /// "Company Application", but explicit "Appeal" and "Application" strings are distinct semantic types and never match each other.
+    /// Explicitly contradictory types (such as "TP" vs "IA" or "Company Appeal" vs "Company Application") are refused.</summary>
+    public static bool AreTypesCompatible(string a, string b)
+    {
+        if (a.Length == 0 || b.Length == 0) return true;
+
+        var aAmbiguous = IsAmbiguousCompanyAbbreviation(a);
+        var bAmbiguous = IsAmbiguousCompanyAbbreviation(b);
+        if (aAmbiguous || bAmbiguous)
+        {
+            if (aAmbiguous && bAmbiguous) return true;
+            var nonAmbiguous = aAmbiguous ? b : a;
+            var nonAmbiguousGroup = GetAliasGroup(nonAmbiguous);
+            return nonAmbiguousGroup is "COMPANY_APPEAL" or "COMPANY_APPLICATION";
+        }
+
+        var groupA = GetAliasGroup(a);
+        var groupB = GetAliasGroup(b);
+        if (groupA != null && groupB != null)
+            return groupA == groupB;
+
+        return a.StartsWith(b, StringComparison.Ordinal) || b.StartsWith(a, StringComparison.Ordinal);
+    }
+
+    /// <summary>Same serial and year; type letters must not contradict ("TP" matches "TPIB", "CP" matches "CPIB",
+    /// "CA" matches "Company Appeal", "TP" never matches "IA", "Company Appeal" never matches "Company Application").
+    /// Either side having no letters is not a contradiction.</summary>
+    public bool Matches(LitigationCaseReference other) =>
+        Serial == other.Serial && Year == other.Year && AreTypesCompatible(TypeLetters, other.TypeLetters);
+
+    /// <summary>The request's cases a question refers to. Cases must match on serial, year, and type compatibility
+    /// (including supported abbreviations like "CA" for "Company Appeal"). Explicit contradictions (such as "TP" vs "IA" or
+    /// "Company Appeal" vs "Company Application") are never picked, even if only one serial/year match exists.</summary>
+    public static IReadOnlyList<LitigationCase> FindReferencedCases(string question, IEnumerable<LitigationCase> cases)
+    {
+        var asked = Extract(question);
+        if (asked.Count == 0) return [];
+        var withRefs = cases.Select(c => (Case: c, Ref: Of(c))).Where(x => x.Ref is not null).ToList();
+        var found = new List<LitigationCase>();
+        foreach (var q in asked)
+        {
+            var sameNumber = withRefs.Where(x => x.Ref!.Serial == q.Serial && x.Ref.Year == q.Year).ToList();
+            var agreeing = sameNumber.Where(x => q.Matches(x.Ref!)).ToList();
+            if (IsAmbiguousCompanyAbbreviation(q.TypeLetters))
+            {
+                var distinctGroups = agreeing
+                    .Select(x => GetAliasGroup(x.Ref!.TypeLetters))
+                    .Where(g => g is "COMPANY_APPEAL" or "COMPANY_APPLICATION")
+                    .Distinct()
+                    .ToList();
+                if (distinctGroups.Count > 1)
+                {
+                    agreeing.Clear();
+                }
+            }
+            foreach (var x in agreeing)
+                if (!found.Contains(x.Case)) found.Add(x.Case);
+        }
+        return found;
+    }
+
+    /// <summary>Order and hearing dates arrive as text ("09-01-2025" in the litigation data); null when unparseable,
+    /// so callers can sort undated orders last rather than guess.</summary>
+    public static DateOnly? ParseDate(string? value) =>
+        !string.IsNullOrWhiteSpace(value) && DateOnly.TryParseExact(value.Trim(), DateFormats, CultureInfo.InvariantCulture, DateTimeStyles.None, out var d)
+            ? d : null;
+
+    private static readonly string[] DateFormats =
+        ["dd-MM-yyyy", "d-M-yyyy", "dd/MM/yyyy", "d/M/yyyy", "dd.MM.yyyy", "yyyy-MM-dd", "d MMM yyyy", "dd MMM yyyy", "d MMMM yyyy", "dd MMMM yyyy"];
+
+    /// <summary>Drops a capitalised sentence word that merely precedes the case type ("Summarise TP 255/2019" → "TP"):
+    /// leading Title-case words go when an all-caps type token ("TP", "IA", "CP(IB)") follows them. "Company Appeal
+    /// (AT) (Ins)" has no such token and is kept whole.</summary>
+    private static string CaseTypeTokens(string type)
+    {
+        var tokens = type.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        var firstCaps = Array.FindIndex(tokens, t => AllCapsTypeRegex().IsMatch(t));
+        return firstCaps > 0 && tokens[..firstCaps].All(t => TitleWordRegex().IsMatch(t))
+            ? string.Join(' ', tokens[firstCaps..]) : type;
+    }
+
+    private static string Letters(string s)
+    {
+        var letters = new string(s.Where(char.IsLetter).ToArray()).ToUpperInvariant();
+        return letters == "NO" || letters.EndsWith("NO", StringComparison.Ordinal) && letters.Length > 2 ? letters[..^2] : letters;
+    }
+
+    private static string TrimSerial(string s) => s.TrimStart('0') is { Length: > 0 } t ? t : s;
+
+    /// <summary>The type is up to four capitalised or bracketed tokens ("TP", "TP(IB)", "Company Appeal (AT) (Ins)")
+    /// immediately before the number, so lower-case question words ("status of") never join it.</summary>
+    [GeneratedRegex(@"(?<type>(?:\(?[A-Z][A-Za-z.]*\)?(?:\([A-Za-z.]+\))?\s*){1,4})?(?:\bNo\.?\s*)?(?<serial>\d{1,6})\s*(?:/\s*[A-Za-z]{1,4}\s*)?(?:/|\bof\b)\s*(?<year>(?:19|20)\d{2})\b")]
+    private static partial Regex ReferenceRegex();
+
+    [GeneratedRegex(@"\d{1,6}")]
+    private static partial Regex SerialRegex();
+
+    [GeneratedRegex(@"^\s*(?:19|20)\d{2}\s*$")]
+    private static partial Regex YearOnlyRegex();
+
+    [GeneratedRegex(@"^[A-Za-z][A-Za-z.()\s]*")]
+    private static partial Regex LeadingTypeRegex();
+
+    [GeneratedRegex(@"^[A-Z]{2,}(\(|$)")]
+    private static partial Regex AllCapsTypeRegex();
+
+    [GeneratedRegex(@"^[A-Z][a-z]+$")]
+    private static partial Regex TitleWordRegex();
+}

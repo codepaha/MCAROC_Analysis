@@ -142,6 +142,22 @@
                                                     <i class="bi bi-gavel me-1"></i>@(label ?? "Order")
                                                 </a>
                                             }
+                                            else if (sourceType == "LitigationCase")
+                                            {
+                                                long? caseId = cit.TryGetProperty("LitigationCaseId", out var lci) && lci.ValueKind == System.Text.Json.JsonValueKind.Number && lci.TryGetInt64(out var lcVal) && lcVal > 0
+                                                    ? lcVal
+                                                    : (cit.TryGetProperty("EntityId", out var ei) && ei.ValueKind == System.Text.Json.JsonValueKind.Number && ei.TryGetInt64(out var eVal) && eVal > 0 ? eVal : null);
+                                                if (caseId.HasValue)
+                                                {
+                                                    <a class="mca-citation mca-citation-case" href="/Requests/@r.RequestId?focusCase=@caseId.Value#case-card-@caseId.Value" target="_blank" rel="noopener">
+                                                        <i class="bi bi-briefcase me-1"></i>@(label ?? "Litigation record")
+                                                    </a>
+                                                }
+                                                else
+                                                {
+                                                    <span class="mca-citation-plain">@(label ?? "Litigation record")</span>
+                                                }
+                                            }
                                             else
                                             {
                                                 string display;

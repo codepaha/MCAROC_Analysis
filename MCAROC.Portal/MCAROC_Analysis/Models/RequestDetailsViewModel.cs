@@ -88,6 +88,10 @@ public class RequestDetailsViewModel
     /// and scrolls it into view on load. Null when the query string carries no charge.</summary>
     public long? FocusChargeId { get; set; }
 
+    /// <summary>From <c>?focusCase=&lt;id&gt;</c> — the Litigation tab sets its page to include this case card
+    /// and scrolls it into view on load. Null when the query string carries no case focus.</summary>
+    public long? FocusCaseId { get; set; }
+
     /// <summary>The latest AnalysisRun (any Status) for this request, if one has ever started — the AI
     /// Analysis tab renders an in-progress/failed state until this reaches a terminal Completed/
     /// CompletedWithErrors status.</summary>
