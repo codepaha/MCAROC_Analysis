@@ -1,0 +1,1588 @@
+[
+  {
+    "SampleId": 1,
+    "CourtForum": "NCLT",
+    "CaseNumber": "TP 255/CTB/2019 (IA 33/CB/2022)",
+    "OrderFileName": "Order NCLT/IA_I.B.C__12_CB_2022/Order 10_18-10-2022.pdf",
+    "OrderDate": "2022-02-10",
+    "Sha256": "532837552b9d2ec462739ffc7d361946c42a1dcd9f4b206197ea43996213046e",
+    "PageCount": 3,
+    "TextExtractionQuality": "NativeClean",
+    "CorpusDuplicateCount": 1,
+    "ExpectedOutcomes": [
+      "Dismissal"
+    ],
+    "ExpectedFineAmount": null,
+    "ExpectedConfidence": "High",
+    "OperativeExcerpt": "ngly, IA (IB) No. 33/C812022 and IA (IB) No. 341C812022 arc dismissed as infructuous. Counsel for respondent in IA No. ll3lcBl202l Mr. D.P Sarangi represented that his name is omitted in the order dated 0",
+    "TaxonomyNotes": "Dismissed as infructuous following earlier order in connected IA 113/CB/2021.",
+    "EvidenceReferences": [
+      {
+        "PageNumber": 1,
+        "Excerpt": "ngly, IA (IB) No. 33/C812022 and IA (IB) No. 341C812022 arc dismissed as infructuous. Counsel for respondent in IA No. ll3lcBl202l Mr. D.P Sarangi represented that his name is omit"
+      }
+    ]
+  },
+  {
+    "SampleId": 2,
+    "CourtForum": "NCLT",
+    "CaseNumber": "TP 255/CTB/2019 (IA 48/CB/2021)",
+    "OrderFileName": "Order NCLT/IA_I.B.C__24_CB_2019/Order 1_13-08-2021.pdf",
+    "OrderDate": "2021-08-13",
+    "Sha256": "067ec8f32423cc457b9d29b68c05637220337b643cc2615ef73406844784db2b",
+    "PageCount": 1,
+    "TextExtractionQuality": "NativeClean",
+    "CorpusDuplicateCount": 1,
+    "ExpectedOutcomes": [
+      "DisposedSettled",
+      "AdjournedNoSubstantiveOrder"
+    ],
+    "ExpectedFineAmount": null,
+    "ExpectedConfidence": "High",
+    "OperativeExcerpt": "thing survives in IA (IB) No. 48/CB 12021and the same shall stand disposed of. IA (IB) No.33/CBl202l and IA (IB) No. 341CB,12021 are wrongly on board today. List this matter on23.08,2021 as earlier",
+    "TaxonomyNotes": "Multi-IA hearing sheet: disposes IA 48 while listing/adjourning connected IAs to 23.08.2021.",
+    "EvidenceReferences": [
+      {
+        "PageNumber": 1,
+        "Excerpt": "thing survives in IA (IB) No. 48/CB 12021and the same shall stand disposed of. IA (IB) No.33/CBl202l and IA (IB) No. 341CB,12021 are wrongly on board today. List this matter on23.0"
+      }
+    ]
+  },
+  {
+    "SampleId": 3,
+    "CourtForum": "NCLT",
+    "CaseNumber": "TP 255/CTB/2019",
+    "OrderFileName": "Order NCLT/IA_I.B.C__313_CB_2023/Order 1_13-11-2023.pdf",
+    "OrderDate": "2023-11-13",
+    "Sha256": "3281eaedd46ff0db6dbde43008b849abe19cfa5a70f05dd2118125a7059526e0",
+    "PageCount": 1,
+    "TextExtractionQuality": "NativeClean",
+    "CorpusDuplicateCount": 1,
+    "ExpectedOutcomes": [
+      "AdjournedNoSubstantiveOrder"
+    ],
+    "ExpectedFineAmount": null,
+    "ExpectedConfidence": "High",
+    "OperativeExcerpt": "ired and could not continue the proceeding with UPS device, hence matter adjourned to 29.11.2023 . s& 5.1 Kaushalendra Kumar Singh Member (Technical) Member (Judicial) -_-.---.-.-7 P. Mohari?.aj Sibendra Naik (Steno)",
+    "TaxonomyNotes": "Adjournment-only order caused by technical failure / power interruption.",
+    "EvidenceReferences": [
+      {
+        "PageNumber": 1,
+        "Excerpt": "ired and could not continue the proceeding with UPS device, hence matter adjourned to 29.11.2023 . s& 5.1 Kaushalendra Kumar Singh Member (Technical) Member (Judicial) -_-.---.-.-7"
+      }
+    ]
+  },
+  {
+    "SampleId": 4,
+    "CourtForum": "NCLT",
+    "CaseNumber": "CP(IB) No. 593/KB/2017",
+    "OrderFileName": "Order NCLT/IA_I.B.C__79_CB_2019/Order 1_12-11-2020.pdf",
+    "OrderDate": "2020-11-12",
+    "Sha256": "5e40980294fe82f11f273fd02d1c14a3cbaf0d2a0fe654112a1e42ab135c402e",
+    "PageCount": 1,
+    "TextExtractionQuality": "NativeClean",
+    "CorpusDuplicateCount": 1,
+    "ExpectedOutcomes": [
+      "AdjournedNoSubstantiveOrder"
+    ],
+    "ExpectedFineAmount": null,
+    "ExpectedConfidence": "High",
+    "OperativeExcerpt": "K. Acharya ORDER Ld. Counsel for the petitioner is present. List the matter on 10.12.2020 for hearing. .Sot S\"t ---,=--- Shri Satya Ranjan Prasad Member (T) Ms. Sucharitha R. Member(J) Nishi(Steno)",
+    "TaxonomyNotes": "Single-line listing/adjournment order.",
+    "EvidenceReferences": [
+      {
+        "PageNumber": 1,
+        "Excerpt": "K. Acharya ORDER Ld. Counsel for the petitioner is present. List the matter on 10.12.2020 for hearing. .Sot S\"t ---,=--- Shri Satya Ranjan Prasad Member (T) Ms. Sucharitha R. Membe"
+      }
+    ]
+  },
+  {
+    "SampleId": 5,
+    "CourtForum": "NCLT",
+    "CaseNumber": "TP 255/CTB/2019",
+    "OrderFileName": "Order NCLT/MA_IBC__1_CB_2022/Order 1_07-04-2022.pdf",
+    "OrderDate": "2022-04-07",
+    "Sha256": "651e855d03562a316b14b068cdb2918f3ca5e9bde526cdc33f87c5d087cb20ce",
+    "PageCount": 2,
+    "TextExtractionQuality": "NativeClean",
+    "CorpusDuplicateCount": 1,
+    "ExpectedOutcomes": [
+      "AdjournedNoSubstantiveOrder"
+    ],
+    "ExpectedFineAmount": null,
+    "ExpectedConfidence": "High",
+    "OperativeExcerpt": "' Acharya who seeks two days' time to file reply affidavit' At request of the counsel, time is granted. Copy of the reply affidavit thereof shall be served on the counsel on record for the opposite parties' a- ffioastalPro",
+    "TaxonomyNotes": "Adjournment granted for filing reply affidavit.",
+    "EvidenceReferences": [
+      {
+        "PageNumber": 1,
+        "Excerpt": "' Acharya who seeks two days' time to file reply affidavit' At request of the counsel, time is granted. Copy of the reply affidavit thereof shall be served on the counsel on record"
+      }
+    ]
+  },
+  {
+    "SampleId": 6,
+    "CourtForum": "NCLT",
+    "CaseNumber": "TP 255/CB/2019 (CP 593/KB/2017)",
+    "OrderFileName": "Order NCLT/TP _IBC__255_CB_2019/Order 100_05-08-2025.pdf",
+    "OrderDate": "2019-08-05",
+    "Sha256": "ca98ced1ab8ce025c3e71b583ee3564e514f50a212dc52b7f7383b2d8b5ec32e",
+    "PageCount": 1,
+    "TextExtractionQuality": "NativeClean",
+    "CorpusDuplicateCount": 118,
+    "ExpectedOutcomes": [
+      "DisposedSettled"
+    ],
+    "ExpectedFineAmount": null,
+    "ExpectedConfidence": "Medium",
+    "OperativeExcerpt": "ORDER CP No. 593/KB/2017 is already disposed of bypassing order or liquidation. Corporate Debtor is already under process of liquidation. Liquidate is appointed. CA No",
+    "TaxonomyNotes": "Records that main company petition was already disposed of by passing liquidation order. Note: 118 identical copies exist across NCLT archive due to upstream scraper re-downloading case status sheet.",
+    "EvidenceReferences": [
+      {
+        "PageNumber": 1,
+        "Excerpt": "ORDER CP No. 593/KB/2017 is already disposed of bypassing order or liquidation. Corporate Debtor is already under process of liquidation. Liquidate is appointed. CA No"
+      }
+    ]
+  },
+  {
+    "SampleId": 7,
+    "CourtForum": "NCLT",
+    "CaseNumber": "TP 220/CTB/2019 (CP 51/2013)",
+    "OrderFileName": "Order NCLT/TP_220_CB_2019/Order 1_31-07-2019.pdf",
+    "OrderDate": "2019-07-31",
+    "Sha256": "b588fed8574bd045b961c6441f7d55fca308e73b52fcc2c5fd3b31864d8dc436",
+    "PageCount": 1,
+    "TextExtractionQuality": "NativeClean",
+    "CorpusDuplicateCount": 1,
+    "ExpectedOutcomes": [
+      "AdjournedNoSubstantiveOrder"
+    ],
+    "ExpectedFineAmount": null,
+    "ExpectedConfidence": "High",
+    "OperativeExcerpt": "recently transferred from the Hon'ble High Court of Orissa. Registry to issue Notice to both the parties. Call on26.09.20l9. s& ..4 1, SA ,L& , //) ' / t Ms. Sucharitha R. Shri Me, Member(J) Nishi(steno)",
+    "TaxonomyNotes": "Case transfer from High Court with notice issued to parties; procedural adjournment.",
+    "EvidenceReferences": [
+      {
+        "PageNumber": 1,
+        "Excerpt": "recently transferred from the Hon'ble High Court of Orissa. Registry to issue Notice to both the parties. Call on26.09.20l9. s& ..4 1, SA ,L& , //) ' / t Ms. Sucharitha R. Shri Me,"
+      }
+    ]
+  },
+  {
+    "SampleId": 8,
+    "CourtForum": "NCLT",
+    "CaseNumber": "TP 240/CTB/2019 (CP 421/2013)",
+    "OrderFileName": "Order NCLT/TP_240_CB_2019/Order 1_23-10-2019.pdf",
+    "OrderDate": "2019-10-23",
+    "Sha256": "c03c1ec12f21e74e5b9ce9a62d151fc23f65bd4ea8d8033d0cce7144f182174c",
+    "PageCount": 1,
+    "TextExtractionQuality": "NativeClean",
+    "CorpusDuplicateCount": 1,
+    "ExpectedOutcomes": [
+      "Dismissal"
+    ],
+    "ExpectedFineAmount": null,
+    "ExpectedConfidence": "High",
+    "OperativeExcerpt": "1. Saswat K. Acharya 2. Ashish K. Dey 3. Shantanu Das ORDER The Company is under liquidation. Hence, the matter is dismissed. Sucharitha R. Kaushal-Steno Member(J)",
+    "TaxonomyNotes": "Substantive summary dismissal of petition due to liquidation status.",
+    "EvidenceReferences": [
+      {
+        "PageNumber": 1,
+        "Excerpt": "1. Saswat K. Acharya 2. Ashish K. Dey 3. Shantanu Das ORDER The Company is under liquidation. Hence, the matter is dismissed. Sucharitha R. Kaushal-Steno Member(J)"
+      }
+    ]
+  },
+  {
+    "SampleId": 9,
+    "CourtForum": "NCLT",
+    "CaseNumber": "TP 93/CTB/2019 (CP 1317/KB/2018)",
+    "OrderFileName": "Order NCLT/TP_93_CB_2019/Order 10_07-01-2020.pdf",
+    "OrderDate": "2019-04-08",
+    "Sha256": "a8ae4dc13639a83e489cfa998949003e60299b86734ec39eac7353a2af57aa4c",
+    "PageCount": 1,
+    "TextExtractionQuality": "NativeClean",
+    "CorpusDuplicateCount": 1,
+    "ExpectedOutcomes": [
+      "AdjournedNoSubstantiveOrder"
+    ],
+    "ExpectedFineAmount": null,
+    "ExpectedConfidence": "High",
+    "OperativeExcerpt": "ord as the file recently been transferred this bench. lssue notice to the Petitioner for his appearance after two weeks. Matter to appear on 08.04.2019. 3d .' M.B. dosavi Member (J) Name of the Company Coastal Projects ltd. Under Section 6",
+    "TaxonomyNotes": "Procedural hearing order after transfer with notice ordered; adjournment only.",
+    "EvidenceReferences": [
+      {
+        "PageNumber": 1,
+        "Excerpt": "ord as the file recently been transferred this bench. lssue notice to the Petitioner for his appearance after two weeks. Matter to appear on 08.04.2019. 3d .' M.B. dosavi Member (J"
+      }
+    ]
+  },
+  {
+    "SampleId": 10,
+    "CourtForum": "NCLT",
+    "CaseNumber": "IA (IB) No. 73/CTB/2020 in CP (IB) 593/KB/2017",
+    "OrderFileName": "Order NCLT/IA_I.B.C__73_CB_2020/Order 1_02-03-2021.pdf",
+    "OrderDate": "2021-03-02",
+    "Sha256": "f3a494c1f23effe8589b6000adaf591268dde2907a289f809e7f7b4a9f96a9b0",
+    "PageCount": 5,
+    "TextExtractionQuality": "NativeClean",
+    "CorpusDuplicateCount": 1,
+    "ExpectedOutcomes": [
+      "InterimRelief"
+    ],
+    "ExpectedFineAmount": null,
+    "ExpectedConfidence": "High",
+    "OperativeExcerpt": "ary action. Hence, in the interests of natural justice, the relief sought for by the applicant is hereby allowed. Accordingly, this IA (IB) No. 73lCTBl2020 connected with CP (IB) No. 593/KB 12017 is ALLOWED. Signed on this, the 02nd",
+    "TaxonomyNotes": "Interim relief application allowed with regulatory referral to IBBI.",
+    "EvidenceReferences": [
+      {
+        "PageNumber": 5,
+        "Excerpt": "ary action. Hence, in the interests of natural justice, the relief sought for by the applicant is hereby allowed. Accordingly, this IA (IB) No. 73lCTBl2020 connected with CP (IB) N"
+      }
+    ]
+  },
+  {
+    "SampleId": 11,
+    "CourtForum": "NCLAT",
+    "CaseNumber": "Company Appeal (AT) (Ins) No. 1151 of 2022",
+    "OrderFileName": "Order NCLAT/Company Appeal_AT__Ins_ - 1151_ND_2022/Order 1_2022-09-23.pdf",
+    "OrderDate": "2022-09-23",
+    "Sha256": "e8dcb1589e7f04b2a97c56dcb90ddcb2981e56d999a4d08ca1ab59de951f9967",
+    "PageCount": 4,
+    "TextExtractionQuality": "NativeClean",
+    "CorpusDuplicateCount": 2,
+    "ExpectedOutcomes": [
+      "Dismissal"
+    ],
+    "ExpectedFineAmount": null,
+    "ExpectedConfidence": "High",
+    "OperativeExcerpt": "IBC consequently this appeal is liable to be dismissed. 15. In the result, the application is dismissed. [Justice M. Satyanarayana Murthy] Member (Judicial) [Barun Mitra] Member (Technical) sa/nn",
+    "TaxonomyNotes": "Appellate judgment dismissing the insolvency appeal.",
+    "EvidenceReferences": [
+      {
+        "PageNumber": 4,
+        "Excerpt": "IBC consequently this appeal is liable to be dismissed. 15. In the result, the application is dismissed. [Justice M. Satyanarayana Murthy] Member (Judicial) [Barun Mitra] Member (T"
+      }
+    ]
+  },
+  {
+    "SampleId": 12,
+    "CourtForum": "NCLAT",
+    "CaseNumber": "Company Appeal (AT) (Insolvency) No. 383 of 2020",
+    "OrderFileName": "Order NCLAT/Company Appeal_AT__Ins_ - 383_ND_2020/Order 1_2022-02-24.pdf",
+    "OrderDate": "2022-02-24",
+    "Sha256": "90ee9a168380d37901e5c0822ab88cd1dab7960ef2fc0cedf1e91f910b25c35b",
+    "PageCount": 2,
+    "TextExtractionQuality": "NativeClean",
+    "CorpusDuplicateCount": 1,
+    "ExpectedOutcomes": [
+      "DisposedSettled"
+    ],
+    "ExpectedFineAmount": null,
+    "ExpectedConfidence": "High",
+    "OperativeExcerpt": "Order impugned. With these observations and clarifications, we dispose of the Appeal. [Justice Ashok Bhushan] Chairperson [Dr. Alok Srivastava] Member (Technical) Basant/nn",
+    "TaxonomyNotes": "Final disposal of appeal without interference.",
+    "EvidenceReferences": [
+      {
+        "PageNumber": 2,
+        "Excerpt": "Order impugned. With these observations and clarifications, we dispose of the Appeal. [Justice Ashok Bhushan] Chairperson [Dr. Alok Srivastava] Member (Technical) Basant/nn"
+      }
+    ]
+  },
+  {
+    "SampleId": 13,
+    "CourtForum": "NCLAT",
+    "CaseNumber": "Company Appeal (AT) (Ins) No. 174 of 2019",
+    "OrderFileName": "Order NCLAT/Company Appeal_AT__Ins_ - 174_ND_2019/Order 6_2019-02-22.pdf",
+    "OrderDate": "2019-02-22",
+    "Sha256": "d0e9ba1ad44d9aa0b6c0e2d57b7b51b1cbbdb194b05e075eef455fa7cfeb90bc",
+    "PageCount": 2,
+    "TextExtractionQuality": "NativeClean",
+    "CorpusDuplicateCount": 1,
+    "ExpectedOutcomes": [
+      "Injunction",
+      "InterimRelief"
+    ],
+    "ExpectedFineAmount": null,
+    "ExpectedConfidence": "High",
+    "OperativeExcerpt": "ate moveable or immoveable property of the Corporate Debtor nor create any third party encumbrance on the same, without prior approval of this Appellate Tribunal. However, it will be open to the liquidator to proceed in accordance",
+    "TaxonomyNotes": "Interim injunction restraining creation of encumbrance or alienation of corporate debtor property.",
+    "EvidenceReferences": [
+      {
+        "PageNumber": 2,
+        "Excerpt": "ate moveable or immoveable property of the Corporate Debtor nor create any third party encumbrance on the same, without prior approval of this Appellate Tribunal. However, it will "
+      }
+    ]
+  },
+  {
+    "SampleId": 14,
+    "CourtForum": "NCLAT",
+    "CaseNumber": "Company Appeal (AT) (Ins) No. 174 of 2019",
+    "OrderFileName": "Order NCLAT/Company Appeal_AT__Ins_ - 174_ND_2019/Order 1_2019-06-12.pdf",
+    "OrderDate": "2019-06-12",
+    "Sha256": "6c50a6c90a1206e2d422ccfe2754f195d03a2cb3772ae221370e220127cd8f96",
+    "PageCount": 2,
+    "TextExtractionQuality": "NativeClean",
+    "CorpusDuplicateCount": 1,
+    "ExpectedOutcomes": [
+      "AdjournedNoSubstantiveOrder"
+    ],
+    "ExpectedFineAmount": null,
+    "ExpectedConfidence": "High",
+    "OperativeExcerpt": "n to entertain the Application proposed directly before us. List this matter for Orders on 1st July, 2019. [Justice A.I.S. Cheema] Member (Judicial) [Kanthi Narahari] Member (Technical) /rs/sk Company Appeal (AT) (INS) No.174",
+    "TaxonomyNotes": "Refusal to entertain interim application directly; listed for orders.",
+    "EvidenceReferences": [
+      {
+        "PageNumber": 2,
+        "Excerpt": "n to entertain the Application proposed directly before us. List this matter for Orders on 1st July, 2019. [Justice A.I.S. Cheema] Member (Judicial) [Kanthi Narahari] Member (Techn"
+      }
+    ]
+  },
+  {
+    "SampleId": 15,
+    "CourtForum": "NCLAT",
+    "CaseNumber": "Company Appeal (AT) (Insolvency) No. 174 of 2019",
+    "OrderFileName": "Order NCLAT/Company Appeal_AT__Ins_ - 174_ND_2019/Order 3_2019-05-13.pdf",
+    "OrderDate": "2019-05-13",
+    "Sha256": "45b8c2b06171c7297d1ab7b970426669544e5871021d1824ac94991b0526b3df",
+    "PageCount": 3,
+    "TextExtractionQuality": "NativeClean",
+    "CorpusDuplicateCount": 1,
+    "ExpectedOutcomes": [
+      "InterimRelief"
+    ],
+    "ExpectedFineAmount": null,
+    "ExpectedConfidence": "High",
+    "OperativeExcerpt": "r other Schemes but must ensure that the ‘Corporate Debtor’ survives and is not liquidated. (Justice S.J. Mukhopadhaya) Chairperson (Justice A.I.S. Cheema) Member(Judicial) (Kanthi Narahari) Member(Technical) A",
+    "TaxonomyNotes": "Interlocutory directions to liquidator regarding Section 230 scheme.",
+    "EvidenceReferences": [
+      {
+        "PageNumber": 3,
+        "Excerpt": "r other Schemes but must ensure that the ‘Corporate Debtor’ survives and is not liquidated. (Justice S.J. Mukhopadhaya) Chairperson (Justice A.I.S. Cheema) Member(Judicial) (Kanthi"
+      }
+    ]
+  },
+  {
+    "SampleId": 16,
+    "CourtForum": "NCLAT",
+    "CaseNumber": "Company Appeal (AT) (Ins) No. 383 of 2020",
+    "OrderFileName": "Order NCLAT/Company Appeal_AT__Ins_ - 383_ND_2020/Order 2_2022-01-13.pdf",
+    "OrderDate": "2022-01-13",
+    "Sha256": "57ba99f132ef68b51920edde03e258dda27352b01ce56df6363c2230fbd1d068",
+    "PageCount": 1,
+    "TextExtractionQuality": "NativeClean",
+    "CorpusDuplicateCount": 1,
+    "ExpectedOutcomes": [
+      "AdjournedNoSubstantiveOrder"
+    ],
+    "ExpectedFineAmount": null,
+    "ExpectedConfidence": "High",
+    "OperativeExcerpt": "spondent for adjournment. List this Appeal ‘For Hearing’ on 24th February, 2022. [Justice Ashok Bhushan] Chairperson [Dr. Ashok Kumar Mishra] Member (Technical) Basant/nn",
+    "TaxonomyNotes": "Adjournment on request of respondent counsel.",
+    "EvidenceReferences": [
+      {
+        "PageNumber": 1,
+        "Excerpt": "spondent for adjournment. List this Appeal ‘For Hearing’ on 24th February, 2022. [Justice Ashok Bhushan] Chairperson [Dr. Ashok Kumar Mishra] Member (Technical) Basant/nn"
+      }
+    ]
+  },
+  {
+    "SampleId": 17,
+    "CourtForum": "NCLAT",
+    "CaseNumber": "Company Appeal (AT) (Ins) No. 383 of 2020",
+    "OrderFileName": "Order NCLAT/Company Appeal_AT__Ins_ - 383_ND_2020/Order 5_2021-10-26.pdf",
+    "OrderDate": "2021-10-26",
+    "Sha256": "668c6e7ca05956f791e5b059337920371465099affc43e3f07e10ca2e7c68eea",
+    "PageCount": 1,
+    "TextExtractionQuality": "NativeClean",
+    "CorpusDuplicateCount": 1,
+    "ExpectedOutcomes": [
+      "AdjournedNoSubstantiveOrder"
+    ],
+    "ExpectedFineAmount": null,
+    "ExpectedConfidence": "High",
+    "OperativeExcerpt": "sha Godiyal, Advocate. O R D E R (Virtual Mode) 26.10.2021: Due to paucity of time, the matter could not be taken up today. The ‘Office of the Registry’ is directed to List the matter on 29th October, 2021. [Justice M. Venugopal] Acting Chair",
+    "TaxonomyNotes": "Adjournment due to bench paucity of time.",
+    "EvidenceReferences": [
+      {
+        "PageNumber": 1,
+        "Excerpt": "sha Godiyal, Advocate. O R D E R (Virtual Mode) 26.10.2021: Due to paucity of time, the matter could not be taken up today. The ‘Office of the Registry’ is directed to List the mat"
+      }
+    ]
+  },
+  {
+    "SampleId": 18,
+    "CourtForum": "NCLAT",
+    "CaseNumber": "Company Appeal (AT) (Ins) No. 935 of 2023",
+    "OrderFileName": "Order NCLAT/Company Appeal_AT__Ins_ - 935_ND_2023/Order 10_2024-10-18.pdf",
+    "OrderDate": "2024-10-18",
+    "Sha256": "05ab8d961a8935ad1b2860ae3779c9e939c8eeb246d09e44e253b02aa686d88a",
+    "PageCount": 1,
+    "TextExtractionQuality": "NativeClean",
+    "CorpusDuplicateCount": 1,
+    "ExpectedOutcomes": [
+      "AdjournedNoSubstantiveOrder"
+    ],
+    "ExpectedFineAmount": null,
+    "ExpectedConfidence": "High",
+    "OperativeExcerpt": "Bhaskar Ray, Advocates. O R D E R (Hybrid Mode) 18.10.2024: Court time is over, adjourned to 17.12.2024. [Justice Rakesh Kumar Jain] Member (Judicial) [Mr. Ajai Das Mehrotra] Member (Technical) R.N./Manu",
+    "TaxonomyNotes": "Standard court time over adjournment order.",
+    "EvidenceReferences": [
+      {
+        "PageNumber": 1,
+        "Excerpt": "Bhaskar Ray, Advocates. O R D E R (Hybrid Mode) 18.10.2024: Court time is over, adjourned to 17.12.2024. [Justice Rakesh Kumar Jain] Member (Judicial) [Mr. Ajai Das Mehrotra] Membe"
+      }
+    ]
+  },
+  {
+    "SampleId": 19,
+    "CourtForum": "High Court",
+    "CaseNumber": "ARBP 821 of 2015",
+    "OrderFileName": "Order HC/ARBP 821 2015/Order 4_03-02-2016.pdf",
+    "OrderDate": "2016-02-03",
+    "Sha256": "da7319bb7d8e9dbb73295943414c735eb207de792061c0fe958ebbd4fcd2217c",
+    "PageCount": 18,
+    "TextExtractionQuality": "NativeClean",
+    "CorpusDuplicateCount": 1,
+    "ExpectedOutcomes": [
+      "StayVacated",
+      "DisposedSettled"
+    ],
+    "ExpectedFineAmount": null,
+    "ExpectedConfidence": "High",
+    "OperativeExcerpt": "rder passed by this Court for appointment of Court Receiver except injunction order shall stands vacated without further reference to the Court. k) Both the Arbitration Petitions are accordingly disposed of. l) No order as t",
+    "TaxonomyNotes": "Crucial negation test: receiver appointment vacated, petition disposed of. Must never be classified as StayGranted.",
+    "EvidenceReferences": [
+      {
+        "PageNumber": 18,
+        "Excerpt": "rder passed by this Court for appointment of Court Receiver except injunction order shall stands vacated without further reference to the Court. k) Both the Arbitration Petitions a"
+      }
+    ]
+  },
+  {
+    "SampleId": 20,
+    "CourtForum": "High Court",
+    "CaseNumber": "CS 44 of 2015",
+    "OrderFileName": "Order HC/CS 44 2015/Order 8_12-05-2016.pdf",
+    "OrderDate": "2016-05-12",
+    "Sha256": "a64d3924582e5dfdb7e865d8a75ad019922c84af9befaa9c158eeac26ce0dd9a",
+    "PageCount": 13,
+    "TextExtractionQuality": "NativeClean",
+    "CorpusDuplicateCount": 1,
+    "ExpectedOutcomes": [
+      "StayVacated",
+      "DisposedSettled"
+    ],
+    "ExpectedFineAmount": null,
+    "ExpectedConfidence": "High",
+    "OperativeExcerpt": "ed accordingly. The suit is decreed in the aforesaid terms. Interim orders passed by this Court from time to time are vacated. All pending applications, if any, also stand disposed of. May 12, 2016 ( Tarlok Singh Chauhan), (GR) Judge 2016:HHC:34",
+    "TaxonomyNotes": "Interim orders explicitly vacated upon suit disposal.",
+    "EvidenceReferences": [
+      {
+        "PageNumber": 13,
+        "Excerpt": "ed accordingly. The suit is decreed in the aforesaid terms. Interim orders passed by this Court from time to time are vacated. All pending applications, if any, also stand disposed"
+      }
+    ]
+  },
+  {
+    "SampleId": 21,
+    "CourtForum": "High Court",
+    "CaseNumber": "WP(C) 1154 of 2020",
+    "OrderFileName": "Order HC/WP(C) 1154 2020/Order 2_27-02-2020.pdf",
+    "OrderDate": "2020-02-27",
+    "Sha256": "38bd8c9645112e8631bd107d79f3bf98c9e4fdb5c2e3b0fb8e7d1df35495741e",
+    "PageCount": 6,
+    "TextExtractionQuality": "NativeClean",
+    "CorpusDuplicateCount": 1,
+    "ExpectedOutcomes": [
+      "StayVacated",
+      "DisposedSettled"
+    ],
+    "ExpectedFineAmount": null,
+    "ExpectedConfidence": "High",
+    "OperativeExcerpt": " interim relief, this writ petition stands disposed of and, the interim order shall stand vacated on completion of 2 (two) months from today. JUDGE Comparing Assistant",
+    "TaxonomyNotes": "Sunset vacation: interim order vacated with sunset period upon disposal.",
+    "EvidenceReferences": [
+      {
+        "PageNumber": 6,
+        "Excerpt": " interim relief, this writ petition stands disposed of and, the interim order shall stand vacated on completion of 2 (two) months from today. JUDGE Comparing Assistant"
+      }
+    ]
+  },
+  {
+    "SampleId": 22,
+    "CourtForum": "High Court",
+    "CaseNumber": "WP(C) 988 of 2012",
+    "OrderFileName": "Order HC/WP(C) 988 2012/Order 1_27-01-2014.pdf",
+    "OrderDate": "2014-01-27",
+    "Sha256": "edb172b3171ef5359ea556f4dfc465aab5a242b69a85a8d646afdce1f8dbc854",
+    "PageCount": 1,
+    "TextExtractionQuality": "NativeClean",
+    "CorpusDuplicateCount": 1,
+    "ExpectedOutcomes": [
+      "StayVacated",
+      "DisposedSettled"
+    ],
+    "ExpectedFineAmount": null,
+    "ExpectedConfidence": "High",
+    "OperativeExcerpt": "r has become infructuous. The writ petition is disposed of. Interim order, if any, stands vacated. 2014:GAU-AS:1092",
+    "TaxonomyNotes": "Disposal of writ petition with explicit vacation of interim order.",
+    "EvidenceReferences": [
+      {
+        "PageNumber": 1,
+        "Excerpt": "r has become infructuous. The writ petition is disposed of. Interim order, if any, stands vacated. 2014:GAU-AS:1092"
+      }
+    ]
+  },
+  {
+    "SampleId": 23,
+    "CourtForum": "High Court",
+    "CaseNumber": "CARBC 66 of 2019",
+    "OrderFileName": "Order HC/CARBC 66 2026/Order 13_01-07-2019.pdf",
+    "OrderDate": "2019-07-01",
+    "Sha256": "e13c7b2aca79f0933fa1a4484364624845214b56bc63d75f812e2c6505a5b022",
+    "PageCount": 1,
+    "TextExtractionQuality": "NativeClean",
+    "CorpusDuplicateCount": 1,
+    "ExpectedOutcomes": [
+      "FinePenalty"
+    ],
+    "ExpectedFineAmount": 5000.0,
+    "ExpectedConfidence": "High",
+    "OperativeExcerpt": "weeks’ to file reply is granted to the respondent, however, subject to costs of Rs. 5,000/-, which shall be deposited by the respondent in the H.P. High Court Advocates’ Welfare Association. List on 29th July, 2",
+    "TaxonomyNotes": "Procedural costs of Rs. 5,000 imposed as condition for extension of time to reply.",
+    "EvidenceReferences": [
+      {
+        "PageNumber": 1,
+        "Excerpt": "weeks’ to file reply is granted to the respondent, however, subject to costs of Rs. 5,000/-, which shall be deposited by the respondent in the H.P. High Court Advocates’ Welfare As"
+      }
+    ]
+  },
+  {
+    "SampleId": 24,
+    "CourtForum": "High Court",
+    "CaseNumber": "COMAP 207 of 2021",
+    "OrderFileName": "Order HC/COMAP 207 2021/Order 1_04-09-2025.pdf",
+    "OrderDate": "2025-09-04",
+    "Sha256": "e52bd685568ccd3ffe274d9830f98ff8254c50681e6b30cda6e8c51dffddb212",
+    "PageCount": 40,
+    "TextExtractionQuality": "NativeClean",
+    "CorpusDuplicateCount": 1,
+    "ExpectedOutcomes": [
+      "FinePenalty",
+      "Dismissal"
+    ],
+    "ExpectedFineAmount": 5000.0,
+    "ExpectedConfidence": "High",
+    "OperativeExcerpt": "uit is rejected U/o.7 Rule 11(d) of CPC. The plaintiffs are liable to pay cost of Rs.5,000/- to the defendant No.1. Draw decree accordingly. Office to issue copy of the order to the parties by electronic mode if Email ID is provided”.",
+    "TaxonomyNotes": "Rejection of plaint (dismissal) with cost of Rs. 5,000 payable to defendant.",
+    "EvidenceReferences": [
+      {
+        "PageNumber": 13,
+        "Excerpt": "uit is rejected U/o.7 Rule 11(d) of CPC. The plaintiffs are liable to pay cost of Rs.5,000/- to the defendant No.1. Draw decree accordingly. Office to issue copy of the order to th"
+      }
+    ]
+  },
+  {
+    "SampleId": 25,
+    "CourtForum": "High Court",
+    "CaseNumber": "MACMA 297 of 2025",
+    "OrderFileName": "Order HC/MACMA 297 2025/Order 12_20-02-2025.pdf",
+    "OrderDate": "2025-02-20",
+    "Sha256": "160a9b444f4358e0529242e7416165de0835e38275fec3898f917f704f1e2bb5",
+    "PageCount": 2,
+    "TextExtractionQuality": "NativeClean",
+    "CorpusDuplicateCount": 1,
+    "ExpectedOutcomes": [
+      "FinePenalty"
+    ],
+    "ExpectedFineAmount": 500.0,
+    "ExpectedConfidence": "High",
+    "OperativeExcerpt": ". Learned counsel for respondent Nos.5 and 6 submitted that costs of Rs.500/- directed to be paid by order of this Court dated 21.01.2025 while allowing I.A.No.01 of 2023 had been paid to respondent Nos.5 and 6. Regis",
+    "TaxonomyNotes": "Costs of Rs. 500 recorded as paid for interlocutory application.",
+    "EvidenceReferences": [
+      {
+        "PageNumber": 1,
+        "Excerpt": ". Learned counsel for respondent Nos.5 and 6 submitted that costs of Rs.500/- directed to be paid by order of this Court dated 21.01.2025 while allowing I.A.No.01 of 2023 had been "
+      }
+    ]
+  },
+  {
+    "SampleId": 26,
+    "CourtForum": "High Court",
+    "CaseNumber": "CRLRC 1025 of 2019",
+    "OrderFileName": "Order HC/CRLRC 1025 2019/Order 1_17-09-2019.pdf",
+    "OrderDate": "2019-09-17",
+    "Sha256": "edd5441c924a946f510a6ff527432ad2c13aba815d396be746391610b43906ef",
+    "PageCount": 3,
+    "TextExtractionQuality": "NativeClean",
+    "CorpusDuplicateCount": 1,
+    "ExpectedOutcomes": [
+      "StayGranted"
+    ],
+    "ExpectedFineAmount": null,
+    "ExpectedConfidence": "High",
+    "OperativeExcerpt": "med to be the receipt ofnotice in the case). There shall be interim stay of all further proceedings in C.C.No.l26 of 2013 on the file of III Special Magistrate, Hyderabad, until further orders, //TRUE COPYII Sd/- B.SATYAVATHI ASSISTA",
+    "TaxonomyNotes": "Interim stay granted on criminal proceedings.",
+    "EvidenceReferences": [
+      {
+        "PageNumber": 1,
+        "Excerpt": "med to be the receipt ofnotice in the case). There shall be interim stay of all further proceedings in C.C.No.l26 of 2013 on the file of III Special Magistrate, Hyderabad, until fu"
+      }
+    ]
+  },
+  {
+    "SampleId": 27,
+    "CourtForum": "High Court",
+    "CaseNumber": "CRLRC 207 of 2020",
+    "OrderFileName": "Order HC/CRLRC 207 2020/Order 1_18-02-2020.pdf",
+    "OrderDate": "2020-02-18",
+    "Sha256": "3b11cdedc4e3806b82f98df05a962106c5ba16a8de165bbe40808038888cfa99",
+    "PageCount": 4,
+    "TextExtractionQuality": "NativeClean",
+    "CorpusDuplicateCount": 1,
+    "ExpectedOutcomes": [
+      "StayGranted"
+    ],
+    "ExpectedFineAmount": null,
+    "ExpectedConfidence": "High",
+    "OperativeExcerpt": " the file of the learned XXI Special Magistrate, Hyderabad, are hereby stayed. 3 To, 1. The XXI Special Magistrate Hyderabad at Erramanzil 2. Authorized Representative, Export-Import Bank of India,",
+    "TaxonomyNotes": "Explicit stay granted till the next date of hearing.",
+    "EvidenceReferences": [
+      {
+        "PageNumber": 2,
+        "Excerpt": " the file of the learned XXI Special Magistrate, Hyderabad, are hereby stayed. 3 To, 1. The XXI Special Magistrate Hyderabad at Erramanzil 2. Authorized Representative, Export-Impo"
+      }
+    ]
+  },
+  {
+    "SampleId": 28,
+    "CourtForum": "High Court",
+    "CaseNumber": "CRLRC 22 of 2020",
+    "OrderFileName": "Order HC/CRLRC 22 2020/Order 1_08-01-2020.pdf",
+    "OrderDate": "2020-01-08",
+    "Sha256": "7c0e50b2b6361395a89c61de4ca8310b2a2d70a6ef5d4b736c5961d446331fb4",
+    "PageCount": 4,
+    "TextExtractionQuality": "NativeClean",
+    "CorpusDuplicateCount": 1,
+    "ExpectedOutcomes": [
+      "StayGranted"
+    ],
+    "ExpectedFineAmount": null,
+    "ExpectedConfidence": "High",
+    "OperativeExcerpt": "the Registry. Post after servi':e of notice. There shall be interim stay of all further proceedings in C,C,No.76 of 2016 on the file of learned Special Magistrate-V, Hyderabad, until further o rders, '' //TRUE COPY// SD/- CH. VENKAT",
+    "TaxonomyNotes": "Interim stay granted on magistrate court proceedings.",
+    "EvidenceReferences": [
+      {
+        "PageNumber": 2,
+        "Excerpt": "the Registry. Post after servi':e of notice. There shall be interim stay of all further proceedings in C,C,No.76 of 2016 on the file of learned Special Magistrate-V, Hyderabad, unt"
+      }
+    ]
+  },
+  {
+    "SampleId": 29,
+    "CourtForum": "High Court",
+    "CaseNumber": "ARBP 821 of 2015",
+    "OrderFileName": "Order HC/ARBP 821 2015/Order 1_17-02-2015.pdf",
+    "OrderDate": "2015-02-17",
+    "Sha256": "00b8878d4d3e6923043ae4763e1455926e5c038a6eec6c4bef45ee5b2ab3fbca",
+    "PageCount": 2,
+    "TextExtractionQuality": "NativeClean",
+    "CorpusDuplicateCount": 1,
+    "ExpectedOutcomes": [
+      "Injunction"
+    ],
+    "ExpectedFineAmount": null,
+    "ExpectedConfidence": "High",
+    "OperativeExcerpt": "pothecated assets to the Receiver. (ii) The Respondents are restrained by an order of injunction from, in any manner, either directly or indirectly, damaging, transferring, disposing of, alienating, encumbering and / or otherwise creati",
+    "TaxonomyNotes": "Interim injunction restraining alienation and encumbrance of assets.",
+    "EvidenceReferences": [
+      {
+        "PageNumber": 1,
+        "Excerpt": "pothecated assets to the Receiver. (ii) The Respondents are restrained by an order of injunction from, in any manner, either directly or indirectly, damaging, transferring, disposi"
+      }
+    ]
+  },
+  {
+    "SampleId": 30,
+    "CourtForum": "High Court",
+    "CaseNumber": "ARBP 822 of 2015",
+    "OrderFileName": "Order HC/ARBP 822 2015/Order 1_17-02-2015.pdf",
+    "OrderDate": "2015-02-17",
+    "Sha256": "d16de16950ebba9b049660df29678af31b6b11cad7fe8af6689c27c82dea8e46",
+    "PageCount": 2,
+    "TextExtractionQuality": "NativeClean",
+    "CorpusDuplicateCount": 1,
+    "ExpectedOutcomes": [
+      "Injunction"
+    ],
+    "ExpectedFineAmount": null,
+    "ExpectedConfidence": "High",
+    "OperativeExcerpt": "pothecated assets to the Receiver. (ii) The Respondents are restrained by an order of injunction from, in any manner, either directly or indirectly, damaging, transferring, disposing of, alienating, encumbering and / or otherwise creati",
+    "TaxonomyNotes": "Companion injunction order restraining respondent.",
+    "EvidenceReferences": [
+      {
+        "PageNumber": 1,
+        "Excerpt": "pothecated assets to the Receiver. (ii) The Respondents are restrained by an order of injunction from, in any manner, either directly or indirectly, damaging, transferring, disposi"
+      }
+    ]
+  },
+  {
+    "SampleId": 31,
+    "CourtForum": "High Court",
+    "CaseNumber": "APP 842 of 2014 in ARBP 1200 of 2013",
+    "OrderFileName": "Order HC/APP 84 2015/Order 1_29-12-2014.pdf",
+    "OrderDate": "2014-12-29",
+    "Sha256": "fc172c38013626d0fe783934aabc168f3ee7a19bcb11c80fed87dffe0ade80d4",
+    "PageCount": 3,
+    "TextExtractionQuality": "NativeClean",
+    "CorpusDuplicateCount": 1,
+    "ExpectedOutcomes": [
+      "PossessionOrder",
+      "InterimRelief"
+    ],
+    "ExpectedFineAmount": null,
+    "ExpectedConfidence": "High",
+    "OperativeExcerpt": " passed by the learned Single Judge (S.J.Kathawalla, J) the Court Receiver is at the site to take possession of the vehicles in question. He submits that irreparable prejudice would be caused to the appellants if possession of t",
+    "TaxonomyNotes": "Court receiver directed on possession of equipment/vehicles.",
+    "EvidenceReferences": [
+      {
+        "PageNumber": 1,
+        "Excerpt": " passed by the learned Single Judge (S.J.Kathawalla, J) the Court Receiver is at the site to take possession of the vehicles in question. He submits that irreparable prejudice woul"
+      }
+    ]
+  },
+  {
+    "SampleId": 32,
+    "CourtForum": "High Court",
+    "CaseNumber": "APP 842 of 2014",
+    "OrderFileName": "Order HC/APP 84 2015/Order 2_30-12-2014.pdf",
+    "OrderDate": "2014-12-30",
+    "Sha256": "53ac71cc3399f061a5e06501196b91ebcd57e727387a1d4bcf51e60d3ba4af96",
+    "PageCount": 4,
+    "TextExtractionQuality": "NativeClean",
+    "CorpusDuplicateCount": 1,
+    "ExpectedOutcomes": [
+      "PossessionOrder",
+      "InterimRelief"
+    ],
+    "ExpectedFineAmount": null,
+    "ExpectedConfidence": "High",
+    "OperativeExcerpt": " the Appeal [original Petitioners], point out that when the Receiver went to take possession of eight of the 73 vehicles, these were found altogether missing and two were not at the site at which the Appellants claimed they were. Mr. Mitra ",
+    "TaxonomyNotes": "Follow-up receiver possession report and compliance order.",
+    "EvidenceReferences": [
+      {
+        "PageNumber": 3,
+        "Excerpt": " the Appeal [original Petitioners], point out that when the Receiver went to take possession of eight of the 73 vehicles, these were found altogether missing and two were not at th"
+      }
+    ]
+  },
+  {
+    "SampleId": 33,
+    "CourtForum": "High Court",
+    "CaseNumber": "AO 335 of 2009",
+    "OrderFileName": "Order HC/AO 335 2009/Order 1_06-10-2009.pdf",
+    "OrderDate": "2009-10-06",
+    "Sha256": "b4a5e8b13c9f7f8c8fae1b03cb1de135a781b6229d32b12763f1932d31ec54ce",
+    "PageCount": 2,
+    "TextExtractionQuality": "NativeClean",
+    "CorpusDuplicateCount": 1,
+    "ExpectedOutcomes": [
+      "AdjournedNoSubstantiveOrder"
+    ],
+    "ExpectedFineAmount": null,
+    "ExpectedConfidence": "High",
+    "OperativeExcerpt": "all be adjusted. The Registry is also directed to remit the amount of Rs.25,000/- to the Tribunal within six weeks from today. (Tarun Agarwala, A.C.J.) Dated 06.10.2009 SKS/Shiv 2017:UHC:3640 2017:UHC:3640",
+    "TaxonomyNotes": "Notice issued and pre-deposit direction; procedural listing.",
+    "EvidenceReferences": [
+      {
+        "PageNumber": 1,
+        "Excerpt": "all be adjusted. The Registry is also directed to remit the amount of Rs.25,000/- to the Tribunal within six weeks from today. (Tarun Agarwala, A.C.J.) Dated 06.10.2009 SKS/Shiv 20"
+      }
+    ]
+  },
+  {
+    "SampleId": 34,
+    "CourtForum": "High Court",
+    "CaseNumber": "AO 335 of 2009",
+    "OrderFileName": "Order HC/AO 335 2009/Order 2_17-12-2016.pdf",
+    "OrderDate": "2016-12-17",
+    "Sha256": "c2f39db565b9a72039cb0f94a500b63d83dc05b2032e728a22e4d6742fa131d9",
+    "PageCount": 1,
+    "TextExtractionQuality": "NativeClean",
+    "CorpusDuplicateCount": 1,
+    "ExpectedOutcomes": [
+      "AdjournedNoSubstantiveOrder"
+    ],
+    "ExpectedFineAmount": null,
+    "ExpectedConfidence": "High",
+    "OperativeExcerpt": " by the claimant. So, it is hereby admitted for hearing and list up this matter for final hearing soon after Winter Vacations. Call the LCR. (Servesh Kumar Gupta, J.) 17.12.2016 Ujjwal 2017:UHC:3640",
+    "TaxonomyNotes": "Adjournment after winter vacations; no substantive relief.",
+    "EvidenceReferences": [
+      {
+        "PageNumber": 1,
+        "Excerpt": " by the claimant. So, it is hereby admitted for hearing and list up this matter for final hearing soon after Winter Vacations. Call the LCR. (Servesh Kumar Gupta, J.) 17.12.2016 Uj"
+      }
+    ]
+  },
+  {
+    "SampleId": 35,
+    "CourtForum": "High Court",
+    "CaseNumber": "Application 5091 of 2024",
+    "OrderFileName": "Order HC/A 5091 2024/Order 1_30-09-2024.pdf",
+    "OrderDate": "2024-09-30",
+    "Sha256": "9e5d5a8e6fde0f6ece72a5f696d24f3414d4d0b8b624fb95552e942e5fa3345e",
+    "PageCount": 1,
+    "TextExtractionQuality": "NativeClean",
+    "CorpusDuplicateCount": 1,
+    "ExpectedOutcomes": [
+      "InterimRelief"
+    ],
+    "ExpectedFineAmount": null,
+    "ExpectedConfidence": "High",
+    "OperativeExcerpt": "sent application has been filed by the applicants herein to seek extension of mandate for a further period of nine months from 30.09.2024. 2. Ms.Mithreyi Kasthurirangan, learned counsel appearing on behalf the respondent submi",
+    "TaxonomyNotes": "Arbitral mandate extension granted under Section 29A.",
+    "EvidenceReferences": [
+      {
+        "PageNumber": 1,
+        "Excerpt": "sent application has been filed by the applicants herein to seek extension of mandate for a further period of nine months from 30.09.2024. 2. Ms.Mithreyi Kasthurirangan, learned co"
+      }
+    ]
+  },
+  {
+    "SampleId": 36,
+    "CourtForum": "High Court",
+    "CaseNumber": "ARBAP 28 of 2006",
+    "OrderFileName": "Order HC/ARBAP 28 2006/Order 1_30-10-2009.pdf",
+    "OrderDate": "2009-10-30",
+    "Sha256": "d74bd2d9c6c32b1fb380c4a73fac75704c88b629f75f8ff20bc3c2cdd5b0523a",
+    "PageCount": 1,
+    "TextExtractionQuality": "NativeClean",
+    "CorpusDuplicateCount": 1,
+    "ExpectedOutcomes": [
+      "Dismissal",
+      "AdjournedNoSubstantiveOrder"
+    ],
+    "ExpectedFineAmount": null,
+    "ExpectedConfidence": "High",
+    "OperativeExcerpt": "/2007 filed under Section 9 of the Arbitration Act has been rendered infructuous and is dismissed as such. Let the Misc. Application No.3899/2008 filed under Section 11 of the Arbitration Act be listed for hearing after two w",
+    "TaxonomyNotes": "Section 9 interim relief application dismissed as infructuous; Section 11 application listed.",
+    "EvidenceReferences": [
+      {
+        "PageNumber": 1,
+        "Excerpt": "/2007 filed under Section 9 of the Arbitration Act has been rendered infructuous and is dismissed as such. Let the Misc. Application No.3899/2008 filed under Section 11 of the Arbi"
+      }
+    ]
+  },
+  {
+    "SampleId": 37,
+    "CourtForum": "High Court",
+    "CaseNumber": "ARBAP 28 of 2006",
+    "OrderFileName": "Order HC/ARBAP 28 2006/Order 2_09-04-2010.pdf",
+    "OrderDate": "2010-04-09",
+    "Sha256": "653c62def89e3c8b2168cd3c0ddf54797b73b1cc5e200b4256a9970cb2e7a515",
+    "PageCount": 8,
+    "TextExtractionQuality": "NativeClean",
+    "CorpusDuplicateCount": 1,
+    "ExpectedOutcomes": [
+      "DisposedSettled"
+    ],
+    "ExpectedFineAmount": null,
+    "ExpectedConfidence": "High",
+    "OperativeExcerpt": " 5.1 of the contractual agreement dated 07.09.2005. 10. The instant application is accordingly disposed of in the aforesaid terms. (J.S. Khehar, C.J.) 09.04.2010 P. Singh 2010:UHC:1809",
+    "TaxonomyNotes": "Section 11 arbitration application disposed of with liberty.",
+    "EvidenceReferences": [
+      {
+        "PageNumber": 8,
+        "Excerpt": " 5.1 of the contractual agreement dated 07.09.2005. 10. The instant application is accordingly disposed of in the aforesaid terms. (J.S. Khehar, C.J.) 09.04.2010 P. Singh 2010:UHC:"
+      }
+    ]
+  },
+  {
+    "SampleId": 38,
+    "CourtForum": "High Court",
+    "CaseNumber": "WP 1704 of 2021",
+    "OrderFileName": "Order HC/WP 1704 2021/Order 4_06-12-2021.pdf",
+    "OrderDate": "2021-12-06",
+    "Sha256": "6c021642d0a09d88c33250da8b311ed425a14e4c39ad8c5f2639127e2fca9885",
+    "PageCount": 14,
+    "TextExtractionQuality": "NativeClean",
+    "CorpusDuplicateCount": 1,
+    "ExpectedOutcomes": [
+      "AdjournedNoSubstantiveOrder"
+    ],
+    "ExpectedFineAmount": null,
+    "ExpectedConfidence": "High",
+    "OperativeExcerpt": "a and others (W.P.No.l9lO2 of 2019, decided on to.12.2o2o). Today, when the matters were heard on the question of vacating the stay, heavy reliance has been placed upon the Judgments delivered in the case of Bihar School Examination Board v. Subhas Ch",
+    "TaxonomyNotes": "Vacation application argued but not decided; matter adjourned for further hearing.",
+    "EvidenceReferences": [
+      {
+        "PageNumber": 12,
+        "Excerpt": "a and others (W.P.No.l9lO2 of 2019, decided on to.12.2o2o). Today, when the matters were heard on the question of vacating the stay, heavy reliance has been placed upon the Judgmen"
+      }
+    ]
+  },
+  {
+    "SampleId": 39,
+    "CourtForum": "District Court",
+    "CaseNumber": "CC 818/2013",
+    "OrderFileName": "Order DC/CC - CALENDAR CASE 818 2013/Order 8_29-04-2025.pdf",
+    "OrderDate": "2025-04-29",
+    "Sha256": "3ff4a9b6c846fae341198a01e3f416e7f989ead3630ebd4db52ba9b59b557b6e",
+    "PageCount": 66,
+    "TextExtractionQuality": "NativeClean",
+    "CorpusDuplicateCount": 1,
+    "ExpectedOutcomes": [
+      "FinePenalty"
+    ],
+    "ExpectedFineAmount": 10000.0,
+    "ExpectedConfidence": "High",
+    "OperativeExcerpt": " Two Years simple imprisonment and hereby 1st Accused shall pay fine of Rs.10,000/- (Rupees Ten Thousand Only) and 1st, 2nd and 3rd Accused are to pay Compensation of Rs.15,00,00,000/- (Rupees Fifteen Crores Only u/s 357(3) Cr.P.C",
+    "TaxonomyNotes": "Conviction under Sec 138 NI Act with statutory fine of Rs. 10,000 and compensation of Rs. 15 Crores.",
+    "EvidenceReferences": [
+      {
+        "PageNumber": 3,
+        "Excerpt": " Two Years simple imprisonment and hereby 1st Accused shall pay fine of Rs.10,000/- (Rupees Ten Thousand Only) and 1st, 2nd and 3rd Accused are to pay Compensation of Rs.15,00,00,0"
+      }
+    ]
+  },
+  {
+    "SampleId": 40,
+    "CourtForum": "District Court",
+    "CaseNumber": "CC 818/2013",
+    "OrderFileName": "Order DC/CC - CALENDAR CASE 818 2013/Order 2_27-11-2024.pdf",
+    "OrderDate": "2024-11-27",
+    "Sha256": "e15114436ce14ac83850ae2f0e017878f9a27cbd7e21b2d60d46ac946ad30bf7",
+    "PageCount": 9,
+    "TextExtractionQuality": "NativeClean",
+    "CorpusDuplicateCount": 1,
+    "ExpectedOutcomes": [
+      "FinePenalty"
+    ],
+    "ExpectedFineAmount": 1000.0,
+    "ExpectedConfidence": "High",
+    "OperativeExcerpt": "in view of reasons stated above this petition is allowed on Costs of Rs1,000/- (Rupees One Thousand Only ) to be paid by Petitioners to Witness PW.1 Hemang Mehta. Dictated to the Steno-Typist, typed on computer, corrected, pri",
+    "TaxonomyNotes": "Witness recall petition allowed on cost of Rs. 1,000.",
+    "EvidenceReferences": [
+      {
+        "PageNumber": 9,
+        "Excerpt": "in view of reasons stated above this petition is allowed on Costs of Rs1,000/- (Rupees One Thousand Only ) to be paid by Petitioners to Witness PW.1 Hemang Mehta. Dictated to the S"
+      }
+    ]
+  },
+  {
+    "SampleId": 41,
+    "CourtForum": "District Court",
+    "CaseNumber": "CC 818/2013",
+    "OrderFileName": "Order DC/CC - CALENDAR CASE 818 2013/Order 3_27-11-2024.pdf",
+    "OrderDate": "2024-11-27",
+    "Sha256": "f5e347c770db50a93b5a604c5fca49acd2e5f5a0001cb8318d2027c7063bd2cc",
+    "PageCount": 9,
+    "TextExtractionQuality": "NativeClean",
+    "CorpusDuplicateCount": 1,
+    "ExpectedOutcomes": [
+      "FinePenalty"
+    ],
+    "ExpectedFineAmount": 1000.0,
+    "ExpectedConfidence": "High",
+    "OperativeExcerpt": "in view of reasons stated above this petition is allowed on Costs of Rs1,000/- (Rupees One Thousand Only ) to be paid by Petitioners to Witness PW.1 Hemang Mehta. There shall be no order as to cost. Dictated to the Steno-Typis",
+    "TaxonomyNotes": "Companion petition allowed on costs of Rs. 1,000.",
+    "EvidenceReferences": [
+      {
+        "PageNumber": 9,
+        "Excerpt": "in view of reasons stated above this petition is allowed on Costs of Rs1,000/- (Rupees One Thousand Only ) to be paid by Petitioners to Witness PW.1 Hemang Mehta. There shall be no"
+      }
+    ]
+  },
+  {
+    "SampleId": 42,
+    "CourtForum": "District Court",
+    "CaseNumber": "Crl.A 684/2025",
+    "OrderFileName": "Order DC/CRLA - CRIMINAL APPEAL 684 2025/Order 1_21-05-2025.pdf",
+    "OrderDate": "2025-05-21",
+    "Sha256": "65ad6be6f21296f9376efab175e3f497a1ac788091b064b210727630184c0820",
+    "PageCount": 2,
+    "TextExtractionQuality": "NativeClean",
+    "CorpusDuplicateCount": 1,
+    "ExpectedOutcomes": [
+      "StayGranted",
+      "FinePenalty"
+    ],
+    "ExpectedFineAmount": 10000.0,
+    "ExpectedConfidence": "High",
+    "OperativeExcerpt": "on 138 of Negotiable Instruments Act and further imposed to pay the fine of Rs.10,000/- by A1 to A3. Further the trial court has directed the A1 to A3 to pay the compensation of Rs.15,00,000/- under section 357(3) of Cr",
+    "TaxonomyNotes": "Appellate suspension/stay of substantive sentence on condition.",
+    "EvidenceReferences": [
+      {
+        "PageNumber": 2,
+        "Excerpt": "on 138 of Negotiable Instruments Act and further imposed to pay the fine of Rs.10,000/- by A1 to A3. Further the trial court has directed the A1 to A3 to pay the compensation of Rs"
+      }
+    ]
+  },
+  {
+    "SampleId": 43,
+    "CourtForum": "District Court",
+    "CaseNumber": "OS 1007/2023",
+    "OrderFileName": "Order DC/O.S. - ORIGINAL SUIT 1007 2023/Order 1_25-07-2026.pdf",
+    "OrderDate": "2023-07-25",
+    "Sha256": "aa3f4658d371718b82bc442bc28d231ef80ae77de737588b737a58eb9ac09ae8",
+    "PageCount": 27,
+    "TextExtractionQuality": "NativeClean",
+    "CorpusDuplicateCount": 1,
+    "ExpectedOutcomes": [
+      "Injunction"
+    ],
+    "ExpectedFineAmount": null,
+    "ExpectedConfidence": "High",
+    "OperativeExcerpt": "te temporary injunction order, my predecessor-in-office has granted exparte ad-interim temporary injunction as sought in I.A.No.I, thereby restrained the defendants from interfering with the plaintiff’s peaceful possession and enjoyment of the ",
+    "TaxonomyNotes": "Ad-interim ex-parte temporary injunction granted.",
+    "EvidenceReferences": [
+      {
+        "PageNumber": 10,
+        "Excerpt": "te temporary injunction order, my predecessor-in-office has granted exparte ad-interim temporary injunction as sought in I.A.No.I, thereby restrained the defendants from interferin"
+      }
+    ]
+  },
+  {
+    "SampleId": 44,
+    "CourtForum": "District Court",
+    "CaseNumber": "Suit for Recovery 900345/2017",
+    "OrderFileName": "Order DC/SUIT FOR RECOVERY 900345 2017/Order 4_29-09-2020.pdf",
+    "OrderDate": "2020-09-29",
+    "Sha256": "21e46d6846300f966cc952412f540e14d2bf4221f94fa14e30886b8b74d426d4",
+    "PageCount": 1056,
+    "TextExtractionQuality": "NativeClean",
+    "CorpusDuplicateCount": 1,
+    "ExpectedOutcomes": [
+      "Injunction",
+      "PossessionOrder"
+    ],
+    "ExpectedFineAmount": null,
+    "ExpectedConfidence": "High",
+    "OperativeExcerpt": " order of even date, the application in hand is allowed and respondent is restrained from raising any kind of construction and putting debris over the suit land comprised in khewat No. 62/52 khatauni No. 25/243, khasra No. 1424/1, measuring 1",
+    "TaxonomyNotes": "Injunction granted restraining construction; references sapurdari possession.",
+    "EvidenceReferences": [
+      {
+        "PageNumber": 144,
+        "Excerpt": " order of even date, the application in hand is allowed and respondent is restrained from raising any kind of construction and putting debris over the suit land comprised in khewat"
+      }
+    ]
+  },
+  {
+    "SampleId": 45,
+    "CourtForum": "District Court",
+    "CaseNumber": "ARB/29/2020",
+    "OrderFileName": "Order DC/ARB - ARBITRATION CASE 29 2020/Order 10_23-08-2022.pdf",
+    "OrderDate": "2022-08-23",
+    "Sha256": "a4340d5976e4672eff3a2d682ae0354d6e0a425aa2fe2203118425e050e8f04a",
+    "PageCount": 1,
+    "TextExtractionQuality": "NativeClean",
+    "CorpusDuplicateCount": 1,
+    "ExpectedOutcomes": [
+      "AdjournedNoSubstantiveOrder"
+    ],
+    "ExpectedFineAmount": null,
+    "ExpectedConfidence": "High",
+    "OperativeExcerpt": "nt sought by learned counsel for parties. On joint request, case stands adjourned to 21.11.2022 for arguments. Date of Order: 23.08.2022 Veena Madhan (Dr. Pankaj) Addl. District Judge, Fbd. UID NO.HR0485 VEENA MADHAN Digitally si",
+    "TaxonomyNotes": "Routine adjournment for hearing arguments.",
+    "EvidenceReferences": [
+      {
+        "PageNumber": 1,
+        "Excerpt": "nt sought by learned counsel for parties. On joint request, case stands adjourned to 21.11.2022 for arguments. Date of Order: 23.08.2022 Veena Madhan (Dr. Pankaj) Addl. District Ju"
+      }
+    ]
+  },
+  {
+    "SampleId": 46,
+    "CourtForum": "District Court",
+    "CaseNumber": "ARB/29/2020",
+    "OrderFileName": "Order DC/ARB - ARBITRATION CASE 29 2020/Order 11_21-11-2022.pdf",
+    "OrderDate": "2022-11-21",
+    "Sha256": "618f90be5c5bd81a17270ade548714704c7a4e0f74854c0e671d411f8287b43b",
+    "PageCount": 1,
+    "TextExtractionQuality": "NativeClean",
+    "CorpusDuplicateCount": 1,
+    "ExpectedOutcomes": [
+      "AdjournedNoSubstantiveOrder"
+    ],
+    "ExpectedFineAmount": null,
+    "ExpectedConfidence": "High",
+    "OperativeExcerpt": "CNR No: HRFB010039732020 CIS No: ARB/29/2020 NHPC LIMITED VS COASTAL PROJECTS LTD etc. Present: Sh. Raghuvesh Singhal along with Ms. Bhawna, Law Officer for the petitioner. Ms. Saumya Upadhyay, Advocate for respond",
+    "TaxonomyNotes": "Adjournment order.",
+    "EvidenceReferences": [
+      {
+        "PageNumber": 1,
+        "Excerpt": "CNR No: HRFB010039732020 CIS No: ARB/29/2020 NHPC LIMITED VS COASTAL PROJECTS LTD etc. Present: Sh. Raghuvesh Singhal along with Ms. Bhawna, Law Officer for the petitioner. Ms. Sau"
+      }
+    ]
+  },
+  {
+    "SampleId": 47,
+    "CourtForum": "District Court",
+    "CaseNumber": "Civ. DJ No. 1451/17",
+    "OrderFileName": "Order DC/CIV DJ - CIVIL SUIT FOR DJ AND ADJ 1451 2017/Order 10_23-10-2020.pdf",
+    "OrderDate": "2020-10-23",
+    "Sha256": "712dc280ce6a5fefc35945537ce355b6e26be6a1d1f981273ec2068be5342673",
+    "PageCount": 1,
+    "TextExtractionQuality": "NativeClean",
+    "CorpusDuplicateCount": 1,
+    "ExpectedOutcomes": [
+      "AdjournedNoSubstantiveOrder"
+    ],
+    "ExpectedFineAmount": null,
+    "ExpectedConfidence": "High",
+    "OperativeExcerpt": "n up due to lockdown on account of Covid­19. Present: None. No adverse order is being passed today. Re­notify for purpose fixed on 10.03.2021. Shivali Sharma Additional District Judge­03(West) Tis Hazari Court/23.10.20",
+    "TaxonomyNotes": "Video-conferencing listing during Covid lockdown; re-notified for hearing.",
+    "EvidenceReferences": [
+      {
+        "PageNumber": 1,
+        "Excerpt": "n up due to lockdown on account of Covid­19. Present: None. No adverse order is being passed today. Re­notify for purpose fixed on 10.03.2021. Shivali Sharma Additional District Ju"
+      }
+    ]
+  },
+  {
+    "SampleId": 48,
+    "CourtForum": "District Court",
+    "CaseNumber": "Civil Execution Case No. 02 of 2018",
+    "OrderFileName": "Order DC/CIVIL EXECUTION CASE 2 2018/Order 1_22-03-2018.pdf",
+    "OrderDate": "2018-03-22",
+    "Sha256": "caa7cbc16e227c410e087358241ea5669fc3d6fb4453e42179de9b352af632f2",
+    "PageCount": 1,
+    "TextExtractionQuality": "NativeClean",
+    "CorpusDuplicateCount": 1,
+    "ExpectedOutcomes": [
+      "AdjournedNoSubstantiveOrder"
+    ],
+    "ExpectedFineAmount": null,
+    "ExpectedConfidence": "High",
+    "OperativeExcerpt": "N THE COURT OF THE DISTRICT JUDGE, WEST SIKKIM AT GYALSHING Civil Execution Case No. 02 of 2018 Nurul Islam .....Decree Holder Vrs. Manager, Coastal Project Ltd. ..... Judgment Debtor Decree Holder absent. Ld. Counsel Ms. Tashi",
+    "TaxonomyNotes": "Execution case notice issuance to judgment debtor.",
+    "EvidenceReferences": [
+      {
+        "PageNumber": 1,
+        "Excerpt": "N THE COURT OF THE DISTRICT JUDGE, WEST SIKKIM AT GYALSHING Civil Execution Case No. 02 of 2018 Nurul Islam .....Decree Holder Vrs. Manager, Coastal Project Ltd. ..... Judgment Deb"
+      }
+    ]
+  },
+  {
+    "SampleId": 49,
+    "CourtForum": "District Court",
+    "CaseNumber": "CR Case 91 of 2018",
+    "OrderFileName": "Order DC/C R CASE 91 2018/Order 1_23-11-2023.pdf",
+    "OrderDate": "2023-11-23",
+    "Sha256": "18188f76dee8383cf98e3c31687e14190b47f23e1254b0ab52ae4f1d04a99d44",
+    "PageCount": 1,
+    "TextExtractionQuality": "NativeClean",
+    "CorpusDuplicateCount": 1,
+    "ExpectedOutcomes": [
+      "AdjournedNoSubstantiveOrder"
+    ],
+    "ExpectedFineAmount": null,
+    "ExpectedConfidence": "High",
+    "OperativeExcerpt": "CR Case 91 of 2018 CIS No. 91 of 2018 Order dt. 23.11.2023 Today is fixed for hearing and order. Complainant is present. Heard the Ld. Advocate for the complainant submitted that",
+    "TaxonomyNotes": "Hearing adjourned for next date.",
+    "EvidenceReferences": [
+      {
+        "PageNumber": 1,
+        "Excerpt": "CR Case 91 of 2018 CIS No. 91 of 2018 Order dt. 23.11.2023 Today is fixed for hearing and order. Complainant is present. Heard the Ld. Advocate for the complainant submitted that"
+      }
+    ]
+  },
+  {
+    "SampleId": 50,
+    "CourtForum": "District Court",
+    "CaseNumber": "CC 2111-2015",
+    "OrderFileName": "Order DC/C.C. - CRIMINAL CASES 2111 2015/Order 1_28-09-2021.pdf",
+    "OrderDate": "2021-09-28",
+    "Sha256": "0d5acc585dfd8280bacd48931b6fa5032923c1cdba87ee4e5bb03726741c5d70",
+    "PageCount": 1,
+    "TextExtractionQuality": "NativeClean",
+    "CorpusDuplicateCount": 1,
+    "ExpectedOutcomes": [
+      "AdjournedNoSubstantiveOrder"
+    ],
+    "ExpectedFineAmount": null,
+    "ExpectedConfidence": "High",
+    "OperativeExcerpt": "IN THE COURT OF JMFC-II, DAVANAGERE. CC 2111-2015 Accused is absent. The present complaint is filed the accused by RTO Davanagere for non payment of Tax amount. The complainant is filed i",
+    "TaxonomyNotes": "Tax evasion criminal prosecution; NBW ordered against accused and adjourned.",
+    "EvidenceReferences": [
+      {
+        "PageNumber": 1,
+        "Excerpt": "IN THE COURT OF JMFC-II, DAVANAGERE. CC 2111-2015 Accused is absent. The present complaint is filed the accused by RTO Davanagere for non payment of Tax amount. The complainant is "
+      }
+    ]
+  },
+  {
+    "SampleId": 51,
+    "CourtForum": "District Court",
+    "CaseNumber": "CMA 108/17",
+    "OrderFileName": "Order DC/CIVIL MISC APPLICATION 108 2017/Order 1_16-12-2019.pdf",
+    "OrderDate": "2019-12-16",
+    "Sha256": "0a6009aa8b726cc70e3191240654e4957b46ded4b6ce6a5a7cf5c8edfcba7673",
+    "PageCount": 3,
+    "TextExtractionQuality": "NativeClean",
+    "CorpusDuplicateCount": 1,
+    "ExpectedOutcomes": [
+      "AdjournedNoSubstantiveOrder"
+    ],
+    "ExpectedFineAmount": null,
+    "ExpectedConfidence": "High",
+    "OperativeExcerpt": "case death has taken place at Tehsil Jubbal, Distt. Shimla. Let notice under Section 21 of the Employees Compensation Act be issued to the State as well as Commissioner for 4.1.2020 on taking steps within 7 days. (Sidharth Sarpal) Commissioner Under W",
+    "TaxonomyNotes": "Workmen Compensation Commissioner notice order.",
+    "EvidenceReferences": [
+      {
+        "PageNumber": 3,
+        "Excerpt": "case death has taken place at Tehsil Jubbal, Distt. Shimla. Let notice under Section 21 of the Employees Compensation Act be issued to the State as well as Commissioner for 4.1.202"
+      }
+    ]
+  },
+  {
+    "SampleId": 52,
+    "CourtForum": "District Court",
+    "CaseNumber": "CMA 108/17",
+    "OrderFileName": "Order DC/CIVIL MISC APPLICATION 108 2017/Order 2_16-07-2020.pdf",
+    "OrderDate": "2020-07-16",
+    "Sha256": "4b58626065987e30c66cb4c1680bd06d2cde8925cca1c8761b7a639f39de6eeb",
+    "PageCount": 1,
+    "TextExtractionQuality": "NativeClean",
+    "CorpusDuplicateCount": 1,
+    "ExpectedOutcomes": [
+      "AdjournedNoSubstantiveOrder"
+    ],
+    "ExpectedFineAmount": null,
+    "ExpectedConfidence": "High",
+    "OperativeExcerpt": "16.7.2020 Present: Sh. Yadwinder Thakur Advocate vice to Sh. Karan Thakur Advocate for petitioner. Sh. Rajiv Sirkeck, Advocate vice to Sh. Divya Raj Advocate for respondent No. 1. Respondent No",
+    "TaxonomyNotes": "Adjournment by proxy counsel.",
+    "EvidenceReferences": [
+      {
+        "PageNumber": 1,
+        "Excerpt": "16.7.2020 Present: Sh. Yadwinder Thakur Advocate vice to Sh. Karan Thakur Advocate for petitioner. Sh. Rajiv Sirkeck, Advocate vice to Sh. Divya Raj Advocate for respondent No. 1. "
+      }
+    ]
+  },
+  {
+    "SampleId": 53,
+    "CourtForum": "Supreme Court",
+    "CaseNumber": "C.A. No. 7971/2017 (SLP(C) 9188/2015)",
+    "OrderFileName": "Order SC/C.A. No. 007971 -  _ 2017_ SLP_C_ No. 009188 _ 2015/Order 1191_11-05-2016.pdf",
+    "OrderDate": "2016-05-11",
+    "Sha256": "a0e397c1540ea3788e2d724e9183316487177db67eff3bea42953360d4716d28",
+    "PageCount": 2,
+    "TextExtractionQuality": "NativeClean",
+    "CorpusDuplicateCount": 2,
+    "ExpectedOutcomes": [
+      "InterimRelief"
+    ],
+    "ExpectedFineAmount": null,
+    "ExpectedConfidence": "High",
+    "OperativeExcerpt": "e Court made the following O R D E R Order dated 18.03.2016 dismissing the Special Leave Petition is recalled and the Special Leave Petition is restored to its original number. The Interlocutory Application No.3/2016 is allowed. Leave granted. List along with Civil Appeal",
+    "TaxonomyNotes": "Restoration order: recalls dismissal order and restores SLP to file. Crucial negation test: recalling a dismissal is NOT a dismissal.",
+    "EvidenceReferences": [
+      {
+        "PageNumber": 1,
+        "Excerpt": "e Court made the following O R D E R Order dated 18.03.2016 dismissing the Special Leave Petition is recalled and the Special Leave Petition is restored to its original number. The"
+      }
+    ]
+  },
+  {
+    "SampleId": 54,
+    "CourtForum": "Supreme Court",
+    "CaseNumber": "SLP(C) No. 9188/2015 group",
+    "OrderFileName": "Order SC/C.A. No. 007971 -  _ 2017_ SLP_C_ No. 009188 _ 2015/Order 107_17-09-2007.pdf",
+    "OrderDate": "2007-09-17",
+    "Sha256": "f64ef52b69c98d9b2d32959ad590031e3a6f755faf75c0c4215dfd0a9631656f",
+    "PageCount": 1,
+    "TextExtractionQuality": "NativeClean",
+    "CorpusDuplicateCount": 1,
+    "ExpectedOutcomes": [
+      "StayGranted"
+    ],
+    "ExpectedFineAmount": null,
+    "ExpectedConfidence": "High",
+    "OperativeExcerpt": "heard along with Civil Appeal No. 3453/02 There shall be an interim stay of the direction of the High Court so far as it relates to refund. (Ganga Thakur) (Vijay Aggarwal) PS to Registrar Court Master",
+    "TaxonomyNotes": "Interim stay granted against High Court refund direction.",
+    "EvidenceReferences": [
+      {
+        "PageNumber": 1,
+        "Excerpt": "heard along with Civil Appeal No. 3453/02 There shall be an interim stay of the direction of the High Court so far as it relates to refund. (Ganga Thakur) (Vijay Aggarwal) PS to Re"
+      }
+    ]
+  },
+  {
+    "SampleId": 55,
+    "CourtForum": "Supreme Court",
+    "CaseNumber": "SLP(C) No. 9188/2015 group",
+    "OrderFileName": "Order SC/C.A. No. 007971 -  _ 2017_ SLP_C_ No. 009188 _ 2015/Order 1266_17-02-2017.pdf",
+    "OrderDate": "2017-02-17",
+    "Sha256": "4bc56ea7f3c9af2c294786a2a8ab7a2760d61be6e95f871a2805605412956679",
+    "PageCount": 2,
+    "TextExtractionQuality": "NativeClean",
+    "CorpusDuplicateCount": 1,
+    "ExpectedOutcomes": [
+      "StayGranted"
+    ],
+    "ExpectedFineAmount": null,
+    "ExpectedConfidence": "High",
+    "OperativeExcerpt": "eased to pass the following Order:­ “Notice. There shall be interim stay of the operation of the impugned order on the petitioner depositing 50% of the tax liability under the provisions of the Himachal Pradesh Tax on Entry of Goods into Local Area Act, 2010 (for ",
+    "TaxonomyNotes": "Conditional stay granted subject to deposit of 50% tax liability.",
+    "EvidenceReferences": [
+      {
+        "PageNumber": 1,
+        "Excerpt": "eased to pass the following Order:­ “Notice. There shall be interim stay of the operation of the impugned order on the petitioner depositing 50% of the tax liability under the prov"
+      }
+    ]
+  },
+  {
+    "SampleId": 56,
+    "CourtForum": "Supreme Court",
+    "CaseNumber": "Civil Appeal No. 7971/2017 group",
+    "OrderFileName": "Order SC/C.A. No. 007971 -  _ 2017_ SLP_C_ No. 009188 _ 2015/Order 12_22-07-2002.pdf",
+    "OrderDate": "2002-07-22",
+    "Sha256": "73c142e2b718b5b39fb8f39c9e5acf6a295906782a60ea7ac5e2155a4d9e640b",
+    "PageCount": 2,
+    "TextExtractionQuality": "NativeClean",
+    "CorpusDuplicateCount": 1,
+    "ExpectedOutcomes": [
+      "StayGranted"
+    ],
+    "ExpectedFineAmount": null,
+    "ExpectedConfidence": "High",
+    "OperativeExcerpt": "vesaid interim order before 30th June, 2002. There shall be stay of the payment of interest on the arrears payable. .SP1 (Ganga Thakur) (Prem Prakash) P.S.to Registrar Court Master",
+    "TaxonomyNotes": "Stay granted on interest payment.",
+    "EvidenceReferences": [
+      {
+        "PageNumber": 2,
+        "Excerpt": "vesaid interim order before 30th June, 2002. There shall be stay of the payment of interest on the arrears payable. .SP1 (Ganga Thakur) (Prem Prakash) P.S.to Registrar Court Master"
+      }
+    ]
+  },
+  {
+    "SampleId": 57,
+    "CourtForum": "Supreme Court",
+    "CaseNumber": "SLP(C) No. 9188/2015 group",
+    "OrderFileName": "Order SC/C.A. No. 007971 -  _ 2017_ SLP_C_ No. 009188 _ 2015/Order 537_03-05-2010.pdf",
+    "OrderDate": "2010-05-03",
+    "Sha256": "c7cfe8918fe00b75121391f4bcd06e27fdf4b4cf4da13ad3150528c482025dff",
+    "PageCount": 1,
+    "TextExtractionQuality": "NativeClean",
+    "CorpusDuplicateCount": 1,
+    "ExpectedOutcomes": [
+      "FinePenalty"
+    ],
+    "ExpectedFineAmount": 1000.0,
+    "ExpectedConfidence": "High",
+    "OperativeExcerpt": "ce, application for change of name of appellant is allowed, subject to depositing the costs of Rs.1,000/- in the Supreme Court Employees Mutual Welfare Fund. (V.K. TIWARI) (S.S.R. KRISHNA) P.A. Court Master",
+    "TaxonomyNotes": "Application allowed subject to depositing costs of Rs. 1,000.",
+    "EvidenceReferences": [
+      {
+        "PageNumber": 1,
+        "Excerpt": "ce, application for change of name of appellant is allowed, subject to depositing the costs of Rs.1,000/- in the Supreme Court Employees Mutual Welfare Fund. (V.K. TIWARI) (S.S.R. "
+      }
+    ]
+  },
+  {
+    "SampleId": 58,
+    "CourtForum": "Supreme Court",
+    "CaseNumber": "SLP(C) No. 9188/2015 group",
+    "OrderFileName": "Order SC/C.A. No. 007971 -  _ 2017_ SLP_C_ No. 009188 _ 2015/Order 1234_15-07-2016.pdf",
+    "OrderDate": "2016-07-15",
+    "Sha256": "ba3b78f4f9993634df80def5db1f5b78d1665df2a33a79e7b3f3be8a4cd4588b",
+    "PageCount": 1,
+    "TextExtractionQuality": "NativeClean",
+    "CorpusDuplicateCount": 1,
+    "ExpectedOutcomes": [
+      "FinePenalty"
+    ],
+    "ExpectedFineAmount": 1000.0,
+    "ExpectedConfidence": "High",
+    "OperativeExcerpt": "itted that Counsel for the Petitioner has on 5th July, 2016 deposited the costs of Rs.1,000/- (Rupees One Thousand only) with Supreme Court Legal Services Committee as directed. The matter is listed before the Hon’ble Court for orders. Dated this the 6th Day of July 2016. ASSISTANT R",
+    "TaxonomyNotes": "Compliance order noting receipt of costs of Rs. 1,000 deposited.",
+    "EvidenceReferences": [
+      {
+        "PageNumber": 1,
+        "Excerpt": "itted that Counsel for the Petitioner has on 5th July, 2016 deposited the costs of Rs.1,000/- (Rupees One Thousand only) with Supreme Court Legal Services Committee as directed. Th"
+      }
+    ]
+  },
+  {
+    "SampleId": 59,
+    "CourtForum": "Supreme Court",
+    "CaseNumber": "SLP(C) No. 9188/2015 group",
+    "OrderFileName": "Order SC/C.A. No. 007971 -  _ 2017_ SLP_C_ No. 009188 _ 2015/Order 508_12-03-2010.pdf",
+    "OrderDate": "2010-03-12",
+    "Sha256": "9c678aa109eac7524074d89b93e32a88e2350dced988cba5a41ab6477014bc8e",
+    "PageCount": 1,
+    "TextExtractionQuality": "NativeClean",
+    "CorpusDuplicateCount": 1,
+    "ExpectedOutcomes": [
+      "Injunction",
+      "InterimRelief"
+    ],
+    "ExpectedFineAmount": null,
+    "ExpectedConfidence": "High",
+    "OperativeExcerpt": "tory applications on 19th March, 2010. In the meantime, the Department is restrained from taking any coercive steps to recover the outstanding amounts, till further orders. [ T.I. Rajput ] [ R.K. Sharma ] A.R.-cum-P.S. Court Master",
+    "TaxonomyNotes": "Interim injunction restraining tax authority from coercive recovery.",
+    "EvidenceReferences": [
+      {
+        "PageNumber": 1,
+        "Excerpt": "tory applications on 19th March, 2010. In the meantime, the Department is restrained from taking any coercive steps to recover the outstanding amounts, till further orders. [ T.I. "
+      }
+    ]
+  },
+  {
+    "SampleId": 60,
+    "CourtForum": "Supreme Court",
+    "CaseNumber": "SLP(C) No. 9188/2015 group",
+    "OrderFileName": "Order SC/C.A. No. 007971 -  _ 2017_ SLP_C_ No. 009188 _ 2015/Order 1000_17-04-2015.pdf",
+    "OrderDate": "2015-04-17",
+    "Sha256": "d25fd92e9e50b653fc6122675d5e50c8e6472667361f22e0621bd0af25ef9765",
+    "PageCount": 3,
+    "TextExtractionQuality": "NativeClean",
+    "CorpusDuplicateCount": 1,
+    "ExpectedOutcomes": [
+      "DisposedSettled",
+      "Dismissal"
+    ],
+    "ExpectedFineAmount": null,
+    "ExpectedConfidence": "High",
+    "OperativeExcerpt": "cial Leave Petitions. Permission sought for is granted. The Special Leave Petitions are disposed of as withdrawn. (G.V.Ramana) (Vinod Kulvi) AR-cum-PS Asstt.Registrar",
+    "TaxonomyNotes": "Permission to withdraw SLP granted; disposed of as withdrawn.",
+    "EvidenceReferences": [
+      {
+        "PageNumber": 3,
+        "Excerpt": "cial Leave Petitions. Permission sought for is granted. The Special Leave Petitions are disposed of as withdrawn. (G.V.Ramana) (Vinod Kulvi) AR-cum-PS Asstt.Registrar"
+      }
+    ]
+  },
+  {
+    "SampleId": 61,
+    "CourtForum": "Supreme Court",
+    "CaseNumber": "SLP(C) No. 9188/2015 group",
+    "OrderFileName": "Order SC/C.A. No. 007971 -  _ 2017_ SLP_C_ No. 009188 _ 2015/Order 1001_24-04-2015.pdf",
+    "OrderDate": "2015-04-24",
+    "Sha256": "5e7089e39e92018e46bed763d08e132bf403ea89e71f157d9e222fce9058cb02",
+    "PageCount": 2,
+    "TextExtractionQuality": "NativeClean",
+    "CorpusDuplicateCount": 1,
+    "ExpectedOutcomes": [
+      "InterimRelief",
+      "AdjournedNoSubstantiveOrder"
+    ],
+    "ExpectedFineAmount": null,
+    "ExpectedConfidence": "High",
+    "OperativeExcerpt": "ssmen/company(s), the amount will carry statutory interest. List along with Civil Appeal No.3453 of 2002. (Neetu Khajuria) Sr.P.A. (Vinod Kulvi) Assistant Registrar",
+    "TaxonomyNotes": "Interest direction on refund and listing order.",
+    "EvidenceReferences": [
+      {
+        "PageNumber": 2,
+        "Excerpt": "ssmen/company(s), the amount will carry statutory interest. List along with Civil Appeal No.3453 of 2002. (Neetu Khajuria) Sr.P.A. (Vinod Kulvi) Assistant Registrar"
+      }
+    ]
+  },
+  {
+    "SampleId": 62,
+    "CourtForum": "Supreme Court",
+    "CaseNumber": "SLP(C) No. 9188/2015 group",
+    "OrderFileName": "Order SC/C.A. No. 007971 -  _ 2017_ SLP_C_ No. 009188 _ 2015/Order 281_03-12-2008.pdf",
+    "OrderDate": "2008-12-03",
+    "Sha256": "8ddcee22618d395378612ed56bbdbd035f87fd938428bc674d696b71be817500",
+    "PageCount": 27,
+    "TextExtractionQuality": "NativeClean",
+    "CorpusDuplicateCount": 1,
+    "ExpectedOutcomes": [
+      "AdjournedNoSubstantiveOrder"
+    ],
+    "ExpectedFineAmount": null,
+    "ExpectedConfidence": "High",
+    "OperativeExcerpt": "A.No.5170/2004 - With Office Report C.A.No.7658/2004 - With Appl.(s) for vacating stay and with office report SLP(C)No.9496/2004 - With Prayer for Interim Relief SLP(C)No.9569/2004 - With Prayer for Interim Relief SLP(C)No.9883/2",
+    "TaxonomyNotes": "Pending vacating stay application listed; no substantive order.",
+    "EvidenceReferences": [
+      {
+        "PageNumber": 8,
+        "Excerpt": "A.No.5170/2004 - With Office Report C.A.No.7658/2004 - With Appl.(s) for vacating stay and with office report SLP(C)No.9496/2004 - With Prayer for Interim Relief SLP(C)No.9569/2004"
+      }
+    ]
+  },
+  {
+    "SampleId": 63,
+    "CourtForum": "Supreme Court",
+    "CaseNumber": "SLP(C) No. 9188/2015 group",
+    "OrderFileName": "Order SC/C.A. No. 007971 -  _ 2017_ SLP_C_ No. 009188 _ 2015/Order 346_08-05-2009.pdf",
+    "OrderDate": "2009-05-08",
+    "Sha256": "c0d6beef63df31851d4a23ce7d3f6c692d3a8db2e148327402cefb0b430521b0",
+    "PageCount": 1,
+    "TextExtractionQuality": "NativeClean",
+    "CorpusDuplicateCount": 4,
+    "ExpectedOutcomes": [
+      "AdjournedNoSubstantiveOrder"
+    ],
+    "ExpectedFineAmount": null,
+    "ExpectedConfidence": "High",
+    "OperativeExcerpt": "eorge, Adv. (Meera Hemant) (Veera Verma) A.R. Court Master (Mentioned slip is enclosed)",
+    "TaxonomyNotes": "Advocate appearance mention slip; procedural record. Note: 4 duplicate files exist in corpus.",
+    "EvidenceReferences": [
+      {
+        "PageNumber": 1,
+        "Excerpt": "eorge, Adv. (Meera Hemant) (Veera Verma) A.R. Court Master (Mentioned slip is enclosed)"
+      }
+    ]
+  },
+  {
+    "SampleId": 64,
+    "CourtForum": "Supreme Court",
+    "CaseNumber": "Transferred Case (C) No. 253 of 2020",
+    "OrderFileName": "Order SC/T.C._C_ No. 000253 -  _ 2020/Order 29_21-05-2021.pdf",
+    "OrderDate": "2021-05-21",
+    "Sha256": "3be35c0c6f9149ff1bc07561943d182abcef1cc44095802b6e9781c243f9cc2c",
+    "PageCount": 82,
+    "TextExtractionQuality": "NativeClean",
+    "CorpusDuplicateCount": 1,
+    "ExpectedOutcomes": [
+      "Dismissal",
+      "DisposedSettled"
+    ],
+    "ExpectedFineAmount": null,
+    "ExpectedConfidence": "High",
+    "OperativeExcerpt": "s, transferred cases and transfer petitions are accordingly dismissed in the above terms, without order on costs. ……………………………….J [L. NAGESWARA RAO] …...........................................J [S. RAVINDRA BHAT] New Delhi, May 21, ",
+    "TaxonomyNotes": "Landmark Supreme Court judgment on personal guarantors under IBC: challenges dismissed and cases disposed of.",
+    "EvidenceReferences": [
+      {
+        "PageNumber": 82,
+        "Excerpt": "s, transferred cases and transfer petitions are accordingly dismissed in the above terms, without order on costs. ……………………………….J [L. NAGESWARA RAO] …..............................."
+      }
+    ]
+  },
+  {
+    "SampleId": 65,
+    "CourtForum": "CESTAT",
+    "CaseNumber": "ST/0020848/2014",
+    "OrderFileName": "Order CESTAT/ST_20848_2014/ST_20848_2014.pdf",
+    "OrderDate": "2014-03-10",
+    "Sha256": "aeb4e543af6307dd44dad960118326ec8b32bf91b21908ed0fca53bba897e6a8",
+    "PageCount": 2,
+    "TextExtractionQuality": "CrawlerWebArtifact",
+    "CorpusDuplicateCount": 1,
+    "ExpectedOutcomes": [],
+    "ExpectedFineAmount": null,
+    "ExpectedConfidence": null,
+    "OperativeExcerpt": "CASE STATUS CASE STATUS Diary no/Year 20857/2014 Case Type/Case No/Year SERVICE TAX/0020848/2014 Date of Filing. 10/03/2014 Case Status. Disposed Impugn Type OIO Impugn",
+    "TaxonomyNotes": "Not a court order; crawler downloaded a CESTAT web portal case status table dump. Model validator should reject or label InsufficientEvidence.",
+    "EvidenceReferences": []
+  },
+  {
+    "SampleId": 66,
+    "CourtForum": "CESTAT",
+    "CaseNumber": "ST/0027256/2013",
+    "OrderFileName": "Order CESTAT/ST_27256_2013/ST_27256_2013.pdf",
+    "OrderDate": null,
+    "Sha256": "645e477aa31159a6fc44ae7879105a81ca19f5dee76aacbee250687bbb21bd59",
+    "PageCount": 1,
+    "TextExtractionQuality": "CrawlerWebArtifact",
+    "CorpusDuplicateCount": 1,
+    "ExpectedOutcomes": [],
+    "ExpectedFineAmount": null,
+    "ExpectedConfidence": null,
+    "OperativeExcerpt": "404 - File Not Found Sorry! Cannot seem to find the page you were looking for.",
+    "TaxonomyNotes": "Corrupted web crawler artifact: HTTP 404 HTML response rendered into PDF. Zero judicial content.",
+    "EvidenceReferences": []
+  }
+]
