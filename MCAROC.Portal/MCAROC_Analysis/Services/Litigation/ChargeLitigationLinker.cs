@@ -34,7 +34,8 @@ public sealed record ChargeLitigationLink(
 }
 
 public sealed record ChargeLitigationSummary(
-    IReadOnlyList<ChargeLitigationLink> Links, int CasesScanned, int OrdersScanned, int OrdersWithoutText, bool NcltOrdersSkipped)
+    IReadOnlyList<ChargeLitigationLink> Links, int CasesScanned, int OrdersScanned, int OrdersWithoutText, bool NcltOrdersSkipped,
+    long? SnapshotId = null, string? Version = null)
 {
     public static ChargeLitigationSummary Empty { get; } = new([], 0, 0, 0, false);
 

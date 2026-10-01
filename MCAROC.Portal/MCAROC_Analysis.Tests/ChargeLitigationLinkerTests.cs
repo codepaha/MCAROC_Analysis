@@ -340,6 +340,64 @@ public class ChargeLitigationLinkerTests : IAsyncLifetime
         Assert.Same(first, second);
     }
 
+    /// <summary>Order text is extracted asynchronously AFTER a snapshot completes. A comparison made while extraction
+    /// is still running finds nothing; it must not be served from cache once the matching text has been published
+    /// under the same snapshot (review of #334).</summary>
+    [Fact]
+    public async Task Links_appear_immediately_when_order_text_is_extracted_after_an_earlier_read_under_the_same_snapshot()
+    {
+        await using var db = CreateContext();
+        var requestId = await SeedRequestWithLitigationAsync(db);
+
+        // Put the order back to "text not extracted yet", as it is right after the snapshot completes.
+        await db.LitigationOrderDocuments.Where(d => d.Order!.Case!.RequestId == requestId)
+            .ExecuteUpdateAsync(u => u.SetProperty(d => d.ExtractedText, (string?)null)
+                .SetProperty(d => d.TextExtractionStatus, (FilingDocumentProcessingStatus?)null)
+                .SetProperty(d => d.ExtractedUtc, (DateTime?)null));
+
+        var cache = new MemoryCache(new MemoryCacheOptions { SizeLimit = 256 });
+        var before = await new ChargeLitigationService(db, cache).GetAsync(requestId);
+        Assert.False(before.HasAny);                                  // nothing to compare yet, and that is now cached
+        var versionBefore = await ChargeLitigationService.VersionAsync(db, requestId);
+
+        // Extraction finishes: the text is published under the SAME snapshot.
+        await db.LitigationOrderDocuments.Where(d => d.Order!.Case!.RequestId == requestId)
+            .ExecuteUpdateAsync(u => u.SetProperty(d => d.ExtractedText, OrderNamingProperty)
+                .SetProperty(d => d.TextExtractionStatus, (FilingDocumentProcessingStatus?)FilingDocumentProcessingStatus.TextExtracted)
+                .SetProperty(d => d.ExtractedUtc, (DateTime?)DateTime.UtcNow));
+
+        var after = await new ChargeLitigationService(db, cache).GetAsync(requestId);   // same cache instance
+
+        Assert.NotEqual(versionBefore, await ChargeLitigationService.VersionAsync(db, requestId));
+        var link = Assert.Single(after.Links);                         // visible at once, not after the cache expires
+        Assert.Equal("CHG-900", link.ChargeNumber);
+        Assert.Equal(after.Version, await ChargeLitigationService.VersionAsync(db, requestId));
+    }
+
+    [Fact]
+    public async Task Re_extraction_of_an_order_with_different_text_changes_the_evidence_version()
+    {
+        await using var db = CreateContext();
+        var requestId = await SeedRequestWithLitigationAsync(db);
+        var first = await ChargeLitigationService.VersionAsync(db, requestId);
+
+        // The same number of extracted documents, but its text was republished later.
+        await db.LitigationOrderDocuments.Where(d => d.Order!.Case!.RequestId == requestId)
+            .ExecuteUpdateAsync(u => u.SetProperty(d => d.ExtractedUtc, (DateTime?)DateTime.UtcNow.AddMinutes(5)));
+
+        Assert.NotEqual(first, await ChargeLitigationService.VersionAsync(db, requestId));
+    }
+
+    [Fact]
+    public async Task Unchanged_evidence_keeps_the_same_version_so_the_cache_still_works()
+    {
+        await using var db = CreateContext();
+        var requestId = await SeedRequestWithLitigationAsync(db);
+
+        Assert.Equal(await ChargeLitigationService.VersionAsync(db, requestId), await ChargeLitigationService.VersionAsync(db, requestId));
+        Assert.Equal("none", await ChargeLitigationService.VersionAsync(db, long.MaxValue));   // no snapshot at all
+    }
+
     [Fact]
     public async Task Loader_ignores_satisfied_charges()
     {
