@@ -28,9 +28,10 @@ public sealed class DossierArtifactService(DossierCache cache, DossierPdfRendere
 
         var dir = Path.Combine(env.ContentRootPath, "App_Data", "Dossiers", requestId.ToString());
         Directory.CreateDirectory(dir);
-        // The litigation snapshot is part of the name: the PDF carries charge-to-case links built from it, and this
-        // file cache never expires, so a refresh must produce a different file rather than serve the old one.
-        var litigationPart = model.ChargeLinks?.SnapshotId is { } snapshotId ? $"-l{snapshotId}" : "";
+        // The litigation evidence version is part of the name: the PDF carries charge-to-case links built from it, and
+        // this file cache never expires. A refresh, or order text extracted later under the same snapshot, must
+        // produce a different file rather than let File.Exists serve a PDF that is missing those links.
+        var litigationPart = model.ChargeLinks?.Version is { } litigationVersion ? $"-l{litigationVersion}" : "";
         var name = $"{flavour.ToString().ToLowerInvariant()}-{model.IngestionRunId}-{model.AnalysisRunId?.ToString() ?? "none"}{litigationPart}.pdf";
         var path = Path.Combine(dir, name);
 
