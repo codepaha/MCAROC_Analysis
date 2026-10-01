@@ -7,6 +7,7 @@ using MCAROC_Analysis.Data.Entities;
 using MCAROC_Analysis.Models;
 using MCAROC_Analysis.Services;
 using MCAROC_Analysis.Services.Audit;
+using Microsoft.Data.SqlTypes;
 using MCAROC_Analysis.Services.Dashboard;
 using MCAROC_Analysis.Services.Dossier;
 using MCAROC_Analysis.Services.Excel;
@@ -994,6 +995,228 @@ public class LitigationTabAndControllerTests : IAsyncLifetime
         var state = LitigationRefreshPolicy.Evaluate(committed, committed == 0 ? null : now.AddDays(-daysSinceLast), now, 3, 15);
         Assert.Equal(allowed, state.Allowed);
         Assert.Equal(remaining, state.Remaining);
+    }
+
+    [Fact]
+    public async Task RenderLitigationTab_RendersOutcomeChipsAndFineAmounts_WithLowConfidenceStyling()
+    {
+        var lake = new LitigationTabViewModel
+        {
+            Request = new McaRequest { RequestId = 42, CompanyName = "Litigation Outcomes Co" },
+            SearchJob = new LitigationSearchJob { Status = LitigationSearchJobStatus.Completed },
+            AuthoritativeSnapshot = new LitigationReportSnapshot { RetrievedUtc = DateTime.UtcNow },
+            TotalCaseCount = 1,
+            TotalClassifiedOrdersCount = 2,
+            OutcomeCounts = new Dictionary<LitigationOrderOutcome, int>
+            {
+                [LitigationOrderOutcome.StayGranted] = 1,
+                [LitigationOrderOutcome.FinePenalty] = 1
+            },
+            Cases =
+            [
+                new LitigationCaseCardViewModel
+                {
+                    LitigationCaseId = 101,
+                    CaseNumber = "HC-101/2022",
+                    Court = "High Court",
+                    Orders =
+                    [
+                        new LitigationOrderRowViewModel
+                        {
+                            LitigationCaseOrderId = 201,
+                            LitigationOrderDocumentId = 301,
+                            OrderDate = "2022-04-15",
+                            OrderType = "Interim Order",
+                            DocumentStatus = LitigationOrderDocumentStatus.Downloaded,
+                            Outcomes = [LitigationOrderOutcome.StayGranted],
+                            Confidence = ClassificationConfidence.High
+                        },
+                        new LitigationOrderRowViewModel
+                        {
+                            LitigationCaseOrderId = 202,
+                            LitigationOrderDocumentId = 302,
+                            OrderDate = "2022-05-20",
+                            OrderType = "Final Order",
+                            DocumentStatus = LitigationOrderDocumentStatus.Downloaded,
+                            Outcomes = [LitigationOrderOutcome.FinePenalty],
+                            FineAmount = 50000m,
+                            Confidence = ClassificationConfidence.Low,
+                            EvidenceTruncated = true
+                        }
+                    ]
+                }
+            ]
+        };
+
+        var html = await RenderTabAsync(ClientModel(lake));
+
+        // Outcome chips bar
+        Assert.Contains("id=\"litigation-outcome-chips\"", html);
+        Assert.Contains("All Outcomes (2)", html);
+        Assert.Contains("Stay Granted (1)", html);
+        Assert.Contains("Fine / Penalty (1)", html);
+
+        // Case card orders table
+        Assert.Contains("<th>Outcomes</th>", html);
+        Assert.Contains("Stay Granted", html);
+        Assert.Contains("Fine / Penalty", html);
+        Assert.Contains("₹50,000", html);
+        Assert.Contains("opacity-75 fst-italic", html);
+        Assert.Contains("Low Confidence", html);
+        Assert.Contains("Truncated", html);
+
+        // Download link
+        Assert.Contains("/Requests/7/Litigation/Orders/301/download", html);
+    }
+
+    [Fact]
+    public async Task RenderLitigationTab_PreservesOutcomeFilterInFormAndPagination()
+    {
+        var lake = new LitigationTabViewModel
+        {
+            Request = new McaRequest { RequestId = 42, CompanyName = "Litigation Outcomes Co" },
+            SearchJob = new LitigationSearchJob { Status = LitigationSearchJobStatus.Completed },
+            AuthoritativeSnapshot = new LitigationReportSnapshot { RetrievedUtc = DateTime.UtcNow },
+            TotalCaseCount = 50,
+            PageSize = 25,
+            CurrentPage = 1,
+            SelectedOutcome = "StayGranted",
+            OutcomeCounts = new Dictionary<LitigationOrderOutcome, int>
+            {
+                [LitigationOrderOutcome.StayGranted] = 5
+            },
+            Cases =
+            [
+                new LitigationCaseCardViewModel
+                {
+                    LitigationCaseId = 101,
+                    CaseNumber = "HC-101/2022",
+                    Orders = []
+                }
+            ]
+        };
+
+        var html = await RenderTabAsync(ClientModel(lake));
+
+        Assert.Contains("name=\"outcome\"", html);
+        Assert.Contains("value=\"StayGranted\"", html);
+        Assert.Contains("All Outcomes", html);
+        Assert.Contains("Stay Granted (5)", html);
+    }
+
+    [Fact]
+    public async Task Details_FiltersByOutcome_WhenOutcomeQueryParamIsProvided()
+    {
+        await using var db = CreateContext();
+        var client = new Client { ClientCode = "OUT" + Guid.NewGuid().ToString("N")[..6], ClientName = "Outcome Co", CreatedDate = DateTime.UtcNow };
+        db.Clients.Add(client);
+        var request = new McaRequest { Client = client, CompanyName = "Outcome Co", RequestNumber = $"REQ-{Guid.NewGuid():N}", CreatedDate = DateTime.UtcNow };
+        db.Requests.Add(request);
+        await db.SaveChangesAsync();
+
+        var job = new LitigationSearchJob { RequestId = request.RequestId, Status = LitigationSearchJobStatus.Completed, RawResponseHash = "hash_auth" };
+        db.LitigationSearchJobs.Add(job);
+        await db.SaveChangesAsync();
+
+        var snap = new LitigationReportSnapshot
+        {
+            LitigationSearchJobId = job.LitigationSearchJobId,
+            RequestId = request.RequestId,
+            ReportHash = "hash_auth",
+            Status = LitigationReportSnapshotStatus.Completed,
+            RetrievedUtc = DateTime.UtcNow,
+            CasesPersistedCount = 2
+        };
+        db.LitigationReportSnapshots.Add(snap);
+        await db.SaveChangesAsync();
+
+        var case1 = new LitigationCase { RequestId = request.RequestId, CaseNumber = "CASE-STAY", Court = "High Court", CaseStatus = "Pending", FirstSeenUtc = DateTime.UtcNow };
+        var case2 = new LitigationCase { RequestId = request.RequestId, CaseNumber = "CASE-FINE", Court = "High Court", CaseStatus = "Disposed", FirstSeenUtc = DateTime.UtcNow };
+        db.LitigationCases.AddRange(case1, case2);
+        await db.SaveChangesAsync();
+
+        db.LitigationCaseSourceReports.AddRange(
+            new LitigationCaseSourceReport { LitigationCaseId = case1.LitigationCaseId, LitigationReportSnapshotId = snap.LitigationReportSnapshotId, FirstSeenUtc = DateTime.UtcNow },
+            new LitigationCaseSourceReport { LitigationCaseId = case2.LitigationCaseId, LitigationReportSnapshotId = snap.LitigationReportSnapshotId, FirstSeenUtc = DateTime.UtcNow }
+        );
+        await db.SaveChangesAsync();
+
+        var order1 = new LitigationCaseOrder { LitigationCaseId = case1.LitigationCaseId, OrderDate = "2023-01-10", OrderType = "Interim Order", CreatedUtc = DateTime.UtcNow };
+        var order2 = new LitigationCaseOrder { LitigationCaseId = case2.LitigationCaseId, OrderDate = "2023-02-15", OrderType = "Final Order", CreatedUtc = DateTime.UtcNow };
+        db.LitigationCaseOrders.AddRange(order1, order2);
+        await db.SaveChangesAsync();
+
+        var doc1 = new LitigationOrderDocument { LitigationCaseOrderId = order1.LitigationCaseOrderId, Status = LitigationOrderDocumentStatus.Downloaded, RetainedUntilUtc = DateTime.UtcNow.AddDays(10), CreatedUtc = DateTime.UtcNow };
+        var doc2 = new LitigationOrderDocument { LitigationCaseOrderId = order2.LitigationCaseOrderId, Status = LitigationOrderDocumentStatus.Downloaded, RetainedUntilUtc = DateTime.UtcNow.AddDays(10), CreatedUtc = DateTime.UtcNow };
+        db.LitigationOrderDocuments.AddRange(doc1, doc2);
+        await db.SaveChangesAsync();
+
+        var chunk1 = new LitigationOrderChunk
+        {
+            RequestId = request.RequestId, LitigationOrderDocumentId = doc1.LitigationOrderDocumentId, LitigationCaseOrderId = order1.LitigationCaseOrderId,
+            LitigationCaseId = case1.LitigationCaseId, CaseNumber = case1.CaseNumber, Court = case1.Court, OrderDate = order1.OrderDate,
+            ChunkIndex = 0, PageNumber = 1, ChunkText = "Interim stay granted on recovery proceedings.",
+            Embedding = new SqlVector<float>(new float[768]), EmbeddingModel = "test", EmbeddingDimensions = 768, ChunkingVersion = "1.0", CreatedDate = DateTime.UtcNow
+        };
+        var chunk2 = new LitigationOrderChunk
+        {
+            RequestId = request.RequestId, LitigationOrderDocumentId = doc2.LitigationOrderDocumentId, LitigationCaseOrderId = order2.LitigationCaseOrderId,
+            LitigationCaseId = case2.LitigationCaseId, CaseNumber = case2.CaseNumber, Court = case2.Court, OrderDate = order2.OrderDate,
+            ChunkIndex = 0, PageNumber = 1, ChunkText = "Petition dismissed with penalty of Rs. 10,000.",
+            Embedding = new SqlVector<float>(new float[768]), EmbeddingModel = "test", EmbeddingDimensions = 768, ChunkingVersion = "1.0", CreatedDate = DateTime.UtcNow
+        };
+        db.LitigationOrderChunks.AddRange(chunk1, chunk2);
+        await db.SaveChangesAsync();
+
+        var h1 = LitigationOrderClassifier.Hashes(LitigationOrderClassifier.BuildEvidence([chunk1]));
+        var h2 = LitigationOrderClassifier.Hashes(LitigationOrderClassifier.BuildEvidence([chunk2]));
+
+        var run = new LitigationAiAnalysisRun { RequestId = request.RequestId, Status = LitigationAiAnalysisRunStatus.Completed, RunNumber = 1, CreatedUtc = DateTime.UtcNow };
+        db.LitigationAiAnalysisRuns.Add(run);
+        await db.SaveChangesAsync();
+
+        db.LitigationOrderClassifications.AddRange(
+            new LitigationOrderClassification
+            {
+                RequestId = request.RequestId, LitigationAiAnalysisRunId = run.LitigationAiAnalysisRunId,
+                LitigationCaseId = case1.LitigationCaseId, LitigationCaseOrderId = order1.LitigationCaseOrderId,
+                LitigationOrderDocumentId = doc1.LitigationOrderDocumentId, Status = LitigationAiAnalysisItemStatus.Completed,
+                OutcomeTypesJson = "[\"StayGranted\"]", Confidence = ClassificationConfidence.High,
+                EvidenceHash = h1.EvidenceHash, PromptHash = h1.PromptHash
+            },
+            new LitigationOrderClassification
+            {
+                RequestId = request.RequestId, LitigationAiAnalysisRunId = run.LitigationAiAnalysisRunId,
+                LitigationCaseId = case2.LitigationCaseId, LitigationCaseOrderId = order2.LitigationCaseOrderId,
+                LitigationOrderDocumentId = doc2.LitigationOrderDocumentId, Status = LitigationAiAnalysisItemStatus.Completed,
+                OutcomeTypesJson = "[\"FinePenalty\"]", FineAmount = 10000m, Confidence = ClassificationConfidence.Medium,
+                EvidenceHash = h2.EvidenceHash, PromptHash = h2.PromptHash
+            }
+        );
+        await db.SaveChangesAsync();
+
+        var controller = CreateRequestsController(db, isReviewer: true);
+
+        // 1. Query for StayGranted
+        var resStay = await controller.Details(request.RequestId, charge: null, court: null, status: null, page: 1, outcome: "StayGranted");
+        var lakeStay = Assert.IsType<RequestDetailsViewModel>(Assert.IsType<ViewResult>(resStay).Model).LitigationDataLake!;
+
+        Assert.Equal(1, lakeStay.TotalCaseCount);
+        Assert.Equal(case1.LitigationCaseId, Assert.Single(lakeStay.Cases).LitigationCaseId);
+        Assert.Equal("StayGranted", lakeStay.SelectedOutcome);
+        Assert.Equal(1, lakeStay.OutcomeCounts[LitigationOrderOutcome.StayGranted]);
+        Assert.Equal(1, lakeStay.OutcomeCounts[LitigationOrderOutcome.FinePenalty]);
+        Assert.Equal(2, lakeStay.TotalClassifiedOrdersCount);
+        Assert.Equal([LitigationOrderOutcome.StayGranted], lakeStay.Cases[0].Orders[0].Outcomes);
+
+        // 2. Query for FinePenalty
+        var resFine = await controller.Details(request.RequestId, charge: null, court: null, status: null, page: 1, outcome: "FinePenalty");
+        var lakeFine = Assert.IsType<RequestDetailsViewModel>(Assert.IsType<ViewResult>(resFine).Model).LitigationDataLake!;
+
+        Assert.Equal(1, lakeFine.TotalCaseCount);
+        Assert.Equal(case2.LitigationCaseId, Assert.Single(lakeFine.Cases).LitigationCaseId);
+        Assert.Equal(10000m, lakeFine.Cases[0].Orders[0].FineAmount);
+        Assert.Equal([LitigationOrderOutcome.FinePenalty], lakeFine.Cases[0].Orders[0].Outcomes);
     }
 
     private static async Task<string> RenderTabAsync(RequestDetailsViewModel model)

@@ -461,7 +461,7 @@ public class RequestsController(
     }
 
     [HttpGet("/Requests/{id:long}")]
-    public async Task<IActionResult> Details(long id, [FromQuery] long? charge, [FromQuery] string? court = null, [FromQuery] string? status = null, [FromQuery] int page = 1)
+    public async Task<IActionResult> Details(long id, [FromQuery] long? charge, [FromQuery] string? court = null, [FromQuery] string? status = null, [FromQuery] int page = 1, [FromQuery] string? outcome = null)
     {
         var request = await db.Requests.Include(r => r.Client).FirstOrDefaultAsync(r => r.RequestId == id);
         if (request is null) return NotFound();
@@ -667,9 +667,20 @@ public class RequestsController(
             {
                 Request = request,
                 CurrentPage = Math.Max(1, page),
-                PageSize = 25
+                PageSize = 25,
+                SelectedOutcome = outcome
             };
             var litCt = HttpContext?.RequestAborted ?? CancellationToken.None;
+            var outcomeLookup = await new LitigationOrderOutcomeQuery(db).FindAsync(id, Enum.GetValues<LitigationOrderOutcome>(), litCt);
+            litVm.TotalClassifiedOrdersCount = outcomeLookup.OrdersClassified;
+            litVm.OutcomeCounts = outcomeLookup.Matches
+                .SelectMany(m => m.Outcomes)
+                .GroupBy(o => o)
+                .ToDictionary(g => g.Key, g => g.Count());
+            var outcomeByOrderId = outcomeLookup.Matches
+                .GroupBy(m => m.LitigationCaseOrderId)
+                .ToDictionary(g => g.Key, g => g.First());
+
             var bprOpts = bprOptions?.Value ?? new BprLitigationOptions();
             litVm.Refresh = await LitigationRefreshPolicy.GetAsync(db, id, bprOpts, DateTime.UtcNow, litCt);
             litVm.HasCompletedAnalysis = await db.LitigationAiAnalysisRuns.AsNoTracking().AnyAsync(r => r.RequestId == id
@@ -794,6 +805,17 @@ public class RequestsController(
                             var lowerStatus = status.Trim().ToLower();
                             casesQuery = casesQuery.Where(c => c.CaseStatus != null && c.CaseStatus.ToLower() == lowerStatus);
                         }
+                    }
+
+                    if (!string.IsNullOrWhiteSpace(outcome) && Enum.TryParse<LitigationOrderOutcome>(outcome, true, out var parsedOutcome))
+                    {
+                        var matchingCaseIds = outcomeLookup.Matches
+                            .Where(m => m.Outcomes.Contains(parsedOutcome))
+                            .Select(m => m.LitigationCaseId)
+                            .Distinct()
+                            .ToList();
+
+                        casesQuery = casesQuery.Where(c => matchingCaseIds.Contains(c.LitigationCaseId));
                     }
 
                     litVm.TotalCaseCount = await casesQuery.CountAsync();
@@ -1054,6 +1076,8 @@ public class RequestsController(
                         {
                             orderDocByOrderId.TryGetValue(o.LitigationCaseOrderId, out var od);
                             var orderMatches = propertyMatchesByOrderId.TryGetValue(o.LitigationCaseOrderId, out var omList) ? omList : [];
+                            outcomeByOrderId.TryGetValue(o.LitigationCaseOrderId, out var outcomeMatch);
+
                             card.Orders.Add(new LitigationOrderRowViewModel
                             {
                                 LitigationCaseOrderId = o.LitigationCaseOrderId,
@@ -1063,6 +1087,11 @@ public class RequestsController(
                                 DocumentStatus = od?.Status,
                                 FailureReason = od?.FailureReason,
                                 RefreshCount = od?.RefreshCount ?? 0,
+                                Outcomes = outcomeMatch?.Outcomes.ToList() ?? [],
+                                FineAmount = outcomeMatch?.FineAmount,
+                                Confidence = outcomeMatch?.Confidence,
+                                EvidenceTruncated = outcomeMatch?.EvidenceTruncated ?? false,
+                                ClassificationStatus = outcomeMatch is not null ? LitigationAiAnalysisItemStatus.Completed : null,
                                 PropertyMatches = orderMatches.Select(m => new LitigationPropertyMatchViewModel
                                 {
                                     LitigationCaseOrderId = m.LitigationCaseOrderId,

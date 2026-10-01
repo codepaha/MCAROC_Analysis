@@ -194,6 +194,12 @@ public class LitigationReportAssembler(
             }
         }
 
+        // Outcomes
+        var outcomeLookup = await new LitigationOrderOutcomeQuery(db).FindAsync(requestId, Enum.GetValues<LitigationOrderOutcome>(), ct);
+        var outcomesByOrderId = outcomeLookup.Matches
+            .GroupBy(m => m.LitigationCaseOrderId)
+            .ToDictionary(g => g.Key, g => g.First());
+
         // Build DTOs with Chronological Order Sorting
         var reportCases = new List<StandaloneReportCaseDto>(cases.Count);
         foreach (var c in cases
@@ -227,6 +233,8 @@ public class LitigationReportAssembler(
                         m.RocChargeNumber,
                         m.ChargeHolder)).ToList();
 
+                    outcomesByOrderId.TryGetValue(o.LitigationCaseOrderId, out var outcomeMatch);
+
                     return new StandaloneReportOrderDto(
                         o.LitigationCaseOrderId,
                         o.OrderDate,
@@ -238,7 +246,11 @@ public class LitigationReportAssembler(
                         disclosure,
                         csvStatus,
                         extractionLabel,
-                        orderMatchDtos);
+                        orderMatchDtos,
+                        outcomeMatch?.Outcomes,
+                        outcomeMatch?.FineAmount,
+                        outcomeMatch?.Confidence,
+                        outcomeMatch?.EvidenceTruncated ?? false);
                 })
                 .ToList();
 
