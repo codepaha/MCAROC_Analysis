@@ -1494,11 +1494,14 @@ public class LitigationTabAndControllerTests : IAsyncLifetime
         public override Task<FullTextSearchState> GetAsync(CancellationToken ct) => Task.FromResult(state);
     }
 
-    /// <summary>#349: the Details page tells the chat panel when keyword search is off on this server.</summary>
+    /// <summary>#349: the Details page passes the chat panel a note only when keyword search is off for some documents —
+    /// and a partial one when only one chunk table lacks its full-text index.</summary>
     [Theory]
-    [InlineData(false, true)]
-    [InlineData(true, false)]
-    public async Task Details_FlagsKeywordSearchUnavailable_OnlyWhenFullTextIsMissing(bool fullTextAvailable, bool expectedFlag)
+    [InlineData(true, true, null)]
+    [InlineData(false, false, "unavailable on this server")]
+    [InlineData(true, false, "covers MCA filings only")]
+    [InlineData(false, true, "covers court orders only")]
+    public async Task Details_SetsKeywordSearchNote_ForMissingOrPartialFullText(bool filingsIndexed, bool ordersIndexed, string? expectedNote)
     {
         await using var db = CreateContext();
         var client = new Client { ClientCode = "FTS" + Guid.NewGuid().ToString("N")[..6], ClientName = "FTS Co", CreatedDate = DateTime.UtcNow };
@@ -1506,12 +1509,15 @@ public class LitigationTabAndControllerTests : IAsyncLifetime
         var request = new McaRequest { Client = client, CompanyName = "FTS Co", RequestNumber = $"REQ-{Guid.NewGuid():N}", CreatedDate = DateTime.UtcNow };
         db.Requests.Add(request);
         await db.SaveChangesAsync();
-        var state = new FullTextSearchState(fullTextAvailable, fullTextAvailable, fullTextAvailable);
+        var state = new FullTextSearchState(Installed: true, filingsIndexed, ordersIndexed);
 
         var controller = CreateRequestsController(db, isReviewer: true, new FixedFullTextStatus(state));
         var model = Assert.IsType<RequestDetailsViewModel>(Assert.IsType<ViewResult>(
             await controller.Details(request.RequestId, charge: null)).Model);
 
-        Assert.Equal(expectedFlag, model.KeywordSearchUnavailable);
+        if (expectedNote is null)
+            Assert.Null(model.KeywordSearchNote);
+        else
+            Assert.Contains(expectedNote, model.KeywordSearchNote);
     }
 }

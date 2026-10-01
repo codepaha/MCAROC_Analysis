@@ -10,6 +10,20 @@ namespace MCAROC_Analysis.Services.Chat;
 public sealed record FullTextSearchState(bool Installed, bool DocumentChunksIndexed, bool LitigationChunksIndexed)
 {
     public bool Available => Installed && DocumentChunksIndexed && LitigationChunksIndexed;
+
+    /// <summary>Each table falls back on its own (<see cref="HybridSearch.IsFullTextIndexedAsync"/> is per table), so
+    /// with one index missing, keyword search still runs over the other.</summary>
+    public bool FilingsKeywordSearch => Installed && DocumentChunksIndexed;
+    public bool OrdersKeywordSearch => Installed && LitigationChunksIndexed;
+
+    /// <summary>What the chat panel tells the user, or null when keyword search covers everything.</summary>
+    public string? ChatNote => (FilingsKeywordSearch, OrdersKeywordSearch) switch
+    {
+        (true, true) => null,
+        (true, false) => "Keyword search covers MCA filings only on this server — answers about court orders use semantic search, so exact case numbers or section references in orders may be missed.",
+        (false, true) => "Keyword search covers court orders only on this server — answers about MCA filings use semantic search, so exact SRNs or section references in filings may be missed.",
+        (false, false) => "Keyword search is unavailable on this server — answers use semantic search only, so exact case numbers or section references may be missed."
+    };
 }
 
 /// <summary>#349: reports <see cref="FullTextSearchState"/> to the startup log, <c>/health</c> and the chat panel. Cached
@@ -52,11 +66,17 @@ public sealed class FullTextSearchStartupCheck(IServiceScopeFactory scopes, ILog
             await using var scope = scopes.CreateAsyncScope();
             var state = await scope.ServiceProvider.GetRequiredService<FullTextSearchStatus>().GetAsync(stoppingToken);
             if (state.Available) return;
+            var coverage = (state.FilingsKeywordSearch, state.OrdersKeywordSearch) switch
+            {
+                (false, false) => "OFF for MCA filings and court orders",
+                (true, false) => "OFF for court orders (LitigationOrderChunks) — MCA filings still have it",
+                _ => "OFF for MCA filings (DocumentChunks) — court orders still have it"
+            };
             logger.LogWarning(
-                "Chat keyword search is OFF: SQL Server Full-Text Search installed={Installed}, DocumentChunks indexed={DocumentChunks}, " +
-                "LitigationOrderChunks indexed={LitigationChunks}. Answers use semantic search only, so exact case numbers and section " +
-                "references can be missed. See docs/chat-hybrid-search.md.",
-                state.Installed, state.DocumentChunksIndexed, state.LitigationChunksIndexed);
+                "Chat keyword search is {Coverage}: SQL Server Full-Text Search installed={Installed}, DocumentChunks indexed={DocumentChunks}, " +
+                "LitigationOrderChunks indexed={LitigationChunks}. Where it is off, answers use semantic search only, so exact case numbers and " +
+                "section references can be missed. See docs/chat-hybrid-search.md.",
+                coverage, state.Installed, state.DocumentChunksIndexed, state.LitigationChunksIndexed);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {

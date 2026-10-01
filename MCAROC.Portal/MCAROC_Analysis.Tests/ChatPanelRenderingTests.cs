@@ -212,18 +212,18 @@ public class ChatPanelRenderingTests
         Assert.Equal(retrievedS1 ? 1 : 0, bannerCount);
     }
 
-    // #349: the chat panel says when keyword search is off, and only then.
+    // #349: the chat panel shows the keyword-search note it is given, and nothing when there is none.
     [Theory]
-    [InlineData(true)]
-    [InlineData(false)]
-    public async Task Render_KeywordSearchNote_FollowsKeywordSearchUnavailable(bool unavailable)
+    [InlineData(null)]
+    [InlineData("Keyword search covers MCA filings only on this server")]
+    public async Task Render_KeywordSearchNote_ShowsTheGivenNoteOnly(string? note)
     {
         var model = CreateBaseModel();
-        model.KeywordSearchUnavailable = unavailable;
+        model.KeywordSearchNote = note;
 
         var html = await RenderChatPanelAsync(model);
 
-        Assert.Equal(unavailable, html.Contains("mcaChatKeywordSearchNote"));
-        Assert.Equal(unavailable, html.Contains("Keyword search is unavailable on this server"));
+        Assert.Equal(note is not null, html.Contains("mcaChatKeywordSearchNote"));
+        if (note is not null) Assert.Contains(note, html);
     }
 }

@@ -641,7 +641,7 @@ public class RequestsController(
         }
 
         if (fullTextStatus is not null)
-            vm.KeywordSearchUnavailable = !(await fullTextStatus.GetAsync(HttpContext?.RequestAborted ?? CancellationToken.None)).Available;
+            vm.KeywordSearchNote = (await fullTextStatus.GetAsync(HttpContext?.RequestAborted ?? CancellationToken.None)).ChatNote;
 
         // Computed metrics (Wave 4). The portal and the dossier PDF read the SAME assembled
         // DossierModel — DossierCache builds it once per (request, ingestion run, analysis run) and

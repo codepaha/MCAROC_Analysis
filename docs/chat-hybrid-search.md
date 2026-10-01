@@ -49,7 +49,8 @@ The per-query fallback is silent, so a server without FTS used to look exactly l
 - **Startup log:** a warning from `FullTextSearchStartupCheck` when FTS is missing or either chunk table is unindexed.
 - **`/health`** (signed-in): a `fullTextSearch` block with `available`, `installed`, `documentChunksIndexed` and
   `litigationChunksIndexed`. Use this to check production without database access.
-- **Chat panel:** a one-line note, "Keyword search is unavailable on this server", while it is off.
+- **Chat panel:** a one-line note while it is off. Each table falls back on its own, so with only one index missing
+  the note (and the startup warning) says which documents still have keyword search, e.g. "covers MCA filings only".
 
 All three read `FullTextSearchStatus`, cached for 10 minutes; after installing FTS and creating the indexes, the
 note clears within that window or on restart.
