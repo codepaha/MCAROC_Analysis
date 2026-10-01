@@ -9,9 +9,12 @@ namespace MCAROC_Analysis.Services.Chat;
 /// LexicalTerms are exact-match candidates (case numbers, quoted phrases, statute/section references) that
 /// pure semantic similarity tends to under-rank — they drive #194's full-text half of hybrid retrieval, never a
 /// filter. OrderOutcomes are the court-order outcomes the question asks about ("orders with a fine/stay") — they
-/// route to #195's exact order-outcome lookup, alongside (never instead of) document retrieval.</summary>
+/// route to #195's exact order-outcome lookup, alongside (never instead of) document retrieval.
+/// AsksForQuantity routes to the dossier's computed metrics ("M" sources); AsksForCompleteList adds the note that
+/// document passages are a top-K sample, not a scan of every document (#193 Finding 2, #338).</summary>
 public record QuestionHints(FilingCategory? Category, string? FormTypeKeyword, string? LenderNameKeyword, int? Year, string? SrnMatch,
-    IReadOnlyList<string>? LexicalTerms = null, IReadOnlyList<LitigationOrderOutcome>? OrderOutcomes = null)
+    IReadOnlyList<string>? LexicalTerms = null, IReadOnlyList<LitigationOrderOutcome>? OrderOutcomes = null,
+    bool AsksForQuantity = false, bool AsksForCompleteList = false)
 {
     public bool HasSoftHints => Category is not null || FormTypeKeyword is not null || LenderNameKeyword is not null;
 }
@@ -55,7 +58,8 @@ public static partial class QuestionHintExtractor
         var srn = knownSrns.FirstOrDefault(s =>
             !string.IsNullOrWhiteSpace(s) && Regex.IsMatch(question, $@"\b{Regex.Escape(s)}\b"));
 
-        return new QuestionHints(category, formType, lender, year, srn, ExtractLexicalTerms(question), ExtractOrderOutcomes(text));
+        return new QuestionHints(category, formType, lender, year, srn, ExtractLexicalTerms(question), ExtractOrderOutcomes(text),
+            AsksForQuantity: QuantityRegex().IsMatch(text), AsksForCompleteList: CompleteListRegex().IsMatch(text));
     }
 
     /// <summary>Outcome words and whether each is unambiguous on its own. "Stay", "injunction", "dismissed" and
@@ -131,6 +135,15 @@ public static partial class QuestionHintExtractor
 
     [GeneratedRegex(@"\b(orders?|cases?|court|tribunal|nclt|nclat|drt|drat|judge?ments?|litigation|petitions?|proceedings?|hearings?|bench|appeals?|suits?)\b")]
     private static partial Regex LegalCueRegex();
+
+    /// <summary>Questions a computed metric can answer: counts, totals, ratios, shares, trends.</summary>
+    [GeneratedRegex(@"\b(how (many|much)|number of|count|total|ratio|percent(age)?|average|growth|trend|cagr|share of|proportion|utili[sz]ation|exposure|outstanding)\b|%")]
+    private static partial Regex QuantityRegex();
+
+    /// <summary>Questions asking for every item rather than an example or a passage. "how many" is included: a count
+    /// built from retrieved passages is just as incomplete as a list built from them.</summary>
+    [GeneratedRegex(@"\b(list|enumerate|every|each of|all (the|of|\w+s)|how many|complete list|full list|which (ones|all))\b")]
+    private static partial Regex CompleteListRegex();
 
     [GeneratedRegex(@"\bstay(s|ed)?\b")]
     private static partial Regex StayRegex();

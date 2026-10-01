@@ -5,7 +5,9 @@ public enum SourceType
     DocumentChunk,
     StructuredFact,
     LitigationChunk,
-    OrderOutcome
+    OrderOutcome,
+    Metric,
+    SearchCoverage
 }
 
 /// <summary>One [FACT]/[SOURCE] entry offered to the model in a prompt. Tag ("F1", "D2", "L3", ...) is assigned
@@ -20,7 +22,11 @@ public enum SourceType
 /// citation can identify "the precise case, order and page" per #244/LIT-04's acceptance criterion.
 /// OrderOutcome (#195, tag "O1"...) is one exact order-outcome classification: DocumentId is the order's
 /// LitigationOrderDocumentId (so the citation links to the actual PDF), EntityId the classification row it came
-/// from. The coverage note that accompanies every outcome lookup is an OrderOutcome source with no DocumentId.</summary>
+/// from. The coverage note that accompanies every outcome lookup is an OrderOutcome source with no DocumentId.
+/// Metric (#338, tag "M1"...) is one dossier metric (DossierComputations.BuildMetricGroups) — EntityType carries the
+/// metric group's title. SearchCoverage (#338, tag "S1") is the note saying the D/L passages are a top-K sample,
+/// added only when the question asks for a complete list; its presence in a message's retrieved sources is what
+/// marks the answer as possibly partial.</summary>
 public record RetrievedSource(
     string Tag,
     SourceType Type,
