@@ -160,8 +160,8 @@ public static partial class PropertyParticularsAi
                 foreach (var n in g.Numbers ?? [])
                 {
                     var number = Grounding.NormalizeIdentifier(n);
-                    if (number.Length > 0 && own.ContainsIdentifier(number)) numbers.Add(number);
-                    else rejected.Add($"{at}.surveyNumbers: {scheme} '{n}' is not stated (or within a stated range) in this property's clause");
+                    if (number.Length > 0 && own.ContainsIdentifier(scheme, number)) numbers.Add(number);
+                    else rejected.Add($"{at}.surveyNumbers: {scheme} '{n}' is not written in a {scheme} list (or a range it states) in this property's clause");
                 }
                 if (numbers.Count > 0) surveys.Add(new SurveyNumberGroup(scheme, qualifier, numbers.Distinct().ToList()));
             }
@@ -219,20 +219,30 @@ public static partial class PropertyParticularsAi
         private readonly string _text;
         private readonly string _lower;
         private readonly List<string> _tokens;
-        private readonly HashSet<string> _identifiers;
-        private readonly List<(string Base, int From, int To)> _ranges;
+        /// <summary>Per scheme (CTS, Survey, Plot, Gat, Khasra): the identifiers written in a list that scheme's own label
+        /// introduces ("C.T.S. Nos 51(P), 52/1 to 17"), and the ranges stated inside those lists.</summary>
+        private readonly Dictionary<string, (HashSet<string> Ids, List<(string Base, int From, int To)> Ranges)> _labelled = new();
 
         public Grounding(string text)
         {
             _text = Whitespace().Replace(text, " ");
             _lower = _text.ToLowerInvariant();
             _tokens = Token().Matches(_lower).Select(m => m.Value).ToList();
-            _identifiers = IdentifierPattern().Matches(_lower).Select(m => NormalizeIdentifier(m.Value)).ToHashSet();
-            _ranges = RangePattern().Matches(_lower)
-                .Select(m => (NormalizeIdentifier(m.Groups["base"].Value), int.Parse(m.Groups["from"].Value, CultureInfo.InvariantCulture),
-                    int.Parse(m.Groups["to"].Value, CultureInfo.InvariantCulture)))
-                .Where(r => r.Item3 >= r.Item2 && r.Item3 - r.Item2 <= 500)
-                .ToList();
+            foreach (Match label in LabelledList().Matches(_lower))
+            {
+                var scheme = SchemeOf(label);
+                if (!_labelled.TryGetValue(scheme, out var entry))
+                    _labelled[scheme] = entry = (new HashSet<string>(), new List<(string, int, int)>());
+                foreach (Match item in ListItem().Matches(label.Groups["list"].Value))
+                {
+                    entry.Ids.Add(NormalizeIdentifier(item.Groups["id"].Value));
+                    if (item.Groups["to"].Success && RangeStart().Match(item.Groups["id"].Value) is { Success: true } start
+                        && int.TryParse(start.Groups["from"].Value, CultureInfo.InvariantCulture, out var from)
+                        && int.TryParse(item.Groups["to"].Value, CultureInfo.InvariantCulture, out var to)
+                        && to >= from && to - from <= 500)
+                        entry.Ranges.Add((NormalizeIdentifier(start.Groups["base"].Value), from, to));
+                }
+            }
         }
 
         public string Slice((int Start, int End) span) => _text[span.Start..span.End];
@@ -289,15 +299,21 @@ public static partial class PropertyParticularsAi
         public bool ContainsPin(string pin) =>
             Numbers().Any(n => n.Raw == pin && !AnyAreaUnit().IsMatch(_lower[n.End..]));
 
-        /// <summary>The whole identifier (suffixes included) is written in this text, or falls inside a range this
-        /// text states explicitly ("52/1 to 17" → 52/1 … 52/17).</summary>
-        public bool ContainsIdentifier(string number)
+        /// <summary>The whole identifier (suffixes included) is written in a list introduced by <em>that scheme's</em>
+        /// label, or falls inside a range such a list states explicitly ("CTS 52/1 to 17" → 52/1 … 52/17). A number
+        /// written anywhere else — an area, a parking count, another scheme's list — never grounds an identifier.</summary>
+        public bool ContainsIdentifier(string scheme, string number)
         {
-            if (_identifiers.Contains(number)) return true;
+            if (!_labelled.TryGetValue(scheme, out var entry)) return false;
+            if (entry.Ids.Contains(number)) return true;
             var cut = number.LastIndexOf('/');
             return cut > 0 && int.TryParse(number[(cut + 1)..], NumberStyles.None, CultureInfo.InvariantCulture, out var n)
-                && _ranges.Any(r => r.Base == number[..cut] && n >= r.From && n <= r.To);
+                && entry.Ranges.Any(r => r.Base == number[..cut] && n >= r.From && n <= r.To);
         }
+
+        private static string SchemeOf(Match label) =>
+            label.Groups["cts"].Success ? "CTS" : label.Groups["survey"].Success ? "Survey" : label.Groups["plot"].Success ? "Plot"
+            : label.Groups["gat"].Success ? "Gat" : "Khasra";
 
         public static string NormalizeIdentifier(string value)
         {
@@ -317,10 +333,22 @@ public static partial class PropertyParticularsAi
         // a longer number or decimal, and never the part after a "/" (that belongs to a survey identifier).
         [GeneratedRegex(@"(?<![\d.,/])(?:\d{1,3}(?:,\d{2,3})+|\d+)(?:\.\d+)?(?!\d)")]
         private static partial Regex NumberToken();
-        [GeneratedRegex(@"(?<![0-9a-z/])\d+[a-z]?(?:\s*/\s*[0-9a-z]+)*(?:\s*\(\s*(?:p|part)\s*\)|\s+part\b)?")]
-        private static partial Regex IdentifierPattern();
-        [GeneratedRegex(@"(?<base>\d+[a-z]?)\s*/\s*(?<from>\d+)\s*(?:to|-|–)\s*(?:\k<base>\s*/\s*)?(?<to>\d+)\b")]
-        private static partial Regex RangePattern();
+        // A scheme label, its "No./Nos." and the identifier list after it. Real spellings: "C.T.S", "C.T. S", "CTS-Nos",
+        // "CST" (typo), "Nos51"; "Survey No."/"S. No."/"Sy. No." (but never the "S." that ends "C.T.S."); "Plot No.".
+        // List items join on ","/"and"/"&"; a structured identifier ("52/7", "51 (P)") may also follow a space or ".",
+        // as in "51 (P) 52(P)" and "52/6. 52/7". An item followed by "parking" or an area unit is never an identifier.
+        private const string Item =
+            @"(?<id>\d+[a-z]?(?![\d])(?:\s*/\s*[0-9a-z]+(?![0-9a-z]))*(?:\s*\(\s*(?:p|part)\s*\)|\s+part\b)?)(?:\s*(?:to|–)\s*(?:\d+[a-z]?\s*/\s*)?(?<to>\d+)\b)?" +
+            @"(?!\s*(?:car\s*)?parking|\s*(?:sq|square|acres?|hectares?|ha)\b)";
+        private const string Structured = @"(?=\d+[a-z]?\s*[/(])";
+
+        [GeneratedRegex(
+            @"(?:(?<cts>(?<![a-z])(?:c\.?\s*t\.?\s*s|cst)(?![a-z]))|(?<survey>(?<![a-z.])(?:survey|sy\.|s\.)(?![a-z]))|(?<plot>(?<![a-z])plots?(?![a-z]))|(?<gat>(?<![a-z])gat(?![a-z]))|(?<khasra>(?<![a-z])khasra(?![a-z])))" +
+            @"\.?\s*[-\s]*(?:nos?\.?|numbers?)?[\s.,:-]*" +
+            @"(?<list>" + Item + @"(?:(?:\s*(?:,|&|\band\b)\s*|(?:\s*\.\s*|\s+)" + Structured + @")" + Item + @")*)")]
+        private static partial Regex LabelledList();
+        [GeneratedRegex(Item)] private static partial Regex ListItem();
+        [GeneratedRegex(@"^(?<base>\d+[a-z]?)\s*/\s*(?<from>\d+)$")] private static partial Regex RangeStart();
         [GeneratedRegex(@"\(\s*PART\s*\)$|PART$|\(P\)$")] private static partial Regex PartSuffix();
         [GeneratedRegex(@"^\s*\.?\s*(?:sq(?:uare)?\.?\s*(?:feet|fts?)\b\.?|sqft\b)")] private static partial Regex SqFtUnit();
         [GeneratedRegex(@"^\s*\.?\s*(?:sq(?:uare)?\.?\s*/?\s*m(?:e?t(?:er|re)s?|trs?|ts|ets|t)?\b\.?|sqm\b)")] private static partial Regex SqMUnit();

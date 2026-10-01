@@ -261,4 +261,68 @@ public class PropertyParticularsAiTests
         Assert.Null(area.EquivalentValue);
         Assert.Contains(v.RejectedFields, r => r.Contains("equivalent 2588.68 Acre"));
     }
+
+    // ── Re-review blocker on PR #333: identifiers must come from a list their own scheme label introduces ───────────
+
+    private static List<string> GroundedNumbers(string clause, string scheme, params string[] numbers)
+    {
+        var list = string.Join(",", numbers.Select(n => $"\"{n}\""));
+        var v = PropertyParticularsAi.Validate($$"""
+            {"properties":[{"sourceText":"{{clause}}","assetClass":"Immovable","kind":"Land","surveyNumbers":[{"scheme":"{{scheme}}","numbers":[{{list}}]}]}]}
+            """, clause);
+        return v.Result?.Properties.SelectMany(p => p.SurveyNumbers).SelectMany(g => g.Numbers).ToList() ?? [];
+    }
+
+    [Theory]
+    [InlineData("100")] // the carpet area
+    [InlineData("17")]  // the parking count
+    public void NumbersFromAreasOrParkingCounts_AreNeverCtsNumbers(string number)
+    {
+        Assert.Empty(GroundedNumbers(ReviewSource, "CTS", number));
+        Assert.Equal(["52/1"], GroundedNumbers(ReviewSource, "CTS", "52/1", number)); // the real CTS number still passes
+    }
+
+    [Theory]
+    [InlineData("Plot", "52/1")]   // written under CTS, claimed as a plot
+    [InlineData("Survey", "52/1")]
+    [InlineData("Gat", "52/1")]
+    public void AnIdentifierUnderOneSchemeLabel_IsNotGroundedForAnother(string scheme, string number)
+    {
+        Assert.Empty(GroundedNumbers(ReviewSource, scheme, number));
+    }
+
+    [Fact]
+    public void CtsNumber_IsNotMisreadAsASurveyNumber_FromTheSThatEndsCTS()
+    {
+        const string clause = "Land at sub-divided plot No.5 of Plot No.75A bearing Old Survey No.75A part and C.T.S. No.18 of Juhu";
+
+        Assert.Equal(["18"], GroundedNumbers(clause, "CTS", "18"));
+        Assert.Empty(GroundedNumbers(clause, "Survey", "18"));
+        Assert.Equal(["75A(P)"], GroundedNumbers(clause, "Survey", "75A(P)"));
+        Assert.Equal(["5", "75A"], GroundedNumbers(clause, "Plot", "5", "75A"));
+        Assert.Empty(GroundedNumbers(clause, "Plot", "18"));
+    }
+
+    [Theory] // verbatim spellings from a real Probe charge report
+    [InlineData("comprised in New C.T.S No.51/B and Old C.T.S. Nos, 51 (P) 52(P), 52/1, 52/2, 52/17, lying", "51/B", "51(P)", "52(P)", "52/17")]
+    [InlineData("comprised in CTS Nos. 51(P), 52(P),52/1,52/2,52/3,52/4,52/5,52/6.52/7,52/8 lying", "51(P)", "52/7", "52/8")]
+    [InlineData("comprised in C.T.S Nos51 (P), 52 (P), 52/1, 52/13, 52/14 52/15,52/16 lying", "51(P)", "52(P)", "52/15", "52/16")]
+    [InlineData("comprised in CST Nos. 51(P), 52(P),52/1,52/10,52/11 lying", "51(P)", "52/10")]
+    [InlineData("comprised in old CTS-Nos, 51 (P), 52 (P) and 52/1 to 17 and new CTS No. 51/B", "51(P)", "52(P)", "52/1", "52/9", "52/17", "51/B")]
+    [InlineData("bearing C.T. S No. 51(part) being a portion", "51(P)")]
+    public void RealCtsSpellings_ListsRangesAndSuffixes_StillGround(string clause, params string[] numbers)
+    {
+        Assert.Equal(numbers, GroundedNumbers(clause, "CTS", numbers));
+    }
+
+    [Fact]
+    public void ARangeIsExpandedOnlyWithinItsStatedBounds()
+    {
+        const string clause = "comprised in old CTS Nos 52/1 to 17 and 18 car parking spaces";
+
+        Assert.Equal(["52/17"], GroundedNumbers(clause, "CTS", "52/17"));
+        Assert.Empty(GroundedNumbers(clause, "CTS", "52/18"));
+        Assert.Empty(GroundedNumbers(clause, "CTS", "18")); // a parking count right after the list is not a list item
+        Assert.Empty(GroundedNumbers(clause, "CTS", "1"));  // ...nor is a fragment of it
+    }
 }
