@@ -296,9 +296,10 @@
                                                 }
                                             </div>
                                         }
-                                        else if (order.ClassificationStatus == LitigationAiAnalysisItemStatus.Completed)
+                                        else if (order.ClassificationStatus == LitigationAiAnalysisItemStatus.InsufficientEvidence)
                                         {
-                                            <span class="text-muted fst-italic small">No substantive relief</span>
+                                            @* Classified, but the order's text didn't show what it decided — not the same as "not analysed yet". *@
+                                            <span class="text-muted fst-italic small" title="The order's text did not show what it decided">Outcome unclear</span>
                                         }
                                         else
                                         {

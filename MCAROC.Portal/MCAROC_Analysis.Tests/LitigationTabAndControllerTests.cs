@@ -1286,6 +1286,89 @@ public class LitigationTabAndControllerTests : IAsyncLifetime
         Assert.Equal([LitigationOrderOutcome.FinePenalty], lakeFine.Cases[0].Orders[0].Outcomes);
     }
 
+    /// <summary>The lookup's matches only carry orders with an outcome, so the order rows take their classification status
+    /// from the lookup's current statuses: an InsufficientEvidence order reads "Outcome unclear", not the "—" of an order
+    /// that was never classified.</summary>
+    [Fact]
+    public async Task Details_DistinguishesInsufficientEvidenceOrders_FromUnclassifiedOnes()
+    {
+        await using var db = CreateContext();
+        var client = new Client { ClientCode = "UNC" + Guid.NewGuid().ToString("N")[..6], ClientName = "Unclear Co", CreatedDate = DateTime.UtcNow };
+        db.Clients.Add(client);
+        var request = new McaRequest { Client = client, CompanyName = "Unclear Co", RequestNumber = $"REQ-{Guid.NewGuid():N}", CreatedDate = DateTime.UtcNow };
+        db.Requests.Add(request);
+        await db.SaveChangesAsync();
+
+        var job = new LitigationSearchJob { RequestId = request.RequestId, Status = LitigationSearchJobStatus.Completed, RawResponseHash = "hash_unc" };
+        db.LitigationSearchJobs.Add(job);
+        await db.SaveChangesAsync();
+        var snap = new LitigationReportSnapshot
+        {
+            LitigationSearchJobId = job.LitigationSearchJobId, RequestId = request.RequestId, ReportHash = "hash_unc",
+            Status = LitigationReportSnapshotStatus.Completed, RetrievedUtc = DateTime.UtcNow, CasesPersistedCount = 1
+        };
+        db.LitigationReportSnapshots.Add(snap);
+        var lc = new LitigationCase { RequestId = request.RequestId, CaseNumber = "CASE-UNC", Court = "High Court", CaseStatus = "Pending", FirstSeenUtc = DateTime.UtcNow };
+        db.LitigationCases.Add(lc);
+        await db.SaveChangesAsync();
+        db.LitigationCaseSourceReports.Add(new LitigationCaseSourceReport { LitigationCaseId = lc.LitigationCaseId, LitigationReportSnapshotId = snap.LitigationReportSnapshotId, FirstSeenUtc = DateTime.UtcNow });
+
+        var run = new LitigationAiAnalysisRun { RequestId = request.RequestId, Status = LitigationAiAnalysisRunStatus.Completed, RunNumber = 1, CreatedUtc = DateTime.UtcNow };
+        db.LitigationAiAnalysisRuns.Add(run);
+        await db.SaveChangesAsync();
+
+        // Three orders: a stay, one whose text didn't show what it decided, and one never classified.
+        var orderIds = new List<long>();
+        foreach (var (date, text, status, outcomes) in new (string, string, LitigationAiAnalysisItemStatus?, string)[]
+        {
+            ("2023-03-01", "Interim stay granted.", LitigationAiAnalysisItemStatus.Completed, "[\"StayGranted\"]"),
+            ("2023-02-01", "Illegible order sheet.", LitigationAiAnalysisItemStatus.InsufficientEvidence, "[]"),
+            ("2023-01-01", "Listed for hearing.", null, "[]")
+        })
+        {
+            var order = new LitigationCaseOrder { LitigationCaseId = lc.LitigationCaseId, OrderDate = date, OrderType = "Order", CreatedUtc = DateTime.UtcNow };
+            db.LitigationCaseOrders.Add(order);
+            await db.SaveChangesAsync();
+            var doc = new LitigationOrderDocument { LitigationCaseOrderId = order.LitigationCaseOrderId, Status = LitigationOrderDocumentStatus.Downloaded, RetainedUntilUtc = DateTime.UtcNow.AddDays(10), CreatedUtc = DateTime.UtcNow };
+            db.LitigationOrderDocuments.Add(doc);
+            await db.SaveChangesAsync();
+            var chunk = new LitigationOrderChunk
+            {
+                RequestId = request.RequestId, LitigationOrderDocumentId = doc.LitigationOrderDocumentId, LitigationCaseOrderId = order.LitigationCaseOrderId,
+                LitigationCaseId = lc.LitigationCaseId, CaseNumber = lc.CaseNumber, Court = lc.Court, OrderDate = date,
+                ChunkIndex = 0, PageNumber = 1, ChunkText = text,
+                Embedding = new SqlVector<float>(new float[768]), EmbeddingModel = "test", EmbeddingDimensions = 768, ChunkingVersion = "1.0", CreatedDate = DateTime.UtcNow
+            };
+            db.LitigationOrderChunks.Add(chunk);
+            if (status is { } st)
+            {
+                var h = LitigationOrderClassifier.Hashes(LitigationOrderClassifier.BuildEvidence([chunk]));
+                db.LitigationOrderClassifications.Add(new LitigationOrderClassification
+                {
+                    RequestId = request.RequestId, LitigationAiAnalysisRunId = run.LitigationAiAnalysisRunId, LitigationCaseId = lc.LitigationCaseId,
+                    LitigationCaseOrderId = order.LitigationCaseOrderId, LitigationOrderDocumentId = doc.LitigationOrderDocumentId,
+                    Status = st, OutcomeTypesJson = outcomes, Confidence = ClassificationConfidence.Medium,
+                    EvidenceHash = h.EvidenceHash, PromptHash = h.PromptHash
+                });
+            }
+            await db.SaveChangesAsync();
+            orderIds.Add(order.LitigationCaseOrderId);
+        }
+
+        var controller = CreateRequestsController(db, isReviewer: true);
+        var model = Assert.IsType<RequestDetailsViewModel>(Assert.IsType<ViewResult>(
+            await controller.Details(request.RequestId, charge: null, court: null, status: null, page: 1, outcome: null)).Model);
+        var rows = Assert.Single(model.LitigationDataLake!.Cases).Orders.ToDictionary(o => o.LitigationCaseOrderId);
+
+        Assert.Equal(LitigationAiAnalysisItemStatus.Completed, rows[orderIds[0]].ClassificationStatus);
+        Assert.Equal(LitigationAiAnalysisItemStatus.InsufficientEvidence, rows[orderIds[1]].ClassificationStatus);
+        Assert.Empty(rows[orderIds[1]].Outcomes);
+        Assert.Null(rows[orderIds[2]].ClassificationStatus);
+
+        var html = await RenderTabAsync(ClientModel(model.LitigationDataLake!));
+        Assert.Single(System.Text.RegularExpressions.Regex.Matches(html, ">Outcome unclear<"));
+    }
+
     private static async Task<string> RenderTabAsync(RequestDetailsViewModel model)
     {
         var dir = new DirectoryInfo(AppContext.BaseDirectory);

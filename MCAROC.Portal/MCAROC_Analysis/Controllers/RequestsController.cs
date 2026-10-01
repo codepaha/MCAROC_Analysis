@@ -39,7 +39,8 @@ public class RequestsController(
     MCAROC_Analysis.Services.Pipeline.PipelineAdopter? pipelineAdopter = null,
     Microsoft.Extensions.Options.IOptions<BprLitigationOptions>? bprOptions = null,
     LitigationAiAnalysisOrchestrator? litigationAnalysis = null,
-    ChargeLitigationService? chargeLitigation = null) : Controller
+    ChargeLitigationService? chargeLitigation = null,
+    LitigationOrderOutcomeQuery? orderOutcomes = null) : Controller
 {
     [HttpGet("/Requests")]
     public async Task<IActionResult> Index([FromQuery] RequestListFilterCriteria filters)
@@ -671,7 +672,8 @@ public class RequestsController(
                 SelectedOutcome = outcome
             };
             var litCt = HttpContext?.RequestAborted ?? CancellationToken.None;
-            var outcomeLookup = await new LitigationOrderOutcomeQuery(db).FindAsync(id, Enum.GetValues<LitigationOrderOutcome>(), litCt);
+            // The DI-registered query caches the evidence hashes, so this per-page-load lookup doesn't reread every order's text.
+            var outcomeLookup = await (orderOutcomes ?? new LitigationOrderOutcomeQuery(db)).FindAsync(id, Enum.GetValues<LitigationOrderOutcome>(), litCt);
             litVm.TotalClassifiedOrdersCount = outcomeLookup.OrdersClassified;
             litVm.OutcomeCounts = outcomeLookup.Matches
                 .SelectMany(m => m.Outcomes)
@@ -1091,7 +1093,9 @@ public class RequestsController(
                                 FineAmount = outcomeMatch?.FineAmount,
                                 Confidence = outcomeMatch?.Confidence,
                                 EvidenceTruncated = outcomeMatch?.EvidenceTruncated ?? false,
-                                ClassificationStatus = outcomeMatch is not null ? LitigationAiAnalysisItemStatus.Completed : null,
+                                // Matches only carry orders WITH an outcome; an InsufficientEvidence classification is still current.
+                                ClassificationStatus = outcomeLookup.CurrentStatusByOrderId?.TryGetValue(o.LitigationCaseOrderId, out var classified) == true
+                                    ? classified : null,
                                 PropertyMatches = orderMatches.Select(m => new LitigationPropertyMatchViewModel
                                 {
                                     LitigationCaseOrderId = m.LitigationCaseOrderId,

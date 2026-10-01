@@ -4,6 +4,7 @@ using MCAROC_Analysis.Data.Entities;
 using MCAROC_Analysis.Services.LitigationData;
 using Microsoft.Data.SqlTypes;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Xunit;
@@ -255,6 +256,64 @@ public sealed class LitigationOrderClassificationTests : IAsyncLifetime
             Assert.True(await db.LitigationOrderClassifications.AnyAsync(c => c.LitigationOrderDocumentId == fineDocId
                 && c.Status == LitigationAiAnalysisItemStatus.Completed && c.OutcomeTypesJson == "[\"FinePenalty\"]"));
         }
+    }
+
+    /// <summary>The Details page runs the lookup on every load, so the evidence hashes are cached under the request's
+    /// chunk version. A rechunk (delete + insert, as LitigationOrderChunkingOrchestrator does) must invalidate them.</summary>
+    [Fact]
+    public async Task Cached_lookup_reuses_hashes_until_the_order_text_is_rechunked()
+    {
+        var (requestId, fineDocId, _) = await SeedRequestWithOrdersAsync();
+        await RunAnalysisAsync(requestId, new ScriptedClient(ClassifyByText));
+        using var cache = new MemoryCache(new MemoryCacheOptions { SizeLimit = 256 });
+
+        await using (var db = CreateContext())
+        {
+            var first = await new LitigationOrderOutcomeQuery(db, cache).FindAsync(requestId, [LitigationOrderOutcome.FinePenalty], CancellationToken.None);
+            Assert.Equal(fineDocId, Assert.Single(first.Matches).LitigationOrderDocumentId);
+
+            // An in-place edit leaves the chunk version unchanged, so the cached hashes are used (the text is not reread).
+            // Production never edits chunk text in place — this only proves the cache is hit.
+            await db.LitigationOrderChunks.Where(c => c.LitigationOrderDocumentId == fineDocId)
+                .ExecuteUpdateAsync(u => u.SetProperty(c => c.ChunkText, "The petition is dismissed as withdrawn."));
+            var cached = await new LitigationOrderOutcomeQuery(db, cache).FindAsync(requestId, [LitigationOrderOutcome.FinePenalty], CancellationToken.None);
+            Assert.Single(cached.Matches);
+
+            // A rechunk replaces the rows: new ids, so a new version, and the changed text is seen.
+            var chunk = await db.LitigationOrderChunks.AsNoTracking().SingleAsync(c => c.LitigationOrderDocumentId == fineDocId);
+            await db.LitigationOrderChunks.Where(c => c.LitigationOrderDocumentId == fineDocId).ExecuteDeleteAsync();
+            chunk.LitigationOrderChunkId = 0;
+            db.LitigationOrderChunks.Add(chunk);
+            await db.SaveChangesAsync();
+        }
+
+        await using (var db = CreateContext())
+        {
+            var rechunked = await new LitigationOrderOutcomeQuery(db, cache).FindAsync(requestId, [LitigationOrderOutcome.FinePenalty], CancellationToken.None);
+            Assert.Empty(rechunked.Matches);
+            Assert.Equal((1, 2, 1), (rechunked.OrdersClassified, rechunked.OrdersWithText, rechunked.OrdersOutdated));
+        }
+    }
+
+    /// <summary>Matches carry only orders with an outcome; CurrentStatusByOrderId must also carry an order classified as
+    /// InsufficientEvidence, so the Litigation tab can tell "outcome unclear" apart from "not classified".</summary>
+    [Fact]
+    public async Task An_insufficient_evidence_order_is_reported_as_current_but_never_matches()
+    {
+        var (requestId, fineDocId, _) = await SeedRequestWithOrdersAsync();
+        await RunAnalysisAsync(requestId, new ScriptedClient(prompt => prompt.Contains("costs of Rs. 50,000")
+            ? ClassifyByText(prompt)
+            : """{"status":"InsufficientEvidence","confidence":"Low","outcomes":[]}"""));
+
+        await using var db = CreateContext();
+        var lookup = await new LitigationOrderOutcomeQuery(db).FindAsync(requestId, Enum.GetValues<LitigationOrderOutcome>(), CancellationToken.None);
+
+        var fineOrderId = Assert.Single(lookup.Matches).LitigationCaseOrderId;
+        Assert.Equal(fineDocId, lookup.Matches[0].LitigationOrderDocumentId);
+        var statuses = Assert.IsAssignableFrom<IReadOnlyDictionary<long, LitigationAiAnalysisItemStatus>>(lookup.CurrentStatusByOrderId);
+        Assert.Equal(2, statuses.Count);
+        Assert.Equal(LitigationAiAnalysisItemStatus.Completed, statuses[fineOrderId]);
+        Assert.Equal(LitigationAiAnalysisItemStatus.InsufficientEvidence, statuses.Single(s => s.Key != fineOrderId).Value);
     }
 
     private static async Task<(long RequestId, long FineDocId, long CaseId)> SeedRequestWithOrdersAsync()
