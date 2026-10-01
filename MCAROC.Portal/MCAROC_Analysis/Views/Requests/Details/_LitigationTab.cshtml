@@ -127,9 +127,10 @@
             }
             @if (lake.SearchJob is not null || hasReport)
             {
-                <form method="post" action="/Requests/@reqId/Litigation/Search" class="d-inline"
-                      onsubmit="return confirm('Refresh litigation data? This uses one of your @lake.Refresh.Max refreshes.');">
+                <form method="post" action="/Requests/@reqId/Litigation/Search" class="d-inline" id="litigation-refresh-form"
+                      onsubmit="return confirm('@(hasReport ? "This refresh is chargeable. " : "")Refresh litigation data? This uses one of your @lake.Refresh.Max refreshes.');">
                     @Html.AntiForgeryToken()
+                    <input type="hidden" name="confirmChargeableRefresh" value="true" />
                     <button type="submit" class="btn btn-sm btn-outline-primary" disabled="@(searchRunning || refreshBlocked)"
                             title="@(refreshBlocked ? lake.Refresh.Reason : $"Fetch fresh court records. {lake.Refresh.Remaining} of {lake.Refresh.Max} refreshes left.")">
                         <i class="bi bi-arrow-repeat me-1"></i>Refresh data
@@ -218,8 +219,13 @@
                     <strong>Search Attempt Failed:</strong>
                     <span>@(lake.SearchJob.FailureReason ?? lake.CurrentAttemptSnapshot?.FailureReason ?? (lake.ImportState == SnapshotImportState.SnapshotMissing ? "Search completed but report snapshot was missing." : "Search job encountered an error."))</span>
                 </div>
-                <form method="post" action="/Requests/@Model.Request.RequestId/Litigation/Search">
+                <form method="post" action="/Requests/@Model.Request.RequestId/Litigation/Search"
+                      onsubmit="@(hasReport ? "return confirm('This refresh is chargeable. Rerun the litigation search?');" : "return true;")">
                     @Html.AntiForgeryToken()
+                    @if (hasReport)
+                    {
+                        <input type="hidden" name="confirmChargeableRefresh" value="true" />
+                    }
                     <button type="submit" class="btn btn-sm btn-outline-danger">Rerun Search</button>
                 </form>
             </div>
