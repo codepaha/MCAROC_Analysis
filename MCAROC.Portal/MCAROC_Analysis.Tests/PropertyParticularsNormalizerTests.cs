@@ -4,7 +4,7 @@ using Xunit;
 namespace MCAROC_Analysis.Tests;
 
 /// <summary>The deterministic reading of a charge's "Particulars of Property Charged", against verbatim wording from a
-/// real Probe charge-report export (public MCA filings) — including its typos, restated areas and broken CTS lists.</summary>
+/// real charge-report export (public MCA filings) — including its typos, restated areas and broken CTS lists.</summary>
 public class PropertyParticularsNormalizerTests
 {
     private const string OfficeUnit =
@@ -144,5 +144,54 @@ public class PropertyParticularsNormalizerTests
         public bool Equals(SurveyNumberGroup? x, SurveyNumberGroup? y) =>
             x is not null && y is not null && x.Scheme == y.Scheme && x.Qualifier == y.Qualifier && x.Numbers.SequenceEqual(y.Numbers);
         public int GetHashCode(SurveyNumberGroup obj) => HashCode.Combine(obj.Scheme, obj.Qualifier);
+    }
+
+    // ── #366: misses found on a 41-company sample of real charge reports ──
+
+    [Fact]
+    public void PlotList_JoinedWithPlusSigns_ReadsEveryPlot()
+    {
+        var p = PropertyParticularsNormalizer.Normalize(
+            "Exclusive charge by way of equitable mortgage on immovable property bearing Plot Nos: 728 + 729 + 730 admeasuring 52707.19 sq. mtrs. " +
+            "together with lease hold rights at GIDC Halol-2", "Immovable property");
+
+        Assert.Contains(new SurveyNumberGroup("Plot", null, ["728", "729", "730"]), p.SurveyNumbers, new SurveyGroupComparer());
+    }
+
+    [Fact]
+    public void PlotList_NeverSwallowsTheHeadOfAnAmount()
+    {
+        var p = PropertyParticularsNormalizer.Normalize("Plot No. 5, 1,000 sq ft situated at Sector 63, Noida", "Immovable property");
+
+        Assert.Contains(new SurveyNumberGroup("Plot", null, ["5"]), p.SurveyNumbers, new SurveyGroupComparer());
+    }
+
+    [Fact]
+    public void LyingAt_NameBeforeVillage_StateWithoutSpaces_AndBarePin_AreRead()
+    {
+        var p = PropertyParticularsNormalizer.Normalize(
+            "Hypothecation of a sterilizer lying at 149/1 Samudrapalli Village, Post - Pengaragunta Palamner Mandal, Chittoor 517408 Andhrapradesh",
+            "Movable property");
+
+        Assert.Equal("Samudrapalli", p.Location.Village);
+        Assert.Equal("Andhra Pradesh", p.Location.State);
+        Assert.Equal("517408", p.Location.Pin);
+        Assert.Contains("Post - Pengaragunta Palamner Mandal", p.Location.Localities);
+    }
+
+    [Fact]
+    public void SixDigits_NotFollowedByAState_AreNeverAPin()
+    {
+        var p = PropertyParticularsNormalizer.Normalize("Term loan of Rs. 250000 secured by plant and machinery at Unit 2", "Movable property");
+
+        Assert.Null(p.Location.Pin);
+    }
+
+    [Theory]
+    [InlineData("As mentioned in CAL")]
+    [InlineData("As per Hypothecation agreement dated May 30, 2026 read with third schedule of the Twelfth Supplemental Joint Deed of hypothecation dated January 13, 2025 (Both attached herewith)")]
+    public void MoreReferenceOnlyPhrasings_AreFlagged(string text)
+    {
+        Assert.True(PropertyParticularsNormalizer.Normalize(text, "Movable property").DetailsOnlyInReferencedDocument);
     }
 }
