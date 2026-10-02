@@ -34,15 +34,19 @@ public sealed class McaRefreshReuseTests : IAsyncLifetime, IDisposable
     }
 
     /// <summary>"Extracts" text derived from the file name, so a test can tell extraction from reuse.</summary>
-    private sealed class CountingExtractor() : PdfTextExtractor(NullLogger<PdfTextExtractor>.Instance, "")
+    private sealed class CountingExtractor(bool xfaPlaceholderOnly = false) : PdfTextExtractor(NullLogger<PdfTextExtractor>.Instance, "")
     {
         public readonly List<string> Extracted = [];
 
+        /// <summary>With <c>xfaPlaceholderOnly</c>, behaves like the extractor before #369 did on an XFA e-form: the "text" is
+        /// Adobe's placeholder.</summary>
         public override Task<PdfExtractionResult> ExtractAsync(string pdfPath, string tempDir, CancellationToken ct)
         {
             Extracted.Add(Path.GetFileName(pdfPath));
-            return Task.FromResult(new PdfExtractionResult($"--- Page 1 (native) ---\nText of {Path.GetFileName(pdfPath)}. Form CHG-1 particulars of charge.",
-                1, 1, 0, TextExtractionMethod.Native, FilingDocumentProcessingStatus.TextExtracted, null));
+            var text = xfaPlaceholderOnly
+                ? "--- Page 1 (native) ---\nPlease wait... If this message is not eventually replaced by the proper contents of the document, your PDF viewer may not be able to display this type of document. Form CHG-1"
+                : $"--- Page 1 (native) ---\nText of {Path.GetFileName(pdfPath)}. Form CHG-1 particulars of charge.";
+            return Task.FromResult(new PdfExtractionResult(text, 1, 1, 0, TextExtractionMethod.Native, FilingDocumentProcessingStatus.TextExtracted, null));
         }
     }
 
@@ -168,6 +172,29 @@ public sealed class McaRefreshReuseTests : IAsyncLifetime, IDisposable
             (await verify.McaFilingDocuments.AsNoTracking().SingleAsync(d => d.BatchId == third && d.FileHash == a)).ReusedFromDocumentId);
         Assert.Equal(original.ExtractionId, await (from e in verify.McaFilingExtractions join f in verify.McaFilings on e.FilingId equals f.FilingId
                                                    where f.BatchId == third select e.ReusedFromExtractionId).SingleAsync());
+    }
+
+    /// <summary>#369: text extracted before XFA e-forms were read is Adobe's placeholder. A refresh must re-extract such a
+    /// document (now reading the form data) rather than carry the placeholder forward, and its filing must get a fresh
+    /// Gemini call — the earlier answer was made from the placeholder.</summary>
+    [Fact]
+    public async Task An_earlier_xfa_placeholder_text_is_re_extracted_and_its_filing_re_sent_to_Gemini()
+    {
+        await using var db = CreateContext();
+        var requestId = await SeedRequestAsync(db);
+        var a = H();
+        var first = await SeedBatchAsync(db, requestId, ("SRN-X", [("Form CHG-1 a.pdf", a)]));
+        await ProcessBatchAsync(first, new CountingExtractor(xfaPlaceholderOnly: true), new CountingGemini());
+
+        var second = await SeedBatchAsync(db, requestId, ("SRN-X", [("Form CHG-1 a.pdf", a)]));
+        var extractor = new CountingExtractor();
+        var gemini = new CountingGemini();
+        await ProcessBatchAsync(second, extractor, gemini);
+
+        Assert.Equal(["Form CHG-1 a.pdf"], extractor.Extracted);
+        Assert.Equal(["SRN-X"], gemini.Called);
+        await using var verify = CreateContext();
+        Assert.Null((await verify.McaFilingDocuments.AsNoTracking().SingleAsync(d => d.BatchId == second)).ReusedFromDocumentId);
     }
 
     [Fact]

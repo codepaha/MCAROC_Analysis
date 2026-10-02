@@ -48,7 +48,9 @@ public enum TextExtractionMethod
     None,
     Native,
     Ocr,
-    Mixed
+    Mixed,
+    /// <summary>#369: an XFA e-form with no page text; the text is the form's filed field values.</summary>
+    Xfa
 }
 
 public enum AiExtractionStatus

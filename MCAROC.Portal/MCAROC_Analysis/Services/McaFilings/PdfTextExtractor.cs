@@ -49,6 +49,13 @@ public class PdfTextExtractor(ILogger<PdfTextExtractor> logger, string tesseract
                 return new PdfExtractionResult("", 0, 0, 0, TextExtractionMethod.None, FilingDocumentProcessingStatus.PasswordProtected, "Encrypted PDF.");
 
             var pageCount = document.NumberOfPages;
+
+            // #369: an XFA e-form (Form 8, CHG-1, PAS-3, MGT-14...) shows only Adobe's "Please wait..." placeholder as page
+            // text, and that placeholder is long enough to skip OCR. The filed values are in the form's XFA data, so a
+            // placeholder page is replaced by them (once — the form data is the whole form); real pages are kept as they are.
+            IReadOnlyList<XfaField>? xfaFields = null;
+            var xfaUsed = false;
+
             var sb = new StringBuilder();
             var nativeCount = 0;
             var ocrCount = 0;
@@ -68,7 +75,17 @@ public class PdfTextExtractor(ILogger<PdfTextExtractor> logger, string tesseract
                     pageText = "";
                 }
 
-                if (pageText.Length >= minCharsPerPageForNativeText)
+                if (XfaFormReader.IsPlaceholderText(pageText) && (xfaFields ??= XfaFormReader.ReadFields(document) ?? []) is { Count: > 0 })
+                {
+                    if (!xfaUsed)
+                    {
+                        sb.AppendLine($"--- Page {pageNumber} (native) ---");
+                        sb.Append(XfaFormReader.ToText(xfaFields));
+                        xfaUsed = true;
+                    }
+                    nativeCount++;
+                }
+                else if (pageText.Length >= minCharsPerPageForNativeText)
                 {
                     sb.AppendLine($"--- Page {pageNumber} (native) ---");
                     sb.AppendLine(pageText);
@@ -83,7 +100,8 @@ public class PdfTextExtractor(ILogger<PdfTextExtractor> logger, string tesseract
                 }
             }
 
-            var method = ocrCount == 0 ? TextExtractionMethod.Native
+            var method = xfaUsed ? TextExtractionMethod.Xfa
+                : ocrCount == 0 ? TextExtractionMethod.Native
                 : nativeCount == 0 ? TextExtractionMethod.Ocr
                 : TextExtractionMethod.Mixed;
 
