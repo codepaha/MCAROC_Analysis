@@ -116,6 +116,9 @@ public class RequestDetailsViewModel
     // Phase 4: Ask Documents
     public List<ChatMessage> ChatMessages { get; set; } = [];
     public int ChunkableDocumentCount { get; set; }
+    /// <summary>#349: set when chat retrieval runs without its keyword half for some or all documents
+    /// (<see cref="Services.Chat.FullTextSearchState.ChatNote"/>); null when keyword search covers everything.</summary>
+    public string? KeywordSearchNote { get; set; }
     public int ChunkedDocumentCount { get; set; }
     public int AuthoritativeBatchChunkableCount { get; set; }
     public int AuthoritativeBatchChunkedCount { get; set; }

@@ -42,6 +42,23 @@ SELECT FULLTEXTSERVICEPROPERTY('IsFullTextInstalled') AS FtsInstalled;
 SELECT OBJECT_NAME(object_id) AS TableName FROM sys.fulltext_indexes;  -- expect DocumentChunks, LitigationOrderChunks
 ```
 
+### Knowing when keyword search is off (#349)
+
+The per-query fallback is silent, so a server without FTS used to look exactly like one with it. Now:
+
+- **Startup log:** a warning from `FullTextSearchStartupCheck` when FTS is missing or either chunk table is unindexed.
+- **`/health`** (signed-in): a `fullTextSearch` block with `available`, `installed`, `documentChunksIndexed` and
+  `litigationChunksIndexed`. Use this to check production without database access.
+- **Chat panel:** a one-line note while it is off. Each table falls back on its own, so with only one index missing
+  the note (and the startup warning) says which documents still have keyword search, e.g. "covers MCA filings only".
+
+All three read `FullTextSearchStatus`, cached for 10 minutes; after installing FTS and creating the indexes, the
+note clears within that window or on restart.
+
+**Local dev:** the default `.\SQLEXPRESS` install has no FTS, so dev runs on semantic search only. To test hybrid
+locally, install SQL Server Express *with Advanced Services* (or add the "Full-Text and Semantic Extractions for
+Search" feature), then re-run the migration's `Up()` SQL.
+
 ## Population timing (decision)
 
 The indexes use `CHANGE_TRACKING AUTO`: a newly chunked row becomes lexically searchable shortly after insert,

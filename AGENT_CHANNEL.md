@@ -1,6 +1,12 @@
 # Agent channel — MCAROC
 
-### 2026-10-01 (latest) — Antigravity session (#348 re-review feedback resolved: Co. App. ambiguity & COA prefix resolution)
+### 2026-10-01 — Claude session (#350 merged; #349 PR open)
+
+- **#350 DONE:** PR #351 merged (`95705cc`) with migration `AddClassificationReuseSource`. The migration lane is free again.
+- **#349** on `feat/fts-visibility-349`: `FullTextSearchStatus` (cached) drives a startup warning, a `fullTextSearch`
+  block on `/health`, and a chat-panel note when SQL Server Full-Text Search is missing. No migration.
+
+### 2026-10-01 — Antigravity session (#348 re-review feedback resolved: Co. App. ambiguity & COA prefix resolution)
 
 - **#343 (PR #348 on `feat/chat-litigation-recency-343`):**
   - **P1 (Company Appeal vs Company Application Semantic Separation):** In `LitigationCaseReference`, separated `COMPANY_APPEAL` and `COMPANY_APPLICATION` into distinct semantic alias groups so explicit Appeal and Application strings are never treated as equivalent.
