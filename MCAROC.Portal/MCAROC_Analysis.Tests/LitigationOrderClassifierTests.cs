@@ -106,6 +106,74 @@ public class LitigationOrderClassifierTests
         Assert.Empty(result.Outcomes);
     }
 
+    // ── #355: long judgements send their decision passages, not just their first 24 chunks ──
+
+    private const string Recital = "The learned counsel for the petitioner submitted the background of the matter and referred to the record.";
+
+    /// <summary>A long judgement of <paramref name="count"/> one-chunk pages, all recital except the given pages.</summary>
+    private static List<LitigationOrderChunk> LongOrder(int count, params (int Page, string Text)[] decisions) =>
+        Enumerable.Range(1, count)
+            .Select(p => Chunk(p, 0, decisions.FirstOrDefault(d => d.Page == p).Text ?? Recital))
+            .ToList();
+
+    [Fact]
+    public void Evidence_ForAnOrderWithinTheBound_IsUnchanged_AndItsPromptHasNoSelectionNote()
+    {
+        var chunks = LongOrder(LitigationOrderClassifier.MaxChunksPerOrder, (24, "The petition is dismissed with costs."));
+
+        var evidence = LitigationOrderClassifier.BuildEvidence(chunks);
+
+        Assert.Equal(Enumerable.Range(1, 24), evidence.Excerpts.Select(e => e.PageNumber));
+        Assert.Equal(0, evidence.OmittedExcerpts);
+        Assert.False(evidence.Truncated);
+        Assert.DoesNotContain("This is a long order", LitigationOrderClassifier.BuildPrompt(evidence));
+    }
+
+    [Fact]
+    public void Evidence_ForALongJudgement_KeepsBothEnds_AndTheDecisionPassageWherever_ItIs()
+    {
+        // The #337 fixture's long judgements decide on pages 3, 8, 10, 13, 82 and 144 — so a decision deep in the middle
+        // (page 144 of 200) and one on the last page must both reach the model.
+        var chunks = LongOrder(200,
+            (144, "In the result, the application is allowed and the respondent is restrained from raising any construction."),
+            (200, "Accordingly, the suit is decreed. No order as to costs."));
+
+        var evidence = LitigationOrderClassifier.BuildEvidence(chunks);
+        var pages = evidence.Excerpts.Select(e => e.PageNumber).ToList();
+
+        Assert.Equal(LitigationOrderClassifier.MaxChunksPerOrder, pages.Count);
+        Assert.Equal(pages.Order(), pages); // still in page order
+        Assert.Contains(144, pages);
+        Assert.Equal([1, 2], pages.Take(2));
+        Assert.Equal([199, 200], pages.TakeLast(2));
+        Assert.True(evidence.Truncated);
+        Assert.Equal(200 - 24, evidence.OmittedExcerpts);
+
+        var prompt = LitigationOrderClassifier.BuildPrompt(evidence);
+        Assert.Contains("This is a long order", prompt);
+        Assert.Contains("176 other excerpts were left out", prompt);
+    }
+
+    [Fact]
+    public void Validate_AcceptsACitationOfASelectedMidJudgementPassage()
+    {
+        var evidence = LitigationOrderClassifier.BuildEvidence(LongOrder(60, (37, "The appeal is dismissed and the appellant shall pay costs of Rs. 5,000.")));
+
+        var result = LitigationOrderClassifier.Validate(
+            """{"status":"Completed","confidence":"High","outcomes":[{"type":"Dismissal","evidenceReferences":[{"pageNumber":37,"chunkIndex":0}]}]}""",
+            evidence);
+
+        Assert.Equal(LitigationAiAnalysisItemStatus.Completed, result.Status);
+        Assert.Equal([LitigationOrderOutcome.Dismissal], result.Outcomes);
+    }
+
+    [Fact]
+    public void DecisionCueScore_CountsDecisionLanguage_AndNotRecitals()
+    {
+        Assert.Equal(0, LitigationOrderClassifier.DecisionCueScore(Recital));
+        Assert.True(LitigationOrderClassifier.DecisionCueScore("The plaint is rejected. The plaintiffs shall pay costs of Rs. 5,000. Draw decree accordingly.") >= 4);
+    }
+
     [Fact]
     public void OutcomeTypes_RoundTrip_AndUnknownNamesAreSkipped()
     {

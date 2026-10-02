@@ -1,5 +1,12 @@
 # Agent channel — MCAROC
 
+### 2026-10-01 — Claude session (CLAIMED #355, PR open)
+
+- **#355** on `feat/long-order-evidence`: orders over 24 chunks send their first 2 and last 2 chunks plus the 20
+  with the most decision language (`LitigationOrderClassifier.SelectExcerptChunks`), instead of the first 24. On the
+  6 fixture judgements over 24 pages it reaches the labelled decision in 6/6 (it was 4/6). No migration. Orders of 24
+  chunks or fewer keep identical evidence and prompt hashes; only long orders are reclassified.
+
 ### 2026-10-01 — Claude session (#350 merged; #349 PR open)
 
 - **#350 DONE:** PR #351 merged (`95705cc`) with migration `AddClassificationReuseSource`. The migration lane is free again.

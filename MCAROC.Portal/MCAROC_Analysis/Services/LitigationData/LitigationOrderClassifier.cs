@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using MCAROC_Analysis.Data.Entities;
 
 namespace MCAROC_Analysis.Services.LitigationData;
@@ -21,17 +22,52 @@ public static class LitigationOrderClassifier
     /// anything recognising it cannot drift apart.</summary>
     internal const string PromptMarker = "You are classifying the outcome of ONE court order";
 
+    /// <summary>#355: in an order longer than <see cref="MaxChunksPerOrder"/> chunks, these many from each end are always
+    /// sent — the opening identifies the matter and the closing often carries the operative order.</summary>
+    internal const int AlwaysKeptAtEachEnd = 2;
+
+    /// <summary>#355: language that marks a passage deciding something. Used only to choose which excerpts of a long order
+    /// the model sees, never to label an outcome. The decision in a long judgement can sit anywhere (the #337 fixture's six
+    /// judgements over 24 pages decide on pages 3, 8, 10, 13, 82 and 144), so position alone loses some of them.</summary>
+    private static readonly Regex[] DecisionCues = new[]
+    {
+        @"\bdismiss(ed|al)\b", @"\ballowed\b", @"\brejected\b", @"\bgranted\b", @"\brestrain", @"\binjunction\b",
+        @"\bshall pay\b", @"\bfine of\b", @"\bcosts?\b", @"\bcompensation\b", @"\bconvicted\b", @"\bsentenced?\b",
+        @"\bacquitted\b", @"\bdisposed\b", @"\bwithdrawn\b", @"\bstay(ed)?\b", @"\bvacated\b", @"\bpossession\b",
+        @"\badjourned\b", @"\blist(ed)? (on|the matter|after)\b", @"\bdecree\b", @"\bin the result\b", @"\baccordingly\b",
+        @"\bhereby\b", @"\bis directed\b", @"\bwe direct\b", @"\bordered\b", @"\bset aside\b", @"\bquashed\b"
+    }.Select(p => new Regex(p, RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Compiled)).ToArray();
+
+    internal static int DecisionCueScore(string text) => DecisionCues.Count(c => c.IsMatch(text));
+
+    /// <summary>The chunks a long order sends: both ends, then the strongest decision language (earlier page first on a
+    /// tie), kept in page order. An order within the limit is sent whole, exactly as before.</summary>
+    internal static List<LitigationOrderChunk> SelectExcerptChunks(List<LitigationOrderChunk> ordered)
+    {
+        if (ordered.Count <= MaxChunksPerOrder)
+            return ordered;
+        var keep = Enumerable.Range(0, AlwaysKeptAtEachEnd)
+            .Concat(Enumerable.Range(ordered.Count - AlwaysKeptAtEachEnd, AlwaysKeptAtEachEnd))
+            .ToHashSet();
+        foreach (var i in Enumerable.Range(0, ordered.Count).Where(i => !keep.Contains(i))
+                     .OrderByDescending(i => DecisionCueScore(ordered[i].ChunkText)).ThenBy(i => i)
+                     .Take(MaxChunksPerOrder - keep.Count))
+            keep.Add(i);
+        return keep.Order().Select(i => ordered[i]).ToList();
+    }
+
     public static LitigationOrderEvidence BuildEvidence(IReadOnlyCollection<LitigationOrderChunk> documentChunks)
     {
         var first = documentChunks.First();
         var ordered = documentChunks.OrderBy(c => c.PageNumber).ThenBy(c => c.ChunkIndex).ToList();
-        var excerpts = ordered.Take(MaxChunksPerOrder)
+        var selected = SelectExcerptChunks(ordered);
+        var excerpts = selected
             .Select(c => new LitigationOrderExcerpt(c.PageNumber, c.ChunkIndex,
                 c.ChunkText.Length <= MaxCharsPerChunk ? c.ChunkText : c.ChunkText[..MaxCharsPerChunk]))
             .ToList();
-        var truncated = ordered.Count > MaxChunksPerOrder || ordered.Take(MaxChunksPerOrder).Any(c => c.ChunkText.Length > MaxCharsPerChunk);
+        var truncated = ordered.Count > MaxChunksPerOrder || selected.Any(c => c.ChunkText.Length > MaxCharsPerChunk);
         return new LitigationOrderEvidence(first.LitigationOrderDocumentId, first.LitigationCaseOrderId, first.LitigationCaseId,
-            first.CaseNumber, first.Court, first.OrderDate, first.OrderType, truncated, excerpts);
+            first.CaseNumber, first.Court, first.OrderDate, first.OrderType, truncated, excerpts, ordered.Count - selected.Count);
     }
 
     /// <summary>What the model is shown — and what the evidence hash covers. Content only: the order's own
@@ -57,8 +93,12 @@ public static class LitigationOrderClassifier
     public static string BuildPrompt(LitigationOrderEvidence evidence)
     {
         var outcomeNames = string.Join("|", Enum.GetNames<LitigationOrderOutcome>());
+        // Empty for every order sent whole, so their prompt — and its hash — is exactly what it was before #355.
+        var selectionNote = evidence.OmittedExcerpts > 0
+            ? $" This is a long order: the excerpts are its opening, its closing and the passages with the most decision language; {evidence.OmittedExcerpts} other excerpts were left out."
+            : "";
         return $$"""
-            {{PromptMarker}} for a BFSI analyst. Use only the supplied excerpts of this order.
+            {{PromptMarker}} for a BFSI analyst. Use only the supplied excerpts of this order.{{selectionNote}}
             Label only what THIS order itself grants, imposes or decides. A party's prayer, an argument, a recital of an
             earlier order, or relief merely sought is NOT an outcome.
             Outcome types:
@@ -171,7 +211,8 @@ public static class LitigationOrderClassifier
 }
 
 public sealed record LitigationOrderEvidence(long LitigationOrderDocumentId, long LitigationCaseOrderId, long LitigationCaseId,
-    string? CaseNumber, string? Court, string? OrderDate, string? OrderType, bool Truncated, IReadOnlyList<LitigationOrderExcerpt> Excerpts);
+    string? CaseNumber, string? Court, string? OrderDate, string? OrderType, bool Truncated, IReadOnlyList<LitigationOrderExcerpt> Excerpts,
+    int OmittedExcerpts = 0);
 public sealed record LitigationOrderExcerpt(int PageNumber, int ChunkIndex, string Text);
 
 public sealed record LitigationOrderClassificationResult(
