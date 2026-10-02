@@ -260,4 +260,19 @@ public class ChargedPropertyAddressRulesTests
         var ctx = BuildContext(companyProfile: Profile(), charges: [charge], propertyExtractions: extractions);
         Assert.Equal(RuleEvaluationStatus.NotTriggered, ChargedPropertyAddressRules.Evaluate(ctx)[0].Status);
     }
+
+    [Fact]
+    public void StructuredProperty_SectorAndPinMatch_PlotDiffers_DoesNotClassifyAsPremises()
+    {
+        var companyProfile = Profile(registered: "Plot 12, Sector 40, Gurgaon, Haryana, 122001");
+        var pool = ChargedPropertyAddressRules.BuildAddressPool(companyProfile, null);
+        var location = new NormalizedLocation(["Sector 40"], null, null, null, "Gurgaon", "Haryana", "122001");
+        var surveyGroups = new[] { new SurveyNumberGroup("Plot", null, ["99"]) };
+        var item = new PropertyReadingItem([PropertyAssetClass.Immovable], [PropertyKind.Premises], null, [], [], [], null, [], surveyGroups, location, []);
+
+        var result = ChargedPropertyAddressRules.ClassifyItem(item, pool);
+
+        Assert.False(result.IsCompanyPremises);
+        Assert.Equal(PremisesCategory.OtherCollateral, result.Category);
+    }
 }

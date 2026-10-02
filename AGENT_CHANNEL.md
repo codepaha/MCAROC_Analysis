@@ -9,14 +9,17 @@
     - Updated `ChargedPropertyAddressRules` with `PremisesCategory` (`RegisteredOffice`, `BusinessAddress`, `OperatingFacility`, `OtherCollateral`), `PremisesMatchResult`, and classification helpers `ClassifyItem` and `ClassifyCharge`.
     - Integrated with completed Gemini property extractions via `AnalysisContext.PropertyExtractions` and `AnalysisOrchestrator.BuildContextAsync`.
     - Maintained fail-closed principle: absence of match is labeled "No match to filed company premises", never asserting third-party ownership.
-    - **Review #356 Fix:** In `EvaluateChargedPropertyVsOwnAddresses`, ensured that when structured property items are extracted (`reading.Items.Count > 0`), the rule only evaluates the structured items and never falls back to the full raw particulars clause. Added regression test `Review356_StructuredMovableAddressMustNotBecomeAMortgagedPremisesFinding`.
+    - **Review #356 Fixes:**
+      - In `EvaluateChargedPropertyVsOwnAddresses`, ensured that when structured property items are extracted (`reading.Items.Count > 0`), the rule only evaluates the structured items and never falls back to the full raw particulars clause. Added regression test `Review356_StructuredMovableAddressMustNotBecomeAMortgagedPremisesFinding`.
+      - In `AddressMatcher.PlotKeysIn(PropertyReadingItem)`, removed inclusion of `Location.Localities`, ensuring only actual survey, unit, and parcel identifiers count as plot keys.
+      - Introduced `IsLocalityNumber` across `AddressMatcher` so locality numbers (e.g. "Sector 40", "Phase 2") are excluded from plot keys on both address and property sides, preventing false strong premises matches when sector and PIN match but plot numbers differ. Added regression tests in `AddressMatcherTests` and `ChargedPropertyAddressRulesTests`.
   - **UI & Dossier Surfacing:**
     - Surfaced premises classification in `_ChargeDrawer.cshtml` with badges (`Own premises: Registered office`, `No match to filed company premises (other collateral)`, or `Movable asset (not applicable to premises)`), along with matched plot/locality/PIN tokens.
     - Updated `ChargeDrawerViewModel` and `_ChargesTab.cshtml` to supply `CompanyProfile` and `EpfoEstablishments` to drawer models.
     - Displayed premises classification tags in the Dossier Charges Annexure (`DossierPdfComposer.Annexures.cs`).
   - **Testing & Verification:**
-    - Added comprehensive unit tests in `AddressMatcherTests.cs` and `ChargedPropertyAddressRulesTests.cs` covering structured matching, CTS/plot variations, conflicting PIN rejection, movable-only exclusion, premises category classifications, and probe regression.
-    - All tests pass cleanly. Zero database migrations required.
+    - Added comprehensive unit tests in `AddressMatcherTests.cs` and `ChargedPropertyAddressRulesTests.cs` covering structured matching, CTS/plot variations, conflicting PIN rejection, movable-only exclusion, premises category classifications, and both review regressions.
+    - All 2,602 tests in `MCAROC_Analysis.Tests` pass (2,578 passed, 0 failed, 24 skipped). Zero database migrations required.
 
 ### 2026-10-02 — Claude session (CLAIMED #353, PR open)
 

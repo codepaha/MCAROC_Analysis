@@ -205,4 +205,21 @@ public class AddressMatcherTests
         Assert.Equal(AddressMatchStrength.Strong, result.Strength);
         Assert.Contains("428", result.MatchedPlotNumbers);
     }
+
+    [Fact]
+    public void Match_StructuredPropertyReadingItem_SectorAndPinMatch_PlotDiffers_NoStrongMatch()
+    {
+        // Company address is at Plot 12 in Sector 40.
+        // Collateral is at Plot 99 in Sector 40 with the same PIN code.
+        // The shared sector number ("40") must not count as a plot key; differing plots must not yield a Strong match.
+        const string companyAddress = "Plot 12, Sector 40, Gurgaon, Haryana, 122001";
+        var location = new NormalizedLocation(["Sector 40"], null, null, null, "Gurgaon", "Haryana", "122001");
+        var surveyGroups = new[] { new SurveyNumberGroup("Plot", null, ["99"]) };
+        var item = new PropertyReadingItem([PropertyAssetClass.Immovable], [PropertyKind.Premises], null, [], [], [], null, [], surveyGroups, location, []);
+
+        var result = AddressMatcher.Match(companyAddress, item);
+
+        Assert.NotEqual(AddressMatchStrength.Strong, result.Strength);
+        Assert.DoesNotContain("40", result.MatchedPlotNumbers);
+    }
 }

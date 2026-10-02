@@ -102,10 +102,14 @@ public static partial class AddressMatcher
 
         // ── Plot / survey / door numbers ──
         var textTokens = Tokenize(text);
-        var textPlotKeys = textTokens.Where(IsPlotToken).Select(PlotKey).ToHashSet(StringComparer.Ordinal);
+        var textPlotKeys = textTokens
+            .Where((t, i) => IsPlotToken(t) && !IsLocalityNumber(textTokens, i))
+            .Select(PlotKey)
+            .ToHashSet(StringComparer.Ordinal);
         var addressPinDigits = addressPin ?? "";
-        var matchedPlots = Tokenize(address)
-            .Where(IsPlotToken)
+        var addressTokens = Tokenize(address);
+        var matchedPlots = addressTokens
+            .Where((t, i) => IsPlotToken(t) && !IsLocalityNumber(addressTokens, i))
             .Where(t => PlotKey(t) != addressPinDigits && PlotKey(t).Length >= 2)
             .Where(t => textPlotKeys.Contains(PlotKey(t)))
             .Distinct(StringComparer.Ordinal)
@@ -168,8 +172,9 @@ public static partial class AddressMatcher
         // ── Plot / survey / door numbers ──
         var itemPlotKeys = PlotKeysIn(item);
         var addressPinDigits = addressPin ?? "";
-        var matchedPlots = Tokenize(address)
-            .Where(IsPlotToken)
+        var addressTokens = Tokenize(address);
+        var matchedPlots = addressTokens
+            .Where((t, i) => IsPlotToken(t) && !IsLocalityNumber(addressTokens, i))
             .Where(t => PlotKey(t) != addressPinDigits && PlotKey(t).Length >= 2)
             .Where(t => itemPlotKeys.Contains(PlotKey(t)))
             .Distinct(StringComparer.Ordinal)
@@ -231,10 +236,15 @@ public static partial class AddressMatcher
     /// <summary>Plot/survey/door keys found in a free text. A <see cref="AddressMatchStrength.Strong"/> match needs
     /// a key shared with the known address, so a text with no key in common cannot be Strong: callers use this to
     /// skip the full comparison (which is costly) for the vast majority of order paragraphs.</summary>
-    public static HashSet<string> PlotKeysIn(string? text) =>
-        string.IsNullOrWhiteSpace(text)
-            ? []
-            : Tokenize(Normalize(text)).Where(IsPlotToken).Select(PlotKey).ToHashSet(StringComparer.Ordinal);
+    public static HashSet<string> PlotKeysIn(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return [];
+        var tokens = Tokenize(Normalize(text));
+        return tokens
+            .Where((t, i) => IsPlotToken(t) && !IsLocalityNumber(tokens, i))
+            .Select(PlotKey)
+            .ToHashSet(StringComparer.Ordinal);
+    }
 
     /// <summary>The plot keys of a known address, exactly as <see cref="Match"/> counts them (PIN digits and
     /// one-character keys are not plot evidence).</summary>
@@ -243,11 +253,17 @@ public static partial class AddressMatcher
         if (string.IsNullOrWhiteSpace(address)) return [];
         var normalized = Normalize(address);
         var pin = ExtractPinCodes(normalized).LastOrDefault() ?? "";
-        return Tokenize(normalized).Where(IsPlotToken).Select(PlotKey)
-            .Where(k => k != pin && k.Length >= 2).ToHashSet(StringComparer.Ordinal);
+        var tokens = Tokenize(normalized);
+        return tokens
+            .Where((t, i) => IsPlotToken(t) && !IsLocalityNumber(tokens, i))
+            .Select(PlotKey)
+            .Where(k => k != pin && k.Length >= 2)
+            .ToHashSet(StringComparer.Ordinal);
     }
 
-    /// <summary>Plot, survey, and unit keys found in a structured property reading item.</summary>
+    /// <summary>Plot, survey, and unit keys found in a structured property reading item.
+    /// Only actual survey, unit, or parcel identifiers are treated as plot keys; locality numbers
+    /// such as sector or phase do not count.</summary>
     public static HashSet<string> PlotKeysIn(PropertyReadingItem item)
     {
         if (item is null) return [];
@@ -257,38 +273,32 @@ public static partial class AddressMatcher
         {
             foreach (var num in g.Numbers)
             {
-                foreach (var token in Tokenize(Normalize(num)))
+                var tokens = Tokenize(Normalize(num));
+                for (var i = 0; i < tokens.Count; i++)
                 {
-                    if (IsPlotToken(token))
-                        keys.Add(PlotKey(token));
+                    if (IsPlotToken(tokens[i]) && !IsLocalityNumber(tokens, i))
+                        keys.Add(PlotKey(tokens[i]));
                 }
             }
         }
 
         foreach (var unit in item.UnitLines)
         {
-            foreach (var token in Tokenize(Normalize(unit)))
+            var tokens = Tokenize(Normalize(unit));
+            for (var i = 0; i < tokens.Count; i++)
             {
-                if (IsPlotToken(token))
-                    keys.Add(PlotKey(token));
+                if (IsPlotToken(tokens[i]) && !IsLocalityNumber(tokens, i))
+                    keys.Add(PlotKey(tokens[i]));
             }
         }
 
         foreach (var p in item.ParkingSpaceNumbers)
         {
-            foreach (var token in Tokenize(Normalize(p)))
+            var tokens = Tokenize(Normalize(p));
+            for (var i = 0; i < tokens.Count; i++)
             {
-                if (IsPlotToken(token))
-                    keys.Add(PlotKey(token));
-            }
-        }
-
-        foreach (var loc in item.Location.Localities)
-        {
-            foreach (var token in Tokenize(Normalize(loc)))
-            {
-                if (IsPlotToken(token))
-                    keys.Add(PlotKey(token));
+                if (IsPlotToken(tokens[i]) && !IsLocalityNumber(tokens, i))
+                    keys.Add(PlotKey(tokens[i]));
             }
         }
 
@@ -329,6 +339,28 @@ public static partial class AddressMatcher
 
     /// <summary>"A-36", "A/36" and "A36" are the same plot written three ways.</summary>
     private static string PlotKey(string token) => token.Replace("-", "").Replace("/", "");
+
+    private static readonly HashSet<string> LocalityNumberPrefixes = new(StringComparer.Ordinal)
+    {
+        "SECTOR", "SEC", "PHASE"
+    };
+
+    /// <summary>Identifies digit-bearing tokens that are locality/administrative numbers (such as Sector 40,
+    /// Phase 2, Sec 15) rather than actual plot, survey, or parcel identifiers.</summary>
+    private static bool IsLocalityNumber(List<string> tokens, int index)
+    {
+        if (index > 0 && LocalityNumberPrefixes.Contains(tokens[index - 1]))
+            return true;
+        if (index > 1 && (tokens[index - 1] is "NO" or "NUMBER") && LocalityNumberPrefixes.Contains(tokens[index - 2]))
+            return true;
+        var token = tokens[index];
+        foreach (var prefix in LocalityNumberPrefixes)
+        {
+            if (token.StartsWith(prefix, StringComparison.Ordinal) && token.Length > prefix.Length && (char.IsDigit(token[prefix.Length]) || token[prefix.Length] == '-'))
+                return true;
+        }
+        return false;
+    }
 
     /// <summary>Six-digit PIN codes, allowing the "751 012" spacing some filings use. The first digit of an
     /// Indian PIN is never 0.</summary>
