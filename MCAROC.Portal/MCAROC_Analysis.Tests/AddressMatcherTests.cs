@@ -1,4 +1,6 @@
 using MCAROC_Analysis.Services.Analysis;
+using MCAROC_Analysis.Services.Excel.Parsers;
+using MCAROC_Analysis.Services.PropertyParticulars;
 
 namespace MCAROC_Analysis.Tests;
 
@@ -136,4 +138,88 @@ public class AddressMatcherTests
     [InlineData("  ", "  ")]
     public void BlankInput_NoMatch(string? address, string? text) =>
         Assert.Equal(AddressMatchStrength.None, AddressMatcher.Match(address, text).Strength);
+
+    [Fact]
+    public void Match_StructuredPropertyReadingItem_PlotAndLocality_Strong()
+    {
+        var location = new NormalizedLocation(["Bhaunti"], null, null, null, "Kanpur", "Uttar Pradesh", "209305");
+        var surveyGroups = new[] { new SurveyNumberGroup("Arazi", null, ["428", "429"]) };
+        var item = new PropertyReadingItem([PropertyAssetClass.Immovable], [PropertyKind.Land], null, [], [], [], null, [], surveyGroups, location, []);
+
+        var result = AddressMatcher.Match(KanpurRegistered, item);
+
+        Assert.Equal(AddressMatchStrength.Strong, result.Strength);
+        Assert.Equal("209305", result.MatchedPinCode);
+        Assert.Contains("428", result.MatchedPlotNumbers);
+        Assert.Contains("429", result.MatchedPlotNumbers);
+        Assert.Contains("BHAUNTI", result.MatchedLocalities);
+    }
+
+    [Fact]
+    public void Match_StructuredPropertyReadingItem_ConflictingPin_NoMatch()
+    {
+        var location = new NormalizedLocation(["Bhaunti"], null, null, null, "Kanpur", "Uttar Pradesh", "500033");
+        var surveyGroups = new[] { new SurveyNumberGroup("Arazi", null, ["428", "429"]) };
+        var item = new PropertyReadingItem([PropertyAssetClass.Immovable], [PropertyKind.Land], null, [], [], [], null, [], surveyGroups, location, []);
+
+        var result = AddressMatcher.Match(KanpurRegistered, item);
+
+        Assert.Equal(AddressMatchStrength.None, result.Strength);
+    }
+
+    [Fact]
+    public void Match_StructuredPropertyReadingItem_MovableAssetClass_Rejected()
+    {
+        var location = new NormalizedLocation(["Bhaunti"], null, null, null, "Kanpur", "Uttar Pradesh", "209305");
+        var surveyGroups = new[] { new SurveyNumberGroup("Arazi", null, ["428", "429"]) };
+        var item = new PropertyReadingItem([PropertyAssetClass.Movable], [PropertyKind.Land], null, [], [], [], null, [], surveyGroups, location, []);
+
+        var result = AddressMatcher.Match(KanpurRegistered, item);
+
+        Assert.Equal(AddressMatchStrength.None, result.Strength);
+    }
+
+    [Fact]
+    public void Match_StructuredPropertyReadingItem_MovableKind_Rejected()
+    {
+        var location = new NormalizedLocation(["Bhaunti"], null, null, null, "Kanpur", "Uttar Pradesh", "209305");
+        var surveyGroups = new[] { new SurveyNumberGroup("Arazi", null, ["428", "429"]) };
+        var item = new PropertyReadingItem([PropertyAssetClass.Immovable], [PropertyKind.CurrentAssets], null, [], [], [], null, [], surveyGroups, location, []);
+
+        var result = AddressMatcher.Match(KanpurRegistered, item);
+
+        Assert.Equal(AddressMatchStrength.None, result.Strength);
+    }
+
+    [Fact]
+    public void Match_StructuredPropertyReading_MatchesFirstImmovableItem()
+    {
+        var location = new NormalizedLocation(["Bhaunti"], null, null, null, "Kanpur", "Uttar Pradesh", "209305");
+        var surveyGroups = new[] { new SurveyNumberGroup("Arazi", null, ["428", "429"]) };
+        var movable = new PropertyReadingItem([PropertyAssetClass.Movable], [PropertyKind.CurrentAssets], null, [], [], [], null, [], [], location, []);
+        var immovable = new PropertyReadingItem([PropertyAssetClass.Immovable], [PropertyKind.Land], null, [], [], [], null, [], surveyGroups, location, []);
+        var reading = new PropertyReading(PropertyReadingSource.Rules, [movable, immovable], false, 0);
+
+        var result = AddressMatcher.Match(KanpurRegistered, reading);
+
+        Assert.Equal(AddressMatchStrength.Strong, result.Strength);
+        Assert.Contains("428", result.MatchedPlotNumbers);
+    }
+
+    [Fact]
+    public void Match_StructuredPropertyReadingItem_SectorAndPinMatch_PlotDiffers_NoStrongMatch()
+    {
+        // Company address is at Plot 12 in Sector 40.
+        // Collateral is at Plot 99 in Sector 40 with the same PIN code.
+        // The shared sector number ("40") must not count as a plot key; differing plots must not yield a Strong match.
+        const string companyAddress = "Plot 12, Sector 40, Gurgaon, Haryana, 122001";
+        var location = new NormalizedLocation(["Sector 40"], null, null, null, "Gurgaon", "Haryana", "122001");
+        var surveyGroups = new[] { new SurveyNumberGroup("Plot", null, ["99"]) };
+        var item = new PropertyReadingItem([PropertyAssetClass.Immovable], [PropertyKind.Premises], null, [], [], [], null, [], surveyGroups, location, []);
+
+        var result = AddressMatcher.Match(companyAddress, item);
+
+        Assert.NotEqual(AddressMatchStrength.Strong, result.Strength);
+        Assert.DoesNotContain("40", result.MatchedPlotNumbers);
+    }
 }

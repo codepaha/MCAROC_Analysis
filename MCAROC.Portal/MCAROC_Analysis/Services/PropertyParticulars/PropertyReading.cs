@@ -67,9 +67,9 @@ public sealed record PropertyReading(
             unitLines.Add(PropertyParticularsNormalizer.Describe(new NormalizedUnit(p.UnitNumber, p.Floor, p.Building)));
         var buildings = new[] { p.UnitNumber is null ? p.Building : null, p.Project }.OfType<string>()
             .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
-        var location = new NormalizedLocation(p.Localities, p.Village, p.Taluka, p.District, p.City, p.State, p.Pin);
+        var location = new NormalizedLocation(p.Localities ?? [], p.Village, p.Taluka, p.District, p.City, p.State, p.Pin);
         return new PropertyReadingItem([p.AssetClass], [p.Kind], p.Owner, unitLines, buildings,
-            p.Areas.Select(ToArea).ToList(), p.ParkingSpaces, [], p.SurveyNumbers, location, []);
+            (p.Areas ?? []).Select(ToArea).ToList(), p.ParkingSpaces, [], p.SurveyNumbers ?? [], location, []);
     }
 
     private const decimal SqFtPerSqM = 10.7639104167097m;
