@@ -635,6 +635,16 @@ public partial class DossierPdfComposer
                         .FontSize(DossierTheme.Small).FontColor(DossierTheme.InkFaint);
                 }
             }
+
+            var thirdPartyOwners = ChargedPropertyAddressRules.GetThirdPartyOwners(charge, model.Profile, model.PropertyExtractions);
+            if (thirdPartyOwners.Count > 0)
+            {
+                col.Item().PaddingTop(2).Text(t =>
+                {
+                    t.Span("Collateral: ").SemiBold().FontSize(DossierTheme.Small).FontColor(DossierTheme.MaroonDeep);
+                    t.Span($"Third-party collateral ({string.Join(", ", thirdPartyOwners)})").FontSize(DossierTheme.Small).FontColor(DossierTheme.MaroonDeep);
+                });
+            }
         }
         else if (labels.Count == 0)
         {
