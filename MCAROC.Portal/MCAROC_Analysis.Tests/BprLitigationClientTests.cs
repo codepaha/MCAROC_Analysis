@@ -238,6 +238,26 @@ public sealed class BprLitigationClientTests
         Assert.Null(result.Bytes);
     }
 
+    [Theory]
+    [InlineData("Job not processed yet")]
+    [InlineData("Job is still processing")]
+    [InlineData("Report not ready")]
+    public async Task GetReportAsync_treats_a_status_false_envelope_saying_the_job_is_still_running_as_Pending(string message)
+    {
+        // A live search the vendor had accepted answered this way while it ran; classing it as Failed made the job
+        // fail permanently after three quick polls even though the report was still being built.
+        var handler = new StubHandler();
+        handler.OnPath("report/job/", _ => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent($$"""{"status":false,"message":"{{message}}"}""", Encoding.UTF8, "application/json")
+        });
+
+        var result = await NewClient(handler).GetReportAsync("token", "job-1", CancellationToken.None);
+
+        Assert.Equal(BprReportPollStatus.Pending, result.Status);
+        Assert.Null(result.Bytes);
+    }
+
     [Fact]
     public async Task GetReportAsync_treats_a_status_false_envelope_with_no_message_as_Failed_with_a_generic_reason()
     {
