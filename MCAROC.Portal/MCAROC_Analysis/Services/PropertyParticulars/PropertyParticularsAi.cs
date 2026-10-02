@@ -76,10 +76,29 @@ public static partial class PropertyParticularsAi
         {{propertyParticulars}}
         """;
 
+    /// <summary>#366: Gemini wraps the requested object in a one-element array in about a third of answers (45 of 122 on a
+    /// 41-company real sample) — <c>[{"properties":[...]}]</c>. That is the same answer, not a different one, so it is
+    /// unwrapped; anything else (an empty array, several elements, invalid JSON) is passed through to fail as before.</summary>
+    internal static string UnwrapSingleElementArray(string rawJson)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(rawJson);
+            return doc.RootElement is { ValueKind: JsonValueKind.Array } arr && arr.GetArrayLength() == 1
+                && arr[0].ValueKind == JsonValueKind.Object
+                ? arr[0].GetRawText()
+                : rawJson;
+        }
+        catch (JsonException)
+        {
+            return rawJson;
+        }
+    }
+
     public static PropertyParticularsValidation Validate(string rawJson, string sourceText)
     {
         Response? response;
-        try { response = JsonSerializer.Deserialize<Response>(rawJson, JsonOptions); }
+        try { response = JsonSerializer.Deserialize<Response>(UnwrapSingleElementArray(rawJson), JsonOptions); }
         catch (JsonException ex) { return Failed($"Invalid JSON: {ex.Message}"); }
         if (response?.Properties is null) return Failed("Response has no properties array.");
         if (response.Properties.Count > MaxProperties) return Failed($"Response split the text into {response.Properties.Count} properties (max {MaxProperties}).");

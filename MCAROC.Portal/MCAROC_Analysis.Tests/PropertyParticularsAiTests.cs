@@ -303,7 +303,7 @@ public class PropertyParticularsAiTests
         Assert.Empty(GroundedNumbers(clause, "Plot", "18"));
     }
 
-    [Theory] // verbatim spellings from a real Probe charge report
+    [Theory] // verbatim spellings from a real charge report
     [InlineData("comprised in New C.T.S No.51/B and Old C.T.S. Nos, 51 (P) 52(P), 52/1, 52/2, 52/17, lying", "51/B", "51(P)", "52(P)", "52/17")]
     [InlineData("comprised in CTS Nos. 51(P), 52(P),52/1,52/2,52/3,52/4,52/5,52/6.52/7,52/8 lying", "51(P)", "52/7", "52/8")]
     [InlineData("comprised in C.T.S Nos51 (P), 52 (P), 52/1, 52/13, 52/14 52/15,52/16 lying", "51(P)", "52(P)", "52/15", "52/16")]
@@ -324,5 +324,27 @@ public class PropertyParticularsAiTests
         Assert.Empty(GroundedNumbers(clause, "CTS", "52/18"));
         Assert.Empty(GroundedNumbers(clause, "CTS", "18")); // a parking count right after the list is not a list item
         Assert.Empty(GroundedNumbers(clause, "CTS", "1"));  // ...nor is a fragment of it
+    }
+
+    // ── #366: a third of real Gemini answers wrap the object in a one-element array ──
+
+    [Fact]
+    public void Validate_AcceptsTheObject_WrappedInAOneElementArray()
+    {
+        var wrapped = PropertyParticularsAi.Validate("[" + Grounded + "]", Source);
+        var plain = PropertyParticularsAi.Validate(Grounded, Source);
+
+        Assert.True(wrapped.IsAccepted, wrapped.FailureReason);
+        Assert.Equal(plain.Result!.Properties.Count, wrapped.Result!.Properties.Count);
+        Assert.Equal(plain.RejectedFields, wrapped.RejectedFields);
+    }
+
+    [Theory]
+    [InlineData("[]")]
+    [InlineData("[{\"properties\":[]},{\"properties\":[]}]")]
+    [InlineData("not json")]
+    public void Validate_StillRejects_EmptyOrMultiElementArraysAndInvalidJson(string raw)
+    {
+        Assert.False(PropertyParticularsAi.Validate(raw, Source).IsAccepted);
     }
 }
