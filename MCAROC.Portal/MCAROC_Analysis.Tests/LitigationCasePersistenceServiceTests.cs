@@ -176,6 +176,29 @@ public class LitigationCasePersistenceServiceTests : IAsyncLifetime
         return ids;
     }
 
+    /// <summary>A real report's signed order links ran to 489 characters, past the old 450-character column, and the whole snapshot
+    /// import failed on the first one. The link is stored exactly as received, and a case title used as the case type no longer
+    /// breaks the import either (it just gives no identity key).</summary>
+    [Fact]
+    public async Task PersistSnapshotAsync_stores_a_long_signed_order_link_and_a_title_as_case_type_in_full()
+    {
+        await using var db = CreateContext();
+        var request = await SeedRequestAsync(db, "LongUrl");
+        var longUrl = "https://source.example/orders/o9.pdf?X-Amz-Signature=" + new string('a', 560);
+        var title = "CP(IB) No. 593/KB/2017 C.A.(IB) No. 506/KB/2018 with connected applications";
+        var job = await SeedCompletedJobAsync(db, request.RequestId, ReportJson("TNKP070001332020", title, orderUrl: longUrl));
+        var service = NewService(db);
+
+        await PersistJobAsync(service, job, CancellationToken.None);
+
+        await using var verifyDb = CreateContext();
+        var stored = await verifyDb.LitigationCases.SingleAsync(c => c.RequestId == request.RequestId);
+        Assert.Equal(title, stored.CaseType);
+        Assert.Null(stored.ProceedingType);
+        var order = await verifyDb.LitigationCaseOrders.SingleAsync(o => o.LitigationCaseId == stored.LitigationCaseId);
+        Assert.Equal(longUrl, order.PdfUrl);
+    }
+
     [Fact]
     public async Task EnsureSnapshotAsync_then_PersistSnapshotAsync_persists_a_case_its_order_and_a_provenance_linked_snapshot()
     {
