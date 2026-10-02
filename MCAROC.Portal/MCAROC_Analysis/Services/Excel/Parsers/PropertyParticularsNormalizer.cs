@@ -37,6 +37,7 @@ public sealed record NormalizedLocation(
 public sealed record NormalizedPropertyParticulars(
     IReadOnlyList<PropertyAssetClass> AssetClasses,
     IReadOnlyList<PropertyKind> Kinds,
+    string? Owner,
     IReadOnlyList<NormalizedUnit> Units,
     IReadOnlyList<string> BuildingsOrProjects,
     IReadOnlyList<NormalizedArea> Areas,
@@ -47,10 +48,10 @@ public sealed record NormalizedPropertyParticulars(
     IReadOnlyList<string> NamedEntities,
     bool DetailsOnlyInReferencedDocument)
 {
-    public static readonly NormalizedPropertyParticulars Empty = new([], [], [], [], [], null, [], [],
+    public static readonly NormalizedPropertyParticulars Empty = new([], [], null, [], [], [], null, [], [],
         new NormalizedLocation([], null, null, null, null, null, null), [], false);
 
-    public bool HasContent => AssetClasses.Count > 0 || Kinds.Count > 0 || Units.Count > 0 || Areas.Count > 0
+    public bool HasContent => AssetClasses.Count > 0 || Kinds.Count > 0 || Owner is not null || Units.Count > 0 || Areas.Count > 0
         || ParkingSpaces is not null || SurveyNumbers.Count > 0 || !Location.IsEmpty || NamedEntities.Count > 0 || DetailsOnlyInReferencedDocument;
 }
 
@@ -74,6 +75,7 @@ public static partial class PropertyParticularsNormalizer
         var type = (propertyType ?? string.Empty).ToLowerInvariant();
 
         var kinds = Kinds(lower, type);
+        var owner = Owner(text);
         var units = Units(text);
         var buildings = Buildings(text);
         var areas = Areas(text);
@@ -85,7 +87,7 @@ public static partial class PropertyParticularsNormalizer
         var referenceOnly = text.Length <= 240 && ReferenceOnly().IsMatch(text)
             && units.Count == 0 && areas.Count == 0 && surveys.Count == 0 && location.IsEmpty;
 
-        return new NormalizedPropertyParticulars(AssetClasses(kinds, lower, type), kinds, units, buildings, areas,
+        return new NormalizedPropertyParticulars(AssetClasses(kinds, lower, type), kinds, owner, units, buildings, areas,
             parking, parkingNumbers, surveys, location, entities, referenceOnly);
     }
 
@@ -416,6 +418,33 @@ public static partial class PropertyParticularsNormalizer
             : CultureInfo.InvariantCulture.TextInfo.ToTitleCase(trimmed.ToLowerInvariant());
     }
 
+    // ── Owner ─────────────────────────────────────────────────────────────────────────────────────────
+
+    private static string? Owner(string text)
+    {
+        var match = OwnerIntroPattern().Match(text);
+        if (!match.Success) return null;
+
+        var rest = text.Substring(match.Index + match.Length);
+        var boundaryMatch = OwnerBoundaryPattern().Match(rest);
+        var raw = boundaryMatch.Success ? rest.Substring(0, boundaryMatch.Index) : rest;
+
+        // Strip parenthesized notes (e.g. '(A/123)', '(Value as per SBI valuation...)')
+        var clean = Regex.Replace(raw, @"\s*\([^)]*\)?", "");
+        // Strip known trailing section headings if separated by period
+        clean = Regex.Replace(clean, @"\.\s+(?:Property|Collateral|Guarantee|Primary|First|Second|Mortgage)\b.*$", "", RegexOptions.IgnoreCase);
+        // Strip trailing punctuation and whitespace first
+        clean = Regex.Replace(clean, @"[\s.,;:()\-–&]+$", "");
+        // Strip trailing digits (e.g. from run-on list numbers like 'Johari2.' or 'Johari4')
+        clean = Regex.Replace(clean, @"(?<=[a-zA-Z])\d+$", "");
+        // Strip any remaining trailing punctuation and whitespace
+        clean = Regex.Replace(clean, @"[\s.,;:()\-–&]+$", "");
+        // Clean leading 'or held by'
+        clean = Regex.Replace(clean, @"^(?:or\s+held\s+by\s+)", "", RegexOptions.IgnoreCase).Trim();
+
+        return clean.Length >= 2 ? clean : null;
+    }
+
     // ── Other entities ────────────────────────────────────────────────────────────────────────────────
 
     private static List<string> NamedEntities(string text)
@@ -484,4 +513,10 @@ public static partial class PropertyParticularsNormalizer
     private static partial Regex SituatedAt();
     [GeneratedRegex(@"(?:[A-Z][A-Za-z&]*\.?\s+){1,6}(?:Private|Pvt\.?)\s+(?:Limited|Ltd\.?)|(?:[A-Z][A-Za-z&]*\s+){1,6}Limited\b")]
     private static partial Regex CompanyName();
+
+    [GeneratedRegex(@"\b(?:held\s+in\s+the\s+name\s+of|standing\s+in\s+the\s+name\s+of|in\s+the\s+name\s+of|owned\s+by|belonging\s+to|property\s+of(?:\s+director\s*[-:]?)?|assets\s+(?:at\s+the\s+[^.;]+?\s+of|of(?:\s+the\s+[^.;]+?\s+unit\s+of)?))\s+", RegexOptions.IgnoreCase)]
+    private static partial Regex OwnerIntroPattern();
+
+    [GeneratedRegex(@"\s+(?:in\s+favour|in\s+favor|along\s+with|and\s*/?\s*or\s+now|and\s+which|which\s+are|and\s+provided|provided\s+as|more\s+specified|through\s+which|situated|located|admeasuring|consisting|with\s+the\s+bank|with\s+other|guarantee\b|as\s+referred|as\s+more\s+particularly|first\s+pari|second\s+pari|\bvalue\s+as\s+per|\(value\b|\b[0-9]+\.\s*(?:first|second|pari|mortgage|exclusive)|(?<=\w)[0-9]+(?:\.|\s+)|(?<=\w)\s*[0-9]+\s*\.\s*)|[,;:\n]", RegexOptions.IgnoreCase)]
+    private static partial Regex OwnerBoundaryPattern();
 }

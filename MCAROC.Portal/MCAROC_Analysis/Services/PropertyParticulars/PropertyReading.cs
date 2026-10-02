@@ -44,12 +44,12 @@ public sealed record PropertyReading(
 
     public static PropertyReading FromRules(NormalizedPropertyParticulars p)
     {
-        var hasItem = p.AssetClasses.Count > 0 || p.Kinds.Count > 0 || p.Units.Count > 0 || p.Areas.Count > 0 || p.ParkingSpaces is not null
+        var hasItem = p.AssetClasses.Count > 0 || p.Kinds.Count > 0 || p.Owner is not null || p.Units.Count > 0 || p.Areas.Count > 0 || p.ParkingSpaces is not null
             || p.SurveyNumbers.Count > 0 || !p.Location.IsEmpty || p.NamedEntities.Count > 0;
         IReadOnlyList<PropertyReadingItem> items = hasItem
             ?
             [
-                new PropertyReadingItem(p.AssetClasses, p.Kinds, null, p.Units.Select(PropertyParticularsNormalizer.Describe).ToList(),
+                new PropertyReadingItem(p.AssetClasses, p.Kinds, p.Owner, p.Units.Select(PropertyParticularsNormalizer.Describe).ToList(),
                     p.BuildingsOrProjects.Where(b => p.Units.All(u => !string.Equals(u.Building, b, StringComparison.OrdinalIgnoreCase))).ToList(),
                     p.Areas, p.ParkingSpaces, p.ParkingSpaceNumbers, p.SurveyNumbers, p.Location, p.NamedEntities)
             ]

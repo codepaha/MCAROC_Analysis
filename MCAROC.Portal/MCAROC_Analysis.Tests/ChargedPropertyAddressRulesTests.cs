@@ -275,4 +275,63 @@ public class ChargedPropertyAddressRulesTests
         Assert.False(result.IsCompanyPremises);
         Assert.Equal(PremisesCategory.OtherCollateral, result.Category);
     }
+
+    [Fact]
+    public void ThirdPartyCollateral_TriggersFinding_AndExcludesCompanySelfOwnership()
+    {
+        var profile = Profile();
+        var tpText = "F.NO. 705, 7TH FLOOR, SILVER OAK, RAHEJA WILLOWS, OWNED BY SUNU MATHEW & BINDU MATHEW & PROVIDED AS COLLATERAL SECURITY";
+        var charge = Charge(10, tpText);
+        var ctx = BuildContext(companyProfile: profile, charges: [charge]);
+
+        var outcomes = ChargedPropertyAddressRules.Evaluate(ctx);
+        var tpOutcome = outcomes.First(o => o.Code == ChargedPropertyAddressRules.ChargedPropertyIsThirdPartyCollateralCode);
+
+        Assert.Equal(RuleEvaluationStatus.Triggered, tpOutcome.Status);
+        var finding = tpOutcome.Finding!;
+        Assert.Equal(FindingSeverity.Watch, finding.Severity);
+        Assert.Contains("SUNU MATHEW & BINDU MATHEW", finding.SummaryText);
+        Assert.Contains("SUNU MATHEW", finding.MetricsJson);
+        Assert.Contains("BINDU MATHEW", finding.MetricsJson);
+        Assert.Equal("{\"entityType\":\"RocCharge\",\"entityIds\":[10]}", finding.SourceReferenceJson);
+
+        var owners = ChargedPropertyAddressRules.GetThirdPartyOwners(charge, profile);
+        Assert.Equal(["SUNU MATHEW & BINDU MATHEW"], owners);
+    }
+
+    [Fact]
+    public void CompanySelfOwnership_DoesNotTriggerThirdPartyCollateralFinding()
+    {
+        var profile = Profile();
+        var selfText = "All that piece & parcel of land owned by the company in favour of Axis Bank Ltd";
+        var charge = Charge(20, selfText);
+        var ctx = BuildContext(companyProfile: profile, charges: [charge]);
+
+        var outcomes = ChargedPropertyAddressRules.Evaluate(ctx);
+        var tpOutcome = outcomes.Count > 1 ? outcomes[1] : outcomes.First();
+
+        Assert.Equal(RuleEvaluationStatus.NotTriggered, tpOutcome.Status);
+        Assert.Empty(ChargedPropertyAddressRules.GetThirdPartyOwners(charge, profile));
+    }
+
+    [Fact]
+    public void DifferentUnitNumbersInSameBuilding_NeverConflatedOrMatchedToPremises()
+    {
+        // Flat 305 vs 315 / 350 / 306 in same society are separate properties
+        var profile = Profile(registered: "Flat 305, Wing A, Sunshine Heights, Mumbai 400001");
+        var pool = ChargedPropertyAddressRules.BuildAddressPool(profile, null);
+
+        var chargeFlat306 = Charge(30, "Flat No. 306, Wing A, Sunshine Heights, Mumbai 400001, owned by Mr. Raj Patel");
+        var chargeFlat315 = Charge(31, "Flat No. 315, Wing A, Sunshine Heights, Mumbai 400001, owned by Mr. Vikram Shah");
+
+        // Neither flat 306 nor flat 315 is company premises (registered office is flat 305)
+        var match306 = ChargedPropertyAddressRules.ClassifyCharge(chargeFlat306, pool);
+        var match315 = ChargedPropertyAddressRules.ClassifyCharge(chargeFlat315, pool);
+        Assert.False(match306.IsCompanyPremises);
+        Assert.False(match315.IsCompanyPremises);
+
+        // Both correctly identify third-party collateral owners
+        Assert.Equal(["Mr. Raj Patel"], ChargedPropertyAddressRules.GetThirdPartyOwners(chargeFlat306, profile));
+        Assert.Equal(["Mr. Vikram Shah"], ChargedPropertyAddressRules.GetThirdPartyOwners(chargeFlat315, profile));
+    }
 }

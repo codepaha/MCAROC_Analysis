@@ -131,6 +131,23 @@ public class PropertyParticularsNormalizerTests
     }
 
     [Theory]
+    [InlineData("F.NO. 705, 7TH FLOOR, SILVER OAK, RAHEJA WILLOWS, OWNED BY SUNU MATHEW & BINDU MATHEW & PROVIDED AS COLLATERAL SECURITY", "SUNU MATHEW & BINDU MATHEW")]
+    [InlineData("Room No B-12, B Wing, Om Shri Swati Manor CHSL, owned by Mr Kamal Johari2. First pari-passu charge", "Mr Kamal Johari")]
+    [InlineData("Room No B-12, B Wing, Om Shri Swati Manor CHSL, owned by Mrs. Kamini Johari & Mr. Kamal Johari. Property", "Mrs. Kamini Johari & Mr. Kamal Johari")]
+    [InlineData("Pledge of 3,60,000 equity shares of KDDL Limited held in the name of Mr. Yashovardhan Saboo. Guarantee - 100%", "Mr. Yashovardhan Saboo")]
+    [InlineData("FIRST PARAMOUNT AND EXCLUSIVE CHARGE ON THE ASSETS OF THE ORNAPAC UNIT OF THE HOLDING COMPANY OF THE BORROWER i.e KDDL LIMITED, SITUATED AT CHANDIGARH", "THE HOLDING COMPANY OF THE BORROWER i.e KDDL LIMITED")]
+    [InlineData("CC FACILITY- FIRST PARI PASSU CHARGE-HYPO. OF ALL CURRENT ASSETS BELONGING TO HOLDING COMPANY.", "HOLDING COMPANY")]
+    [InlineData("owned by erstwhile Golden Chemtech Ltd IV", "erstwhile Golden Chemtech Ltd IV")]
+    [InlineData("standing in the name of promoters i.e. Mr. X", "promoters i.e. Mr. X")]
+    [InlineData("RESIDENTIAL PROPERTY OF DIRECTOR - Mr. APURVA SHAH (A/123)", "Mr. APURVA SHAH")]
+    [InlineData("All that piece & parcel of land owned by the company in favour of Axis Bank Ltd", "the company")]
+    public void Owner_IsExtracted_FromRealFilingPatterns(string text, string expectedOwner)
+    {
+        var p = PropertyParticularsNormalizer.Normalize(text);
+        Assert.Equal(expectedOwner, p.Owner);
+    }
+
+    [Theory]
     [InlineData(null)]
     [InlineData("")]
     [InlineData("-")]

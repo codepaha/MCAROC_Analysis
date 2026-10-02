@@ -45,6 +45,7 @@ public sealed record PremisesMatchResult(
 public static class ChargedPropertyAddressRules
 {
     public const string ChargedPropertyIsCompanyPremisesCode = "CHARGED_PROPERTY_IS_COMPANY_PREMISES";
+    public const string ChargedPropertyIsThirdPartyCollateralCode = "CHARGED_PROPERTY_IS_THIRD_PARTY_COLLATERAL";
 
     /// <summary>Used only when PropertyType is blank (≈25% of real Coastal events): a description that names
     /// land/buildings is the one worth comparing to a premises address. When PropertyType IS filed and omits
@@ -52,7 +53,8 @@ public static class ChargedPropertyAddressRules
     private static readonly string[] ImmovableKeywords =
         ["MORTGAGE", "LAND", "BUILDING", "PLOT", "FLAT", "PREMISES", "IMMOVABLE", "FACTORY", "SURVEY", "ARAZI", "GATA", "KHATA"];
 
-    public static List<RuleEvaluationOutcome> Evaluate(AnalysisContext ctx) => [EvaluateChargedPropertyVsOwnAddresses(ctx)];
+    public static List<RuleEvaluationOutcome> Evaluate(AnalysisContext ctx) =>
+        [EvaluateChargedPropertyVsOwnAddresses(ctx), EvaluateThirdPartyCollateral(ctx)];
 
     private static RuleEvaluationOutcome EvaluateChargedPropertyVsOwnAddresses(AnalysisContext ctx)
     {
@@ -254,10 +256,131 @@ public static class ChargedPropertyAddressRules
         return PremisesMatchResult.OtherCollateral();
     }
 
+    private static RuleEvaluationOutcome EvaluateThirdPartyCollateral(AnalysisContext ctx)
+    {
+        if (ctx.Charges.Count == 0)
+            return RuleEvaluationOutcome.NotEvaluated(ChargedPropertyIsThirdPartyCollateralCode, "No charge records available.");
+
+        var openEvents = ctx.Charges
+            .Where(c => c.SatisfactionDate is null)
+            .SelectMany(c => c.Events.Select(e => (Charge: c, Event: e)))
+            .Where(x => !string.IsNullOrWhiteSpace(x.Event.PropertyParticulars))
+            .ToList();
+        if (openEvents.Count == 0)
+            return RuleEvaluationOutcome.NotEvaluated(ChargedPropertyIsThirdPartyCollateralCode,
+                "No open (unsatisfied) charge has property particulars on file.");
+
+        var matches = new List<ThirdPartyCollateralMatch>();
+        foreach (var (charge, ev) in openEvents)
+        {
+            var reading = PropertyReading.For(ev.PropertyParticulars, ev.PropertyType, ctx.PropertyExtractions);
+            if (reading.Items.Count > 0)
+            {
+                for (var i = 0; i < reading.Items.Count; i++)
+                {
+                    var item = reading.Items[i];
+                    if (!string.IsNullOrWhiteSpace(item.Owner) && !IsSelfCompany(item.Owner, ctx.CompanyProfile))
+                    {
+                        matches.Add(new ThirdPartyCollateralMatch(charge, ev, item.Owner, i));
+                    }
+                }
+            }
+        }
+
+        if (matches.Count == 0)
+            return RuleEvaluationOutcome.NotTriggered();
+
+        var distinct = matches
+            .GroupBy(m => (m.Charge.ChargeId, m.Owner))
+            .Select(g => g.First())
+            .OrderBy(m => m.Charge.ChargeId)
+            .ToList();
+        var charges = distinct.Select(m => m.Charge).DistinctBy(c => c.ChargeId).ToList();
+        var owners = distinct.Select(m => m.Owner).Distinct().ToList();
+
+        var ownerSummary = owners.Count == 1 ? $"owned by {owners[0]}" : $"{owners.Count} third-party owners ({string.Join(", ", owners.Take(3))})";
+        var summary = charges.Count == 1
+            ? $"Open charge {charges[0].RocChargeNumber} ({charges[0].LatestChargeHolderRaw}) appears to include third-party collateral ({ownerSummary}). Confirm against the charge instrument."
+            : $"{charges.Count} open charges (including {charges[0].RocChargeNumber}, {charges[0].LatestChargeHolderRaw}) appear to include third-party collateral ({ownerSummary}). Confirm against the charge instruments.";
+
+        return RuleEvaluationOutcome.Triggered(new FindingDraft(
+            FindingSection.Charges, FindingSeverity.Watch, TemporalStatus.Current,
+            ChargedPropertyIsThirdPartyCollateralCode, "Third-Party Collateral Pledged for Company Charges",
+            summary,
+            MetricsJson: JsonSerializer.Serialize(new
+            {
+                matchCount = distinct.Count,
+                matches = distinct.Select(m => new
+                {
+                    chargeNumber = m.Charge.RocChargeNumber,
+                    chargeHolder = m.Charge.LatestChargeHolderRaw,
+                    chargeEventId = m.Event.ChargeEventId,
+                    owner = m.Owner,
+                    propertyItemIndex = m.ItemIndex
+                })
+            }),
+            SourceReferenceJson: JsonSerializer.Serialize(new
+            {
+                entityType = nameof(RocCharge),
+                entityIds = charges.Select(c => c.ChargeId).OrderBy(id => id).ToArray()
+            })));
+    }
+
+    /// <summary>Returns true if the owner string refers to the company itself (borrower/company/security provider/subject company)
+    /// rather than a third party or individual.</summary>
+    public static bool IsSelfCompany(string? owner, CompanyProfile? profile)
+    {
+        if (string.IsNullOrWhiteSpace(owner)) return false;
+        var o = owner.Trim();
+        if (System.Text.RegularExpressions.Regex.IsMatch(o, @"^(?:the\s+)?(?:company|borrower|security\s+provider|subject\s+company)\b", System.Text.RegularExpressions.RegexOptions.IgnoreCase))
+            return true;
+
+        if (!string.IsNullOrWhiteSpace(profile?.CompanyName))
+        {
+            var companyNorm = System.Text.RegularExpressions.Regex.Replace(profile.CompanyName, @"\b(?:Private|Pvt\.?|Limited|Ltd\.?)\b", "", System.Text.RegularExpressions.RegexOptions.IgnoreCase).Trim();
+            var ownerNorm = System.Text.RegularExpressions.Regex.Replace(o, @"\b(?:Private|Pvt\.?|Limited|Ltd\.?)\b", "", System.Text.RegularExpressions.RegexOptions.IgnoreCase).Trim();
+            if (string.Equals(companyNorm, ownerNorm, StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>Finds third-party owners from a charge's property reading (if any), excluding self-company references.</summary>
+    public static IReadOnlyList<string> GetThirdPartyOwners(
+        RocCharge charge,
+        CompanyProfile? profile,
+        IReadOnlyDictionary<string, PropertyParticularsExtraction>? extractions = null)
+    {
+        var owners = new List<string>();
+        var events = charge.Events.OrderByDescending(e => e.EventDate ?? DateOnly.MinValue).ThenByDescending(e => e.ChargeEventId);
+        foreach (var ev in events)
+        {
+            if (string.IsNullOrWhiteSpace(ev.PropertyParticulars)) continue;
+            var reading = PropertyReading.For(ev.PropertyParticulars, ev.PropertyType, extractions);
+            foreach (var item in reading.Items)
+            {
+                if (!string.IsNullOrWhiteSpace(item.Owner) && !IsSelfCompany(item.Owner, profile))
+                {
+                    if (!owners.Contains(item.Owner, StringComparer.OrdinalIgnoreCase))
+                        owners.Add(item.Owner);
+                }
+            }
+            if (owners.Count > 0) break; // Use latest filing's particulars
+        }
+        return owners;
+    }
+
     private sealed record PremisesMatch(
         RocCharge Charge,
         RocChargeEvent Event,
         CompanyPremisesAddress Address,
         AddressMatchResult Result,
+        int? ItemIndex = null);
+
+    private sealed record ThirdPartyCollateralMatch(
+        RocCharge Charge,
+        RocChargeEvent Event,
+        string Owner,
         int? ItemIndex = null);
 }
