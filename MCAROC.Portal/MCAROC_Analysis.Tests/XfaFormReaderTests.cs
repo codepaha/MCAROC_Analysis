@@ -125,25 +125,79 @@ public class XfaFormReaderTests
         }
     }
 
+    // ── PR #371 review: the placeholder is never content, even when the form data can't be read ──
+
+    [Theory]
+    [InlineData(null)]                                   // no XFA packet at all
+    [InlineData("<xfa:datasets><broken")]                // a packet that isn't readable XML
+    [InlineData("<xfa:datasets xmlns:xfa=\"http://www.xfa.org/schema/xfa-data/1.0/\"><xfa:data/></xfa:datasets>")] // no filled fields
+    public async Task PdfTextExtractor_NeverPassesThePlaceholderOn_WhenTheFormDataCannotBeRead(string? datasets)
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"xfa-bad-{Guid.NewGuid():N}.pdf");
+        await File.WriteAllBytesAsync(path, MinimalXfaPdf(Placeholder, datasets));
+        try
+        {
+            var result = await new PdfTextExtractor(NullLogger<PdfTextExtractor>.Instance, "").ExtractAsync(path, Path.GetTempPath(), CancellationToken.None);
+
+            Assert.Equal(FilingDocumentProcessingStatus.UnsupportedPdf, result.Status);
+            Assert.Equal("", result.FullText);
+            Assert.False(XfaFormReader.IsPlaceholderText(result.FullText));
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public async Task PdfTextExtractor_KeepsRealPages_AndDropsAnUnreadablePlaceholderPage()
+    {
+        const string RealPage = "Schedule I: Flat No. 305, B Wing, Sunrise Society, Survey No. 12/3, Village Baner, Pune 411045.";
+        var path = Path.Combine(Path.GetTempPath(), $"xfa-mixed-{Guid.NewGuid():N}.pdf");
+        await File.WriteAllBytesAsync(path, MultiPagePdf([Placeholder, RealPage], datasets: null));
+        try
+        {
+            var result = await new PdfTextExtractor(NullLogger<PdfTextExtractor>.Instance, "").ExtractAsync(path, Path.GetTempPath(), CancellationToken.None);
+
+            Assert.Equal(FilingDocumentProcessingStatus.TextExtracted, result.Status);
+            Assert.Contains("Flat No. 305", result.FullText);
+            Assert.False(XfaFormReader.IsPlaceholderText(result.FullText));
+            Assert.DoesNotContain("--- Page 1 ", result.FullText); // the placeholder page contributed nothing
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
     /// <summary>A one-page PDF whose page shows <paramref name="pageText"/> in Helvetica, with — when
     /// <paramref name="datasets"/> is given — an AcroForm whose /XFA array carries that datasets packet.</summary>
-    private static byte[] MinimalXfaPdf(string pageText, string? datasets)
+    private static byte[] MinimalXfaPdf(string pageText, string? datasets) => MultiPagePdf([pageText], datasets);
+
+    /// <summary>A PDF with one page per entry of <paramref name="pageTexts"/> (Helvetica), and — when
+    /// <paramref name="datasets"/> is given — an AcroForm whose /XFA array carries that datasets packet.</summary>
+    private static byte[] MultiPagePdf(IReadOnlyList<string> pageTexts, string? datasets)
     {
-        var escaped = pageText.Replace("\\", "\\\\").Replace("(", "\\(").Replace(")", "\\)");
-        var content = $"BT /F1 8 Tf 20 400 Td ({escaped}) Tj ET";
+        // Objects: 1 catalog, 2 pages, 3 font, [4 acroform, 5 datasets], then a page + content pair per page.
         var objects = new List<string>
         {
-            datasets is null ? "<< /Type /Catalog /Pages 2 0 R >>" : "<< /Type /Catalog /Pages 2 0 R /AcroForm 6 0 R >>",
-            "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
-            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 1200 800] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>",
-            $"<< /Length {Encoding.ASCII.GetByteCount(content)} >>\nstream\n{content}\nendstream",
-            "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>"
+            datasets is null ? "<< /Type /Catalog /Pages 2 0 R >>" : "<< /Type /Catalog /Pages 2 0 R /AcroForm 4 0 R >>",
+            "", // pages, filled below
+            "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+            datasets is null ? "<< >>" : "<< /Fields [] /XFA [(datasets) 5 0 R] >>",
+            datasets is null ? "<< >>" : $"<< /Length {Encoding.UTF8.GetByteCount(datasets)} >>\nstream\n{datasets}\nendstream"
         };
-        if (datasets is not null)
+        var kids = new List<string>();
+        foreach (var text in pageTexts)
         {
-            objects.Add("<< /Fields [] /XFA [(datasets) 7 0 R] >>");
-            objects.Add($"<< /Length {Encoding.UTF8.GetByteCount(datasets)} >>\nstream\n{datasets}\nendstream");
+            var escaped = text.Replace("\\", "\\\\").Replace("(", "\\(").Replace(")", "\\)");
+            var content = $"BT /F1 8 Tf 20 400 Td ({escaped}) Tj ET";
+            var pageId = objects.Count + 1;
+            objects.Add($"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 1200 800] /Contents {pageId + 1} 0 R /Resources << /Font << /F1 3 0 R >> >> >>");
+            objects.Add($"<< /Length {Encoding.ASCII.GetByteCount(content)} >>\nstream\n{content}\nendstream");
+            kids.Add($"{pageId} 0 R");
         }
+        objects[1] = $"<< /Type /Pages /Kids [{string.Join(" ", kids)}] /Count {pageTexts.Count} >>";
 
         var pdf = new StringBuilder("%PDF-1.7\n");
         var offsets = new List<int>();

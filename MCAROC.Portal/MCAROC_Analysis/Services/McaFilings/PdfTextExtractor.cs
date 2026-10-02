@@ -55,6 +55,7 @@ public class PdfTextExtractor(ILogger<PdfTextExtractor> logger, string tesseract
             // placeholder page is replaced by them (once — the form data is the whole form); real pages are kept as they are.
             IReadOnlyList<XfaField>? xfaFields = null;
             var xfaUsed = false;
+            var unreadableFormPages = 0;
 
             var sb = new StringBuilder();
             var nativeCount = 0;
@@ -75,15 +76,25 @@ public class PdfTextExtractor(ILogger<PdfTextExtractor> logger, string tesseract
                     pageText = "";
                 }
 
-                if (XfaFormReader.IsPlaceholderText(pageText) && (xfaFields ??= XfaFormReader.ReadFields(document) ?? []) is { Count: > 0 })
+                if (XfaFormReader.IsPlaceholderText(pageText))
                 {
-                    if (!xfaUsed)
+                    // The placeholder is never content. With readable form data the page becomes the form's fields;
+                    // without it (no packet, or one that can't be read) the page contributes nothing.
+                    if ((xfaFields ??= XfaFormReader.ReadFields(document) ?? []) is { Count: > 0 })
                     {
-                        sb.AppendLine($"--- Page {pageNumber} (native) ---");
-                        sb.Append(XfaFormReader.ToText(xfaFields));
-                        xfaUsed = true;
+                        if (!xfaUsed)
+                        {
+                            sb.AppendLine($"--- Page {pageNumber} (native) ---");
+                            sb.Append(XfaFormReader.ToText(xfaFields));
+                            xfaUsed = true;
+                        }
+                        nativeCount++;
                     }
-                    nativeCount++;
+                    else
+                    {
+                        unreadableFormPages++;
+                        logger.LogWarning("Page {Page} of {Path} is an XFA form placeholder but the form data could not be read", pageNumber, pdfPath);
+                    }
                 }
                 else if (pageText.Length >= minCharsPerPageForNativeText)
                 {
@@ -99,6 +110,11 @@ public class PdfTextExtractor(ILogger<PdfTextExtractor> logger, string tesseract
                     ocrCount++;
                 }
             }
+
+            // Nothing but unreadable XFA placeholders: there is no filing content to pass on — never report it as extracted.
+            if (unreadableFormPages > 0 && nativeCount == 0 && ocrCount == 0)
+                return new PdfExtractionResult("", pageCount, 0, 0, TextExtractionMethod.None, FilingDocumentProcessingStatus.UnsupportedPdf,
+                    "XFA e-form whose form data could not be read; the PDF only shows Adobe's placeholder page.");
 
             var method = xfaUsed ? TextExtractionMethod.Xfa
                 : ocrCount == 0 ? TextExtractionMethod.Native
