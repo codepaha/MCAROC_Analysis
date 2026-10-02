@@ -176,7 +176,7 @@ public class XfaFormReaderTests
 
     /// <summary>A PDF with one page per entry of <paramref name="pageTexts"/> (Helvetica), and — when
     /// <paramref name="datasets"/> is given — an AcroForm whose /XFA array carries that datasets packet.</summary>
-    internal static byte[] MultiPagePdf(IReadOnlyList<string> pageTexts, string? datasets)
+    internal static byte[] MultiPagePdf(IReadOnlyList<string> pageTexts, string? datasets, IReadOnlyList<(string Name, string Content)>? embedded = null)
     {
         // Objects: 1 catalog, 2 pages, 3 font, [4 acroform, 5 datasets], then a page + content pair per page.
         var objects = new List<string>
@@ -198,6 +198,19 @@ public class XfaFormReaderTests
             kids.Add($"{pageId} 0 R");
         }
         objects[1] = $"<< /Type /Pages /Kids [{string.Join(" ", kids)}] /Count {pageTexts.Count} >>";
+        if (embedded is { Count: > 0 })
+        {
+            // #377: files embedded the way MCA e-forms carry their attachments — a catalog /Names /EmbeddedFiles tree.
+            var names = new List<string>();
+            foreach (var (name, content) in embedded)
+            {
+                var specId = objects.Count + 1;
+                objects.Add($"<< /Type /Filespec /F ({name}) /UF ({name}) /EF << /F {specId + 1} 0 R >> >>");
+                objects.Add($"<< /Type /EmbeddedFile /Length {Encoding.UTF8.GetByteCount(content)} >>\nstream\n{content}\nendstream");
+                names.Add($"({name}) {specId} 0 R");
+            }
+            objects[0] = objects[0][..^2] + $"/Names << /EmbeddedFiles << /Names [{string.Join(" ", names)}] >> >> >>";
+        }
 
         var pdf = new StringBuilder("%PDF-1.7\n");
         var offsets = new List<int>();

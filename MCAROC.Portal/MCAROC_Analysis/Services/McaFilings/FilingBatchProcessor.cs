@@ -374,6 +374,9 @@ public class FilingBatchProcessor(
                 // #364: a form's XFA fields beside its text, so charge forms are read without reopening the PDF.
                 if (extraction.XfaFields is { Count: > 0 } xfa)
                     await XfaFormReader.WriteSidecarAsync(textPath, xfa, ct);
+                // #377: the hashes of its embedded attachments, so they are linked to its charge without the PDF.
+                if (extraction.EmbeddedFiles is { } embedded)
+                    await EmbeddedFiles.WriteSidecarAsync(textPath, embedded, ct);
 
                 document.ExtractedTextPath = textPath;
                 document.ExtractedCharCount = extraction.FullText.Length;
@@ -648,8 +651,12 @@ public class FilingBatchProcessor(
                 continue;
             logger.LogInformation("Document {DocumentId} reuses the extracted text of document {SourceId} (same PDF, earlier batch).",
                 document.FilingDocumentId, c.FilingDocumentId);
+            // The same PDF has the same form fields and embedded files: carry what was saved beside the earlier text (#364,
+            // #377). Anything not saved there stays null and is filled in by ChargeFormBackfill from the PDF.
+            var xfa = await XfaFormReader.ReadSidecarAsync(c.ExtractedTextPath!, ct);
+            var embedded = await EmbeddedFiles.ReadSidecarAsync(c.ExtractedTextPath!, ct);
             return (new PdfExtractionResult(text, c.PageCount, c.NativePageCount, c.OcrPageCount, c.TextExtractionMethod,
-                FilingDocumentProcessingStatus.TextExtracted, null), c.ReusedFromDocumentId ?? c.FilingDocumentId);
+                FilingDocumentProcessingStatus.TextExtracted, null, xfa is { Count: > 0 } ? xfa : null, embedded), c.ReusedFromDocumentId ?? c.FilingDocumentId);
         }
         return null;
     }

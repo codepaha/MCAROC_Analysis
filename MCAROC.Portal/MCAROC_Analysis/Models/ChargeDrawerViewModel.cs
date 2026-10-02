@@ -13,7 +13,8 @@ public record ChargeDrawerViewModel(
     IReadOnlyDictionary<string, PropertyParticularsExtraction>? PropertyExtractions = null,
     CompanyProfile? CompanyProfile = null,
     IReadOnlyList<EpfoEstablishment>? EpfoEstablishments = null,
-    IReadOnlyList<MCAROC_Analysis.Services.PropertyParticulars.LinkedChargeForm>? ChargeForms = null)
+    IReadOnlyList<MCAROC_Analysis.Services.PropertyParticulars.LinkedChargeForm>? ChargeForms = null,
+    IReadOnlyList<MCAROC_Analysis.Services.PropertyParticulars.ChargeDocumentRow>? Documents = null)
 {
     /// <summary>Charges-section findings whose SourceReferenceJson entityIds contain this charge's PK.
     /// Portfolio-level findings (lender concentration, registered exposure) name no single charge and
@@ -25,12 +26,14 @@ public record ChargeDrawerViewModel(
         IReadOnlyDictionary<string, PropertyParticularsExtraction>? propertyExtractions = null,
         CompanyProfile? companyProfile = null,
         IReadOnlyList<EpfoEstablishment>? epfoEstablishments = null,
-        IReadOnlyList<MCAROC_Analysis.Services.PropertyParticulars.LinkedChargeForm>? chargeForms = null)
+        IReadOnlyList<MCAROC_Analysis.Services.PropertyParticulars.LinkedChargeForm>? chargeForms = null,
+        IReadOnlyDictionary<string, IReadOnlyList<MCAROC_Analysis.Services.PropertyParticulars.ChargeDocumentRow>>? chargeDocuments = null)
     {
         var related = allFindings
             .Where(f => f.Section == FindingSection.Charges && NamesCharge(f.SourceReferenceJson, charge.ChargeId))
             .ToList();
-        return new ChargeDrawerViewModel(charge, related, litigation, propertyExtractions, companyProfile, epfoEstablishments, chargeForms);
+        var documents = chargeDocuments?.GetValueOrDefault(MCAROC_Analysis.Services.PropertyParticulars.ChargeDocumentLinker.Normalize(charge.RocChargeNumber));
+        return new ChargeDrawerViewModel(charge, related, litigation, propertyExtractions, companyProfile, epfoEstablishments, chargeForms, documents);
     }
 
     private static bool NamesCharge(string? sourceReferenceJson, long chargeId)

@@ -219,7 +219,7 @@
                         <td><a class="mca-chip" data-bs-toggle="collapse" href="#charge-@c.ChargeId" role="button">Details</a></td>
                     </tr>
                     <tr class="collapse" id="charge-@c.ChargeId">
-                        <td colspan="8">@await Html.PartialAsync("Details/_ChargeDrawer", ChargeDrawerViewModel.For(c, Model.AnalysisFindings, LitigationFor(c), Model.PropertyExtractions, Model.CompanyProfile, Model.EpfoEstablishments, Model.ChargeForms.GetValueOrDefault(c.ChargeId)))</td>
+                        <td colspan="8">@await Html.PartialAsync("Details/_ChargeDrawer", ChargeDrawerViewModel.For(c, Model.AnalysisFindings, LitigationFor(c), Model.PropertyExtractions, Model.CompanyProfile, Model.EpfoEstablishments, Model.ChargeForms.GetValueOrDefault(c.ChargeId), Model.ChargeDocuments))</td>
                     </tr>
                 }
                 </tbody>
@@ -277,7 +277,7 @@
                         <td><a class="mca-chip" data-bs-toggle="collapse" href="#charge-@c.ChargeId" role="button">Details</a></td>
                     </tr>
                     <tr class="collapse" id="charge-@c.ChargeId">
-                        <td colspan="7">@await Html.PartialAsync("Details/_ChargeDrawer", ChargeDrawerViewModel.For(c, Model.AnalysisFindings, propertyExtractions: Model.PropertyExtractions, companyProfile: Model.CompanyProfile, epfoEstablishments: Model.EpfoEstablishments, chargeForms: Model.ChargeForms.GetValueOrDefault(c.ChargeId)))</td>
+                        <td colspan="7">@await Html.PartialAsync("Details/_ChargeDrawer", ChargeDrawerViewModel.For(c, Model.AnalysisFindings, propertyExtractions: Model.PropertyExtractions, companyProfile: Model.CompanyProfile, epfoEstablishments: Model.EpfoEstablishments, chargeForms: Model.ChargeForms.GetValueOrDefault(c.ChargeId), chargeDocuments: Model.ChargeDocuments))</td>
                     </tr>
                 }
                 </tbody>

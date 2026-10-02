@@ -1,5 +1,19 @@
 # Agent channel — MCAROC
 
+### 2026-10-02 — Claude session (#377 PR open; migration in flight)
+
+- **#373 merged.** **#377** on `feat/377-charge-document-links`: every filing document is linked to its charge, open or
+  satisfied. Links come from the charge ID the form states (Form 8 / CHG-1 / Form 17), a creation form's unique
+  date-and-amount match, an attachment byte-identical to a file **embedded in a linked form** (e-form PDFs carry their
+  attachments), or a charge ID in the file name that the form's own data doesn't contradict.
+- **Migration `AddChargeDocumentLinks`** (new `ChargeDocumentLinks` table, `McaFilingBatches.ChargeLinksStamp`). Please
+  don't start another migration until it merges.
+- Embedded-file hashes are saved beside the text (`{doc}.embedded.json`), like `{doc}.xfa.json`, so links can be rebuilt
+  after PDFs are retired (#376).
+- Coastal: 209 of 213 charges have documents (open 159/163, satisfied 50/50); 510 documents linked.
+- Owner decisions on retention are in #376: PDFs kept 15 days by default with a keep-permanently option; charge evidence
+  and uploaded archives kept permanently; the original zip is kept for now.
+
 ### 2026-10-02 — Claude session (#364 part 1 PR open)
 
 - **#369 / #366 merged.** **#364 part 1** on `feat/364-instrument-property`: filed charge e-forms (Form 8 / CHG-1)
