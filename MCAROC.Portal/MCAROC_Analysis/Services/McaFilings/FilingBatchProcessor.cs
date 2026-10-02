@@ -640,6 +640,9 @@ public class FilingBatchProcessor(
             if (!File.Exists(c.ExtractedTextPath))
                 continue; // retired (#360) or missing — try an older copy, else extract afresh
             var text = await File.ReadAllTextAsync(c.ExtractedTextPath!, ct);
+            // #369: text extracted before XFA e-forms were read is Adobe's placeholder, not the form — never carry it forward.
+            if (XfaFormReader.IsPlaceholderText(text))
+                continue;
             logger.LogInformation("Document {DocumentId} reuses the extracted text of document {SourceId} (same PDF, earlier batch).",
                 document.FilingDocumentId, c.FilingDocumentId);
             return (new PdfExtractionResult(text, c.PageCount, c.NativePageCount, c.OcrPageCount, c.TextExtractionMethod,
@@ -658,6 +661,10 @@ public class FilingBatchProcessor(
     {
         static string Signature(IEnumerable<(string Hash, string Name, string? FormType)> docs) =>
             string.Join("\n", docs.Select(d => $"{d.Hash}|{d.Name}|{d.FormType}").Order(StringComparer.Ordinal));
+        // Gemini read the documents' text, so an earlier answer only stands when every document's text is that same text
+        // (reused, not re-extracted) — e.g. an XFA form now read for the first time (#369) must get a fresh call.
+        if (documents.Any(d => d.ReusedFromDocumentId is null))
+            return null;
         var current = Signature(documents.Select(d => (d.FileHash, d.OriginalFileName, d.FormType)));
 
         var candidates = await (
