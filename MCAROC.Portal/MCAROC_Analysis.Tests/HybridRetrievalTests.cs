@@ -36,7 +36,7 @@ public class HybridRetrievalTests : IAsyncLifetime
 
     private static DocumentChunk NewChunk(long requestId, string srn, string text, float[] embedding) => new()
     {
-        RequestId = requestId, FilingDocumentId = requestId, FilingId = requestId, BatchId = requestId,
+        RequestId = requestId, FilingDocumentId = -requestId, FilingId = requestId, BatchId = requestId, // negative: never a real document id
         Srn = srn, Category = FilingCategory.Unclassified, FormType = null, DocumentName = $"{srn}.pdf",
         ChunkIndex = 0, PageNumber = 1, ChunkText = text,
         Embedding = new SqlVector<float>(embedding),
