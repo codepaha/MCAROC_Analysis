@@ -93,7 +93,10 @@ public sealed class LitigationStartService(
         if (await HasReservedAsync(PaidCallKind.LitigationSearch, request.RequestId, ct))
             return LitigationStartResult.Denied(AdmissionDenial.InFlight, "A litigation search for this request is already queued or in progress.");
 
-        var scopeKey = PaidCallScopeKeys.LitigationSearch(PaidCallScopeKeys.CanonicalIdentifier(request), keywords.Select(k => k.Value));
+        // The same matching mode the registration will use (LitigationSearchJobService reads it the same way from the same
+        // options), so the scope this search claims is the search that is actually bought.
+        var exactMatch = (bprOptions?.Value ?? new BprLitigationOptions()).ExactMatchFor(request.EntityType);
+        var scopeKey = PaidCallScopeKeys.LitigationSearch(PaidCallScopeKeys.CanonicalIdentifier(request), keywords.Select(k => k.Value), exactMatch);
 
         // #291 (plan §4.2a): another request may already hold this exact scope's report, retrieved within
         // the reuse window — take that instead of buying and analysing again. No admission at all: nothing
