@@ -211,4 +211,19 @@ public class ChatPanelRenderingTests
         var bannerCount = System.Text.RegularExpressions.Regex.Matches(html, "class=\"mca-partial-results-banner\"").Count;
         Assert.Equal(retrievedS1 ? 1 : 0, bannerCount);
     }
+
+    // #349: the chat panel shows the keyword-search note it is given, and nothing when there is none.
+    [Theory]
+    [InlineData(null)]
+    [InlineData("Keyword search covers MCA filings only on this server")]
+    public async Task Render_KeywordSearchNote_ShowsTheGivenNoteOnly(string? note)
+    {
+        var model = CreateBaseModel();
+        model.KeywordSearchNote = note;
+
+        var html = await RenderChatPanelAsync(model);
+
+        Assert.Equal(note is not null, html.Contains("mcaChatKeywordSearchNote"));
+        if (note is not null) Assert.Contains(note, html);
+    }
 }

@@ -7,6 +7,7 @@ using MCAROC_Analysis.Data.Entities;
 using MCAROC_Analysis.Models;
 using MCAROC_Analysis.Services;
 using MCAROC_Analysis.Services.Audit;
+using MCAROC_Analysis.Services.Chat;
 using Microsoft.Data.SqlTypes;
 using MCAROC_Analysis.Services.Dashboard;
 using MCAROC_Analysis.Services.Dossier;
@@ -25,6 +26,7 @@ using Microsoft.AspNetCore.Mvc.ViewEngines;
 using Microsoft.AspNetCore.Mvc.ViewFeatures;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -79,7 +81,7 @@ public class LitigationTabAndControllerTests : IAsyncLifetime
         public IFileProvider ContentRootFileProvider { get; set; } = new NullFileProvider();
     }
 
-    private static RequestsController CreateRequestsController(AppDbContext db, bool isReviewer)
+    private static RequestsController CreateRequestsController(AppDbContext db, bool isReviewer, FullTextSearchStatus? fullTextStatus = null)
     {
         var env = new FakeEnv(Path.GetTempPath());
         var fileVal = new FileValidationService(new ExcelSheetReader());
@@ -97,7 +99,8 @@ public class LitigationTabAndControllerTests : IAsyncLifetime
             corporateTimelineBuilder: new CorporateTimelineBuilder(db),
             logger: NullLogger<RequestsController>.Instance,
             derivativeService: derivService,
-            tokenService: null!);
+            tokenService: null!,
+            fullTextStatus: fullTextStatus);
 
         var services = new ServiceCollection();
         services.AddSingleton<IAuthenticationService>(new FakeAuthService(isReviewer));
@@ -1483,5 +1486,38 @@ public class LitigationTabAndControllerTests : IAsyncLifetime
 
         await viewResult.View.RenderAsync(viewContext);
         return writer.ToString();
+    }
+
+    private sealed class FixedFullTextStatus(FullTextSearchState state)
+        : FullTextSearchStatus(null!, new MemoryCache(new MemoryCacheOptions()))
+    {
+        public override Task<FullTextSearchState> GetAsync(CancellationToken ct) => Task.FromResult(state);
+    }
+
+    /// <summary>#349: the Details page passes the chat panel a note only when keyword search is off for some documents —
+    /// and a partial one when only one chunk table lacks its full-text index.</summary>
+    [Theory]
+    [InlineData(true, true, null)]
+    [InlineData(false, false, "unavailable on this server")]
+    [InlineData(true, false, "covers MCA filings only")]
+    [InlineData(false, true, "covers court orders only")]
+    public async Task Details_SetsKeywordSearchNote_ForMissingOrPartialFullText(bool filingsIndexed, bool ordersIndexed, string? expectedNote)
+    {
+        await using var db = CreateContext();
+        var client = new Client { ClientCode = "FTS" + Guid.NewGuid().ToString("N")[..6], ClientName = "FTS Co", CreatedDate = DateTime.UtcNow };
+        db.Clients.Add(client);
+        var request = new McaRequest { Client = client, CompanyName = "FTS Co", RequestNumber = $"REQ-{Guid.NewGuid():N}", CreatedDate = DateTime.UtcNow };
+        db.Requests.Add(request);
+        await db.SaveChangesAsync();
+        var state = new FullTextSearchState(Installed: true, filingsIndexed, ordersIndexed);
+
+        var controller = CreateRequestsController(db, isReviewer: true, new FixedFullTextStatus(state));
+        var model = Assert.IsType<RequestDetailsViewModel>(Assert.IsType<ViewResult>(
+            await controller.Details(request.RequestId, charge: null)).Model);
+
+        if (expectedNote is null)
+            Assert.Null(model.KeywordSearchNote);
+        else
+            Assert.Contains(expectedNote, model.KeywordSearchNote);
     }
 }
