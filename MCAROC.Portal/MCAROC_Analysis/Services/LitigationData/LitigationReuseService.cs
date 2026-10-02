@@ -108,7 +108,7 @@ public sealed class LitigationReuseService(
 
         var caseIdMap = await CopyCasesAsync(source.RequestId, sourceSnapshotId, requestId, snapshot.LitigationReportSnapshotId, ct);
         var orderIdMap = await CopyOrdersAsync(caseIdMap, ct);
-        var (toEnqueue, docIdMap) = await CopyOrderDocumentsAndChunksAsync(requestId, orderIdMap, caseIdMap, ct);
+        var (toEnqueue, docIdMap) = await CopyOrderDocumentsAndChunksAsync(source.RequestId, requestId, orderIdMap, caseIdMap, ct);
         await CopyAnalysisAsync(sourceSnapshotId, requestId, snapshot.LitigationReportSnapshotId, originId, caseIdMap, orderIdMap, docIdMap, ct);
 
         await tx.CommitAsync(ct);
@@ -183,7 +183,8 @@ public sealed class LitigationReuseService(
     /// orphaned) needs its id handed back to the caller to enqueue once the copy actually commits: the
     /// in-process <see cref="LitigationOrderDocumentQueue"/> has no idea a new row exists otherwise, and would
     /// otherwise sit untouched until the next process restart's recovery sweep.</summary>
-    private async Task<(List<long> ToEnqueue, Dictionary<long, long> DocIdMap)> CopyOrderDocumentsAndChunksAsync(long requestId, Dictionary<long, long> orderIdMap, Dictionary<long, long> caseIdMap, CancellationToken ct)
+    private async Task<(List<long> ToEnqueue, Dictionary<long, long> DocIdMap)> CopyOrderDocumentsAndChunksAsync(long sourceRequestId, long requestId,
+        Dictionary<long, long> orderIdMap, Dictionary<long, long> caseIdMap, CancellationToken ct)
     {
         var toEnqueue = new List<long>();
         var docIdMap = new Dictionary<long, long>();
@@ -220,8 +221,10 @@ public sealed class LitigationReuseService(
             }
         }
 
+        // Scoped to the source request, like every other read here: a chunk is request-owned, and a document id alone
+        // must never pull in another request's rows (found when a test seeded chunks with made-up document ids).
         var sourceChunks = await db.LitigationOrderChunks.AsNoTracking()
-            .Where(c => docIdMap.Keys.Contains(c.LitigationOrderDocumentId)).ToListAsync(ct);
+            .Where(c => c.RequestId == sourceRequestId && docIdMap.Keys.Contains(c.LitigationOrderDocumentId)).ToListAsync(ct);
         foreach (var c in sourceChunks)
             db.LitigationOrderChunks.Add(new LitigationOrderChunk
             {
