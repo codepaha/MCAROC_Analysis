@@ -769,43 +769,66 @@ public class LitigationCasePersistenceServiceTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task PersistSnapshotAsync_with_different_pdf_url_for_same_date_and_type_deduplicates_and_updates_order()
+    public async Task PersistSnapshotAsync_distinct_pdfs_on_same_date_and_type_remain_distinct_orders()
     {
-        // Fallback deduplication: when OrderDate and OrderType match, even a completely distinct URL updates in-place.
+        // P1: Distinct PDF documents on the same date and type must remain separate orders and never be collapsed.
         await using var db = CreateContext();
-        var request = await SeedRequestAsync(db, "D7");
-        var initialUrl = "https://source.example/orders/v1/hearing-2026-09-01.pdf";
-        var reportJson = ReportJson("TNKP070001332058", "OS", orderUrl: initialUrl);
-        var job = await SeedCompletedJobAsync(db, request.RequestId, reportJson);
-        var service = NewService(db);
-        await PersistJobAsync(service, job, CancellationToken.None);
+        var request = await SeedRequestAsync(db, "R374A");
+        var first = await SeedCompletedJobAsync(db, request.RequestId, ReportJson("TNKP070001332374", "OS", orderUrl: "https://source.example/first-order.pdf"));
+        await PersistJobAsync(NewService(db), first, CancellationToken.None);
 
-        var ordersInitial = await db.LitigationCaseOrders.Where(o => o.Case!.RequestId == request.RequestId).ToListAsync();
-        Assert.Single(ordersInitial);
+        var second = await SeedCompletedJobAsync(db, request.RequestId, ReportJson("TNKP070001332374", "OS", caseNo: "23/2020", orderUrl: "https://source.example/second-order.pdf"));
+        await PersistJobAsync(NewService(db), second, CancellationToken.None);
 
-        var documentInitial = await db.LitigationOrderDocuments.SingleAsync(d => d.LitigationCaseOrderId == ordersInitial[0].LitigationCaseOrderId);
-        documentInitial.Status = LitigationOrderDocumentStatus.Expired;
+        await using var verify = CreateContext();
+        Assert.Equal(2, await verify.LitigationCaseOrders.CountAsync(o => o.Case!.RequestId == request.RequestId));
+    }
+
+    [Fact]
+    public async Task PersistSnapshotAsync_fresh_signed_url_requeues_expired_document_without_retention_extension()
+    {
+        // P2: Refreshed presigned URL must reset an Expired document back to Pending even when retention deadline is not extended.
+        await using var db = CreateContext();
+        var request = await SeedRequestAsync(db, "R374B");
+        var retrieved = DateTime.UtcNow;
+        var first = await SeedCompletedJobAsync(db, request.RequestId, ReportJson("TNKP070001332375", "OS", orderUrl: "https://source.example/order.pdf?X-Amz-Signature=old"));
+        await PersistJobAsync(NewService(db), first, retrieved, CancellationToken.None);
+
+        var order = await db.LitigationCaseOrders.SingleAsync(o => o.Case!.RequestId == request.RequestId);
+        var document = await db.LitigationOrderDocuments.SingleAsync(d => d.LitigationCaseOrderId == order.LitigationCaseOrderId);
+        document.Status = LitigationOrderDocumentStatus.Expired;
         await db.SaveChangesAsync();
 
-        var refreshedUrl = "https://source.example/orders/v2/hearing-2026-09-01-signed.pdf";
-        var rerunReportJson = ReportJson("TNKP070001332058", "OS", caseNo: "25/2020", orderUrl: refreshedUrl);
-        var job2 = await SeedCompletedJobAsync(db, request.RequestId, rerunReportJson);
         var orderDocumentQueue = new LitigationOrderDocumentQueue();
-        var service2 = NewService(db, orderDocumentQueue: orderDocumentQueue);
-        await PersistJobAsync(service2, job2, CancellationToken.None);
+        var second = await SeedCompletedJobAsync(db, request.RequestId, ReportJson("TNKP070001332375", "OS", caseNo: "23/2020", orderUrl: "https://source.example/order.pdf?X-Amz-Signature=new"));
+        await PersistJobAsync(NewService(db, orderDocumentQueue: orderDocumentQueue), second, retrieved, CancellationToken.None);
 
-        await using var verifyDb = CreateContext();
-        var ordersAfter = await verifyDb.LitigationCaseOrders.Where(o => o.Case!.RequestId == request.RequestId).ToListAsync();
-        Assert.Single(ordersAfter);
-        Assert.Equal(ordersInitial[0].LitigationCaseOrderId, ordersAfter[0].LitigationCaseOrderId);
-        Assert.Equal(refreshedUrl, ordersAfter[0].PdfUrl);
-
-        var documentAfter = await verifyDb.LitigationOrderDocuments.SingleAsync(d => d.LitigationCaseOrderId == ordersAfter[0].LitigationCaseOrderId);
-        Assert.Equal(LitigationOrderDocumentStatus.Pending, documentAfter.Status);
-        Assert.Equal(1, documentAfter.RefreshCount);
+        await using var verify = CreateContext();
+        var reloaded = await verify.LitigationOrderDocuments.SingleAsync(d => d.LitigationCaseOrderId == order.LitigationCaseOrderId);
+        Assert.Equal(LitigationOrderDocumentStatus.Pending, reloaded.Status);
+        Assert.Equal(1, reloaded.RefreshCount);
 
         var enqueued = await DrainAvailableAsync(orderDocumentQueue, TimeSpan.FromSeconds(2));
-        Assert.Contains(documentAfter.LitigationOrderDocumentId, enqueued);
+        Assert.Contains(reloaded.LitigationOrderDocumentId, enqueued);
+    }
+
+    [Fact]
+    public async Task PersistSnapshotAsync_duplicate_signed_urls_inside_one_report_admit_one_order_and_document()
+    {
+        // P1: Intra-report duplicate orders with different presigned tokens must not cause foreign key insertion failures.
+        await using var db = CreateContext();
+        var request = await SeedRequestAsync(db, "R374C");
+        var report = TwoOrderReportJson("TNKP070001332376")
+            .Replace("https://source.example/o1.pdf", "https://source.example/order.pdf?X-Amz-Signature=one")
+            .Replace("https://source.example/o2.pdf", "https://source.example/order.pdf?X-Amz-Signature=two")
+            .Replace("10-01-2025", "09-01-2025").Replace("\"order_type\": \"Order\"", "\"order_type\": \"Judgment\"");
+
+        var job = await SeedCompletedJobAsync(db, request.RequestId, report);
+        await PersistJobAsync(NewService(db), job, CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var order = Assert.Single(await verify.LitigationCaseOrders.Where(o => o.Case!.RequestId == request.RequestId).ToListAsync());
+        Assert.Single(await verify.LitigationOrderDocuments.Where(d => d.LitigationCaseOrderId == order.LitigationCaseOrderId).ToListAsync());
     }
 }
 

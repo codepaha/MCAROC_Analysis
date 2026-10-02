@@ -325,10 +325,11 @@ public sealed class LitigationCasePersistenceService(
         litigationCase.LastSeenUtc = now;
     }
 
-    /// <summary>Adds only orders not already recorded for this case — de-duplicated primarily on
-    /// <c>(PdfUrl, OrderDate, OrderType)</c> or <c>(NormalizedPdfUrl, OrderDate, OrderType)</c> or
-    /// fallback <c>(OrderDate, OrderType)</c> when date and type are present. This prevents duplicate order rows
-    /// on the case card across refreshes when upstream order PDF URLs or presigned query signatures change (issue #362).
+    /// <summary>Adds only orders not already recorded for this case — de-duplicated on
+    /// <c>(PdfUrl, OrderDate, OrderType)</c> or <c>(NormalizedPdfUrl, OrderDate, OrderType)</c> where
+    /// <c>NormalizedPdfUrl</c> normalizes only ephemeral query parameters (such as S3 presigned signatures
+    /// and expiry) while strictly preserving document-selecting path and query parameters (issue #362).
+    /// Orders with distinct document identities on the same date/type are never collapsed.
     ///
     /// Also admits (#243/LIT-03) each order's <see cref="LitigationOrderDocument"/> — a brand-new order gets a
     /// new Pending document row, added to the SAME tracked-entity graph as the order itself so both are part
@@ -348,9 +349,7 @@ public sealed class LitigationCasePersistenceService(
     {
         if (orders.Count == 0) return ([], []);
 
-        // A brand-new case has LitigationCaseId == 0 at this point (not yet saved) — the query below then
-        // correctly finds zero existing rows rather than needing a separate "is this new" branch.
-        // We load full tracked entities if the case exists so we can update PdfUrl in-place on refresh.
+        // Load existing orders already persisted in the database for this case.
         var existing = litigationCase.LitigationCaseId != 0
             ? await db.LitigationCaseOrders
                 .Where(o => o.LitigationCaseId == litigationCase.LitigationCaseId)
@@ -359,14 +358,31 @@ public sealed class LitigationCasePersistenceService(
 
         var added = new List<object>();
         var toEnqueue = new List<LitigationOrderDocument>();
+        // Tracks newly admitted orders and documents within this single snapshot attempt to handle
+        // intra-report duplicates (e.g. two equivalent orders signed with different presigned tokens).
+        var newlyAdmitted = new List<(LitigationCaseOrder Order, LitigationOrderDocument Document)>();
+
         foreach (var order in orders)
         {
-            var match = FindMatchingOrder(existing, order);
+            // 1. Check if order matches an unsaved order newly added in this current method execution
+            var newMatch = newlyAdmitted.FirstOrDefault(n => IsSameOrder(n.Order, order));
+            if (newMatch.Order is not null)
+            {
+                // Intra-report duplicate of an order newly added in this batch.
+                // If the second appearance has a fresh URL, update it.
+                if (!string.IsNullOrWhiteSpace(order.PdfUrl) && newMatch.Order.PdfUrl != order.PdfUrl)
+                {
+                    newMatch.Order.PdfUrl = order.PdfUrl;
+                }
+                continue;
+            }
+
+            // 2. Check if order matches an existing database order
+            var match = existing.FirstOrDefault(e => IsSameOrder(e, order));
             if (match is not null)
             {
-                // If upstream refreshed the order's PdfUrl (e.g. freshly-signed S3 URL), update it in place
-                // on the existing order row so download retries use the fresh URL and no duplicate row is created.
-                if (!string.IsNullOrWhiteSpace(order.PdfUrl) && match.PdfUrl != order.PdfUrl)
+                var urlChanged = !string.IsNullOrWhiteSpace(order.PdfUrl) && match.PdfUrl != order.PdfUrl;
+                if (urlChanged)
                 {
                     match.PdfUrl = order.PdfUrl;
                     added.Add(match);
@@ -387,7 +403,7 @@ public sealed class LitigationCasePersistenceService(
                     toEnqueue.Add(document);
                 }
                 else if (document.Status is LitigationOrderDocumentStatus.Failed or LitigationOrderDocumentStatus.Expired
-                    && (retainedUntilUtc > document.RetainedUntilUtc || match.PdfUrl != order.PdfUrl))
+                    && (retainedUntilUtc > document.RetainedUntilUtc || urlChanged))
                 {
                     if (retainedUntilUtc > document.RetainedUntilUtc)
                     {
@@ -411,7 +427,6 @@ public sealed class LitigationCasePersistenceService(
             };
             db.LitigationCaseOrders.Add(newOrder);
             added.Add(newOrder);
-            existing.Add(newOrder);
 
             var newDocument = new LitigationOrderDocument
             {
@@ -420,52 +435,71 @@ public sealed class LitigationCasePersistenceService(
             db.LitigationOrderDocuments.Add(newDocument);
             added.Add(newDocument);
             toEnqueue.Add(newDocument);
+
+            newlyAdmitted.Add((newOrder, newDocument));
         }
         return (added, toEnqueue);
     }
 
-    private static LitigationCaseOrder? FindMatchingOrder(IEnumerable<LitigationCaseOrder> existing, BprLitigationOrder candidate)
+    private static bool IsSameOrder(LitigationCaseOrder existing, BprLitigationOrder candidate)
     {
         // 1. Exact match on (PdfUrl, OrderDate, OrderType)
-        var exact = existing.FirstOrDefault(e => e.PdfUrl == candidate.PdfUrl && e.OrderDate == candidate.OrderDate && e.OrderType == candidate.OrderType);
-        if (exact is not null) return exact;
+        if (existing.PdfUrl == candidate.PdfUrl && existing.OrderDate == candidate.OrderDate && existing.OrderType == candidate.OrderType)
+            return true;
 
-        // 2. Normalized URL match (e.g. S3 presigned URLs where query params / signatures changed between refreshes)
-        var candidateNorm = NormalizePdfUrl(candidate.PdfUrl);
-        if (!string.IsNullOrWhiteSpace(candidateNorm))
+        // 2. Normalized URL match: only compare normalized URLs if both are present and date/type match.
+        // Strips ephemeral signing parameters (e.g. S3 presigned tokens) while preserving document-selecting
+        // paths and query parameters.
+        if (existing.OrderDate == candidate.OrderDate && existing.OrderType == candidate.OrderType)
         {
-            var normMatch = existing.FirstOrDefault(e =>
-                NormalizePdfUrl(e.PdfUrl) == candidateNorm && e.OrderDate == candidate.OrderDate && e.OrderType == candidate.OrderType);
-            if (normMatch is not null) return normMatch;
+            var existingNorm = NormalizePdfUrl(existing.PdfUrl);
+            var candidateNorm = NormalizePdfUrl(candidate.PdfUrl);
+            if (!string.IsNullOrWhiteSpace(existingNorm) && !string.IsNullOrWhiteSpace(candidateNorm) && existingNorm == candidateNorm)
+                return true;
         }
 
-        // 3. Match on (OrderDate, OrderType) when both are non-empty
-        if (!string.IsNullOrWhiteSpace(candidate.OrderDate) && !string.IsNullOrWhiteSpace(candidate.OrderType))
-        {
-            var dateTypeMatch = existing.FirstOrDefault(e =>
-                e.OrderDate == candidate.OrderDate && e.OrderType == candidate.OrderType);
-            if (dateTypeMatch is not null) return dateTypeMatch;
-        }
-
-        return null;
+        return false;
     }
+
+    private static readonly HashSet<string> EphemeralQueryKeys = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "x-amz-algorithm", "x-amz-credential", "x-amz-date", "x-amz-expires",
+        "x-amz-signedheaders", "x-amz-signature", "x-amz-security-token",
+        "awsaccesskeyid", "signature", "expires"
+    };
 
     private static string NormalizePdfUrl(string? url)
     {
         if (string.IsNullOrWhiteSpace(url)) return string.Empty;
         var trimmed = url.Trim();
         var qIdx = trimmed.IndexOf('?');
-        if (qIdx != -1)
+        if (qIdx == -1) return trimmed;
+
+        var baseUri = trimmed[..qIdx];
+        var query = trimmed[(qIdx + 1)..];
+        var fIdx = query.IndexOf('#');
+        var fragment = string.Empty;
+        if (fIdx != -1)
         {
-            var query = trimmed[(qIdx + 1)..];
-            if (query.Contains("X-Amz-", StringComparison.OrdinalIgnoreCase)
-                || query.Contains("AWSAccessKeyId", StringComparison.OrdinalIgnoreCase)
-                || query.Contains("Signature=", StringComparison.OrdinalIgnoreCase))
+            fragment = query[fIdx..];
+            query = query[..fIdx];
+        }
+
+        var pairs = query.Split('&', StringSplitOptions.RemoveEmptyEntries);
+        var kept = new List<string>();
+        foreach (var pair in pairs)
+        {
+            var eqIdx = pair.IndexOf('=');
+            var key = eqIdx != -1 ? pair[..eqIdx] : pair;
+            if (!EphemeralQueryKeys.Contains(key))
             {
-                return trimmed[..qIdx];
+                kept.Add(pair);
             }
         }
-        return trimmed;
+
+        return kept.Count > 0
+            ? $"{baseUri}?{string.Join("&", kept)}{fragment}"
+            : $"{baseUri}{fragment}";
     }
 
     private static int? ParseYear(string? value) => int.TryParse(value, out var year) ? year : null;
