@@ -176,7 +176,7 @@ public class XfaFormReaderTests
 
     /// <summary>A PDF with one page per entry of <paramref name="pageTexts"/> (Helvetica), and — when
     /// <paramref name="datasets"/> is given — an AcroForm whose /XFA array carries that datasets packet.</summary>
-    private static byte[] MultiPagePdf(IReadOnlyList<string> pageTexts, string? datasets)
+    internal static byte[] MultiPagePdf(IReadOnlyList<string> pageTexts, string? datasets)
     {
         // Objects: 1 catalog, 2 pages, 3 font, [4 acroform, 5 datasets], then a page + content pair per page.
         var objects = new List<string>

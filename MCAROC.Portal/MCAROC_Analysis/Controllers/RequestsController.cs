@@ -496,6 +496,9 @@ public class RequestsController(
                 .Where(x => x.IngestionRunId == runId).ToListAsync();
             vm.PropertyExtractions = await PropertyParticularsExtractionService.LoadCompletedAsync(
                 db, vm.Charges.SelectMany(c => c.Events), HttpContext?.RequestAborted ?? CancellationToken.None);
+            vm.ChargeForms = await ChargeForms.LoadAsync(db, id, vm.Charges, HttpContext?.RequestAborted ?? CancellationToken.None,
+                HttpContext?.RequestServices?.GetService<Microsoft.Extensions.Caching.Memory.IMemoryCache>(),
+                HttpContext?.RequestServices?.GetService<ChargeFormBackfill>());
             // Lazy backfill for requests ingested before the Gemini extraction existed: idempotent, a no-op once every
             // text has a row, and inert when extraction is disabled or Vertex AI is not configured.
             if (HttpContext?.RequestServices?.GetService<PropertyParticularsExtractionService>() is { IsActive: true } propertyExtraction)

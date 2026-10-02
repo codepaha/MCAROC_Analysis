@@ -224,7 +224,7 @@
                     From the @(propertyEvent!.EventType.ToString().ToLowerInvariant()) filing@(propertyEvent.EventDate is { } pd ? " of " + pd.ToString("d MMM yyyy") : "") ·
                     @if (property.Source == PropertyReadingSource.Ai)
                     {
-                        <text>split by AI (Gemini); every value below was checked against the source wording@(property.RejectedFieldCount > 0 ? $" — {property.RejectedFieldCount} value(s) the AI returned were not in the source and are not shown" : "").</text>
+                        <text>every value below is written in the source wording@(property.RejectedFieldCount > 0 ? $" — {property.RejectedFieldCount} value(s) not found there are not shown" : "").</text>
                     }
                     else
                     {
@@ -324,6 +324,58 @@
                 @if (property.DetailsOnlyInReferencedDocument)
                 {
                     <p class="text-muted mb-0">The filing does not describe the property itself — it only refers to a schedule/annexure of the charge instrument.</p>
+                }
+            </div>
+        }
+
+        @if (Model.ChargeForms is { Count: > 0 } chargeForms)
+        {
+            @* #364: the charge e-forms (Form 8 / CHG-1) filed for this charge, read field by field from the form itself (#369) —
+               the property particulars and ownership exactly as the company filed them. *@
+            <div class="mca-charge-forms" style="margin-top:12px;">
+                <h4 style="font-size:1rem;">Filed charge forms</h4>
+                @foreach (var linked in chargeForms)
+                {
+                    var form = linked.Form;
+                    var formReading = PropertyReading.For(form.PropertyParticulars, null, null);
+                    <dl class="mca-kv" style="border-left:3px solid var(--bs-border-color, #ddd); padding-left:8px; margin-bottom:10px;">
+                        <div><dt>Instrument</dt><dd>@(form.InstrumentDescription ?? "Charge form")@(form.InstrumentDate is { } fd ? " · " + fd.ToString("d MMM yyyy") : "")</dd></div>
+                        @if (form.AmountSecuredCrore is { } cr)
+                        {
+                            <div><dt>Amount secured</dt><dd>₹@cr.ToString("N2") Cr</dd></div>
+                        }
+                        @if (form.HolderName is not null)
+                        {
+                            <div><dt>Charge holder</dt><dd>@form.HolderName</dd></div>
+                        }
+                        @if (form.OwnedByCompany == false)
+                        {
+                            <div>
+                                <dt>Ownership</dt>
+                                <dd>
+                                    <span class="mca-badge sev-watch">Not registered in the company's name</span>
+                                    @if (form.RegisteredOwner is not null)
+                                    {
+                                        <span> — registered in: @form.RegisteredOwner</span>
+                                    }
+                                    <span class="text-muted" style="font-size:0.85em;">(as stated in the form)</span>
+                                </dd>
+                            </div>
+                        }
+                        else if (form.OwnedByCompany == true)
+                        {
+                            <div><dt>Ownership</dt><dd>Registered in the company's name (as stated in the form)</dd></div>
+                        }
+                        @if (form.PropertyParticulars is not null)
+                        {
+                            <div><dt>Property as filed</dt><dd>@form.PropertyParticulars</dd></div>
+                            @foreach (var formItem in formReading.Items.Where(i => i.SurveyNumbers.Count > 0 || !i.Location.IsEmpty || i.UnitLines.Count > 0 || i.Areas.Count > 0))
+                            {
+                                <div><dt>Reading</dt><dd>@PropertyReading.Summarize(formItem)</dd></div>
+                            }
+                        }
+                        <div><dt>Source</dt><dd><a href="/Requests/@Model.Charge.RequestId/documents/@form.FilingDocumentId/view" target="_blank" rel="noopener">Open the filed form</a></dd></div>
+                    </dl>
                 }
             </div>
         }

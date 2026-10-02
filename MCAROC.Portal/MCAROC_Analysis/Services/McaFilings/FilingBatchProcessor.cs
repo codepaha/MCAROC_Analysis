@@ -371,6 +371,9 @@ public class FilingBatchProcessor(
                 Directory.CreateDirectory(textDir);
                 var textPath = Path.Combine(textDir, $"{document.FilingDocumentId}.txt");
                 await File.WriteAllTextAsync(textPath, extraction.FullText, ct);
+                // #364: a form's XFA fields beside its text, so charge forms are read without reopening the PDF.
+                if (extraction.XfaFields is { Count: > 0 } xfa)
+                    await XfaFormReader.WriteSidecarAsync(textPath, xfa, ct);
 
                 document.ExtractedTextPath = textPath;
                 document.ExtractedCharCount = extraction.FullText.Length;
