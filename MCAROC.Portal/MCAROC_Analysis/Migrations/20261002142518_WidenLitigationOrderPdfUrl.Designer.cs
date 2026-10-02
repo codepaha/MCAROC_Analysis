@@ -5,6 +5,7 @@ using Microsoft.Data.SqlTypes;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 #nullable disable
@@ -12,9 +13,11 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace MCAROC_Analysis.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20261002142518_WidenLitigationOrderPdfUrl")]
+    partial class WidenLitigationOrderPdfUrl
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -1047,48 +1050,6 @@ namespace MCAROC_Analysis.Migrations
                         .IsUnique();
 
                     b.ToTable("CalculationLedgerEntries");
-                });
-
-            modelBuilder.Entity("MCAROC_Analysis.Data.Entities.ChargeDocumentLink", b =>
-                {
-                    b.Property<long>("ChargeDocumentLinkId")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("bigint");
-
-                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("ChargeDocumentLinkId"));
-
-                    b.Property<long>("BatchId")
-                        .HasColumnType("bigint");
-
-                    b.Property<long>("FilingDocumentId")
-                        .HasColumnType("bigint");
-
-                    b.Property<long?>("LinkedFromDocumentId")
-                        .HasColumnType("bigint");
-
-                    b.Property<string>("Method")
-                        .IsRequired()
-                        .HasMaxLength(30)
-                        .HasColumnType("nvarchar(30)");
-
-                    b.Property<long>("RequestId")
-                        .HasColumnType("bigint");
-
-                    b.Property<string>("RocChargeNumber")
-                        .IsRequired()
-                        .HasMaxLength(50)
-                        .HasColumnType("nvarchar(50)");
-
-                    b.HasKey("ChargeDocumentLinkId");
-
-                    b.HasIndex("FilingDocumentId");
-
-                    b.HasIndex("RequestId", "RocChargeNumber");
-
-                    b.HasIndex("BatchId", "RocChargeNumber", "FilingDocumentId")
-                        .IsUnique();
-
-                    b.ToTable("ChargeDocumentLinks");
                 });
 
             modelBuilder.Entity("MCAROC_Analysis.Data.Entities.ChargeSecurityComponent", b =>
@@ -4181,10 +4142,6 @@ namespace MCAROC_Analysis.Migrations
 
                     SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("BatchId"));
 
-                    b.Property<string>("ChargeLinksStamp")
-                        .HasMaxLength(100)
-                        .HasColumnType("nvarchar(100)");
-
                     b.Property<DateTime?>("CompletedDate")
                         .HasColumnType("datetime2");
 
@@ -6432,17 +6389,6 @@ namespace MCAROC_Analysis.Migrations
                         .IsRequired();
 
                     b.Navigation("Snapshot");
-                });
-
-            modelBuilder.Entity("MCAROC_Analysis.Data.Entities.ChargeDocumentLink", b =>
-                {
-                    b.HasOne("MCAROC_Analysis.Data.Entities.McaFilingDocument", "FilingDocument")
-                        .WithMany()
-                        .HasForeignKey("FilingDocumentId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("FilingDocument");
                 });
 
             modelBuilder.Entity("MCAROC_Analysis.Data.Entities.ChargeSecurityComponent", b =>

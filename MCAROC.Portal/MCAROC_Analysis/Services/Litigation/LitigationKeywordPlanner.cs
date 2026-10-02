@@ -65,7 +65,30 @@ public static partial class LitigationKeywordPlanner
     private static partial Regex Whitespace();
 }
 
-public sealed record LitigationKeyword(string Value, LitigationKeywordSource Source);
+public sealed record LitigationKeyword(string Value, LitigationKeywordSource Source)
+{
+    private static readonly System.Text.Json.JsonSerializerOptions ReadOptions = new()
+    {
+        PropertyNameCaseInsensitive = true,
+        Converters = { new System.Text.Json.Serialization.JsonStringEnumConverter() }
+    };
+
+    /// <summary>The keywords stored on a search job (<c>LitigationSearchJob.KeywordsJson</c>). The job writes
+    /// <c>{"value":…,"source":"LegalName"}</c> — lower-case names, the source as text — which a default
+    /// <c>Deserialize&lt;LitigationKeyword&gt;</c> does not match (names are case-sensitive), leaving every value empty and every
+    /// source <c>LegalName</c>. Names are matched ignoring case and the source may be text or a number; unreadable JSON gives an
+    /// empty list.</summary>
+    public static IReadOnlyList<LitigationKeyword> ParseJson(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json)) return [];
+        try
+        {
+            return System.Text.Json.JsonSerializer.Deserialize<List<LitigationKeyword>>(json, ReadOptions)?
+                .Where(k => !string.IsNullOrWhiteSpace(k.Value)).ToList() ?? [];
+        }
+        catch (System.Text.Json.JsonException) { return []; }
+    }
+}
 
 public sealed record ApprovedLitigationAlias(string Value, LitigationKeywordSource Source)
 {

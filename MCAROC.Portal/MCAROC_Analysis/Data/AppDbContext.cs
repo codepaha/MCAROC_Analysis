@@ -302,6 +302,9 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
         {
             e.HasKey(x => x.LitigationCaseOrderId);
             // Unique, not just indexed — same concurrent-import backstop reasoning as LitigationCase above.
+            // A signed storage link: the longest in a real 837-order report was 489 characters, over the default 450.
+            // 700 characters keeps the unique key below SQL Server's 1,700-byte index limit with a typical date and type.
+            e.Property(x => x.PdfUrl).HasMaxLength(700);
             e.HasIndex(x => new { x.LitigationCaseId, x.PdfUrl, x.OrderDate, x.OrderType }).IsUnique();
             e.HasOne(x => x.Case).WithMany(c => c.Orders).HasForeignKey(x => x.LitigationCaseId).OnDelete(DeleteBehavior.Cascade);
         });

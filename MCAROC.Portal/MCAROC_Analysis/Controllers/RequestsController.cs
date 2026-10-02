@@ -905,15 +905,7 @@ public class RequestsController(
                     }
                     litVm.CourtSummaryGrid = summaryGrid;
 
-                    List<LitigationKeyword> keywords = [];
-                    if (!string.IsNullOrWhiteSpace(job.KeywordsJson))
-                    {
-                        try
-                        {
-                            keywords = JsonSerializer.Deserialize<List<LitigationKeyword>>(job.KeywordsJson) ?? [];
-                        }
-                        catch { }
-                    }
+                    var keywords = LitigationKeyword.ParseJson(job.KeywordsJson).ToList();
 
                     var allCompletedSnapshots = await db.LitigationReportSnapshots
                         .AsNoTracking()

@@ -48,10 +48,17 @@ public static partial class LitigationCaseIdentity
         return candidate;
     }
 
+    /// <summary>The width of <c>LitigationCase.ProceedingType</c>. A "case type" the provider sends that normalises to more than
+    /// this is a case title or several case numbers run together, not a type code.</summary>
+    public const int MaxProceedingTypeLength = 30;
+
     public static string? NormaliseProceedingType(string? value)
     {
         var candidate = NonAlphaNumeric().Replace(NormaliseDisplay(value), string.Empty).ToUpperInvariant();
         if (candidate.Length == 0 || IsPlaceholder(candidate)) return null;
+        // Not usable as an identity key (it would not fit the column either) — no type, so no automatic merge. The
+        // provider's own text is kept as received in LitigationCase.CaseType.
+        if (candidate.Length > MaxProceedingTypeLength) return null;
 
         return candidate switch
         {

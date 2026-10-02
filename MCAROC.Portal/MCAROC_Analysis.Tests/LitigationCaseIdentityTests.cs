@@ -14,6 +14,13 @@ public sealed class LitigationCaseIdentityTests
     public void NormaliseCnr_accepts_only_a_valid_non_placeholder_identifier(string source, string? expected) =>
         Assert.Equal(expected, LitigationCaseIdentity.NormaliseCnr(source));
 
+    [Theory]
+    [InlineData("CP(IB) No. 593/KB/2017 C.A.(IB) No. 506/KB/2018 with connected applications", null)] // a case title, longer than the column
+    [InlineData("CP(IB) No. 593/KB/2017", "CPIBNO593KB2017")]
+    [InlineData("O.S.", "OS")]
+    public void NormaliseProceedingType_gives_no_key_for_text_too_long_to_be_a_type_code(string source, string? expected) =>
+        Assert.Equal(expected, LitigationCaseIdentity.NormaliseProceedingType(source));
+
     [Fact]
     public void CanAutoDedupe_requires_a_shared_valid_Cnr_and_compatible_type()
     {

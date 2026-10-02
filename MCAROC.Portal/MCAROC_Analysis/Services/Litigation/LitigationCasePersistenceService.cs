@@ -325,9 +325,11 @@ public sealed class LitigationCasePersistenceService(
         litigationCase.LastSeenUtc = now;
     }
 
-    /// <summary>Adds only orders not already recorded for this case — de-duplicated on (PdfUrl, OrderDate,
-    /// OrderType), the closest available approximation of identity BPR's order records offer (they carry no
-    /// order-level id of their own); backstopped by a DB unique index for the concurrent-import case.
+    /// <summary>Adds only orders not already recorded for this case — de-duplicated on
+    /// <c>(PdfUrl, OrderDate, OrderType)</c> or <c>(NormalizedPdfUrl, OrderDate, OrderType)</c> where
+    /// <c>NormalizedPdfUrl</c> normalizes only ephemeral query parameters (such as S3 presigned signatures
+    /// and expiry) while strictly preserving document-selecting path and query parameters (issue #362).
+    /// Orders with distinct document identities on the same date/type are never collapsed.
     ///
     /// Also admits (#243/LIT-03) each order's <see cref="LitigationOrderDocument"/> — a brand-new order gets a
     /// new Pending document row, added to the SAME tracked-entity graph as the order itself so both are part
@@ -335,8 +337,8 @@ public sealed class LitigationCasePersistenceService(
     /// <c>EnsureSnapshotAsync</c>: never commit an order without a matching document eligible for import, and
     /// never leave a race between the two visible to any other connection). An order this report re-surfaces
     /// that ALREADY has a document is an explicit, auditable refresh opportunity if that document previously
-    /// failed/expired and <paramref name="retainedUntilUtc"/> genuinely extends its window — see
-    /// <see cref="LitigationOrderDocument"/>'s own remarks for why this is the only "refresh/refetch"
+    /// failed/expired and <paramref name="retainedUntilUtc"/> genuinely extends its window (or if a fresh URL was
+    /// provided) — see <see cref="LitigationOrderDocument"/>'s own remarks for why this is the only "refresh/refetch"
     /// mechanism epic #239 requires.
     ///
     /// Returns the newly-added/modified order and document entities (so a caller can precisely detach them if
@@ -347,21 +349,53 @@ public sealed class LitigationCasePersistenceService(
     {
         if (orders.Count == 0) return ([], []);
 
-        // A brand-new case has LitigationCaseId == 0 at this point (not yet saved) — the query below then
-        // correctly finds zero existing rows rather than needing a separate "is this new" branch.
-        var existing = await db.LitigationCaseOrders
-            .Where(o => o.LitigationCaseId == litigationCase.LitigationCaseId)
-            .Select(o => new { o.LitigationCaseOrderId, o.PdfUrl, o.OrderDate, o.OrderType })
-            .ToListAsync(ct);
+        // Load existing orders already persisted in the database for this case.
+        var existing = litigationCase.LitigationCaseId != 0
+            ? await db.LitigationCaseOrders
+                .Where(o => o.LitigationCaseId == litigationCase.LitigationCaseId)
+                .ToListAsync(ct)
+            : [];
 
         var added = new List<object>();
         var toEnqueue = new List<LitigationOrderDocument>();
+        // Tracks newly admitted orders and documents within this single snapshot attempt to handle
+        // intra-report duplicates (e.g. two equivalent orders signed with different presigned tokens).
+        var newlyAdmitted = new List<(LitigationCaseOrder Order, LitigationOrderDocument Document)>();
+        // Tracks newly admitted documents for pre-existing orders within this batch to prevent
+        // duplicate admissions when duplicate report rows match an existing order that has no document yet.
+        var admittedExistingDocuments = new Dictionary<long, LitigationOrderDocument>();
+
         foreach (var order in orders)
         {
-            var match = existing.FirstOrDefault(e => e.PdfUrl == order.PdfUrl && e.OrderDate == order.OrderDate && e.OrderType == order.OrderType);
+            // 1. Check if order matches an unsaved order newly added in this current method execution
+            var newMatch = newlyAdmitted.FirstOrDefault(n => IsSameOrder(n.Order, order));
+            if (newMatch.Order is not null)
+            {
+                // Intra-report duplicate of an order newly added in this batch.
+                // If the second appearance has a fresh URL, update it.
+                if (!string.IsNullOrWhiteSpace(order.PdfUrl) && newMatch.Order.PdfUrl != order.PdfUrl)
+                {
+                    newMatch.Order.PdfUrl = order.PdfUrl;
+                }
+                continue;
+            }
+
+            // 2. Check if order matches an existing database order
+            var match = existing.FirstOrDefault(e => IsSameOrder(e, order));
             if (match is not null)
             {
-                var document = await db.LitigationOrderDocuments.FirstOrDefaultAsync(d => d.LitigationCaseOrderId == match.LitigationCaseOrderId, ct);
+                var urlChanged = !string.IsNullOrWhiteSpace(order.PdfUrl) && match.PdfUrl != order.PdfUrl;
+                if (urlChanged)
+                {
+                    match.PdfUrl = order.PdfUrl;
+                    added.Add(match);
+                }
+
+                if (!admittedExistingDocuments.TryGetValue(match.LitigationCaseOrderId, out var document))
+                {
+                    document = await db.LitigationOrderDocuments.FirstOrDefaultAsync(d => d.LitigationCaseOrderId == match.LitigationCaseOrderId, ct);
+                }
+
                 if (document is null)
                 {
                     // A pre-existing order with no document yet — either persisted before #243 shipped, or an
@@ -374,11 +408,15 @@ public sealed class LitigationCasePersistenceService(
                     db.LitigationOrderDocuments.Add(document);
                     added.Add(document);
                     toEnqueue.Add(document);
+                    admittedExistingDocuments[match.LitigationCaseOrderId] = document;
                 }
                 else if (document.Status is LitigationOrderDocumentStatus.Failed or LitigationOrderDocumentStatus.Expired
-                    && retainedUntilUtc > document.RetainedUntilUtc)
+                    && (retainedUntilUtc > document.RetainedUntilUtc || urlChanged))
                 {
-                    document.RetainedUntilUtc = retainedUntilUtc;
+                    if (retainedUntilUtc > document.RetainedUntilUtc)
+                    {
+                        document.RetainedUntilUtc = retainedUntilUtc;
+                    }
                     document.Status = LitigationOrderDocumentStatus.Pending;
                     document.RefreshCount++;
                     document.LastRefreshedUtc = now;
@@ -387,6 +425,7 @@ public sealed class LitigationCasePersistenceService(
                     // the change tracker across attempts while this method's own return value moves on.
                     added.Add(document);
                     toEnqueue.Add(document);
+                    admittedExistingDocuments[match.LitigationCaseOrderId] = document;
                 }
                 continue;
             }
@@ -405,8 +444,71 @@ public sealed class LitigationCasePersistenceService(
             db.LitigationOrderDocuments.Add(newDocument);
             added.Add(newDocument);
             toEnqueue.Add(newDocument);
+
+            newlyAdmitted.Add((newOrder, newDocument));
         }
         return (added, toEnqueue);
+    }
+
+    private static bool IsSameOrder(LitigationCaseOrder existing, BprLitigationOrder candidate)
+    {
+        // 1. Exact match on (PdfUrl, OrderDate, OrderType)
+        if (existing.PdfUrl == candidate.PdfUrl && existing.OrderDate == candidate.OrderDate && existing.OrderType == candidate.OrderType)
+            return true;
+
+        // 2. Normalized URL match: only compare normalized URLs if both are present and date/type match.
+        // Strips ephemeral signing parameters (e.g. S3 presigned tokens) while preserving document-selecting
+        // paths and query parameters.
+        if (existing.OrderDate == candidate.OrderDate && existing.OrderType == candidate.OrderType)
+        {
+            var existingNorm = NormalizePdfUrl(existing.PdfUrl);
+            var candidateNorm = NormalizePdfUrl(candidate.PdfUrl);
+            if (!string.IsNullOrWhiteSpace(existingNorm) && !string.IsNullOrWhiteSpace(candidateNorm) && existingNorm == candidateNorm)
+                return true;
+        }
+
+        return false;
+    }
+
+    private static readonly HashSet<string> EphemeralQueryKeys = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "x-amz-algorithm", "x-amz-credential", "x-amz-date", "x-amz-expires",
+        "x-amz-signedheaders", "x-amz-signature", "x-amz-security-token",
+        "awsaccesskeyid", "signature", "expires"
+    };
+
+    private static string NormalizePdfUrl(string? url)
+    {
+        if (string.IsNullOrWhiteSpace(url)) return string.Empty;
+        var trimmed = url.Trim();
+        var qIdx = trimmed.IndexOf('?');
+        if (qIdx == -1) return trimmed;
+
+        var baseUri = trimmed[..qIdx];
+        var query = trimmed[(qIdx + 1)..];
+        var fIdx = query.IndexOf('#');
+        var fragment = string.Empty;
+        if (fIdx != -1)
+        {
+            fragment = query[fIdx..];
+            query = query[..fIdx];
+        }
+
+        var pairs = query.Split('&', StringSplitOptions.RemoveEmptyEntries);
+        var kept = new List<string>();
+        foreach (var pair in pairs)
+        {
+            var eqIdx = pair.IndexOf('=');
+            var key = eqIdx != -1 ? pair[..eqIdx] : pair;
+            if (!EphemeralQueryKeys.Contains(key))
+            {
+                kept.Add(pair);
+            }
+        }
+
+        return kept.Count > 0
+            ? $"{baseUri}?{string.Join("&", kept)}{fragment}"
+            : $"{baseUri}{fragment}";
     }
 
     private static int? ParseYear(string? value) => int.TryParse(value, out var year) ? year : null;
