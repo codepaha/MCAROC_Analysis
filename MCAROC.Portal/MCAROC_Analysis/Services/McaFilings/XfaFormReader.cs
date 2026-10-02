@@ -114,6 +114,28 @@ public static class XfaFormReader
         return false;
     }
 
+    /// <summary>#364: where a document's XFA fields are kept — beside its extracted text file.</summary>
+    public static string SidecarPath(string extractedTextPath) =>
+        Path.Combine(Path.GetDirectoryName(extractedTextPath) ?? "", Path.GetFileNameWithoutExtension(extractedTextPath) + ".xfa.json");
+
+    /// <summary>Writes the fields beside the text. An empty list is written too: it records that the PDF was checked and
+    /// has no form data, so it is never re-read.</summary>
+    public static async Task WriteSidecarAsync(string extractedTextPath, IReadOnlyList<XfaField> fields, CancellationToken ct)
+    {
+        var path = SidecarPath(extractedTextPath);
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        await File.WriteAllTextAsync(path, System.Text.Json.JsonSerializer.Serialize(fields), ct);
+    }
+
+    /// <summary>The fields saved beside the text, or null when none were saved (never checked).</summary>
+    public static async Task<IReadOnlyList<XfaField>?> ReadSidecarAsync(string extractedTextPath, CancellationToken ct)
+    {
+        var path = SidecarPath(extractedTextPath);
+        if (!File.Exists(path)) return null;
+        try { return System.Text.Json.JsonSerializer.Deserialize<List<XfaField>>(await File.ReadAllTextAsync(path, ct)) ?? []; }
+        catch (System.Text.Json.JsonException) { return null; }
+    }
+
     /// <summary>The fields as text for everything that reads a document's text (chat chunks, classification, Gemini
     /// extraction): one "Name: value" line per field, under a single page marker. Values are kept verbatim; only line
     /// breaks inside a value are folded to spaces so each field stays one line.</summary>

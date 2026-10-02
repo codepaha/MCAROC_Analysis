@@ -33,6 +33,9 @@ public class RequestDetailsViewModel
     public List<RocCharge> Charges { get; set; } = [];
     /// <summary>Completed Gemini property-particulars extractions for these charges' texts, keyed by text hash.</summary>
     public IReadOnlyDictionary<string, PropertyParticularsExtraction> PropertyExtractions { get; set; } = new Dictionary<string, PropertyParticularsExtraction>();
+    /// <summary>#364: the filed charge e-forms (XFA) linked to each charge, keyed by RocCharge.ChargeId.</summary>
+    public IReadOnlyDictionary<long, IReadOnlyList<MCAROC_Analysis.Services.PropertyParticulars.LinkedChargeForm>> ChargeForms { get; set; }
+        = new Dictionary<long, IReadOnlyList<MCAROC_Analysis.Services.PropertyParticulars.LinkedChargeForm>>();
     public List<MsmePayment> MsmePayments { get; set; } = [];
     public List<GstRegistration> GstRegistrations { get; set; } = [];
     public List<EpfoContribution> EpfoContributions { get; set; } = [];

@@ -332,6 +332,7 @@ builder.Services.AddScoped(sp => new DocumentRetriever(sp.GetRequiredService<App
 builder.Services.AddScoped(sp => new LitigationDocumentRetriever(sp.GetRequiredService<AppDbContext>(), ChatRetrievalOptions.Default));
 builder.Services.AddScoped<LitigationOrderOutcomeQuery>();
 builder.Services.AddScoped<FullTextSearchStatus>();
+builder.Services.AddSingleton<MCAROC_Analysis.Services.PropertyParticulars.ChargeFormBackfill>();
 builder.Services.AddHostedService<FullTextSearchStartupCheck>();
 builder.Services.AddScoped<RetrievalContextBuilder>();
 builder.Services.AddScoped<ChatService>();

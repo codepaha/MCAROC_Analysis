@@ -12,7 +12,8 @@ public record ChargeDrawerViewModel(
     IReadOnlyList<ChargeLitigationLink>? Litigation = null,
     IReadOnlyDictionary<string, PropertyParticularsExtraction>? PropertyExtractions = null,
     CompanyProfile? CompanyProfile = null,
-    IReadOnlyList<EpfoEstablishment>? EpfoEstablishments = null)
+    IReadOnlyList<EpfoEstablishment>? EpfoEstablishments = null,
+    IReadOnlyList<MCAROC_Analysis.Services.PropertyParticulars.LinkedChargeForm>? ChargeForms = null)
 {
     /// <summary>Charges-section findings whose SourceReferenceJson entityIds contain this charge's PK.
     /// Portfolio-level findings (lender concentration, registered exposure) name no single charge and
@@ -23,12 +24,13 @@ public record ChargeDrawerViewModel(
         IReadOnlyList<ChargeLitigationLink>? litigation = null,
         IReadOnlyDictionary<string, PropertyParticularsExtraction>? propertyExtractions = null,
         CompanyProfile? companyProfile = null,
-        IReadOnlyList<EpfoEstablishment>? epfoEstablishments = null)
+        IReadOnlyList<EpfoEstablishment>? epfoEstablishments = null,
+        IReadOnlyList<MCAROC_Analysis.Services.PropertyParticulars.LinkedChargeForm>? chargeForms = null)
     {
         var related = allFindings
             .Where(f => f.Section == FindingSection.Charges && NamesCharge(f.SourceReferenceJson, charge.ChargeId))
             .ToList();
-        return new ChargeDrawerViewModel(charge, related, litigation, propertyExtractions, companyProfile, epfoEstablishments);
+        return new ChargeDrawerViewModel(charge, related, litigation, propertyExtractions, companyProfile, epfoEstablishments, chargeForms);
     }
 
     private static bool NamesCharge(string? sourceReferenceJson, long chargeId)

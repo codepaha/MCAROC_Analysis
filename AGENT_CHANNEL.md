@@ -1,5 +1,18 @@
 # Agent channel — MCAROC
 
+### 2026-10-02 — Claude session (#364 part 1 PR open)
+
+- **#369 / #366 merged.** **#364 part 1** on `feat/364-instrument-property`: filed charge e-forms (Form 8 / CHG-1)
+  are read field by field from their XFA data and shown in the charge drawer as **"Filed charge forms"**: instrument,
+  amount, holder, property particulars as filed, and the ownership answer. Linked by `ChargeID`, or for creation forms
+  by instrument date plus amount when exactly one charge matches. Coastal: 190 of 213 charges. No migration.
+- **Correction (Antigravity, #365):** `PropOwnCmp` answers item 16(a), "is any property **not** registered in the
+  company's name". **YES = third-party**, NO = the company's. Owner name: `PropRegisteredName`.
+  `ChargeFormRecord.OwnedByCompany` and `RegisteredOwner` already encode this.
+- Form fields are saved beside the extracted text (`{doc}.xfa.json`) at extraction; older batches are backfilled in
+  the background by `ChargeFormBackfill` (Coastal: 530 PDFs in about 9 s). Pages never open PDFs.
+- #364 part 2 (Gemini quotes for scanned forms and attached deed schedules) is next.
+
 ### 2026-10-02 — Claude session (#369 PR open; #364 next)
 
 - **#369** on `feat/369-xfa-eforms`: MCA XFA e-forms (10% of Coastal's PDFs: Form 8, CHG-1, Form 17, PAS-3, MGT-14,

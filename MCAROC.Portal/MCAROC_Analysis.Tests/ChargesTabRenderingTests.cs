@@ -509,7 +509,8 @@ public class ChargesTabRenderingTests
 
         var html = await RenderChargesTabAsync(vm);
 
-        Assert.Contains("split by AI (Gemini)", html);
+        Assert.Contains("every value below is written in the source wording", html);
+        Assert.DoesNotContain("by AI", html); // owner rule: extracted data is shown as data, not labelled as AI output
         Assert.Contains("1 of 2", html);
         Assert.Contains("2 of 2", html);
         Assert.Contains("Belongs to", html);
@@ -583,5 +584,46 @@ public class ChargesTabRenderingTests
 
         Assert.Contains("CHG-101", html);
         Assert.DoesNotContain("Case found", html);
+    }
+
+    // ── #364: filed charge e-forms (XFA) in the drawer ──
+
+    [Fact]
+    public async Task Charge_drawer_shows_the_filed_charge_form_with_its_property_and_ownership_answer()
+    {
+        var vm = CreateViewModel();
+        var charge = ChargeWithParticulars();
+        vm.Charges = [charge];
+        var form = new MCAROC_Analysis.Services.PropertyParticulars.ChargeFormRecord(
+            FilingDocumentId: 777, ChargeId: null, InstrumentDescription: "Deed of Hypothecation dated 07/09/2015",
+            InstrumentDate: new DateOnly(2015, 9, 7), AmountSecuredRupees: 4_492_800_000m, HolderName: "Example Bank Limited",
+            PropertyParticulars: "Flat No. 305, B Wing, Sunrise Society, Survey No. 12/3, Village Baner, Pune 411045", OwnedByCompany: false,
+            RegisteredOwner: "Mr. A. Director and Mrs. B. Director");
+        vm.ChargeForms = new Dictionary<long, IReadOnlyList<MCAROC_Analysis.Services.PropertyParticulars.LinkedChargeForm>>
+        {
+            [charge.ChargeId] = [new(form, MCAROC_Analysis.Services.PropertyParticulars.ChargeFormLinkBasis.CreationDateAndAmount)]
+        };
+
+        var html = await RenderChargesTabAsync(vm);
+
+        Assert.Contains("Filed charge forms", html);
+        Assert.Contains("Deed of Hypothecation dated 07/09/2015", html);
+        Assert.Contains("₹449.28 Cr", html);
+        Assert.Contains("Flat No. 305, B Wing, Sunrise Society, Survey No. 12/3, Village Baner, Pune 411045", html); // verbatim
+        Assert.Contains("Not registered in the company's name", html);
+        Assert.Contains("registered in: Mr. A. Director and Mrs. B. Director", html);
+        Assert.Contains($"/Requests/{charge.RequestId}/documents/777/view", html);
+        Assert.DoesNotContain("by AI", html);
+    }
+
+    [Fact]
+    public async Task Charge_drawer_has_no_filed_forms_section_when_none_is_linked()
+    {
+        var vm = CreateViewModel();
+        vm.Charges = [ChargeWithParticulars()];
+
+        var html = await RenderChargesTabAsync(vm);
+
+        Assert.DoesNotContain("Filed charge forms", html);
     }
 }
