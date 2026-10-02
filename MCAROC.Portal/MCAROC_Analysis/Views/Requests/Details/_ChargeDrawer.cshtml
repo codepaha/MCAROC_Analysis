@@ -206,10 +206,15 @@
 
             var addressPool = ChargedPropertyAddressRules.BuildAddressPool(Model.CompanyProfile, Model.EpfoEstablishments);
             var chargePremisesMatch = addressPool.Count > 0 ? ChargedPropertyAddressRules.ClassifyCharge(c, addressPool, Model.PropertyExtractions) : null;
+            var thirdPartyOwners = ChargedPropertyAddressRules.GetThirdPartyOwners(c, Model.CompanyProfile, Model.PropertyExtractions);
         }
         @if (chargePremisesMatch?.IsCompanyPremises == true)
         {
             <p style="margin-top:10px;"><span class="mca-finding-label">Premises:</span> <span class="mca-badge sev-watch">Own premises: @chargePremisesMatch.Label</span></p>
+        }
+        @if (thirdPartyOwners.Count > 0)
+        {
+            <p style="margin-top:10px;"><span class="mca-finding-label">Collateral:</span> <span class="mca-badge sev-watch">Third-party collateral: @string.Join(", ", thirdPartyOwners)</span></p>
         }
         @if (property.HasContent)
         {
@@ -272,7 +277,19 @@
                         }
                         @if (item.Owner is not null)
                         {
-                            <div><dt>Belongs to</dt><dd>@item.Owner</dd></div>
+                            <div>
+                                <dt>Belongs to</dt>
+                                <dd>
+                                    @if (!ChargedPropertyAddressRules.IsSelfCompany(item.Owner, Model.CompanyProfile))
+                                    {
+                                        <span class="mca-badge sev-watch">Third-party: @item.Owner</span>
+                                    }
+                                    else
+                                    {
+                                        @item.Owner
+                                    }
+                                </dd>
+                            </div>
                         }
                         @foreach (var unitLine in item.UnitLines)
                         {
