@@ -25,8 +25,11 @@ public class VertexAiExtractionService
     public const string PromptVersion = "1.0";
     private const int MaxContextCharsPerDocument = 40_000; // guards prompt size for very large native-text documents
 
-    private readonly GenAiClient _client;
-    private readonly ILogger<VertexAiExtractionService> _logger;
+    private readonly GenAiClient _client = null!;
+    private readonly ILogger<VertexAiExtractionService> _logger = null!;
+
+    /// <summary>For test doubles that override <see cref="ExtractAsync"/> — the real ctor eagerly loads GCP creds.</summary>
+    protected VertexAiExtractionService() { }
 
     public VertexAiExtractionService(string projectId, string location, string credentialsPath, ILogger<VertexAiExtractionService> logger)
     {
@@ -36,7 +39,7 @@ public class VertexAiExtractionService
         _client = new GenAiClient(vertexAI: true, project: projectId, location: location, credential: credential);
     }
 
-    public async Task<ExtractionOutcome> ExtractAsync(
+    public virtual async Task<ExtractionOutcome> ExtractAsync(
         string srn, FilingCategory category, string? dominantFormType,
         IReadOnlyList<FilingDocumentContext> documents, CancellationToken ct)
     {

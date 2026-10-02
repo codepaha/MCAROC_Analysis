@@ -66,8 +66,11 @@ public partial class DocumentChunkingOrchestrator(
 
             var fullText = await File.ReadAllTextAsync(document.ExtractedTextPath, ct);
             var textChunks = TextChunker.Chunk(fullText, ChatIndexingOptions.Default);
+            // #359: the same PDF already chunked in an earlier batch of this request (a client refresh re-imports the
+            // whole MCA export) reuses those vectors when its chunks are identical — no Vertex call for unchanged text.
             var embeddings = textChunks.Count > 0
-                ? await embeddingService.EmbedDocumentsAsync(textChunks.Select(c => c.Text).ToList(), ct)
+                ? await FindEarlierBatchEmbeddingsAsync(document, textChunks, ct)
+                    ?? await embeddingService.EmbedDocumentsAsync(textChunks.Select(c => c.Text).ToList(), ct)
                 : [];
             // Chunks are paired with embeddings positionally below; a mismatch means the embedding call
             // dropped/duplicated a vector — fail this document (retry, then Failed) rather than persist a
@@ -272,6 +275,41 @@ public partial class DocumentChunkingOrchestrator(
 
     [GeneratedRegex(@"\s+")]
     private static partial Regex MultiWhitespacePattern();
+
+    /// <summary>#359: the embeddings of the same PDF (same <see cref="McaFilingDocument.FileHash"/>) already chunked in an
+    /// earlier batch of this request — only when that copy's chunks are exactly <paramref name="textChunks"/> (page, index
+    /// and text) at the current chunking version and embedding model, so a vector is only ever reused for the very text it
+    /// was computed from. Null means embed afresh.</summary>
+    private async Task<List<float[]>?> FindEarlierBatchEmbeddingsAsync(McaFilingDocument document, List<TextChunk> textChunks, CancellationToken ct)
+    {
+        if (string.IsNullOrEmpty(document.FileHash))
+            return null;
+        var candidateIds = await db.McaFilingDocuments.AsNoTracking()
+            .Where(d => d.RequestId == document.RequestId && d.FileHash == document.FileHash && d.BatchId != document.BatchId
+                && d.ChunkingStatus == ChunkingStatus.Chunked)
+            .OrderByDescending(d => d.FilingDocumentId)
+            .Select(d => d.FilingDocumentId)
+            .ToListAsync(ct);
+        foreach (var candidateId in candidateIds)
+        {
+            var source = await db.DocumentChunks.AsNoTracking()
+                .Where(c => c.FilingDocumentId == candidateId)
+                .OrderBy(c => c.ChunkIndex)
+                .Select(c => new { c.ChunkIndex, c.PageNumber, c.ChunkText, c.Embedding, c.EmbeddingModel, c.EmbeddingDimensions, c.ChunkingVersion })
+                .ToListAsync(ct);
+            var identical = source.Count == textChunks.Count && source.Select((c, i) =>
+                    c.ChunkIndex == i && c.PageNumber == textChunks[i].PageNumber && c.ChunkText == textChunks[i].Text
+                    && c.EmbeddingModel == EmbeddingService.ModelId && c.EmbeddingDimensions == EmbeddingService.Dimensions
+                    && c.ChunkingVersion == ChunkingVersion)
+                .All(ok => ok);
+            if (!identical)
+                continue;
+            logger.LogInformation("Document {DocumentId} reuses the {Count} embeddings of document {SourceId} (same PDF, earlier batch).",
+                document.FilingDocumentId, source.Count, candidateId);
+            return source.Select(c => c.Embedding.Memory.ToArray()).ToList();
+        }
+        return null;
+    }
 
     /// <summary>Startup recovery: any document left InProgress by a crash is, by the same "fresh process =
     /// orphaned" logic already proven twice in this codebase (Phase 2/3), reset to Pending and its batch

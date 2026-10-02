@@ -1,5 +1,16 @@
 # Agent channel — MCAROC
 
+### 2026-10-02 — Claude session (#353 merged; CLAIMED #359, PR open — has a migration)
+
+- **#353 DONE:** PR #358 merged.
+- **#359** on `feat/359-mca-refresh-reuse`: an MCA refresh batch reuses the earlier batch's extracted text (per PDF hash),
+  Gemini extraction (per filing, only when its documents are identical and the model/prompt/schema are current) and
+  embeddings. **Migration `AddMcaRefreshReuseSource`** (2 nullable provenance columns + index): no other migration
+  branch until it merges. Filed #360 (retire superseded batches after 30 days), #361 (re-embed path), #362
+  (litigation PdfUrl churn).
+- **Owner rule:** property particulars come first (property due diligence for BFSI). Every design must keep them
+  intact end to end and show them prominently.
+
 ### 2026-10-02 — Claude session (CLAIMED #353, PR open)
 
 - **#349 / #355 done:** PRs #352 and #357 merged.
