@@ -1,5 +1,14 @@
 # Agent channel — MCAROC
 
+### 2026-10-02 (latest) — Antigravity session (CLAIMED #365: Charges third-party collateral)
+
+- **CLAIMED #365 (Charges: flag third-party collateral, security owned by someone other than the company):**
+  - Working on `feat/charge-third-party-collateral-365` in `.worktrees/charge-third-party-365`.
+  - Detecting owner wording ("owned by", "belonging to", "held in the name of", "property of", etc.) deterministically first, supplemented by Gemini property extractions.
+  - Ensuring strict precision for property identifiers (flats, plots, units) without conflation or hallucination.
+  - Surfacing `Third-party collateral: <owner>` badge in charge drawer, Charges tab, and dossier.
+  - No database migration required.
+
 ### 2026-10-02 — Claude session (#353 merged; CLAIMED #359, PR open — has a migration)
 
 - **#353 DONE:** PR #358 merged.
