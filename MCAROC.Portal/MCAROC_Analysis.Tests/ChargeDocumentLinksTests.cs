@@ -102,6 +102,47 @@ public class ChargeDocumentLinkerTests
             ChargeDocumentLinker.Compute(docs, charges).Select(l => (l.ChargeNumber, l.FilingDocumentId, l.Method)).ToList());
     }
 
+    /// <summary>PR #378 review: a creation form matched to charge 1001 by its date and amount, whose file name names charge 1002,
+    /// must not also link to 1002 — nor may its embedded deed. Form evidence wins; the contradictory name links nothing.</summary>
+    [Fact]
+    public void A_file_name_naming_another_charge_never_adds_a_link_to_a_form_matched_by_date_and_amount_or_to_its_attachments()
+    {
+        var charges = new[]
+        {
+            Charge(1, "1001", (ChargeEventType.Creation, new DateOnly(2015, 9, 7), 10m)),
+            Charge(2, "1002")
+        };
+        var docs = new[]
+        {
+            new ChargeLinkInput(10, "HF", "Form 8-ChargeId-1002.pdf",
+                Fields(("ChargeType", "CRTN"), ("InstrumentDesc", "Deed"), ("InstrumentCrtModDate", "2015-09-07"), ("AmtSecured", "100000000")),
+                [new("deed.pdf", Hash("deed"))]),
+            new ChargeLinkInput(20, Hash("deed"), "deed.pdf")
+        };
+
+        Assert.Equal(
+            [("1001", 10L, ChargeDocumentLinkMethod.CreationDateAndAmount), ("1001", 20L, ChargeDocumentLinkMethod.EmbeddedAttachment)],
+            ChargeDocumentLinker.Compute(docs, charges).Select(l => (l.ChargeNumber, l.FilingDocumentId, l.Method)).ToList());
+    }
+
+    [Fact]
+    public void A_file_name_that_agrees_with_the_form_evidence_adds_nothing_and_a_filename_only_form_still_links()
+    {
+        var charges = new[] { Charge(1, "1001", (ChargeEventType.Creation, new DateOnly(2015, 9, 7), 10m)), Charge(2, "1002") };
+        var docs = new[]
+        {
+            // Agrees with its own date-and-amount match: one link, by the stronger evidence.
+            new ChargeLinkInput(10, "H10", "Form 8-ChargeId-1001.pdf",
+                Fields(("ChargeType", "CRTN"), ("InstrumentDesc", "Deed"), ("InstrumentCrtModDate", "2015-09-07"), ("AmtSecured", "100000000"))),
+            // No form data to contradict it: the name alone links it.
+            new ChargeLinkInput(11, "H11", "Optional Attachment-ChargeId-1002.pdf")
+        };
+
+        Assert.Equal(
+            [("1001", 10L, ChargeDocumentLinkMethod.CreationDateAndAmount), ("1002", 11L, ChargeDocumentLinkMethod.FileName)],
+            ChargeDocumentLinker.Compute(docs, charges).Select(l => (l.ChargeNumber, l.FilingDocumentId, l.Method)).ToList());
+    }
+
     [Theory]
     [InlineData("6367d1ef14743470be398e84293cf983v1-Form CHG-1-131015.pdf", "Form CHG-1-131015")]
     [InlineData("693f11218eff5222ed57c9ded67fc1d9v1.DUP0-Form CHG-1-131015.pdf", "Form CHG-1-131015")]

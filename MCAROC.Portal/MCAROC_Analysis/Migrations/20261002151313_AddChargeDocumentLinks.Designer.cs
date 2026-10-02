@@ -13,7 +13,7 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace MCAROC_Analysis.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    [Migration("20261002123723_AddChargeDocumentLinks")]
+    [Migration("20261002151313_AddChargeDocumentLinks")]
     partial class AddChargeDocumentLinks
     {
         /// <inheritdoc />
@@ -3533,7 +3533,8 @@ namespace MCAROC_Analysis.Migrations
                         .HasColumnType("nvarchar(450)");
 
                     b.Property<string>("PdfUrl")
-                        .HasColumnType("nvarchar(450)");
+                        .HasMaxLength(700)
+                        .HasColumnType("nvarchar(700)");
 
                     b.HasKey("LitigationCaseOrderId");
 

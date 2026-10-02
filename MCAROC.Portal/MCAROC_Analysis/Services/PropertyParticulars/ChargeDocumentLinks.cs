@@ -62,12 +62,18 @@ public static partial class ChargeDocumentLinker
             foreach (var form in forms.Where(f => f.Basis == ChargeFormLinkBasis.CreationDateAndAmount))
                 Add(new(numberOfRow[chargeId], form.Form.FilingDocumentId, ChargeDocumentLinkMethod.CreationDateAndAmount));
 
-        // 3. The file name states the charge ID, and the document's form data doesn't name a different one.
+        // 3. The file name states the charge ID — the weakest evidence, so it only ever fills a gap. A document whose own form
+        //    data already identified a charge (a stated ID, or rule 2's unique date-and-amount match) keeps exactly that; a
+        //    file name naming a different charge is a contradiction and links nothing. This runs before attachments inherit
+        //    their form's links (rule 4), so a contradictory name can't pull a form or its deed onto an unrelated charge.
+        var formCharges = links.Values.GroupBy(l => l.FilingDocumentId).ToDictionary(g => g.Key, g => g.Select(l => l.ChargeNumber).ToHashSet(StringComparer.Ordinal));
         foreach (var d in documents)
         {
             if (FileNameChargeId().Match(d.OriginalFileName) is not { Success: true } m) continue;
             var n = Normalize(m.Groups[1].Value);
-            if (!numbers.Contains(n) || (statedId.TryGetValue(d.FilingDocumentId, out var stated) && stated != n)) continue;
+            if (!numbers.Contains(n)) continue;
+            if (statedId.TryGetValue(d.FilingDocumentId, out var stated) && stated != n) continue;
+            if (formCharges.TryGetValue(d.FilingDocumentId, out var identified) && !identified.Contains(n)) continue;
             Add(new(n, d.FilingDocumentId, ChargeDocumentLinkMethod.FileName));
         }
 
