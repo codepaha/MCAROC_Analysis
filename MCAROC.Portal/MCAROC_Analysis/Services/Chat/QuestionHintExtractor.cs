@@ -13,10 +13,11 @@ namespace MCAROC_Analysis.Services.Chat;
 /// AsksForQuantity routes to the dossier's computed metrics ("M" sources); AsksForCompleteList adds the note that
 /// document passages are a top-K sample, not a scan of every document (#193 Finding 2, #338). AsksForRecency
 /// ("current status", "last three orders", "next hearing") pulls a named case's newest orders by date, which
-/// similarity ranking cannot do (#343).</summary>
+/// similarity ranking cannot do (#343). AsksForDecision ("what was decided", "outcome", "was it dismissed") pulls a named
+/// case's passages with the most decision language, which similarity under-ranks in long judgements (#353).</summary>
 public record QuestionHints(FilingCategory? Category, string? FormTypeKeyword, string? LenderNameKeyword, int? Year, string? SrnMatch,
     IReadOnlyList<string>? LexicalTerms = null, IReadOnlyList<LitigationOrderOutcome>? OrderOutcomes = null,
-    bool AsksForQuantity = false, bool AsksForCompleteList = false, bool AsksForRecency = false)
+    bool AsksForQuantity = false, bool AsksForCompleteList = false, bool AsksForRecency = false, bool AsksForDecision = false)
 {
     public bool HasSoftHints => Category is not null || FormTypeKeyword is not null || LenderNameKeyword is not null;
 }
@@ -62,7 +63,7 @@ public static partial class QuestionHintExtractor
 
         return new QuestionHints(category, formType, lender, year, srn, ExtractLexicalTerms(question), ExtractOrderOutcomes(text),
             AsksForQuantity: QuantityRegex().IsMatch(text), AsksForCompleteList: CompleteListRegex().IsMatch(text),
-            AsksForRecency: RecencyRegex().IsMatch(text));
+            AsksForRecency: RecencyRegex().IsMatch(text), AsksForDecision: DecisionQuestionRegex().IsMatch(text));
     }
 
     /// <summary>Outcome words and whether each is unambiguous on its own. "Stay", "injunction", "dismissed" and
@@ -152,6 +153,9 @@ public static partial class QuestionHintExtractor
 
     [GeneratedRegex(@"\b(latest|last|recent(ly)?|current(ly)?|status|next (hearing|date)|upcoming|so far|to date)\b")]
     private static partial Regex RecencyRegex();
+
+    [GeneratedRegex(@"\b(decid(e|ed|ing)|decisions?|outcomes?|results?|rulings?|verdict|held|disposed|disposal|dismiss(ed|al)?|allowed|rejected|granted|what happened|fate)\b")]
+    private static partial Regex DecisionQuestionRegex();
 
     [GeneratedRegex(@"\bstay(s|ed)?\b")]
     private static partial Regex StayRegex();
