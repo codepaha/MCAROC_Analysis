@@ -1,4 +1,6 @@
 @model ChargeDrawerViewModel
+@using MCAROC_Analysis.Services.Analysis
+@using MCAROC_Analysis.Services.Analysis.Rules
 @using MCAROC_Analysis.Services.Excel.Parsers
 @using MCAROC_Analysis.Services.PropertyParticulars
 @{
@@ -201,6 +203,13 @@
             var property = propertyEvent is null
                 ? PropertyReading.None
                 : PropertyReading.For(propertyEvent.PropertyParticulars, propertyEvent.PropertyType, Model.PropertyExtractions);
+
+            var addressPool = ChargedPropertyAddressRules.BuildAddressPool(Model.CompanyProfile, Model.EpfoEstablishments);
+            var chargePremisesMatch = addressPool.Count > 0 ? ChargedPropertyAddressRules.ClassifyCharge(c, addressPool, Model.PropertyExtractions) : null;
+        }
+        @if (chargePremisesMatch?.IsCompanyPremises == true)
+        {
+            <p style="margin-top:10px;"><span class="mca-finding-label">Premises:</span> <span class="mca-badge sev-watch">Own premises: @chargePremisesMatch.Label</span></p>
         }
         @if (property.HasContent)
         {
@@ -220,10 +229,38 @@
                 @for (var pi = 0; pi < property.Items.Count; pi++)
                 {
                     var item = property.Items[pi];
+                    var itemMatch = addressPool.Count > 0 ? ChargedPropertyAddressRules.ClassifyItem(item, addressPool, itemIndex: pi) : null;
+                    var evPieces = itemMatch?.IsCompanyPremises == true
+                        ? itemMatch.Result.MatchedPlotNumbers.Concat(itemMatch.Result.MatchedLocalities).Append(itemMatch.Result.MatchedPinCode).Where(x => !string.IsNullOrEmpty(x)).ToList()
+                        : null;
                     <dl class="mca-kv" style="@(property.Items.Count > 1 ? "border-left:3px solid var(--bs-border-color, #ddd); padding-left:8px; margin-bottom:10px;" : "")">
                         @if (property.Items.Count > 1)
                         {
                             <div><dt>Property</dt><dd>@(pi + 1) of @property.Items.Count</dd></div>
+                        }
+                        @if (itemMatch is not null)
+                        {
+                            <div>
+                                <dt>Premises</dt>
+                                <dd>
+                                    @if (itemMatch.IsCompanyPremises)
+                                    {
+                                        <span class="mca-badge sev-watch">Own premises: @itemMatch.Label</span>
+                                        @if (evPieces is { Count: > 0 })
+                                        {
+                                            <span class="text-muted ms-1" style="font-size:0.85em;">(matched: @string.Join(", ", evPieces))</span>
+                                        }
+                                    }
+                                    else if (AddressMatcher.IsImmovable(item))
+                                    {
+                                        <span class="text-muted">No match to filed company premises (other collateral)</span>
+                                    }
+                                    else
+                                    {
+                                        <span class="text-muted">Movable asset (not applicable to premises)</span>
+                                    }
+                                </dd>
+                            </div>
                         }
                         @if (item.AssetClasses.Count > 0)
                         {
@@ -279,6 +316,10 @@
             <details open="@(property.HasContent ? null : "open")">
                 <summary class="mca-json-toggle">Property particulars (source wording)</summary>
                 <div class="mt-2">
+                    @if (chargePremisesMatch?.IsCompanyPremises == true && !property.HasContent)
+                    {
+                        <p><span class="mca-badge sev-watch">Own premises: @chargePremisesMatch.Label</span></p>
+                    }
                     @if (!string.IsNullOrWhiteSpace(narrativeEvent?.PropertyParticulars)) { <p><b>Particulars of Property Charged:</b> @narrativeEvent!.PropertyParticulars</p> }
                     @if (!string.IsNullOrWhiteSpace(narrativeEvent?.ExtentAndOperation)) { <p><b>Extent and Operation of Charge:</b> @narrativeEvent!.ExtentAndOperation</p> }
                 </div>

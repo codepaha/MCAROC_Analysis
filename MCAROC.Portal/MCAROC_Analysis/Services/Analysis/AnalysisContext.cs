@@ -24,6 +24,10 @@ public class AnalysisContext
     /// <summary>Only the address pool for ChargedPropertyAddressRules (issue #191) reads this today.</summary>
     public IReadOnlyList<EpfoEstablishment> EpfoEstablishments { get; init; } = [];
 
+    /// <summary>Completed Gemini property particulars extractions for charges, used by ChargedPropertyAddressRules.</summary>
+    public IReadOnlyDictionary<string, PropertyParticularsExtraction> PropertyExtractions { get; init; } =
+        new Dictionary<string, PropertyParticularsExtraction>();
+
     public required DateTime AnalysisDate { get; init; }
     public required MaterialityContext Materiality { get; init; }
 
@@ -44,7 +48,8 @@ public class AnalysisContext
         IReadOnlyList<MsmePayment> msmePayments, IReadOnlyList<GstRegistration> gstRegistrations,
         IReadOnlyList<EpfoContribution> epfoContributions, IReadOnlyList<AuditorObservation> auditorObservations,
         IReadOnlyList<Litigation> litigations, DateTime analysisDate,
-        IReadOnlyList<EpfoEstablishment>? epfoEstablishments = null)
+        IReadOnlyList<EpfoEstablishment>? epfoEstablishments = null,
+        IReadOnlyDictionary<string, PropertyParticularsExtraction>? propertyExtractions = null)
     {
         var orderedYears = financialYears.OrderByDescending(f => f.FinancialYear).ToList();
         var latest = orderedYears.ElementAtOrDefault(0);
@@ -75,6 +80,7 @@ public class AnalysisContext
             AuditorObservations = auditorObservations,
             Litigations = litigations,
             EpfoEstablishments = epfoEstablishments ?? [],
+            PropertyExtractions = propertyExtractions ?? new Dictionary<string, PropertyParticularsExtraction>(),
             AnalysisDate = analysisDate,
             Materiality = MaterialityContext.FromLatestYear(latest),
             LatestFinancialYear = latest,

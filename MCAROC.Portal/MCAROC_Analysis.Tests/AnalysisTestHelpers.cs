@@ -26,7 +26,8 @@ public static class AnalysisTestHelpers
         List<Litigation>? litigations = null,
         DateTime? analysisDate = null,
         Client? client = null,
-        List<EpfoEstablishment>? epfoEstablishments = null)
+        List<EpfoEstablishment>? epfoEstablishments = null,
+        Dictionary<string, PropertyParticularsExtraction>? propertyExtractions = null)
     {
         var request = Request();
         request.Client = client;
@@ -34,7 +35,7 @@ public static class AnalysisTestHelpers
             request, companyProfile, directors ?? [], directorAssociations ?? [], shareholdings ?? [],
             financialYears ?? [], charges ?? [], msmePayments ?? [], gstRegistrations ?? [],
             epfoContributions ?? [], auditorObservations ?? [], litigations ?? [], analysisDate ?? AnalysisDate,
-            epfoEstablishments);
+            epfoEstablishments, propertyExtractions);
     }
 
     public static FinancialYearData Fy(
