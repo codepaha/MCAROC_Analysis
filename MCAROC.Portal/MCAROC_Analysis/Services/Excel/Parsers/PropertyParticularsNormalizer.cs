@@ -55,7 +55,7 @@ public sealed record NormalizedPropertyParticulars(
 }
 
 /// <summary>Deterministic regex normaliser for charge-report property particulars — the same no-I/O, never-guess
-/// style as <see cref="ChargeSecurityClassifier"/>. Built against real MCA wording (Probe charge-report exports):
+/// style as <see cref="ChargeSecurityClassifier"/>. Built against real MCA wording (charge-report exports):
 /// run-on paragraphs mixing a mortgaged unit, its parking, the underlying land and a hypothecation clause; areas
 /// restated in a second unit; CTS lists with ranges and typos ("CST", "C.T. S", "Nos51"); location tokens strung
 /// after "situated at". Stateless and cheap, so it runs at render time over every already-ingested charge.</summary>
@@ -82,7 +82,7 @@ public static partial class PropertyParticularsNormalizer
         var location = Location(text);
         var entities = NamedEntities(text);
 
-        var referenceOnly = text.Length <= 160 && ReferenceOnly().IsMatch(text)
+        var referenceOnly = text.Length <= 240 && ReferenceOnly().IsMatch(text)
             && units.Count == 0 && areas.Count == 0 && surveys.Count == 0 && location.IsEmpty;
 
         return new NormalizedPropertyParticulars(AssetClasses(kinds, lower, type), kinds, units, buildings, areas,
@@ -290,7 +290,7 @@ public static partial class PropertyParticularsNormalizer
         foreach (Match m in SurveyPattern().Matches(text))
             Add("Survey", Qualifier(m.Groups["q"].Value), [m.Groups["no"].Value + (m.Groups["part"].Success ? "(P)" : "")]);
         foreach (Match m in PlotPattern().Matches(text))
-            Add("Plot", null, [m.Groups["no"].Value]);
+            Add("Plot", null, SplitNumberList(m.Groups["list"].Value));
         foreach (Match m in GatKhasraPattern().Matches(text))
             Add(CultureInfo.InvariantCulture.TextInfo.ToTitleCase(m.Groups["s"].Value.ToLowerInvariant()), null, SplitNumberList(m.Groups["list"].Value));
         return groups;
@@ -372,14 +372,23 @@ public static partial class PropertyParticularsNormalizer
         "Bhubaneswar", "Visakhapatnam", "Vijayawada", "Patna", "Ranchi", "Raipur", "Guwahati", "Goa", "Panaji", "Ludhiana", "Amritsar"
     ];
 
+    /// <summary>#366: a state as written in filings, with or without its spaces ("Andhrapradesh").</summary>
+    private static string StateAlternation => string.Join("|", States.SelectMany(s => new[] { Regex.Escape(s), Regex.Escape(s.Replace(" ", "")) }).Distinct());
+
+    /// <summary>#366: a PIN written without the word "PIN" ("Chittoor 517408 Andhrapradesh") — six digits only count when
+    /// a state or "India" follows directly, so an amount or a survey number never reads as one.</summary>
+    private static readonly Regex PinBeforeState = new($@"\b(?<v>[1-9]\d{{5}})\b(?=[\s,.\-–]{{0,3}}(?:{StateAlternation}|india)\b)",
+        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Compiled);
+
     private static NormalizedLocation Location(string text)
     {
-        var state = States.FirstOrDefault(s => Regex.IsMatch(text, $@"\b{Regex.Escape(s)}\b", RegexOptions.IgnoreCase));
+        var state = States.FirstOrDefault(s => Regex.IsMatch(text, $@"\b(?:{Regex.Escape(s)}|{Regex.Escape(s.Replace(" ", ""))})\b", RegexOptions.IgnoreCase));
         var city = Cities.FirstOrDefault(c => Regex.IsMatch(text, $@"\b{Regex.Escape(c)}\b", RegexOptions.IgnoreCase));
         var taluka = TalukaPattern().Match(text) is { Success: true } t ? Title(t.Groups["v"].Value) : null;
         var district = DistrictPattern().Match(text) is { Success: true } d ? Title(d.Groups["v"].Value) : null;
         var village = VillagePattern().Match(text) is { Success: true } v ? Title(v.Groups["v"].Value) : null;
-        var pin = PinPattern().Match(text) is { Success: true } p ? p.Groups["v"].Value : null;
+        var pin = PinPattern().Match(text) is { Success: true } p ? p.Groups["v"].Value
+            : PinBeforeState.Match(text) is { Success: true } q ? q.Groups["v"].Value : null;
 
         var known = new[] { state, city, taluka, district, village }.OfType<string>().ToHashSet(StringComparer.OrdinalIgnoreCase);
         var localities = new List<string>();
@@ -427,7 +436,7 @@ public static partial class PropertyParticularsNormalizer
 
     [GeneratedRegex(@"\s+")] private static partial Regex Whitespace();
     [GeneratedRegex(@"(?<!im)mov(e)?able")] private static partial Regex MovableWord();
-    [GeneratedRegex(@"^(as per|part [a-z0-9]+ of|refer|more particularly|described in|as described|schedule|annexure)|\b(schedule|annexure)\b", RegexOptions.IgnoreCase)]
+    [GeneratedRegex(@"^(as per|as mentioned|as stated|as given|as detailed|as specified|mentioned in|part [a-z0-9]+ of|refer|more particularly|described in|as described|schedule|annexure)|\b(schedule|annexure)\b", RegexOptions.IgnoreCase)]
     private static partial Regex ReferenceOnly();
 
     [GeneratedRegex(@"\b(?:unit|flat|office|shop|apartment)\s*no\.?\s*(?<no>\d+\s*[a-z]?)\b", RegexOptions.IgnoreCase)]
@@ -455,7 +464,9 @@ public static partial class PropertyParticularsNormalizer
     private static partial Regex NumberItem();
     [GeneratedRegex(@"(?:\b(?<q>new|old)\s+)?(?<![.\w])(?:survey|s\.|sy\.)\s*no\.?\s*(?<no>\d+[a-z]?(?:/\d+[a-z]?)*)(?<part>\s*(?:\(?\s*part\b\)?|\(p\)))?", RegexOptions.IgnoreCase)]
     private static partial Regex SurveyPattern();
-    [GeneratedRegex(@"\bplot\s*no\.?\s*(?<no>\d+[a-z]?(?:/\d+[a-z]?)?)\b", RegexOptions.IgnoreCase)]
+    // A list joined by "+", ",", "&" or "and" ("Plot Nos: 728 + 729 + 730"); an item is never the head of a comma-grouped
+    // amount ("Plot No. 5, 1,000 sq ft" is plot 5 only).
+    [GeneratedRegex(@"\bplot\s*nos?\.?\s*[:.-]?\s*(?<list>\d+[a-z]?(?:/\d+[a-z]?)?(?!,?\d)(?:\s*(?:\+|,|&|and)\s*\d+[a-z]?(?:/\d+[a-z]?)?(?!,?\d))*)\b", RegexOptions.IgnoreCase)]
     private static partial Regex PlotPattern();
     [GeneratedRegex(@"\b(?<s>gat|gata|khasra|arazi|khata)\s*nos?\.?\s*(?<list>\d+[a-z]?(?:/\d+[a-z]?)*(?:\s*(?:,|and|&)\s*\d+[a-z]?(?:/\d+[a-z]?)*)*)", RegexOptions.IgnoreCase)]
     private static partial Regex GatKhasraPattern();
@@ -464,11 +475,12 @@ public static partial class PropertyParticularsNormalizer
     private static partial Regex TalukaPattern();
     [GeneratedRegex(@"(?<v>\b[A-Za-z]+(?:\s+[A-Za-z]+)?)\s+district\b", RegexOptions.IgnoreCase)]
     private static partial Regex DistrictPattern();
-    [GeneratedRegex(@"\bvillage\s+(?<v>[A-Za-z]+(?:\s+(?:east|west|north|south))?)", RegexOptions.IgnoreCase)]
+    // "Village Malegaon" or "Samudrapalli Village" (the name before the word is capitalised, so "the village" never matches).
+    [GeneratedRegex(@"\bvillage\s+(?<v>[A-Za-z]+(?:\s+(?:east|west|north|south))?)|(?-i:\b(?<v>[A-Z][a-z]{2,}))\s+village\b", RegexOptions.IgnoreCase)]
     private static partial Regex VillagePattern();
     [GeneratedRegex(@"(?:\bpin(?:\s*code)?[\s:.-]*|[-–]\s*)(?<v>[1-9]\d{5})\b", RegexOptions.IgnoreCase)]
     private static partial Regex PinPattern();
-    [GeneratedRegex(@"\b(?:situated|located)\s+at\s+(?<v>[^.;]+?)(?=\s+(?:together|with|incl|including|comprising|forming|to\s+be|as\s+detailed|as\s+per|and\s+the|admeasuring)\b|[.;]|$)", RegexOptions.IgnoreCase)]
+    [GeneratedRegex(@"\b(?:situated|located|lying(?:\s+and\s+being)?)\s+at\s+(?<v>[^.;]+?)(?=\s+(?:together|with|incl|including|comprising|forming|to\s+be|as\s+detailed|as\s+per|and\s+the|admeasuring)\b|[.;]|$)", RegexOptions.IgnoreCase)]
     private static partial Regex SituatedAt();
     [GeneratedRegex(@"(?:[A-Z][A-Za-z&]*\.?\s+){1,6}(?:Private|Pvt\.?)\s+(?:Limited|Ltd\.?)|(?:[A-Z][A-Za-z&]*\s+){1,6}Limited\b")]
     private static partial Regex CompanyName();

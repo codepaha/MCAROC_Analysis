@@ -1,6 +1,6 @@
 # Charge property particulars: normalisation
 
-The charge report's **PROPERTY PARTICULARS** column (column M in the Probe "Open/Satisfied Charges in Details"
+The charge report's **PROPERTY PARTICULARS** column (column M in the charge-report "Open/Satisfied Charges in Details"
 sheets; `RocChargeEvent.PropertyParticulars`) is one run-on paragraph. A single cell often mixes several assets,
 for example:
 

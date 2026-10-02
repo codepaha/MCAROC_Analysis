@@ -45,6 +45,11 @@ public sealed class CompanyRefreshService(
 
     private TimeSpan RefreshTimeout => TimeSpan.FromHours(Math.Max(1, options.Value.RefreshTimeoutHours));
 
+    /// <summary>How long a claim may show "nothing pending" before it is treated as never sent and re-sent. A claim is
+    /// written just before the tool is called, so a caller polling in that window would otherwise see old data with
+    /// nothing pending and send a second request for the same refresh.</summary>
+    internal static readonly TimeSpan ResendGrace = TimeSpan.FromMinutes(2);
+
     public async Task<RefreshGateResult> EvaluateAsync(string identifier, string bid, CancellationToken ct)
     {
         identifier = identifier.Trim().ToUpperInvariant();
@@ -148,7 +153,11 @@ public sealed class CompanyRefreshService(
             }
 
             // Nothing pending, yet the data predates our request: the request never took effect. Re-send it
-            // (free) rather than accept stale data — bounded by the same deadline.
+            // (free) rather than accept stale data — bounded by the same deadline. A claim younger than ResendGrace is
+            // most likely still being sent by the caller that made it, so it is waited on, not sent twice.
+            if (now - requestedUtc < ResendGrace)
+                return new RefreshGateResult(RefreshGateKind.Waiting,
+                    $"Waiting for the reference tool to refresh this company's data (requested {Ist.Format(requestedUtc)}; times out {Ist.Format(deadline)}).");
             if (now <= deadline)
             {
                 await client.RequestRefreshAsync(bid, ct);
