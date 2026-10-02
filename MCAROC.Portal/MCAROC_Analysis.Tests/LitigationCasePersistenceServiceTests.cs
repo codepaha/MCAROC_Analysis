@@ -830,5 +830,31 @@ public class LitigationCasePersistenceServiceTests : IAsyncLifetime
         var order = Assert.Single(await verify.LitigationCaseOrders.Where(o => o.Case!.RequestId == request.RequestId).ToListAsync());
         Assert.Single(await verify.LitigationOrderDocuments.Where(d => d.LitigationCaseOrderId == order.LitigationCaseOrderId).ToListAsync());
     }
+
+    [Fact]
+    public async Task PersistSnapshotAsync_duplicated_existing_order_without_document_admits_exactly_one_document()
+    {
+        // P1: Refreshed report containing duplicate rows for an existing order with no document must admit exactly one document.
+        await using var db = CreateContext();
+        var request = await SeedRequestAsync(db, "R374D");
+        var requestId = request.RequestId;
+        var first = await SeedCompletedJobAsync(db, requestId, ReportJson("TNKP070001332377", "OS", orderUrl: "https://source.example/order.pdf?X-Amz-Signature=old"));
+        await PersistJobAsync(NewService(db), first, CancellationToken.None);
+
+        var existingOrderId = await db.LitigationCaseOrders.Where(o => o.Case!.RequestId == requestId).Select(o => o.LitigationCaseOrderId).SingleAsync();
+        await db.LitigationOrderDocuments.Where(d => d.LitigationCaseOrderId == existingOrderId).ExecuteDeleteAsync();
+        db.ChangeTracker.Clear();
+
+        var report = TwoOrderReportJson("TNKP070001332377")
+            .Replace("https://source.example/o1.pdf", "https://source.example/order.pdf?X-Amz-Signature=one")
+            .Replace("https://source.example/o2.pdf", "https://source.example/order.pdf?X-Amz-Signature=two")
+            .Replace("10-01-2025", "09-01-2025").Replace("\"order_type\": \"Order\"", "\"order_type\": \"Judgment\"");
+        var second = await SeedCompletedJobAsync(db, requestId, report);
+        var snapshot = await PersistJobAsync(NewService(db), second, CancellationToken.None);
+
+        await using var verify = CreateContext();
+        Assert.Equal(LitigationReportSnapshotStatus.Completed, (await verify.LitigationReportSnapshots.SingleAsync(s => s.LitigationReportSnapshotId == snapshot)).Status);
+        Assert.Single(await verify.LitigationOrderDocuments.Where(d => d.LitigationCaseOrderId == existingOrderId).ToListAsync());
+    }
 }
 

@@ -361,6 +361,9 @@ public sealed class LitigationCasePersistenceService(
         // Tracks newly admitted orders and documents within this single snapshot attempt to handle
         // intra-report duplicates (e.g. two equivalent orders signed with different presigned tokens).
         var newlyAdmitted = new List<(LitigationCaseOrder Order, LitigationOrderDocument Document)>();
+        // Tracks newly admitted documents for pre-existing orders within this batch to prevent
+        // duplicate admissions when duplicate report rows match an existing order that has no document yet.
+        var admittedExistingDocuments = new Dictionary<long, LitigationOrderDocument>();
 
         foreach (var order in orders)
         {
@@ -388,7 +391,11 @@ public sealed class LitigationCasePersistenceService(
                     added.Add(match);
                 }
 
-                var document = await db.LitigationOrderDocuments.FirstOrDefaultAsync(d => d.LitigationCaseOrderId == match.LitigationCaseOrderId, ct);
+                if (!admittedExistingDocuments.TryGetValue(match.LitigationCaseOrderId, out var document))
+                {
+                    document = await db.LitigationOrderDocuments.FirstOrDefaultAsync(d => d.LitigationCaseOrderId == match.LitigationCaseOrderId, ct);
+                }
+
                 if (document is null)
                 {
                     // A pre-existing order with no document yet — either persisted before #243 shipped, or an
@@ -401,6 +408,7 @@ public sealed class LitigationCasePersistenceService(
                     db.LitigationOrderDocuments.Add(document);
                     added.Add(document);
                     toEnqueue.Add(document);
+                    admittedExistingDocuments[match.LitigationCaseOrderId] = document;
                 }
                 else if (document.Status is LitigationOrderDocumentStatus.Failed or LitigationOrderDocumentStatus.Expired
                     && (retainedUntilUtc > document.RetainedUntilUtc || urlChanged))
@@ -417,6 +425,7 @@ public sealed class LitigationCasePersistenceService(
                     // the change tracker across attempts while this method's own return value moves on.
                     added.Add(document);
                     toEnqueue.Add(document);
+                    admittedExistingDocuments[match.LitigationCaseOrderId] = document;
                 }
                 continue;
             }
