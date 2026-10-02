@@ -639,8 +639,9 @@ public class ChatEndpointJsonTests : IAsyncLifetime
         var staleBatchId = DateTime.UtcNow.Ticks + 1;
         var activeBatchId = DateTime.UtcNow.Ticks + 2;
 
-        var staleChunk = NewChunk(requestId, staleBatchId, 101, "SRN-OLD", FilingCategory.Charge, Axis(0));
-        var activeChunk = NewChunk(requestId, activeBatchId, 201, "SRN-NEW", FilingCategory.Charge, Axis(0));
+        // Negative document ids never collide with real (identity) ones of other tests on the shared test database.
+        var staleChunk = NewChunk(requestId, staleBatchId, -101, "SRN-OLD", FilingCategory.Charge, Axis(0));
+        var activeChunk = NewChunk(requestId, activeBatchId, -201, "SRN-NEW", FilingCategory.Charge, Axis(0));
 
         db.DocumentChunks.AddRange(staleChunk, activeChunk);
         await db.SaveChangesAsync();
@@ -655,7 +656,7 @@ public class ChatEndpointJsonTests : IAsyncLifetime
 
         Assert.Single(matches);
         Assert.Equal(activeBatchId, matches[0].Chunk.BatchId);
-        Assert.Equal(201, matches[0].Chunk.FilingDocumentId);
+        Assert.Equal(-201, matches[0].Chunk.FilingDocumentId);
     }
 
     // ── 6. Citation Verification Against Authoritative Batch ──
