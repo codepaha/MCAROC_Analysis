@@ -208,6 +208,22 @@ public sealed class CompanyRefreshServiceTests : IAsyncLifetime
         Assert.NotNull((await LifecycleAsync()).ActiveRefreshId);
     }
 
+    /// <summary>The race behind the flaky concurrency test: a caller that polls between another caller's claim and its call
+    /// to the tool sees nothing pending and old data. That is a refresh still being sent, not one that never took effect —
+    /// it must wait, not send a second request.</summary>
+    [Fact]
+    public async Task A_poll_moments_after_a_claim_waits_instead_of_re_sending()
+    {
+        var tool = new FakeReferenceTool(Bid) { AddedAt = Now.AddMonths(-2), DataAsOf = Now.AddDays(-3), OnRefreshRequested = _ => { } };
+        Assert.Equal(RefreshGateKind.Waiting, (await EvaluateAsync(tool)).Kind); // claims and sends (the tool shows nothing pending yet)
+
+        _time.Advance(TimeSpan.FromSeconds(5));
+        var poll = await EvaluateAsync(tool);
+
+        Assert.Equal(RefreshGateKind.Waiting, poll.Kind);
+        Assert.Equal(1, tool.Count("requestProbeDataUpdate"));
+    }
+
     [Fact]
     public async Task A_refresh_past_its_deadline_times_out_and_a_retry_starts_a_new_one()
     {
