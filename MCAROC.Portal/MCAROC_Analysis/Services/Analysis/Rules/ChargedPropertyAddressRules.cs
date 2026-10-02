@@ -83,7 +83,6 @@ public static class ChargedPropertyAddressRules
             if (!DescribesImmovableProperty(ev)) continue;
 
             var reading = PropertyReading.For(ev.PropertyParticulars, ev.PropertyType, ctx.PropertyExtractions);
-            var eventMatched = false;
 
             if (reading.Items.Count > 0)
             {
@@ -98,13 +97,12 @@ public static class ChargedPropertyAddressRules
                         if (result.Strength == AddressMatchStrength.Strong)
                         {
                             matches.Add(new PremisesMatch(charge, ev, address, result, i));
-                            eventMatched = true;
                         }
                     }
                 }
             }
 
-            if (!eventMatched)
+            else
             {
                 foreach (var address in pool)
                 {
