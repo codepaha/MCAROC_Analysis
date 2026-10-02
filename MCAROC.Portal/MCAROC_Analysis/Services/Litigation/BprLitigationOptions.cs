@@ -30,7 +30,20 @@ public sealed class BprLitigationOptions
     /// value, but it is still sent because omitting it is not a documented alternative.</summary>
     public string FileFormat { get; init; } = "JSON";
 
+    /// <summary>The vendor's <c>exact_match</c> for searches by an individual, partnership or proprietorship: the name must match
+    /// exactly. Companies and LLPs use <see cref="ExactMatchForCompanies"/> instead.</summary>
     public bool ExactMatch { get; init; } = true;
+
+    /// <summary>The vendor's <c>exact_match</c> for a company or LLP search — off by default. Court records write a company's
+    /// name in many ways ("M/S … LTD"); an exact match returned only tribunal cases for a real company, none from the High
+    /// Courts or district courts, where the sheet had hundreds (owner decision, 2026-10-02).</summary>
+    public bool ExactMatchForCompanies { get; init; } = false;
+
+    /// <summary>The <c>exact_match</c> to send for a request of this entity type.</summary>
+    public bool ExactMatchFor(MCAROC_Analysis.Data.Entities.EntityType entityType) =>
+        entityType is MCAROC_Analysis.Data.Entities.EntityType.Company or MCAROC_Analysis.Data.Entities.EntityType.LLP
+            ? ExactMatchForCompanies
+            : ExactMatch;
     public string Formats { get; init; } = "standard";
 
     /// <summary>Delay between polls of GET report/job/{id} while a job has not yet produced a recognizable

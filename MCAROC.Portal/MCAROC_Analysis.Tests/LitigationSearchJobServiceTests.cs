@@ -197,6 +197,24 @@ public class LitigationSearchJobServiceTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task ProcessAsync_registers_a_company_search_without_exact_matching()
+    {
+        await using var db = CreateContext();
+        var request = await SeedRequestAsync(db); // a Company
+        var (seedService, _) = NewService(db);
+        var job = await seedService.CreateOrResetJobAsync(request.RequestId, LitigationKeywordPlanner.Build(request.CompanyName!), "individual", "cust-1", CancellationToken.None);
+
+        await using var processDb = CreateContext();
+        var (service, handler) = NewService(processDb);
+        StubHappyPath(handler);
+        await service.ProcessAsync(job.LitigationSearchJobId, CancellationToken.None);
+
+        var body = Assert.Single(handler.Requests.Zip(handler.RequestBodies), p => p.First.RequestUri!.AbsolutePath.Contains("bprjob/register")).Second;
+        Assert.Contains("\"exact_match\":false", body);
+        Assert.Contains("\"entity_type\":\"individual\"", body); // the vendor's entity type is unchanged
+    }
+
+    [Fact]
     public async Task ProcessAsync_does_not_re_register_once_a_vendor_job_id_is_already_recorded()
     {
         long jobId;
@@ -421,15 +439,18 @@ public class LitigationSearchJobServiceTests : IAsyncLifetime
     {
         private readonly List<(string PathSuffix, Func<HttpRequestMessage, HttpResponseMessage> Respond)> _routes = [];
         public List<HttpRequestMessage> Requests { get; } = [];
+        public List<string?> RequestBodies { get; } = [];
         public void OnPath(string pathSuffix, Func<HttpRequestMessage, HttpResponseMessage> respond) => _routes.Add((pathSuffix, respond));
 
-        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
             Requests.Add(request);
+            // Read now: the caller disposes the request (and its content) once SendAsync returns.
+            RequestBodies.Add(request.Content is null ? null : await request.Content.ReadAsStringAsync(ct));
             var route = _routes.FirstOrDefault(r => request.RequestUri!.AbsolutePath.Contains(r.PathSuffix, StringComparison.Ordinal));
-            return Task.FromResult(route.Respond is null
+            return route.Respond is null
                 ? new HttpResponseMessage(HttpStatusCode.NotFound) { Content = new StringContent("no stub for " + request.RequestUri) }
-                : route.Respond(request));
+                : route.Respond(request);
         }
     }
 }

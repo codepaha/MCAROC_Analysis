@@ -169,7 +169,10 @@ public sealed class LitigationSearchJobService(
                 if (claimedRegistering == 0) throw new LitigationSearchJobLeaseLostException(jobId);
 
                 var keywords = ParseKeywordValues(job.KeywordsJson);
-                vendorJobId = await client.RegisterJobAsync(token, keywords, job.EntityType, job.ApplicationCustomerId, ct);
+                // Companies and LLPs are searched without exact name matching, individuals/partnerships/proprietorships with it.
+                var entityType = await db.Requests.AsNoTracking().Where(r => r.RequestId == job.RequestId).Select(r => r.EntityType).FirstAsync(ct);
+                vendorJobId = await client.RegisterJobAsync(token, keywords, job.EntityType, job.ApplicationCustomerId, ct,
+                    _opts.ExactMatchFor(entityType));
 
                 // Persisted the instant BPR confirms success — this is the narrowest the crash window between
                 // "vendor accepted the call" and "we know it" can be made without a vendor idempotency key.
