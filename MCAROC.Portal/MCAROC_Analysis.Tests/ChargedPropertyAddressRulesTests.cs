@@ -334,4 +334,50 @@ public class ChargedPropertyAddressRulesTests
         Assert.Equal(["Mr. Raj Patel"], ChargedPropertyAddressRules.GetThirdPartyOwners(chargeFlat306, profile));
         Assert.Equal(["Mr. Vikram Shah"], ChargedPropertyAddressRules.GetThirdPartyOwners(chargeFlat315, profile));
     }
+
+    [Fact]
+    public void OlderEventWithThirdPartyOwner_LatestModificationWithout_DoesNotTriggerThirdPartyCollateral()
+    {
+        // Issue #370: older creation event had third-party collateral, but a subsequent modification replaced it
+        // with company-owned assets / plant & machinery without third-party owner. The current status should only
+        // evaluate the latest event with property particulars.
+        var profile = Profile();
+        var creationEvent = new RocChargeEvent
+        {
+            ChargeEventId = 101,
+            RocChargeId = 50,
+            EventType = ChargeEventType.Creation,
+            EventDate = new DateOnly(2020, 1, 15),
+            PropertyType = "Immovable property",
+            PropertyParticulars = "Flat 101, Galaxy Tower, owned by Mr. Third Party Guarantor"
+        };
+        var modificationEvent = new RocChargeEvent
+        {
+            ChargeEventId = 102,
+            RocChargeId = 50,
+            EventType = ChargeEventType.Modification,
+            EventDate = new DateOnly(2022, 6, 20),
+            PropertyType = "Movable property",
+            PropertyParticulars = "First charge on entire plant and machinery owned by the company"
+        };
+        var charge = new RocCharge
+        {
+            ChargeId = 50,
+            RocChargeNumber = "1000050",
+            LatestChargeHolderRaw = "HDFC Bank",
+            SatisfactionDate = null,
+            Events = [creationEvent, modificationEvent]
+        };
+
+        var ctx = BuildContext(companyProfile: profile, charges: [charge]);
+        var outcomes = ChargedPropertyAddressRules.Evaluate(ctx);
+        var tpOutcome = outcomes.Count > 1 ? outcomes[1] : outcomes.First();
+
+        // Must not trigger finding based on stale creation particulars
+        Assert.Equal(RuleEvaluationStatus.NotTriggered, tpOutcome.Status);
+
+        // GetThirdPartyOwners must also agree and return empty
+        var owners = ChargedPropertyAddressRules.GetThirdPartyOwners(charge, profile);
+        Assert.Empty(owners);
+    }
 }

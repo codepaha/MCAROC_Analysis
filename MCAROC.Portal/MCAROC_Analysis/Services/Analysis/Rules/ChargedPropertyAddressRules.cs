@@ -261,17 +261,27 @@ public static class ChargedPropertyAddressRules
         if (ctx.Charges.Count == 0)
             return RuleEvaluationOutcome.NotEvaluated(ChargedPropertyIsThirdPartyCollateralCode, "No charge records available.");
 
-        var openEvents = ctx.Charges
+        var openCharges = ctx.Charges
             .Where(c => c.SatisfactionDate is null)
-            .SelectMany(c => c.Events.Select(e => (Charge: c, Event: e)))
-            .Where(x => !string.IsNullOrWhiteSpace(x.Event.PropertyParticulars))
             .ToList();
-        if (openEvents.Count == 0)
+
+        var latestEvents = new List<(RocCharge Charge, RocChargeEvent Event)>();
+        foreach (var charge in openCharges)
+        {
+            var latestEv = charge.Events
+                .OrderByDescending(e => e.EventDate ?? DateOnly.MinValue)
+                .ThenByDescending(e => e.ChargeEventId)
+                .FirstOrDefault(e => !string.IsNullOrWhiteSpace(e.PropertyParticulars));
+            if (latestEv is not null)
+                latestEvents.Add((charge, latestEv));
+        }
+
+        if (latestEvents.Count == 0)
             return RuleEvaluationOutcome.NotEvaluated(ChargedPropertyIsThirdPartyCollateralCode,
                 "No open (unsatisfied) charge has property particulars on file.");
 
         var matches = new List<ThirdPartyCollateralMatch>();
-        foreach (var (charge, ev) in openEvents)
+        foreach (var (charge, ev) in latestEvents)
         {
             var reading = PropertyReading.For(ev.PropertyParticulars, ev.PropertyType, ctx.PropertyExtractions);
             if (reading.Items.Count > 0)
@@ -346,18 +356,21 @@ public static class ChargedPropertyAddressRules
         return false;
     }
 
-    /// <summary>Finds third-party owners from a charge's property reading (if any), excluding self-company references.</summary>
+    /// <summary>Finds third-party owners from a charge's latest property reading (if any), excluding self-company references.</summary>
     public static IReadOnlyList<string> GetThirdPartyOwners(
         RocCharge charge,
         CompanyProfile? profile,
         IReadOnlyDictionary<string, PropertyParticularsExtraction>? extractions = null)
     {
         var owners = new List<string>();
-        var events = charge.Events.OrderByDescending(e => e.EventDate ?? DateOnly.MinValue).ThenByDescending(e => e.ChargeEventId);
-        foreach (var ev in events)
+        var latestEv = charge.Events
+            .OrderByDescending(e => e.EventDate ?? DateOnly.MinValue)
+            .ThenByDescending(e => e.ChargeEventId)
+            .FirstOrDefault(e => !string.IsNullOrWhiteSpace(e.PropertyParticulars));
+
+        if (latestEv is not null)
         {
-            if (string.IsNullOrWhiteSpace(ev.PropertyParticulars)) continue;
-            var reading = PropertyReading.For(ev.PropertyParticulars, ev.PropertyType, extractions);
+            var reading = PropertyReading.For(latestEv.PropertyParticulars, latestEv.PropertyType, extractions);
             foreach (var item in reading.Items)
             {
                 if (!string.IsNullOrWhiteSpace(item.Owner) && !IsSelfCompany(item.Owner, profile))
@@ -366,8 +379,8 @@ public static class ChargedPropertyAddressRules
                         owners.Add(item.Owner);
                 }
             }
-            if (owners.Count > 0) break; // Use latest filing's particulars
         }
+
         return owners;
     }
 
