@@ -65,10 +65,20 @@ public class LitigationRecencyRoutingTests : IAsyncLifetime
         db.LitigationCases.Add(c);
         await db.SaveChangesAsync();
 
+        // A real document per order: a made-up document id written to the shared test database collides with other
+        // tests' real documents under parallel runs.
+        var documents = c.Orders.Select(o => new LitigationOrderDocument
+        {
+            LitigationCaseOrderId = o.LitigationCaseOrderId, Status = LitigationOrderDocumentStatus.Downloaded,
+            RetainedUntilUtc = DateTime.UtcNow.AddDays(5), CreatedUtc = DateTime.UtcNow
+        }).ToList();
+        db.LitigationOrderDocuments.AddRange(documents);
+        await db.SaveChangesAsync();
+
         for (var i = 0; i < orders.Length; i++)
             db.LitigationOrderChunks.Add(new LitigationOrderChunk
             {
-                RequestId = requestId, LitigationOrderDocumentId = c.Orders[i].LitigationCaseOrderId, LitigationCaseOrderId = c.Orders[i].LitigationCaseOrderId,
+                RequestId = requestId, LitigationOrderDocumentId = documents[i].LitigationOrderDocumentId, LitigationCaseOrderId = c.Orders[i].LitigationCaseOrderId,
                 LitigationCaseId = c.LitigationCaseId, CaseNumber = number, Court = "NCLT Cuttack", OrderType = "Order", OrderDate = orders[i].Date,
                 ChunkIndex = 0, PageNumber = 1, ChunkText = orders[i].Text, Embedding = new SqlVector<float>(Axis0()),
                 EmbeddingModel = "test", EmbeddingDimensions = 768, ChunkingVersion = "1.0", CreatedDate = DateTime.UtcNow

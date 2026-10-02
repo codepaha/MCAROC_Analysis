@@ -46,15 +46,37 @@ public class SearchCoverageRoutingTests : IAsyncLifetime
         db.Requests.Add(request);
         await db.SaveChangesAsync();
 
+        // Real case/order/document rows: made-up ids written to the shared test database collide with other tests'
+        // real documents under parallel runs (they broke LitigationReuseServiceTests and a chunking test on CI).
         for (var i = 0; i < litigationChunks; i++)
+        {
+            var litigationCase = new LitigationCase
+            {
+                RequestId = request.RequestId, Cnr = "CNR" + Guid.NewGuid().ToString("N")[..10], CaseNumber = $"CS {i + 1}/2021",
+                Court = "High Court", FirstSeenUtc = DateTime.UtcNow, LastSeenUtc = DateTime.UtcNow
+            };
+            db.LitigationCases.Add(litigationCase);
+            await db.SaveChangesAsync();
+            var order = new LitigationCaseOrder { LitigationCaseId = litigationCase.LitigationCaseId, OrderDate = "10-02-2022", OrderType = "Order", CreatedUtc = DateTime.UtcNow };
+            db.LitigationCaseOrders.Add(order);
+            await db.SaveChangesAsync();
+            var document = new LitigationOrderDocument
+            {
+                LitigationCaseOrderId = order.LitigationCaseOrderId, Status = LitigationOrderDocumentStatus.Downloaded,
+                RetainedUntilUtc = DateTime.UtcNow.AddDays(5), CreatedUtc = DateTime.UtcNow
+            };
+            db.LitigationOrderDocuments.Add(document);
+            await db.SaveChangesAsync();
             db.LitigationOrderChunks.Add(new LitigationOrderChunk
             {
-                RequestId = request.RequestId, LitigationOrderDocumentId = i + 1, LitigationCaseOrderId = i + 1, LitigationCaseId = i + 1,
+                RequestId = request.RequestId, LitigationOrderDocumentId = document.LitigationOrderDocumentId,
+                LitigationCaseOrderId = order.LitigationCaseOrderId, LitigationCaseId = litigationCase.LitigationCaseId,
                 CaseNumber = $"CS {i + 1}/2021", Court = "High Court", ChunkIndex = 0, PageNumber = 1,
                 ChunkText = $"Order {i + 1}: the plaintiff alleges fraud in the loan documents.",
                 Embedding = new SqlVector<float>(Axis0()),
                 EmbeddingModel = "test", EmbeddingDimensions = 768, ChunkingVersion = "1.0", CreatedDate = DateTime.UtcNow
             });
+        }
         await db.SaveChangesAsync();
         return request.RequestId;
     }

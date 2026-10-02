@@ -329,6 +329,35 @@ public sealed class LitigationReuseServiceTests : IAsyncLifetime
         Assert.Equal("NEW/2026", (await verify.LitigationCases.AsNoTracking().SingleAsync(c => c.RequestId == requester.RequestId)).CaseNumber);
     }
 
+    /// <summary>Chunks are request-owned: a chunk of another request that names the same document id (a data error, or a
+    /// test that seeded a made-up id) must neither be copied nor break the copy — it once threw KeyNotFoundException on CI.</summary>
+    [Fact]
+    public async Task Another_requests_chunk_naming_a_source_document_id_is_never_copied()
+    {
+        await using var db = CreateContext();
+        var scope = $"search|SEED-{Guid.NewGuid():N}|hash";
+        var source = await SeedSourceAsync(db, scope, retrievedUtc: DateTime.UtcNow.AddDays(-3), withDocument: true, withChunk: true);
+        var sourceDocId = await db.LitigationOrderDocuments.AsNoTracking()
+            .Where(d => db.LitigationCaseOrders.Any(o => o.LitigationCaseOrderId == d.LitigationCaseOrderId && o.LitigationCaseId == source.CaseId))
+            .Select(d => d.LitigationOrderDocumentId).SingleAsync();
+        var stranger = await SeedRequestAsync(db, "stranger");
+        db.LitigationOrderChunks.Add(new LitigationOrderChunk
+        {
+            RequestId = stranger.RequestId, LitigationOrderDocumentId = sourceDocId, LitigationCaseOrderId = -1, LitigationCaseId = -1,
+            ChunkIndex = 0, PageNumber = 1, ChunkText = "a stranger's chunk", Embedding = new SqlVector<float>(new float[768]),
+            EmbeddingModel = "test", EmbeddingDimensions = 768, ChunkingVersion = "1.0", CreatedDate = DateTime.UtcNow
+        });
+        await db.SaveChangesAsync();
+        var request = await SeedRequestAsync(db, "reuser");
+
+        var result = await Service(db).TryReuseAsync(request.RequestId, scope, CancellationToken.None);
+
+        Assert.True(result.Reused);
+        await using var verify = CreateContext();
+        var copied = await verify.LitigationOrderChunks.AsNoTracking().Where(c => c.RequestId == request.RequestId).ToListAsync();
+        Assert.Equal("reused chunk text", Assert.Single(copied).ChunkText);
+    }
+
     private sealed record SourceHandles(long RequestId, long SnapshotId, long CaseId, DateTime RetrievedUtc, string? DocumentPath);
 
     private async Task<SourceHandles> SeedSourceAsync(
