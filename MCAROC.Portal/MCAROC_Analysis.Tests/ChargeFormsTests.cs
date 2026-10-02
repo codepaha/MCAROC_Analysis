@@ -94,6 +94,23 @@ public class ChargeFormsTests
         Assert.Equal(5, linked[2][0].Form.FilingDocumentId);
     }
 
+    /// <summary>PR #373 review: the date-and-amount fallback is for creation forms only. A modification form, or a form that
+    /// doesn't state its type, without a charge ID stays unlinked even when a creation event happens to match.</summary>
+    [Theory]
+    [InlineData("ChargeType: MDFN\n")]
+    [InlineData("")]
+    public void Link_DateAndAmountFallback_IsForCreationFormsOnly(string chargeTypeLine)
+    {
+        var text = "--- Page 1 (native) ---\n" + chargeTypeLine +
+            "InstrumentDesc: Supplemental modification deed\nInstrumentCrtModDate: 2015-09-07\nAmtSecured: 4492800000.00\nNewPropParticlars: Flat No. 305\n";
+        var form = ChargeForms.Read(9, text)!;
+        var charge = Charge(1, "1001", (ChargeEventType.Creation, new DateOnly(2015, 9, 7), 449.28m));
+
+        Assert.NotEqual(true, form.IsCreation);
+        Assert.Empty(ChargeForms.Link([form], [charge]));
+        Assert.Single(ChargeForms.Link([ChargeForms.Read(5, CreationForm)!], [charge])[1]); // the same match for a CRTN form links
+    }
+
     [Fact]
     public void Link_NeverGuesses_WhenTwoChargesMatchOrNoneDoes()
     {
@@ -137,7 +154,7 @@ public sealed class ChargeFormsLoadTests : IAsyncLifetime, IDisposable
         try { Directory.Delete(_dir, recursive: true); } catch { /* best effort */ }
     }
 
-    private sealed class RecordingBackfill() : ChargeFormBackfill(null!, null!, Microsoft.Extensions.Logging.Abstractions.NullLogger<ChargeFormBackfill>.Instance)
+    private sealed class RecordingBackfill() : ChargeFormBackfill(null!, Microsoft.Extensions.Logging.Abstractions.NullLogger<ChargeFormBackfill>.Instance)
     {
         public readonly List<long> Requested = [];
         public override void Request(long batchId) => Requested.Add(batchId);
@@ -160,7 +177,7 @@ public sealed class ChargeFormsLoadTests : IAsyncLifetime, IDisposable
 
         const string Datasets = """
             <xfa:datasets xmlns:xfa="http://www.xfa.org/schema/xfa-data/1.0/"><xfa:data><Form8_Dtls><Form8>
-              <InstrumentDesc>Deed of Hypothecation</InstrumentDesc><InstrumentCrtModDate>2015-09-07</InstrumentCrtModDate>
+              <ChargeType>CRTN</ChargeType><InstrumentDesc>Deed of Hypothecation</InstrumentDesc><InstrumentCrtModDate>2015-09-07</InstrumentCrtModDate>
               <AmtSecured>4492800000.00</AmtSecured><NewPropParticlars>Plot No. 45, Sector 63, Noida</NewPropParticlars>
               <PropOwnCmp>YES</PropOwnCmp><PropRegisteredName>Mr. A. Director</PropRegisteredName>
             </Form8></Form8_Dtls></xfa:data></xfa:datasets>
@@ -188,7 +205,7 @@ public sealed class ChargeFormsLoadTests : IAsyncLifetime, IDisposable
         // 2. The backfill reads the PDF's form data and saves it beside the text.
         var services = new Microsoft.Extensions.DependencyInjection.ServiceCollection()
             .AddScoped(_ => CreateContext()).BuildServiceProvider();
-        var backfill = new ChargeFormBackfill(services.GetRequiredService<Microsoft.Extensions.DependencyInjection.IServiceScopeFactory>(), cache,
+        var backfill = new ChargeFormBackfill(services.GetRequiredService<Microsoft.Extensions.DependencyInjection.IServiceScopeFactory>(),
             Microsoft.Extensions.Logging.Abstractions.NullLogger<ChargeFormBackfill>.Instance);
         Assert.Equal(1, await backfill.RunAsync(batch.BatchId, CancellationToken.None));
         Assert.True(File.Exists(Path.Combine(_dir, "form8.xfa.json")));
@@ -216,5 +233,86 @@ public sealed class ChargeFormsLoadTests : IAsyncLifetime, IDisposable
 
         Assert.Equal(TextExtractionMethod.Native, result.Method); // real page text is kept as it is
         Assert.Equal("10332396", Assert.Single(result.XfaFields!).Value);
+    }
+
+    private async Task<(long RequestId, McaFilingBatch Batch, McaFiling Filing)> SeedBatchAsync(MCAROC_Analysis.Data.AppDbContext db, FilingBatchStatus status)
+    {
+        var request = new McaRequest { ClientId = 1, EntityType = EntityType.Company, CompanyName = "Forms Co", RequestNumber = $"CF-{Guid.NewGuid():N}",
+            RequestStatus = RequestStatus.DataExtracted, CreatedDate = DateTime.UtcNow };
+        db.Requests.Add(request);
+        await db.SaveChangesAsync();
+        var batch = new McaFilingBatch { RequestId = request.RequestId, Status = status, StartedDate = DateTime.UtcNow };
+        db.McaFilingBatches.Add(batch);
+        await db.SaveChangesAsync();
+        var filing = new McaFiling { BatchId = batch.BatchId, RequestId = request.RequestId, Srn = "SRN-1", NestedZipName = "n.zip" };
+        db.McaFilings.Add(filing);
+        await db.SaveChangesAsync();
+        return (request.RequestId, batch, filing);
+    }
+
+    /// <summary>An extracted charge document with its form fields saved beside its text (as extraction now does).</summary>
+    private async Task<long> ExtractedFormAsync(MCAROC_Analysis.Data.AppDbContext db, McaFilingBatch batch, McaFiling filing)
+    {
+        var textPath = Path.Combine(_dir, Guid.NewGuid().ToString("N") + ".txt");
+        await File.WriteAllTextAsync(textPath, "--- Page 1 (native) ---\nForm 8");
+        await MCAROC_Analysis.Services.McaFilings.XfaFormReader.WriteSidecarAsync(textPath,
+        [
+            new("F/ChargeType", "ChargeType", "CRTN"), new("F/InstrumentDesc", "InstrumentDesc", "Deed of Hypothecation"),
+            new("F/InstrumentCrtModDate", "InstrumentCrtModDate", "2015-09-07"), new("F/AmtSecured", "AmtSecured", "4492800000.00"),
+            new("F/NewPropParticlars", "NewPropParticlars", "Plot No. 45, Sector 63, Noida")
+        ], CancellationToken.None);
+        var d = new McaFilingDocument { FilingId = filing.FilingId, BatchId = batch.BatchId, RequestId = batch.RequestId, OriginalFileName = "Form 8.pdf",
+            StoragePath = "missing.pdf", ExtractedTextPath = textPath, FileHash = Guid.NewGuid().ToString("N"), ProcessingStatus = FilingDocumentProcessingStatus.Completed,
+            Category = FilingCategory.Charge, TextExtractionMethod = TextExtractionMethod.Native, UpdatedAt = DateTime.UtcNow };
+        db.McaFilingDocuments.Add(d);
+        await db.SaveChangesAsync();
+        return d.FilingDocumentId;
+    }
+
+    private static RocCharge CreationCharge(long requestId) => new()
+    {
+        ChargeId = 42, RequestId = requestId, RocChargeNumber = "100080144",
+        Events = [new RocChargeEvent { EventType = ChargeEventType.Creation, EventDate = new DateOnly(2015, 9, 7), ChargeAmount = 449.28m }]
+    };
+
+    /// <summary>PR #373 review: a load while the batch is still being processed must not cache its (empty) answer — a form
+    /// extracted into the same batch afterwards shows on the very next load.</summary>
+    [Fact]
+    public async Task A_form_extracted_after_a_load_of_an_in_flight_batch_shows_on_the_next_load()
+    {
+        await using var db = CreateContext();
+        var (requestId, batch, filing) = await SeedBatchAsync(db, FilingBatchStatus.Processing);
+        using var cache = new MemoryCache(new MemoryCacheOptions { SizeLimit = 256 });
+
+        Assert.Empty(await ChargeForms.LoadAsync(db, requestId, [CreationCharge(requestId)], CancellationToken.None, cache));
+
+        var docId = await ExtractedFormAsync(db, batch, filing);
+        batch.Status = FilingBatchStatus.Completed;
+        batch.CompletedDate = DateTime.UtcNow;
+        await db.SaveChangesAsync();
+
+        Assert.Equal(docId, Assert.Single((await ChargeForms.LoadAsync(db, requestId, [CreationCharge(requestId)], CancellationToken.None, cache))[42]).Form.FilingDocumentId);
+    }
+
+    /// <summary>The cache still serves a settled batch whose evidence hasn't changed, and a newly extracted document (a new
+    /// row) is picked up straight away.</summary>
+    [Fact]
+    public async Task A_settled_batch_is_served_from_cache_until_its_evidence_changes()
+    {
+        await using var db = CreateContext();
+        var (requestId, batch, filing) = await SeedBatchAsync(db, FilingBatchStatus.Completed);
+        using var cache = new MemoryCache(new MemoryCacheOptions { SizeLimit = 256 });
+        var first = await ExtractedFormAsync(db, batch, filing);
+        Assert.Single((await ChargeForms.LoadAsync(db, requestId, [CreationCharge(requestId)], CancellationToken.None, cache))[42]);
+
+        // Unchanged evidence: served from cache (deleting the saved fields changes nothing until the evidence does).
+        var firstText = (await db.McaFilingDocuments.AsNoTracking().SingleAsync(d => d.FilingDocumentId == first)).ExtractedTextPath!;
+        File.Delete(MCAROC_Analysis.Services.McaFilings.XfaFormReader.SidecarPath(firstText));
+        Assert.Single((await ChargeForms.LoadAsync(db, requestId, [CreationCharge(requestId)], CancellationToken.None, cache))[42]);
+
+        // New evidence (another extracted form in the batch): re-read, not the stale cached list.
+        await MCAROC_Analysis.Services.McaFilings.XfaFormReader.WriteSidecarAsync(firstText, [], CancellationToken.None);
+        var second = await ExtractedFormAsync(db, batch, filing);
+        Assert.Equal(second, Assert.Single((await ChargeForms.LoadAsync(db, requestId, [CreationCharge(requestId)], CancellationToken.None, cache))[42]).Form.FilingDocumentId);
     }
 }

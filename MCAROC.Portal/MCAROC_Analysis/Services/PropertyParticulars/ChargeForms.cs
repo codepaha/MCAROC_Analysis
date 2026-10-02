@@ -15,8 +15,12 @@ namespace MCAROC_Analysis.Services.PropertyParticulars;
 /// YES → false; null when unanswered. <see cref="RegisteredOwner"/> is item 16(b), in whose name it is registered.</summary>
 public sealed record ChargeFormRecord(
     long FilingDocumentId, string? ChargeId, string? InstrumentDescription, DateOnly? InstrumentDate, decimal? AmountSecuredRupees,
-    string? HolderName, string? PropertyParticulars, bool? OwnedByCompany, string? RegisteredOwner = null)
+    string? HolderName, string? PropertyParticulars, bool? OwnedByCompany, string? RegisteredOwner = null, string? FiledChargeType = null)
 {
+    /// <summary>The form's own filed type (field <c>ChargeType</c>): CRTN for a charge creation, MDFN for a modification.
+    /// Null when the form doesn't state it — then it is never treated as a creation.</summary>
+    public bool? IsCreation => FiledChargeType?.ToUpperInvariant() switch { "CRTN" => true, "MDFN" => false, _ => null };
+
     /// <summary>The amount as the charge register states it: rupees crore, two decimals.</summary>
     public decimal? AmountSecuredCrore => AmountSecuredRupees is { } r ? Math.Round(r / 10_000_000m, 2, MidpointRounding.AwayFromZero) : null;
 }
@@ -70,15 +74,17 @@ public static class ChargeForms
             string.IsNullOrWhiteSpace(particulars) ? null : particulars,
             // Item 16(a) asks whether any property is NOT registered in the company's name: NO means it is the company's.
             One("PropOwnCmp")?.ToUpperInvariant() switch { "NO" => true, "YES" => false, _ => null },
-            registeredOwner);
+            registeredOwner,
+            One("ChargeType"));
     }
 
     private static bool NoOwner(string value) =>
         value.Trim().Trim('.', '-').ToUpperInvariant() is "" or "NIL" or "NA" or "N/A" or "NONE" or "NOT APPLICABLE";
 
-    /// <summary>Matches forms to the request's charges. A form naming a charge ID links to that charge only; a form without
-    /// one links only when exactly one charge has a creation event on the instrument date for the same amount (crore, two
-    /// decimals). Anything ambiguous or unmatched is left unlinked — a form is never attached to a guessed charge.</summary>
+    /// <summary>Matches forms to the request's charges. A form naming a charge ID links to that charge only. A form without
+    /// one links only when the form itself is a creation (filed type CRTN) and exactly one charge has a creation event on
+    /// the instrument date for the same amount (crore, two decimals). A modification or unknown-type form without an ID, and
+    /// anything ambiguous or unmatched, is left unlinked — a form is never attached to a guessed charge.</summary>
     public static IReadOnlyDictionary<long, IReadOnlyList<LinkedChargeForm>> Link(IEnumerable<ChargeFormRecord> forms, IReadOnlyCollection<RocCharge> charges)
     {
         var byNumber = charges.GroupBy(c => c.RocChargeNumber.Trim().TrimStart('0')).ToDictionary(g => g.Key, g => g.ToList());
@@ -93,7 +99,7 @@ public static class ChargeForms
                 if (byNumber.TryGetValue(id, out var withId) && withId.Count == 1) Add(withId[0], new(form, ChargeFormLinkBasis.ChargeId));
                 continue;
             }
-            if (form.InstrumentDate is not { } date || form.AmountSecuredCrore is not { } crore) continue;
+            if (form.IsCreation != true || form.InstrumentDate is not { } date || form.AmountSecuredCrore is not { } crore) continue;
             var candidates = charges.Where(c => c.Events.Any(e => e.EventType == ChargeEventType.Creation && e.EventDate == date
                 && e.ChargeAmount is { } a && Math.Round(a, 2) == crore)).ToList();
             if (candidates.Count == 1) Add(candidates[0], new(form, ChargeFormLinkBasis.CreationDateAndAmount));
@@ -104,7 +110,6 @@ public static class ChargeForms
 
     private static readonly TimeSpan CacheFor = TimeSpan.FromHours(6);
 
-    internal static string CacheKey(long batchId) => $"ChargeForms:{batchId}";
 
     /// <summary>The batch documents whose filed form data is read: its charge documents, plus any whose text came from XFA.</summary>
     internal static IQueryable<McaFilingDocument> Candidates(AppDbContext db, long batchId) =>
@@ -115,7 +120,9 @@ public static class ChargeForms
     /// read from each document's saved XFA fields (written at extraction, beside its text) — never by opening PDFs on a page
     /// load. Documents extracted before that existed have none yet: they are handed to <paramref name="backfill"/>, which
     /// saves them in the background, and the forms appear on a later load. A complete batch is cached; the link to charges is
-    /// recomputed each time (cheap).</summary>
+    /// recomputed each time (cheap). The cache is keyed on the batch's evidence — how many documents are eligible, the newest
+    /// and the latest update — so a document extracted after a load (which updates its row) is read on the very next one;
+    /// a batch still being processed, or one with documents awaiting backfill, is never cached.</summary>
     public static async Task<IReadOnlyDictionary<long, IReadOnlyList<LinkedChargeForm>>> LoadAsync(
         AppDbContext db, long requestId, IReadOnlyCollection<RocCharge> charges, CancellationToken ct,
         IMemoryCache? cache = null, ChargeFormBackfill? backfill = null)
@@ -124,10 +131,12 @@ public static class ChargeForms
         var batch = await McaFilingBatchResolver.GetAuthoritativeBatchAsync(db, requestId, ct);
         if (batch is null) return new Dictionary<long, IReadOnlyList<LinkedChargeForm>>();
 
-        if (cache is not null && cache.TryGetValue(CacheKey(batch.BatchId), out List<ChargeFormRecord>? cached) && cached is not null)
+        var documents = await Candidates(db, batch.BatchId).Select(d => new { d.FilingDocumentId, d.ExtractedTextPath, d.UpdatedAt }).ToListAsync(ct);
+        var key = documents.Count == 0 ? null
+            : $"ChargeForms:{batch.BatchId}:{documents.Count}:{documents.Max(d => d.FilingDocumentId)}:{documents.Max(d => d.UpdatedAt).Ticks}";
+        if (key is not null && cache is not null && cache.TryGetValue(key, out List<ChargeFormRecord>? cached) && cached is not null)
             return Link(cached, charges);
 
-        var documents = await Candidates(db, batch.BatchId).Select(d => new { d.FilingDocumentId, d.ExtractedTextPath }).ToListAsync(ct);
         var forms = new List<ChargeFormRecord>();
         var missing = false;
         foreach (var d in documents)
@@ -136,16 +145,19 @@ public static class ChargeForms
             if (fields is null) { missing = true; continue; }
             if (FromFields(d.FilingDocumentId, fields) is { } form) forms.Add(form);
         }
+        var batchSettled = batch.Status is FilingBatchStatus.Completed or FilingBatchStatus.CompletedWithErrors;
         if (missing) backfill?.Request(batch.BatchId);
-        else cache?.Set(CacheKey(batch.BatchId), forms, new MemoryCacheEntryOptions { Size = 1, AbsoluteExpirationRelativeToNow = CacheFor });
+        else if (batchSettled && key is not null)
+            cache?.Set(key, forms, new MemoryCacheEntryOptions { Size = 1, AbsoluteExpirationRelativeToNow = CacheFor });
         return Link(forms, charges);
     }
 }
 
 /// <summary>#364: saves the XFA fields of a batch's charge documents that were extracted before fields were saved at
-/// extraction — off the request path, a few PDFs at a time — then drops the batch's cached forms so the next load shows
-/// them. One run per batch at a time; writing a document's fields is idempotent, so an overlapping run is harmless.</summary>
-public class ChargeFormBackfill(IServiceScopeFactory scopes, IMemoryCache cache, ILogger<ChargeFormBackfill> logger)
+/// extraction — off the request path, a few PDFs at a time — so the next load shows them (a load with documents still
+/// awaiting this is never cached). One run per batch at a time; writing a document's fields is idempotent, so an
+/// overlapping run is harmless.</summary>
+public class ChargeFormBackfill(IServiceScopeFactory scopes, ILogger<ChargeFormBackfill> logger)
 {
     private readonly System.Collections.Concurrent.ConcurrentDictionary<long, Task> _running = new();
 
@@ -182,7 +194,6 @@ public class ChargeFormBackfill(IServiceScopeFactory scopes, IMemoryCache cache,
             await XfaFormReader.WriteSidecarAsync(d.ExtractedTextPath!, fields, token);
             Interlocked.Increment(ref saved);
         });
-        cache.Remove(ChargeForms.CacheKey(batchId));
         if (saved > 0) logger.LogInformation("Saved charge-form fields for {Count} document(s) of batch {BatchId}", saved, batchId);
         return saved;
     }
