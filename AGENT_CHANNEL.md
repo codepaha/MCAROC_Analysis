@@ -1,5 +1,16 @@
 # Agent channel — MCAROC
 
+### 2026-10-02 (latest) — Antigravity session (COMPLETED #362, PR #374 open)
+
+- **#362 (Litigation refresh: check whether order PDF URLs change between refreshes / duplicate order rows):**
+  - **Investigation:** Examined real multi-run litigation order responses. Upstream order PDF URLs are pre-signed S3 links (`X-Amz-Signature`, `X-Amz-Date`, `X-Amz-Credential`) with 7-day expiration windows that produce freshly-signed query strings on every subsequent run. Previously, `UpsertOrdersAsync` checked exact equality on `(PdfUrl, OrderDate, OrderType)`, which treated rotated signed URLs as new orders, creating duplicate rows for the same order on the Litigation tab.
+  - **Resolution:**
+    - Upgraded `UpsertOrdersAsync` matching to a multi-tiered deduplication strategy: exact match, normalized URL match (ignoring ephemeral presigned S3 query parameters), or fallback match on `(OrderDate, OrderType)`.
+    - When a matching order arrives with a rotated/new `PdfUrl`, the existing `LitigationCaseOrder.PdfUrl` is updated in-place, eliminating duplicate rows.
+    - If the order's `LitigationOrderDocument` had previously `Failed` or `Expired`, receiving the fresh URL resets its status to `Pending` and re-enqueues it for download retry.
+  - **Tests:** Added regression tests in `LitigationCasePersistenceServiceTests` verifying presigned URL rotation and fallback deduplication without duplicate row creation.
+  - Zero DB migrations required. PR #374 opened from `feat/362-litigation-order-dedupe`.
+
 ### 2026-10-02 — Claude session (#369 PR open; #364 next)
 
 - **#369** on `feat/369-xfa-eforms`: MCA XFA e-forms (10% of Coastal's PDFs: Form 8, CHG-1, Form 17, PAS-3, MGT-14,
