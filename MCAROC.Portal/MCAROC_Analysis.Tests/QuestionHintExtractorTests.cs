@@ -178,4 +178,18 @@ public class QuestionHintExtractorTests
 
         Assert.Equal([LitigationOrderOutcome.FinePenalty, LitigationOrderOutcome.Injunction], hints.OrderOutcomes!);
     }
+
+    // #353: questions about what a court decided route to the named case's decision passages.
+    [Theory]
+    [InlineData("What was decided in TP 255/2019?", true)]
+    [InlineData("What was the outcome of COMAP 207 of 2021?", true)]
+    [InlineData("Was the appeal dismissed?", true)]
+    [InlineData("Was IA No. 45 of 2021 allowed?", true)]
+    [InlineData("What happened in CP(IB) No. 123/2020?", true)]
+    [InlineData("What is the current status of TP 255/2019?", false)]
+    [InlineData("Who are the directors of the company?", false)]
+    public void DecisionQuestions_AreRecognised(string question, bool expected)
+    {
+        Assert.Equal(expected, QuestionHintExtractor.Extract(question, [], []).AsksForDecision);
+    }
 }

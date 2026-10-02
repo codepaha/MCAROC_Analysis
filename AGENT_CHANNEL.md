@@ -1,5 +1,13 @@
 # Agent channel — MCAROC
 
+### 2026-10-02 — Claude session (CLAIMED #353, PR open)
+
+- **#349 / #355 done:** PRs #352 and #357 merged.
+- **#353** on `feat/353-decision-passage-boost`, with the scope narrowed on the issue: no section detection (OCR-damaged
+  headings; decisions are not reliably at the end), no per-chunk context header (needs a re-embed path). A "what was
+  decided" question about a named case pins that case's top-5 decision-language passages ahead of similarity matches
+  (`AsksForDecision`, `GetDecisionPassagesAsync`). No migration, no re-embed. Antigravity has #354.
+
 ### 2026-10-01 — Claude session (CLAIMED #355, PR open)
 
 - **#355** on `feat/long-order-evidence`: orders over 24 chunks send their first 2 and last 2 chunks plus the 20

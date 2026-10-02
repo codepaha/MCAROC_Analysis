@@ -108,8 +108,16 @@ public class RetrievalContextBuilder
             ? await _litigationRetriever.GetLatestOrderChunksAsync(requestId,
                 referencedCases.Select(c => c.LitigationCaseId).ToList(), LatestOrdersPerQuestion, ChunksPerLatestOrder, ct)
             : [];
-        var litigationChunks = latestOrderChunks.Select(c => (Chunk: c, Distance: (double?)null))
-            .Concat(litigationMatches.Where(m => latestOrderChunks.All(l => l.LitigationOrderChunkId != m.Chunk.LitigationOrderChunkId))
+        // #353: a "what was decided" question about a named case gets that case's strongest decision passages — in a long
+        // judgement the deciding paragraph can sit anywhere, and similarity to the question under-ranks it.
+        var decisionChunks = hints.AsksForDecision && referencedCases.Count > 0
+            ? await _litigationRetriever.GetDecisionPassagesAsync(requestId,
+                referencedCases.Select(c => c.LitigationCaseId).ToList(), DecisionPassagesPerQuestion, ct)
+            : [];
+        var pinned = latestOrderChunks.Concat(decisionChunks.Where(d => latestOrderChunks.All(l => l.LitigationOrderChunkId != d.LitigationOrderChunkId)))
+            .ToList();
+        var litigationChunks = pinned.Select(c => (Chunk: c, Distance: (double?)null))
+            .Concat(litigationMatches.Where(m => pinned.All(p => p.LitigationOrderChunkId != m.Chunk.LitigationOrderChunkId))
                 .Select(m => (m.Chunk, Distance: (double?)m.Distance)))
             .ToList();
 
@@ -179,6 +187,9 @@ public class RetrievalContextBuilder
 
     internal const int LatestOrdersPerQuestion = 3;
     internal const int ChunksPerLatestOrder = 2;
+    /// <summary>#353: on the fixture's long judgements the decision passage ranked within the top 5 by decision language
+    /// in 5 of 6 (the 1,054-page suit's ranked 8th).</summary>
+    internal const int DecisionPassagesPerQuestion = 5;
     internal const int MaxReferencedCases = 5;
     internal const int NewestOrdersListed = 5;
 

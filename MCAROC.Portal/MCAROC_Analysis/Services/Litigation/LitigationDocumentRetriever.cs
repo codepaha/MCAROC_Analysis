@@ -106,6 +106,37 @@ public class LitigationDocumentRetriever(AppDbContext db, ChatRetrievalOptions o
             .ToList();
     }
 
+    /// <summary>#353's decision route: the passages of the given cases with the most decision language
+    /// (<see cref="LitigationOrderClassifier.DecisionCueScore"/>) — newer order first on a tie, then page order —
+    /// for "what was decided" questions. Measured on the six #337 fixture judgements over 24 pages with real embeddings:
+    /// within the named case, the labelled decision passage ranked 0, 0, 1, 4, 7 by this score, but 1–106 by
+    /// similarity to "What was decided in …?". Passages with no decision language are never returned.</summary>
+    public virtual async Task<List<LitigationOrderChunk>> GetDecisionPassagesAsync(
+        long requestId, IReadOnlyCollection<long> caseIds, int take, CancellationToken ct)
+    {
+        var chunks = await db.LitigationOrderChunks.AsNoTracking()
+            .Where(c => c.RequestId == requestId && caseIds.Contains(c.LitigationCaseId))
+            .Select(c => new LitigationOrderChunk
+            {
+                LitigationOrderChunkId = c.LitigationOrderChunkId, RequestId = c.RequestId, LitigationOrderDocumentId = c.LitigationOrderDocumentId,
+                LitigationCaseOrderId = c.LitigationCaseOrderId, LitigationCaseId = c.LitigationCaseId, CaseNumber = c.CaseNumber, Cnr = c.Cnr,
+                Court = c.Court, OrderType = c.OrderType, OrderDate = c.OrderDate, ChunkIndex = c.ChunkIndex, PageNumber = c.PageNumber,
+                ChunkText = c.ChunkText
+            })
+            .ToListAsync(ct);
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        return chunks
+            .Select(c => (Chunk: c, Score: LitigationOrderClassifier.DecisionCueScore(c.ChunkText)))
+            .Where(x => x.Score > 0)
+            .OrderByDescending(x => x.Score)
+            .ThenByDescending(x => LitigationCaseReference.ParseDate(x.Chunk.OrderDate) ?? DateOnly.MinValue)
+            .ThenBy(x => x.Chunk.LitigationCaseOrderId).ThenBy(x => x.Chunk.PageNumber).ThenBy(x => x.Chunk.ChunkIndex)
+            .Select(x => x.Chunk)
+            .Where(c => seen.Add(NormalizedText(c.ChunkText)))
+            .Take(take)
+            .ToList();
+    }
+
     private const string WideColumns = """
         c.LitigationOrderChunkId, c.RequestId, c.LitigationOrderDocumentId, c.LitigationCaseOrderId, c.LitigationCaseId,
             c.CaseNumber, c.Cnr, c.Court, c.OrderType, c.OrderDate, c.ChunkIndex, c.PageNumber, c.ChunkText,

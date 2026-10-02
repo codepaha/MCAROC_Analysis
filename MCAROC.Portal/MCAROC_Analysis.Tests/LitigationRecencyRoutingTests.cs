@@ -144,4 +144,57 @@ public class LitigationRecencyRoutingTests : IAsyncLifetime
         Assert.Equal(2, texts.Count);
         Assert.Single(texts, t => t == shared);
     }
+
+    // ── #353: "what was decided" gets the named case's decision passages ahead of similarity matches ──
+
+    private const string Recital = "Heard the learned counsel for the parties and perused the record placed before the Tribunal.";
+    private const string Decision = "In the result, the application is dismissed. The applicant shall pay costs of Rs. 5,000. Ordered accordingly.";
+
+    [Fact]
+    public async Task DecisionQuestionAboutANamedCase_PinsItsDecisionPassage_First()
+    {
+        await using var db = CreateContext();
+        var requestId = await SeedRequestAsync(db);
+        await SeedCaseAsync(db, requestId, "TP(IB) 255/CTB/2019",
+            ("12-09-2023", Recital), ("15-03-2021", Decision), ("20-07-2026", Recital + " Matter listed for further hearing."));
+        await SeedCaseAsync(db, requestId, "TP 93/CTB/2019", ("25-03-2019", "The petition is allowed and the stay is vacated hereby."));
+
+        var context = await NewBuilder(db).BuildAsync(requestId, "What was decided in TP 255/2019?", CancellationToken.None);
+
+        var litigation = context.Sources.Where(s => s.Type == SourceType.LitigationChunk).ToList();
+        Assert.Equal(Decision, litigation[0].Text);
+        Assert.Null(litigation[0].RelevanceScore); // pinned, not a similarity match
+        // Only the named case's decision passages are pinned; recitals (no decision language) never are.
+        Assert.Single(litigation, s => s.RelevanceScore is null);
+        Assert.Single(litigation, s => s.Text == Decision); // and not repeated by the similarity matches
+    }
+
+    [Fact]
+    public async Task DecisionAndRecencyQuestion_PinsNewestOrdersThenDecisionPassages_WithoutRepeats()
+    {
+        await using var db = CreateContext();
+        var requestId = await SeedRequestAsync(db);
+        await SeedCaseAsync(db, requestId, "TP(IB) 255/CTB/2019",
+            ("20-07-2026", Recital), ("06-05-2026", Recital + " Adjourned."), ("01-01-2025", Recital + " Notice issued."),
+            ("15-03-2021", Decision));
+
+        var context = await NewBuilder(db).BuildAsync(requestId, "What was the latest decision in TP 255/2019?", CancellationToken.None);
+
+        var pinned = context.Sources.Where(s => s.Type == SourceType.LitigationChunk && s.RelevanceScore is null).ToList();
+        Assert.Equal(["Order 20-07-2026", "Order 06-05-2026", "Order 01-01-2025", "Order 15-03-2021"],
+            pinned.Select(s => s.DisplayLabel.Split(" · ")[1]));
+        Assert.Equal(pinned.Count, pinned.Select(s => s.ChunkId).Distinct().Count());
+    }
+
+    [Fact]
+    public async Task DecisionQuestionWithoutANamedCase_PinsNothing()
+    {
+        await using var db = CreateContext();
+        var requestId = await SeedRequestAsync(db);
+        await SeedCaseAsync(db, requestId, "TP(IB) 255/CTB/2019", ("15-03-2021", Decision));
+
+        var context = await NewBuilder(db).BuildAsync(requestId, "Which petitions were dismissed?", CancellationToken.None);
+
+        Assert.All(context.Sources.Where(s => s.Type == SourceType.LitigationChunk), s => Assert.NotNull(s.RelevanceScore));
+    }
 }
