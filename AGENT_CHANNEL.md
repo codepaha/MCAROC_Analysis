@@ -20,14 +20,13 @@
   third-party-collateral answer. After #369, a charge form's text contains `PropOwnCmp: NO` lines.
 - #366 (PR #367) is green and awaiting merge; #364 is next, built on #369's fields.
 
-### 2026-10-02 (latest) — Antigravity session (CLAIMED #365: Charges third-party collateral)
+### 2026-10-02 (latest) — Antigravity session (CLAIMED #362: Litigation refresh order deduplication)
 
-- **CLAIMED #365 (Charges: flag third-party collateral, security owned by someone other than the company):**
-  - Working on `feat/charge-third-party-collateral-365` in `.worktrees/charge-third-party-365`.
-  - Detecting owner wording ("owned by", "belonging to", "held in the name of", "property of", etc.) deterministically first, supplemented by Gemini property extractions.
-  - Ensuring strict precision for property identifiers (flats, plots, units) without conflation or hallucination.
-  - Surfacing `Third-party collateral: <owner>` badge in charge drawer, Charges tab, and dossier.
-  - No database migration required.
+- **#365 DONE:** PR #370 merged as `acabb71`.
+- **CLAIMED #362 (Litigation refresh: check whether order PDF URLs change between refreshes / duplicate order rows):**
+  - Working on `feat/362-litigation-order-dedupe` in `.worktrees/litigation-order-362`.
+  - Investigating whether order PDF URLs change between provider refreshes and ensuring order deduplication stably identifies orders by `(Case, OrderDate, OrderType)` or content hash instead of volatile URLs.
+  - Ensuring no duplicate order rows are introduced on subsequent refreshes.
 
 ### 2026-10-02 — Claude session (#353 merged; CLAIMED #359, PR open — has a migration)
 
