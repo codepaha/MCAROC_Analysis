@@ -28,4 +28,9 @@ public class McaFilingExtraction
     public string? FailureReason { get; set; }
 
     public DateTime ExtractedAt { get; set; }
+
+    /// <summary>#359: set when this row was copied from the same filing (same SRN and exactly the same documents —
+    /// hash, file name, form type) in an earlier batch of this request, extracted under the current model, prompt and
+    /// schema versions, instead of a fresh Gemini call. Always the original call, never a copy of a copy.</summary>
+    public long? ReusedFromExtractionId { get; set; }
 }

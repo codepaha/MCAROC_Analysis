@@ -900,6 +900,8 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             e.HasOne(x => x.Filing).WithMany(f => f.Documents).HasForeignKey(x => x.FilingId).OnDelete(DeleteBehavior.Cascade);
             e.HasOne<McaFilingDocument>().WithMany().HasForeignKey(x => x.DuplicateOfDocumentId).OnDelete(DeleteBehavior.Restrict);
             e.HasIndex(x => new { x.BatchId, x.FileHash });
+            // #359: a refresh batch looks up the same PDF in this request's earlier batches, once per document.
+            e.HasIndex(x => new { x.RequestId, x.FileHash });
             e.HasIndex(x => x.ProcessingStatus);
             e.Property(x => x.Category).HasConversion<string>().HasMaxLength(20);
             e.Property(x => x.ClassificationConfidence).HasConversion<string>().HasMaxLength(10);

@@ -339,7 +339,12 @@ public class FilingBatchProcessor(
             var filing = document.Filing!;
             var tempDir = FilingStoragePaths.TempDir(contentRootPath, document.RequestId, document.BatchId, document.FilingId);
 
-            var extraction = await pdfTextExtractor.ExtractAsync(document.StoragePath, tempDir, ct);
+            // #359: a client refresh re-imports the whole MCA export as a new batch. A PDF this request already
+            // extracted in an earlier batch reuses that text (OCR is the slow part); classification below still
+            // runs fresh, since it also reads folder and file names a refresh may change.
+            var earlier = await FindEarlierExtractedTextAsync(document, ct);
+            var extraction = earlier?.Result ?? await pdfTextExtractor.ExtractAsync(document.StoragePath, tempDir, ct);
+            document.ReusedFromDocumentId = earlier?.SourceDocumentId;
 
             if (extraction.Status != FilingDocumentProcessingStatus.TextExtracted)
             {
@@ -537,7 +542,14 @@ public class FilingBatchProcessor(
             contexts.Add(new FilingDocumentContext(d.OriginalFileName, d.FormType, text));
         }
 
-        var outcome = await vertexAiService.ExtractAsync(filing.Srn, dominantCategory, dominantFormType, contexts, ct);
+        // #359: the same filing, with exactly the same documents, already extracted in an earlier batch under the
+        // current model/prompt/schema — copy it rather than paying for an identical Gemini call. Any change to the
+        // filing's documents, or a version bump, gets a fresh call; a failed extraction is never copied.
+        var earlierExtraction = await FindEarlierExtractionAsync(filing, documents,
+            VertexAiExtractionService.SchemaNameFor(dominantCategory, dominantFormType), ct);
+        var outcome = earlierExtraction is { } e
+            ? new ExtractionOutcome(e.SchemaName, e.ExtractedJson, e.RawModelResponse, e.ValidationStatus, e.ValidationErrors, e.Status, e.FailureReason)
+            : await vertexAiService.ExtractAsync(filing.Srn, dominantCategory, dominantFormType, contexts, ct);
 
         db.McaFilingExtractions.Add(new McaFilingExtraction
         {
@@ -552,7 +564,8 @@ public class FilingBatchProcessor(
             ValidationErrors = outcome.ValidationErrors,
             Status = outcome.Status,
             FailureReason = outcome.FailureReason,
-            ExtractedAt = DateTime.UtcNow
+            ExtractedAt = DateTime.UtcNow,
+            ReusedFromExtractionId = earlierExtraction is null ? null : earlierExtraction.ReusedFromExtractionId ?? earlierExtraction.ExtractionId
         });
 
         // Only the documents this call actually claimed — a stray NotApplicable document that happened to
@@ -606,6 +619,71 @@ public class FilingBatchProcessor(
         }
 
         await MaybeCompleteBatchAsync(filing.BatchId, ct);
+    }
+
+    /// <summary>#359: the extracted text of the same PDF (same <see cref="McaFilingDocument.FileHash"/>) from an earlier
+    /// batch of this request, if that document completed extraction and its text file is still on disk — newest first.
+    /// A document whose extraction failed is never a source, so a refresh retries it.</summary>
+    private async Task<(PdfExtractionResult Result, long SourceDocumentId)?> FindEarlierExtractedTextAsync(McaFilingDocument document, CancellationToken ct)
+    {
+        if (string.IsNullOrEmpty(document.FileHash))
+            return null;
+        var candidates = await db.McaFilingDocuments.AsNoTracking()
+            .Where(d => d.RequestId == document.RequestId && d.FileHash == document.FileHash && d.BatchId != document.BatchId
+                && d.DuplicateOfDocumentId == null && d.ProcessingStatus == FilingDocumentProcessingStatus.Completed
+                && d.ExtractedTextPath != null)
+            .OrderByDescending(d => d.FilingDocumentId)
+            .Select(d => new { d.FilingDocumentId, d.ReusedFromDocumentId, d.ExtractedTextPath, d.PageCount, d.NativePageCount, d.OcrPageCount, d.TextExtractionMethod })
+            .ToListAsync(ct);
+        foreach (var c in candidates)
+        {
+            if (!File.Exists(c.ExtractedTextPath))
+                continue; // retired (#360) or missing — try an older copy, else extract afresh
+            var text = await File.ReadAllTextAsync(c.ExtractedTextPath!, ct);
+            logger.LogInformation("Document {DocumentId} reuses the extracted text of document {SourceId} (same PDF, earlier batch).",
+                document.FilingDocumentId, c.FilingDocumentId);
+            return (new PdfExtractionResult(text, c.PageCount, c.NativePageCount, c.OcrPageCount, c.TextExtractionMethod,
+                FilingDocumentProcessingStatus.TextExtracted, null), c.ReusedFromDocumentId ?? c.FilingDocumentId);
+        }
+        return null;
+    }
+
+    /// <summary>#359: a successful extraction of the same filing (same SRN) from an earlier batch of this request whose
+    /// documents are exactly this filing's — the same (hash, file name, form type) set, which is everything the Gemini
+    /// prompt is built from — made with the current model, prompt and schema versions, and under the schema this filing's
+    /// recomputed classification selects now (<paramref name="schemaName"/>): the same documents classified differently
+    /// would be extracted into different, category-specific fields. Null means a fresh call.</summary>
+    private async Task<McaFilingExtraction?> FindEarlierExtractionAsync(McaFiling filing, List<McaFilingDocument> documents, string schemaName,
+        CancellationToken ct)
+    {
+        static string Signature(IEnumerable<(string Hash, string Name, string? FormType)> docs) =>
+            string.Join("\n", docs.Select(d => $"{d.Hash}|{d.Name}|{d.FormType}").Order(StringComparer.Ordinal));
+        var current = Signature(documents.Select(d => (d.FileHash, d.OriginalFileName, d.FormType)));
+
+        var candidates = await (
+                from e in db.McaFilingExtractions.AsNoTracking()
+                join f in db.McaFilings.AsNoTracking() on e.FilingId equals f.FilingId
+                where f.RequestId == filing.RequestId && f.BatchId != filing.BatchId && f.Srn == filing.Srn
+                    && e.Status == ExtractionStatus.Success && e.Model == VertexAiExtractionService.ModelId
+                    && e.PromptVersion == VertexAiExtractionService.PromptVersion && e.SchemaVersion == FilingSchemaNames.SchemaVersion
+                    && e.SchemaName == schemaName
+                orderby e.ExtractionId descending
+                select e)
+            .ToListAsync(ct);
+        foreach (var candidate in candidates)
+        {
+            var earlierDocs = await db.McaFilingDocuments.AsNoTracking()
+                .Where(d => d.FilingId == candidate.FilingId && d.ProcessingStatus == FilingDocumentProcessingStatus.Completed)
+                .Select(d => new { d.FileHash, d.OriginalFileName, d.FormType })
+                .ToListAsync(ct);
+            if (Signature(earlierDocs.Select(d => (d.FileHash, d.OriginalFileName, d.FormType))) == current)
+            {
+                logger.LogInformation("Filing {FilingId} reuses extraction {ExtractionId} (same SRN and documents, earlier batch).",
+                    filing.FilingId, candidate.ExtractionId);
+                return candidate;
+            }
+        }
+        return null;
     }
 
     private static bool IsUniqueConstraintViolation(DbUpdateException ex) =>

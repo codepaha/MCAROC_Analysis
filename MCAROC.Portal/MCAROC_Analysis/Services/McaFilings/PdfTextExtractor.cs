@@ -17,7 +17,7 @@ public record PdfExtractionResult(
 /// hardcoded constant — it was flagged in the plan as something to tune against real samples, not guess.</summary>
 public class PdfTextExtractor(ILogger<PdfTextExtractor> logger, string tesseractExePath, int minCharsPerPageForNativeText = 80)
 {
-    public async Task<PdfExtractionResult> ExtractAsync(string pdfPath, string tempDir, CancellationToken ct)
+    public virtual async Task<PdfExtractionResult> ExtractAsync(string pdfPath, string tempDir, CancellationToken ct)
     {
         byte[] pdfBytes;
         try

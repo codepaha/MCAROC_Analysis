@@ -20,6 +20,12 @@ public class McaFilingDocument
     /// extraction/AI and reuse the canonical document's results.</summary>
     public long? DuplicateOfDocumentId { get; set; }
 
+    /// <summary>#359: set when this document's extracted text was copied from the same PDF (same
+    /// <see cref="FileHash"/>) in an earlier batch of this request, instead of re-extracting/OCR'ing it — a client
+    /// refresh re-imports the whole MCA export as a new batch. Always the original extraction, never a copy of a
+    /// copy. Classification is still recomputed from the copied text.</summary>
+    public long? ReusedFromDocumentId { get; set; }
+
     public int PageCount { get; set; }
 
     // Classification — every decision is auditable, not just its outcome.
