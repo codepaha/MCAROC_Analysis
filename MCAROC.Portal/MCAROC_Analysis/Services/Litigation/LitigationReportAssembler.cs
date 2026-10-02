@@ -72,19 +72,7 @@ public class LitigationReportAssembler(
         }
 
         // Keywords
-        List<string> keywords = [];
-        if (!string.IsNullOrWhiteSpace(job.KeywordsJson))
-        {
-            try
-            {
-                var kwList = JsonSerializer.Deserialize<List<LitigationKeyword>>(job.KeywordsJson);
-                if (kwList is not null)
-                {
-                    keywords = kwList.Select(k => k.Value).Where(k => !string.IsNullOrWhiteSpace(k)).ToList();
-                }
-            }
-            catch { }
-        }
+        var keywords = LitigationKeyword.ParseJson(job.KeywordsJson).Select(k => k.Value).ToList();
 
         // Server-Side Subquery Loading for Case IDs
         var snapshotId = authoritativeSnapshot.LitigationReportSnapshotId;
