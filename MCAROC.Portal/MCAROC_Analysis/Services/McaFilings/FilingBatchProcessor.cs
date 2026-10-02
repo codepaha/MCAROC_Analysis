@@ -545,7 +545,8 @@ public class FilingBatchProcessor(
         // #359: the same filing, with exactly the same documents, already extracted in an earlier batch under the
         // current model/prompt/schema — copy it rather than paying for an identical Gemini call. Any change to the
         // filing's documents, or a version bump, gets a fresh call; a failed extraction is never copied.
-        var earlierExtraction = await FindEarlierExtractionAsync(filing, documents, ct);
+        var earlierExtraction = await FindEarlierExtractionAsync(filing, documents,
+            VertexAiExtractionService.SchemaNameFor(dominantCategory, dominantFormType), ct);
         var outcome = earlierExtraction is { } e
             ? new ExtractionOutcome(e.SchemaName, e.ExtractedJson, e.RawModelResponse, e.ValidationStatus, e.ValidationErrors, e.Status, e.FailureReason)
             : await vertexAiService.ExtractAsync(filing.Srn, dominantCategory, dominantFormType, contexts, ct);
@@ -649,8 +650,11 @@ public class FilingBatchProcessor(
 
     /// <summary>#359: a successful extraction of the same filing (same SRN) from an earlier batch of this request whose
     /// documents are exactly this filing's — the same (hash, file name, form type) set, which is everything the Gemini
-    /// prompt is built from — made with the current model, prompt and schema versions. Null means a fresh call.</summary>
-    private async Task<McaFilingExtraction?> FindEarlierExtractionAsync(McaFiling filing, List<McaFilingDocument> documents, CancellationToken ct)
+    /// prompt is built from — made with the current model, prompt and schema versions, and under the schema this filing's
+    /// recomputed classification selects now (<paramref name="schemaName"/>): the same documents classified differently
+    /// would be extracted into different, category-specific fields. Null means a fresh call.</summary>
+    private async Task<McaFilingExtraction?> FindEarlierExtractionAsync(McaFiling filing, List<McaFilingDocument> documents, string schemaName,
+        CancellationToken ct)
     {
         static string Signature(IEnumerable<(string Hash, string Name, string? FormType)> docs) =>
             string.Join("\n", docs.Select(d => $"{d.Hash}|{d.Name}|{d.FormType}").Order(StringComparer.Ordinal));
@@ -662,6 +666,7 @@ public class FilingBatchProcessor(
                 where f.RequestId == filing.RequestId && f.BatchId != filing.BatchId && f.Srn == filing.Srn
                     && e.Status == ExtractionStatus.Success && e.Model == VertexAiExtractionService.ModelId
                     && e.PromptVersion == VertexAiExtractionService.PromptVersion && e.SchemaVersion == FilingSchemaNames.SchemaVersion
+                    && e.SchemaName == schemaName
                 orderby e.ExtractionId descending
                 select e)
             .ToListAsync(ct);

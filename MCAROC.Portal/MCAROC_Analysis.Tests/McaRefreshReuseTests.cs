@@ -54,7 +54,7 @@ public sealed class McaRefreshReuseTests : IAsyncLifetime, IDisposable
             IReadOnlyList<FilingDocumentContext> documents, CancellationToken ct)
         {
             Called.Add(srn);
-            return Task.FromResult(new ExtractionOutcome("ChargeSchema", $$"""{"srn":"{{srn}}","documents":{{documents.Count}}}""", "raw",
+            return Task.FromResult(new ExtractionOutcome(SchemaNameFor(category, dominantFormType), $$"""{"srn":"{{srn}}","documents":{{documents.Count}}}""", "raw",
                 ExtractionValidationStatus.Valid, null, ExtractionStatus.Success, null));
         }
     }
@@ -191,6 +191,32 @@ public sealed class McaRefreshReuseTests : IAsyncLifetime, IDisposable
         await using var verify = CreateContext();
         Assert.Null(await (from e in verify.McaFilingExtractions join f in verify.McaFilings on e.FilingId equals f.FilingId
                            where f.BatchId == second select e.ReusedFromExtractionId).SingleAsync());
+    }
+
+    /// <summary>PR #363 review: the same documents at the same versions, but extracted under a different schema than the
+    /// one this filing's recomputed classification selects now — category-specific fields must not carry over.</summary>
+    [Fact]
+    public async Task An_extraction_made_under_a_different_schema_is_never_reused()
+    {
+        await using var db = CreateContext();
+        var requestId = await SeedRequestAsync(db);
+        var a = H();
+        var first = await SeedBatchAsync(db, requestId, ("SRN-X", [("Form CHG-1 a.pdf", a)]));
+        await ProcessBatchAsync(first, new CountingExtractor(), new CountingGemini());
+        await using (var tamper = CreateContext())
+            await tamper.McaFilingExtractions.Where(e => tamper.McaFilings.Any(f => f.FilingId == e.FilingId && f.BatchId == first))
+                .ExecuteUpdateAsync(u => u.SetProperty(e => e.SchemaName, FilingSchemaNames.Constitutional));
+
+        var second = await SeedBatchAsync(db, requestId, ("SRN-X", [("Form CHG-1 a.pdf", a)]));
+        var gemini = new CountingGemini();
+        await ProcessBatchAsync(second, new CountingExtractor(), gemini);
+
+        Assert.Equal(["SRN-X"], gemini.Called);
+        await using var verify = CreateContext();
+        var extraction = await (from e in verify.McaFilingExtractions join f in verify.McaFilings on e.FilingId equals f.FilingId
+                                where f.BatchId == second select e).SingleAsync();
+        Assert.Null(extraction.ReusedFromExtractionId);
+        Assert.Equal(FilingSchemaNames.Charge, extraction.SchemaName);
     }
 
     [Fact]

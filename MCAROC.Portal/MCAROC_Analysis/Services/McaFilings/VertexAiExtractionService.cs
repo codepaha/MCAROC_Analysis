@@ -62,6 +62,10 @@ public class VertexAiExtractionService
         return Validate(schemaName, rawResponse);
     }
 
+    /// <summary>The schema a filing with this dominant category and form type is extracted under — what a reused
+    /// extraction (#359) must have been produced with.</summary>
+    internal static string SchemaNameFor(FilingCategory category, string? formType) => SelectSchema(category, formType).SchemaName;
+
     private static (string SchemaName, string JsonShape) SelectSchema(FilingCategory category, string? formType)
     {
         var form = formType?.ToLowerInvariant() ?? "";
