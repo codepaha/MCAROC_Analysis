@@ -260,7 +260,7 @@ public class StructuredFactsProviderTests : IAsyncLifetime
         const long staleBatchId = 999L;
         db.DocumentChunks.Add(new DocumentChunk
         {
-            RequestId = requestId, FilingDocumentId = 1, FilingId = staleBatchId, BatchId = staleBatchId,
+            RequestId = requestId, FilingDocumentId = -requestId, FilingId = staleBatchId, BatchId = staleBatchId, // negative: never a real document id
             Srn = "SRN-STALE", Category = FilingCategory.Charge, FormType = null, DocumentName = "stale.pdf",
             ChunkIndex = 0, PageNumber = 1, ChunkText = "stale chunk text from a deleted batch",
             Embedding = new SqlVector<float>(new float[768]),
