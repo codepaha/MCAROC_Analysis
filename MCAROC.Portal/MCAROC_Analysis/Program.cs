@@ -103,6 +103,10 @@ builder.Services.AddScoped<CompanyRefreshService>();
 builder.Services.AddScoped<CompanyUnlockService>();
 builder.Services.AddScoped<CompanyGateCoordinator>();
 builder.Services.AddHostedService<CompanyRefreshWorker>();
+// Document retention (#376) and superseded batch chunks pruning (#360)
+builder.Services.AddScoped<McaDocumentRetentionService>();
+builder.Services.AddHostedService<McaDocumentRetentionWorker>();
+builder.Services.AddScoped<McaDocumentRestoreService>();
 // Circuit breaker (docs/pipeline-automation-plan.md §5.4) — scoped because it writes through the
 // request/job-scoped AppDbContext; the probe (a singleton hosted service) creates its own scope per tick.
 builder.Services.AddScoped<IIntegrationHealthService, IntegrationHealthService>();

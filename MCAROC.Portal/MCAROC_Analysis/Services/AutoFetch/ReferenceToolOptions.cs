@@ -57,6 +57,15 @@ public sealed class ReferenceToolOptions
     /// <summary>Whether the auto-fetch form pre-ticks "also fetch the filing PDFs".</summary>
     public bool IncludeFilingsByDefault { get; init; } = true;
 
+    /// <summary>#376: Days to retain non-charge filing PDFs before deleting physical files on disk.</summary>
+    public int DocumentRetentionDays { get; init; } = 15;
+
+    /// <summary>#376: Global switch to keep all filing PDFs permanently.</summary>
+    public bool KeepDocumentsPermanently { get; init; } = false;
+
+    /// <summary>#360: Days after which superseded batch chunks are pruned.</summary>
+    public int SupersededBatchGraceDays { get; init; } = 30;
+
     public string UserAgent { get; init; } =
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/153.0.0.0 Safari/537.36";
 

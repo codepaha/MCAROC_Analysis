@@ -1,11 +1,11 @@
-using System.IO.Compression;
+﻿using System.IO.Compression;
 using MCAROC_Analysis.Services.AutoFetch;
 using MCAROC_Analysis.Services.McaFilings;
 
 namespace MCAROC_Analysis.Tests;
 
-/// <summary>The packaged archive must be exactly what the MCA filings pipeline unpacks: outer zip →
-/// "{Section}/{docId}_{COMPANY}_{CIN}.zip" → PDFs, safe by ArchiveSafetyValidator's rules and with a
+/// <summary>The packaged archive must be exactly what the MCA filings pipeline unpacks: outer zip â†’
+/// "{Section}/{docId}_{COMPANY}_{CIN}.zip" â†’ PDFs, safe by ArchiveSafetyValidator's rules and with a
 /// nested-zip name FilingIdentityParser reads the company/CIN back out of.</summary>
 public class AutoFetchArchiveBuilderTests : IDisposable
 {
@@ -32,11 +32,11 @@ public class AutoFetchArchiveBuilderTests : IDisposable
             [
                 ("Form CHG-1.pdf", Pdf("c1/main.pdf")),
                 ("666589981-DEED-OF-MORTGAGE.pdf", Pdf("c1/att1.pdf")),
-                ("666589981-DEED-OF-MORTGAGE.pdf", Pdf("c1/att2.pdf")), // duplicate name → suffixed, not lost
-                ("missing.pdf", Path.Combine(_tempDir, "c1", "nope.pdf")), // never downloaded → skipped
+                ("666589981-DEED-OF-MORTGAGE.pdf", Pdf("c1/att2.pdf")), // duplicate name â†’ suffixed, not lost
+                ("missing.pdf", Path.Combine(_tempDir, "c1", "nope.pdf")), // never downloaded â†’ skipped
             ]),
             new ArchiveFiling("Financial Documents", "079987a1e2c7a9e35f776383fadc87a2v1", [("Form PAS-3.pdf", Pdf("a1/main.pdf"))]),
-            new ArchiveFiling("Scanned Documents", "deadbeef", []), // nothing on disk → no nested zip at all
+            new ArchiveFiling("Scanned Documents", "deadbeef", Array.Empty<ArchiveFile>()), // nothing on disk â†’ no nested zip at all
         };
         var outer = Path.Combine(_tempDir, "out", "filings.zip");
 

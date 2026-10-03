@@ -260,6 +260,25 @@ public class FilingBatchProcessor(
             .ToDictionaryAsync(x => x.FileHash, x => x.FilingDocumentId, ct);
 
         using var nestedArchive = ZipFile.OpenRead(nestedZipPath);
+        Dictionary<string, AutoFetch.AutoFetchArchiveBuilder.ArchiveManifestFileEntry>? manifestLookup = null;
+        var manifestEntry = nestedArchive.GetEntry("manifest.json");
+        if (manifestEntry != null)
+        {
+            try
+            {
+                using var stream = manifestEntry.Open();
+                var manifestList = System.Text.Json.JsonSerializer.Deserialize<List<AutoFetch.AutoFetchArchiveBuilder.ArchiveManifestFileEntry>>(stream);
+                if (manifestList != null)
+                {
+                    manifestLookup = manifestList.ToDictionary(m => m.EntryName, StringComparer.OrdinalIgnoreCase);
+                }
+            }
+            catch (Exception ex)
+            {
+                logger.LogWarning(ex, "Failed to read manifest.json from nested zip {Zip}", nestedZipPath);
+            }
+        }
+
         foreach (var pdfEntry in nestedArchive.Entries.Where(e => e.FullName.EndsWith(".pdf", StringComparison.OrdinalIgnoreCase)))
         {
             ct.ThrowIfCancellationRequested();
@@ -284,17 +303,24 @@ public class FilingBatchProcessor(
                 hash = Convert.ToHexString(sha256.Hash!);
             }
 
+            var entryFileName = Path.GetFileName(pdfEntry.FullName);
+            AutoFetch.AutoFetchArchiveBuilder.ArchiveManifestFileEntry? meta = null;
+            manifestLookup?.TryGetValue(entryFileName, out meta);
+
             var document = new McaFilingDocument
             {
                 FilingId = filing.FilingId,
                 BatchId = batch.BatchId,
                 RequestId = batch.RequestId,
-                OriginalFileName = Path.GetFileName(pdfEntry.FullName),
+                OriginalFileName = entryFileName,
                 SourceFolder = sourceFolder,
                 StoragePath = storagePath,
                 FileHash = hash,
                 ProcessingStatus = FilingDocumentProcessingStatus.Discovered,
-                UpdatedAt = DateTime.UtcNow
+                UpdatedAt = DateTime.UtcNow,
+                SourceDocId = meta?.SourceDocId,
+                SourceAwsPath = meta?.SourceAwsPath,
+                SourceAttachmentName = meta?.SourceAttachmentName
             };
 
             if (hashesSeenInBatch.TryGetValue(hash, out var canonicalId))
