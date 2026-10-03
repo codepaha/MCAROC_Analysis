@@ -194,7 +194,8 @@ public static partial class ChargeInstrumentAi
         for (var at = text.IndexOf(quote, StringComparison.OrdinalIgnoreCase); at >= 0;
             at = at + 1 < text.Length ? text.IndexOf(quote, at + 1, StringComparison.OrdinalIgnoreCase) : -1)
         {
-            if (StartsOnBoundary(text, at) && EndsOnBoundary(text, at + quote.Length)) return at;
+            if (StartsOnBoundary(text, at) && EndsOnBoundary(text, at + quote.Length)
+                && !SplitsIdentifierAcrossSpace(text, at, at + quote.Length)) return at;
         }
         return -1;
     }
@@ -221,6 +222,59 @@ public static partial class ChargeInstrumentAi
         var previous = text[start - 1];
         if (IsWordChar(previous)) return false; // starts inside a word or number
         return !(IsJoiner(previous) && start - 2 >= 0 && IsWordChar(text[start - 2]));
+    }
+
+    /// <summary>Whitespace — a space or a line break from the PDF — can sit around the slash or hyphen of an identifier ("12 / 3",
+    /// "12/\n3"). A quote that stops on one side of such a joiner has cut the identifier just the same. A hyphen only joins two numbers;
+    /// a slash joins two word characters when one is a digit ("Baner / Taluka" is two places, not one identifier).</summary>
+    private static bool SplitsIdentifierAcrossSpace(string text, int start, int end)
+    {
+        static bool Joins(char left, char joiner, char right) => joiner switch
+        {
+            '/' => IsWordChar(left) && IsWordChar(right) && (char.IsDigit(left) || char.IsDigit(right)),
+            '-' => char.IsDigit(left) && char.IsDigit(right),
+            _ => false
+        };
+        int Back(int i) { while (i >= 0 && char.IsWhiteSpace(text[i])) i--; return i; }
+        int Fwd(int i) { while (i < text.Length && char.IsWhiteSpace(text[i])) i++; return i; }
+
+        // The end: the quote's last character, and what follows it after any whitespace.
+        var last = Back(end - 1);
+        var after = Fwd(end);
+        if (last >= 0 && after < text.Length)
+        {
+            // …12 | / 3 — the quote stops before a joiner that is followed by the rest of the identifier
+            if (text[after] is '/' or '-')
+            {
+                var rest = Fwd(after + 1);
+                if (rest < text.Length && Joins(text[last], text[after], text[rest])) return true;
+            }
+            // …12 / | 3 — the quote ends on the joiner
+            if (text[last] is '/' or '-')
+            {
+                var before = Back(last - 1);
+                if (before >= 0 && Joins(text[before], text[last], text[after])) return true;
+            }
+        }
+        // The start, mirrored: what precedes the quote's first character after any whitespace.
+        var first = Fwd(start);
+        var preceding = Back(start - 1);
+        if (first < text.Length && preceding >= 0)
+        {
+            // 12 / | 3… — the quote starts after a joiner that follows the rest of the identifier
+            if (text[preceding] is '/' or '-')
+            {
+                var rest = Back(preceding - 1);
+                if (rest >= 0 && Joins(text[rest], text[preceding], text[first])) return true;
+            }
+            // 12 | / 3… — the quote starts on the joiner
+            if (text[first] is '/' or '-')
+            {
+                var next = Fwd(first + 1);
+                if (next < text.Length && Joins(text[preceding], text[first], text[next])) return true;
+            }
+        }
+        return false;
     }
 
     private static ChargeInstrumentValidation Failed(string reason) => new(false, null, [], reason);
