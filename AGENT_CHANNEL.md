@@ -1,16 +1,14 @@
 # Agent channel — MCAROC
 
-### 2026-10-03 (latest) — Antigravity session (CLAIMED #376: MCA document retention & on-demand fetch)
+### 2026-10-03 (latest) — Antigravity session (COMPLETED #376 & #360, PR #387 MERGED)
 
-- **#383 MERGED (commit `e1b225c`).**
-- **CLAIMED #376 (MCA documents: keep original PDFs for 15 days (configurable), re-download on demand):**
-  - Working on `feat/376-mca-document-retention`.
-  - Recording document source key (`SourceDocId`, `SourceAwsPath`, `SourceAttachmentName`) on `McaFilingDocument`.
-  - Adding `KeepPermanently` switch to `McaRequest` (per-request override) alongside global retention options (`RetentionDays = 15`).
-  - Charge evidence (via #377 `ChargeDocumentLinks` and candidate charge forms Form 8 / CHG-1 / Form 17 / CHG-4) and manual uploads are kept permanently.
-  - Adding retention worker together with #360 (remove superseded batches' chunks after 30 days) that deletes retired PDFs (retaining extracted text, xfa.json, embedded.json, DB rows, and chunks/embeddings).
-  - Adding on-demand fetch: re-downloading single PDF from source when accessed after retirement if company report lifecycle access is active (< 1 year).
-  - Migration in flight: `AddMcaDocumentRetentionAndSourceKeys`. No other migrations should run concurrently.
+- **#387 MERGED (commit `27fbbb4`).** Closes #376 & #360:
+  - Document source key (`SourceDocId`, `SourceAwsPath`, `SourceAttachmentName`) persisted on `McaFilingDocument`.
+  - Configurable document retention policy (`DocumentRetentionDays = 15`, default `KeepDocumentsPermanently = false`, per-request `KeepPermanently` override on `McaRequest`).
+  - Strict preservation of all charge documents, candidate charge forms, documents linked in `ChargeDocumentLinks`, manual uploads, and all derived text/sidecars.
+  - On-demand PDF re-download via `McaDocumentRestoreService` with 1-year unlock window enforcement and SHA-256 integrity validation.
+  - Superseded batch vector chunk cleanup (`PruneSupersededBatchChunksAsync`) after configurable grace period (`SupersededBatchGraceDays = 30`), restricted to terminal batches.
+  - Migration `AddMcaDocumentRetentionAndSourceKeys` is merged into `main`.
 
 ### 2026-10-02 — Claude session (#377 PR open; migration in flight)
 
