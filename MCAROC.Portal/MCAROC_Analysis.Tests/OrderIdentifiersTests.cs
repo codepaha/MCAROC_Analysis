@@ -230,7 +230,31 @@ public sealed class LitigationIdentityEvidenceTests : IAsyncLifetime
         await AddTextAsync(db, orders[1], null); // a document with no text does not count as read
 
         var page = await service.GetAsync(request.RequestId, caseId, CancellationToken.None);
-        Assert.Equal((IdentityEvidenceStatus.NameOnly, 1), (page!.Identity.Status, page.Identity.OrdersWithText));
+        Assert.Equal((IdentityEvidenceStatus.NameOnly, 1, 0), (page!.Identity.Status, page.Identity.OrdersWithText, page.Identity.OrdersNamingCompany));
         Assert.Empty(page.Identity.Identifiers);
     }
+
+    [Fact]
+    public async Task A_name_only_case_reports_how_many_of_the_orders_read_name_the_company()
+    {
+        await using var db = CreateContext();
+        var (request, caseId, orders) = await SeedAsync(db);
+        await AddTextAsync(db, orders[0], "Heard Ld. Counsel for M/s EXAMPLE BUILDERS PVT. LTD. The application is listed on 12.04.2018.");
+        await AddTextAsync(db, orders[1], "The Example  Builders\nPrivate Limited has not appeared; List on 18.04.2018. Another party, Example Traders Limited, appeared.");
+
+        var page = await new LitigationCasePageService(db).GetAsync(request.RequestId, caseId, CancellationToken.None);
+
+        Assert.Equal((IdentityEvidenceStatus.NameOnly, 2, 2), (page!.Identity.Status, page.Identity.OrdersWithText, page.Identity.OrdersNamingCompany));
+    }
+
+    [Theory]
+    [InlineData("Counsel for M/s Example Builders (P) Ltd.", true)]
+    [InlineData("EXAMPLE   BUILDERS\nPRIVATE LIMITED", true)]
+    [InlineData("Example Builders and Developers Limited", true)]   // the company's words occur in order as whole words
+    [InlineData("Example Buildersmith Limited", false)]             // not whole words
+    [InlineData("Builders Example Limited", false)]                  // not in order
+    [InlineData("Example Traders Limited", false)]
+    [InlineData("", false)]
+    public void The_company_is_named_when_its_distinguishing_words_occur_in_order_as_whole_words(string text, bool expected) =>
+        Assert.Equal(expected, LitigationCompanySides.NamesCompany(text, [LitigationCompanySides.Core("Example Builders Private Limited")]));
 }

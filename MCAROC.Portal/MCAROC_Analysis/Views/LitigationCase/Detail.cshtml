@@ -89,7 +89,7 @@
                     break;
                 case IdentityEvidenceStatus.NameOnly:
                     <div><span class="badge bg-secondary" data-identity="NameOnly">Name match only</span>
-                        @Model.Identity.OrdersWithText order@(Model.Identity.OrdersWithText == 1 ? "" : "s") read; none prints an identifier of the company. The case rests on the name match.</div>
+                        @Model.Identity.OrdersWithText order@(Model.Identity.OrdersWithText == 1 ? "" : "s") read; none prints an identifier of the company. The case rests on the name match@(Model.Identity.OrdersNamingCompany > 0 ? $", which the orders bear out: the company's name appears in {Model.Identity.OrdersNamingCompany} of them" : ", and none of the orders read names the company")).</div>
                     break;
                 default:
                     <div><span class="badge bg-secondary" data-identity="NoOrderText">Not checked</span>

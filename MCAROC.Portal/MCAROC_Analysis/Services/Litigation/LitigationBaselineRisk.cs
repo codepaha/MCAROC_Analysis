@@ -207,6 +207,15 @@ public static partial class LitigationCompanySides
         return false;
     }
 
+    /// <summary>True when the text names the company: its distinguishing words (current or earlier name, "Ltd / Pvt / M/s" ignored) occur in
+    /// order as whole words, whatever the case or spacing.</summary>
+    public static bool NamesCompany(string? text, IReadOnlyCollection<string> companyCores)
+    {
+        if (string.IsNullOrWhiteSpace(text) || companyCores.Count == 0) return false;
+        var flat = " " + NonAlnum().Replace(MessrsPrefix().Replace(text.ToUpperInvariant(), " "), " ").Trim() + " ";
+        return companyCores.Any(core => core.Length > 0 && flat.Contains(" " + core + " ", StringComparison.Ordinal));
+    }
+
     public static LitigationCompanySide Determine(IEnumerable<string> petitioners, IEnumerable<string> respondents, IEnumerable<string> companyNames)
     {
         var cores = companyNames.Select(Core).Where(c => c.Length > 0).Distinct().ToList();

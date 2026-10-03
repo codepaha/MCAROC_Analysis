@@ -10,7 +10,8 @@ public sealed record RelatedLitigationCase(
     long LitigationCaseId, string? CaseNumber, string? Court, LitigationCaseStatusBucket Status, LitigationRiskTier Tier, string SharedParty);
 
 /// <summary>Whether the case's own orders tie it to the company by an identifier they print, and which identifiers they name.</summary>
-public sealed record LitigationIdentityEvidence(IdentityEvidenceStatus Status, IReadOnlyList<MatchedOrderIdentifier> Identifiers, int OrdersWithText);
+public sealed record LitigationIdentityEvidence(
+    IdentityEvidenceStatus Status, IReadOnlyList<MatchedOrderIdentifier> Identifiers, int OrdersWithText, int OrdersNamingCompany = 0);
 
 /// <summary>Everything the standalone page of one litigation case shows.</summary>
 public sealed record LitigationCasePage(
@@ -67,14 +68,15 @@ public sealed class LitigationCasePageService(AppDbContext db, ChargeLitigationS
             catch (Exception ex) when (ex is not OperationCanceledException) { /* the page stands without the charge links */ }
         }
 
-        var identity = await IdentityEvidenceAsync(request, companyProfile, theCase, orderDocs, ct);
+        var identity = await IdentityEvidenceAsync(request, companyProfile, theCase, orderDocs, companyNames, ct);
         return new LitigationCasePage(request, card, snapshot.RetrievedUtc, links, await RelatedAsync(inReport, card, companyNames, ct), identity);
     }
 
     /// <summary>Reads the identifiers printed in the case's own order texts and ties them to the company: its CIN/LLPIN, PAN, GSTINs and its
     /// directors' DINs. Order texts are in the database (they outlive the retained PDFs), so this needs no file.</summary>
     private async Task<LitigationIdentityEvidence> IdentityEvidenceAsync(
-        McaRequest request, CompanyProfile? profile, LitigationCase theCase, IReadOnlyDictionary<long, LitigationOrderDocument> orderDocs, CancellationToken ct)
+        McaRequest request, CompanyProfile? profile, LitigationCase theCase, IReadOnlyDictionary<long, LitigationOrderDocument> orderDocs,
+        IReadOnlyCollection<string> companyNames, CancellationToken ct)
     {
         var runId = request.LatestCompletedIngestionRunId;
         var gstins = runId is { } gr ? await db.GstRegistrations.AsNoTracking().Where(g => g.IngestionRunId == gr && g.Gstin != "").Select(g => g.Gstin).Distinct().ToListAsync(ct) : [];
@@ -82,18 +84,21 @@ public sealed class LitigationCasePageService(AppDbContext db, ChargeLitigationS
         var company = new CompanyIdentity(
             request.Cin ?? profile?.Cin, request.Llpin ?? profile?.Llpin, request.Pan ?? profile?.Pan, gstins, dins);
 
+        var cores = companyNames.Select(LitigationCompanySides.Core).Where(c => c.Length > 0).Distinct().ToList();
         var matched = new List<MatchedOrderIdentifier>();
         var withText = 0;
+        var namingCompany = 0;
         foreach (var order in theCase.Orders.OrderByDescending(o => o.OrderDate))
         {
             if (!orderDocs.TryGetValue(order.LitigationCaseOrderId, out var doc) || string.IsNullOrWhiteSpace(doc.ExtractedText)) continue;
             withText++;
+            if (LitigationCompanySides.NamesCompany(doc.ExtractedText, cores)) namingCompany++;
             foreach (var id in OrderIdentifiers.Extract(doc.ExtractedText))
                 matched.Add(new MatchedOrderIdentifier(id, OrderIdentifiers.Classify(id, company), order.LitigationCaseOrderId, order.OrderDate, order.OrderType, doc.LitigationOrderDocumentId));
         }
         // The company's own identifiers first, then directors', then anyone else's.
         var ordered = matched.OrderBy(m => m.Match).ThenBy(m => m.Identifier.Type).ToList();
-        return new LitigationIdentityEvidence(OrderIdentifiers.StatusOf(ordered, withText), ordered, withText);
+        return new LitigationIdentityEvidence(OrderIdentifiers.StatusOf(ordered, withText), ordered, withText, namingCompany);
     }
 
     /// <summary>The report the Litigation tab shows: the current attempt's snapshot when it completed, else the job's latest completed one.</summary>
