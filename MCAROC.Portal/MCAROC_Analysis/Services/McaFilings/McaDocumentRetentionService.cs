@@ -1,4 +1,4 @@
-﻿using MCAROC_Analysis.Data;
+using MCAROC_Analysis.Data;
 using MCAROC_Analysis.Data.Entities;
 using MCAROC_Analysis.Services.AutoFetch;
 using Microsoft.EntityFrameworkCore;
@@ -53,7 +53,7 @@ public sealed class McaDocumentRetentionService(
         {
             try
             {
-                var prunedInBatch = await PruneBatchDocumentsAsync(batch.BatchId, batch.RequestId, now, ct);
+                var prunedInBatch = await PruneBatchDocumentsAsync(batch.BatchId, batch.RequestId, threshold, now, ct);
                 totalPruned += prunedInBatch;
             }
             catch (Exception ex) when (!ct.IsCancellationRequested)
@@ -65,7 +65,7 @@ public sealed class McaDocumentRetentionService(
         return totalPruned;
     }
 
-    private async Task<int> PruneBatchDocumentsAsync(long batchId, long requestId, DateTime now, CancellationToken ct)
+    private async Task<int> PruneBatchDocumentsAsync(long batchId, long requestId, DateTime threshold, DateTime now, CancellationToken ct)
     {
         var linkedDocIds = await db.ChargeDocumentLinks
             .Where(l => l.BatchId == batchId)
@@ -100,6 +100,7 @@ public sealed class McaDocumentRetentionService(
         var candidates = await db.McaFilingDocuments
             .Where(d => d.BatchId == batchId
                         && d.RetiredUtc == null
+                        && d.UpdatedAt < threshold
                         && !string.IsNullOrEmpty(d.StoragePath)
                         && d.SourceAwsPath != null
                         && !protectedIds.Contains(d.FilingDocumentId)
@@ -111,22 +112,37 @@ public sealed class McaDocumentRetentionService(
         foreach (var doc in candidates)
         {
             var path = doc.StoragePath;
+            var fileSuccessfullyRemoved = false;
             if (!string.IsNullOrWhiteSpace(path) && File.Exists(path))
             {
+                if (File.GetLastWriteTimeUtc(path) >= threshold)
+                {
+                    continue;
+                }
+
                 try
                 {
                     File.Delete(path);
+                    fileSuccessfullyRemoved = !File.Exists(path);
                 }
                 catch (Exception ex)
                 {
                     logger.LogWarning(ex, "Failed to delete physical file {Path} for Doc {DocId}", path, doc.FilingDocumentId);
+                    fileSuccessfullyRemoved = false;
                 }
             }
+            else
+            {
+                fileSuccessfullyRemoved = true;
+            }
 
-            doc.StoragePath = string.Empty;
-            doc.RetiredUtc = now;
-            doc.UpdatedAt = now;
-            prunedCount++;
+            if (fileSuccessfullyRemoved)
+            {
+                doc.StoragePath = string.Empty;
+                doc.RetiredUtc = now;
+                doc.UpdatedAt = now;
+                prunedCount++;
+            }
         }
 
         if (prunedCount > 0)
@@ -160,11 +176,18 @@ public sealed class McaDocumentRetentionService(
         foreach (var reqId in requestIdsWithBatches)
         {
             var authoritativeBatch = await McaFilingBatchResolver.GetAuthoritativeBatchAsync(db, reqId, ct);
-            if (authoritativeBatch == null) continue;
+            if (authoritativeBatch == null || authoritativeBatch.Status is not (FilingBatchStatus.Completed or FilingBatchStatus.CompletedWithErrors))
+            {
+                continue;
+            }
+
+            var authorEffectiveDate = authoritativeBatch.CompletedDate ?? authoritativeBatch.StartedDate;
 
             var supersededBatchIds = await db.McaFilingBatches
                 .Where(b => b.RequestId == reqId
                             && b.BatchId != authoritativeBatch.BatchId
+                            && (b.Status == FilingBatchStatus.Completed || b.Status == FilingBatchStatus.CompletedWithErrors)
+                            && (b.CompletedDate ?? b.StartedDate) <= authorEffectiveDate
                             && (b.CompletedDate ?? b.StartedDate) < threshold)
                 .Select(b => b.BatchId)
                 .ToListAsync(ct);

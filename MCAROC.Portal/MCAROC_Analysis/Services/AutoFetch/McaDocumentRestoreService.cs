@@ -1,4 +1,4 @@
-﻿using System.Security.Cryptography;
+using System.Security.Cryptography;
 using MCAROC_Analysis.Data;
 using MCAROC_Analysis.Data.Entities;
 using MCAROC_Analysis.Services.McaFilings;
@@ -58,10 +58,10 @@ public sealed class McaDocumentRestoreService(
             return new DocumentRestoreResult(DocumentRestoreStatus.Error, null, $"Request {document.RequestId} not found.");
         }
 
-        var identifier = (request.Cin ?? "").Trim().ToUpperInvariant();
+        var identifier = (request.Cin ?? request.Llpin ?? request.AutoFetchCompanyIdentifier ?? "").Trim().ToUpperInvariant();
         if (string.IsNullOrEmpty(identifier))
         {
-            return new DocumentRestoreResult(DocumentRestoreStatus.Error, null, "Request CIN is missing.");
+            return new DocumentRestoreResult(DocumentRestoreStatus.Error, null, "Request company identifier (CIN/LLPIN) is missing.");
         }
 
         var lifecycle = await db.CompanyReportLifecycles.AsNoTracking()
