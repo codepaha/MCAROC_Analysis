@@ -298,11 +298,29 @@ public class McaDocumentRetentionTests : IAsyncLifetime, IDisposable
         db.CompanyReportLifecycles.Add(lifecycle);
         await db.SaveChangesAsync();
 
+        var batch = new McaFilingBatch
+        {
+            RequestId = request.RequestId,
+            Status = FilingBatchStatus.Completed,
+            StartedDate = DateTime.UtcNow
+        };
+        db.McaFilingBatches.Add(batch);
+        await db.SaveChangesAsync();
+
+        var filing = new McaFiling
+        {
+            RequestId = request.RequestId,
+            BatchId = batch.BatchId,
+            Srn = "SRN-EXP-1"
+        };
+        db.McaFilings.Add(filing);
+        await db.SaveChangesAsync();
+
         var doc = new McaFilingDocument
         {
             RequestId = request.RequestId,
-            BatchId = 100,
-            FilingId = 100,
+            BatchId = batch.BatchId,
+            FilingId = filing.FilingId,
             OriginalFileName = "test.pdf",
             SourceAwsPath = "aws/path/test.pdf",
             RetiredUtc = DateTime.UtcNow.AddDays(-10),
