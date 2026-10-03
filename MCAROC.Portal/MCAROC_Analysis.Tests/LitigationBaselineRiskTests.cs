@@ -179,6 +179,28 @@ public class LitigationCompanySidesTests
             LitigationCompanySides.Determine(["Alpha Traders"], ["Beta Exports"], Names));
     }
 
+    /// <summary>The provider says on each case whether it is by or against the entity searched. When the party names do not settle the side (the
+    /// company is not among them, or none were sent), that decides; when they do, the names win.</summary>
+    [Theory]
+    [InlineData("against", LitigationCompanySide.AgainstCompany)]
+    [InlineData("AGAINST", LitigationCompanySide.AgainstCompany)]
+    [InlineData("by", LitigationCompanySide.ByCompany)]
+    [InlineData("other", LitigationCompanySide.Unknown)]
+    [InlineData(null, LitigationCompanySide.Unknown)]
+    public void The_providers_direction_settles_the_side_when_the_names_do_not(string? direction, LitigationCompanySide expected)
+    {
+        Assert.Equal(expected, LitigationCompanySides.Determine(["Alpha Traders"], ["Beta Exports"], Names, direction));
+        Assert.Equal(expected, LitigationCompanySides.Determine([], [], Names, direction));
+    }
+
+    [Fact]
+    public void The_party_names_win_over_the_providers_direction_and_no_company_names_leaves_only_the_direction()
+    {
+        Assert.Equal(LitigationCompanySide.ByCompany, LitigationCompanySides.Determine(["Coastal Projects Ltd"], ["Some Bank"], Names, "against"));
+        Assert.Equal(LitigationCompanySide.AgainstCompany, LitigationCompanySides.Determine(["Some Bank"], ["M/s Coastal Projects Ltd"], Names, "by"));
+        Assert.Equal(LitigationCompanySide.AgainstCompany, LitigationCompanySides.Determine(["A"], ["B"], [], "against"));
+    }
+
     [Fact]
     public void A_different_company_that_merely_shares_a_word_is_not_the_company()
     {
@@ -317,5 +339,47 @@ public sealed class LitigationCasePageServiceTests : IAsyncLifetime
 
         Assert.IsType<Microsoft.AspNetCore.Mvc.NotFoundResult>(await controller.Detail(s.Request.RequestId, s.OtherRequestCaseId, CancellationToken.None));
         Assert.IsType<Microsoft.AspNetCore.Mvc.NotFoundResult>(await controller.Detail(s.Request.RequestId, -1, CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task A_case_whose_parties_are_provider_records_shows_them_and_takes_its_side_from_the_providers_direction()
+    {
+        await using var db = CreateContext();
+        var s = await SeedAsync(db);
+        var snapshotId = await db.LitigationReportSnapshots.Where(x => x.RequestId == s.Request.RequestId).Select(x => x.LitigationReportSnapshotId).SingleAsync();
+        async Task<long> AddAsync(LitigationCase c)
+        {
+            c.RequestId = s.Request.RequestId;
+            c.FirstSeenUtc = c.LastSeenUtc = DateTime.UtcNow;
+            db.LitigationCases.Add(c);
+            await db.SaveChangesAsync();
+            db.LitigationCaseSourceReports.Add(new LitigationCaseSourceReport { LitigationCaseId = c.LitigationCaseId, LitigationReportSnapshotId = snapshotId, FirstSeenUtc = DateTime.UtcNow });
+            await db.SaveChangesAsync();
+            return c.LitigationCaseId;
+        }
+        var named = await AddAsync(new LitigationCase
+        {
+            Type = "drt", Court = "Drt", CaseNumber = "SA-41", CaseType = "SA-", CaseStatus = "PENDING", Direction = "against",
+            PetitionersJson = "[{\"name\":\"GURUSWAMY NANDA KUMAR\",\"address\":\"\",\"advocate\":\"\"}]",
+            RespondentsJson = "[{\"name\":\"BANK OF MAHARASHTRA\"},{\"name\":\"M/S. COASTAL PROJECTS LIMITED\"}]",
+            PetitionerAdvocatesJson = "[{\"code\":\"\",\"name\":\"PSN RAVINDRA\"}]"
+        });
+        var unnamed = await AddAsync(new LitigationCase
+        {
+            Type = "drt", Court = "Drt", CaseNumber = "SA-42", CaseType = "SA-", CaseStatus = "PENDING", Direction = "against",
+            PetitionersJson = "[{\"name\":\"A. CREDITOR\"}]", RespondentsJson = "[{\"name\":\" \"}]" // the company is not named: the provider's direction decides
+        });
+        var service = new LitigationCasePageService(db);
+
+        var card = (await service.GetAsync(s.Request.RequestId, named, CancellationToken.None))!.Card;
+        Assert.Equal(["GURUSWAMY NANDA KUMAR"], card.Petitioners);
+        Assert.Equal(["BANK OF MAHARASHTRA", "M/S. COASTAL PROJECTS LIMITED"], card.Respondents);
+        Assert.Equal(["PSN RAVINDRA"], card.PetitionerAdvocates);
+        Assert.Equal(LitigationCompanySide.AgainstCompany, card.CompanySide);
+
+        var other = (await service.GetAsync(s.Request.RequestId, unnamed, CancellationToken.None))!.Card;
+        Assert.Equal(["A. CREDITOR"], other.Petitioners);
+        Assert.Empty(other.Respondents); // a blank name is not a party
+        Assert.Equal(LitigationCompanySide.AgainstCompany, other.CompanySide);
     }
 }

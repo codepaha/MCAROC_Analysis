@@ -19,12 +19,7 @@ public sealed record LitigationCaseMapContext(
 /// matches, any stored analysis) — shared by the Litigation tab's card list and the case's own page, so the two can never disagree.</summary>
 public static class LitigationCaseCardMapper
 {
-    public static List<string> ParseNames(string? json)
-    {
-        if (string.IsNullOrWhiteSpace(json)) return [];
-        try { return JsonSerializer.Deserialize<List<string>>(json) ?? []; }
-        catch (JsonException) { return []; }
-    }
+    public static List<string> ParseNames(string? json) => LitigationPartyNames.Parse(json);
 
     public static LitigationCaseCardViewModel Map(LitigationCase c, LitigationCaseMapContext ctx)
     {
@@ -61,7 +56,7 @@ public static class LitigationCaseCardMapper
             FirstSeenUtc = c.FirstSeenUtc,
             LastSeenUtc = c.LastSeenUtc
         };
-        card.CompanySide = LitigationCompanySides.Determine(card.Petitioners, card.Respondents, ctx.CompanyNames);
+        card.CompanySide = LitigationCompanySides.Determine(card.Petitioners, card.Respondents, ctx.CompanyNames, c.Direction);
         card.Risk = LitigationBaselineRisk.Assess(new LitigationRiskInput(
             c.Type, c.Court, c.CourtCategory, c.CaseType, c.Act, c.CaseStage, c.CaseClassification, c.ProceedingType, status, card.CompanySide, card.Petitioners));
 

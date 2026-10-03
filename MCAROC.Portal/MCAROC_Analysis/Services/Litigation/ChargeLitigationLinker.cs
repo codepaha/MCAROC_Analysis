@@ -279,8 +279,8 @@ public static partial class ChargeLitigationLinker
             if (string.IsNullOrWhiteSpace(json)) continue;
             try
             {
-                foreach (var n in JsonSerializer.Deserialize<List<string>>(json) ?? [])
-                    if (!string.IsNullOrWhiteSpace(n)) names.Add(EntityCrossReferenceRules.NormalizeCompanyName(n));
+                foreach (var n in LitigationPartyNames.Parse(json))
+                    names.Add(EntityCrossReferenceRules.NormalizeCompanyName(n));
             }
             catch (JsonException) { /* unparseable party list: no claim, never a guess */ }
         }
@@ -293,7 +293,7 @@ public static partial class ChargeLitigationLinker
         try
         {
             var sides = new[] { c.PetitionersJson, c.RespondentsJson }
-                .Select(j => string.IsNullOrWhiteSpace(j) ? "" : string.Join(", ", JsonSerializer.Deserialize<List<string>>(j) ?? []))
+                .Select(j => string.IsNullOrWhiteSpace(j) ? "" : string.Join(", ", LitigationPartyNames.Parse(j)))
                 .Where(s => s.Length > 0).ToList();
             if (sides.Count > 0) parties = string.Join(" v. ", sides);
         }

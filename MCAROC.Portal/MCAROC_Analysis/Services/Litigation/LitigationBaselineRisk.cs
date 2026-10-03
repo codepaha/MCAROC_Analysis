@@ -216,10 +216,20 @@ public static partial class LitigationCompanySides
         return companyCores.Any(core => core.Length > 0 && flat.Contains(" " + core + " ", StringComparison.Ordinal));
     }
 
-    public static LitigationCompanySide Determine(IEnumerable<string> petitioners, IEnumerable<string> respondents, IEnumerable<string> companyNames)
+    /// <summary>The company's side from the party names — a name that is the company's own, current or earlier, marks its side. When the names
+    /// do not say (the company is not among them, or the provider sent none), the provider's own direction decides: <c>by_or_against</c>
+    /// says whether the case is by or against the entity that was searched.</summary>
+    public static LitigationCompanySide Determine(
+        IEnumerable<string> petitioners, IEnumerable<string> respondents, IEnumerable<string> companyNames, string? providerDirection = null)
     {
+        var fromProvider = providerDirection?.Trim().ToLowerInvariant() switch
+        {
+            "by" => LitigationCompanySide.ByCompany,
+            "against" => LitigationCompanySide.AgainstCompany,
+            _ => LitigationCompanySide.Unknown
+        };
         var cores = companyNames.Select(Core).Where(c => c.Length > 0).Distinct().ToList();
-        if (cores.Count == 0) return LitigationCompanySide.Unknown;
+        if (cores.Count == 0) return fromProvider;
         var by = petitioners.Any(p => IsCompany(p, cores));
         var against = respondents.Any(r => IsCompany(r, cores));
         return (by, against) switch
@@ -227,7 +237,7 @@ public static partial class LitigationCompanySides
             (true, true) => LitigationCompanySide.Both,
             (true, false) => LitigationCompanySide.ByCompany,
             (false, true) => LitigationCompanySide.AgainstCompany,
-            _ => LitigationCompanySide.Unknown
+            _ => fromProvider
         };
     }
 

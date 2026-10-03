@@ -143,7 +143,7 @@ public sealed class LitigationCasePageService(AppDbContext db, ChargeLitigationS
             .Select(c => new
             {
                 c.LitigationCaseId, c.CaseNumber, c.Court, c.CaseStatus, c.CaseStage, c.Type, c.CourtCategory, c.CaseType, c.Act, c.CaseClassification,
-                c.ProceedingType, c.PetitionersJson, c.RespondentsJson
+                c.ProceedingType, c.PetitionersJson, c.RespondentsJson, c.Direction
             }).ToListAsync(ct);
 
         var related = new List<RelatedLitigationCase>();
@@ -154,7 +154,7 @@ public sealed class LitigationCasePageService(AppDbContext db, ChargeLitigationS
             var shared = petitioners.Concat(respondents).Select(LitigationCompanySides.Core).FirstOrDefault(core => mine.ContainsKey(core));
             if (shared is null) continue;
             var status = LitigationCaseStatusClassifier.Classify(o.CaseStatus, o.CaseStage);
-            var side = LitigationCompanySides.Determine(petitioners, respondents, companyNames);
+            var side = LitigationCompanySides.Determine(petitioners, respondents, companyNames, o.Direction);
             var tier = LitigationBaselineRisk.Assess(new LitigationRiskInput(
                 o.Type, o.Court, o.CourtCategory, o.CaseType, o.Act, o.CaseStage, o.CaseClassification, o.ProceedingType, status, side, petitioners)).Tier;
             related.Add(new RelatedLitigationCase(o.LitigationCaseId, o.CaseNumber, o.Court, status, tier, mine[shared]));
