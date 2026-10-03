@@ -11,7 +11,8 @@ public record LitigationAiCallResult(bool Success, string RawResponse, string? F
 /// Credentials are supplied only by configuration at composition time and are never persisted with a run.</summary>
 public interface ILitigationAiAnalysisClient
 {
-    Task<LitigationAiCallResult> CallAsync(string prompt, int timeoutSeconds, CancellationToken ct);
+    /// <summary><paramref name="modelId"/> overrides the client's default model for this one call.</summary>
+    Task<LitigationAiCallResult> CallAsync(string prompt, int timeoutSeconds, CancellationToken ct, string? modelId = null);
 }
 
 public sealed class VertexLitigationAiAnalysisClient : ILitigationAiAnalysisClient
@@ -29,14 +30,14 @@ public sealed class VertexLitigationAiAnalysisClient : ILitigationAiAnalysisClie
         _client = new GenAiClient(vertexAI: true, project: projectId, location: location, credential: credential);
     }
 
-    public async Task<LitigationAiCallResult> CallAsync(string prompt, int timeoutSeconds, CancellationToken ct)
+    public async Task<LitigationAiCallResult> CallAsync(string prompt, int timeoutSeconds, CancellationToken ct, string? modelId = null)
     {
         try
         {
             var (_, text, timedOut) = await CalculationAiAuditTimeoutRunner.RunAsync(async innerCt =>
             {
                 var config = new GenerateContentConfig { ResponseMimeType = "application/json" };
-                var response = await _client.Models.GenerateContentAsync(ModelId, prompt, config, innerCt);
+                var response = await _client.Models.GenerateContentAsync(string.IsNullOrWhiteSpace(modelId) ? ModelId : modelId, prompt, config, innerCt);
                 return response.Candidates?.FirstOrDefault()?.Content?.Parts?.FirstOrDefault()?.Text ?? string.Empty;
             }, TimeSpan.FromSeconds(timeoutSeconds), ct);
             return timedOut

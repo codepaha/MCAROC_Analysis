@@ -37,7 +37,7 @@ public sealed class LitigationOrderClassificationTests : IAsyncLifetime
     {
         public int ClassificationCalls;
 
-        public Task<LitigationAiCallResult> CallAsync(string prompt, int timeoutSeconds, CancellationToken ct)
+        public Task<LitigationAiCallResult> CallAsync(string prompt, int timeoutSeconds, CancellationToken ct, string? modelId = null)
         {
             if (prompt.StartsWith(LitigationOrderClassifier.PromptMarker, StringComparison.Ordinal))
             {
@@ -49,6 +49,8 @@ public sealed class LitigationOrderClassificationTests : IAsyncLifetime
                 var ids = Regex.Matches(prompt, "\"LitigationCaseAiAnalysisId\":(\\d+)").Select(m => m.Groups[1].Value);
                 return Ok($$"""{"status":"Completed","summary":"Portfolio.","unknowns":[],"caseAnalysisIds":[{{string.Join(",", ids)}}]}""");
             }
+            if (prompt.StartsWith(LitigationCaseAnalysisPrompt.Marker, StringComparison.Ordinal))
+                return Ok(CaseAnalysisAnswers.For(prompt));
             // Only after "Evidence:" — the prompt's own response-shape example also contains a reference.
             var evidence = prompt[prompt.IndexOf("Evidence:", StringComparison.Ordinal)..];
             var r = Regex.Match(evidence, "\"litigationCaseOrderId\":(\\d+),\"litigationOrderDocumentId\":(\\d+),\"pageNumber\":(\\d+),\"chunkIndex\":(\\d+)");

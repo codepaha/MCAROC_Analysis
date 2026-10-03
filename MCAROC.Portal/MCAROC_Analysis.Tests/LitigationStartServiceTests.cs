@@ -345,8 +345,9 @@ public sealed class LitigationStartServiceTests : IAsyncLifetime
         seed.LitigationCases.Add(litCase);
         await seed.SaveChangesAsync();
 
-        var evidence = LitigationAnalysisPromptBuilder.BuildCaseEvidence(litCase, []);
-        var json = LitigationAnalysisPromptBuilder.SerializeEvidence(evidence);
+        var input = LitigationCaseAnalysisInputBuilder.Build(litCase, new Dictionary<long, LitigationOrderDocument>(), request.CompanyName,
+            [request.CompanyName], DateOnly.FromDateTime(DateTime.UtcNow));
+        var json = input.EvidenceJson;
         var run = new LitigationAiAnalysisRun { RequestId = request.RequestId, RunNumber = 1, Status = LitigationAiAnalysisRunStatus.Completed, CreatedUtc = DateTime.UtcNow, CompletedUtc = DateTime.UtcNow };
         seed.LitigationAiAnalysisRuns.Add(run);
         await seed.SaveChangesAsync();
@@ -354,8 +355,8 @@ public sealed class LitigationStartServiceTests : IAsyncLifetime
         {
             LitigationAiAnalysisRunId = run.LitigationAiAnalysisRunId, LitigationCaseId = litCase.LitigationCaseId,
             Status = LitigationAiAnalysisItemStatus.Completed, EvidenceJson = json,
-            EvidenceHash = LitigationAnalysisPromptBuilder.ComputeHash(json),
-            PromptHash = LitigationAnalysisPromptBuilder.ComputeHash(LitigationAnalysisPromptBuilder.BuildCasePrompt(evidence)),
+            EvidenceHash = input.EvidenceHash,
+            PromptHash = LitigationCaseAnalysisInputBuilder.Hash(LitigationCaseAnalysisPrompt.Instructions),
             AnalysisJson = "{\"summary\":\"ok\"}", CompletedUtc = DateTime.UtcNow
         });
         seed.LitigationPortfolioAiAnalyses.Add(new LitigationPortfolioAiAnalysis
