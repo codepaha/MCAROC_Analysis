@@ -41,7 +41,8 @@ public class RequestsController(
     LitigationAiAnalysisOrchestrator? litigationAnalysis = null,
     ChargeLitigationService? chargeLitigation = null,
     LitigationOrderOutcomeQuery? orderOutcomes = null,
-    FullTextSearchStatus? fullTextStatus = null) : Controller
+    FullTextSearchStatus? fullTextStatus = null,
+    MCAROC_Analysis.Services.AutoFetch.McaDocumentRestoreService? documentRestore = null) : Controller
 {
     [HttpGet("/Requests")]
     public async Task<IActionResult> Index([FromQuery] RequestListFilterCriteria filters)
@@ -1355,8 +1356,26 @@ public class RequestsController(
 
         if (string.IsNullOrWhiteSpace(targetDoc.StoragePath) || !System.IO.File.Exists(targetDoc.StoragePath))
         {
-            logger?.LogError("Storage path missing or file not found on disk for Doc {DocId}.", targetDoc.FilingDocumentId);
-            return (null, null);
+            if (documentRestore != null && (targetDoc.RetiredUtc != null || !string.IsNullOrEmpty(targetDoc.SourceAwsPath)))
+            {
+                logger?.LogInformation("Attempting on-demand restoration for retired/missing document {DocId}.", targetDoc.FilingDocumentId);
+                var restoreResult = await documentRestore.RestoreDocumentAsync(targetDoc, ct);
+                if (restoreResult.Status == MCAROC_Analysis.Services.AutoFetch.DocumentRestoreStatus.Success && !string.IsNullOrEmpty(restoreResult.RestoredPath))
+                {
+                    targetDoc.StoragePath = restoreResult.RestoredPath;
+                }
+                else
+                {
+                    logger?.LogWarning("On-demand restoration for Doc {DocId} resulted in {Status}: {Error}",
+                        targetDoc.FilingDocumentId, restoreResult.Status, restoreResult.ErrorMessage);
+                    return (null, null);
+                }
+            }
+            else
+            {
+                logger?.LogError("Storage path missing or file not found on disk for Doc {DocId}.", targetDoc.FilingDocumentId);
+                return (null, null);
+            }
         }
 
         try

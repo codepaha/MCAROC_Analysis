@@ -636,7 +636,8 @@ public sealed class AutoFetchJobService(
                 new ParallelOptions { MaxDegreeOfParallelism = Math.Max(1, _opts.DownloadConcurrency), CancellationToken = ct },
                 async (item, token) =>
                 {
-                    var (filing, (entryName, localPath, awsPath, did)) = item;
+                    var (filing, file) = item;
+                    var (entryName, localPath, awsPath, did, _) = file;
                     if (!budget.TryReserve(_opts.MaxResponseBytes))
                     {
                         Interlocked.Increment(ref cappedCount);
@@ -753,13 +754,13 @@ public sealed class AutoFetchJobService(
                 if (!seen.Add(doc.DocId)) continue;
                 var files = new List<PlannedFile>(1 + doc.Attachments.Count);
                 var docDir = Path.Combine(stagingDir, AutoFetchArchiveBuilder.SafeDocFolder(doc.DocId));
-                files.Add(new PlannedFile(AutoFetchArchiveBuilder.SanitizeEntryName(doc.Name), Path.Combine(docDir, "main.pdf"), doc.AwsPath, doc.DocId));
+                files.Add(new PlannedFile(AutoFetchArchiveBuilder.SanitizeEntryName(doc.Name), Path.Combine(docDir, "main.pdf"), doc.AwsPath, doc.DocId, doc.Name));
                 var attIndex = 0;
                 foreach (var att in doc.Attachments)
                 {
                     attIndex++;
                     files.Add(new PlannedFile(AutoFetchArchiveBuilder.SanitizeEntryName(att.Name), Path.Combine(docDir, $"att{attIndex}.pdf"), att.AwsPath,
-                        Path.GetFileNameWithoutExtension(att.Name)));
+                        Path.GetFileNameWithoutExtension(att.Name), att.Name));
                 }
 
                 if (fileCount + files.Count > pdfCap) { truncatedByCount = true; break; }
@@ -968,11 +969,11 @@ public sealed class AutoFetchJobService(
         job.HeartbeatUtc = now;
     }
 
-    private sealed record PlannedFile(string EntryName, string LocalPath, string AwsPath, string Did);
+    private sealed record PlannedFile(string EntryName, string LocalPath, string AwsPath, string Did, string? AttachmentName = null);
 
     private sealed record PlannedFiling(string SectionFolder, string DocId, List<PlannedFile> Files)
     {
         public ArchiveFiling ToArchiveFiling() =>
-            new(SectionFolder, DocId, Files.Select(f => (f.EntryName, f.LocalPath)).ToList());
+            new(SectionFolder, DocId, Files.Select(f => new ArchiveFile(f.EntryName, f.LocalPath, f.AwsPath, f.Did, f.AttachmentName ?? f.EntryName)).ToList());
     }
 }

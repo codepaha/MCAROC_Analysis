@@ -4,10 +4,19 @@ using System.Text.RegularExpressions;
 
 namespace MCAROC_Analysis.Services.AutoFetch;
 
+/// <summary>One file to package inside a nested zip, with its optional reference tool source key info.</summary>
+public sealed record ArchiveFile(string EntryName, string LocalPath, string? AwsPath = null, string? Did = null, string? AttachmentName = null);
+
 /// <summary>One filing to package: its outer section folder, the nested-zip identity, and the PDFs
-/// (already on disk) that go inside it. <see cref="Files"/> maps the entry name inside the nested zip to
-/// the local path.</summary>
-public sealed record ArchiveFiling(string SectionFolder, string DocId, IReadOnlyList<(string EntryName, string LocalPath)> Files);
+/// (already on disk) that go inside it.</summary>
+public sealed record ArchiveFiling(string SectionFolder, string DocId, IReadOnlyList<ArchiveFile> Files)
+{
+    // Backwards-compatible constructor for existing tests and call sites passing (EntryName, LocalPath) tuples
+    public ArchiveFiling(string sectionFolder, string docId, IReadOnlyList<(string EntryName, string LocalPath)> files)
+        : this(sectionFolder, docId, files.Select(f => new ArchiveFile(f.EntryName, f.LocalPath)).ToList())
+    {
+    }
+}
 
 /// <summary>Packages downloaded filing PDFs into exactly the archive layout <c>FilingBatchProcessor</c>
 /// unpacks: an outer zip of <c>{Section folder}/{docId}_{COMPANY}_{CIN}.zip</c> nested zips, each
@@ -44,13 +53,28 @@ public static partial class AutoFetchArchiveBuilder
             using var entryStream = entry.Open();
             using var nested = new ZipArchive(entryStream, ZipArchiveMode.Create, leaveOpen: true);
             var usedNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            foreach (var (entryName, localPath) in present)
+            var manifestEntries = new List<ArchiveManifestFileEntry>();
+
+            foreach (var file in present)
             {
-                var name = UniqueEntryName(SanitizeEntryName(entryName), usedNames);
-                nested.CreateEntryFromFile(localPath, name, CompressionLevel.Fastest);
+                var name = UniqueEntryName(SanitizeEntryName(file.EntryName), usedNames);
+                nested.CreateEntryFromFile(file.LocalPath, name, CompressionLevel.Fastest);
+                if (!string.IsNullOrEmpty(file.AwsPath) || !string.IsNullOrEmpty(file.Did))
+                {
+                    manifestEntries.Add(new ArchiveManifestFileEntry(name, filing.DocId, file.AwsPath, file.AttachmentName ?? file.EntryName));
+                }
+            }
+
+            if (manifestEntries.Count > 0)
+            {
+                var manifestEntry = nested.CreateEntry("manifest.json", CompressionLevel.Fastest);
+                using var ms = manifestEntry.Open();
+                System.Text.Json.JsonSerializer.Serialize(ms, manifestEntries);
             }
         }
     }
+
+    public sealed record ArchiveManifestFileEntry(string EntryName, string SourceDocId, string? SourceAwsPath, string? SourceAttachmentName);
 
     /// <summary>"Lodha Developers Limited" → "LODHA_DEVELOPERS_LIMITED" (what FilingIdentityParser turns
     /// back into "LODHA DEVELOPERS LIMITED"). Capped so a long name can't push the nested-zip filename

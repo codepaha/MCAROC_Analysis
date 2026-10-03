@@ -5,6 +5,7 @@ using Microsoft.Data.SqlTypes;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 #nullable disable
@@ -12,9 +13,11 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace MCAROC_Analysis.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20261003101210_AddMcaDocumentRetentionAndSourceKeys")]
+    partial class AddMcaDocumentRetentionAndSourceKeys
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -1089,81 +1092,6 @@ namespace MCAROC_Analysis.Migrations
                         .IsUnique();
 
                     b.ToTable("ChargeDocumentLinks");
-                });
-
-            modelBuilder.Entity("MCAROC_Analysis.Data.Entities.ChargeInstrumentExtraction", b =>
-                {
-                    b.Property<long>("ChargeInstrumentExtractionId")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("bigint");
-
-                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("ChargeInstrumentExtractionId"));
-
-                    b.Property<int>("AttemptCount")
-                        .HasColumnType("int");
-
-                    b.Property<DateTime?>("CompletedUtc")
-                        .HasColumnType("datetime2");
-
-                    b.Property<DateTime>("CreatedUtc")
-                        .HasColumnType("datetime2");
-
-                    b.Property<string>("FailureReason")
-                        .HasMaxLength(1000)
-                        .HasColumnType("nvarchar(1000)");
-
-                    b.Property<long>("FilingDocumentId")
-                        .HasColumnType("bigint");
-
-                    b.Property<DateTime?>("LeaseExpiresUtc")
-                        .HasColumnType("datetime2");
-
-                    b.Property<Guid?>("LeaseToken")
-                        .HasColumnType("uniqueidentifier");
-
-                    b.Property<string>("ModelId")
-                        .IsRequired()
-                        .HasMaxLength(100)
-                        .HasColumnType("nvarchar(100)");
-
-                    b.Property<DateTime?>("NextAttemptUtc")
-                        .HasColumnType("datetime2");
-
-                    b.Property<string>("PromptVersion")
-                        .IsRequired()
-                        .HasMaxLength(20)
-                        .HasColumnType("nvarchar(20)");
-
-                    b.Property<string>("RawResponseJson")
-                        .HasColumnType("nvarchar(max)");
-
-                    b.Property<string>("RejectedFieldsJson")
-                        .HasColumnType("nvarchar(max)");
-
-                    b.Property<long>("RequestId")
-                        .HasColumnType("bigint");
-
-                    b.Property<string>("ResultJson")
-                        .HasColumnType("nvarchar(max)");
-
-                    b.Property<long?>("ReusedFromExtractionId")
-                        .HasColumnType("bigint");
-
-                    b.Property<string>("Status")
-                        .IsRequired()
-                        .HasMaxLength(20)
-                        .HasColumnType("nvarchar(20)");
-
-                    b.HasKey("ChargeInstrumentExtractionId");
-
-                    b.HasIndex("RequestId");
-
-                    b.HasIndex("FilingDocumentId", "PromptVersion")
-                        .IsUnique();
-
-                    b.HasIndex("Status", "NextAttemptUtc");
-
-                    b.ToTable("ChargeInstrumentExtractions");
                 });
 
             modelBuilder.Entity("MCAROC_Analysis.Data.Entities.ChargeSecurityComponent", b =>
@@ -6533,17 +6461,6 @@ namespace MCAROC_Analysis.Migrations
                 });
 
             modelBuilder.Entity("MCAROC_Analysis.Data.Entities.ChargeDocumentLink", b =>
-                {
-                    b.HasOne("MCAROC_Analysis.Data.Entities.McaFilingDocument", "FilingDocument")
-                        .WithMany()
-                        .HasForeignKey("FilingDocumentId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("FilingDocument");
-                });
-
-            modelBuilder.Entity("MCAROC_Analysis.Data.Entities.ChargeInstrumentExtraction", b =>
                 {
                     b.HasOne("MCAROC_Analysis.Data.Entities.McaFilingDocument", "FilingDocument")
                         .WithMany()

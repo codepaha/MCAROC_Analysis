@@ -43,6 +43,10 @@ public class McaRequest
 
     /// <summary>Derived from the latest completed run's WarningsCount; kept separate from RequestStatus.</summary>
     public bool HasIngestionWarnings { get; set; }
+
+    /// <summary>#376: Keep original filing PDFs permanently regardless of global retention policy.</summary>
+    public bool KeepPermanently { get; set; }
+
     public byte[]? RowVersion { get; set; }
 
     public List<RequestDocument> Documents { get; set; } = [];

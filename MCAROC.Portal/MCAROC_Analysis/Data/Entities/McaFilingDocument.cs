@@ -64,4 +64,10 @@ public class McaFilingDocument
     public string? ChunkingErrorCategory { get; set; }
     public DateTime? ChunkingFailedUtc { get; set; }
     public DateTime? ChunkingLastAttemptUtc { get; set; }
+
+    // Retention and on-demand re-download (#376)
+    public string? SourceDocId { get; set; }
+    public string? SourceAwsPath { get; set; }
+    public string? SourceAttachmentName { get; set; }
+    public DateTime? RetiredUtc { get; set; }
 }
