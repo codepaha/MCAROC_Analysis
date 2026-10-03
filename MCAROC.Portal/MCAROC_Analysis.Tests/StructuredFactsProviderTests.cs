@@ -148,6 +148,55 @@ public class StructuredFactsProviderTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Fetched_litigation_cases_are_summarised_for_the_assistant_even_when_the_sheet_has_none()
+    {
+        // The report sheet's Litigations rows are empty for a fetched search; the Litigation tab's cases live in LitigationCases.
+        // The digest must still say how many there are, or the assistant answers "no litigation on file".
+        await using var db = CreateContext();
+        var (requestId, _) = await SeedRequestAsync(db);
+        var job = new LitigationSearchJob { RequestId = requestId, Status = LitigationSearchJobStatus.Completed, RawResponseHash = "h" + Guid.NewGuid().ToString("N") };
+        db.LitigationSearchJobs.Add(job);
+        await db.SaveChangesAsync();
+        var snapshot = new LitigationReportSnapshot
+        {
+            LitigationSearchJobId = job.LitigationSearchJobId, RequestId = requestId, ReportHash = job.RawResponseHash!,
+            Status = LitigationReportSnapshotStatus.Completed, RetrievedUtc = DateTime.UtcNow
+        };
+        db.LitigationReportSnapshots.Add(snapshot);
+        await db.SaveChangesAsync();
+        LitigationCase NewCase(string type, string status, string? direction, string? next) => new()
+        {
+            RequestId = requestId, Type = type, CaseStatus = status, Direction = direction, NextHearingDate = next,
+            FirstSeenUtc = DateTime.UtcNow, LastSeenUtc = DateTime.UtcNow
+        };
+        var cases = new[]
+        {
+            NewCase("drt", "PENDING", "against", "2026-11-01"), NewCase("drt", "PENDING", "against", null),
+            NewCase("nclt", "Disposed", "by", null), NewCase("highcourt", "PENDING", null, "2026-12-01")
+        };
+        db.LitigationCases.AddRange(cases);
+        await db.SaveChangesAsync();
+        // A case that belongs to an older report only is not part of the current picture.
+        var stale = NewCase("nclat", "PENDING", "against", null);
+        db.LitigationCases.Add(stale);
+        await db.SaveChangesAsync();
+        db.LitigationCaseSourceReports.AddRange(cases.Select(c => new LitigationCaseSourceReport
+            { LitigationCaseId = c.LitigationCaseId, LitigationReportSnapshotId = snapshot.LitigationReportSnapshotId, FirstSeenUtc = DateTime.UtcNow }));
+        await db.SaveChangesAsync();
+
+        var facts = await new StructuredFactsProvider(db).BuildDigestAsync(
+            requestId, new QuestionHints(FilingCategory.Compliance, null, null, null, null), CancellationToken.None);
+
+        var fact = Assert.Single(facts, f => f.DomainKey == "Litigation" && f.Text.Contains("fetched from the litigation data service"));
+        Assert.Contains("4 litigation case(s)", fact.Text);
+        Assert.Contains("3 pending, 1 disposed", fact.Text);
+        Assert.Contains("2 against the company, 1 by the company, 1 of unstated direction", fact.Text);
+        Assert.Contains("2 with a next hearing date", fact.Text);
+        Assert.Contains("drt 2", fact.Text);
+        Assert.DoesNotContain("nclat", fact.Text);
+    }
+
+    [Fact]
     public async Task Litigation_detail_fact_omits_the_court_clause_when_court_is_unknown()
     {
         await using var db = CreateContext();
