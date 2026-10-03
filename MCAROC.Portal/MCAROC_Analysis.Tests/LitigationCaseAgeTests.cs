@@ -44,26 +44,94 @@ public class LitigationCaseAgeTests
     }
 
     [Fact]
-    public void Without_a_filing_date_the_earliest_order_gives_a_labelled_lower_bound()
+    public void Without_a_filing_date_or_any_year_the_earliest_order_gives_a_labelled_lower_bound()
     {
-        var age = LitigationCaseAges.Compute(null, null, "2017", LitigationCaseStatusBucket.Pending, ["2021-07-20", "2019-03-25", "2024-01-05"], AsOf);
+        var age = LitigationCaseAges.Compute(null, null, null, LitigationCaseStatusBucket.Pending, ["2021-07-20", "2019-03-25", "2024-01-05"], AsOf);
 
         Assert.Equal(CaseAgeBasis.FirstOrderOnFile, age.Basis);
         Assert.True(age.IsLowerBound);
         Assert.Equal("Pending for at least 7 years 6 months", age.Headline);
-        Assert.Contains("No filing date on record", age.BasisNote);
+        Assert.Contains("No filing date or year on record", age.BasisNote);
         Assert.Contains("first order on file 25 Mar 2019", age.BasisNote);
     }
 
+    /// <summary>Owner: with no filing date, fall back to the case year, then the year in the CNR.</summary>
     [Fact]
-    public void With_only_a_year_no_age_is_computed_and_with_nothing_the_age_is_not_known()
+    public void Without_a_filing_date_the_case_year_gives_an_approximate_age_in_whole_years()
     {
-        var yearOnly = LitigationCaseAges.Compute(null, null, "2017", LitigationCaseStatusBucket.Pending, None, AsOf);
+        var age = LitigationCaseAges.Compute(null, null, "2017", LitigationCaseStatusBucket.Pending, None, AsOf);
+
+        Assert.Equal((CaseAgeBasis.CaseYear, 108), (age.Basis, age.Months));
+        Assert.True(age.IsApproximate);
+        Assert.Equal("Pending for about 9 years", age.Headline);
+        Assert.Equal("No filing date on record · case year 2017 (whole years)", age.BasisNote);
+    }
+
+    [Fact]
+    public void Without_a_case_year_the_year_in_the_cnr_is_used()
+    {
+        // A CNR is 16 characters and ends with the four-digit year.
+        var age = LitigationCaseAges.Compute(null, null, null, LitigationCaseStatusBucket.Pending, None, AsOf, cnr: "MHCC050049162017");
+
+        Assert.Equal((CaseAgeBasis.CnrYear, 108, 2017), (age.Basis, age.Months, age.Year));
+        Assert.Equal("Pending for about 9 years", age.Headline);
+        Assert.Contains("year in the CNR 2017", age.BasisNote);
+    }
+
+    [Fact]
+    public void The_case_year_comes_before_the_cnr_year_and_a_filing_date_before_both()
+    {
+        var both = LitigationCaseAges.Compute(null, null, "2019", LitigationCaseStatusBucket.Pending, None, AsOf, cnr: "MHCC050049162017");
+        var filed = LitigationCaseAges.Compute("2021-04-26", null, "2019", LitigationCaseStatusBucket.Pending, None, AsOf, cnr: "MHCC050049162017");
+
+        Assert.Equal((CaseAgeBasis.CaseYear, 84), (both.Basis, both.Months));
+        Assert.Equal((CaseAgeBasis.Filed, 65), (filed.Basis, filed.Months));
+    }
+
+    [Theory]
+    [InlineData("2027", "MHCC050049162017", 2017)] // an implausible case year falls through to the CNR year
+    [InlineData("", "MHCC050049162017", 2017)]
+    [InlineData("abc", "MHCC050049162017", 2017)]
+    public void An_unusable_case_year_falls_through_to_the_cnr_year(string caseYear, string cnr, int expectedYear) =>
+        Assert.Equal(expectedYear, LitigationCaseAges.Compute(null, null, caseYear, LitigationCaseStatusBucket.Pending, None, AsOf, cnr).Year);
+
+    [Theory]
+    [InlineData("AAAAAAAAAAAAAAAA")]  // placeholder
+    [InlineData("MHCC0500491620")]    // not 16 characters
+    [InlineData("MHCC050049162099")]  // a year after the as-of year
+    [InlineData("-")]
+    public void A_cnr_that_is_not_valid_or_has_an_implausible_year_gives_no_year(string cnr) =>
+        Assert.Equal(CaseAgeBasis.Unknown, LitigationCaseAges.Compute(null, null, null, LitigationCaseStatusBucket.Pending, None, AsOf, cnr).Basis);
+
+    [Fact]
+    public void An_order_older_than_the_year_allows_wins_as_a_lower_bound_and_a_consistent_order_does_not()
+    {
+        // Case year 2024 says "about 2 years", but an order from 2019 proves at least 7 years 6 months.
+        var older = LitigationCaseAges.Compute(null, null, "2024", LitigationCaseStatusBucket.Pending, ["2019-03-25"], AsOf);
+        var consistent = LitigationCaseAges.Compute(null, null, "2017", LitigationCaseStatusBucket.Pending, ["2019-03-25"], AsOf);
+
+        Assert.Equal((CaseAgeBasis.FirstOrderOnFile, "Pending for at least 7 years 6 months"), (older.Basis, older.Headline));
+        Assert.Equal((CaseAgeBasis.CaseYear, "Pending for about 9 years"), (consistent.Basis, consistent.Headline));
+    }
+
+    [Fact]
+    public void A_year_gives_an_age_to_the_end_year_for_a_disposed_case_and_under_a_year_for_the_current_year()
+    {
+        var disposed = LitigationCaseAges.Compute(null, "2022-03-15", "2019", LitigationCaseStatusBucket.Disposed, None, AsOf);
+        var thisYear = LitigationCaseAges.Compute(null, null, "2026", LitigationCaseStatusBucket.Pending, None, AsOf);
+        var unknownStatus = LitigationCaseAges.Compute(null, null, "2017", LitigationCaseStatusBucket.Unknown, None, AsOf);
+
+        Assert.Equal("Ran for about 3 years", disposed.Headline);
+        Assert.Equal("Pending for under a year", thisYear.Headline);
+        Assert.Equal("About 9 years since registration", unknownStatus.Headline);
+    }
+
+    [Fact]
+    public void With_nothing_on_record_the_age_is_not_known()
+    {
         var nothing = LitigationCaseAges.Compute(null, null, null, LitigationCaseStatusBucket.Pending, None, AsOf);
 
-        Assert.Equal(("Registered in 2017", null), (yearOnly.Headline, yearOnly.Months));
-        Assert.Equal("Age not known", nothing.Headline);
-        Assert.Equal(CaseAgeBand.NotKnown, LitigationCaseAges.BandOf(yearOnly));
+        Assert.Equal(("Age not known", CaseAgeBand.NotKnown), (nothing.Headline, LitigationCaseAges.BandOf(nothing)));
     }
 
     [Theory]
@@ -130,13 +198,13 @@ public class LitigationCaseAgeTests
         profile.Add(2, LitigationCaseAges.Compute("2024-02-01", null, null, LitigationCaseStatusBucket.Pending, None, AsOf));   // 2y 8m
         profile.Add(3, LitigationCaseAges.Compute("2014-06-09", null, null, LitigationCaseStatusBucket.Pending, None, AsOf));   // 12y
         profile.Add(4, LitigationCaseAges.Compute("2019-03-25", null, "2019", LitigationCaseStatusBucket.Disposed, ["2019-04-01"], AsOf)); // disposed: not banded
-        profile.Add(5, LitigationCaseAges.Compute(null, null, "2017", LitigationCaseStatusBucket.Pending, None, AsOf));         // year only
+        profile.Add(5, LitigationCaseAges.Compute(null, null, "2017", LitigationCaseStatusBucket.Pending, None, AsOf));         // year only: about 9 years
 
         Assert.Equal(4, profile.PendingCases);
         Assert.Equal(1, profile.PendingByBand[CaseAgeBand.UnderOneYear]);
         Assert.Equal(1, profile.PendingByBand[CaseAgeBand.OneToThreeYears]);
-        Assert.Equal(1, profile.PendingByBand[CaseAgeBand.OverFiveYears]);
-        Assert.Equal(1, profile.PendingByBand[CaseAgeBand.NotKnown]);
+        Assert.Equal(2, profile.PendingByBand[CaseAgeBand.OverFiveYears]); // the case with a filing date and the one with only a year (about 9 years)
+        Assert.Equal(0, profile.PendingByBand[CaseAgeBand.NotKnown]);
         Assert.Equal(3, profile.OldestPendingCaseId);
     }
 

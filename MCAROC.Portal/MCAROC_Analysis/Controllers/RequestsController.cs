@@ -981,7 +981,7 @@ public class RequestsController(
                         .Where(c => caseIdsQuery.Contains(c.LitigationCaseId))
                         .Select(c => new
                         {
-                            c.LitigationCaseId, c.FilingDate, c.DecisionDate, c.CaseYear, c.CaseStatus, c.CaseStage,
+                            c.LitigationCaseId, c.FilingDate, c.DecisionDate, c.CaseYear, c.Cnr, c.CaseStatus, c.CaseStage,
                             c.Type, c.Court, c.CourtCategory, c.CaseType, c.Act, c.CaseClassification, c.ProceedingType, c.PetitionersJson, c.RespondentsJson
                         })
                         .ToListAsync();
@@ -993,7 +993,7 @@ public class RequestsController(
                     {
                         var rowStatus = LitigationCaseStatusClassifier.Classify(r.CaseStatus, r.CaseStage);
                         litVm.AgeProfile.Add(r.LitigationCaseId, LitigationCaseAges.Compute(r.FilingDate, r.DecisionDate, r.CaseYear, rowStatus,
-                            orderDatesOfCase.GetValueOrDefault(r.LitigationCaseId) ?? [], ageAsOf));
+                            orderDatesOfCase.GetValueOrDefault(r.LitigationCaseId) ?? [], ageAsOf, r.Cnr));
                         var rowPetitioners = LitigationCaseCardMapper.ParseNames(r.PetitionersJson);
                         var rowSide = LitigationCompanySides.Determine(rowPetitioners, LitigationCaseCardMapper.ParseNames(r.RespondentsJson), companyNames);
                         litVm.RiskProfile.Add(LitigationBaselineRisk.Assess(new LitigationRiskInput(

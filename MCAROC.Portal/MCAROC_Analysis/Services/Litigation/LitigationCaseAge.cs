@@ -8,10 +8,12 @@ public enum CaseAgeBasis
 {
     /// <summary>The filing date the court record states: an exact start.</summary>
     Filed,
-    /// <summary>No filing date; the earliest order on file. A true lower bound — the case is at least this old.</summary>
+    /// <summary>No filing date; the year in the case number. Only the year is known, so the age is approximate.</summary>
+    CaseYear,
+    /// <summary>No filing date or case year; the year the CNR carries (its last four digits). Approximate, like the case year.</summary>
+    CnrYear,
+    /// <summary>No year at all; the earliest order on file. A true lower bound — the case is at least this old.</summary>
     FirstOrderOnFile,
-    /// <summary>Only the year the case was registered. No age is computed from a year.</summary>
-    YearOnly,
     Unknown
 }
 
@@ -22,34 +24,34 @@ public enum CaseAgeKind { Pending, Disposed, Elapsed }
 /// <summary>A pending case's age band, for the ageing summary.</summary>
 public enum CaseAgeBand { UnderOneYear, OneToThreeYears, ThreeToFiveYears, OverFiveYears, NotKnown }
 
-/// <summary>How old a litigation case is, with the basis shown so an estimate is never mistaken for a filed date.</summary>
+/// <summary>How old a litigation case is, with the basis shown so an estimate is never mistaken for a filed date. A filing date gives an
+/// exact age; a case year or CNR year gives an approximate one (whole years, to the end year); the earliest order on file gives a lower bound.</summary>
 public sealed record LitigationCaseAge(
     CaseAgeBasis Basis, CaseAgeKind Kind, DateOnly? Start, DateOnly? End, int? Months, bool EndIsLastOrderOnFile, int? Year)
 {
     public bool IsLowerBound => Basis == CaseAgeBasis.FirstOrderOnFile;
+    /// <summary>True when the age comes from a year alone, so it is "about" that many years.</summary>
+    public bool IsApproximate => Basis is CaseAgeBasis.CaseYear or CaseAgeBasis.CnrYear;
     public int? Years => Months is { } m ? m / 12 : null;
 
-    /// <summary>The duration alone: "5 years 5 months", "at least 7 years", or "registered in 2017" when only the year is known.</summary>
-    public string Duration => Basis switch
+    /// <summary>The duration alone: "5 years 5 months", "about 9 years", "at least 7 years".</summary>
+    public string Duration => Months switch
     {
-        CaseAgeBasis.YearOnly => $"registered in {Year}",
-        _ when Months is null => "not known",
-        _ => (IsLowerBound ? "at least " : "") + LitigationCaseAges.FormatMonths(Months.Value)
+        null => "not known",
+        { } m when IsApproximate => m < 12 ? "under a year" : "about " + LitigationCaseAges.FormatMonths(m),
+        { } m => (IsLowerBound ? "at least " : "") + LitigationCaseAges.FormatMonths(m)
     };
 
-    /// <summary>A short line for a card: "pending for 5 years 5 months", "ran for 2 years 3 months", "at least 7 years pending".</summary>
-    public string Headline => Basis switch
-    {
-        CaseAgeBasis.YearOnly => $"Registered in {Year}",
-        CaseAgeBasis.Unknown => "Age not known",
-        _ when Months is null => "Age not known",
-        _ => Kind switch
+    /// <summary>A short line for a card: "Pending for 5 years 5 months", "Ran for about 3 years", "About 9 years since registration".</summary>
+    public string Headline => Months is null
+        ? "Age not known"
+        : Kind switch
         {
             CaseAgeKind.Pending => $"Pending for {Duration}",
             CaseAgeKind.Disposed => $"Ran for {Duration}",
-            _ => $"{Duration} since {(Basis == CaseAgeBasis.Filed ? "filing" : "its first order on file")}"
-        }
-    };
+            _ => IsApproximate ? $"{char.ToUpperInvariant(Duration[0])}{Duration[1..]} since registration"
+                : $"{Duration} since {(Basis == CaseAgeBasis.Filed ? "filing" : "its first order on file")}"
+        };
 
     /// <summary>Where the number comes from, in words, for the line under it.</summary>
     public string BasisNote
@@ -57,12 +59,14 @@ public sealed record LitigationCaseAge(
         get
         {
             string D(DateOnly? d) => d is { } v ? v.ToString("d MMM yyyy", CultureInfo.InvariantCulture) : "—";
+            var disposedEnd = Kind == CaseAgeKind.Disposed && End is not null ? $" · {(EndIsLastOrderOnFile ? "last order on file" : "decided")} {D(End)}" : "";
             return Basis switch
             {
-                CaseAgeBasis.Filed => $"Filed {D(Start)}" + (Kind == CaseAgeKind.Disposed && End is not null ? $" · {(EndIsLastOrderOnFile ? "last order on file" : "decided")} {D(End)}" : ""),
-                CaseAgeBasis.FirstOrderOnFile => $"No filing date on record · first order on file {D(Start)}" + (Kind == CaseAgeKind.Disposed && End is not null ? $" · last order on file {D(End)}" : ""),
-                CaseAgeBasis.YearOnly => "Only the year is on record",
-                _ => "No filing date, order or year on record"
+                CaseAgeBasis.Filed => $"Filed {D(Start)}{disposedEnd}",
+                CaseAgeBasis.CaseYear => $"No filing date on record · case year {Year} (whole years){disposedEnd}",
+                CaseAgeBasis.CnrYear => $"No filing date or case year on record · year in the CNR {Year} (whole years){disposedEnd}",
+                CaseAgeBasis.FirstOrderOnFile => $"No filing date or year on record · first order on file {D(Start)}{disposedEnd}",
+                _ => "No filing date, year or order on record"
             };
         }
     }
@@ -77,12 +81,24 @@ public static class LitigationCaseAges
         !string.IsNullOrWhiteSpace(value)
         && DateOnly.TryParseExact(value.Trim(), DateFormats, CultureInfo.InvariantCulture, DateTimeStyles.None, out var d) ? d : null;
 
+    /// <summary>A plausible registration year: four digits, not before 1900 and not after the as-of year.</summary>
+    public static int? ParseYear(string? value, int asOfYear) =>
+        int.TryParse(value?.Trim(), NumberStyles.None, CultureInfo.InvariantCulture, out var y) && y >= 1900 && y <= asOfYear ? y : null;
+
+    /// <summary>The year a CNR carries: its last four digits, when it is a valid CNR (16 characters, not a placeholder).</summary>
+    public static int? YearInCnr(string? cnr, int asOfYear)
+    {
+        var normalised = LitigationCaseIdentity.NormaliseCnr(cnr);
+        return normalised is null ? null : ParseYear(normalised[^4..], asOfYear);
+    }
+
     /// <summary>The age of a case at <paramref name="asOf"/> — the date its data was retrieved (in IST), so a page and a report
-    /// built from the same data always agree. Nothing is guessed: a missing filing date falls back to the earliest order on file
-    /// (a lower bound, labelled so), then to the registration year (shown as a year, no age computed).</summary>
+    /// built from the same data always agree. Nothing is guessed. The start is, in order: the filing date (exact); the case year
+    /// (approximate, whole years); the year in the CNR (approximate); the earliest order on file (a lower bound). When a year is known
+    /// but an order on file is older than that year allows, the order wins as the lower bound. The basis is always reported.</summary>
     public static LitigationCaseAge Compute(
         string? filingDate, string? decisionDate, string? caseYear, LitigationCaseStatusBucket status,
-        IEnumerable<string?> orderDates, DateOnly asOf)
+        IEnumerable<string?> orderDates, DateOnly asOf, string? cnr = null)
     {
         var orders = orderDates.Select(ParseDate).OfType<DateOnly>().Order().ToList();
         var kind = status switch
@@ -92,14 +108,7 @@ public static class LitigationCaseAges
             _ => CaseAgeKind.Elapsed
         };
 
-        DateOnly? start;
-        CaseAgeBasis basis;
-        if (ParseDate(filingDate) is { } filed) { start = filed; basis = CaseAgeBasis.Filed; }
-        else if (orders.Count > 0) { start = orders[0]; basis = CaseAgeBasis.FirstOrderOnFile; }
-        else if (int.TryParse(caseYear?.Trim(), NumberStyles.None, CultureInfo.InvariantCulture, out var year) && year >= 1900 && year <= asOf.Year)
-            return new LitigationCaseAge(CaseAgeBasis.YearOnly, kind, null, null, null, false, year);
-        else return new LitigationCaseAge(CaseAgeBasis.Unknown, kind, null, null, null, false, null);
-
+        // Where the clock stops.
         DateOnly? end;
         var endIsLastOrder = false;
         if (kind == CaseAgeKind.Disposed)
@@ -110,8 +119,21 @@ public static class LitigationCaseAges
         }
         else end = asOf;
 
-        int? months = start is { } s && end is { } e && e >= s ? MonthsBetween(s, e) : null;
-        return new LitigationCaseAge(basis, kind, start, end, months, endIsLastOrder, null);
+        if (ParseDate(filingDate) is { } filed)
+            return new LitigationCaseAge(CaseAgeBasis.Filed, kind, filed, end, end is { } e && e >= filed ? MonthsBetween(filed, e) : null, endIsLastOrder, null);
+
+        var (yearBasis, year) = ParseYear(caseYear, asOf.Year) is { } cy ? (CaseAgeBasis.CaseYear, (int?)cy)
+            : YearInCnr(cnr, asOf.Year) is { } ny ? (CaseAgeBasis.CnrYear, ny)
+            : (CaseAgeBasis.Unknown, null);
+        int? yearMonths = year is { } y && end is { } ye && ye.Year >= y ? (ye.Year - y) * 12 : null;
+
+        int? orderMonths = orders.Count > 0 && end is { } oe && oe >= orders[0] ? MonthsBetween(orders[0], oe) : null;
+        // A year gives about N whole years; an order older than that year allows proves the case is at least as old as the order says.
+        if (year is not null && (orderMonths is null || yearMonths is null || orderMonths <= yearMonths))
+            return new LitigationCaseAge(yearBasis, kind, null, end, yearMonths, endIsLastOrder, year);
+        if (orders.Count > 0)
+            return new LitigationCaseAge(CaseAgeBasis.FirstOrderOnFile, kind, orders[0], end, orderMonths, endIsLastOrder, null);
+        return new LitigationCaseAge(CaseAgeBasis.Unknown, kind, null, null, null, false, null);
     }
 
     /// <summary>Whole calendar months from <paramref name="start"/> to <paramref name="end"/> (a month is complete on the same day number).</summary>

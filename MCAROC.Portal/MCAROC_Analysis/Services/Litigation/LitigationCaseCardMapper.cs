@@ -50,7 +50,7 @@ public static class LitigationCaseCardMapper
             ProceedingType = c.ProceedingType,
             Direction = c.Direction,
             FilingDate = c.FilingDate,
-            Age = LitigationCaseAges.Compute(c.FilingDate, c.DecisionDate, c.CaseYear, status, c.Orders.Select(o => o.OrderDate), ctx.AsOf),
+            Age = LitigationCaseAges.Compute(c.FilingDate, c.DecisionDate, c.CaseYear, status, c.Orders.Select(o => o.OrderDate), ctx.AsOf, c.Cnr),
             LastHearingDate = c.LastHearingDate,
             NextHearingDate = c.NextHearingDate,
             DecisionDate = c.DecisionDate,
