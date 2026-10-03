@@ -206,6 +206,13 @@ public class ChargeDocumentLinkBuilder(IServiceScopeFactory scopes, ChargeFormBa
 
         logger.LogInformation("Linked {Links} charge document link(s) for batch {BatchId} ({Charges} charges)",
             links.Count, batchId, links.Select(l => l.ChargeNumber).Distinct().Count());
+
+        // #364 part 2: the documents now tied to a charge are read for their property passages (when Vertex AI is configured).
+        if (scope.ServiceProvider.GetService<ChargeInstrumentExtractionService>() is { IsActive: true } instruments)
+        {
+            try { await instruments.ScheduleForBatchAsync(batchId, ct); }
+            catch (Exception ex) { logger.LogWarning(ex, "Scheduling charge instrument extraction failed for batch {BatchId}", batchId); }
+        }
         return links.Count;
     }
 }

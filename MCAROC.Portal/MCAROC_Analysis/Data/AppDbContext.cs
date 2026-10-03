@@ -95,6 +95,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<LitigationCaseAiAnalysis> LitigationCaseAiAnalyses => Set<LitigationCaseAiAnalysis>();
     public DbSet<LitigationOrderClassification> LitigationOrderClassifications => Set<LitigationOrderClassification>();
     public DbSet<PropertyParticularsExtraction> PropertyParticularsExtractions => Set<PropertyParticularsExtraction>();
+    public DbSet<ChargeInstrumentExtraction> ChargeInstrumentExtractions => Set<ChargeInstrumentExtraction>();
     public DbSet<LitigationPortfolioAiAnalysis> LitigationPortfolioAiAnalyses => Set<LitigationPortfolioAiAnalysis>();
 
     // #164 Calculation assurance
@@ -468,6 +469,20 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             e.Property(x => x.ModelId).HasMaxLength(100).IsRequired();
             e.Property(x => x.Status).HasConversion<string>().HasMaxLength(20);
             e.Property(x => x.ResponseHash).HasMaxLength(64);
+            e.Property(x => x.FailureReason).HasMaxLength(1000);
+        });
+
+        modelBuilder.Entity<ChargeInstrumentExtraction>(e =>
+        {
+            e.HasKey(x => x.ChargeInstrumentExtractionId);
+            e.HasOne(x => x.FilingDocument).WithMany().HasForeignKey(x => x.FilingDocumentId).OnDelete(DeleteBehavior.Cascade);
+            // One extraction per document per prompt version — the idempotency key concurrent schedulers race on.
+            e.HasIndex(x => new { x.FilingDocumentId, x.PromptVersion }).IsUnique();
+            e.HasIndex(x => new { x.Status, x.NextAttemptUtc });
+            e.HasIndex(x => x.RequestId);
+            e.Property(x => x.PromptVersion).HasMaxLength(20).IsRequired();
+            e.Property(x => x.ModelId).HasMaxLength(100).IsRequired();
+            e.Property(x => x.Status).HasConversion<string>().HasMaxLength(20);
             e.Property(x => x.FailureReason).HasMaxLength(1000);
         });
 

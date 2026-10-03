@@ -1,0 +1,42 @@
+@model InstrumentPassagesViewModel
+@using MCAROC_Analysis.Services.PropertyParticulars
+@* #364 part 2: the property as the document itself words it — each passage is a verbatim quote (it occurs, word for word, in the
+   document's text) with the page it starts on as its provenance. The reading under a passage is the same rules reading the
+   charge's own particulars get. *@
+@functions {
+    static string KindLabel(InstrumentPassageKind kind) => kind switch
+    {
+        InstrumentPassageKind.Particulars => "Particulars of property charged",
+        InstrumentPassageKind.PropertyTable => "Property details (table)",
+        InstrumentPassageKind.Schedule => "Property schedule",
+        InstrumentPassageKind.Ownership => "Ownership statement",
+        _ => "Property"
+    };
+}
+<div class="mca-instrument-passages" style="margin:4px 0 8px 0; padding-left:8px; border-left:3px solid var(--bs-border-color, #ddd);">
+    <div class="small fw-bold text-muted">Property per charge instrument</div>
+    @foreach (var passage in Model.Result.Passages)
+    {
+        var reading = PropertyReading.For(passage.Text, null, null);
+        var pageHref = $"/Requests/{Model.RequestId}/documents/{Model.DocumentId}/view#page={passage.Page}";
+        <div style="margin:4px 0;">
+            <span class="mca-badge">@KindLabel(passage.Kind)</span>
+            <a href="@pageHref" target="_blank" rel="noopener" class="small">@(passage.EndPage > passage.Page ? $"pages {passage.Page}–{passage.EndPage}" : $"page {passage.Page}")</a>
+            @if (passage.Text.Length > 700)
+            {
+                <details>
+                    <summary class="small">@passage.Text[..400]… (@passage.Text.Length.ToString("N0") characters)</summary>
+                    <div style="white-space:pre-wrap;">@passage.Text</div>
+                </details>
+            }
+            else
+            {
+                <div style="white-space:pre-wrap;">@passage.Text</div>
+            }
+            @foreach (var item in reading.Items.Where(i => i.SurveyNumbers.Count > 0 || !i.Location.IsEmpty || i.UnitLines.Count > 0 || i.Areas.Count > 0))
+            {
+                <div class="small text-muted">Reading: @PropertyReading.Summarize(item)</div>
+            }
+        </div>
+    }
+</div>
