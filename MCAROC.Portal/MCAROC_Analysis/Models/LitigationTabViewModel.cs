@@ -170,6 +170,8 @@ public sealed class LitigationTabViewModel
     public LitigationCourtSummaryGrid CourtSummaryGrid { get; set; } = new();
     /// <summary>Pending cases by age across the whole report (not just this page), as of <see cref="AgeAsOf"/>.</summary>
     public LitigationAgeProfile AgeProfile { get; set; } = new();
+    /// <summary>Cases by baseline risk tier across the whole report, and the overall tier (the highest case tier).</summary>
+    public LitigationRiskProfile RiskProfile { get; set; } = new();
     public DateOnly? AgeAsOf { get; set; }
     public LitigationSourceCoverageViewModel SourceCoverage { get; set; } = new();
 
@@ -264,6 +266,10 @@ public sealed class LitigationCaseCardViewModel
     public string? FilingDate { get; set; }
     /// <summary>How old the case is, measured to the date its data was retrieved, with the basis of the number.</summary>
     public LitigationCaseAge? Age { get; set; }
+    /// <summary>The baseline R0–R3 tier from the court record, with its trigger and reason.</summary>
+    public LitigationRiskAssessment? Risk { get; set; }
+    /// <summary>Which side of the case the company is on, from the party names.</summary>
+    public LitigationCompanySide CompanySide { get; set; }
     public string? LastHearingDate { get; set; }
     public string? NextHearingDate { get; set; }
     public string? DecisionDate { get; set; }

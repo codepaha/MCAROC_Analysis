@@ -17,7 +17,15 @@
     <div class="card-header d-flex flex-wrap justify-content-between align-items-center bg-light py-2 px-3">
         <div class="d-flex align-items-center gap-2">
             <span class="badge @statusBadgeClass">@Model.StatusBucket</span>
+            @if (Model.Risk is { } cardRisk)
+            {
+                <span class="badge @LitigationBaselineRisk.BadgeCss(cardRisk.Tier)" title="@cardRisk.Trigger — @cardRisk.Reason" data-risk-tier="@cardRisk.Tier">@cardRisk.Tier</span>
+            }
             <strong>@(string.IsNullOrWhiteSpace(Model.CaseNumber) ? "Case #" + Model.LitigationCaseId : Model.CaseNumber)</strong>
+            @if ((long?)ViewBag.RequestId is > 0)
+            {
+                <a class="small" href="/Requests/@ViewBag.RequestId/Litigation/Cases/@Model.LitigationCaseId">case page</a>
+            }
             @if (!string.IsNullOrWhiteSpace(Model.CaseType))
             {
                 <span class="text-muted">(@Model.CaseType)</span>

@@ -188,6 +188,7 @@ builder.Services.AddSingleton<ILitigationAiAnalysisClient>(sp =>
 builder.Services.AddScoped<LitigationAiAnalysisOrchestrator>();
 builder.Services.AddHostedService<LitigationAiAnalysisWorker>();
 builder.Services.AddScoped<LitigationReportAssembler>();
+builder.Services.AddScoped<LitigationCasePageService>();
 // Gemini split/label of charge "Particulars of Property Charged" (column M), grounded against the source text.
 // Scheduled after ingestion; skipped entirely when disabled or when Vertex AI is not configured.
 builder.Services.Configure<MCAROC_Analysis.Services.PropertyParticulars.PropertyParticularsExtractionOptions>(

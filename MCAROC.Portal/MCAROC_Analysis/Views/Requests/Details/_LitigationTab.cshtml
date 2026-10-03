@@ -302,6 +302,35 @@
         }
     }
 
+    @if (lake.AuthoritativeSnapshot is not null && lake.RiskProfile.TotalCases > 0)
+    {
+        <!-- Risk tiers across the report (baseline from the court record) -->
+        <div class="card mb-4 shadow-sm border" id="litigation-risk-profile">
+            <div class="card-header bg-light d-flex justify-content-between align-items-center py-2 px-3">
+                <h5 class="card-title mb-0 small fw-bold text-uppercase"><i class="bi bi-shield-exclamation me-2 text-primary"></i>Litigation Risk</h5>
+                <span class="badge @LitigationBaselineRisk.BadgeCss(lake.RiskProfile.Overall) fs-6" data-risk-overall="@lake.RiskProfile.Overall">@lake.RiskProfile.Overall · @LitigationBaselineRisk.Label(lake.RiskProfile.Overall)</span>
+            </div>
+            <div class="card-body">
+                <div class="mca-highlight-grid">
+                    @foreach (var tier in new[] { LitigationRiskTier.R3, LitigationRiskTier.R2, LitigationRiskTier.R1, LitigationRiskTier.R0 })
+                    {
+                        <div class="pi-metric">
+                            <span>@tier · @LitigationBaselineRisk.Label(tier)</span>
+                            <strong>@lake.RiskProfile.Cases[tier]</strong>
+                        </div>
+                    }
+                </div>
+                @foreach (var tier in new[] { LitigationRiskTier.R3, LitigationRiskTier.R2 })
+                {
+                    var triggers = lake.RiskProfile.TriggersOf(tier);
+                    if (triggers.Count == 0) { continue; }
+                    <p class="small mb-1 mt-3"><strong>@tier</strong> — @string.Join("; ", triggers.Select(t => $"{t.Trigger} × {t.Count}"))</p>
+                }
+                <p class="small text-muted mb-0 mt-2">The overall tier is the highest of the cases'. Each case's tier is a baseline worked out from its court record: forum, case type, act, status and the company's side.</p>
+            </div>
+        </div>
+    }
+
     @if (lake.AuthoritativeSnapshot is not null && lake.AgeProfile.PendingCases > 0)
     {
         <!-- Ageing of pending cases (as of the day the data was retrieved) -->
