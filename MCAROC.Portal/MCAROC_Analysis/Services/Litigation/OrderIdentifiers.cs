@@ -118,6 +118,13 @@ public static partial class OrderIdentifiers
         return type == OrderIdentifierType.Pan && v.Length == 10 ? $"{v[..5]}****{v[9]}" : value;
     }
 
+    /// <summary>A context snippet with every standalone PAN in it masked — the snippet is the words around an identifier, so it can hold this
+    /// identifier's PAN or another one's. Display only; the stored identifier values are untouched, so matching stays exact.</summary>
+    public static string MaskContext(string? context) =>
+        string.IsNullOrEmpty(context)
+            ? ""
+            : PanPattern().Replace(context, m => PanEntityLetters.Contains(m.Value[3]) ? Mask(OrderIdentifierType.Pan, m.Value) : m.Value);
+
     public static string Label(OrderIdentifierType type) => type switch
     {
         OrderIdentifierType.Cin => "CIN",

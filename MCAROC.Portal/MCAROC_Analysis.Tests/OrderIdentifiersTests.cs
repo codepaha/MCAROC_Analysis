@@ -91,6 +91,22 @@ public class OrderIdentifiersTests
     }
 
     [Fact]
+    public void A_context_snippet_shows_no_full_pan_but_keeps_other_identifiers()
+    {
+        var text = "--- Page 1 (native) ---\nThe respondent PAN ABCCE1234F appeared; GSTIN 29ABCCE1234F1Z5 and CIN U12345MH2010PTC123456 too.";
+        var found = OrderIdentifiers.Extract(text);
+
+        Assert.All(found, id =>
+        {
+            var shown = OrderIdentifiers.MaskContext(id.Context);
+            Assert.DoesNotContain("ABCCE1234F ", shown); // the standalone PAN, in any row's snippet
+            Assert.Contains("ABCCE****F", shown);
+            Assert.Contains("29ABCCE1234F1Z5", shown);   // a GSTIN is a public registry value and is left as printed
+        });
+        Assert.Contains(found, id => id.Value == "ABCCE1234F"); // the stored value is untouched, for exact matching
+    }
+
+    [Fact]
     public void A_pan_is_masked_and_the_corporate_identifiers_stay_whole()
     {
         Assert.Equal("ABCCE****F", OrderIdentifiers.Mask(OrderIdentifierType.Pan, "ABCCE1234F"));
