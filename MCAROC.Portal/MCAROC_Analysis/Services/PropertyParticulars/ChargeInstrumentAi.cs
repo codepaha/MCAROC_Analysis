@@ -142,6 +142,7 @@ public static partial class ChargeInstrumentAi
         for (var i = 0; i < response.Passages.Count; i++)
         {
             var p = response.Passages[i];
+            if (p is null) return Failed($"passages[{i}] is null.");
             if (!Enum.TryParse<InstrumentPassageKind>(p.Kind, ignoreCase: true, out var kind) || !Enum.IsDefined(kind))
             {
                 rejected.Add($"passages[{i}]: unsupported kind '{p.Kind}' — dropped");
@@ -158,7 +159,7 @@ public static partial class ChargeInstrumentAi
                 rejected.Add($"passages[{i}]: longer than {MaxPassageChars} characters — dropped");
                 continue;
             }
-            var at = index.Text.IndexOf(text, StringComparison.OrdinalIgnoreCase);
+            var at = FindQuote(index.Text, text);
             if (at < 0)
             {
                 rejected.Add($"passages[{i}]: not a verbatim quote of the document — dropped");
@@ -184,6 +185,41 @@ public static partial class ChargeInstrumentAi
     [GeneratedRegex(@"\b(said|aforesaid|hereunder|hereinabove|hereinafter|abovementioned|above[- ]mentioned)\b", RegexOptions.IgnoreCase)]
     private static partial Regex ReferenceWords();
 
+    /// <summary>Where the quote sits in the document text, as a whole: it must start and end on identifier boundaries. A quote
+    /// that stops inside a longer word or number ("Flat No. 30" out of "Flat No. 305"), or at the slash, hyphen, dot or letter that
+    /// continues an identifier ("12" out of "12/3", "30" out of "30A"), is part of a different identifier, not a quote of this one,
+    /// and is not found. The same goes for a quote that starts inside one ("05" out of "305"). Case and spacing don't matter.</summary>
+    internal static int FindQuote(string text, string quote)
+    {
+        for (var at = text.IndexOf(quote, StringComparison.OrdinalIgnoreCase); at >= 0;
+            at = at + 1 < text.Length ? text.IndexOf(quote, at + 1, StringComparison.OrdinalIgnoreCase) : -1)
+        {
+            if (StartsOnBoundary(text, at) && EndsOnBoundary(text, at + quote.Length)) return at;
+        }
+        return -1;
+    }
+
+    private static bool IsWordChar(char c) => char.IsLetterOrDigit(c);
+
+    /// <summary>A separator that joins the two halves of one identifier when a word character sits on each side of it.</summary>
+    private static bool IsJoiner(char c) => c is '/' or '-' or '.' or '\'' or '_' or '(' or ')';
+
+    private static bool EndsOnBoundary(string text, int end)
+    {
+        if (end >= text.Length || !IsWordChar(text[end - 1])) return true; // the end of the text, or the quote ends on punctuation
+        var next = text[end];
+        if (IsWordChar(next)) return false; // stops inside a word or number
+        return !(IsJoiner(next) && end + 1 < text.Length && IsWordChar(text[end + 1]));
+    }
+
+    private static bool StartsOnBoundary(string text, int start)
+    {
+        if (start <= 0 || !IsWordChar(text[start])) return true; // the start of the text, or the quote starts on punctuation
+        var previous = text[start - 1];
+        if (IsWordChar(previous)) return false; // starts inside a word or number
+        return !(IsJoiner(previous) && start - 2 >= 0 && IsWordChar(text[start - 2]));
+    }
+
     private static ChargeInstrumentValidation Failed(string reason) => new(false, null, [], reason);
 
     public static string Serialize(ChargeInstrumentAiResult result) => JsonSerializer.Serialize(result, JsonOptions);
@@ -201,6 +237,6 @@ public static partial class ChargeInstrumentAi
         Converters = { new JsonStringEnumConverter() }
     };
 
-    private sealed record Response(List<RawPassage>? Passages);
+    private sealed record Response(List<RawPassage?>? Passages);
     private sealed record RawPassage(string? Kind, string? Text);
 }

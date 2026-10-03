@@ -153,6 +153,24 @@ public class ChargeInstrumentExtractionService(
                 .SetProperty(x => x.LeaseExpiresUtc, now.AddSeconds(LeaseSeconds)), ct);
         if (claimed == 0) return;
 
+        // From here the row is claimed: whatever goes wrong — reading the document, an unreadable answer, a database blip — must
+        // reach the fenced retry/failure path, never leave it InProgress with nothing to wake it.
+        try
+        {
+            await ProcessClaimedAsync(extractionId, token, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            logger.LogWarning(ex, "Charge instrument extraction {Id} failed while processing", extractionId);
+            var attempts = await db.ChargeInstrumentExtractions.AsNoTracking()
+                .Where(x => x.ChargeInstrumentExtractionId == extractionId).Select(x => x.AttemptCount).FirstOrDefaultAsync(CancellationToken.None);
+            await FailOrRetryAsync(new ChargeInstrumentExtraction { ChargeInstrumentExtractionId = extractionId, AttemptCount = attempts }, token,
+                $"{ex.GetType().Name}: {ex.Message}", CancellationToken.None);
+        }
+    }
+
+    private async Task ProcessClaimedAsync(long extractionId, Guid token, CancellationToken ct)
+    {
         var row = await db.ChargeInstrumentExtractions.AsNoTracking().SingleAsync(x => x.ChargeInstrumentExtractionId == extractionId, ct);
         var textPath = await db.McaFilingDocuments.AsNoTracking().Where(d => d.FilingDocumentId == row.FilingDocumentId)
             .Select(d => d.ExtractedTextPath).FirstOrDefaultAsync(ct);

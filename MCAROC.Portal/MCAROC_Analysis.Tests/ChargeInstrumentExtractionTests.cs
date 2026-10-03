@@ -46,6 +46,65 @@ public class ChargeInstrumentAiTests
         Assert.Contains(v.Rejected, r => r.Contains("not a verbatim quote"));
     }
 
+    /// <summary>PR #385 review: a quote must not stop inside a longer identifier. "Flat No. 30" is not a quote of "Flat No. 305", and a
+    /// quote that starts inside one, or stops at the slash, hyphen, dot or letter that continues it, is part of a different identifier.</summary>
+    [Theory]
+    [InlineData("Flat No. 305, B Wing, Sunrise Society", "Flat No. 30")]            // prefix of 305
+    [InlineData("Flat No. 305, B Wing, Sunrise Society", "No. 305, B Wing, Sunrise Societ")] // ends inside a word
+    [InlineData("Flat No. 305, B Wing, Sunrise Society", "at No. 305")]              // starts inside a word
+    [InlineData("Survey No. 12/3, Village Baner", "Survey No. 12")]                  // slash continues the number
+    [InlineData("Survey No. 12-3, Village Baner", "Survey No. 12")]                  // hyphen continues it
+    [InlineData("Plot No. 30A, Sector 63", "Plot No. 30")]                           // suffix letter
+    [InlineData("Total area 12.5 sq mtrs", "Total area 12")]                                     // decimal point continues it
+    [InlineData("Unit No. A-305, Tower B", "05, Tower B")]                           // starts inside 305
+    [InlineData("Unit No. A-305, Tower B", "305, Tower B")]                          // starts after the hyphen of A-305
+    [InlineData("Sy No. 403/2A3, 404/B/2C", "Sy No. 403/2")]                         // ends inside the 2A3 parcel suffix
+    public void A_quote_that_cuts_an_identifier_is_not_found(string source, string cut)
+    {
+        var v = ChargeInstrumentAi.Validate(Json(("Schedule", cut)), source);
+
+        Assert.True(v.IsAccepted);
+        Assert.Empty(v.Result!.Passages);
+        Assert.Contains(v.Rejected, r => r.Contains("not a verbatim quote"));
+    }
+
+    /// <summary>The same boundary rule must not reject honest quotes: ending at a comma, full stop or the end of the text, starting after
+    /// punctuation, spanning pages and lines, and quoting a whole identifier in full.</summary>
+    [Theory]
+    [InlineData("Flat No. 305, B Wing, Sunrise Society", "Flat No. 305")]
+    [InlineData("Flat No. 305, B Wing, Sunrise Society", "305, B Wing")]
+    [InlineData("Flat No. 305. B Wing", "Flat No. 305")]
+    [InlineData("Survey No. 12/3, Village Baner", "Survey No. 12/3")]
+    [InlineData("Survey No. 12/3, Village Baner", "12/3, Village Baner")]
+    [InlineData("Plot No. 30A, Sector 63", "Plot No. 30A")]
+    [InlineData("Sy Nos. 403/2A3, 404/B/2C, and 404/A3", "Sy Nos. 403/2A3, 404/B/2C, and 404/A3")]
+    [InlineData("Address: (Flat No. 305), B Wing", "Flat No. 305")]
+    public void An_honest_quote_on_identifier_boundaries_is_kept(string source, string quote)
+    {
+        var v = ChargeInstrumentAi.Validate(Json(("Schedule", quote)), source);
+
+        Assert.Equal(quote, Assert.Single(v.Result!.Passages).Text);
+    }
+
+    [Fact]
+    public void A_later_whole_occurrence_is_found_when_an_earlier_one_cuts_an_identifier()
+    {
+        // "Flat No. 30" cuts 305 on its first appearance but is whole on its second.
+        var v = ChargeInstrumentAi.Validate(Json(("Schedule", "Flat No. 30")), "Flat No. 305 and also Flat No. 30 in Wing B");
+
+        Assert.Equal("Flat No. 30", Assert.Single(v.Result!.Passages).Text);
+    }
+
+    [Fact]
+    public void A_null_entry_in_the_answer_is_a_malformed_answer_not_an_exception()
+    {
+        var v = ChargeInstrumentAi.Validate("""{"passages":[null,{"kind":"Schedule","text":"Village Baner"}]}""", Document);
+
+        Assert.False(v.IsAccepted);
+        Assert.Null(v.Result);
+        Assert.Contains("passages[0] is null", v.FailureReason);
+    }
+
     [Fact]
     public void Whitespace_and_case_do_not_matter_and_copied_page_markers_are_removed()
     {
@@ -307,6 +366,54 @@ public sealed class ChargeInstrumentExtractionServiceTests : IAsyncLifetime, IDi
         var done = await db.ChargeInstrumentExtractions.AsNoTracking().SingleAsync(x => x.ChargeInstrumentExtractionId == id);
         Assert.Equal((ChargeInstrumentExtractionStatus.Completed, 2), (done.Status, done.AttemptCount));
         Assert.Single((await ChargeInstrumentExtractionService.LoadAsync(db, [doc.FilingDocumentId], CancellationToken.None))[doc.FilingDocumentId].Passages);
+    }
+
+    /// <summary>PR #385 review: an answer with a null entry used to throw out of validation and leave the claimed row InProgress with a live
+    /// lease. Anything that goes wrong after the claim now reaches the fenced retry/failure path.</summary>
+    [Fact]
+    public async Task A_null_entry_answer_is_retried_a_valid_one_completes_and_bad_answers_exhaust_the_attempts_cleanly()
+    {
+        await using var db = CreateContext();
+        var s = await SeedAsync(db);
+        var doc = await AddLinkedDocumentAsync(db, s, DeedText, Guid.NewGuid().ToString("N"));
+        // A null member, then an answer of the wrong shape, then a good one.
+        var answers = new Queue<string>(["{\"passages\":[null]}", "{\"passages\":\"oops\"}", Answer]);
+        var client = new FakeClient(_ => new(true, answers.Dequeue(), null));
+        var service = NewService(db, client);
+        await service.ScheduleForBatchAsync(s.Batch.BatchId, CancellationToken.None);
+        var id = await db.ChargeInstrumentExtractions.Where(x => x.FilingDocumentId == doc.FilingDocumentId).Select(x => x.ChargeInstrumentExtractionId).SingleAsync();
+
+        for (var attempt = 1; attempt <= 3; attempt++)
+        {
+            await db.ChargeInstrumentExtractions.Where(x => x.ChargeInstrumentExtractionId == id).ExecuteUpdateAsync(u => u.SetProperty(x => x.NextAttemptUtc, (DateTime?)null));
+            await service.ProcessAsync(id, CancellationToken.None);
+            var row = await db.ChargeInstrumentExtractions.AsNoTracking().SingleAsync(x => x.ChargeInstrumentExtractionId == id);
+            Assert.Null(row.LeaseToken); // never left claimed
+            Assert.NotEqual(ChargeInstrumentExtractionStatus.InProgress, row.Status);
+            Assert.Equal(attempt < 3 ? ChargeInstrumentExtractionStatus.Pending : ChargeInstrumentExtractionStatus.Completed, row.Status);
+        }
+        Assert.Single((await ChargeInstrumentExtractionService.LoadAsync(db, [doc.FilingDocumentId], CancellationToken.None))[doc.FilingDocumentId].Passages);
+    }
+
+    [Fact]
+    public async Task A_document_that_cannot_be_read_after_the_claim_ends_failed_not_stranded_in_progress()
+    {
+        await using var db = CreateContext();
+        var s = await SeedAsync(db);
+        var doc = await AddLinkedDocumentAsync(db, s, DeedText, Guid.NewGuid().ToString("N"));
+        var service = NewService(db, new FakeClient(_ => new(true, Answer, null)), options: new ChargeInstrumentExtractionOptions { MaxAttempts = 1 });
+        await service.ScheduleForBatchAsync(s.Batch.BatchId, CancellationToken.None);
+        var id = await db.ChargeInstrumentExtractions.Where(x => x.FilingDocumentId == doc.FilingDocumentId).Select(x => x.ChargeInstrumentExtractionId).SingleAsync();
+        // The text file is a directory now: reading it throws an IOException after the row has been claimed.
+        var path = (await db.McaFilingDocuments.AsNoTracking().SingleAsync(d => d.FilingDocumentId == doc.FilingDocumentId)).ExtractedTextPath!;
+        File.Delete(path);
+        Directory.CreateDirectory(path);
+
+        await service.ProcessAsync(id, CancellationToken.None);
+
+        var row = await db.ChargeInstrumentExtractions.AsNoTracking().SingleAsync(x => x.ChargeInstrumentExtractionId == id);
+        Assert.Equal((ChargeInstrumentExtractionStatus.Failed, null), (row.Status, row.LeaseToken));
+        Assert.False(string.IsNullOrEmpty(row.FailureReason));
     }
 
     [Fact]
