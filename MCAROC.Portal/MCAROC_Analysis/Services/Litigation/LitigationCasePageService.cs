@@ -9,10 +9,13 @@ namespace MCAROC_Analysis.Services.LitigationData;
 public sealed record RelatedLitigationCase(
     long LitigationCaseId, string? CaseNumber, string? Court, LitigationCaseStatusBucket Status, LitigationRiskTier Tier, string SharedParty);
 
+/// <summary>Whether the case's own orders tie it to the company by an identifier they print, and which identifiers they name.</summary>
+public sealed record LitigationIdentityEvidence(IdentityEvidenceStatus Status, IReadOnlyList<MatchedOrderIdentifier> Identifiers, int OrdersWithText);
+
 /// <summary>Everything the standalone page of one litigation case shows.</summary>
 public sealed record LitigationCasePage(
     McaRequest Request, LitigationCaseCardViewModel Card, DateTime RetrievedUtc, IReadOnlyList<ChargeLitigationLink> ChargeLinks,
-    IReadOnlyList<RelatedLitigationCase> RelatedCases);
+    IReadOnlyList<RelatedLitigationCase> RelatedCases, LitigationIdentityEvidence Identity);
 
 /// <summary>Loads one case of a request's current litigation report for its own page: the same card the Litigation tab builds
 /// (identity, age, baseline risk tier, parties, orders with outcomes and property matches, any stored analysis), plus the charge it
@@ -64,7 +67,33 @@ public sealed class LitigationCasePageService(AppDbContext db, ChargeLitigationS
             catch (Exception ex) when (ex is not OperationCanceledException) { /* the page stands without the charge links */ }
         }
 
-        return new LitigationCasePage(request, card, snapshot.RetrievedUtc, links, await RelatedAsync(inReport, card, companyNames, ct));
+        var identity = await IdentityEvidenceAsync(request, companyProfile, theCase, orderDocs, ct);
+        return new LitigationCasePage(request, card, snapshot.RetrievedUtc, links, await RelatedAsync(inReport, card, companyNames, ct), identity);
+    }
+
+    /// <summary>Reads the identifiers printed in the case's own order texts and ties them to the company: its CIN/LLPIN, PAN, GSTINs and its
+    /// directors' DINs. Order texts are in the database (they outlive the retained PDFs), so this needs no file.</summary>
+    private async Task<LitigationIdentityEvidence> IdentityEvidenceAsync(
+        McaRequest request, CompanyProfile? profile, LitigationCase theCase, IReadOnlyDictionary<long, LitigationOrderDocument> orderDocs, CancellationToken ct)
+    {
+        var runId = request.LatestCompletedIngestionRunId;
+        var gstins = runId is { } gr ? await db.GstRegistrations.AsNoTracking().Where(g => g.IngestionRunId == gr && g.Gstin != "").Select(g => g.Gstin).Distinct().ToListAsync(ct) : [];
+        var dins = runId is { } dr ? await db.Directors.AsNoTracking().Where(d => d.IngestionRunId == dr && d.Din != "").Select(d => d.Din).Distinct().ToListAsync(ct) : [];
+        var company = new CompanyIdentity(
+            request.Cin ?? profile?.Cin, request.Llpin ?? profile?.Llpin, request.Pan ?? profile?.Pan, gstins, dins);
+
+        var matched = new List<MatchedOrderIdentifier>();
+        var withText = 0;
+        foreach (var order in theCase.Orders.OrderByDescending(o => o.OrderDate))
+        {
+            if (!orderDocs.TryGetValue(order.LitigationCaseOrderId, out var doc) || string.IsNullOrWhiteSpace(doc.ExtractedText)) continue;
+            withText++;
+            foreach (var id in OrderIdentifiers.Extract(doc.ExtractedText))
+                matched.Add(new MatchedOrderIdentifier(id, OrderIdentifiers.Classify(id, company), order.LitigationCaseOrderId, order.OrderDate, order.OrderType, doc.LitigationOrderDocumentId));
+        }
+        // The company's own identifiers first, then directors', then anyone else's.
+        var ordered = matched.OrderBy(m => m.Match).ThenBy(m => m.Identifier.Type).ToList();
+        return new LitigationIdentityEvidence(OrderIdentifiers.StatusOf(ordered, withText), ordered, withText);
     }
 
     /// <summary>The report the Litigation tab shows: the current attempt's snapshot when it completed, else the job's latest completed one.</summary>

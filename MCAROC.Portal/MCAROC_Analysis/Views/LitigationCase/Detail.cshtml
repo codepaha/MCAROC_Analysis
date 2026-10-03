@@ -73,6 +73,67 @@
         </div>
     </div>
 
+    <!-- Identity evidence: is this the company's case? -->
+    <div class="card shadow-sm mb-3" id="case-identity">
+        <div class="card-header bg-light small fw-bold text-uppercase"><i class="bi bi-fingerprint me-1 text-primary"></i>Identity evidence</div>
+        <div class="card-body small">
+            @switch (Model.Identity.Status)
+            {
+                case IdentityEvidenceStatus.Confirmed:
+                    <div><span class="badge bg-success" data-identity="Confirmed">Confirmed by identifier</span>
+                        An order names the company's own CIN, LLPIN, PAN or GSTIN.</div>
+                    break;
+                case IdentityEvidenceStatus.DirectorOnly:
+                    <div><span class="badge bg-info text-dark" data-identity="DirectorOnly">Director named</span>
+                        No identifier of the company itself, but an order names the DIN of one of its directors.</div>
+                    break;
+                case IdentityEvidenceStatus.NameOnly:
+                    <div><span class="badge bg-secondary" data-identity="NameOnly">Name match only</span>
+                        @Model.Identity.OrdersWithText order@(Model.Identity.OrdersWithText == 1 ? "" : "s") read; none prints an identifier of the company. The case rests on the name match.</div>
+                    break;
+                default:
+                    <div><span class="badge bg-secondary" data-identity="NoOrderText">Not checked</span>
+                        There is no order text to read for this case, so no identifier can confirm it.</div>
+                    break;
+            }
+            @if (Model.Identity.Identifiers.Count > 0)
+            {
+                <div class="table-responsive mt-3">
+                    <table class="table table-sm align-middle mb-0">
+                        <thead class="table-light"><tr><th>Identifier</th><th>Value</th><th>Whose</th><th>Order</th><th>Page</th><th>As printed</th></tr></thead>
+                        <tbody>
+                            @foreach (var m in Model.Identity.Identifiers)
+                            {
+                                <tr>
+                                    <td>@OrderIdentifiers.Label(m.Identifier.Type)</td>
+                                    <td class="font-monospace">@OrderIdentifiers.Mask(m.Identifier.Type, m.Identifier.Value)</td>
+                                    <td>
+                                        @switch (m.Match)
+                                        {
+                                            case IdentifierMatch.Company: <span class="badge bg-success">The company's</span> break;
+                                            case IdentifierMatch.Director: <span class="badge bg-info text-dark">A director's</span> break;
+                                            default: <span class="text-muted">Another party's</span> break;
+                                        }
+                                    </td>
+                                    <td>@Or(m.OrderDate)@(string.IsNullOrWhiteSpace(m.OrderType) ? "" : " · " + m.OrderType)</td>
+                                    <td>
+                                        @if (m.DocumentId is { } mdoc)
+                                        {
+                                            <a href="/Requests/@request.RequestId/Litigation/Orders/@mdoc/download#page=@m.Identifier.Page">@m.Identifier.Page</a>
+                                        }
+                                        else { @m.Identifier.Page }
+                                    </td>
+                                    <td class="text-muted">@m.Identifier.Context</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+                <div class="text-muted mt-2">Identifiers are read exactly as printed. A PAN is shown masked; the corporate identifiers are public registry values. Personal identifiers such as Aadhaar and mobile numbers are not read.</div>
+            }
+        </div>
+    </div>
+
     <!-- Where it stands -->
     <div class="card shadow-sm mb-3" id="case-standing">
         <div class="card-header bg-light small fw-bold text-uppercase"><i class="bi bi-flag me-1 text-primary"></i>Where it stands</div>
