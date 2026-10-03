@@ -176,6 +176,34 @@ public sealed class BprLitigationClientTests
         Assert.Contains("\"application_customer_id\":\"req-1\"", sentBody);
     }
 
+    [Theory]
+    [InlineData(null, "true")]   // no override: the configured default (exact match on)
+    [InlineData(false, "false")]
+    [InlineData(true, "true")]
+    public async Task RegisterJobAsync_sends_exact_match_from_the_override_or_the_configured_default(bool? exactMatch, string expected)
+    {
+        var handler = new StubHandler();
+        handler.OnPath("bprjob/register", _ => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent("""{"job_id":"job-1"}""", Encoding.UTF8, "application/json")
+        });
+
+        await NewClient(handler).RegisterJobAsync("token", ["Example Co"], "individual", "req-1", CancellationToken.None, exactMatch);
+
+        Assert.Contains($"\"exact_match\":{expected}", handler.RequestBodies.Single());
+    }
+
+    [Fact]
+    public void ExactMatchFor_is_off_for_companies_and_LLPs_and_on_for_everyone_else_by_default()
+    {
+        var opts = new BprLitigationOptions();
+
+        Assert.False(opts.ExactMatchFor(MCAROC_Analysis.Data.Entities.EntityType.Company));
+        Assert.False(opts.ExactMatchFor(MCAROC_Analysis.Data.Entities.EntityType.LLP));
+        Assert.True(opts.ExactMatch); // individuals, partnerships and proprietorships keep exact matching
+        Assert.True(new BprLitigationOptions { ExactMatchForCompanies = true }.ExactMatchFor(MCAROC_Analysis.Data.Entities.EntityType.Company));
+    }
+
     [Fact]
     public async Task RegisterJobAsync_rejects_an_empty_keyword_list_without_calling_the_vendor()
     {

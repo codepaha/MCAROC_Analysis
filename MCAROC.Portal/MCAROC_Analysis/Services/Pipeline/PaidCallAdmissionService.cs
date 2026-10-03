@@ -53,8 +53,12 @@ public static class PaidCallScopeKeys
     public static string CanonicalIdentifier(McaRequest request) =>
         (request.Cin ?? request.Llpin)?.Trim().ToUpperInvariant() is { Length: > 0 } id ? id : $"REQUEST-{request.RequestId}";
 
-    /// <summary>Order- and case-insensitive: the same keyword set always hashes to the same scope.</summary>
-    public static string LitigationSearch(string canonicalIdentifier, IEnumerable<string> keywordValues)
+    /// <summary>Order- and case-insensitive: the same keyword set always hashes to the same scope. The matching mode is part
+    /// of the identity: a report found with exact name matching and one found without it are different searches — the broader
+    /// one has cases the exact one cannot — so neither may stand in for the other (reuse and admission freshness both key on
+    /// this). Exact matching keeps the key every earlier search was admitted under (they were all exact), so those reports stay
+    /// reusable for genuinely equivalent exact searches and are never taken for a broad one.</summary>
+    public static string LitigationSearch(string canonicalIdentifier, IEnumerable<string> keywordValues, bool exactMatch = true)
     {
         var normalized = string.Join("\n", keywordValues
             .Select(k => k.Trim().ToUpperInvariant())
@@ -62,7 +66,7 @@ public static class PaidCallScopeKeys
             .Distinct(StringComparer.Ordinal)
             .Order(StringComparer.Ordinal));
         var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(normalized))).ToLowerInvariant();
-        return $"search|{canonicalIdentifier}|{hash}";
+        return exactMatch ? $"search|{canonicalIdentifier}|{hash}" : $"search|{canonicalIdentifier}|{hash}|broad";
     }
 
     /// <summary>Scoped to the snapshot being analysed; a request with no completed snapshot yet falls back to

@@ -76,6 +76,7 @@ public sealed class LitigationReuseService(
         {
             RequestId = requestId, Status = LitigationSearchJobStatus.Completed,
             KeywordsJson = sourceJob.KeywordsJson, EntityType = sourceJob.EntityType, ApplicationCustomerId = sourceJob.ApplicationCustomerId,
+            ExactMatch = sourceJob.ExactMatch,
             ReportFormat = sourceJob.ReportFormat, CreatedUtc = now, CompletedUtc = now
         };
         db.LitigationSearchJobs.Add(job);

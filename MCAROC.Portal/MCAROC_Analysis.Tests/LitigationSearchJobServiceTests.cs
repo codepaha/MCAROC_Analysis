@@ -26,13 +26,13 @@ public class LitigationSearchJobServiceTests : IAsyncLifetime
 
     public Task DisposeAsync() => Task.CompletedTask;
 
-    private static async Task<McaRequest> SeedRequestAsync(AppDbContext db)
+    private static async Task<McaRequest> SeedRequestAsync(AppDbContext db, EntityType entityType = EntityType.Company)
     {
         var client = new Client { ClientCode = "LITJ" + Guid.NewGuid().ToString("N")[..6], ClientName = "Litigation Job Test Co", CreatedDate = DateTime.UtcNow };
         db.Clients.Add(client);
         var request = new McaRequest
         {
-            Client = client, EntityType = EntityType.Company, CompanyName = "Litigation Job Test Company",
+            Client = client, EntityType = entityType, CompanyName = "Litigation Job Test Company",
             Cin = "U45203OR1995PLC003982", RequestNumber = $"LITJ-{Guid.NewGuid():N}",
             RequestStatus = RequestStatus.DataExtracted, CreatedDate = DateTime.UtcNow
         };
@@ -194,6 +194,57 @@ public class LitigationSearchJobServiceTests : IAsyncLifetime
         Assert.NotNull(reloaded.CompletedUtc);
 
         Assert.Contains(handler.Requests, r => r.RequestUri!.AbsolutePath.Contains("bprjob/register"));
+    }
+
+    /// <summary>PR #383 review: the matching mode is fixed when the search is admitted and stored on the job. A queued job
+    /// processed later — after a restart, or by an instance configured differently — registers with that admitted mode, not
+    /// whatever today's options say, so the search bought is the search whose scope was claimed. Both directions, Company and LLP.</summary>
+    [Theory]
+    [InlineData(EntityType.Company, false)]
+    [InlineData(EntityType.LLP, false)]
+    [InlineData(EntityType.Company, true)]
+    [InlineData(EntityType.LLP, true)]
+    public async Task ProcessAsync_registers_with_the_matching_mode_admitted_not_the_current_configuration(EntityType entityType, bool admittedExact)
+    {
+        await using var db = CreateContext();
+        var request = await SeedRequestAsync(db, entityType);
+        var (seedService, _) = NewService(db);
+        var job = await seedService.CreateOrResetJobAsync(request.RequestId, LitigationKeywordPlanner.Build(request.CompanyName!), "individual", "cust-1",
+            CancellationToken.None, admittedExact);
+
+        // Processed by an instance whose configuration says the opposite for companies.
+        var flipped = new BprLitigationOptions
+        {
+            BaseUrl = DefaultOptions.BaseUrl, Id = DefaultOptions.Id, SecretKey = DefaultOptions.SecretKey,
+            PollIntervalSeconds = 1, PollTimeoutMinutes = 1, MaxAttempts = 2, ExactMatchForCompanies = !admittedExact
+        };
+        await using var processDb = CreateContext();
+        var (service, handler) = NewService(processDb, flipped);
+        StubHappyPath(handler);
+        await service.ProcessAsync(job.LitigationSearchJobId, CancellationToken.None);
+
+        var body = Assert.Single(handler.Requests.Zip(handler.RequestBodies), p => p.First.RequestUri!.AbsolutePath.Contains("bprjob/register")).Second;
+        Assert.Contains($"\"exact_match\":{(admittedExact ? "true" : "false")}", body);
+        Assert.Contains("\"entity_type\":\"individual\"", body); // the vendor's entity type is unchanged
+    }
+
+    [Fact]
+    public async Task A_job_from_before_the_mode_was_recorded_registers_as_exact_matching()
+    {
+        await using var db = CreateContext();
+        var request = await SeedRequestAsync(db);
+        var (seedService, _) = NewService(db);
+        var job = await seedService.CreateOrResetJobAsync(request.RequestId, LitigationKeywordPlanner.Build(request.CompanyName!), "individual", "cust-1", CancellationToken.None, exactMatch: false);
+        await db.LitigationSearchJobs.Where(j => j.LitigationSearchJobId == job.LitigationSearchJobId)
+            .ExecuteUpdateAsync(s => s.SetProperty(j => j.ExactMatch, (bool?)null)); // a legacy row
+
+        await using var processDb = CreateContext();
+        var (service, handler) = NewService(processDb); // companies are broad in today's options
+        StubHappyPath(handler);
+        await service.ProcessAsync(job.LitigationSearchJobId, CancellationToken.None);
+
+        var body = Assert.Single(handler.Requests.Zip(handler.RequestBodies), p => p.First.RequestUri!.AbsolutePath.Contains("bprjob/register")).Second;
+        Assert.Contains("\"exact_match\":true", body);
     }
 
     [Fact]
@@ -421,15 +472,18 @@ public class LitigationSearchJobServiceTests : IAsyncLifetime
     {
         private readonly List<(string PathSuffix, Func<HttpRequestMessage, HttpResponseMessage> Respond)> _routes = [];
         public List<HttpRequestMessage> Requests { get; } = [];
+        public List<string?> RequestBodies { get; } = [];
         public void OnPath(string pathSuffix, Func<HttpRequestMessage, HttpResponseMessage> respond) => _routes.Add((pathSuffix, respond));
 
-        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
             Requests.Add(request);
+            // Read now: the caller disposes the request (and its content) once SendAsync returns.
+            RequestBodies.Add(request.Content is null ? null : await request.Content.ReadAsStringAsync(ct));
             var route = _routes.FirstOrDefault(r => request.RequestUri!.AbsolutePath.Contains(r.PathSuffix, StringComparison.Ordinal));
-            return Task.FromResult(route.Respond is null
+            return route.Respond is null
                 ? new HttpResponseMessage(HttpStatusCode.NotFound) { Content = new StringContent("no stub for " + request.RequestUri) }
-                : route.Respond(request));
+                : route.Respond(request);
         }
     }
 }

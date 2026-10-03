@@ -62,9 +62,11 @@ public sealed class BprLitigationClient(
     /// the plan via <see cref="LitigationKeywordPlanner"/> — this client never invents search terms).
     /// Returns the vendor's job id. Callers must not call this twice for the same logical search; job-level
     /// idempotency (skip registration once a vendor job id is already recorded) is the caller's
-    /// responsibility, not this client's — it has no state of its own.</summary>
+    /// responsibility, not this client's — it has no state of its own. <paramref name="exactMatch"/> overrides the configured
+    /// default for this search (companies and individuals are searched differently).</summary>
     public async Task<string> RegisterJobAsync(
-        string token, IReadOnlyList<string> keywords, string entityType, string applicationCustomerId, CancellationToken ct)
+        string token, IReadOnlyList<string> keywords, string entityType, string applicationCustomerId, CancellationToken ct,
+        bool? exactMatch = null)
     {
         RequireConfigured();
         if (keywords.Count == 0) throw new ArgumentException("At least one approved keyword is required.", nameof(keywords));
@@ -77,7 +79,7 @@ public sealed class BprLitigationClient(
             keywords,
             application_customer_id = applicationCustomerId,
             file_format = _opts.FileFormat,
-            exact_match = _opts.ExactMatch,
+            exact_match = exactMatch ?? _opts.ExactMatch,
             formats = _opts.Formats
         });
 
