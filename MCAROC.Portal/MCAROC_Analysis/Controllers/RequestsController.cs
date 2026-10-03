@@ -968,6 +968,22 @@ public class RequestsController(
                         }
                     }
 
+                    // Age is measured to the day the data was retrieved (IST), so the page and the reports agree whenever opened.
+                    var ageAsOf = DateOnly.FromDateTime(Ist.FromUtc(authoritativeSnapshot.RetrievedUtc));
+                    litVm.AgeAsOf = ageAsOf;
+                    var ageRows = await db.LitigationCases.AsNoTracking()
+                        .Where(c => caseIdsQuery.Contains(c.LitigationCaseId))
+                        .Select(c => new { c.LitigationCaseId, c.FilingDate, c.DecisionDate, c.CaseYear, c.CaseStatus, c.CaseStage })
+                        .ToListAsync();
+                    var orderDatesOfCase = (await db.LitigationCaseOrders.AsNoTracking()
+                            .Where(o => caseIdsQuery.Contains(o.LitigationCaseId))
+                            .Select(o => new { o.LitigationCaseId, o.OrderDate }).ToListAsync())
+                        .GroupBy(o => o.LitigationCaseId).ToDictionary(g => g.Key, g => g.Select(o => o.OrderDate).ToList());
+                    foreach (var r in ageRows)
+                        litVm.AgeProfile.Add(r.LitigationCaseId, LitigationCaseAges.Compute(r.FilingDate, r.DecisionDate, r.CaseYear,
+                            LitigationCaseStatusClassifier.Classify(r.CaseStatus, r.CaseStage),
+                            orderDatesOfCase.GetValueOrDefault(r.LitigationCaseId) ?? [], ageAsOf));
+
                     var pagedCases = await casesQuery
                         .OrderBy(c => (c.Court == null || c.Court.Trim() == "") ? "Unspecified Court" : c.Court.Trim())
                         .ThenByDescending(c => c.LastHearingDate ?? string.Empty)
@@ -1066,6 +1082,8 @@ public class RequestsController(
                             ProceedingType = c.ProceedingType,
                             Direction = c.Direction,
                             FilingDate = c.FilingDate,
+                            Age = LitigationCaseAges.Compute(c.FilingDate, c.DecisionDate, c.CaseYear,
+                                LitigationCaseStatusClassifier.Classify(c.CaseStatus, c.CaseStage), c.Orders.Select(o => o.OrderDate), ageAsOf),
                             LastHearingDate = c.LastHearingDate,
                             NextHearingDate = c.NextHearingDate,
                             DecisionDate = c.DecisionDate,

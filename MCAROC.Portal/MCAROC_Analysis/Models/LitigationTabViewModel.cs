@@ -168,6 +168,9 @@ public sealed class LitigationTabViewModel
         ImportState == SnapshotImportState.SnapshotMissing;
 
     public LitigationCourtSummaryGrid CourtSummaryGrid { get; set; } = new();
+    /// <summary>Pending cases by age across the whole report (not just this page), as of <see cref="AgeAsOf"/>.</summary>
+    public LitigationAgeProfile AgeProfile { get; set; } = new();
+    public DateOnly? AgeAsOf { get; set; }
     public LitigationSourceCoverageViewModel SourceCoverage { get; set; } = new();
 
     public List<LitigationCaseCardViewModel> Cases { get; set; } = [];
@@ -259,6 +262,8 @@ public sealed class LitigationCaseCardViewModel
     public string? Direction { get; set; }
 
     public string? FilingDate { get; set; }
+    /// <summary>How old the case is, measured to the date its data was retrieved, with the basis of the number.</summary>
+    public LitigationCaseAge? Age { get; set; }
     public string? LastHearingDate { get; set; }
     public string? NextHearingDate { get; set; }
     public string? DecisionDate { get; set; }

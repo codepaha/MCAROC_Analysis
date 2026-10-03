@@ -87,6 +87,15 @@
             </div>
         </div>
 
+        @if (Model.Age is { } caseAge)
+        {
+            <div class="mb-3 small" data-case-age>
+                <span class="text-muted">Age:</span>
+                <strong>@caseAge.Headline</strong>
+                <span class="text-muted"> — @caseAge.BasisNote</span>
+            </div>
+        }
+
         @if (!string.IsNullOrWhiteSpace(Model.CaseStatus) || !string.IsNullOrWhiteSpace(Model.CaseStage) || !string.IsNullOrWhiteSpace(Model.Act))
         {
             <div class="row g-2 mb-3 small">

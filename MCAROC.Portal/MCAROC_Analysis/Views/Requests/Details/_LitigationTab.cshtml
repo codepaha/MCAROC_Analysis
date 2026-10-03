@@ -302,6 +302,44 @@
         }
     }
 
+    @if (lake.AuthoritativeSnapshot is not null && lake.AgeProfile.PendingCases > 0)
+    {
+        <!-- Ageing of pending cases (as of the day the data was retrieved) -->
+        <div class="card mb-4 shadow-sm border" id="litigation-age-profile">
+            <div class="card-header bg-light d-flex justify-content-between align-items-center py-2 px-3">
+                <h5 class="card-title mb-0 small fw-bold text-uppercase"><i class="bi bi-hourglass-split me-2 text-primary"></i>Pending Cases by Age</h5>
+                @if (lake.AgeAsOf is { } ageAsOf)
+                {
+                    <span class="text-muted small">As of @ageAsOf.ToString("d MMM yyyy", System.Globalization.CultureInfo.InvariantCulture) (data retrieval date)</span>
+                }
+            </div>
+            <div class="card-body">
+                <div class="mca-highlight-grid">
+                    @foreach (var band in Enum.GetValues<CaseAgeBand>())
+                    {
+                        <div class="pi-metric">
+                            <span>@LitigationCaseAges.Label(band)</span>
+                            <strong>@lake.AgeProfile.PendingByBand[band]</strong>
+                        </div>
+                    }
+                </div>
+                @if (lake.AgeProfile.OldestPending is { } oldest)
+                {
+                    <p class="small mb-0 mt-3">
+                        <span class="text-muted">Oldest pending case:</span>
+                        <strong>@oldest.Duration</strong>
+                        <span class="text-muted">(@oldest.BasisNote)</span>
+                        @if (lake.AgeProfile.OldestPendingCaseId is { } oldestId)
+                        {
+                            <a href="#case-card-@oldestId" class="ms-1">view case</a>
+                        }
+                    </p>
+                }
+                <p class="small text-muted mb-0 mt-2">Age runs from the filing date on the court record. Where there is none, it is "at least" the time since the earliest order on file, and a case with only a registration year has no age computed.</p>
+            </div>
+        </div>
+    }
+
     <!-- Court Summary Grid -->
     <div class="card mb-4 shadow-sm border">
         <div class="card-header bg-light d-flex justify-content-between align-items-center py-2 px-3">
