@@ -225,14 +225,14 @@ public static partial class ChargeInstrumentAi
     }
 
     /// <summary>Whitespace — a space or a line break from the PDF — can sit around the slash or hyphen of an identifier ("12 / 3",
-    /// "12/\n3"). A quote that stops on one side of such a joiner has cut the identifier just the same. A hyphen only joins two numbers;
-    /// a slash joins two word characters when one is a digit ("Baner / Taluka" is two places, not one identifier).</summary>
+    /// "12/\n3"). A quote that stops on one side of such a joiner has cut the identifier just the same. A hyphen or slash joins two word
+    /// characters when one is a digit ("A - 305", "305 - A", "12 / 3"; "Baner / Taluka" is two places, not one identifier).</summary>
     private static bool SplitsIdentifierAcrossSpace(string text, int start, int end)
     {
         static bool Joins(char left, char joiner, char right) => joiner switch
         {
             '/' => IsWordChar(left) && IsWordChar(right) && (char.IsDigit(left) || char.IsDigit(right)),
-            '-' => char.IsDigit(left) && char.IsDigit(right),
+            '-' => IsWordChar(left) && IsWordChar(right) && (char.IsDigit(left) || char.IsDigit(right)),
             _ => false
         };
         int Back(int i) { while (i >= 0 && char.IsWhiteSpace(text[i])) i--; return i; }

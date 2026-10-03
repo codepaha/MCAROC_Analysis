@@ -66,6 +66,8 @@ public class ChargeInstrumentAiTests
     [InlineData("Survey No. 12\n/3, Village Baner", "Survey No. 12")]                // line break before the slash
     [InlineData("Survey No. 12 / 3, Village Baner", "3, Village Baner")]             // starts after a spaced slash
     [InlineData("Plot No. 12 - 3, Sector 5", "Plot No. 12")]                                 // spaced hyphen between numbers
+    [InlineData("Unit No. A - 305, Tower B", "305, Tower B")]                        // spaced letter-number unit: starts after the letter
+    [InlineData("Flat No. 305 - A, Sunrise Society", "Flat No. 305")]                // spaced number-letter unit: drops the letter
     [InlineData("Unit No. A-305, Tower B", "-305, Tower B")]                         // starts on the hyphen itself
     public void A_quote_that_cuts_an_identifier_is_not_found(string source, string cut)
     {
@@ -87,6 +89,8 @@ public class ChargeInstrumentAiTests
     [InlineData("Survey No. 12/\n3, Village Baner", "Survey No. 12/ 3")]
     [InlineData("Sunrise Society - B Wing, Pune", "Sunrise Society")]                 // a hyphen between words is not an identifier joiner
     [InlineData("Village Baner / Taluka Haveli", "Village Baner")]                   // a slash after a word and a space before a word
+    [InlineData("Unit No. A - 305, Tower B", "Unit No. A - 305, Tower B")]
+    [InlineData("Flat No. 305 - A, Sunrise Society", "Flat No. 305 - A, Sunrise Society")]
     [InlineData("Survey No. 12/3, Village Baner", "12/3, Village Baner")]
     [InlineData("Plot No. 30A, Sector 63", "Plot No. 30A")]
     [InlineData("Sy Nos. 403/2A3, 404/B/2C, and 404/A3", "Sy Nos. 403/2A3, 404/B/2C, and 404/A3")]
