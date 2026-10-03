@@ -36,6 +36,10 @@ public class RequestDetailsViewModel
     /// <summary>#364: the filed charge e-forms (XFA) linked to each charge, keyed by RocCharge.ChargeId.</summary>
     public IReadOnlyDictionary<long, IReadOnlyList<MCAROC_Analysis.Services.PropertyParticulars.LinkedChargeForm>> ChargeForms { get; set; }
         = new Dictionary<long, IReadOnlyList<MCAROC_Analysis.Services.PropertyParticulars.LinkedChargeForm>>();
+    /// <summary>#377: the filing documents linked to each charge (open or satisfied), keyed by the register's charge number
+    /// without leading zeros.</summary>
+    public IReadOnlyDictionary<string, IReadOnlyList<MCAROC_Analysis.Services.PropertyParticulars.ChargeDocumentRow>> ChargeDocuments { get; set; }
+        = new Dictionary<string, IReadOnlyList<MCAROC_Analysis.Services.PropertyParticulars.ChargeDocumentRow>>();
     public List<MsmePayment> MsmePayments { get; set; } = [];
     public List<GstRegistration> GstRegistrations { get; set; } = [];
     public List<EpfoContribution> EpfoContributions { get; set; } = [];

@@ -333,6 +333,7 @@ builder.Services.AddScoped(sp => new LitigationDocumentRetriever(sp.GetRequiredS
 builder.Services.AddScoped<LitigationOrderOutcomeQuery>();
 builder.Services.AddScoped<FullTextSearchStatus>();
 builder.Services.AddSingleton<MCAROC_Analysis.Services.PropertyParticulars.ChargeFormBackfill>();
+builder.Services.AddSingleton<MCAROC_Analysis.Services.PropertyParticulars.ChargeDocumentLinkBuilder>();
 builder.Services.AddHostedService<FullTextSearchStartupCheck>();
 builder.Services.AddScoped<RetrievalContextBuilder>();
 builder.Services.AddScoped<ChatService>();
