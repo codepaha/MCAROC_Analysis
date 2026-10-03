@@ -293,8 +293,12 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             // workers both pass the in-memory CanAutoDedupe check before either commits. SQL Server treats
             // each NULL Cnr as distinct, so CNR-less cases (which never auto-dedupe anyway) never collide.
             e.HasIndex(x => new { x.RequestId, x.Cnr, x.ProceedingType }).IsUnique();
+            // The provider's own record id: the same record arriving in a later report is the same stored case, whether or not it has
+            // a CNR. Unique per request so a concurrent import cannot store one record twice.
+            e.HasIndex(x => new { x.RequestId, x.ProviderCaseId }).IsUnique().HasFilter("[ProviderCaseId] IS NOT NULL");
             e.HasOne(x => x.Request).WithMany().HasForeignKey(x => x.RequestId).OnDelete(DeleteBehavior.Cascade);
             e.Property(x => x.CspId).HasMaxLength(100);
+            e.Property(x => x.ProviderCaseId).HasMaxLength(100);
             e.Property(x => x.Cnr).HasMaxLength(20);
             e.Property(x => x.ProceedingType).HasMaxLength(30);
         });
