@@ -39,6 +39,12 @@ public sealed class LitigationSearchJob
     public string EntityType { get; set; } = "individual";
     public string ApplicationCustomerId { get; set; } = string.Empty;
 
+    /// <summary>The vendor's "exact_match" this search is registered with — fixed when the search is admitted, so the search that
+    /// is bought is the search whose scope was claimed even if the job is processed later, after a restart or by an instance
+    /// configured differently, and every retry registers with the same value. Null only on rows from before this was recorded:
+    /// every earlier search was exact, so null reads as exact.</summary>
+    public bool? ExactMatch { get; set; }
+
     /// <summary>JSON array of the exact keyword objects submitted (<c>[{"value":"...","source":"..."}]</c>),
     /// built by <see cref="LitigationKeywordPlanner"/> before this job is created — never invented here.
     /// Kept as a JSON column rather than a child table: it is audit data about one registration call, not an

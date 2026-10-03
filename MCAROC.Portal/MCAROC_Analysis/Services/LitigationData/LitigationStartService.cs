@@ -118,7 +118,7 @@ public sealed class LitigationStartService(
         LitigationSearchJob job;
         try
         {
-            job = await searchJobs.CreateOrResetJobAsync(request.RequestId, keywords, entityType, applicationCustomerId, ct);
+            job = await searchJobs.CreateOrResetJobAsync(request.RequestId, keywords, entityType, applicationCustomerId, ct, exactMatch);
         }
         catch
         {

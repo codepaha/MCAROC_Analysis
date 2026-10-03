@@ -159,6 +159,27 @@ public sealed class LitigationStartServiceTests : IAsyncLifetime
         Assert.False(await db.PaidCallAdmissions.AnyAsync(a => a.RequestId == request.RequestId));
     }
 
+    /// <summary>The mode claimed in the admission's scope is the mode written to the job it queues, which is what registration reads.</summary>
+    [Theory]
+    [InlineData(EntityType.Company, false)]
+    [InlineData(EntityType.LLP, false)]
+    [InlineData(EntityType.Company, true)]
+    [InlineData(EntityType.LLP, true)]
+    public async Task The_queued_job_records_the_same_matching_mode_as_its_admission_scope(EntityType entityType, bool exactForCompanies)
+    {
+        var request = await SeedRequestAsync(entityType);
+        await using var db = CreateContext();
+
+        var result = await Starter(db, bpr: new BprLitigationOptions { ExactMatchForCompanies = exactForCompanies })
+            .StartSearchAsync(request, Keywords, "company", "cust", PaidCallTrigger.Manual, CancellationToken.None);
+
+        Assert.True(result.Started);
+        var job = await db.LitigationSearchJobs.AsNoTracking().SingleAsync(j => j.RequestId == request.RequestId);
+        var scope = (await db.PaidCallAdmissions.AsNoTracking().SingleAsync(a => a.RequestId == request.RequestId)).ScopeKey;
+        Assert.Equal(exactForCompanies, job.ExactMatch);
+        Assert.Equal(!exactForCompanies, scope.EndsWith("|broad", StringComparison.Ordinal));
+    }
+
     [Fact]
     public void The_scope_key_keeps_the_legacy_form_for_exact_matching_and_differs_for_a_broad_search()
     {

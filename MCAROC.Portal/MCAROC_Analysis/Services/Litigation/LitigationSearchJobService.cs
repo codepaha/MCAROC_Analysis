@@ -63,7 +63,8 @@ public sealed class LitigationSearchJobService(
     /// <exception cref="InvalidOperationException">The existing job is non-terminal and may still have an
     /// active BPR call in flight.</exception>
     public async Task<LitigationSearchJob> CreateOrResetJobAsync(
-        long requestId, IReadOnlyList<LitigationKeyword> keywords, string entityType, string applicationCustomerId, CancellationToken ct)
+        long requestId, IReadOnlyList<LitigationKeyword> keywords, string entityType, string applicationCustomerId, CancellationToken ct,
+        bool exactMatch = true)
     {
         if (keywords.Count == 0) throw new ArgumentException("At least one approved keyword is required.", nameof(keywords));
 
@@ -83,6 +84,7 @@ public sealed class LitigationSearchJobService(
 
         job.EntityType = entityType;
         job.ApplicationCustomerId = applicationCustomerId;
+        job.ExactMatch = exactMatch;
         job.KeywordsJson = JsonSerializer.Serialize(keywords.Select(k => new { value = k.Value, source = k.Source.ToString() }));
         job.Status = LitigationSearchJobStatus.Pending;
         job.ProgressPercent = 0;
@@ -169,10 +171,10 @@ public sealed class LitigationSearchJobService(
                 if (claimedRegistering == 0) throw new LitigationSearchJobLeaseLostException(jobId);
 
                 var keywords = ParseKeywordValues(job.KeywordsJson);
-                // Companies and LLPs are searched without exact name matching, individuals/partnerships/proprietorships with it.
-                var entityType = await db.Requests.AsNoTracking().Where(r => r.RequestId == job.RequestId).Select(r => r.EntityType).FirstAsync(ct);
+                // The mode recorded when the search was admitted — never re-derived from today's options or the request, which
+                // could differ after a restart. A row from before it was recorded was exact.
                 vendorJobId = await client.RegisterJobAsync(token, keywords, job.EntityType, job.ApplicationCustomerId, ct,
-                    _opts.ExactMatchFor(entityType));
+                    job.ExactMatch ?? true);
 
                 // Persisted the instant BPR confirms success — this is the narrowest the crash window between
                 // "vendor accepted the call" and "we know it" can be made without a vendor idempotency key.
