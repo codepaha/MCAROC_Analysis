@@ -635,6 +635,40 @@ public sealed class BprLitigationClientTests
         return port;
     }
 
+    /// <summary>Real run: the debt-recovery tribunal's order files are PDFs with eight blank-line bytes before the header, and a strict
+    /// byte-0 check rejected all of them. Blank space ahead of the signature is accepted; anything else ahead of it is not.</summary>
+    [Theory]
+    [InlineData(new byte[] { 0x0D, 0x0A, 0x0D, 0x0A, 0x0D, 0x0A, 0x0D, 0x0A })]
+    [InlineData(new byte[] { 0x0A })]
+    [InlineData(new byte[] { 0x20, 0x09, 0x00 })]
+    public async Task DownloadOrderDocumentAsync_accepts_a_pdf_with_blank_space_before_its_header(byte[] leading)
+    {
+        var body = leading.Concat(PdfBytes).ToArray();
+        var handler = new StubHandler();
+        handler.OnPath("orders/o1.pdf", _ => new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(body) });
+
+        var result = await NewClient(handler).DownloadOrderDocumentAsync("token", "https://bpr.example/orders/o1.pdf", 1024, CancellationToken.None);
+
+        Assert.True(result.Ok);
+        Assert.Equal(body, result.Bytes); // kept exactly as received
+    }
+
+    [Theory]
+    [InlineData("<html><body>Expired</body></html>")]
+    [InlineData("\r\n\r\n<html>Not a PDF %PDF- appears later</html>")] // blank space, then something that is not the header
+    [InlineData("{\"status\":false,\"message\":\"expired\"}")]
+    [InlineData("   ")]
+    public async Task DownloadOrderDocumentAsync_still_rejects_content_that_is_not_a_pdf(string body)
+    {
+        var handler = new StubHandler();
+        handler.OnPath("orders/o1.pdf", _ => new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(body, Encoding.UTF8, "text/html") });
+
+        var result = await NewClient(handler).DownloadOrderDocumentAsync("token", "https://bpr.example/orders/o1.pdf", 1024, CancellationToken.None);
+
+        Assert.False(result.Ok);
+        Assert.Contains("PDF signature", result.Error);
+    }
+
     [Fact]
     public async Task DownloadOrderDocumentAsync_fails_on_a_non_PDF_signature_response()
     {

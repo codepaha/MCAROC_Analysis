@@ -440,4 +440,21 @@ public class ChargeLitigationLinkerTests : IAsyncLifetime
 
         Assert.False(summary.HasAny);
     }
+
+    /// <summary>The provider sends each party as a record; the linker used to read only plain strings, so on a real report a lender litigating was
+    /// never recognised from the parties.</summary>
+    [Fact]
+    public void Lender_named_in_a_party_record_links_the_case_just_as_a_plain_name_does()
+    {
+        var charges = new[] { Charge(1, "CHG-1", "State Bank of India", particulars: null), Charge(3, "CHG-3", "HDFC Bank Limited", particulars: null) };
+        var asRecords = Case(10, "SA 99/2021", court: "Debts Recovery Tribunal", act: "SARFAESI Act 2002",
+            petitioners: "[{\"name\":\"State Bank of India\",\"address\":\"\",\"advocate\":\"\"}]", respondents: "[{\"name\":\"Coastal Projects Limited\"}]");
+
+        var summary = Build(charges, [asRecords]);
+
+        var link = Assert.Single(summary.Links);
+        Assert.Equal((1L, ChargeLitigationSignal.LenderRecoveryCase), (link.ChargeId, link.Signal));
+        Assert.Equal("State Bank of India v. Coastal Projects Limited", link.Case.Parties);
+        Assert.Empty(summary.ForCharge(3));
+    }
 }

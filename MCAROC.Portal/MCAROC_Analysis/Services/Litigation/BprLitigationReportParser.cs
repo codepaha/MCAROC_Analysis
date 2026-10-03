@@ -55,7 +55,7 @@ public static class BprLitigationReportParser
         CspId: Value(item, "csp_id"),
         CnrNumber: Value(item, "cnr_number"),
         CourtCategory: path.FirstOrDefault(IsCourtCategory),
-        Direction: path.FirstOrDefault(value => value is "by" or "against"),
+        Direction: path.FirstOrDefault(value => value is "by" or "against") ?? ByOrAgainst(item),
         CaseClassification: Classification(path),
         Type: Value(item, "type"),
         Court: Value(item, "court"),
@@ -68,7 +68,7 @@ public static class BprLitigationReportParser
         Act: Value(item, "act"),
         FilingDate: Value(item, "filing_date"),
         LastHearingDate: Value(item, "last_hearing_date"),
-        NextHearingDate: Value(item, "next_hearing_date"),
+        NextHearingDate: Value(item, "next_hearing_date") ?? Value(item, "next_hearing"),
         DecisionDate: Value(item, "decision_date"),
         State: Value(item, "state"),
         District: Value(item, "district"),
@@ -98,6 +98,14 @@ public static class BprLitigationReportParser
     {
         var direction = path.Select((value, index) => new { value, index }).FirstOrDefault(item => item.value is "by" or "against");
         return direction is not null && direction.index + 1 < path.Count ? path[direction.index + 1] : null;
+    }
+
+    /// <summary>Tribunal sections (high_risk_court → drt → live) carry no by/against level in their path; each case says it instead, as
+    /// <c>by_or_against</c>: whether the case is by or against the entity searched.</summary>
+    private static string? ByOrAgainst(JsonElement item)
+    {
+        var value = Value(item, "by_or_against")?.Trim().ToLowerInvariant();
+        return value is "by" or "against" ? value : null;
     }
 
     private static bool IsCourtCategory(string value) => value is "supreme_court" or "high_court" or "district_court"
