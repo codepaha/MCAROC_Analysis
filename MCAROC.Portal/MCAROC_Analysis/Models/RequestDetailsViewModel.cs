@@ -40,6 +40,9 @@ public class RequestDetailsViewModel
     /// without leading zeros.</summary>
     public IReadOnlyDictionary<string, IReadOnlyList<MCAROC_Analysis.Services.PropertyParticulars.ChargeDocumentRow>> ChargeDocuments { get; set; }
         = new Dictionary<string, IReadOnlyList<MCAROC_Analysis.Services.PropertyParticulars.ChargeDocumentRow>>();
+    /// <summary>#364 part 2: the property passages quoted from each linked document, keyed by FilingDocumentId.</summary>
+    public IReadOnlyDictionary<long, MCAROC_Analysis.Services.PropertyParticulars.ChargeInstrumentAiResult> InstrumentPassages { get; set; }
+        = new Dictionary<long, MCAROC_Analysis.Services.PropertyParticulars.ChargeInstrumentAiResult>();
     public List<MsmePayment> MsmePayments { get; set; } = [];
     public List<GstRegistration> GstRegistrations { get; set; } = [];
     public List<EpfoContribution> EpfoContributions { get; set; } = [];

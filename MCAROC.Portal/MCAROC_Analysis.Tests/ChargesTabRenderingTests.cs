@@ -659,4 +659,54 @@ public class ChargesTabRenderingTests
             && html.IndexOf("Instrument of Charge: Instrument(s)", StringComparison.Ordinal) < html.IndexOf("Form 17: Form 17", StringComparison.Ordinal));
         Assert.DoesNotContain("attached to this charge&#x27;s form", html);
     }
+
+    // ── #364 part 2: property passages quoted from a linked charge document ──
+
+    [Fact]
+    public async Task Charge_drawer_shows_the_property_quoted_from_a_linked_document_verbatim_with_its_page_link()
+    {
+        var vm = CreateViewModel();
+        var charge = ChargeWithParticulars();
+        vm.Charges = [charge];
+        const string quote = "Flat No. 305, B Wing, Sunrise Society, Survey No. 12/3, Village Baner, Taluka Haveli, District Pune 411045";
+        vm.ChargeDocuments = new Dictionary<string, IReadOnlyList<MCAROC_Analysis.Services.PropertyParticulars.ChargeDocumentRow>>
+        {
+            ["CHG-901"] =
+            [
+                new(601, "Instrument of Charge", "Deed of Mortgage", ChargeDocumentLinkMethod.EmbeddedAttachment, null)
+            ]
+        };
+        vm.InstrumentPassages = new Dictionary<long, MCAROC_Analysis.Services.PropertyParticulars.ChargeInstrumentAiResult>
+        {
+            [601] = new([
+                new(MCAROC_Analysis.Services.PropertyParticulars.InstrumentPassageKind.Schedule, quote, 7, 8),
+                new(MCAROC_Analysis.Services.PropertyParticulars.InstrumentPassageKind.Ownership, "registered in the name of Mr. A. Director", 2, 2)
+            ])
+        };
+
+        var html = await RenderChargesTabAsync(vm);
+
+        Assert.Contains("Property per charge instrument", html);
+        Assert.Contains(quote, html); // the document's own words, unchanged
+        Assert.Contains("registered in the name of Mr. A. Director", html);
+        Assert.Contains($"/Requests/{charge.RequestId}/documents/601/view#page=7", html); // provenance is the page link
+        Assert.Contains("pages 7–8", html);
+        Assert.Contains("Property schedule", html);
+    }
+
+    [Fact]
+    public async Task Charge_drawer_has_no_instrument_block_for_a_document_without_passages()
+    {
+        var vm = CreateViewModel();
+        vm.Charges = [ChargeWithParticulars()];
+        vm.ChargeDocuments = new Dictionary<string, IReadOnlyList<MCAROC_Analysis.Services.PropertyParticulars.ChargeDocumentRow>>
+        {
+            ["CHG-901"] = [new(602, "Instrument of Charge", "Deed of Mortgage", ChargeDocumentLinkMethod.EmbeddedAttachment, null)]
+        };
+
+        var html = await RenderChargesTabAsync(vm);
+
+        Assert.Contains("Deed of Mortgage", html);
+        Assert.DoesNotContain("Property per charge instrument", html);
+    }
 }

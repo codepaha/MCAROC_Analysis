@@ -402,12 +402,22 @@
                         <li style="margin-bottom:6px;">
                             <a href="/Requests/@Model.Charge.RequestId/documents/@doc.FilingDocumentId/view" target="_blank" rel="noopener">@(doc.FormType ?? "Attachment"): @doc.DisplayName</a>
                             <span class="text-muted" style="font-size:0.85em;"> — @HowLinked(doc)</span>
+                            @if (Model.InstrumentPassages?.GetValueOrDefault(doc.FilingDocumentId) is { } docPassages)
+                            {
+                                @await Html.PartialAsync("Details/_InstrumentPassages", new InstrumentPassagesViewModel(Model.Charge.RequestId, doc.FilingDocumentId, docPassages))
+                            }
                             @if (attachmentsOf[doc.FilingDocumentId].Any())
                             {
                                 <ul style="list-style:none; padding-left:16px; margin-top:2px;">
                                     @foreach (var a in attachmentsOf[doc.FilingDocumentId])
                                     {
-                                        <li><a href="/Requests/@Model.Charge.RequestId/documents/@a.FilingDocumentId/view" target="_blank" rel="noopener">@(a.FormType ?? "Attachment"): @a.DisplayName</a></li>
+                                        <li>
+                                            <a href="/Requests/@Model.Charge.RequestId/documents/@a.FilingDocumentId/view" target="_blank" rel="noopener">@(a.FormType ?? "Attachment"): @a.DisplayName</a>
+                                            @if (Model.InstrumentPassages?.GetValueOrDefault(a.FilingDocumentId) is { } attachmentPassages)
+                                            {
+                                                @await Html.PartialAsync("Details/_InstrumentPassages", new InstrumentPassagesViewModel(Model.Charge.RequestId, a.FilingDocumentId, attachmentPassages))
+                                            }
+                                        </li>
                                     }
                                 </ul>
                             }

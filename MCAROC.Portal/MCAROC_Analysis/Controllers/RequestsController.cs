@@ -501,6 +501,14 @@ public class RequestsController(
                 HttpContext?.RequestServices?.GetService<ChargeFormBackfill>());
             vm.ChargeDocuments = await ChargeDocumentLinker.LoadAsync(db, id, runId, HttpContext?.RequestAborted ?? CancellationToken.None,
                 HttpContext?.RequestServices?.GetService<ChargeDocumentLinkBuilder>());
+            if (HttpContext?.RequestServices?.GetService<ChargeInstrumentExtractionService>() is { IsActive: true } instruments)
+            {
+                try { await instruments.ScheduleForRequestAsync(id, HttpContext.RequestAborted); }
+                catch (Exception ex) when (ex is not OperationCanceledException) { logger?.LogWarning(ex, "Scheduling charge instrument extraction failed for request {RequestId}", id); }
+            }
+            vm.InstrumentPassages = await ChargeInstrumentExtractionService.LoadAsync(db,
+                vm.ChargeDocuments.Values.SelectMany(rows => rows.Select(r => r.FilingDocumentId)).Distinct().ToList(),
+                HttpContext?.RequestAborted ?? CancellationToken.None);
             // Lazy backfill for requests ingested before the Gemini extraction existed: idempotent, a no-op once every
             // text has a row, and inert when extraction is disabled or Vertex AI is not configured.
             if (HttpContext?.RequestServices?.GetService<PropertyParticularsExtractionService>() is { IsActive: true } propertyExtraction)

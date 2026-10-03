@@ -205,6 +205,13 @@ builder.Services.AddSingleton<MCAROC_Analysis.Services.PropertyParticulars.IProp
 });
 builder.Services.AddScoped<MCAROC_Analysis.Services.PropertyParticulars.PropertyParticularsExtractionService>();
 builder.Services.AddHostedService<MCAROC_Analysis.Services.PropertyParticulars.PropertyParticularsExtractionWorker>();
+// #364 part 2: property passages quoted from charge documents linked by #377 (deeds, instruments, scanned forms), grounded in the
+// document's own text. Shares the Gemini client above; skipped when disabled or when Vertex AI is not configured.
+builder.Services.Configure<MCAROC_Analysis.Services.PropertyParticulars.ChargeInstrumentExtractionOptions>(
+    builder.Configuration.GetSection(MCAROC_Analysis.Services.PropertyParticulars.ChargeInstrumentExtractionOptions.SectionName));
+builder.Services.AddSingleton<MCAROC_Analysis.Services.PropertyParticulars.ChargeInstrumentExtractionQueue>();
+builder.Services.AddScoped<MCAROC_Analysis.Services.PropertyParticulars.ChargeInstrumentExtractionService>();
+builder.Services.AddHostedService<MCAROC_Analysis.Services.PropertyParticulars.ChargeInstrumentExtractionWorker>();
 
 builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseSqlServer(builder.Configuration.GetConnectionString("Default")));

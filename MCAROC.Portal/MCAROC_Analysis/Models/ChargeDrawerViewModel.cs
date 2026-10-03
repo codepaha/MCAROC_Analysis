@@ -14,7 +14,8 @@ public record ChargeDrawerViewModel(
     CompanyProfile? CompanyProfile = null,
     IReadOnlyList<EpfoEstablishment>? EpfoEstablishments = null,
     IReadOnlyList<MCAROC_Analysis.Services.PropertyParticulars.LinkedChargeForm>? ChargeForms = null,
-    IReadOnlyList<MCAROC_Analysis.Services.PropertyParticulars.ChargeDocumentRow>? Documents = null)
+    IReadOnlyList<MCAROC_Analysis.Services.PropertyParticulars.ChargeDocumentRow>? Documents = null,
+    IReadOnlyDictionary<long, MCAROC_Analysis.Services.PropertyParticulars.ChargeInstrumentAiResult>? InstrumentPassages = null)
 {
     /// <summary>Charges-section findings whose SourceReferenceJson entityIds contain this charge's PK.
     /// Portfolio-level findings (lender concentration, registered exposure) name no single charge and
@@ -27,13 +28,14 @@ public record ChargeDrawerViewModel(
         CompanyProfile? companyProfile = null,
         IReadOnlyList<EpfoEstablishment>? epfoEstablishments = null,
         IReadOnlyList<MCAROC_Analysis.Services.PropertyParticulars.LinkedChargeForm>? chargeForms = null,
-        IReadOnlyDictionary<string, IReadOnlyList<MCAROC_Analysis.Services.PropertyParticulars.ChargeDocumentRow>>? chargeDocuments = null)
+        IReadOnlyDictionary<string, IReadOnlyList<MCAROC_Analysis.Services.PropertyParticulars.ChargeDocumentRow>>? chargeDocuments = null,
+        IReadOnlyDictionary<long, MCAROC_Analysis.Services.PropertyParticulars.ChargeInstrumentAiResult>? instrumentPassages = null)
     {
         var related = allFindings
             .Where(f => f.Section == FindingSection.Charges && NamesCharge(f.SourceReferenceJson, charge.ChargeId))
             .ToList();
         var documents = chargeDocuments?.GetValueOrDefault(MCAROC_Analysis.Services.PropertyParticulars.ChargeDocumentLinker.Normalize(charge.RocChargeNumber));
-        return new ChargeDrawerViewModel(charge, related, litigation, propertyExtractions, companyProfile, epfoEstablishments, chargeForms, documents);
+        return new ChargeDrawerViewModel(charge, related, litigation, propertyExtractions, companyProfile, epfoEstablishments, chargeForms, documents, instrumentPassages);
     }
 
     private static bool NamesCharge(string? sourceReferenceJson, long chargeId)
