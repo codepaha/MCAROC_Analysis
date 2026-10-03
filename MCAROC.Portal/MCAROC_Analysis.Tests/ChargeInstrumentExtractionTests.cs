@@ -59,6 +59,8 @@ public class ChargeInstrumentAiTests
     [InlineData("Unit No. A-305, Tower B", "05, Tower B")]                           // starts inside 305
     [InlineData("Unit No. A-305, Tower B", "305, Tower B")]                          // starts after the hyphen of A-305
     [InlineData("Sy No. 403/2A3, 404/B/2C", "Sy No. 403/2")]                         // ends inside the 2A3 parcel suffix
+    [InlineData("Survey No. 12/3, Village Baner", "Survey No. 12/")]                 // ends on the slash itself
+    [InlineData("Unit No. A-305, Tower B", "-305, Tower B")]                         // starts on the hyphen itself
     public void A_quote_that_cuts_an_identifier_is_not_found(string source, string cut)
     {
         var v = ChargeInstrumentAi.Validate(Json(("Schedule", cut)), source);

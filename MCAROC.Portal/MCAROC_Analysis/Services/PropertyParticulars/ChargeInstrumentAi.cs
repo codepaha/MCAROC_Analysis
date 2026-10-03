@@ -206,7 +206,9 @@ public static partial class ChargeInstrumentAi
 
     private static bool EndsOnBoundary(string text, int end)
     {
-        if (end >= text.Length || !IsWordChar(text[end - 1])) return true; // the end of the text, or the quote ends on punctuation
+        if (end >= text.Length) return true;
+        // A quote that ends on the joiner itself ("12/" out of "12/3") has stopped inside the identifier too.
+        if (!IsWordChar(text[end - 1])) return !(IsJoiner(text[end - 1]) && IsWordChar(text[end]));
         var next = text[end];
         if (IsWordChar(next)) return false; // stops inside a word or number
         return !(IsJoiner(next) && end + 1 < text.Length && IsWordChar(text[end + 1]));
@@ -214,7 +216,8 @@ public static partial class ChargeInstrumentAi
 
     private static bool StartsOnBoundary(string text, int start)
     {
-        if (start <= 0 || !IsWordChar(text[start])) return true; // the start of the text, or the quote starts on punctuation
+        if (start <= 0) return true;
+        if (!IsWordChar(text[start])) return !(IsJoiner(text[start]) && IsWordChar(text[start - 1]));
         var previous = text[start - 1];
         if (IsWordChar(previous)) return false; // starts inside a word or number
         return !(IsJoiner(previous) && start - 2 >= 0 && IsWordChar(text[start - 2]));
