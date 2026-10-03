@@ -499,6 +499,8 @@ public class RequestsController(
             vm.ChargeForms = await ChargeForms.LoadAsync(db, id, vm.Charges, HttpContext?.RequestAborted ?? CancellationToken.None,
                 HttpContext?.RequestServices?.GetService<Microsoft.Extensions.Caching.Memory.IMemoryCache>(),
                 HttpContext?.RequestServices?.GetService<ChargeFormBackfill>());
+            vm.ChargeDocuments = await ChargeDocumentLinker.LoadAsync(db, id, runId, HttpContext?.RequestAborted ?? CancellationToken.None,
+                HttpContext?.RequestServices?.GetService<ChargeDocumentLinkBuilder>());
             // Lazy backfill for requests ingested before the Gemini extraction existed: idempotent, a no-op once every
             // text has a row, and inert when extraction is disabled or Vertex AI is not configured.
             if (HttpContext?.RequestServices?.GetService<PropertyParticularsExtractionService>() is { IsActive: true } propertyExtraction)
@@ -903,15 +905,7 @@ public class RequestsController(
                     }
                     litVm.CourtSummaryGrid = summaryGrid;
 
-                    List<LitigationKeyword> keywords = [];
-                    if (!string.IsNullOrWhiteSpace(job.KeywordsJson))
-                    {
-                        try
-                        {
-                            keywords = JsonSerializer.Deserialize<List<LitigationKeyword>>(job.KeywordsJson) ?? [];
-                        }
-                        catch { }
-                    }
+                    var keywords = LitigationKeyword.ParseJson(job.KeywordsJson).ToList();
 
                     var allCompletedSnapshots = await db.LitigationReportSnapshots
                         .AsNoTracking()

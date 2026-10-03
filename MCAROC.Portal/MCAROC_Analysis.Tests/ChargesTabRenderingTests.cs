@@ -626,4 +626,37 @@ public class ChargesTabRenderingTests
 
         Assert.DoesNotContain("Filed charge forms", html);
     }
+
+    // ── #377: every filing document linked to the charge ──
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Charge_drawer_lists_the_charges_documents_with_attachments_under_their_form_open_or_satisfied(bool satisfied)
+    {
+        var vm = CreateViewModel();
+        var charge = ChargeWithParticulars();
+        if (satisfied) charge.SatisfactionDate = new DateOnly(2020, 1, 1);
+        vm.Charges = [charge];
+        vm.ChargeDocuments = new Dictionary<string, IReadOnlyList<MCAROC_Analysis.Services.PropertyParticulars.ChargeDocumentRow>>
+        {
+            ["CHG-901"] =
+            [
+                new(501, "Form CHG-1", "Form CHG-1-131015", ChargeDocumentLinkMethod.FormChargeId, null),
+                new(502, "Instrument of Charge", "Instrument(s) of creation or modification of charge", ChargeDocumentLinkMethod.EmbeddedAttachment, 501),
+                new(503, "Form 17", "Form 17", ChargeDocumentLinkMethod.FormChargeId, null)
+            ]
+        };
+
+        var html = await RenderChargesTabAsync(vm);
+
+        Assert.Contains("Documents filed for this charge", html);
+        Assert.Contains($"/Requests/{charge.RequestId}/documents/502/view", html);
+        Assert.Contains("Form CHG-1: Form CHG-1-131015", html);
+        Assert.Contains("the form states this charge ID", html);
+        // The attachment is listed beneath its form, not as a document of its own.
+        Assert.True(html.IndexOf("Form CHG-1: Form CHG-1-131015", StringComparison.Ordinal) < html.IndexOf("Instrument of Charge: Instrument(s)", StringComparison.Ordinal)
+            && html.IndexOf("Instrument of Charge: Instrument(s)", StringComparison.Ordinal) < html.IndexOf("Form 17: Form 17", StringComparison.Ordinal));
+        Assert.DoesNotContain("attached to this charge&#x27;s form", html);
+    }
 }

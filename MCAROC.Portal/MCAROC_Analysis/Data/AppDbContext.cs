@@ -39,6 +39,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<McaFiling> McaFilings => Set<McaFiling>();
     public DbSet<McaFilingDocument> McaFilingDocuments => Set<McaFilingDocument>();
     public DbSet<McaFilingExtraction> McaFilingExtractions => Set<McaFilingExtraction>();
+    public DbSet<ChargeDocumentLink> ChargeDocumentLinks => Set<ChargeDocumentLink>();
 
     public DbSet<DocumentChunk> DocumentChunks => Set<DocumentChunk>();
     public DbSet<ChatSession> ChatSessions => Set<ChatSession>();
@@ -301,6 +302,9 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
         {
             e.HasKey(x => x.LitigationCaseOrderId);
             // Unique, not just indexed — same concurrent-import backstop reasoning as LitigationCase above.
+            // A signed storage link: the longest in a real 837-order report was 489 characters, over the default 450.
+            // 700 characters keeps the unique key below SQL Server's 1,700-byte index limit with a typical date and type.
+            e.Property(x => x.PdfUrl).HasMaxLength(700);
             e.HasIndex(x => new { x.LitigationCaseId, x.PdfUrl, x.OrderDate, x.OrderType }).IsUnique();
             e.HasOne(x => x.Case).WithMany(c => c.Orders).HasForeignKey(x => x.LitigationCaseId).OnDelete(DeleteBehavior.Cascade);
         });
@@ -555,6 +559,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
         {
             e.HasKey(x => x.BatchId);
             e.HasOne(x => x.Request).WithMany().HasForeignKey(x => x.RequestId).OnDelete(DeleteBehavior.Cascade);
+            e.Property(x => x.ChargeLinksStamp).HasMaxLength(100);
             e.HasIndex(x => x.UploadSessionId)
                 .IsUnique()
                 .HasFilter("[UploadSessionId] IS NOT NULL");
@@ -911,6 +916,17 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             e.Property(x => x.ChunkingStatus).HasConversion<string>().HasMaxLength(20);
             e.Property(x => x.ChunkingLastError).HasMaxLength(500);
             e.Property(x => x.ChunkingErrorCategory).HasMaxLength(30);
+        });
+
+        modelBuilder.Entity<ChargeDocumentLink>(e =>
+        {
+            e.HasKey(x => x.ChargeDocumentLinkId);
+            e.HasOne(x => x.FilingDocument).WithMany().HasForeignKey(x => x.FilingDocumentId).OnDelete(DeleteBehavior.Cascade);
+            e.Property(x => x.RocChargeNumber).HasMaxLength(50).IsRequired();
+            e.Property(x => x.Method).HasConversion<string>().HasMaxLength(30);
+            e.HasIndex(x => new { x.BatchId, x.RocChargeNumber, x.FilingDocumentId }).IsUnique();
+            e.HasIndex(x => new { x.RequestId, x.RocChargeNumber });
+            e.HasIndex(x => x.FilingDocumentId);
         });
 
         modelBuilder.Entity<McaFilingExtraction>(e =>

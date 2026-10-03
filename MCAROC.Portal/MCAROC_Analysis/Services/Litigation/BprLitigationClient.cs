@@ -450,13 +450,22 @@ public sealed class BprLitigationClient(
             var message = root.TryGetProperty("message", out var messageValue) && messageValue.ValueKind == JsonValueKind.String
                 ? messageValue.GetString()
                 : null;
-            result = BprReportPollResult.Failed(message ?? "BPR returned a status:false error envelope with no message.");
+            // A job the vendor has accepted but not finished answers with this same envelope ("Job not processed yet"):
+            // that is "not ready", not a failure — polling must continue until the job's own deadline.
+            result = message is not null && IsStillProcessingMessage(message)
+                ? BprReportPollResult.Pending($"BPR: {message}")
+                : BprReportPollResult.Failed(message ?? "BPR returned a status:false error envelope with no message.");
             return true;
         }
 
         result = BprReportPollResult.Pending("BPR returned a status:true acknowledgement envelope — not yet a report.");
         return true;
     }
+
+    private static readonly string[] StillProcessingPhrases = ["not processed yet", "not yet processed", "still processing", "in progress", "not ready"];
+
+    private static bool IsStillProcessingMessage(string message) =>
+        StillProcessingPhrases.Any(p => message.Contains(p, StringComparison.OrdinalIgnoreCase));
 
     private static string? ExtractStringField(string json, string[] candidates)
     {

@@ -31,5 +31,9 @@ public class McaFilingBatch
     public long CumulativeUncompressedBytes { get; set; }
     public int CumulativePdfCount { get; set; }
 
+    /// <summary>#377: what this batch's charge-document links were last built from (register run, documents and their saved
+    /// form data). Null until first built; a different value means the links are rebuilt.</summary>
+    public string? ChargeLinksStamp { get; set; }
+
     public List<McaFiling> Filings { get; set; } = [];
 }

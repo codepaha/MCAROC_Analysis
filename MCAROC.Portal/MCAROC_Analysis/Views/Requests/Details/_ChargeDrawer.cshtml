@@ -380,6 +380,43 @@
             </div>
         }
 
+        @if (Model.Documents is { Count: > 0 } chargeDocuments)
+        {
+            @* #377: every filing document tied to this charge — its creation, modification and satisfaction forms and the
+               attachments embedded in them (deeds, instruments, letters) — open or satisfied alike. Each link is exact. *@
+            var attachmentsOf = chargeDocuments.Where(x => x.LinkedFromDocumentId is not null).ToLookup(x => x.LinkedFromDocumentId!.Value);
+            var shownIds = chargeDocuments.Where(x => x.LinkedFromDocumentId is null).Select(x => x.FilingDocumentId).ToHashSet();
+            var topLevel = chargeDocuments.Where(x => x.LinkedFromDocumentId is null || !shownIds.Contains(x.LinkedFromDocumentId.Value)).ToList();
+            string HowLinked(MCAROC_Analysis.Services.PropertyParticulars.ChargeDocumentRow row) => row.Method switch
+            {
+                MCAROC_Analysis.Data.Entities.ChargeDocumentLinkMethod.FormChargeId => "the form states this charge ID",
+                MCAROC_Analysis.Data.Entities.ChargeDocumentLinkMethod.CreationDateAndAmount => "creation form; its date and amount match this charge",
+                MCAROC_Analysis.Data.Entities.ChargeDocumentLinkMethod.FileName => "the file name states this charge ID",
+                _ => "attached to this charge's form"
+            };
+            <div class="mca-charge-documents" style="margin-top:12px;">
+                <h4 style="font-size:1rem;">Documents filed for this charge <span class="text-muted" style="font-size:0.8em;">(@chargeDocuments.Count)</span></h4>
+                <ul style="list-style:none; padding-left:0; margin-bottom:0;">
+                    @foreach (var doc in topLevel)
+                    {
+                        <li style="margin-bottom:6px;">
+                            <a href="/Requests/@Model.Charge.RequestId/documents/@doc.FilingDocumentId/view" target="_blank" rel="noopener">@(doc.FormType ?? "Attachment"): @doc.DisplayName</a>
+                            <span class="text-muted" style="font-size:0.85em;"> — @HowLinked(doc)</span>
+                            @if (attachmentsOf[doc.FilingDocumentId].Any())
+                            {
+                                <ul style="list-style:none; padding-left:16px; margin-top:2px;">
+                                    @foreach (var a in attachmentsOf[doc.FilingDocumentId])
+                                    {
+                                        <li><a href="/Requests/@Model.Charge.RequestId/documents/@a.FilingDocumentId/view" target="_blank" rel="noopener">@(a.FormType ?? "Attachment"): @a.DisplayName</a></li>
+                                    }
+                                </ul>
+                            }
+                        </li>
+                    }
+                </ul>
+            </div>
+        }
+
         @if (!string.IsNullOrWhiteSpace(narrativeEvent?.PropertyParticulars) || !string.IsNullOrWhiteSpace(narrativeEvent?.ExtentAndOperation))
         {
             <details open="@(property.HasContent ? null : "open")">

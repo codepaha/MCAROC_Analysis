@@ -5,6 +5,37 @@ namespace MCAROC_Analysis.Tests;
 public sealed class LitigationKeywordPlannerTests
 {
     [Fact]
+    public void ParseJson_reads_the_shape_a_search_job_stores_names_and_sources_intact()
+    {
+        // Exactly what LitigationSearchJobService writes: lower-case names, the source as text.
+        var stored = System.Text.Json.JsonSerializer.Serialize(new[]
+        {
+            new { value = "Example Projects Limited", source = nameof(LitigationKeywordSource.LegalName) },
+            new { value = "EXAMPLE PROJECTS PRIVATE LIMITED", source = nameof(LitigationKeywordSource.HistoricalLegalName) }
+        });
+
+        var keywords = LitigationKeyword.ParseJson(stored);
+
+        Assert.Equal(
+            [("Example Projects Limited", LitigationKeywordSource.LegalName), ("EXAMPLE PROJECTS PRIVATE LIMITED", LitigationKeywordSource.HistoricalLegalName)],
+            keywords.Select(k => (k.Value, k.Source)).ToList());
+    }
+
+    [Theory]
+    [InlineData("""[{"Value":"Example Co","Source":0}]""")] // capitalised names, numeric source
+    [InlineData("""[{"value":"Example Co","source":"LegalName"}]""")]
+    public void ParseJson_accepts_either_casing_and_a_numeric_or_text_source(string json) =>
+        Assert.Equal(("Example Co", LitigationKeywordSource.LegalName), Assert.Single(LitigationKeyword.ParseJson(json)) is var k ? (k.Value, k.Source) : default);
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("not json")]
+    [InlineData("""[{"value":"  ","source":"LegalName"}]""")]
+    public void ParseJson_gives_nothing_for_missing_unreadable_or_blank_keywords(string? json) =>
+        Assert.Empty(LitigationKeyword.ParseJson(json));
+
+    [Fact]
     public void Build_keeps_vetted_abbreviation_phonetic_and_Hindi_aliases_with_their_provenance()
     {
         var keywords = LitigationKeywordPlanner.Build(

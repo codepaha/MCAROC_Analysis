@@ -8,10 +8,12 @@ namespace MCAROC_Analysis.Services.McaFilings;
 
 /// <param name="XfaFields">#364: the PDF's filled XFA form fields when it has any — read while the PDF is open anyway, so
 /// the charge-form reader never has to reopen it. Null for an ordinary PDF.</param>
+/// <param name="EmbeddedFiles">#377: the hashes of the files embedded in the PDF (an e-form's attachments); empty when it has
+/// none. Null when the PDF wasn't read (failed extraction, or text reused from an earlier batch without saved hashes).</param>
 public record PdfExtractionResult(
     string FullText, int PageCount, int NativePageCount, int OcrPageCount,
     TextExtractionMethod Method, FilingDocumentProcessingStatus Status, string? Error,
-    IReadOnlyList<XfaField>? XfaFields = null);
+    IReadOnlyList<XfaField>? XfaFields = null, IReadOnlyList<EmbeddedFileHash>? EmbeddedFiles = null);
 
 /// <summary>Extracts text page-by-page (not whole-document fallback), since a single filing document can
 /// mix native-text and scanned pages: native text via PdfPig first; only pages below the character
@@ -127,7 +129,7 @@ public class PdfTextExtractor(ILogger<PdfTextExtractor> logger, string tesseract
             // Many forms render visible text and still carry their XFA data; keep the fields for exact consumers (#364).
             xfaFields ??= XfaFormReader.ReadFields(document) ?? [];
             return new PdfExtractionResult(sb.ToString(), pageCount, nativeCount, ocrCount, method, FilingDocumentProcessingStatus.TextExtracted, null,
-                xfaFields.Count > 0 ? xfaFields : null);
+                xfaFields.Count > 0 ? xfaFields : null, EmbeddedFiles.Read(document));
         }
     }
 

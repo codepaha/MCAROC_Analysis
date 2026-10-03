@@ -155,13 +155,17 @@ public static class ChargeForms
 
 /// <summary>#364: saves the XFA fields of a batch's charge documents that were extracted before fields were saved at
 /// extraction — off the request path, a few PDFs at a time — so the next load shows them (a load with documents still
-/// awaiting this is never cached). One run per batch at a time; writing a document's fields is idempotent, so an
-/// overlapping run is harmless.</summary>
+/// awaiting this is never cached). #377: the hashes of each one's embedded attachments are saved the same way. One run per
+/// batch at a time; writing a document's fields is idempotent, so an overlapping run is harmless.</summary>
 public class ChargeFormBackfill(IServiceScopeFactory scopes, ILogger<ChargeFormBackfill> logger)
 {
     private readonly System.Collections.Concurrent.ConcurrentDictionary<long, Task> _running = new();
 
-    public virtual void Request(long batchId) =>
+    public virtual void Request(long batchId) => _ = RunSharedAsync(batchId);
+
+    /// <summary>The batch's run — the one already in progress, or a new one. Callers that need the fields saved before they
+    /// continue (#377's link builder) await it, so a batch is never backfilled twice at once.</summary>
+    internal Task RunSharedAsync(long batchId) =>
         _running.GetOrAdd(batchId, id => Task.Run(async () =>
         {
             try { await RunAsync(id, CancellationToken.None); }
@@ -174,24 +178,31 @@ public class ChargeFormBackfill(IServiceScopeFactory scopes, ILogger<ChargeFormB
         await using var scope = scopes.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         var documents = await ChargeForms.Candidates(db, batchId).Select(d => new { d.ExtractedTextPath, d.StoragePath }).ToListAsync(ct);
-        var todo = documents.Where(d => !File.Exists(XfaFormReader.SidecarPath(d.ExtractedTextPath!))).ToList();
+        var todo = documents.Where(d => !File.Exists(XfaFormReader.SidecarPath(d.ExtractedTextPath!))
+            || !File.Exists(EmbeddedFiles.SidecarPath(d.ExtractedTextPath!))).ToList();
         var saved = 0;
         await Parallel.ForEachAsync(todo, new ParallelOptions { MaxDegreeOfParallelism = 4, CancellationToken = ct }, async (d, token) =>
         {
             IReadOnlyList<XfaField> fields = [];
+            IReadOnlyList<EmbeddedFileHash> embedded = [];
             if (!string.IsNullOrEmpty(d.StoragePath) && File.Exists(d.StoragePath))
             {
                 try
                 {
                     using var pdf = PdfDocument.Open(d.StoragePath);
                     fields = XfaFormReader.ReadFields(pdf) ?? [];
+                    embedded = EmbeddedFiles.Read(pdf);
                 }
                 catch (Exception) when (!token.IsCancellationRequested)
                 {
                     // An unreadable PDF has no form data to offer; record it as checked.
                 }
             }
-            await XfaFormReader.WriteSidecarAsync(d.ExtractedTextPath!, fields, token);
+            // Only the missing one is written: a saved sidecar is never overwritten with a re-read.
+            if (!File.Exists(XfaFormReader.SidecarPath(d.ExtractedTextPath!)))
+                await XfaFormReader.WriteSidecarAsync(d.ExtractedTextPath!, fields, token);
+            if (!File.Exists(EmbeddedFiles.SidecarPath(d.ExtractedTextPath!)))
+                await EmbeddedFiles.WriteSidecarAsync(d.ExtractedTextPath!, embedded, token);
             Interlocked.Increment(ref saved);
         });
         if (saved > 0) logger.LogInformation("Saved charge-form fields for {Count} document(s) of batch {BatchId}", saved, batchId);
