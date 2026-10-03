@@ -976,6 +976,38 @@ public class RequestsController(
                         }
                     }
 
+                    // Age is measured to the day the data was retrieved (IST), so the page and the reports agree whenever opened.
+                    var ageAsOf = DateOnly.FromDateTime(Ist.FromUtc(authoritativeSnapshot.RetrievedUtc));
+                    litVm.AgeAsOf = ageAsOf;
+                    var companyNames = new List<string>();
+                    if (!string.IsNullOrWhiteSpace(request.CompanyName)) companyNames.Add(request.CompanyName);
+                    if (request.LatestCompletedIngestionRunId is { } nameRunId)
+                        companyNames.AddRange(await db.CompanyNameHistories.AsNoTracking()
+                            .Where(h => h.IngestionRunId == nameRunId && h.PreviousName != null && h.PreviousName != "")
+                            .Select(h => h.PreviousName!).ToListAsync());
+                    var ageRows = await db.LitigationCases.AsNoTracking()
+                        .Where(c => caseIdsQuery.Contains(c.LitigationCaseId))
+                        .Select(c => new
+                        {
+                            c.LitigationCaseId, c.FilingDate, c.DecisionDate, c.CaseYear, c.Cnr, c.CaseNumber, c.CaseStatus, c.CaseStage,
+                            c.Type, c.Court, c.CourtCategory, c.CaseType, c.Act, c.CaseClassification, c.ProceedingType, c.PetitionersJson, c.RespondentsJson, c.Direction
+                        })
+                        .ToListAsync();
+                    var orderDatesOfCase = (await db.LitigationCaseOrders.AsNoTracking()
+                            .Where(o => caseIdsQuery.Contains(o.LitigationCaseId))
+                            .Select(o => new { o.LitigationCaseId, o.OrderDate }).ToListAsync())
+                        .GroupBy(o => o.LitigationCaseId).ToDictionary(g => g.Key, g => g.Select(o => o.OrderDate).ToList());
+                    foreach (var r in ageRows)
+                    {
+                        var rowStatus = LitigationCaseStatusClassifier.Classify(r.CaseStatus, r.CaseStage);
+                        litVm.AgeProfile.Add(r.LitigationCaseId, LitigationCaseAges.Compute(r.FilingDate, r.DecisionDate, r.CaseYear, rowStatus,
+                            orderDatesOfCase.GetValueOrDefault(r.LitigationCaseId) ?? [], ageAsOf, r.Cnr, r.CaseNumber));
+                        var rowPetitioners = LitigationCaseCardMapper.ParseNames(r.PetitionersJson);
+                        var rowSide = LitigationCompanySides.Determine(rowPetitioners, LitigationCaseCardMapper.ParseNames(r.RespondentsJson), companyNames, r.Direction);
+                        litVm.RiskProfile.Add(LitigationBaselineRisk.Assess(new LitigationRiskInput(
+                            r.Type, r.Court, r.CourtCategory, r.CaseType, r.Act, r.CaseStage, r.CaseClassification, r.ProceedingType, rowStatus, rowSide, rowPetitioners)));
+                    }
+
                     var pagedCases = await casesQuery
                         .OrderBy(c => (c.Court == null || c.Court.Trim() == "") ? "Unspecified Court" : c.Court.Trim())
                         .ThenByDescending(c => c.LastHearingDate ?? string.Empty)
@@ -1051,139 +1083,9 @@ public class RequestsController(
                         }
                     }
 
-                    foreach (var c in pagedCases)
-                    {
-                        var card = new LitigationCaseCardViewModel
-                        {
-                            LitigationCaseId = c.LitigationCaseId,
-                            CaseNumber = c.CaseNumber,
-                            Cnr = c.Cnr,
-                            CspId = c.CspId,
-                            ProviderCaseId = c.ProviderCaseId,
-                            Court = c.Court,
-                            Bench = c.Bench,
-                            CourtCategory = c.CourtCategory,
-                            State = c.State,
-                            District = c.District,
-                            CaseType = c.CaseType,
-                            CaseYear = c.CaseYear,
-                            CaseStage = c.CaseStage,
-                            CaseStatus = c.CaseStatus,
-                            StatusBucket = LitigationCaseStatusClassifier.Classify(c.CaseStatus, c.CaseStage),
-                            Act = c.Act,
-                            ProceedingType = c.ProceedingType,
-                            Direction = c.Direction,
-                            FilingDate = c.FilingDate,
-                            LastHearingDate = c.LastHearingDate,
-                            NextHearingDate = c.NextHearingDate,
-                            DecisionDate = c.DecisionDate,
-                            FirstSeenUtc = c.FirstSeenUtc,
-                            LastSeenUtc = c.LastSeenUtc
-                        };
-
-                        if (!string.IsNullOrWhiteSpace(c.PetitionersJson))
-                        {
-                            try { card.Petitioners = JsonSerializer.Deserialize<List<string>>(c.PetitionersJson) ?? []; } catch { }
-                        }
-                        if (!string.IsNullOrWhiteSpace(c.RespondentsJson))
-                        {
-                            try { card.Respondents = JsonSerializer.Deserialize<List<string>>(c.RespondentsJson) ?? []; } catch { }
-                        }
-                        if (!string.IsNullOrWhiteSpace(c.PetitionerAdvocatesJson))
-                        {
-                            try { card.PetitionerAdvocates = JsonSerializer.Deserialize<List<string>>(c.PetitionerAdvocatesJson) ?? []; } catch { }
-                        }
-                        if (!string.IsNullOrWhiteSpace(c.RespondentAdvocatesJson))
-                        {
-                            try { card.RespondentAdvocates = JsonSerializer.Deserialize<List<string>>(c.RespondentAdvocatesJson) ?? []; } catch { }
-                        }
-
-                        foreach (var o in c.Orders.OrderByDescending(o => o.OrderDate))
-                        {
-                            orderDocByOrderId.TryGetValue(o.LitigationCaseOrderId, out var od);
-                            var orderMatches = propertyMatchesByOrderId.TryGetValue(o.LitigationCaseOrderId, out var omList) ? omList : [];
-                            outcomeByOrderId.TryGetValue(o.LitigationCaseOrderId, out var outcomeMatch);
-
-                            card.Orders.Add(new LitigationOrderRowViewModel
-                            {
-                                LitigationCaseOrderId = o.LitigationCaseOrderId,
-                                LitigationOrderDocumentId = od?.LitigationOrderDocumentId,
-                                OrderDate = o.OrderDate,
-                                OrderType = o.OrderType,
-                                DocumentStatus = od?.Status,
-                                FailureReason = od?.FailureReason,
-                                RefreshCount = od?.RefreshCount ?? 0,
-                                Outcomes = outcomeMatch?.Outcomes.ToList() ?? [],
-                                FineAmount = outcomeMatch?.FineAmount,
-                                Confidence = outcomeMatch?.Confidence,
-                                EvidenceTruncated = outcomeMatch?.EvidenceTruncated ?? false,
-                                // Matches only carry orders WITH an outcome; an InsufficientEvidence classification is still current.
-                                ClassificationStatus = outcomeLookup.CurrentStatusByOrderId?.TryGetValue(o.LitigationCaseOrderId, out var classified) == true
-                                    ? classified : null,
-                                PropertyMatches = orderMatches.Select(m => new LitigationPropertyMatchViewModel
-                                {
-                                    LitigationCaseOrderId = m.LitigationCaseOrderId,
-                                    OrderDate = m.OrderDate,
-                                    OrderType = m.OrderType,
-                                    PageNumber = m.PageNumber,
-                                    SourceLabel = m.SourceLabel,
-                                    AddressText = m.AddressText,
-                                    Strength = m.Strength,
-                                    MatchedPinCode = m.MatchedPinCode,
-                                    MatchedPlotNumbers = [..m.MatchedPlotNumbers],
-                                    MatchedLocalities = [..m.MatchedLocalities],
-                                    Excerpt = m.Excerpt,
-                                    IsCompanyPremises = m.IsCompanyPremises,
-                                    RocChargeId = m.RocChargeId,
-                                    RocChargeNumber = m.RocChargeNumber,
-                                    ChargeHolder = m.ChargeHolder
-                                }).ToList()
-                            });
-                        }
-                        card.PropertyMatches = card.Orders.SelectMany(o => o.PropertyMatches).ToList();
-
-                        if (caseAiByCaseId.TryGetValue(c.LitigationCaseId, out var ca))
-                        {
-                            var vmCa = new LitigationCaseAiAnalysisViewModel
-                            {
-                                LitigationCaseAiAnalysisId = ca.LitigationCaseAiAnalysisId,
-                                Status = ca.Status,
-                                CompletedUtc = ca.CompletedUtc,
-                                FailureReason = ca.FailureReason,
-                                RunNumber = latestAiRun?.RunNumber ?? 0
-                            };
-                            if (!string.IsNullOrWhiteSpace(ca.AnalysisJson))
-                            {
-                                try
-                                {
-                                    using var doc = JsonDocument.Parse(ca.AnalysisJson);
-                                    var root = doc.RootElement;
-                                    if (root.TryGetProperty("summary", out var sProp)) vmCa.Summary = sProp.GetString();
-                                    if (root.TryGetProperty("unknowns", out var uProp) && uProp.ValueKind == JsonValueKind.Array)
-                                    {
-                                        vmCa.Unknowns = uProp.EnumerateArray().Select(x => x.GetString() ?? "").Where(x => !string.IsNullOrEmpty(x)).ToList();
-                                    }
-                                    if (root.TryGetProperty("evidenceReferences", out var refProp) && refProp.ValueKind == JsonValueKind.Array)
-                                    {
-                                        foreach (var r in refProp.EnumerateArray())
-                                        {
-                                            var orderId = r.TryGetProperty("litigationCaseOrderId", out var oProp) ? oProp.GetInt64() : 0;
-                                            var pageNum = r.TryGetProperty("pageNumber", out var pProp) ? pProp.GetInt32() : 0;
-                                            vmCa.Citations.Add($"Order #{orderId} (p. {pageNum})");
-                                        }
-                                    }
-                                }
-                                catch { }
-                            }
-                            card.Analysis = vmCa;
-                            if (ca.CompletedUtc.HasValue && c.LastSeenUtc > ca.CompletedUtc.Value)
-                            {
-                                card.IsAnalysisStaleComparedToCase = true;
-                            }
-                        }
-
-                        litVm.Cases.Add(card);
-                    }
+                    var mapContext = new LitigationCaseMapContext(orderDocByOrderId, propertyMatchesByOrderId, outcomeByOrderId, outcomeLookup,
+                        caseAiByCaseId, latestAiRun?.RunNumber ?? 0, ageAsOf, companyNames);
+                    foreach (var c in pagedCases) litVm.Cases.Add(LitigationCaseCardMapper.Map(c, mapContext));
                 }
             }
 

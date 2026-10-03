@@ -302,6 +302,87 @@
         }
     }
 
+    @if (lake.AuthoritativeSnapshot is not null && lake.RiskProfile.TotalCases > 0)
+    {
+        <!-- Risk tiers across the report (baseline from the court record) -->
+        <div class="card mb-4 shadow-sm border" id="litigation-risk-profile">
+            <div class="card-header bg-light d-flex justify-content-between align-items-center py-2 px-3">
+                <h5 class="card-title mb-0 small fw-bold text-uppercase"><i class="bi bi-shield-exclamation me-2 text-primary"></i>Litigation Risk</h5>
+                <span class="badge @LitigationBaselineRisk.BadgeCss(lake.RiskProfile.Overall) fs-6" data-risk-overall="@lake.RiskProfile.Overall">@lake.RiskProfile.Overall · @LitigationBaselineRisk.Label(lake.RiskProfile.Overall)</span>
+            </div>
+            <div class="card-body">
+                <div class="mca-highlight-grid">
+                    @foreach (var tier in new[] { LitigationRiskTier.R3, LitigationRiskTier.R2, LitigationRiskTier.R1, LitigationRiskTier.R0 })
+                    {
+                        <div class="pi-metric">
+                            <span>@tier · @LitigationBaselineRisk.Label(tier)</span>
+                            <strong>@lake.RiskProfile.Cases[tier]</strong>
+                        </div>
+                    }
+                </div>
+                @foreach (var tier in new[] { LitigationRiskTier.R3, LitigationRiskTier.R2 })
+                {
+                    var triggers = lake.RiskProfile.TriggersOf(tier);
+                    if (triggers.Count == 0) { continue; }
+                    <p class="small mb-1 mt-3"><strong>@tier</strong> — @string.Join("; ", triggers.Select(t => $"{t.Trigger} × {t.Count}"))</p>
+                }
+                <p class="small text-muted mb-0 mt-2">The overall tier is the highest of the cases'. Each case's tier is a baseline worked out from its court record: forum, case type, act, status and the company's side.</p>
+            </div>
+        </div>
+    }
+
+    @if (lake.AuthoritativeSnapshot is not null && lake.AgeProfile.PendingCases > 0)
+    {
+        <!-- Ageing of pending cases (as of the day the data was retrieved) -->
+        <div class="card mb-4 shadow-sm border" id="litigation-age-profile">
+            <div class="card-header bg-light d-flex justify-content-between align-items-center py-2 px-3">
+                <h5 class="card-title mb-0 small fw-bold text-uppercase"><i class="bi bi-hourglass-split me-2 text-primary"></i>Pending Cases by Age</h5>
+                @if (lake.AgeAsOf is { } ageAsOf)
+                {
+                    <span class="text-muted small">As of @ageAsOf.ToString("d MMM yyyy", System.Globalization.CultureInfo.InvariantCulture) (data retrieval date)</span>
+                }
+            </div>
+            <div class="card-body">
+                <div class="mca-highlight-grid">
+                    @foreach (var band in Enum.GetValues<CaseAgeBand>())
+                    {
+                        <div class="pi-metric">
+                            <span>@LitigationCaseAges.Label(band)</span>
+                            <strong>@lake.AgeProfile.PendingByBand[band]</strong>
+                        </div>
+                    }
+                </div>
+                @if (lake.AgeProfile.PendingEstimatedFromYear + lake.AgeProfile.PendingAtLeast > 0)
+                {
+                    <p class="small mb-0 mt-3 text-muted">
+                        The bands count pending cases with a filing date.
+                        @if (lake.AgeProfile.PendingEstimatedFromYear > 0)
+                        {
+                            <span><strong>@lake.AgeProfile.PendingEstimatedFromYear</strong> more @(lake.AgeProfile.PendingEstimatedFromYear == 1 ? "has" : "have") only a year to go on, so an estimated age. </span>
+                        }
+                        @if (lake.AgeProfile.PendingAtLeast > 0)
+                        {
+                            <span><strong>@lake.AgeProfile.PendingAtLeast</strong> more @(lake.AgeProfile.PendingAtLeast == 1 ? "has" : "have") no date at all, only an earliest order on file, so an age of "at least" that. Neither is banded or ranked.</span>
+                        }
+                    </p>
+                }
+                @if (lake.AgeProfile.OldestPending is { } oldest)
+                {
+                    <p class="small mb-0 mt-3">
+                        <span class="text-muted">Oldest pending case with a filing date:</span>
+                        <strong>@oldest.Duration</strong>
+                        <span class="text-muted">(@oldest.BasisNote)</span>
+                        @if (lake.AgeProfile.OldestPendingCaseId is { } oldestId)
+                        {
+                            <a href="/Requests/@reqId/Litigation/Cases/@oldestId" class="ms-1">view case</a>
+                        }
+                    </p>
+                }
+                <p class="small text-muted mb-0 mt-2">Age runs from the filing date on the court record. Where there is none it is "about" so many whole years from the case year, or failing that the year in the CNR or in the case number, and where there is no year at all it is "at least" the time since the earliest order on file.</p>
+            </div>
+        </div>
+    }
+
     <!-- Court Summary Grid -->
     <div class="card mb-4 shadow-sm border">
         <div class="card-header bg-light d-flex justify-content-between align-items-center py-2 px-3">

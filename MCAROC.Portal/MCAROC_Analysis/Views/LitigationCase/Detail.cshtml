@@ -1,0 +1,328 @@
+@using MCAROC_Analysis.Models
+@using MCAROC_Analysis.Data.Entities
+@using MCAROC_Analysis.Services.LitigationData
+@model LitigationCasePage
+@{
+    var card = Model.Card;
+    var request = Model.Request;
+    var risk = card.Risk!;
+    ViewData["Title"] = $"{(string.IsNullOrWhiteSpace(card.CaseNumber) ? "Case " + card.LitigationCaseId : card.CaseNumber)} — {request.CompanyName}";
+
+    var statusBadge = card.StatusBucket switch
+    {
+        LitigationCaseStatusBucket.Pending => "bg-warning text-dark",
+        LitigationCaseStatusBucket.Disposed => "bg-success text-white",
+        _ => "bg-secondary text-white"
+    };
+    var latestOrder = card.Orders.FirstOrDefault(); // newest first
+
+    string Or(string? v) => string.IsNullOrWhiteSpace(v) ? "—" : v;
+    string PdfState(LitigationOrderRowViewModel o) => o.DocumentStatus switch
+    {
+        LitigationOrderDocumentStatus.Downloaded => "",
+        LitigationOrderDocumentStatus.Pending or LitigationOrderDocumentStatus.InProgress => "PDF is being fetched",
+        LitigationOrderDocumentStatus.Failed => "PDF could not be fetched",
+        LitigationOrderDocumentStatus.Expired => "PDF link expired — refresh the litigation data to fetch it again",
+        _ => "No PDF in the report"
+    };
+}
+
+<div class="container-fluid py-3" id="litigation-case-page">
+    <div class="mb-3 small">
+        <a href="/Requests/@request.RequestId#tab-litigation"><i class="bi bi-arrow-left me-1"></i>Litigation — @request.CompanyName</a>
+    </div>
+
+    <!-- Identity -->
+    <div class="card shadow-sm mb-3">
+        <div class="card-body">
+            <div class="d-flex flex-wrap justify-content-between align-items-start gap-3">
+                <div>
+                    <div class="small text-muted">@Or(card.Court)@(string.IsNullOrWhiteSpace(card.Bench) ? "" : " · " + card.Bench) · @Or(card.State)@(string.IsNullOrWhiteSpace(card.District) ? "" : " · " + card.District)</div>
+                    <h3 class="mb-1">@(string.IsNullOrWhiteSpace(card.CaseNumber) ? "Case #" + card.LitigationCaseId : card.CaseNumber)</h3>
+                    <div class="text-muted">@Or(card.CaseType)@(string.IsNullOrWhiteSpace(card.Act) ? "" : " · " + card.Act)</div>
+                </div>
+                <div class="d-flex flex-wrap align-items-center gap-2">
+                    <span class="badge @statusBadge fs-6">@card.StatusBucket</span>
+                    <span class="badge @LitigationBaselineRisk.BadgeCss(risk.Tier) fs-6" title="@risk.Reason" data-risk-tier="@risk.Tier">@risk.Tier · @LitigationBaselineRisk.Label(risk.Tier)</span>
+                </div>
+            </div>
+            <div class="row g-2 mt-3 small">
+                <div class="col-md-3"><span class="text-muted">CNR:</span> <span class="font-monospace">@Or(card.Cnr)</span></div>
+                <div class="col-md-3"><span class="text-muted">Category:</span> @Or(card.CourtCategory)</div>
+                <div class="col-md-3"><span class="text-muted">Proceeding type:</span> @Or(card.ProceedingType)</div>
+                <div class="col-md-3"><span class="text-muted">Data retrieved:</span> @Ist.Format(Model.RetrievedUtc)</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Risk tier -->
+    <div class="card shadow-sm mb-3" id="case-risk">
+        <div class="card-header bg-light small fw-bold text-uppercase"><i class="bi bi-shield-exclamation me-1 text-primary"></i>Risk</div>
+        <div class="card-body">
+            <div class="d-flex flex-wrap align-items-start gap-3">
+                <span class="badge @LitigationBaselineRisk.BadgeCss(risk.Tier) fs-4 px-3 py-2">@risk.Tier</span>
+                <div>
+                    <div class="fw-bold">@risk.Trigger</div>
+                    <div class="small">@risk.Reason</div>
+                    <div class="small text-muted mt-1">Worked out from the court record — forum, case type, act, status and the company's side. @LitigationCompanySides.Label(card.CompanySide).</div>
+                </div>
+            </div>
+            <div class="small text-muted mt-3">
+                R3 critical · R2 high · R1 low · R0 no litigation. A tier is a baseline from the record; where the orders say more, it can only be confirmed or raised.
+            </div>
+        </div>
+    </div>
+
+    <!-- Identity evidence: is this the company's case? -->
+    <div class="card shadow-sm mb-3" id="case-identity">
+        <div class="card-header bg-light small fw-bold text-uppercase"><i class="bi bi-fingerprint me-1 text-primary"></i>Identity evidence</div>
+        <div class="card-body small">
+            @switch (Model.Identity.Status)
+            {
+                case IdentityEvidenceStatus.Confirmed:
+                    <div><span class="badge bg-success" data-identity="Confirmed">Confirmed by identifier</span>
+                        An order names the company's own CIN, LLPIN, PAN or GSTIN.</div>
+                    break;
+                case IdentityEvidenceStatus.DirectorOnly:
+                    <div><span class="badge bg-info text-dark" data-identity="DirectorOnly">Director named</span>
+                        No identifier of the company itself, but an order names the DIN of one of its directors.</div>
+                    break;
+                case IdentityEvidenceStatus.NameOnly:
+                    <div><span class="badge bg-secondary" data-identity="NameOnly">Name match only</span>
+                        @Model.Identity.OrdersWithText order@(Model.Identity.OrdersWithText == 1 ? "" : "s") read; none prints an identifier of the company. The case rests on the name match@(Model.Identity.OrdersNamingCompany > 0 ? $", which the orders bear out: the company's name appears in {Model.Identity.OrdersNamingCompany} of them" : ", and none of the orders read names the company")).</div>
+                    break;
+                default:
+                    <div><span class="badge bg-secondary" data-identity="NoOrderText">Not checked</span>
+                        There is no order text to read for this case, so no identifier can confirm it.</div>
+                    break;
+            }
+            @if (Model.Identity.Identifiers.Count > 0)
+            {
+                <div class="table-responsive mt-3">
+                    <table class="table table-sm align-middle mb-0">
+                        <thead class="table-light"><tr><th>Identifier</th><th>Value</th><th>Whose</th><th>Order</th><th>Page</th><th>As printed</th></tr></thead>
+                        <tbody>
+                            @foreach (var m in Model.Identity.Identifiers)
+                            {
+                                <tr>
+                                    <td>@OrderIdentifiers.Label(m.Identifier.Type)</td>
+                                    <td class="font-monospace">@OrderIdentifiers.Mask(m.Identifier.Type, m.Identifier.Value)</td>
+                                    <td>
+                                        @switch (m.Match)
+                                        {
+                                            case IdentifierMatch.Company: <span class="badge bg-success">The company's</span> break;
+                                            case IdentifierMatch.Director: <span class="badge bg-info text-dark">A director's</span> break;
+                                            default: <span class="text-muted">Another party's</span> break;
+                                        }
+                                    </td>
+                                    <td>@Or(m.OrderDate)@(string.IsNullOrWhiteSpace(m.OrderType) ? "" : " · " + m.OrderType)</td>
+                                    <td>
+                                        @if (m.DocumentId is { } mdoc)
+                                        {
+                                            <a href="/Requests/@request.RequestId/Litigation/Orders/@mdoc/download#page=@m.Identifier.Page">@m.Identifier.Page</a>
+                                        }
+                                        else { @m.Identifier.Page }
+                                    </td>
+                                    <td class="text-muted">@OrderIdentifiers.MaskContext(m.Identifier.Context)</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+                <div class="text-muted mt-2">Identifiers are read exactly as printed. A PAN is shown masked; the corporate identifiers are public registry values. Personal identifiers such as Aadhaar and mobile numbers are not read.</div>
+            }
+        </div>
+    </div>
+
+    <!-- Where it stands -->
+    <div class="card shadow-sm mb-3" id="case-standing">
+        <div class="card-header bg-light small fw-bold text-uppercase"><i class="bi bi-flag me-1 text-primary"></i>Where it stands</div>
+        <div class="card-body">
+            <div class="row g-3 small">
+                <div class="col-md-4">
+                    <div class="text-muted">Status</div>
+                    <div><strong>@card.StatusBucket</strong>@(string.IsNullOrWhiteSpace(card.CaseStatus) || string.Equals(card.CaseStatus.Trim(), card.StatusBucket.ToString(), StringComparison.OrdinalIgnoreCase) ? "" : " — " + card.CaseStatus)</div>
+                    @if (!string.IsNullOrWhiteSpace(card.CaseStage)) { <div class="text-muted">Stage: @card.CaseStage</div> }
+                </div>
+                <div class="col-md-4" data-case-age>
+                    <div class="text-muted">Age</div>
+                    <div><strong>@card.Age!.Headline</strong></div>
+                    <div class="text-muted">@card.Age.BasisNote</div>
+                </div>
+                <div class="col-md-4">
+                    <div class="text-muted">Latest order on file</div>
+                    @if (latestOrder is null)
+                    {
+                        <div>No orders in the report</div>
+                    }
+                    else
+                    {
+                        <div><strong>@Or(latestOrder.OrderDate)</strong>@(string.IsNullOrWhiteSpace(latestOrder.OrderType) ? "" : " — " + latestOrder.OrderType)</div>
+                        @if (latestOrder.Outcomes.Count > 0)
+                        {
+                            <div class="d-flex flex-wrap gap-1 mt-1">
+                                @foreach (var outcome in latestOrder.Outcomes)
+                                {
+                                    <span class="badge @LitigationOrderOutcomeLabels.BadgeCss(outcome)"><i class="bi @LitigationOrderOutcomeLabels.IconCss(outcome) me-1"></i>@LitigationOrderOutcomeLabels.Format(outcome)</span>
+                                }
+                            </div>
+                        }
+                    }
+                </div>
+                <div class="col-md-3"><div class="text-muted">Filing date</div><div>@Or(card.FilingDate)</div></div>
+                <div class="col-md-3"><div class="text-muted">Last hearing</div><div>@Or(card.LastHearingDate)</div></div>
+                <div class="col-md-3"><div class="text-muted">Next hearing</div><div>@Or(card.NextHearingDate)</div></div>
+                <div class="col-md-3"><div class="text-muted">Decision date</div><div>@Or(card.DecisionDate)</div></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Parties -->
+    <div class="card shadow-sm mb-3" id="case-parties">
+        <div class="card-header bg-light small fw-bold text-uppercase"><i class="bi bi-people me-1 text-primary"></i>Parties and advocates</div>
+        <div class="card-body">
+            <div class="row g-3">
+                <div class="col-md-6">
+                    <div class="small fw-bold text-muted text-uppercase mb-1">Petitioner(s)</div>
+                    <ul class="small mb-2">
+                        @foreach (var p in card.Petitioners) { <li>@p</li> }
+                        @if (card.Petitioners.Count == 0) { <li class="text-muted">None on record</li> }
+                    </ul>
+                    @if (card.PetitionerAdvocates.Count > 0) { <div class="small text-muted"><strong>Advocates:</strong> @string.Join(", ", card.PetitionerAdvocates)</div> }
+                </div>
+                <div class="col-md-6">
+                    <div class="small fw-bold text-muted text-uppercase mb-1">Respondent(s)</div>
+                    <ul class="small mb-2">
+                        @foreach (var r in card.Respondents) { <li>@r</li> }
+                        @if (card.Respondents.Count == 0) { <li class="text-muted">None on record</li> }
+                    </ul>
+                    @if (card.RespondentAdvocates.Count > 0) { <div class="small text-muted"><strong>Advocates:</strong> @string.Join(", ", card.RespondentAdvocates)</div> }
+                </div>
+            </div>
+            <div class="small text-muted mt-1">@LitigationCompanySides.Label(card.CompanySide).</div>
+        </div>
+    </div>
+
+    <!-- Order timeline -->
+    <div class="card shadow-sm mb-3" id="case-orders">
+        <div class="card-header bg-light small fw-bold text-uppercase"><i class="bi bi-clock-history me-1 text-primary"></i>Orders <span class="badge bg-secondary">@card.Orders.Count</span></div>
+        <div class="card-body">
+            @if (card.Orders.Count == 0)
+            {
+                <div class="text-muted small">The report lists no orders for this case.</div>
+            }
+            else
+            {
+                <ul class="list-unstyled mb-0">
+                    @foreach (var o in card.Orders)
+                    {
+                        <li class="d-flex gap-3 pb-3 mb-3 border-bottom" data-order="@o.LitigationCaseOrderId">
+                            <div class="text-nowrap fw-bold small" style="min-width:7.5em;">@Or(o.OrderDate)</div>
+                            <div class="flex-grow-1 small">
+                                <div>@Or(o.OrderType)</div>
+                                @if (o.Outcomes.Count > 0 || o.FineAmount is not null)
+                                {
+                                    <div class="d-flex flex-wrap gap-1 mt-1">
+                                        @foreach (var outcome in o.Outcomes)
+                                        {
+                                            <span class="badge @LitigationOrderOutcomeLabels.BadgeCss(outcome)"><i class="bi @LitigationOrderOutcomeLabels.IconCss(outcome) me-1"></i>@LitigationOrderOutcomeLabels.Format(outcome)</span>
+                                        }
+                                        @if (o.FineAmount is { } fine) { <span class="badge bg-light text-dark border">Fine ₹@fine.ToString("N0")</span> }
+                                    </div>
+                                }
+                                @if (o.PropertyMatches.Count > 0)
+                                {
+                                    <div class="text-muted mt-1">Names property that matches the company's: @o.PropertyMatches.Count match@(o.PropertyMatches.Count == 1 ? "" : "es") in this order.</div>
+                                }
+                            </div>
+                            <div class="small text-end text-nowrap">
+                                @if (o.DocumentStatus == LitigationOrderDocumentStatus.Downloaded && o.LitigationOrderDocumentId is { } docId)
+                                {
+                                    <a href="/Requests/@request.RequestId/Litigation/Orders/@docId/download"><i class="bi bi-file-earmark-pdf me-1"></i>Order PDF</a>
+                                }
+                                else
+                                {
+                                    <span class="text-muted" title="@o.FailureReason">@PdfState(o)</span>
+                                }
+                            </div>
+                        </li>
+                    }
+                </ul>
+            }
+        </div>
+    </div>
+
+    <!-- Charges -->
+    @if (Model.ChargeLinks.Count > 0)
+    {
+        <div class="card shadow-sm mb-3" id="case-charges">
+            <div class="card-header bg-light small fw-bold text-uppercase"><i class="bi bi-bank me-1 text-primary"></i>Bears on a charge</div>
+            <div class="card-body small">
+                <ul class="mb-0">
+                    @foreach (var link in Model.ChargeLinks)
+                    {
+                        var signalText = link.Signal switch
+                        {
+                            ChargeLitigationSignal.ImmovableAddress => "Touches charged property",
+                            ChargeLitigationSignal.MovableIdentifier => "Names a charged asset",
+                            _ => "Charge holder's recovery case"
+                        };
+                        <li class="mb-1">
+                            <span class="mca-badge @ChargeLitigationLabels.Severity(link.Signal)">@signalText</span>
+                            <strong>@(link.ChargeNumber ?? "Charge " + link.ChargeId)</strong>@(string.IsNullOrWhiteSpace(link.ChargeHolder) ? "" : " (" + link.ChargeHolder + ")")
+                            — @link.Explanation
+                            <a href="/Requests/@request.RequestId?charge=@link.ChargeId#tab-charges">open the charge</a>
+                        </li>
+                    }
+                </ul>
+            </div>
+        </div>
+    }
+
+    <!-- Stored analysis of the case -->
+    @if (card.Analysis is { Status: LitigationAiAnalysisItemStatus.Completed or LitigationAiAnalysisItemStatus.InsufficientEvidence } analysis && !string.IsNullOrWhiteSpace(analysis.Summary))
+    {
+        <div class="card shadow-sm mb-3" id="case-analysis">
+            <div class="card-header bg-light small fw-bold text-uppercase"><i class="bi bi-journal-text me-1 text-primary"></i>Case summary</div>
+            <div class="card-body small">
+                <p>@analysis.Summary</p>
+                @if (analysis.Unknowns.Count > 0)
+                {
+                    <div class="fw-bold text-muted mb-1">Not established from the orders</div>
+                    <ul class="mb-2">@foreach (var u in analysis.Unknowns) { <li>@u</li> }</ul>
+                }
+                @if (analysis.Citations.Count > 0) { <div class="text-muted">Sources: @string.Join("; ", analysis.Citations)</div> }
+                @if (card.IsAnalysisStaleComparedToCase) { <div class="text-muted mt-1">The case record has changed since this summary was written.</div> }
+            </div>
+        </div>
+    }
+
+    <!-- Related cases -->
+    @if (Model.RelatedCases.Count > 0)
+    {
+        <div class="card shadow-sm mb-3" id="case-related">
+            <div class="card-header bg-light small fw-bold text-uppercase"><i class="bi bi-diagram-3 me-1 text-primary"></i>Other cases with the same party</div>
+            <div class="table-responsive">
+                <table class="table table-sm table-striped align-middle mb-0 small">
+                    <thead class="table-light"><tr><th>Case</th><th>Court</th><th>Status</th><th>Tier</th><th>Shared party</th></tr></thead>
+                    <tbody>
+                        @foreach (var r in Model.RelatedCases)
+                        {
+                            <tr>
+                                <td><a href="/Requests/@request.RequestId/Litigation/Cases/@r.LitigationCaseId">@(string.IsNullOrWhiteSpace(r.CaseNumber) ? "Case #" + r.LitigationCaseId : r.CaseNumber)</a></td>
+                                <td>@Or(r.Court)</td>
+                                <td>@r.Status</td>
+                                <td><span class="badge @LitigationBaselineRisk.BadgeCss(r.Tier)">@r.Tier</span></td>
+                                <td>@r.SharedParty</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    }
+
+    <div class="small text-muted">
+        Provider case id @Or(card.ProviderCaseId) · CSP id @Or(card.CspId) · first seen @Ist.Format(card.FirstSeenUtc) · last seen @Ist.Format(card.LastSeenUtc)
+    </div>
+</div>
