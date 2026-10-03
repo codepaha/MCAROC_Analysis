@@ -12,6 +12,9 @@ public enum CaseAgeBasis
     CaseYear,
     /// <summary>No filing date or case year; the year the CNR carries (its last four digits). Approximate, like the case year.</summary>
     CnrYear,
+    /// <summary>No filing date, case year or CNR; the year written in the case number ("C.P.(IB)No.593/KB/2017"). Where the number names several
+    /// cases (an application in a petition) the earliest year is used. Approximate, like the case year.</summary>
+    CaseNumberYear,
     /// <summary>No year at all; the earliest order on file. A true lower bound — the case is at least this old.</summary>
     FirstOrderOnFile,
     Unknown
@@ -31,7 +34,7 @@ public sealed record LitigationCaseAge(
 {
     public bool IsLowerBound => Basis == CaseAgeBasis.FirstOrderOnFile;
     /// <summary>True when the age comes from a year alone, so it is "about" that many years.</summary>
-    public bool IsApproximate => Basis is CaseAgeBasis.CaseYear or CaseAgeBasis.CnrYear;
+    public bool IsApproximate => Basis is CaseAgeBasis.CaseYear or CaseAgeBasis.CnrYear or CaseAgeBasis.CaseNumberYear;
     public int? Years => Months is { } m ? m / 12 : null;
 
     /// <summary>The duration alone: "5 years 5 months", "about 9 years", "at least 7 years".</summary>
@@ -65,6 +68,7 @@ public sealed record LitigationCaseAge(
                 CaseAgeBasis.Filed => $"Filed {D(Start)}{disposedEnd}",
                 CaseAgeBasis.CaseYear => $"No filing date on record · case year {Year} (whole years){disposedEnd}",
                 CaseAgeBasis.CnrYear => $"No filing date or case year on record · year in the CNR {Year} (whole years){disposedEnd}",
+                CaseAgeBasis.CaseNumberYear => $"No filing date, case year or CNR on record · year in the case number {Year} (whole years){disposedEnd}",
                 CaseAgeBasis.FirstOrderOnFile => $"No filing date or year on record · first order on file {D(Start)}{disposedEnd}",
                 _ => "No filing date, year or order on record"
             };
@@ -72,7 +76,7 @@ public sealed record LitigationCaseAge(
     }
 }
 
-public static class LitigationCaseAges
+public static partial class LitigationCaseAges
 {
     private static readonly string[] DateFormats = ["yyyy-MM-dd", "dd-MM-yyyy", "d-M-yyyy", "dd/MM/yyyy", "d/M/yyyy", "d MMM yyyy", "dd MMM yyyy", "yyyy/MM/dd"];
 
@@ -92,13 +96,28 @@ public static class LitigationCaseAges
         return normalised is null ? null : ParseYear(normalised[^4..], asOfYear);
     }
 
+    /// <summary>The year written in a case number after its serial and optional bench code — "593/KB/2017" → 2017, "WP/9/2020" → 2020. A number
+    /// that names several cases ("C.P.(IB)No.593/KB/2017 CA(IB)No.206/KB/2018", a transfer petition in an older petition) gives the earliest
+    /// year, since the dispute is at least that old. Null when no plausible year follows a serial.</summary>
+    public static int? YearInCaseNumber(string? caseNumber, int asOfYear)
+    {
+        if (string.IsNullOrWhiteSpace(caseNumber)) return null;
+        var years = SerialAndYear().Matches(caseNumber)
+            .Select(m => ParseYear(m.Groups["year"].Value, asOfYear)).OfType<int>().ToList();
+        return years.Count == 0 ? null : years.Min();
+    }
+
+    [System.Text.RegularExpressions.GeneratedRegex(@"(?<!\d)\d{1,6}\s*/\s*(?:[A-Za-z]{1,6}\s*/\s*)?(?<year>\d{4})(?!\d)")]
+    private static partial System.Text.RegularExpressions.Regex SerialAndYear();
+
     /// <summary>The age of a case at <paramref name="asOf"/> — the date its data was retrieved (in IST), so a page and a report
     /// built from the same data always agree. Nothing is guessed. The start is, in order: the filing date (exact); the case year
-    /// (approximate, whole years); the year in the CNR (approximate); the earliest order on file (a lower bound). When a year is known
+    /// (approximate, whole years); the year in the CNR (approximate); the year in the case number (approximate); the earliest order on
+    /// file (a lower bound). When a year is known
     /// but an order on file is older than that year allows, the order wins as the lower bound. The basis is always reported.</summary>
     public static LitigationCaseAge Compute(
         string? filingDate, string? decisionDate, string? caseYear, LitigationCaseStatusBucket status,
-        IEnumerable<string?> orderDates, DateOnly asOf, string? cnr = null)
+        IEnumerable<string?> orderDates, DateOnly asOf, string? cnr = null, string? caseNumber = null)
     {
         var orders = orderDates.Select(ParseDate).OfType<DateOnly>().Order().ToList();
         var kind = status switch
@@ -124,6 +143,7 @@ public static class LitigationCaseAges
 
         var (yearBasis, year) = ParseYear(caseYear, asOf.Year) is { } cy ? (CaseAgeBasis.CaseYear, (int?)cy)
             : YearInCnr(cnr, asOf.Year) is { } ny ? (CaseAgeBasis.CnrYear, ny)
+            : YearInCaseNumber(caseNumber, asOf.Year) is { } cn ? (CaseAgeBasis.CaseNumberYear, (int?)cn)
             : (CaseAgeBasis.Unknown, null);
         int? yearMonths = year is { } y && end is { } ye && ye.Year >= y ? (ye.Year - y) * 12 : null;
 

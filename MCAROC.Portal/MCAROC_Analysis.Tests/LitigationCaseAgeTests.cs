@@ -126,6 +126,57 @@ public class LitigationCaseAgeTests
         Assert.Equal("About 9 years since registration", unknownStatus.Headline);
     }
 
+    /// <summary>Owner: also take the year from the case number — the NCLT numbers carry it ("C.P.(IB)No.593/KB/2017") while the provider's
+    /// case-year field and CNR are empty.</summary>
+    [Theory]
+    [InlineData("C.P.(IB)No.593/KB/2017", 2017)]
+    [InlineData("MISC.A.No.36/CTB/2019", 2019)]
+    [InlineData("IA NO 119/CTB/2020", 2020)]
+    [InlineData("WP/9/2020", 2020)]
+    [InlineData("OS 22/2020", 2020)]
+    [InlineData("C.P.(IB)No.593/KB/2017CA(IB)No.206/KB/2018", 2017)]            // several numbers: the earliest year
+    [InlineData("T.P.No.220/CTB/2019 C.P. No.51/2013", 2013)]                   // a transfer petition in an older petition
+    [InlineData("C.P.(IB)No.593/KB/2017CA(IB)No.582/KB/2018CA(IB)No.921/KB/2018", 2017)]
+    public void The_year_is_read_from_a_case_number(string caseNumber, int expected) =>
+        Assert.Equal(expected, LitigationCaseAges.YearInCaseNumber(caseNumber, 2026));
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("41")]                      // a serial alone
+    [InlineData("SA-")]
+    [InlineData("C.P.(IB)No.593/KB/2099")]  // a year after the as-of year
+    [InlineData("OA/12/1850")]              // before 1900
+    public void No_year_is_read_where_the_case_number_has_none_or_an_implausible_one(string? caseNumber) =>
+        Assert.Null(LitigationCaseAges.YearInCaseNumber(caseNumber, 2026));
+
+    [Fact]
+    public void Without_a_filing_date_case_year_or_cnr_the_case_number_year_gives_the_age()
+    {
+        var age = LitigationCaseAges.Compute(null, null, null, LitigationCaseStatusBucket.Pending,
+            ["2018-03-12", "2018-04-18"], AsOf, caseNumber: "C.P.(IB)No.593/KB/2017CA(IB)No.206/KB/2018");
+
+        Assert.Equal((CaseAgeBasis.CaseNumberYear, 108, 2017), (age.Basis, age.Months, age.Year));
+        Assert.True(age.IsApproximate);
+        Assert.Equal("Pending for about 9 years", age.Headline);
+        Assert.Contains("year in the case number 2017", age.BasisNote);
+    }
+
+    [Fact]
+    public void The_case_number_year_comes_after_the_filing_date_case_year_and_cnr_year_and_before_the_first_order()
+    {
+        const string number = "C.P.(IB)No.593/KB/2015";
+        var withCnr = LitigationCaseAges.Compute(null, null, null, LitigationCaseStatusBucket.Pending, ["2018-03-12"], AsOf, cnr: "MHCC050049162017", caseNumber: number);
+        var withYear = LitigationCaseAges.Compute(null, null, "2019", LitigationCaseStatusBucket.Pending, ["2020-03-12"], AsOf, caseNumber: number);
+        var filed = LitigationCaseAges.Compute("2021-04-26", null, null, LitigationCaseStatusBucket.Pending, None, AsOf, caseNumber: number);
+        var numberOnly = LitigationCaseAges.Compute(null, null, null, LitigationCaseStatusBucket.Pending, ["2018-03-12"], AsOf, caseNumber: number);
+
+        Assert.Equal((CaseAgeBasis.CnrYear, 2017), (withCnr.Basis, withCnr.Year));
+        Assert.Equal((CaseAgeBasis.CaseYear, 2019), (withYear.Basis, withYear.Year));
+        Assert.Equal(CaseAgeBasis.Filed, filed.Basis);
+        Assert.Equal((CaseAgeBasis.CaseNumberYear, 2015), (numberOnly.Basis, numberOnly.Year)); // not the later first order
+    }
+
     [Fact]
     public void With_nothing_on_record_the_age_is_not_known()
     {
