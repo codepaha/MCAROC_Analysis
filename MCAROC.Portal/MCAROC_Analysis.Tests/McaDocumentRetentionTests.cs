@@ -767,9 +767,10 @@ public class McaDocumentRetentionTests : IAsyncLifetime, IDisposable
         Assert.Equal(2, remainingChunks.Count);
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task Review387_Failed_file_deletion_must_not_retire_the_database_row()
     {
+        Skip.IfNot(OperatingSystem.IsWindows(), "Exclusive file locking semantics that fail deletion require Windows; tested in windows-tests CI job.");
         await using var db = CreateContext();
 
         var client = await db.Clients.FirstAsync();
