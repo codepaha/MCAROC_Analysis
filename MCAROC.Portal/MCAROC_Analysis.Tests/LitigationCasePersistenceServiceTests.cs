@@ -94,14 +94,14 @@ public class LitigationCasePersistenceServiceTests : IAsyncLifetime
         return snapshotId;
     }
 
-    private static string ReportJson(string cnr, string caseType, string caseNo = "22/2020", string cspId = "csp-1", string orderUrl = "https://source.example/o1.pdf") => $$"""
+    private static string ReportJson(string cnr, string caseType, string caseNo = "22/2020", string cspId = "csp-1", string orderUrl = "https://source.example/o1.pdf", string? providerId = null) => $$"""
         {
             "request_details": {"job_id": "job-1", "report_date": "2026-09-20", "keywords": ["Test Company"]},
             "district_court": {
                 "against": {
                     "civil": [
                         {
-                            "_id": "provider-1", "csp_id": "{{cspId}}", "cnr_number": "{{cnr}}",
+                            "id": "{{providerId ?? "provider-1"}}", "csp_id": "{{cspId}}", "cnr_number": "{{cnr}}",
                             "type": "district", "court": "Sub Judge", "bench": "Bench",
                             "case_no": "{{caseNo}}", "case_type": "{{caseType}}", "case_year": "2020",
                             "case_stage": "Trial", "case_status": "DISPOSED", "act": "Code",
@@ -382,11 +382,11 @@ public class LitigationCasePersistenceServiceTests : IAsyncLifetime
         // reruns of the same (reused) job row, same as the merge-via-CNR test's shape.
         await using var db = CreateContext();
         var request = await SeedRequestAsync(db, "A4");
-        var job1 = await SeedCompletedJobAsync(db, request.RequestId, ReportJson("TNKP070001332023", "OS"));
+        var job1 = await SeedCompletedJobAsync(db, request.RequestId, ReportJson("TNKP070001332023", "OS", providerId: "rec-os"));
         var service = NewService(db);
         await PersistJobAsync(service, job1, CancellationToken.None);
 
-        var job2 = await SeedCompletedJobAsync(db, request.RequestId, ReportJson("TNKP070001332023", "CC"));
+        var job2 = await SeedCompletedJobAsync(db, request.RequestId, ReportJson("TNKP070001332023", "CC", providerId: "rec-cc"));
         await PersistJobAsync(service, job2, CancellationToken.None);
 
         await using var verifyDb = CreateContext();
@@ -403,17 +403,68 @@ public class LitigationCasePersistenceServiceTests : IAsyncLifetime
         // row, without ever exercising the "no CNR ⇒ never auto-dedupe" logic this test targets.
         await using var db = CreateContext();
         var request = await SeedRequestAsync(db, "A5");
-        var job1 = await SeedCompletedJobAsync(db, request.RequestId, ReportJson("", "OS", caseNo: "22/2020", cspId: "shared-csp"));
+        var job1 = await SeedCompletedJobAsync(db, request.RequestId, ReportJson("", "OS", caseNo: "22/2020", cspId: "shared-csp", providerId: "rec-22"));
         var service = NewService(db);
         await PersistJobAsync(service, job1, CancellationToken.None);
 
-        var job2 = await SeedCompletedJobAsync(db, request.RequestId, ReportJson("", "OS", caseNo: "23/2020", cspId: "shared-csp"));
+        var job2 = await SeedCompletedJobAsync(db, request.RequestId, ReportJson("", "OS", caseNo: "23/2020", cspId: "shared-csp", providerId: "rec-23"));
         await PersistJobAsync(service, job2, CancellationToken.None);
 
         await using var verifyDb = CreateContext();
         var cases = await verifyDb.LitigationCases.Where(c => c.RequestId == request.RequestId).ToListAsync();
         Assert.Equal(2, cases.Count);
         Assert.All(cases, c => Assert.Equal("shared-csp", c.CspId));
+    }
+
+    [Fact]
+    public async Task PersistSnapshotAsync_stores_a_CNR_less_case_once_when_a_refresh_returns_the_same_provider_record()
+    {
+        // A refresh returns the cases it returned before. The provider's record id is stable per case, so a case without a CNR
+        // that comes back is the same stored case — not a second row. The reports differ (hearing date) so each is imported.
+        await using var db = CreateContext();
+        var request = await SeedRequestAsync(db, "PR1");
+        var service = NewService(db);
+        var job1 = await SeedCompletedJobAsync(db, request.RequestId, ReportJson("", "OS", caseNo: "22/2020", providerId: "rec-aaa"));
+        await PersistJobAsync(service, job1, CancellationToken.None);
+        var job2 = await SeedCompletedJobAsync(db, request.RequestId, ReportJson("", "OS", caseNo: "22/2020", providerId: "rec-aaa", orderUrl: "https://source.example/o2.pdf"));
+        await PersistJobAsync(service, job2, CancellationToken.None);
+
+        await using var verifyDb = CreateContext();
+        var cases = await verifyDb.LitigationCases.Where(c => c.RequestId == request.RequestId).ToListAsync();
+        var only = Assert.Single(cases);
+        Assert.Equal("rec-aaa", only.ProviderCaseId);
+        Assert.Equal(2, await verifyDb.LitigationCaseSourceReports.CountAsync(s => s.LitigationCaseId == only.LitigationCaseId)); // listed by both reports
+    }
+
+    [Fact]
+    public async Task PersistSnapshotAsync_keeps_cases_with_different_provider_records_separate_even_with_the_same_number_and_csp()
+    {
+        // Nothing is merged on case number, parties or CSP: two different provider records stay two cases.
+        await using var db = CreateContext();
+        var request = await SeedRequestAsync(db, "PR2");
+        var service = NewService(db);
+        var job1 = await SeedCompletedJobAsync(db, request.RequestId, ReportJson("", "OS", caseNo: "22/2020", cspId: "same", providerId: "rec-1"));
+        await PersistJobAsync(service, job1, CancellationToken.None);
+        var job2 = await SeedCompletedJobAsync(db, request.RequestId, ReportJson("", "OS", caseNo: "22/2020", cspId: "same", providerId: "rec-2"));
+        await PersistJobAsync(service, job2, CancellationToken.None);
+
+        await using var verifyDb = CreateContext();
+        Assert.Equal(2, await verifyDb.LitigationCases.CountAsync(c => c.RequestId == request.RequestId));
+    }
+
+    [Fact]
+    public async Task PersistSnapshotAsync_does_not_match_a_provider_record_id_across_requests()
+    {
+        await using var db = CreateContext();
+        var first = await SeedRequestAsync(db, "PR3");
+        var second = await SeedRequestAsync(db, "PR4");
+        var service = NewService(db);
+        await PersistJobAsync(service, await SeedCompletedJobAsync(db, first.RequestId, ReportJson("", "OS", providerId: "rec-shared")), CancellationToken.None);
+        await PersistJobAsync(service, await SeedCompletedJobAsync(db, second.RequestId, ReportJson("", "OS", providerId: "rec-shared")), CancellationToken.None);
+
+        await using var verifyDb = CreateContext();
+        Assert.Equal(1, await verifyDb.LitigationCases.CountAsync(c => c.RequestId == first.RequestId));
+        Assert.Equal(1, await verifyDb.LitigationCases.CountAsync(c => c.RequestId == second.RequestId));
     }
 
     [Fact]

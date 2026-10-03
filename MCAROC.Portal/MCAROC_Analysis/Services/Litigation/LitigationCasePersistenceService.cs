@@ -232,7 +232,8 @@ public sealed class LitigationCasePersistenceService(
         {
             var addedThisAttempt = new List<object>();
 
-            var litigationCase = await FindAutoDedupeMatchAsync(requestId, identity, ct);
+            var litigationCase = await FindAutoDedupeMatchAsync(requestId, identity, ct)
+                ?? await FindSameProviderRecordAsync(requestId, item.ProviderCaseId, ct);
             var isNewCase = litigationCase is null;
             litigationCase ??= new LitigationCase { RequestId = requestId, FirstSeenUtc = now };
             if (isNewCase)
@@ -294,9 +295,19 @@ public sealed class LitigationCasePersistenceService(
             LitigationCaseIdentity.CanAutoDedupe(identity, new LitigationCaseIdentityEvidence(c.Cnr, c.ProceedingType, null, c.CspId)));
     }
 
+    /// <summary>The same provider record seen again — a refresh returns the cases it already returned. The provider's record id is
+    /// stable per case, so a case stored under it is this case, with or without a CNR. This is "already stored", not a judgement that two
+    /// different records are one case: records with different ids stay separate (nothing is merged on case number or parties).</summary>
+    private async Task<LitigationCase?> FindSameProviderRecordAsync(long requestId, string? providerCaseId, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(providerCaseId)) return null;
+        var id = providerCaseId.Trim();
+        return await db.LitigationCases.FirstOrDefaultAsync(c => c.RequestId == requestId && c.ProviderCaseId == id, ct);
+    }
+
     private static void ApplyFields(LitigationCase litigationCase, LitigationCaseIdentityEvidence identity, BprLitigationCase item, DateTime now)
     {
-        litigationCase.ProviderCaseId = item.ProviderCaseId;
+        litigationCase.ProviderCaseId = item.ProviderCaseId ?? litigationCase.ProviderCaseId;
         litigationCase.CspId = item.CspId;
         litigationCase.Cnr = identity.Cnr;
         litigationCase.ProceedingType = identity.ProceedingType;
