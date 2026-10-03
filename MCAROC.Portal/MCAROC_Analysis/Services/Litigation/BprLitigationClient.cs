@@ -237,7 +237,7 @@ public sealed class BprLitigationClient(
 
             if (bytes.Length == 0)
                 return BprOrderDownloadResult.Failed("Order PDF download returned an empty body.");
-            if (!StartsWithPdfSignature(bytes))
+            if (!HasPdfSignature(bytes))
                 return BprOrderDownloadResult.Failed(
                     $"Downloaded content ({bytes.Length:N0} bytes) does not start with the PDF signature — " +
                     "likely an error page or an expired link, not the order.");
@@ -263,8 +263,16 @@ public sealed class BprLitigationClient(
         return buffer.ToArray();
     }
 
-    private static bool StartsWithPdfSignature(byte[] bytes) =>
-        bytes.Length >= PdfSignature.Length && bytes.AsSpan(0, PdfSignature.Length).SequenceEqual(PdfSignature);
+    /// <summary>True when the content is a PDF: <c>%PDF-</c> at the start, allowing only blank space before it. The format permits a few bytes ahead of the
+    /// header and the tribunal's order files have them (eight blank-line bytes), so a strict byte-0 check rejected every DRT order. Anything else before the
+    /// signature — an HTML or JSON error page, an expired-link body — is still not a PDF.</summary>
+    internal static bool HasPdfSignature(byte[] bytes)
+    {
+        var limit = Math.Min(bytes.Length, 1024);
+        var i = 0;
+        while (i < limit && bytes[i] is 0x00 or 0x09 or 0x0A or 0x0D or 0x20) i++;
+        return bytes.Length - i >= PdfSignature.Length && bytes.AsSpan(i, PdfSignature.Length).SequenceEqual(PdfSignature);
+    }
 
     // Private/loopback/link-local ranges an order PDF host must never resolve to, even if the hostname
     // itself is on the allowlist — defense in depth against DNS pointing an approved-looking name at an
