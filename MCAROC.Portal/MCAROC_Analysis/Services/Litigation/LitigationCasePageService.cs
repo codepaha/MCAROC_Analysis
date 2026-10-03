@@ -88,7 +88,7 @@ public sealed class LitigationCasePageService(AppDbContext db, ChargeLitigationS
         var matched = new List<MatchedOrderIdentifier>();
         var withText = 0;
         var namingCompany = 0;
-        foreach (var order in theCase.Orders.OrderByDescending(o => o.OrderDate))
+        foreach (var order in theCase.Orders.OrderByDescending(o => LitigationCaseAges.ParseDate(o.OrderDate) ?? DateOnly.MinValue))
         {
             if (!orderDocs.TryGetValue(order.LitigationCaseOrderId, out var doc) || string.IsNullOrWhiteSpace(doc.ExtractedText)) continue;
             withText++;

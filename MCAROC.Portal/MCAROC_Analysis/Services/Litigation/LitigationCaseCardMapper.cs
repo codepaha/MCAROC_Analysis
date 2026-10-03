@@ -60,7 +60,7 @@ public static class LitigationCaseCardMapper
         card.Risk = LitigationBaselineRisk.Assess(new LitigationRiskInput(
             c.Type, c.Court, c.CourtCategory, c.CaseType, c.Act, c.CaseStage, c.CaseClassification, c.ProceedingType, status, card.CompanySide, card.Petitioners));
 
-        foreach (var o in c.Orders.OrderByDescending(o => o.OrderDate))
+        foreach (var o in c.Orders.OrderByDescending(o => LitigationCaseAges.ParseDate(o.OrderDate) ?? DateOnly.MinValue))
         {
             ctx.OrderDocByOrderId.TryGetValue(o.LitigationCaseOrderId, out var od);
             var orderMatches = ctx.PropertyMatchesByOrderId.TryGetValue(o.LitigationCaseOrderId, out var omList) ? omList : [];

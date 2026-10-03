@@ -352,15 +352,29 @@
                         </div>
                     }
                 </div>
+                @if (lake.AgeProfile.PendingEstimatedFromYear + lake.AgeProfile.PendingAtLeast > 0)
+                {
+                    <p class="small mb-0 mt-3 text-muted">
+                        The bands count pending cases with a filing date.
+                        @if (lake.AgeProfile.PendingEstimatedFromYear > 0)
+                        {
+                            <span><strong>@lake.AgeProfile.PendingEstimatedFromYear</strong> more @(lake.AgeProfile.PendingEstimatedFromYear == 1 ? "has" : "have") only a year to go on, so an estimated age. </span>
+                        }
+                        @if (lake.AgeProfile.PendingAtLeast > 0)
+                        {
+                            <span><strong>@lake.AgeProfile.PendingAtLeast</strong> more @(lake.AgeProfile.PendingAtLeast == 1 ? "has" : "have") no date at all, only an earliest order on file, so an age of "at least" that. Neither is banded or ranked.</span>
+                        }
+                    </p>
+                }
                 @if (lake.AgeProfile.OldestPending is { } oldest)
                 {
                     <p class="small mb-0 mt-3">
-                        <span class="text-muted">Oldest pending case:</span>
+                        <span class="text-muted">Oldest pending case with a filing date:</span>
                         <strong>@oldest.Duration</strong>
                         <span class="text-muted">(@oldest.BasisNote)</span>
                         @if (lake.AgeProfile.OldestPendingCaseId is { } oldestId)
                         {
-                            <a href="#case-card-@oldestId" class="ms-1">view case</a>
+                            <a href="/Requests/@reqId/Litigation/Cases/@oldestId" class="ms-1">view case</a>
                         }
                     </p>
                 }

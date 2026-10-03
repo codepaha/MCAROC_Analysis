@@ -196,18 +196,27 @@ public static partial class LitigationCaseAges
     };
 }
 
-/// <summary>The ageing of a portfolio's pending cases: how many fall in each band, and the oldest with a known age.</summary>
+/// <summary>The ageing of a portfolio's pending cases. Only a case with a filing date has an age that can be banded or ranked: a year-based
+/// age is an estimate (give or take a year) and an age from the earliest order on file is only a floor — a case with such an age could be far
+/// older. Those are counted on their own, never folded into a band or put forward as the oldest case.</summary>
 public sealed class LitigationAgeProfile
 {
+    /// <summary>Pending cases with a filing date, by band; <see cref="CaseAgeBand.NotKnown"/> holds those with no age at all.</summary>
     public Dictionary<CaseAgeBand, int> PendingByBand { get; } = Enum.GetValues<CaseAgeBand>().ToDictionary(b => b, _ => 0);
-    public int PendingCases => PendingByBand.Values.Sum();
+    /// <summary>Pending cases whose age is only worked out from a case, CNR or case-number year.</summary>
+    public int PendingEstimatedFromYear { get; private set; }
+    /// <summary>Pending cases whose age is only "at least" the time since their earliest order on file.</summary>
+    public int PendingAtLeast { get; private set; }
+    public int PendingCases => PendingByBand.Values.Sum() + PendingEstimatedFromYear + PendingAtLeast;
     public long? OldestPendingCaseId { get; private set; }
     public LitigationCaseAge? OldestPending { get; private set; }
 
-    /// <summary>Counts every case's age; only pending cases are banded.</summary>
+    /// <summary>Counts every case's age; only pending cases are counted.</summary>
     public void Add(long caseId, LitigationCaseAge age)
     {
         if (age.Kind != CaseAgeKind.Pending) return;
+        if (age.IsLowerBound) { PendingAtLeast++; return; }
+        if (age.IsApproximate) { PendingEstimatedFromYear++; return; }
         PendingByBand[LitigationCaseAges.BandOf(age)]++;
         if (age.Months is { } m && (OldestPending?.Months is not { } best || m > best))
         {

@@ -1,3 +1,4 @@
+using MCAROC_Analysis.Data.Entities;
 using MCAROC_Analysis.Models;
 using MCAROC_Analysis.Services.LitigationData;
 
@@ -254,9 +255,25 @@ public class LitigationCaseAgeTests
         Assert.Equal(4, profile.PendingCases);
         Assert.Equal(1, profile.PendingByBand[CaseAgeBand.UnderOneYear]);
         Assert.Equal(1, profile.PendingByBand[CaseAgeBand.OneToThreeYears]);
-        Assert.Equal(2, profile.PendingByBand[CaseAgeBand.OverFiveYears]); // the case with a filing date and the one with only a year (about 9 years)
+        Assert.Equal(1, profile.PendingByBand[CaseAgeBand.OverFiveYears]); // only the case with a filing date is banded
+        Assert.Equal(1, profile.PendingEstimatedFromYear);                 // the year-only case is counted on its own
         Assert.Equal(0, profile.PendingByBand[CaseAgeBand.NotKnown]);
         Assert.Equal(3, profile.OldestPendingCaseId);
+    }
+
+    [Fact]
+    public void A_lower_bound_is_not_banded_and_is_never_the_oldest_case()
+    {
+        var profile = new LitigationAgeProfile();
+        // Only an order from 1 June 2026 is on file: "at least 4 months", but the case could be ten years old.
+        profile.Add(1, LitigationCaseAges.Compute(null, null, null, LitigationCaseStatusBucket.Pending, ["2026-06-01"], AsOf));
+        profile.Add(2, LitigationCaseAges.Compute("2024-01-10", null, null, LitigationCaseStatusBucket.Pending, None, AsOf));
+
+        Assert.Equal(1, profile.PendingAtLeast);
+        Assert.Equal(0, profile.PendingByBand[CaseAgeBand.UnderOneYear]);
+        Assert.Equal(1, profile.PendingByBand[CaseAgeBand.OneToThreeYears]);
+        Assert.Equal(2, profile.PendingCases);
+        Assert.Equal(2, profile.OldestPendingCaseId);
     }
 
     [Theory]
@@ -269,4 +286,28 @@ public class LitigationCaseAgeTests
     [InlineData(60, CaseAgeBand.OverFiveYears)]
     public void Bands_follow_whole_months(int months, CaseAgeBand expected) =>
         Assert.Equal(expected, LitigationCaseAges.BandOf(new LitigationCaseAge(CaseAgeBasis.Filed, CaseAgeKind.Pending, null, null, months, false, null)));
+
+    [Fact]
+    public void Orders_are_listed_newest_first_by_date_not_by_text()
+    {
+        // Day-first text sorts "26-04-2021" after "09-01-2025"; the dates themselves do not.
+        var c = new LitigationCase
+        {
+            LitigationCaseId = 1, CaseStatus = "PENDING",
+            Orders =
+            [
+                new LitigationCaseOrder { LitigationCaseOrderId = 1, OrderDate = "26-04-2021" },
+                new LitigationCaseOrder { LitigationCaseOrderId = 2, OrderDate = "09-01-2025" },
+                new LitigationCaseOrder { LitigationCaseOrderId = 3, OrderDate = "2023-05-01" },
+                new LitigationCaseOrder { LitigationCaseOrderId = 4, OrderDate = "not a date" }
+            ]
+        };
+        var ctx = new LitigationCaseMapContext(
+            new Dictionary<long, LitigationOrderDocument>(), new Dictionary<long, List<LitigationPropertyMatchResult>>(),
+            new Dictionary<long, OrderOutcomeMatch>(), OrderOutcomeLookup.Empty, new Dictionary<long, LitigationCaseAiAnalysis>(), 0, AsOf, []);
+
+        var card = LitigationCaseCardMapper.Map(c, ctx);
+
+        Assert.Equal([2L, 3L, 1L, 4L], card.Orders.Select(o => o.LitigationCaseOrderId));
+    }
 }
