@@ -95,7 +95,7 @@
                 }
             </h3>
             <p class="text-muted small mb-0">
-                Court records, case orders and evidence-grounded AI analysis.
+                Court records, case orders and case analysis.
                 @if (hasReport)
                 {
                     <span>Data retrieved @Ist.Format(lake.AuthoritativeSnapshot!.RetrievedUtc).</span>
@@ -105,15 +105,15 @@
         <div class="d-flex flex-wrap align-items-center gap-2">
             @if (hasReport)
             {
-                <div class="btn-group btn-group-sm" role="group" aria-label="Report before AI analysis">
-                    <a href="/Requests/@reqId/Litigation/Report/pdf" class="btn btn-outline-danger" title="Case data only, no AI analysis"><i class="bi bi-file-earmark-pdf me-1"></i>Report (PDF)</a>
-                    <a href="/Requests/@reqId/Litigation/Report/csv" class="btn btn-outline-success" title="Case register only, no AI analysis"><i class="bi bi-file-earmark-spreadsheet me-1"></i>Report (CSV)</a>
+                <div class="btn-group btn-group-sm" role="group" aria-label="Report before analysis">
+                    <a href="/Requests/@reqId/Litigation/Report/pdf" class="btn btn-outline-danger" title="Case data only, no analysis"><i class="bi bi-file-earmark-pdf me-1"></i>Report (PDF)</a>
+                    <a href="/Requests/@reqId/Litigation/Report/csv" class="btn btn-outline-success" title="Case register only, no analysis"><i class="bi bi-file-earmark-spreadsheet me-1"></i>Report (CSV)</a>
                 </div>
                 @if (lake.HasCompletedAnalysis)
                 {
-                    <div class="btn-group btn-group-sm" role="group" aria-label="Report with AI analysis">
-                        <a href="/Requests/@reqId/Litigation/Report/pdf?withAnalysis=true" class="btn btn-outline-danger" title="Includes the AI analysis"><i class="bi bi-stars me-1"></i>With AI (PDF)</a>
-                        <a href="/Requests/@reqId/Litigation/Report/csv?withAnalysis=true" class="btn btn-outline-success" title="Includes the AI analysis"><i class="bi bi-stars me-1"></i>With AI (CSV)</a>
+                    <div class="btn-group btn-group-sm" role="group" aria-label="Report with analysis">
+                        <a href="/Requests/@reqId/Litigation/Report/pdf?withAnalysis=true" class="btn btn-outline-danger" title="Includes the case analysis"><i class="bi bi-journal-text me-1"></i>With analysis (PDF)</a>
+                        <a href="/Requests/@reqId/Litigation/Report/csv?withAnalysis=true" class="btn btn-outline-success" title="Includes the case analysis"><i class="bi bi-journal-text me-1"></i>With analysis (CSV)</a>
                     </div>
                 }
                 <a href="/Requests/@reqId/Litigation/OrdersZip" class="btn btn-sm btn-outline-secondary" title="Download all retained order PDFs as a ZIP archive">
@@ -121,8 +121,8 @@
                 </a>
                 <button type="button" id="litigation-run-analysis" class="btn btn-sm btn-primary"
                         disabled="@(lake.AnalysisInProgress || !lake.NeedsAnalysis || searchRunning)"
-                        title="@(lake.AnalysisInProgress ? "Analysis is running" : !lake.NeedsAnalysis ? "All cases are already analysed and nothing has changed" : "Run evidence-grounded AI analysis on new or changed cases")">
-                    <i class="bi bi-stars me-1"></i>@(lake.AnalysisInProgress ? "Analysing…" : lake.HasCompletedAnalysis ? "Re-run AI Analysis" : "Run AI Analysis")
+                        title="@(lake.AnalysisInProgress ? "Analysis is running" : !lake.NeedsAnalysis ? "All cases are already analysed and nothing has changed" : "Analyse new or changed cases")">
+                    <i class="bi bi-journal-text me-1"></i>@(lake.AnalysisInProgress ? "Analysing…" : lake.HasCompletedAnalysis ? "Re-run analysis" : "Run analysis")
                 </button>
             }
             @if (lake.SearchJob is not null || hasReport)
@@ -518,13 +518,13 @@
         </div>
     </div>
 
-    <!-- Portfolio AI Synthesis (if available) -->
+    <!-- Portfolio synthesis (if available) -->
     @if (lake.PortfolioAnalysis is not null)
     {
         <div class="card mb-4 shadow-sm border border-primary-subtle">
             <div class="card-header bg-primary text-white py-2 px-3 d-flex justify-content-between align-items-center">
                 <h5 class="card-title mb-0 small fw-bold text-uppercase">
-                    <i class="bi bi-stars me-2"></i>Portfolio Legal Risk Synthesis (Gemini AI)
+                    <i class="bi bi-journal-text me-2"></i>Portfolio summary of the cases
                 </h5>
                 <span class="badge bg-white text-primary">@lake.PortfolioAnalysis.Status</span>
             </div>
@@ -761,7 +761,7 @@
             if (btn) {
                 btn.addEventListener('click', function () {
                     btn.disabled = true;
-                    say('Starting AI analysis…');
+                    say('Starting analysis…');
                     fetch('/Requests/' + reqId + '/Litigation/Analysis', {
                         method: 'POST',
                         headers: { 'Accept': 'application/json' },
@@ -769,15 +769,15 @@
                     })
                         .then(function (r) { return r.json().catch(function () { return {}; }).then(function (b) { return { ok: r.ok, body: b }; }); })
                         .then(function (res) {
-                            if (!res.ok) { say(res.body.error || 'AI analysis could not be started.'); return; }
-                            say('AI analysis is running. This page will update when it finishes.');
+                            if (!res.ok) { say(res.body.error || 'Analysis could not be started.'); return; }
+                            say('Analysis is running. This page will update when it finishes.');
                             btn.innerHTML = '<i class="bi bi-stars me-1"></i>Analysing…';
                             poll();
-                        }).catch(function () { btn.disabled = false; say('AI analysis could not be started.'); });
+                        }).catch(function () { btn.disabled = false; say('Analysis could not be started.'); });
                 });
                 @if (lake.AnalysisInProgress)
                 {
-                    <text>say('AI analysis is running. This page will update when it finishes.'); poll();</text>
+                    <text>say('Analysis is running. This page will update when it finishes.'); poll();</text>
                 }
             }
         })();

@@ -377,11 +377,11 @@
             }
         </div>
 
-        <!-- Gemini AI Case Analysis -->
+        <!-- Stored case analysis -->
         <div class="border rounded p-3 bg-light">
             <div class="d-flex align-items-center justify-content-between mb-2">
                 <span class="small fw-bold text-uppercase text-primary">
-                    <i class="bi bi-stars me-1"></i>Evidence-Grounded AI Analysis
+                    <i class="bi bi-journal-text me-1"></i>Case analysis
                 </span>
                 @if (Model.Analysis is not null)
                 {
@@ -394,7 +394,7 @@
             @if (Model.Analysis is null)
             {
                 <div class="small text-muted">
-                    <i class="bi bi-hourglass-split me-1"></i><strong>Analysis Pending:</strong> Evidence-grounded AI analysis has not yet been executed for this case.
+                    <i class="bi bi-hourglass-split me-1"></i><strong>Analysis pending:</strong> this case has not been analysed yet.
                 </div>
             }
             else
@@ -406,30 +406,7 @@
                     </div>
                 }
 
-                @if (!string.IsNullOrWhiteSpace(Model.Analysis.Summary))
-                {
-                    <p class="small mb-2 text-dark">@Model.Analysis.Summary</p>
-                }
-
-                @if (Model.Analysis.Unknowns.Count > 0)
-                {
-                    <div class="mb-2">
-                        <div class="small fw-bold text-muted">Information Gaps / Unknowns:</div>
-                        <ul class="mb-0 ps-3 small text-muted">
-                            @foreach (var u in Model.Analysis.Unknowns)
-                            {
-                                <li>@u</li>
-                            }
-                        </ul>
-                    </div>
-                }
-
-                @if (Model.Analysis.Citations.Count > 0)
-                {
-                    <div class="small text-muted mt-2 pt-2 border-top">
-                        <strong>Evidence Citations:</strong> @string.Join(", ", Model.Analysis.Citations)
-                    </div>
-                }
+                @await Html.PartialAsync("~/Views/LitigationCase/_CaseAnalysis.cshtml", Model.Analysis, new ViewDataDictionary(ViewData) { { "RequestId", (long)requestId }, { "Full", false } })
 
                 @if (Model.Analysis.Status == LitigationAiAnalysisItemStatus.Failed && !string.IsNullOrWhiteSpace(Model.Analysis.FailureReason))
                 {

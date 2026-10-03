@@ -1,0 +1,102 @@
+@using MCAROC_Analysis.Models
+@using MCAROC_Analysis.Data.Entities
+@using MCAROC_Analysis.Services.LitigationData
+@model LitigationCaseAiAnalysisViewModel
+@{
+    // The stored analysis of one case. On the case page (Full) it also shows the findings of each order; on the card it is the short form.
+    var requestId = (long)(ViewData["RequestId"] ?? 0L);
+    var full = ViewData["Full"] is true;
+    string Link(long? documentId, int page) => documentId is { } d ? $"/Requests/{requestId}/Litigation/Orders/{d}/download#page={page}" : "";
+    string TierCss(string? tier) => Enum.TryParse<LitigationRiskTier>(tier, out var t) ? LitigationBaselineRisk.BadgeCss(t) : "bg-secondary";
+    string Pretty(string? v) => string.IsNullOrWhiteSpace(v) ? "" : v!.Replace('_', ' ').ToLowerInvariant();
+    string Claim(string c) => c switch
+    {
+        "risk_trigger" => "Why the tier was raised", "restraint" => "Restraint", "lis_pendens" => "Lis pendens",
+        "operative_order" => "Operative order", "outcome" => "Outcome", "target_party" => "The company's role", _ => c
+    };
+}
+@if (Model.IsDetailed)
+{
+    <div class="d-flex flex-wrap align-items-center gap-2 mb-2">
+        @if (!string.IsNullOrWhiteSpace(Model.RiskLevel))
+        {
+            <span class="badge @TierCss(Model.RiskLevel)" title="Tier after reading the orders">@Model.RiskLevel</span>
+        }
+        @if (Model.RiskRaised && !string.IsNullOrWhiteSpace(Model.BaselineRisk))
+        {
+            <span class="badge bg-light text-dark border" title="The tier worked out from the court record alone">Raised from @Model.BaselineRisk on the orders</span>
+        }
+        @if (!string.IsNullOrWhiteSpace(Model.Relevance)) { <span class="badge bg-light text-dark border">@Model.Relevance</span> }
+        @if (Model.ActiveRestraint) { <span class="badge bg-danger"><i class="bi bi-slash-circle me-1"></i>Restraint in force@(string.IsNullOrWhiteSpace(Model.RestraintType) || Model.RestraintType == "NONE" ? "" : " (" + Pretty(Model.RestraintType) + ")")</span> }
+        @if (Model.LisPendens) { <span class="badge bg-warning text-dark">Lis pendens</span> }
+        @if (!string.IsNullOrWhiteSpace(Model.TargetRole)) { <span class="text-muted small">Company is: @Model.TargetRole@(string.IsNullOrWhiteSpace(Model.ExposureDirection) || Model.ExposureDirection == "UNKNOWN" ? "" : " - " + Pretty(Model.ExposureDirection))</span> }
+    </div>
+    @if (!string.IsNullOrWhiteSpace(Model.RiskTrigger))
+    {
+        <p class="small mb-1"><strong>@Model.RiskTrigger</strong>@(string.IsNullOrWhiteSpace(Model.RiskReason) ? "" : " - " + Model.RiskReason)</p>
+    }
+}
+@if (!string.IsNullOrWhiteSpace(Model.Summary)) { <p class="small mb-2">@Model.Summary</p> }
+@if (Model.IsDetailed)
+{
+    @if (!string.IsNullOrWhiteSpace(Model.ConsequenceNote)) { <p class="small mb-2"><span class="fw-bold text-muted">If decided against the company: </span>@Model.ConsequenceNote</p> }
+    @if (Model.PetitionerResult is not null || !string.IsNullOrWhiteSpace(Model.FinalOrderSummary))
+    {
+        <p class="small mb-2"><span class="fw-bold text-muted">Outcome: </span>@Model.FinalOrderSummary
+            @if (!string.IsNullOrWhiteSpace(Model.PetitionerResult)) { <span class="text-muted"> (petitioner: @Model.PetitionerResult@(string.IsNullOrWhiteSpace(Model.RespondentResult) ? "" : "; respondent: " + Model.RespondentResult))</span> }
+        </p>
+    }
+    @if (full)
+    {
+        @if (!string.IsNullOrWhiteSpace(Model.FactualBackground) || !string.IsNullOrWhiteSpace(Model.ReliefSought) || !string.IsNullOrWhiteSpace(Model.CoreIssue))
+        {
+            <dl class="row small mb-2">
+                @if (!string.IsNullOrWhiteSpace(Model.FactualBackground)) { <dt class="col-sm-3 text-muted">Background</dt><dd class="col-sm-9">@Model.FactualBackground</dd> }
+                @if (!string.IsNullOrWhiteSpace(Model.ReliefSought)) { <dt class="col-sm-3 text-muted">Relief sought</dt><dd class="col-sm-9">@Model.ReliefSought</dd> }
+                @if (!string.IsNullOrWhiteSpace(Model.CoreIssue)) { <dt class="col-sm-3 text-muted">Central question</dt><dd class="col-sm-9">@Model.CoreIssue</dd> }
+                @if (!string.IsNullOrWhiteSpace(Model.Amount)) { <dt class="col-sm-3 text-muted">Amount</dt><dd class="col-sm-9">@Model.Amount</dd> }
+            </dl>
+        }
+        @if (Model.JudicialReasoning.Count > 0)
+        {
+            <div class="fw-bold text-muted small mb-1">The court's reasoning</div>
+            <ul class="small mb-2">@foreach (var r in Model.JudicialReasoning) { <li>@r</li> }</ul>
+        }
+        @if (Model.Provisions.Count > 0) { <div class="small mb-1"><span class="fw-bold text-muted">Provisions: </span>@string.Join("; ", Model.Provisions)</div> }
+        @if (Model.ConnectedMatters.Count > 0) { <div class="small mb-1"><span class="fw-bold text-muted">Connected matters: </span>@string.Join("; ", Model.ConnectedMatters)</div> }
+        @if (Model.Precedents.Count > 0) { <div class="small mb-2"><span class="fw-bold text-muted">Precedents cited: </span>@string.Join("; ", Model.Precedents)</div> }
+        @if (Model.OrderFindings.Count > 0)
+        {
+            <div class="fw-bold text-muted small mb-1 mt-2">Order by order</div>
+            @foreach (var o in Model.OrderFindings.Where(x => !string.IsNullOrWhiteSpace(x.Summary)))
+            {
+                <div class="border rounded p-2 mb-2 small">
+                    <div class="fw-bold">@(o.Date ?? "Undated")@(string.IsNullOrWhiteSpace(o.Type) ? "" : " - " + o.Type)
+                        @if (o.DocumentId is { } od) { <a class="ms-2 fw-normal" href="@Link(od, 1)">order PDF</a> }</div>
+                    <div>@o.Summary</div>
+                    @if (o.KeyFindings.Count > 0) { <ul class="mb-1 mt-1">@foreach (var f in o.KeyFindings) { <li>@f</li> }</ul> }
+                    @if (!string.IsNullOrWhiteSpace(o.OperativeOrder)) { <div><span class="text-muted">Operative order: </span>@o.OperativeOrder</div> }
+                </div>
+            }
+        }
+    }
+    @if (Model.Quotes.Count > 0)
+    {
+        <details class="small mb-2">
+            <summary class="fw-bold text-muted">Passages this rests on (@Model.Quotes.Count)</summary>
+            @foreach (var q in Model.Quotes)
+            {
+                <blockquote class="border-start ps-2 my-1 mb-0">
+                    <span class="text-muted">@Claim(q.Claim) - </span>"@q.Quote"
+                    @if (q.DocumentId is { } qd) { <a class="ms-1" href="@Link(qd, q.Page)">p. @q.Page</a> } else { <span class="text-muted ms-1">p. @q.Page</span> }
+                </blockquote>
+            }
+        </details>
+    }
+}
+@if (Model.Unknowns.Count > 0)
+{
+    <div class="fw-bold text-muted small">Not established from the orders</div>
+    <ul class="mb-2 small text-muted">@foreach (var u in Model.Unknowns) { <li>@u</li> }</ul>
+}
+@if (!Model.IsDetailed && Model.Citations.Count > 0) { <div class="small text-muted">Sources: @string.Join("; ", Model.Citations)</div> }

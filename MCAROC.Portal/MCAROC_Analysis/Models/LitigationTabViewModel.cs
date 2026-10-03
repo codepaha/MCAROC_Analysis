@@ -338,6 +338,57 @@ public sealed class LitigationCaseAiAnalysisViewModel
     public DateTime? CompletedUtc { get; set; }
     public string? FailureReason { get; set; }
     public int RunNumber { get; set; }
+
+    // The v2.0 case analysis (null / empty on an analysis in the older shape).
+    public bool IsDetailed { get; set; }
+    public string? BaselineRisk { get; set; }
+    public bool RiskRaised { get; set; }
+    public string? RiskTrigger { get; set; }
+    public string? RiskReason { get; set; }
+    public string? Relevance { get; set; }
+    public string? CaseNature { get; set; }
+    public string? TargetRole { get; set; }
+    public string? ExposureDirection { get; set; }
+    public string? Subject { get; set; }
+    public string? Amount { get; set; }
+    public bool ActiveRestraint { get; set; }
+    public string? RestraintType { get; set; }
+    public bool LisPendens { get; set; }
+    public string? FactualBackground { get; set; }
+    public string? ReliefSought { get; set; }
+    public string? CoreIssue { get; set; }
+    public string? ConsequenceNote { get; set; }
+    public string? PetitionerResult { get; set; }
+    public string? RespondentResult { get; set; }
+    public string? FinalOrderSummary { get; set; }
+    public List<string> JudicialReasoning { get; set; } = [];
+    public List<string> Provisions { get; set; } = [];
+    public List<string> Precedents { get; set; } = [];
+    public List<string> ConnectedMatters { get; set; } = [];
+    public List<LitigationAnalysisOrderFinding> OrderFindings { get; set; } = [];
+    public List<LitigationAnalysisQuote> Quotes { get; set; } = [];
+}
+
+/// <summary>What the analysis found in one order.</summary>
+public sealed class LitigationAnalysisOrderFinding
+{
+    public long OrderId { get; set; }
+    public long? DocumentId { get; set; }
+    public string? Date { get; set; }
+    public string? Type { get; set; }
+    public string? Summary { get; set; }
+    public List<string> KeyFindings { get; set; } = [];
+    public string? OperativeOrder { get; set; }
+}
+
+/// <summary>A passage the portal confirmed word for word in an order, with the page it is on.</summary>
+public sealed class LitigationAnalysisQuote
+{
+    public string Claim { get; set; } = "";
+    public long OrderId { get; set; }
+    public long? DocumentId { get; set; }
+    public string Quote { get; set; } = "";
+    public int Page { get; set; }
 }
 
 public sealed class LitigationPortfolioAiAnalysisViewModel
