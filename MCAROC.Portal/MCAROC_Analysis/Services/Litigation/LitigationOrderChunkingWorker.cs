@@ -25,9 +25,13 @@ public sealed class LitigationOrderChunkingWorker(
         try
         {
             using var scope = scopes.CreateScope();
-            var count = await scope.ServiceProvider.GetRequiredService<LitigationOrderChunkingOrchestrator>().RecoverStaleWorkAsync(ct);
+            var orchestrator = scope.ServiceProvider.GetRequiredService<LitigationOrderChunkingOrchestrator>();
+            var count = await orchestrator.RecoverStaleWorkAsync(ct);
             if (count > 0)
                 logger.LogInformation("Re-queued {Count} litigation order document(s) for chunking on startup", count);
+            var outdatedCount = await orchestrator.EnqueueOutdatedDocumentsAsync(1000, ct);
+            if (outdatedCount > 0)
+                logger.LogInformation("Re-queued {Count} outdated litigation order document(s) for re-embedding on startup", outdatedCount);
         }
         catch (Exception ex)
         {

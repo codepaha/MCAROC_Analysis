@@ -144,14 +144,15 @@ public class LitigationDocumentRetriever(AppDbContext db, ChatRetrievalOptions o
         """;
 
     // Rank on a narrow (LitigationOrderChunkId, Distance) subquery first, then join back for the wide
-    // columns only for the winning rows — see this type's own remarks for why.
+    // columns only for the winning rows — see this type's own remarks for why. #361 filters on the active
+    // EmbeddingModel so vector distance is never evaluated across incompatible model spaces during a migration.
     private const string VectorSql = $"""
             SELECT {WideColumns},
                 ranked.Distance
             FROM (
                 SELECT TOP (@topK) LitigationOrderChunkId, VECTOR_DISTANCE('cosine', Embedding, @queryVector) AS Distance
                 FROM LitigationOrderChunks
-                WHERE RequestId = @requestId
+                WHERE RequestId = @requestId AND EmbeddingModel = @model
                 ORDER BY VECTOR_DISTANCE('cosine', Embedding, @queryVector)
             ) AS ranked
             JOIN LitigationOrderChunks c ON c.LitigationOrderChunkId = ranked.LitigationOrderChunkId
@@ -167,7 +168,7 @@ public class LitigationDocumentRetriever(AppDbContext db, ChatRetrievalOptions o
                 SELECT TOP (@topK) d.LitigationOrderChunkId, ft.[RANK] AS FtRank
                 FROM CONTAINSTABLE(LitigationOrderChunks, ChunkText, @ftQuery) AS ft
                 JOIN LitigationOrderChunks d ON d.LitigationOrderChunkId = ft.[KEY]
-                WHERE d.RequestId = @requestId
+                WHERE d.RequestId = @requestId AND d.EmbeddingModel = @model
                 ORDER BY ft.[RANK] DESC, d.LitigationOrderChunkId
             ) AS ranked
             JOIN LitigationOrderChunks c ON c.LitigationOrderChunkId = ranked.LitigationOrderChunkId
@@ -181,6 +182,7 @@ public class LitigationDocumentRetriever(AppDbContext db, ChatRetrievalOptions o
         cmd.CommandText = sql;
         cmd.Parameters.Add(new SqlParameter("@topK", SqlDbType.Int) { Value = topK });
         cmd.Parameters.Add(new SqlParameter("@requestId", SqlDbType.BigInt) { Value = requestId });
+        cmd.Parameters.Add(new SqlParameter("@model", SqlDbType.NVarChar, 100) { Value = EmbeddingService.ModelId });
         var vectorParam = cmd.Parameters.Add("@queryVector", Microsoft.Data.SqlDbTypeExtensions.Vector, EmbeddingService.Dimensions);
         vectorParam.Value = queryVector;
         if (containsQuery is not null) cmd.Parameters.Add(new SqlParameter("@ftQuery", SqlDbType.NVarChar, 4000) { Value = containsQuery });
