@@ -185,7 +185,13 @@ public static class LitigationCaseAnalysisGroups
         }
         // A group whose tier rests on a restraint or lis pendens that has since ended counts at the tier it would have had without it
         // (risk_without_restraint, from the same group); any other ground it has — a recovery act, a criminal case — still counts in full.
-        bool Superseded(JsonObject g) => (g["active_restraint"]?.GetValue<bool>() == true && !restraintNow) || (g["lis_pendens"]?.GetValue<bool>() == true && !lisNow);
+        // "Without restraint" assumes NEITHER a restraint nor a lis pendens, so it applies only when everything the group asserted has ended; if
+        // either is still in force the group keeps the tier it gave (it cannot be split between the two).
+        bool Superseded(JsonObject g)
+        {
+            var restraint = g["active_restraint"]?.GetValue<bool>() == true; var lis = g["lis_pendens"]?.GetValue<bool>() == true;
+            return (restraint || lis) && (!restraint || !restraintNow) && (!lis || !lisNow);
+        }
         JsonNode? Effective(JsonObject g, string key) => Superseded(g) && g[key + "_without_restraint"] is { } alt ? alt : g[key];
         var top = groups.OrderByDescending(g => Array.IndexOf(Risks, Effective(g, "risk")?.ToString())).First();
         JsonArray Join(string key)

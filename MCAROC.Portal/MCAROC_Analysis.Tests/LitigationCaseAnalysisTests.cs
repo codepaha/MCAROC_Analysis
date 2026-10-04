@@ -792,4 +792,57 @@ public class LitigationCaseAnalysisTests
         var absent = JsonNode.Parse(GroupWith(GrantText, 1, LitigationRiskTier.R1, a => a["risk"] = "R1"))!;
         Assert.Equal("R1", absent["risk_without_restraint"]!.ToString());                              // absent: the tier given
     }
+
+    private const string LisText = "--- Page 1 (native) ---" + "\n" + "The respondent is restrained from alienating the property. A lis pendens notice is recorded against the property.";
+    private const string LisEndedText = "--- Page 1 (native) ---" + "\n" + "The lis pendens notice is cancelled and removed from the record.";
+
+    private static string RestraintAndLisR3(long id) => GroupWith(LisText, id, LitigationRiskTier.R1, a =>
+    {
+        a["risk"] = "R3"; a["risk_trigger"] = "Active restraint"; a["risk_reason"] = "Injunction in force.";
+        a["active_restraint"] = true; a["restraint_type"] = "INJUNCTION"; a["lis_pendens"] = true;
+        a["risk_without_restraint"] = "R1"; a["risk_trigger_without_restraint"] = "Pending Civil Suit"; a["risk_reason_without_restraint"] = "Ordinary pending matter.";
+        a["evidence"] = new JsonArray(
+            new JsonObject { ["claim"] = "restraint", ["order_id"] = id, ["quote"] = "The respondent is restrained from alienating the property" },
+            new JsonObject { ["claim"] = "lis_pendens", ["order_id"] = id, ["quote"] = "A lis pendens notice is recorded against the property" },
+            new JsonObject { ["claim"] = "risk_trigger", ["order_id"] = id, ["quote"] = "The respondent is restrained from alienating the property" });
+    });
+
+    private static string LisEndedR1(long id) => GroupWith(LisEndedText, id, LitigationRiskTier.R1, a =>
+    {
+        a["risk"] = "R1"; a["risk_trigger"] = "Pending Civil Suit"; a["risk_reason"] = "Pending civil matter.";
+        a["lis_pendens_ended"] = true;
+        a["evidence"] = new JsonArray(new JsonObject { ["claim"] = "lis_pendens_ended", ["order_id"] = id, ["quote"] = "The lis pendens notice is cancelled" });
+    });
+
+    [Fact]
+    public void Ending_only_lis_pendens_does_not_downgrade_a_still_active_injunction()
+    {
+        var merged = JsonNode.Parse(LitigationCaseAnalysisGroups.Merge([LisEndedR1(2), RestraintAndLisR3(1)]))!;
+
+        Assert.True((bool)merged["active_restraint"]!);
+        Assert.False((bool)merged["lis_pendens"]!);
+        Assert.Equal("R3", merged["risk"]!.ToString());
+        Assert.Equal("Active restraint", merged["risk_trigger"]!.ToString());
+    }
+
+    [Fact]
+    public void Lifting_the_injunction_while_a_lis_pendens_remains_keeps_the_tier_and_ending_both_lowers_it()
+    {
+        var stillLis = JsonNode.Parse(LitigationCaseAnalysisGroups.Merge([LiftedR1(2), RestraintAndLisR3(1)]))!;
+        Assert.False((bool)stillLis["active_restraint"]!);
+        Assert.True((bool)stillLis["lis_pendens"]!);
+        Assert.Equal("R3", stillLis["risk"]!.ToString());                 // the lis pendens is still in force
+
+        // both ended, by two newer groups
+        var bothEnded = JsonNode.Parse(LitigationCaseAnalysisGroups.Merge([LisEndedR1(3), LiftedR1(2), RestraintAndLisR3(1)]))!;
+        Assert.False((bool)bothEnded["active_restraint"]!);
+        Assert.False((bool)bothEnded["lis_pendens"]!);
+        Assert.Equal("R1", bothEnded["risk"]!.ToString());
+
+        // unchanged: a newer group that says nothing about either
+        var unchanged = JsonNode.Parse(LitigationCaseAnalysisGroups.Merge([Quiet(2), RestraintAndLisR3(1)]))!;
+        Assert.Equal("R3", unchanged["risk"]!.ToString());
+        Assert.True((bool)unchanged["active_restraint"]!);
+        Assert.True((bool)unchanged["lis_pendens"]!);
+    }
 }
