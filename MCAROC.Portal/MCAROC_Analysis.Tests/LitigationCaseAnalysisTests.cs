@@ -464,4 +464,41 @@ public class LitigationCaseAnalysisTests
         var evidence = Assert.Single((JsonArray)JsonNode.Parse(v.AnalysisJson!)!["evidence"]!)!;
         Assert.Equal(2, (int)evidence["page"]!);
     }
+
+    [Theory]
+    [InlineData("Rs. 2000")]     // year-shaped
+    [InlineData("Rs. 999")]      // under four digits
+    public void A_small_or_year_shaped_amount_must_be_printed_too(string reported)
+    {
+        var input = Input(NewCase((1, "09-01-2025", "Order")), Docs((1, 11, "--- Page 1 (native) ---" + "\n" + "The application is dismissed with no order as to costs.")));
+
+        var json = JsonNode.Parse(Validate(Answer(input, a => a["amount"] = reported), input).AnalysisJson!)!;
+
+        Assert.Null(json["amount"]);
+    }
+
+    [Theory]
+    [InlineData("Rs. 2000", "Rs. 2000")]
+    [InlineData("Rs. 999 as costs", "Rs. 999")]
+    public void A_small_or_year_shaped_amount_that_is_printed_is_kept(string printed, string reported)
+    {
+        var input = Input(NewCase((1, "09-01-2025", "Order")), Docs((1, 11, "--- Page 1 (native) ---" + "\n" + "Costs of " + printed + " are awarded.")));
+
+        var json = JsonNode.Parse(Validate(Answer(input, a => a["amount"] = reported), input).AnalysisJson!)!;
+
+        Assert.Equal(reported, json["amount"]!.ToString());
+    }
+
+    [Fact]
+    public void A_tail_quote_gets_its_real_page_from_windows_line_endings_too()
+    {
+        var text = ("--- Page 1 (native) ---" + "\n" + new string('a', 30_000) + "\n--- Page 2 (native) ---" + "\n" + new string('b', 70_000) + " The application is allowed with costs.").Replace("\n", "\r\n");
+        var input = Input(NewCase((1, "09-01-2025", "Order")), Docs((1, 11, text)));
+
+        var v = Validate(Answer(input, a => a["evidence"] = new JsonArray(
+            new JsonObject { ["claim"] = "operative_order", ["order_id"] = 1, ["quote"] = "The application is allowed with costs." })), input);
+
+        var evidence = Assert.Single((JsonArray)JsonNode.Parse(v.AnalysisJson!)!["evidence"]!)!;
+        Assert.Equal(2, (int)evidence["page"]!);
+    }
 }

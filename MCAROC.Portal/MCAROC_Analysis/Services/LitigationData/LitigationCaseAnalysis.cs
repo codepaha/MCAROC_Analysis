@@ -29,7 +29,7 @@ public static class LitigationCaseAnalysisInputBuilder
     private const int HeadChars = 20_000;
     public const string OmittedMarker = "[... middle section omitted for length ...]";
     private static readonly System.Text.RegularExpressions.Regex PageMarkerLine =
-        new(@"^--- Page \d+ \((?:native|OCR)\) ---[ \t]*$", System.Text.RegularExpressions.RegexOptions.Multiline | System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        new(@"^--- Page \d+ \((?:native|OCR)\) ---\s*$", System.Text.RegularExpressions.RegexOptions.Multiline | System.Text.RegularExpressions.RegexOptions.IgnoreCase);
 
     public static CaseAnalysisInput Build(
         LitigationCase c, IReadOnlyDictionary<long, LitigationOrderDocument> documentsByOrderId,
@@ -244,7 +244,7 @@ public static class LitigationCaseAnalysisValidator
         var amount = Str("amount");
         var unknownsOut = Strings(root["unknowns"]);
         var printed = PrintedNumbers(input);
-        if (amount is not null && !FiguresPrinted(amount, printed, out _))
+        if (amount is not null && !FiguresPrinted(amount, printed, out _, everyNumber: true))
         {
             notes.Add($"amount '{amount}' is not printed in any order text - dropped.");
             unknownsOut.Add($"An amount of '{amount}' was reported but could not be matched to the printed order text, so it is not shown.");
@@ -315,15 +315,18 @@ public static class LitigationCaseAnalysisValidator
 
     /// <summary>True when every figure of four or more digits in <paramref name="prose"/> is one of the printed numbers; the ones that are
     /// not are returned. Commas and their grouping do not matter ("5,251,19,676.60" and "525119676.60" are the same number).</summary>
-    private static bool FiguresPrinted(string prose, HashSet<string> printed, out List<string> unmatched)
+    private static bool FiguresPrinted(string prose, HashSet<string> printed, out List<string> unmatched, bool everyNumber = false)
     {
         unmatched = [];
         foreach (System.Text.RegularExpressions.Match m in NumberToken.Matches(prose))
         {
             var figure = m.Value.Replace(",", "");
             var digits = figure.Count(char.IsDigit);
-            if (digits < 4) continue; // section numbers and counts are not amounts
-            if (digits == 4 && figure.All(char.IsDigit) && int.Parse(figure) is >= 1900 and <= 2100) continue; // a year
+            if (!everyNumber)
+            {
+                if (digits < 4) continue; // section numbers and counts are not amounts
+                if (digits == 4 && figure.All(char.IsDigit) && int.Parse(figure) is >= 1900 and <= 2100) continue; // a year
+            }
             if (!printed.Contains(figure)) unmatched.Add(m.Value);
         }
         return unmatched.Count == 0;
