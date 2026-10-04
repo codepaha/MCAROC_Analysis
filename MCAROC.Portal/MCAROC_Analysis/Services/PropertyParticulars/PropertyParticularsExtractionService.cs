@@ -54,6 +54,15 @@ public sealed class VertexPropertyParticularsAiClient : IPropertyParticularsAiCl
             var (_, text, timedOut) = await CalculationAiAuditTimeoutRunner.RunAsync(async innerCt =>
             {
                 var config = new GenerateContentConfig { ResponseMimeType = "application/json" };
+                // The charge-instrument reading returns many long quoted passages; unconstrained, 3 of 190 Coastal documents came back as
+                // invalid JSON (a stray escape, a "|", an answer that ran on for 600+ passages and was cut off). A response schema keeps the
+                // output well-formed; a runaway answer is cut by the output-token limit and the validator still checks every quote against the document.
+                if (prompt.StartsWith(ChargeInstrumentAi.PromptMarker, StringComparison.Ordinal))
+                {
+                    config.ResponseSchema = ChargeInstrumentAi.ResponseSchema();
+                    config.Temperature = 0;
+                    config.MaxOutputTokens = 32_000;
+                }
                 var response = await _client.Models.GenerateContentAsync(PropertyParticularsAi.ModelId, prompt, config, innerCt);
                 return response.Candidates?.FirstOrDefault()?.Content?.Parts?.FirstOrDefault()?.Text ?? string.Empty;
             }, TimeSpan.FromSeconds(timeoutSeconds), ct);
