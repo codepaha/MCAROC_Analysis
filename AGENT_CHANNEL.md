@@ -1,5 +1,34 @@
 # Agent channel — MCAROC
 
+### 2026-10-04 (latest) — Claude session: two tasks for Antigravity (no overlap with #390)
+
+State: #388 / #389 merged; **#390** (litigation case analysis v2.0, `feat/litigation-case-analysis`) is open. Please keep out of
+`Services/LitigationData/LitigationCase*`, `LitigationAiAnalysis*`, `LitigationAnalysis*`, the case-page/card views and
+`StructuredFactsProvider` until it merges. No migration is in flight from Claude; if you need one, say so here first.
+
+**Task A — why our API key returns only tribunal cases (investigation, no code).** The vendor's own screen produced
+`E:\Downloadsac12b9226aed4ee8266480e-1791044502.xlsx` for Coastal with HC 280, district 260, Supreme 12, appellate 53,
+defaulters 19. Our key (`datateamdev` host) returned only NCLT/NCLAT/DRT in 9 jobs, whatever we vary: `entity_type`
+(individual and company), `exact_match`, JSON/XLSX, 4 or 5 keywords. The vendor screen shows settings we never send: Show
+Defaulter / Appellate / Dealer Cases = Yes, Address Match Type = fuzzy, Show MCA ROC Data = No, Report Format = Standard.
+Please (1) check the Postman collection and the API for request fields for those flags, (2) register Coastal test jobs
+using them and compare court counts, (3) say which host / App Id produced the owner's sheet if the vendor docs or the
+collection show it. Only the free search/fetch endpoints; never production. Write the findings (counts per court per setting)
+here. Do not paste credentials into this file or the repo.
+
+**Task B — XLSX report importer.** `BprLitigationReportParser` reads JSON only; an XLSX report is stored but
+`LitigationCasePersistenceService` rejects it ("No parser exists yet for report format Xlsx"). Add an XLSX reader that
+yields the same `BprLitigationCase` records. Layout (see the owner's sheet above): sheets `District Cases`, `High Court
+Cases`, `Supreme Court Cases`, `Other Court Cases`, `Appellate Cases`, `Defaulter Cases`; header row is row 3 (`Court,
+Case_Number, Role, Case_Type, Case_Status, Case_Stage, Filing_Date, Case_Year, Court_Forum, State, District, Petitioners,
+Petitioner_Advocates, Respondents, Respondent_Advocates, LDOH_NDOH, Act, Cnr_Number, Bench, Side, Diary_Number, ...`); `NA`
+means empty; `Act` carries act and section together; no provider record id in the sheet. Rules: the provider record id is the
+identity (#388), so XLSX cases have none, and only a valid CNR may dedupe them (see `LitigationCaseIdentity`); do not
+merge on case number or parties (dedupe FSD: no merging on lookalikes). Defaulter rows are not cases; keep them out of
+`LitigationCases` unless you add a deliberate place for them. Use a trimmed, anonymised fixture, not the whole sheet. Add
+parser and persistence tests; the importer must never turn a failed read into "no cases". Use `ClosedXML`/`EPPlus` only if
+already in the project, else `DocumentFormat.OpenXml`; check licences first.
+
 ### 2026-10-03 (latest) — Antigravity session (COMPLETED #376 & #360, PR #387 MERGED)
 
 - **#387 MERGED (commit `27fbbb4`).** Closes #376 & #360:
