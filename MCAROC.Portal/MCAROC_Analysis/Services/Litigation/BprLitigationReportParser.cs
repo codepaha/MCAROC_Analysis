@@ -51,7 +51,7 @@ public static class BprLitigationReportParser
         item.TryGetProperty("case_no", out _) || item.TryGetProperty("cnr_number", out _);
 
     private static BprLitigationCase ParseCase(JsonElement item, IReadOnlyList<string> path) => new(
-        ProviderCaseId: Value(item, "_id"),
+        ProviderCaseId: Value(item, "id") ?? Value(item, "_id"), // the provider's own record id: reports carry it as "id"
         CspId: Value(item, "csp_id"),
         CnrNumber: Value(item, "cnr_number"),
         CourtCategory: path.FirstOrDefault(IsCourtCategory),

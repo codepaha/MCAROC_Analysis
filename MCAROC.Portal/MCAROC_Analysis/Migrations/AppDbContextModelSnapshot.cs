@@ -3492,7 +3492,8 @@ namespace MCAROC_Analysis.Migrations
                         .HasColumnType("nvarchar(30)");
 
                     b.Property<string>("ProviderCaseId")
-                        .HasColumnType("nvarchar(max)");
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)");
 
                     b.Property<long>("RequestId")
                         .HasColumnType("bigint");
@@ -3510,6 +3511,10 @@ namespace MCAROC_Analysis.Migrations
                         .HasColumnType("nvarchar(max)");
 
                     b.HasKey("LitigationCaseId");
+
+                    b.HasIndex("RequestId", "ProviderCaseId")
+                        .IsUnique()
+                        .HasFilter("[ProviderCaseId] IS NOT NULL");
 
                     b.HasIndex("RequestId", "Cnr", "ProceedingType")
                         .IsUnique()
