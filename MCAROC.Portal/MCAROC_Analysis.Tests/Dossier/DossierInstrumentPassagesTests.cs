@@ -4,6 +4,9 @@ using MCAROC_Analysis.Services.Dossier;
 using MCAROC_Analysis.Services.PropertyParticulars;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Memory;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging.Abstractions;
+using MCAROC_Analysis.Services.CalculationAssurance;
 using UglyToad.PdfPig;
 using Xunit;
 
@@ -120,5 +123,73 @@ public class DossierInstrumentPassagesTests : IAsyncLifetime
         }
 
         Assert.NotSame(first, await cache.GetAsync(requestId));              // the quotes arrived: the earlier model is not reused
+    }
+
+    private sealed class TestEnv(string contentRoot) : Microsoft.AspNetCore.Hosting.IWebHostEnvironment
+    {
+        public string WebRootPath { get; set; } = "";
+        public Microsoft.Extensions.FileProviders.IFileProvider WebRootFileProvider { get; set; } = new Microsoft.Extensions.FileProviders.NullFileProvider();
+        public string ContentRootPath { get; set; } = contentRoot;
+        public Microsoft.Extensions.FileProviders.IFileProvider ContentRootFileProvider { get; set; } = new Microsoft.Extensions.FileProviders.NullFileProvider();
+        public string ApplicationName { get; set; } = "Tests";
+        public string EnvironmentName { get; set; } = "Test";
+    }
+
+    [Fact]
+    public async Task A_passage_arriving_after_a_pdf_was_rendered_produces_a_new_file_and_an_unchanged_one_is_reused()
+    {
+        await using var seed = DossierGoldenMasterTests.CreateContext();
+        var (requestId, _, _) = await DossierTestSeed.SeedAsync(seed);
+        var batch = new McaFilingBatch { RequestId = requestId, Status = FilingBatchStatus.Completed, StartedDate = DateTime.UtcNow, CompletedDate = DateTime.UtcNow };
+        seed.McaFilingBatches.Add(batch);
+        await seed.SaveChangesAsync();
+        var filing = new McaFiling { BatchId = batch.BatchId, RequestId = requestId, Srn = "SRN-" + Guid.NewGuid().ToString("N")[..6], NestedZipName = "n.zip" };
+        seed.McaFilings.Add(filing);
+        await seed.SaveChangesAsync();
+        var document = new McaFilingDocument
+        {
+            FilingId = filing.FilingId, BatchId = batch.BatchId, RequestId = requestId, OriginalFileName = "Deed.pdf", StoragePath = "gone.pdf",
+            FileHash = Guid.NewGuid().ToString("N"), ProcessingStatus = FilingDocumentProcessingStatus.Completed, Category = FilingCategory.Charge, UpdatedAt = DateTime.UtcNow
+        };
+        seed.McaFilingDocuments.Add(document);
+        await seed.SaveChangesAsync();
+        seed.ChargeDocumentLinks.Add(new ChargeDocumentLink
+        {
+            RequestId = requestId, BatchId = batch.BatchId, RocChargeNumber = "C1", FilingDocumentId = document.FilingDocumentId, Method = ChargeDocumentLinkMethod.EmbeddedAttachment
+        });
+        await seed.SaveChangesAsync();
+
+        var root = Path.Combine(Path.GetTempPath(), "dossier-passages-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            await using var db = DossierGoldenMasterTests.CreateContext();
+            var memory = new MemoryCache(new MemoryCacheOptions { SizeLimit = 256 });
+            var cache = new DossierCache(db, new DossierAssembler(db), memory);
+            var gate = new CalculationArtifactGateService(db, new ConfigurationBuilder().AddInMemoryCollection().Build(), NullLogger<CalculationArtifactGateService>.Instance);
+            var artifacts = new DossierArtifactService(cache, new DossierPdfRenderer(WebRoot()), gate, new TestEnv(root));
+
+            var before = await artifacts.EnsureRenderedAsync(requestId, DossierVariant.Executive, CancellationToken.None);
+            Assert.True(before.Rendered);
+            Assert.Equal(before.Path, (await artifacts.EnsureRenderedAsync(requestId, DossierVariant.Executive, CancellationToken.None)).Path);   // nothing changed: reused
+
+            await using (var writer = DossierGoldenMasterTests.CreateContext())
+            {
+                writer.ChargeInstrumentExtractions.Add(new ChargeInstrumentExtraction
+                {
+                    RequestId = requestId, FilingDocumentId = document.FilingDocumentId, PromptVersion = ChargeInstrumentAi.PromptVersion, ModelId = "m",
+                    Status = ChargeInstrumentExtractionStatus.Completed, CreatedUtc = DateTime.UtcNow, CompletedUtc = DateTime.UtcNow,
+                    ResultJson = ChargeInstrumentAi.Serialize(new ChargeInstrumentAiResult([new InstrumentPassage(InstrumentPassageKind.Schedule, "Plot No. 5, Sector 9, Navi Mumbai", 3, 3)]))
+                });
+                await writer.SaveChangesAsync();
+            }
+
+            var after = await artifacts.EnsureRenderedAsync(requestId, DossierVariant.Executive, CancellationToken.None);
+            Assert.True(after.Rendered);
+            Assert.NotEqual(before.Path, after.Path);                                        // the PDF built before the quotes existed is not served
+            Assert.True(File.Exists(after.Path));
+            Assert.Equal(after.Path, (await artifacts.EnsureRenderedAsync(requestId, DossierVariant.Executive, CancellationToken.None)).Path);
+        }
+        finally { try { Directory.Delete(root, recursive: true); } catch { } }
     }
 }
