@@ -37,7 +37,8 @@ public sealed class DossierArtifactService(DossierCache cache, DossierPdfRendere
             ? "-" + PropertyParticulars.PropertyParticularsExtractionService.VersionOf(extractions) : "";
         // And for the property passages quoted from the charges' filed documents (#364): they finish after ingestion too, and the annexure prints them.
         var instrumentPart = InstrumentVersionOf(model.InstrumentPassagesByCharge) is { Length: > 0 } instrumentVersion ? "-i" + instrumentVersion : "";
-        var name = $"{flavour.ToString().ToLowerInvariant()}-{model.IngestionRunId}-{model.AnalysisRunId?.ToString() ?? "none"}{litigationPart}{propertyPart}{instrumentPart}.pdf";
+        // Layout marker: bumped when what a dossier contains changes for everyone at once (this file cache never expires). "-nl" = no litigation.
+        var name = $"{flavour.ToString().ToLowerInvariant()}-{model.IngestionRunId}-{model.AnalysisRunId?.ToString() ?? "none"}{litigationPart}{propertyPart}{instrumentPart}-nl.pdf";
         var path = Path.Combine(dir, name);
 
         if (!File.Exists(path))

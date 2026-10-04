@@ -32,9 +32,6 @@ public static class AuditRouteRegistry
             { ("RequestsUpload", "Abort"), (AuditActionType.ArchiveUploadAborted, AuditRulePolicy.Always) },
             { ("RequestsUpload", "Heartbeat"), (AuditActionType.OtherMutation, AuditRulePolicy.Never) },
 
-            // Clients
-            { ("Clients", "Edit"), (AuditActionType.ClientEdited, AuditRulePolicy.Always) },
-
             // ApplicationAuth: the generic mutation filter records these without retaining credentials.
             { ("ApplicationAuth", "Login"), (AuditActionType.ApplicationLoginAttempted, AuditRulePolicy.Always) },
             { ("ApplicationAuth", "Logout"), (AuditActionType.ApplicationLoggedOut, AuditRulePolicy.Always) },

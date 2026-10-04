@@ -224,8 +224,9 @@ public class DossierChargeLitigationTests : IAsyncLifetime
 
             if (OperatingSystem.IsWindows())   // PdfPig text extraction is only reliable on Windows fonts
             {
+                // The dossier carries no litigation any more, linked cases included: they live in the standalone litigation report.
                 Assert.DoesNotContain(Squash("WP(C) 11227/2019"), TextOf(await File.ReadAllBytesAsync(pathBefore)));
-                Assert.Contains(Squash("WP(C) 11227/2019"), TextOf(await File.ReadAllBytesAsync(after.Path!)));
+                Assert.DoesNotContain(Squash("WP(C) 11227/2019"), TextOf(await File.ReadAllBytesAsync(after.Path!)));
             }
 
             // 4. With nothing further changed, a third download reuses the second file (the cache still works).

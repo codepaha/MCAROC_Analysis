@@ -94,7 +94,7 @@ public class DossierPdfComposerTests : IAsyncLifetime
         Assert.Contains("Borrowing & Security", text);
         Assert.Contains("Directors & Governance", text);
         Assert.Contains("Statutory Compliance", text);
-        Assert.Contains("Litigation", text);
+        Assert.DoesNotContain("6. Litigation", text);       // litigation has its own report
         Assert.Contains("Executive Summary", text);
         Assert.DoesNotContain("Annexure", text);
 
@@ -525,7 +525,7 @@ public class DossierPdfComposerTests : IAsyncLifetime
         Assert.Contains("UnacceptedAgency", presentText);
         Assert.Contains("Not accepted", presentText);
         Assert.Contains("Alice Rao Trading Co", presentText);
-        Assert.Contains("TestCourt", presentText);
+        Assert.DoesNotContain("TestCourt", presentText);   // financial-dispute cases are litigation: not in the dossier any more
 
         // A separate, freshly-seeded request with none of these four categories at all — proves the
         // in-context note for a genuinely empty table (the first request above has real rows in every
@@ -553,7 +553,7 @@ public class DossierPdfComposerTests : IAsyncLifetime
         Assert.Contains("This upload did not include “Related Party Transactions”.", absentText);
         Assert.Contains("This upload did not include “Credit Ratings” or “Unaccepted Ratings”.", absentText);
         Assert.Contains("This upload did not include “Proprietorship”.", absentText);
-        Assert.Contains("This upload did not include “Legal Cases - Financial Dispute”.", absentText);
+        Assert.DoesNotContain("This upload did not include “Legal Cases - Financial Dispute”.", absentText);   // its table is in the removed litigation section
         Assert.DoesNotContain("no dedicated section in this dossier", absentText);
     }
 
@@ -648,7 +648,7 @@ public class DossierPdfComposerTests : IAsyncLifetime
         var text = TextOf(new DossierPdfRenderer(WebRoot()).Render(model!, DossierVariant.Executive));
 
         Assert.Contains("USD 55.5", text);
-        Assert.Contains("INR 7.89", text);
+        Assert.DoesNotContain("INR 7.89", text);            // the financial-dispute table is part of the removed litigation section
         // The no-currency row's bare number, and specifically not a stray "null" from a naive interpolation.
         Assert.Contains("NoCurrencyAgency", text);
         Assert.DoesNotContain("null 12", text);
@@ -704,11 +704,10 @@ public class DossierPdfComposerTests : IAsyncLifetime
         Assert.DoesNotContain("and Litigation.", text);
     }
 
-    /// <summary>Regression guard: with the flag on (the default), the Litigation TOC entry, annexure and
-    /// Snapshot tile are all still present — the toggle only changes anything for the clients it's turned
-    /// off for.</summary>
+    /// <summary>The dossier carries no litigation for anyone now (litigation has its own standalone report): the default build has no
+    /// Litigation TOC entry, annexure or snapshot tile.</summary>
     [SkippableFact]
-    public async Task Litigation_flag_on_by_default_is_unaffected()
+    public async Task Litigation_is_absent_from_the_dossier_by_default()
     {
         Skip.IfNot(OperatingSystem.IsWindows(),
             "PdfPig text extraction from SkiaSharp subset fonts is unreliable on Linux; covered by the windows-tests job.");
@@ -719,14 +718,14 @@ public class DossierPdfComposerTests : IAsyncLifetime
         await using var db = DossierGoldenMasterTests.CreateContext();
         var model = await new DossierAssembler(db).BuildAsync(requestId);
         Assert.NotNull(model);
-        Assert.True(model!.IncludeLitigation);
+        Assert.False(model!.IncludeLitigation);
 
         var text = TextOf(new DossierPdfRenderer(WebRoot()).Render(model, DossierVariant.Executive));
 
-        Assert.Contains("6. Litigation", text);
-        Assert.Contains("SECTION 6", text);
-        Assert.Contains("Pending Litigation Against Company", text);
-        Assert.Contains("and Litigation.", text);
+        Assert.DoesNotContain("6. Litigation", text);
+        Assert.DoesNotContain("SECTION 6", text);
+        Assert.DoesNotContain("Pending Litigation Against Company", text);
+        Assert.DoesNotContain("and Litigation.", text);
     }
 
     /// <summary>Proves ReviewPriority and the flag-count strip are genuinely recomputed from the filtered
