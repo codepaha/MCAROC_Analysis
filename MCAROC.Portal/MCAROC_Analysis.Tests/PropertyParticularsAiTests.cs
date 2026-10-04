@@ -372,4 +372,17 @@ public class PropertyParticularsAiTests
         Assert.Empty(GroundedNumbers(clause, "Survey", "100"));
         Assert.Empty(GroundedNumbers(clause, "Survey", "10"));
     }
+
+    [Theory]
+    [InlineData("Sy No. 12, 1,000 sq ft carpet area")]
+    [InlineData("Sy No. 12, 100 m2 carpet area")]
+    [InlineData("Sy No. 12, 17 parking spaces")]
+    public void MeasurementsAndCountsFollowingSurvey_AreNotGroundedAsSurveyIdentifiers(string clause)
+    {
+        Assert.Equal(["12"], GroundedNumbers(clause, "Survey", "12"));
+        Assert.Empty(GroundedNumbers(clause, "Survey", "1"));
+        Assert.Empty(GroundedNumbers(clause, "Survey", "1000"));
+        Assert.Empty(GroundedNumbers(clause, "Survey", "100"));
+        Assert.Empty(GroundedNumbers(clause, "Survey", "17"));
+    }
 }

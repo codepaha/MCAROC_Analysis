@@ -285,9 +285,30 @@ public class PropertyParticularsNormalizerTests
     [InlineData("Door No.51/937-2, Kurnool", "51/937-2")]
     [InlineData("Flat No. A-305 in Tower B", "A-305")]
     [InlineData("Flat No. 305 A in Tower B", "305A")]
+    [InlineData("Door No. 51/937 - 2, Kurnool", "51/937-2")]
+    [InlineData("Flat No. A - 305 in Tower B", "A-305")]
     public void Door_or_flat_identifier_keeps_full_subdivision_and_suffix(string text, string expectedUnit)
     {
         var p = PropertyParticularsNormalizer.Normalize(text, "Immovable property");
         Assert.Contains(p.Units, u => u.UnitNumber == expectedUnit);
+    }
+
+    [Theory]
+    [InlineData("Sy No. 12, 1,000 sq ft carpet area")]
+    [InlineData("Sy No. 12, 100 m2 carpet area")]
+    [InlineData("Sy No. 12, 17 parking spaces")]
+    public void Measurements_and_counts_must_not_be_parcel_identifiers(string text)
+    {
+        var p = PropertyParticularsNormalizer.Normalize(text, "Immovable property");
+        Assert.Equal(new[] { "12" }, p.SurveyNumbers.SelectMany(g => g.Numbers));
+    }
+
+    [Theory]
+    [InlineData("Door No. 51/937 - 2, Kurnool", "51/937")]
+    [InlineData("Flat No. A - 305 in Tower B", "A")]
+    public void Spaced_subdivisions_must_not_return_identifier_prefixes(string text, string prefix)
+    {
+        var p = PropertyParticularsNormalizer.Normalize(text, "Immovable property");
+        Assert.DoesNotContain(p.Units, u => u.UnitNumber == prefix);
     }
 }
