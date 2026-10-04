@@ -8,6 +8,7 @@ namespace MCAROC_Analysis.Models;
 public class DocumentsPageViewModel
 {
     public long RequestId { get; set; }
+    public long? BatchId { get; set; }
 
     /// <summary>Selected <see cref="FilingCategory"/> name, or null for "All". "Other" maps to <see cref="FilingCategory.Unclassified"/>.</summary>
     public string? Category { get; set; }

@@ -33,4 +33,10 @@
     <ProjectReference Include="..\MCAROC_Analysis\MCAROC_Analysis.csproj" />
   </ItemGroup>
 
+  <PropertyGroup Condition="'$(RequestPageBaseline)' == 'true'">
+    <DefineConstants>$(DefineConstants);REQUEST_PAGE_BASELINE</DefineConstants>
+  </PropertyGroup>
+  <ItemGroup Condition="'$(RequestPageBaseline)' == 'true'">
+    <Compile Include="../../tmp/request-page-baseline/RequestsController.cs" />
+  </ItemGroup>
 </Project>
