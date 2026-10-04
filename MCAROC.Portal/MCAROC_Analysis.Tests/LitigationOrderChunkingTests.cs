@@ -1156,12 +1156,16 @@ public class LitigationOrderChunkingTests : IAsyncLifetime
         Assert.DoesNotContain(docV2.LitigationOrderDocumentId, drained);
     }
 
-    [Fact]
-    public void DropDuplicateText_suppresses_duplicate_passages_sharing_body_across_parent_case_and_IA()
+    [Theory]
+    [InlineData("NCLT")]
+    [InlineData("NCLT [Mumbai Bench]")]
+    [InlineData("NCLT | Mumbai Bench")]
+    [InlineData("NCLT [Mumbai | Bench]")]
+    public void DropDuplicateText_suppresses_duplicate_passages_sharing_body_across_parent_case_and_IA(string court)
     {
         const string body = "The application is dismissed and the order of the tribunal is affirmed.";
-        var parentHeader = LitigationOrderChunkingOrchestrator.BuildContextHeader("NCLT", "CP 1/2025", null, "Order", "2025-01-01", 1);
-        var iaHeader = LitigationOrderChunkingOrchestrator.BuildContextHeader("NCLT", "IA 2/2025", null, "Order", "2025-01-01", 1);
+        var parentHeader = LitigationOrderChunkingOrchestrator.BuildContextHeader(court, "CP 1/2025", null, "Order", "2025-01-01", 1);
+        var iaHeader = LitigationOrderChunkingOrchestrator.BuildContextHeader(court, "IA 2/2025", null, "Order", "2025-01-01", 1);
 
         var parentChunk = new LitigationOrderChunk
         {
@@ -1199,16 +1203,42 @@ public class LitigationOrderChunkingTests : IAsyncLifetime
         const string coram = "[Coram: Hon'ble Mr. Justice ABC]\n\nNotice issued.";
         Assert.Equal(coram, LitigationDocumentRetriever.ExtractBodyText(coram));
 
+        const string orderPrefixOnly = "[Order: Dismissed]\n\nNotice issued.";
+        Assert.Equal(orderPrefixOnly, LitigationDocumentRetriever.ExtractBodyText(orderPrefixOnly));
+
+        const string courtPrefixOnly = "[Court: High Court]\n\nNotice issued.";
+        Assert.Equal(courtPrefixOnly, LitigationDocumentRetriever.ExtractBodyText(courtPrefixOnly));
+
         const string header = "[Court: High Court | Case: WP 123/2024 | Page 1]\n\nSubstantive order text.";
         Assert.Equal("Substantive order text.", LitigationDocumentRetriever.ExtractBodyText(header));
+
+        const string bracketedHeader = "[Court: NCLT [Mumbai Bench] | Case: CP 1/2025 | Page 1]\n\nSubstantive order text.";
+        Assert.Equal("Substantive order text.", LitigationDocumentRetriever.ExtractBodyText(bracketedHeader));
+
+        const string pipedHeader = "[Court: NCLT | Mumbai Bench | Case: CP 1/2025 | Page 1]\n\nSubstantive order text.";
+        Assert.Equal("Substantive order text.", LitigationDocumentRetriever.ExtractBodyText(pipedHeader));
+
+        const string pipedBracketHeader = "[Court: NCLT [Mumbai | Bench] | Case: CP [IB] 1/2025 | Order: Order [Interim] 2025-01-01 | Page 1]\n\nSubstantive order text.";
+        Assert.Equal("Substantive order text.", LitigationDocumentRetriever.ExtractBodyText(pipedBracketHeader));
+
+        const string headerWithBracketedLegalBody = "[Court: NCLT [Mumbai Bench] | Page 1]\n\n[1] The petitioner approached the High Court under Article 226.";
+        Assert.Equal("[1] The petitioner approached the High Court under Article 226.", LitigationDocumentRetriever.ExtractBodyText(headerWithBracketedLegalBody));
     }
 
-    [Fact]
-    public async Task GetLatestOrderChunksAsync_and_GetDecisionPassagesAsync_deduplicate_identical_bodies_with_distinct_case_headers()
+    [Theory]
+    [InlineData("District Court, Chennai")]
+    [InlineData("NCLT [Mumbai Bench]")]
+    [InlineData("NCLT | Mumbai Bench")]
+    [InlineData("NCLT [Mumbai | Bench]")]
+    public async Task GetLatestOrderChunksAsync_and_GetDecisionPassagesAsync_deduplicate_identical_bodies_with_distinct_case_headers(string court)
     {
         await using var db = CreateContext();
         var (request, parentCase, parentOrder) = await SeedOrderAsync(db, "DEDUP1");
         var (_, iaCase, iaOrder) = await SeedOrderAsync(db, "DEDUP2", request.RequestId);
+
+        parentCase.Court = court;
+        iaCase.Court = court;
+        await db.SaveChangesAsync();
 
         const string sharedBody = "The application is dismissed and relief is declined.";
         var parentHeader = LitigationOrderChunkingOrchestrator.BuildContextHeader(parentCase.Court, parentCase.CaseNumber, parentCase.Cnr, parentOrder.OrderType, parentOrder.OrderDate, 1);

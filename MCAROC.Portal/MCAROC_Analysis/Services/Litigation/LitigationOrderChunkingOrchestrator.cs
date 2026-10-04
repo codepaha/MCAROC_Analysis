@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using MCAROC_Analysis.Data;
 using MCAROC_Analysis.Data.Entities;
 using MCAROC_Analysis.Services.Chat;
@@ -103,17 +104,17 @@ public sealed class LitigationOrderChunkingOrchestrator(
     {
         var parts = new List<string>(5);
         if (!string.IsNullOrWhiteSpace(court))
-            parts.Add($"Court: {court.Trim()}");
+            parts.Add($"Court: {CleanHeaderField(court)}");
         if (!string.IsNullOrWhiteSpace(caseNumber))
-            parts.Add($"Case: {caseNumber.Trim()}");
+            parts.Add($"Case: {CleanHeaderField(caseNumber)}");
         if (!string.IsNullOrWhiteSpace(cnr))
-            parts.Add($"CNR: {cnr.Trim()}");
+            parts.Add($"CNR: {CleanHeaderField(cnr)}");
 
         var orderParts = new List<string>(2);
         if (!string.IsNullOrWhiteSpace(orderType))
-            orderParts.Add(orderType.Trim());
+            orderParts.Add(CleanHeaderField(orderType));
         if (!string.IsNullOrWhiteSpace(orderDate))
-            orderParts.Add(orderDate.Trim());
+            orderParts.Add(CleanHeaderField(orderDate));
         if (orderParts.Count > 0)
             parts.Add($"Order: {string.Join(" ", orderParts)}");
 
@@ -121,6 +122,9 @@ public sealed class LitigationOrderChunkingOrchestrator(
 
         return $"[{string.Join(" | ", parts)}]";
     }
+
+    private static string CleanHeaderField(string value) =>
+        Regex.Replace(value.Trim(), @"[\r\n]+", " ");
 
     public async Task ChunkOrderDocumentAsync(long orderDocumentId, CancellationToken ct)
     {

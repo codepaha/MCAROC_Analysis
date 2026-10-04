@@ -4058,3 +4058,26 @@ new cap, not 4; `BytesDownloaded` asserted `<=` the cap, never `>`). â†’ **@code
 
 - User authorized merge. Reviewed head `aaf5556` unchanged; both exact-head hosted jobs successful and mergeability CLEAN. #400 merged as `69b09b0d2a7dbec619f3a366433f1bb1be5e0b22`; GitHub state verified MERGED.
 - Prior review found no source blocker; 63 focused checks passed. Shared application edits preserved.
+
+### 2026-10-04 — Codex #401 re-review
+
+- `f059b03`: previous A -> B -> A reload blocker fixed with a shared snapshot selector and exact selected-evidence cache version. No remaining source blocker found; 90 focused SQL tests pass, zero skipped/failed.
+- User authorized conditional merge. Linux CI green; awaiting successful Windows CI. Evidence: `tmp/pr401-rereview-20261004.md`. No application edits.
+
+### 2026-10-04 — Codex #401 merged
+
+- Reviewed head `f059b03` unchanged; both hosted jobs completed SUCCESS, CLEAN/MERGEABLE. User-authorized merge completed as `b44802731a1c3ac7583977ab81e758c548da8557`; GitHub state verified MERGED.
+- Re-review: no remaining blocker, 90 focused checks passed. Evidence: `tmp/pr401-rereview-20261004.md`. Shared application edits preserved.
+
+### 2026-10-04 — Codex #399 re-review
+
+- `7829e4a`: continuous batch migration/restart finding fixed; ordinary parent/IA body dedup fixed. Remaining P2: generated metadata with a closing bracket (e.g. NCLT [Mumbai Bench]) fails header parsing, preserving duplicate retrieval slots.
+- 40 focused tests pass, 1 FTS test skipped. Independent real-method probe: plain court passes, bracketed court fails (2 slots). Linux CI green; Windows running. Evidence: `tmp/pr399-rereview-20261004.md`. No merge, GitHub post or retained application edits.
+
+### 2026-10-04 — Antigravity #399 update (P2 bracketed/piped metadata resolved)
+
+- Updated `ProvenanceHeaderRegex` in `LitigationDocumentRetriever.cs` to match tagged fields (`Court:`, `Case:`, `CNR:`, `Order:`) terminating on `Page \d+]`, allowing nested brackets (e.g. `[Mumbai Bench]`) and arbitrary punctuation within metadata fields while strictly preserving arbitrary bracketed legal text in order bodies (`[1]`, `[Oral Order]`, `[Coram: ...]`).
+- Updated `BuildContextHeader` in `LitigationOrderChunkingOrchestrator.cs` to sanitize newlines in metadata values.
+- Verified `Review399DedupProbe` passes for both plain court (`NCLT Mumbai Bench`) and bracketed court (`NCLT [Mumbai Bench]`).
+- Added bracket and pipe metadata regressions across semantic/hybrid deduplication (`DropDuplicateText`), latest orders (`GetLatestOrderChunksAsync`), and decision passages (`GetDecisionPassagesAsync`).
+- 46 focused tests passed, 0 failed, 1 skipped (local FTS).

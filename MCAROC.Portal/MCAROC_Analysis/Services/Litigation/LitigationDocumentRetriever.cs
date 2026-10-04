@@ -85,8 +85,8 @@ public class LitigationDocumentRetriever(AppDbContext db, ChatRetrievalOptions o
         Regex.Replace(ExtractBodyText(text), @"\s+", " ").Trim();
 
     private static readonly Regex ProvenanceHeaderRegex = new(
-        @"^\[(Court: [^|\]]+|Case: [^|\]]+|CNR: [^|\]]+|Order: [^|\]]+|Page \d+)(\s*\|\s*(Court: [^|\]]+|Case: [^|\]]+|CNR: [^|\]]+|Order: [^|\]]+|Page \d+))*\]\r?\n\r?\n",
-        RegexOptions.Compiled);
+        @"^\[(?:(?:Court|Case|CNR|Order):\s*(?:(?!\s*\|\s*(?:Court:|Case:|CNR:|Order:|Page\s+\d+\]))[^\r\n])*?\s*\|\s*)*Page\s+\d+\][^\S\r\n]*\r?\n\r?\n",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
     internal static List<LitigationOrderChunkMatch> DropDuplicateText(IEnumerable<LitigationOrderChunkMatch> ranked, int take)
     {
