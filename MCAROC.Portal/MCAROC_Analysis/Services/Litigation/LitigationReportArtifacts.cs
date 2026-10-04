@@ -169,7 +169,16 @@ public sealed record StandaloneLitigationReport(
 public sealed record LitigationPortfolioAnalysis(string Status, string? RiskLevel, string? Summary, IReadOnlyList<string>? KeyFindings);
 
 /// <summary>Evidence-backed interpretation for a case. A missing entry means analysis has not run.</summary>
-public sealed record LitigationCaseAnalysis(string Status, string? RiskLevel, string? Summary, IReadOnlyList<string>? KeyIssues, string? RecommendedAction, string? EvidenceNote = null);
+public sealed record LitigationCaseAnalysis(
+    string Status, string? RiskLevel, string? Summary, IReadOnlyList<string>? KeyIssues, string? RecommendedAction, string? EvidenceNote = null,
+    string? RiskTrigger = null, string? RiskReason = null, string? BaselineRisk = null, bool RiskRaised = false,
+    bool ActiveRestraint = false, string? RestraintType = null, bool LisPendens = false,
+    string? Consequence = null, string? Outcome = null, string? Subject = null, string? Amount = null,
+    IReadOnlyList<string>? Provisions = null, IReadOnlyList<LitigationAnalysisQuote>? Passages = null, IReadOnlyList<string>? KeyPoints = null)
+{
+    /// <summary>True for the detailed analysis (tier, trigger, quoted passages); false for a summary-only one.</summary>
+    public bool IsDetailed => RiskTrigger is not null || Passages is { Count: > 0 };
+}
 
 /// <summary>Renders the standalone litigation deliverables for one MCA ROC assignment.</summary>
 public static class LitigationReportArtifacts
@@ -207,7 +216,8 @@ public static class LitigationReportArtifacts
         "Order Dates", "Order Types", "Order Availability Statuses", "Order Retained Until Dates", "Order Text Extraction Statuses",
         "Contested Property Match Count", "Contested Property Details", "Charge Link Count", "Charge Links",
         "Analysis Status", "Analysis Risk", "Analysis Summary", "Analysis Key Issues", "Analysis Recommended Action",
-        "Report Reused", "Reused From Request ID", "Reused From Snapshot ID", "Report Retrieved Date", "Reuse Disclosure"
+        "Report Reused", "Reused From Request ID", "Reused From Snapshot ID", "Report Retrieved Date", "Reuse Disclosure",
+        "Analysis Trigger", "Analysis Baseline Risk", "Analysis Restraint", "Analysis Outcome", "Analysis Passages", "Analysis Key Points"
     ];
 
     private static void WriteRow(CsvWriter csv, int serial, StandaloneLitigationReport report, StandaloneReportCaseDto item)
@@ -254,7 +264,16 @@ public static class LitigationReportArtifacts
             propertyMatchCount, propertyMatchDetails, chargeLinkCount, chargeLinkDetails,
             analysis?.Status ?? "Pending", analysis?.RiskLevel, analysis?.Summary,
             analysis is null ? null : string.Join("; ", analysis.KeyIssues ?? []), analysis?.RecommendedAction,
-            isReused, reusedReqId, reusedSnapId, retrievedDate, reuseDisclosure
+            isReused, reusedReqId, reusedSnapId, retrievedDate, reuseDisclosure,
+            analysis?.RiskTrigger, analysis?.BaselineRisk,
+            string.Join("; ", new[]
+            {
+                analysis is { ActiveRestraint: true } ? "Restraint in force" + (string.IsNullOrWhiteSpace(analysis.RestraintType) || analysis.RestraintType == "NONE" ? "" : " (" + analysis.RestraintType + ")") : null,
+                analysis is { LisPendens: true } ? "Lis pendens" : null
+            }.Where(x => x is not null)) is { Length: > 0 } flags ? flags : null,
+            analysis?.Outcome,
+            analysis?.Passages is { Count: > 0 } ps ? string.Join(" | ", ps.Select(q => $"{q.Claim}: \"{q.Quote}\" (order #{q.OrderId}, p. {q.Page})")) : null,
+            analysis?.KeyPoints is { Count: > 0 } kp ? string.Join("; ", kp) : null
         }) csv.WriteField(SafeCsv(value));
         csv.NextRecord();
     }
@@ -629,7 +648,39 @@ internal sealed class LitigationReportPdfDocument(StandaloneLitigationReport rep
     private static void AnalysisPanel(IContainer container, LitigationCaseAnalysis? analysis) => container.Background("#F5F8FD").Border(0.8f).BorderColor(Border).Padding(8).Column(panel =>
     {
         panel.Item().Row(row => { row.RelativeItem().Text("CASE ANALYSIS").Bold().FontSize(8.5f).FontColor(Navy); row.AutoItem().Element(c => Pill(c, analysis?.RiskLevel ?? "PENDING", analysis is null ? Navy : RiskColor(analysis.RiskLevel))); });
-        panel.Item().PaddingTop(5).Text(analysis?.Summary ?? "Analysis pending. It will be generated only after extracted order text and case metadata are available for this case.").FontSize(8.2f);
+        if (analysis is { IsDetailed: true })
+        {
+            if (analysis.RiskRaised && !string.IsNullOrWhiteSpace(analysis.BaselineRisk))
+                panel.Item().PaddingTop(3).Text($"Raised from {analysis.BaselineRisk} on the orders").FontSize(7.2f).FontColor(Colors.Grey.Darken1);
+            if (!string.IsNullOrWhiteSpace(analysis.RiskTrigger))
+                panel.Item().PaddingTop(4).Text(text => { text.Span(analysis.RiskTrigger).Bold().FontSize(8.2f); if (!string.IsNullOrWhiteSpace(analysis.RiskReason)) text.Span(" - " + analysis.RiskReason).FontSize(8.2f); });
+            if (analysis.ActiveRestraint || analysis.LisPendens)
+                panel.Item().PaddingTop(3).Text(string.Join("  |  ", new[]
+                {
+                    analysis.ActiveRestraint ? "RESTRAINT IN FORCE" + (string.IsNullOrWhiteSpace(analysis.RestraintType) || analysis.RestraintType == "NONE" ? "" : " (" + Humanize(analysis.RestraintType) + ")") : null,
+                    analysis.LisPendens ? "LIS PENDENS" : null
+                }.Where(x => x is not null))).Bold().FontSize(7.4f).FontColor(Red);
+        }
+        panel.Item().PaddingTop(5).Text(analysis?.Summary ?? "Analysis pending. It will be generated only after extracted order text and case metadata are available for this case.").FontSize(8.2f).SemiBold();
+        if (analysis?.KeyPoints is { Count: > 0 })
+            foreach (var point in analysis.KeyPoints) panel.Item().PaddingTop(2).Text(text => { text.Span("\u2022 ").FontColor(Navy); text.Span(point).FontSize(8.2f); });
+        if (analysis is { IsDetailed: true })
+        {
+            if (!string.IsNullOrWhiteSpace(analysis.Outcome)) panel.Item().PaddingTop(4).Text(text => { text.Span("OUTCOME  ").Bold().FontSize(7).FontColor(Navy); text.Span(analysis.Outcome).FontSize(8); });
+            if (!string.IsNullOrWhiteSpace(analysis.Consequence)) panel.Item().PaddingTop(4).Text(text => { text.Span("IF DECIDED AGAINST THE COMPANY  ").Bold().FontSize(7).FontColor(Navy); text.Span(analysis.Consequence).FontSize(8); });
+            if (analysis.Provisions is { Count: > 0 }) panel.Item().PaddingTop(4).Text(text => { text.Span("PROVISIONS  ").Bold().FontSize(7).FontColor(Navy); text.Span(string.Join("; ", analysis.Provisions)).FontSize(7.6f); });
+            if (analysis.Passages is { Count: > 0 })
+            {
+                panel.Item().PaddingTop(5).Text("PASSAGES THIS RESTS ON").Bold().FontSize(7).FontColor(Navy);
+                foreach (var passage in analysis.Passages)
+                    panel.Item().PaddingTop(2).BorderLeft(2).BorderColor(Border).PaddingLeft(5).Text(text =>
+                    {
+                        text.Span(PassageClaim(passage.Claim) + ": ").SemiBold().FontSize(7.2f).FontColor(Colors.Grey.Darken1);
+                        text.Span("\u201C" + passage.Quote + "\u201D").FontSize(7.6f);
+                        text.Span($"  (order #{passage.OrderId}, p. {passage.Page})").FontSize(7).FontColor(Colors.Grey.Darken1);
+                    });
+            }
+        }
         if (analysis?.KeyIssues is { Count: > 0 }) { panel.Item().PaddingTop(5).Text("KEY ISSUES").Bold().FontSize(7).FontColor(Navy); foreach (var issue in analysis.KeyIssues) panel.Item().PaddingTop(2).Text(text => { text.Span("• ").FontColor(Navy); text.Span(issue); }); }
         if (!string.IsNullOrWhiteSpace(analysis?.RecommendedAction)) panel.Item().PaddingTop(5).Text(text => { text.Span("RECOMMENDED ACTION  ").Bold().FontSize(7).FontColor(Green); text.Span(analysis.RecommendedAction).FontSize(8); });
         if (!string.IsNullOrWhiteSpace(analysis?.EvidenceNote)) panel.Item().PaddingTop(4).Text(analysis.EvidenceNote).Italic().FontSize(7.2f).FontColor(Colors.Grey.Darken1);
@@ -688,6 +739,11 @@ internal sealed class LitigationReportPdfDocument(StandaloneLitigationReport rep
 
     private static void Pill(IContainer container, string text, string color) => container.Background("#FFFFFF").Border(0.8f).BorderColor(color).CornerRadius(7).PaddingVertical(3).PaddingHorizontal(7).Text(text).Bold().FontSize(6.8f).FontColor(color);
     private static string RiskColor(string? risk) => risk?.StartsWith("R1", StringComparison.OrdinalIgnoreCase) == true ? Green : risk?.StartsWith("R2", StringComparison.OrdinalIgnoreCase) == true ? Amber : risk?.StartsWith("R3", StringComparison.OrdinalIgnoreCase) == true ? Red : Navy;
+    private static string PassageClaim(string claim) => claim switch
+    {
+        "risk_trigger" => "Why the tier was raised", "restraint" => "Restraint", "lis_pendens" => "Lis pendens",
+        "operative_order" => "Operative order", "outcome" => "Outcome", "target_party" => "The company's role", _ => claim
+    };
     private static string Display(string? value) => string.IsNullOrWhiteSpace(value) ? "-" : value;
     private static string JoinValues(string? first, string? second) => string.Join(" / ", new[] { first, second }.Where(value => !string.IsNullOrWhiteSpace(value)));
     private static string Humanize(string? value) => string.IsNullOrWhiteSpace(value) ? "-" : value.Replace('_', ' ').ToUpperInvariant();

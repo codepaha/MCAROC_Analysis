@@ -1,6 +1,6 @@
 namespace MCAROC_Analysis.Services.LitigationData;
 
-/// <summary>The case-analysis instructions, version 2.0. Adapted from the owner's Case Risk Analysis prompt (v7.5.2): the same rules
+/// <summary>The case-analysis instructions, version 2.1 (2.0 plus a concise, bulleted style for the analyst). Adapted from the owner's Case Risk Analysis prompt (v7.5.2): the same rules
 /// (read the whole order, no invention, order-confirmed versus metadata-led, the R0-R3 ladder with its triggers, restraint and lis
 /// pendens, the operative order, outcome), made client-neutral (the requester is not known here, so no client lens or transaction is
 /// assumed), cut to one case per call, and changed so that every conclusion that matters carries a verbatim quote from a named order,
@@ -8,7 +8,7 @@ namespace MCAROC_Analysis.Services.LitigationData;
 /// by the portal's own code, so they are not asked of the model.</summary>
 public static class LitigationCaseAnalysisPrompt
 {
-    public const string Version = "2.0";
+    public const string Version = "2.1";
 
     /// <summary>First words of the prompt: tests and the validator-facing code recognise a v2.0 prompt by this.</summary>
     public const string Marker = "You are a litigation due-diligence analyst reading the record of one Indian court or tribunal case.";
@@ -62,10 +62,11 @@ public static class LitigationCaseAnalysisPrompt
 
         8. GARBLED TEXT. Order text comes from scanned or badly encoded PDFs and is often damaged: words run together or split, letters
            and digits misread ("totai sum of Rs.s2s LrLg,6l,6?6.6ops"). Never repair or reconstruct a damaged number, date, amount, case
-           number or name from your guesses about what it must have been. For a figure that is damaged, give amount as null, or as the
-           printed characters between quotation marks when they are partly readable, and say in unknowns that the figure is not legible
-           in the order. A quote must reproduce the damaged characters as printed; a quote you have "corrected" will be discarded.
-           Spacing alone may differ between your quote and the text.
+           number or name from your guesses about what it must have been. A figure that is damaged or only partly legible is never written
+           into summary, key_points, risk_reason or any other field, and amount is null: write "amount not legible in the order" as a
+           key point and add it to unknowns. Use a figure only when it is printed legibly somewhere in the case's orders. A quote must
+           reproduce damaged characters as printed; a quote you have "corrected" will be discarded. Spacing alone may differ between
+           your quote and the text.
 
         ## TARGET'S ROLE AND DIRECTION
 
@@ -116,7 +117,7 @@ public static class LitigationCaseAnalysisPrompt
         The portal computes its own baseline tier from the metadata. You may confirm it or raise it; if you raise it, the reason must be
         in an order you quote under "evidence" with claim "risk_trigger". A tier lower than the baseline is not accepted.
         risk_trigger is a short phrase naming the trigger ("NI Act 138 - Cheque Bounce (Accused)", "DRT Recovery Proceeding",
-        "Pending Title Dispute - Appeal Stage", "No litigation risk identified."). risk_reason is 1-3 sentences that name the trigger
+        "Pending Title Dispute - Appeal Stage", "No litigation risk identified."). risk_reason is ONE sentence of at most 30 words that names the trigger
         correctly: never describe a disposed NI Act, DRT or similar R3-any-status case as "no residual exposure". risk_category is
         FINANCIAL, PROPERTY, CRIMINAL, REGULATORY or OTHER for R2 and R3, otherwise null.
 
@@ -125,16 +126,26 @@ public static class LitigationCaseAnalysisPrompt
         R2 trigger. "Background": a disposed civil matter with no residual exposure and no financial-default or criminal history.
         "Not material": unrelated or purely informational, or the target is only a formal party with no real exposure.
 
+        ## STYLE (applies to every text field)
+        The reader is an analyst scanning many cases: write so that nothing has to be read twice and no story has to be followed.
+        Telegraphic fragments, not sentences of narrative. Lead with the fact: who, what, how much, status, date. Numbers, dates and
+        names as printed. No background the analyst already has, no filler ("it is noted that", "the court was of the view"), no
+        repetition of one fact across fields, no hedging words without a reason. One idea per bullet. Respect the length limits below.
+
         ## CONTENT
-        - summary: 2-3 sentences: what the case is about, the target's role, the status, and the most important risk finding. Say if the
-          case has been pending unusually long (over 5 years civil or commercial, 3 criminal, 7 tax). For R0 and R1 the last sentence
-          says which high-risk categories were not found.
+        - summary: ONE line, at most 25 words: the dispute, the target's role and the status ("DRT recovery by 13 banks against company
+          as 1st respondent; disposed 2023, allowed with costs").
+        - key_points: 3 to 6 bullets, each at most 25 words, the facts that matter most, in order of importance: the claim or charge and
+          its amount, the target's exposure (role, what it is liable for), the current position (stage, next step, outcome), any restraint
+          or lis pendens, anything unusual (pending over 5 years civil or commercial, 3 criminal, 7 tax; connected matters). For R0 and R1
+          one bullet says which high-risk categories were not found. Never repeat the summary.
         - subject: 1-5 words ("NI Act - Cheque Bounce", "DRT - Recovery", "Civil - Recovery Suit", "Writ - Service Matter").
         - amount: the sum in dispute exactly as the order or metadata states it, or null.
         - case_nature: Civil, Criminal, Commercial, Tax, Regulatory, Administrative, Mixed or Unknown. liability_type: Civil, Criminal,
           Both or Unknown. In Metadata-Led mode, case_type and act are corroborating signals, never the only one.
-        - factual_background (3-5 sentences, only facts stated in the order), relief_sought (what was asked of the court), core_issue
-          (the central question), judicial_reasoning (2-3 close paraphrases of the court's reasoning). Null or [] in Metadata-Led mode.
+        - factual_background, relief_sought and core_issue: each ONE line of at most 25 words, only facts stated in the order (what
+          happened; what was asked of the court; the central question). judicial_reasoning: at most 2 bullets of at most 25 words. Null or
+          [] in Metadata-Led mode.
         - provisions: every act, section, article and rule the orders cite, as "Section 138, Negotiable Instruments Act 1881". In
           Metadata-Led mode parse the input act text instead: split distinct acts, drop placeholder marks, give "Section n, Act" where a
           number is present and just the act name where not, and never invent a year or a section.
@@ -155,13 +166,14 @@ public static class LitigationCaseAnalysisPrompt
         - order_analysis: one entry per input order, by order_id. If its order_text is null: summary "Order text not available - metadata-led
           analysis only.", type "Procedural Order" is not to be guessed (use null), other fields null or []. Otherwise: type is one of
           Final Order, Disposal Order, Judgment, Interim Order, Stay Order, Procedural Order, Hearing, classified from the operative
-          outcome (an order that disposes of the matter is never an Interim Order); summary 1-2 sentences of what the court did that day;
-          key_findings 3-6 full sentences (for a disposing order the last one states what was allowed or dismissed and on what ground);
-          operative_order: the closing direction ("IN THE RESULT", "ORDERED", "accordingly") stated specifically (dismissed, allowed,
-          decreed for Rs X, plaint rejected as time-barred), not just "disposed". In Indian orders it is at the very end.
-        - outcome: for DISPOSED cases an object {petitioner_result, respondent_result, final_order_summary} with results Won, Lost,
+          outcome (an order that disposes of the matter is never an Interim Order); summary at most 20 words on what the court did that day;
+          key_findings 1 to 3 bullets of at most 20 words (a routine listing or adjournment needs none: []; for a disposing order the last
+          one states what was allowed or dismissed and on what ground); operative_order: the closing direction ("IN THE RESULT",
+          "ORDERED", "accordingly") in ONE line of at most 30 words, stated specifically (dismissed, allowed, decreed for Rs X, plaint
+          rejected as time-barred), not just "disposed". In Indian orders it is at the very end.
+        - outcome: for DISPOSED cases an object {petitioner_result, respondent_result, final_order_summary (one line, at most 25 words)} with results Won, Lost,
           Partly Won, Pending or Unknown; null otherwise.
-        - consequence_note: 1-2 plain sentences on what an adverse decision would mean for the target (a debt recovered against assets, a
+        - consequence_note: ONE line of at most 25 words on what an adverse decision would mean for the target (a debt recovered against assets, a
           cloud on title, criminal exposure of management). Null when relevance is "Not material", the case is concluded with no residual
           exposure, or the consequence cannot be told from the data.
         - unknowns: things the reader should know could not be determined (order text missing or truncated, unreadable pages, a
@@ -177,7 +189,7 @@ public static class LitigationCaseAnalysisPrompt
         Return exactly this JSON object, every key present:
         {"case_key":"","analysis_basis":"Order-Confirmed|Metadata-Led","target_party_role":"","legal_exposure_direction":"BY_TARGET|AGAINST_TARGET|NEUTRAL|UNKNOWN",
         "risk":"R3|R2|R1|R0","risk_trigger":"","risk_reason":"","risk_category":null,"relevance":"Needs attention|Monitor|Background|Not material",
-        "case_nature":"","liability_type":"","summary":"","subject":"","amount":null,"factual_background":null,"relief_sought":null,"core_issue":null,
+        "case_nature":"","liability_type":"","summary":"","key_points":[],"subject":"","amount":null,"factual_background":null,"relief_sought":null,"core_issue":null,
         "judicial_reasoning":[],"provisions":[],"precedents":[],"connected_matters":[],"active_restraint":false,"restraint_type":"NONE","lis_pendens":false,"restraint_lifted":false,"lis_pendens_ended":false,"risk_without_restraint":"R3|R2|R1|R0","risk_trigger_without_restraint":"","risk_reason_without_restraint":"",
         "order_analysis":[{"order_id":0,"date":"","type":null,"summary":"","key_findings":[],"operative_order":null}],
         "outcome":null,"consequence_note":null,"evidence":[{"claim":"","order_id":0,"quote":""}],"unknowns":[]}

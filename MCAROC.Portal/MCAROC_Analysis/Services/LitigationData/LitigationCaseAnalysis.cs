@@ -121,7 +121,7 @@ public static class LitigationCaseAnalysisInputBuilder
 public static class LitigationCaseAnalysisProjection
 {
     private static readonly string[] Kept =
-        ["case_key", "risk", "risk_trigger", "risk_category", "baseline_risk", "relevance", "case_nature", "liability_type", "subject", "summary",
+        ["case_key", "risk", "risk_trigger", "risk_category", "baseline_risk", "relevance", "case_nature", "liability_type", "subject", "summary", "key_points",
          "target_party_role", "legal_exposure_direction", "active_restraint", "restraint_type", "lis_pendens", "amount", "analysis_basis", "unknowns"];
 
     public static string? ForPortfolio(string? analysisJson)
@@ -237,7 +237,10 @@ public static class LitigationCaseAnalysisGroups
         // The consequence of an adverse decision was written for the top group's own grounds: not carried over from a superseded one.
         merged["consequence_note"] = Stale(top) ? groups.Where(g => !Stale(g)).Select(g => g["consequence_note"]?.DeepClone()).FirstOrDefault(n => n is not null)
             : top["consequence_note"]?.DeepClone() ?? (First("consequence_note") is { } c ? JsonValue.Create(c) : null);
-        merged["summary"] = string.Join(" ", groups.Select(g => g["summary"]?.ToString()).Where(x => !string.IsNullOrWhiteSpace(x)));
+        // The headline is the top group's, unless it describes a restraint or lis pendens that has ended: then the newest group that does not.
+        merged["summary"] = (Stale(top) ? groups.FirstOrDefault(g => !Stale(g)) ?? groups[0] : top)["summary"]?.DeepClone();
+        merged["key_points"] = new JsonArray(groups.SelectMany(g => (g["key_points"] as JsonArray)?.Select(x => x?.ToString()) ?? [])
+            .Where(x => !string.IsNullOrWhiteSpace(x)).Distinct(StringComparer.OrdinalIgnoreCase).Take(8).Select(x => (JsonNode)JsonValue.Create(x)!).ToArray());
         foreach (var key in new[] { "judicial_reasoning", "provisions", "precedents", "connected_matters", "order_analysis", "evidence", "unknowns", "evidenceReferences", "validation_notes" })
             merged[key] = Join(key);
         merged["active_restraint"] = restraintNow;
@@ -393,7 +396,7 @@ public static class LitigationCaseAnalysisValidator
             ["risk_reason"] = Str("risk_reason"), ["risk_category"] = risk is "R3" or "R2" ? Str("risk_category") : null,
             ["baseline_risk"] = baselineName, ["baseline_trigger"] = baselineTrigger, ["risk_raised"] = raised,
             ["relevance"] = relevance, ["case_nature"] = Str("case_nature") ?? "Unknown", ["liability_type"] = Str("liability_type") ?? "Unknown",
-            ["summary"] = summary, ["subject"] = Str("subject"), ["amount"] = amount,
+            ["summary"] = summary, ["key_points"] = Bullets(root["key_points"]), ["subject"] = Str("subject"), ["amount"] = amount,
             ["factual_background"] = Str("factual_background"), ["relief_sought"] = Str("relief_sought"), ["core_issue"] = Str("core_issue"),
             ["judicial_reasoning"] = Strings(root["judicial_reasoning"]), ["provisions"] = Strings(root["provisions"]),
             ["precedents"] = Strings(root["precedents"]), ["connected_matters"] = Strings(root["connected_matters"]),
@@ -483,6 +486,22 @@ public static class LitigationCaseAnalysisValidator
             if (Joiner(text[start - 1]) && start >= 2 && char.IsLetterOrDigit(text[start - 2])) return true;
         }
         return false;
+    }
+
+    /// <summary>The headline bullets: trimmed, no blanks or repeats, at most six, each cut to a sane length (the prompt asks for 25 words).</summary>
+    private static JsonArray Bullets(JsonNode? node)
+    {
+        var result = new JsonArray();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (node is JsonArray a)
+            foreach (var x in a)
+            {
+                if (x is not JsonValue v || !v.TryGetValue<string>(out var s) || string.IsNullOrWhiteSpace(s)) continue;
+                s = s.Trim().TrimStart('-', '*', '\u2022', ' ');
+                if (s.Length > 300) s = s[..297].TrimEnd() + "...";
+                if (s.Length > 0 && seen.Add(s) && result.Count < 6) result.Add(s);
+            }
+        return result;
     }
 
     private static JsonArray Strings(JsonNode? node)

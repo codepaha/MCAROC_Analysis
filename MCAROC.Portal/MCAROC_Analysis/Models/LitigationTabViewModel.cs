@@ -341,6 +341,7 @@ public sealed class LitigationCaseAiAnalysisViewModel
 
     // The v2.0 case analysis (null / empty on an analysis in the older shape).
     public bool IsDetailed { get; set; }
+    public List<string> KeyPoints { get; set; } = [];
     public string? BaselineRisk { get; set; }
     public bool RiskRaised { get; set; }
     public string? RiskTrigger { get; set; }

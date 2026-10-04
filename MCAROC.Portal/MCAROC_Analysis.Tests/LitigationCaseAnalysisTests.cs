@@ -21,6 +21,7 @@ internal static class CaseAnalysisAnswers
             ["target_party_role"] = "Respondent", ["legal_exposure_direction"] = "AGAINST_TARGET",
             ["risk"] = "R0", ["risk_trigger"] = "Scripted", ["risk_reason"] = "Scripted answer.", ["risk_category"] = null,
             ["relevance"] = "Monitor", ["case_nature"] = "Civil", ["liability_type"] = "Civil", ["summary"] = "Scripted case summary.",
+            ["key_points"] = new JsonArray("Scripted point one.", "Scripted point two."),
             ["subject"] = "Civil - Test", ["amount"] = null, ["factual_background"] = null, ["relief_sought"] = null, ["core_issue"] = null,
             ["judicial_reasoning"] = new JsonArray(), ["provisions"] = new JsonArray(), ["precedents"] = new JsonArray(),
             ["connected_matters"] = new JsonArray(), ["active_restraint"] = false, ["restraint_type"] = "NONE", ["lis_pendens"] = false,
@@ -567,11 +568,60 @@ public class LitigationCaseAnalysisTests
         Assert.Equal("R3", merged["risk"]!.ToString());
         Assert.Equal("Active Restraint", merged["risk_trigger"]!.ToString());
         Assert.Equal(2, ((JsonArray)merged["provisions"]!).Count);                       // joined, no repeat
-        Assert.StartsWith("Newest orders", merged["summary"]!.ToString());              // newest group first
-        Assert.Contains("Earlier orders", merged["summary"]!.ToString());
+        Assert.StartsWith("Earlier orders", merged["summary"]!.ToString());             // the headline is the highest-tier group's, not a story of both
         Assert.Equal(2, (int)merged["split_groups"]!);
         Assert.Contains(((JsonArray)merged["unknowns"]!).Select(x => x!.ToString()), u => u.Contains("2 groups"));
         Assert.Equal(2, ((JsonArray)merged["order_analysis"]!).Count);
+    }
+
+    [Fact]
+    public void Key_points_are_kept_as_short_bullets_trimmed_deduplicated_and_capped_at_six()
+    {
+        var input = Input(NewCase((1, "09-01-2025", "Order")), Docs((1, 11, OrderOneText)));
+        var long300 = new string('w', 400);
+
+        var v = Validate(Answer(input, a => a["key_points"] = new JsonArray(
+            "- Claim: Rs.52 crore by 13 banks", "  * Company is 1st respondent  ", "Claim: Rs.52 crore by 13 banks", "", "Disposed 2023", "Allowed with costs", "p5", "p6", "p7", long300)), input);
+
+        var points = ((JsonArray)JsonNode.Parse(v.AnalysisJson!)!["key_points"]!).Select(x => x!.ToString()).ToList();
+        Assert.Equal(6, points.Count);
+        Assert.Equal("Claim: Rs.52 crore by 13 banks", points[0]);   // list marker stripped, the repeat dropped
+        Assert.Equal("Company is 1st respondent", points[1]);
+        Assert.DoesNotContain(points, p => p.Length > 300);
+    }
+
+    [Fact]
+    public void The_prompt_asks_for_a_headline_bullets_and_short_fields()
+    {
+        var prompt = LitigationCaseAnalysisPrompt.Instructions;
+
+        Assert.Contains("key_points: 3 to 6 bullets", prompt);
+        Assert.Contains("ONE line, at most 25 words", prompt);
+        Assert.Contains("\"key_points\":[]", prompt);
+        Assert.DoesNotContain("2-3 sentences", prompt);
+        Assert.Equal("2.1", LitigationCaseAnalysisPrompt.Version);
+    }
+
+    [Fact]
+    public void The_stored_key_points_are_read_back_and_a_merged_long_case_keeps_the_top_headline_and_all_bullets()
+    {
+        var input = Input(NewCase((1, "09-01-2025", "Order")), Docs((1, 11, OrderOneText)));
+        var first = Validate(Answer(input, a => { a["summary"] = "Low group headline."; a["key_points"] = new JsonArray("Point A", "Shared point"); }), input, LitigationRiskTier.R0).AnalysisJson!;
+        var second = Validate(Answer(input, a =>
+        {
+            a["summary"] = "High group headline."; a["key_points"] = new JsonArray("Shared point", "Point B");
+            a["risk"] = "R3"; a["risk_trigger"] = "Active Restraint";
+            a["evidence"] = new JsonArray(new JsonObject { ["claim"] = "risk_trigger", ["order_id"] = 1, ["quote"] = "restrained from creating any third party interest" });
+        }), input, LitigationRiskTier.R0).AnalysisJson!;
+
+        var merged = LitigationCaseAnalysisGroups.Merge([first, second]);
+
+        var json = JsonNode.Parse(merged)!;
+        Assert.Equal("High group headline.", json["summary"]!.ToString());
+        Assert.Equal(["Point A", "Shared point", "Point B"], ((JsonArray)json["key_points"]!).Select(x => x!.ToString()));
+        var vm = MCAROC_Analysis.Services.LitigationData.LitigationCaseCardMapper.MapAnalysis(
+            new LitigationCaseAiAnalysis { Status = LitigationAiAnalysisItemStatus.Completed, AnalysisJson = merged }, 1);
+        Assert.Equal(["Point A", "Shared point", "Point B"], vm.KeyPoints);
     }
 
     // ── #392 review: restraint chronology, evidence covers what groups send, group budgets ──

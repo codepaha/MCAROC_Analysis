@@ -62,6 +62,55 @@ public sealed class LitigationReportWireTests : IAsyncLifetime
         return controller;
     }
 
+    [Fact]
+    public async Task AssembleAsync_an_analysis_of_a_case_not_in_this_report_neither_appears_nor_raises_the_portfolio_tier()
+    {
+        await using var db = CreateContext();
+        var client = new Client { ClientCode = "HS" + Guid.NewGuid().ToString("N")[..6], ClientName = "Historical Co", CreatedDate = DateTime.UtcNow };
+        db.Clients.Add(client);
+        var request = new McaRequest { Client = client, CompanyName = "Historical Co", RequestNumber = $"REQ-HS-{Guid.NewGuid():N}", CreatedDate = DateTime.UtcNow };
+        db.Requests.Add(request);
+        await db.SaveChangesAsync();
+        var job = new LitigationSearchJob { RequestId = request.RequestId, Status = LitigationSearchJobStatus.Completed, RawResponseHash = "hs-" + Guid.NewGuid().ToString("N"), CreatedUtc = DateTime.UtcNow };
+        db.LitigationSearchJobs.Add(job);
+        await db.SaveChangesAsync();
+        var snapshot = new LitigationReportSnapshot
+        {
+            LitigationSearchJobId = job.LitigationSearchJobId, RequestId = request.RequestId, ReportHash = job.RawResponseHash!,
+            Status = LitigationReportSnapshotStatus.Completed, RetrievedUtc = DateTime.UtcNow, CreatedUtc = DateTime.UtcNow, CompletedUtc = DateTime.UtcNow
+        };
+        db.LitigationReportSnapshots.Add(snapshot);
+        var visible = new LitigationCase { RequestId = request.RequestId, CaseNumber = "VIS-1", Court = "Civil Court", CaseStatus = "Pending", FirstSeenUtc = DateTime.UtcNow, LastSeenUtc = DateTime.UtcNow };
+        var historical = new LitigationCase { RequestId = request.RequestId, CaseNumber = "OLD-1", Court = "DRT", CaseStatus = "Pending", FirstSeenUtc = DateTime.UtcNow, LastSeenUtc = DateTime.UtcNow };
+        db.LitigationCases.AddRange(visible, historical);
+        await db.SaveChangesAsync();
+        db.LitigationCaseSourceReports.Add(new LitigationCaseSourceReport { LitigationCaseId = visible.LitigationCaseId, LitigationReportSnapshotId = snapshot.LitigationReportSnapshotId, FirstSeenUtc = DateTime.UtcNow });
+        var run = new LitigationAiAnalysisRun
+        {
+            RequestId = request.RequestId, RunNumber = 1, Status = LitigationAiAnalysisRunStatus.Completed, ModelId = "m", PromptVersion = "2.1", CreatedUtc = DateTime.UtcNow, CompletedUtc = DateTime.UtcNow
+        };
+        db.LitigationAiAnalysisRuns.Add(run);
+        await db.SaveChangesAsync();
+        string Detailed(string risk) => "{\"status\":\"Completed\",\"prompt_version\":\"2.1\",\"risk\":\"" + risk + "\",\"risk_trigger\":\"t\",\"summary\":\"s\",\"key_points\":[],\"evidence\":[],\"unknowns\":[]}";
+        db.LitigationCaseAiAnalyses.AddRange(
+            new LitigationCaseAiAnalysis { LitigationAiAnalysisRunId = run.LitigationAiAnalysisRunId, LitigationCaseId = visible.LitigationCaseId, Status = LitigationAiAnalysisItemStatus.Completed, AnalysisJson = Detailed("R1"), EvidenceJson = "{}", EvidenceHash = "a", PromptHash = "p", CompletedUtc = DateTime.UtcNow },
+            new LitigationCaseAiAnalysis { LitigationAiAnalysisRunId = run.LitigationAiAnalysisRunId, LitigationCaseId = historical.LitigationCaseId, Status = LitigationAiAnalysisItemStatus.Completed, AnalysisJson = Detailed("R3"), EvidenceJson = "{}", EvidenceHash = "b", PromptHash = "p", CompletedUtc = DateTime.UtcNow });
+        db.LitigationPortfolioAiAnalyses.Add(new LitigationPortfolioAiAnalysis
+        {
+            LitigationAiAnalysisRunId = run.LitigationAiAnalysisRunId, Status = LitigationAiAnalysisItemStatus.Completed, EvidenceJson = "{}", EvidenceHash = "c", PromptHash = "p",
+            AnalysisJson = "{\"status\":\"Completed\",\"summary\":\"Portfolio.\",\"unknowns\":[],\"caseAnalysisIds\":[1]}", CompletedUtc = DateTime.UtcNow
+        });
+        await db.SaveChangesAsync();
+
+        var report = await new LitigationReportAssembler(db).AssembleAsync(request.RequestId);
+
+        Assert.NotNull(report);
+        Assert.Single(report.Cases);
+        Assert.Equal("R1", report.PortfolioAnalysis!.RiskLevel);                                  // not the historical case's R3
+        Assert.NotNull(report.AnalysisFor(visible.LitigationCaseId));
+        Assert.Null(report.AnalysisFor(historical.LitigationCaseId));
+    }
+
     // ── 1. Large-Snapshot Scale Test (> 2,100 cases with subqueries) ─────────
 
     [Fact]
