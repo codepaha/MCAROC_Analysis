@@ -155,7 +155,10 @@ public static class LitigationCaseAnalysisPrompt
           not expired, case not disposed with it lifted). restraint_type: INJUNCTION, ATTACHMENT, STATUS_QUO, POSSESSION_RESTRAINT or NONE.
           lis_pendens: true if a pending title, partition or specific-performance suit over property, or a section 52 Transfer of
           Property Act notation, applies. Either flag set to true needs a quote under "evidence" with claim "restraint" or
-          "lis_pendens"; without one the portal sets it back to false.
+          "lis_pendens"; without one the portal sets it back to false. restraint_lifted: true if the orders you were given vacate, lift,
+          set aside or let lapse a restraint granted earlier (the earlier grant itself may not be among your orders), or the case ends
+          with it lifted; lis_pendens_ended likewise for a lis pendens. Each needs a quote with claim "restraint_lifted" or
+          "lis_pendens_ended". If these orders grant a restraint and a later one in the same orders lifts it, active_restraint is false.
         - order_analysis: one entry per input order, by order_id. If its order_text is null: summary "Order text not available - metadata-led
           analysis only.", type "Procedural Order" is not to be guessed (use null), other fields null or []. Otherwise: type is one of
           Final Order, Disposal Order, Judgment, Interim Order, Stay Order, Procedural Order, Hearing, classified from the operative
@@ -174,7 +177,7 @@ public static class LitigationCaseAnalysisPrompt
 
         ## EVIDENCE
         "evidence" is a list of {"claim", "order_id", "quote"} with claim one of "risk_trigger", "restraint", "lis_pendens",
-        "operative_order", "outcome", "target_party". Give at least one for each of: a risk raised above the baseline; each true
+        "restraint_lifted", "lis_pendens_ended", "operative_order", "outcome", "target_party". Give at least one for each of: a risk raised above the baseline; each true
         restraint or lis_pendens flag; the operative order of each disposing order; and the target's role when it is not obvious. Metadata-Led
         cases have an empty list.
 
@@ -183,7 +186,7 @@ public static class LitigationCaseAnalysisPrompt
         {"case_key":"","analysis_basis":"Order-Confirmed|Metadata-Led","target_party_role":"","legal_exposure_direction":"BY_TARGET|AGAINST_TARGET|NEUTRAL|UNKNOWN",
         "risk":"R3|R2|R1|R0","risk_trigger":"","risk_reason":"","risk_category":null,"relevance":"Needs attention|Monitor|Background|Not material",
         "case_nature":"","liability_type":"","summary":"","key_points":[],"subject":"","amount":null,"factual_background":null,"relief_sought":null,"core_issue":null,
-        "judicial_reasoning":[],"provisions":[],"precedents":[],"connected_matters":[],"active_restraint":false,"restraint_type":"NONE","lis_pendens":false,
+        "judicial_reasoning":[],"provisions":[],"precedents":[],"connected_matters":[],"active_restraint":false,"restraint_type":"NONE","lis_pendens":false,"restraint_lifted":false,"lis_pendens_ended":false,
         "order_analysis":[{"order_id":0,"date":"","type":null,"summary":"","key_findings":[],"operative_order":null}],
         "outcome":null,"consequence_note":null,"evidence":[{"claim":"","order_id":0,"quote":""}],"unknowns":[]}
 

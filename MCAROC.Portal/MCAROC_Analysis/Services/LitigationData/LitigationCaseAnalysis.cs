@@ -25,7 +25,8 @@ public sealed record CaseAnalysisInput(
 public static class LitigationCaseAnalysisInputBuilder
 {
     public const int MaxOrderChars = 60_000;
-    public const int MaxCaseChars = 400_000;
+    /// <summary>The most order text sent for one case over all its groups; past it the oldest orders' text is left out (flagged).</summary>
+    public const int MaxCaseChars = 1_000_000;
     private const int HeadChars = 20_000;
     public const string OmittedMarker = "[... middle section omitted for length ...]";
     private static readonly System.Text.RegularExpressions.Regex PageMarkerLine =
@@ -33,7 +34,8 @@ public static class LitigationCaseAnalysisInputBuilder
 
     public static CaseAnalysisInput Build(
         LitigationCase c, IReadOnlyDictionary<long, LitigationOrderDocument> documentsByOrderId,
-        string targetEntity, IReadOnlyCollection<string> targetNames, DateOnly asOf, IReadOnlySet<long>? onlyOrderIds = null)
+        string targetEntity, IReadOnlyCollection<string> targetNames, DateOnly asOf, IReadOnlySet<long>? onlyOrderIds = null,
+        IReadOnlySet<long>? withoutTextOrderIds = null)
     {
         var ordered = c.Orders.Where(o => onlyOrderIds is null || onlyOrderIds.Contains(o.LitigationCaseOrderId))
             .OrderByDescending(o => LitigationCaseAges.ParseDate(o.OrderDate) ?? DateOnly.MinValue)
@@ -46,6 +48,9 @@ public static class LitigationCaseAnalysisInputBuilder
             documentsByOrderId.TryGetValue(o.LitigationCaseOrderId, out var doc);
             var text = string.IsNullOrWhiteSpace(doc?.ExtractedText) ? null : doc!.ExtractedText!;
             var total = text?.Length ?? 0;
+            // A group is built from the whole case's plan: an order whose text the whole case left out for length stays without text here,
+            // so the text a group sends is exactly the text the case's evidence hash covers.
+            if (text is not null && withoutTextOrderIds is not null && withoutTextOrderIds.Contains(o.LitigationCaseOrderId)) { text = null; truncated = true; }
             if (text is not null)
             {
                 if (text.Length > MaxOrderChars)
@@ -194,9 +199,22 @@ public static class LitigationCaseAnalysisGroups
             .Where(x => !string.IsNullOrWhiteSpace(x)).Distinct(StringComparer.OrdinalIgnoreCase).Take(8).Select(x => (JsonNode)JsonValue.Create(x)!).ToArray());
         foreach (var key in new[] { "judicial_reasoning", "provisions", "precedents", "connected_matters", "order_analysis", "evidence", "unknowns", "evidenceReferences", "validation_notes" })
             merged[key] = Join(key);
-        merged["active_restraint"] = Any("active_restraint");
-        merged["restraint_type"] = restraintGroup?["restraint_type"]?.DeepClone() ?? JsonValue.Create("NONE");
-        merged["lis_pendens"] = Any("lis_pendens");
+        // Whether a restraint or lis pendens is in force NOW is a matter of chronology, not of any group saying so: walk the groups oldest to
+        // newest; a group that grants or confirms one sets it, a group whose orders lift or end it clears it, a group that says nothing leaves
+        // the state as it was. (An OR over the groups would revive a restraint that a newer order vacated.)
+        var restraintNow = false; JsonNode? restraintTypeNow = null; var lisNow = false;
+        foreach (var g in Enumerable.Reverse(groups))
+        {
+            if (g["active_restraint"]?.GetValue<bool>() == true) { restraintNow = true; restraintTypeNow = g["restraint_type"]?.DeepClone(); }
+            else if (g["restraint_lifted"]?.GetValue<bool>() == true) { restraintNow = false; restraintTypeNow = null; }
+            if (g["lis_pendens"]?.GetValue<bool>() == true) lisNow = true;
+            else if (g["lis_pendens_ended"]?.GetValue<bool>() == true) lisNow = false;
+        }
+        merged["active_restraint"] = restraintNow;
+        merged["restraint_type"] = restraintNow ? restraintTypeNow ?? JsonValue.Create("NONE") : JsonValue.Create("NONE");
+        merged["lis_pendens"] = lisNow;
+        merged["restraint_lifted"] = Any("restraint_lifted");
+        merged["lis_pendens_ended"] = Any("lis_pendens_ended");
         merged["outcome"] = groups.Select(g => g["outcome"]).FirstOrDefault(o => o is JsonObject)?.DeepClone();
         merged["split_groups"] = groups.Count;
         ((JsonArray)merged["unknowns"]!).Add($"A long case: its orders were read in {groups.Count} groups, newest first.");
@@ -217,7 +235,7 @@ public static class LitigationCaseAnalysisValidator
     private static readonly string[] Risks = ["R0", "R1", "R2", "R3"];
     private static readonly string[] Relevance = ["Needs attention", "Monitor", "Background", "Not material"];
     private static readonly string[] Directions = ["BY_TARGET", "AGAINST_TARGET", "NEUTRAL", "UNKNOWN"];
-    private static readonly string[] Claims = ["risk_trigger", "restraint", "lis_pendens", "operative_order", "outcome", "target_party"];
+    private static readonly string[] Claims = ["risk_trigger", "restraint", "lis_pendens", "restraint_lifted", "lis_pendens_ended", "operative_order", "outcome", "target_party"];
     private static readonly string[] RestraintTypes = ["INJUNCTION", "ATTACHMENT", "STATUS_QUO", "POSSESSION_RESTRAINT", "NONE"];
     private static readonly string[] Bases = ["Order-Confirmed", "Metadata-Led"];
     private const int MinQuote = 12, MaxQuote = 500;
@@ -287,6 +305,12 @@ public static class LitigationCaseAnalysisValidator
         if (restraint && !Has("restraint")) { restraint = false; notes.Add("active_restraint set back to false: no confirmed quote."); }
         var lis = root["lis_pendens"] is JsonValue lv && lv.TryGetValue<bool>(out var lb) && lb;
         if (lis && !Has("lis_pendens")) { lis = false; notes.Add("lis_pendens set back to false: no confirmed quote."); }
+        // Whether these orders END a restraint or lis pendens granted earlier: only meaningful across the groups of a long case, where it is
+        // what lets a later group's order cancel an earlier group's grant. Like the flags themselves, it stands only on a confirmed quote.
+        var restraintLifted = root["restraint_lifted"] is JsonValue rl && rl.TryGetValue<bool>(out var rlb) && rlb;
+        if (restraintLifted && !Has("restraint_lifted")) { restraintLifted = false; notes.Add("restraint_lifted set back to false: no confirmed quote."); }
+        var lisEnded = root["lis_pendens_ended"] is JsonValue le && le.TryGetValue<bool>(out var leb) && leb;
+        if (lisEnded && !Has("lis_pendens_ended")) { lisEnded = false; notes.Add("lis_pendens_ended set back to false: no confirmed quote."); }
         var restraintType = Str("restraint_type");
         if (!restraint) restraintType = "NONE";
         else if (restraintType is null || !RestraintTypes.Contains(restraintType)) restraintType = "NONE";
@@ -338,6 +362,7 @@ public static class LitigationCaseAnalysisValidator
             ["judicial_reasoning"] = Strings(root["judicial_reasoning"]), ["provisions"] = Strings(root["provisions"]),
             ["precedents"] = Strings(root["precedents"]), ["connected_matters"] = Strings(root["connected_matters"]),
             ["active_restraint"] = restraint, ["restraint_type"] = restraintType, ["lis_pendens"] = lis,
+            ["restraint_lifted"] = restraintLifted, ["lis_pendens_ended"] = lisEnded,
             ["order_analysis"] = orderAnalysis, ["outcome"] = root["outcome"]?.DeepClone(), ["consequence_note"] = Str("consequence_note"),
             ["evidence"] = new JsonArray(confirmed.Select(c => (JsonNode)new JsonObject
             {

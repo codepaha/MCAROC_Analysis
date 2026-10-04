@@ -151,7 +151,9 @@ public class LitigationReportAssembler(
 
             var aiCaseAnalyses = await db.LitigationCaseAiAnalyses
                 .AsNoTracking()
-                .Where(ca => ca.LitigationAiAnalysisRunId == latestAiRun.LitigationAiAnalysisRunId)
+                // Only the cases this report lists: the run may hold analyses of cases that belong to an older report, and they must neither
+                // appear here nor raise this report's overall tier.
+                .Where(ca => ca.LitigationAiAnalysisRunId == latestAiRun.LitigationAiAnalysisRunId && caseIdsQuery.Contains(ca.LitigationCaseId))
                 .ToListAsync(ct);
 
             foreach (var ca in aiCaseAnalyses)

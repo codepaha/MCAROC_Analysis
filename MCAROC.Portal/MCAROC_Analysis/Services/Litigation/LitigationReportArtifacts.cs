@@ -266,8 +266,11 @@ public static class LitigationReportArtifacts
             analysis is null ? null : string.Join("; ", analysis.KeyIssues ?? []), analysis?.RecommendedAction,
             isReused, reusedReqId, reusedSnapId, retrievedDate, reuseDisclosure,
             analysis?.RiskTrigger, analysis?.BaselineRisk,
-            analysis is { ActiveRestraint: true } ? "Restraint in force" + (string.IsNullOrWhiteSpace(analysis.RestraintType) || analysis.RestraintType == "NONE" ? "" : " (" + analysis.RestraintType + ")")
-                : analysis is { LisPendens: true } ? "Lis pendens" : null,
+            string.Join("; ", new[]
+            {
+                analysis is { ActiveRestraint: true } ? "Restraint in force" + (string.IsNullOrWhiteSpace(analysis.RestraintType) || analysis.RestraintType == "NONE" ? "" : " (" + analysis.RestraintType + ")") : null,
+                analysis is { LisPendens: true } ? "Lis pendens" : null
+            }.Where(x => x is not null)) is { Length: > 0 } flags ? flags : null,
             analysis?.Outcome,
             analysis?.Passages is { Count: > 0 } ps ? string.Join(" | ", ps.Select(q => $"{q.Claim}: \"{q.Quote}\" (order #{q.OrderId}, p. {q.Page})")) : null,
             analysis?.KeyPoints is { Count: > 0 } kp ? string.Join("; ", kp) : null

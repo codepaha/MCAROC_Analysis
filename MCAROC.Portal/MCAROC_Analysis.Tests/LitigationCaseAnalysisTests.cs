@@ -114,12 +114,12 @@ public class LitigationCaseAnalysisTests
     [Fact]
     public void Past_the_case_budget_the_oldest_orders_lose_their_text_not_the_newest()
     {
-        var orders = Enumerable.Range(1, 9).Select(i => ((long)i, $"0{i}-01-2025", "Order")).ToArray();
+        var orders = Enumerable.Range(1, 20).Select(i => ((long)i, $"{i:00}-01-2025", "Order")).ToArray();   // 20 x 55k > the 1M case limit
         var docs = Docs(orders.Select(o => (o.Item1, o.Item1 + 100, (string?)new string('x', 55_000))).ToArray());
         var input = Input(NewCase(orders), docs);
 
         Assert.True(input.TextTruncated);
-        Assert.NotNull(input.Orders.First(o => o.OrderId == 9).Text);   // newest keeps its text
+        Assert.NotNull(input.Orders.First(o => o.OrderId == 20).Text);  // newest keeps its text
         Assert.Null(input.Orders.First(o => o.OrderId == 1).Text);      // oldest was left out
     }
 
@@ -622,5 +622,101 @@ public class LitigationCaseAnalysisTests
         var vm = MCAROC_Analysis.Services.LitigationData.LitigationCaseCardMapper.MapAnalysis(
             new LitigationCaseAiAnalysis { Status = LitigationAiAnalysisItemStatus.Completed, AnalysisJson = merged }, 1);
         Assert.Equal(["Point A", "Shared point", "Point B"], vm.KeyPoints);
+    }
+
+    // ── #392 review: restraint chronology, evidence covers what groups send, group budgets ──
+
+    private const string GrantText = "--- Page 1 (native) ---" + "\n" + "The respondent is restrained from alienating the property until further orders.";
+    private const string LiftText = "--- Page 1 (native) ---" + "\n" + "The earlier injunction is vacated and no restraint remains in force.";
+    private const string QuietText = "--- Page 1 (native) ---" + "\n" + "The matter is adjourned to the next date for arguments.";
+
+    private static string GroupAnswer(string text, long orderId, Action<JsonObject>? tweak) =>
+        LitigationCaseAnalysisValidator.Validate(
+            CaseAnalysisAnswers.For(LitigationCaseAnalysisPrompt.Build(Input(NewCase((orderId, "01-01-2025", "Order")), Docs((orderId, orderId + 100, text))).CaseJson), tweak),
+            Input(NewCase((orderId, "01-01-2025", "Order")), Docs((orderId, orderId + 100, text))), LitigationRiskTier.R0, "Baseline").AnalysisJson!;
+
+    private static string Granted(long id) => GroupAnswer(GrantText, id, a =>
+    {
+        a["active_restraint"] = true; a["restraint_type"] = "INJUNCTION";
+        a["evidence"] = new JsonArray(new JsonObject { ["claim"] = "restraint", ["order_id"] = id, ["quote"] = "The respondent is restrained from alienating the property" });
+    });
+    private static string Lifted(long id) => GroupAnswer(LiftText, id, a =>
+    {
+        a["restraint_lifted"] = true;
+        a["evidence"] = new JsonArray(new JsonObject { ["claim"] = "restraint_lifted", ["order_id"] = id, ["quote"] = "The earlier injunction is vacated" });
+    });
+    private static string Quiet(long id) => GroupAnswer(QuietText, id, null);
+
+    [Fact]
+    public void A_restraint_lifted_by_a_newer_group_is_not_in_force_in_the_merged_case()
+    {
+        // groups are passed newest first: order 2 (newer) lifts what order 1 (older) granted
+        var merged = JsonNode.Parse(LitigationCaseAnalysisGroups.Merge([Lifted(2), Granted(1)]))!;
+
+        Assert.False((bool)merged["active_restraint"]!);
+        Assert.Equal("NONE", merged["restraint_type"]!.ToString());
+    }
+
+    [Fact]
+    public void A_restraint_a_newer_group_never_mentions_stays_in_force_and_a_renewed_one_is_in_force()
+    {
+        var untouched = JsonNode.Parse(LitigationCaseAnalysisGroups.Merge([Quiet(2), Granted(1)]))!;
+        Assert.True((bool)untouched["active_restraint"]!);
+        Assert.Equal("INJUNCTION", untouched["restraint_type"]!.ToString());
+
+        // granted, lifted, granted again: the newest grant stands
+        var renewed = JsonNode.Parse(LitigationCaseAnalysisGroups.Merge([Granted(3), Lifted(2), Granted(1)]))!;
+        Assert.True((bool)renewed["active_restraint"]!);
+    }
+
+    [Fact]
+    public void A_lifted_flag_without_a_confirmed_quote_is_set_back_to_false()
+    {
+        var input = Input(NewCase((1, "01-01-2025", "Order")), Docs((1, 101, LiftText)));
+
+        var v = Validate(Answer(input, a => a["restraint_lifted"] = true), input);
+
+        Assert.False((bool)JsonNode.Parse(v.AnalysisJson!)!["restraint_lifted"]!);
+    }
+
+    [Fact]
+    public void Text_beyond_the_old_case_budget_is_part_of_the_evidence_hash_and_groups_send_exactly_the_hashed_text()
+    {
+        var orders = Enumerable.Range(1, 9).Select(i => ((long)i, $"0{i}-01-2025", "Order")).ToArray();
+        Dictionary<long, LitigationOrderDocument> DocsWith(char first) =>
+            Docs(orders.Select(o => (o.Item1, o.Item1 + 100, (string?)new string(o.Item1 == 1 ? first : 'x', 55_000))).ToArray());
+        var c = NewCase(orders);
+
+        var a = LitigationCaseAnalysisInputBuilder.Build(c, DocsWith('x'), Target, [Target], AsOf);
+        var b = LitigationCaseAnalysisInputBuilder.Build(c, DocsWith('y'), Target, [Target], AsOf);
+
+        Assert.NotEqual(a.EvidenceHash, b.EvidenceHash);                     // a same-length change in the oldest order changes the hash
+        // every group is built against the whole case and carries only text the whole case carries
+        var plan = LitigationCaseAnalysisGroups.Plan(a, 100_000, 80_000);
+        var sent = plan.SelectMany(ids => LitigationCaseAnalysisInputBuilder.Build(c, DocsWith('x'), Target, [Target], AsOf, ids,
+            a.Orders.Where(o => o.Text is null && o.TotalChars > 0).Select(o => o.OrderId).ToHashSet()).Orders).ToList();
+        Assert.Equal(a.Orders.Sum(o => o.Text?.Length ?? 0), sent.Sum(o => o.Text?.Length ?? 0));
+    }
+
+    [Fact]
+    public void A_group_never_sends_more_text_than_the_group_budget_and_orders_over_the_case_limit_are_flagged_not_rehydrated()
+    {
+        var orders = Enumerable.Range(1, 20).Select(i => ((long)i, $"{i:00}-01-2025", "Order")).ToArray();   // 20 x 55k = 1.1M > 1M
+        var docs = Docs(orders.Select(o => (o.Item1, o.Item1 + 100, (string?)new string('x', 55_000))).ToArray());
+        var c = NewCase(orders);
+        var whole = LitigationCaseAnalysisInputBuilder.Build(c, docs, Target, [Target], AsOf);
+        Assert.True(whole.TextTruncated);
+        var omitted = whole.Orders.Where(o => o.Text is null).Select(o => o.OrderId).ToHashSet();
+        Assert.NotEmpty(omitted);
+
+        var plan = LitigationCaseAnalysisGroups.Plan(whole, 100_000, 80_000);
+
+        Assert.Equal(20, plan.SelectMany(g => g).Distinct().Count());       // every order exactly once
+        foreach (var ids in plan)
+        {
+            var part = LitigationCaseAnalysisInputBuilder.Build(c, docs, Target, [Target], AsOf, ids, omitted);
+            Assert.True(part.Orders.Sum(o => o.Text?.Length ?? 0) <= 80_000, "a group sent more than the group budget");
+            Assert.All(part.Orders.Where(o => omitted.Contains(o.OrderId)), o => Assert.Null(o.Text));   // not rehydrated
+        }
     }
 }

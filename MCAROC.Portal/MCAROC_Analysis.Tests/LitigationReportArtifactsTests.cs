@@ -352,6 +352,27 @@ public sealed class LitigationReportArtifactsTests
         Assert.True(LitigationReportArtifacts.RenderPdf(report).Length > 1000);
     }
 
+    [Theory]
+    [InlineData(false, false, "")]
+    [InlineData(true, false, "Restraint in force (INJUNCTION)")]
+    [InlineData(false, true, "Lis pendens")]
+    [InlineData(true, true, "Restraint in force (INJUNCTION); Lis pendens")]
+    public void RenderCsv_shows_restraint_and_lis_pendens_independently(bool restraint, bool lisPendens, string expected)
+    {
+        var analysis = new MCAROC_Analysis.Services.LitigationData.LitigationCaseAnalysis(
+            "Completed", "R3", "Headline.", [], null, null, RiskTrigger: "Trigger", ActiveRestraint: restraint, RestraintType: restraint ? "INJUNCTION" : "NONE", LisPendens: lisPendens);
+        var report = ReportWithSingleCase("csp-1") with
+        {
+            CaseAnalysesByCaseId = new Dictionary<long, MCAROC_Analysis.Services.LitigationData.LitigationCaseAnalysis> { [1] = analysis }
+        };
+
+        using var reader = new StringReader(Encoding.UTF8.GetString(LitigationReportArtifacts.RenderCsv(report)));
+        using var csv = new CsvHelper.CsvReader(reader, System.Globalization.CultureInfo.InvariantCulture);
+        csv.Read(); csv.ReadHeader(); csv.Read();
+
+        Assert.Equal(expected, csv.GetField("Analysis Restraint") ?? "");
+    }
+
     private static StandaloneLitigationReport ReportWithSingleCase(string cspId, IReadOnlyList<StandaloneReportPropertyMatchDto>? propertyMatches = null)
     {
         var orders = new List<StandaloneReportOrderDto>
