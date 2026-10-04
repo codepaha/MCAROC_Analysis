@@ -106,6 +106,35 @@ public class AnalysisClaimAndRecoveryTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task AutomaticRetry_WaitingRequestIsFoundAfterRestart_AndFailedAttemptsAreCountedPerIngestionRun()
+    {
+        // A failed attempt puts the request back to DataExtracted and waits out a delay in memory; if the app stops meanwhile,
+        // recovery must find it (DataExtracted, an ingestion run, nothing running). Mirrors RecoverStaleWorkAsync / the failure path.
+        await using var db = CreateContext();
+        var waiting = await SeedRequestAsync(db, RequestStatus.DataExtracted);
+        var running = await SeedRequestAsync(db, RequestStatus.DataExtracted);
+        db.AnalysisRuns.AddRange(
+            new AnalysisRun { RequestId = waiting.RequestId, IngestionRunId = 1, RunNumber = 1, Status = AnalysisRunStatus.Failed, StartedDate = DateTime.UtcNow },
+            new AnalysisRun { RequestId = waiting.RequestId, IngestionRunId = 1, RunNumber = 2, Status = AnalysisRunStatus.Failed, StartedDate = DateTime.UtcNow },
+            new AnalysisRun { RequestId = waiting.RequestId, IngestionRunId = 2, RunNumber = 3, Status = AnalysisRunStatus.Failed, StartedDate = DateTime.UtcNow },
+            new AnalysisRun { RequestId = running.RequestId, IngestionRunId = 1, RunNumber = 1, Status = AnalysisRunStatus.Running, StartedDate = DateTime.UtcNow });
+        await db.SaveChangesAsync();
+
+        var found = await db.Requests
+            .Where(r => r.RequestStatus == RequestStatus.DataExtracted && r.LatestCompletedIngestionRunId != null
+                && !db.AnalysisRuns.Any(a => a.RequestId == r.RequestId && a.Status == AnalysisRunStatus.Running))
+            .Select(r => r.RequestId).ToListAsync();
+        Assert.Contains(waiting.RequestId, found);
+        Assert.DoesNotContain(running.RequestId, found);
+
+        // Only the attempts on the current ingestion run count towards the retry budget.
+        var failedAttempts = await db.AnalysisRuns.CountAsync(
+            a => a.RequestId == waiting.RequestId && a.IngestionRunId == 1 && a.Status == AnalysisRunStatus.Failed);
+        Assert.Equal(2, failedAttempts);
+        Assert.True(failedAttempts <= MCAROC_Analysis.Services.Analysis.AnalysisOrchestrator.MaxAutomaticRetries);
+    }
+
+    [Fact]
     public async Task AnalysisRun_UniqueRequestIdAndRunNumber_RejectsADuplicateInsert()
     {
         await using var db = CreateContext();

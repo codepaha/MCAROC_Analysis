@@ -23,6 +23,20 @@ public class AnalysisOrchestrator(
     ILogger<AnalysisOrchestrator> logger)
 {
     private static readonly RuleThresholds Thresholds = RuleThresholds.Default;
+
+    /// <summary>How many times a failed analysis is retried automatically (so up to 1 + this many attempts).</summary>
+    public const int MaxAutomaticRetries = 3;
+    /// <summary>The wait before each automatic retry: a short pause first (a transient blip), longer after (a loaded machine).</summary>
+    internal static TimeSpan[] RetryDelays { get; set; } = [TimeSpan.FromSeconds(30), TimeSpan.FromMinutes(2), TimeSpan.FromMinutes(5)];
+
+    /// <summary>Puts the request back on the analysis queue after <paramref name="delay"/>. The queue is a singleton, so this does not
+    /// touch the scoped database context; a restart during the wait is covered by <see cref="RecoverStaleWorkAsync"/>.</summary>
+    private void ScheduleAnalysis(long requestId, TimeSpan delay)
+    {
+        var q = queue;
+        if (delay <= TimeSpan.Zero) { q.Enqueue(requestId); return; }
+        _ = Task.Run(async () => { await Task.Delay(delay); q.Enqueue(requestId); });
+    }
     public const string RuleEngineVersion = "1.0";
 
     /// <summary>Code prefix for cross-section findings the AI synthesis pass adds after
@@ -291,8 +305,26 @@ public class AnalysisOrchestrator(
 
             if (updatedRun > 0)
             {
-                await db.Requests.Where(r => r.RequestId == requestId && r.RequestStatus != RequestStatus.Cancelled)
-                    .ExecuteUpdateAsync(s => s.SetProperty(r => r.RequestStatus, RequestStatus.AiAnalysisFailed), CancellationToken.None);
+                // A failure is retried automatically, up to MaxAutomaticRetries times with growing delays (a timeout under load, a model or
+                // network blip): the request goes back to DataExtracted and is re-queued after the delay. Only when every retry has failed
+                // does it become AiAnalysisFailed and reach the Needs Attention board.
+                var failedAttempts = await db.AnalysisRuns.CountAsync(
+                    a => a.RequestId == requestId && a.IngestionRunId == ingestionRunId && a.Status == AnalysisRunStatus.Failed, CancellationToken.None);
+                if (failedAttempts <= MaxAutomaticRetries)
+                {
+                    var delay = RetryDelays[Math.Min(failedAttempts, RetryDelays.Length) - 1];
+                    logger.LogWarning("Analysis for request {RequestId} failed (attempt {Attempt}); retrying automatically in {Delay}.",
+                        requestId, failedAttempts, delay);
+                    var reset = await db.Requests.Where(r => r.RequestId == requestId && r.RequestStatus != RequestStatus.Cancelled)
+                        .ExecuteUpdateAsync(s => s.SetProperty(r => r.RequestStatus, RequestStatus.DataExtracted), CancellationToken.None);
+                    if (reset > 0) ScheduleAnalysis(requestId, delay);
+                }
+                else
+                {
+                    logger.LogError("Analysis for request {RequestId} failed {Attempts} times; giving up.", requestId, failedAttempts);
+                    await db.Requests.Where(r => r.RequestId == requestId && r.RequestStatus != RequestStatus.Cancelled)
+                        .ExecuteUpdateAsync(s => s.SetProperty(r => r.RequestStatus, RequestStatus.AiAnalysisFailed), CancellationToken.None);
+                }
             }
         }
     }
@@ -314,7 +346,15 @@ public class AnalysisOrchestrator(
             await RetryAsync(requestId, "Application restarted mid-analysis.", ct);
         }
 
-        return stuckRequestIds.Count;
+        // A request waiting out an automatic retry delay (DataExtracted, nothing running) when the app stopped would otherwise never be
+        // queued again. Queuing is safe for any other DataExtracted request too: the claim in RunAnalysisAsync is atomic.
+        var waiting = await db.Requests
+            .Where(r => r.RequestStatus == RequestStatus.DataExtracted && r.LatestCompletedIngestionRunId != null
+                && !db.AnalysisRuns.Any(a => a.RequestId == r.RequestId && a.Status == AnalysisRunStatus.Running))
+            .Select(r => r.RequestId).ToListAsync(ct);
+        foreach (var requestId in waiting) queue.Enqueue(requestId);
+
+        return stuckRequestIds.Count + waiting.Count;
     }
 
     /// <summary>Resets any running analysis run to Failed and re-queues the request for analysis.</summary>
