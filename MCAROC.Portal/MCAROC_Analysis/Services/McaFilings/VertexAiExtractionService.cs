@@ -36,8 +36,15 @@ public class VertexAiExtractionService
         _logger = logger;
         var credential = GoogleCredential.FromFile(credentialsPath)
             .CreateScoped("https://www.googleapis.com/auth/cloud-platform");
-        _client = new GenAiClient(vertexAI: true, project: projectId, location: location, credential: credential);
+        // The SDK's HTTP layer gives up after about 100 seconds whatever the caller wants, which cut off a long filing (1 of 130 in dev).
+        // The call's own limit (CallTimeout) is enforced in ExtractAsync, so the HTTP layer only has to allow more than that.
+        _client = new GenAiClient(vertexAI: true, project: projectId, location: location, credential: credential,
+            httpOptions: new HttpOptions { Timeout = HttpTimeoutMilliseconds });
     }
+
+    private const int HttpTimeoutMilliseconds = 900_000;
+    /// <summary>The longest one filing's extraction call may take.</summary>
+    internal static readonly TimeSpan CallTimeout = TimeSpan.FromSeconds(300);
 
     public virtual async Task<ExtractionOutcome> ExtractAsync(
         string srn, FilingCategory category, string? dominantFormType,
@@ -50,8 +57,16 @@ public class VertexAiExtractionService
         try
         {
             var config = new GenerateContentConfig { ResponseMimeType = "application/json" };
-            var response = await _client.Models.GenerateContentAsync(ModelId, prompt, config, ct);
+            using var limit = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            limit.CancelAfter(CallTimeout);
+            var response = await _client.Models.GenerateContentAsync(ModelId, prompt, config, limit.Token);
             rawResponse = response.Candidates?.FirstOrDefault()?.Content?.Parts?.FirstOrDefault()?.Text ?? "";
+        }
+        catch (Exception ex) when (ex is OperationCanceledException && !ct.IsCancellationRequested)
+        {
+            var message = $"Vertex AI call timed out after {(int)CallTimeout.TotalSeconds}s.";
+            _logger.LogWarning(ex, "Vertex AI call for filing {Srn} timed out", srn);
+            return new ExtractionOutcome(schemaName, null, null, ExtractionValidationStatus.Invalid, message, ExtractionStatus.Failed, message);
         }
         catch (Exception ex)
         {
