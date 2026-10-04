@@ -39,8 +39,13 @@ public sealed class VertexPropertyParticularsAiClient : IPropertyParticularsAiCl
     {
         _logger = logger;
         var credential = GoogleCredential.FromFile(credentialsPath).CreateScoped("https://www.googleapis.com/auth/cloud-platform");
-        _client = new GenAiClient(vertexAI: true, project: projectId, location: location, credential: credential);
+        // The SDK's HTTP layer gives up after about 100 seconds whatever timeout a call asks for, and the charge-instrument reading sends a
+        // whole deed and returns its property passages: those calls run longer. The per-call limit is enforced by CallAsync's own timeout.
+        _client = new GenAiClient(vertexAI: true, project: projectId, location: location, credential: credential,
+            httpOptions: new HttpOptions { Timeout = HttpTimeoutMilliseconds });
     }
+
+    private const int HttpTimeoutMilliseconds = 1_200_000;
 
     public async Task<PropertyParticularsAiCallResult> CallAsync(string prompt, int timeoutSeconds, CancellationToken ct)
     {
