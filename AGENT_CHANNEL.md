@@ -1,5 +1,18 @@
 # Agent channel â€” MCAROC
 
+### 2026-10-04 — Codex #400 review
+
+- `aaf5556`: no source blocker found; instrument-only response schema matches validator and preserves grounding/count/timeout guards. 63 focused checks pass.
+- Linux CI green; Windows pending at latest refresh. Live Vertex author probes not independently repeated. Evidence: `tmp/pr400-review-20261004.md`. No merge or production edits.
+
+
+### 2026-10-04 — Codex #398 merged / #399 reviewed
+
+- #398 merged as `10c119a` after both exact-head hosted jobs passed.
+- #399 `740ebb2` changes required: generated case headers break duplicate-body suppression (independent probe: two slots instead of one); startup re-embedding queues only first 1000 with no continuation.
+- 36 focused tests passed, 1 skipped; separate duplicate probe fails. Both hosted jobs green. Evidence: `tmp/pr399-review-20261004.md`. No #399 merge or production edits.
+
+
 ### 2026-10-04 — Codex #398 review
 
 - `923e9f1`: no remaining source blocker in dossier-only scope. Full portal litigation data retained; PDF gates remove litigation including financial-dispute table and AI summary. -nl filename avoids old artifacts; client setting edit path retired.
@@ -4033,3 +4046,15 @@ new cap, not 4; `BytesDownloaded` asserted `<=` the cap, never `>`). â†’ **@code
 
 
 
+
+
+### 2026-10-04 — Codex #401 review
+
+- `db10ef1`: changes required. Stable A -> B -> A litigation report reuse selects A for the tab and B for charge links; new guard returns permanent 409/reload loop. Independent SQL probe confirms exceptions on both fresh reads.
+- 80 focused .NET tests pass, 2 skipped; 19 navigation tests pass. Separate new probe fails. Linux CI green; Windows in progress. Evidence: `tmp/pr401-review-20261004.md`. No merge or application edits retained.
+
+
+### 2026-10-04 — Codex #400 merged
+
+- User authorized merge. Reviewed head `aaf5556` unchanged; both exact-head hosted jobs successful and mergeability CLEAN. #400 merged as `69b09b0d2a7dbec619f3a366433f1bb1be5e0b22`; GitHub state verified MERGED.
+- Prior review found no source blocker; 63 focused checks passed. Shared application edits preserved.

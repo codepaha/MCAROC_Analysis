@@ -1,4 +1,5 @@
 using System.Data;
+using System.Text.RegularExpressions;
 using MCAROC_Analysis.Data;
 using MCAROC_Analysis.Data.Entities;
 using MCAROC_Analysis.Services.Chat;
@@ -69,13 +70,29 @@ public class LitigationDocumentRetriever(AppDbContext db, ChatRetrievalOptions o
     /// TopK, then keeps the best-ranked copy of each passage until TopK distinct ones are left.</summary>
     internal const int DuplicateOverFetch = 2;
 
+    /// <summary>#361: Extracts the source order text body by stripping the orchestrator-generated provenance header
+    /// if present. Generated headers match "[Court: ... | Case: ... | CNR: ... | Order: ... | Page ...]\n\n".
+    /// Distinguishes generated metadata from bracketed legal order text (e.g. "[1] ...", "[Oral Order] ...",
+    /// "[Coram: ...]") so arbitrary bracketed source text is never stripped.</summary>
+    internal static string ExtractBodyText(string text)
+    {
+        if (string.IsNullOrEmpty(text) || text[0] != '[') return text;
+        var match = ProvenanceHeaderRegex.Match(text);
+        return match.Success ? text[match.Length..] : text;
+    }
+
+    internal static string NormalizedBody(string text) =>
+        Regex.Replace(ExtractBodyText(text), @"\s+", " ").Trim();
+
+    private static readonly Regex ProvenanceHeaderRegex = new(
+        @"^\[(Court: [^|\]]+|Case: [^|\]]+|CNR: [^|\]]+|Order: [^|\]]+|Page \d+)(\s*\|\s*(Court: [^|\]]+|Case: [^|\]]+|CNR: [^|\]]+|Order: [^|\]]+|Page \d+))*\]\r?\n\r?\n",
+        RegexOptions.Compiled);
+
     internal static List<LitigationOrderChunkMatch> DropDuplicateText(IEnumerable<LitigationOrderChunkMatch> ranked, int take)
     {
         var seen = new HashSet<string>(StringComparer.Ordinal);
-        return ranked.Where(m => seen.Add(NormalizedText(m.Chunk.ChunkText))).Take(take).ToList();
+        return ranked.Where(m => seen.Add(NormalizedBody(m.Chunk.ChunkText))).Take(take).ToList();
     }
-
-    private static string NormalizedText(string text) => System.Text.RegularExpressions.Regex.Replace(text, @"\s+", " ").Trim();
 
     /// <summary>#343's recency route: the newest <paramref name="orderCount"/> orders of the given cases by their
     /// order date (undated orders last), with up to <paramref name="chunksPerOrder"/> leading chunks each — what a
@@ -102,7 +119,7 @@ public class LitigationDocumentRetriever(AppDbContext db, ChatRetrievalOptions o
         var seen = new HashSet<string>(StringComparer.Ordinal);
         return newest
             .SelectMany(id => chunks.Where(c => c.LitigationCaseOrderId == id).Take(chunksPerOrder))
-            .Where(c => seen.Add(NormalizedText(c.ChunkText)))
+            .Where(c => seen.Add(NormalizedBody(c.ChunkText)))
             .ToList();
     }
 
@@ -126,13 +143,13 @@ public class LitigationDocumentRetriever(AppDbContext db, ChatRetrievalOptions o
             .ToListAsync(ct);
         var seen = new HashSet<string>(StringComparer.Ordinal);
         return chunks
-            .Select(c => (Chunk: c, Score: LitigationOrderClassifier.DecisionCueScore(c.ChunkText)))
+            .Select(c => (Chunk: c, Score: LitigationOrderClassifier.DecisionCueScore(ExtractBodyText(c.ChunkText))))
             .Where(x => x.Score > 0)
             .OrderByDescending(x => x.Score)
             .ThenByDescending(x => LitigationCaseReference.ParseDate(x.Chunk.OrderDate) ?? DateOnly.MinValue)
             .ThenBy(x => x.Chunk.LitigationCaseOrderId).ThenBy(x => x.Chunk.PageNumber).ThenBy(x => x.Chunk.ChunkIndex)
             .Select(x => x.Chunk)
-            .Where(c => seen.Add(NormalizedText(c.ChunkText)))
+            .Where(c => seen.Add(NormalizedBody(c.ChunkText)))
             .Take(take)
             .ToList();
     }

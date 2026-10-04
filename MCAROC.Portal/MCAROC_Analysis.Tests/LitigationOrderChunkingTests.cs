@@ -7,7 +7,9 @@ using MCAROC_Analysis.Services.LitigationData;
 using MCAROC_Analysis.Services.McaFilings;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 using Xunit;
 
 namespace MCAROC_Analysis.Tests;
@@ -1152,6 +1154,228 @@ public class LitigationOrderChunkingTests : IAsyncLifetime
         var drained = await DrainAvailableAsync(queue, TimeSpan.FromMilliseconds(200));
         Assert.Contains(docV1.LitigationOrderDocumentId, drained);
         Assert.DoesNotContain(docV2.LitigationOrderDocumentId, drained);
+    }
+
+    [Fact]
+    public void DropDuplicateText_suppresses_duplicate_passages_sharing_body_across_parent_case_and_IA()
+    {
+        const string body = "The application is dismissed and the order of the tribunal is affirmed.";
+        var parentHeader = LitigationOrderChunkingOrchestrator.BuildContextHeader("NCLT", "CP 1/2025", null, "Order", "2025-01-01", 1);
+        var iaHeader = LitigationOrderChunkingOrchestrator.BuildContextHeader("NCLT", "IA 2/2025", null, "Order", "2025-01-01", 1);
+
+        var parentChunk = new LitigationOrderChunk
+        {
+            LitigationOrderChunkId = 1,
+            ChunkText = $"{parentHeader}\n\n{body}"
+        };
+        var iaChunk = new LitigationOrderChunk
+        {
+            LitigationOrderChunkId = 2,
+            ChunkText = $"{iaHeader}\n\n{body}"
+        };
+
+        var matches = new[]
+        {
+            new LitigationOrderChunkMatch(parentChunk, 0.1),
+            new LitigationOrderChunkMatch(iaChunk, 0.1)
+        };
+
+        var deduplicated = LitigationDocumentRetriever.DropDuplicateText(matches, 10);
+        var single = Assert.Single(deduplicated);
+        Assert.Equal(1, single.Chunk.LitigationOrderChunkId);
+        // Selected provenance header on the retained chunk is preserved
+        Assert.StartsWith(parentHeader, single.Chunk.ChunkText);
+    }
+
+    [Fact]
+    public void ExtractBodyText_does_not_strip_bracketed_legal_order_text()
+    {
+        const string numbered = "[1] The petitioner approached the High Court under Article 226.";
+        Assert.Equal(numbered, LitigationDocumentRetriever.ExtractBodyText(numbered));
+
+        const string oral = "[Oral Order]\n\nThe matter is adjourned to next week.";
+        Assert.Equal(oral, LitigationDocumentRetriever.ExtractBodyText(oral));
+
+        const string coram = "[Coram: Hon'ble Mr. Justice ABC]\n\nNotice issued.";
+        Assert.Equal(coram, LitigationDocumentRetriever.ExtractBodyText(coram));
+
+        const string header = "[Court: High Court | Case: WP 123/2024 | Page 1]\n\nSubstantive order text.";
+        Assert.Equal("Substantive order text.", LitigationDocumentRetriever.ExtractBodyText(header));
+    }
+
+    [Fact]
+    public async Task GetLatestOrderChunksAsync_and_GetDecisionPassagesAsync_deduplicate_identical_bodies_with_distinct_case_headers()
+    {
+        await using var db = CreateContext();
+        var (request, parentCase, parentOrder) = await SeedOrderAsync(db, "DEDUP1");
+        var (_, iaCase, iaOrder) = await SeedOrderAsync(db, "DEDUP2", request.RequestId);
+
+        const string sharedBody = "The application is dismissed and relief is declined.";
+        var parentHeader = LitigationOrderChunkingOrchestrator.BuildContextHeader(parentCase.Court, parentCase.CaseNumber, parentCase.Cnr, parentOrder.OrderType, parentOrder.OrderDate, 1);
+        var iaHeader = LitigationOrderChunkingOrchestrator.BuildContextHeader(iaCase.Court, iaCase.CaseNumber, iaCase.Cnr, iaOrder.OrderType, iaOrder.OrderDate, 1);
+
+        var parentDoc = await SeedDownloadedDocumentAsync(db, parentOrder.LitigationCaseOrderId, "parent text");
+        var iaDoc = await SeedDownloadedDocumentAsync(db, iaOrder.LitigationCaseOrderId, "ia text");
+
+        db.LitigationOrderChunks.Add(new LitigationOrderChunk
+        {
+            RequestId = request.RequestId, LitigationOrderDocumentId = parentDoc.LitigationOrderDocumentId,
+            LitigationCaseOrderId = parentOrder.LitigationCaseOrderId, LitigationCaseId = parentCase.LitigationCaseId,
+            CaseNumber = parentCase.CaseNumber, Court = parentCase.Court, OrderType = parentOrder.OrderType, OrderDate = parentOrder.OrderDate,
+            ChunkIndex = 0, PageNumber = 1, ChunkText = $"{parentHeader}\n\n{sharedBody}",
+            Embedding = new SqlVector<float>(Axis(0)), EmbeddingModel = EmbeddingService.ModelId,
+            EmbeddingDimensions = EmbeddingService.Dimensions, ChunkingVersion = "2.0", CreatedDate = DateTime.UtcNow
+        });
+        db.LitigationOrderChunks.Add(new LitigationOrderChunk
+        {
+            RequestId = request.RequestId, LitigationOrderDocumentId = iaDoc.LitigationOrderDocumentId,
+            LitigationCaseOrderId = iaOrder.LitigationCaseOrderId, LitigationCaseId = iaCase.LitigationCaseId,
+            CaseNumber = iaCase.CaseNumber, Court = iaCase.Court, OrderType = iaOrder.OrderType, OrderDate = iaOrder.OrderDate,
+            ChunkIndex = 0, PageNumber = 1, ChunkText = $"{iaHeader}\n\n{sharedBody}",
+            Embedding = new SqlVector<float>(Axis(0)), EmbeddingModel = EmbeddingService.ModelId,
+            EmbeddingDimensions = EmbeddingService.Dimensions, ChunkingVersion = "2.0", CreatedDate = DateTime.UtcNow
+        });
+        await db.SaveChangesAsync();
+
+        var retriever = new LitigationDocumentRetriever(db, ChatRetrievalOptions.Default);
+        var caseIds = new[] { parentCase.LitigationCaseId, iaCase.LitigationCaseId };
+
+        var latest = await retriever.GetLatestOrderChunksAsync(request.RequestId, caseIds, 5, 2, CancellationToken.None);
+        Assert.Single(latest);
+
+        var decision = await retriever.GetDecisionPassagesAsync(request.RequestId, caseIds, 5, CancellationToken.None);
+        Assert.Single(decision);
+    }
+
+    [Fact]
+    public async Task Worker_continuously_drains_outdated_documents_across_batches_without_restart_and_recovers_interrupted_work()
+    {
+        await using var db = CreateContext();
+        var (request, _, _) = await SeedOrderAsync(db, "WK_INIT");
+
+        // Seed 5 outdated documents (with version "1.0"), with sweep batch limit = 2 (5 > 2)
+        var outdatedDocs = new List<LitigationOrderDocument>();
+        for (var i = 1; i <= 5; i++)
+        {
+            var (_, c, o) = await SeedOrderAsync(db, $"WK_{i}", request.RequestId);
+            var doc = await SeedDownloadedDocumentAsync(db, o.LitigationCaseOrderId, $"--- Page 1 (native) ---\nThis is order text for document number {i} that is definitely longer than fifty characters to ensure valid chunking.");
+            db.LitigationOrderChunks.Add(new LitigationOrderChunk
+            {
+                RequestId = request.RequestId,
+                LitigationOrderDocumentId = doc.LitigationOrderDocumentId,
+                LitigationCaseOrderId = o.LitigationCaseOrderId,
+                LitigationCaseId = c.LitigationCaseId,
+                ChunkIndex = 0, PageNumber = 1,
+                ChunkText = $"Outdated doc {i} text",
+                Embedding = new SqlVector<float>(Axis(0)),
+                EmbeddingModel = EmbeddingService.ModelId,
+                EmbeddingDimensions = EmbeddingService.Dimensions,
+                ChunkingVersion = "1.0",
+                CreatedDate = DateTime.UtcNow.AddDays(-10)
+            });
+            doc.ChunkingStatus = ChunkingStatus.Chunked;
+            outdatedDocs.Add(doc);
+        }
+        await db.SaveChangesAsync();
+        var targetDocIds = outdatedDocs.Select(d => d.LitigationOrderDocumentId).ToList();
+        var seededChunksCount = await db.LitigationOrderChunks.CountAsync(c => targetDocIds.Contains(c.LitigationOrderDocumentId));
+        Assert.Equal(5, seededChunksCount);
+
+        var queue = new LitigationOrderChunkingQueue();
+        var stubEmbedding = new StubEmbeddingService(n => Enumerable.Range(0, n).Select(_ => Axis(0)).ToList());
+
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddScoped(_ => CreateContext());
+        services.AddSingleton(queue);
+        services.AddSingleton<EmbeddingService>(stubEmbedding);
+        services.AddScoped<LitigationOrderChunkingOrchestrator>();
+        var sp = services.BuildServiceProvider();
+
+        var options = new LitigationChunkingOptions
+        {
+            MaxConcurrentChunking = 2,
+            OutdatedBatchSize = 2,
+            QueueBackpressureLimit = 2,
+            SweepInterval = TimeSpan.FromMinutes(10),
+            BatchThrottleInterval = TimeSpan.FromMilliseconds(50),
+            RequestId = request.RequestId
+        };
+
+        var worker = new LitigationOrderChunkingWorker(
+            sp.GetRequiredService<IServiceScopeFactory>(),
+            queue,
+            NullLogger<LitigationOrderChunkingWorker>.Instance,
+            Microsoft.Extensions.Options.Options.Create(options));
+
+        using var cts = new CancellationTokenSource();
+        await worker.StartAsync(cts.Token);
+
+        // All 5 documents must be drained and re-embedded to version "2.0" without restart
+        var timeout = DateTime.UtcNow.AddSeconds(20);
+        var allDrained = false;
+        while (DateTime.UtcNow < timeout)
+        {
+            await using var verifyDb = CreateContext();
+            var migratedCount = await verifyDb.LitigationOrderChunks.AsNoTracking()
+                .Where(c => targetDocIds.Contains(c.LitigationOrderDocumentId) && c.ChunkingVersion == "2.0")
+                .Select(c => c.LitigationOrderDocumentId)
+                .Distinct()
+                .CountAsync();
+
+            if (migratedCount == 5)
+            {
+                allDrained = true;
+                break;
+            }
+            await Task.Delay(100);
+        }
+
+        Assert.True(allDrained, "Continuous draining must process all 5 outdated documents across batches without restart.");
+        await worker.StopAsync(CancellationToken.None);
+
+        // Seed doc 6, set to Pending (simulating work enqueued or mid-restart before completion)
+        var (_, case6, order6) = await SeedOrderAsync(db, "RST", request.RequestId);
+        var doc6 = await SeedDownloadedDocumentAsync(db, order6.LitigationCaseOrderId, "--- Page 1 (native) ---\nThis is order text for document 6 restart recovery that is definitely longer than fifty characters.");
+        doc6.ChunkingStatus = ChunkingStatus.Pending;
+        await db.SaveChangesAsync();
+
+        // Fresh worker on a fresh queue (simulating complete application restart)
+        var restartQueue = new LitigationOrderChunkingQueue();
+        var restartServices = new ServiceCollection();
+        restartServices.AddLogging();
+        restartServices.AddScoped(_ => CreateContext());
+        restartServices.AddSingleton(restartQueue);
+        restartServices.AddSingleton<EmbeddingService>(stubEmbedding);
+        restartServices.AddScoped<LitigationOrderChunkingOrchestrator>();
+        var restartSp = restartServices.BuildServiceProvider();
+
+        var restartWorker = new LitigationOrderChunkingWorker(
+            restartSp.GetRequiredService<IServiceScopeFactory>(),
+            restartQueue,
+            NullLogger<LitigationOrderChunkingWorker>.Instance,
+            Microsoft.Extensions.Options.Options.Create(options));
+
+        using var restartCts = new CancellationTokenSource();
+        await restartWorker.StartAsync(restartCts.Token);
+
+        var doc6Timeout = DateTime.UtcNow.AddSeconds(20);
+        var doc6Migrated = false;
+        while (DateTime.UtcNow < doc6Timeout)
+        {
+            await using var verifyDb = CreateContext();
+            var chunk = await verifyDb.LitigationOrderChunks.AsNoTracking()
+                .FirstOrDefaultAsync(c => c.LitigationOrderDocumentId == doc6.LitigationOrderDocumentId && c.ChunkingVersion == "2.0");
+            if (chunk is not null)
+            {
+                doc6Migrated = true;
+                break;
+            }
+            await Task.Delay(100);
+        }
+
+        Assert.True(doc6Migrated, "Document 6 must be recovered on restart and chunked to version 2.0.");
+        await restartWorker.StopAsync(CancellationToken.None);
     }
 }
 
