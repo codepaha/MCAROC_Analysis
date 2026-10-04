@@ -38,6 +38,33 @@ public static partial class ChargeInstrumentAi
     internal const int MaxPassageChars = 30_000;
     internal const string PromptMarker = "You are quoting the property description out of one document filed with an Indian ROC charge";
 
+    /// <summary>The response schema sent with the prompt: <c>{"passages":[{"kind":…,"text":…}]}</c>, so the model's output is well-formed JSON
+    /// of the shape <see cref="Validate"/> reads. (No <c>maxItems</c>: Vertex rejects it with "invalid argument" for this model; the count is
+    /// capped by <see cref="MaxPassages"/> in the validator and by the output-token limit.)</summary>
+    public static Google.GenAI.Types.Schema ResponseSchema() => new()
+    {
+        Type = Google.GenAI.Types.Type.Object,
+        Required = ["passages"],
+        Properties = new Dictionary<string, Google.GenAI.Types.Schema>
+        {
+            ["passages"] = new()
+            {
+                Type = Google.GenAI.Types.Type.Array,
+                Items = new()
+                {
+                    Type = Google.GenAI.Types.Type.Object,
+                    Required = ["kind", "text"],
+                    PropertyOrdering = ["kind", "text"],
+                    Properties = new Dictionary<string, Google.GenAI.Types.Schema>
+                    {
+                        ["kind"] = new() { Type = Google.GenAI.Types.Type.String, Enum = [.. Enum.GetNames<InstrumentPassageKind>()] },
+                        ["text"] = new() { Type = Google.GenAI.Types.Type.String }
+                    }
+                }
+            }
+        }
+    };
+
     public static string BuildPrompt(string documentText) => $$"""
         {{PromptMarker}} (MCA Form CHG-1/CHG-9, Form 8/13/17, or an attached deed, agreement, instrument or letter), for a BFSI
         property due diligence analyst. Find every passage that describes the property or assets charged, and quote it.
