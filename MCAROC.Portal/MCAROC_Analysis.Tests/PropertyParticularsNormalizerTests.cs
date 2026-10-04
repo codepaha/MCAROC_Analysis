@@ -211,4 +211,106 @@ public class PropertyParticularsNormalizerTests
     {
         Assert.True(PropertyParticularsNormalizer.Normalize(text, "Movable property").DetailsOnlyInReferencedDocument);
     }
+
+    // ── #384: survey and door numbers (Kurnool & South Indian deed patterns) ──
+
+    [Fact]
+    public void KurnoolExample_SurveyNos_DoorNo_Ward_Town_AreReadFieldByField()
+    {
+        const string text =
+            "Commercial Property bearing D No.51/937, Sy Nos. 403/2A3, 404/B/2C, and 404/A3, Opp to New Bus stand Kurnool, " +
+            "Presently within Kurnool, Ward No.51, Kurnool, Andhra Pradesh.";
+
+        var p = PropertyParticularsNormalizer.Normalize(text, "Immovable property");
+
+        Assert.Contains(PropertyAssetClass.Immovable, p.AssetClasses);
+        Assert.Contains(PropertyKind.Premises, p.Kinds);
+        Assert.Contains(PropertyKind.Land, p.Kinds);
+
+        Assert.Equal(new NormalizedUnit("51/937", null, null), Assert.Single(p.Units));
+
+        var surveyGroup = Assert.Single(p.SurveyNumbers);
+        Assert.Equal("Survey", surveyGroup.Scheme);
+        Assert.Null(surveyGroup.Qualifier);
+        Assert.Equal(["403/2A3", "404/B/2C", "404/A3"], surveyGroup.Numbers);
+
+        Assert.Equal("Kurnool", p.Location.City);
+        Assert.Equal("Andhra Pradesh", p.Location.State);
+        Assert.Contains("Ward 51", p.Location.Localities);
+    }
+
+    [Theory]
+    [InlineData("immovable property comprised in S.F. No. 120/1, 120/2 at Coimbatore", new[] { "120/1", "120/2" })]
+    [InlineData("land bearing R.S. Nos. 45/3A, 45/3B situated at Madurai", new[] { "45/3A", "45/3B" })]
+    [InlineData("bearing T.S. No. 12 situated at Salem", new[] { "12" })]
+    public void SouthIndianSurveyPrefixes_AreRecognizedAsSurveyNumbers(string text, string[] expectedNumbers)
+    {
+        var p = PropertyParticularsNormalizer.Normalize(text, "Immovable property");
+
+        var surveyGroup = Assert.Single(p.SurveyNumbers);
+        Assert.Equal("Survey", surveyGroup.Scheme);
+        Assert.Equal(expectedNumbers, surveyGroup.Numbers);
+    }
+
+    [Fact]
+    public void WholeIdentifiersOnly_SurveySubdivisionNeverReadsPrefixFragment()
+    {
+        const string text = "land bearing Sy No. 403/2A3 situated at Kurnool";
+
+        var p = PropertyParticularsNormalizer.Normalize(text, "Immovable property");
+
+        var group = Assert.Single(p.SurveyNumbers);
+        Assert.Equal(["403/2A3"], group.Numbers);
+        Assert.DoesNotContain("403/2", group.Numbers);
+    }
+
+    [Fact]
+    public void Carpet_area_after_a_survey_number_is_not_another_survey_identifier()
+    {
+        var p = PropertyParticularsNormalizer.Normalize("Land bearing Sy No. 12, 100 sq m carpet area at Kurnool, Andhra Pradesh.", "Immovable property");
+        Assert.Equal(new[] { "12" }, p.SurveyNumbers.SelectMany(g => g.Numbers));
+    }
+
+    [Theory]
+    [InlineData("Door No.51/937-2, Kurnool", "51/937")]
+    [InlineData("Flat No. A-305 in Tower B", "A")]
+    [InlineData("Flat No. 305 A in Tower B", "305")]
+    public void A_door_or_flat_identifier_must_not_be_a_prefix_of_a_different_unit(string text, string prefix)
+    {
+        var p = PropertyParticularsNormalizer.Normalize(text, "Immovable property");
+        Assert.DoesNotContain(p.Units, u => u.UnitNumber == prefix);
+    }
+
+    [Theory]
+    [InlineData("Door No.51/937-2, Kurnool", "51/937-2")]
+    [InlineData("Flat No. A-305 in Tower B", "A-305")]
+    [InlineData("Flat No. 305 A in Tower B", "305A")]
+    [InlineData("Door No. 51/937 - 2, Kurnool", "51/937-2")]
+    [InlineData("Flat No. A - 305 in Tower B", "A-305")]
+    public void Door_or_flat_identifier_keeps_full_subdivision_and_suffix(string text, string expectedUnit)
+    {
+        var p = PropertyParticularsNormalizer.Normalize(text, "Immovable property");
+        Assert.Contains(p.Units, u => u.UnitNumber == expectedUnit);
+    }
+
+    [Theory]
+    [InlineData("Sy No. 12, 1,000 sq ft carpet area")]
+    [InlineData("Sy No. 12, 100 m2 carpet area")]
+    [InlineData("Sy No. 12, 100 sqm carpet area")]
+    [InlineData("Sy No. 12, 100 sqft carpet area")]
+    [InlineData("Sy No. 12, 17 parking spaces")]
+    public void Measurements_and_counts_must_not_be_parcel_identifiers(string text)
+    {
+        var p = PropertyParticularsNormalizer.Normalize(text, "Immovable property");
+        Assert.Equal(new[] { "12" }, p.SurveyNumbers.SelectMany(g => g.Numbers));
+    }
+
+    [Theory]
+    [InlineData("Door No. 51/937 - 2, Kurnool", "51/937")]
+    [InlineData("Flat No. A - 305 in Tower B", "A")]
+    public void Spaced_subdivisions_must_not_return_identifier_prefixes(string text, string prefix)
+    {
+        var p = PropertyParticularsNormalizer.Normalize(text, "Immovable property");
+        Assert.DoesNotContain(p.Units, u => u.UnitNumber == prefix);
+    }
 }

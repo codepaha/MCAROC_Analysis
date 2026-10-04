@@ -358,23 +358,25 @@ public static partial class PropertyParticularsAi
         // as in "51 (P) 52(P)" and "52/6. 52/7". An item followed by "parking" or an area unit is never an identifier.
         private const string Item =
             @"(?<id>\d+[a-z]?(?![\d])(?:\s*/\s*[0-9a-z]+(?![0-9a-z]))*(?:\s*\(\s*(?:p|part)\s*\)|\s+part\b)?)(?:\s*(?:to|–)\s*(?:\d+[a-z]?\s*/\s*)?(?<to>\d+)\b)?" +
-            @"(?!\s*(?:car\s*)?parking|\s*(?:sq|square|acres?|hectares?|ha)\b)";
+            @"(?![0-9a-z])(?!\s*" + PropertyParticularsNormalizer.MeasurementOrParkingPattern + @")";
         private const string Structured = @"(?=\d+[a-z]?\s*[/(])";
+        private const string NonMeasurementSep =
+            @"(?:(?:\s*,\s*and\b\s*|\s*(?:,|&|\band\b)\s*|(?:\s*\.\s*|\s+)" + Structured + @")(?!\d+(?:,\d{2,3})*(?:\.\d+)?\s*" + PropertyParticularsNormalizer.MeasurementOrParkingPattern + @"))";
 
         [GeneratedRegex(
-            @"(?:(?<cts>(?<![a-z])(?:c\.?\s*t\.?\s*s|cst)(?![a-z]))|(?<survey>(?<![a-z.])(?:survey|sy\.|s\.)(?![a-z]))|(?<plot>(?<![a-z])plots?(?![a-z]))|(?<gat>(?<![a-z])gat(?![a-z]))|(?<khasra>(?<![a-z])khasra(?![a-z])))" +
+            @"(?:(?<cts>(?<![a-z])(?:c\.?\s*t\.?\s*s|cst)(?![a-z]))|(?<survey>(?<![a-z.])(?:survey|sy\b|sy\.|s\.f\.|s\.f\b|sf\b|sf\.|r\.s\.|r\.s\b|rs\b|rs\.|t\.s\.|t\.s\b|ts\b|ts\.|s\.|s\b)(?![a-z]))|(?<plot>(?<![a-z])plots?(?![a-z]))|(?<gat>(?<![a-z])gat(?![a-z]))|(?<khasra>(?<![a-z])khasra(?![a-z])))" +
             @"\.?\s*[-\s]*(?:nos?\.?|numbers?)?[\s.,:-]*" +
-            @"(?<list>" + Item + @"(?:(?:\s*(?:,|&|\band\b)\s*|(?:\s*\.\s*|\s+)" + Structured + @")" + Item + @")*)")]
+            @"(?<list>" + Item + @"(?:" + NonMeasurementSep + Item + @")*)")]
         private static partial Regex LabelledList();
         [GeneratedRegex(Item)] private static partial Regex ListItem();
         [GeneratedRegex(@"^(?<base>\d+[a-z]?)\s*/\s*(?<from>\d+)$")] private static partial Regex RangeStart();
         [GeneratedRegex(@"\(\s*PART\s*\)$|PART$|\(P\)$")] private static partial Regex PartSuffix();
         [GeneratedRegex(@"^\s*\.?\s*(?:sq(?:uare)?\.?\s*(?:feet|fts?)\b\.?|sqft\b)")] private static partial Regex SqFtUnit();
-        [GeneratedRegex(@"^\s*\.?\s*(?:sq(?:uare)?\.?\s*/?\s*m(?:e?t(?:er|re)s?|trs?|ts|ets|t)?\b\.?|sqm\b)")] private static partial Regex SqMUnit();
+        [GeneratedRegex(@"^\s*\.?\s*(?:sq(?:uare)?\.?\s*/?\s*m(?:e?t(?:er|re)s?|trs?|ts|ets|t)?\b\.?|sqm\b|m2\b)")] private static partial Regex SqMUnit();
         [GeneratedRegex(@"^\s*acres?\b")] private static partial Regex AcreUnit();
         [GeneratedRegex(@"^\s*(?:hectares?|ha)\b")] private static partial Regex HectareUnit();
         [GeneratedRegex(@"^\s*\.?\s*sq(?:uare)?\.?\s*(?:yards?|yds?)\b")] private static partial Regex SqYdUnit();
-        [GeneratedRegex(@"^\s*\.?\s*(?:sq|square|acres?|hectares?|sqm|sqft)\b")] private static partial Regex AnyAreaUnit();
+        [GeneratedRegex(@"^\s*\.?\s*(?:sq|square|acres?|hectares?|sqm|sqft|m2)\b")] private static partial Regex AnyAreaUnit();
         [GeneratedRegex(@"^\s*(?:nos?\.?\s*(?:of\s*)?)?(?:covered\s+|open\s+|stilt\s+)?(?:car\s*)?parking\b")] private static partial Regex ParkingAfter();
     }
 

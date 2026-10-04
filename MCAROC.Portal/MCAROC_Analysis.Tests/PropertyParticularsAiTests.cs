@@ -347,4 +347,44 @@ public class PropertyParticularsAiTests
     {
         Assert.False(PropertyParticularsAi.Validate(raw, Source).IsAccepted);
     }
+
+    // ── #384: survey schemes and whole identifiers in grounding ──
+
+    [Fact]
+    public void SouthIndianSurveyPrefixes_GroundProperly_AndEnforceWholeIdentifiers()
+    {
+        const string clause = "Sy Nos. 403/2A3, 404/B/2C, and 404/A3, also S.F. No. 120/1, R.S. No. 45/3A, T.S. No. 12";
+
+        Assert.Equal(["403/2A3", "404/B/2C", "404/A3"], GroundedNumbers(clause, "Survey", "403/2A3", "404/B/2C", "404/A3"));
+        Assert.Equal(["120/1"], GroundedNumbers(clause, "Survey", "120/1"));
+        Assert.Equal(["45/3A"], GroundedNumbers(clause, "Survey", "45/3A"));
+        Assert.Equal(["12"], GroundedNumbers(clause, "Survey", "12"));
+
+        // Whole identifier guarantee: 403/2 is not grounded out of 403/2A3
+        Assert.Empty(GroundedNumbers(clause, "Survey", "403/2"));
+    }
+
+    [Fact]
+    public void AreaFollowingSurveyNumber_IsNotGroundedAsSurveyIdentifier()
+    {
+        const string clause = "Sy No. 12, 100 sq m carpet area";
+        Assert.Equal(["12"], GroundedNumbers(clause, "Survey", "12"));
+        Assert.Empty(GroundedNumbers(clause, "Survey", "100"));
+        Assert.Empty(GroundedNumbers(clause, "Survey", "10"));
+    }
+
+    [Theory]
+    [InlineData("Sy No. 12, 1,000 sq ft carpet area")]
+    [InlineData("Sy No. 12, 100 m2 carpet area")]
+    [InlineData("Sy No. 12, 100 sqm carpet area")]
+    [InlineData("Sy No. 12, 100 sqft carpet area")]
+    [InlineData("Sy No. 12, 17 parking spaces")]
+    public void MeasurementsAndCountsFollowingSurvey_AreNotGroundedAsSurveyIdentifiers(string clause)
+    {
+        Assert.Equal(["12"], GroundedNumbers(clause, "Survey", "12"));
+        Assert.Empty(GroundedNumbers(clause, "Survey", "1"));
+        Assert.Empty(GroundedNumbers(clause, "Survey", "1000"));
+        Assert.Empty(GroundedNumbers(clause, "Survey", "100"));
+        Assert.Empty(GroundedNumbers(clause, "Survey", "17"));
+    }
 }
