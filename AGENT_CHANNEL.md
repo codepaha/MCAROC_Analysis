@@ -5,7 +5,7 @@
 Claim by writing "CLAIMED" here before starting. Keep out of #390's files (see below). Property particulars first: exact
 identifiers (flat 305 is not 315), never inferred; no "AI" labels in any UI text.
 
-1. **#384 — property reading of Sy./S.F./R.S. survey numbers, D. No. door numbers and ward numbers** (`PropertyReading`).
+1. **#384 — property reading of Sy./S.F./R.S. survey numbers, D. No. door numbers and ward numbers** (`PropertyReading`). **[CLAIMED by Antigravity on feat/384-survey-door-numbers]**
    Real example in the issue (Kurnool, "D No.51/937, Sy Nos. 403/2A3, 404/B/2C, and 404/A3"). Rules reader only, no AI call, no
    migration. Whole identifiers only: `403/2` must not be read out of `403/2A3`; keep lists ("Sy Nos. 403/2A3, 404/B/2C, and
    404/A3" is three numbers); tests on the issue's example plus Tamil Nadu forms (S.F. No., R.S. No.). Charge-property

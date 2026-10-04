@@ -211,4 +211,56 @@ public class PropertyParticularsNormalizerTests
     {
         Assert.True(PropertyParticularsNormalizer.Normalize(text, "Movable property").DetailsOnlyInReferencedDocument);
     }
+
+    // ── #384: survey and door numbers (Kurnool & South Indian deed patterns) ──
+
+    [Fact]
+    public void KurnoolExample_SurveyNos_DoorNo_Ward_Town_AreReadFieldByField()
+    {
+        const string text =
+            "Commercial Property bearing D No.51/937, Sy Nos. 403/2A3, 404/B/2C, and 404/A3, Opp to New Bus stand Kurnool, " +
+            "Presently within Kurnool, Ward No.51, Kurnool, Andhra Pradesh.";
+
+        var p = PropertyParticularsNormalizer.Normalize(text, "Immovable property");
+
+        Assert.Contains(PropertyAssetClass.Immovable, p.AssetClasses);
+        Assert.Contains(PropertyKind.Premises, p.Kinds);
+        Assert.Contains(PropertyKind.Land, p.Kinds);
+
+        Assert.Equal(new NormalizedUnit("51/937", null, null), Assert.Single(p.Units));
+
+        var surveyGroup = Assert.Single(p.SurveyNumbers);
+        Assert.Equal("Survey", surveyGroup.Scheme);
+        Assert.Null(surveyGroup.Qualifier);
+        Assert.Equal(["403/2A3", "404/B/2C", "404/A3"], surveyGroup.Numbers);
+
+        Assert.Equal("Kurnool", p.Location.City);
+        Assert.Equal("Andhra Pradesh", p.Location.State);
+        Assert.Contains("Ward 51", p.Location.Localities);
+    }
+
+    [Theory]
+    [InlineData("immovable property comprised in S.F. No. 120/1, 120/2 at Coimbatore", new[] { "120/1", "120/2" })]
+    [InlineData("land bearing R.S. Nos. 45/3A, 45/3B situated at Madurai", new[] { "45/3A", "45/3B" })]
+    [InlineData("bearing T.S. No. 12 situated at Salem", new[] { "12" })]
+    public void SouthIndianSurveyPrefixes_AreRecognizedAsSurveyNumbers(string text, string[] expectedNumbers)
+    {
+        var p = PropertyParticularsNormalizer.Normalize(text, "Immovable property");
+
+        var surveyGroup = Assert.Single(p.SurveyNumbers);
+        Assert.Equal("Survey", surveyGroup.Scheme);
+        Assert.Equal(expectedNumbers, surveyGroup.Numbers);
+    }
+
+    [Fact]
+    public void WholeIdentifiersOnly_SurveySubdivisionNeverReadsPrefixFragment()
+    {
+        const string text = "land bearing Sy No. 403/2A3 situated at Kurnool";
+
+        var p = PropertyParticularsNormalizer.Normalize(text, "Immovable property");
+
+        var group = Assert.Single(p.SurveyNumbers);
+        Assert.Equal(["403/2A3"], group.Numbers);
+        Assert.DoesNotContain("403/2", group.Numbers);
+    }
 }

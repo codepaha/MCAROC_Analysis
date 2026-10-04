@@ -347,4 +347,20 @@ public class PropertyParticularsAiTests
     {
         Assert.False(PropertyParticularsAi.Validate(raw, Source).IsAccepted);
     }
+
+    // ── #384: survey schemes and whole identifiers in grounding ──
+
+    [Fact]
+    public void SouthIndianSurveyPrefixes_GroundProperly_AndEnforceWholeIdentifiers()
+    {
+        const string clause = "Sy Nos. 403/2A3, 404/B/2C, and 404/A3, also S.F. No. 120/1, R.S. No. 45/3A, T.S. No. 12";
+
+        Assert.Equal(["403/2A3", "404/B/2C", "404/A3"], GroundedNumbers(clause, "Survey", "403/2A3", "404/B/2C", "404/A3"));
+        Assert.Equal(["120/1"], GroundedNumbers(clause, "Survey", "120/1"));
+        Assert.Equal(["45/3A"], GroundedNumbers(clause, "Survey", "45/3A"));
+        Assert.Equal(["12"], GroundedNumbers(clause, "Survey", "12"));
+
+        // Whole identifier guarantee: 403/2 is not grounded out of 403/2A3
+        Assert.Empty(GroundedNumbers(clause, "Survey", "403/2"));
+    }
 }

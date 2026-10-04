@@ -222,4 +222,21 @@ public class AddressMatcherTests
         Assert.NotEqual(AddressMatchStrength.Strong, result.Strength);
         Assert.DoesNotContain("40", result.MatchedPlotNumbers);
     }
+
+    [Fact]
+    public void Match_StructuredPropertyReadingItem_WardNumber_NeverTreatedAsPlotNumber()
+    {
+        // Company address is at Plot 51 in Kurnool.
+        // Collateral is at Sy No 403 in Ward 51, Kurnool.
+        // Ward 51 must not match Plot 51.
+        const string companyAddress = "Plot 51, Kurnool, Andhra Pradesh, 518001";
+        var location = new NormalizedLocation(["Ward 51"], null, null, null, "Kurnool", "Andhra Pradesh", "518001");
+        var surveyGroups = new[] { new SurveyNumberGroup("Survey", null, ["403"]) };
+        var item = new PropertyReadingItem([PropertyAssetClass.Immovable], [PropertyKind.Land], null, [], [], [], null, [], surveyGroups, location, []);
+
+        var result = AddressMatcher.Match(companyAddress, item);
+
+        Assert.NotEqual(AddressMatchStrength.Strong, result.Strength);
+        Assert.DoesNotContain("51", result.MatchedPlotNumbers);
+    }
 }

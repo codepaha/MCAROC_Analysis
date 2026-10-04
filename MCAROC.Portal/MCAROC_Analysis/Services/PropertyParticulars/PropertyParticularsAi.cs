@@ -362,9 +362,9 @@ public static partial class PropertyParticularsAi
         private const string Structured = @"(?=\d+[a-z]?\s*[/(])";
 
         [GeneratedRegex(
-            @"(?:(?<cts>(?<![a-z])(?:c\.?\s*t\.?\s*s|cst)(?![a-z]))|(?<survey>(?<![a-z.])(?:survey|sy\.|s\.)(?![a-z]))|(?<plot>(?<![a-z])plots?(?![a-z]))|(?<gat>(?<![a-z])gat(?![a-z]))|(?<khasra>(?<![a-z])khasra(?![a-z])))" +
+            @"(?:(?<cts>(?<![a-z])(?:c\.?\s*t\.?\s*s|cst)(?![a-z]))|(?<survey>(?<![a-z.])(?:survey|sy\b|sy\.|s\.f\.|s\.f\b|sf\b|sf\.|r\.s\.|r\.s\b|rs\b|rs\.|t\.s\.|t\.s\b|ts\b|ts\.|s\.|s\b)(?![a-z]))|(?<plot>(?<![a-z])plots?(?![a-z]))|(?<gat>(?<![a-z])gat(?![a-z]))|(?<khasra>(?<![a-z])khasra(?![a-z])))" +
             @"\.?\s*[-\s]*(?:nos?\.?|numbers?)?[\s.,:-]*" +
-            @"(?<list>" + Item + @"(?:(?:\s*(?:,|&|\band\b)\s*|(?:\s*\.\s*|\s+)" + Structured + @")" + Item + @")*)")]
+            @"(?<list>" + Item + @"(?:(?:\s*,\s*and\b\s*|\s*(?:,|&|\band\b)\s*|(?:\s*\.\s*|\s+)" + Structured + @")" + Item + @")*)")]
         private static partial Regex LabelledList();
         [GeneratedRegex(Item)] private static partial Regex ListItem();
         [GeneratedRegex(@"^(?<base>\d+[a-z]?)\s*/\s*(?<from>\d+)$")] private static partial Regex RangeStart();

@@ -342,7 +342,7 @@ public static partial class AddressMatcher
 
     private static readonly HashSet<string> LocalityNumberPrefixes = new(StringComparer.Ordinal)
     {
-        "SECTOR", "SEC", "PHASE"
+        "SECTOR", "SEC", "PHASE", "WARD"
     };
 
     /// <summary>Identifies digit-bearing tokens that are locality/administrative numbers (such as Sector 40,
