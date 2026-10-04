@@ -152,6 +152,11 @@ public class DossierAssembler(AppDbContext db, Services.LitigationData.ChargeLit
             catch (JsonException) { }
         }
 
+        // The property passages quoted from the documents filed for each charge: a highlight, never a reason the dossier fails to build.
+        IReadOnlyDictionary<string, IReadOnlyList<ChargeInstrumentPassageSet>>? instrumentPassages = null;
+        try { instrumentPassages = await LoadInstrumentPassagesAsync(request.RequestId, runId, ct); }
+        catch (Exception ex) when (ex is not OperationCanceledException) { /* the dossier is built without them */ }
+
         var notAssessed = DeserializeSufficiencyNotes(analysis.DataSufficiencyNotesJson);
 
         var roles = DossierComputations.LitigationRoles(litigations, findings);
@@ -189,10 +194,26 @@ public class DossierAssembler(AppDbContext db, Services.LitigationData.ChargeLit
             IncludeLitigation: false,
             ChargesNarrative: chargesNarrative,
             ChargeLinks: chargeLinks,
-            PropertyExtractions: await PropertyParticulars.PropertyParticularsExtractionService.LoadCompletedAsync(db, charges.SelectMany(c => c.Events), ct));
+            PropertyExtractions: await PropertyParticulars.PropertyParticularsExtractionService.LoadCompletedAsync(db, charges.SelectMany(c => c.Events), ct),
+            InstrumentPassagesByCharge: instrumentPassages);
 
         // Metrics are derived from the fully-assembled model, then folded back in.
         return model with { Metrics = DossierComputations.BuildMetricGroups(model) };
+    }
+
+    private async Task<IReadOnlyDictionary<string, IReadOnlyList<ChargeInstrumentPassageSet>>> LoadInstrumentPassagesAsync(long requestId, long runId, CancellationToken ct)
+    {
+        var documents = await PropertyParticulars.ChargeDocumentLinker.LoadAsync(db, requestId, runId, ct);
+        var passages = await PropertyParticulars.ChargeInstrumentExtractionService.LoadAsync(
+            db, documents.Values.SelectMany(rows => rows.Select(r => r.FilingDocumentId)).Distinct().ToList(), ct);
+        var result = new Dictionary<string, IReadOnlyList<ChargeInstrumentPassageSet>>();
+        foreach (var (chargeKey, rows) in documents)
+        {
+            var sets = rows.Where(r => passages.ContainsKey(r.FilingDocumentId))
+                .Select(r => new ChargeInstrumentPassageSet(r.FilingDocumentId, r.DisplayName, r.FormType, passages[r.FilingDocumentId])).ToList();
+            if (sets.Count > 0) result[chargeKey] = sets;
+        }
+        return result;
     }
 
     /// <summary>Reads <see cref="AnalysisRun.DataSufficiencyNotesJson"/> — a <c>[{code, reason}]</c>

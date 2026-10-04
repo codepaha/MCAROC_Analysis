@@ -655,7 +655,39 @@ public partial class DossierPdfComposer
                 col.Item().PaddingTop(3).Text("Security (source wording): " + narrativeEv.InstrumentDescription)
                     .FontSize(DossierTheme.Small).FontColor(DossierTheme.InkSoft);
         }
+
+        ComposeInstrumentPassages(col, charge);
     });
+
+    private const int MaxInstrumentPassagesPerCharge = 4;
+    private const int MaxInstrumentPassageChars = 500;
+
+    /// <summary>The property passages quoted from the documents filed for this charge — its own words, with the page — each with the
+    /// reading of the property that the rules give it. Shown whenever documents were read, since most filings only refer to the deed.</summary>
+    private void ComposeInstrumentPassages(ColumnDescriptor col, RocCharge charge)
+    {
+        var sets = model.InstrumentPassagesByCharge?.GetValueOrDefault(Services.PropertyParticulars.ChargeDocumentLinker.Normalize(charge.RocChargeNumber));
+        if (sets is null || sets.Count == 0) return;
+        var all = sets.SelectMany(s => s.Result.Passages.Select(p => (Set: s, Passage: p))).ToList();
+        if (all.Count == 0) return;
+        col.Item().PaddingTop(4).Text("Property as described in the filed documents").Bold().FontSize(DossierTheme.Small).FontColor(DossierTheme.Ink);
+        foreach (var (set, passage) in all.Take(MaxInstrumentPassagesPerCharge))
+        {
+            var quote = passage.Text.Length > MaxInstrumentPassageChars ? passage.Text[..MaxInstrumentPassageChars].TrimEnd() + "…" : passage.Text;
+            col.Item().PaddingTop(2).BorderLeft(2).BorderColor(DossierTheme.Line).PaddingLeft(6).Column(box =>
+            {
+                box.Item().Text($"“{quote}”").FontSize(DossierTheme.Small).FontColor(DossierTheme.InkSoft);
+                var pages = passage.EndPage > passage.Page ? $"pages {passage.Page}-{passage.EndPage}" : $"page {passage.Page}";
+                box.Item().Text($"{set.FormType ?? "Attachment"}: {set.DisplayName}, {pages}").FontSize(DossierTheme.Small).FontColor(DossierTheme.InkFaint);
+                var reading = Services.PropertyParticulars.PropertyReading.For(passage.Text, null, null);
+                if (reading.HasContent)
+                    box.Item().Text("Read as: " + reading.Summarize()).FontSize(DossierTheme.Small).FontColor(DossierTheme.Ink);
+            });
+        }
+        if (all.Count > MaxInstrumentPassagesPerCharge)
+            col.Item().PaddingTop(2).Text($"{all.Count - MaxInstrumentPassagesPerCharge} more passage(s) are shown on the portal's Charges tab.")
+                .FontSize(DossierTheme.Small).FontColor(DossierTheme.InkFaint);
+    }
 
     private static string SpaceCamel(string s) => System.Text.RegularExpressions.Regex.Replace(s, "(\\B[A-Z])", " $1");
 

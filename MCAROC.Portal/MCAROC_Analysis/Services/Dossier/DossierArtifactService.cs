@@ -35,8 +35,10 @@ public sealed class DossierArtifactService(DossierCache cache, DossierPdfRendere
         // Same for the property-particulars readings the annexure prints (Gemini extractions complete after ingestion).
         var propertyPart = model.PropertyExtractions is { Count: > 0 } extractions
             ? "-" + PropertyParticulars.PropertyParticularsExtractionService.VersionOf(extractions) : "";
+        // And for the property passages quoted from the charges' filed documents (#364): they finish after ingestion too, and the annexure prints them.
+        var instrumentPart = InstrumentVersionOf(model.InstrumentPassagesByCharge) is { Length: > 0 } instrumentVersion ? "-i" + instrumentVersion : "";
         // Layout marker: bumped when what a dossier contains changes for everyone at once (this file cache never expires). "-nl" = no litigation.
-        var name = $"{flavour.ToString().ToLowerInvariant()}-{model.IngestionRunId}-{model.AnalysisRunId?.ToString() ?? "none"}{litigationPart}{propertyPart}-nl.pdf";
+        var name = $"{flavour.ToString().ToLowerInvariant()}-{model.IngestionRunId}-{model.AnalysisRunId?.ToString() ?? "none"}{litigationPart}{propertyPart}{instrumentPart}-nl.pdf";
         var path = Path.Combine(dir, name);
 
         if (!File.Exists(path))
@@ -49,5 +51,21 @@ public sealed class DossierArtifactService(DossierCache cache, DossierPdfRendere
         }
 
         return new DossierRenderResult(true, false, false, path);
+    }
+
+    /// <summary>A short fingerprint of the passages the annexure prints (which documents, which passages, which pages): empty when there
+    /// are none, so a dossier without them keeps its earlier file name. Any passage arriving or changing yields a different file.</summary>
+    internal static string InstrumentVersionOf(IReadOnlyDictionary<string, IReadOnlyList<MCAROC_Analysis.Models.Dossier.ChargeInstrumentPassageSet>>? passages)
+    {
+        if (passages is null || passages.Count == 0) return "";
+        var sb = new System.Text.StringBuilder();
+        foreach (var (charge, sets) in passages.OrderBy(p => p.Key, StringComparer.Ordinal))
+            foreach (var set in sets.OrderBy(x => x.DocumentId))
+            {
+                sb.Append(charge).Append('|').Append(set.DocumentId).Append('|').Append(set.DisplayName);
+                foreach (var passage in set.Result.Passages) sb.Append('|').Append((int)passage.Kind).Append(':').Append(passage.Page).Append('-').Append(passage.EndPage).Append(':').Append(passage.Text);
+                sb.Append(';');
+            }
+        return Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(sb.ToString())))[..10];
     }
 }
