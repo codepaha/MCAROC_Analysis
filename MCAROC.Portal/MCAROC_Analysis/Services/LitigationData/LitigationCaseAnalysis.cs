@@ -237,8 +237,8 @@ public static class LitigationCaseAnalysisGroups
         // The consequence of an adverse decision was written for the top group's own grounds: not carried over from a superseded one.
         merged["consequence_note"] = Stale(top) ? groups.Where(g => !Stale(g)).Select(g => g["consequence_note"]?.DeepClone()).FirstOrDefault(n => n is not null)
             : top["consequence_note"]?.DeepClone() ?? (First("consequence_note") is { } c ? JsonValue.Create(c) : null);
-        // The headline is the top group's, unless that group's tier rests on a restraint that has ended: then the newest group that does not.
-        merged["summary"] = (topSuperseded ? groups.FirstOrDefault(g => !Superseded(g)) ?? groups[0] : top)["summary"]?.DeepClone();
+        // The headline is the top group's, unless it describes a restraint or lis pendens that has ended: then the newest group that does not.
+        merged["summary"] = (Stale(top) ? groups.FirstOrDefault(g => !Stale(g)) ?? groups[0] : top)["summary"]?.DeepClone();
         merged["key_points"] = new JsonArray(groups.SelectMany(g => (g["key_points"] as JsonArray)?.Select(x => x?.ToString()) ?? [])
             .Where(x => !string.IsNullOrWhiteSpace(x)).Distinct(StringComparer.OrdinalIgnoreCase).Take(8).Select(x => (JsonNode)JsonValue.Create(x)!).ToArray());
         foreach (var key in new[] { "judicial_reasoning", "provisions", "precedents", "connected_matters", "order_analysis", "evidence", "unknowns", "evidenceReferences", "validation_notes" })
