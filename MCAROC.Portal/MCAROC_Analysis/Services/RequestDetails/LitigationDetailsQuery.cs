@@ -88,24 +88,9 @@ public sealed class LitigationDetailsQuery(AppDbContext db,
                     };
                 }
 
-                LitigationReportSnapshot? authoritativeSnapshot = null;
-                bool isPriorRun = false;
-                if (currentAttemptSnapshot is { Status: LitigationReportSnapshotStatus.Completed })
-                {
-                    authoritativeSnapshot = currentAttemptSnapshot;
-                }
-                else
-                {
-                    authoritativeSnapshot = await db.LitigationReportSnapshots.AsNoTracking()
-                        .AsNoTracking()
-                        .Where(s => s.LitigationSearchJobId == job.LitigationSearchJobId && s.Status == LitigationReportSnapshotStatus.Completed)
-                        .OrderByDescending(s => s.RetrievedUtc)
-                        .FirstOrDefaultAsync(ct);
-                    if (authoritativeSnapshot is not null)
-                    {
-                        isPriorRun = true;
-                    }
-                }
+                var authoritativeSnapshot = await LitigationSnapshotSelection.ForRequest(db, id).FirstOrDefaultAsync(ct);
+                var isPriorRun = authoritativeSnapshot is not null
+                    && authoritativeSnapshot.LitigationReportSnapshotId != currentAttemptSnapshot?.LitigationReportSnapshotId;
 
                 litVm.AuthoritativeSnapshot = authoritativeSnapshot;
                 litVm.IsPriorRunDataShown = isPriorRun;

@@ -26,6 +26,13 @@ and after assembly. If publication changes during assembly, the page returns HTT
 publication check, not a database snapshot transaction: processing progress and
 mutable case metadata may still advance within the same generation.
 
+The tab, charge comparison, and publication fence use one authoritative litigation
+snapshot selector: prefer the completed snapshot matching the current report hash;
+otherwise use the latest completed retrieval (snapshot ID breaks date ties). An
+A -> B -> A report sequence therefore returns to A's original snapshot instead of
+disagreeing permanently with B's later retrieval date. Charge comparison cache
+versions are derived from the exact snapshot selected for the comparison.
+
 Document browsing carries the selected batch ID through filter and pagination
 links. SQL verifies the batch belongs to the requested request. Calls without a
 batch ID preserve the existing latest-authoritative-batch behavior. Analyst route
@@ -33,7 +40,7 @@ restrictions remain unchanged.
 
 ## Measurement
 
-Baseline: `2b3f22f` Details action. Synthetic fixture: one analyzed company using
+Baseline: `2b3f22f` Details action; measured refactor: `db10ef1`. Synthetic fixture: one analyzed company using
 the existing golden-master seed plus 1,000 filings/PDFs, no live litigation
 snapshot, no providers, no background workers. Four iterations per implementation,
 with a fresh DbContext each time and a shared dossier cache. The initial iteration
@@ -60,6 +67,10 @@ litigation request and normal deployed hardware before choosing further deferral
 A final repeat after status-copy changes retained 60 warm reads / 1 tracked entity;
 warm total times ranged from 468 to 1,314 ms (median 990 ms). That variability is
 another reason to treat timings as diagnostic, while query/entity counts are stable.
+The subsequent snapshot-selection fix was regression-tested rather than
+re-benchmarked. A request with a litigation job now performs a shared snapshot
+selection even when the current attempt is already completed; the fixture above
+had no litigation job.
 
 To reproduce in PowerShell from this worktree, explicitly select a disposable
 local test database, then run:
@@ -99,3 +110,10 @@ authentication, provider readiness, or end-to-end report delivery.
 Final header render checks and the performance probe also passed (4 checks). Desktop
 and mobile browser inspection found no document-wide horizontal overflow; keyboard
 ArrowRight activated the next tab. Screenshots are under `tmp/page-preview/`.
+
+Review follow-up: the repeated-report regression failed in both open-charge and
+no-open-charge cases before the fix. After aligning snapshot selection, 82 focused
+SQL tests passed across request loading, charge comparison/cache invalidation,
+litigation tab behavior, and dossier charge links. The concurrent-ingestion
+publication regression remains in place and passed. JavaScript and UI were
+unchanged in this follow-up.

@@ -4,6 +4,7 @@ using MCAROC_Analysis.Data;
 using MCAROC_Analysis.Data.Entities;
 using MCAROC_Analysis.Models;
 using MCAROC_Analysis.Services.Dossier;
+using MCAROC_Analysis.Services.LitigationData;
 using MCAROC_Analysis.Services.RequestDetails;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
@@ -100,6 +101,72 @@ public class RequestDetailsQueryTests : IAsyncLifetime
         var result = Assert.IsType<ViewResult>(await controller.Details(id, null));
         Assert.Equal("RefreshRequired", result.ViewName);
         Assert.Equal(409, controller.Response.StatusCode);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Repeated_report_hash_renders_the_same_snapshot_across_tabs_and_charge_links(bool hasOpenCharges)
+    {
+        await using var seed = Db();
+        var (id, _, _) = await Dossier.DossierTestSeed.SeedAsync(seed);
+        if (!hasOpenCharges)
+            await seed.RocCharges.Where(c => c.RequestId == id)
+                .ExecuteUpdateAsync(s => s.SetProperty(c => c.ChargeStatus, "Satisfied"));
+        var hashA = new string('a', 64);
+        var hashB = new string('b', 64);
+        var job = new LitigationSearchJob { RequestId = id, Status = LitigationSearchJobStatus.Completed, RawResponseHash = hashA };
+        seed.LitigationSearchJobs.Add(job);
+        await seed.SaveChangesAsync();
+        var snapshotA = new LitigationReportSnapshot { RequestId = id, LitigationSearchJobId = job.LitigationSearchJobId,
+            ReportHash = hashA, RetrievedUtc = DateTime.UtcNow.AddDays(-2), Status = LitigationReportSnapshotStatus.Completed };
+        var snapshotB = new LitigationReportSnapshot { RequestId = id, LitigationSearchJobId = job.LitigationSearchJobId,
+            ReportHash = hashB, RetrievedUtc = DateTime.UtcNow.AddDays(-1), Status = LitigationReportSnapshotStatus.Completed };
+        seed.LitigationReportSnapshots.AddRange(snapshotA, snapshotB);
+        var caseA = new LitigationCase { RequestId = id, CaseNumber = "A/1", Court = "Debts Recovery Tribunal",
+            CaseStatus = "Pending", PetitionersJson = "[\"STATE BANK OF INDIA\"]" };
+        var caseB = new LitigationCase { RequestId = id, CaseNumber = "B/1", Court = "Debts Recovery Tribunal",
+            CaseStatus = "Pending", PetitionersJson = "[\"STATE BANK OF INDIA\"]" };
+        seed.LitigationCases.AddRange(caseA, caseB);
+        await seed.SaveChangesAsync();
+        seed.LitigationCaseSourceReports.AddRange(
+            new LitigationCaseSourceReport { LitigationReportSnapshotId = snapshotA.LitigationReportSnapshotId, LitigationCaseId = caseA.LitigationCaseId },
+            new LitigationCaseSourceReport { LitigationReportSnapshotId = snapshotB.LitigationReportSnapshotId, LitigationCaseId = caseB.LitigationCaseId });
+        await seed.SaveChangesAsync();
+
+        using var cache = new MemoryCache(new MemoryCacheOptions { SizeLimit = 256 });
+        // A -> B -> A, then another reload of A. Keep the cache but recreate the request context each time.
+        foreach (var snapshot in new[] { snapshotA, snapshotB, snapshotA, snapshotA })
+        {
+            await seed.LitigationSearchJobs.Where(j => j.RequestId == id)
+                .ExecuteUpdateAsync(s => s.SetProperty(j => j.RawResponseHash, snapshot.ReportHash));
+            await using var read = Db();
+            var chargeLinks = new ChargeLitigationService(read, cache);
+            var controller = new RequestsController(read, null!, null!, null!, null!, null!,
+                new DossierCache(read, new DossierAssembler(read, chargeLinks), cache), null!, new CorporateTimelineBuilder(read),
+                chargeLitigation: chargeLinks);
+            controller.ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() };
+            var result = Assert.IsType<ViewResult>(await controller.Details(id, null));
+            Assert.NotEqual("RefreshRequired", result.ViewName);
+            Assert.Equal(200, controller.Response.StatusCode);
+            var vm = Assert.IsType<RequestDetailsViewModel>(result.Model);
+            Assert.Equal(snapshot.LitigationReportSnapshotId, vm.LitigationDataLake!.AuthoritativeSnapshot!.LitigationReportSnapshotId);
+            Assert.False(vm.LitigationDataLake.IsPriorRunDataShown);
+            Assert.Equal(snapshot.LitigationReportSnapshotId, vm.ChargeLitigation!.SnapshotId);
+            Assert.Equal(await ChargeLitigationService.VersionAsync(read, id), vm.ChargeLitigation.Version);
+            Assert.Equal(snapshot.LitigationReportSnapshotId, (await RequestPageVersion.ReadAsync(read, id, default))!.LitigationSnapshot);
+            Assert.Equal(snapshot == snapshotA ? caseA.LitigationCaseId : caseB.LitigationCaseId,
+                Assert.Single(vm.LitigationDataLake.Cases).LitigationCaseId);
+            if (hasOpenCharges)
+            {
+                var lakeLinks = vm.ChargeLitigation.Links.Where(l => l.Case.LitigationCaseId is not null).ToList();
+                Assert.NotEmpty(lakeLinks);
+                Assert.All(lakeLinks,
+                    link => Assert.Equal(snapshot == snapshotA ? caseA.LitigationCaseId : caseB.LitigationCaseId, link.Case.LitigationCaseId));
+            }
+            else
+                Assert.Empty(vm.ChargeLitigation.Links);
+        }
     }
 
     private sealed class PublishAtFinalRead(long requestId, long runId) : DbCommandInterceptor
