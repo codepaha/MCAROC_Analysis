@@ -161,6 +161,16 @@ public class LitigationReportAssembler(
                     caseAnalysesByCaseId[ca.LitigationCaseId] = new LitigationCaseAnalysis(ca.Status.ToString(), null, ca.FailureReason ?? "Analysis pending.", null, null);
                     continue;
                 }
+                var detailed = LitigationCaseCardMapper.MapAnalysis(ca, latestAiRun.RunNumber);
+                if (detailed.IsDetailed)
+                {
+                    caseAnalysesByCaseId[ca.LitigationCaseId] = new LitigationCaseAnalysis(
+                        ca.Status.ToString(), detailed.RiskLevel, detailed.Summary, detailed.Unknowns, null, null,
+                        detailed.RiskTrigger, detailed.RiskReason, detailed.BaselineRisk, detailed.RiskRaised,
+                        detailed.ActiveRestraint, detailed.RestraintType, detailed.LisPendens, detailed.ConsequenceNote, detailed.FinalOrderSummary,
+                        detailed.Subject, detailed.Amount, detailed.Provisions, detailed.Quotes, detailed.KeyPoints);
+                    continue;
+                }
                 try
                 {
                     using var cDoc = JsonDocument.Parse(ca.AnalysisJson);
@@ -182,7 +192,11 @@ public class LitigationReportAssembler(
             }
         }
 
-        // Outcomes (AI analysis output: only included when includeAnalysis is true)
+        // The overall tier is the highest of the cases' own, as on the Litigation tab; the synthesis text does not carry one.
+        if (portfolioAnalysis is { RiskLevel: null } && caseAnalysesByCaseId.Values.Select(a => a.RiskLevel).Where(r => r is "R0" or "R1" or "R2" or "R3").OrderByDescending(r => r).FirstOrDefault() is { } top)
+            portfolioAnalysis = portfolioAnalysis with { RiskLevel = top };
+
+        // Outcomes (analysis output: only included when includeAnalysis is true)
         Dictionary<long, OrderOutcomeMatch> outcomesByOrderId = [];
         if (includeAnalysis)
         {

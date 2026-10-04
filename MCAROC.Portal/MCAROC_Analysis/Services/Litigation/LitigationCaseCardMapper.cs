@@ -125,6 +125,7 @@ public static class LitigationCaseCardMapper
     private static void ReadDetailed(JsonElement root, LitigationCaseAiAnalysisViewModel vm)
     {
         vm.IsDetailed = true;
+        vm.KeyPoints = TextList(root, "key_points");
         vm.RiskLevel = Text(root, "risk");
         vm.BaselineRisk = Text(root, "baseline_risk");
         vm.RiskRaised = Flag(root, "risk_raised");

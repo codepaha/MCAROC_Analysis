@@ -36,7 +36,8 @@
         <p class="small mb-1"><strong>@Model.RiskTrigger</strong>@(string.IsNullOrWhiteSpace(Model.RiskReason) ? "" : " - " + Model.RiskReason)</p>
     }
 }
-@if (!string.IsNullOrWhiteSpace(Model.Summary)) { <p class="small mb-2">@Model.Summary</p> }
+@if (!string.IsNullOrWhiteSpace(Model.Summary)) { <p class="small mb-1@(Model.KeyPoints.Count > 0 ? " fw-semibold" : "")">@Model.Summary</p> }
+@if (Model.KeyPoints.Count > 0) { <ul class="small mb-2 ps-3">@foreach (var k in Model.KeyPoints) { <li>@k</li> }</ul> }
 @if (Model.IsDetailed)
 {
     @if (!string.IsNullOrWhiteSpace(Model.ConsequenceNote)) { <p class="small mb-2"><span class="fw-bold text-muted">If decided against the company: </span>@Model.ConsequenceNote</p> }
