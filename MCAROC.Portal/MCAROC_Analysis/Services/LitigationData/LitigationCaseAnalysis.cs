@@ -192,6 +192,14 @@ public static class LitigationCaseAnalysisGroups
             var restraint = g["active_restraint"]?.GetValue<bool>() == true; var lis = g["lis_pendens"]?.GetValue<bool>() == true;
             return (restraint || lis) && (!restraint || !restraintNow) && (!lis || !lisNow);
         }
+        // A group some of whose restraint / lis pendens has ended while the rest is still in force keeps its tier, but its own trigger and
+        // reason name what it asserted (an injunction that may be gone), so they are rewritten from the final state.
+        bool Partial(JsonObject g)
+        {
+            var restraint = g["active_restraint"]?.GetValue<bool>() == true; var lis = g["lis_pendens"]?.GetValue<bool>() == true;
+            return !Superseded(g) && ((restraint && !restraintNow) || (lis && !lisNow));
+        }
+        bool Stale(JsonObject g) => Superseded(g) || Partial(g);
         JsonNode? Effective(JsonObject g, string key) => Superseded(g) && g[key + "_without_restraint"] is { } alt ? alt : g[key];
         var top = groups.OrderByDescending(g => Array.IndexOf(Risks, Effective(g, "risk")?.ToString())).First();
         JsonArray Join(string key)
@@ -210,13 +218,24 @@ public static class LitigationCaseAnalysisGroups
             merged[key] = First(key);
         var topSuperseded = Superseded(top);
         merged["risk"] = Effective(top, "risk")?.DeepClone();
-        merged["risk_trigger"] = Effective(top, "risk_trigger")?.DeepClone();
-        merged["risk_reason"] = Effective(top, "risk_reason")?.DeepClone();
+        if (Partial(top))
+        {
+            var ended = new List<string>();
+            if (top["active_restraint"]?.GetValue<bool>() == true && !restraintNow) ended.Add("injunction or restraint");
+            if (top["lis_pendens"]?.GetValue<bool>() == true && !lisNow) ended.Add("lis pendens");
+            merged["risk_trigger"] = restraintNow ? "Active restraint" : "Active lis pendens";
+            merged["risk_reason"] = $"{(restraintNow ? "A restraint" : "A lis pendens")} is still in force; the {string.Join(" and the ", ended)} ended by a later order.";
+        }
+        else
+        {
+            merged["risk_trigger"] = Effective(top, "risk_trigger")?.DeepClone();
+            merged["risk_reason"] = Effective(top, "risk_reason")?.DeepClone();
+        }
         merged["risk_category"] = merged["risk"]?.ToString() is "R3" or "R2" ? top["risk_category"]?.DeepClone() : null;
         merged["risk_raised"] = Any("risk_raised");
         merged["relevance"] = topSuperseded ? JsonValue.Create(merged["risk"]?.ToString() is "R3" or "R2" ? "Needs attention" : "Monitor") : top["relevance"]?.DeepClone();
         // The consequence of an adverse decision was written for the top group's own grounds: not carried over from a superseded one.
-        merged["consequence_note"] = topSuperseded ? groups.Where(g => !Superseded(g)).Select(g => g["consequence_note"]?.DeepClone()).FirstOrDefault(n => n is not null)
+        merged["consequence_note"] = Stale(top) ? groups.Where(g => !Stale(g)).Select(g => g["consequence_note"]?.DeepClone()).FirstOrDefault(n => n is not null)
             : top["consequence_note"]?.DeepClone() ?? (First("consequence_note") is { } c ? JsonValue.Create(c) : null);
         // The headline is the top group's, unless that group's tier rests on a restraint that has ended: then the newest group that does not.
         merged["summary"] = (topSuperseded ? groups.FirstOrDefault(g => !Superseded(g)) ?? groups[0] : top)["summary"]?.DeepClone();

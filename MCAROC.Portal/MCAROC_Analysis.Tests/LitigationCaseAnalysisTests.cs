@@ -832,6 +832,11 @@ public class LitigationCaseAnalysisTests
         Assert.False((bool)stillLis["active_restraint"]!);
         Assert.True((bool)stillLis["lis_pendens"]!);
         Assert.Equal("R3", stillLis["risk"]!.ToString());                 // the lis pendens is still in force
+        // ...but the stated ground is no longer the lifted injunction
+        Assert.Equal("Active lis pendens", stillLis["risk_trigger"]!.ToString());
+        Assert.DoesNotContain("Injunction in force", stillLis["risk_reason"]!.ToString());
+        Assert.Contains("lis pendens is still in force", stillLis["risk_reason"]!.ToString());
+        Assert.Contains("injunction or restraint ended", stillLis["risk_reason"]!.ToString());
 
         // both ended, by two newer groups
         var bothEnded = JsonNode.Parse(LitigationCaseAnalysisGroups.Merge([LisEndedR1(3), LiftedR1(2), RestraintAndLisR3(1)]))!;
