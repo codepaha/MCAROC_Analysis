@@ -258,8 +258,11 @@ public sealed class LitigationAiAnalysisOrchestrator(AppDbContext db, ILitigatio
     public sealed class AnalysisContext(IReadOnlyDictionary<long, LitigationOrderDocument> documentsByOrderId, string targetEntity, IReadOnlyList<string> targetNames, DateOnly asOf)
     {
         public IReadOnlyList<string> TargetNames => targetNames;
-        public CaseAnalysisInput Build(LitigationCase c) =>
-            LitigationCaseAnalysisInputBuilder.Build(c, documentsByOrderId, targetEntity, targetNames, asOf);
+        /// <summary>The input for the whole case, or for one group of its orders. A group is built against the whole case's input
+        /// (<paramref name="whole"/>) so that it sends exactly the text the case's evidence hash covers.</summary>
+        public CaseAnalysisInput Build(LitigationCase c, IReadOnlySet<long>? onlyOrderIds = null, CaseAnalysisInput? whole = null) =>
+            LitigationCaseAnalysisInputBuilder.Build(c, documentsByOrderId, targetEntity, targetNames, asOf, onlyOrderIds,
+                whole?.Orders.Where(o => o.Text is null && o.TotalChars > 0).Select(o => o.OrderId).ToHashSet());
 
         /// <summary>The tier and trigger the case's own record gives it, which the model may confirm or raise but not lower.</summary>
         public LitigationRiskAssessment Baseline(LitigationCase c)
@@ -299,13 +302,29 @@ public sealed class LitigationAiAnalysisOrchestrator(AppDbContext db, ILitigatio
     private async Task<LitigationCaseAiAnalysis> AnalyzeCaseFreshAsync(long runId, Guid token, LitigationCase c, AnalysisContext context, CaseAnalysisInput input, string promptHash, CancellationToken ct)
     {
         var item = new LitigationCaseAiAnalysis { LitigationAiAnalysisRunId = runId, LitigationCaseId = c.LitigationCaseId, EvidenceJson = input.EvidenceJson, EvidenceHash = input.EvidenceHash, PromptHash = promptHash };
-        await RenewAsync(runId, token, ct);
-        var response = await client.CallAsync(LitigationCaseAnalysisPrompt.Build(input.CaseJson), options.Value.CaseTimeoutSeconds, ct, options.Value.CaseModelId);
-        await RenewAsync(runId, token, ct);
-        item.RawResponseJson = response.RawResponse; item.ResponseHash = string.IsNullOrWhiteSpace(response.RawResponse) ? null : LitigationCaseAnalysisInputBuilder.Hash(response.RawResponse);
         var baseline = context.Baseline(c);
-        var valid = response.Success ? LitigationCaseAnalysisValidator.Validate(response.RawResponse, input, baseline.Tier, baseline.Trigger)
-            : new CaseAnalysisValidation(false, null, response.FailureReason ?? "Case AI call failed.", []);
+        var groups = LitigationCaseAnalysisGroups.Plan(input, options.Value.SplitAboveChars, options.Value.GroupChars);
+        var raws = new List<string>(); var accepted = new List<string>(); CaseAnalysisValidation? valid = null;
+        foreach (var ids in groups)
+        {
+            // One group is the whole case; otherwise each group is built and checked against its own orders' text.
+            var part = groups.Count == 1 ? input : context.Build(c, ids, input);
+            await RenewAsync(runId, token, ct);
+            var response = await client.CallAsync(LitigationCaseAnalysisPrompt.Build(part.CaseJson), options.Value.CaseTimeoutSeconds, ct, options.Value.CaseModelId);
+            await RenewAsync(runId, token, ct);
+            raws.Add(response.RawResponse);
+            var v = response.Success ? LitigationCaseAnalysisValidator.Validate(response.RawResponse, part, baseline.Tier, baseline.Trigger)
+                : new CaseAnalysisValidation(false, null, response.FailureReason ?? "Case AI call failed.", []);
+            if (!v.IsAccepted)
+            {
+                valid = new CaseAnalysisValidation(false, null, groups.Count == 1 ? v.RejectReason : $"Group {raws.Count} of {groups.Count}: {v.RejectReason}", []);
+                break;
+            }
+            accepted.Add(v.AnalysisJson!);
+        }
+        valid ??= new CaseAnalysisValidation(true, LitigationCaseAnalysisGroups.Merge(accepted), null, []);
+        var raw = groups.Count == 1 ? raws[^1] : string.Join("\n", raws.Select((r, i) => $"/* group {i + 1} of {groups.Count} */ {r}"));
+        item.RawResponseJson = raw; item.ResponseHash = string.IsNullOrWhiteSpace(raw) ? null : LitigationCaseAnalysisInputBuilder.Hash(raw);
         item.Status = valid.IsAccepted ? LitigationAiAnalysisItemStatus.Completed : LitigationAiAnalysisItemStatus.Failed; item.AnalysisJson = valid.AnalysisJson; item.FailureReason = valid.RejectReason; item.CompletedUtc = DateTime.UtcNow;
         return item;
     }

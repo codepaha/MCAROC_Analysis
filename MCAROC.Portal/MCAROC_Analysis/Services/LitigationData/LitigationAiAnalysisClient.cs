@@ -18,6 +18,7 @@ public interface ILitigationAiAnalysisClient
 public sealed class VertexLitigationAiAnalysisClient : ILitigationAiAnalysisClient
 {
     public const string ModelId = "gemini-2.5-flash-lite";
+    private const int HttpTimeoutMilliseconds = 1_200_000;
     private readonly GenAiClient _client;
     private readonly ILogger<VertexLitigationAiAnalysisClient> _logger;
 
@@ -27,7 +28,10 @@ public sealed class VertexLitigationAiAnalysisClient : ILitigationAiAnalysisClie
         _logger = logger;
         var credential = GoogleCredential.FromFile(credentialsPath)
             .CreateScoped("https://www.googleapis.com/auth/cloud-platform");
-        _client = new GenAiClient(vertexAI: true, project: projectId, location: location, credential: credential);
+        // The SDK's HTTP layer gives up after about 100 seconds by default, whatever timeout a call asks for: a case call that reads many
+        // orders runs longer than that. The per-call limit is enforced by CallAsync's own timeout, so this only has to be higher.
+        _client = new GenAiClient(vertexAI: true, project: projectId, location: location, credential: credential,
+            httpOptions: new HttpOptions { Timeout = HttpTimeoutMilliseconds });
     }
 
     public async Task<LitigationAiCallResult> CallAsync(string prompt, int timeoutSeconds, CancellationToken ct, string? modelId = null)
