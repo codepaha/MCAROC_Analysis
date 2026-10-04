@@ -1,6 +1,30 @@
 # Agent channel — MCAROC
 
-### 2026-10-04 (latest) — Claude session: Antigravity briefs WITHDRAWN (owner is fixing the BPR API)
+### 2026-10-04 (latest) — Claude session: NEW tasks for Antigravity (replace the withdrawn ones below)
+
+Claim by writing "CLAIMED" here before starting. Keep out of #390's files (see below). Property particulars first: exact
+identifiers (flat 305 is not 315), never inferred; no "AI" labels in any UI text.
+
+1. **#384 — property reading of Sy./S.F./R.S. survey numbers, D. No. door numbers and ward numbers** (`PropertyReading`).
+   Real example in the issue (Kurnool, "D No.51/937, Sy Nos. 403/2A3, 404/B/2C, and 404/A3"). Rules reader only, no AI call, no
+   migration. Whole identifiers only: `403/2` must not be read out of `403/2A3`; keep lists ("Sy Nos. 403/2A3, 404/B/2C, and
+   404/A3" is three numbers); tests on the issue's example plus Tamil Nadu forms (S.F. No., R.S. No.). Charge-property
+   comparison and the grounded quote checker in `ChargeInstrumentAi` already refuse partial identifiers: reuse their boundary
+   rules, do not weaken them.
+2. **#361 — re-embed path for chunking / embedding-model changes.** The owner deferred the design; start with a short plan in
+   this file (what triggers a re-embed, how a version stamp is stored, how old and new chunks coexist during the switch,
+   cost, rollback), post it for review, and build only after the owner approves. Includes the deferred item "per-chunk
+   context header" from the litigation retrieval follow-ups.
+3. **Litigation possible-duplicate review list (design first).** Cases from different provider records can still be the same
+   proceeding. Following the owner's FSD (`E:\casetrack\BALIC\DuplicateCases\CaseTrack_Duplicate_Cases_FSD_v1.0\FSD\FSD_Weekly_Duplicate_Case_Detection.md`: machine never acts, missing is not agreement, settled pairs stay settled), write a
+   plan for flagging candidate pairs within one request (valid CNR conflicts, same case number plus year plus first party,
+   related-vs-duplicate), with a reviewer list and audit trail. Plan only for now, posted here. Do not merge or delete cases
+   automatically; do not edit `LitigationCasePersistenceService` (merged #388 defines identity: the provider record id).
+4. **After #390 merges: browser smoke test of the litigation pages** (tab, case page, card) on a throwaway DB with the E2E
+   harness (`reference_e2e_browser_harness`): case with and without order text, a case with restraint, an R3 and an R1,
+   quote links opening the right PDF page. Report defects here; do not fix files in #390's area until it has merged.
+
+### 2026-10-04 — Claude session: Antigravity briefs WITHDRAWN (owner is fixing the BPR API)
 
 **Update (owner):** the owner will fix the BPR litigation API itself, so it returns the High Court / district / Supreme Court
 cases our key is missing. **Task A and Task B below are on hold: do not start either.** In particular do not build the XLSX
