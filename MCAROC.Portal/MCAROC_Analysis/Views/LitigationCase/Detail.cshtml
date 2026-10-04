@@ -283,16 +283,10 @@
     @if (card.Analysis is { Status: LitigationAiAnalysisItemStatus.Completed or LitigationAiAnalysisItemStatus.InsufficientEvidence } analysis && !string.IsNullOrWhiteSpace(analysis.Summary))
     {
         <div class="card shadow-sm mb-3" id="case-analysis">
-            <div class="card-header bg-light small fw-bold text-uppercase"><i class="bi bi-journal-text me-1 text-primary"></i>Case summary</div>
+            <div class="card-header bg-light small fw-bold text-uppercase"><i class="bi bi-journal-text me-1 text-primary"></i>@(analysis.IsDetailed ? "Case analysis" : "Case summary")</div>
             <div class="card-body small">
-                <p>@analysis.Summary</p>
-                @if (analysis.Unknowns.Count > 0)
-                {
-                    <div class="fw-bold text-muted mb-1">Not established from the orders</div>
-                    <ul class="mb-2">@foreach (var u in analysis.Unknowns) { <li>@u</li> }</ul>
-                }
-                @if (analysis.Citations.Count > 0) { <div class="text-muted">Sources: @string.Join("; ", analysis.Citations)</div> }
-                @if (card.IsAnalysisStaleComparedToCase) { <div class="text-muted mt-1">The case record has changed since this summary was written.</div> }
+                @await Html.PartialAsync("~/Views/LitigationCase/_CaseAnalysis.cshtml", analysis, new ViewDataDictionary(ViewData) { { "RequestId", request.RequestId }, { "Full", true } })
+                @if (card.IsAnalysisStaleComparedToCase) { <div class="text-muted mt-1">The case record has changed since this analysis was written.</div> }
             </div>
         </div>
     }
