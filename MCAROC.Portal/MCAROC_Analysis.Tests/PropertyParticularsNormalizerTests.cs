@@ -263,4 +263,31 @@ public class PropertyParticularsNormalizerTests
         Assert.Equal(["403/2A3"], group.Numbers);
         Assert.DoesNotContain("403/2", group.Numbers);
     }
+
+    [Fact]
+    public void Carpet_area_after_a_survey_number_is_not_another_survey_identifier()
+    {
+        var p = PropertyParticularsNormalizer.Normalize("Land bearing Sy No. 12, 100 sq m carpet area at Kurnool, Andhra Pradesh.", "Immovable property");
+        Assert.Equal(new[] { "12" }, p.SurveyNumbers.SelectMany(g => g.Numbers));
+    }
+
+    [Theory]
+    [InlineData("Door No.51/937-2, Kurnool", "51/937")]
+    [InlineData("Flat No. A-305 in Tower B", "A")]
+    [InlineData("Flat No. 305 A in Tower B", "305")]
+    public void A_door_or_flat_identifier_must_not_be_a_prefix_of_a_different_unit(string text, string prefix)
+    {
+        var p = PropertyParticularsNormalizer.Normalize(text, "Immovable property");
+        Assert.DoesNotContain(p.Units, u => u.UnitNumber == prefix);
+    }
+
+    [Theory]
+    [InlineData("Door No.51/937-2, Kurnool", "51/937-2")]
+    [InlineData("Flat No. A-305 in Tower B", "A-305")]
+    [InlineData("Flat No. 305 A in Tower B", "305A")]
+    public void Door_or_flat_identifier_keeps_full_subdivision_and_suffix(string text, string expectedUnit)
+    {
+        var p = PropertyParticularsNormalizer.Normalize(text, "Immovable property");
+        Assert.Contains(p.Units, u => u.UnitNumber == expectedUnit);
+    }
 }

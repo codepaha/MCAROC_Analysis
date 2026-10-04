@@ -363,4 +363,13 @@ public class PropertyParticularsAiTests
         // Whole identifier guarantee: 403/2 is not grounded out of 403/2A3
         Assert.Empty(GroundedNumbers(clause, "Survey", "403/2"));
     }
+
+    [Fact]
+    public void AreaFollowingSurveyNumber_IsNotGroundedAsSurveyIdentifier()
+    {
+        const string clause = "Sy No. 12, 100 sq m carpet area";
+        Assert.Equal(["12"], GroundedNumbers(clause, "Survey", "12"));
+        Assert.Empty(GroundedNumbers(clause, "Survey", "100"));
+        Assert.Empty(GroundedNumbers(clause, "Survey", "10"));
+    }
 }

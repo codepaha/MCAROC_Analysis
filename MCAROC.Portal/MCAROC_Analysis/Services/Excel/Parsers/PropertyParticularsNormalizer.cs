@@ -484,7 +484,7 @@ public static partial class PropertyParticularsNormalizer
     [GeneratedRegex(@"^(as per|as mentioned|as stated|as given|as detailed|as specified|mentioned in|part [a-z0-9]+ of|refer|more particularly|described in|as described|schedule|annexure)|\b(schedule|annexure)\b", RegexOptions.IgnoreCase)]
     private static partial Regex ReferenceOnly();
 
-    [GeneratedRegex(@"(?<!\w)(?:(?:unit|flat|office|shop|apartment|d(?:oor)?\.?)\s*nos?\.?|d\.nos?\.?)\s*(?<no>[0-9a-z]+(?:/[0-9a-z]+)*)\b", RegexOptions.IgnoreCase)]
+    [GeneratedRegex(@"(?<!\w)(?:(?:unit|flat|office|shop|apartment|d(?:oor)?\.?)\s*nos?\.?|d\.nos?\.?)\s*(?<no>[0-9a-z]+(?:(?:/|-)[0-9a-z]+)*(?:\s+[a-z]\b)?)(?!\s*[-/]\w)", RegexOptions.IgnoreCase)]
     private static partial Regex UnitPattern();
     [GeneratedRegex(@"\b(?<n>\d{1,3})\s*(?:st|nd|rd|th)?\s+floor\b", RegexOptions.IgnoreCase)]
     private static partial Regex FloorPattern();
@@ -503,17 +503,17 @@ public static partial class PropertyParticularsNormalizer
     [GeneratedRegex(@"\b(?<p>[A-Z]{1,2})\s*-\s*(?<a>\d{1,4})(?:\s*to\s*(?:to\s*)?(?:\k<p>\s*-\s*)?(?<to>\d{1,4}))?", RegexOptions.IgnoreCase)]
     private static partial Regex ParkingNumber();
 
-    [GeneratedRegex(@"(?:\b(?<q>new|old)\s+)?(?:\bc\.?\s*t\.?\s*s\.?|\bcst\b)\s*[-\s]*(?:nos?\.?|numbers?)?[\s.,:-]*(?<list>\d+[a-z]?(?:/[0-9a-z]+)*(?:\s*\((?:p|part)\))?(?:\s*(?:to|–)\s*\d+)?(?:(?:\s*,\s*and\b|\s*(?:,|\.|and|&|\+)?)\s*\d+[a-z]?(?:/[0-9a-z]+)*(?:\s*\((?:p|part)\))?(?:\s*(?:to|–)\s*\d+)?)*)", RegexOptions.IgnoreCase)]
+    [GeneratedRegex(@"(?:\b(?<q>new|old)\s+)?(?:\bc\.?\s*t\.?\s*s\.?|\bcst\b)\s*[-\s]*(?:nos?\.?|numbers?)?[\s.,:-]*(?<list>\d+[a-z]?(?:/[0-9a-z]+)*(?![0-9a-z])(?!\s*(?:sq|square|acres?|hectares?|ha|(?:car\s*)?parking)\b)(?:\s*\((?:p|part)\))?(?:\s*(?:to|–)\s*\d+)?(?:(?:\s*,\s*and\b|\s*(?:,|\.|and|&|\+)?)\s*\d+[a-z]?(?:/[0-9a-z]+)*(?![0-9a-z])(?!\s*(?:sq|square|acres?|hectares?|ha|(?:car\s*)?parking)\b)(?:\s*\((?:p|part)\))?(?:\s*(?:to|–)\s*\d+)?)*)", RegexOptions.IgnoreCase)]
     private static partial Regex CtsPattern();
-    [GeneratedRegex(@"(?<n>\d+[a-z]?(?:/[0-9a-z]+)*)(?:\s*(?<part>\((?:p|part)\)|part\b))?(?:\s*(?:to|–)\s*(?<to>\d+))?", RegexOptions.IgnoreCase)]
+    [GeneratedRegex(@"(?<n>\d+[a-z]?(?:/[0-9a-z]+)*)(?![0-9a-z])(?!\s*(?:sq|square|acres?|hectares?|ha|(?:car\s*)?parking)\b)(?:\s*(?<part>\((?:p|part)\)|part\b))?(?:\s*(?:to|–)\s*(?<to>\d+))?", RegexOptions.IgnoreCase)]
     private static partial Regex NumberItem();
-    [GeneratedRegex(@"(?:\b(?<q>new|old)\s+)?(?<![.\w])(?:survey|sy\b|sy\.|s\.f\.|s\.f\b|sf\b|sf\.|r\.s\.|r\.s\b|rs\b|rs\.|t\.s\.|t\.s\b|ts\b|ts\.|s\.|s\b)\s*nos?\.?\s*[:.-]?\s*(?<list>\d+[a-z]?(?:/[0-9a-z]+)*(?:\s*(?:\(p\)|part\b))?(?:\s*(?:to|–)\s*\d+)?(?:(?:\s*,\s*and\b\s*|\s*(?:,|\.|and|&|\+)\s*)\d+[a-z]?(?:/[0-9a-z]+)*(?:\s*(?:\(p\)|part\b))?(?:\s*(?:to|–)\s*\d+)?)*)", RegexOptions.IgnoreCase)]
+    [GeneratedRegex(@"(?:\b(?<q>new|old)\s+)?(?<![.\w])(?:survey|sy\b|sy\.|s\.f\.|s\.f\b|sf\b|sf\.|r\.s\.|r\.s\b|rs\b|rs\.|t\.s\.|t\.s\b|ts\b|ts\.|s\.|s\b)\s*nos?\.?\s*[:.-]?\s*(?<list>\d+[a-z]?(?:/[0-9a-z]+)*(?![0-9a-z])(?!\s*(?:sq|square|acres?|hectares?|ha|(?:car\s*)?parking)\b)(?:\s*(?:\(p\)|part\b))?(?:\s*(?:to|–)\s*\d+)?(?:(?:\s*,\s*and\b\s*|\s*(?:,|\.|and|&|\+)\s*)\d+[a-z]?(?:/[0-9a-z]+)*(?![0-9a-z])(?!\s*(?:sq|square|acres?|hectares?|ha|(?:car\s*)?parking)\b)(?:\s*(?:\(p\)|part\b))?(?:\s*(?:to|–)\s*\d+)?)*)", RegexOptions.IgnoreCase)]
     private static partial Regex SurveyPattern();
     // A list joined by "+", ",", "&" or "and" ("Plot Nos: 728 + 729 + 730"); an item is never the head of a comma-grouped
     // amount ("Plot No. 5, 1,000 sq ft" is plot 5 only).
-    [GeneratedRegex(@"\bplot\s*nos?\.?\s*[:.-]?\s*(?<list>\d+[a-z]?(?:/[0-9a-z]+)*(?!,?\d)(?:\s*(?:to|–)\s*\d+)?(?:(?:\s*,\s*and\b\s*|\s*(?:\+|,|&|and)\s*)\d+[a-z]?(?:/[0-9a-z]+)*(?!,?\d)(?:\s*(?:to|–)\s*\d+)?)*)\b", RegexOptions.IgnoreCase)]
+    [GeneratedRegex(@"\bplot\s*nos?\.?\s*[:.-]?\s*(?<list>\d+[a-z]?(?:/[0-9a-z]+)*(?!,?\d)(?![0-9a-z])(?!\s*(?:sq|square|acres?|hectares?|ha|(?:car\s*)?parking)\b)(?:\s*(?:to|–)\s*\d+)?(?:(?:\s*,\s*and\b\s*|\s*(?:\+|,|&|and)\s*)\d+[a-z]?(?:/[0-9a-z]+)*(?!,?\d)(?![0-9a-z])(?!\s*(?:sq|square|acres?|hectares?|ha|(?:car\s*)?parking)\b)(?:\s*(?:to|–)\s*\d+)?)*)\b", RegexOptions.IgnoreCase)]
     private static partial Regex PlotPattern();
-    [GeneratedRegex(@"\b(?<s>gat|gata|khasra|arazi|khata)\s*nos?\.?\s*(?<list>\d+[a-z]?(?:/[0-9a-z]+)*(?:\s*(?:to|–)\s*\d+)?(?:(?:\s*,\s*and\b\s*|\s*(?:,|and|&|\+)\s*)\d+[a-z]?(?:/[0-9a-z]+)*(?:\s*(?:to|–)\s*\d+)?)*)", RegexOptions.IgnoreCase)]
+    [GeneratedRegex(@"\b(?<s>gat|gata|khasra|arazi|khata)\s*nos?\.?\s*(?<list>\d+[a-z]?(?:/[0-9a-z]+)*(?![0-9a-z])(?!\s*(?:sq|square|acres?|hectares?|ha|(?:car\s*)?parking)\b)(?:\s*(?:to|–)\s*\d+)?(?:(?:\s*,\s*and\b\s*|\s*(?:,|and|&|\+)\s*)\d+[a-z]?(?:/[0-9a-z]+)*(?![0-9a-z])(?!\s*(?:sq|square|acres?|hectares?|ha|(?:car\s*)?parking)\b)(?:\s*(?:to|–)\s*\d+)?)*)", RegexOptions.IgnoreCase)]
     private static partial Regex GatKhasraPattern();
     [GeneratedRegex(@"\b(?:ward|w\.)\s*nos?\.?\s*(?<no>[0-9a-z]+(?:/[0-9a-z]+)*)\b", RegexOptions.IgnoreCase)]
     private static partial Regex WardPattern();
