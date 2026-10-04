@@ -117,6 +117,8 @@ public class RequestDetailsViewModel
     // MCA Filings (PDF) pipeline
     public McaFilingBatch? FilingBatch { get; set; }
     public List<FilingSummaryViewModel> FilingSummaries { get; set; } = [];
+    /// <summary>Projected IDs for validating chat citations without materializing filing bodies.</summary>
+    public HashSet<long>? AuthoritativeDocumentIds { get; set; }
     public Dictionary<FilingCategory, int> FilingCategoryCounts { get; set; } = [];
     public Dictionary<TextExtractionMethod, int> TextExtractionMethodCounts { get; set; } = [];
     public int AiSuccessCount { get; set; }

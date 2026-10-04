@@ -84,6 +84,26 @@ public class CorporateTimelineBuilder(AppDbContext db)
             .ToList();
     }
 
+    /// <summary>Uses the page's selected ingestion run; no re-query or latest-run re-selection.</summary>
+    public static IReadOnlyList<CorporateTimelineEvent> BuildFrom(MCAROC_Analysis.Models.RequestDetailsViewModel vm)
+    {
+        if (vm.LatestRun is null) return [];
+        var events = new List<CorporateTimelineEvent>();
+        if (vm.CompanyProfile is { } profile) events.AddRange(IncorporationEvents(profile));
+        events.AddRange(NameChangeEvents(vm.NameHistory, vm.CompanyProfile?.CompanyName ?? vm.Request.CompanyName));
+        events.AddRange(DirectorEvents(vm.Directors, vm.DirectorAssignmentHistories));
+        events.AddRange(ChargeEvents(vm.Charges.SelectMany(c => c.Events).ToList()));
+        events.AddRange(CapitalEvents(vm.SecurityAllotments));
+        events.AddRange(CreditRatingEvents(vm.CreditRatings));
+        events.AddRange(FinancialDisputeEvents(vm.FinancialDisputeCases));
+        events.AddRange(GstEvents(vm.GstRegistrations));
+        events.AddRange(EpfoEvents(vm.EpfoEstablishments));
+        events.AddRange(ComplianceEvents(vm.ComplianceRecords));
+        return events.OrderBy(e => e.Date).ThenBy(e => e.Category)
+            .ThenBy(e => e.Provenance.SourceSheetName, StringComparer.Ordinal)
+            .ThenBy(e => e.Provenance.SourceRowNumber).ThenBy(e => e.Provenance.EntityId).ToList();
+    }
+
     private static TimelineEventProvenance Provenance(ExtractedEntityBase entity, string entityType, long entityId) =>
         new(entityType, entityId, entity.SourceSheetName, entity.SourceRowNumber, entity.SourceDocumentId);
 

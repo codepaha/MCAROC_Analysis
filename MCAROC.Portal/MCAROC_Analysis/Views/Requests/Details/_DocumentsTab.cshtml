@@ -163,8 +163,8 @@
                     }
                 </div>
 
-                <div id="mca-docs-panel" data-mca-docs-url="@Url.Action("Documents", "Requests", new { id = r.RequestId })" class="d-flex align-items-center gap-2 flex-wrap">
-                    <a class="mca-chip" data-mca-docs-load href="@Url.Action("Documents", "Requests", new { id = r.RequestId })">
+                <div id="mca-docs-panel" data-mca-docs-url="@Url.Action("Documents", "Requests", new { id = r.RequestId, batchId = Model.FilingBatch?.BatchId })" class="d-flex align-items-center gap-2 flex-wrap">
+                    <a class="mca-chip" data-mca-docs-load href="@Url.Action("Documents", "Requests", new { id = r.RequestId, batchId = Model.FilingBatch?.BatchId })">
                         <i class="bi bi-list-ul"></i> Browse @Model.FilingCategoryCounts.Values.Sum() filed document(s)
                     </a>
                     @if (archiveDoc != null)

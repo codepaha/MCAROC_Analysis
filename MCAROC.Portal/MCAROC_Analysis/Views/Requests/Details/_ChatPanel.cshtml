@@ -11,13 +11,13 @@
     };
 
     var authoritativeBatchId = Model.FilingBatch?.BatchId;
-    var validDocIds = authoritativeBatchId is null
+    var validDocIds = Model.AuthoritativeDocumentIds ?? (authoritativeBatchId is null
         ? new HashSet<long>()
         : Model.FilingSummaries
             .Where(s => s.Filing.BatchId == authoritativeBatchId.Value)
             .SelectMany(s => s.Filing.Documents)
             .Select(d => d.FilingDocumentId)
-            .ToHashSet();
+            .ToHashSet());
 }
 
 <!-- Floating Trigger Button -->

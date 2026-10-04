@@ -4,7 +4,7 @@
     // Rendered both as a full partial response (fetch-swap / direct link) and inline from the Documents tab.
     string CatLabel(FilingCategory c) => c == FilingCategory.Unclassified ? "Other" : c.ToString();
     string PageUrl(string? cat, int page) =>
-        Url.Action("Documents", "Requests", new { id = Model.RequestId, category = cat, page })!;
+        Url.Action("Documents", "Requests", new { id = Model.RequestId, category = cat, page, batchId = Model.BatchId })!;
 }
 
 @if (!Model.HasBatch)

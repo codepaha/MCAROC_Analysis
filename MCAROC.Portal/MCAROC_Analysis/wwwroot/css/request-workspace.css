@@ -1,0 +1,36 @@
+/* A compact assessment workspace; retain the portal's typography and colour tokens. */
+.mca-request-context { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 8px; color: var(--muted); font-size: 12px; }
+.mca-request-context a { color: var(--muted); text-decoration: none; }
+.mca-request-context a:hover { color: var(--brand); text-decoration: underline; }
+.mca-company-id { min-width: 0; }
+.mca-company-id h1 { overflow-wrap: anywhere; line-height: 1.3; }
+.mca-company-head { gap: 16px 24px; }
+.mca-meta-controls, .mca-head-actions, .mca-meta-detail { flex-wrap: wrap; }
+.mca-meta-detail { line-height: 1.6; }
+.mca-head-actions { row-gap: 8px; }
+.mca-tabs { flex-wrap: nowrap; overflow-y: hidden; scrollbar-width: thin; scrollbar-color: var(--border-strong) transparent; }
+.mca-tabs::-webkit-scrollbar { display: block; height: 4px; }
+.mca-tabs::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 4px; }
+.mca-tabs .nav-link { min-height: 44px; padding: 11px 15px; }
+.mca-tabs .nav-link:focus-visible, .mca-request-context a:focus-visible, .mca-coverage-details summary:focus-visible { outline: 2px solid var(--brand); outline-offset: -2px; border-radius: 3px; }
+.mca-coverage-strip { align-items: flex-start; padding-block: 10px; line-height: 1.6; }
+.mca-coverage-item { flex-wrap: wrap; }
+.mca-coverage-details { max-width: 100%; }
+.mca-coverage-details summary { cursor: pointer; color: var(--warn-strong, #9a6b00); }
+.mca-coverage-details p { margin: 6px 0 0; max-width: 70ch; color: var(--muted); }
+.mca-document-notice { font-size: 13px; color: var(--muted); margin-block: 8px; }
+#mca-docs-panel[aria-busy="true"] { opacity: .65; transition: opacity .15s ease; }
+@media (max-width: 900px) {
+    /* A tall sticky company header leaves too little reading space on phones. */
+    .mca-detail-head { position: relative; top: auto; }
+    .mca-company-head { flex-direction: column; align-items: stretch; }
+    .mca-company-meta { align-items: flex-start; text-align: left; }
+    .mca-meta-controls, .mca-company-meta .mca-pills, .mca-meta-detail { justify-content: flex-start; }
+    .mca-head-actions { flex-wrap: wrap; }
+    .mca-head-actions .btn { min-height: 40px; }
+    .mca-contents-nav { top: var(--mca-topbar-h); }
+    .mca-contents-section { scroll-margin-top: calc(var(--mca-topbar-h) + var(--mca-contents-nav-h) + 16px); }
+}
+@media (prefers-reduced-motion: reduce) {
+    #mca-docs-panel[aria-busy="true"] { transition: none; }
+}

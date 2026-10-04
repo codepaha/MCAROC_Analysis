@@ -5,6 +5,51 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const McaContentsNav = require('../../MCAROC_Analysis/wwwroot/js/contents-nav.js');
 
+function documentLoaderHarness(fetch) {
+    const panel = createMockElement();
+    panel.innerHTML = 'existing list';
+    panel.removeAttribute = key => delete panel.attributes[key];
+    const notice = createMockElement('p');
+    panel.insertAdjacentElement = () => {};
+    const doc = {
+        body: createMockElement('body'),
+        documentElement: { style: { setProperty() {} } },
+        getElementById: id => id === 'mca-docs-panel' ? panel : null,
+        querySelector: () => null, querySelectorAll: () => [], createElement: () => notice
+    };
+    McaContentsNav.initDetailsNav({ doc, window: { fetch, location: { hash: '' } } });
+    const click = () => panel.dispatchEvent({ type: 'click', preventDefault() {}, target: {
+        closest: () => ({ getAttribute: () => '/Requests/1/Documents?batchId=2&page=2' })
+    } });
+    return { panel, notice, click };
+}
+
+test('document load rejects error/login responses and preserves the current list for retry', async () => {
+    for (const response of [{ ok: false }, { ok: true, redirected: true }]) {
+        const h = documentLoaderHarness(async () => ({ ...response, text: async () => 'login or error page' }));
+        h.click();
+        await new Promise(resolve => setImmediate(resolve));
+        assert.equal(h.panel.innerHTML, 'existing list');
+        assert.match(h.notice.textContent, /could not be loaded/);
+        assert.equal(h.panel.getAttribute('aria-busy'), null);
+    }
+});
+
+test('document load prevents overlapping requests, preserves batch URL, and focuses successful content', async () => {
+    let resolveResponse, calls = 0, url;
+    const h = documentLoaderHarness(href => { calls++; url = href; return new Promise(resolve => { resolveResponse = resolve; }); });
+    h.click(); h.click();
+    assert.equal(calls, 1);
+    assert.equal(h.panel.getAttribute('aria-busy'), 'true');
+    assert.match(url, /batchId=2/);
+    resolveResponse({ ok: true, redirected: false, text: async () => 'next list' });
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(h.panel.innerHTML, 'next list');
+    assert.equal(h.panel.focusCalls.length, 1);
+    assert.equal(h.panel.getAttribute('aria-busy'), null);
+    assert.equal(h.notice.textContent, 'Documents loaded.');
+});
+
 function createMockElement(tagName = 'div', initialAttrs = {}) {
     const el = {
         tagName: tagName.toUpperCase(),

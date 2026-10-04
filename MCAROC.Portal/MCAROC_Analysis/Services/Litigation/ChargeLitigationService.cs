@@ -12,7 +12,7 @@ public sealed class ChargeLitigationService(AppDbContext db, IMemoryCache cache)
 {
     private static readonly TimeSpan CacheFor = TimeSpan.FromMinutes(30);
 
-    /// <summary>Identifies the evidence a comparison is made from: the newest completed litigation snapshot AND how
+    /// <summary>Identifies the evidence a comparison is made from: the authoritative completed litigation snapshot AND how
     /// many of its order texts have been extracted, and when the latest was. Order text is extracted asynchronously
     /// after a snapshot completes, so the snapshot id alone would let a comparison made while extraction was still
     /// running (and so found nothing) be reused after the matching text arrives. Anything that caches or stores a
@@ -20,7 +20,12 @@ public sealed class ChargeLitigationService(AppDbContext db, IMemoryCache cache)
     /// Cheap by design: one aggregate over the request's order documents, no text is read.</summary>
     public static async Task<string> VersionAsync(AppDbContext db, long requestId, CancellationToken ct = default)
     {
-        var snapshotId = await LatestSnapshotIdAsync(db, requestId, ct);
+        var snapshotId = await AuthoritativeSnapshotIdAsync(db, requestId, ct);
+        return await SnapshotVersionAsync(db, snapshotId, ct);
+    }
+
+    private static async Task<string> SnapshotVersionAsync(AppDbContext db, long? snapshotId, CancellationToken ct)
+    {
         if (snapshotId is not { } sid) return "none";
 
         var caseIds = db.LitigationCaseSourceReports.Where(sr => sr.LitigationReportSnapshotId == sid)
@@ -36,10 +41,8 @@ public sealed class ChargeLitigationService(AppDbContext db, IMemoryCache cache)
         return $"{sid}-{extracted?.Count ?? 0}-{extracted?.Last?.Ticks ?? 0}";
     }
 
-    private static Task<long?> LatestSnapshotIdAsync(AppDbContext db, long requestId, CancellationToken ct) =>
-        db.LitigationReportSnapshots.AsNoTracking()
-            .Where(s => s.SearchJob!.RequestId == requestId && s.Status == LitigationReportSnapshotStatus.Completed)
-            .OrderByDescending(s => s.RetrievedUtc)
+    private static Task<long?> AuthoritativeSnapshotIdAsync(AppDbContext db, long requestId, CancellationToken ct) =>
+        LitigationSnapshotSelection.ForRequest(db, requestId)
             .Select(s => (long?)s.LitigationReportSnapshotId).FirstOrDefaultAsync(ct);
 
     public async Task<ChargeLitigationSummary> GetAsync(long requestId, CancellationToken ct = default)
@@ -47,9 +50,9 @@ public sealed class ChargeLitigationService(AppDbContext db, IMemoryCache cache)
         var runId = await db.Requests.AsNoTracking().Where(r => r.RequestId == requestId)
             .Select(r => r.LatestCompletedIngestionRunId).FirstOrDefaultAsync(ct);
 
-        // The same snapshot the Litigation tab shows: the newest completed one.
-        var snapshotId = await LatestSnapshotIdAsync(db, requestId, ct);
-        var version = await VersionAsync(db, requestId, ct);
+        // Match the tab's current-report/fallback rule and key the cache on that exact evidence.
+        var snapshotId = await AuthoritativeSnapshotIdAsync(db, requestId, ct);
+        var version = await SnapshotVersionAsync(db, snapshotId, ct);
 
         var openChargeCount = await db.RocCharges.AsNoTracking()
             .CountAsync(c => c.RequestId == requestId && c.SatisfactionDate == null && c.ChargeStatus != "Satisfied", ct);

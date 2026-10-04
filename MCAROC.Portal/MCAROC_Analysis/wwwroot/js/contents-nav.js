@@ -470,6 +470,15 @@
                 const targetSelector = (e.target && e.target.getAttribute('data-bs-target')) || '';
                 const domain = targetSelector.replace('#tab-', '').toLowerCase();
                 onMainTabActivated(domain);
+                // Keep the active section visible in the horizontally scrollable tab strip.
+                const strip = d.getElementById('mcaTabs');
+                if (strip && e.target && e.target.getBoundingClientRect && strip.getBoundingClientRect && strip.scrollBy) {
+                    const item = e.target.getBoundingClientRect();
+                    const bounds = strip.getBoundingClientRect();
+                    const shift = item.left < bounds.left ? item.left - bounds.left
+                        : item.right > bounds.right ? item.right - bounds.right : 0;
+                    if (shift) strip.scrollBy({ left: shift, behavior: 'auto' });
+                }
             });
         });
 
@@ -518,27 +527,43 @@
         // ── Documents pagination fetch-and-swap ──
         const docsPanel = d.getElementById('mca-docs-panel');
         if (docsPanel) {
+            let pending = false;
+            const notice = d.createElement('p');
+            notice.className = 'mca-document-notice';
+            notice.setAttribute('role', 'status');
+            notice.setAttribute('aria-live', 'polite');
+            docsPanel.insertAdjacentElement('afterend', notice);
             docsPanel.addEventListener('click', function (e) {
                 const a = e.target.closest ? e.target.closest('a') : null;
                 if (!a || !a.getAttribute('href')) return;
                 const href = a.getAttribute('href');
                 if (href.indexOf('/Requests/') === -1 || href.indexOf('/Documents') === -1) return;
+                if (!(w && w.fetch)) return;
                 e.preventDefault();
+                if (pending) return;
+                pending = true;
                 docsPanel.classList.add('mca-loading');
-                if (w && w.fetch) {
-                    w.fetch(href, { headers: { 'X-Requested-With': 'fetch' } })
-                        .then(function (res) { return res.text(); })
-                        .then(function (html) {
-                            docsPanel.innerHTML = html;
-                            docsPanel.classList.remove('mca-loading');
-                        })
-                        .catch(function () {
-                            docsPanel.classList.remove('mca-loading');
-                            if (w.location) w.location = href;
-                        });
-                } else if (w && w.location) {
-                    w.location = href;
-                }
+                docsPanel.setAttribute('aria-busy', 'true');
+                notice.textContent = 'Loading documents…';
+                w.fetch(href, { headers: { 'X-Requested-With': 'fetch' } })
+                    .then(function (res) {
+                        if (!res.ok || res.redirected) throw new Error('Documents unavailable');
+                        return res.text();
+                    })
+                    .then(function (html) {
+                        docsPanel.innerHTML = html;
+                        notice.textContent = 'Documents loaded.';
+                        docsPanel.setAttribute('tabindex', '-1');
+                        docsPanel.focus({ preventScroll: true });
+                    })
+                    .catch(function () {
+                        notice.textContent = 'Documents could not be loaded. Your current list is unchanged. Select the page again to retry, or reload if your session has expired.';
+                    })
+                    .finally(function () {
+                        pending = false;
+                        docsPanel.classList.remove('mca-loading');
+                        docsPanel.removeAttribute('aria-busy');
+                    });
             });
         }
 
@@ -672,6 +697,15 @@
                             const domain = targetSelector.replace('#tab-', '').toLowerCase();
                             if (KNOWN_TABS.includes(domain)) {
                                 onMainTabActivated(domain);
+                // Keep the active section visible in the horizontally scrollable tab strip.
+                const strip = d.getElementById('mcaTabs');
+                if (strip && e.target && e.target.getBoundingClientRect && strip.getBoundingClientRect && strip.scrollBy) {
+                    const item = e.target.getBoundingClientRect();
+                    const bounds = strip.getBoundingClientRect();
+                    const shift = item.left < bounds.left ? item.left - bounds.left
+                        : item.right > bounds.right ? item.right - bounds.right : 0;
+                    if (shift) strip.scrollBy({ left: shift, behavior: 'auto' });
+                }
                             }
                         }
                     }

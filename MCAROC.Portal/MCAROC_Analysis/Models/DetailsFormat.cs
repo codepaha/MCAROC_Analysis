@@ -13,6 +13,19 @@ public static class DetailsFormat
     public static string Pct(decimal? v) => v is null ? "—" : $"{v.Value:0.##}%";
     public static string Or(string? s) => string.IsNullOrWhiteSpace(s) ? "—" : s!;
 
+    public static string RequestStatusLabel(RequestStatus status) => status switch
+    {
+        RequestStatus.DocumentsUploaded => "Documents uploaded",
+        RequestStatus.ExtractionInProgress => "Extracting documents",
+        RequestStatus.DataExtracted => "Data extracted",
+        RequestStatus.ValidationFailed => "Validation failed",
+        RequestStatus.ExtractionFailed => "Extraction failed",
+        RequestStatus.AiAnalysisInProgress => "Analysis in progress",
+        RequestStatus.AnalysisCompleted => "Analysis completed",
+        RequestStatus.AiAnalysisFailed => "Analysis failed",
+        _ => status.ToString()
+    };
+
     public static string StatusPill(RequestStatus s) => s switch
     {
         RequestStatus.AnalysisCompleted => "pi-status-completed",

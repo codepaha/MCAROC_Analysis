@@ -1,0 +1,8 @@
+@model long
+@{ ViewData["Title"] = "Updated assessment available"; }
+<section class="mca-section" aria-labelledby="refresh-heading">
+    <h1 id="refresh-heading">Updated assessment available</h1>
+    <p>The source data changed while this page was loading. Reload to see all sections from the same assessment.</p>
+    <a class="btn btn-primary" href="/Requests/@Model">Reload assessment</a>
+    <a class="btn btn-link" href="/Requests">Back to search history</a>
+</section>

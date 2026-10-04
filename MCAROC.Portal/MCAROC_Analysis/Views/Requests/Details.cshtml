@@ -9,7 +9,7 @@
     // The lender-oriented business domains + the cross-domain Timeline synthesis view. AI Analysis is first and default.
     var tabs = new (string Label, string Id, string? Badge)[]
     {
-        ("AI Analysis",        "ai",         null),
+        ("Assessment",        "ai",         null),
         ("Corporate",          "corporate",  null),
         ("Financials",         "financials", Model.FinancialYears.Count > 0 ? Model.FinancialYears.Count.ToString() : null),
         ("Charges & Security", "charges",    Model.OpenChargeCount > 0 ? Model.OpenChargeCount.ToString() : null),
@@ -27,9 +27,10 @@
      data-focus-case="@(Model.FocusCaseId?.ToString() ?? "")">
     <div class="mca-company-head">
         <div class="mca-company-id">
+            <p class="mca-request-context"><a href="/Requests">Search history</a><span aria-hidden="true">/</span>@r.RequestNumber</p>
             <h1>@r.CompanyName</h1>
             <div class="mca-ids">
-                <span><b>CIN:</b> @(Model.CompanyProfile?.Cin ?? r.Cin ?? r.Llpin ?? "—")</span>
+                <span><b>@(r.EntityType == EntityType.LLP ? "LLPIN:" : "CIN:")</b> @(Model.CompanyProfile?.Cin ?? r.Cin ?? r.Llpin ?? "—")</span>
                 <span><b>PAN:</b> @(Model.CompanyProfile?.Pan ?? r.Pan ?? "—")</span>
                 @if (!string.IsNullOrEmpty(Model.CompanyProfile?.CompanyStatus))
                 {
@@ -48,7 +49,7 @@
         <div class="mca-company-meta">
             <div class="mca-meta-controls">
                 <div class="mca-pills">
-                    <span class="pi-status-pill @StatusPill(r.RequestStatus)">@r.RequestStatus</span>
+                    <span class="pi-status-pill @StatusPill(r.RequestStatus)">@RequestStatusLabel(r.RequestStatus)</span>
                     @if (run?.OverallReviewPriority is { } hdrPr)
                     {
                         <span class="pi-status-pill @PriorityPill(hdrPr)">@hdrPr Priority</span>
@@ -61,7 +62,7 @@
                 <div class="mca-head-actions">
                     @if (r.RequestStatus == RequestStatus.AnalysisCompleted)
                     {
-                        <a href="/Requests/@r.RequestId/dossier" class="btn btn-sm btn-outline-primary">Download dossier</a>
+                        <a href="/Requests/@r.RequestId/dossier" class="btn btn-sm btn-primary">Download dossier</a>
                         @* #164 internal calculation-assurance review panel — never part of the customer deliverable
                            above. Plain link, not a tab: it lives on its own page at /internal/calc-audit so this
                            page's own tab markup never has to branch on whether audit data is present. *@
@@ -96,7 +97,10 @@
             </div>
             </div>
             <div class="mca-meta-detail">
-                <span><b>@r.RequestNumber</b> &middot; @(r.Client?.ClientName)</span>
+                @if (!string.IsNullOrWhiteSpace(r.Client?.ClientName))
+                {
+                    <span>@r.Client.ClientName</span>
+                }
                 @if (Model.LatestRun?.SourceSnapshotDate is { } sourceSnapshot)
                 {
                     var ageDays = Math.Max(0, (Ist.Now().Date - sourceSnapshot.Date).Days);
@@ -120,9 +124,10 @@
             </span>
             @if (coverage.AnySheetAbsent)
             {
-                <span class="mca-coverage-item text-muted" title="Not in this upload: @string.Join(", ", coverage.AbsentSheets)">
-                    @coverage.AbsentSheets.Count not in this upload
-                </span>
+                <details class="mca-coverage-details">
+                    <summary>@coverage.AbsentSheets.Count sheets not in this upload</summary>
+                    <p>@string.Join(", ", coverage.AbsentSheets)</p>
+                </details>
             }
             @if (coverage.ChargeReportMissing)
             {
@@ -138,13 +143,14 @@
         </div>
     }
 
-    <ul class="nav mca-tabs" id="mcaTabs" role="tablist">
+    <ul class="nav mca-tabs" id="mcaTabs" role="tablist" aria-label="Assessment sections">
         @for (var i = 0; i < tabs.Length; i++)
         {
             var t = tabs[i];
             <li class="nav-item" role="presentation">
                 <button class="nav-link @(i == 0 ? "active" : "")" data-bs-toggle="tab"
-                        data-bs-target="#tab-@t.Id" type="button" role="tab">
+                        id="tab-button-@t.Id" data-bs-target="#tab-@t.Id" type="button" role="tab"
+                        aria-controls="tab-@t.Id" aria-selected="@(i == 0 ? "true" : "false")" tabindex="@(i == 0 ? "0" : "-1")">
                     @t.Label
                     @if (t.Badge is { } b) { <span class="badge">@b</span> }
                 </button>
@@ -177,17 +183,21 @@
 }
 
 <div class="tab-content" id="mcaMainTabContent">
-    <div class="tab-pane fade show active" id="tab-ai" role="tabpanel">@await Html.PartialAsync("Details/_AiAnalysisTab", Model)</div>
-    <div class="tab-pane fade" id="tab-corporate" role="tabpanel">@await Html.PartialAsync("Details/_CorporateTab", Model)</div>
-    <div class="tab-pane fade" id="tab-financials" role="tabpanel">@await Html.PartialAsync("Details/_FinancialsTab", Model)</div>
-    <div class="tab-pane fade" id="tab-charges" role="tabpanel">@await Html.PartialAsync("Details/_ChargesTab", Model)</div>
-    <div class="tab-pane fade" id="tab-compliance" role="tabpanel">@await Html.PartialAsync("Details/_ComplianceTab", Model)</div>
-    <div class="tab-pane fade" id="tab-litigation" role="tabpanel">@await Html.PartialAsync("Details/_LitigationTab", Model)</div>
-    <div class="tab-pane fade" id="tab-timeline" role="tabpanel">@await Html.PartialAsync("Details/_TimelineTab", Model)</div>
-    <div class="tab-pane fade" id="tab-documents" role="tabpanel">@await Html.PartialAsync("Details/_DocumentsTab", Model)</div>
+    <div class="tab-pane fade show active" id="tab-ai" role="tabpanel" aria-labelledby="tab-button-ai" tabindex="0">@await Html.PartialAsync("Details/_AiAnalysisTab", Model)</div>
+    <div class="tab-pane fade" id="tab-corporate" role="tabpanel" aria-labelledby="tab-button-corporate" tabindex="0">@await Html.PartialAsync("Details/_CorporateTab", Model)</div>
+    <div class="tab-pane fade" id="tab-financials" role="tabpanel" aria-labelledby="tab-button-financials" tabindex="0">@await Html.PartialAsync("Details/_FinancialsTab", Model)</div>
+    <div class="tab-pane fade" id="tab-charges" role="tabpanel" aria-labelledby="tab-button-charges" tabindex="0">@await Html.PartialAsync("Details/_ChargesTab", Model)</div>
+    <div class="tab-pane fade" id="tab-compliance" role="tabpanel" aria-labelledby="tab-button-compliance" tabindex="0">@await Html.PartialAsync("Details/_ComplianceTab", Model)</div>
+    <div class="tab-pane fade" id="tab-litigation" role="tabpanel" aria-labelledby="tab-button-litigation" tabindex="0">@await Html.PartialAsync("Details/_LitigationTab", Model)</div>
+    <div class="tab-pane fade" id="tab-timeline" role="tabpanel" aria-labelledby="tab-button-timeline" tabindex="0">@await Html.PartialAsync("Details/_TimelineTab", Model)</div>
+    <div class="tab-pane fade" id="tab-documents" role="tabpanel" aria-labelledby="tab-button-documents" tabindex="0">@await Html.PartialAsync("Details/_DocumentsTab", Model)</div>
 </div>
 
 @await Html.PartialAsync("Details/_ChatPanel", Model)
+
+@section Styles {
+    <link rel="stylesheet" href="~/css/request-workspace.css" asp-append-version="true" />
+}
 
 @section Scripts {
     <script type="module" src="~/js/amount-unit.js"></script>
