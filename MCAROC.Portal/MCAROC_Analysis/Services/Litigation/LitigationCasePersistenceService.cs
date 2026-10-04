@@ -232,8 +232,14 @@ public sealed class LitigationCasePersistenceService(
         {
             var addedThisAttempt = new List<object>();
 
-            var litigationCase = await FindAutoDedupeMatchAsync(requestId, identity, ct)
-                ?? await FindSameProviderRecordAsync(requestId, item.ProviderCaseId, ct);
+            var byCnr = await FindAutoDedupeMatchAsync(requestId, identity, ct);
+            var byProviderRecord = await FindSameProviderRecordAsync(requestId, item.ProviderCaseId, ct);
+            var litigationCase = byCnr ?? byProviderRecord;
+            // The CNR says this is case C; the provider's record id is already held by a different stored row P (an earlier report listed
+            // the record before its CNR was known). The CNR is the stronger identity, so C takes the item — but the id stays with P, which is
+            // left as it was with its reports, orders and documents: assigning it to C would break the per-request unique id, and giving C's
+            // CNR to P would break the unique CNR. P is no longer listed by reports from here on, since this one lists C.
+            var providerIdHeldElsewhere = byCnr is not null && byProviderRecord is not null && byProviderRecord.LitigationCaseId != byCnr.LitigationCaseId;
             var isNewCase = litigationCase is null;
             litigationCase ??= new LitigationCase { RequestId = requestId, FirstSeenUtc = now };
             if (isNewCase)
@@ -242,7 +248,7 @@ public sealed class LitigationCasePersistenceService(
                 addedThisAttempt.Add(litigationCase);
             }
 
-            ApplyFields(litigationCase, identity, item, now);
+            ApplyFields(litigationCase, identity, item, now, keepProviderCaseId: providerIdHeldElsewhere);
             var (orderEntities, orderDocumentsToEnqueue) =
                 await UpsertOrdersAsync(litigationCase, item.Orders, now, orderRetainedUntilUtc, ct);
             addedThisAttempt.AddRange(orderEntities);
@@ -305,9 +311,9 @@ public sealed class LitigationCasePersistenceService(
         return await db.LitigationCases.FirstOrDefaultAsync(c => c.RequestId == requestId && c.ProviderCaseId == id, ct);
     }
 
-    private static void ApplyFields(LitigationCase litigationCase, LitigationCaseIdentityEvidence identity, BprLitigationCase item, DateTime now)
+    private static void ApplyFields(LitigationCase litigationCase, LitigationCaseIdentityEvidence identity, BprLitigationCase item, DateTime now, bool keepProviderCaseId = false)
     {
-        litigationCase.ProviderCaseId = item.ProviderCaseId ?? litigationCase.ProviderCaseId;
+        if (!keepProviderCaseId) litigationCase.ProviderCaseId = item.ProviderCaseId ?? litigationCase.ProviderCaseId;
         litigationCase.CspId = item.CspId;
         litigationCase.Cnr = identity.Cnr;
         litigationCase.ProceedingType = identity.ProceedingType;

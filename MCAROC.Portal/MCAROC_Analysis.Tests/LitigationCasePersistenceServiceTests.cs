@@ -437,6 +437,40 @@ public class LitigationCasePersistenceServiceTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task PersistSnapshotAsync_a_refresh_that_adds_a_CNR_already_held_by_another_record_does_not_fail_and_keeps_both_rows()
+    {
+        // rec-a first arrives with no CNR; rec-b arrives with a CNR; a refresh then gives rec-a that same CNR. The CNR says rec-a is the case
+        // rec-b's row already is, and rec-a's id is held by its own earlier row: the import must complete, not hit either unique index.
+        await using var db = CreateContext();
+        var request = await SeedRequestAsync(db, "PR5");
+        var service = NewService(db);
+        const string cnr = "TNKP070001332023";
+        await PersistJobAsync(service, await SeedCompletedJobAsync(db, request.RequestId, ReportJson("", "OS", caseNo: "11/2020", providerId: "rec-a")), CancellationToken.None);
+        await PersistJobAsync(service, await SeedCompletedJobAsync(db, request.RequestId, ReportJson(cnr, "OS", caseNo: "12/2020", providerId: "rec-b")), CancellationToken.None);
+
+        var enrichment = await SeedCompletedJobAsync(db, request.RequestId, ReportJson(cnr, "OS", caseNo: "11/2020", providerId: "rec-a"));
+        var snapshotId = await PersistJobAsync(service, enrichment, CancellationToken.None); // must not throw
+
+        await using var verify = CreateContext();
+        var rows = await verify.LitigationCases.Where(c => c.RequestId == request.RequestId).OrderBy(c => c.LitigationCaseId).ToListAsync();
+        Assert.Equal(2, rows.Count);
+        var recA = rows.Single(r => r.ProviderCaseId == "rec-a");
+        var cnrRow = rows.Single(r => r.Cnr == cnr);
+        Assert.NotEqual(recA.LitigationCaseId, cnrRow.LitigationCaseId);
+        Assert.Equal("rec-b", cnrRow.ProviderCaseId);   // the id was not moved onto the CNR row
+        Assert.Null(recA.Cnr);
+        // The new report lists the CNR row; the earlier rows keep their earlier reports.
+        Assert.True(await verify.LitigationCaseSourceReports.AnyAsync(l => l.LitigationReportSnapshotId == snapshotId && l.LitigationCaseId == cnrRow.LitigationCaseId));
+        Assert.True(await verify.LitigationCaseSourceReports.AnyAsync(l => l.LitigationCaseId == recA.LitigationCaseId));
+
+        // Later refreshes of either record keep working.
+        await PersistJobAsync(service, await SeedCompletedJobAsync(db, request.RequestId, ReportJson(cnr, "OS", caseNo: "11/2020", providerId: "rec-a", orderUrl: "https://source.example/o9.pdf")), CancellationToken.None);
+        await PersistJobAsync(service, await SeedCompletedJobAsync(db, request.RequestId, ReportJson(cnr, "OS", caseNo: "12/2020", providerId: "rec-b", orderUrl: "https://source.example/o10.pdf")), CancellationToken.None);
+        await using var again = CreateContext();
+        Assert.Equal(2, await again.LitigationCases.CountAsync(c => c.RequestId == request.RequestId));
+    }
+
+    [Fact]
     public async Task PersistSnapshotAsync_keeps_cases_with_different_provider_records_separate_even_with_the_same_number_and_csp()
     {
         // Nothing is merged on case number, parties or CSP: two different provider records stay two cases.
