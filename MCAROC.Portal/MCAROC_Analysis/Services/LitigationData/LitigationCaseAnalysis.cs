@@ -28,6 +28,8 @@ public static class LitigationCaseAnalysisInputBuilder
     public const int MaxCaseChars = 400_000;
     private const int HeadChars = 20_000;
     public const string OmittedMarker = "[... middle section omitted for length ...]";
+    private static readonly System.Text.RegularExpressions.Regex PageMarkerLine =
+        new(@"^--- Page \d+ \((?:native|OCR)\) ---[ \t]*$", System.Text.RegularExpressions.RegexOptions.Multiline | System.Text.RegularExpressions.RegexOptions.IgnoreCase);
 
     public static CaseAnalysisInput Build(
         LitigationCase c, IReadOnlyDictionary<long, LitigationOrderDocument> documentsByOrderId,
@@ -47,7 +49,11 @@ public static class LitigationCaseAnalysisInputBuilder
             {
                 if (text.Length > MaxOrderChars)
                 {
-                    text = text[..HeadChars] + "\n" + OmittedMarker + "\n" + text[^(MaxOrderChars - HeadChars)..];
+                    var tailStart = text.Length - (MaxOrderChars - HeadChars);
+                    // The page marker in force at the start of the tail is usually in the omitted middle: put it back, or the tail's passages
+                    // would be given the last page of the head.
+                    var tailMarker = PageMarkerLine.Matches(text[..tailStart]).LastOrDefault();
+                    text = text[..HeadChars] + "\n" + OmittedMarker + "\n" + (tailMarker is null ? "" : tailMarker.Value.Trim() + "\n") + text[tailStart..];
                     truncated = true;
                 }
                 if (text.Length > budget) { text = null; truncated = true; } // newest orders were taken first
@@ -237,7 +243,7 @@ public static class LitigationCaseAnalysisValidator
         // large figure in the prose is kept but flagged, so the reader knows it is not confirmed by the printed text.
         var amount = Str("amount");
         var unknownsOut = Strings(root["unknowns"]);
-        var printed = PrintedDigits(input);
+        var printed = PrintedNumbers(input);
         if (amount is not null && !FiguresPrinted(amount, printed, out _))
         {
             notes.Add($"amount '{amount}' is not printed in any order text - dropped.");
@@ -295,22 +301,30 @@ public static class LitigationCaseAnalysisValidator
         return at < 0 ? null : (map[at], map[at + squashedQuote.Length - 1] + 1);
     }
 
-    /// <summary>All the text sent for a case with whitespace and the thousands commas removed, lower-cased: where a figure has to be found.</summary>
-    private static string PrintedDigits(CaseAnalysisInput input) =>
-        string.Concat(input.Orders.Where(o => o.Text is not null).Select(o => new string(o.Text!.Where(c => !char.IsWhiteSpace(c) && c != ',').ToArray()))).ToLowerInvariant();
+    /// <summary>The numbers printed in the text sent for a case, each as digits only (thousands commas dropped, a decimal part kept), one set
+    /// over all orders. A number is a whole token: "12345" is not found in "1234500" or "12345.50".</summary>
+    private static HashSet<string> PrintedNumbers(CaseAnalysisInput input)
+    {
+        var set = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var order in input.Orders.Where(o => o.Text is not null))
+            foreach (System.Text.RegularExpressions.Match m in NumberToken.Matches(order.Text!)) set.Add(m.Value.Replace(",", ""));
+        return set;
+    }
 
-    /// <summary>True when every figure of four or more digits in <paramref name="prose"/> is found in the printed text; the ones that are not are
-    /// returned. A figure is its digits, its decimal part kept, with commas and spacing ignored ("5,251.19" and "5251.19" are the same).</summary>
-    private static bool FiguresPrinted(string prose, string printed, out List<string> unmatched)
+    private static readonly System.Text.RegularExpressions.Regex NumberToken = new(@"\d(?:[\d,]*\d)?(?:\.\d+)?");
+
+    /// <summary>True when every figure of four or more digits in <paramref name="prose"/> is one of the printed numbers; the ones that are
+    /// not are returned. Commas and their grouping do not matter ("5,251,19,676.60" and "525119676.60" are the same number).</summary>
+    private static bool FiguresPrinted(string prose, HashSet<string> printed, out List<string> unmatched)
     {
         unmatched = [];
-        foreach (System.Text.RegularExpressions.Match m in System.Text.RegularExpressions.Regex.Matches(prose, @"\d[\d,]*\d(?:\.\d+)?|\d"))
+        foreach (System.Text.RegularExpressions.Match m in NumberToken.Matches(prose))
         {
             var figure = m.Value.Replace(",", "");
             var digits = figure.Count(char.IsDigit);
             if (digits < 4) continue; // section numbers and counts are not amounts
-            if (digits == 4 && m.Value.All(char.IsDigit) && int.Parse(m.Value) is >= 1900 and <= 2100) continue; // a year
-            if (!printed.Contains(figure, StringComparison.Ordinal)) unmatched.Add(m.Value);
+            if (digits == 4 && figure.All(char.IsDigit) && int.Parse(figure) is >= 1900 and <= 2100) continue; // a year
+            if (!printed.Contains(figure)) unmatched.Add(m.Value);
         }
         return unmatched.Count == 0;
     }
@@ -318,6 +332,7 @@ public static class LitigationCaseAnalysisValidator
     /// <summary>True when the passage begins or ends in the middle of a number: "Survey No. 12" out of "12/3", "305" out of "A305" or "3050".</summary>
     private static bool CutsANumber(string text, int start, int end)
     {
+        if (ChargeInstrumentAi.SplitsIdentifierAcrossSpace(text, start, end)) return true; // "Survey No. 12" out of "12 / 3", "305" out of "A - 305"
         static bool Joiner(char c) => c is '/' or '-' or '.';
         if (end < text.Length && char.IsDigit(text[end - 1]))
         {

@@ -376,4 +376,92 @@ public class LitigationCaseAnalysisTests
         Assert.Contains(unknowns, u => u.Contains("7777") && u.Contains("not confirmed"));
         Assert.DoesNotContain(unknowns, u => u.Contains("2018")); // a year is not an amount
     }
+
+    [Theory]
+    [InlineData("The property at Survey No. 12 / 3 is attached.", "The property at Survey No. 12")]      // spaced slash
+    [InlineData("The property at Survey No. 12/ 3 is attached.", "The property at Survey No. 12/")]      // joiner ending
+    [InlineData("The flat is Flat No. 305 - A in Sunrise.", "The flat is Flat No. 305")]                 // letter-number unit
+    [InlineData("The unit is Unit No. A - 305 in Tower B.", "305 in Tower B")]                           // starts after the letter
+    public void The_spacing_fallback_applies_the_same_identifier_rules_as_the_exact_match(string source, string cut)
+    {
+        var input = Input(NewCase((1, "09-01-2025", "Order")), Docs((1, 11, "--- Page 1 (native) ---" + "\n" + source)));
+
+        var v = Validate(Answer(input, a =>
+        {
+            a["risk"] = "R3"; a["risk_trigger"] = "Raised";
+            a["evidence"] = new JsonArray(new JsonObject { ["claim"] = "risk_trigger", ["order_id"] = 1, ["quote"] = cut });
+        }), input, LitigationRiskTier.R0);
+
+        var json = JsonNode.Parse(v.AnalysisJson!)!;
+        Assert.Equal("R0", json["risk"]!.ToString());          // no valid quote: the baseline stays
+        Assert.Empty((JsonArray)json["evidence"]!);
+    }
+
+    [Fact]
+    public void Spacing_only_differences_still_match_a_whole_identifier()
+    {
+        var input = Input(NewCase((1, "09-01-2025", "Order")), Docs((1, 11, "--- Page 1 (native) ---" + "\n" + "The property at Survey No. 12 / 3, Village Baner is attached.")));
+
+        var v = Validate(Answer(input, a =>
+        {
+            a["risk"] = "R3"; a["risk_trigger"] = "Raised";
+            a["evidence"] = new JsonArray(new JsonObject { ["claim"] = "risk_trigger", ["order_id"] = 1, ["quote"] = "The property at Survey No. 12/3, Village Baner" });
+        }), input, LitigationRiskTier.R0);
+
+        Assert.Equal("R3", JsonNode.Parse(v.AnalysisJson!)!["risk"]!.ToString());
+    }
+
+    [Theory]
+    [InlineData("Rs. 1234500", "Rs. 12345")]            // a prefix of a different number
+    [InlineData("Rs. 12345.50", "Rs. 12345")]           // the whole part of a decimal amount
+    [InlineData("Rs. 912345", "Rs. 12345")]             // a suffix of a different number
+    public void An_amount_that_is_only_part_of_a_printed_number_is_dropped(string printed, string reported)
+    {
+        var input = Input(NewCase((1, "09-01-2025", "Order")), Docs((1, 11, "--- Page 1 (native) ---" + "\n" + "The respondent shall pay " + printed + " within four weeks.")));
+
+        var json = JsonNode.Parse(Validate(Answer(input, a => a["amount"] = reported), input).AnalysisJson!)!;
+
+        Assert.Null(json["amount"]);
+        Assert.Contains(((JsonArray)json["unknowns"]!).Select(x => x!.ToString()), u => u.Contains("could not be matched"));
+    }
+
+    [Theory]
+    [InlineData("Rs. 12,345", "Rs. 12345")]
+    [InlineData("Rs.12345.50 only", "Rs. 12,345.50")]
+    [InlineData("a sum of Rs. 5,00,00,000/-", "Rs. 5,00,00,000")]
+    public void A_printed_amount_is_kept_whatever_its_comma_grouping(string printed, string reported)
+    {
+        var input = Input(NewCase((1, "09-01-2025", "Order")), Docs((1, 11, "--- Page 1 (native) ---" + "\n" + "The respondent shall pay " + printed + " within four weeks.")));
+
+        var json = JsonNode.Parse(Validate(Answer(input, a => a["amount"] = reported), input).AnalysisJson!)!;
+
+        Assert.Equal(reported, json["amount"]!.ToString());
+    }
+
+    [Fact]
+    public void A_figure_is_not_matched_across_two_orders()
+    {
+        // "12" ends order 1 and "345" starts order 2: together they are not the printed number 12345.
+        var input = Input(NewCase((1, "09-01-2025", "Order"), (2, "08-01-2025", "Order")),
+            Docs((1, 11, "--- Page 1 (native) ---" + "\n" + "Costs of Rs. 12"), (2, 12, "--- Page 1 (native) ---" + "\n" + "345 was the earlier figure.")));
+
+        var json = JsonNode.Parse(Validate(Answer(input, a => a["amount"] = "Rs. 12345"), input).AnalysisJson!)!;
+
+        Assert.Null(json["amount"]);
+    }
+
+    [Fact]
+    public void A_quote_in_the_tail_of_a_cut_order_is_linked_to_the_page_it_is_really_on()
+    {
+        // Page 1 marker + 30,000 chars; page 2 marker + 70,000 chars + the operative sentence. The page 2 marker falls in the omitted middle.
+        var text = "--- Page 1 (native) ---" + "\n" + new string('a', 30_000) + "\n--- Page 2 (native) ---" + "\n" + new string('b', 70_000) + " The application is allowed with costs.";
+        var input = Input(NewCase((1, "09-01-2025", "Order")), Docs((1, 11, text)));
+        Assert.True(input.TextTruncated);
+
+        var v = Validate(Answer(input, a => a["evidence"] = new JsonArray(
+            new JsonObject { ["claim"] = "operative_order", ["order_id"] = 1, ["quote"] = "The application is allowed with costs." })), input);
+
+        var evidence = Assert.Single((JsonArray)JsonNode.Parse(v.AnalysisJson!)!["evidence"]!)!;
+        Assert.Equal(2, (int)evidence["page"]!);
+    }
 }
