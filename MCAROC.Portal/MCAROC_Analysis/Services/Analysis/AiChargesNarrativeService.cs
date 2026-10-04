@@ -238,8 +238,36 @@ public partial class AiChargesNarrativeService
             allowed.Add(Math.Round(d, 2).ToString(CultureInfo.InvariantCulture));
         }
 
+        // Numbers that appear in the wording of the charge data the model was shown (the instrument, property, extent, terms and holder text):
+        // "56 new centres", "Rs 700 Lakh", "25.02.2026" are quotations of the data, not inventions. Without them a faithful summary that
+        // repeats a figure from the deed wording was rejected as "number not present in the data" (11 of 18 rejections in the 41-company
+        // preflight). Sums and other derived figures are still not allowed: they appear nowhere in the data.
+        void AddNumbersFrom(string? text)
+        {
+            if (string.IsNullOrWhiteSpace(text)) return;
+            foreach (Match m in DataNumberRegex().Matches(text))
+            {
+                var raw = m.Value;
+                var digits = new string(raw.Where(c => char.IsDigit(c) || c == '.').ToArray()).Trim('.');
+                if (digits.Length == 0) continue;
+                allowed.Add(raw); allowed.Add(digits);
+                if (decimal.TryParse(digits, NumberStyles.Any, CultureInfo.InvariantCulture, out var v))
+                {
+                    allowed.Add(Math.Round(v, 0).ToString(CultureInfo.InvariantCulture));
+                    allowed.Add(Math.Round(v, 1).ToString(CultureInfo.InvariantCulture));
+                    allowed.Add(Math.Round(v, 2).ToString(CultureInfo.InvariantCulture));
+                }
+            }
+        }
+
         foreach (var sc in selectedCharges)
         {
+            AddNumbersFrom(Truncate(sc.Charge.LatestChargeHolderRaw));
+            if (sc.RepresentativeEvent is { } shown)
+            {
+                AddNumbersFrom(Truncate(shown.InstrumentDescription)); AddNumbersFrom(Truncate(shown.PropertyParticulars));
+                AddNumbersFrom(Truncate(shown.ExtentAndOperation)); AddNumbersFrom(Truncate(shown.OtherTerms)); AddNumbersFrom(Truncate(shown.ModificationParticulars));
+            }
             allowed.Add(sc.Charge.ChargeId.ToString(CultureInfo.InvariantCulture));
             if (!string.IsNullOrWhiteSpace(sc.Charge.RocChargeNumber)) allowed.Add(sc.Charge.RocChargeNumber);
             AddAmount(sc.Charge.CurrentAmount);
@@ -251,6 +279,9 @@ public partial class AiChargesNarrativeService
 
         return allowed;
     }
+
+    [GeneratedRegex(@"\d[\d,]*(?:\.\d+)?")]
+    private static partial Regex DataNumberRegex();
 
     private static bool ContainsUnsupportedNumber(string text, HashSet<string> allowed)
     {

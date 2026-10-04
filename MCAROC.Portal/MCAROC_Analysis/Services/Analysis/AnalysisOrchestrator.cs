@@ -219,6 +219,11 @@ public class AnalysisOrchestrator(
                 var chargesOutcome = await chargesNarrativeService.SynthesizeAsync(selected, openCharges.Count, ct);
                 if (chargesOutcome.Success)
                     chargesNarrativeJson = JsonSerializer.Serialize(chargesOutcome.Narrative);
+                else
+                    // A rejected or failed narrative used to vanish without a trace (18 of 34 companies with open charges had none in the
+                    // 41-company preflight and nothing in the log said why).
+                    logger.LogWarning("Charges narrative not produced for request {RequestId}, analysis run {AnalysisRunId}: {Reason}",
+                        requestId, run.AnalysisRunId, chargesOutcome.FailureReason);
             }
             catch (AnalysisRunCancelledException)
             {
@@ -340,9 +345,11 @@ public class AnalysisOrchestrator(
         // The rule engine is standalone-only (Phase 6 added Consolidated rows to the same table).
         var financialYears = await db.FinancialYearData
             .Where(x => x.IngestionRunId == ingestionRunId && x.Basis == FinancialBasis.Standalone).ToListAsync(ct);
-        var charges = await db.RocCharges.Include(c => c.Events).Where(x => x.IngestionRunId == ingestionRunId).ToListAsync(ct);
+        // AsSplitQuery on both parent+children loads: as one JOIN, every parent row is repeated for each child (a GST registration for each of
+        // its filings: up to ~1,600 per company in the 41-company sample), which made this load exceed the 30 s command timeout under load.
+        var charges = await db.RocCharges.AsSplitQuery().Include(c => c.Events).Where(x => x.IngestionRunId == ingestionRunId).ToListAsync(ct);
         var msmePayments = await db.MsmePayments.Where(x => x.IngestionRunId == ingestionRunId).ToListAsync(ct);
-        var gstRegistrations = await db.GstRegistrations.Include(g => g.Filings).Where(x => x.IngestionRunId == ingestionRunId).ToListAsync(ct);
+        var gstRegistrations = await db.GstRegistrations.AsSplitQuery().Include(g => g.Filings).Where(x => x.IngestionRunId == ingestionRunId).ToListAsync(ct);
         var epfoContributions = await db.EpfoContributions.Where(x => x.IngestionRunId == ingestionRunId).ToListAsync(ct);
         var epfoEstablishments = await db.EpfoEstablishments.Where(x => x.IngestionRunId == ingestionRunId).ToListAsync(ct);
         var auditorObservations = await db.AuditorObservations

@@ -330,4 +330,41 @@ public class AiChargesNarrativeServiceValidationTests
         Assert.Equal(2, outcome.Narrative!.CoveredChargeCount);
         Assert.Equal(312, outcome.Narrative.TotalOpenChargeCount);
     }
+
+    // ── numbers quoted from the deed wording the model was shown ─────────────
+
+    private static string NarrativeJson(string summary) => System.Text.Json.JsonSerializer.Serialize(new { summary, notableCollateralPoints = Array.Empty<object>() });
+
+    [Fact]
+    public void Validate_AcceptsANumberThatAppearsInTheChargeWordingTheModelWasShown()
+    {
+        var ev = new RocChargeEvent
+        {
+            ChargeEventId = 1, RocChargeId = 1, EventType = ChargeEventType.Creation, EventDate = new DateOnly(2026, 2, 25),
+            InstrumentDescription = "Deed of Hypothecation dated 25.02.2026 for 56 new centres, limit Rs 700 Lakh at 9.5%",
+            PropertyParticulars = "Stock at Plot No. 14, Sector 9"
+        };
+        var charge = Charge(1, "C1", 160m, events: [ev]);
+        var selected = AiChargesNarrativeService.SelectChargesForNarrative([charge]);
+
+        var outcome = AiChargesNarrativeService.Validate(
+            NarrativeJson("The single open charge, 160.00, secures 56 new centres under a deed dated 25.02.2026 with a Rs 700 Lakh limit at 9.5%."), selected, 1);
+
+        Assert.True(outcome.Success, outcome.FailureReason);
+    }
+
+    [Fact]
+    public void Validate_StillRejectsADerivedTotalOrAnInventedFigure()
+    {
+        var a = Charge(1, "C1", 20m, events: [new RocChargeEvent { ChargeEventId = 1, RocChargeId = 1, EventType = ChargeEventType.Creation, InstrumentDescription = "Hypothecation of stock" }]);
+        var b = Charge(2, "C2", 15m);
+        var selected = AiChargesNarrativeService.SelectChargesForNarrative([a, b]);
+
+        var total = AiChargesNarrativeService.Validate(NarrativeJson("Two open charges totalling 35.00."), selected, 2);       // a sum: in nobody's data
+        var invented = AiChargesNarrativeService.Validate(NarrativeJson("Charge C1 secures 999 branches."), selected, 2);
+
+        Assert.False(total.Success);
+        Assert.Contains("number not present", total.FailureReason);
+        Assert.False(invented.Success);
+    }
 }
