@@ -669,4 +669,77 @@ public class LitigationCaseAnalysisTests
             Assert.All(part.Orders.Where(o => omitted.Contains(o.OrderId)), o => Assert.Null(o.Text));   // not rehydrated
         }
     }
+
+    // ── #392 re-review: the tier follows the final restraint state ──
+
+    private static string GroupWith(string text, long id, LitigationRiskTier baseline, Action<JsonObject> tweak)
+    {
+        var input = Input(NewCase((id, "01-01-2025", "Order")), Docs((id, id + 100, text)));
+        return LitigationCaseAnalysisValidator.Validate(CaseAnalysisAnswers.For(LitigationCaseAnalysisPrompt.Build(input.CaseJson), tweak), input, baseline, "Baseline").AnalysisJson!;
+    }
+
+    /// <summary>An older group whose R3 rests on an injunction it grants; <paramref name="without"/> is the tier it would have had without it.</summary>
+    private static string GrantedR3(long id, string without, string withoutTrigger = "Pending Civil Suit") => GroupWith(GrantText, id, LitigationRiskTier.R1, a =>
+    {
+        a["risk"] = "R3"; a["risk_trigger"] = "Active restraint"; a["risk_reason"] = "Injunction remains in force.";
+        a["active_restraint"] = true; a["restraint_type"] = "INJUNCTION";
+        a["risk_without_restraint"] = without; a["risk_trigger_without_restraint"] = withoutTrigger; a["risk_reason_without_restraint"] = "Ordinary pending matter.";
+        a["evidence"] = new JsonArray(
+            new JsonObject { ["claim"] = "restraint", ["order_id"] = id, ["quote"] = "The respondent is restrained from alienating the property" },
+            new JsonObject { ["claim"] = "risk_trigger", ["order_id"] = id, ["quote"] = "The respondent is restrained from alienating the property" });
+    });
+
+    private static string LiftedR1(long id) => GroupWith(LiftText, id, LitigationRiskTier.R1, a =>
+    {
+        a["risk"] = "R1"; a["risk_trigger"] = "Pending Civil Suit"; a["risk_reason"] = "Pending civil matter, restraint lifted.";
+        a["restraint_lifted"] = true;
+        a["evidence"] = new JsonArray(new JsonObject { ["claim"] = "restraint_lifted", ["order_id"] = id, ["quote"] = "The earlier injunction is vacated" });
+    });
+
+    [Fact]
+    public void A_tier_that_rested_only_on_a_restraint_that_a_newer_order_lifted_falls_with_it()
+    {
+        var merged = JsonNode.Parse(LitigationCaseAnalysisGroups.Merge([LiftedR1(2), GrantedR3(1, without: "R1")]))!;
+
+        Assert.False((bool)merged["active_restraint"]!);
+        Assert.Equal("R1", merged["risk"]!.ToString());
+        Assert.Equal("Pending Civil Suit", merged["risk_trigger"]!.ToString());
+        Assert.DoesNotContain("Injunction remains", merged["risk_reason"]!.ToString());
+        Assert.Equal("Monitor", merged["relevance"]!.ToString());
+    }
+
+    [Fact]
+    public void A_tier_with_an_independent_ground_keeps_it_when_the_restraint_is_lifted()
+    {
+        // the old group is R3 for a DRT recovery AND an injunction: without the injunction it is still R3
+        var merged = JsonNode.Parse(LitigationCaseAnalysisGroups.Merge([LiftedR1(2), GrantedR3(1, without: "R3", withoutTrigger: "DRT Recovery Proceeding")]))!;
+
+        Assert.False((bool)merged["active_restraint"]!);
+        Assert.Equal("R3", merged["risk"]!.ToString());
+        Assert.Equal("DRT Recovery Proceeding", merged["risk_trigger"]!.ToString());
+        Assert.Equal("Needs attention", merged["relevance"]!.ToString());
+    }
+
+    [Fact]
+    public void A_renewed_restraint_keeps_the_tier_it_gave()
+    {
+        var merged = JsonNode.Parse(LitigationCaseAnalysisGroups.Merge([GrantedR3(3, without: "R1"), LiftedR1(2), GrantedR3(1, without: "R1")]))!;
+
+        Assert.True((bool)merged["active_restraint"]!);
+        Assert.Equal("R3", merged["risk"]!.ToString());
+        Assert.Equal("Active restraint", merged["risk_trigger"]!.ToString());
+    }
+
+    [Fact]
+    public void The_without_restraint_tier_is_clamped_between_the_baseline_and_the_tier_given()
+    {
+        var above = JsonNode.Parse(GroupWith(GrantText, 1, LitigationRiskTier.R1, a => { a["risk"] = "R1"; a["risk_without_restraint"] = "R3"; }))!;
+        Assert.Equal(above["risk"]!.ToString(), above["risk_without_restraint"]!.ToString());          // never above the tier given
+
+        var below = JsonNode.Parse(GroupWith(GrantText, 1, LitigationRiskTier.R2, a => { a["risk"] = "R3"; a["risk_trigger"] = "x"; a["risk_without_restraint"] = "R0"; a["evidence"] = new JsonArray(new JsonObject { ["claim"] = "risk_trigger", ["order_id"] = 1, ["quote"] = "The respondent is restrained from alienating the property" }); }))!;
+        Assert.Equal("R2", below["risk_without_restraint"]!.ToString());                              // never below the record-based baseline
+
+        var absent = JsonNode.Parse(GroupWith(GrantText, 1, LitigationRiskTier.R1, a => a["risk"] = "R1"))!;
+        Assert.Equal("R1", absent["risk_without_restraint"]!.ToString());                              // absent: the tier given
+    }
 }

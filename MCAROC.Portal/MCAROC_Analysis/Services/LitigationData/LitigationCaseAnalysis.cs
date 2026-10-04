@@ -172,7 +172,22 @@ public static class LitigationCaseAnalysisGroups
         var groups = groupJsons.Select(j => (JsonObject)JsonNode.Parse(j)!).ToList();
         if (groups.Count == 1) return groupJsons[0];
         string? First(string key) => groups.Select(g => g[key]?.ToString()).FirstOrDefault(v => !string.IsNullOrWhiteSpace(v));
-        var top = groups.OrderByDescending(g => Array.IndexOf(Risks, g["risk"]?.ToString())).First();
+        // Whether a restraint or lis pendens is in force NOW is a matter of chronology, not of any group saying so: walk the groups oldest to
+        // newest; a group that grants or confirms one sets it, a group whose orders lift or end it clears it, a group that says nothing leaves
+        // the state as it was. (An OR over the groups would revive a restraint that a newer order vacated.)
+        var restraintNow = false; JsonNode? restraintTypeNow = null; var lisNow = false;
+        foreach (var g in Enumerable.Reverse(groups))
+        {
+            if (g["active_restraint"]?.GetValue<bool>() == true) { restraintNow = true; restraintTypeNow = g["restraint_type"]?.DeepClone(); }
+            else if (g["restraint_lifted"]?.GetValue<bool>() == true) { restraintNow = false; restraintTypeNow = null; }
+            if (g["lis_pendens"]?.GetValue<bool>() == true) lisNow = true;
+            else if (g["lis_pendens_ended"]?.GetValue<bool>() == true) lisNow = false;
+        }
+        // A group whose tier rests on a restraint or lis pendens that has since ended counts at the tier it would have had without it
+        // (risk_without_restraint, from the same group); any other ground it has — a recovery act, a criminal case — still counts in full.
+        bool Superseded(JsonObject g) => (g["active_restraint"]?.GetValue<bool>() == true && !restraintNow) || (g["lis_pendens"]?.GetValue<bool>() == true && !lisNow);
+        JsonNode? Effective(JsonObject g, string key) => Superseded(g) && g[key + "_without_restraint"] is { } alt ? alt : g[key];
+        var top = groups.OrderByDescending(g => Array.IndexOf(Risks, Effective(g, "risk")?.ToString())).First();
         JsonArray Join(string key)
         {
             var result = new JsonArray();
@@ -187,27 +202,19 @@ public static class LitigationCaseAnalysisGroups
         merged["analysis_basis"] = groups.Any(g => g["analysis_basis"]?.ToString() == "Order-Confirmed") ? "Order-Confirmed" : "Metadata-Led";
         foreach (var key in new[] { "target_party_role", "legal_exposure_direction", "case_nature", "liability_type", "subject", "amount", "factual_background", "relief_sought", "core_issue" })
             merged[key] = First(key);
-        merged["risk"] = top["risk"]?.DeepClone();
-        merged["risk_trigger"] = top["risk_trigger"]?.DeepClone();
-        merged["risk_reason"] = top["risk_reason"]?.DeepClone();
-        merged["risk_category"] = top["risk_category"]?.DeepClone();
+        var topSuperseded = Superseded(top);
+        merged["risk"] = Effective(top, "risk")?.DeepClone();
+        merged["risk_trigger"] = Effective(top, "risk_trigger")?.DeepClone();
+        merged["risk_reason"] = Effective(top, "risk_reason")?.DeepClone();
+        merged["risk_category"] = merged["risk"]?.ToString() is "R3" or "R2" ? top["risk_category"]?.DeepClone() : null;
         merged["risk_raised"] = Any("risk_raised");
-        merged["relevance"] = top["relevance"]?.DeepClone();
-        merged["consequence_note"] = top["consequence_note"]?.DeepClone() ?? (First("consequence_note") is { } c ? JsonValue.Create(c) : null);
+        merged["relevance"] = topSuperseded ? JsonValue.Create(merged["risk"]?.ToString() is "R3" or "R2" ? "Needs attention" : "Monitor") : top["relevance"]?.DeepClone();
+        // The consequence of an adverse decision was written for the top group's own grounds: not carried over from a superseded one.
+        merged["consequence_note"] = topSuperseded ? groups.Where(g => !Superseded(g)).Select(g => g["consequence_note"]?.DeepClone()).FirstOrDefault(n => n is not null)
+            : top["consequence_note"]?.DeepClone() ?? (First("consequence_note") is { } c ? JsonValue.Create(c) : null);
         merged["summary"] = string.Join(" ", groups.Select(g => g["summary"]?.ToString()).Where(x => !string.IsNullOrWhiteSpace(x)));
         foreach (var key in new[] { "judicial_reasoning", "provisions", "precedents", "connected_matters", "order_analysis", "evidence", "unknowns", "evidenceReferences", "validation_notes" })
             merged[key] = Join(key);
-        // Whether a restraint or lis pendens is in force NOW is a matter of chronology, not of any group saying so: walk the groups oldest to
-        // newest; a group that grants or confirms one sets it, a group whose orders lift or end it clears it, a group that says nothing leaves
-        // the state as it was. (An OR over the groups would revive a restraint that a newer order vacated.)
-        var restraintNow = false; JsonNode? restraintTypeNow = null; var lisNow = false;
-        foreach (var g in Enumerable.Reverse(groups))
-        {
-            if (g["active_restraint"]?.GetValue<bool>() == true) { restraintNow = true; restraintTypeNow = g["restraint_type"]?.DeepClone(); }
-            else if (g["restraint_lifted"]?.GetValue<bool>() == true) { restraintNow = false; restraintTypeNow = null; }
-            if (g["lis_pendens"]?.GetValue<bool>() == true) lisNow = true;
-            else if (g["lis_pendens_ended"]?.GetValue<bool>() == true) lisNow = false;
-        }
         merged["active_restraint"] = restraintNow;
         merged["restraint_type"] = restraintNow ? restraintTypeNow ?? JsonValue.Create("NONE") : JsonValue.Create("NONE");
         merged["lis_pendens"] = lisNow;
@@ -309,6 +316,12 @@ public static class LitigationCaseAnalysisValidator
         if (restraintLifted && !Has("restraint_lifted")) { restraintLifted = false; notes.Add("restraint_lifted set back to false: no confirmed quote."); }
         var lisEnded = root["lis_pendens_ended"] is JsonValue le && le.TryGetValue<bool>(out var leb) && leb;
         if (lisEnded && !Has("lis_pendens_ended")) { lisEnded = false; notes.Add("lis_pendens_ended set back to false: no confirmed quote."); }
+        // The tier these orders would give with no restraint or lis pendens in the picture. Used only when a later group lifts the restraint.
+        // Never above the tier given, never below the record-based baseline; absent or unusable, it is the tier given.
+        var withoutRestraint = Str("risk_without_restraint");
+        if (withoutRestraint is null || !Risks.Contains(withoutRestraint)) withoutRestraint = risk;
+        if (Array.IndexOf(Risks, withoutRestraint) > Array.IndexOf(Risks, risk)) withoutRestraint = risk;
+        if (Array.IndexOf(Risks, withoutRestraint) < (int)baseline) withoutRestraint = baselineName;
         var restraintType = Str("restraint_type");
         if (!restraint) restraintType = "NONE";
         else if (restraintType is null || !RestraintTypes.Contains(restraintType)) restraintType = "NONE";
@@ -361,6 +374,10 @@ public static class LitigationCaseAnalysisValidator
             ["precedents"] = Strings(root["precedents"]), ["connected_matters"] = Strings(root["connected_matters"]),
             ["active_restraint"] = restraint, ["restraint_type"] = restraintType, ["lis_pendens"] = lis,
             ["restraint_lifted"] = restraintLifted, ["lis_pendens_ended"] = lisEnded,
+            ["risk_without_restraint"] = withoutRestraint,
+            ["risk_trigger_without_restraint"] = Str("risk_trigger_without_restraint")
+                ?? (withoutRestraint == risk ? (raised ? Str("risk_trigger") : (reported == risk ? Str("risk_trigger") : baselineTrigger)) : baselineTrigger),
+            ["risk_reason_without_restraint"] = Str("risk_reason_without_restraint") ?? Str("risk_reason"),
             ["order_analysis"] = orderAnalysis, ["outcome"] = root["outcome"]?.DeepClone(), ["consequence_note"] = Str("consequence_note"),
             ["evidence"] = new JsonArray(confirmed.Select(c => (JsonNode)new JsonObject
             {
