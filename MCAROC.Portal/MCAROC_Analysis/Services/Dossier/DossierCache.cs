@@ -41,7 +41,9 @@ public class DossierCache(AppDbContext db, DossierAssembler assembler, IMemoryCa
         var litigationVersion = await ChargeLitigationService.VersionAsync(db, requestId, ct);
         // Likewise for the Gemini property-particulars readings, which complete after ingestion.
         var propertyVersion = await PropertyParticulars.PropertyParticularsExtractionService.VersionAsync(db, requestId, ct);
-        var key = $"dossier:{requestId}:{ingestionRunId}:{analysisRunId}:{litigationVersion}:{propertyVersion}";
+        // And for the passages quoted from the charges' filed documents, which finish after ingestion too.
+        var instrumentVersion = await PropertyParticulars.ChargeInstrumentExtractionService.VersionAsync(db, requestId, ct);
+        var key = $"dossier:{requestId}:{ingestionRunId}:{analysisRunId}:{litigationVersion}:{propertyVersion}:{instrumentVersion}";
         if (cache.TryGetValue(key, out DossierModel? cached) && cached is not null)
             return cached;
 
@@ -77,7 +79,8 @@ public class DossierCache(AppDbContext db, DossierAssembler assembler, IMemoryCa
 
         if (keyParts is { LatestCompletedIngestionRunId: { } ingestionRunId, AnalysisRunId: { } analysisRunId })
             cache.Remove($"dossier:{requestId}:{ingestionRunId}:{analysisRunId}:{await ChargeLitigationService.VersionAsync(db, requestId, ct)}"
-                + $":{await PropertyParticulars.PropertyParticularsExtractionService.VersionAsync(db, requestId, ct)}");
+                + $":{await PropertyParticulars.PropertyParticularsExtractionService.VersionAsync(db, requestId, ct)}"
+                + $":{await PropertyParticulars.ChargeInstrumentExtractionService.VersionAsync(db, requestId, ct)}");
 
         var dir = Path.Combine(contentRootPath, "App_Data", "Dossiers", requestId.ToString());
         if (Directory.Exists(dir))

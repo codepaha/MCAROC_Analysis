@@ -139,6 +139,16 @@ public class ChargeInstrumentExtractionService(
         return result;
     }
 
+    /// <summary>Changes whenever a request's completed passage extractions do (one finishing, or a re-extraction): part of the
+    /// dossier's cache key, so a dossier built before the quotes existed is never served after.</summary>
+    public static async Task<string> VersionAsync(AppDbContext db, long requestId, CancellationToken ct)
+    {
+        var rows = await db.ChargeInstrumentExtractions.AsNoTracking()
+            .Where(x => x.RequestId == requestId && x.PromptVersion == ChargeInstrumentAi.PromptVersion && x.Status == ChargeInstrumentExtractionStatus.Completed)
+            .Select(x => x.ChargeInstrumentExtractionId).ToListAsync(ct);
+        return rows.Count == 0 ? "0" : $"{rows.Count}.{rows.Max()}";
+    }
+
     public virtual async Task ProcessAsync(long extractionId, CancellationToken ct)
     {
         var token = Guid.NewGuid();

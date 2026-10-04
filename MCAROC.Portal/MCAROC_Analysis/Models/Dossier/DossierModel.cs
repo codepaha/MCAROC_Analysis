@@ -1,4 +1,4 @@
-using MCAROC_Analysis.Data.Entities;
+﻿using MCAROC_Analysis.Data.Entities;
 using MCAROC_Analysis.Services.Analysis;
 using MCAROC_Analysis.Services.Dossier;
 
@@ -38,6 +38,9 @@ public sealed record DossierModel(
     // Carried unfiltered like IncludeLitigation above: only DossierPdfComposer decides whether the PDF shows it.
     // Its SnapshotId is part of the dossier's cache keys, so a litigation refresh never serves stale links.
     Services.LitigationData.ChargeLitigationSummary? ChargeLinks = null,
+    // The property passages quoted from each charge's filed documents (#364), keyed by the charge's normalised number. Appended
+    // last like the fields above; null/empty where no document has been read. Its version is part of the dossier's cache key.
+    IReadOnlyDictionary<string, IReadOnlyList<ChargeInstrumentPassageSet>>? InstrumentPassagesByCharge = null,
     // Completed Gemini property-particulars extractions for these charges' texts, keyed by text hash — the annexure
     // falls back to the deterministic reading for any text without one. Appended last, same precedent as above.
     IReadOnlyDictionary<string, Data.Entities.PropertyParticularsExtraction>? PropertyExtractions = null);
@@ -156,3 +159,6 @@ public sealed record DossierSourceSheet(
 /// <summary>One raw row: the Excel row number the person would see, and the ordered cell values
 /// exactly as extracted (a null/blank cell stays null).</summary>
 public sealed record DossierSourceRow(int RowNumber, IReadOnlyList<string?> Cells);
+
+/// <summary>The property passages quoted from one document filed for a charge, with the document they came from.</summary>
+public sealed record ChargeInstrumentPassageSet(long DocumentId, string DisplayName, string? FormType, Services.PropertyParticulars.ChargeInstrumentAiResult Result);
