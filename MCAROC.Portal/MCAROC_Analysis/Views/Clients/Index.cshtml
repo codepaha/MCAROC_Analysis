@@ -7,7 +7,7 @@
     <div>
         <div class="pi-kicker">Internal</div>
         <h1>Clients</h1>
-        <p>Per-client dossier settings. Everything else about a client's requests is unaffected by this page.</p>
+        <p>The clients requests are made for. Litigation is delivered as a separate report, not inside the dossier.</p>
     </div>
 </div>
 
@@ -22,8 +22,7 @@
         <tr>
             <th>Client</th>
             <th>Code</th>
-            <th>Litigation in dossier</th>
-            <th></th>
+
         </tr>
         </thead>
         <tbody>
@@ -32,8 +31,7 @@
             <tr>
                 <td>@client.ClientName</td>
                 <td>@client.ClientCode</td>
-                <td>@(client.IncludeLitigationInDossier ? "Included" : "Omitted (separate report)")</td>
-                <td><a asp-action="Edit" asp-route-id="@client.ClientId" class="btn btn-sm btn-outline-secondary">Edit</a></td>
+
             </tr>
         }
         </tbody>

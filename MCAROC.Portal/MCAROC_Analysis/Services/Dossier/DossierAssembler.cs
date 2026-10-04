@@ -184,7 +184,9 @@ public class DossierAssembler(AppDbContext db, Services.LitigationData.ChargeLit
             // Carried through unfiltered — DossierModel is shared with the portal's on-screen company page
             // (see DossierCache's doc comment), so no litigation data is ever redacted here. Only
             // DossierPdfComposer reads this flag, to decide what its own PDF output shows.
-            IncludeLitigation: request.Client?.IncludeLitigationInDossier ?? true,
+            // The dossier no longer carries litigation: it has its own standalone report (Litigation tab's PDF / CSV). The composer
+            // still honours this flag, so the section can be brought back by one line here, but nothing sets it any more.
+            IncludeLitigation: false,
             ChargesNarrative: chargesNarrative,
             ChargeLinks: chargeLinks,
             PropertyExtractions: await PropertyParticulars.PropertyParticularsExtractionService.LoadCompletedAsync(db, charges.SelectMany(c => c.Events), ct));

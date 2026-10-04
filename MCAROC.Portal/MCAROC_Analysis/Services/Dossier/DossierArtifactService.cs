@@ -35,7 +35,8 @@ public sealed class DossierArtifactService(DossierCache cache, DossierPdfRendere
         // Same for the property-particulars readings the annexure prints (Gemini extractions complete after ingestion).
         var propertyPart = model.PropertyExtractions is { Count: > 0 } extractions
             ? "-" + PropertyParticulars.PropertyParticularsExtractionService.VersionOf(extractions) : "";
-        var name = $"{flavour.ToString().ToLowerInvariant()}-{model.IngestionRunId}-{model.AnalysisRunId?.ToString() ?? "none"}{litigationPart}{propertyPart}.pdf";
+        // Layout marker: bumped when what a dossier contains changes for everyone at once (this file cache never expires). "-nl" = no litigation.
+        var name = $"{flavour.ToString().ToLowerInvariant()}-{model.IngestionRunId}-{model.AnalysisRunId?.ToString() ?? "none"}{litigationPart}{propertyPart}-nl.pdf";
         var path = Path.Combine(dir, name);
 
         if (!File.Exists(path))

@@ -17,5 +17,6 @@ public class Client
     /// report. Portal-only views (the on-screen company page) are unaffected — this only gates
     /// DossierPdfComposer's PDF output, never the shared DossierModel/DossierAssembler data. Default true
     /// so every existing client keeps today's behavior.</summary>
+    /// <summary>Retired: the dossier no longer carries litigation for any client. Column kept (unused) so no migration is needed.</summary>
     public bool IncludeLitigationInDossier { get; set; } = true;
 }
