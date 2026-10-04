@@ -358,10 +358,10 @@ public static partial class PropertyParticularsAi
         // as in "51 (P) 52(P)" and "52/6. 52/7". An item followed by "parking" or an area unit is never an identifier.
         private const string Item =
             @"(?<id>\d+[a-z]?(?![\d])(?:\s*/\s*[0-9a-z]+(?![0-9a-z]))*(?:\s*\(\s*(?:p|part)\s*\)|\s+part\b)?)(?:\s*(?:to|–)\s*(?:\d+[a-z]?\s*/\s*)?(?<to>\d+)\b)?" +
-            @"(?![0-9a-z])(?!\s*(?:sq|square|acres?|hectares?|ha|m2|(?:car\s*)?parking|\d+\s*(?:car\s*)?parking)\b)";
+            @"(?![0-9a-z])(?!\s*" + PropertyParticularsNormalizer.MeasurementOrParkingPattern + @")";
         private const string Structured = @"(?=\d+[a-z]?\s*[/(])";
         private const string NonMeasurementSep =
-            @"(?:(?:\s*,\s*and\b\s*|\s*(?:,|&|\band\b)\s*|(?:\s*\.\s*|\s+)" + Structured + @")(?!\d+(?:,\d{2,3})*(?:\.\d+)?\s*(?:sq|square|acres?|hectares?|ha|m2|(?:car\s*)?parking)\b))";
+            @"(?:(?:\s*,\s*and\b\s*|\s*(?:,|&|\band\b)\s*|(?:\s*\.\s*|\s+)" + Structured + @")(?!\d+(?:,\d{2,3})*(?:\.\d+)?\s*" + PropertyParticularsNormalizer.MeasurementOrParkingPattern + @"))";
 
         [GeneratedRegex(
             @"(?:(?<cts>(?<![a-z])(?:c\.?\s*t\.?\s*s|cst)(?![a-z]))|(?<survey>(?<![a-z.])(?:survey|sy\b|sy\.|s\.f\.|s\.f\b|sf\b|sf\.|r\.s\.|r\.s\b|rs\b|rs\.|t\.s\.|t\.s\b|ts\b|ts\.|s\.|s\b)(?![a-z]))|(?<plot>(?<![a-z])plots?(?![a-z]))|(?<gat>(?<![a-z])gat(?![a-z]))|(?<khasra>(?<![a-z])khasra(?![a-z])))" +

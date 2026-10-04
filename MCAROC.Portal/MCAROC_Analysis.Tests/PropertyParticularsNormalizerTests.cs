@@ -296,6 +296,8 @@ public class PropertyParticularsNormalizerTests
     [Theory]
     [InlineData("Sy No. 12, 1,000 sq ft carpet area")]
     [InlineData("Sy No. 12, 100 m2 carpet area")]
+    [InlineData("Sy No. 12, 100 sqm carpet area")]
+    [InlineData("Sy No. 12, 100 sqft carpet area")]
     [InlineData("Sy No. 12, 17 parking spaces")]
     public void Measurements_and_counts_must_not_be_parcel_identifiers(string text)
     {

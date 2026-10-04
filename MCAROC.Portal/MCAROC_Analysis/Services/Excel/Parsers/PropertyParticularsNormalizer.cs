@@ -503,13 +503,16 @@ public static partial class PropertyParticularsNormalizer
     [GeneratedRegex(@"\b(?<p>[A-Z]{1,2})\s*-\s*(?<a>\d{1,4})(?:\s*to\s*(?:to\s*)?(?:\k<p>\s*-\s*)?(?<to>\d{1,4}))?", RegexOptions.IgnoreCase)]
     private static partial Regex ParkingNumber();
 
+    internal const string MeasurementOrParkingPattern =
+        @"(?:sq(?:uare)?\b|sqft\b|sqm\b|m2\b|acres?\b|hectares?\b|ha\b|(?:car\s*)?parking\b|\d+\s*(?:car\s*)?parking\b)";
+
     private const string ItemHead =
         @"(?<n>\d+[a-z]?(?:/[0-9a-z]+)*)(?![0-9a-z])" +
-        @"(?!\s*(?:sq|square|acres?|hectares?|ha|m2|(?:car\s*)?parking|\d+\s*(?:car\s*)?parking)\b)" +
+        @"(?!\s*" + MeasurementOrParkingPattern + @")" +
         @"(?:\s*(?<part>\((?:p|part)\)|part\b))?(?:\s*(?:to|–)\s*(?<to>\d+))?";
 
     private const string NonMeasurementSep =
-        @"(?:(?:\s*,\s*and\b\s*|\s*(?:,|\.|and|&|\+)\s*|\s+)(?!\d+(?:,\d{2,3})*(?:\.\d+)?\s*(?:sq|square|acres?|hectares?|ha|m2|(?:car\s*)?parking)\b))";
+        @"(?:(?:\s*,\s*and\b\s*|\s*(?:,|\.|and|&|\+)\s*|\s+)(?!\d+(?:,\d{2,3})*(?:\.\d+)?\s*" + MeasurementOrParkingPattern + @"))";
 
     [GeneratedRegex(@"(?:\b(?<q>new|old)\s+)?(?:\bc\.?\s*t\.?\s*s\.?|\bcst\b)\s*[-\s]*(?:nos?\.?|numbers?)?[\s.,:-]*(?<list>" + ItemHead + @"(?:" + NonMeasurementSep + ItemHead + @")*)", RegexOptions.IgnoreCase)]
     private static partial Regex CtsPattern();
