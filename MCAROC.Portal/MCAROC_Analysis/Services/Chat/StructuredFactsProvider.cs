@@ -1,5 +1,6 @@
 using MCAROC_Analysis.Data;
 using MCAROC_Analysis.Data.Entities;
+using MCAROC_Analysis.Models;
 using Microsoft.EntityFrameworkCore;
 
 namespace MCAROC_Analysis.Services.Chat;
@@ -22,7 +23,11 @@ public class StructuredFactsProvider(AppDbContext db)
         var request = await db.Requests.FirstAsync(r => r.RequestId == requestId, ct);
         var facts = new List<StructuredFact>();
         if (request.LatestCompletedIngestionRunId is not { } ingestionRunId)
+        {
+            // No MCA ingestion, but the litigation data fetched from the data service stands on its own.
+            if (await BuildFetchedLitigationFactAsync(requestId, ct) is { } onlyLitigation) facts.Add(onlyLitigation);
             return facts;
+        }
 
         var detailed = DetermineDetailedDomains(hints);
 
@@ -137,7 +142,48 @@ public class StructuredFactsProvider(AppDbContext db)
                 facts.Add(new StructuredFact("Litigation", $"{litigations.Count} litigation record(s) on file.", null, null));
         }
 
-        return facts.Select(f => f with { IngestionRunId = ingestionRunId }).ToList();
+        var withRun = facts.Select(f => f with { IngestionRunId = ingestionRunId }).ToList();
+        if (await BuildFetchedLitigationFactAsync(requestId, ct) is { } fetched) withRun.Add(fetched);
+        return withRun;
+    }
+
+    /// <summary>The litigation cases fetched from the data service (the Litigation tab's cases), summarised: how many, how many pending
+    /// and disposed, how many are by or against the company, by court type, and how many have a next hearing. The structured facts above
+    /// read only the report sheet's Litigations rows, which a fetched search never fills — so without this the assistant would say
+    /// "no litigation on file" for a company whose tab lists dozens of cases. The cases are those of the latest completed report.</summary>
+    private async Task<StructuredFact?> BuildFetchedLitigationFactAsync(long requestId, CancellationToken ct)
+    {
+        var snapshotId = await db.LitigationReportSnapshots.AsNoTracking()
+            .Where(s => s.RequestId == requestId && s.Status == LitigationReportSnapshotStatus.Completed)
+            .OrderByDescending(s => s.RetrievedUtc).ThenByDescending(s => s.LitigationReportSnapshotId)
+            .Select(s => (long?)s.LitigationReportSnapshotId).FirstOrDefaultAsync(ct);
+        if (snapshotId is null) return null;
+
+        var cases = await db.LitigationCaseSourceReports.AsNoTracking()
+            .Where(l => l.LitigationReportSnapshotId == snapshotId)
+            .Select(l => new { l.Case!.Type, l.Case.CaseStatus, l.Case.CaseStage, l.Case.Direction, l.Case.NextHearingDate })
+            .ToListAsync(ct);
+        if (cases.Count == 0) return null;
+
+        var pending = 0; var disposed = 0; var by = 0; var against = 0; var withNext = 0;
+        foreach (var c in cases)
+        {
+            switch (LitigationCaseStatusClassifier.Classify(c.CaseStatus, c.CaseStage))
+            {
+                case LitigationCaseStatusBucket.Pending: pending++; break;
+                case LitigationCaseStatusBucket.Disposed: disposed++; break;
+            }
+            if (string.Equals(c.Direction, "by", StringComparison.OrdinalIgnoreCase)) by++;
+            else if (string.Equals(c.Direction, "against", StringComparison.OrdinalIgnoreCase)) against++;
+            if (!string.IsNullOrWhiteSpace(c.NextHearingDate)) withNext++;
+        }
+        var courts = string.Join(", ", cases.GroupBy(c => string.IsNullOrWhiteSpace(c.Type) ? "other" : c.Type!.Trim().ToLowerInvariant())
+            .OrderByDescending(g => g.Count()).ThenBy(g => g.Key).Select(g => $"{g.Key} {g.Count()}"));
+        var text = $"{cases.Count} litigation case(s) fetched from the litigation data service for this company: {pending} pending, {disposed} disposed, "
+            + $"{cases.Count - pending - disposed} of unknown status; {against} against the company, {by} by the company"
+            + (by + against < cases.Count ? $", {cases.Count - by - against} of unstated direction" : "")
+            + $"; {withNext} with a next hearing date. By court type: {courts}.";
+        return new StructuredFact("Litigation", text, null, null);
     }
 
     private static HashSet<string> DetermineDetailedDomains(QuestionHints hints)
