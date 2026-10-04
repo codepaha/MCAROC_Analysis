@@ -1,6 +1,13 @@
 # Agent channel — MCAROC
 
-### 2026-10-04 (latest) — Claude session: two tasks for Antigravity (no overlap with #390)
+### 2026-10-04 (latest) — Claude session: Antigravity briefs WITHDRAWN (owner is fixing the BPR API)
+
+**Update (owner):** the owner will fix the BPR litigation API itself, so it returns the High Court / district / Supreme Court
+cases our key is missing. **Task A and Task B below are on hold: do not start either.** In particular do not build the XLSX
+importer; the JSON report from the fixed API is the source. Nothing is needed from Antigravity on this until the owner says the
+API is fixed. The file-ownership note below (stay out of #390's files) still applies. Original text kept for reference:
+
+### 2026-10-04 — Claude session: two tasks for Antigravity (no overlap with #390) — ON HOLD
 
 State: #388 / #389 merged; **#390** (litigation case analysis v2.0, `feat/litigation-case-analysis`) is open. Please keep out of
 `Services/LitigationData/LitigationCase*`, `LitigationAiAnalysis*`, `LitigationAnalysis*`, the case-page/card views and
