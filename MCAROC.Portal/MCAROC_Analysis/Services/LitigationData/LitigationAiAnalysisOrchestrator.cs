@@ -258,8 +258,11 @@ public sealed class LitigationAiAnalysisOrchestrator(AppDbContext db, ILitigatio
     public sealed class AnalysisContext(IReadOnlyDictionary<long, LitigationOrderDocument> documentsByOrderId, string targetEntity, IReadOnlyList<string> targetNames, DateOnly asOf)
     {
         public IReadOnlyList<string> TargetNames => targetNames;
-        public CaseAnalysisInput Build(LitigationCase c, IReadOnlySet<long>? onlyOrderIds = null) =>
-            LitigationCaseAnalysisInputBuilder.Build(c, documentsByOrderId, targetEntity, targetNames, asOf, onlyOrderIds);
+        /// <summary>The input for the whole case, or for one group of its orders. A group is built against the whole case's input
+        /// (<paramref name="whole"/>) so that it sends exactly the text the case's evidence hash covers.</summary>
+        public CaseAnalysisInput Build(LitigationCase c, IReadOnlySet<long>? onlyOrderIds = null, CaseAnalysisInput? whole = null) =>
+            LitigationCaseAnalysisInputBuilder.Build(c, documentsByOrderId, targetEntity, targetNames, asOf, onlyOrderIds,
+                whole?.Orders.Where(o => o.Text is null && o.TotalChars > 0).Select(o => o.OrderId).ToHashSet());
 
         /// <summary>The tier and trigger the case's own record gives it, which the model may confirm or raise but not lower.</summary>
         public LitigationRiskAssessment Baseline(LitigationCase c)
@@ -305,7 +308,7 @@ public sealed class LitigationAiAnalysisOrchestrator(AppDbContext db, ILitigatio
         foreach (var ids in groups)
         {
             // One group is the whole case; otherwise each group is built and checked against its own orders' text.
-            var part = groups.Count == 1 ? input : context.Build(c, ids);
+            var part = groups.Count == 1 ? input : context.Build(c, ids, input);
             await RenewAsync(runId, token, ct);
             var response = await client.CallAsync(LitigationCaseAnalysisPrompt.Build(part.CaseJson), options.Value.CaseTimeoutSeconds, ct, options.Value.CaseModelId);
             await RenewAsync(runId, token, ct);
