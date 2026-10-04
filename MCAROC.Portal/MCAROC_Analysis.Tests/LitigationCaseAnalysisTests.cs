@@ -501,4 +501,76 @@ public class LitigationCaseAnalysisTests
         var evidence = Assert.Single((JsonArray)JsonNode.Parse(v.AnalysisJson!)!["evidence"]!)!;
         Assert.Equal(2, (int)evidence["page"]!);
     }
+
+    // ── Long cases: grouped calls ──
+
+    private static CaseAnalysisInput LongInput(params int[] sizes)
+    {
+        var orders = sizes.Select((n, i) => ((long)(i + 1), $"{(i + 1):00}-01-2025", "Order")).ToArray();
+        var docs = Docs(sizes.Select((n, i) => ((long)(i + 1), (long)(i + 101), (string?)(n == 0 ? null : new string('x', n)))).ToArray());
+        return Input(NewCase(orders), docs);
+    }
+
+    [Fact]
+    public void A_case_within_the_limit_is_one_group()
+    {
+        var plan = LitigationCaseAnalysisGroups.Plan(LongInput(30_000, 30_000, 30_000), splitAbove: 100_000, groupChars: 80_000);
+
+        Assert.Single(plan);
+        Assert.Equal(3, plan[0].Count);
+    }
+
+    [Fact]
+    public void A_long_case_is_cut_into_groups_of_orders_newest_first_with_no_order_in_two_groups()
+    {
+        // orders 1..5 (order 5 is the newest): 50k, 50k, 50k, 50k, 0 (no text)
+        var plan = LitigationCaseAnalysisGroups.Plan(LongInput(50_000, 50_000, 50_000, 50_000, 0), splitAbove: 100_000, groupChars: 80_000);
+
+        Assert.Equal(4, plan.Count);                                     // 50k fits one per group at an 80k limit
+        Assert.True(plan[0].SetEquals([5L, 4L]));                        // the order without text rides with the newest group
+        Assert.Equal(5, plan.SelectMany(g => g).Distinct().Count());     // every order exactly once
+        Assert.Equal(5, plan.Sum(g => g.Count));
+    }
+
+    [Fact]
+    public void An_input_built_for_one_group_holds_only_its_orders_and_is_checked_against_only_their_text()
+    {
+        var whole = LongInput(50_000, 50_000, 10_000);
+        var c = NewCase((1, "01-01-2025", "Order"), (2, "02-01-2025", "Order"), (3, "03-01-2025", "Order"));
+        var docs = Docs((1, 101, new string('x', 50_000)), (2, 102, new string('y', 50_000)), (3, 103, "--- Page 1 (native) ---" + "\n" + "The application is allowed with costs."));
+
+        var part = LitigationCaseAnalysisInputBuilder.Build(c, docs, Target, [Target], AsOf, new HashSet<long> { 3 });
+
+        Assert.Equal([3L], part.Orders.Select(o => o.OrderId));
+        Assert.Equal(3, whole.Orders.Count);
+        // A quote naming order 2 is not in this group's input, so it is dropped.
+        var v = Validate(Answer(part, a => a["evidence"] = new JsonArray(
+            new JsonObject { ["claim"] = "operative_order", ["order_id"] = 2, ["quote"] = "yyyyyyyyyyyyyyyy" },
+            new JsonObject { ["claim"] = "operative_order", ["order_id"] = 3, ["quote"] = "The application is allowed with costs." })), part);
+        Assert.Equal(3L, (long)Assert.Single((JsonArray)JsonNode.Parse(v.AnalysisJson!)!["evidence"]!)!["order_id"]!);
+    }
+
+    [Fact]
+    public void Merged_group_results_take_the_highest_tier_any_flag_and_every_finding()
+    {
+        var newest = Answer(Input(NewCase((3, "03-01-2025", "Order")), Docs((3, 103, "--- Page 1 (native) ---" + "\n" + "Order three text."))),
+            a => { a["summary"] = "Newest orders: hearing adjourned."; a["provisions"] = new JsonArray("Section 19, RDB Act"); });
+        var older = Answer(Input(NewCase((1, "01-01-2025", "Order")), Docs((1, 101, "--- Page 1 (native) ---" + "\n" + "Order one text."))),
+            a => { a["risk"] = "R3"; a["risk_trigger"] = "Active Restraint"; a["summary"] = "Earlier orders: a restraint was granted."; a["provisions"] = new JsonArray("Section 19, RDB Act", "Section 22, RDB Act"); a["evidence"] = new JsonArray(new JsonObject { ["claim"] = "risk_trigger", ["order_id"] = 1, ["quote"] = "Order one text." }); });
+        string Ok(string answer, long order) => LitigationCaseAnalysisValidator.Validate(answer, order == 3
+            ? Input(NewCase((3, "03-01-2025", "Order")), Docs((3, 103, "--- Page 1 (native) ---" + "\n" + "Order three text.")))
+            : Input(NewCase((1, "01-01-2025", "Order")), Docs((1, 101, "--- Page 1 (native) ---" + "\n" + "Order one text."))),
+            LitigationRiskTier.R0, "Baseline").AnalysisJson!;
+
+        var merged = JsonNode.Parse(LitigationCaseAnalysisGroups.Merge([Ok(newest, 3), Ok(older, 1)]))!;
+
+        Assert.Equal("R3", merged["risk"]!.ToString());
+        Assert.Equal("Active Restraint", merged["risk_trigger"]!.ToString());
+        Assert.Equal(2, ((JsonArray)merged["provisions"]!).Count);                       // joined, no repeat
+        Assert.StartsWith("Newest orders", merged["summary"]!.ToString());              // newest group first
+        Assert.Contains("Earlier orders", merged["summary"]!.ToString());
+        Assert.Equal(2, (int)merged["split_groups"]!);
+        Assert.Contains(((JsonArray)merged["unknowns"]!).Select(x => x!.ToString()), u => u.Contains("2 groups"));
+        Assert.Equal(2, ((JsonArray)merged["order_analysis"]!).Count);
+    }
 }

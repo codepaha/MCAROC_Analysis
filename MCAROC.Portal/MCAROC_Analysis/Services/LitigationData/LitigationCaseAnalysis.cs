@@ -33,9 +33,10 @@ public static class LitigationCaseAnalysisInputBuilder
 
     public static CaseAnalysisInput Build(
         LitigationCase c, IReadOnlyDictionary<long, LitigationOrderDocument> documentsByOrderId,
-        string targetEntity, IReadOnlyCollection<string> targetNames, DateOnly asOf)
+        string targetEntity, IReadOnlyCollection<string> targetNames, DateOnly asOf, IReadOnlySet<long>? onlyOrderIds = null)
     {
-        var ordered = c.Orders.OrderByDescending(o => LitigationCaseAges.ParseDate(o.OrderDate) ?? DateOnly.MinValue)
+        var ordered = c.Orders.Where(o => onlyOrderIds is null || onlyOrderIds.Contains(o.LitigationCaseOrderId))
+            .OrderByDescending(o => LitigationCaseAges.ParseDate(o.OrderDate) ?? DateOnly.MinValue)
             .ThenByDescending(o => o.LitigationCaseOrderId).ToList();
         var budget = MaxCaseChars;
         var truncated = false;
@@ -131,6 +132,73 @@ public static class LitigationCaseAnalysisProjection
             return compact.ToJsonString(new JsonSerializerOptions { Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping });
         }
         catch (JsonException) { return analysisJson; }
+    }
+}
+
+/// <summary>Plans and merges the analysis of a case too long for one call: its orders, newest first, are cut into groups of at most a given
+/// amount of text; each group is analysed on its own and the results are merged by rules, not by another model call.</summary>
+public static class LitigationCaseAnalysisGroups
+{
+    /// <summary>The order ids of each group, newest orders first. One group when the text sent is within <paramref name="splitAbove"/>.
+    /// Orders with no text cost nothing and ride with the first group.</summary>
+    public static List<HashSet<long>> Plan(CaseAnalysisInput whole, int splitAbove, int groupChars)
+    {
+        var all = whole.Orders.Select(o => o.OrderId).ToHashSet();
+        if (whole.Orders.Sum(o => o.Text?.Length ?? 0) <= splitAbove) return [all];
+        var groups = new List<HashSet<long>> { new() };
+        var size = 0;
+        foreach (var o in whole.Orders) // already newest first
+        {
+            var len = o.Text?.Length ?? 0;
+            if (len > 0 && size > 0 && size + len > groupChars) { groups.Add([]); size = 0; }
+            groups[^1].Add(o.OrderId);
+            size += len;
+        }
+        return groups;
+    }
+
+    private static readonly string[] Risks = ["R0", "R1", "R2", "R3"];
+
+    /// <summary>Merges validated group analyses (newest group first). The tier is the highest, with its trigger and reason; flags are true if
+    /// any group says so; lists and per-order findings and quotes are joined; the summary reads newest group first; the other single
+    /// fields come from the newest group that has them.</summary>
+    public static string Merge(IReadOnlyList<string> groupJsons)
+    {
+        var groups = groupJsons.Select(j => (JsonObject)JsonNode.Parse(j)!).ToList();
+        if (groups.Count == 1) return groupJsons[0];
+        string? First(string key) => groups.Select(g => g[key]?.ToString()).FirstOrDefault(v => !string.IsNullOrWhiteSpace(v));
+        var top = groups.OrderByDescending(g => Array.IndexOf(Risks, g["risk"]?.ToString())).First();
+        JsonArray Join(string key)
+        {
+            var result = new JsonArray();
+            var seen = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var g in groups)
+                if (g[key] is JsonArray a) foreach (var x in a) if (x is not null && seen.Add(x.ToJsonString())) result.Add(x.DeepClone());
+            return result;
+        }
+        bool Any(string key) => groups.Any(g => g[key]?.GetValue<bool>() == true);
+        var restraintGroup = groups.FirstOrDefault(g => g["active_restraint"]?.GetValue<bool>() == true);
+        var merged = (JsonObject)groups[0].DeepClone();
+        merged["analysis_basis"] = groups.Any(g => g["analysis_basis"]?.ToString() == "Order-Confirmed") ? "Order-Confirmed" : "Metadata-Led";
+        foreach (var key in new[] { "target_party_role", "legal_exposure_direction", "case_nature", "liability_type", "subject", "amount", "factual_background", "relief_sought", "core_issue" })
+            merged[key] = First(key);
+        merged["risk"] = top["risk"]?.DeepClone();
+        merged["risk_trigger"] = top["risk_trigger"]?.DeepClone();
+        merged["risk_reason"] = top["risk_reason"]?.DeepClone();
+        merged["risk_category"] = top["risk_category"]?.DeepClone();
+        merged["risk_raised"] = Any("risk_raised");
+        merged["relevance"] = top["relevance"]?.DeepClone();
+        merged["consequence_note"] = top["consequence_note"]?.DeepClone() ?? (First("consequence_note") is { } c ? JsonValue.Create(c) : null);
+        merged["summary"] = string.Join(" ", groups.Select(g => g["summary"]?.ToString()).Where(x => !string.IsNullOrWhiteSpace(x)));
+        foreach (var key in new[] { "judicial_reasoning", "provisions", "precedents", "connected_matters", "order_analysis", "evidence", "unknowns", "evidenceReferences", "validation_notes" })
+            merged[key] = Join(key);
+        merged["active_restraint"] = Any("active_restraint");
+        merged["restraint_type"] = restraintGroup?["restraint_type"]?.DeepClone() ?? JsonValue.Create("NONE");
+        merged["lis_pendens"] = Any("lis_pendens");
+        merged["outcome"] = groups.Select(g => g["outcome"]).FirstOrDefault(o => o is JsonObject)?.DeepClone();
+        merged["split_groups"] = groups.Count;
+        ((JsonArray)merged["unknowns"]!).Add($"A long case: its orders were read in {groups.Count} groups, newest first.");
+        return merged.ToJsonString(new JsonSerializerOptions { Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping });
     }
 }
 

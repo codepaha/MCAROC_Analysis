@@ -9,5 +9,10 @@ public sealed class LitigationAiAnalysisOptions
     /// per-order outcome classification and the portfolio synthesis — keep the client's default model.</summary>
     public string CaseModelId { get; set; } = "gemini-2.5-flash";
     /// <summary>A case call reads every order of a case and returns a large JSON object; it takes minutes, not seconds.</summary>
-    public int CaseTimeoutSeconds { get; set; } = 240;
+    public int CaseTimeoutSeconds { get; set; } = 600;
+    /// <summary>A case whose order text sent to the model is longer than this is analysed in groups of orders (newest first), each in its own
+    /// call, and the group results are merged: one call over a very long case times out.</summary>
+    public int SplitAboveChars { get; set; } = 100_000;
+    /// <summary>The most order text sent in one group call.</summary>
+    public int GroupChars { get; set; } = 80_000;
 }
