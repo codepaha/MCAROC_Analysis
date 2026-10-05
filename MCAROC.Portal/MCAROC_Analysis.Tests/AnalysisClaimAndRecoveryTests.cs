@@ -1,6 +1,8 @@
 using MCAROC_Analysis.Data;
 using MCAROC_Analysis.Data.Entities;
 using Microsoft.EntityFrameworkCore;
+using MCAROC_Analysis.Services.Analysis;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace MCAROC_Analysis.Tests;
 
@@ -103,6 +105,67 @@ public class AnalysisClaimAndRecoveryTests : IAsyncLifetime
             .Where(r => r.RequestId == request.RequestId && r.RequestStatus == RequestStatus.DataExtracted)
             .ExecuteUpdateAsync(s => s.SetProperty(r => r.RequestStatus, RequestStatus.AiAnalysisInProgress));
         Assert.Equal(1, claimed);
+    }
+
+    [Fact]
+    public async Task AutomaticRetry_RestartHonoursTheRemainingWait_AndFailedAttemptsAreCountedPerIngestionRun()
+    {
+        await using var db = CreateContext();
+        var due = await SeedRequestAsync(db, RequestStatus.DataExtracted);
+        var notYet = await SeedRequestAsync(db, RequestStatus.DataExtracted);
+        var running = await SeedRequestAsync(db, RequestStatus.DataExtracted);
+        db.AnalysisRuns.AddRange(
+            new AnalysisRun { RequestId = notYet.RequestId, IngestionRunId = 1, RunNumber = 1, Status = AnalysisRunStatus.Failed, StartedDate = DateTime.UtcNow },
+            new AnalysisRun { RequestId = notYet.RequestId, IngestionRunId = 1, RunNumber = 2, Status = AnalysisRunStatus.Failed, StartedDate = DateTime.UtcNow },
+            new AnalysisRun { RequestId = notYet.RequestId, IngestionRunId = 2, RunNumber = 3, Status = AnalysisRunStatus.Failed, StartedDate = DateTime.UtcNow },
+            new AnalysisRun { RequestId = running.RequestId, IngestionRunId = 1, RunNumber = 1, Status = AnalysisRunStatus.Running, StartedDate = DateTime.UtcNow });
+        await db.SaveChangesAsync();
+
+        // Times are set last, so the seeding above does not eat into the wait.
+        await db.Requests.Where(r => r.RequestId == due.RequestId).ExecuteUpdateAsync(s => s.SetProperty(r => r.AnalysisRetryAfter, DateTime.UtcNow.AddSeconds(-5)));
+        await db.Requests.Where(r => r.RequestId == notYet.RequestId).ExecuteUpdateAsync(s => s.SetProperty(r => r.AnalysisRetryAfter, DateTime.UtcNow.AddSeconds(5)));
+        // The app restarts: the real recovery runs against a fresh queue.
+        var queue = new AnalysisQueue();
+        var orchestrator = new MCAROC_Analysis.Services.Analysis.AnalysisOrchestrator(
+            db, null!, null!, queue, null!, null!, null!, NullLogger<MCAROC_Analysis.Services.Analysis.AnalysisOrchestrator>.Instance);
+        await orchestrator.RecoverStaleWorkAsync(CancellationToken.None);
+
+        var seen = new List<long>();
+        async Task DrainAsync(TimeSpan span)
+        {
+            using var cts = new CancellationTokenSource(span);
+            try { await foreach (var id in queue.ReadAllAsync(cts.Token)) seen.Add(id); } catch (OperationCanceledException) { }
+        }
+        await DrainAsync(TimeSpan.FromMilliseconds(1500));
+        Assert.Contains(due.RequestId, seen);                 // its wait was already over: queued at once
+        Assert.DoesNotContain(notYet.RequestId, seen);        // restart during the wait: not retried early
+        Assert.DoesNotContain(running.RequestId, seen);       // a run already in flight is left alone
+
+        await DrainAsync(TimeSpan.FromSeconds(8));
+        Assert.Contains(notYet.RequestId, seen);              // queued once the remaining wait has passed
+
+        // Only the attempts on the current ingestion run count towards the retry budget.
+        var failedAttempts = await db.AnalysisRuns.CountAsync(
+            a => a.RequestId == notYet.RequestId && a.IngestionRunId == 1 && a.Status == AnalysisRunStatus.Failed);
+        Assert.Equal(2, failedAttempts);
+        Assert.True(failedAttempts <= MCAROC_Analysis.Services.Analysis.AnalysisOrchestrator.MaxAutomaticRetries);
+    }
+
+    [Fact]
+    public async Task AutomaticRetry_AnEarlyDuplicateQueueItemCannotClaimTheRequestBeforeItIsDue()
+    {
+        await using var db = CreateContext();
+        var waiting = await SeedRequestAsync(db, RequestStatus.DataExtracted);
+        await db.Requests.Where(r => r.RequestId == waiting.RequestId)
+            .ExecuteUpdateAsync(s => s.SetProperty(r => r.AnalysisRetryAfter, DateTime.UtcNow.AddMinutes(5)));
+
+        var orchestrator = new AnalysisOrchestrator(
+            db, null!, null!, new AnalysisQueue(), null!, null!, null!, NullLogger<AnalysisOrchestrator>.Instance);
+        await orchestrator.RunAnalysisAsync(waiting.RequestId, CancellationToken.None);   // the early duplicate
+
+        await using var verify = CreateContext();
+        Assert.Equal(RequestStatus.DataExtracted, (await verify.Requests.FirstAsync(r => r.RequestId == waiting.RequestId)).RequestStatus);
+        Assert.False(await verify.AnalysisRuns.AnyAsync(a => a.RequestId == waiting.RequestId));
     }
 
     [Fact]

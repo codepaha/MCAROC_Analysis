@@ -307,6 +307,7 @@ public sealed class AutoFetchJobService(
                 request.IsManualReviewRequired = false;
                 request.ManualReviewReason = null;
                 request.RequestStatus = RequestStatus.DocumentsUploaded;
+                request.AnalysisRetryAfter = null; // a new ingestion starts clean: no old retry wait
                 request.AnalysisStartedDate = DateTime.UtcNow;
                 await db.SaveChangesAsync(ct);
 

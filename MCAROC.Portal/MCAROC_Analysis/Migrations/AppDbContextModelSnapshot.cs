@@ -4554,6 +4554,9 @@ namespace MCAROC_Analysis.Migrations
                     b.Property<DateTime?>("AnalysisCompletedDate")
                         .HasColumnType("datetime2");
 
+                    b.Property<DateTime?>("AnalysisRetryAfter")
+                        .HasColumnType("datetime2");
+
                     b.Property<DateTime?>("AnalysisStartedDate")
                         .HasColumnType("datetime2");
 
