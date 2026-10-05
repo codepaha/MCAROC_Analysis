@@ -90,10 +90,13 @@ public class LitigationDocumentRetriever(AppDbContext db, ChatRetrievalOptions o
 
     internal static List<LitigationOrderChunkMatch> DropDuplicateText(IEnumerable<LitigationOrderChunkMatch> ranked, int take)
     {
-        // Scope by (CaseId, body): passages from different cases with identical wording are both preserved;
-        // only true intra-case duplicates (same LitigationCaseId, same normalised body text) are suppressed.
-        var seen = new HashSet<(long CaseId, string NormalizedBody)>();
-        return ranked.Where(m => seen.Add((m.Chunk.LitigationCaseId, NormalizedBody(m.Chunk.ChunkText)))).Take(take).ToList();
+        // Body-only dedup (not case-scoped): the same physical court order is routinely filed under both a parent
+        // case and its IA (#343: 135 of 297 real Coastal orders had a twin), so a body-equal passage that has
+        // already been shown is suppressed regardless of case. NormalizedBody strips the provenance header first,
+        // so the comparison is on substantive order text only. The recency and decision routes (GetLatestOrderChunksAsync
+        // and GetDecisionPassagesAsync) use case-scoped dedup because there each case's evidence must be preserved.
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        return ranked.Where(m => seen.Add(NormalizedBody(m.Chunk.ChunkText))).Take(take).ToList();
     }
 
     /// <summary>#343's recency route: the newest <paramref name="orderCount"/> orders of the given cases by their
