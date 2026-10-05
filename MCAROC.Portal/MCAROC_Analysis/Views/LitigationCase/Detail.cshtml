@@ -285,7 +285,7 @@
         <div class="card shadow-sm mb-3" id="case-analysis">
             <div class="card-header bg-light small fw-bold text-uppercase"><i class="bi bi-journal-text me-1 text-primary"></i>@(analysis.IsDetailed ? "Case analysis" : "Case summary")</div>
             <div class="card-body small">
-                @await Html.PartialAsync("~/Views/LitigationCase/_CaseAnalysis.cshtml", analysis, new ViewDataDictionary(ViewData) { { "RequestId", request.RequestId }, { "Full", true } })
+                @await Html.PartialAsync("~/Views/LitigationCase/_CaseAnalysis.cshtml", analysis, new ViewDataDictionary(ViewData) { ["RequestId"] = request.RequestId, ["Full"] = true })
                 @if (card.IsAnalysisStaleComparedToCase) { <div class="text-muted mt-1">The case record has changed since this analysis was written.</div> }
             </div>
         </div>
