@@ -365,6 +365,9 @@ public class AiChargesNarrativeServiceValidationTests
         var rounded = AiChargesNarrativeService.Validate(NarrativeJson("The charge carries interest at 10%."), selected, 1);
         Assert.False(rounded.Success);
         Assert.Contains("number not present", rounded.FailureReason);
+
+        // A nearby invented value is not the source figure either: 9.54 rounds to 9.5 but is not written anywhere.
+        Assert.False(AiChargesNarrativeService.Validate(NarrativeJson("The charge carries interest at 9.54%."), selected, 1).Success);
     }
 
     [Fact]

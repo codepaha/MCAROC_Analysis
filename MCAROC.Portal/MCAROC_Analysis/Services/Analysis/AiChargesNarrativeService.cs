@@ -233,9 +233,12 @@ public partial class AiChargesNarrativeService
         void AddAmount(decimal? v)
         {
             if (v is not { } d) return;
-            allowed.Add(Math.Round(d, 0).ToString(CultureInfo.InvariantCulture));
-            allowed.Add(Math.Round(d, 1).ToString(CultureInfo.InvariantCulture));
-            allowed.Add(Math.Round(d, 2).ToString(CultureInfo.InvariantCulture));
+            // The amount as the prompt shows it (N2) and its shorter written forms: 160.00 / 160.0 / 160.
+            foreach (var form in new[] { Math.Round(d, 0), Math.Round(d, 1), Math.Round(d, 2) })
+            {
+                allowed.Add(form.ToString(CultureInfo.InvariantCulture));
+                allowed.Add(form.ToString("0.############", CultureInfo.InvariantCulture));
+            }
         }
 
         // Numbers that appear in the wording of the charge data the model was shown (the instrument, property, extent, terms and holder text):
@@ -290,10 +293,8 @@ public partial class AiChargesNarrativeService
             if (digitsOnly.Length == 0 || !decimal.TryParse(digitsOnly, NumberStyles.Any, CultureInfo.InvariantCulture, out var value))
                 continue;
 
-            var rounded0 = Math.Round(value, 0).ToString(CultureInfo.InvariantCulture);
-            var rounded1 = Math.Round(value, 1).ToString(CultureInfo.InvariantCulture);
-            var rounded2 = Math.Round(value, 2).ToString(CultureInfo.InvariantCulture);
-            if (!allowed.Contains(rounded0) && !allowed.Contains(rounded1) && !allowed.Contains(rounded2) && !allowed.Contains(digitsOnly))
+            // The figure as written (9.50 also as 9.5), never a rounded form: 9.54 must not pass because 9.5 is in the data.
+            if (!allowed.Contains(digitsOnly) && !allowed.Contains(value.ToString("0.############", CultureInfo.InvariantCulture)))
                 return true;
         }
         return false;
