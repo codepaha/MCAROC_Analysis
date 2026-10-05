@@ -367,7 +367,7 @@ public sealed class LitigationOrderChunkingOrchestrator(
                 && d.TextExtractionStatus == FilingDocumentProcessingStatus.TextExtracted
                 && (!db.LitigationOrderChunks.Any(c => c.LitigationOrderDocumentId == d.LitigationOrderDocumentId)
                     || db.LitigationOrderChunks.Any(c => c.LitigationOrderDocumentId == d.LitigationOrderDocumentId
-                        && (c.ChunkingVersion != ChunkingVersion || c.EmbeddingModel != EmbeddingService.ModelId))));
+                        && (c.ChunkingVersion != ChunkingVersion || c.EmbeddingModel != EmbeddingService.ModelId || c.EmbeddingDimensions != EmbeddingService.Dimensions))));
 
         if (requestId.HasValue)
             query = query.Where(d => d.Order!.Case!.RequestId == requestId.Value);

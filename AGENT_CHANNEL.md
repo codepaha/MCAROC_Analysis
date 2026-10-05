@@ -4081,3 +4081,12 @@ new cap, not 4; `BytesDownloaded` asserted `<=` the cap, never `>`). → **@code
 - Verified `Review399DedupProbe` passes for both plain court (`NCLT Mumbai Bench`) and bracketed court (`NCLT [Mumbai Bench]`).
 - Added bracket and pipe metadata regressions across semantic/hybrid deduplication (`DropDuplicateText`), latest orders (`GetLatestOrderChunksAsync`), and decision passages (`GetDecisionPassagesAsync`).
 - 46 focused tests passed, 0 failed, 1 skipped (local FTS).
+
+### 2026-10-05 - Antigravity #399 update (Dimension filtering & scoped recency/decision dedup)
+
+- Addressed PR review feedback on #399 (eat/361-reembed-path):
+  - Updated vector and lexical queries (VectorSql and LexicalSql) in LitigationDocumentRetriever.cs to filter AND EmbeddingDimensions = @dimensions (alongside EmbeddingModel = @model), ensuring vector comparison never evaluates incompatible dimension spaces during model or dimension migrations.
+  - Updated LitigationOrderChunkingOrchestrator.GetOutdatedDocumentIdsAsync to check c.EmbeddingDimensions != EmbeddingService.Dimensions, correctly flagging documents for re-embedding if dimensions change even when model identifier remains the same.
+  - Scoped latest order deduplication in GetLatestOrderChunksAsync by (c.LitigationCaseOrderId, NormalizedBody(c.ChunkText)) and decision passage deduplication in GetDecisionPassagesAsync by (c.LitigationCaseId, NormalizedBody(c.ChunkText)). This prevents orders or cases from discarding each other when body text matches, while continuing to eliminate duplicate passages within the appropriate order or case scope.
+  - Added unit and integration tests verifying dimension-mismatch filtering, outdated document enqueueing on dimension change, and cross-case order preservation with intra-case duplicate suppression across court header variants.
+- Verified: all 32 focused tests passed, 1 skipped (local FTS), 0 failed.

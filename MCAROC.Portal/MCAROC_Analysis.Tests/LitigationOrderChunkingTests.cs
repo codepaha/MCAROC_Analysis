@@ -1044,7 +1044,7 @@ public class LitigationOrderChunkingTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task SearchRequestOrdersAsync_filters_by_active_embedding_model()
+    public async Task SearchRequestOrdersAsync_filters_by_active_embedding_model_and_dimensions()
     {
         await using var db = CreateContext();
         var (request, litigationCase, order) = await SeedOrderAsync(db, "MF1");
@@ -1072,8 +1072,8 @@ public class LitigationOrderChunkingTests : IAsyncLifetime
             CreatedDate = DateTime.UtcNow.AddDays(-30)
         };
 
-        // Active chunk with current embedding model
-        var activeChunk = new LitigationOrderChunk
+        // Obsolete chunk with active model but incompatible dimensions (e.g. 512 vs active 768)
+        var obsoleteDimensionsChunk = new LitigationOrderChunk
         {
             RequestId = request.RequestId,
             LitigationOrderDocumentId = doc.LitigationOrderDocumentId,
@@ -1086,6 +1086,28 @@ public class LitigationOrderChunkingTests : IAsyncLifetime
             OrderDate = order.OrderDate,
             ChunkIndex = 1,
             PageNumber = 1,
+            ChunkText = "[Court: District Court | Case: OS/1 | Page 1]\n\nObsolete dimensions chunk",
+            Embedding = new SqlVector<float>(Axis(0)),
+            EmbeddingModel = EmbeddingService.ModelId,
+            EmbeddingDimensions = 512,
+            ChunkingVersion = "2.0",
+            CreatedDate = DateTime.UtcNow.AddDays(-15)
+        };
+
+        // Active chunk with current embedding model and active dimensions
+        var activeChunk = new LitigationOrderChunk
+        {
+            RequestId = request.RequestId,
+            LitigationOrderDocumentId = doc.LitigationOrderDocumentId,
+            LitigationCaseOrderId = order.LitigationCaseOrderId,
+            LitigationCaseId = litigationCase.LitigationCaseId,
+            CaseNumber = litigationCase.CaseNumber,
+            Cnr = litigationCase.Cnr,
+            Court = litigationCase.Court,
+            OrderType = order.OrderType,
+            OrderDate = order.OrderDate,
+            ChunkIndex = 2,
+            PageNumber = 1,
             ChunkText = "[Court: District Court | Case: OS/1 | Page 1]\n\nActive chunk",
             Embedding = new SqlVector<float>(Axis(0)),
             EmbeddingModel = EmbeddingService.ModelId,
@@ -1094,7 +1116,7 @@ public class LitigationOrderChunkingTests : IAsyncLifetime
             CreatedDate = DateTime.UtcNow
         };
 
-        db.LitigationOrderChunks.AddRange(obsoleteChunk, activeChunk);
+        db.LitigationOrderChunks.AddRange(obsoleteChunk, obsoleteDimensionsChunk, activeChunk);
         doc.ChunkingStatus = ChunkingStatus.Chunked;
         await db.SaveChangesAsync();
 
@@ -1102,10 +1124,42 @@ public class LitigationOrderChunkingTests : IAsyncLifetime
         var retriever = new LitigationDocumentRetriever(verify, ChatRetrievalOptions.Default);
         var matches = await retriever.SearchRequestOrdersAsync(request.RequestId, Axis(0), CancellationToken.None);
 
-        // Vector search only returns chunks from the active EmbeddingModel
+        // Vector search only returns chunks from the active EmbeddingModel AND active EmbeddingDimensions
         var match = Assert.Single(matches);
         Assert.Equal(EmbeddingService.ModelId, match.Chunk.EmbeddingModel);
+        Assert.Equal(EmbeddingService.Dimensions, match.Chunk.EmbeddingDimensions);
         Assert.Equal(activeChunk.ChunkText, match.Chunk.ChunkText);
+    }
+
+    [Fact]
+    public async Task EnqueueOutdatedDocumentsAsync_resets_and_enqueues_documents_with_outdated_dimensions_same_model()
+    {
+        await using var db = CreateContext();
+        var (request, caseA, orderA) = await SeedOrderAsync(db, "ENDIM1");
+        var doc = await SeedDownloadedDocumentAsync(db, orderA.LitigationCaseOrderId, "--- Page 1 (native) ---\ndim text");
+        var chunk = new LitigationOrderChunk
+        {
+            RequestId = request.RequestId, LitigationOrderDocumentId = doc.LitigationOrderDocumentId,
+            LitigationCaseOrderId = orderA.LitigationCaseOrderId, LitigationCaseId = caseA.LitigationCaseId,
+            ChunkIndex = 0, PageNumber = 1, ChunkText = "dim text", Embedding = new SqlVector<float>(Axis(0)),
+            EmbeddingModel = EmbeddingService.ModelId, EmbeddingDimensions = 512,
+            ChunkingVersion = LitigationOrderChunkingOrchestrator.ChunkingVersion, CreatedDate = DateTime.UtcNow
+        };
+        db.LitigationOrderChunks.Add(chunk);
+        doc.ChunkingStatus = ChunkingStatus.Chunked;
+        await db.SaveChangesAsync();
+
+        var queue = new LitigationOrderChunkingQueue();
+        var orchestrator = new LitigationOrderChunkingOrchestrator(db, new StubEmbeddingService(_ => []), queue, NullLogger<LitigationOrderChunkingOrchestrator>.Instance);
+
+        var enqueuedCount = await orchestrator.EnqueueOutdatedDocumentsAsync(10, CancellationToken.None, request.RequestId);
+        Assert.Equal(1, enqueuedCount);
+
+        await db.Entry(doc).ReloadAsync();
+        Assert.Equal(ChunkingStatus.Pending, doc.ChunkingStatus);
+
+        var drained = await DrainAvailableAsync(queue, TimeSpan.FromMilliseconds(200));
+        Assert.Contains(doc.LitigationOrderDocumentId, drained);
     }
 
     [Fact]
@@ -1230,7 +1284,7 @@ public class LitigationOrderChunkingTests : IAsyncLifetime
     [InlineData("NCLT [Mumbai Bench]")]
     [InlineData("NCLT | Mumbai Bench")]
     [InlineData("NCLT [Mumbai | Bench]")]
-    public async Task GetLatestOrderChunksAsync_and_GetDecisionPassagesAsync_deduplicate_identical_bodies_with_distinct_case_headers(string court)
+    public async Task GetLatestOrderChunksAsync_and_GetDecisionPassagesAsync_preserve_both_cases_when_sharing_identical_text_and_deduplicate_within_scope(string court)
     {
         await using var db = CreateContext();
         var (request, parentCase, parentOrder) = await SeedOrderAsync(db, "DEDUP1");
@@ -1247,6 +1301,7 @@ public class LitigationOrderChunkingTests : IAsyncLifetime
         var parentDoc = await SeedDownloadedDocumentAsync(db, parentOrder.LitigationCaseOrderId, "parent text");
         var iaDoc = await SeedDownloadedDocumentAsync(db, iaOrder.LitigationCaseOrderId, "ia text");
 
+        // Two chunks in parentOrder sharing the same body text (testing intra-order / intra-case deduplication)
         db.LitigationOrderChunks.Add(new LitigationOrderChunk
         {
             RequestId = request.RequestId, LitigationOrderDocumentId = parentDoc.LitigationOrderDocumentId,
@@ -1256,6 +1311,17 @@ public class LitigationOrderChunkingTests : IAsyncLifetime
             Embedding = new SqlVector<float>(Axis(0)), EmbeddingModel = EmbeddingService.ModelId,
             EmbeddingDimensions = EmbeddingService.Dimensions, ChunkingVersion = "2.0", CreatedDate = DateTime.UtcNow
         });
+        db.LitigationOrderChunks.Add(new LitigationOrderChunk
+        {
+            RequestId = request.RequestId, LitigationOrderDocumentId = parentDoc.LitigationOrderDocumentId,
+            LitigationCaseOrderId = parentOrder.LitigationCaseOrderId, LitigationCaseId = parentCase.LitigationCaseId,
+            CaseNumber = parentCase.CaseNumber, Court = parentCase.Court, OrderType = parentOrder.OrderType, OrderDate = parentOrder.OrderDate,
+            ChunkIndex = 1, PageNumber = 2, ChunkText = $"{parentHeader}\n\n{sharedBody}",
+            Embedding = new SqlVector<float>(Axis(0)), EmbeddingModel = EmbeddingService.ModelId,
+            EmbeddingDimensions = EmbeddingService.Dimensions, ChunkingVersion = "2.0", CreatedDate = DateTime.UtcNow
+        });
+
+        // One chunk in iaOrder sharing the same body text under a different case
         db.LitigationOrderChunks.Add(new LitigationOrderChunk
         {
             RequestId = request.RequestId, LitigationOrderDocumentId = iaDoc.LitigationOrderDocumentId,
@@ -1270,11 +1336,17 @@ public class LitigationOrderChunkingTests : IAsyncLifetime
         var retriever = new LitigationDocumentRetriever(db, ChatRetrievalOptions.Default);
         var caseIds = new[] { parentCase.LitigationCaseId, iaCase.LitigationCaseId };
 
+        // Latest orders: parentOrder deduplicates duplicate chunks internally, and iaOrder is preserved
         var latest = await retriever.GetLatestOrderChunksAsync(request.RequestId, caseIds, 5, 2, CancellationToken.None);
-        Assert.Single(latest);
+        Assert.Equal(2, latest.Count);
+        Assert.Contains(latest, c => c.LitigationCaseOrderId == parentOrder.LitigationCaseOrderId);
+        Assert.Contains(latest, c => c.LitigationCaseOrderId == iaOrder.LitigationCaseOrderId);
 
+        // Decision passages: parentCase deduplicates duplicate passages internally, and iaCase is preserved
         var decision = await retriever.GetDecisionPassagesAsync(request.RequestId, caseIds, 5, CancellationToken.None);
-        Assert.Single(decision);
+        Assert.Equal(2, decision.Count);
+        Assert.Contains(decision, c => c.LitigationCaseId == parentCase.LitigationCaseId);
+        Assert.Contains(decision, c => c.LitigationCaseId == iaCase.LitigationCaseId);
     }
 
     [Fact]
