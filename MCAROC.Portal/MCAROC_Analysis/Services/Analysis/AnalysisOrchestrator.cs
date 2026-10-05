@@ -316,7 +316,9 @@ public class AnalysisOrchestrator(
                     logger.LogWarning("Analysis for request {RequestId} failed (attempt {Attempt}); retrying automatically in {Delay}.",
                         requestId, failedAttempts, delay);
                     var reset = await db.Requests.Where(r => r.RequestId == requestId && r.RequestStatus != RequestStatus.Cancelled)
-                        .ExecuteUpdateAsync(s => s.SetProperty(r => r.RequestStatus, RequestStatus.DataExtracted), CancellationToken.None);
+                        .ExecuteUpdateAsync(s => s
+                            .SetProperty(r => r.RequestStatus, RequestStatus.DataExtracted)
+                            .SetProperty(r => r.AnalysisRetryAfter, DateTime.UtcNow + delay), CancellationToken.None);
                     if (reset > 0) ScheduleAnalysis(requestId, delay);
                 }
                 else
@@ -348,11 +350,14 @@ public class AnalysisOrchestrator(
 
         // A request waiting out an automatic retry delay (DataExtracted, nothing running) when the app stopped would otherwise never be
         // queued again. Queuing is safe for any other DataExtracted request too: the claim in RunAnalysisAsync is atomic.
+        // The persisted AnalysisRetryAfter keeps the promised wait: only the time still remaining is waited again.
         var waiting = await db.Requests
             .Where(r => r.RequestStatus == RequestStatus.DataExtracted && r.LatestCompletedIngestionRunId != null
                 && !db.AnalysisRuns.Any(a => a.RequestId == r.RequestId && a.Status == AnalysisRunStatus.Running))
-            .Select(r => r.RequestId).ToListAsync(ct);
-        foreach (var requestId in waiting) queue.Enqueue(requestId);
+            .Select(r => new { r.RequestId, r.AnalysisRetryAfter }).ToListAsync(ct);
+        var now = DateTime.UtcNow;
+        foreach (var w in waiting)
+            ScheduleAnalysis(w.RequestId, w.AnalysisRetryAfter is { } at ? at - now : TimeSpan.Zero);
 
         return stuckRequestIds.Count + waiting.Count;
     }

@@ -41,6 +41,10 @@ public class McaRequest
     /// <summary>The most recent successfully-completed ingestion run. Details/current-state queries filter on this.</summary>
     public long? LatestCompletedIngestionRunId { get; set; }
 
+    /// <summary>Set when a failed analysis is waiting out its automatic-retry delay: the earliest time (UTC) it may be queued again.
+    /// Survives a restart, so recovery honours the remaining wait instead of retrying at once.</summary>
+    public DateTime? AnalysisRetryAfter { get; set; }
+
     /// <summary>Derived from the latest completed run's WarningsCount; kept separate from RequestStatus.</summary>
     public bool HasIngestionWarnings { get; set; }
 
