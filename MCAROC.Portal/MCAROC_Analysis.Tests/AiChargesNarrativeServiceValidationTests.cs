@@ -354,6 +354,20 @@ public class AiChargesNarrativeServiceValidationTests
     }
 
     [Fact]
+    public void Validate_DoesNotLetARoundedFormOfAWordingFigureThrough()
+    {
+        // Source says 9.5%: the narrative may say 9.5%, never 10% (a rounded form of a figure that is not in the data).
+        var ev = new RocChargeEvent { ChargeEventId = 1, RocChargeId = 1, EventType = ChargeEventType.Creation, EventDate = new DateOnly(2026, 2, 25), InstrumentDescription = "Hypothecation of stock at 9.5% interest", PropertyParticulars = "Stock at Plot No. 14, Sector 9" };
+        var selected = AiChargesNarrativeService.SelectChargesForNarrative([Charge(1, "C1", 160m, events: [ev])]);
+
+        var faithful = AiChargesNarrativeService.Validate(NarrativeJson("The charge carries interest at 9.5%."), selected, 1);
+        Assert.True(faithful.Success, faithful.FailureReason);
+        var rounded = AiChargesNarrativeService.Validate(NarrativeJson("The charge carries interest at 10%."), selected, 1);
+        Assert.False(rounded.Success);
+        Assert.Contains("number not present", rounded.FailureReason);
+    }
+
+    [Fact]
     public void Validate_StillRejectsADerivedTotalOrAnInventedFigure()
     {
         var a = Charge(1, "C1", 20m, events: [new RocChargeEvent { ChargeEventId = 1, RocChargeId = 1, EventType = ChargeEventType.Creation, InstrumentDescription = "Hypothecation of stock" }]);

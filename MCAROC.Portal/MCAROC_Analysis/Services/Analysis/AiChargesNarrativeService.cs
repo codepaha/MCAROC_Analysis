@@ -253,9 +253,8 @@ public partial class AiChargesNarrativeService
                 allowed.Add(raw); allowed.Add(digits);
                 if (decimal.TryParse(digits, NumberStyles.Any, CultureInfo.InvariantCulture, out var v))
                 {
-                    allowed.Add(Math.Round(v, 0).ToString(CultureInfo.InvariantCulture));
-                    allowed.Add(Math.Round(v, 1).ToString(CultureInfo.InvariantCulture));
-                    allowed.Add(Math.Round(v, 2).ToString(CultureInfo.InvariantCulture));
+                    // Only the figure as written (9.50 also as 9.5): never a rounded value, or a source "9.5%" would let "10%" through.
+                    allowed.Add(v.ToString("0.############", CultureInfo.InvariantCulture));
                 }
             }
         }
