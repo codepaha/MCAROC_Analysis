@@ -81,7 +81,7 @@ public class LitigationRecencyRoutingTests : IAsyncLifetime
                 RequestId = requestId, LitigationOrderDocumentId = documents[i].LitigationOrderDocumentId, LitigationCaseOrderId = c.Orders[i].LitigationCaseOrderId,
                 LitigationCaseId = c.LitigationCaseId, CaseNumber = number, Court = "NCLT Cuttack", OrderType = "Order", OrderDate = orders[i].Date,
                 ChunkIndex = 0, PageNumber = 1, ChunkText = orders[i].Text, Embedding = new SqlVector<float>(Axis0()),
-                EmbeddingModel = "test", EmbeddingDimensions = 768, ChunkingVersion = "1.0", CreatedDate = DateTime.UtcNow
+                EmbeddingModel = EmbeddingService.ModelId, EmbeddingDimensions = 768, ChunkingVersion = "1.0", CreatedDate = DateTime.UtcNow
             });
         await db.SaveChangesAsync();
         return c;

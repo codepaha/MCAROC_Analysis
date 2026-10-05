@@ -17,4 +17,5 @@ public sealed class LitigationOrderChunkingQueue
     private readonly Channel<long> _channel = Channel.CreateUnbounded<long>();
     public void Enqueue(long orderDocumentId) => _channel.Writer.TryWrite(orderDocumentId);
     public IAsyncEnumerable<long> ReadAllAsync(CancellationToken ct) => _channel.Reader.ReadAllAsync(ct);
+    public int Count => _channel.Reader.Count;
 }

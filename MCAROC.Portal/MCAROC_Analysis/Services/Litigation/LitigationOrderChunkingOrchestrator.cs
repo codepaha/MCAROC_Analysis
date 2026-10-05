@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using MCAROC_Analysis.Data;
 using MCAROC_Analysis.Data.Entities;
 using MCAROC_Analysis.Services.Chat;
@@ -81,7 +82,7 @@ public sealed class LitigationOrderChunkingOrchestrator(
     AppDbContext db, EmbeddingService embeddingService, LitigationOrderChunkingQueue queue,
     ILogger<LitigationOrderChunkingOrchestrator> logger)
 {
-    public const string ChunkingVersion = "1.0";
+    public const string ChunkingVersion = "2.0";
     private const int MaxChunkRetryCount = 3;
 
     // How long a lease survives with no renewal before being treated as abandoned — not "the whole operation's
@@ -95,6 +96,35 @@ public sealed class LitigationOrderChunkingOrchestrator(
     private const int EmbedRenewalBatchSize = 32;
 
     private static readonly string LeaseOwnerId = $"{Environment.MachineName}:{Environment.ProcessId}";
+
+    /// <summary>Builds a deterministic provenance header prepended to each chunk before embedding and persistence
+    /// (#361). Injects court, case number, CNR, order type/date, and page number directly into the chunk text so
+    /// both vector similarity and full-text search match on structured case terms.</summary>
+    public static string BuildContextHeader(string? court, string? caseNumber, string? cnr, string? orderType, string? orderDate, int pageNumber)
+    {
+        var parts = new List<string>(5);
+        if (!string.IsNullOrWhiteSpace(court))
+            parts.Add($"Court: {CleanHeaderField(court)}");
+        if (!string.IsNullOrWhiteSpace(caseNumber))
+            parts.Add($"Case: {CleanHeaderField(caseNumber)}");
+        if (!string.IsNullOrWhiteSpace(cnr))
+            parts.Add($"CNR: {CleanHeaderField(cnr)}");
+
+        var orderParts = new List<string>(2);
+        if (!string.IsNullOrWhiteSpace(orderType))
+            orderParts.Add(CleanHeaderField(orderType));
+        if (!string.IsNullOrWhiteSpace(orderDate))
+            orderParts.Add(CleanHeaderField(orderDate));
+        if (orderParts.Count > 0)
+            parts.Add($"Order: {string.Join(" ", orderParts)}");
+
+        parts.Add($"Page {pageNumber}");
+
+        return $"[{string.Join(" | ", parts)}]";
+    }
+
+    private static string CleanHeaderField(string value) =>
+        Regex.Replace(value.Trim(), @"[\r\n]+", " ");
 
     public async Task ChunkOrderDocumentAsync(long orderDocumentId, CancellationToken ct)
     {
@@ -135,13 +165,23 @@ public sealed class LitigationOrderChunkingOrchestrator(
             var textChunks = TextChunker.Chunk(document.ExtractedText, ChatIndexingOptions.Default);
             var order = document.Order;
             var litigationCase = order.Case!;
+
+            // #361: Prepend deterministic context header to each chunk before embedding and persistence
+            var preparedChunks = new List<(int PageNumber, string Text)>(textChunks.Count);
+            for (var i = 0; i < textChunks.Count; i++)
+            {
+                var header = BuildContextHeader(litigationCase.Court, litigationCase.CaseNumber, litigationCase.Cnr, order.OrderType, order.OrderDate, textChunks[i].PageNumber);
+                var chunkText = $"{header}\n\n{textChunks[i].Text}";
+                preparedChunks.Add((textChunks[i].PageNumber, chunkText));
+            }
+
             // #350: the same PDF under another order of this request (a parent case and its IA share an order sheet)
             // is already embedded — copy its vectors rather than paying Vertex again for identical text.
-            var vectors = await FindSameTextEmbeddingsAsync(document, litigationCase.RequestId, textChunks, ct);
-            var embeddings = new List<float[]>(textChunks.Count);
-            for (var offset = 0; vectors is null && offset < textChunks.Count; offset += EmbedRenewalBatchSize)
+            var vectors = await FindSameTextEmbeddingsAsync(document, litigationCase.RequestId, preparedChunks, ct);
+            var embeddings = new List<float[]>(preparedChunks.Count);
+            for (var offset = 0; vectors is null && offset < preparedChunks.Count; offset += EmbedRenewalBatchSize)
             {
-                var batchTexts = textChunks.Skip(offset).Take(EmbedRenewalBatchSize).Select(c => c.Text).ToList();
+                var batchTexts = preparedChunks.Skip(offset).Take(EmbedRenewalBatchSize).Select(c => c.Text).ToList();
                 embeddings.AddRange(await embeddingService.EmbedDocumentsAsync(batchTexts, ct));
 
                 var renewed = await ChunkingLeaseGuarded(orderDocumentId, myLeaseToken).ExecuteUpdateAsync(s =>
@@ -156,14 +196,14 @@ public sealed class LitigationOrderChunkingOrchestrator(
             }
             // Positional pairing below; a mismatch means an embedding call dropped/duplicated a vector — fail
             // this document (retry, then Failed) rather than persist a misaligned or truncated index.
-            if (vectors is null && embeddings.Count != textChunks.Count)
+            if (vectors is null && embeddings.Count != preparedChunks.Count)
                 throw new InvalidOperationException(
-                    $"Embedding count {embeddings.Count} does not match chunk count {textChunks.Count} " +
+                    $"Embedding count {embeddings.Count} does not match chunk count {preparedChunks.Count} " +
                     $"for litigation order document {orderDocumentId}.");
 
             vectors ??= embeddings.Select(e => new SqlVector<float>(e)).ToList();
-            var newChunks = new List<LitigationOrderChunk>(textChunks.Count);
-            for (var i = 0; i < textChunks.Count; i++)
+            var newChunks = new List<LitigationOrderChunk>(preparedChunks.Count);
+            for (var i = 0; i < preparedChunks.Count; i++)
             {
                 newChunks.Add(new LitigationOrderChunk
                 {
@@ -177,8 +217,8 @@ public sealed class LitigationOrderChunkingOrchestrator(
                     OrderType = order.OrderType,
                     OrderDate = order.OrderDate,
                     ChunkIndex = i,
-                    PageNumber = textChunks[i].PageNumber,
-                    ChunkText = textChunks[i].Text,
+                    PageNumber = preparedChunks[i].PageNumber,
+                    ChunkText = preparedChunks[i].Text,
                     Embedding = vectors[i],
                     EmbeddingModel = EmbeddingService.ModelId,
                     EmbeddingDimensions = EmbeddingService.Dimensions,
@@ -211,7 +251,7 @@ public sealed class LitigationOrderChunkingOrchestrator(
             }
 
             await transaction.CommitAsync(ct);
-            logger.LogInformation("Litigation order document {Id} chunked: {Count} chunk(s).", orderDocumentId, textChunks.Count);
+            logger.LogInformation("Litigation order document {Id} chunked: {Count} chunk(s).", orderDocumentId, preparedChunks.Count);
         }
         catch (Exception ex)
         {
@@ -282,7 +322,7 @@ public sealed class LitigationOrderChunkingOrchestrator(
     /// version — or null when there is none and the text must be embedded. Every chunk is compared (page, index, text),
     /// so a copy can only ever be reused for the very text it was computed from.</summary>
     private async Task<List<SqlVector<float>>?> FindSameTextEmbeddingsAsync(LitigationOrderDocument document, long requestId,
-        List<TextChunk> textChunks, CancellationToken ct)
+        List<(int PageNumber, string Text)> textChunks, CancellationToken ct)
     {
         if (string.IsNullOrEmpty(document.FileHash) || textChunks.Count == 0)
             return null;
@@ -314,6 +354,73 @@ public sealed class LitigationOrderChunkingOrchestrator(
             return source.Select(c => c.Embedding).ToList();
         }
         return null;
+    }
+
+    /// <summary>#361: Finds order documents whose chunk set was indexed under an older chunking version or a
+    /// different embedding model, or which have reached Chunked status without stored chunks. Optionally scoped
+    /// to <paramref name="requestId"/> for single-request rebuilds.</summary>
+    public async Task<List<long>> GetOutdatedDocumentIdsAsync(int maxDocuments, CancellationToken ct, long? requestId = null)
+    {
+        var query = db.LitigationOrderDocuments.AsNoTracking()
+            .Where(d => d.ChunkingStatus == ChunkingStatus.Chunked
+                && !string.IsNullOrWhiteSpace(d.ExtractedText)
+                && d.TextExtractionStatus == FilingDocumentProcessingStatus.TextExtracted
+                && (!db.LitigationOrderChunks.Any(c => c.LitigationOrderDocumentId == d.LitigationOrderDocumentId)
+                    || db.LitigationOrderChunks.Any(c => c.LitigationOrderDocumentId == d.LitigationOrderDocumentId
+                        && (c.ChunkingVersion != ChunkingVersion || c.EmbeddingModel != EmbeddingService.ModelId || c.EmbeddingDimensions != EmbeddingService.Dimensions))));
+
+        if (requestId.HasValue)
+            query = query.Where(d => d.Order!.Case!.RequestId == requestId.Value);
+
+        return await query
+            .OrderBy(d => d.LitigationOrderDocumentId)
+            .Take(maxDocuments)
+            .Select(d => d.LitigationOrderDocumentId)
+            .ToListAsync(ct);
+    }
+
+    /// <summary>#361: Enqueues outdated documents for background re-embedding by resetting them to Pending.
+    /// Preserves the existing chunk set for queries until each document is newly chunked and atomically swapped.
+    /// Optionally scoped to <paramref name="requestId"/>.</summary>
+    public async Task<int> EnqueueOutdatedDocumentsAsync(int maxDocuments, CancellationToken ct, long? requestId = null)
+    {
+        var outdatedIds = await GetOutdatedDocumentIdsAsync(maxDocuments, ct, requestId);
+        if (outdatedIds.Count == 0)
+            return 0;
+
+        await db.LitigationOrderDocuments
+            .Where(d => outdatedIds.Contains(d.LitigationOrderDocumentId) && d.ChunkingStatus == ChunkingStatus.Chunked)
+            .ExecuteUpdateAsync(s => s
+                .SetProperty(d => d.ChunkingStatus, ChunkingStatus.Pending)
+                .SetProperty(d => d.ChunkRetryCount, 0), ct);
+
+        foreach (var id in outdatedIds)
+            queue.Enqueue(id);
+
+        logger.LogInformation("Enqueued {Count} outdated litigation order document(s) for re-embedding to version {Version}.", outdatedIds.Count, ChunkingVersion);
+        return outdatedIds.Count;
+    }
+
+    /// <summary>#361: Re-chunks and re-embeds outdated order documents synchronously up to <paramref name="maxDocuments"/>.
+    /// Executes the atomic per-document swap under lease protection. Optionally scoped to <paramref name="requestId"/>.</summary>
+    public async Task<int> RechunkOutdatedDocumentsAsync(int maxDocuments, CancellationToken ct, long? requestId = null)
+    {
+        var outdatedIds = await GetOutdatedDocumentIdsAsync(maxDocuments, ct, requestId);
+        var rechunked = 0;
+        foreach (var id in outdatedIds)
+        {
+            if (ct.IsCancellationRequested) break;
+
+            await db.LitigationOrderDocuments
+                .Where(d => d.LitigationOrderDocumentId == id && d.ChunkingStatus == ChunkingStatus.Chunked)
+                .ExecuteUpdateAsync(s => s
+                    .SetProperty(d => d.ChunkingStatus, ChunkingStatus.Pending)
+                    .SetProperty(d => d.ChunkRetryCount, 0), ct);
+
+            await ChunkOrderDocumentAsync(id, ct);
+            rechunked++;
+        }
+        return rechunked;
     }
 
     public async Task<int> RecoverStaleWorkAsync(CancellationToken ct)

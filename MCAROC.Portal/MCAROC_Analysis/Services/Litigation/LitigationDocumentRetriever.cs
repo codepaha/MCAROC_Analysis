@@ -1,4 +1,5 @@
 using System.Data;
+using System.Text.RegularExpressions;
 using MCAROC_Analysis.Data;
 using MCAROC_Analysis.Data.Entities;
 using MCAROC_Analysis.Services.Chat;
@@ -69,13 +70,34 @@ public class LitigationDocumentRetriever(AppDbContext db, ChatRetrievalOptions o
     /// TopK, then keeps the best-ranked copy of each passage until TopK distinct ones are left.</summary>
     internal const int DuplicateOverFetch = 2;
 
-    internal static List<LitigationOrderChunkMatch> DropDuplicateText(IEnumerable<LitigationOrderChunkMatch> ranked, int take)
+    /// <summary>#361: Extracts the source order text body by stripping the orchestrator-generated provenance header
+    /// if present. Generated headers match "[Court: ... | Case: ... | CNR: ... | Order: ... | Page ...]\n\n".
+    /// Distinguishes generated metadata from bracketed legal order text (e.g. "[1] ...", "[Oral Order] ...",
+    /// "[Coram: ...]") so arbitrary bracketed source text is never stripped.</summary>
+    internal static string ExtractBodyText(string text)
     {
-        var seen = new HashSet<string>(StringComparer.Ordinal);
-        return ranked.Where(m => seen.Add(NormalizedText(m.Chunk.ChunkText))).Take(take).ToList();
+        if (string.IsNullOrEmpty(text) || text[0] != '[') return text;
+        var match = ProvenanceHeaderRegex.Match(text);
+        return match.Success ? text[match.Length..] : text;
     }
 
-    private static string NormalizedText(string text) => System.Text.RegularExpressions.Regex.Replace(text, @"\s+", " ").Trim();
+    internal static string NormalizedBody(string text) =>
+        Regex.Replace(ExtractBodyText(text), @"\s+", " ").Trim();
+
+    private static readonly Regex ProvenanceHeaderRegex = new(
+        @"^\[(?:(?:Court|Case|CNR|Order):\s*(?:(?!\s*\|\s*(?:Court:|Case:|CNR:|Order:|Page\s+\d+\]))[^\r\n])*?\s*\|\s*)*Page\s+\d+\][^\S\r\n]*\r?\n\r?\n",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
+    internal static List<LitigationOrderChunkMatch> DropDuplicateText(IEnumerable<LitigationOrderChunkMatch> ranked, int take)
+    {
+        // Body-only dedup (not case-scoped): the same physical court order is routinely filed under both a parent
+        // case and its IA (#343: 135 of 297 real Coastal orders had a twin), so a body-equal passage that has
+        // already been shown is suppressed regardless of case. NormalizedBody strips the provenance header first,
+        // so the comparison is on substantive order text only. The recency and decision routes (GetLatestOrderChunksAsync
+        // and GetDecisionPassagesAsync) use case-scoped dedup because there each case's evidence must be preserved.
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        return ranked.Where(m => seen.Add(NormalizedBody(m.Chunk.ChunkText))).Take(take).ToList();
+    }
 
     /// <summary>#343's recency route: the newest <paramref name="orderCount"/> orders of the given cases by their
     /// order date (undated orders last), with up to <paramref name="chunksPerOrder"/> leading chunks each — what a
@@ -99,10 +121,10 @@ public class LitigationDocumentRetriever(AppDbContext db, ChatRetrievalOptions o
             .Where(c => c.RequestId == requestId && newest.Contains(c.LitigationCaseOrderId))
             .OrderBy(c => c.PageNumber).ThenBy(c => c.ChunkIndex)
             .ToListAsync(ct);
-        var seen = new HashSet<string>(StringComparer.Ordinal);
+        var seen = new HashSet<(long OrderId, string NormalizedBody)>();
         return newest
             .SelectMany(id => chunks.Where(c => c.LitigationCaseOrderId == id).Take(chunksPerOrder))
-            .Where(c => seen.Add(NormalizedText(c.ChunkText)))
+            .Where(c => seen.Add((c.LitigationCaseOrderId, NormalizedBody(c.ChunkText))))
             .ToList();
     }
 
@@ -124,15 +146,15 @@ public class LitigationDocumentRetriever(AppDbContext db, ChatRetrievalOptions o
                 ChunkText = c.ChunkText
             })
             .ToListAsync(ct);
-        var seen = new HashSet<string>(StringComparer.Ordinal);
+        var seen = new HashSet<(long CaseId, string NormalizedBody)>();
         return chunks
-            .Select(c => (Chunk: c, Score: LitigationOrderClassifier.DecisionCueScore(c.ChunkText)))
+            .Select(c => (Chunk: c, Score: LitigationOrderClassifier.DecisionCueScore(ExtractBodyText(c.ChunkText))))
             .Where(x => x.Score > 0)
             .OrderByDescending(x => x.Score)
             .ThenByDescending(x => LitigationCaseReference.ParseDate(x.Chunk.OrderDate) ?? DateOnly.MinValue)
             .ThenBy(x => x.Chunk.LitigationCaseOrderId).ThenBy(x => x.Chunk.PageNumber).ThenBy(x => x.Chunk.ChunkIndex)
             .Select(x => x.Chunk)
-            .Where(c => seen.Add(NormalizedText(c.ChunkText)))
+            .Where(c => seen.Add((c.LitigationCaseId, NormalizedBody(c.ChunkText))))
             .Take(take)
             .ToList();
     }
@@ -144,14 +166,16 @@ public class LitigationDocumentRetriever(AppDbContext db, ChatRetrievalOptions o
         """;
 
     // Rank on a narrow (LitigationOrderChunkId, Distance) subquery first, then join back for the wide
-    // columns only for the winning rows — see this type's own remarks for why.
+    // columns only for the winning rows — see this type's own remarks for why. #361 filters on the active
+    // EmbeddingModel and EmbeddingDimensions so vector distance is never evaluated across incompatible model
+    // or dimension spaces during a migration.
     private const string VectorSql = $"""
             SELECT {WideColumns},
                 ranked.Distance
             FROM (
                 SELECT TOP (@topK) LitigationOrderChunkId, VECTOR_DISTANCE('cosine', Embedding, @queryVector) AS Distance
                 FROM LitigationOrderChunks
-                WHERE RequestId = @requestId
+                WHERE RequestId = @requestId AND EmbeddingModel = @model AND EmbeddingDimensions = @dimensions
                 ORDER BY VECTOR_DISTANCE('cosine', Embedding, @queryVector)
             ) AS ranked
             JOIN LitigationOrderChunks c ON c.LitigationOrderChunkId = ranked.LitigationOrderChunkId
@@ -167,7 +191,7 @@ public class LitigationDocumentRetriever(AppDbContext db, ChatRetrievalOptions o
                 SELECT TOP (@topK) d.LitigationOrderChunkId, ft.[RANK] AS FtRank
                 FROM CONTAINSTABLE(LitigationOrderChunks, ChunkText, @ftQuery) AS ft
                 JOIN LitigationOrderChunks d ON d.LitigationOrderChunkId = ft.[KEY]
-                WHERE d.RequestId = @requestId
+                WHERE d.RequestId = @requestId AND d.EmbeddingModel = @model AND d.EmbeddingDimensions = @dimensions
                 ORDER BY ft.[RANK] DESC, d.LitigationOrderChunkId
             ) AS ranked
             JOIN LitigationOrderChunks c ON c.LitigationOrderChunkId = ranked.LitigationOrderChunkId
@@ -181,6 +205,8 @@ public class LitigationDocumentRetriever(AppDbContext db, ChatRetrievalOptions o
         cmd.CommandText = sql;
         cmd.Parameters.Add(new SqlParameter("@topK", SqlDbType.Int) { Value = topK });
         cmd.Parameters.Add(new SqlParameter("@requestId", SqlDbType.BigInt) { Value = requestId });
+        cmd.Parameters.Add(new SqlParameter("@model", SqlDbType.NVarChar, 100) { Value = EmbeddingService.ModelId });
+        cmd.Parameters.Add(new SqlParameter("@dimensions", SqlDbType.Int) { Value = EmbeddingService.Dimensions });
         var vectorParam = cmd.Parameters.Add("@queryVector", Microsoft.Data.SqlDbTypeExtensions.Vector, EmbeddingService.Dimensions);
         vectorParam.Value = queryVector;
         if (containsQuery is not null) cmd.Parameters.Add(new SqlParameter("@ftQuery", SqlDbType.NVarChar, 4000) { Value = containsQuery });

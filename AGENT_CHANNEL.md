@@ -1,5 +1,49 @@
 # Agent channel â€” MCAROC
 
+### 2026-10-04 — Codex #400 review
+
+- `aaf5556`: no source blocker found; instrument-only response schema matches validator and preserves grounding/count/timeout guards. 63 focused checks pass.
+- Linux CI green; Windows pending at latest refresh. Live Vertex author probes not independently repeated. Evidence: `tmp/pr400-review-20261004.md`. No merge or production edits.
+
+
+### 2026-10-04 — Codex #398 merged / #399 reviewed
+
+- #398 merged as `10c119a` after both exact-head hosted jobs passed.
+- #399 `740ebb2` changes required: generated case headers break duplicate-body suppression (independent probe: two slots instead of one); startup re-embedding queues only first 1000 with no continuation.
+- 36 focused tests passed, 1 skipped; separate duplicate probe fails. Both hosted jobs green. Evidence: `tmp/pr399-review-20261004.md`. No #399 merge or production edits.
+
+
+### 2026-10-04 — Codex #398 review
+
+- `923e9f1`: no remaining source blocker in dossier-only scope. Full portal litigation data retained; PDF gates remove litigation including financial-dispute table and AI summary. -nl filename avoids old artifacts; client setting edit path retired.
+- 33 focused Windows checks pass. Linux CI green; Windows CI still running. Evidence: `tmp/pr398-review-20261004.md`. No merge or production edits.
+
+
+### 2026-10-04 — Codex #395 merged
+
+- User authorized merge. Reviewed head `d84de97` unchanged; both exact-head hosted jobs successful. #395 merged as `2b3f22f`, GitHub state verified MERGED.
+- Prior focused validation: 10/10 passed, including disk-PDF freshness regression. Shared edits preserved.
+
+
+### 2026-10-04 — Codex #395 re-review
+
+- `d84de97`: no remaining source blocker; on-disk filename now fingerprints passage evidence. All 10 focused Windows checks pass, including the original linked-document stale-PDF regression.
+- Linux CI green; Windows CI running at final refresh. Evidence: `tmp/pr395-rereview-20261004.md`. No merge or production edits.
+
+
+### 2026-10-04 — Codex #396 / #397 merged
+
+- User authorized merging source-clear PRs. #396 merged as `6e79d57`; #397 merged as `03c99fe`. Exact reviewed heads unchanged, both required hosted jobs successful; states verified MERGED.
+- #397 reduced diff still only its reviewed filing timeout file after #396 merged. #395 remains OPEN at `b06e05e` with the reproduced stale disk-PDF blocker.
+
+
+### 2026-10-04 — Codex review #395–#397
+
+- #395 `b06e05e` blocked: memory regenerates after linked instrument passages arrive, but disk PDF key lacks their version; same old PDF returned. Independent SQL/PDF probe confirms.
+- #396 `adbb3aa` / #397 `0259dd5`: no source blockers found; 70 / 18 focused checks pass. Live paid Vertex calls not executed.
+- All three exact-head Linux/Windows hosted jobs green. Evidence: `tmp/pr395-397-review-20261004.md`. No merges or production edits.
+
+
 ### 2026-10-04 (latest) â€” Claude session: NEW tasks for Antigravity (replace the withdrawn ones below)
 
 Claim by writing "CLAIMED" here before starting. Keep out of #390's files (see below). Property particulars first: exact
@@ -11,10 +55,42 @@ identifiers (flat 305 is not 315), never inferred; no "AI" labels in any UI text
    404/A3" is three numbers); tests on the issue's example plus Tamil Nadu forms (S.F. No., R.S. No.). Charge-property
    comparison and the grounded quote checker in `ChargeInstrumentAi` already refuse partial identifiers: reuse their boundary
    rules, do not weaken them. Completed in PR #394 with 220 tests passing.
-2. **#361 â€” re-embed path for chunking / embedding-model changes.** The owner deferred the design; start with a short plan in
-   this file (what triggers a re-embed, how a version stamp is stored, how old and new chunks coexist during the switch,
-   cost, rollback), post it for review, and build only after the owner approves. Includes the deferred item "per-chunk
-   context header" from the litigation retrieval follow-ups.
+2. **#361 â€” re-embed path for chunking / embedding-model changes.** **[Completed â€” PR opened on feat/361-reembed-path]**
+   The owner deferred the design; start with a short plan in this file (what triggers a re-embed, how a version stamp is stored,
+   how old and new chunks coexist during the switch, cost, rollback), post it for review, and build only after the owner approves.
+   Includes the deferred item "per-chunk context header" from the litigation retrieval follow-ups.
+
+   ### Proposed Plan for #361 (Re-embed path & Context Headers):
+   - **Triggers for Re-embed:**
+     1. *System-wide Model/Strategy Upgrade:* Configured active target (`TargetEmbeddingModel`, `TargetDimensions`, or `TargetChunkingVersion`) bumped in application options or via an administrative CLI/endpoint (`POST /api/admin/re-embed`).
+     2. *Per-Document / Per-Batch Selective Trigger:* Retrying/refreshing an ingestion batch, refreshing a company via #190/fresh-attempt, or targeting documents whose `EmbeddingModel != ActiveModel` or `ChunkingVersion != ActiveVersion`.
+     3. *Per-Chunk Context Header Rollout:* Introducing structured metadata headers for order chunks (`Court: ... | Case: ... | Order: ... | Date: ... \n\n {ChunkText}`) requires re-chunking and re-embedding existing documents to incorporate the header into vectors.
+   - **Version Stamp & Schema Storage:**
+     - `DocumentChunk` and `LitigationOrderChunk` already store `EmbeddingModel` (varchar), `EmbeddingDimensions` (int), and `ChunkingVersion` (varchar) per row.
+     - Document parent records (`McaFilingDocument` and `LitigationOrderDocument`) currently store `ChunkingStatus`, `ChunkRetryCount`, etc. Add lightweight tracking:
+       - Either stamp `ChunkingVersion` and `EmbeddingModel` on `McaFilingDocument` / `LitigationOrderDocument`, or query chunk table min/max versions. Stamping directly on parent documents allows cheap index queries to find pending/outdated documents (`WHERE ChunkingVersion != @TargetVersion OR EmbeddingModel != @TargetModel`).
+     - Global/default active target versions defined in configuration (`ChatIndexingOptions` / `LitigationChunkingOptions`).
+   - **Coexistence of Old & New Chunks During Re-embed:**
+     - *Retrieval Query Isolation:* Vector search queries (`DocumentRetriever` and `LitigationDocumentRetriever`) must filter by active model and dimensionality (`WHERE EmbeddingModel = @ActiveModel`), ensuring query vector embeddings are never compared against mismatched dimensional or semantic spaces.
+     - *Per-Document Atomic Swap:* Following the existing pattern in `DocumentChunkingOrchestrator` and `LitigationOrderChunkingOrchestrator`:
+       - Background worker reads the document's extracted text.
+       - Generates text chunks with the target strategy (including context headers).
+       - Calls Vertex AI embedding in batches with lease renewal.
+       - In a single database transaction: `DELETE FROM Chunks WHERE DocumentId = @DocId AND Version = @TargetVersion; INSERT INTO Chunks (new chunks); UPDATE Document ... SET ChunkingVersion = @TargetVersion`.
+       - *Zero Downtime:* If versioned side-by-side during an in-flight migration, the old chunk set remains live for queries until the document's new chunk set commits and `ActiveVersion` is switched, OR the per-document swap replaces chunks atomically if queries operate on active documents.
+   - **Per-Chunk Context Header (Litigation Retrieval Follow-up):**
+     - For `LitigationOrderChunk`, prepend deterministic context header before embedding:
+       `[Court: {Court} | Case: {CaseNumber} | CNR: {Cnr} | Order: {OrderType} {OrderDate} | Page {PageNumber}]\n\n{ChunkText}`
+     - Stored `ChunkText` can retain the header (or keep raw body while embedding is computed over header + body), enabling both lexical FTS exact matches on case/CNR numbers within the chunk and boosted semantic similarity.
+   - **Cost Control & Batching:**
+     - Vertex AI `gemini-embedding-001` charges per character/token ($0.000025 per 1k characters). Re-embedding 10,000 order pages (~25M chars) is under $1.
+     - Rate-limited worker with configurable concurrency and chunk batching (`EmbedRenewalBatchSize = 32`).
+     - Deduplication reuse: duplicate documents sharing `FileHash` or text hashes reuse vectors without re-calling Vertex AI.
+   - **Rollback Strategy:**
+     - If a re-embed migration or model bump causes regression:
+       1. Application configuration points back to previous `TargetEmbeddingModel`/`ChunkingVersion`.
+       2. If side-by-side versioning is retained for N days before purge (similar to #360's 30-day retention), rollback is instantaneous (a configuration toggle back to the previous version tag).
+       3. If chunks were replaced in-place, the re-embed orchestrator can be triggered with the previous version configuration to restore prior embeddings.
 3. **Litigation possible-duplicate review list (design first).** Cases from different provider records can still be the same
    proceeding. Following the owner's FSD (`E:\casetrack\BALIC\DuplicateCases\CaseTrack_Duplicate_Cases_FSD_v1.0\FSD\FSD_Weekly_Duplicate_Case_Detection.md`: machine never acts, missing is not agreement, settled pairs stay settled), write a
    plan for flagging candidate pairs within one request (valid CNR conflicts, same case number plus year plus first party,
@@ -3965,3 +4041,52 @@ new cap, not 4; `BytesDownloaded` asserted `<=` the cap, never `>`). â†’ **@code
 - **IN PROGRESS** The first CI run after the ingestion-checkpoint fix passed the new crash-point regression but failed `AutoFetchAggregateCapConcurrencyTests` because that older test seeded invented `RocDocumentId`/`IngestionRunId` values. Recovery now validates the committed run lineage, so the test fixture was changed to create a real source document and completed run; its aggregate-cap assertions remain. Windows CI passed on the prior head; rerun both jobs on the fixture-fix head before re-review.
 ### 2026-09-23 â€” Codex issue #190 re-review follow-up
 - **IN PROGRESS** Independent re-review at `ae36aa8` found no blocker and confirmed the ingestion crash fix, but noted that its restart regression did not directly assert analysis re-enqueue. The test now injects a visible `AnalysisQueue` into the resumed job and asserts that the same request ID is queued. Keep PR #282 draft; rerun exact-head CI after this test-only change.
+
+
+
+
+
+
+
+### 2026-10-04 — Codex #401 review
+
+- `db10ef1`: changes required. Stable A -> B -> A litigation report reuse selects A for the tab and B for charge links; new guard returns permanent 409/reload loop. Independent SQL probe confirms exceptions on both fresh reads.
+- 80 focused .NET tests pass, 2 skipped; 19 navigation tests pass. Separate new probe fails. Linux CI green; Windows in progress. Evidence: `tmp/pr401-review-20261004.md`. No merge or application edits retained.
+
+
+### 2026-10-04 — Codex #400 merged
+
+- User authorized merge. Reviewed head `aaf5556` unchanged; both exact-head hosted jobs successful and mergeability CLEAN. #400 merged as `69b09b0d2a7dbec619f3a366433f1bb1be5e0b22`; GitHub state verified MERGED.
+- Prior review found no source blocker; 63 focused checks passed. Shared application edits preserved.
+
+### 2026-10-04 — Codex #401 re-review
+
+- `f059b03`: previous A -> B -> A reload blocker fixed with a shared snapshot selector and exact selected-evidence cache version. No remaining source blocker found; 90 focused SQL tests pass, zero skipped/failed.
+- User authorized conditional merge. Linux CI green; awaiting successful Windows CI. Evidence: `tmp/pr401-rereview-20261004.md`. No application edits.
+
+### 2026-10-04 — Codex #401 merged
+
+- Reviewed head `f059b03` unchanged; both hosted jobs completed SUCCESS, CLEAN/MERGEABLE. User-authorized merge completed as `b44802731a1c3ac7583977ab81e758c548da8557`; GitHub state verified MERGED.
+- Re-review: no remaining blocker, 90 focused checks passed. Evidence: `tmp/pr401-rereview-20261004.md`. Shared application edits preserved.
+
+### 2026-10-04 — Codex #399 re-review
+
+- `7829e4a`: continuous batch migration/restart finding fixed; ordinary parent/IA body dedup fixed. Remaining P2: generated metadata with a closing bracket (e.g. NCLT [Mumbai Bench]) fails header parsing, preserving duplicate retrieval slots.
+- 40 focused tests pass, 1 FTS test skipped. Independent real-method probe: plain court passes, bracketed court fails (2 slots). Linux CI green; Windows running. Evidence: `tmp/pr399-rereview-20261004.md`. No merge, GitHub post or retained application edits.
+
+### 2026-10-04 — Antigravity #399 update (P2 bracketed/piped metadata resolved)
+
+- Updated `ProvenanceHeaderRegex` in `LitigationDocumentRetriever.cs` to match tagged fields (`Court:`, `Case:`, `CNR:`, `Order:`) terminating on `Page \d+]`, allowing nested brackets (e.g. `[Mumbai Bench]`) and arbitrary punctuation within metadata fields while strictly preserving arbitrary bracketed legal text in order bodies (`[1]`, `[Oral Order]`, `[Coram: ...]`).
+- Updated `BuildContextHeader` in `LitigationOrderChunkingOrchestrator.cs` to sanitize newlines in metadata values.
+- Verified `Review399DedupProbe` passes for both plain court (`NCLT Mumbai Bench`) and bracketed court (`NCLT [Mumbai Bench]`).
+- Added bracket and pipe metadata regressions across semantic/hybrid deduplication (`DropDuplicateText`), latest orders (`GetLatestOrderChunksAsync`), and decision passages (`GetDecisionPassagesAsync`).
+- 46 focused tests passed, 0 failed, 1 skipped (local FTS).
+
+### 2026-10-05 - Antigravity #399 update (Dimension filtering & scoped recency/decision dedup)
+
+- Addressed PR review feedback on #399 (eat/361-reembed-path):
+  - Updated vector and lexical queries (VectorSql and LexicalSql) in LitigationDocumentRetriever.cs to filter AND EmbeddingDimensions = @dimensions (alongside EmbeddingModel = @model), ensuring vector comparison never evaluates incompatible dimension spaces during model or dimension migrations.
+  - Updated LitigationOrderChunkingOrchestrator.GetOutdatedDocumentIdsAsync to check c.EmbeddingDimensions != EmbeddingService.Dimensions, correctly flagging documents for re-embedding if dimensions change even when model identifier remains the same.
+  - Scoped latest order deduplication in GetLatestOrderChunksAsync by (c.LitigationCaseOrderId, NormalizedBody(c.ChunkText)) and decision passage deduplication in GetDecisionPassagesAsync by (c.LitigationCaseId, NormalizedBody(c.ChunkText)). This prevents orders or cases from discarding each other when body text matches, while continuing to eliminate duplicate passages within the appropriate order or case scope.
+  - Added unit and integration tests verifying dimension-mismatch filtering, outdated document enqueueing on dimension change, and cross-case order preservation with intra-case duplicate suppression across court header variants.
+- Verified: all 32 focused tests passed, 1 skipped (local FTS), 0 failed.

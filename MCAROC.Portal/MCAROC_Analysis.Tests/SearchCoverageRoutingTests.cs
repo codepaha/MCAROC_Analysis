@@ -74,7 +74,7 @@ public class SearchCoverageRoutingTests : IAsyncLifetime
                 CaseNumber = $"CS {i + 1}/2021", Court = "High Court", ChunkIndex = 0, PageNumber = 1,
                 ChunkText = $"Order {i + 1}: the plaintiff alleges fraud in the loan documents.",
                 Embedding = new SqlVector<float>(Axis0()),
-                EmbeddingModel = "test", EmbeddingDimensions = 768, ChunkingVersion = "1.0", CreatedDate = DateTime.UtcNow
+                EmbeddingModel = EmbeddingService.ModelId, EmbeddingDimensions = 768, ChunkingVersion = "1.0", CreatedDate = DateTime.UtcNow
             });
         }
         await db.SaveChangesAsync();
