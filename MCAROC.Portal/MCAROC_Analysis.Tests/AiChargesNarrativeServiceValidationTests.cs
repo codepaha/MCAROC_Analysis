@@ -371,6 +371,26 @@ public class AiChargesNarrativeServiceValidationTests
     }
 
     [Fact]
+    public void Validate_ComparesFiguresWithTheirUnits()
+    {
+        static IReadOnlyList<AiChargesNarrativeService.SelectedCharge> Shown(string wording) => AiChargesNarrativeService.SelectChargesForNarrative([Charge(1, "C1", 160m, events: [new RocChargeEvent
+            { ChargeEventId = 1, RocChargeId = 1, EventType = ChargeEventType.Creation, EventDate = new DateOnly(2026, 2, 25), InstrumentDescription = wording, PropertyParticulars = "Stock at Plot 14" }])]);
+        static bool Ok(string wording, string claim) => AiChargesNarrativeService.Validate(NarrativeJson(claim), Shown(wording), 1).Success;
+
+        // A bare 9.5 in the source does not support a claim of 9.5% (nor 9.5x, nor a rupee amount).
+        Assert.False(Ok("Version 9.5 of the deed", "The charge carries interest at 9.5%."));
+        Assert.False(Ok("Version 9.5 of the deed", "The charge is for Rs 9.5 crore."));
+        // A percentage in the source supports a percentage, however it is written, but not a bare number or a multiple.
+        Assert.True(Ok("Interest at 9.5% p.a.", "The charge carries interest at 9.5%."));
+        Assert.True(Ok("Interest at 9.5% p.a.", "The charge carries interest at 9.5 percent."));
+        Assert.False(Ok("Interest at 9.5% p.a.", "The charge covers 9.5 branches."));
+        Assert.False(Ok("Interest at 9.5% p.a.", "Cover of 9.5x."));
+        // Scale matters for amounts quoted in the wording.
+        Assert.True(Ok("limit Rs 700 Lakh", "A limit of Rs 700 lakh applies."));
+        Assert.False(Ok("limit Rs 700 Lakh", "A limit of Rs 700 crore applies."));
+    }
+
+    [Fact]
     public void Validate_StillRejectsADerivedTotalOrAnInventedFigure()
     {
         var a = Charge(1, "C1", 20m, events: [new RocChargeEvent { ChargeEventId = 1, RocChargeId = 1, EventType = ChargeEventType.Creation, InstrumentDescription = "Hypothecation of stock" }]);

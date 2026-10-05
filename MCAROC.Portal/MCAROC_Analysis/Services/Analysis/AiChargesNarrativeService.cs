@@ -224,20 +224,27 @@ public partial class AiChargesNarrativeService
     /// invented.</summary>
     private static HashSet<string> BuildAllowedNumbers(IReadOnlyList<SelectedCharge> selectedCharges, int totalOpenChargeCount)
     {
-        var allowed = new HashSet<string>
+        // Every entry is "unit:number" (see FigureKey): a figure is only supported by the same number in the same unit, so a source
+        // "9.5" does not support "9.5%", a "%" does not support "x", and "Rs 700 Lakh" does not support "700 crore".
+        var allowed = new HashSet<string>();
+        void AddBare(string? text)
         {
-            selectedCharges.Count.ToString(CultureInfo.InvariantCulture),
-            totalOpenChargeCount.ToString(CultureInfo.InvariantCulture)
-        };
+            if (string.IsNullOrWhiteSpace(text)) return;
+            if (decimal.TryParse(text.Replace(",", ""), NumberStyles.Any, CultureInfo.InvariantCulture, out var d)) allowed.Add("n:" + Norm(d));
+            allowed.Add("n:" + text);
+        }
+        AddBare(selectedCharges.Count.ToString(CultureInfo.InvariantCulture));
+        AddBare(totalOpenChargeCount.ToString(CultureInfo.InvariantCulture));
 
         void AddAmount(decimal? v)
         {
             if (v is not { } d) return;
-            // The amount as the prompt shows it (N2) and its shorter written forms: 160.00 / 160.0 / 160.
+            // The amount as the prompt shows it (N2) and its shorter written forms: 160.00 / 160.0 / 160, bare or as a rupee amount
+            // in any scale (the prompt does not say which scale the narrative will use for it).
             foreach (var form in new[] { Math.Round(d, 0), Math.Round(d, 1), Math.Round(d, 2) })
             {
-                allowed.Add(form.ToString(CultureInfo.InvariantCulture));
-                allowed.Add(form.ToString("0.############", CultureInfo.InvariantCulture));
+                allowed.Add("n:" + Norm(form));
+                allowed.Add("amt:*:" + Norm(form));
             }
         }
 
@@ -247,19 +254,7 @@ public partial class AiChargesNarrativeService
         // preflight). Sums and other derived figures are still not allowed: they appear nowhere in the data.
         void AddNumbersFrom(string? text)
         {
-            if (string.IsNullOrWhiteSpace(text)) return;
-            foreach (Match m in DataNumberRegex().Matches(text))
-            {
-                var raw = m.Value;
-                var digits = new string(raw.Where(c => char.IsDigit(c) || c == '.').ToArray()).Trim('.');
-                if (digits.Length == 0) continue;
-                allowed.Add(raw); allowed.Add(digits);
-                if (decimal.TryParse(digits, NumberStyles.Any, CultureInfo.InvariantCulture, out var v))
-                {
-                    // Only the figure as written (9.50 also as 9.5): never a rounded value, or a source "9.5%" would let "10%" through.
-                    allowed.Add(v.ToString("0.############", CultureInfo.InvariantCulture));
-                }
-            }
+            foreach (var key in FigureKeys(text)) allowed.Add(key);
         }
 
         foreach (var sc in selectedCharges)
@@ -270,52 +265,57 @@ public partial class AiChargesNarrativeService
                 AddNumbersFrom(Truncate(shown.InstrumentDescription)); AddNumbersFrom(Truncate(shown.PropertyParticulars));
                 AddNumbersFrom(Truncate(shown.ExtentAndOperation)); AddNumbersFrom(Truncate(shown.OtherTerms)); AddNumbersFrom(Truncate(shown.ModificationParticulars));
             }
-            allowed.Add(sc.Charge.ChargeId.ToString(CultureInfo.InvariantCulture));
-            if (!string.IsNullOrWhiteSpace(sc.Charge.RocChargeNumber)) allowed.Add(sc.Charge.RocChargeNumber);
+            AddBare(sc.Charge.ChargeId.ToString(CultureInfo.InvariantCulture));
+            AddBare(sc.Charge.RocChargeNumber);
             AddAmount(sc.Charge.CurrentAmount);
-            if (sc.Charge.CreationDate is { } cd) allowed.Add(cd.Year.ToString(CultureInfo.InvariantCulture));
-            if (sc.Charge.LatestModificationDate is { } md) allowed.Add(md.Year.ToString(CultureInfo.InvariantCulture));
-            if (sc.RepresentativeEvent?.EventDate is { } ed) allowed.Add(ed.Year.ToString(CultureInfo.InvariantCulture));
+            if (sc.Charge.CreationDate is { } cd) AddBare(cd.Year.ToString(CultureInfo.InvariantCulture));
+            if (sc.Charge.LatestModificationDate is { } md) AddBare(md.Year.ToString(CultureInfo.InvariantCulture));
+            if (sc.RepresentativeEvent?.EventDate is { } ed) AddBare(ed.Year.ToString(CultureInfo.InvariantCulture));
             if (sc.RepresentativeEvent?.ChargeAmount is { } ca) AddAmount(ca);
         }
 
         return allowed;
     }
 
-    [GeneratedRegex(@"\d[\d,]*(?:\.\d+)?")]
-    private static partial Regex DataNumberRegex();
+    private static string Norm(decimal d) => d.ToString("0.############", CultureInfo.InvariantCulture);
+
+    // One figure: an optional rupee marker before, the number, an optional unit after (%, x, crore, lakh).
+    [GeneratedRegex(@"(?<pre>₹\s?|\b(?:Rs\.?|INR)\s?)?(?<num>\d[\d,]*(?:\.\d+)?)(?<post>\s?(?:%|per\s?cent\b|percent\b|x\b|crore\b|cr\b|lakh\b|lac\b))?",
+        RegexOptions.IgnoreCase)]
+    private static partial Regex FigureRegex();
+
+    /// <summary>The figures in <paramref name="text"/> as "unit:number" keys, where the unit is read from what is written next to the
+    /// number: "pct" for % / percent, "x" for a multiple, "amt:{scale}" for a rupee amount (₹/Rs/INR before, crore/lakh after), else "n".
+    /// Used for both the data and the narrative, so the two are compared on the same terms.</summary>
+    private static IEnumerable<string> FigureKeys(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text)) yield break;
+        foreach (Match m in FigureRegex().Matches(text))
+        {
+            var digits = m.Groups["num"].Value.Replace(",", "");
+            if (!decimal.TryParse(digits, NumberStyles.Any, CultureInfo.InvariantCulture, out var value)) continue;
+            var n = Norm(value);
+            var post = m.Groups["post"].Value.Trim().ToLowerInvariant();
+            var hasPre = m.Groups["pre"].Success && m.Groups["pre"].Length > 0;
+            string scale = post switch { "crore" or "cr" => "crore", "lakh" or "lac" => "lakh", _ => "" };
+            if (post == "%" || post.StartsWith("per") ) yield return "pct:" + n;
+            else if (post == "x") yield return "x:" + n;
+            else if (hasPre || scale.Length > 0) yield return $"amt:{scale}:{n}";
+            else yield return "n:" + n;
+        }
+    }
 
     private static bool ContainsUnsupportedNumber(string text, HashSet<string> allowed)
     {
-        foreach (Match m in FinancialNumberRegex().Matches(text))
+        foreach (var key in FigureKeys(text))
         {
-            var digitsOnly = new string(m.Value.Where(c => char.IsDigit(c) || c == '.').ToArray()).Trim('.');
-            if (digitsOnly.Length == 0 || !decimal.TryParse(digitsOnly, NumberStyles.Any, CultureInfo.InvariantCulture, out var value))
-                continue;
-
-            // The figure as written (9.50 also as 9.5), never a rounded form: 9.54 must not pass because 9.5 is in the data.
-            if (!allowed.Contains(digitsOnly) && !allowed.Contains(value.ToString("0.############", CultureInfo.InvariantCulture)))
-                return true;
+            if (allowed.Contains(key)) continue;
+            // A rupee amount from the charge's own amount field is accepted in any scale.
+            if (key.StartsWith("amt:", StringComparison.Ordinal) && allowed.Contains("amt:*:" + key[(key.LastIndexOf(':') + 1)..])) continue;
+            return true;
         }
         return false;
     }
-
-    // Starts from the same amount/percentage/year recognition as AiCrossSectionAnalysisService's regex
-    // (₹/Rs./INR-prefixed and bare crore/lakh-suffixed amounts, percentages, ratios, years), plus one more
-    // alternative this service needs that the sibling doesn't: a fully bare number with no currency marker,
-    // no crore/lakh suffix, nothing (e.g. a fabricated "999" or "5 charges"). Without it, an unmarked
-    // invented figure was never even inspected. Kept as a trailing fallback, not a replacement for the
-    // marker-specific alternatives above, because those need their own trailing boundary (`%`, `x`, `crore`)
-    // to correctly bound the match where the bare pattern's `\b` wouldn't (e.g. "3x" has no word boundary
-    // between the digit and the letter).
-    [GeneratedRegex(
-        @"₹\s?[\d,]+(\.\d+)?(\s?(?:crore|cr\.?|lakh))?" +
-        @"|\b(?:Rs\.?|INR)\s?[\d,]+(\.\d+)?(\s?(?:crore|cr\.?|lakh))?" +
-        @"|\b[\d,]+(\.\d+)?\s?(?:crore|lakh)\b" +
-        @"|[\d.]+\s?%|[\d.]+x\b|FY\s?\d{4}|\b(19|20)\d{2}\b" +
-        @"|\b\d[\d,]*(\.\d+)?\b",
-        RegexOptions.IgnoreCase)]
-    private static partial Regex FinancialNumberRegex();
 
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNameCaseInsensitive = true };
 
