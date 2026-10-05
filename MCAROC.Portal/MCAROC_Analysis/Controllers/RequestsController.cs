@@ -131,6 +131,8 @@ public class RequestsController(
         }
 
         request.RequestStatus = RequestStatus.DocumentsUploaded;
+
+        request.AnalysisRetryAfter = null; // a new ingestion starts clean: no old retry wait
         request.AnalysisStartedDate = DateTime.UtcNow;
         await db.SaveChangesAsync();
 
@@ -231,6 +233,7 @@ public class RequestsController(
         request.IsManualReviewRequired = false;
         request.ManualReviewReason = null;
         request.RequestStatus = RequestStatus.DocumentsUploaded;
+        request.AnalysisRetryAfter = null; // a new ingestion starts clean: no old retry wait
         request.AnalysisStartedDate = DateTime.UtcNow;
         await db.SaveChangesAsync();
 

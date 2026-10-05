@@ -106,6 +106,7 @@ public class IngestionOrchestrator(AppDbContext db, IExcelSheetReader sheetReade
             request.LatestCompletedIngestionRunId = run.IngestionRunId;
             request.HasIngestionWarnings = run.WarningsCount > 0;
             request.RequestStatus = RequestStatus.DataExtracted;
+            request.AnalysisRetryAfter = null; // a new ingestion starts clean: no old retry wait
             request.AnalysisCompletedDate = DateTime.UtcNow;
 
             // The auto-fetch checkpoint must commit with the completed run. Otherwise a restart after
