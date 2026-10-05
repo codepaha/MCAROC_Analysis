@@ -217,8 +217,11 @@ builder.Services.AddSingleton<MCAROC_Analysis.Services.PropertyParticulars.Charg
 builder.Services.AddScoped<MCAROC_Analysis.Services.PropertyParticulars.ChargeInstrumentExtractionService>();
 builder.Services.AddHostedService<MCAROC_Analysis.Services.PropertyParticulars.ChargeInstrumentExtractionWorker>();
 
+// The 30-second ADO.NET default is too tight for the analysis/dossier loads when several requests run at once on a small SQL instance
+// (one analysis failed on it in the 41-company preflight). Configurable: Database:CommandTimeoutSeconds, default 120.
+var sqlCommandTimeout = builder.Configuration.GetValue("Database:CommandTimeoutSeconds", 120);
 builder.Services.AddDbContext<AppDbContext>(options =>
-    options.UseSqlServer(builder.Configuration.GetConnectionString("Default")));
+    options.UseSqlServer(builder.Configuration.GetConnectionString("Default"), sql => sql.CommandTimeout(sqlCommandTimeout)));
 
 builder.Services.AddScoped<IExcelSheetReader, ExcelSheetReader>();
 builder.Services.AddScoped<IWorkbookDerivativeService, WorkbookDerivativeService>();

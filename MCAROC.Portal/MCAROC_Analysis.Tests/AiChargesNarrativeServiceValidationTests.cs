@@ -330,4 +330,78 @@ public class AiChargesNarrativeServiceValidationTests
         Assert.Equal(2, outcome.Narrative!.CoveredChargeCount);
         Assert.Equal(312, outcome.Narrative.TotalOpenChargeCount);
     }
+
+    // ── numbers quoted from the deed wording the model was shown ─────────────
+
+    private static string NarrativeJson(string summary) => System.Text.Json.JsonSerializer.Serialize(new { summary, notableCollateralPoints = Array.Empty<object>() });
+
+    [Fact]
+    public void Validate_AcceptsANumberThatAppearsInTheChargeWordingTheModelWasShown()
+    {
+        var ev = new RocChargeEvent
+        {
+            ChargeEventId = 1, RocChargeId = 1, EventType = ChargeEventType.Creation, EventDate = new DateOnly(2026, 2, 25),
+            InstrumentDescription = "Deed of Hypothecation dated 25.02.2026 for 56 new centres, limit Rs 700 Lakh at 9.5%",
+            PropertyParticulars = "Stock at Plot No. 14, Sector 9"
+        };
+        var charge = Charge(1, "C1", 160m, events: [ev]);
+        var selected = AiChargesNarrativeService.SelectChargesForNarrative([charge]);
+
+        var outcome = AiChargesNarrativeService.Validate(
+            NarrativeJson("The single open charge, 160.00, secures 56 new centres under a deed dated 25.02.2026 with a Rs 700 Lakh limit at 9.5%."), selected, 1);
+
+        Assert.True(outcome.Success, outcome.FailureReason);
+    }
+
+    [Fact]
+    public void Validate_DoesNotLetARoundedFormOfAWordingFigureThrough()
+    {
+        // Source says 9.5%: the narrative may say 9.5%, never 10% (a rounded form of a figure that is not in the data).
+        var ev = new RocChargeEvent { ChargeEventId = 1, RocChargeId = 1, EventType = ChargeEventType.Creation, EventDate = new DateOnly(2026, 2, 25), InstrumentDescription = "Hypothecation of stock at 9.5% interest", PropertyParticulars = "Stock at Plot No. 14, Sector 9" };
+        var selected = AiChargesNarrativeService.SelectChargesForNarrative([Charge(1, "C1", 160m, events: [ev])]);
+
+        var faithful = AiChargesNarrativeService.Validate(NarrativeJson("The charge carries interest at 9.5%."), selected, 1);
+        Assert.True(faithful.Success, faithful.FailureReason);
+        var rounded = AiChargesNarrativeService.Validate(NarrativeJson("The charge carries interest at 10%."), selected, 1);
+        Assert.False(rounded.Success);
+        Assert.Contains("number not present", rounded.FailureReason);
+
+        // A nearby invented value is not the source figure either: 9.54 rounds to 9.5 but is not written anywhere.
+        Assert.False(AiChargesNarrativeService.Validate(NarrativeJson("The charge carries interest at 9.54%."), selected, 1).Success);
+    }
+
+    [Fact]
+    public void Validate_ComparesFiguresWithTheirUnits()
+    {
+        static IReadOnlyList<AiChargesNarrativeService.SelectedCharge> Shown(string wording) => AiChargesNarrativeService.SelectChargesForNarrative([Charge(1, "C1", 160m, events: [new RocChargeEvent
+            { ChargeEventId = 1, RocChargeId = 1, EventType = ChargeEventType.Creation, EventDate = new DateOnly(2026, 2, 25), InstrumentDescription = wording, PropertyParticulars = "Stock at Plot 14" }])]);
+        static bool Ok(string wording, string claim) => AiChargesNarrativeService.Validate(NarrativeJson(claim), Shown(wording), 1).Success;
+
+        // A bare 9.5 in the source does not support a claim of 9.5% (nor 9.5x, nor a rupee amount).
+        Assert.False(Ok("Version 9.5 of the deed", "The charge carries interest at 9.5%."));
+        Assert.False(Ok("Version 9.5 of the deed", "The charge is for Rs 9.5 crore."));
+        // A percentage in the source supports a percentage, however it is written, but not a bare number or a multiple.
+        Assert.True(Ok("Interest at 9.5% p.a.", "The charge carries interest at 9.5%."));
+        Assert.True(Ok("Interest at 9.5% p.a.", "The charge carries interest at 9.5 percent."));
+        Assert.False(Ok("Interest at 9.5% p.a.", "The charge covers 9.5 branches."));
+        Assert.False(Ok("Interest at 9.5% p.a.", "Cover of 9.5x."));
+        // Scale matters for amounts quoted in the wording.
+        Assert.True(Ok("limit Rs 700 Lakh", "A limit of Rs 700 lakh applies."));
+        Assert.False(Ok("limit Rs 700 Lakh", "A limit of Rs 700 crore applies."));
+    }
+
+    [Fact]
+    public void Validate_StillRejectsADerivedTotalOrAnInventedFigure()
+    {
+        var a = Charge(1, "C1", 20m, events: [new RocChargeEvent { ChargeEventId = 1, RocChargeId = 1, EventType = ChargeEventType.Creation, InstrumentDescription = "Hypothecation of stock" }]);
+        var b = Charge(2, "C2", 15m);
+        var selected = AiChargesNarrativeService.SelectChargesForNarrative([a, b]);
+
+        var total = AiChargesNarrativeService.Validate(NarrativeJson("Two open charges totalling 35.00."), selected, 2);       // a sum: in nobody's data
+        var invented = AiChargesNarrativeService.Validate(NarrativeJson("Charge C1 secures 999 branches."), selected, 2);
+
+        Assert.False(total.Success);
+        Assert.Contains("number not present", total.FailureReason);
+        Assert.False(invented.Success);
+    }
 }
