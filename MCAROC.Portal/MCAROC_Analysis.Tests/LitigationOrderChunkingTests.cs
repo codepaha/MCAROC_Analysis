@@ -1215,20 +1215,21 @@ public class LitigationOrderChunkingTests : IAsyncLifetime
     [InlineData("NCLT [Mumbai Bench]")]
     [InlineData("NCLT | Mumbai Bench")]
     [InlineData("NCLT [Mumbai | Bench]")]
-    public void DropDuplicateText_suppresses_duplicate_passages_sharing_body_across_parent_case_and_IA(string court)
+    public void DropDuplicateText_suppresses_duplicate_passages_within_same_case(string court)
     {
+        // Both chunks share LitigationCaseId=0 (same case) — the body-equal duplicate should be suppressed.
         const string body = "The application is dismissed and the order of the tribunal is affirmed.";
         var parentHeader = LitigationOrderChunkingOrchestrator.BuildContextHeader(court, "CP 1/2025", null, "Order", "2025-01-01", 1);
         var iaHeader = LitigationOrderChunkingOrchestrator.BuildContextHeader(court, "IA 2/2025", null, "Order", "2025-01-01", 1);
 
         var parentChunk = new LitigationOrderChunk
         {
-            LitigationOrderChunkId = 1,
+            LitigationOrderChunkId = 1, LitigationCaseId = 100,
             ChunkText = $"{parentHeader}\n\n{body}"
         };
         var iaChunk = new LitigationOrderChunk
         {
-            LitigationOrderChunkId = 2,
+            LitigationOrderChunkId = 2, LitigationCaseId = 100,  // same case
             ChunkText = $"{iaHeader}\n\n{body}"
         };
 
@@ -1243,6 +1244,41 @@ public class LitigationOrderChunkingTests : IAsyncLifetime
         Assert.Equal(1, single.Chunk.LitigationOrderChunkId);
         // Selected provenance header on the retained chunk is preserved
         Assert.StartsWith(parentHeader, single.Chunk.ChunkText);
+    }
+
+    [Theory]
+    [InlineData("NCLT")]
+    [InlineData("NCLT [Mumbai Bench]")]
+    [InlineData("NCLT | Mumbai Bench")]
+    [InlineData("NCLT [Mumbai | Bench]")]
+    public void DropDuplicateText_preserves_both_passages_when_identical_body_text_comes_from_different_cases(string court)
+    {
+        // Two cases with the same order wording: each case's passage must survive deduplication.
+        const string body = "The application is dismissed and the order of the tribunal is affirmed.";
+        var parentHeader = LitigationOrderChunkingOrchestrator.BuildContextHeader(court, "CP 1/2025", null, "Order", "2025-01-01", 1);
+        var iaHeader = LitigationOrderChunkingOrchestrator.BuildContextHeader(court, "IA 2/2025", null, "Order", "2025-01-01", 1);
+
+        var caseAChunk = new LitigationOrderChunk
+        {
+            LitigationOrderChunkId = 1, LitigationCaseId = 101,  // case A
+            ChunkText = $"{parentHeader}\n\n{body}"
+        };
+        var caseBChunk = new LitigationOrderChunk
+        {
+            LitigationOrderChunkId = 2, LitigationCaseId = 202,  // case B — different case, identical body
+            ChunkText = $"{iaHeader}\n\n{body}"
+        };
+
+        var matches = new[]
+        {
+            new LitigationOrderChunkMatch(caseAChunk, 0.1),
+            new LitigationOrderChunkMatch(caseBChunk, 0.1)
+        };
+
+        var deduplicated = LitigationDocumentRetriever.DropDuplicateText(matches, 10);
+        Assert.Equal(2, deduplicated.Count);
+        Assert.Contains(deduplicated, m => m.Chunk.LitigationCaseId == 101);
+        Assert.Contains(deduplicated, m => m.Chunk.LitigationCaseId == 202);
     }
 
     [Fact]

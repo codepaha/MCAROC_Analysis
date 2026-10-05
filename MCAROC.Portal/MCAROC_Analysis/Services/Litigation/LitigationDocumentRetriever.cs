@@ -90,8 +90,10 @@ public class LitigationDocumentRetriever(AppDbContext db, ChatRetrievalOptions o
 
     internal static List<LitigationOrderChunkMatch> DropDuplicateText(IEnumerable<LitigationOrderChunkMatch> ranked, int take)
     {
-        var seen = new HashSet<string>(StringComparer.Ordinal);
-        return ranked.Where(m => seen.Add(NormalizedBody(m.Chunk.ChunkText))).Take(take).ToList();
+        // Scope by (CaseId, body): passages from different cases with identical wording are both preserved;
+        // only true intra-case duplicates (same LitigationCaseId, same normalised body text) are suppressed.
+        var seen = new HashSet<(long CaseId, string NormalizedBody)>();
+        return ranked.Where(m => seen.Add((m.Chunk.LitigationCaseId, NormalizedBody(m.Chunk.ChunkText)))).Take(take).ToList();
     }
 
     /// <summary>#343's recency route: the newest <paramref name="orderCount"/> orders of the given cases by their
