@@ -406,7 +406,7 @@
                     </div>
                 }
 
-                @await Html.PartialAsync("~/Views/LitigationCase/_CaseAnalysis.cshtml", Model.Analysis, new ViewDataDictionary(ViewData) { { "RequestId", (long)requestId }, { "Full", false } })
+                @await Html.PartialAsync("~/Views/LitigationCase/_CaseAnalysis.cshtml", Model.Analysis, new ViewDataDictionary(ViewData) { ["RequestId"] = (long)requestId, ["Full"] = false })
 
                 @if (Model.Analysis.Status == LitigationAiAnalysisItemStatus.Failed && !string.IsNullOrWhiteSpace(Model.Analysis.FailureReason))
                 {

@@ -701,7 +701,7 @@
             {
                 @foreach (var c in lake.Cases)
                 {
-                    @await Html.PartialAsync("~/Views/Requests/Details/_LitigationCaseCard.cshtml", c, new ViewDataDictionary(ViewData) { { "RequestId", Model.Request.RequestId }, { "ChargeLinks", Model.ChargeLitigation?.Links.Where(l => l.Case.LitigationCaseId == c.LitigationCaseId).ToList() } })
+                    @await Html.PartialAsync("~/Views/Requests/Details/_LitigationCaseCard.cshtml", c, new ViewDataDictionary(ViewData) { ["RequestId"] = Model.Request.RequestId, ["ChargeLinks"] = Model.ChargeLitigation?.Links.Where(l => l.Case.LitigationCaseId == c.LitigationCaseId).ToList() })
                 }
 
                 @if (lake.TotalPages > 1)
