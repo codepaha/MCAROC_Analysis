@@ -152,6 +152,23 @@ public class AnalysisClaimAndRecoveryTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task AutomaticRetry_AnEarlyDuplicateQueueItemCannotClaimTheRequestBeforeItIsDue()
+    {
+        await using var db = CreateContext();
+        var waiting = await SeedRequestAsync(db, RequestStatus.DataExtracted);
+        await db.Requests.Where(r => r.RequestId == waiting.RequestId)
+            .ExecuteUpdateAsync(s => s.SetProperty(r => r.AnalysisRetryAfter, DateTime.UtcNow.AddMinutes(5)));
+
+        var orchestrator = new AnalysisOrchestrator(
+            db, null!, null!, new AnalysisQueue(), null!, null!, null!, NullLogger<AnalysisOrchestrator>.Instance);
+        await orchestrator.RunAnalysisAsync(waiting.RequestId, CancellationToken.None);   // the early duplicate
+
+        await using var verify = CreateContext();
+        Assert.Equal(RequestStatus.DataExtracted, (await verify.Requests.FirstAsync(r => r.RequestId == waiting.RequestId)).RequestStatus);
+        Assert.False(await verify.AnalysisRuns.AnyAsync(a => a.RequestId == waiting.RequestId));
+    }
+
+    [Fact]
     public async Task AnalysisRun_UniqueRequestIdAndRunNumber_RejectsADuplicateInsert()
     {
         await using var db = CreateContext();

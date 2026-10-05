@@ -66,8 +66,13 @@ public class AnalysisOrchestrator(
         // whose UPDATE actually matches a row proceeds, so a double-enqueue (recovery + a near-simultaneous
         // trigger) collapses to one winner rather than creating two AnalysisRuns.
         var claimed = await db.Requests
-            .Where(r => r.RequestId == requestId && r.RequestStatus == RequestStatus.DataExtracted)
-            .ExecuteUpdateAsync(s => s.SetProperty(r => r.RequestStatus, RequestStatus.AiAnalysisInProgress), ct);
+            .Where(r => r.RequestId == requestId && r.RequestStatus == RequestStatus.DataExtracted
+                // A request waiting out an automatic-retry delay cannot be claimed early by any other queue item (a duplicate
+                // enqueue, a resumed auto-fetch): the delayed enqueue, or startup recovery, brings it back when the time is due.
+                && (r.AnalysisRetryAfter == null || r.AnalysisRetryAfter <= DateTime.UtcNow))
+            .ExecuteUpdateAsync(s => s
+                .SetProperty(r => r.RequestStatus, RequestStatus.AiAnalysisInProgress)
+                .SetProperty(r => r.AnalysisRetryAfter, (DateTime?)null), ct);
         if (claimed == 0)
             return;
 
@@ -373,7 +378,9 @@ public class AnalysisOrchestrator(
                 .SetProperty(a => a.CompletedDate, DateTime.UtcNow), ct);
 
         var updated = await db.Requests.Where(r => r.RequestId == requestId && r.RequestStatus != RequestStatus.Cancelled)
-            .ExecuteUpdateAsync(s => s.SetProperty(r => r.RequestStatus, RequestStatus.DataExtracted), ct);
+            .ExecuteUpdateAsync(s => s
+                .SetProperty(r => r.RequestStatus, RequestStatus.DataExtracted)
+                .SetProperty(r => r.AnalysisRetryAfter, (DateTime?)null), ct);
 
         if (updated > 0)
         {
