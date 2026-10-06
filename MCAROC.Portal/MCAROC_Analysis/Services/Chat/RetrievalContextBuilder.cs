@@ -128,7 +128,10 @@ public class RetrievalContextBuilder
                 PageNumber: chunk.PageNumber, DocumentId: chunk.LitigationOrderDocumentId,
                 LitigationCaseId: chunk.LitigationCaseId, LitigationCaseOrderId: chunk.LitigationCaseOrderId));
 
-        AddLitigationCaseSources(sources, referencedCases);
+        // A question that describes cases by forum, status or side ("the Supreme Court cases against the company") gets the matching
+        // case records too, in the register's order; the facts above state how many match in all.
+        var listedCases = hints.CaseList is { } caseFilter ? await FindListedCasesAsync(requestId, caseFilter, ct) : [];
+        AddLitigationCaseSources(sources, referencedCases.Concat(listedCases.Where(l => referencedCases.All(r => r.LitigationCaseId != l.LitigationCaseId))).ToList());
 
         if (hints.OrderOutcomes is { Count: > 0 } outcomes)
             AddOrderOutcomeSources(sources, outcomes, await _orderOutcomes.FindAsync(requestId, outcomes, ct));
@@ -200,6 +203,29 @@ public class RetrievalContextBuilder
         return string.IsNullOrWhiteSpace(c.CaseNumber)
             ? $"Litigation order · {date} · Page {c.PageNumber}"
             : $"{c.CaseNumber} ({c.Court}) · {date} · Page {c.PageNumber}";
+    }
+
+    /// <summary>The first <see cref="LitigationCaseListSelector.MaxListedCases"/> cases of the latest completed report that match a described
+    /// set, selected and ordered exactly as the register and the report do.</summary>
+    private async Task<List<LitigationCase>> FindListedCasesAsync(long requestId, CaseListFilter filter, CancellationToken ct)
+    {
+        var request = await _db.Requests.AsNoTracking().Where(r => r.RequestId == requestId)
+            .Select(r => new { r.CompanyName, r.LatestCompletedIngestionRunId }).FirstOrDefaultAsync(ct);
+        if (request is null) return [];
+        var snapshotId = await _db.LitigationReportSnapshots.AsNoTracking()
+            .Where(s => s.RequestId == requestId && s.Status == LitigationReportSnapshotStatus.Completed)
+            .OrderByDescending(s => s.RetrievedUtc).ThenByDescending(s => s.LitigationReportSnapshotId)
+            .Select(s => (long?)s.LitigationReportSnapshotId).FirstOrDefaultAsync(ct);
+        if (snapshotId is null) return [];
+
+        var cases = await _db.LitigationCaseSourceReports.AsNoTracking()
+            .Where(l => l.LitigationReportSnapshotId == snapshotId).Select(l => l.Case!).ToListAsync(ct);
+        var names = await _structuredFacts.CompanyNamesAsync(requestId, request.CompanyName, request.LatestCompletedIngestionRunId, ct);
+        var (listed, _) = LitigationCaseListSelector.Select(cases, filter, names);
+        var ids = listed.Select(c => c.LitigationCaseId).ToList();
+        var withOrders = (await _db.LitigationCases.AsNoTracking().Include(c => c.Orders)
+            .Where(c => ids.Contains(c.LitigationCaseId)).ToListAsync(ct)).ToDictionary(c => c.LitigationCaseId);
+        return ids.Where(withOrders.ContainsKey).Select(id => withOrders[id]).ToList();
     }
 
     private async Task<List<LitigationCase>> FindReferencedCasesAsync(long requestId, string question, CancellationToken ct)

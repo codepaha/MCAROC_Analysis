@@ -17,7 +17,8 @@ namespace MCAROC_Analysis.Services.Chat;
 /// case's passages with the most decision language, which similarity under-ranks in long judgements (#353).</summary>
 public record QuestionHints(FilingCategory? Category, string? FormTypeKeyword, string? LenderNameKeyword, int? Year, string? SrnMatch,
     IReadOnlyList<string>? LexicalTerms = null, IReadOnlyList<LitigationOrderOutcome>? OrderOutcomes = null,
-    bool AsksForQuantity = false, bool AsksForCompleteList = false, bool AsksForRecency = false, bool AsksForDecision = false)
+    bool AsksForQuantity = false, bool AsksForCompleteList = false, bool AsksForRecency = false, bool AsksForDecision = false,
+    CaseListFilter? CaseList = null)
 {
     public bool HasSoftHints => Category is not null || FormTypeKeyword is not null || LenderNameKeyword is not null;
 }
@@ -63,7 +64,8 @@ public static partial class QuestionHintExtractor
 
         return new QuestionHints(category, formType, lender, year, srn, ExtractLexicalTerms(question), ExtractOrderOutcomes(text),
             AsksForQuantity: QuantityRegex().IsMatch(text), AsksForCompleteList: CompleteListRegex().IsMatch(text),
-            AsksForRecency: RecencyRegex().IsMatch(text), AsksForDecision: DecisionQuestionRegex().IsMatch(text));
+            AsksForRecency: RecencyRegex().IsMatch(text), AsksForDecision: DecisionQuestionRegex().IsMatch(text),
+            CaseList: LitigationCaseListSelector.Extract(question));
     }
 
     /// <summary>Outcome words and whether each is unambiguous on its own. "Stay", "injunction", "dismissed" and

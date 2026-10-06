@@ -1,6 +1,7 @@
 using MCAROC_Analysis.Data;
 using MCAROC_Analysis.Data.Entities;
 using MCAROC_Analysis.Models;
+using MCAROC_Analysis.Services.LitigationData;
 using Microsoft.EntityFrameworkCore;
 
 namespace MCAROC_Analysis.Services.Chat;
@@ -18,6 +19,11 @@ public class StructuredFactsProvider(AppDbContext db)
 {
     private static readonly string[] AllDomains = ["Directors", "Financial", "Charges", "Gst", "Epfo", "Litigation"];
 
+    /// <summary>Charge rows listed individually in one prompt (the largest, plus any the question points at).</summary>
+    internal const int MaxChargeRows = 40;
+    internal const int MaxHoldersListed = 12;
+    internal const int MaxWorkbookLitigationRows = 40;
+
     public async Task<List<StructuredFact>> BuildDigestAsync(long requestId, QuestionHints hints, CancellationToken ct)
     {
         var request = await db.Requests.FirstAsync(r => r.RequestId == requestId, ct);
@@ -25,7 +31,7 @@ public class StructuredFactsProvider(AppDbContext db)
         if (request.LatestCompletedIngestionRunId is not { } ingestionRunId)
         {
             // No MCA ingestion, but the litigation data fetched from the data service stands on its own.
-            if (await BuildFetchedLitigationFactAsync(requestId, ct) is { } onlyLitigation) facts.Add(onlyLitigation);
+            facts.AddRange(await BuildFetchedLitigationFactsAsync(requestId, hints, request.CompanyName, null, ct));
             return facts;
         }
 
@@ -87,21 +93,42 @@ public class StructuredFactsProvider(AppDbContext db)
         var charges = await db.RocCharges.Where(x => x.IngestionRunId == ingestionRunId).ToListAsync(ct);
         if (charges.Count > 0)
         {
+            // The counts and totals are always stated, never left for the model to work out from rows: counting a few hundred
+            // rows is exactly where a language model drifts (it once answered 106 for 163 open charges).
+            var open = charges.Where(c => c.SatisfactionDate is null).ToList();
+            var openTotal = open.Sum(c => c.CurrentAmount ?? 0m);
+            facts.Add(new StructuredFact("Charges",
+                $"{open.Count} open charge(s), {charges.Count - open.Count} satisfied charge(s) on record ({charges.Count} in total); the open charges total ₹{openTotal:N2} Cr.", null, null));
+            if (open.Count > 0)
+            {
+                var holders = open.GroupBy(c => c.LatestChargeHolderRaw).Select(g => (Holder: g.Key, Count: g.Count(), Amount: g.Sum(c => c.CurrentAmount ?? 0m)))
+                    .OrderByDescending(h => h.Amount).ThenBy(h => h.Holder, StringComparer.Ordinal).ToList();
+                facts.Add(new StructuredFact("Charges",
+                    $"Open charges by holder, largest total first: " + string.Join("; ", holders.Take(MaxHoldersListed).Select(h => $"{h.Holder}: {h.Count} charge(s), ₹{h.Amount:N2} Cr"))
+                        + (holders.Count > MaxHoldersListed ? $"; and {holders.Count - MaxHoldersListed} other holder(s)." : "."), null, null));
+            }
+
             var recentCutoff = DateOnly.FromDateTime(DateTime.UtcNow.AddYears(-2));
             var relevant = charges.Where(c => c.SatisfactionDate is null || c.SatisfactionDate >= recentCutoff).ToList();
-            // Detailed per-row only when there's at least one open/recent charge to show; otherwise fall
-            // through to the headline so the Charges domain is never dropped from the digest entirely
-            // (e.g. a charge-specific question on a company whose charges were all satisfied >2y ago).
+            // Per-row detail only when the question is about charges and there is an open or recent charge to show.
             if (detailed.Contains("Charges") && relevant.Count > 0)
-                foreach (var c in relevant)
+            {
+                // The largest charges, plus every charge the question points at (a lender it names, a year it asks about), so a capped
+                // list never hides the row asked for.
+                bool Asked(RocCharge c) =>
+                    (hints.LenderNameKeyword is { } lender && c.LatestChargeHolderRaw.Contains(lender, StringComparison.OrdinalIgnoreCase))
+                    || (hints.Year is { } year && (c.CreationDate?.Year == year || c.SatisfactionDate?.Year == year));
+                var listed = relevant.OrderByDescending(Asked).ThenByDescending(c => c.CurrentAmount ?? 0m).ThenBy(c => c.RocChargeNumber, StringComparer.Ordinal)
+                    .Take(Math.Max(MaxChargeRows, relevant.Count(Asked))).ToList();
+                foreach (var c in listed.OrderByDescending(c => c.CurrentAmount ?? 0m).ThenBy(c => c.RocChargeNumber, StringComparer.Ordinal))
                     facts.Add(new StructuredFact("Charges",
                         $"Charge {c.RocChargeNumber}: Holder {c.LatestChargeHolderRaw}, Amount ₹{c.CurrentAmount} Cr, Status {c.ChargeStatus}"
-                            + (c.SatisfactionDate is { } sd ? $", Satisfied {sd}" : ""),
+                            + (c.CreationDate is { } created ? $", Created {created:yyyy-MM-dd}" : "")
+                            + (c.SatisfactionDate is { } sd ? $", Satisfied {sd:yyyy-MM-dd}" : ""),
                         "RocCharge", c.ChargeId));
-            else
-            {
-                var open = charges.Count(c => c.SatisfactionDate is null);
-                facts.Add(new StructuredFact("Charges", $"{open} open charge(s), {charges.Count - open} satisfied charge(s) on record.", null, null));
+                if (listed.Count < relevant.Count)
+                    facts.Add(new StructuredFact("Charges",
+                        $"Only {listed.Count} of the {relevant.Count} open or recently satisfied charges are listed individually (the largest, and any the question points at); the counts and totals above cover all of them.", null, null));
             }
         }
 
@@ -131,7 +158,7 @@ public class StructuredFactsProvider(AppDbContext db)
         var litigations = await db.Litigations.Where(x => x.IngestionRunId == ingestionRunId).ToListAsync(ct);
         if (litigations.Count > 0)
         {
-            if (detailed.Contains("Litigation"))
+            if (detailed.Contains("Litigation") && litigations.Count <= MaxWorkbookLitigationRows)
                 foreach (var l in litigations)
                 {
                     var courtSuffix = string.IsNullOrWhiteSpace(l.Court) ? "" : $", Court: {l.Court}";
@@ -139,43 +166,55 @@ public class StructuredFactsProvider(AppDbContext db)
                         $"{l.CaseType} ({l.CaseStatus}): {l.Litigants}, Case No. {l.CaseNumber}{courtSuffix}", "Litigation", l.LitigationId));
                 }
             else
-                facts.Add(new StructuredFact("Litigation", $"{litigations.Count} litigation record(s) on file.", null, null));
+                facts.Add(new StructuredFact("Litigation", $"{litigations.Count} litigation record(s) on file in the report workbook"
+                    + (litigations.Count > MaxWorkbookLitigationRows ? " (too many to list one by one here; the litigation cases summary and case records cover the court proceedings)." : "."), null, null));
         }
 
         var withRun = facts.Select(f => f with { IngestionRunId = ingestionRunId }).ToList();
-        if (await BuildFetchedLitigationFactAsync(requestId, ct) is { } fetched) withRun.Add(fetched);
+        withRun.AddRange(await BuildFetchedLitigationFactsAsync(requestId, hints, request.CompanyName, ingestionRunId, ct));
         return withRun;
     }
 
     /// <summary>The litigation cases fetched from the data service (the Litigation tab's cases), summarised: how many, how many pending
     /// and disposed, how many are by or against the company, by court type, and how many have a next hearing. The structured facts above
     /// read only the report sheet's Litigations rows, which a fetched search never fills — so without this the assistant would say
-    /// "no litigation on file" for a company whose tab lists dozens of cases. The cases are those of the latest completed report.</summary>
-    private async Task<StructuredFact?> BuildFetchedLitigationFactAsync(long requestId, CancellationToken ct)
+    /// "no litigation on file" for a company whose tab lists dozens of cases. The cases are those of the latest completed report.
+    /// The company's side and each case's forum are worked out exactly as the page and the report do (the same rules), and the summary
+    /// states the combinations a question asks about (pending cases against the company, cases per forum), so none has to be counted from
+    /// a list. When the question describes a set of cases, the size of that set is stated too.</summary>
+    private async Task<List<StructuredFact>> BuildFetchedLitigationFactsAsync(
+        long requestId, QuestionHints hints, string companyName, long? ingestionRunId, CancellationToken ct)
     {
         var snapshotId = await db.LitigationReportSnapshots.AsNoTracking()
             .Where(s => s.RequestId == requestId && s.Status == LitigationReportSnapshotStatus.Completed)
             .OrderByDescending(s => s.RetrievedUtc).ThenByDescending(s => s.LitigationReportSnapshotId)
             .Select(s => (long?)s.LitigationReportSnapshotId).FirstOrDefaultAsync(ct);
-        if (snapshotId is null) return null;
+        if (snapshotId is null) return [];
 
         var cases = await db.LitigationCaseSourceReports.AsNoTracking()
             .Where(l => l.LitigationReportSnapshotId == snapshotId)
-            .Select(l => new { l.Case!.Type, l.Case.CaseStatus, l.Case.CaseStage, l.Case.Direction, l.Case.NextHearingDate })
-            .ToListAsync(ct);
-        if (cases.Count == 0) return null;
+            .Select(l => l.Case!).ToListAsync(ct);
+        if (cases.Count == 0) return [];
 
+        var names = await CompanyNamesAsync(requestId, companyName, ingestionRunId, ct);
+        var summary = new LitigationForumSummary();
         var pending = 0; var disposed = 0; var by = 0; var against = 0; var withNext = 0;
+        // status x side: [pending, disposed, unknown] x [against, by, not determined]
+        var crossTab = new int[3, 3];
         foreach (var c in cases)
         {
-            switch (LitigationCaseStatusClassifier.Classify(c.CaseStatus, c.CaseStage))
+            var bucket = LitigationCaseStatusClassifier.Classify(c.CaseStatus, c.CaseStage);
+            var side = LitigationCasePresentation.Side(c.Direction, c.PetitionersJson, c.RespondentsJson, names);
+            summary.Add(LitigationCasePresentation.Resolve(c.Type, c.Court, c.CourtCategory), side, bucket);
+            switch (bucket)
             {
                 case LitigationCaseStatusBucket.Pending: pending++; break;
                 case LitigationCaseStatusBucket.Disposed: disposed++; break;
             }
-            if (string.Equals(c.Direction, "by", StringComparison.OrdinalIgnoreCase)) by++;
-            else if (string.Equals(c.Direction, "against", StringComparison.OrdinalIgnoreCase)) against++;
+            if (side == LitigationCompanySide.ByCompany) by++;
+            else if (side == LitigationCompanySide.AgainstCompany) against++;
             if (!string.IsNullOrWhiteSpace(c.NextHearingDate)) withNext++;
+            crossTab[(int)bucket, (int)LitigationForumSummary.ColumnOf(side)]++;
         }
         var courts = string.Join(", ", cases.GroupBy(c => string.IsNullOrWhiteSpace(c.Type) ? "other" : c.Type!.Trim().ToLowerInvariant())
             .OrderByDescending(g => g.Count()).ThenBy(g => g.Key).Select(g => $"{g.Key} {g.Count()}"));
@@ -183,7 +222,47 @@ public class StructuredFactsProvider(AppDbContext db)
             + $"{cases.Count - pending - disposed} of unknown status; {against} against the company, {by} by the company"
             + (by + against < cases.Count ? $", {cases.Count - by - against} of unstated direction" : "")
             + $"; {withNext} with a next hearing date. By court type: {courts}.";
-        return new StructuredFact("Litigation", text, null, null);
+        var facts = new List<StructuredFact> { new("Litigation", text, null, null) };
+
+        string Row(string label, LitigationCaseStatusBucket bucket) =>
+            $"{label}: {crossTab[(int)bucket, 0]} against the company, {crossTab[(int)bucket, 1]} by the company, {crossTab[(int)bucket, 2]} side not determined";
+        facts.Add(new StructuredFact("Litigation",
+            $"Litigation cases by status and the company's side: {Row("pending", LitigationCaseStatusBucket.Pending)}; {Row("disposed", LitigationCaseStatusBucket.Disposed)}; "
+            + $"{Row("status not reported", LitigationCaseStatusBucket.Unknown)}.", null, null));
+
+        var forums = Enum.GetValues<LitigationInstitution>().Where(f => summary.ForForum(f).Total > 0).Select(f =>
+        {
+            string Part(LitigationForumSummary.SideColumn side)
+            {
+                var c = summary.Cell(f, side);
+                return $"{c.Total} ({c.Pending} pending, {c.Disposed} disposed, {c.Unknown} unknown)";
+            }
+            return $"{LitigationCasePresentation.Label(f)}: {summary.ForForum(f).Total} in all — against the company {Part(LitigationForumSummary.SideColumn.Against)}; "
+                + $"by the company {Part(LitigationForumSummary.SideColumn.By)}; side not determined {Part(LitigationForumSummary.SideColumn.NotDetermined)}";
+        });
+        facts.Add(new StructuredFact("Litigation", "Litigation cases by forum: " + string.Join(". ", forums) + ".", null, null));
+
+        if (hints.CaseList is { } filter)
+        {
+            var (listed, total) = LitigationCaseListSelector.Select(cases, filter, names);
+            facts.Add(new StructuredFact("Litigation",
+                $"Cases matching the question ({filter.Describe()}): {total} of the {cases.Count} case(s)."
+                + (total == 0 ? " None match." : total > listed.Count
+                    ? $" The first {listed.Count} are given as litigation case records (pending first, then by forum seniority, cases against the company first, newest filing first); the rest are not listed."
+                    : " All of them are given as litigation case records."), null, null));
+        }
+        return facts;
+    }
+
+    /// <summary>The company's current name and the names it has had, which a party list may use.</summary>
+    internal async Task<List<string>> CompanyNamesAsync(long requestId, string companyName, long? ingestionRunId, CancellationToken ct)
+    {
+        var names = new List<string>();
+        if (!string.IsNullOrWhiteSpace(companyName)) names.Add(companyName);
+        if (ingestionRunId is { } runId)
+            names.AddRange(await db.CompanyNameHistories.AsNoTracking().Where(h => h.RequestId == requestId && h.IngestionRunId == runId)
+                .Select(h => h.PreviousName).ToListAsync(ct));
+        return names.Where(n => !string.IsNullOrWhiteSpace(n)).Distinct().ToList();
     }
 
     private static HashSet<string> DetermineDetailedDomains(QuestionHints hints)
