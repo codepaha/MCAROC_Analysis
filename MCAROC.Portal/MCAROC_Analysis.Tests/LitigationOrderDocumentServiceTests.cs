@@ -367,6 +367,8 @@ public class LitigationOrderDocumentServiceTests : IAsyncLifetime
 
         var (_, _, failedOrder) = await SeedOrderAsync(db, "R2", "https://bpr.example/orders/r2.pdf");
         var failedDocument = await SeedDocumentAsync(db, failedOrder.LitigationCaseOrderId, DateTime.UtcNow.AddDays(5), LitigationOrderDocumentStatus.Failed);
+        failedDocument.NextAttemptUtc = DateTime.UtcNow.AddMinutes(-1); // its backoff has elapsed
+        await db.SaveChangesAsync();
 
         var (_, _, expiredLeaseOrder) = await SeedOrderAsync(db, "R3", "https://bpr.example/orders/r3.pdf");
         var expiredLeaseDocument = await SeedDocumentAsync(db, expiredLeaseOrder.LitigationCaseOrderId, DateTime.UtcNow.AddDays(5), LitigationOrderDocumentStatus.InProgress);
@@ -394,23 +396,29 @@ public class LitigationOrderDocumentServiceTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task RecoverStaleWorkAsync_keeps_a_recent_failures_backoff_and_skips_failed_rows_with_no_PdfUrl()
+    public async Task RecoverStaleWorkAsync_reschedules_a_failure_at_its_recorded_next_attempt_and_skips_failed_rows_with_no_PdfUrl()
     {
         await using var db = CreateContext();
         var queue = new LitigationOrderDocumentQueue();
         var service = NewService(db, new StubHandler(), queue);
 
-        // Claimed a minute ago (lease = claim + 10 min) on its 3rd attempt: next retry is 20 minutes after that claim.
-        var (_, _, recentOrder) = await SeedOrderAsync(db, "B1", "https://bpr.example/orders/b1.pdf");
-        var recentFailure = await SeedDocumentAsync(db, recentOrder.LitigationCaseOrderId, DateTime.UtcNow.AddDays(5), LitigationOrderDocumentStatus.Failed);
-        recentFailure.AttemptCount = 3;
-        recentFailure.LeaseExpiresUtc = DateTime.UtcNow.AddMinutes(9);
+        // Failed 8 minutes after its claim, so its deadline (failure + 20 min) is later than claim + 20 min:
+        // recovery must use the recorded deadline, not rebuild one from the claim time.
+        var (_, _, laterOrder) = await SeedOrderAsync(db, "B1", "https://bpr.example/orders/b1.pdf");
+        var notYetDue = await SeedDocumentAsync(db, laterOrder.LitigationCaseOrderId, DateTime.UtcNow.AddDays(5), LitigationOrderDocumentStatus.Failed);
+        notYetDue.AttemptCount = 3;
+        notYetDue.LeaseExpiresUtc = DateTime.UtcNow.AddMinutes(-11); // claim was ~21 min ago: a claim-based deadline would be past
+        notYetDue.NextAttemptUtc = DateTime.UtcNow.AddMinutes(10);
 
-        // Its backoff (5 min after a claim 30 min ago) has already elapsed — retried straight away.
         var (_, _, dueOrder) = await SeedOrderAsync(db, "B2", "https://bpr.example/orders/b2.pdf");
-        var dueFailure = await SeedDocumentAsync(db, dueOrder.LitigationCaseOrderId, DateTime.UtcNow.AddDays(5), LitigationOrderDocumentStatus.Failed);
-        dueFailure.AttemptCount = 1;
-        dueFailure.LeaseExpiresUtc = DateTime.UtcNow.AddMinutes(-20);
+        var due = await SeedDocumentAsync(db, dueOrder.LitigationCaseOrderId, DateTime.UtcNow.AddDays(5), LitigationOrderDocumentStatus.Failed);
+        due.AttemptCount = 1;
+        due.NextAttemptUtc = DateTime.UtcNow.AddMinutes(-1);
+
+        // Failed before NextAttemptUtc existed: backed off from now, not retried at once.
+        var (_, _, legacyOrder) = await SeedOrderAsync(db, "B5", "https://bpr.example/orders/b5.pdf");
+        var legacy = await SeedDocumentAsync(db, legacyOrder.LitigationCaseOrderId, DateTime.UtcNow.AddDays(5), LitigationOrderDocumentStatus.Failed);
+        legacy.AttemptCount = 2;
 
         var (_, _, noUrlOrder) = await SeedOrderAsync(db, "B3", "");
         var noUrlFailure = await SeedDocumentAsync(db, noUrlOrder.LitigationCaseOrderId, DateTime.UtcNow.AddDays(5), LitigationOrderDocumentStatus.Failed);
@@ -419,8 +427,9 @@ public class LitigationOrderDocumentServiceTests : IAsyncLifetime
         await service.RecoverStaleWorkAsync(CancellationToken.None);
 
         var immediate = await DrainAvailableAsync(queue, TimeSpan.FromMilliseconds(500));
-        Assert.Contains(dueFailure.LitigationOrderDocumentId, immediate);
-        Assert.DoesNotContain(recentFailure.LitigationOrderDocumentId, immediate);
+        Assert.Contains(due.LitigationOrderDocumentId, immediate);
+        Assert.DoesNotContain(notYetDue.LitigationOrderDocumentId, immediate);
+        Assert.DoesNotContain(legacy.LitigationOrderDocumentId, immediate);
         Assert.DoesNotContain(noUrlFailure.LitigationOrderDocumentId, immediate);
     }
 
