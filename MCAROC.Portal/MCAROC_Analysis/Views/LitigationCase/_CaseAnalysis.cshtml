@@ -33,17 +33,17 @@
     </div>
     @if (!string.IsNullOrWhiteSpace(Model.RiskTrigger))
     {
-        <p class="small mb-1"><strong>@Model.RiskTrigger</strong>@(string.IsNullOrWhiteSpace(Model.RiskReason) ? "" : " - " + Model.RiskReason)</p>
+        <p class="mb-1"><strong>@Model.RiskTrigger</strong>@(string.IsNullOrWhiteSpace(Model.RiskReason) ? "" : " - " + Model.RiskReason)</p>
     }
 }
-@if (!string.IsNullOrWhiteSpace(Model.Summary)) { <p class="small mb-1@(Model.KeyPoints.Count > 0 ? " fw-semibold" : "")">@Model.Summary</p> }
-@if (Model.KeyPoints.Count > 0) { <ul class="small mb-2 ps-3">@foreach (var k in Model.KeyPoints) { <li>@k</li> }</ul> }
+@if (!string.IsNullOrWhiteSpace(Model.Summary)) { <p class="mb-1@(Model.KeyPoints.Count > 0 ? " fw-semibold" : "")">@Model.Summary</p> }
+@if (Model.KeyPoints.Count > 0) { <ul class="mb-2 ps-3">@foreach (var k in Model.KeyPoints) { <li>@k</li> }</ul> }
 @if (Model.IsDetailed)
 {
-    @if (!string.IsNullOrWhiteSpace(Model.ConsequenceNote)) { <p class="small mb-2"><span class="fw-bold text-muted">If decided against the company: </span>@Model.ConsequenceNote</p> }
+    @if (!string.IsNullOrWhiteSpace(Model.ConsequenceNote)) { <p class="mb-2"><span class="fw-bold text-muted">If decided against the company: </span>@Model.ConsequenceNote</p> }
     @if (Model.PetitionerResult is not null || !string.IsNullOrWhiteSpace(Model.FinalOrderSummary))
     {
-        <p class="small mb-2"><span class="fw-bold text-muted">Outcome: </span>@Model.FinalOrderSummary
+        <p class="mb-2"><span class="fw-bold text-muted">Outcome: </span>@Model.FinalOrderSummary
             @if (!string.IsNullOrWhiteSpace(Model.PetitionerResult)) { <span class="text-muted"> (petitioner: @Model.PetitionerResult@(string.IsNullOrWhiteSpace(Model.RespondentResult) ? "" : "; respondent: " + Model.RespondentResult))</span> }
         </p>
     }
@@ -51,7 +51,7 @@
     {
         @if (!string.IsNullOrWhiteSpace(Model.FactualBackground) || !string.IsNullOrWhiteSpace(Model.ReliefSought) || !string.IsNullOrWhiteSpace(Model.CoreIssue))
         {
-            <dl class="row small mb-2">
+            <dl class="row mb-2">
                 @if (!string.IsNullOrWhiteSpace(Model.FactualBackground)) { <dt class="col-sm-3 text-muted">Background</dt><dd class="col-sm-9">@Model.FactualBackground</dd> }
                 @if (!string.IsNullOrWhiteSpace(Model.ReliefSought)) { <dt class="col-sm-3 text-muted">Relief sought</dt><dd class="col-sm-9">@Model.ReliefSought</dd> }
                 @if (!string.IsNullOrWhiteSpace(Model.CoreIssue)) { <dt class="col-sm-3 text-muted">Central question</dt><dd class="col-sm-9">@Model.CoreIssue</dd> }
@@ -61,11 +61,11 @@
         @if (Model.JudicialReasoning.Count > 0)
         {
             <div class="fw-bold text-muted small mb-1">The court's reasoning</div>
-            <ul class="small mb-2">@foreach (var r in Model.JudicialReasoning) { <li>@r</li> }</ul>
+            <ul class="mb-2">@foreach (var r in Model.JudicialReasoning) { <li>@r</li> }</ul>
         }
-        @if (Model.Provisions.Count > 0) { <div class="small mb-1"><span class="fw-bold text-muted">Provisions: </span>@string.Join("; ", Model.Provisions)</div> }
-        @if (Model.ConnectedMatters.Count > 0) { <div class="small mb-1"><span class="fw-bold text-muted">Connected matters: </span>@string.Join("; ", Model.ConnectedMatters)</div> }
-        @if (Model.Precedents.Count > 0) { <div class="small mb-2"><span class="fw-bold text-muted">Precedents cited: </span>@string.Join("; ", Model.Precedents)</div> }
+        @if (Model.Provisions.Count > 0) { <div class="mb-1"><span class="fw-bold text-muted">Provisions: </span>@string.Join("; ", Model.Provisions)</div> }
+        @if (Model.ConnectedMatters.Count > 0) { <div class="mb-1"><span class="fw-bold text-muted">Connected matters: </span>@string.Join("; ", Model.ConnectedMatters)</div> }
+        @if (Model.Precedents.Count > 0) { <div class="mb-2"><span class="fw-bold text-muted">Precedents cited: </span>@string.Join("; ", Model.Precedents)</div> }
         @if (Model.OrderFindings.Count > 0)
         {
             <div class="fw-bold text-muted small mb-1 mt-2">Order by order</div>
@@ -83,7 +83,7 @@
     }
     @if (Model.Quotes.Count > 0)
     {
-        <details class="small mb-2">
+        <details class="mb-2">
             <summary class="fw-bold text-muted">Passages this rests on (@Model.Quotes.Count)</summary>
             @foreach (var q in Model.Quotes)
             {
