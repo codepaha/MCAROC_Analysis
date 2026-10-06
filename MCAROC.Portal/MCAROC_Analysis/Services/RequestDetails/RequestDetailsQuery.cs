@@ -19,7 +19,8 @@ public sealed class RequestDetailsQuery(AppDbContext db, DossierCache dossierCac
     LitigationOrderOutcomeQuery? orderOutcomes = null, FullTextSearchStatus? fullTextStatus = null)
 {
     public async Task<RequestDetailsViewModel?> BuildAsync(long id, long? charge, string? court, string? status,
-        int page, string? outcome, long? focusCase, bool hasFullAccess, IServiceProvider? services, CancellationToken ct)
+        int page, string? outcome, long? focusCase, bool hasFullAccess, IServiceProvider? services, CancellationToken ct,
+        string? search = null, int pageSize = 25, bool compactLitigation = false)
     {
         var version = await RequestPageVersion.ReadAsync(db, id, ct);
         var request = await db.Requests.AsNoTracking().Include(r => r.Client).FirstOrDefaultAsync(r => r.RequestId == id, ct);
@@ -60,7 +61,7 @@ public sealed class RequestDetailsQuery(AppDbContext db, DossierCache dossierCac
         }
 
         await new LitigationDetailsQuery(db, bprOptions, litigationAnalysis, orderOutcomes)
-            .LoadAsync(vm, court, status, page, outcome, focusCase, ct);
+            .LoadAsync(vm, court, status, page, outcome, focusCase, ct, search, pageSize, compactLitigation);
 
         // Never let the charge-to-case comparison take the request page down: it is a highlight, not the page.
         if (chargeLitigation is not null)
@@ -76,6 +77,7 @@ public sealed class RequestDetailsQuery(AppDbContext db, DossierCache dossierCac
             || (dossier is not null && dossier.IngestionRunId != vm.Request.LatestCompletedIngestionRunId)
             || (vm.ChargeLitigation is { } links && links.SnapshotId != vm.LitigationDataLake?.AuthoritativeSnapshot?.LitigationReportSnapshotId))
             throw new RequestPageChangedException();
+        if (vm.LitigationDataLake?.CaseList is { } list) list.Generation = version?.Key;
         return vm;
     }
 }

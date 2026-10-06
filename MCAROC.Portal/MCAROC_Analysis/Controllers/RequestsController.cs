@@ -467,7 +467,8 @@ public class RequestsController(
     }
 
     [HttpGet("/Requests/{id:long}")]
-    public async Task<IActionResult> Details(long id, [FromQuery] long? charge, [FromQuery] string? court = null, [FromQuery] string? status = null, [FromQuery] int page = 1, [FromQuery] string? outcome = null, [FromQuery] long? focusCase = null)
+    public async Task<IActionResult> Details(long id, [FromQuery] long? charge, [FromQuery] string? court = null, [FromQuery] string? status = null, [FromQuery] int page = 1, [FromQuery] string? outcome = null, [FromQuery] long? focusCase = null,
+        [FromQuery] string? q = null, [FromQuery] int pageSize = 25)
     {
         var timer = System.Diagnostics.Stopwatch.StartNew();
         var query = new Services.RequestDetails.RequestDetailsQuery(db, dossierCache, logger,
@@ -475,7 +476,8 @@ public class RequestsController(
         try
         {
             var vm = await query.BuildAsync(id, charge, court, status, page, outcome, focusCase,
-                PortalAccess.HasFullAccess(User), HttpContext?.RequestServices, HttpContext?.RequestAborted ?? CancellationToken.None);
+                  PortalAccess.HasFullAccess(User), HttpContext?.RequestServices, HttpContext?.RequestAborted ?? CancellationToken.None,
+                  q, pageSize, compactLitigation: true);
             return vm is null ? NotFound() : View(vm);
         }
         catch (Services.RequestDetails.RequestPageChangedException)
@@ -489,6 +491,57 @@ public class RequestsController(
             if (HttpContext is not null)
                 Response.Headers["Server-Timing"] = $"request-model;dur={timer.Elapsed.TotalMilliseconds.ToString("F1", System.Globalization.CultureInfo.InvariantCulture)}";
         }
+    }
+
+    /// <summary>A single page of litigation case summaries, fenced to the displayed request generation.</summary>
+    [HttpGet("/Requests/{id:long}/Litigation/CaseList")]
+    public async Task<IActionResult> LitigationCases(long id, [FromQuery] string? court = null, [FromQuery] string? status = null,
+        [FromQuery] int page = 1, [FromQuery] int pageSize = 25, [FromQuery] string? q = null,
+        [FromQuery] string? outcome = null, [FromQuery] long? snapshot = null, [FromQuery] string? generation = null)
+    {
+        var ct = HttpContext?.RequestAborted ?? CancellationToken.None;
+        var timer = System.Diagnostics.Stopwatch.StartNew();
+        var before = await Services.RequestDetails.RequestPageVersion.ReadAsync(db, id, ct);
+        var model = await new Services.RequestDetails.LitigationCaseListQuery(db, orderOutcomes)
+            .BuildAsync(id, court, status, page, pageSize, q, outcome, null, ct);
+        if (model is null) return NotFound();
+        if (chargeLitigation is not null)
+        {
+            var links = await chargeLitigation.GetCachedAsync(id, ct);
+            // A missing/stale comparison must not silently remove badges or trigger a full evidence scan.
+            if (links is null || links.SnapshotId != model.SnapshotId)
+                return StatusCode(StatusCodes.Status409Conflict);
+            var pageIds = model.Cases.Select(c => c.LitigationCaseId).ToHashSet();
+            ViewData["ChargeLinks"] = links.Links
+                .Where(l => l.Case.LitigationCaseId is { } caseId && pageIds.Contains(caseId)).ToArray();
+        }
+        // Never publish a list from a different snapshot into the already displayed overview.
+        if ((snapshot.HasValue && snapshot != model.SnapshotId)
+            || (generation is not null && generation != before?.Key)
+            || before != await Services.RequestDetails.RequestPageVersion.ReadAsync(db, id, ct))
+            return StatusCode(StatusCodes.Status409Conflict);
+        model.Generation = before?.Key;
+        if (HttpContext is not null)
+        {
+            Response.Headers.CacheControl = "no-store";
+            Response.Headers["Server-Timing"] = $"litigation-list;dur={timer.Elapsed.TotalMilliseconds.ToString("F1", System.Globalization.CultureInfo.InvariantCulture)}";
+        }
+        return PartialView("Details/_LitigationCaseList", model);
+    }
+
+    [HttpGet("/Requests/{id:long}/Litigation/AnalysisAvailability")]
+    public async Task<IActionResult> LitigationAnalysisAvailability(long id, [FromQuery] string? generation = null)
+    {
+        var ct = HttpContext?.RequestAborted ?? CancellationToken.None;
+        var before = await Services.RequestDetails.RequestPageVersion.ReadAsync(db, id, ct);
+        if (before is null) return NotFound();
+        if (generation is not null && generation != before.Key) return StatusCode(StatusCodes.Status409Conflict);
+        if (litigationAnalysis is null) return StatusCode(StatusCodes.Status503ServiceUnavailable);
+        var needsAnalysis = await litigationAnalysis.NeedsAnalysisAsync(id, ct);
+        if (before != await Services.RequestDetails.RequestPageVersion.ReadAsync(db, id, ct))
+            return StatusCode(StatusCodes.Status409Conflict);
+        Response.Headers.CacheControl = "no-store";
+        return Json(new { needsAnalysis });
     }
 
     /// <summary>The computed-metrics layer as JSON — the same `DossierModel.Metrics` the portal panel

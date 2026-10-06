@@ -176,6 +176,7 @@ public sealed class LitigationTabViewModel
     public LitigationSourceCoverageViewModel SourceCoverage { get; set; } = new();
 
     public List<LitigationCaseCardViewModel> Cases { get; set; } = [];
+    public LitigationCaseListViewModel? CaseList { get; set; }
     public int TotalCaseCount { get; set; }
     public int CurrentPage { get; set; } = 1;
     public int TotalPages => PageSize > 0 ? (int)Math.Ceiling((double)TotalCaseCount / PageSize) : 0;
@@ -187,6 +188,7 @@ public sealed class LitigationTabViewModel
     public int RefreshIntervalDays { get; set; }
     public bool HasCompletedAnalysis { get; set; }
     public bool AnalysisInProgress { get; set; }
+    public bool AnalysisAvailabilityPending { get; set; }
     /// <summary>True only when a run would analyse something new — a case or order evidence not yet on file.</summary>
     public bool NeedsAnalysis { get; set; }
 
@@ -280,6 +282,8 @@ public sealed class LitigationCaseCardViewModel
     public List<string> RespondentAdvocates { get; set; } = [];
 
     public List<LitigationOrderRowViewModel> Orders { get; set; } = [];
+    public int OrderCount { get; set; }
+    public int DownloadedOrderCount { get; set; }
     public List<LitigationPropertyMatchViewModel> PropertyMatches { get; set; } = [];
     public LitigationCaseAiAnalysisViewModel? Analysis { get; set; }
     public bool IsAnalysisStaleComparedToCase { get; set; }

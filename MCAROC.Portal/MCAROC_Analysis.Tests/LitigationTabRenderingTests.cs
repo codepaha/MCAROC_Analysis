@@ -59,6 +59,12 @@ public class LitigationTabRenderingTests
     }
 
     private static async Task<string> RenderLitigationTabAsync(RequestDetailsViewModel model)
+        => await RenderViewAsync("/Views/Requests/Details/_LitigationTab.cshtml", model);
+
+    internal static Task<string> RenderCaseListAsync(PartialViewResult result)
+        => RenderViewAsync("/Views/Requests/Details/_LitigationCaseList.cshtml", result.Model!, result.ViewData);
+
+    private static async Task<string> RenderViewAsync(string viewPath, object model, ViewDataDictionary? data = null)
     {
         var sp = CreateServices();
         var viewEngine = sp.GetRequiredService<IRazorViewEngine>();
@@ -69,7 +75,6 @@ public class LitigationTabRenderingTests
         routeData.Values["controller"] = "Requests";
         var actionContext = new ActionContext(httpContext, routeData, new ActionDescriptor());
 
-        var viewPath = "/Views/Requests/Details/_LitigationTab.cshtml";
         var viewResult = viewEngine.GetView(executingFilePath: null, viewPath: viewPath, isMainPage: false);
         if (!viewResult.Success)
         {
@@ -83,12 +88,14 @@ public class LitigationTabRenderingTests
         }
 
         await using var writer = new StringWriter();
-        var viewDictionary = new ViewDataDictionary<RequestDetailsViewModel>(
+        var viewDictionary = new ViewDataDictionary(
             new EmptyModelMetadataProvider(),
             new ModelStateDictionary())
         {
             Model = model
         };
+        if (data is not null)
+            foreach (var entry in data) viewDictionary[entry.Key] = entry.Value;
 
         var tempData = new TempDataDictionary(actionContext.HttpContext, tempDataProvider);
         var viewContext = new ViewContext(
@@ -330,6 +337,26 @@ public class LitigationTabRenderingTests
     }
 
     [Fact]
+    public async Task Case_register_precedes_expandable_report_details_and_encodes_party_names()
+    {
+        var vm = LakeModel(null, withCard: true);
+        var lake = vm.LitigationDataLake!;
+        lake.TotalCaseCount = 3000;
+        lake.Cases[0].Petitioners = ["<script>alert('party')</script>"];
+        lake.SearchJob = new LitigationSearchJob { Status = LitigationSearchJobStatus.Completed };
+        lake.AuthoritativeSnapshot = new LitigationReportSnapshot { Status = LitigationReportSnapshotStatus.Completed, RetrievedUtc = DateTime.UtcNow };
+        var html = await RenderLitigationTabAsync(vm);
+        Assert.True(html.IndexOf("litigation-case-table", StringComparison.Ordinal) < html.IndexOf("litigation-report-details", StringComparison.Ordinal));
+        Assert.Contains("1–25", html);
+        Assert.Contains("&lt;script&gt;", html);
+        Assert.DoesNotContain("<script>alert('party')</script>", html);
+        Assert.Single(System.Text.RegularExpressions.Regex.Matches(html, "name=\"outcome\""));
+        Assert.Contains("value=\"100\"", html);
+        Assert.Contains("returnUrl=", html);
+        Assert.DoesNotContain("Orders &amp; Judgments", html);
+    }
+
+    [Fact]
     public async Task Litigation_tab_shows_a_banner_listing_the_charges_a_case_touches_with_the_caveats()
     {
         var link = new MCAROC_Analysis.Services.LitigationData.ChargeLitigationLink(
@@ -344,7 +371,7 @@ public class LitigationTabRenderingTests
         Assert.Contains("Litigation touches charged property", html);
         Assert.Contains("CHG-101", html);
         Assert.Contains("order names the charged property", html);
-        Assert.Contains("#case-card-10", html);
+        Assert.Contains("/Requests/0/Litigation/Cases/10", html);
         Assert.Contains("Only strong matches are shown", html);
         Assert.Contains("NCLT/NCLAT orders are not scanned", html);
         Assert.Contains("2 order(s) had no extractable text", html);

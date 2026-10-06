@@ -396,6 +396,32 @@ test('initDetailsNav: sets up dual ResizeObserver, resets contents-nav height on
     assert.equal(observedEls[0].attributes.id, 'mcaDetailHead');
 });
 
+test('initial compact workspace observes sticky tabs and scrolls the default tab without an event', () => {
+    const head = createMockElement();
+    head.dataset.compactWorkspace = 'true';
+    const strip = createMockElement();
+    const active = createMockElement('button', { 'data-bs-target': '#tab-ai', class: 'active' });
+    active.getBoundingClientRect = () => ({ left: 180, right: 220 });
+    strip.getBoundingClientRect = () => ({ left: 0, right: 100 });
+    const shifts = [], observed = [];
+    strip.scrollBy = value => shifts.push(value);
+    const doc = {
+        body: createMockElement('body'), documentElement: { style: { setProperty() {} } },
+        getElementById: id => ({ mcaDetailHead: head, mcaTabs: strip })[id] ?? null,
+        querySelector: selector => selector.startsWith('#mcaTabs button') ? active : null,
+        querySelectorAll: () => []
+    };
+    class Observer { observe(el) { observed.push(el); } disconnect() {} }
+    assert.doesNotThrow(() => McaContentsNav.initDetailsNav({ doc, window: { location: { hash: '' } }, ResizeObserver: Observer }));
+    assert.equal(observed[0], strip);
+    assert.deepEqual(shifts, [{ left: 120, behavior: 'auto' }]);
+    const pane = createMockElement('div', { id: 'tab-ai' });
+    const hashDoc = { ...doc, getElementById: id => id === 'tab-ai' ? pane : doc.getElementById(id),
+        querySelectorAll: selector => selector === '#mcaTabs button[data-bs-toggle="tab"]' ? [active] : [] };
+    McaContentsNav.initDetailsNav({ doc: hashDoc, window: { location: { hash: '#tab-ai' } } });
+    assert.equal(pane.scrollIntoViewCalls.length, 1);
+});
+
 test('jump link click handler prevents default and calls history.pushState', () => {
     const link = createMockElement('a', { class: 'nav-link', href: '#sec-financials-pl' });
     const nav = createMockElement('nav', { class: 'mca-contents-nav' });

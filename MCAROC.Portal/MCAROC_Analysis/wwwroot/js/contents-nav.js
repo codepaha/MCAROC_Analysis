@@ -389,16 +389,18 @@
         }
 
         const RO = (options && options.ResizeObserver) || (typeof ResizeObserver !== 'undefined' ? ResizeObserver : null);
-        if (RO && head) {
+        const compactWorkspace = head && head.dataset && head.dataset.compactWorkspace === 'true';
+        const stickyHead = compactWorkspace ? d.getElementById('mcaTabs') : head;
+        if (RO && stickyHead) {
             detailHeadObserver = new RO(function (entries) {
                 for (const entry of entries) {
                     const h = entry.target.offsetHeight || (entry.contentRect && entry.contentRect.height);
                     if (h) setCssVar('--mca-detail-head-h', h + 'px');
                 }
             });
-            detailHeadObserver.observe(head);
+            detailHeadObserver.observe(stickyHead);
             // Initial sync
-            if (head.offsetHeight) setCssVar('--mca-detail-head-h', head.offsetHeight + 'px');
+            if (stickyHead.offsetHeight) setCssVar('--mca-detail-head-h', stickyHead.offsetHeight + 'px');
         }
 
         function updateContentsNavObservation(domain) {
@@ -640,6 +642,11 @@
                             scrollToSection(sectionEl, w);
                         }
                     }
+                } else {
+                    // A tab hash can jump to a hidden pane before Bootstrap activates it.
+                    // Reposition the visible pane using its sticky-header scroll margin.
+                    const pane = d.getElementById(parsed.targetTab);
+                    if (pane) scrollToSection(pane, w);
                 }
             }, bLib);
 
@@ -697,15 +704,14 @@
                             const domain = targetSelector.replace('#tab-', '').toLowerCase();
                             if (KNOWN_TABS.includes(domain)) {
                                 onMainTabActivated(domain);
-                // Keep the active section visible in the horizontally scrollable tab strip.
-                const strip = d.getElementById('mcaTabs');
-                if (strip && e.target && e.target.getBoundingClientRect && strip.getBoundingClientRect && strip.scrollBy) {
-                    const item = e.target.getBoundingClientRect();
-                    const bounds = strip.getBoundingClientRect();
-                    const shift = item.left < bounds.left ? item.left - bounds.left
-                        : item.right > bounds.right ? item.right - bounds.right : 0;
-                    if (shift) strip.scrollBy({ left: shift, behavior: 'auto' });
-                }
+                                const strip = d.getElementById('mcaTabs');
+                                if (strip && activeBtn.getBoundingClientRect && strip.getBoundingClientRect && strip.scrollBy) {
+                                    const item = activeBtn.getBoundingClientRect();
+                                    const bounds = strip.getBoundingClientRect();
+                                    const shift = item.left < bounds.left ? item.left - bounds.left
+                                        : item.right > bounds.right ? item.right - bounds.right : 0;
+                                    if (shift) strip.scrollBy({ left: shift, behavior: 'auto' });
+                                }
                             }
                         }
                     }

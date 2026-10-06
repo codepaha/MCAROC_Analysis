@@ -491,7 +491,8 @@ public class LitigationTabAndControllerTests : IAsyncLifetime
 
         // 2. Mutable metadata check: Case A exhibits current database values (Disposed status) and Order 2
         Assert.Equal(LitigationCaseStatusBucket.Disposed, card.StatusBucket);
-        Assert.Equal(2, card.Orders.Count);
+        Assert.Equal(2, card.OrderCount);
+        Assert.Empty(card.Orders);
 
         // 3. Grid aggregates match the authoritative snapshot (1 case, Delhi High Court)
         Assert.Equal(1, lake.CourtSummaryGrid.TotalCases);
@@ -759,10 +760,10 @@ public class LitigationTabAndControllerTests : IAsyncLifetime
         var lake2 = Assert.IsType<RequestDetailsViewModel>(Assert.IsType<ViewResult>(res2).Model).LitigationDataLake!;
         Assert.Equal(24, lake2.TotalCaseCount);
         var grid2 = lake2.CourtSummaryGrid;
-        Assert.Single(grid2.Rows);
-        Assert.Equal(24, grid2.TotalCases);
+        Assert.Equal(2, grid2.Rows.Count);
+        Assert.Equal(26, grid2.TotalCases);
         Assert.Equal(grid2.TotalCases, grid2.TotalPendingCases + grid2.TotalDisposedCases + grid2.TotalUnknownCases);
-        Assert.Equal(grid2.TotalCases, lake2.TotalCaseCount);
+        Assert.Equal(24, lake2.TotalCaseCount); // The register is filtered; overview totals cover the report.
         foreach (var r in grid2.Rows)
         {
             Assert.Equal(r.TotalCases, r.PendingCases + r.DisposedCases + r.UnknownCases);
@@ -776,13 +777,10 @@ public class LitigationTabAndControllerTests : IAsyncLifetime
         Assert.Equal("CASE-3", card3.CaseNumber);
         Assert.Equal(LitigationCaseStatusBucket.Disposed, card3.StatusBucket);
         var grid3 = lake3.CourtSummaryGrid;
-        Assert.Single(grid3.Rows);
-        Assert.Equal(1, grid3.TotalCases);
-        Assert.Equal(1, grid3.TotalDisposedCases);
-        Assert.Equal(0, grid3.TotalPendingCases);
-        Assert.Equal(0, grid3.TotalUnknownCases);
+        Assert.Equal(2, grid3.Rows.Count);
+        Assert.Equal(26, grid3.TotalCases);
         Assert.Equal(grid3.TotalCases, grid3.TotalPendingCases + grid3.TotalDisposedCases + grid3.TotalUnknownCases);
-        Assert.Equal(grid3.TotalCases, lake3.TotalCaseCount);
+        Assert.Equal(1, lake3.TotalCaseCount);
         foreach (var r in grid3.Rows)
         {
             Assert.Equal(r.TotalCases, r.PendingCases + r.DisposedCases + r.UnknownCases);
@@ -1131,7 +1129,7 @@ public class LitigationTabAndControllerTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task RenderLitigationTab_RendersOutcomeChipsAndFineAmounts_WithLowConfidenceStyling()
+    public async Task RenderLitigationTab_ShowsCompactRegister_AndLeavesOrderEvidenceOnCasePage()
     {
         var lake = new LitigationTabViewModel
         {
@@ -1183,23 +1181,13 @@ public class LitigationTabAndControllerTests : IAsyncLifetime
 
         var html = await RenderTabAsync(ClientModel(lake));
 
-        // Outcome chips bar
-        Assert.Contains("id=\"litigation-outcome-chips\"", html);
-        Assert.Contains("All Outcomes (2)", html);
-        Assert.Contains("Stay Granted (1)", html);
-        Assert.Contains("Fine / Penalty (1)", html);
+        Assert.Contains("litigation-case-table", html);
+        Assert.Contains("/Requests/7/Litigation/Cases/101", html);
+        Assert.Contains("name=\"outcome\"", html);
+        Assert.DoesNotContain("litigation-outcome-chips", html);
+        Assert.DoesNotContain("Low Confidence", html);
+        Assert.DoesNotContain("/Litigation/Orders/301/download", html);
 
-        // Case card orders table
-        Assert.Contains("<th>Outcomes</th>", html);
-        Assert.Contains("Stay Granted", html);
-        Assert.Contains("Fine / Penalty", html);
-        Assert.Contains("₹50,000", html);
-        Assert.Contains("opacity-75 fst-italic", html);
-        Assert.Contains("Low Confidence", html);
-        Assert.Contains("Truncated", html);
-
-        // Download link
-        Assert.Contains("/Requests/7/Litigation/Orders/301/download", html);
     }
 
     [Fact]
@@ -1233,8 +1221,9 @@ public class LitigationTabAndControllerTests : IAsyncLifetime
 
         Assert.Contains("name=\"outcome\"", html);
         Assert.Contains("value=\"StayGranted\"", html);
-        Assert.Contains("All Outcomes", html);
-        Assert.Contains("Stay Granted (5)", html);
+        Assert.Contains("All outcomes", html);
+        Assert.Contains("Stay Granted", html);
+        Assert.Contains("outcome=StayGranted", html);
     }
 
     [Fact]
@@ -1340,7 +1329,9 @@ public class LitigationTabAndControllerTests : IAsyncLifetime
         Assert.Equal(1, lakeStay.OutcomeCounts[LitigationOrderOutcome.StayGranted]);
         Assert.Equal(1, lakeStay.OutcomeCounts[LitigationOrderOutcome.FinePenalty]);
         Assert.Equal(2, lakeStay.TotalClassifiedOrdersCount);
-        Assert.Equal([LitigationOrderOutcome.StayGranted], lakeStay.Cases[0].Orders[0].Outcomes);
+        Assert.Empty(lakeStay.Cases[0].Orders);
+        var stayPage = await new LitigationCasePageService(db).GetAsync(request.RequestId, case1.LitigationCaseId, default);
+        Assert.Equal([LitigationOrderOutcome.StayGranted], stayPage!.Card.Orders[0].Outcomes);
 
         // 2. Query for FinePenalty
         var resFine = await controller.Details(request.RequestId, charge: null, court: null, status: null, page: 1, outcome: "FinePenalty");
@@ -1348,8 +1339,10 @@ public class LitigationTabAndControllerTests : IAsyncLifetime
 
         Assert.Equal(1, lakeFine.TotalCaseCount);
         Assert.Equal(case2.LitigationCaseId, Assert.Single(lakeFine.Cases).LitigationCaseId);
-        Assert.Equal(10000m, lakeFine.Cases[0].Orders[0].FineAmount);
-        Assert.Equal([LitigationOrderOutcome.FinePenalty], lakeFine.Cases[0].Orders[0].Outcomes);
+        Assert.Empty(lakeFine.Cases[0].Orders);
+        var finePage = await new LitigationCasePageService(db).GetAsync(request.RequestId, case2.LitigationCaseId, default);
+        Assert.Equal(10000m, finePage!.Card.Orders[0].FineAmount);
+        Assert.Equal([LitigationOrderOutcome.FinePenalty], finePage.Card.Orders[0].Outcomes);
     }
 
     /// <summary>The lookup's matches only carry orders with an outcome, so the order rows take their classification status
@@ -1424,7 +1417,9 @@ public class LitigationTabAndControllerTests : IAsyncLifetime
         var controller = CreateRequestsController(db, isReviewer: true);
         var model = Assert.IsType<RequestDetailsViewModel>(Assert.IsType<ViewResult>(
             await controller.Details(request.RequestId, charge: null, court: null, status: null, page: 1, outcome: null)).Model);
-        var rows = Assert.Single(model.LitigationDataLake!.Cases).Orders.ToDictionary(o => o.LitigationCaseOrderId);
+        Assert.Empty(Assert.Single(model.LitigationDataLake!.Cases).Orders);
+        var casePage = await new LitigationCasePageService(db).GetAsync(request.RequestId, lc.LitigationCaseId, default);
+        var rows = casePage!.Card.Orders.ToDictionary(o => o.LitigationCaseOrderId);
 
         Assert.Equal(LitigationAiAnalysisItemStatus.Completed, rows[orderIds[0]].ClassificationStatus);
         Assert.Equal(LitigationAiAnalysisItemStatus.InsufficientEvidence, rows[orderIds[1]].ClassificationStatus);
@@ -1432,7 +1427,7 @@ public class LitigationTabAndControllerTests : IAsyncLifetime
         Assert.Null(rows[orderIds[2]].ClassificationStatus);
 
         var html = await RenderTabAsync(ClientModel(model.LitigationDataLake!));
-        Assert.Single(System.Text.RegularExpressions.Regex.Matches(html, ">Outcome unclear<"));
+        Assert.DoesNotContain(">Outcome unclear<", html); // Detailed classifications are now on the case page.
     }
 
     private static async Task<string> RenderTabAsync(RequestDetailsViewModel model)
