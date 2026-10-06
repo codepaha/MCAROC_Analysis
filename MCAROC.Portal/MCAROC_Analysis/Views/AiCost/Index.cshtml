@@ -1,0 +1,80 @@
+@using MCAROC_Analysis.Controllers
+@using MCAROC_Analysis.Services.AiUsage
+@model AiCostPage
+@{
+    ViewData["Title"] = $"AI cost: {Model.CompanyName}";
+    var r = Model.Report;
+    string Usd(decimal v) => v < 0.01m && v > 0 ? "<$0.01" : "$" + v.ToString("N2");
+    string Rate(decimal v) => "$" + v.ToString("0.0000");
+    string Basis(AiCostDriver d) => Model.Rates.Recorded.Contains(d) ? "recorded" : "estimate";
+    string Driver(AiCostDriver d) => d switch
+    {
+        AiCostDriver.FilingDocument => "per filing document",
+        AiCostDriver.Order => "per order",
+        AiCostDriver.Case => "per case",
+        AiCostDriver.Question => "per question",
+        _ => "per assignment"
+    };
+}
+
+<div class="container py-3" id="ai-cost-page" style="max-width:1000px;">
+    <a href="/Requests/@r.RequestId" class="text-decoration-none small"><i class="bi bi-arrow-left me-1"></i>@Model.CompanyName</a>
+    <h1 class="h4 mt-2">Cost of this assignment in AI calls</h1>
+    <p class="text-muted">Recorded from the usage each model call reported, priced at the rates in <code>AiPricing</code> configuration (list prices; check them against the cloud bill). Data vendor and infrastructure costs are not included.</p>
+
+    @if (!r.HasUsage)
+    {
+        <div class="alert alert-secondary">No model usage has been recorded for this assignment yet. Usage is recorded as calls are made, so work done before recording was introduced is not counted. The rates below are estimates until usage exists.</div>
+    }
+    else
+    {
+        <div class="card shadow-sm mb-3">
+            <div class="card-body d-flex flex-wrap gap-4 align-items-baseline">
+                <div><div class="text-muted small">Total</div><div class="fs-3 fw-bold" id="ai-cost-total">@Usd(r.TotalUsd)</div></div>
+                <div><div class="text-muted small">In rupees</div><div class="fs-5">₹@r.TotalInr.ToString("N0")</div></div>
+                <div class="text-muted small ms-auto">@r.Volumes.FilingDocuments filing documents · @r.Volumes.Orders orders · @r.Volumes.Cases cases · @r.Volumes.Questions questions</div>
+            </div>
+        </div>
+        @if (r.HasUnpriced)
+        {
+            <div class="alert alert-warning">Some calls used a model with no price configured; they are listed but counted as $0.</div>
+        }
+        <div class="card shadow-sm mb-3">
+            <div class="card-header bg-light fw-bold text-uppercase small">By purpose</div>
+            <table class="table mb-0">
+                <thead class="table-light"><tr><th>Purpose</th><th>Scales with</th><th class="text-end">Calls</th><th class="text-end">Input tokens</th><th class="text-end">Output tokens</th><th class="text-end">Cost</th></tr></thead>
+                <tbody>
+                @foreach (var l in r.Lines)
+                {
+                    <tr>
+                        <td>@l.Purpose</td><td class="text-muted">@Driver(l.Driver)</td>
+                        <td class="text-end">@l.Calls.ToString("N0")</td><td class="text-end">@l.InputTokens.ToString("N0")</td><td class="text-end">@l.OutputTokens.ToString("N0")</td>
+                        <td class="text-end">@Usd(l.CostUsd)@(l.HasUnpriced ? " *" : "")</td>
+                    </tr>
+                }
+                </tbody>
+            </table>
+        </div>
+    }
+
+    <div class="card shadow-sm mb-3">
+        <div class="card-header bg-light fw-bold text-uppercase small">Estimate a new assignment by size</div>
+        <div class="card-body">
+            <p class="text-muted small mb-2" id="ai-cost-rates">Rates, each from recorded usage across all assignments where there is some and a built-in estimate where there is not:
+                @Rate(Model.Rates.PerFilingDocument) per filing document (@Basis(AiCostDriver.FilingDocument)), @Rate(Model.Rates.PerOrder) per order (@Basis(AiCostDriver.Order)),
+                @Rate(Model.Rates.PerCase) per case (@Basis(AiCostDriver.Case)), @Rate(Model.Rates.PerQuestion) per Copilot question (@Basis(AiCostDriver.Question)),
+                @Usd(Model.Rates.Fixed) per assignment (@Basis(AiCostDriver.Assignment)).</p>
+            <form method="get" class="row g-2 align-items-end">
+                <div class="col-sm-3"><label class="form-label small">Filing documents</label><input name="filings" type="number" min="0" class="form-control" value="@Model.EstimateVolumes.FilingDocuments" /></div>
+                <div class="col-sm-2"><label class="form-label small">Court orders</label><input name="orders" type="number" min="0" class="form-control" value="@Model.EstimateVolumes.Orders" /></div>
+                <div class="col-sm-2"><label class="form-label small">Cases</label><input name="cases" type="number" min="0" class="form-control" value="@Model.EstimateVolumes.Cases" /></div>
+                <div class="col-sm-3"><label class="form-label small">Copilot questions</label><input name="questions" type="number" min="0" class="form-control" value="@Model.EstimateVolumes.Questions" /></div>
+                <div class="col-sm-2"><button class="btn btn-primary w-100" type="submit">Estimate</button></div>
+            </form>
+            <div class="mt-3 d-flex flex-wrap gap-4 align-items-baseline" id="ai-cost-estimate">
+                <div><span class="text-muted small">Estimated cost</span> <span class="fs-4 fw-bold">@Usd(Model.Estimate.TotalUsd)</span></div>
+                <div class="text-muted small">filings @Usd(Model.Estimate.FilingDocumentsUsd) · orders @Usd(Model.Estimate.OrdersUsd) · cases @Usd(Model.Estimate.CasesUsd) · questions @Usd(Model.Estimate.QuestionsUsd) · fixed @Usd(Model.Estimate.FixedUsd)</div>
+            </div>
+        </div>
+    </div>
+</div>

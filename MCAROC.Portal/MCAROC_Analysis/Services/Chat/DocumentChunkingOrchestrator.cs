@@ -5,6 +5,7 @@ using Microsoft.Data.SqlTypes;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using System.Text.RegularExpressions;
+using MCAROC_Analysis.Services.AiUsage;
 
 namespace MCAROC_Analysis.Services.Chat;
 
@@ -42,6 +43,7 @@ public partial class DocumentChunkingOrchestrator(
             return; // already claimed/chunked by another worker or a previous run
 
         var document = await db.McaFilingDocuments.Include(d => d.Filing).FirstAsync(d => d.FilingDocumentId == filingDocumentId, ct);
+        using var usageScope = AiUsageContext.Begin(document.RequestId, AiUsagePurposes.EmbeddingFilings);
         var batch = await db.McaFilingBatches.AsNoTracking().FirstOrDefaultAsync(b => b.BatchId == document.BatchId, ct);
         var correlationId = !string.IsNullOrWhiteSpace(batch?.CorrelationId) ? batch.CorrelationId : CorrelationContext.GenerateCorrelationId();
 

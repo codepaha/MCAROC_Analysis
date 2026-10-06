@@ -2,6 +2,7 @@ using Google.Apis.Auth.OAuth2;
 using Google.GenAI.Types;
 using GenAiClient = Google.GenAI.Client;
 using Microsoft.Extensions.Logging;
+using MCAROC_Analysis.Services.AiUsage;
 
 namespace MCAROC_Analysis.Services.Chat;
 
@@ -40,6 +41,7 @@ public class EmbeddingService
                 .ToList();
             var config = new EmbedContentConfig { TaskType = "RETRIEVAL_DOCUMENT", OutputDimensionality = Dimensions };
             var response = await _client!.Models.EmbedContentAsync(ModelId, batch, config, ct);
+            AiUsageLog.RecordEmbedding(AiUsagePurposes.Embedding, ModelId, response.Metadata?.BillableCharacterCount ?? batch.Sum(c => c.Parts?.Sum(p => (long)(p.Text?.Length ?? 0)) ?? 0));
             var batchEmbeddings = response.Embeddings ?? [];
             // The caller (DocumentChunkingOrchestrator) pairs results[i] with chunk[i] positionally, so the
             // batch API must return exactly one vector per input, in input order. A short/surplus/null
@@ -64,6 +66,7 @@ public class EmbeddingService
     {
         var config = new EmbedContentConfig { TaskType = "RETRIEVAL_QUERY", OutputDimensionality = Dimensions };
         var response = await _client!.Models.EmbedContentAsync(ModelId, text, config, ct);
+        AiUsageLog.RecordEmbedding(AiUsagePurposes.Copilot, ModelId, response.Metadata?.BillableCharacterCount ?? text.Length);
         var values = response.Embeddings?.FirstOrDefault()?.Values
             ?? throw new InvalidOperationException("Embedding response contained no values.");
         return Normalize(values);

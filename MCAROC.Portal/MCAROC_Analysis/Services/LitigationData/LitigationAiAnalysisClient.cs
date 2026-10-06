@@ -2,6 +2,7 @@ using Google.Apis.Auth.OAuth2;
 using Google.GenAI.Types;
 using GenAiClient = Google.GenAI.Client;
 using MCAROC_Analysis.Services.CalculationAssurance;
+using MCAROC_Analysis.Services.AiUsage;
 
 namespace MCAROC_Analysis.Services.LitigationData;
 
@@ -34,6 +35,11 @@ public sealed class VertexLitigationAiAnalysisClient : ILitigationAiAnalysisClie
             httpOptions: new HttpOptions { Timeout = HttpTimeoutMilliseconds });
     }
 
+    private static string PurposeOf(string prompt) =>
+        prompt.StartsWith(LitigationOrderClassifier.PromptMarker, StringComparison.Ordinal) ? AiUsagePurposes.OrderClassification
+        : prompt.StartsWith(LitigationCaseAnalysisPrompt.Marker, StringComparison.Ordinal) ? AiUsagePurposes.CaseAnalysis
+        : AiUsagePurposes.LitigationPortfolio;
+
     public async Task<LitigationAiCallResult> CallAsync(string prompt, int timeoutSeconds, CancellationToken ct, string? modelId = null)
     {
         try
@@ -41,7 +47,9 @@ public sealed class VertexLitigationAiAnalysisClient : ILitigationAiAnalysisClie
             var (_, text, timedOut) = await CalculationAiAuditTimeoutRunner.RunAsync(async innerCt =>
             {
                 var config = new GenerateContentConfig { ResponseMimeType = "application/json" };
-                var response = await _client.Models.GenerateContentAsync(string.IsNullOrWhiteSpace(modelId) ? ModelId : modelId, prompt, config, innerCt);
+                var model = string.IsNullOrWhiteSpace(modelId) ? ModelId : modelId;
+                var response = await _client.Models.GenerateContentAsync(model, prompt, config, innerCt);
+                AiUsageLog.RecordGeneration(PurposeOf(prompt), model, response.UsageMetadata);
                 return response.Candidates?.FirstOrDefault()?.Content?.Parts?.FirstOrDefault()?.Text ?? string.Empty;
             }, TimeSpan.FromSeconds(timeoutSeconds), ct);
             return timedOut

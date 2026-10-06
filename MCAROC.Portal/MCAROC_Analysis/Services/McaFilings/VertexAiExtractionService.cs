@@ -5,6 +5,7 @@ using Google.GenAI.Types;
 using GenAiClient = Google.GenAI.Client;
 using MCAROC_Analysis.Data.Entities;
 using Microsoft.Extensions.Logging;
+using MCAROC_Analysis.Services.AiUsage;
 
 namespace MCAROC_Analysis.Services.McaFilings;
 
@@ -60,6 +61,7 @@ public class VertexAiExtractionService
             using var limit = CancellationTokenSource.CreateLinkedTokenSource(ct);
             limit.CancelAfter(CallTimeout);
             var response = await _client.Models.GenerateContentAsync(ModelId, prompt, config, limit.Token);
+            AiUsageLog.RecordGeneration(AiUsagePurposes.FilingExtraction, ModelId, response.UsageMetadata);
             rawResponse = response.Candidates?.FirstOrDefault()?.Content?.Parts?.FirstOrDefault()?.Text ?? "";
         }
         catch (Exception ex) when (ex is OperationCanceledException && !ct.IsCancellationRequested)

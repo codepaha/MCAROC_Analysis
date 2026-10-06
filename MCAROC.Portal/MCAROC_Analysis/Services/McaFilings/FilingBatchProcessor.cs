@@ -6,6 +6,7 @@ using MCAROC_Analysis.Services.Chat;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using MCAROC_Analysis.Services.AiUsage;
 
 namespace MCAROC_Analysis.Services.McaFilings;
 
@@ -579,6 +580,7 @@ public class FilingBatchProcessor(
         // filing's documents, or a version bump, gets a fresh call; a failed extraction is never copied.
         var earlierExtraction = await FindEarlierExtractionAsync(filing, documents,
             VertexAiExtractionService.SchemaNameFor(dominantCategory, dominantFormType), ct);
+        using var usageScope = AiUsageContext.Begin(filing.RequestId);
         var outcome = earlierExtraction is { } e
             ? new ExtractionOutcome(e.SchemaName, e.ExtractedJson, e.RawModelResponse, e.ValidationStatus, e.ValidationErrors, e.Status, e.FailureReason)
             : await vertexAiService.ExtractAsync(filing.Srn, dominantCategory, dominantFormType, contexts, ct);

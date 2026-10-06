@@ -1,6 +1,7 @@
 using Google.Apis.Auth.OAuth2;
 using Google.GenAI.Types;
 using GenAiClient = Google.GenAI.Client;
+using MCAROC_Analysis.Services.AiUsage;
 
 namespace MCAROC_Analysis.Services.CalculationAssurance;
 
@@ -36,6 +37,7 @@ public class CalculationAiAuditService
             {
                 var config = new GenerateContentConfig { ResponseMimeType = "application/json" };
                 var response = await _client.Models.GenerateContentAsync(ModelId, prompt, config, innerCt);
+                AiUsageLog.RecordGeneration(AiUsagePurposes.CalculationAudit, ModelId, response.UsageMetadata);
                 return response.Candidates?.FirstOrDefault()?.Content?.Parts?.FirstOrDefault()?.Text ?? "";
             }, TimeSpan.FromSeconds(timeoutSeconds), ct);
 

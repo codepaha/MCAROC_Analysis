@@ -108,6 +108,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<CalculationDiscrepancyApproval> CalculationDiscrepancyApprovals => Set<CalculationDiscrepancyApproval>();
     public DbSet<CalculationArtifactHold> CalculationArtifactHolds => Set<CalculationArtifactHold>();
     public DbSet<CalculationAiAuditRun> CalculationAiAuditRuns => Set<CalculationAiAuditRun>();
+    public DbSet<AiUsageRecord> AiUsageRecords => Set<AiUsageRecord>();
     public DbSet<CalculationAssuranceOverrideAudit> CalculationAssuranceOverrideAudits => Set<CalculationAssuranceOverrideAudit>();
 
     // Large Archive Upload & Storage Admission
@@ -1060,6 +1061,14 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
                 .OnDelete(DeleteBehavior.Restrict);
             e.HasIndex(x => x.CalculationCheckResultId);
             e.HasIndex(x => x.CalculationLedgerEntryId);
+        });
+
+        modelBuilder.Entity<AiUsageRecord>(e =>
+        {
+            e.HasKey(x => x.AiUsageRecordId);
+            e.Property(x => x.Purpose).HasMaxLength(80);
+            e.Property(x => x.Model).HasMaxLength(100);
+            e.HasIndex(x => new { x.RequestId, x.CreatedUtc });
         });
 
         modelBuilder.Entity<CalculationAiAuditRun>(e =>

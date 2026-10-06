@@ -4,6 +4,7 @@ using MCAROC_Analysis.Data.Entities;
 using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
+using MCAROC_Analysis.Services.AiUsage;
 
 namespace MCAROC_Analysis.Services.Chat;
 
@@ -52,6 +53,7 @@ public class ChatService(
         Guid clientTurnId,
         CancellationToken ct)
     {
+        using var usageScope = AiUsageContext.Begin(requestId);
         if (string.IsNullOrWhiteSpace(question))
             return new ChatTurnResult(ChatTurnOutcome.QuestionEmpty);
 

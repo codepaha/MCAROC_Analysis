@@ -4,6 +4,7 @@ using MCAROC_Analysis.Data.Entities;
 using MCAROC_Analysis.Services.Chat;
 using Microsoft.Data.SqlTypes;
 using Microsoft.EntityFrameworkCore;
+using MCAROC_Analysis.Services.AiUsage;
 // DocumentChunkingOrchestrator (Services.Chat) supplies ClassifyChunkingError/SanitizeAndCap — see the
 // class doc comment below for why these are reused rather than duplicated.
 
@@ -152,6 +153,7 @@ public sealed class LitigationOrderChunkingOrchestrator(
 
         var document = await db.LitigationOrderDocuments.Include(d => d.Order).ThenInclude(o => o!.Case)
             .FirstAsync(d => d.LitigationOrderDocumentId == orderDocumentId, ct);
+        using var usageScope = AiUsageContext.Begin(document.Order?.Case?.RequestId, AiUsagePurposes.EmbeddingOrders);
 
         try
         {

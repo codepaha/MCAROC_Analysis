@@ -4,6 +4,7 @@ using System.Text.RegularExpressions;
 using Google.Apis.Auth.OAuth2;
 using Google.GenAI.Types;
 using MCAROC_Analysis.Models;
+using MCAROC_Analysis.Services.AiUsage;
 
 namespace MCAROC_Analysis.Services.PreLoginReports;
 
@@ -63,6 +64,7 @@ public sealed class BorrowerAssignmentAiExtractor(IConfiguration configuration) 
                     Data = await System.IO.File.ReadAllBytesAsync(imagePath, ct) } });
             }
             var response = await client.Models.GenerateContentAsync(model, new Content { Role = "user", Parts = parts }, config, timeout.Token);
+            AiUsageLog.RecordGeneration(AiUsagePurposes.BorrowerExtraction, model, response.UsageMetadata);
             var json = string.Concat(response.Candidates?.FirstOrDefault()?.Content?.Parts?
                 .Where(p => p.Thought != true).Select(p => p.Text) ?? []);
             return (Validate(json), model);

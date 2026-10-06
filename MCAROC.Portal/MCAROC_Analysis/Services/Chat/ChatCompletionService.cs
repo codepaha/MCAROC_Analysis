@@ -6,6 +6,7 @@ using Google.GenAI.Types;
 using GenAiClient = Google.GenAI.Client;
 using MCAROC_Analysis.Data.Entities;
 using Microsoft.Extensions.Logging;
+using MCAROC_Analysis.Services.AiUsage;
 
 namespace MCAROC_Analysis.Services.Chat;
 
@@ -89,6 +90,7 @@ public class ChatCompletionService
         {
             var config = new GenerateContentConfig { ResponseMimeType = "application/json" };
             var response = await _client.Models.GenerateContentAsync(_modelId, prompt, config, ct);
+            AiUsageLog.RecordGeneration(AiUsagePurposes.Copilot, _modelId, response.UsageMetadata);
             return response.Candidates?.FirstOrDefault()?.Content?.Parts?.FirstOrDefault()?.Text ?? "";
         }
         catch (Exception ex)

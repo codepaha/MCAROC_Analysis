@@ -4,6 +4,7 @@ using MCAROC_Analysis.Data.Entities;
 using MCAROC_Analysis.Models;
 using MCAROC_Analysis.Services.CalculationAssurance;
 using Microsoft.EntityFrameworkCore;
+using MCAROC_Analysis.Services.AiUsage;
 
 namespace MCAROC_Analysis.Services.Analysis;
 
@@ -62,6 +63,7 @@ public class AnalysisOrchestrator(
 
     public async Task RunAnalysisAsync(long requestId, CancellationToken ct)
     {
+        using var usageScope = AiUsageContext.Begin(requestId);
         // Atomic claim, mirroring Phase 2's exact ExecuteUpdateAsync-based claim pattern: only the caller
         // whose UPDATE actually matches a row proceeds, so a double-enqueue (recovery + a near-simultaneous
         // trigger) collapses to one winner rather than creating two AnalysisRuns.
