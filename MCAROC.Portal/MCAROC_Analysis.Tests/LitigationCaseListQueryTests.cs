@@ -76,7 +76,9 @@ public class LitigationCaseListQueryTests(ITestOutputHelper output)
         Assert.True(first.Cases[0].Analysis!.ActiveRestraint); Assert.True(first.Cases[0].Analysis!.LisPendens);
         Assert.True(first.Cases[0].IsAnalysisStaleComparedToCase); Assert.Null(first.Cases[0].Analysis!.Summary);
         Assert.DoesNotContain(capture.Commands, sql => sql.Contains("ExtractedText") || sql.Contains("PdfUrl") || sql.Contains("RawReportBytes") || sql.Contains("RawResponseJson"));
-        Assert.Contains(capture.Commands, sql => sql.Contains("OFFSET") && sql.Contains("FETCH NEXT"));
+        // The order needs each matching case's forum, side and status as displayed, so keys are read for every match (never orders or
+        // evidence) and the displayed page is then fetched by id.
+        Assert.Contains(capture.Commands, sql => sql.Contains("[LitigationCaseId] IN ("));
         Assert.Contains(capture.Commands, sql => sql.Contains("JSON_VALUE"));
         Assert.DoesNotContain(capture.Commands, sql => sql.Contains("EvidenceJson"));
         var next = (await query.BuildAsync(request.RequestId, null, null, 2, 25, null, null, null, default))!;

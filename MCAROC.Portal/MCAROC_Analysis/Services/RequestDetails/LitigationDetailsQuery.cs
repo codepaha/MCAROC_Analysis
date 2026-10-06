@@ -358,6 +358,7 @@ public sealed class LitigationDetailsQuery(AppDbContext db,
                             orderDatesOfCase.GetValueOrDefault(r.LitigationCaseId) ?? [], ageAsOf, r.Cnr, r.CaseNumber));
                         var rowPetitioners = LitigationCaseCardMapper.ParseNames(r.PetitionersJson);
                         var rowSide = LitigationCompanySides.Determine(rowPetitioners, LitigationCaseCardMapper.ParseNames(r.RespondentsJson), companyNames, r.Direction);
+                        litVm.ForumSummary.Add(LitigationCasePresentation.Resolve(r.Type, r.Court, r.CourtCategory), rowSide, rowStatus);
                         litVm.RiskProfile.Add(LitigationBaselineRisk.Assess(new LitigationRiskInput(
                             r.Type, r.Court, r.CourtCategory, r.CaseType, r.Act, r.CaseStage, r.CaseClassification, r.ProceedingType, rowStatus, rowSide, rowPetitioners)));
                     }
