@@ -183,10 +183,49 @@ public sealed record LitigationCaseAnalysis(
 /// <summary>Renders the standalone litigation deliverables for one MCA ROC assignment.</summary>
 public static class LitigationReportArtifacts
 {
-    public static byte[] RenderPdf(StandaloneLitigationReport report)
+    public static byte[] RenderPdf(StandaloneLitigationReport report, byte[]? logo = null)
     {
         QuestPDF.Settings.License = LicenseType.Community;
-        return new LitigationReportPdfDocument(report).GeneratePdf();
+        return new LitigationReportPdfDocument(report, logo).GeneratePdf();
+    }
+
+    /// <summary>The Cubictree mark used in the dossier's running header; null when the file is missing, in which case the
+    /// header falls back to a text monogram.</summary>
+    public static byte[]? TryLoadLogo(string webRootPath)
+    {
+        try
+        {
+            var path = Path.Combine(webRootPath, "images", "favicon.png");
+            return File.Exists(path) ? File.ReadAllBytes(path) : null;
+        }
+        catch (IOException) { return null; }
+    }
+
+    /// <summary>One case as the report presents it: which section and forum it belongs to, whose side the company is on
+    /// and how old it is.</summary>
+    internal sealed record CaseView(
+        StandaloneReportCaseDto Item, LitigationCaseStatusBucket Bucket, LitigationInstitution Institution,
+        LitigationCompanySide Side, LitigationCaseAge Age);
+
+    /// <summary>Every case, in report order: pending, then disposed, then status not reported; within a section by forum
+    /// seniority, cases against the company before ones it brought, newest filing first.</summary>
+    internal static IReadOnlyList<CaseView> BuildCaseViews(StandaloneLitigationReport report)
+    {
+        // Age is measured to the day the data was retrieved (IST), as on the case page, so the two always agree.
+        var asOf = DateOnly.FromDateTime(Ist.FromUtc(report.AuthoritativeSnapshotRetrievedUtc));
+        var targets = report.KeywordsSearched.Append(report.CompanyName).ToList();
+        return report.Cases
+            .Select(item =>
+            {
+                var bucket = LitigationCaseStatusClassifier.Classify(item.CaseStatus, item.CaseStage);
+                return new CaseView(
+                    item, bucket, LitigationCasePresentation.Resolve(item.Type, item.Court, item.CourtCategory),
+                    LitigationCasePresentation.Side(item.Direction, item.PetitionersJson, item.RespondentsJson, targets),
+                    LitigationCaseAges.Compute(item.FilingDate, item.DecisionDate, item.CaseYear, bucket,
+                        item.Orders.Select(o => o.OrderDate), asOf, item.CnrNumber, item.CaseNumber));
+            })
+            .OrderBy(v => LitigationCasePresentation.SortKey(v.Bucket, v.Institution, v.Side, v.Item.FilingDate, v.Item.LitigationCaseId))
+            .ToList();
     }
 
     public static byte[] RenderCsv(StandaloneLitigationReport report)
@@ -198,10 +237,10 @@ public static class LitigationReportArtifacts
             foreach (var header in CsvHeaders) csv.WriteField(header);
             csv.NextRecord();
             var serial = 0;
-            foreach (var item in report.Cases)
+            foreach (var view in BuildCaseViews(report))
             {
                 serial++;
-                WriteRow(csv, serial, report, item);
+                WriteRow(csv, serial, report, view);
             }
         }
         return stream.ToArray();
@@ -209,7 +248,7 @@ public static class LitigationReportArtifacts
 
     private static readonly string[] CsvHeaders =
     [
-        "Sr No", "Assignment Number", "Company", "Provider Case ID", "CSP ID", "CNR Number", "Court Category", "Direction",
+        "Sr No", "Assignment Number", "Company", "Provider Case ID", "CNR Number", "Court Category", "Direction", "Forum", "Case Age",
         "Type", "Court", "Bench", "Case Number", "Case Type", "Case Year", "Case Stage", "Case Status", "Act", "Filing Date",
         "Last Hearing Date", "Next Hearing Date", "Decision Date", "State", "District", "Petitioners", "Respondents",
         "Petitioner Advocates", "Respondent Advocates", "Order Count", "Downloaded Order Count", "Expired Order Count",
@@ -220,8 +259,9 @@ public static class LitigationReportArtifacts
         "Analysis Trigger", "Analysis Baseline Risk", "Analysis Restraint", "Analysis Outcome", "Analysis Passages", "Analysis Key Points"
     ];
 
-    private static void WriteRow(CsvWriter csv, int serial, StandaloneLitigationReport report, StandaloneReportCaseDto item)
+    private static void WriteRow(CsvWriter csv, int serial, StandaloneLitigationReport report, CaseView view)
     {
+        var item = view.Item;
         var analysis = report.AnalysisFor(item.LitigationCaseId);
         var downloadedCount = item.Orders.Count(o => o.AvailabilityBucket == LitigationOrderAvailabilityBucket.Downloaded);
         var expiredCount = item.Orders.Count(o => o.AvailabilityBucket == LitigationOrderAvailabilityBucket.Expired);
@@ -254,7 +294,8 @@ public static class LitigationReportArtifacts
         foreach (var value in new[]
         {
             serial.ToString(CultureInfo.InvariantCulture), report.AssignmentNumber, report.CompanyName,
-            item.ProviderCaseId, item.CspId, item.CnrNumber, item.CourtCategory, item.Direction, item.Type, item.Court, item.Bench,
+            item.ProviderCaseId, item.CnrNumber, item.CourtCategory, view.Side switch { LitigationCompanySide.ByCompany => "By", LitigationCompanySide.AgainstCompany => "Against", _ => "Not determined" },
+            LitigationCasePresentation.Label(view.Institution), view.Age.Headline, item.Type, item.Court, item.Bench,
             item.CaseNumber, item.CaseType, item.CaseYear, item.CaseStage, item.CaseStatus, item.Act, item.FilingDate,
             item.LastHearingDate, item.NextHearingDate, item.DecisionDate, item.State, item.District,
             PartyText(item.PetitionersJson), PartyText(item.RespondentsJson), PartyText(item.PetitionerAdvocatesJson),
@@ -308,8 +349,10 @@ public static class LitigationReportArtifacts
     }
 }
 
-internal sealed class LitigationReportPdfDocument(StandaloneLitigationReport report) : IDocument
+internal sealed class LitigationReportPdfDocument(StandaloneLitigationReport report, byte[]? logo = null) : IDocument
 {
+    private readonly IReadOnlyList<LitigationReportArtifacts.CaseView> views = LitigationReportArtifacts.BuildCaseViews(report);
+
     private const string Ink = "#15233D";
     private const string Navy = "#1B4F91";
     private const string BlueTint = "#F2F7FE";
@@ -334,14 +377,28 @@ internal sealed class LitigationReportPdfDocument(StandaloneLitigationReport rep
             {
                 column.Spacing(9);
                 ComposeCover(column);
-                if (report.Cases.Count > 0)
+                var serial = 0;
+                foreach (var section in new[] { LitigationCaseStatusBucket.Pending, LitigationCaseStatusBucket.Disposed, LitigationCaseStatusBucket.Unknown })
                 {
+                    var inSection = views.Where(v => v.Bucket == section).ToList();
+                    if (inSection.Count == 0) continue;
                     column.Item().PageBreak();
-                    var serial = 0;
-                    foreach (var item in report.Cases)
+                    column.Item().Element(c => SectionHeading(c, section, inSection.Count));
+                    LitigationInstitution? current = null;
+                    foreach (var view in inSection)
                     {
-                        serial++;
-                        column.Item().EnsureSpace(180).Element(card => ComposeCaseCard(card, serial, item, report.AnalysisFor(item.LitigationCaseId)));
+                        var number = ++serial;
+                        var startsForum = current != view.Institution;
+                        current = view.Institution;
+                        var forumCount = inSection.Count(v => v.Institution == view.Institution);
+                        // The forum heading is part of its first card's item, so the two can never be split across pages.
+                        column.Item().EnsureSpace(180).Column(entry =>
+                        {
+                            if (startsForum)
+                                entry.Item().PaddingTop(4).PaddingBottom(4).Text($"{LitigationCasePresentation.Label(view.Institution).ToUpperInvariant()}  ·  {forumCount}")
+                                    .Bold().FontSize(8.5f).FontColor(Navy);
+                            entry.Item().Element(card => ComposeCaseCard(card, number, view, report.AnalysisFor(view.Item.LitigationCaseId)));
+                        });
                     }
                 }
             });
@@ -351,8 +408,15 @@ internal sealed class LitigationReportPdfDocument(StandaloneLitigationReport rep
 
     private void ComposeHeader(IContainer container) => container.PaddingBottom(8).BorderBottom(1.4f).BorderColor(Navy).Row(row =>
     {
-        row.RelativeItem().Text("CUBICTREE  |  MCA ROC INTELLIGENCE").Bold().FontSize(8).FontColor(Navy);
-        row.AutoItem().Text("LITIGATION DUE DILIGENCE").SemiBold().FontSize(8).FontColor(Colors.Grey.Darken1);
+        // Same mark as the dossier's running header, on every page; a text monogram stands in if the file is missing.
+        row.ConstantItem(20).Element(c =>
+        {
+            if (logo is { Length: > 0 }) c.AlignMiddle().Image(logo);
+            else c.AlignMiddle().Width(14).Height(14).Background(Navy).AlignCenter().AlignMiddle().Text("CT").Bold().FontSize(6).FontColor("#FFFFFF");
+        });
+        row.ConstantItem(8);
+        row.RelativeItem().AlignMiddle().Text("CUBICTREE  |  MCA ROC INTELLIGENCE").Bold().FontSize(8).FontColor(Navy);
+        row.AutoItem().AlignMiddle().Text("LITIGATION DUE DILIGENCE").SemiBold().FontSize(8).FontColor(Colors.Grey.Darken1);
     });
 
     private void ComposeFooter(IContainer container) => container.PaddingTop(7).BorderTop(0.5f).BorderColor(Border).Row(row =>
@@ -366,10 +430,10 @@ internal sealed class LitigationReportPdfDocument(StandaloneLitigationReport rep
 
     private void ComposeCover(ColumnDescriptor column)
     {
-        var grid = report.CourtSummaryGrid;
-        var pending = grid.TotalPendingCases;
-        var disposed = grid.TotalDisposedCases;
-        var orders = grid.TotalOrders;
+        // Counted from the same list the summary table and case sections use, so the cover can never disagree with them.
+        var pending = views.Count(v => v.Bucket == LitigationCaseStatusBucket.Pending);
+        var disposed = views.Count(v => v.Bucket == LitigationCaseStatusBucket.Disposed);
+        var orders = views.Sum(v => v.Item.Orders.Count);
         column.Item().PaddingTop(6).Text("Litigation Due Diligence Report").Bold().FontSize(22).FontColor(Ink);
         column.Item().PaddingTop(2).Text(report.CompanyName).SemiBold().FontSize(13).FontColor(Navy);
         column.Item().Text($"Assignment {report.AssignmentNumber}  |  Generated {Ist.Format(report.GeneratedAtUtc, "dd MMM yyyy, HH:mm")}").FontSize(8).FontColor(Colors.Grey.Darken1);
@@ -402,26 +466,30 @@ internal sealed class LitigationReportPdfDocument(StandaloneLitigationReport rep
         column.Item().PaddingTop(10).Element(container => InformationTable(container, infoRows));
         column.Item().PaddingTop(12).Row(row =>
         {
-            Metric(row.RelativeItem(), "CASES", grid.TotalCases.ToString(CultureInfo.InvariantCulture), Navy); row.ConstantItem(7);
+            Metric(row.RelativeItem(), "CASES", views.Count.ToString(CultureInfo.InvariantCulture), Navy); row.ConstantItem(7);
             Metric(row.RelativeItem(), "PENDING", pending.ToString(CultureInfo.InvariantCulture), Red); row.ConstantItem(7);
             Metric(row.RelativeItem(), "DISPOSED", disposed.ToString(CultureInfo.InvariantCulture), Green); row.ConstantItem(7);
             Metric(row.RelativeItem(), "ORDERS ON RECORD", orders.ToString(CultureInfo.InvariantCulture), Amber);
         });
 
-        // Court Summary Grid
-        column.Item().PaddingTop(12).Text("COURT / TRIBUNAL SUMMARY").Bold().FontSize(8.5f).FontColor(Navy);
-        if (grid.Rows.Count == 0)
+        column.Item().PaddingTop(12).Text(text =>
+        {
+            text.Span("SUMMARY: FORUM WISE").Bold().FontSize(8.5f).FontColor(Navy);
+            text.Span("     each figure is total (").FontSize(7).FontColor(Colors.Grey.Darken1);
+            text.Span("pending").FontSize(7).FontColor(Red);
+            text.Span(" / ").FontSize(7).FontColor(Colors.Grey.Darken1);
+            text.Span("disposed").FontSize(7).FontColor(Green);
+            text.Span(" / status unknown)").FontSize(7).FontColor(Colors.Grey.Darken1);
+        });
+        if (views.Count == 0)
         {
             column.Item().PaddingTop(4).Background("#FAFCFF").Border(0.8f).BorderColor(Border).Padding(8)
                 .Text("No court proceedings found in authoritative snapshot.").FontSize(8.2f).FontColor(Colors.Grey.Darken1);
         }
         else
         {
-            column.Item().PaddingTop(4).Element(c => ComposeCourtGridTable(c, grid));
+            column.Item().PaddingTop(4).Element(ComposeForumSummary);
         }
-
-        if (report.ChargeLinks is { } chargeLinks)
-            column.Item().PaddingTop(12).Element(container => ChargeLinksSection(container, chargeLinks));
 
         column.Item().PaddingTop(12).Element(container => PortfolioPanel(container, report.PortfolioAnalysis));
         column.Item().PaddingTop(10).Background("#FAFCFF").Border(0.8f).BorderColor(Border).Padding(9).Column(note =>
@@ -431,112 +499,76 @@ internal sealed class LitigationReportPdfDocument(StandaloneLitigationReport rep
         });
     }
 
-    private static void ComposeCourtGridTable(IContainer container, LitigationCourtSummaryGrid grid) => container.Table(table =>
+    /// <summary>One row per forum, zero rows included so a forum with nothing found reads as "searched, none". Cases against
+    /// the company and cases it brought each show total (pending / disposed / unknown).</summary>
+    private void ComposeForumSummary(IContainer container)
     {
-        table.ColumnsDefinition(columns =>
+        var showUnspecified = views.Any(v => v.Side is LitigationCompanySide.Both or LitigationCompanySide.Unknown);
+        container.Table(table =>
         {
-            columns.RelativeColumn(3); // Court
-            columns.RelativeColumn(2); // Category
-            columns.RelativeColumn(1); // Total
-            columns.RelativeColumn(1); // Pending
-            columns.RelativeColumn(1); // Disposed
-            columns.RelativeColumn(1); // Unknown
-            columns.RelativeColumn(1); // Orders
+            table.ColumnsDefinition(columns =>
+            {
+                columns.RelativeColumn(2.2f); columns.RelativeColumn(1); columns.RelativeColumn(2); columns.RelativeColumn(2);
+                if (showUnspecified) columns.RelativeColumn(2);
+            });
+            IContainer Head(IContainer c) => c.Background("#EAF2FD").BorderBottom(1).BorderColor(Navy).Padding(4);
+            table.Header(header =>
+            {
+                header.Cell().Element(Head).Text("FORUM").Bold().FontSize(7).FontColor(Navy);
+                header.Cell().Element(Head).AlignRight().Text("TOTAL").Bold().FontSize(7).FontColor(Navy);
+                header.Cell().Element(Head).AlignRight().Text("AGAINST COMPANY").Bold().FontSize(7).FontColor(Navy);
+                header.Cell().Element(Head).AlignRight().Text("BY COMPANY").Bold().FontSize(7).FontColor(Navy);
+                if (showUnspecified) header.Cell().Element(Head).AlignRight().Text("NOT DETERMINED").Bold().FontSize(7).FontColor(Navy);
+            });
+
+            void Row(string label, IReadOnlyList<LitigationReportArtifacts.CaseView> rows, bool total)
+            {
+                IContainer Cell(IContainer c) => total
+                    ? c.Background("#F0F4FA").BorderTop(1).BorderColor(Navy).Padding(4)
+                    : c.BorderBottom(0.5f).BorderColor("#D7E3F2").Padding(4);
+                table.Cell().Element(Cell).Text(t => { var span = t.Span(label).FontSize(7.5f); if (total) span.Bold(); });
+                table.Cell().Element(Cell).AlignRight().Text(t => { var span = t.Span(rows.Count.ToString(CultureInfo.InvariantCulture)).FontSize(7.5f); if (total) span.Bold(); });
+                Breakdown(table.Cell().Element(Cell), rows.Where(v => v.Side == LitigationCompanySide.AgainstCompany).ToList());
+                Breakdown(table.Cell().Element(Cell), rows.Where(v => v.Side == LitigationCompanySide.ByCompany).ToList());
+                if (showUnspecified) Breakdown(table.Cell().Element(Cell), rows.Where(v => v.Side is LitigationCompanySide.Both or LitigationCompanySide.Unknown).ToList());
+            }
+
+            foreach (var institution in Enum.GetValues<LitigationInstitution>())
+                Row(LitigationCasePresentation.Label(institution), views.Where(v => v.Institution == institution).ToList(), false);
+            Row("Total", views, true);
+        });
+    }
+
+    /// <summary>"12 (3/8/1)": cases, then pending in red, disposed in green and status unknown in grey.</summary>
+    private static void Breakdown(IContainer container, IReadOnlyList<LitigationReportArtifacts.CaseView> rows) =>
+        container.AlignRight().Text(text =>
+        {
+            text.DefaultTextStyle(style => style.FontSize(7.5f));
+            int Count(LitigationCaseStatusBucket b) => rows.Count(v => v.Bucket == b);
+            text.Span(rows.Count.ToString(CultureInfo.InvariantCulture)).Bold();
+            text.Span(" (");
+            text.Span(Count(LitigationCaseStatusBucket.Pending).ToString(CultureInfo.InvariantCulture)).FontColor(Red);
+            text.Span("/");
+            text.Span(Count(LitigationCaseStatusBucket.Disposed).ToString(CultureInfo.InvariantCulture)).FontColor(Green);
+            text.Span("/");
+            text.Span(Count(LitigationCaseStatusBucket.Unknown).ToString(CultureInfo.InvariantCulture)).FontColor(Colors.Grey.Darken1);
+            text.Span(")");
         });
 
-        table.Header(header =>
-        {
-            header.Cell().Background("#EAF2FD").BorderBottom(1).BorderColor(Navy).Padding(4).Text("COURT / TRIBUNAL").Bold().FontSize(7).FontColor(Navy);
-            header.Cell().Background("#EAF2FD").BorderBottom(1).BorderColor(Navy).Padding(4).Text("CATEGORY").Bold().FontSize(7).FontColor(Navy);
-            header.Cell().Background("#EAF2FD").BorderBottom(1).BorderColor(Navy).Padding(4).AlignRight().Text("TOTAL").Bold().FontSize(7).FontColor(Navy);
-            header.Cell().Background("#EAF2FD").BorderBottom(1).BorderColor(Navy).Padding(4).AlignRight().Text("PENDING").Bold().FontSize(7).FontColor(Navy);
-            header.Cell().Background("#EAF2FD").BorderBottom(1).BorderColor(Navy).Padding(4).AlignRight().Text("DISPOSED").Bold().FontSize(7).FontColor(Navy);
-            header.Cell().Background("#EAF2FD").BorderBottom(1).BorderColor(Navy).Padding(4).AlignRight().Text("UNKNOWN").Bold().FontSize(7).FontColor(Navy);
-            header.Cell().Background("#EAF2FD").BorderBottom(1).BorderColor(Navy).Padding(4).AlignRight().Text("ORDERS").Bold().FontSize(7).FontColor(Navy);
-        });
-
-        foreach (var row in grid.Rows)
-        {
-            table.Cell().BorderBottom(0.5f).BorderColor("#D7E3F2").Padding(4).Text(Display(row.CourtName)).FontSize(7.5f);
-            table.Cell().BorderBottom(0.5f).BorderColor("#D7E3F2").Padding(4).Text(Humanize(row.CourtCategory)).FontSize(7.5f);
-            table.Cell().BorderBottom(0.5f).BorderColor("#D7E3F2").Padding(4).AlignRight().Text(row.TotalCases.ToString(CultureInfo.InvariantCulture)).FontSize(7.5f);
-            table.Cell().BorderBottom(0.5f).BorderColor("#D7E3F2").Padding(4).AlignRight().Text(row.PendingCases.ToString(CultureInfo.InvariantCulture)).FontSize(7.5f);
-            table.Cell().BorderBottom(0.5f).BorderColor("#D7E3F2").Padding(4).AlignRight().Text(row.DisposedCases.ToString(CultureInfo.InvariantCulture)).FontSize(7.5f);
-            table.Cell().BorderBottom(0.5f).BorderColor("#D7E3F2").Padding(4).AlignRight().Text(row.UnknownCases.ToString(CultureInfo.InvariantCulture)).FontSize(7.5f);
-            table.Cell().BorderBottom(0.5f).BorderColor("#D7E3F2").Padding(4).AlignRight().Text(row.TotalOrders.ToString(CultureInfo.InvariantCulture)).FontSize(7.5f);
-        }
-
-        // Total footer row
-        table.Cell().Background("#F0F4FA").BorderTop(1).BorderColor(Navy).Padding(4).Text("Total (Reconciled)").Bold().FontSize(7.5f).FontColor(Navy);
-        table.Cell().Background("#F0F4FA").BorderTop(1).BorderColor(Navy).Padding(4).Text("").FontSize(7.5f);
-        table.Cell().Background("#F0F4FA").BorderTop(1).BorderColor(Navy).Padding(4).AlignRight().Text(grid.TotalCases.ToString(CultureInfo.InvariantCulture)).Bold().FontSize(7.5f).FontColor(Navy);
-        table.Cell().Background("#F0F4FA").BorderTop(1).BorderColor(Navy).Padding(4).AlignRight().Text(grid.TotalPendingCases.ToString(CultureInfo.InvariantCulture)).Bold().FontSize(7.5f).FontColor(Navy);
-        table.Cell().Background("#F0F4FA").BorderTop(1).BorderColor(Navy).Padding(4).AlignRight().Text(grid.TotalDisposedCases.ToString(CultureInfo.InvariantCulture)).Bold().FontSize(7.5f).FontColor(Navy);
-        table.Cell().Background("#F0F4FA").BorderTop(1).BorderColor(Navy).Padding(4).AlignRight().Text(grid.TotalUnknownCases.ToString(CultureInfo.InvariantCulture)).Bold().FontSize(7.5f).FontColor(Navy);
-        table.Cell().Background("#F0F4FA").BorderTop(1).BorderColor(Navy).Padding(4).AlignRight().Text(grid.TotalOrders.ToString(CultureInfo.InvariantCulture)).Bold().FontSize(7.5f).FontColor(Navy);
-    });
-
-    /// <summary>The cases that touch what the company's open charges secure, or an honest statement of what was
-    /// compared when there are none (never a bare "clean").</summary>
-    private static void ChargeLinksSection(IContainer container, ChargeLitigationSummary summary) => container.Column(section =>
+    private static void SectionHeading(IContainer container, LitigationCaseStatusBucket section, int count)
     {
-        section.Item().Text("CHARGED PROPERTY & LITIGATION").Bold().FontSize(8.5f).FontColor(Navy);
-
-        var caveats = new List<string> { "Only strong matches are shown." };
-        if (summary.NcltOrdersSkipped) caveats.Add("NCLT/NCLAT orders are not scanned.");
-        if (summary.OrdersWithoutText > 0) caveats.Add($"{summary.OrdersWithoutText} order(s) had no extractable text and could not be compared.");
-        if (summary.MovableChargesWithoutIdentifiers > 0) caveats.Add($"{summary.MovableChargesWithoutIdentifiers} movable-asset charge(s) name no vehicle or serial numbers, so could not be compared.");
-
-        if (!summary.HasAny)
+        var (title, color) = section switch
         {
-            section.Item().PaddingTop(4).Background("#FAFCFF").Border(0.8f).BorderColor(Border).Padding(8).Column(c =>
-            {
-                c.Item().Text("No case was tied to a charged property, a named asset or a charge holder's recovery proceeding.").FontSize(8.2f);
-                c.Item().PaddingTop(2).Text($"{summary.OrdersScanned} order(s) with text were compared. Charges that name no specific property or asset cannot be compared. " + string.Join(" ", caveats.Skip(1))).FontSize(7.5f).FontColor(Colors.Grey.Darken1);
-            });
-            return;
-        }
-
-        section.Item().PaddingTop(4).Background("#FFF7F7").BorderLeft(4).BorderColor(Red).Border(0.8f).BorderColor("#F3C7C7").Padding(8).Column(c =>
+            LitigationCaseStatusBucket.Pending => ("PENDING CASES", Red),
+            LitigationCaseStatusBucket.Disposed => ("DISPOSED CASES", Green),
+            _ => ("CASES WITH STATUS NOT REPORTED", Amber)
+        };
+        container.BorderBottom(1.2f).BorderColor(color).PaddingBottom(3).Text(text =>
         {
-            c.Item().Text($"{summary.ChargesWithLinks} open charge(s) have litigation linked: {summary.CasesNamingAssets} case(s) name charged property or assets; {summary.CasesFor(ChargeLitigationSignal.LenderRecoveryCase)} are recovery proceedings by a charge holder.").Bold().FontSize(8.2f);
-            c.Item().PaddingTop(5).Table(table =>
-            {
-                table.ColumnsDefinition(columns =>
-                {
-                    columns.RelativeColumn(2);   // Charge
-                    columns.RelativeColumn(2);   // Link
-                    columns.RelativeColumn(2.4f); // Case
-                    columns.RelativeColumn(4);   // Evidence
-                });
-                foreach (var h in new[] { "CHARGE", "LINK", "CASE", "EVIDENCE" })
-                    table.Cell().Background("#EAF2FD").BorderBottom(1).BorderColor(Navy).Padding(4).Text(h).Bold().FontSize(7).FontColor(Navy);
-
-                foreach (var l in summary.Links)
-                {
-                    var asset = ChargeLitigationLabels.NamesTheAsset(l.Signal);
-                    table.Cell().BorderBottom(0.5f).BorderColor("#E4D0D0").Padding(4).Column(x =>
-                    {
-                        x.Item().Text(Display(l.ChargeNumber)).Bold().FontSize(7.6f);
-                        x.Item().Text(Display(l.ChargeHolder)).FontSize(7).FontColor(Colors.Grey.Darken1);
-                    });
-                    table.Cell().BorderBottom(0.5f).BorderColor("#E4D0D0").Padding(4).Text(ChargeLitigationLabels.Heading(l.Signal)).SemiBold().FontSize(7.4f).FontColor(asset ? Red : Amber);
-                    table.Cell().BorderBottom(0.5f).BorderColor("#E4D0D0").Padding(4).Column(x =>
-                    {
-                        x.Item().Text(Display(l.Case.CaseNumber)).FontSize(7.6f);
-                        x.Item().Text($"{Display(l.Case.Court)} · {l.Case.Source}").FontSize(7).FontColor(Colors.Grey.Darken1);
-                    });
-                    table.Cell().BorderBottom(0.5f).BorderColor("#E4D0D0").Padding(4).Column(x =>
-                    {
-                        x.Item().Text(l.Explanation).FontSize(7.4f);
-                        if (!string.IsNullOrWhiteSpace(l.Excerpt))
-                            x.Item().PaddingTop(2).Text($"“{l.Excerpt}”{(l.PageNumber is { } pg ? $" (page {pg})" : "")}").Italic().FontSize(7).FontColor(Colors.Grey.Darken2);
-                    });
-                }
-            });
-            c.Item().PaddingTop(4).Text(string.Join(" ", caveats)).FontSize(7).FontColor(Colors.Grey.Darken1);
+            text.Span(title).Bold().FontSize(11).FontColor(color);
+            text.Span($"   {count}").Bold().FontSize(11).FontColor(Ink);
         });
-    });
+    }
 
     private static void Metric(IContainer container, string label, string value, string color) => container.Background(BlueTint).Border(0.8f).BorderColor(Border).Padding(8).Column(card =>
     {
@@ -551,9 +583,10 @@ internal sealed class LitigationReportPdfDocument(StandaloneLitigationReport rep
         if (analysis?.KeyFindings is { Count: > 0 }) foreach (var finding in analysis.KeyFindings) panel.Item().PaddingTop(2).Text(text => { text.Span("• ").FontColor(Navy); text.Span(finding); });
     });
 
-    private static void ComposeCaseCard(IContainer container, int serial, StandaloneReportCaseDto item, LitigationCaseAnalysis? analysis) => container.Border(0.9f).BorderColor(Border).Column(card =>
+    private static void ComposeCaseCard(IContainer container, int serial, LitigationReportArtifacts.CaseView view, LitigationCaseAnalysis? analysis) => container.Border(0.9f).BorderColor(Border).Column(card =>
     {
-        var bucket = LitigationCaseStatusClassifier.Classify(item.CaseStatus, item.CaseStage);
+        var item = view.Item;
+        var bucket = view.Bucket;
         var accent = bucket switch
         {
             LitigationCaseStatusBucket.Pending => Red,
@@ -573,7 +606,7 @@ internal sealed class LitigationReportPdfDocument(StandaloneLitigationReport rep
             {
                 title.Item().Text($"CASE {serial:000}").Bold().FontSize(7.5f).FontColor(Navy);
                 title.Item().PaddingTop(2).Text(Display(item.CaseNumber)).Bold().FontSize(14).FontColor(Ink);
-                title.Item().PaddingTop(1).Text(Display(item.Court)).FontSize(8.5f).FontColor(Colors.Grey.Darken1);
+                title.Item().PaddingTop(1).Text($"{LitigationCasePresentation.Label(view.Institution)}  ·  {Display(item.Court)}").FontSize(8.5f).FontColor(Colors.Grey.Darken1);
             });
             row.AutoItem().Column(badges =>
             {
@@ -584,7 +617,7 @@ internal sealed class LitigationReportPdfDocument(StandaloneLitigationReport rep
         card.Item().Padding(9).Column(body =>
         {
             body.Item().Text("CASE PARTICULARS").Bold().FontSize(8).FontColor(Navy);
-            body.Item().PaddingTop(5).Element(c => CaseDetailsGrid(c, item));
+            body.Item().PaddingTop(5).Element(c => CaseDetailsGrid(c, view));
             body.Item().PaddingTop(9).Element(c => PartiesPanel(c, item));
             if (item.PropertyMatches is { Count: > 0 })
                 body.Item().PaddingTop(9).Element(c => PropertyMatchesPanel(c, item.PropertyMatches));
@@ -619,13 +652,14 @@ internal sealed class LitigationReportPdfDocument(StandaloneLitigationReport rep
         }
     });
 
-    private static void CaseDetailsGrid(IContainer container, StandaloneReportCaseDto item) => container.Table(table =>
+    private static void CaseDetailsGrid(IContainer container, LitigationReportArtifacts.CaseView view) => container.Table(table =>
     {
+        var item = view.Item;
         table.ColumnsDefinition(columns => { columns.RelativeColumn(); columns.RelativeColumn(); });
         var fields = new (string Label, string Value)[]
         {
-            ("CNR NO", Display(item.CnrNumber)), ("CSP ID", Display(item.CspId)), ("COURT CATEGORY", Humanize(item.CourtCategory)), ("TYPE", Humanize(item.Type)),
-            ("DIRECTION", Humanize(item.Direction)), ("BENCH", Display(item.Bench)), ("CASE TYPE / YEAR", JoinValues(item.CaseType, item.CaseYear)),
+            ("CNR NO", Display(item.CnrNumber)), ("CASE AGE", view.Age.Headline), ("FORUM", LitigationCasePresentation.Label(view.Institution)), ("TYPE", Humanize(item.Type)),
+            ("DIRECTION", LitigationCasePresentation.SideLabel(view.Side)), ("BENCH", Display(item.Bench)), ("CASE TYPE / YEAR", JoinValues(item.CaseType, item.CaseYear)),
             ("CASE STAGE", Display(item.CaseStage)), ("FILING DATE", Display(item.FilingDate)), ("LAST HEARING", Display(item.LastHearingDate)),
             ("NEXT HEARING", Display(item.NextHearingDate)), ("DECISION DATE", Display(item.DecisionDate)), ("STATE / DISTRICT", JoinValues(item.State, item.District)), ("ACT", Display(item.Act))
         };
@@ -688,8 +722,13 @@ internal sealed class LitigationReportPdfDocument(StandaloneLitigationReport rep
 
     private static void OrdersPanel(IContainer container, IReadOnlyList<StandaloneReportOrderDto> orders) => container.Column(panel =>
     {
-        panel.Item().Text("ORDERS & JUDGMENTS").Bold().FontSize(8).FontColor(Navy);
+        panel.Item().EnsureSpace(80).Text("ORDERS & JUDGMENTS").Bold().FontSize(8).FontColor(Navy);
         if (orders.Count == 0) { panel.Item().PaddingTop(4).Text("No order record was returned for this case.").FontSize(8).FontColor(Colors.Grey.Darken1); return; }
+        var available = orders.Count(o => o.AvailabilityBucket == LitigationOrderAvailabilityBucket.Downloaded);
+        if (available < orders.Count)
+            // A neutral count: whether the rest are failed, expired or pending is a pipeline detail the reader cannot act on.
+            panel.Item().PaddingTop(2).Text($"{available} of {orders.Count} order documents are available in the portal.")
+                .FontSize(7.2f).FontColor(Colors.Grey.Darken1);
         foreach (var order in orders)
         {
             panel.Item().PaddingTop(4).Background("#FFFCF4").BorderLeft(3).BorderColor(Amber).Padding(5).Column(entry =>
@@ -699,8 +738,6 @@ internal sealed class LitigationReportPdfDocument(StandaloneLitigationReport rep
                     text.Span(Display(order.OrderDate)).Bold().FontColor(Amber);
                     text.Span("  |  ");
                     text.Span(Display(order.OrderType));
-                    text.Span("  |  ");
-                    text.Span(order.AvailabilityDisclosure).FontColor(Colors.Grey.Darken1);
                 });
                 if (order.PropertyMatches is { Count: > 0 })
                 {

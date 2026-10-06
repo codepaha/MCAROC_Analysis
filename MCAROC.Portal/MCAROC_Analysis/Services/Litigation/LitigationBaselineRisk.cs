@@ -234,7 +234,7 @@ public static partial class LitigationCompanySides
         var against = respondents.Any(r => IsCompany(r, cores));
         return (by, against) switch
         {
-            (true, true) => LitigationCompanySide.Both,
+            (true, true) => fromProvider != LitigationCompanySide.Unknown ? fromProvider : LitigationCompanySide.Both,
             (true, false) => LitigationCompanySide.ByCompany,
             (false, true) => LitigationCompanySide.AgainstCompany,
             _ => fromProvider
