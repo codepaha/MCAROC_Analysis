@@ -74,8 +74,8 @@
 .litigation-filters .litigation-search { flex: 2 1 250px; max-width: 380px; }
 .litigation-filters input, .litigation-filters select { min-height: 34px; }
 .litigation-list-caption, .litigation-pagination { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; font-size: 12px; color: var(--muted); padding-block: 10px; }
-.litigation-table-wrap { border-block: 1px solid var(--border); background: var(--surface); }
-.litigation-case-table { margin: 0; font-size: 12px; min-width: 940px; }
+.litigation-table-wrap { position: relative; border-block: 1px solid var(--border); background: var(--surface); }
+.litigation-case-table { --bs-table-bg: var(--surface); --bs-table-color: var(--text); --bs-table-border-color: var(--border); margin: 0; font-size: 12px; min-width: 940px; }
 .litigation-case-table th { font-size: 11px; color: var(--muted); font-weight: 600; white-space: nowrap; background: var(--surface-2, var(--surface)); }
 .litigation-case-table > :not(caption) > * > * { padding: 11px 10px; border-bottom-color: var(--border); }
 .litigation-case-table tbody tr:hover { background: var(--brand-soft); }
@@ -86,6 +86,9 @@
 .litigation-status { white-space: nowrap; color: var(--muted); }
 .litigation-status.pending { color: var(--warn-strong, #9a6b00); }
 .litigation-status.disposed { color: var(--success-strong, #18734e); }
+[data-theme="dark"] .litigation-charge-notice { color: #ffa5a8; }
+[data-theme="dark"] .litigation-status.pending { color: #ffd279; }
+[data-theme="dark"] .litigation-status.disposed { color: #7ed4a4; }
 #litigation-register[aria-busy="true"] .litigation-table-wrap { opacity: .55; transition: opacity .15s; }
 #litigation-list-feedback:empty { display: none; }
 @media (max-width: 900px) {
@@ -96,4 +99,5 @@
 
 .mca-coverage-strip { padding-block: 4px; font-size: 11px; }
 .mca-company-head { gap: 8px 16px; }
+#mcaMainTabContent > .tab-pane { scroll-margin-top: calc(var(--mca-topbar-h) + var(--mca-detail-head-h, 54px) + 12px); }
 @media (prefers-reduced-motion: reduce) { #litigation-register[aria-busy="true"] .litigation-table-wrap { transition: none; } }
