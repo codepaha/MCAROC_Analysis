@@ -45,21 +45,21 @@ public static class LitigationCasePresentation
     /// "high_risk_court" is not a forum.</summary>
     public static LitigationInstitution Resolve(string? type, string? court, string? courtCategory)
     {
-        var institution = LitigationBaselineRisk.ForumOf(type, court, courtCategory) switch
+        switch (LitigationBaselineRisk.ForumOf(type, court, courtCategory))
         {
-            LitigationForum.SupremeCourt => LitigationInstitution.SupremeCourt,
-            LitigationForum.HighCourt => LitigationInstitution.HighCourt,
-            LitigationForum.DistrictCourt => LitigationInstitution.DistrictCourt,
-            LitigationForum.Consumer => LitigationInstitution.ConsumerCourt,
-            LitigationForum.Cestat => LitigationInstitution.Cestat,
-            LitigationForum.Nclt => LitigationInstitution.Nclt,
-            LitigationForum.Nclat => LitigationInstitution.Nclat,
-            LitigationForum.Itat => LitigationInstitution.Itat,
-            LitigationForum.Drt => LitigationInstitution.Drt,
-            LitigationForum.Drat => LitigationInstitution.Drat,
-            _ => LitigationInstitution.Others
-        };
-        if (institution != LitigationInstitution.Others) return institution;
+            case LitigationForum.SupremeCourt: return LitigationInstitution.SupremeCourt;
+            case LitigationForum.HighCourt: return LitigationInstitution.HighCourt;
+            case LitigationForum.DistrictCourt: return LitigationInstitution.DistrictCourt;
+            case LitigationForum.Consumer: return LitigationInstitution.ConsumerCourt;
+            case LitigationForum.Cestat: return LitigationInstitution.Cestat;
+            case LitigationForum.Nclt: return LitigationInstitution.Nclt;
+            case LitigationForum.Nclat: return LitigationInstitution.Nclat;
+            case LitigationForum.Itat: return LitigationInstitution.Itat;
+            case LitigationForum.Drt: return LitigationInstitution.Drt;
+            case LitigationForum.Drat: return LitigationInstitution.Drat;
+            case LitigationForum.Rera: return LitigationInstitution.Others; // a known forum that is not in the list: never a court tier
+        }
+        // Not recognised from the type or the court name: the vendor's category settles the three court tiers.
         return courtCategory?.Trim().ToLowerInvariant() switch
         {
             "supreme_court" => LitigationInstitution.SupremeCourt,
@@ -83,9 +83,15 @@ public static class LitigationCasePresentation
         _ => "Not determined"
     };
 
-    /// <summary>List order: section (pending, disposed, status unknown), then forum by seniority, then cases against the
-    /// company before cases it brought, then newest filing first. Stable for equal keys.</summary>
-    public static int SectionOrder(LitigationCaseStatusBucket bucket) => bucket switch
+    /// <summary>The order cases are listed in, by the report and by the portal register alike, so the two can never disagree: pending
+    /// first, then disposed, then status not reported; within a section by forum seniority, cases against the company before ones it
+    /// brought, newest filing first (no filing date last), and the case id so equal cases keep a stable order.</summary>
+    public static (int Section, int Forum, int Side, int Filing, long CaseId) SortKey(
+        LitigationCaseStatusBucket status, LitigationInstitution forum, LitigationCompanySide side, string? filingDate, long caseId) =>
+        (SectionOrder(status), (int)forum, SideOrder(side),
+            LitigationCaseAges.ParseDate(filingDate) is { } filed ? -filed.DayNumber : int.MaxValue, caseId);
+
+    private static int SectionOrder(LitigationCaseStatusBucket bucket) => bucket switch
     {
         LitigationCaseStatusBucket.Pending => 0,
         LitigationCaseStatusBucket.Disposed => 1,
@@ -93,14 +99,11 @@ public static class LitigationCasePresentation
     };
 
     /// <summary>Against the company first (the cases a lender cares about), then by the company, then the undetermined.</summary>
-    public static int SideOrder(LitigationCompanySide side) => side switch
+    private static int SideOrder(LitigationCompanySide side) => side switch
     {
         LitigationCompanySide.AgainstCompany => 0,
         LitigationCompanySide.ByCompany => 1,
         LitigationCompanySide.Both => 2,
         _ => 3
     };
-
-    /// <summary>Filing date as a sortable number, so cases without one sort last.</summary>
-    public static int FilingSortKey(string? filingDate) => LitigationCaseAges.ParseDate(filingDate)?.DayNumber ?? int.MinValue;
 }

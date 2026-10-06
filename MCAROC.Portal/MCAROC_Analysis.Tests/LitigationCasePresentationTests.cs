@@ -21,6 +21,11 @@ public sealed class LitigationCasePresentationTests
     [InlineData("consumer", "Consumer Court", "tribunal_cases", LitigationInstitution.ConsumerCourt)]
     [InlineData("others", "Unspecified Court", "tribunal_cases", LitigationInstitution.Others)]
     [InlineData("rera", "State RERA", null, LitigationInstitution.Others)]
+    // RERA is a known forum outside the list: it is Others even when the vendor files it under a court tier
+    [InlineData("rera", "State RERA", "high_court", LitigationInstitution.Others)]
+    [InlineData("rera", "State RERA", "district_court", LitigationInstitution.Others)]
+    [InlineData("rera", "State RERA", "supreme_court", LitigationInstitution.Others)]
+    [InlineData(null, "Real Estate Regulatory Authority", "district_court", LitigationInstitution.Others)]
     // no type: the court name, then the vendor's category for the three court tiers
     [InlineData(null, "Debts Recovery Tribunal, Kolkata", null, LitigationInstitution.Drt)]
     [InlineData(null, "SupremeCourt", "supreme_court", LitigationInstitution.SupremeCourt)]
@@ -130,6 +135,52 @@ public sealed class LitigationCasePresentationTests
         csv.Read();
         Assert.Equal("District Court", csv.GetField("Forum"));
         Assert.Equal("Against", csv.GetField("Direction"));
+    }
+
+    [Fact]
+    public void Csv_gives_every_case_an_explicit_direction_including_when_it_cannot_be_determined()
+    {
+        var both = Case(1, "high_court", "DelhiHighCourt", "Pending", null, "05-10-2025");
+        both = both with { PetitionersJson = """[{"name":"COASTAL PROJECTS LTD"}]""", RespondentsJson = """[{"name":"COASTAL PROJECTS PVT LTD"}]""" };
+        var neither = Case(2, "high_court", "DelhiHighCourt", "Pending", null, "05-10-2025");
+        neither = neither with { PetitionersJson = """[{"name":"A"}]""", RespondentsJson = """[{"name":"B"}]""" };
+        var noParties = Case(3, "high_court", "DelhiHighCourt", "Pending", null, "05-10-2025") with { PetitionersJson = null, RespondentsJson = null };
+        var report = Report(both, neither, noParties);
+
+        using var reader = new StringReader(Encoding.UTF8.GetString(LitigationReportArtifacts.RenderCsv(report)));
+        using var csv = new CsvHelper.CsvReader(reader, System.Globalization.CultureInfo.InvariantCulture);
+        csv.Read(); csv.ReadHeader();
+        var directions = new List<string?>();
+        while (csv.Read()) directions.Add(csv.GetField("Direction"));
+
+        Assert.Equal(3, directions.Count);
+        Assert.All(directions, d => Assert.Equal("Not determined", d)); // same wording as the report, never a blank cell
+    }
+
+    [Fact]
+    public void Cases_that_tie_on_every_other_key_are_listed_by_case_id()
+    {
+        var report = Report(
+            Case(30, "high_court", "DelhiHighCourt", "Pending", "against", "01-01-2025"),
+            Case(10, "high_court", "DelhiHighCourt", "Pending", "against", "01-01-2025"),
+            Case(20, "high_court", "DelhiHighCourt", "Pending", "against", "01-01-2025"));
+
+        Assert.Equal([10L, 20L, 30L], LitigationReportArtifacts.BuildCaseViews(report).Select(v => v.Item.LitigationCaseId).ToArray());
+    }
+
+    [Fact]
+    public void The_sort_key_is_what_the_report_orders_by()
+    {
+        var report = Report(
+            Case(1, "tribunal_cases", "Itat", "Pending", "against", "01-01-2020"),
+            Case(2, "high_court", "DelhiHighCourt", "Pending", "by", "01-01-2025"),
+            Case(3, "high_court", "DelhiHighCourt", "Pending", "against", null));
+
+        var views = LitigationReportArtifacts.BuildCaseViews(report);
+        var byKey = views.OrderBy(v => LitigationCasePresentation.SortKey(v.Bucket, v.Institution, v.Side, v.Item.FilingDate, v.Item.LitigationCaseId)).ToList();
+
+        Assert.Equal(byKey.Select(v => v.Item.LitigationCaseId), views.Select(v => v.Item.LitigationCaseId));
+        Assert.Equal([3L, 2L, 1L], views.Select(v => v.Item.LitigationCaseId).ToArray()); // HC against (undated), HC by, then ITAT
     }
 
     // ── PDF ──────────────────────────────────────────────────────────────────────────────────────────────
