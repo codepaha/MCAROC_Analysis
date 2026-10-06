@@ -241,19 +241,76 @@ public class CopilotCaseAndChargeFactsTests
         Assert.DoesNotContain(plain, f => f.Text.StartsWith("Cases matching the question"));
     }
 
+    private static async Task<(long RequestId, long RunId)> SeedWorkbookRowsAsync(AppDbContext db, int count)
+    {
+        var (requestId, runId) = await SeedRequestAsync(db);
+        for (var i = 0; i < count; i++)
+            db.Litigations.Add(new Litigation { RequestId = requestId, IngestionRunId = runId, CaseType = "Filed By this Corporate", CaseStatus = "Disposed",
+                Court = "SMALL CAUSES COURT, HYDERABAD", Litigants = $"GENERIC PARTY {i}", CaseNumber = $"OS {1000 + i}/2015" });
+        // the rows a question can point at, all workbook-only (no fetched case record exists for any of them)
+        db.Litigations.Add(new Litigation { RequestId = requestId, IngestionRunId = runId, CaseType = "Filed Against this Corporate", CaseStatus = "Pending",
+            Court = "NATIONAL COMPANY LAW TRIBUNAL", Litigants = "STATE BANK OF INDIA", CaseNumber = "CP(IB) No. 593/KB/2017" });
+        db.Litigations.Add(new Litigation { RequestId = requestId, IngestionRunId = runId, CaseType = "Filed Against this Corporate", CaseStatus = "Pending",
+            Court = "NATIONAL COMPANY LAW TRIBUNAL", Litigants = "KARUR VYSYA BANK", CaseNumber = "CP(IB) No. 120/KB/2018" });
+        db.Litigations.Add(new Litigation { RequestId = requestId, IngestionRunId = runId, CaseType = "Filed By this Corporate", CaseStatus = "Pending",
+            Court = "NATIONAL COMPANY LAW TRIBUNAL", Litigants = "SOME DEBTOR", CaseNumber = "CP(IB) No. 77/KB/2019" });
+        await db.SaveChangesAsync();
+        return (requestId, runId);
+    }
+
     [Fact]
-    public async Task Hundreds_of_workbook_litigation_rows_become_a_headline_not_hundreds_of_facts()
+    public async Task A_long_workbook_litigation_list_keeps_the_rows_the_question_points_at()
     {
         await using var db = CreateContext();
-        var (requestId, runId) = await SeedRequestAsync(db);
-        for (var i = 0; i < StructuredFactsProvider.MaxWorkbookLitigationRows + 10; i++)
-            db.Litigations.Add(new Litigation { RequestId = requestId, IngestionRunId = runId, CaseType = "Filed Against", CaseStatus = "Pending", Litigants = "X", CaseNumber = $"WB-{i}" });
-        await db.SaveChangesAsync();
+        var (requestId, _) = await SeedWorkbookRowsAsync(db, StructuredFactsProvider.MaxWorkbookLitigationRows + 20);
+        var provider = new StructuredFactsProvider(db);
 
-        var facts = await new StructuredFactsProvider(db).BuildDigestAsync(requestId, new QuestionHints(FilingCategory.Compliance, null, null, null, null), default);
+        // a case number the question quotes (the workbook spaces it differently)
+        var byNumber = await provider.BuildDigestAsync(requestId,
+            QuestionHintExtractor.Extract("What is the status of CP(IB) No.593/KB/2017?", [], []), default);
+        var row = Assert.Single(byNumber, f => f.EntityType == "Litigation");
+        Assert.Contains("593/KB/2017", row.Text);
+        Assert.Contains(byNumber, f => f.Text.Contains("on file in the report workbook") && f.Text.Contains("1 matching the question"));
+
+        // a described set: pending NCLT cases against the company
+        var byFilter = await provider.BuildDigestAsync(requestId,
+            QuestionHintExtractor.Extract("Which NCLT cases are pending against the company?", [], []), default);
+        var rows = byFilter.Where(f => f.EntityType == "Litigation").ToList();
+        Assert.Equal(2, rows.Count);
+        Assert.All(rows, r => Assert.Contains("NATIONAL COMPANY LAW TRIBUNAL", r.Text));
+        Assert.DoesNotContain(rows, r => r.Text.Contains("77/KB/2019")); // filed by the company, so not "against"
+
+        // a lender the question names
+        var byLender = await provider.BuildDigestAsync(requestId,
+            QuestionHintExtractor.Extract("Any proceedings involving Karur Vysya Bank?", ["KARUR VYSYA BANK"], []), default);
+        Assert.Contains(byLender, f => f.EntityType == "Litigation" && f.Text.Contains("KARUR VYSYA BANK"));
+    }
+
+    [Fact]
+    public async Task A_long_workbook_list_with_nothing_to_pick_by_is_counted_not_listed_and_says_so()
+    {
+        await using var db = CreateContext();
+        var (requestId, _) = await SeedWorkbookRowsAsync(db, StructuredFactsProvider.MaxWorkbookLitigationRows + 20);
+
+        var facts = await new StructuredFactsProvider(db).BuildDigestAsync(requestId,
+            new QuestionHints(FilingCategory.Compliance, null, null, null, null), default);
 
         Assert.DoesNotContain(facts, f => f.EntityType == "Litigation");
-        Assert.Contains(facts, f => f.Text.StartsWith($"{StructuredFactsProvider.MaxWorkbookLitigationRows + 10} litigation record(s) on file in the report workbook"));
+        var note = Assert.Single(facts, f => f.Text.Contains("on file in the report workbook"));
+        Assert.Contains($"{StructuredFactsProvider.MaxWorkbookLitigationRows + 23} litigation record(s)", note.Text);
+        Assert.Contains("none is listed individually", note.Text);
+    }
+
+    [Fact]
+    public async Task A_short_workbook_list_is_still_given_in_full()
+    {
+        await using var db = CreateContext();
+        var (requestId, _) = await SeedWorkbookRowsAsync(db, 10);
+
+        var facts = await new StructuredFactsProvider(db).BuildDigestAsync(requestId,
+            new QuestionHints(FilingCategory.Compliance, null, null, null, null), default);
+
+        Assert.Equal(13, facts.Count(f => f.EntityType == "Litigation"));
     }
 
     [Fact]

@@ -128,8 +128,9 @@ public static partial class QuestionHintExtractor
     /// <summary>Court case numbers as they appear in Indian order sheets: an upper-case case-type prefix
     /// (<c>TP</c>, <c>WP</c>, <c>CP(IB)</c>, <c>O.S.</c>, <c>IA</c>…), an optional "No.", a serial and a year
     /// joined by "/" or "of" — e.g. <c>TP 255/2019</c>, <c>WP/11227/2019</c>, <c>CP(IB) No. 123/2020</c>,
-    /// <c>IA No. 45 of 2021</c>. Case-sensitive on the prefix so ordinary words never match.</summary>
-    [GeneratedRegex(@"\b[A-Z][A-Z.()]{0,14}(?:\s*No\.?)?[\s/.-]*\d{1,6}\s*(?:/|\bof\b)\s*(?:19|20)\d{2}\b")]
+    /// <c>IA No. 45 of 2021</c>, and the bench code some tribunals put between serial and year, e.g.
+    /// <c>CP(IB) No. 593/KB/2017</c>. Case-sensitive on the prefix so ordinary words never match.</summary>
+    [GeneratedRegex(@"\b[A-Z][A-Z.()]{0,14}(?:\s*No\.?)?[\s/.-]*\d{1,6}\s*(?:/\s*[A-Z]{1,6}\s*)?(?:/|\bof\b)\s*(?:19|20)\d{2}\b")]
     private static partial Regex CaseNumberRegex();
 
     /// <summary>Statute references — <c>Section 7</c>, <c>section 138</c>, <c>Sec. 29A</c>, <c>Section 13(2)</c>.</summary>

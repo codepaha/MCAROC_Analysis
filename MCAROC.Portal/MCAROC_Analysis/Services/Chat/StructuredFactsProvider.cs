@@ -158,16 +158,26 @@ public class StructuredFactsProvider(AppDbContext db)
         var litigations = await db.Litigations.Where(x => x.IngestionRunId == ingestionRunId).ToListAsync(ct);
         if (litigations.Count > 0)
         {
-            if (detailed.Contains("Litigation") && litigations.Count <= MaxWorkbookLitigationRows)
-                foreach (var l in litigations)
-                {
-                    var courtSuffix = string.IsNullOrWhiteSpace(l.Court) ? "" : $", Court: {l.Court}";
-                    facts.Add(new StructuredFact("Litigation",
-                        $"{l.CaseType} ({l.CaseStatus}): {l.Litigants}, Case No. {l.CaseNumber}{courtSuffix}", "Litigation", l.LitigationId));
-                }
-            else
-                facts.Add(new StructuredFact("Litigation", $"{litigations.Count} litigation record(s) on file in the report workbook"
-                    + (litigations.Count > MaxWorkbookLitigationRows ? " (too many to list one by one here; the litigation cases summary and case records cover the court proceedings)." : "."), null, null));
+            // A short list is given in full. A long one (hundreds of rows swamp the prompt and the citations) is narrowed to the rows the question
+            // points at: a case number it quotes, a party it names, or the forum, status and side it describes. Rows the question does not point
+            // at are counted, not listed.
+            var listed = litigations.Count <= MaxWorkbookLitigationRows
+                ? (detailed.Contains("Litigation") ? litigations : [])
+                : litigations.Where(l => WorkbookRowAsked(l, hints)).Take(MaxWorkbookLitigationRows).ToList();
+            foreach (var l in listed)
+            {
+                var courtSuffix = string.IsNullOrWhiteSpace(l.Court) ? "" : $", Court: {l.Court}";
+                facts.Add(new StructuredFact("Litigation",
+                    $"{l.CaseType} ({l.CaseStatus}): {l.Litigants}, Case No. {l.CaseNumber}{courtSuffix}", "Litigation", l.LitigationId));
+            }
+            if (litigations.Count > MaxWorkbookLitigationRows)
+                facts.Add(new StructuredFact("Litigation",
+                    $"{litigations.Count} litigation record(s) on file in the report workbook; "
+                    + (listed.Count == 0
+                        ? "none is listed individually because the question names no case number, party, forum, status or side to pick them by (the litigation cases summary and case records cover the court proceedings)."
+                        : $"{listed.Count} matching the question {(listed.Count == MaxWorkbookLitigationRows ? "(the first " + MaxWorkbookLitigationRows + ") " : "")}are listed individually, the rest are not."), null, null));
+            else if (listed.Count == 0)
+                facts.Add(new StructuredFact("Litigation", $"{litigations.Count} litigation record(s) on file in the report workbook.", null, null));
         }
 
         var withRun = facts.Select(f => f with { IngestionRunId = ingestionRunId }).ToList();
@@ -263,6 +273,32 @@ public class StructuredFactsProvider(AppDbContext db)
             names.AddRange(await db.CompanyNameHistories.AsNoTracking().Where(h => h.RequestId == requestId && h.IngestionRunId == runId)
                 .Select(h => h.PreviousName).ToListAsync(ct));
         return names.Where(n => !string.IsNullOrWhiteSpace(n)).Distinct().ToList();
+    }
+
+    /// <summary>Whether a workbook litigation row is one the question points at: a quoted case number (compared without punctuation, since the
+    /// workbook and the question space them differently), a lender or party it names, or a forum, status and side it describes.</summary>
+    internal static bool WorkbookRowAsked(Litigation l, QuestionHints hints)
+    {
+        static string Flat(string? value) => new([.. (value ?? "").Where(char.IsLetterOrDigit).Select(char.ToLowerInvariant)]);
+        var number = Flat(l.CaseNumber);
+        var parties = Flat(l.Litigants);
+        if (hints.LexicalTerms is { Count: > 0 } terms && terms.Any(t => Flat(t) is { Length: >= 5 } flat && (number.Contains(flat) || parties.Contains(flat))))
+            return true;
+        if (hints.LenderNameKeyword is { } lender && Flat(lender) is { Length: >= 3 } flatLender && parties.Contains(flatLender))
+            return true;
+        if (hints.CaseList is not { } filter) return false;
+
+        if (filter.Forums.Count > 0 && !filter.Forums.Contains(LitigationCasePresentation.Resolve(null, l.Court, null))) return false;
+        if (filter.Status is { } status && LitigationCaseStatusClassifier.Classify(l.CaseStatus, null) != status) return false;
+        if (filter.Side is { } side)
+        {
+            var type = (l.CaseType ?? "").ToLowerInvariant();
+            var workbookSide = type.Contains("against") ? LitigationCompanySide.AgainstCompany
+                : type.Contains(" by ") || type.StartsWith("by ") || type.Contains("filed by") ? LitigationCompanySide.ByCompany
+                : LitigationCompanySide.Unknown;
+            if (workbookSide != side) return false;
+        }
+        return true;
     }
 
     private static HashSet<string> DetermineDetailedDomains(QuestionHints hints)
