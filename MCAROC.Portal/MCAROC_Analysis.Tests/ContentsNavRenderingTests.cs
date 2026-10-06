@@ -266,11 +266,11 @@ public class ContentsNavRenderingTests
         var vm = CreateViewModel();
         var html = await RenderPartialAsync("/Views/Requests/Details/_LitigationTab.cshtml", vm);
 
-        // Sticky contents nav header
-        Assert.Contains("class=\"mca-contents-nav\"", html);
+        // Compact contents navigation retains the same section and accessibility contracts.
+        Assert.Contains("class=\"mca-contents-nav litigation-section-links\"", html);
         Assert.Contains("id=\"contents-nav-litigation\"", html);
         Assert.Contains("aria-label=\"Litigation contents\"", html);
-        Assert.Contains("CONTENTS", html);
+        Assert.DoesNotContain("CONTENTS", html);
 
         // Jump links for all 5 canonical sections
         Assert.Contains("href=\"#sec-litigation-summary\"", html);

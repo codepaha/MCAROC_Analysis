@@ -505,6 +505,16 @@ public class RequestsController(
         var model = await new Services.RequestDetails.LitigationCaseListQuery(db, orderOutcomes)
             .BuildAsync(id, court, status, page, pageSize, q, outcome, null, ct);
         if (model is null) return NotFound();
+        if (chargeLitigation is not null)
+        {
+            var links = await chargeLitigation.GetCachedAsync(id, ct);
+            // A missing/stale comparison must not silently remove badges or trigger a full evidence scan.
+            if (links is null || links.SnapshotId != model.SnapshotId)
+                return StatusCode(StatusCodes.Status409Conflict);
+            var pageIds = model.Cases.Select(c => c.LitigationCaseId).ToHashSet();
+            ViewData["ChargeLinks"] = links.Links
+                .Where(l => l.Case.LitigationCaseId is { } caseId && pageIds.Contains(caseId)).ToArray();
+        }
         // Never publish a list from a different snapshot into the already displayed overview.
         if ((snapshot.HasValue && snapshot != model.SnapshotId)
             || (generation is not null && generation != before?.Key)

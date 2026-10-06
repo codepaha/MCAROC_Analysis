@@ -9,6 +9,7 @@ The request page now places a compact case register before the detailed report o
 - The register defaults to 25 rows, with 50 and 100 options. Case number, CNR, court and party search runs over the entire authoritative snapshot before SQL pagination. Court, status and order-outcome filters persist in the URL.
 - Page changes fetch only the register. Requests can be cancelled; an old response cannot replace newer results. Keyboard focus, an announced loading/result message, back/forward navigation and ordinary GET links support navigation.
 - Snapshot and request-generation checks return HTTP 409 when the displayed report has changed. Existing rows remain visible with a full-page reload link.
+- Partial responses retain per-case charge-link badges from the initial page's versioned comparison cache, limited to the displayed case IDs. If that comparison expires or its evidence version changes, pagination returns HTTP 409 and offers a full-page refresh; it never silently drops badges or performs a cold full-evidence scan.
 - Analysis eligibility is checked asynchronously when the Litigation tab opens. Analysis polling reads lifecycle metadata rather than every persisted case analysis.
 
 ## Performance boundary

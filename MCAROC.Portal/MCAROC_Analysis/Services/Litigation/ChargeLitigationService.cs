@@ -45,6 +45,23 @@ public sealed class ChargeLitigationService(AppDbContext db, IMemoryCache cache)
         LitigationSnapshotSelection.ForRequest(db, requestId)
             .Select(s => (long?)s.LitigationReportSnapshotId).FirstOrDefaultAsync(ct);
 
+    /// <summary>Read the initial page's versioned comparison without scanning evidence on pagination.
+    /// Null means the comparison must be refreshed through the full request page.</summary>
+    public async Task<ChargeLitigationSummary?> GetCachedAsync(long requestId, CancellationToken ct = default)
+    {
+        var runId = await db.Requests.AsNoTracking().Where(r => r.RequestId == requestId)
+            .Select(r => r.LatestCompletedIngestionRunId).FirstOrDefaultAsync(ct);
+        var snapshotId = await AuthoritativeSnapshotIdAsync(db, requestId, ct);
+        var version = await SnapshotVersionAsync(db, snapshotId, ct);
+        var openChargeCount = await db.RocCharges.AsNoTracking()
+            .CountAsync(c => c.RequestId == requestId && c.SatisfactionDate == null && c.ChargeStatus != "Satisfied", ct);
+        if (openChargeCount == 0) return ChargeLitigationSummary.Empty with { SnapshotId = snapshotId, Version = version };
+        return cache.TryGetValue(CacheKey(requestId, version, runId, openChargeCount), out ChargeLitigationSummary? cached) ? cached : null;
+    }
+
+    private static string CacheKey(long requestId, string version, long? runId, int openChargeCount)
+        => $"ChargeLitigation:{requestId}:{version}:{runId}:{openChargeCount}";
+
     public async Task<ChargeLitigationSummary> GetAsync(long requestId, CancellationToken ct = default)
     {
         var runId = await db.Requests.AsNoTracking().Where(r => r.RequestId == requestId)
@@ -58,7 +75,7 @@ public sealed class ChargeLitigationService(AppDbContext db, IMemoryCache cache)
             .CountAsync(c => c.RequestId == requestId && c.SatisfactionDate == null && c.ChargeStatus != "Satisfied", ct);
         if (openChargeCount == 0) return ChargeLitigationSummary.Empty with { SnapshotId = snapshotId, Version = version };
 
-        var key = $"ChargeLitigation:{requestId}:{version}:{runId}:{openChargeCount}";
+        var key = CacheKey(requestId, version, runId, openChargeCount);
         if (cache.TryGetValue(key, out ChargeLitigationSummary? cached) && cached is not null) return cached;
 
         var charges = await db.RocCharges.AsNoTracking()

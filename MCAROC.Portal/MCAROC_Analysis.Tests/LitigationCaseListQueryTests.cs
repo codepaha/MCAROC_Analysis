@@ -11,6 +11,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Caching.Memory;
 using Xunit.Abstractions;
 
 namespace MCAROC_Analysis.Tests;
@@ -112,6 +113,32 @@ public class LitigationCaseListQueryTests(ITestOutputHelper output)
         Assert.Single(capture.Commands);
         Assert.DoesNotContain(capture.Commands, sql => sql.Contains("AnalysisJson") || sql.Contains("EvidenceJson") || sql.Contains("LitigationCaseAiAnalyses"));
         Assert.IsType<NotFoundResult>(await lifecycle.GetAnalysisProgress(long.MaxValue, default));
+
+        var ingestion = new IngestionRun { RequestId = request.RequestId, RunNumber = 1, StartedDate = DateTime.UtcNow, Status = IngestionRunStatus.CompletedClean };
+        seed.IngestionRuns.Add(ingestion); await seed.SaveChangesAsync();
+        seed.RocCharges.Add(new RocCharge { RequestId = request.RequestId, IngestionRunId = ingestion.IngestionRunId,
+            RocChargeNumber = "UI-CHARGE", LatestChargeHolderRaw = "Opponent", ChargeStatus = "Open" });
+        cases[0].CaseType = cases[27].CaseType = "Recovery suit";
+        await seed.SaveChangesAsync();
+        using var cache = new MemoryCache(new MemoryCacheOptions());
+        var chargeLinks = new ChargeLitigationService(read, cache);
+        var initialLinks = await chargeLinks.GetAsync(request.RequestId);
+        Assert.Equal(2, initialLinks.Links.Count);
+        var withLinks = new RequestsController(read, null!, null!, null!, null!, null!, null!, null!, null!, chargeLitigation: chargeLinks);
+        withLinks.ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() };
+        capture.Commands.Clear();
+        foreach (var response in new[] {
+            await withLinks.LitigationCases(request.RequestId, page: 2),
+            await withLinks.LitigationCases(request.RequestId, q: cases[27].CaseNumber) })
+        {
+            var result = Assert.IsType<PartialViewResult>(response);
+            Assert.Single(Assert.IsAssignableFrom<IReadOnlyList<ChargeLitigationLink>>(result.ViewData["ChargeLinks"]));
+            var html = await LitigationTabRenderingTests.RenderCaseListAsync(result);
+            Assert.Contains("Charge holder&#x27;s recovery case", html);
+        }
+        cache.Compact(1);
+        Assert.Equal(409, Assert.IsType<StatusCodeResult>(await withLinks.LitigationCases(request.RequestId, page: 2)).StatusCode);
+        Assert.DoesNotContain(capture.Commands, sql => sql.Contains("ExtractedText") || sql.Contains("PdfUrl") || sql.Contains("EvidenceJson"));
     }
 
     [Fact]

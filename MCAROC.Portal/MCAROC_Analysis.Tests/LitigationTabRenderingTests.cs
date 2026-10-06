@@ -59,6 +59,12 @@ public class LitigationTabRenderingTests
     }
 
     private static async Task<string> RenderLitigationTabAsync(RequestDetailsViewModel model)
+        => await RenderViewAsync("/Views/Requests/Details/_LitigationTab.cshtml", model);
+
+    internal static Task<string> RenderCaseListAsync(PartialViewResult result)
+        => RenderViewAsync("/Views/Requests/Details/_LitigationCaseList.cshtml", result.Model!, result.ViewData);
+
+    private static async Task<string> RenderViewAsync(string viewPath, object model, ViewDataDictionary? data = null)
     {
         var sp = CreateServices();
         var viewEngine = sp.GetRequiredService<IRazorViewEngine>();
@@ -69,7 +75,6 @@ public class LitigationTabRenderingTests
         routeData.Values["controller"] = "Requests";
         var actionContext = new ActionContext(httpContext, routeData, new ActionDescriptor());
 
-        var viewPath = "/Views/Requests/Details/_LitigationTab.cshtml";
         var viewResult = viewEngine.GetView(executingFilePath: null, viewPath: viewPath, isMainPage: false);
         if (!viewResult.Success)
         {
@@ -83,12 +88,14 @@ public class LitigationTabRenderingTests
         }
 
         await using var writer = new StringWriter();
-        var viewDictionary = new ViewDataDictionary<RequestDetailsViewModel>(
+        var viewDictionary = new ViewDataDictionary(
             new EmptyModelMetadataProvider(),
             new ModelStateDictionary())
         {
             Model = model
         };
+        if (data is not null)
+            foreach (var entry in data) viewDictionary[entry.Key] = entry.Value;
 
         var tempData = new TempDataDictionary(actionContext.HttpContext, tempDataProvider);
         var viewContext = new ViewContext(
