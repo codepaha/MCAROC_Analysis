@@ -8,6 +8,7 @@ using Google.GenAI.Types;
 using GenAiClient = Google.GenAI.Client;
 using MCAROC_Analysis.Data.Entities;
 using Microsoft.Extensions.Logging;
+using MCAROC_Analysis.Services.AiUsage;
 
 namespace MCAROC_Analysis.Services.Analysis;
 
@@ -74,6 +75,7 @@ public partial class AiChargesNarrativeService
         {
             var config = new GenerateContentConfig { ResponseMimeType = "application/json" };
             var response = await _client.Models.GenerateContentAsync(ModelId, prompt, config, ct);
+            AiUsageLog.RecordGeneration(AiUsagePurposes.ChargesNarrative, ModelId, response.UsageMetadata);
             rawResponse = response.Candidates?.FirstOrDefault()?.Content?.Parts?.FirstOrDefault()?.Text ?? "";
         }
         catch (Exception ex)

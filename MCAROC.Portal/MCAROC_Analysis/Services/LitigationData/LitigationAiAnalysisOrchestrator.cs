@@ -6,6 +6,7 @@ using MCAROC_Analysis.Models;
 using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
+using MCAROC_Analysis.Services.AiUsage;
 
 namespace MCAROC_Analysis.Services.LitigationData;
 
@@ -72,6 +73,7 @@ public sealed class LitigationAiAnalysisOrchestrator(AppDbContext db, ILitigatio
         try
         {
             var requestId = await db.LitigationAiAnalysisRuns.Where(x => x.LitigationAiAnalysisRunId == runId && x.LeaseToken == token).Select(x => x.RequestId).SingleAsync(ct);
+            using var usageScope = AiUsageContext.Begin(requestId);
             var cases = await db.LitigationCases.Include(x => x.Orders).Where(x => x.RequestId == requestId).ToListAsync(ct);
             var chunks = await db.LitigationOrderChunks.Where(x => x.RequestId == requestId).ToListAsync(ct);
             var context = await LoadAnalysisContextAsync(requestId, ct);

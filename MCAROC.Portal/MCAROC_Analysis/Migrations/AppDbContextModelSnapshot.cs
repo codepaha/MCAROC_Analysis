@@ -23,6 +23,55 @@ namespace MCAROC_Analysis.Migrations
 
             SqlServerModelBuilderExtensions.UseIdentityColumns(modelBuilder);
 
+            modelBuilder.Entity("MCAROC_Analysis.Data.Entities.AiUsageRecord", b =>
+                {
+                    b.Property<long>("AiUsageRecordId")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("AiUsageRecordId"));
+
+                    b.Property<long?>("BillableCharacters")
+                        .HasColumnType("bigint");
+
+                    b.Property<DateTime>("CreatedUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<int>("InputTokens")
+                        .HasColumnType("int");
+
+                    b.Property<string>("Model")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)");
+
+                    b.Property<int>("OutputTokens")
+                        .HasColumnType("int");
+
+                    b.Property<string>("Purpose")
+                        .IsRequired()
+                        .HasMaxLength(80)
+                        .HasColumnType("nvarchar(80)");
+
+                    b.Property<long?>("RequestId")
+                        .HasColumnType("bigint");
+
+                    b.Property<bool>("Succeeded")
+                        .HasColumnType("bit");
+
+                    b.Property<int>("ThoughtTokens")
+                        .HasColumnType("int");
+
+                    b.Property<bool>("TokensEstimated")
+                        .HasColumnType("bit");
+
+                    b.HasKey("AiUsageRecordId");
+
+                    b.HasIndex("RequestId", "CreatedUtc");
+
+                    b.ToTable("AiUsageRecords");
+                });
+
             modelBuilder.Entity("MCAROC_Analysis.Data.Entities.AnalysisFinding", b =>
                 {
                     b.Property<long>("FindingId")

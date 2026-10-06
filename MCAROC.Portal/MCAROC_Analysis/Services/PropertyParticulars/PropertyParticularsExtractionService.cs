@@ -9,6 +9,7 @@ using MCAROC_Analysis.Services.CalculationAssurance;
 using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
+using MCAROC_Analysis.Services.AiUsage;
 
 namespace MCAROC_Analysis.Services.PropertyParticulars;
 
@@ -64,6 +65,7 @@ public sealed class VertexPropertyParticularsAiClient : IPropertyParticularsAiCl
                     config.MaxOutputTokens = 32_000;
                 }
                 var response = await _client.Models.GenerateContentAsync(PropertyParticularsAi.ModelId, prompt, config, innerCt);
+                AiUsageLog.RecordGeneration(AiUsagePurposes.PropertyParticulars, PropertyParticularsAi.ModelId, response.UsageMetadata);
                 return response.Candidates?.FirstOrDefault()?.Content?.Parts?.FirstOrDefault()?.Text ?? string.Empty;
             }, TimeSpan.FromSeconds(timeoutSeconds), ct);
             return timedOut
