@@ -246,7 +246,13 @@ public class LitigationController(
     }
 
     [HttpGet("/Requests/{id:long}/Litigation/OrdersZip")]
-    public async Task<IActionResult> DownloadOrdersZip(long id, CancellationToken ct)
+    public Task<IActionResult> DownloadOrdersZip(long id, CancellationToken ct) => ServeOrdersZipAsync(id, null, ct);
+
+    /// <summary>Every retained order PDF of one case, in one ZIP (the case page's "Download all orders").</summary>
+    [HttpGet("/Requests/{id:long}/Litigation/Cases/{caseId:long}/OrdersZip")]
+    public Task<IActionResult> DownloadCaseOrdersZip(long id, long caseId, CancellationToken ct) => ServeOrdersZipAsync(id, caseId, ct);
+
+    private async Task<IActionResult> ServeOrdersZipAsync(long id, long? caseId, CancellationToken ct)
     {
         var request = await db.Requests.Where(r => r.RequestId == id)
             .Select(r => new { r.RequestId, r.CompanyName }).FirstOrDefaultAsync(ct);
@@ -255,7 +261,8 @@ public class LitigationController(
         // Only Downloaded — "currently retained" excludes Pending/InProgress (not fetched yet) and
         // Failed/Expired (no file to include) by construction, never by a separate flag to keep in sync.
         var documents = await db.LitigationOrderDocuments
-            .Where(d => d.Order!.Case!.RequestId == id && d.Status == LitigationOrderDocumentStatus.Downloaded)
+            .Where(d => d.Order!.Case!.RequestId == id && d.Status == LitigationOrderDocumentStatus.Downloaded
+                && (caseId == null || d.Order.LitigationCaseId == caseId))
             .Select(d => new
             {
                 d.LitigationOrderDocumentId, d.StoragePath, d.Order!.OrderType, d.Order.OrderDate,
@@ -286,7 +293,7 @@ public class LitigationController(
         }
 
         if (entries.Count == 0)
-            return NotFound("No currently retained litigation order PDFs are available for this request.");
+            return NotFound(caseId is null ? "No currently retained litigation order PDFs are available for this request." : "No retained order PDFs are available for this case.");
 
         var zipDir = Path.Combine(env.ContentRootPath, "App_Data", "Requests", id.ToString(), "litigation-orders", "_zip");
         Directory.CreateDirectory(zipDir);
@@ -296,13 +303,15 @@ public class LitigationController(
         if (written == 0)
         {
             TryDelete(zipPath);
-            return NotFound("No currently retained litigation order PDFs are available for this request.");
+            return NotFound(caseId is null ? "No currently retained litigation order PDFs are available for this request." : "No retained order PDFs are available for this case.");
         }
 
         Response.Headers["Referrer-Policy"] = "no-referrer";
         Response.Headers.CacheControl = "no-store, private";
         Response.Headers["X-Content-Type-Options"] = "nosniff";
-        var fileName = $"LitigationOrders_{AutoFetchArchiveBuilder.CompanyToken(request.CompanyName ?? "Company")}_{id}.zip";
+        var fileName = caseId is null
+            ? $"LitigationOrders_{AutoFetchArchiveBuilder.CompanyToken(request.CompanyName ?? "Company")}_{id}.zip"
+            : $"CaseOrders_{AutoFetchArchiveBuilder.CompanyToken(documents[0].CaseLabel ?? "Case")}_{caseId}.zip";
         var contentDisposition = new Microsoft.Net.Http.Headers.ContentDispositionHeaderValue("attachment");
         contentDisposition.SetHttpFileName(fileName);
         Response.Headers.ContentDisposition = contentDisposition.ToString();
