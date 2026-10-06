@@ -524,6 +524,7 @@ public sealed partial class CompanyRegistryQueryService
             {
                 CalculatedUtc = source.Metadata.CalculatedUtc,
                 IsImportedBaseline = source.Metadata.IsImportedBaseline,
+                SourceRowCount = source.Metadata.SourceRowCount,
                 PublishedDate = source.Metadata.PublishedDate,
                 CompletedUtc = source.Metadata.CompletedUtc,
                 Source = source.Metadata.Source,
