@@ -263,15 +263,15 @@ public sealed class BprLitigationClient(
         return buffer.ToArray();
     }
 
-    /// <summary>True when the content is a PDF: <c>%PDF-</c> at the start, allowing only blank space before it. The format permits a few bytes ahead of the
-    /// header and the tribunal's order files have them (eight blank-line bytes), so a strict byte-0 check rejected every DRT order. Anything else before the
-    /// signature — an HTML or JSON error page, an expired-link body — is still not a PDF.</summary>
+    /// <summary>True when the content is a PDF: <c>%PDF-</c> within the first kilobyte, which is as far in as the format allows the header to sit.
+    /// Real order files have stray bytes ahead of it: the debt-recovery tribunal's carry eight blank-line bytes and the Supreme Court's carry four binary
+    /// ones, so a byte-0 check rejected both. What may not precede the header is markup: a prefix containing <c>&lt;</c> or <c>{</c> is an HTML or JSON
+    /// page (an error body, an expired link) that merely mentions the signature, not a PDF.</summary>
     internal static bool HasPdfSignature(byte[] bytes)
     {
-        var limit = Math.Min(bytes.Length, 1024);
-        var i = 0;
-        while (i < limit && bytes[i] is 0x00 or 0x09 or 0x0A or 0x0D or 0x20) i++;
-        return bytes.Length - i >= PdfSignature.Length && bytes.AsSpan(i, PdfSignature.Length).SequenceEqual(PdfSignature);
+        var window = bytes.AsSpan(0, Math.Min(bytes.Length, 1024 + PdfSignature.Length));
+        var at = window.IndexOf(PdfSignature);
+        return at >= 0 && window[..at].IndexOfAny((byte)'<', (byte)'{') < 0;
     }
 
     // Private/loopback/link-local ranges an order PDF host must never resolve to, even if the hostname
