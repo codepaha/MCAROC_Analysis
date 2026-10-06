@@ -338,7 +338,8 @@ builder.Services.AddSingleton(sp =>
     var projectId = config["GoogleCloud:ProjectId"] ?? throw new InvalidOperationException("GoogleCloud:ProjectId is not configured.");
     var location = config["GoogleCloud:Location"] ?? "us-central1";
     var credentialsPath = config["GoogleCloud:CredentialsPath"] ?? throw new InvalidOperationException("GoogleCloud:CredentialsPath is not configured.");
-    return new ChatCompletionService(projectId, location, credentialsPath, sp.GetRequiredService<ILogger<ChatCompletionService>>());
+    // Chat:CompletionModel overrides the default answering model (a larger model follows the citation format more reliably, at a higher cost per answer).
+    return new ChatCompletionService(projectId, location, credentialsPath, sp.GetRequiredService<ILogger<ChatCompletionService>>(), config["Chat:CompletionModel"]);
 });
 builder.Services.AddScoped<DocumentChunkingOrchestrator>();
 builder.Services.AddHostedService<DocumentChunkingWorker>();

@@ -20,12 +20,18 @@ public record ChatCompletionResult(string Answer, bool InsufficientEvidence, Lis
 /// in the supplied [FACT]/[SOURCE] blocks, and validates the response before it's shown.</summary>
 public class ChatCompletionService
 {
+    /// <summary>The model that answers unless <c>Chat:CompletionModel</c> names another.</summary>
     public const string ModelId = "gemini-2.5-flash-lite";
     public const string PromptVersion = "1.3";
     private const string InsufficientAnswer = "I could not verify this from the uploaded records.";
 
     internal static ChatCompletionResult InsufficientEvidenceResult() =>
         new(InsufficientAnswer, true, []);
+
+    private readonly string _modelId = ModelId;
+
+    /// <summary>The model this instance asks, recorded with every answer.</summary>
+    public virtual string Model => _modelId;
 
     private readonly GenAiClient _client;
     private readonly ILogger<ChatCompletionService> _logger;
@@ -42,9 +48,10 @@ public class ChatCompletionService
         _logger = logger;
     }
 
-    public ChatCompletionService(string projectId, string location, string credentialsPath, ILogger<ChatCompletionService> logger)
+    public ChatCompletionService(string projectId, string location, string credentialsPath, ILogger<ChatCompletionService> logger, string? modelId = null)
     {
         _logger = logger;
+        if (!string.IsNullOrWhiteSpace(modelId)) _modelId = modelId.Trim();
         var credential = GoogleCredential.FromFile(credentialsPath).CreateScoped("https://www.googleapis.com/auth/cloud-platform");
         _client = new GenAiClient(vertexAI: true, project: projectId, location: location, credential: credential);
     }
@@ -83,7 +90,7 @@ public class ChatCompletionService
         try
         {
             var config = new GenerateContentConfig { ResponseMimeType = "application/json" };
-            var response = await _client.Models.GenerateContentAsync(ModelId, prompt, config, ct);
+            var response = await _client.Models.GenerateContentAsync(_modelId, prompt, config, ct);
             return response.Candidates?.FirstOrDefault()?.Content?.Parts?.FirstOrDefault()?.Text ?? "";
         }
         catch (Exception ex)

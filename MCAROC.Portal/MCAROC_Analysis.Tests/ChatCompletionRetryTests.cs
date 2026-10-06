@@ -147,6 +147,14 @@ public class ChatCompletionRetryTests
     }
 
     [Fact]
+    public void The_answering_model_defaults_to_the_built_in_one_and_can_be_named()
+    {
+        Assert.Equal(ChatCompletionService.ModelId, new ScriptedModel().Model);
+        // a configured model is recorded with every answer; the constructor that reads it needs credentials, so check the seam directly
+        Assert.Equal("gemini-2.5-flash-lite", ChatCompletionService.ModelId);
+    }
+
+    [Fact]
     public async Task A_usable_first_reply_costs_one_call()
     {
         var model = new ScriptedModel(Good);

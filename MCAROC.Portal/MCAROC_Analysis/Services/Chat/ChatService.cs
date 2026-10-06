@@ -122,7 +122,7 @@ public class ChatService(
                     s.Tag, Type = s.Type.ToString(), s.DisplayLabel, s.RelevanceScore
                 })),
                 CitedSourcesJson = JsonSerializer.Serialize(completion.CitedSources),
-                Model = ChatCompletionService.ModelId,
+                Model = completionService.Model,
                 PromptVersion = ChatCompletionService.PromptVersion,
                 EmbeddingModel = EmbeddingService.ModelId,
                 TopK = Options.TopK,
