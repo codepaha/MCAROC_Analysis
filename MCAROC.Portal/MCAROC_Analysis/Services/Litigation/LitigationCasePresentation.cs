@@ -83,44 +83,6 @@ public static class LitigationCasePresentation
         _ => "Not determined"
     };
 
-    public static readonly string[] DateFormats = ["dd-MM-yyyy", "d-M-yyyy", "yyyy-MM-dd", "dd/MM/yyyy", "d/M/yyyy"];
-
-    public static DateOnly? ParseDate(string? value) =>
-        DateOnly.TryParseExact(value?.Trim(), DateFormats, CultureInfo.InvariantCulture, DateTimeStyles.None, out var date) ? date : null;
-
-    /// <summary>How long the case has been open (pending), took to decide (disposed) or has existed (status unknown).
-    /// "-" whenever the dates needed are missing or contradict each other.</summary>
-    public static string Age(string? filingDate, string? decisionDate, LitigationCaseStatusBucket bucket, DateOnly today)
-    {
-        if (ParseDate(filingDate) is not { } filed) return "-";
-        switch (bucket)
-        {
-            case LitigationCaseStatusBucket.Disposed:
-                if (ParseDate(decisionDate) is not { } decided || decided < filed) return "-";
-                return $"Disposed in {Span(filed, decided)}";
-            case LitigationCaseStatusBucket.Pending:
-                return filed > today ? "-" : $"Pending {Span(filed, today)}";
-            default:
-                return filed > today ? "-" : $"Filed {Span(filed, today)} ago";
-        }
-    }
-
-    /// <summary>Whole years and months, or days when under a month ("3 yrs 2 mths", "1 yr", "5 mths", "12 days").</summary>
-    public static string Span(DateOnly from, DateOnly to)
-    {
-        var months = (to.Year - from.Year) * 12 + to.Month - from.Month - (to.Day < from.Day ? 1 : 0);
-        if (months < 1)
-        {
-            var days = Math.Max(0, to.DayNumber - from.DayNumber);
-            return days == 1 ? "1 day" : $"{days} days";
-        }
-        var years = months / 12;
-        var rest = months % 12;
-        var y = years == 1 ? "1 yr" : $"{years} yrs";
-        var m = rest == 1 ? "1 mth" : $"{rest} mths";
-        return years == 0 ? m : rest == 0 ? y : $"{y} {m}";
-    }
-
     /// <summary>List order: section (pending, disposed, status unknown), then forum by seniority, then cases against the
     /// company before cases it brought, then newest filing first. Stable for equal keys.</summary>
     public static int SectionOrder(LitigationCaseStatusBucket bucket) => bucket switch
@@ -140,5 +102,5 @@ public static class LitigationCasePresentation
     };
 
     /// <summary>Filing date as a sortable number, so cases without one sort last.</summary>
-    public static int FilingSortKey(string? filingDate) => ParseDate(filingDate)?.DayNumber ?? int.MinValue;
+    public static int FilingSortKey(string? filingDate) => LitigationCaseAges.ParseDate(filingDate)?.DayNumber ?? int.MinValue;
 }

@@ -67,26 +67,6 @@ public sealed class LitigationCasePresentationTests
     public void Side_reads_the_company_from_the_party_lists_when_the_vendor_gives_none(string? pet, string? res, LitigationCompanySide expected) =>
         Assert.Equal(expected, LitigationCasePresentation.Side(null, pet, res, Targets));
 
-    private static readonly DateOnly Today = new(2026, 10, 6);
-
-    [Theory]
-    [InlineData("21-12-2023", null, LitigationCaseStatusBucket.Pending, "Pending 2 yrs 9 mths")]
-    [InlineData("06-10-2025", null, LitigationCaseStatusBucket.Pending, "Pending 1 yr")]
-    [InlineData("07-10-2025", null, LitigationCaseStatusBucket.Pending, "Pending 11 mths")] // one day short of a year
-    [InlineData("26-09-2026", null, LitigationCaseStatusBucket.Pending, "Pending 10 days")]
-    [InlineData("2024-03-01", null, LitigationCaseStatusBucket.Pending, "Pending 2 yrs 7 mths")] // ISO dates too
-    [InlineData("10-03-2016", "09-12-2023", LitigationCaseStatusBucket.Disposed, "Disposed in 7 yrs 8 mths")]
-    [InlineData("04-08-2015", "12-05-2016", LitigationCaseStatusBucket.Disposed, "Disposed in 9 mths")]
-    [InlineData("28-01-2016", null, LitigationCaseStatusBucket.Unknown, "Filed 10 yrs 8 mths ago")]
-    // missing or contradictory dates never produce a made-up age
-    [InlineData(null, null, LitigationCaseStatusBucket.Pending, "-")]
-    [InlineData("not a date", null, LitigationCaseStatusBucket.Pending, "-")]
-    [InlineData("10-03-2016", null, LitigationCaseStatusBucket.Disposed, "-")]
-    [InlineData("10-03-2016", "01-01-2015", LitigationCaseStatusBucket.Disposed, "-")]
-    [InlineData("01-01-2027", null, LitigationCaseStatusBucket.Pending, "-")]
-    public void Age_describes_how_long_a_case_has_been_open_or_took_to_decide(string? filed, string? decided, LitigationCaseStatusBucket bucket, string expected) =>
-        Assert.Equal(expected, LitigationCasePresentation.Age(filed, decided, bucket, Today));
-
     // ── report order ─────────────────────────────────────────────────────────────────────────────────────
 
     private static StandaloneReportCaseDto Case(long id, string category, string court, string status, string? direction, string? filed, string? petitioner = null) =>
@@ -121,22 +101,22 @@ public sealed class LitigationCasePresentationTests
     [Fact]
     public void Case_views_resolve_a_missing_direction_from_the_party_lists_and_carry_the_age()
     {
-        var report = Report(Case(1, "tribunal_cases", "Itat", "Pending", null, "06-10-2025",
+        var report = Report(Case(1, "tribunal_cases", "Itat", "Pending", null, "05-10-2025",
             petitioner: """[{"name":"COASTAL PROJECTS PRIVATE LIMITED"}]"""));
 
         var view = Assert.Single(LitigationReportArtifacts.BuildCaseViews(report));
 
         Assert.Equal(LitigationCompanySide.ByCompany, view.Side);
         Assert.Equal(LitigationInstitution.Itat, view.Institution);
-        Assert.Equal("Pending 1 yr", view.Age);
+        Assert.Equal("Pending for 1 year", view.Age.Headline); // measured to the retrieval date, as on the case page
     }
 
     [Fact]
     public void Csv_follows_report_order_and_carries_forum_and_age_but_never_the_internal_id()
     {
         var report = Report(
-            Case(1, "district_court", "Sub Judge", "Pending", "against", "06-10-2025"),
-            Case(2, "supreme_court", "SupremeCourt", "Pending", "by", "06-10-2024"));
+            Case(1, "district_court", "Sub Judge", "Pending", "against", "05-10-2025"),
+            Case(2, "supreme_court", "SupremeCourt", "Pending", "by", "05-10-2024"));
 
         using var reader = new StringReader(Encoding.UTF8.GetString(LitigationReportArtifacts.RenderCsv(report)));
         using var csv = new CsvHelper.CsvReader(reader, System.Globalization.CultureInfo.InvariantCulture);
@@ -145,7 +125,7 @@ public sealed class LitigationCasePresentationTests
 
         csv.Read();
         Assert.Equal("Supreme Court", csv.GetField("Forum"));
-        Assert.Equal("Pending 2 yrs", csv.GetField("Case Age"));
+        Assert.Equal("Pending for 2 years", csv.GetField("Case Age"));
         Assert.Equal("By", csv.GetField("Direction"));
         csv.Read();
         Assert.Equal("District Court", csv.GetField("Forum"));
@@ -167,9 +147,9 @@ public sealed class LitigationCasePresentationTests
             "PdfPig text extraction is unreliable off Windows fonts; covered by the windows-tests CI job.");
 
         var report = Report(
-            Case(1, "high_court", "DelhiHighCourt", "Pending", "against", "06-10-2025"),
+            Case(1, "high_court", "DelhiHighCourt", "Pending", "against", "05-10-2025"),
             Case(2, "high_risk_court", "Drt", "Disposed", "against", "10-03-2016"),
-            Case(3, "tribunal_cases", "Itat", "Fixed", null, "06-10-2025"));
+            Case(3, "tribunal_cases", "Itat", "Fixed", null, "05-10-2025"));
         var text = PdfText(report);
 
         Assert.Contains("PENDING CASES", text);
@@ -177,7 +157,7 @@ public sealed class LitigationCasePresentationTests
         Assert.Contains("NOT REPORTED", text);
         Assert.Contains("FORUM WISE", text);
         Assert.Contains("CASE AGE", text);
-        Assert.Contains("Pending 1 yr", text);
+        Assert.Contains("Pending for 1 year", text);
         Assert.Contains("Against the company", text);
         Assert.DoesNotContain("csp-1", text);
         Assert.DoesNotContain("CSP", text);
@@ -189,7 +169,7 @@ public sealed class LitigationCasePresentationTests
     public void Pdf_renders_with_and_without_the_logo_and_with_no_cases()
     {
         var png = Convert.FromBase64String("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==");
-        var withCases = Report(Case(1, "high_court", "DelhiHighCourt", "Pending", "against", "06-10-2025"));
+        var withCases = Report(Case(1, "high_court", "DelhiHighCourt", "Pending", "against", "05-10-2025"));
 
         Assert.True(LitigationReportArtifacts.RenderPdf(withCases, png).Length > 1000);
         Assert.True(LitigationReportArtifacts.RenderPdf(withCases, null).Length > 1000);

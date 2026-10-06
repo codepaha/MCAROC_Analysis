@@ -205,13 +205,14 @@ public static class LitigationReportArtifacts
     /// and how old it is.</summary>
     internal sealed record CaseView(
         StandaloneReportCaseDto Item, LitigationCaseStatusBucket Bucket, LitigationInstitution Institution,
-        LitigationCompanySide Side, string Age);
+        LitigationCompanySide Side, LitigationCaseAge Age);
 
     /// <summary>Every case, in report order: pending, then disposed, then status not reported; within a section by forum
     /// seniority, cases against the company before ones it brought, newest filing first.</summary>
     internal static IReadOnlyList<CaseView> BuildCaseViews(StandaloneLitigationReport report)
     {
-        var today = DateOnly.FromDateTime(report.GeneratedAtUtc.UtcDateTime.AddMinutes(330)); // IST calendar day
+        // Age is measured to the day the data was retrieved (IST), as on the case page, so the two always agree.
+        var asOf = DateOnly.FromDateTime(Ist.FromUtc(report.AuthoritativeSnapshotRetrievedUtc));
         var targets = report.KeywordsSearched.Append(report.CompanyName).ToList();
         return report.Cases
             .Select(item =>
@@ -220,7 +221,8 @@ public static class LitigationReportArtifacts
                 return new CaseView(
                     item, bucket, LitigationCasePresentation.Resolve(item.Type, item.Court, item.CourtCategory),
                     LitigationCasePresentation.Side(item.Direction, item.PetitionersJson, item.RespondentsJson, targets),
-                    LitigationCasePresentation.Age(item.FilingDate, item.DecisionDate, bucket, today));
+                    LitigationCaseAges.Compute(item.FilingDate, item.DecisionDate, item.CaseYear, bucket,
+                        item.Orders.Select(o => o.OrderDate), asOf, item.CnrNumber, item.CaseNumber));
             })
             .OrderBy(v => LitigationCasePresentation.SectionOrder(v.Bucket))
             .ThenBy(v => v.Institution)
@@ -296,7 +298,7 @@ public static class LitigationReportArtifacts
         {
             serial.ToString(CultureInfo.InvariantCulture), report.AssignmentNumber, report.CompanyName,
             item.ProviderCaseId, item.CnrNumber, item.CourtCategory, view.Side switch { LitigationCompanySide.ByCompany => "By", LitigationCompanySide.AgainstCompany => "Against", _ => null },
-            LitigationCasePresentation.Label(view.Institution), view.Age, item.Type, item.Court, item.Bench,
+            LitigationCasePresentation.Label(view.Institution), view.Age.Headline, item.Type, item.Court, item.Bench,
             item.CaseNumber, item.CaseType, item.CaseYear, item.CaseStage, item.CaseStatus, item.Act, item.FilingDate,
             item.LastHearingDate, item.NextHearingDate, item.DecisionDate, item.State, item.District,
             PartyText(item.PetitionersJson), PartyText(item.RespondentsJson), PartyText(item.PetitionerAdvocatesJson),
@@ -659,7 +661,7 @@ internal sealed class LitigationReportPdfDocument(StandaloneLitigationReport rep
         table.ColumnsDefinition(columns => { columns.RelativeColumn(); columns.RelativeColumn(); });
         var fields = new (string Label, string Value)[]
         {
-            ("CNR NO", Display(item.CnrNumber)), ("CASE AGE", view.Age), ("FORUM", LitigationCasePresentation.Label(view.Institution)), ("TYPE", Humanize(item.Type)),
+            ("CNR NO", Display(item.CnrNumber)), ("CASE AGE", view.Age.Headline), ("FORUM", LitigationCasePresentation.Label(view.Institution)), ("TYPE", Humanize(item.Type)),
             ("DIRECTION", LitigationCasePresentation.SideLabel(view.Side)), ("BENCH", Display(item.Bench)), ("CASE TYPE / YEAR", JoinValues(item.CaseType, item.CaseYear)),
             ("CASE STAGE", Display(item.CaseStage)), ("FILING DATE", Display(item.FilingDate)), ("LAST HEARING", Display(item.LastHearingDate)),
             ("NEXT HEARING", Display(item.NextHearingDate)), ("DECISION DATE", Display(item.DecisionDate)), ("STATE / DISTRICT", JoinValues(item.State, item.District)), ("ACT", Display(item.Act))
