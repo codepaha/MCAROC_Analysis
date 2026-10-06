@@ -170,6 +170,8 @@ public sealed class LitigationTabViewModel
     public LitigationCourtSummaryGrid CourtSummaryGrid { get; set; } = new();
     /// <summary>Pending cases by age across the whole report (not just this page), as of <see cref="AgeAsOf"/>.</summary>
     public LitigationAgeProfile AgeProfile { get; set; } = new();
+    /// <summary>Cases per forum by the company's side and status, across the whole report.</summary>
+    public LitigationForumSummary ForumSummary { get; } = new();
     /// <summary>Cases by baseline risk tier across the whole report, and the overall tier (the highest case tier).</summary>
     public LitigationRiskProfile RiskProfile { get; set; } = new();
     public DateOnly? AgeAsOf { get; set; }
@@ -250,6 +252,8 @@ public sealed class LitigationCaseCardViewModel
     public string? ProviderCaseId { get; set; }
 
     public string? Court { get; set; }
+    /// <summary>The forum the case sits in (Supreme Court, High Court, ... Others), read as the report reads it.</summary>
+    public LitigationInstitution Institution { get; set; } = LitigationInstitution.Others;
     public string? Bench { get; set; }
     public string? CourtCategory { get; set; }
     public string? State { get; set; }

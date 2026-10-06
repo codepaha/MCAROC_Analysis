@@ -499,75 +499,53 @@
         </div>
     }
 
-    <!-- Court Summary Grid -->
-    <div class="card mb-4 shadow-sm border">
-        <div class="card-header bg-light d-flex justify-content-between align-items-center py-2 px-3">
+    <!-- Forum summary -->
+    @{
+        var forums = lake.ForumSummary;
+        var forumColumns = new List<(string Title, LitigationForumSummary.SideColumn Side)>
+        {
+            ("Against company", LitigationForumSummary.SideColumn.Against), ("By company", LitigationForumSummary.SideColumn.By)
+        };
+        if (forums.HasNotDetermined) { forumColumns.Add(("Not determined", LitigationForumSummary.SideColumn.NotDetermined)); }
+        void Breakdown(LitigationForumSummary.Counts c, bool bold = false)
+        {
+            <span class="@(bold ? "fw-bold" : "")">@c.Total</span>
+            <span class="text-muted">(<span class="text-warning-emphasis">@c.Pending</span> / <span class="text-success">@c.Disposed</span> / <span class="text-secondary">@c.Unknown</span>)</span>
+        }
+    }
+    <div class="card mb-4 shadow-sm border" id="litigation-forum-summary">
+        <div class="card-header bg-light d-flex justify-content-between align-items-center flex-wrap gap-1 py-2 px-3">
             <h5 class="card-title mb-0 small fw-bold text-uppercase">
-                <i class="bi bi-grid-3x3 me-2 text-primary"></i>Court Summary Grid
+                <i class="bi bi-grid-3x3 me-2 text-primary"></i>Summary: Forum Wise
             </h5>
-            @if (lake.CourtSummaryGrid.IsReconciled)
-            {
-                <span class="badge bg-success">
-                    <i class="bi bi-check-circle me-1"></i>Reconciled (Total = Pending + Disposed + Unknown)
-                </span>
-            }
-            else
-            {
-                <span class="badge bg-danger">
-                    <i class="bi bi-exclamation-triangle me-1"></i>Reconciliation Mismatch
-                </span>
-            }
+            <span class="small text-muted">Each figure is total (<span class="text-warning-emphasis">pending</span> / <span class="text-success">disposed</span> / <span class="text-secondary">status unknown</span>)</span>
         </div>
         <div class="card-body p-0">
             <div class="table-responsive">
-                <table class="table table-hover table-striped mb-0 small align-middle">
+                <table class="table table-hover mb-0 small align-middle">
+                    <caption class="visually-hidden">Litigation cases by forum and by whether the company brought the case or it was brought against the company</caption>
                     <thead class="table-light">
                         <tr>
-                            <th>Court Name</th>
-                            <th>Category</th>
-                            <th class="text-end">Total Cases</th>
-                            <th class="text-end">Pending</th>
-                            <th class="text-end">Disposed</th>
-                            <th class="text-end">Unknown / Other</th>
-                            <th class="text-end">Total Orders</th>
+                            <th scope="col">Forum</th>
+                            <th scope="col" class="text-end">Total</th>
+                            @foreach (var column in forumColumns) { <th scope="col" class="text-end">@column.Title</th> }
                         </tr>
                     </thead>
                     <tbody>
-                        @if (lake.CourtSummaryGrid.Rows.Count == 0)
+                        @foreach (var forum in Enum.GetValues<LitigationInstitution>())
                         {
                             <tr>
-                                <td colspan="7" class="text-center text-muted py-3">No court records indexed in authoritative snapshot.</td>
+                                <th scope="row" class="fw-normal">@LitigationCasePresentation.Label(forum)</th>
+                                <td class="text-end fw-semibold">@forums.ForForum(forum).Total</td>
+                                @foreach (var column in forumColumns) { <td class="text-end text-nowrap">@{ Breakdown(forums.Cell(forum, column.Side)); }</td> }
                             </tr>
-                        }
-                        else
-                        {
-                            @foreach (var r in lake.CourtSummaryGrid.Rows)
-                            {
-                                <tr>
-                                    <td>
-                                        <a href="?court=@Uri.EscapeDataString(r.CourtName)" class="text-decoration-none fw-semibold">
-                                            @r.CourtName
-                                        </a>
-                                    </td>
-                                    <td><span class="badge bg-light text-dark border">@(r.CourtCategory ?? "Unspecified")</span></td>
-                                    <td class="text-end fw-bold">@r.TotalCases</td>
-                                    <td class="text-end text-warning-emphasis">@r.PendingCases</td>
-                                    <td class="text-end text-success">@r.DisposedCases</td>
-                                    <td class="text-end text-secondary">@r.UnknownCases</td>
-                                    <td class="text-end">@r.TotalOrders</td>
-                                </tr>
-                            }
                         }
                     </tbody>
                     <tfoot class="table-light fw-bold">
                         <tr>
-                            <td>Total Portfolio Reconciled</td>
-                            <td>—</td>
-                            <td class="text-end">@lake.CourtSummaryGrid.TotalCases</td>
-                            <td class="text-end text-warning-emphasis">@lake.CourtSummaryGrid.TotalPendingCases</td>
-                            <td class="text-end text-success">@lake.CourtSummaryGrid.TotalDisposedCases</td>
-                            <td class="text-end text-secondary">@lake.CourtSummaryGrid.TotalUnknownCases</td>
-                            <td class="text-end">@lake.CourtSummaryGrid.TotalOrders</td>
+                            <th scope="row">Total</th>
+                            <td class="text-end">@forums.Total.Total</td>
+                            @foreach (var column in forumColumns) { <td class="text-end text-nowrap">@{ Breakdown(forums.ForSide(column.Side), bold: true); }</td> }
                         </tr>
                     </tfoot>
                 </table>

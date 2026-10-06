@@ -751,9 +751,11 @@ public class LitigationTabAndControllerTests : IAsyncLifetime
         var unspecRow = grid1.Rows.Single(r => r.CourtName == "Unspecified Court");
         Assert.Equal(24, unspecRow.TotalCases);
 
-        // Verify Case Cards on Call 1 are ordered by normalized court ("Delhi HC" before "Unspecified Court")
-        Assert.Equal("Delhi HC", lake1.Cases[0].Court);
-        Assert.Equal("Delhi HC  ", lake1.Cases[1].Court);
+        // The register lists pending cases first, then disposed, then status not reported; ties fall back to the case id.
+        Assert.Equal("CASE-1", lake1.Cases[0].CaseNumber);
+        Assert.Equal("CASE-4", lake1.Cases[1].CaseNumber); // "Delhi HC  ": pending trial
+        Assert.Equal("CASE-3", lake1.Cases[^1].CaseNumber); // disposed: after all 24 pending cases (case 2, status not reported, is on page 2)
+        Assert.Equal(LitigationCaseStatusBucket.Disposed, lake1.Cases[^1].StatusBucket);
 
         // Call 2: Filtered by "Unspecified Court"
         var res2 = await controller.Details(request.RequestId, charge: null, court: "Unspecified Court");
@@ -997,7 +999,7 @@ public class LitigationTabAndControllerTests : IAsyncLifetime
                 Court = "High Court of Delhi",
                 CaseNumber = $"CS {i}/2020",
                 CaseStatus = "Pending",
-                LastHearingDate = $"{i:D2}-01-2020",
+                FilingDate = $"{i:D2}-01-2020",
                 FirstSeenUtc = DateTime.UtcNow
             };
             cases.Add(c);
@@ -1017,8 +1019,8 @@ public class LitigationTabAndControllerTests : IAsyncLifetime
         await db.SaveChangesAsync();
 
         // Target a case that sorts onto page 2 (PageSize is 25)
-        // Cases are ordered by Court, ThenByDescending LastHearingDate, ThenBy LitigationCaseId.
-        // Cases with earlier LastHearingDate ("01-01-2020") sort towards the end, so cases[0] will be on page 2.
+        // Same status and forum, so cases are ordered newest filing first, then by LitigationCaseId.
+        // Cases[0] has the earliest filing date ("01-01-2020"), so it sorts to the end and lands on page 2.
         var targetCase = cases[0];
 
         var controller = CreateRequestsController(db, isReviewer: true);
@@ -1052,6 +1054,34 @@ public class LitigationTabAndControllerTests : IAsyncLifetime
         Assert.Contains("has not started yet", html);
         Assert.DoesNotContain("sec-litigation-probable", html);
         Assert.DoesNotContain("sec-litigation-unverified", html);
+    }
+
+    [Fact]
+    public async Task RenderLitigationTab_ShowsTheForumSummary_InPlaceOfTheCourtNameGrid()
+    {
+        var lake = new LitigationTabViewModel
+        {
+            Request = new McaRequest { RequestId = 7, CompanyName = "Client View Co" },
+            SearchJob = new LitigationSearchJob { Status = LitigationSearchJobStatus.Completed },
+            AuthoritativeSnapshot = new LitigationReportSnapshot { RetrievedUtc = DateTime.UtcNow }
+        };
+        lake.ForumSummary.Add(LitigationInstitution.HighCourt, LitigationCompanySide.AgainstCompany, LitigationCaseStatusBucket.Pending);
+        lake.ForumSummary.Add(LitigationInstitution.HighCourt, LitigationCompanySide.AgainstCompany, LitigationCaseStatusBucket.Disposed);
+        lake.ForumSummary.Add(LitigationInstitution.Drt, LitigationCompanySide.ByCompany, LitigationCaseStatusBucket.Unknown);
+
+        var html = await RenderTabAsync(ClientModel(lake));
+
+        Assert.Contains("Summary: Forum Wise", html);
+        Assert.Contains("Against company", html);
+        Assert.Contains("By company", html);
+        Assert.DoesNotContain("Not determined", html); // only shown when some case's side could not be told
+        Assert.DoesNotContain("Court Summary Grid", html);
+        // every forum is a row, including ones with nothing found
+        foreach (var forum in Enum.GetValues<LitigationInstitution>())
+            Assert.Contains(LitigationCasePresentation.Label(forum), html);
+
+        lake.ForumSummary.Add(LitigationInstitution.Itat, LitigationCompanySide.Unknown, LitigationCaseStatusBucket.Pending);
+        Assert.Contains("Not determined", await RenderTabAsync(ClientModel(lake)));
     }
 
     [Fact]

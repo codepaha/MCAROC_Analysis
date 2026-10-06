@@ -12,6 +12,15 @@ The request page now places a compact case register before the detailed report o
 - Partial responses retain per-case charge-link badges from the initial page's versioned comparison cache, limited to the displayed case IDs. If that comparison expires or its evidence version changes, pagination returns HTTP 409 and offers a full-page refresh; it never silently drops badges or performs a cold full-evidence scan.
 - Analysis eligibility is checked asynchronously when the Litigation tab opens. Analysis polling reads lifecycle metadata rather than every persisted case analysis.
 
+## Order, status segments and forum summary
+
+The register follows the litigation report. Cases are listed pending first, then disposed, then status not reported; within a section by forum seniority (Supreme Court, High Court, District Court, then Consumer Court, CESTAT, NCLT, NCLAT, ITAT, DRT, DRAT, Others), cases against the company before ones it brought, newest filing first, then case id. The keys are SQL expressions (`LitigationRegisterOrder`), so the order is applied before paging. Two are close approximations of what a row displays, because the exact answer needs data SQL cannot read: the forum is the vendor's type (its court category as a fallback for the three court tiers) and the side is the vendor's direction. A row's displayed forum and side use the full rules (`LitigationCasePresentation`, `LitigationCompanySides`).
+
+- A **status segment** control (All / Pending / Disposed / Status not reported) replaces the status select. Each segment shows its case count under the current search, court and outcome filters, and links to page 1 with only the status changed. Segments are `data-litigation-page` links, so they use the same no-reload path as pagination.
+- Each row shows its **forum** with the court name beneath, and the case **age** beside the status (`LitigationCaseAges`, measured to the retrieval date, basis shown on hover).
+- The **forum summary** replaces the court-name grid in the overview disclosure: one row per forum, zeros included, with cases against and by the company each as total (pending / disposed / unknown). A "Not determined" column appears only when some case's side could not be told. It is filled in the existing pass over every case, so it adds no query. The court filter and its suggestions still use court names.
+- A deep link finds the case's position by reading the ordered ids of the matching cases, and only for a deep link; normal paging does not read them.
+
 ## Performance boundary
 
 The default case-list endpoint projects only a bounded page of case metadata. Order/document counts and scalar analysis warning flags are restricted to those case IDs. It does not materialize extracted text, PDF URLs, raw reports, full case-analysis JSON or evidence bodies. No schema migration or paid/external API call is introduced by browsing or pagination.
