@@ -264,18 +264,28 @@ public sealed class BprLitigationClient(
     }
 
     /// <summary>True when the content is a PDF: <c>%PDF-</c> within the first kilobyte, which is as far in as the format allows the header to sit.
-    /// Real order files have stray bytes ahead of it: the debt-recovery tribunal's carry eight blank-line bytes and the Supreme Court's carry four binary
-    /// ones (90 B4 00 00), so a byte-0 check rejected both. What may precede the header is only whitespace, control bytes and non-ASCII bytes. Any
-    /// visible ASCII character (a letter, digit or punctuation) ahead of it means readable text, an HTML or JSON page or a plain-text error such as
-    /// "Expired link: %PDF-", that merely mentions the signature, so it is not a PDF.</summary>
+    /// Real order files have stray bytes ahead of it, of two kinds: blank-line bytes (the debt-recovery tribunal's carry eight) and a short binary header
+    /// (the Supreme Court's carry four: two data bytes and two NULs, for example 90 B4 00 00 or 3C D6 00 00, where the first byte can be any value,
+    /// including a printable one). A byte-0 check rejected both. Readable text ahead of the header is not a PDF: an HTML or JSON page or a plain-text
+    /// error such as "Expired link: %PDF-" that merely mentions the signature. So the prefix must be blank, or a short binary header: at most eight
+    /// bytes, with a NUL or non-ASCII byte in it, and no more than two letters or digits.</summary>
     internal static bool HasPdfSignature(byte[] bytes)
     {
         var window = bytes.AsSpan(0, Math.Min(bytes.Length, 1024 + PdfSignature.Length));
         var at = window.IndexOf(PdfSignature);
         if (at < 0) return false;
-        foreach (var b in window[..at])
-            if (b is > 0x20 and < 0x7F) return false; // visible ASCII: text, not a stray binary or blank byte
-        return true;
+
+        var prefix = window[..at];
+        var blank = true;
+        var binary = false;
+        var alphanumeric = 0;
+        foreach (var b in prefix)
+        {
+            if (b > 0x20) blank = false;
+            if (b == 0x00 || b >= 0x7F) binary = true;
+            if (b is >= (byte)'0' and <= (byte)'9' or >= (byte)'A' and <= (byte)'Z' or >= (byte)'a' and <= (byte)'z') alphanumeric++;
+        }
+        return blank || (prefix.Length <= 8 && binary && alphanumeric <= 2);
     }
 
     // Private/loopback/link-local ranges an order PDF host must never resolve to, even if the hostname
