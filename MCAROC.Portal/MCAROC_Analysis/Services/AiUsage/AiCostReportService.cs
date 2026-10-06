@@ -9,7 +9,14 @@ namespace MCAROC_Analysis.Services.AiUsage;
 /// (a fixed cost per assignment).</summary>
 public enum AiCostDriver { FilingDocument, Order, Case, Question, Assignment }
 
-public sealed record AiCostLine(string Purpose, AiCostDriver Driver, int Calls, long InputTokens, long OutputTokens, decimal CostUsd, bool HasUnpriced);
+public sealed record AiCostLine(
+    string Purpose, AiCostDriver Driver, int Calls, long InputTokens, long OutputTokens, decimal CostUsd, bool HasUnpriced, bool HasEstimatedTokens = false);
+
+/// <summary>Whether the usage log is complete: rows still waiting to be saved, and rows given up on since the app started (the totals may be low by their cost).</summary>
+public sealed record AiUsageRecordingStatus(int Pending, long Failed)
+{
+    public bool Incomplete => Failed > 0;
+}
 
 /// <summary>How big an assignment is, in the units its cost scales with.</summary>
 public sealed record AiCostVolumes(int FilingDocuments, int Orders, int Cases, int Questions = 0);
@@ -21,7 +28,7 @@ public sealed record AiUnitRates(
 
 public sealed record AiCostReport(
     long RequestId, IReadOnlyList<AiCostLine> Lines, decimal TotalUsd, decimal TotalInr, bool HasUnpriced, bool HasUsage,
-    AiCostVolumes Volumes, AiUnitRates Rates);
+    AiCostVolumes Volumes, AiUnitRates Rates, AiUsageRecordingStatus Recording);
 
 public sealed record AiCostEstimate(decimal FilingDocumentsUsd, decimal OrdersUsd, decimal CasesUsd, decimal QuestionsUsd, decimal FixedUsd)
 {
@@ -30,7 +37,7 @@ public sealed record AiCostEstimate(decimal FilingDocumentsUsd, decimal OrdersUs
 
 /// <summary>Reads recorded model usage back as a cost: per purpose for one assignment, and as per-unit rates that estimate a new assignment from how many
 /// documents, cases and questions it has.</summary>
-public sealed class AiCostReportService(AppDbContext db, IOptions<AiPricingOptions> pricing)
+public sealed class AiCostReportService(AppDbContext db, IOptions<AiPricingOptions> pricing, AiUsageQueue? queue = null)
 {
     /// <summary>Per-unit rates used for a driver until usage has been recorded for it: estimates from a 645-document, 3,499-order, 698-case company priced at
     /// list rates, and from the Copilot calls measured on it (about three model calls for two questions).</summary>
@@ -53,7 +60,8 @@ public sealed class AiCostReportService(AppDbContext db, IOptions<AiPricingOptio
         var volumes = await VolumesAsync(requestId, ct);
         var total = lines.Sum(l => l.CostUsd);
         // Rates shown beside the assignment are the pooled ones (more data than any single request), not this request's own
-        return new AiCostReport(requestId, lines, total, total * pricing.Value.UsdToInr, lines.Any(l => l.HasUnpriced), records.Count > 0, volumes, await UnitRatesAsync(ct));
+        return new AiCostReport(requestId, lines, total, total * pricing.Value.UsdToInr, lines.Any(l => l.HasUnpriced), records.Count > 0, volumes, await UnitRatesAsync(ct),
+            new AiUsageRecordingStatus(queue?.Pending ?? 0, queue?.Failed ?? 0));
     }
 
     public IReadOnlyList<AiCostLine> Summarize(IEnumerable<AiUsageRecord> records) =>
@@ -61,7 +69,7 @@ public sealed class AiCostReportService(AppDbContext db, IOptions<AiPricingOptio
         {
             var priced = g.Select(r => AiCostCalculator.CostUsd(r, pricing.Value)).ToList();
             return new AiCostLine(g.Key, DriverOf(g.Key), g.Count(), g.Sum(r => (long)r.InputTokens), g.Sum(r => (long)r.OutputTokens + r.ThoughtTokens),
-                priced.Sum(c => c ?? 0m), priced.Any(c => c is null));
+                priced.Sum(c => c ?? 0m), priced.Any(c => c is null), g.Any(r => r.TokensEstimated));
         }).OrderByDescending(l => l.CostUsd).ToList();
 
     private async Task<AiCostVolumes> VolumesAsync(long requestId, CancellationToken ct) => new(

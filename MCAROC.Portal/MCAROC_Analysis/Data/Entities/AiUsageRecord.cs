@@ -25,5 +25,9 @@ public class AiUsageRecord
 
     public bool Succeeded { get; set; } = true;
 
+    /// <summary>True when the token counts are an estimate (an embedding batch the provider gave no token count for, or a generation with no usage
+    /// metadata), so the report can show the cost as approximate instead of as recorded.</summary>
+    public bool TokensEstimated { get; set; }
+
     public DateTime CreatedUtc { get; set; } = DateTime.UtcNow;
 }

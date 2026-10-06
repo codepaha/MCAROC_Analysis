@@ -196,6 +196,8 @@ builder.Services.AddScoped<LitigationCasePageService>();
 // What each model call cost, recorded as calls are made and read back per assignment (Services/AiUsage).
 builder.Services.Configure<MCAROC_Analysis.Services.AiUsage.AiPricingOptions>(builder.Configuration.GetSection(MCAROC_Analysis.Services.AiUsage.AiPricingOptions.SectionName));
 builder.Services.AddScoped<MCAROC_Analysis.Services.AiUsage.AiCostReportService>();
+builder.Services.AddSingleton<MCAROC_Analysis.Services.AiUsage.AiUsageQueue>();
+builder.Services.AddHostedService<MCAROC_Analysis.Services.AiUsage.AiUsageWriterService>();
 // Gemini split/label of charge "Particulars of Property Charged" (column M), grounded against the source text.
 // Scheduled after ingestion; skipped entirely when disabled or when Vertex AI is not configured.
 builder.Services.Configure<MCAROC_Analysis.Services.PropertyParticulars.PropertyParticularsExtractionOptions>(
@@ -440,7 +442,7 @@ builder.Services.AddRateLimiter(options =>
 });
 
 var app = builder.Build();
-MCAROC_Analysis.Services.AiUsage.AiUsageLog.Configure(app.Services.GetRequiredService<IServiceScopeFactory>(), app.Logger);
+MCAROC_Analysis.Services.AiUsage.AiUsageLog.Configure(app.Services.GetRequiredService<MCAROC_Analysis.Services.AiUsage.AiUsageQueue>());
 
 if (analystOperationalCommand)
 {

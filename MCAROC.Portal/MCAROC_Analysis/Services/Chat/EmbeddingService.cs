@@ -41,7 +41,8 @@ public class EmbeddingService
                 .ToList();
             var config = new EmbedContentConfig { TaskType = "RETRIEVAL_DOCUMENT", OutputDimensionality = Dimensions };
             var response = await _client!.Models.EmbedContentAsync(ModelId, batch, config, ct);
-            AiUsageLog.RecordEmbedding(AiUsagePurposes.Embedding, ModelId, response.Metadata?.BillableCharacterCount ?? batch.Sum(c => c.Parts?.Sum(p => (long)(p.Text?.Length ?? 0)) ?? 0));
+            AiUsageLog.RecordEmbedding(AiUsagePurposes.Embedding, ModelId, response.Metadata?.BillableCharacterCount ?? batch.Sum(c => c.Parts?.Sum(p => (long)(p.Text?.Length ?? 0)) ?? 0),
+                ReportedTokens(response.Embeddings));
             var batchEmbeddings = response.Embeddings ?? [];
             // The caller (DocumentChunkingOrchestrator) pairs results[i] with chunk[i] positionally, so the
             // batch API must return exactly one vector per input, in input order. A short/surplus/null
@@ -51,6 +52,20 @@ public class EmbeddingService
                 results.Add(Normalize(embedding.Values ?? []));
         }
         return results;
+    }
+
+    /// <summary>The token count the provider reported for a batch (the sum of each input's own count), or null when any input has none, so a partial figure is
+    /// never presented as the whole.</summary>
+    internal static int? ReportedTokens(IReadOnlyList<ContentEmbedding>? embeddings)
+    {
+        if (embeddings is null || embeddings.Count == 0) return null;
+        double total = 0;
+        foreach (var embedding in embeddings)
+        {
+            if (embedding.Statistics?.TokenCount is not { } tokens) return null;
+            total += tokens;
+        }
+        return (int)Math.Round(total);
     }
 
     /// <summary>Guards the positional pairing in EmbedDocumentsAsync — a batch embed call must return
@@ -66,7 +81,7 @@ public class EmbeddingService
     {
         var config = new EmbedContentConfig { TaskType = "RETRIEVAL_QUERY", OutputDimensionality = Dimensions };
         var response = await _client!.Models.EmbedContentAsync(ModelId, text, config, ct);
-        AiUsageLog.RecordEmbedding(AiUsagePurposes.Copilot, ModelId, response.Metadata?.BillableCharacterCount ?? text.Length);
+        AiUsageLog.RecordEmbedding(AiUsagePurposes.Copilot, ModelId, response.Metadata?.BillableCharacterCount ?? text.Length, ReportedTokens(response.Embeddings));
         var values = response.Embeddings?.FirstOrDefault()?.Values
             ?? throw new InvalidOperationException("Embedding response contained no values.");
         return Normalize(values);

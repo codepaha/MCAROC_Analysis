@@ -20,7 +20,7 @@
 <div class="container py-3" id="ai-cost-page" style="max-width:1000px;">
     <a href="/Requests/@r.RequestId" class="text-decoration-none small"><i class="bi bi-arrow-left me-1"></i>@Model.CompanyName</a>
     <h1 class="h4 mt-2">Cost of this assignment in AI calls</h1>
-    <p class="text-muted">Recorded from the usage each model call reported, priced at the rates in <code>AiPricing</code> configuration (list prices; check them against the cloud bill). Data vendor and infrastructure costs are not included.</p>
+    <p class="text-muted">Recorded from the usage each model call reported (a "~" marks a cost whose token counts are estimated because the provider reported none), priced at the rates in <code>AiPricing</code> configuration (list prices; check them against the cloud bill). Data vendor and infrastructure costs are not included. Records are saved in the background and finished on a normal shutdown; a crash can lose the last few.</p>
 
     @if (!r.HasUsage)
     {
@@ -35,6 +35,14 @@
                 <div class="text-muted small ms-auto">@r.Volumes.FilingDocuments filing documents · @r.Volumes.Orders orders · @r.Volumes.Cases cases · @r.Volumes.Questions questions</div>
             </div>
         </div>
+        @if (r.Recording.Incomplete)
+        {
+            <div class="alert alert-danger" id="ai-cost-incomplete">@r.Recording.Failed.ToString("N0") usage record(s) could not be saved since the app started, so the totals here are lower than what was actually spent.</div>
+        }
+        else if (r.Recording.Pending > 0)
+        {
+            <div class="alert alert-info">@r.Recording.Pending usage record(s) are still being saved; refresh in a moment.</div>
+        }
         @if (r.HasUnpriced)
         {
             <div class="alert alert-warning">Some calls used a model with no price configured; they are listed but counted as $0.</div>
@@ -49,7 +57,7 @@
                     <tr>
                         <td>@l.Purpose</td><td class="text-muted">@Driver(l.Driver)</td>
                         <td class="text-end">@l.Calls.ToString("N0")</td><td class="text-end">@l.InputTokens.ToString("N0")</td><td class="text-end">@l.OutputTokens.ToString("N0")</td>
-                        <td class="text-end">@Usd(l.CostUsd)@(l.HasUnpriced ? " *" : "")</td>
+                        <td class="text-end">@(l.HasEstimatedTokens ? "~" : "")@Usd(l.CostUsd)@(l.HasUnpriced ? " *" : "")</td>
                     </tr>
                 }
                 </tbody>

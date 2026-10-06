@@ -1,7 +1,10 @@
+using Google.GenAI.Types;
 using MCAROC_Analysis.Data;
 using MCAROC_Analysis.Data.Entities;
 using MCAROC_Analysis.Services.AiUsage;
+using MCAROC_Analysis.Services.Chat;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using Xunit;
 
@@ -106,37 +109,99 @@ public sealed class AiCostTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task A_recorded_call_carries_the_assignment_and_a_scoped_purpose_overrides_the_clients_default()
+    public void A_recorded_call_carries_the_assignment_and_a_scoped_purpose_overrides_the_clients_default()
     {
-        var written = new List<AiUsageRecord>();
-        var gate = new TaskCompletionSource();
-        AiUsageLog.Configure(r => { lock (written) written.Add(r); gate.TrySetResult(); return Task.CompletedTask; });
+        var queue = new AiUsageQueue();
+        AiUsageLog.Configure(queue);
         try
         {
             using (AiUsageContext.Begin(7, AiUsagePurposes.EmbeddingOrders))
                 AiUsageLog.RecordEmbedding(AiUsagePurposes.Embedding, "gemini-embedding-001", billableCharacters: 4_000);
-            await gate.Task.WaitAsync(TimeSpan.FromSeconds(10));
         }
-        finally { AiUsageLog.Configure((Func<AiUsageRecord, Task>?)null); }
+        finally { AiUsageLog.Configure(null); }
 
-        var record = Assert.Single(written);
+        Assert.True(queue.Reader.TryRead(out var record));
         Assert.Equal(7, record.RequestId);
         Assert.Equal(AiUsagePurposes.EmbeddingOrders, record.Purpose);
         Assert.Equal(1_000, record.InputTokens);   // about four characters a token when the provider reports no count
         Assert.Equal(4_000, record.BillableCharacters);
+        Assert.True(record.TokensEstimated);       // so the report shows it as approximate, not as recorded
+        Assert.Equal(1, queue.Pending);
     }
 
     [Fact]
-    public async Task A_writer_that_fails_never_surfaces_to_the_caller()
+    public void An_embedding_the_provider_counted_is_exact_not_estimated()
     {
-        var attempted = new TaskCompletionSource();
-        AiUsageLog.Configure(_ => { attempted.TrySetResult(); throw new InvalidOperationException("the database is down"); });
-        try
-        {
-            AiUsageLog.RecordEmbedding(AiUsagePurposes.Embedding, "gemini-embedding-001", 10);   // must not throw
-            await attempted.Task.WaitAsync(TimeSpan.FromSeconds(10));
-        }
-        finally { AiUsageLog.Configure((Func<AiUsageRecord, Task>?)null); }
+        var queue = new AiUsageQueue();
+        AiUsageLog.Configure(queue);
+        try { AiUsageLog.RecordEmbedding(AiUsagePurposes.Embedding, "gemini-embedding-001", billableCharacters: 4_000, reportedTokens: 913); }
+        finally { AiUsageLog.Configure(null); }
+
+        Assert.True(queue.Reader.TryRead(out var record));
+        Assert.Equal(913, record.InputTokens);
+        Assert.False(record.TokensEstimated);
+    }
+
+    [Fact]
+    public void A_batch_token_count_is_the_sum_of_the_inputs_and_is_withheld_when_any_input_has_none()
+    {
+        ContentEmbedding Counted(float tokens) => new() { Statistics = new ContentEmbeddingStatistics { TokenCount = tokens } };
+        Assert.Equal(30, EmbeddingService.ReportedTokens([Counted(10), Counted(20)]));
+        Assert.Null(EmbeddingService.ReportedTokens([Counted(10), new ContentEmbedding()]));   // a partial figure is never presented as the whole
+        Assert.Null(EmbeddingService.ReportedTokens([]));
+        Assert.Null(EmbeddingService.ReportedTokens(null));
+    }
+
+    [Fact]
+    public async Task A_save_that_fails_is_retried_and_counted_saved_once_it_succeeds()
+    {
+        var queue = new AiUsageQueue();
+        var batch = new[] { Call("x", "gemini-2.5-flash", 1, 1), Call("x", "gemini-2.5-flash", 1, 1) };
+        queue.Enqueue(batch[0]); queue.Enqueue(batch[1]);
+        var attempts = 0;
+
+        await AiUsageWriterService.SaveAsync(queue, batch, _ => ++attempts < 3 ? throw new InvalidOperationException("the database is busy") : Task.CompletedTask,
+            [TimeSpan.Zero, TimeSpan.Zero, TimeSpan.Zero], Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance);
+
+        Assert.Equal(3, attempts);
+        Assert.Equal(0, queue.Pending);
+        Assert.Equal(0, queue.Failed);
+    }
+
+    [Fact]
+    public async Task A_save_that_never_succeeds_is_counted_as_failed_so_the_report_can_say_it_is_incomplete()
+    {
+        var queue = new AiUsageQueue();
+        var batch = new[] { Call("x", "gemini-2.5-flash", 1, 1), Call("x", "gemini-2.5-flash", 1, 1), Call("x", "gemini-2.5-flash", 1, 1) };
+        foreach (var r in batch) queue.Enqueue(r);
+
+        await AiUsageWriterService.SaveAsync(queue, batch, _ => throw new InvalidOperationException("the database is down"),
+            [TimeSpan.Zero, TimeSpan.Zero], Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance);
+
+        Assert.Equal(0, queue.Pending);
+        Assert.Equal(3, queue.Failed);
+        Assert.True(new AiUsageRecordingStatus(queue.Pending, queue.Failed).Incomplete);
+    }
+
+    [Fact]
+    public async Task On_shutdown_what_is_queued_is_saved_before_the_writer_stops()
+    {
+        var requestId = 9_400_000_000L + Random.Shared.Next(1, 1_000_000);
+        var queue = new AiUsageQueue();
+        var services = new Microsoft.Extensions.DependencyInjection.ServiceCollection();
+        services.AddDbContext<AppDbContext>(o => o.UseSqlServer(TestDatabase.ConnectionString));
+        await using var provider = services.BuildServiceProvider();
+        var writer = new AiUsageWriterService(queue, provider.GetRequiredService<Microsoft.Extensions.DependencyInjection.IServiceScopeFactory>(),
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<AiUsageWriterService>.Instance);
+
+        await writer.StartAsync(CancellationToken.None);
+        for (var i = 0; i < 120; i++) queue.Enqueue(Call(AiUsagePurposes.Copilot, "gemini-2.5-flash", 10, 1, 0, requestId));
+        await writer.StopAsync(CancellationToken.None);   // closes the queue and drains it
+
+        await using var read = CreateContext();
+        Assert.Equal(120, await read.AiUsageRecords.CountAsync(r => r.RequestId == requestId));
+        Assert.Equal(0, queue.Pending);
+        Assert.Equal(0, queue.Failed);
     }
 
     // ── the report ────────────────────────────────────────────────────────

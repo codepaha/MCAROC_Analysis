@@ -25,6 +25,7 @@ namespace MCAROC_Analysis.Migrations
                     ThoughtTokens = table.Column<int>(type: "int", nullable: false),
                     BillableCharacters = table.Column<long>(type: "bigint", nullable: true),
                     Succeeded = table.Column<bool>(type: "bit", nullable: false),
+                    TokensEstimated = table.Column<bool>(type: "bit", nullable: false),
                     CreatedUtc = table.Column<DateTime>(type: "datetime2", nullable: false)
                 },
                 constraints: table =>

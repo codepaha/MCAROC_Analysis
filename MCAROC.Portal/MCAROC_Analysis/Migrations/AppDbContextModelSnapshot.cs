@@ -62,6 +62,9 @@ namespace MCAROC_Analysis.Migrations
                     b.Property<int>("ThoughtTokens")
                         .HasColumnType("int");
 
+                    b.Property<bool>("TokensEstimated")
+                        .HasColumnType("bit");
+
                     b.HasKey("AiUsageRecordId");
 
                     b.HasIndex("RequestId", "CreatedUtc");

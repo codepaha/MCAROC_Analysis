@@ -13,7 +13,7 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace MCAROC_Analysis.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    [Migration("20261006131014_AiUsageRecords")]
+    [Migration("20261006134201_AiUsageRecords")]
     partial class AiUsageRecords
     {
         /// <inheritdoc />
@@ -64,6 +64,9 @@ namespace MCAROC_Analysis.Migrations
 
                     b.Property<int>("ThoughtTokens")
                         .HasColumnType("int");
+
+                    b.Property<bool>("TokensEstimated")
+                        .HasColumnType("bit");
 
                     b.HasKey("AiUsageRecordId");
 
