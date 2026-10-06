@@ -9,6 +9,7 @@ public sealed partial class CompanyRegistryQueryService
 {
     // Kept separate from verified sync-job snapshots; this never fabricates a completed sync job.
     private const long ImportedBaselineSnapshotId = -1;
+    private const string ImportedBaselineCacheKey = "RegistryImportedBaseline_AnalyticsV2";
     private static bool IsUsableBaseline(RegistryAggregateData? data) =>
         data?.Metadata.IsImportedBaseline == true && data.EntityAnalytics.Count > 0 && data.Metadata.CalculatedUtc.HasValue;
 
@@ -49,13 +50,39 @@ public sealed partial class CompanyRegistryQueryService
         if (!_allowImportedBaseline) return;
         if (await _db.CompanyMasterSyncJobs.AsNoTracking().AnyAsync(j => j.Status == CompanyMasterSyncJobStatus.Promoting ||
             (j.Status == CompanyMasterSyncJobStatus.Completed && j.PublishedDate.HasValue), ct)) return;
-        if (!await _db.CompanyMasterRecords.AsNoTracking().AnyAsync(ct)) return;
+        if (!await _db.CompanyMasterRecords.AsNoTracking().AnyAsync(ct))
+        {
+            // Nothing to aggregate. A baseline saved while there were rows must not keep being served for records that no longer exist.
+            await ClearImportedBaselineAsync(ct);
+            return;
+        }
         await GetImportedBaselineAsync(ct, refresh: true);
+    }
+
+    /// <summary>The registry has no rows: replace any usable stored baseline with an empty one and drop the cached copy, so the dashboard reads
+    /// "no baseline" instead of figures for records that are gone. An empty baseline is not usable (<see cref="IsUsableBaseline"/> needs analytics),
+    /// and the next refresh that finds rows rebuilds it. Takes the same locks as a rebuild, and does nothing if a promotion owns the registry.</summary>
+    private async Task ClearImportedBaselineAsync(CancellationToken ct)
+    {
+        await _rebuildLock.WaitAsync(ct);
+        try
+        {
+            await using var gate = await _promotionCoordinator.TryAcquireRebuildGateAsync(ct);
+            if (gate == null) return;
+            _cache.Remove(ImportedBaselineCacheKey);
+            if (!IsUsableBaseline(await _snapshotStore.GetSnapshotAsync(ImportedBaselineSnapshotId, ct))) return; // nothing stale is being served
+            await _snapshotStore.SaveSnapshotAsync(ImportedBaselineSnapshotId, new RegistryAggregateData
+            {
+                EntityAnalytics = [],
+                Metadata = new() { IsImportedBaseline = true, CalculatedUtc = DateTime.UtcNow, SourceRowCount = 0 }
+            }, ct);
+        }
+        finally { _rebuildLock.Release(); }
     }
 
     private async Task<RegistryAggregateData?> GetImportedBaselineAsync(CancellationToken ct, bool refresh = false)
     {
-        const string key = "RegistryImportedBaseline_AnalyticsV2";
+        const string key = ImportedBaselineCacheKey;
         if (!refresh)
         {
             if (!await _promotionCoordinator.TryProbePromotionAdmissionAsync(ct)) return null;

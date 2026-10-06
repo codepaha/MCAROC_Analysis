@@ -107,6 +107,59 @@ public sealed class RegistryBaselineRefreshTests
     }
 
     [Fact]
+    public async Task A_baseline_is_not_served_once_the_registry_has_been_emptied()
+    {
+        await using var isolated = await TestDatabase.CreateIsolatedDatabaseAsync("RegistryBaselineEmptied");
+        var state = new CountingState();
+        await using (var seed = new AppDbContext(new DbContextOptionsBuilder<AppDbContext>().UseSqlServer(isolated.ConnectionString).Options))
+        {
+            seed.CompanyMasterRecords.AddRange(Row("U00001MH2020PTC000001"), Row("U00002MH2020PTC000002"));
+            await seed.SaveChangesAsync();
+        }
+        await RefreshAsync(isolated.ConnectionString, state);
+        Assert.Equal(1, state.Saves);
+        Assert.NotNull(await ReadAsDashboardAsync(isolated.ConnectionString, state)); // the dashboard serves the populated baseline
+
+        // every row is removed: the next refresh must replace the stored baseline, not leave it standing
+        await using (var wipe = new AppDbContext(new DbContextOptionsBuilder<AppDbContext>().UseSqlServer(isolated.ConnectionString).Options))
+            await wipe.CompanyMasterRecords.ExecuteDeleteAsync();
+        await RefreshAsync(isolated.ConnectionString, state);
+
+        Assert.Equal(2, state.Saves);
+        Assert.Empty(state.Stored!.EntityAnalytics);
+        Assert.Null(await ReadAsDashboardAsync(isolated.ConnectionString, state)); // no figures for records that no longer exist
+
+        // already cleared: refreshing an empty registry again writes nothing more
+        await RefreshAsync(isolated.ConnectionString, state);
+        Assert.Equal(2, state.Saves);
+
+        // and rows coming back are aggregated again
+        await using (var back = new AppDbContext(new DbContextOptionsBuilder<AppDbContext>().UseSqlServer(isolated.ConnectionString).Options))
+        {
+            back.CompanyMasterRecords.Add(Row("U00009MH2021PTC000009"));
+            await back.SaveChangesAsync();
+        }
+        await RefreshAsync(isolated.ConnectionString, state);
+        Assert.Equal(3, state.Saves);
+        Assert.NotNull(await ReadAsDashboardAsync(isolated.ConnectionString, state));
+    }
+
+    /// <summary>The dashboard's read path (the one a page request takes): the stored baseline if it is usable, never a rebuild.</summary>
+    private static async Task<RegistryAggregateData?> ReadAsDashboardAsync(string connectionString, CountingState state)
+    {
+        await using var db = new AppDbContext(new DbContextOptionsBuilder<AppDbContext>().UseSqlServer(connectionString).Options);
+        using var cache = new MemoryCache(new MemoryCacheOptions { SizeLimit = 256 });
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection(
+            new Dictionary<string, string?> { ["RegistryAnalytics:AllowImportedBaseline"] = "true" }).Build();
+        var service = new CompanyRegistryQueryService(db, cache, state, state, NullLogger<CompanyRegistryQueryService>.Instance,
+            new SemaphoreSlim(1, 1), configuration);
+        var read = (Task<RegistryAggregateData?>)typeof(CompanyRegistryQueryService)
+            .GetMethod("GetImportedBaselineAsync", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!
+            .Invoke(service, [CancellationToken.None, false])!;
+        return await read;
+    }
+
+    [Fact]
     public async Task A_refresh_with_no_registry_rows_builds_nothing()
     {
         await using var isolated = await TestDatabase.CreateIsolatedDatabaseAsync("RegistryBaselineEmpty");
