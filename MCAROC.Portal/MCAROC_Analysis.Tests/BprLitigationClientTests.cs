@@ -641,7 +641,12 @@ public sealed class BprLitigationClientTests
     [InlineData(new byte[] { 0x0D, 0x0A, 0x0D, 0x0A, 0x0D, 0x0A, 0x0D, 0x0A })]
     [InlineData(new byte[] { 0x0A })]
     [InlineData(new byte[] { 0x20, 0x09, 0x00 })]
-    public async Task DownloadOrderDocumentAsync_accepts_a_pdf_with_blank_space_before_its_header(byte[] leading)
+    // Real run: the Supreme Court's order files carry four binary bytes ahead of the header.
+    [InlineData(new byte[] { 0x90, 0xB4, 0x00, 0x00 })]
+    // Real run: 51 more Supreme Court files, where the first byte of the same four-byte header is printable.
+    [InlineData(new byte[] { 0x3C, 0xD6, 0x00, 0x00 })]
+    [InlineData(new byte[] { 0x41, 0x7A, 0x00, 0x00 })]
+    public async Task DownloadOrderDocumentAsync_accepts_a_pdf_with_stray_bytes_before_its_header(byte[] leading)
     {
         var body = leading.Concat(PdfBytes).ToArray();
         var handler = new StubHandler();
@@ -656,6 +661,14 @@ public sealed class BprLitigationClientTests
     [Theory]
     [InlineData("<html><body>Expired</body></html>")]
     [InlineData("\r\n\r\n<html>Not a PDF %PDF- appears later</html>")] // blank space, then something that is not the header
+    [InlineData("{\"error\":\"expired\"} %PDF- is mentioned in the message")] // a JSON body that mentions the signature
+    [InlineData("Expired link: %PDF-")] // a plain-text error that mentions the signature
+    [InlineData("Access Denied %PDF-1.4")]
+    [InlineData("x%PDF-")]
+    [InlineData("<p>%PDF-")]
+    [InlineData("{\"a\":1}%PDF-")]
+    [InlineData("Expired%PDF-")]
+    [InlineData("\u0090\u00b4Expired link <p>%PDF-</p>")] // stray bytes, but markup before the header
     [InlineData("{\"status\":false,\"message\":\"expired\"}")]
     [InlineData("   ")]
     public async Task DownloadOrderDocumentAsync_still_rejects_content_that_is_not_a_pdf(string body)
