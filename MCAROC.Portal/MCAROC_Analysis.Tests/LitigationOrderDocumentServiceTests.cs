@@ -393,6 +393,54 @@ public class LitigationOrderDocumentServiceTests : IAsyncLifetime
         Assert.Contains(liveLeaseDocument.LitigationOrderDocumentId, eventual); // shows up once its lease expires
     }
 
+    [Fact]
+    public async Task RecoverStaleWorkAsync_keeps_a_recent_failures_backoff_and_skips_failed_rows_with_no_PdfUrl()
+    {
+        await using var db = CreateContext();
+        var queue = new LitigationOrderDocumentQueue();
+        var service = NewService(db, new StubHandler(), queue);
+
+        // Claimed a minute ago (lease = claim + 10 min) on its 3rd attempt: next retry is 20 minutes after that claim.
+        var (_, _, recentOrder) = await SeedOrderAsync(db, "B1", "https://bpr.example/orders/b1.pdf");
+        var recentFailure = await SeedDocumentAsync(db, recentOrder.LitigationCaseOrderId, DateTime.UtcNow.AddDays(5), LitigationOrderDocumentStatus.Failed);
+        recentFailure.AttemptCount = 3;
+        recentFailure.LeaseExpiresUtc = DateTime.UtcNow.AddMinutes(9);
+
+        // Its backoff (5 min after a claim 30 min ago) has already elapsed — retried straight away.
+        var (_, _, dueOrder) = await SeedOrderAsync(db, "B2", "https://bpr.example/orders/b2.pdf");
+        var dueFailure = await SeedDocumentAsync(db, dueOrder.LitigationCaseOrderId, DateTime.UtcNow.AddDays(5), LitigationOrderDocumentStatus.Failed);
+        dueFailure.AttemptCount = 1;
+        dueFailure.LeaseExpiresUtc = DateTime.UtcNow.AddMinutes(-20);
+
+        var (_, _, noUrlOrder) = await SeedOrderAsync(db, "B3", "");
+        var noUrlFailure = await SeedDocumentAsync(db, noUrlOrder.LitigationCaseOrderId, DateTime.UtcNow.AddDays(5), LitigationOrderDocumentStatus.Failed);
+        await db.SaveChangesAsync();
+
+        await service.RecoverStaleWorkAsync(CancellationToken.None);
+
+        var immediate = await DrainAvailableAsync(queue, TimeSpan.FromMilliseconds(500));
+        Assert.Contains(dueFailure.LitigationOrderDocumentId, immediate);
+        Assert.DoesNotContain(recentFailure.LitigationOrderDocumentId, immediate);
+        Assert.DoesNotContain(noUrlFailure.LitigationOrderDocumentId, immediate);
+    }
+
+    [Fact]
+    public async Task DownloadAndExtractAsync_does_not_reclaim_a_failed_order_with_no_PdfUrl()
+    {
+        await using var db = CreateContext();
+        var (_, _, order) = await SeedOrderAsync(db, "B4", "");
+        var document = await SeedDocumentAsync(db, order.LitigationCaseOrderId, DateTime.UtcNow.AddDays(5), LitigationOrderDocumentStatus.Failed);
+        document.AttemptCount = 2;
+        await db.SaveChangesAsync();
+
+        await NewService(db, new StubHandler()).DownloadAndExtractAsync(document.LitigationOrderDocumentId, CancellationToken.None);
+
+        await using var verifyDb = CreateContext();
+        var reloaded = await verifyDb.LitigationOrderDocuments.FirstAsync(d => d.LitigationOrderDocumentId == document.LitigationOrderDocumentId);
+        Assert.Equal(LitigationOrderDocumentStatus.Failed, reloaded.Status);
+        Assert.Equal(2, reloaded.AttemptCount);
+    }
+
     private static async Task<List<long>> DrainAvailableAsync(LitigationOrderDocumentQueue queue, TimeSpan window)
     {
         var ids = new List<long>();
