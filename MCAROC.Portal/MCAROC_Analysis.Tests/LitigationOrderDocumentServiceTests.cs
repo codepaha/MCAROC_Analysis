@@ -367,6 +367,8 @@ public class LitigationOrderDocumentServiceTests : IAsyncLifetime
 
         var (_, _, failedOrder) = await SeedOrderAsync(db, "R2", "https://bpr.example/orders/r2.pdf");
         var failedDocument = await SeedDocumentAsync(db, failedOrder.LitigationCaseOrderId, DateTime.UtcNow.AddDays(5), LitigationOrderDocumentStatus.Failed);
+        failedDocument.NextAttemptUtc = DateTime.UtcNow.AddMinutes(-1); // its backoff has elapsed
+        await db.SaveChangesAsync();
 
         var (_, _, expiredLeaseOrder) = await SeedOrderAsync(db, "R3", "https://bpr.example/orders/r3.pdf");
         var expiredLeaseDocument = await SeedDocumentAsync(db, expiredLeaseOrder.LitigationCaseOrderId, DateTime.UtcNow.AddDays(5), LitigationOrderDocumentStatus.InProgress);
@@ -391,6 +393,61 @@ public class LitigationOrderDocumentServiceTests : IAsyncLifetime
 
         var eventual = await DrainAvailableAsync(queue, TimeSpan.FromSeconds(3));
         Assert.Contains(liveLeaseDocument.LitigationOrderDocumentId, eventual); // shows up once its lease expires
+    }
+
+    [Fact]
+    public async Task RecoverStaleWorkAsync_reschedules_a_failure_at_its_recorded_next_attempt_and_skips_failed_rows_with_no_PdfUrl()
+    {
+        await using var db = CreateContext();
+        var queue = new LitigationOrderDocumentQueue();
+        var service = NewService(db, new StubHandler(), queue);
+
+        // Failed 8 minutes after its claim, so its deadline (failure + 20 min) is later than claim + 20 min:
+        // recovery must use the recorded deadline, not rebuild one from the claim time.
+        var (_, _, laterOrder) = await SeedOrderAsync(db, "B1", "https://bpr.example/orders/b1.pdf");
+        var notYetDue = await SeedDocumentAsync(db, laterOrder.LitigationCaseOrderId, DateTime.UtcNow.AddDays(5), LitigationOrderDocumentStatus.Failed);
+        notYetDue.AttemptCount = 3;
+        notYetDue.LeaseExpiresUtc = DateTime.UtcNow.AddMinutes(-11); // claim was ~21 min ago: a claim-based deadline would be past
+        notYetDue.NextAttemptUtc = DateTime.UtcNow.AddMinutes(10);
+
+        var (_, _, dueOrder) = await SeedOrderAsync(db, "B2", "https://bpr.example/orders/b2.pdf");
+        var due = await SeedDocumentAsync(db, dueOrder.LitigationCaseOrderId, DateTime.UtcNow.AddDays(5), LitigationOrderDocumentStatus.Failed);
+        due.AttemptCount = 1;
+        due.NextAttemptUtc = DateTime.UtcNow.AddMinutes(-1);
+
+        // Failed before NextAttemptUtc existed: backed off from now, not retried at once.
+        var (_, _, legacyOrder) = await SeedOrderAsync(db, "B5", "https://bpr.example/orders/b5.pdf");
+        var legacy = await SeedDocumentAsync(db, legacyOrder.LitigationCaseOrderId, DateTime.UtcNow.AddDays(5), LitigationOrderDocumentStatus.Failed);
+        legacy.AttemptCount = 2;
+
+        var (_, _, noUrlOrder) = await SeedOrderAsync(db, "B3", "");
+        var noUrlFailure = await SeedDocumentAsync(db, noUrlOrder.LitigationCaseOrderId, DateTime.UtcNow.AddDays(5), LitigationOrderDocumentStatus.Failed);
+        await db.SaveChangesAsync();
+
+        await service.RecoverStaleWorkAsync(CancellationToken.None);
+
+        var immediate = await DrainAvailableAsync(queue, TimeSpan.FromMilliseconds(500));
+        Assert.Contains(due.LitigationOrderDocumentId, immediate);
+        Assert.DoesNotContain(notYetDue.LitigationOrderDocumentId, immediate);
+        Assert.DoesNotContain(legacy.LitigationOrderDocumentId, immediate);
+        Assert.DoesNotContain(noUrlFailure.LitigationOrderDocumentId, immediate);
+    }
+
+    [Fact]
+    public async Task DownloadAndExtractAsync_does_not_reclaim_a_failed_order_with_no_PdfUrl()
+    {
+        await using var db = CreateContext();
+        var (_, _, order) = await SeedOrderAsync(db, "B4", "");
+        var document = await SeedDocumentAsync(db, order.LitigationCaseOrderId, DateTime.UtcNow.AddDays(5), LitigationOrderDocumentStatus.Failed);
+        document.AttemptCount = 2;
+        await db.SaveChangesAsync();
+
+        await NewService(db, new StubHandler()).DownloadAndExtractAsync(document.LitigationOrderDocumentId, CancellationToken.None);
+
+        await using var verifyDb = CreateContext();
+        var reloaded = await verifyDb.LitigationOrderDocuments.FirstAsync(d => d.LitigationOrderDocumentId == document.LitigationOrderDocumentId);
+        Assert.Equal(LitigationOrderDocumentStatus.Failed, reloaded.Status);
+        Assert.Equal(2, reloaded.AttemptCount);
     }
 
     private static async Task<List<long>> DrainAvailableAsync(LitigationOrderDocumentQueue queue, TimeSpan window)

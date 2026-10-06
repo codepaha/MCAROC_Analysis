@@ -64,6 +64,12 @@ public sealed class LitigationOrderDocumentService(
             return;
         }
 
+        // Nothing an attempt could change: a Failed order with no PdfUrl stays that way until a litigation refresh
+        // re-admits it with one, and an unconfigured client fails every attempt. Claiming anyway only bumps
+        // AttemptCount and rewrites the row — thousands of writes on every startup sweep.
+        if (document.Status == LitigationOrderDocumentStatus.Failed && string.IsNullOrWhiteSpace(document.Order.PdfUrl)) return;
+        if (!_opts.IsConfigured) return;
+
         if (!await TryClaimAsync(document, ct)) return; // already owned by a still-live attempt
         var myLeaseToken = document.LeaseToken!.Value;
         var attemptCount = document.AttemptCount;
@@ -256,9 +262,15 @@ public sealed class LitigationOrderDocumentService(
         var now = DateTime.UtcNow;
         var newStatus = retainedUntilUtc <= now ? LitigationOrderDocumentStatus.Expired : LitigationOrderDocumentStatus.Failed;
 
+        // Failure time + backoff, persisted with the failure itself so recovery after a restart reschedules the same moment.
+        var readyUtc = now + RetryDelay(attemptCount);
+        var effectiveReadyUtc = readyUtc < retainedUntilUtc ? readyUtc : retainedUntilUtc;
+        DateTime? nextAttemptUtc = newStatus == LitigationOrderDocumentStatus.Failed ? effectiveReadyUtc : null;
+
         var claimed = await LeaseGuarded(documentId, leaseToken).ExecuteUpdateAsync(s => s
             .SetProperty(d => d.Status, newStatus)
-            .SetProperty(d => d.FailureReason, reason), ct);
+            .SetProperty(d => d.FailureReason, reason)
+            .SetProperty(d => d.NextAttemptUtc, nextAttemptUtc), ct);
         if (claimed == 0)
         {
             logger.LogWarning(
@@ -268,12 +280,7 @@ public sealed class LitigationOrderDocumentService(
         }
 
         if (newStatus == LitigationOrderDocumentStatus.Failed)
-        {
-            var delayMinutes = Math.Min(180, 5 * Math.Pow(2, Math.Max(0, attemptCount - 1)));
-            var readyUtc = now.AddMinutes(delayMinutes);
-            var effectiveReadyUtc = readyUtc < retainedUntilUtc ? readyUtc : retainedUntilUtc;
             ScheduleRetry(documentId, effectiveReadyUtc, ct);
-        }
     }
 
     /// <summary>Runs before any claim (no lease token exists yet), on a document whose retention window has
@@ -299,6 +306,9 @@ public sealed class LitigationOrderDocumentService(
     }
 
     // ── Recovery ───────────────────────────────────────────────────────────────────────────────────
+
+    private static TimeSpan RetryDelay(int attemptCount) =>
+        TimeSpan.FromMinutes(Math.Min(180, 5 * Math.Pow(2, Math.Max(0, attemptCount - 1))));
 
     private void ScheduleRetry(long orderDocumentId, DateTime readyUtc, CancellationToken ct)
     {
@@ -328,20 +338,31 @@ public sealed class LitigationOrderDocumentService(
     /// same reasoning as <c>LitigationCasePersistenceService.RecoverStaleWorkAsync</c>. Includes <see
     /// cref="LitigationOrderDocumentStatus.Failed"/> rows here too (not just Pending/InProgress): a failed
     /// download is meant to be retried automatically up to its retention deadline, not just on an explicit
-    /// refresh.</summary>
+    /// refresh. A failed row keeps its backoff across a restart (measured from its last claim, which minted
+    /// <c>NextAttemptUtc</c>), so a restart never re-attempts every failure at once, and a failed row with no
+    /// PdfUrl is not re-attempted at all.</summary>
     public async Task<int> RecoverStaleWorkAsync(CancellationToken ct)
     {
+        if (!_opts.IsConfigured) return 0; // every attempt would fail; rows stay as-is until the client is configured
+
         var now = DateTime.UtcNow;
         var nonTerminal = await db.LitigationOrderDocuments
-            .Where(d => d.Status == LitigationOrderDocumentStatus.Pending || d.Status == LitigationOrderDocumentStatus.Failed ||
-                d.Status == LitigationOrderDocumentStatus.InProgress)
-            .Select(d => new { d.LitigationOrderDocumentId, d.Status, d.LeaseExpiresUtc })
+            .Where(d => d.Status == LitigationOrderDocumentStatus.Pending || d.Status == LitigationOrderDocumentStatus.InProgress ||
+                (d.Status == LitigationOrderDocumentStatus.Failed && d.Order != null && d.Order.PdfUrl != null && d.Order.PdfUrl != ""))
+            .Select(d => new { d.LitigationOrderDocumentId, d.Status, d.LeaseExpiresUtc, d.NextAttemptUtc, d.AttemptCount, d.RetainedUntilUtc })
             .ToListAsync(ct);
 
         foreach (var d in nonTerminal)
         {
             if (d.Status == LitigationOrderDocumentStatus.InProgress && d.LeaseExpiresUtc is { } expires && expires > now)
                 ScheduleRetry(d.LitigationOrderDocumentId, expires, ct);
+            else if (d.Status == LitigationOrderDocumentStatus.Failed)
+            {
+                // A row that failed before NextAttemptUtc existed has no recorded deadline: back it off from now
+                // rather than retrying every legacy failure at once.
+                var readyUtc = d.NextAttemptUtc ?? now + RetryDelay(d.AttemptCount);
+                ScheduleRetry(d.LitigationOrderDocumentId, readyUtc < d.RetainedUntilUtc ? readyUtc : d.RetainedUntilUtc, ct);
+            }
             else
                 queue.Enqueue(d.LitigationOrderDocumentId);
         }

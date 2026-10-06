@@ -3912,6 +3912,9 @@ namespace MCAROC_Analysis.Migrations
                     b.Property<long>("LitigationCaseOrderId")
                         .HasColumnType("bigint");
 
+                    b.Property<DateTime?>("NextAttemptUtc")
+                        .HasColumnType("datetime2");
+
                     b.Property<int>("RefreshCount")
                         .HasColumnType("int");
 

@@ -70,6 +70,11 @@ public sealed class LitigationOrderDocument
     public Guid? LeaseToken { get; set; }
     public DateTime? LeaseExpiresUtc { get; set; }
 
+    /// <summary>When a <c>Failed</c> row is next due a retry: failure time plus its backoff, capped at
+    /// <see cref="RetainedUntilUtc"/>. Written in the same update that records the failure, so a restart's recovery
+    /// sweep reproduces exactly the delay the failure scheduled. Null on a row that failed before this column existed.</summary>
+    public DateTime? NextAttemptUtc { get; set; }
+
     /// <summary>Path to the retained PDF, named <c>{LitigationOrderDocumentId}-{LeaseToken:N}.pdf</c> — keyed
     /// by the WINNING attempt's own lease token, never a fixed/shared name, so a stale attempt's late file
     /// write can never land on the same path as the attempt that actually published this row. See
