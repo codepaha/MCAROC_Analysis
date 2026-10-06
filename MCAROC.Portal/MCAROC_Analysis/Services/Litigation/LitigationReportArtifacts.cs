@@ -729,9 +729,8 @@ internal sealed class LitigationReportPdfDocument(StandaloneLitigationReport rep
         if (orders.Count == 0) { panel.Item().PaddingTop(4).Text("No order record was returned for this case.").FontSize(8).FontColor(Colors.Grey.Darken1); return; }
         var available = orders.Count(o => o.AvailabilityBucket == LitigationOrderAvailabilityBucket.Downloaded);
         if (available < orders.Count)
-            panel.Item().PaddingTop(2).Text(available == 0
-                ? "Order documents are not yet available in the portal."
-                : $"Order documents available in the portal for {available} of {orders.Count} orders.")
+            // A neutral count: whether the rest are failed, expired or pending is a pipeline detail the reader cannot act on.
+            panel.Item().PaddingTop(2).Text($"{available} of {orders.Count} order documents are available in the portal.")
                 .FontSize(7.2f).FontColor(Colors.Grey.Darken1);
         foreach (var order in orders)
         {
