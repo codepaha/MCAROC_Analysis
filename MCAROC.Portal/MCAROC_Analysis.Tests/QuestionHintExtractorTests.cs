@@ -192,4 +192,13 @@ public class QuestionHintExtractorTests
     {
         Assert.Equal(expected, QuestionHintExtractor.Extract(question, [], []).AsksForDecision);
     }
+
+    [Theory]
+    [InlineData("What is the status of CP(IB) No.593/KB/2017?", "CP(IB) No.593/KB/2017")]
+    [InlineData("Show CP(IB) No. 120/KB/2018 please", "CP(IB) No. 120/KB/2018")]
+    [InlineData("Any update on TP 255/2019?", "TP 255/2019")]
+    public void A_case_number_with_a_tribunal_bench_code_between_serial_and_year_is_a_lexical_term(string question, string expected)
+    {
+        Assert.Contains(expected, QuestionHintExtractor.ExtractLexicalTerms(question));
+    }
 }

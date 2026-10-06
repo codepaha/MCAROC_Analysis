@@ -289,10 +289,11 @@ public class StructuredFactsProviderTests : IAsyncLifetime
         var context = await contextBuilder.BuildAsync(requestId, "What open charges are recorded?", CancellationToken.None);
 
         Assert.False(embedding.Called);
-        var fact = Assert.Single(context.Sources);
-        Assert.Equal(SourceType.StructuredFact, fact.Type);
+        // Only structured facts: the charge headline, the by-holder summary and the charge row itself.
+        Assert.All(context.Sources, source => Assert.Equal(SourceType.StructuredFact, source.Type));
+        var fact = Assert.Single(context.Sources, source => source.DisplayLabel.Contains("RocCharge"));
         Assert.Contains($"Ingestion run {runId}", fact.DisplayLabel);
-        Assert.Contains("RocCharge", fact.DisplayLabel);
+        Assert.Contains(context.Sources, source => source.Text.Contains("1 open charge(s)"));
         Assert.Equal("NotStarted", context.IndexingStatusLabel);
     }
 

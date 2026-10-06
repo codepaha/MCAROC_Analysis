@@ -17,7 +17,8 @@ namespace MCAROC_Analysis.Services.Chat;
 /// case's passages with the most decision language, which similarity under-ranks in long judgements (#353).</summary>
 public record QuestionHints(FilingCategory? Category, string? FormTypeKeyword, string? LenderNameKeyword, int? Year, string? SrnMatch,
     IReadOnlyList<string>? LexicalTerms = null, IReadOnlyList<LitigationOrderOutcome>? OrderOutcomes = null,
-    bool AsksForQuantity = false, bool AsksForCompleteList = false, bool AsksForRecency = false, bool AsksForDecision = false)
+    bool AsksForQuantity = false, bool AsksForCompleteList = false, bool AsksForRecency = false, bool AsksForDecision = false,
+    CaseListFilter? CaseList = null, IReadOnlyList<string>? TopicTerms = null)
 {
     public bool HasSoftHints => Category is not null || FormTypeKeyword is not null || LenderNameKeyword is not null;
 }
@@ -63,7 +64,8 @@ public static partial class QuestionHintExtractor
 
         return new QuestionHints(category, formType, lender, year, srn, ExtractLexicalTerms(question), ExtractOrderOutcomes(text),
             AsksForQuantity: QuantityRegex().IsMatch(text), AsksForCompleteList: CompleteListRegex().IsMatch(text),
-            AsksForRecency: RecencyRegex().IsMatch(text), AsksForDecision: DecisionQuestionRegex().IsMatch(text));
+            AsksForRecency: RecencyRegex().IsMatch(text), AsksForDecision: DecisionQuestionRegex().IsMatch(text),
+            CaseList: LitigationCaseListSelector.Extract(question), TopicTerms: ExtractTopicTerms(text));
     }
 
     /// <summary>Outcome words and whether each is unambiguous on its own. "Stay", "injunction", "dismissed" and
@@ -96,6 +98,30 @@ public static partial class QuestionHintExtractor
         return outcomes.Distinct().ToList();
     }
 
+    /// <summary>The subject words of a question: every word of five or more letters that is not a stop word, lower case, in order. Used to point
+    /// at the rows of a long list whose own wording ("Criminal Case", a court or party name) mentions what was asked about, which the exact-phrase
+    /// terms (case numbers, quotations) cannot do.</summary>
+    internal static IReadOnlyList<string> ExtractTopicTerms(string lowerText)
+    {
+        var terms = new List<string>();
+        foreach (Match m in TopicWordRegex().Matches(lowerText))
+            if (!TopicStopWords.Contains(m.Value) && !terms.Contains(m.Value)) terms.Add(m.Value);
+        return terms;
+    }
+
+    private static readonly HashSet<string> TopicStopWords = new(StringComparer.Ordinal)
+    {
+        "about", "above", "against", "after", "again", "before", "being", "between", "cases", "company", "companys", "could", "court", "courts",
+        "details", "does", "during", "filed", "found", "from", "give", "have", "here", "into", "latest", "list", "listed", "many", "matter", "matters",
+        "more", "other", "pending", "please", "recent", "records", "report", "reported", "should", "show", "since", "some", "status", "summarise",
+        "summarize", "summary", "tell", "than", "that", "their", "them", "there", "these", "they", "this", "those", "through", "under", "until",
+        "very", "were", "what", "when", "where", "which", "while", "whose", "will", "with", "within", "would", "borrower", "proceedings", "proceeding",
+        "litigation", "litigations", "disposed", "currently", "ongoing"
+    };
+
+    [GeneratedRegex(@"[a-z]{5,}")]
+    private static partial Regex TopicWordRegex();
+
     /// <summary>Caps how many exact-match phrases one question can OR together — a question quoting a dozen
     /// fragments is better served by the semantic search than by a sprawling full-text condition.</summary>
     internal const int MaxLexicalTerms = 5;
@@ -126,8 +152,9 @@ public static partial class QuestionHintExtractor
     /// <summary>Court case numbers as they appear in Indian order sheets: an upper-case case-type prefix
     /// (<c>TP</c>, <c>WP</c>, <c>CP(IB)</c>, <c>O.S.</c>, <c>IA</c>…), an optional "No.", a serial and a year
     /// joined by "/" or "of" — e.g. <c>TP 255/2019</c>, <c>WP/11227/2019</c>, <c>CP(IB) No. 123/2020</c>,
-    /// <c>IA No. 45 of 2021</c>. Case-sensitive on the prefix so ordinary words never match.</summary>
-    [GeneratedRegex(@"\b[A-Z][A-Z.()]{0,14}(?:\s*No\.?)?[\s/.-]*\d{1,6}\s*(?:/|\bof\b)\s*(?:19|20)\d{2}\b")]
+    /// <c>IA No. 45 of 2021</c>, and the bench code some tribunals put between serial and year, e.g.
+    /// <c>CP(IB) No. 593/KB/2017</c>. Case-sensitive on the prefix so ordinary words never match.</summary>
+    [GeneratedRegex(@"\b[A-Z][A-Z.()]{0,14}(?:\s*No\.?)?[\s/.-]*\d{1,6}\s*(?:/\s*[A-Z]{1,6}\s*)?(?:/|\bof\b)\s*(?:19|20)\d{2}\b")]
     private static partial Regex CaseNumberRegex();
 
     /// <summary>Statute references — <c>Section 7</c>, <c>section 138</c>, <c>Sec. 29A</c>, <c>Section 13(2)</c>.</summary>
