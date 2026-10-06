@@ -513,17 +513,28 @@ public sealed class LitigationOrderClassificationTests : IAsyncLifetime
         Assert.Equal(3, await verify.LitigationCaseAiAnalyses.CountAsync(c => c.LitigationAiAnalysisRunId == run.LitigationAiAnalysisRunId));
     }
 
-    /// <summary>The first case analysis fails at once; every other one is still "in the model" for a while and honours its cancellation token.</summary>
-    private sealed class FailOneThenSlowClient(Func<string, string> classify) : ILitigationAiAnalysisClient
+    /// <summary>The first case analysis fails only once every other case analysis is inside the model call, so the failure always lands while its
+    /// siblings are in flight (not before they have started, which would let the scheduler skip them for the wrong reason). Those siblings
+    /// then honour their cancellation token during a short delay.</summary>
+    private sealed class FailOneThenSlowClient(Func<string, string> classify, int expectedConcurrentCalls) : ILitigationAiAnalysisClient
     {
         private int _caseCalls;
+        private int _entered;
+        private readonly TaskCompletionSource _allEntered = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
         public async Task<LitigationAiCallResult> CallAsync(string prompt, int timeoutSeconds, CancellationToken ct, string? modelId = null)
         {
             if (prompt.StartsWith(LitigationOrderClassifier.PromptMarker, StringComparison.Ordinal))
                 return await OkResult(classify(prompt));
             if (prompt.StartsWith(LitigationCaseAnalysisPrompt.Marker, StringComparison.Ordinal))
             {
-                if (Interlocked.Increment(ref _caseCalls) == 1) throw new InvalidOperationException("this call failed");
+                var first = Interlocked.Increment(ref _caseCalls) == 1;
+                if (Interlocked.Increment(ref _entered) == expectedConcurrentCalls) _allEntered.TrySetResult();
+                if (first)
+                {
+                    await _allEntered.Task.WaitAsync(TimeSpan.FromSeconds(10));   // every sibling is now in flight
+                    throw new InvalidOperationException("this call failed");
+                }
                 await Task.Delay(500, ct);   // still running when the failure above lands
             }
             return await OkResult(CaseAnalysisAnswers.For(prompt));
@@ -535,7 +546,7 @@ public sealed class LitigationOrderClassificationTests : IAsyncLifetime
     {
         var (requestId, _, _) = await SeedRequestWithOrdersAsync();
         await AddCasesWithOrdersAsync(requestId, 2);   // 3 cases, all three started at once
-        var client = new FailOneThenSlowClient(ClassifyByText);
+        var client = new FailOneThenSlowClient(ClassifyByText, expectedConcurrentCalls: 3);
 
         var run = await RunWithLimitsAsync(requestId, client, caseConcurrency: 3, orderConcurrency: 1);
 
