@@ -513,6 +513,37 @@ public sealed class LitigationOrderClassificationTests : IAsyncLifetime
         Assert.Equal(3, await verify.LitigationCaseAiAnalyses.CountAsync(c => c.LitigationAiAnalysisRunId == run.LitigationAiAnalysisRunId));
     }
 
+    /// <summary>The first case analysis fails at once; every other one is still "in the model" for a while and honours its cancellation token.</summary>
+    private sealed class FailOneThenSlowClient(Func<string, string> classify) : ILitigationAiAnalysisClient
+    {
+        private int _caseCalls;
+        public async Task<LitigationAiCallResult> CallAsync(string prompt, int timeoutSeconds, CancellationToken ct, string? modelId = null)
+        {
+            if (prompt.StartsWith(LitigationOrderClassifier.PromptMarker, StringComparison.Ordinal))
+                return await OkResult(classify(prompt));
+            if (prompt.StartsWith(LitigationCaseAnalysisPrompt.Marker, StringComparison.Ordinal))
+            {
+                if (Interlocked.Increment(ref _caseCalls) == 1) throw new InvalidOperationException("this call failed");
+                await Task.Delay(500, ct);   // still running when the failure above lands
+            }
+            return await OkResult(CaseAnalysisAnswers.For(prompt));
+        }
+    }
+
+    [Fact]
+    public async Task A_failing_case_does_not_cancel_calls_already_running_so_their_paid_results_are_saved()
+    {
+        var (requestId, _, _) = await SeedRequestWithOrdersAsync();
+        await AddCasesWithOrdersAsync(requestId, 2);   // 3 cases, all three started at once
+        var client = new FailOneThenSlowClient(ClassifyByText);
+
+        var run = await RunWithLimitsAsync(requestId, client, caseConcurrency: 3, orderConcurrency: 1);
+
+        await using var verify = CreateContext();
+        // one call failed; the other two were mid-call and finished, and their results are on file rather than lost with the failed sibling
+        Assert.Equal(2, await verify.LitigationCaseAiAnalyses.CountAsync(c => c.LitigationAiAnalysisRunId == run.LitigationAiAnalysisRunId));
+    }
+
     /// <summary>Puts a finished run back to the state a worker leaves when it stops after publishing its order
     /// classifications: the run is Pending again with no lease, and its classification rows are still on file.</summary>
     private static async Task ReopenAsResumableAsync(AppDbContext db, long runId)

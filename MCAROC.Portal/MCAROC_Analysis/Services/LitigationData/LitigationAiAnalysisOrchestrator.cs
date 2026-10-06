@@ -216,17 +216,23 @@ public sealed class LitigationAiAnalysisOrchestrator(AppDbContext db, ILitigatio
     }
 
     /// <summary>Runs <paramref name="work"/> over every item with at most <paramref name="concurrency"/> in flight. The first failure cancels the work still
-    /// waiting to start (no further paid calls once the run is going to fail) and is rethrown after the calls already running have finished.</summary>
+    /// waiting to start (no further paid calls once the run is going to fail); calls already running are left to finish and save, and the failure is rethrown after they have.</summary>
     private static async Task RunBoundedAsync<T>(IReadOnlyList<T> items, int concurrency, CancellationToken ct, Func<T, CancellationToken, Task> work)
     {
         if (items.Count == 0) return;
-        using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        // The stop signal only keeps QUEUED items from starting. Work already running gets the caller's own token, so a sibling that is mid-call
+        // still finishes and saves its result: cancelling it would throw away a paid response that has not been persisted yet.
+        using var stopStarting = CancellationTokenSource.CreateLinkedTokenSource(ct);
         using var gate = new SemaphoreSlim(Math.Max(1, concurrency));
         var tasks = items.Select(async item =>
         {
-            await gate.WaitAsync(cts.Token);
-            try { await work(item, cts.Token); }
-            catch { cts.Cancel(); throw; }
+            await gate.WaitAsync(stopStarting.Token);
+            try
+            {
+                stopStarting.Token.ThrowIfCancellationRequested();   // a failure landed while this item waited for its turn
+                await work(item, ct);
+            }
+            catch { stopStarting.Cancel(); throw; }
             finally { gate.Release(); }
         }).ToList();
         try { await Task.WhenAll(tasks); }
