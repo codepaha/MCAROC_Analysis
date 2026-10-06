@@ -89,14 +89,19 @@ public class ChatCompletionRetryTests
     }
 
     [Fact]
-    public async Task The_retry_hands_the_model_its_own_uncited_answer_and_asks_only_for_the_tags()
+    public async Task The_retry_regenerates_from_the_evidence_and_never_repeats_the_uncited_answer_back_to_the_model()
     {
-        var model = new ScriptedModel("""{ "answer": "There are 167 pending cases against the company.", "citedTags": [], "insufficientEvidence": false }""", Good);
+        // an unsupported answer re-sent "for citing" could come back with a valid tag and look sourced
+        const string unsupported = "There are 167 pending cases against the company.";
+        var model = new ScriptedModel($$"""{ "answer": "{{unsupported}}", "citedTags": [], "insufficientEvidence": false }""", Good);
 
         await AskAsync(model);
 
-        Assert.Contains("There are 167 pending cases against the company.", model.Prompts[1]);
-        Assert.Contains("citedTags listing the tag of every", model.Prompts[1]);
+        Assert.Equal(2, model.Prompts.Count);
+        Assert.DoesNotContain(unsupported, model.Prompts[1]);
+        Assert.DoesNotContain("167", model.Prompts[1]);
+        Assert.Contains("Answer again from the [FACT]/[SOURCE] blocks above only", model.Prompts[1]);
+        Assert.Contains("tag of every block that supports each claim", model.Prompts[1]);
     }
 
     [Fact]

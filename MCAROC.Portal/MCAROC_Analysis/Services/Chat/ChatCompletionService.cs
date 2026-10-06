@@ -67,16 +67,14 @@ public class ChatCompletionService
 
         // The model did not say the evidence was insufficient; its reply was unusable (empty, not the JSON asked for, a blank answer, or no valid
         // citation). A small model does this now and then on a long prompt, and the fixed "could not verify" message would then be shown although the
-        // sources support an answer. Ask once more, say why, and hand back its own answer when it wrote one, so it only has to name the tags.
+        // sources support an answer. Ask once more, and say why.
         // The reply text itself is never logged: it can quote the client's records. Only the outcome and the lengths are.
         _logger?.LogWarning("Chat reply was unusable ({Outcome}, {Length} characters); asking once more.", outcome, rawResponse.Length);
-        var previousAnswer = TryReadAnswer(rawResponse);
-        var retryPrompt = prompt + "\n\nYour previous reply could not be used (" + Describe(outcome) + ")."
-            + (outcome == ChatReplyOutcome.Uncited && !string.IsNullOrWhiteSpace(previousAnswer)
-                ? " Your previous answer was: \"" + previousAnswer + "\". Send it again, with citedTags listing the tag of every [FACT]/[SOURCE] block it came from."
-                : "")
-            + " Reply again with ONLY the JSON object. If the [FACT]/[SOURCE] blocks support an answer, give it and list the tags you used in citedTags; "
-            + "if they do not, set insufficientEvidence=true.";
+        // The retry regenerates from the evidence. It deliberately does NOT hand the earlier answer back for "citing": a tag is checked only
+        // for existing, not for supporting the claim, so an unsupported answer re-sent with a valid tag would look sourced.
+        var retryPrompt = prompt + "\n\nYour previous reply could not be used (" + Describe(outcome) + "). Answer again from the [FACT]/[SOURCE] blocks above only, "
+            + "and list in citedTags the tag of every block that supports each claim you make. Reply with ONLY the JSON object. "
+            + "If the blocks do not support an answer, set insufficientEvidence=true.";
         var retryResponse = await GenerateRawAsync(retryPrompt, ct);
         (result, outcome) = ValidateWithOutcome(retryResponse, context.Sources);
         if (IsUnusable(outcome))
@@ -111,7 +109,6 @@ public class ChatCompletionService
         _ => "it cited no tag from the blocks above"
     };
 
-    /// <summary>The answer text of a reply, when the reply is JSON that has one.</summary>
     private static string? TryReadAnswer(string raw)
     {
         try { return JsonSerializer.Deserialize<AiChatResponseDto>(raw, JsonOptions)?.Answer; }
