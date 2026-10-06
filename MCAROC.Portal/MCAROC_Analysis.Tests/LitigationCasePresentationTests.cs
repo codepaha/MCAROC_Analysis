@@ -165,6 +165,30 @@ public sealed class LitigationCasePresentationTests
         Assert.DoesNotContain("Retrieval pending", text);
     }
 
+    private static StandaloneReportOrderDto OrderIn(long id, LitigationOrderAvailabilityBucket bucket) =>
+        new(id, "10-01-2025", "order/judgement", bucket, null, null, null, "internal pipeline wording", "x", "x");
+
+    [SkippableTheory]
+    [InlineData(LitigationOrderAvailabilityBucket.Failed, LitigationOrderAvailabilityBucket.Expired, "0of2orderdocumentsareavailableintheportal.")]
+    [InlineData(LitigationOrderAvailabilityBucket.Downloaded, LitigationOrderAvailabilityBucket.Failed, "1of2orderdocumentsareavailableintheportal.")]
+    [InlineData(LitigationOrderAvailabilityBucket.Pending, LitigationOrderAvailabilityBucket.Pending, "0of2orderdocumentsareavailableintheportal.")]
+    public void Pdf_states_order_availability_as_a_neutral_count_whatever_the_unavailable_orders_state(
+        LitigationOrderAvailabilityBucket first, LitigationOrderAvailabilityBucket second, string expectedSquashed)
+    {
+        Skip.IfNot(OperatingSystem.IsWindows(),
+            "PdfPig text extraction is unreliable off Windows fonts; covered by the windows-tests CI job.");
+
+        var one = Case(1, "high_court", "DelhiHighCourt", "Pending", "against", "05-10-2025");
+        var report = Report(one with { Orders = [OrderIn(1, first), OrderIn(2, second)] });
+        var text = new string(PdfText(report).Where(c => !char.IsWhiteSpace(c) && c != ' ').ToArray());
+
+        Assert.Contains(expectedSquashed, text);
+        // never implies the unavailable documents are merely awaiting retrieval, and never leaks pipeline wording
+        Assert.DoesNotContain("notyetavailable", text);
+        Assert.DoesNotContain("internalpipelinewording", text);
+        Assert.DoesNotContain("Retrieval", text);
+    }
+
     [Fact]
     public void Pdf_renders_with_and_without_the_logo_and_with_no_cases()
     {
