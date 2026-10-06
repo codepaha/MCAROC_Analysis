@@ -659,6 +659,9 @@ public sealed class BprLitigationClientTests
     [InlineData("<html><body>Expired</body></html>")]
     [InlineData("\r\n\r\n<html>Not a PDF %PDF- appears later</html>")] // blank space, then something that is not the header
     [InlineData("{\"error\":\"expired\"} %PDF- is mentioned in the message")] // a JSON body that mentions the signature
+    [InlineData("Expired link: %PDF-")] // a plain-text error that mentions the signature
+    [InlineData("Access Denied %PDF-1.4")]
+    [InlineData("x%PDF-")]
     [InlineData("\u0090\u00b4Expired link <p>%PDF-</p>")] // stray bytes, but markup before the header
     [InlineData("{\"status\":false,\"message\":\"expired\"}")]
     [InlineData("   ")]

@@ -265,13 +265,17 @@ public sealed class BprLitigationClient(
 
     /// <summary>True when the content is a PDF: <c>%PDF-</c> within the first kilobyte, which is as far in as the format allows the header to sit.
     /// Real order files have stray bytes ahead of it: the debt-recovery tribunal's carry eight blank-line bytes and the Supreme Court's carry four binary
-    /// ones, so a byte-0 check rejected both. What may not precede the header is markup: a prefix containing <c>&lt;</c> or <c>{</c> is an HTML or JSON
-    /// page (an error body, an expired link) that merely mentions the signature, not a PDF.</summary>
+    /// ones (90 B4 00 00), so a byte-0 check rejected both. What may precede the header is only whitespace, control bytes and non-ASCII bytes. Any
+    /// visible ASCII character (a letter, digit or punctuation) ahead of it means readable text, an HTML or JSON page or a plain-text error such as
+    /// "Expired link: %PDF-", that merely mentions the signature, so it is not a PDF.</summary>
     internal static bool HasPdfSignature(byte[] bytes)
     {
         var window = bytes.AsSpan(0, Math.Min(bytes.Length, 1024 + PdfSignature.Length));
         var at = window.IndexOf(PdfSignature);
-        return at >= 0 && window[..at].IndexOfAny((byte)'<', (byte)'{') < 0;
+        if (at < 0) return false;
+        foreach (var b in window[..at])
+            if (b is > 0x20 and < 0x7F) return false; // visible ASCII: text, not a stray binary or blank byte
+        return true;
     }
 
     // Private/loopback/link-local ranges an order PDF host must never resolve to, even if the hostname
