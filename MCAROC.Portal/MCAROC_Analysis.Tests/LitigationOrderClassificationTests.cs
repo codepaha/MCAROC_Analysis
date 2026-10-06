@@ -395,6 +395,166 @@ public sealed class LitigationOrderClassificationTests : IAsyncLifetime
         Assert.Null(ia.ReusedFromClassificationId);
     }
 
+    private static Task<LitigationAiCallResult> OkResult(string json) => Task.FromResult(new LitigationAiCallResult(true, json, null));
+
+    /// <summary>Counts the calls in flight at once, and holds each briefly so overlap is real, not incidental.</summary>
+    private sealed class OverlapTrackingClient(Func<string, string> classify, int holdMilliseconds = 120) : ILitigationAiAnalysisClient
+    {
+        private int _inFlight;
+        public int MaxInFlight;
+        public int Calls;
+
+        public async Task<LitigationAiCallResult> CallAsync(string prompt, int timeoutSeconds, CancellationToken ct, string? modelId = null)
+        {
+            var now = Interlocked.Increment(ref _inFlight);
+            int seen;
+            while (now > (seen = Volatile.Read(ref MaxInFlight))) Interlocked.CompareExchange(ref MaxInFlight, now, seen);
+            try
+            {
+                Interlocked.Increment(ref Calls);
+                await Task.Delay(holdMilliseconds, ct);
+                if (prompt.StartsWith(LitigationOrderClassifier.PromptMarker, StringComparison.Ordinal))
+                    return await OkResult(classify(prompt));
+                if (prompt.Contains("portfolio-level", StringComparison.Ordinal))
+                {
+                    var ids = Regex.Matches(prompt, "\"LitigationCaseAiAnalysisId\":(\\d+)").Select(m => m.Groups[1].Value);
+                    return await OkResult($$"""{"status":"Completed","summary":"Portfolio.","unknowns":[],"caseAnalysisIds":[{{string.Join(",", ids)}}]}""");
+                }
+                return await OkResult(CaseAnalysisAnswers.For(prompt));
+            }
+            finally { Interlocked.Decrement(ref _inFlight); }
+        }
+    }
+
+    private static async Task AddCasesWithOrdersAsync(long requestId, int count)
+    {
+        await using var db = CreateContext();
+        for (var i = 0; i < count; i++)
+        {
+            var c = new LitigationCase
+            {
+                RequestId = requestId, Cnr = "CNR" + Guid.NewGuid().ToString("N")[..10], CaseNumber = $"EXTRA {i}/2021", Court = "NCLT Chennai",
+                ProceedingType = "CP", FirstSeenUtc = DateTime.UtcNow, LastSeenUtc = DateTime.UtcNow
+            };
+            db.LitigationCases.Add(c);
+            await db.SaveChangesAsync();
+            // distinct text per order, so none is a duplicate that gets copied instead of classified
+            await SeedOrderAsync(db, requestId, c.LitigationCaseId, $"The tribunal adjourned matter {i} to a later date for filing of replies, no order on merits.", $"EXTRA {i}/2021");
+        }
+    }
+
+    private static async Task<LitigationAiAnalysisRun> RunWithLimitsAsync(long requestId, ILitigationAiAnalysisClient client, int caseConcurrency, int orderConcurrency)
+    {
+        await using var db = CreateContext();
+        var options = new LitigationAiAnalysisOptions { CaseConcurrency = caseConcurrency, OrderConcurrency = orderConcurrency };
+        var orchestrator = new LitigationAiAnalysisOrchestrator(db, client, new LitigationAiAnalysisQueue(), Options.Create(options), NullLogger<LitigationAiAnalysisOrchestrator>.Instance);
+        var run = await orchestrator.CreateOrJoinAsync(requestId, LitigationAiAnalysisTrigger.Manual, null, null, CancellationToken.None);
+        await orchestrator.RunAsync(run.LitigationAiAnalysisRunId, CancellationToken.None);
+        return run;
+    }
+
+    [Fact]
+    public async Task Order_classifications_and_case_analyses_overlap_up_to_the_limit_and_every_result_is_saved()
+    {
+        var (requestId, _, _) = await SeedRequestWithOrdersAsync();
+        await AddCasesWithOrdersAsync(requestId, 14);   // 15 cases, 16 orders in all
+        var client = new OverlapTrackingClient(ClassifyByText);
+
+        var run = await RunWithLimitsAsync(requestId, client, caseConcurrency: 3, orderConcurrency: 4);
+
+        await using var verify = CreateContext();
+        var done = await verify.LitigationAiAnalysisRuns.AsNoTracking().SingleAsync(r => r.LitigationAiAnalysisRunId == run.LitigationAiAnalysisRunId);
+        Assert.Equal(LitigationAiAnalysisRunStatus.Completed, done.Status);
+        Assert.True(client.MaxInFlight > 1, "the calls ran one after another");
+        Assert.True(client.MaxInFlight <= 4, $"{client.MaxInFlight} calls overlapped; the larger limit is 4");
+        // every case and every order has its own saved result, and the portfolio is built from them
+        Assert.Equal(15, await verify.LitigationCaseAiAnalyses.CountAsync(c => c.LitigationAiAnalysisRunId == run.LitigationAiAnalysisRunId));
+        Assert.Equal(16, await verify.LitigationOrderClassifications.CountAsync(c => c.LitigationAiAnalysisRunId == run.LitigationAiAnalysisRunId));
+        Assert.True(await verify.LitigationPortfolioAiAnalyses.AnyAsync(p => p.LitigationAiAnalysisRunId == run.LitigationAiAnalysisRunId));
+    }
+
+    [Fact]
+    public async Task With_a_limit_of_one_the_calls_still_run_one_after_another()
+    {
+        var (requestId, _, _) = await SeedRequestWithOrdersAsync();
+        await AddCasesWithOrdersAsync(requestId, 5);
+        var client = new OverlapTrackingClient(ClassifyByText, holdMilliseconds: 30);
+
+        await RunWithLimitsAsync(requestId, client, caseConcurrency: 1, orderConcurrency: 1);
+
+        Assert.Equal(1, client.MaxInFlight);
+    }
+
+    /// <summary>Answers normally until <paramref name="fail"/> says to stop, then throws for every further case analysis (the process "dying").</summary>
+    private sealed class ThrowAfterClient(Func<string, string> classify, Func<bool> fail) : ILitigationAiAnalysisClient
+    {
+        public Task<LitigationAiCallResult> CallAsync(string prompt, int timeoutSeconds, CancellationToken ct, string? modelId = null)
+        {
+            if (prompt.StartsWith(LitigationOrderClassifier.PromptMarker, StringComparison.Ordinal))
+                return OkResult(classify(prompt));
+            if (prompt.StartsWith(LitigationCaseAnalysisPrompt.Marker, StringComparison.Ordinal) && fail())
+                throw new InvalidOperationException("the process stopped");
+            return OkResult(CaseAnalysisAnswers.For(prompt));
+        }
+    }
+
+    [Fact]
+    public async Task Each_case_is_saved_when_it_completes_so_a_run_that_stops_midway_keeps_what_was_paid_for()
+    {
+        var (requestId, _, _) = await SeedRequestWithOrdersAsync();
+        await AddCasesWithOrdersAsync(requestId, 6);   // 7 cases
+        var served = 0;
+        var client = new ThrowAfterClient(ClassifyByText, () => Interlocked.Increment(ref served) > 3);
+
+        var run = await RunWithLimitsAsync(requestId, client, caseConcurrency: 1, orderConcurrency: 1);
+
+        await using var verify = CreateContext();
+        // the three analysed before the stop are on file instead of being discarded with it, so a retried run only pays for the rest
+        Assert.Equal(3, await verify.LitigationCaseAiAnalyses.CountAsync(c => c.LitigationAiAnalysisRunId == run.LitigationAiAnalysisRunId));
+    }
+
+    /// <summary>The first case analysis fails only once every other case analysis is inside the model call, so the failure always lands while its
+    /// siblings are in flight (not before they have started, which would let the scheduler skip them for the wrong reason). Those siblings
+    /// then honour their cancellation token during a short delay.</summary>
+    private sealed class FailOneThenSlowClient(Func<string, string> classify, int expectedConcurrentCalls) : ILitigationAiAnalysisClient
+    {
+        private int _caseCalls;
+        private int _entered;
+        private readonly TaskCompletionSource _allEntered = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public async Task<LitigationAiCallResult> CallAsync(string prompt, int timeoutSeconds, CancellationToken ct, string? modelId = null)
+        {
+            if (prompt.StartsWith(LitigationOrderClassifier.PromptMarker, StringComparison.Ordinal))
+                return await OkResult(classify(prompt));
+            if (prompt.StartsWith(LitigationCaseAnalysisPrompt.Marker, StringComparison.Ordinal))
+            {
+                var first = Interlocked.Increment(ref _caseCalls) == 1;
+                if (Interlocked.Increment(ref _entered) == expectedConcurrentCalls) _allEntered.TrySetResult();
+                if (first)
+                {
+                    await _allEntered.Task.WaitAsync(TimeSpan.FromSeconds(10));   // every sibling is now in flight
+                    throw new InvalidOperationException("this call failed");
+                }
+                await Task.Delay(500, ct);   // still running when the failure above lands
+            }
+            return await OkResult(CaseAnalysisAnswers.For(prompt));
+        }
+    }
+
+    [Fact]
+    public async Task A_failing_case_does_not_cancel_calls_already_running_so_their_paid_results_are_saved()
+    {
+        var (requestId, _, _) = await SeedRequestWithOrdersAsync();
+        await AddCasesWithOrdersAsync(requestId, 2);   // 3 cases, all three started at once
+        var client = new FailOneThenSlowClient(ClassifyByText, expectedConcurrentCalls: 3);
+
+        var run = await RunWithLimitsAsync(requestId, client, caseConcurrency: 3, orderConcurrency: 1);
+
+        await using var verify = CreateContext();
+        // one call failed; the other two were mid-call and finished, and their results are on file rather than lost with the failed sibling
+        Assert.Equal(2, await verify.LitigationCaseAiAnalyses.CountAsync(c => c.LitigationAiAnalysisRunId == run.LitigationAiAnalysisRunId));
+    }
+
     /// <summary>Puts a finished run back to the state a worker leaves when it stops after publishing its order
     /// classifications: the run is Pending again with no lease, and its classification rows are still on file.</summary>
     private static async Task ReopenAsResumableAsync(AppDbContext db, long runId)
