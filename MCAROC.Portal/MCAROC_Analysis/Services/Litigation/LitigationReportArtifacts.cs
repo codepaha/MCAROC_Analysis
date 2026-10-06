@@ -224,10 +224,7 @@ public static class LitigationReportArtifacts
                     LitigationCaseAges.Compute(item.FilingDate, item.DecisionDate, item.CaseYear, bucket,
                         item.Orders.Select(o => o.OrderDate), asOf, item.CnrNumber, item.CaseNumber));
             })
-            .OrderBy(v => LitigationCasePresentation.SectionOrder(v.Bucket))
-            .ThenBy(v => v.Institution)
-            .ThenBy(v => LitigationCasePresentation.SideOrder(v.Side))
-            .ThenByDescending(v => LitigationCasePresentation.FilingSortKey(v.Item.FilingDate))
+            .OrderBy(v => LitigationCasePresentation.SortKey(v.Bucket, v.Institution, v.Side, v.Item.FilingDate, v.Item.LitigationCaseId))
             .ToList();
     }
 
@@ -297,7 +294,7 @@ public static class LitigationReportArtifacts
         foreach (var value in new[]
         {
             serial.ToString(CultureInfo.InvariantCulture), report.AssignmentNumber, report.CompanyName,
-            item.ProviderCaseId, item.CnrNumber, item.CourtCategory, view.Side switch { LitigationCompanySide.ByCompany => "By", LitigationCompanySide.AgainstCompany => "Against", _ => null },
+            item.ProviderCaseId, item.CnrNumber, item.CourtCategory, view.Side switch { LitigationCompanySide.ByCompany => "By", LitigationCompanySide.AgainstCompany => "Against", _ => "Not determined" },
             LitigationCasePresentation.Label(view.Institution), view.Age.Headline, item.Type, item.Court, item.Bench,
             item.CaseNumber, item.CaseType, item.CaseYear, item.CaseStage, item.CaseStatus, item.Act, item.FilingDate,
             item.LastHearingDate, item.NextHearingDate, item.DecisionDate, item.State, item.District,
