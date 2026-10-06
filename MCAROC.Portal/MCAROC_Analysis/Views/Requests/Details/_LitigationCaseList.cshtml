@@ -1,0 +1,92 @@
+@using MCAROC_Analysis.Data.Entities
+@using MCAROC_Analysis.Services.LitigationData
+@model LitigationCaseListViewModel
+@{
+    string Or(string? value) => string.IsNullOrWhiteSpace(value) ? "—" : value;
+    string ShortNames(List<string> names) => names.Count == 0 ? "Not recorded" : names[0] + (names.Count > 1 ? $" +{names.Count - 1}" : "");
+    var pages = new[] { 1, Model.Page - 1, Model.Page, Model.Page + 1, Model.TotalPages }.Where(p => p >= 1 && p <= Model.TotalPages).Distinct().Order().ToList();
+}
+<div id="litigation-case-list" data-request-id="@Model.RequestId" data-snapshot="@Model.SnapshotId" data-generation="@Model.Generation" data-page="@Model.Page" tabindex="-1">
+    <form method="get" action="/Requests/@Model.RequestId#tab-litigation" class="litigation-filters" data-litigation-filter>
+        <div class="litigation-search">
+            <label for="litigation-search">Search all cases</label>
+            <input id="litigation-search" name="q" type="search" value="@Model.Search" maxlength="200" class="form-control form-control-sm" placeholder="Case number, CNR, court or party" />
+        </div>
+        <div><label for="litigation-court">Court</label><input id="litigation-court" name="court" value="@Model.Court" list="litigation-court-options" class="form-control form-control-sm" placeholder="Choose court" /></div>
+        <div><label for="litigation-status">Status</label><select id="litigation-status" name="status" class="form-select form-select-sm">
+            <option value="">All statuses</option>
+            @foreach (var status in Enum.GetValues<LitigationCaseStatusBucket>()) { <option value="@status" selected="@(Model.Status == status.ToString())">@status</option> }
+        </select></div>
+        <div><label for="litigation-outcome">Order outcome</label><select id="litigation-outcome" name="outcome" class="form-select form-select-sm">
+            <option value="">All outcomes</option>
+            @foreach (var outcome in Enum.GetValues<LitigationOrderOutcome>()) { <option value="@outcome" selected="@(Model.Outcome == outcome.ToString())">@LitigationOrderOutcomeLabels.Format(outcome)</option> }
+        </select></div>
+        <div><label for="litigation-page-size">Rows</label><select id="litigation-page-size" name="pageSize" class="form-select form-select-sm">
+            @foreach (var size in new[] { 25, 50, 100 }) { <option value="@size" selected="@(Model.PageSize == size)">@size</option> }
+        </select></div>
+        <button class="btn btn-sm btn-primary" type="submit">Apply</button>
+        @if (!string.IsNullOrWhiteSpace(Model.Search) || !string.IsNullOrWhiteSpace(Model.Court) || !string.IsNullOrWhiteSpace(Model.Status) || !string.IsNullOrWhiteSpace(Model.Outcome))
+        { <a class="btn btn-sm btn-outline-secondary" href="/Requests/@Model.RequestId?pageSize=@Model.PageSize#tab-litigation" data-litigation-page>Clear</a> }
+    </form>
+    <div class="litigation-list-caption"><span><strong>@Model.First–@Model.Last</strong> of <strong>@Model.Total.ToString("N0")</strong> matching cases</span><span>Sorted by court, last hearing and case ID</span></div>
+    <div class="table-responsive litigation-table-wrap">
+        <table class="table litigation-case-table align-middle">
+            <caption class="visually-hidden">Litigation case register, page @Model.Page of @Model.TotalPages</caption>
+            <thead><tr><th scope="col">Case / parties</th><th scope="col">Court</th><th scope="col">Company role</th><th scope="col">Status</th><th scope="col">Risk / analysis</th><th scope="col">Next hearing</th><th scope="col">Orders</th><th scope="col"><span class="visually-hidden">Action</span></th></tr></thead>
+            <tbody>
+            @if (Model.Cases.Count == 0)
+            { <tr><td colspan="8" class="text-center py-4">No cases match these filters. Try another search or clear the filters.</td></tr> }
+            @foreach (var c in Model.Cases)
+            {
+                var caseUrl = Microsoft.AspNetCore.WebUtilities.QueryHelpers.AddQueryString($"/Requests/{Model.RequestId}/Litigation/Cases/{c.LitigationCaseId}", "returnUrl", Model.PageUrl(Model.Page));
+                <tr id="case-card-@c.LitigationCaseId" tabindex="-1">
+                    <td class="litigation-case-identity">
+                        <a class="fw-semibold" href="@caseUrl">@(c.CaseNumber ?? c.Cnr ?? $"Case #{c.LitigationCaseId}")</a>
+                        <span class="litigation-party-line" title="@string.Join(", ", c.Petitioners) v. @string.Join(", ", c.Respondents)">@ShortNames(c.Petitioners) <span class="text-muted">v.</span> @ShortNames(c.Respondents)</span>
+                        @if (c.Analysis?.ActiveRestraint == true) { <span class="mca-badge sev-critical">Restraint in force</span> }
+                        @if (c.Analysis?.LisPendens == true) { <span class="mca-badge sev-watch">Lis pendens</span> }
+                        @if (ViewData["ChargeLinks"] is IReadOnlyList<ChargeLitigationLink> links)
+                        {
+                            @foreach (var signal in links.Where(l => l.Case.LitigationCaseId == c.LitigationCaseId).Select(l => l.Signal).Distinct())
+                            { <span class="mca-badge @ChargeLitigationLabels.Severity(signal)">@(signal == ChargeLitigationSignal.ImmovableAddress ? "Touches charged property" : signal == ChargeLitigationSignal.MovableIdentifier ? "Names a charged asset" : "Charge holder's recovery case")</span> }
+                        }
+                    </td>
+                    <td>@Or(c.Court)</td><td>@LitigationCompanySides.Label(c.CompanySide)</td>
+                    <td><span class="litigation-status @c.StatusBucket.ToString().ToLowerInvariant()">@c.StatusBucket</span></td>
+                    <td>
+                        @if (c.Risk is { } risk) { <span class="badge @LitigationBaselineRisk.BadgeCss(risk.Tier)" title="Baseline: @risk.Reason">@risk.Tier · Baseline</span> }
+                        <small class="d-block text-muted">@(c.Analysis?.Status switch
+                        {
+                            LitigationAiAnalysisItemStatus.Completed => "Analysed",
+                            LitigationAiAnalysisItemStatus.InsufficientEvidence => "Insufficient evidence",
+                            LitigationAiAnalysisItemStatus.Failed => "Analysis failed",
+                            _ => "Analysis pending"
+                        })</small>
+                        @if (c.IsAnalysisStaleComparedToCase) { <small class="d-block text-warning-emphasis">Analysis reflects prior evidence</small> }
+                    </td>
+                    <td class="text-nowrap">@Or(c.NextHearingDate)</td>
+                    <td class="text-nowrap"><span>@c.DownloadedOrderCount / @c.OrderCount</span><small class="d-block text-muted">PDFs available</small></td>
+                    <td><a class="btn btn-sm btn-outline-primary" href="@caseUrl" aria-label="View case @(c.CaseNumber ?? c.Cnr ?? c.LitigationCaseId.ToString())">View</a></td>
+                </tr>
+            }
+            </tbody>
+        </table>
+    </div>
+    <nav class="litigation-pagination" aria-label="Case pagination">
+        <span>Page @Model.Page of @Model.TotalPages</span>
+        <div class="d-flex gap-1 align-items-center">
+            @if (Model.Page > 1) { <a class="btn btn-sm btn-outline-secondary" href="@Model.PageUrl(Model.Page - 1)" data-litigation-page>Previous</a> }
+            else { <span class="btn btn-sm btn-outline-secondary disabled" aria-disabled="true">Previous</span> }
+            @{ int previous = 0; }
+            @foreach (var pageNumber in pages)
+            {
+                if (previous > 0 && pageNumber > previous + 1) { <span class="px-1" aria-hidden="true">…</span> }
+                if (pageNumber == Model.Page) { <span class="btn btn-sm btn-primary" aria-current="page">@pageNumber</span> }
+                else { <a class="btn btn-sm btn-outline-secondary" href="@Model.PageUrl(pageNumber)" aria-label="Page @pageNumber" data-litigation-page>@pageNumber</a> }
+                previous = pageNumber;
+            }
+            @if (Model.Page < Model.TotalPages) { <a class="btn btn-sm btn-outline-secondary" href="@Model.PageUrl(Model.Page + 1)" data-litigation-page>Next</a> }
+            else { <span class="btn btn-sm btn-outline-secondary disabled" aria-disabled="true">Next</span> }
+        </div>
+    </nav>
+</div>

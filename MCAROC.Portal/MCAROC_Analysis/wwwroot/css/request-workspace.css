@@ -34,3 +34,66 @@
 @media (prefers-reduced-motion: reduce) {
     #mca-docs-panel[aria-busy="true"] { transition: none; }
 }
+
+.workspace-topbar { min-height: 52px; padding-block: 6px; }
+.workspace-breadcrumb { padding-block: 7px; font-size: 12px; }
+.mca-detail-head { position: relative; top: auto; margin-bottom: 0; padding-top: 8px; box-shadow: none; }
+.mca-company-id h1 { font-size: 21px; }
+.mca-company-head { padding-bottom: 6px; }
+.mca-company-meta { gap: 2px; }
+.mca-company-meta .mca-meta-detail { font-size: 11px; }
+.mca-tabs { position: sticky; top: var(--mca-topbar-h); z-index: 13; background: var(--surface); margin-bottom: 12px; }
+.mca-contents-nav { top: calc(var(--mca-topbar-h) + 44px); }
+.mca-contents-section { scroll-margin-top: calc(var(--mca-topbar-h) + 100px); }
+.workspace-menu { position: relative; font-size: 12px; }
+.workspace-menu summary { cursor: pointer; white-space: nowrap; }
+.workspace-menu summary:focus-visible, .litigation-secondary summary:focus-visible { outline: 2px solid var(--brand); outline-offset: 3px; }
+.workspace-menu-panel { position: absolute; z-index: 30; right: 0; top: calc(100% + 6px); min-width: 240px; max-width: min(440px, 85vw); padding: 14px; background: var(--surface); color: var(--text); border: 1px solid var(--border); border-radius: 8px; box-shadow: var(--shadow-sm); }
+.workspace-menu-panel .mca-head-actions, .workspace-menu-panel .btn-group { display: flex; flex-direction: column; gap: 8px; align-items: stretch; }
+.workspace-menu-panel .btn { text-align: left; }
+.workspace-menu-panel .btn-group, .workspace-menu-panel > .btn { margin-bottom: 8px; }
+.workspace-menu-panel .btn-group > .btn { border-radius: 4px; }
+.mca-company-detail-fields { display: grid; gap: 10px; text-align: left; white-space: normal; overflow-wrap: anywhere; }
+.company-details .workspace-menu-panel { left: 0; right: auto; }
+.mca-company-head .mca-unit-toggle { transform: scale(.9); transform-origin: right center; }
+.litigation-section-links { position: static; border: 0; box-shadow: none; background: transparent; padding: 0; margin-bottom: 8px; min-height: 32px; }
+.litigation-section-links .nav-link { padding-block: 5px; font-size: 12px; }
+.litigation-toolbar { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 10px; }
+.litigation-toolbar h3 { font-size: 22px; }
+.litigation-toolbar h3 .bi { font-size: 20px; }
+.litigation-toolbar p { font-size: 11px; margin-top: 3px; }
+.litigation-totals { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px 22px; padding-block: 8px; border-block: 1px solid var(--border); font-size: 12px; margin-bottom: 10px; }
+.litigation-totals strong { font-size: 16px; color: var(--text); }
+.litigation-secondary { padding: 9px 0; font-size: 12px; border-bottom: 1px solid var(--border); }
+.litigation-secondary summary { cursor: pointer; color: var(--text-2); }
+.litigation-charge-notice { background: var(--surface); color: var(--danger-strong, #a22626); border-left: 3px solid currentColor; padding: 8px 12px; margin-bottom: 10px; font-size: 12px; }
+.litigation-charge-notice summary { cursor: pointer; font-weight: 600; }
+.litigation-filters { display: flex; align-items: end; gap: 10px; flex-wrap: wrap; padding-block: 8px; }
+.litigation-filters label { display: block; color: var(--muted); font-size: 11px; margin-bottom: 3px; }
+.litigation-filters > div { flex: 1 1 125px; max-width: 190px; }
+.litigation-filters .litigation-search { flex: 2 1 250px; max-width: 380px; }
+.litigation-filters input, .litigation-filters select { min-height: 34px; }
+.litigation-list-caption, .litigation-pagination { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; font-size: 12px; color: var(--muted); padding-block: 10px; }
+.litigation-table-wrap { border-block: 1px solid var(--border); background: var(--surface); }
+.litigation-case-table { margin: 0; font-size: 12px; min-width: 940px; }
+.litigation-case-table th { font-size: 11px; color: var(--muted); font-weight: 600; white-space: nowrap; background: var(--surface-2, var(--surface)); }
+.litigation-case-table > :not(caption) > * > * { padding: 11px 10px; border-bottom-color: var(--border); }
+.litigation-case-table tbody tr:hover { background: var(--brand-soft); }
+.litigation-case-table tbody tr:focus { outline: 2px solid var(--brand); outline-offset: -2px; }
+.litigation-case-table tbody tr { scroll-margin-top: calc(var(--mca-topbar-h) + 68px); }
+.litigation-case-identity { width: 30%; max-width: 320px; }
+.litigation-party-line { display: block; max-width: 310px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: 11px; margin-top: 3px; }
+.litigation-status { white-space: nowrap; color: var(--muted); }
+.litigation-status.pending { color: var(--warn-strong, #9a6b00); }
+.litigation-status.disposed { color: var(--success-strong, #18734e); }
+#litigation-register[aria-busy="true"] .litigation-table-wrap { opacity: .55; transition: opacity .15s; }
+#litigation-list-feedback:empty { display: none; }
+@media (max-width: 900px) {
+    .litigation-filters > div, .litigation-filters .litigation-search { max-width: none; }
+    .workspace-menu-panel { right: auto; left: 0; }
+    .litigation-pagination .btn { padding-inline: 8px; }
+}
+
+.mca-coverage-strip { padding-block: 4px; font-size: 11px; }
+.mca-company-head { gap: 8px 16px; }
+@media (prefers-reduced-motion: reduce) { #litigation-register[aria-busy="true"] .litigation-table-wrap { transition: none; } }

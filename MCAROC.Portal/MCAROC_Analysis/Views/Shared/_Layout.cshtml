@@ -101,7 +101,7 @@
         <button type="button" class="pi-sidebar-scrim" id="piSidebarScrim" aria-label="Close navigation"></button>
 
         <div class="pi-main">
-            <header class="pi-topbar">
+            <header class="pi-topbar @(ViewData["CompactRequestWorkspace"] is true ? "workspace-topbar" : "")">
                 <button type="button" class="pi-mobile-nav-toggle" id="piMobileNavToggle" aria-controls="piSidebar" aria-expanded="false" aria-label="Open navigation">
                     <i class="bi bi-list"></i>
                 </button>
@@ -134,7 +134,7 @@
                 </div>
             </header>
 
-            <nav class="pi-breadcrumb" aria-label="Breadcrumb">
+            <nav class="pi-breadcrumb @(ViewData["CompactRequestWorkspace"] is true ? "workspace-breadcrumb" : "")" aria-label="Breadcrumb">
                 <a asp-controller="Dashboard" asp-action="Index"><i class="bi bi-house-door"></i> Dashboard</a>
                 <span class="sep">/</span>
                 <span class="current">@(ViewData["Title"] ?? "Dashboard")</span>

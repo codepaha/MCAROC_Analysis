@@ -2,6 +2,7 @@
 @inject Microsoft.AspNetCore.Hosting.IWebHostEnvironment HostEnv
 @{
     ViewData["Title"] = Model.Request.RequestNumber;
+    ViewData["CompactRequestWorkspace"] = true;
     var r = Model.Request;
     var run = Model.LatestAnalysisRun;
     var coverage = Model.SheetCoverage;
@@ -22,15 +23,20 @@
 
 @* ─────────────────────────  Fixed company header + domain tabs  ───────────────────────── *@
 <div class="mca-detail-head" id="mcaDetailHead"
+     data-compact-workspace="true"
      data-request-id="@r.RequestId"
      data-focus-charge="@(Model.FocusChargeId?.ToString() ?? "")"
      data-focus-case="@(Model.FocusCaseId?.ToString() ?? "")">
     <div class="mca-company-head">
         <div class="mca-company-id">
-            <p class="mca-request-context"><a href="/Requests">Search history</a><span aria-hidden="true">/</span>@r.RequestNumber</p>
             <h1>@r.CompanyName</h1>
             <div class="mca-ids">
                 <span><b>@(r.EntityType == EntityType.LLP ? "LLPIN:" : "CIN:")</b> @(Model.CompanyProfile?.Cin ?? r.Cin ?? r.Llpin ?? "—")</span>
+                @if (!string.IsNullOrEmpty(Model.CompanyProfile?.CompanyStatus))
+                { <span>@Model.CompanyProfile.CompanyStatus</span> }
+                <details class="workspace-menu company-details">
+                    <summary>Company details</summary>
+                    <div class="workspace-menu-panel mca-company-detail-fields">
                 <span><b>PAN:</b> @(Model.CompanyProfile?.Pan ?? r.Pan ?? "—")</span>
                 @if (!string.IsNullOrEmpty(Model.CompanyProfile?.CompanyStatus))
                 {
@@ -44,6 +50,8 @@
                 {
                     <span><b>LEI:</b> @Model.CompanyProfile.Lei</span>
                 }
+                    </div>
+                </details>
             </div>
         </div>
         <div class="mca-company-meta">
@@ -59,10 +67,15 @@
                         <span class="pi-status-pill pi-status-processing">Manual Review Required</span>
                     }
                 </div>
+                @if (r.RequestStatus == RequestStatus.AnalysisCompleted)
+                { <a href="/Requests/@r.RequestId/dossier" class="btn btn-sm btn-primary">Download dossier</a> }
+                <details class="workspace-menu">
+                    <summary class="btn btn-sm btn-outline-secondary">Actions</summary>
+                    <div class="workspace-menu-panel">
                 <div class="mca-head-actions">
                     @if (r.RequestStatus == RequestStatus.AnalysisCompleted)
                     {
-                        <a href="/Requests/@r.RequestId/dossier" class="btn btn-sm btn-primary">Download dossier</a>
+
                         @* #164 internal calculation-assurance review panel — never part of the customer deliverable
                            above. Plain link, not a tab: it lives on its own page at /internal/calc-audit so this
                            page's own tab markup never has to branch on whether audit data is present. *@
@@ -86,7 +99,9 @@
                             <i class="bi bi-journal-text"></i><span>Audit logs</span>
                         </a>
                     }
-                </div>
+                </div>                    </div>
+                </details>
+
             @* Crore/Lakh/₹ amount unit toggle (#123) — only this page renders any amount, so the
                control lives here, not in _Layout.cshtml. The dossier PDF above always shows Crore
                regardless of this toggle: it's a fixed generated document, not the live page. *@
@@ -120,7 +135,7 @@
         <div class="mca-coverage-strip">
             <span class="mca-coverage-item">
                 <i class="bi bi-collection"></i>
-                Data coverage: <b>@coverage.PresentOptionalSheets of @coverage.TotalOptionalSheets</b> optional workbook sheets present
+                Coverage: <b>@coverage.PresentOptionalSheets / @coverage.TotalOptionalSheets</b> sheets
             </span>
             @if (coverage.AnySheetAbsent)
             {
@@ -143,6 +158,8 @@
         </div>
     }
 
+</div>
+
     <ul class="nav mca-tabs" id="mcaTabs" role="tablist" aria-label="Assessment sections">
         @for (var i = 0; i < tabs.Length; i++)
         {
@@ -157,7 +174,6 @@
             </li>
         }
     </ul>
-</div>
 
 @if (TempData["AutoFetchOk"] is string autoFetchOk)
 {
@@ -203,4 +219,5 @@
     <script type="module" src="~/js/amount-unit.js"></script>
     <script src="~/js/contents-nav.js" asp-append-version="true"></script>
     <script src="~/js/chat-panel.js" asp-append-version="true"></script>
+    <script src="~/js/litigation-workspace.js" asp-append-version="true"></script>
 }

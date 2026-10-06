@@ -3,6 +3,11 @@
 @using MCAROC_Analysis.Services.LitigationData
 @model LitigationCasePage
 @{
+    var returnUrl = Context.Request.Query["returnUrl"].ToString();
+    var expectedReturnPath = $"/Requests/{Model.Request.RequestId}";
+    if (!Url.IsLocalUrl(returnUrl) || !(returnUrl.StartsWith(expectedReturnPath + "?", StringComparison.Ordinal)
+        || returnUrl.StartsWith(expectedReturnPath + "#", StringComparison.Ordinal) || returnUrl == expectedReturnPath))
+        returnUrl = expectedReturnPath + "#tab-litigation";
     var card = Model.Card;
     var request = Model.Request;
     var risk = card.Risk!;
@@ -29,7 +34,7 @@
 
 <div class="container-fluid py-3" id="litigation-case-page">
     <div class="mb-3 small">
-        <a href="/Requests/@request.RequestId#tab-litigation"><i class="bi bi-arrow-left me-1"></i>Litigation — @request.CompanyName</a>
+        <a href="@returnUrl"><i class="bi bi-arrow-left me-1"></i>Litigation — @request.CompanyName</a>
     </div>
 
     <!-- Identity -->

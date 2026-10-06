@@ -55,6 +55,18 @@ public class LitigationController(
         return run is null ? NotFound() : Ok(run);
     }
 
+    /// <summary>Lifecycle-only polling: never loads case analyses or extracted order evidence.</summary>
+    [HttpGet("/Requests/{id:long}/Litigation/AnalysisProgress")]
+    [ResponseCache(NoStore = true, Location = ResponseCacheLocation.None)]
+    public async Task<IActionResult> GetAnalysisProgress(long id, CancellationToken ct)
+    {
+        var run = await db.LitigationAiAnalysisRuns.AsNoTracking().Where(x => x.RequestId == id)
+            .OrderByDescending(x => x.RunNumber).Select(x => new
+            { x.LitigationAiAnalysisRunId, x.RunNumber, status = x.Status.ToString(), x.CompletedUtc })
+            .FirstOrDefaultAsync(ct);
+        return run is null ? NotFound() : Ok(run);
+    }
+
     /// <summary>Starts or reruns a BPR litigation search for the request. Evaluates fail-closed eligibility
     /// before queuing the job. The first search is free; once a report exists another search is a client refresh,
     /// which is chargeable and must carry <paramref name="confirmChargeableRefresh"/> (set by the tab's confirm

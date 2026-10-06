@@ -11,6 +11,10 @@ public sealed record RequestPageVersion(long? Ingestion, long? Analysis, Analysi
     long? FilingBatch, long? LitigationSnapshot, string? SearchHash, long? LitigationAnalysis,
     LitigationAiAnalysisRunStatus? LitigationAnalysisStatus)
 {
+    public string Key => Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
+        System.Text.Encoding.UTF8.GetBytes(System.Text.Json.JsonSerializer.Serialize(new
+        { Ingestion, Analysis, AnalysisStatus, FilingBatch, LitigationSnapshot, SearchHash, LitigationAnalysis, LitigationAnalysisStatus }))));
+
     public static Task<RequestPageVersion?> ReadAsync(AppDbContext db, long id, CancellationToken ct)
     {
         var snapshots = LitigationSnapshotSelection.ForRequest(db, id);

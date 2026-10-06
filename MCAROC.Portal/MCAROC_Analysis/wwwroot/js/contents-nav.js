@@ -389,16 +389,18 @@
         }
 
         const RO = (options && options.ResizeObserver) || (typeof ResizeObserver !== 'undefined' ? ResizeObserver : null);
-        if (RO && head) {
+        const compactWorkspace = head && head.dataset && head.dataset.compactWorkspace === 'true';
+        const stickyHead = compactWorkspace ? d.getElementById('mcaTabs') : head;
+        if (RO && stickyHead) {
             detailHeadObserver = new RO(function (entries) {
                 for (const entry of entries) {
                     const h = entry.target.offsetHeight || (entry.contentRect && entry.contentRect.height);
                     if (h) setCssVar('--mca-detail-head-h', h + 'px');
                 }
             });
-            detailHeadObserver.observe(head);
+            detailHeadObserver.observe(stickyHead);
             // Initial sync
-            if (head.offsetHeight) setCssVar('--mca-detail-head-h', head.offsetHeight + 'px');
+            if (stickyHead.offsetHeight) setCssVar('--mca-detail-head-h', stickyHead.offsetHeight + 'px');
         }
 
         function updateContentsNavObservation(domain) {

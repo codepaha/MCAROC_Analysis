@@ -59,6 +59,13 @@ public class LitigationOrderOutcomeQuery(AppDbContext db, IMemoryCache? cache = 
         var successful = await db.LitigationOrderClassifications.AsNoTracking()
             .Where(c => c.RequestId == requestId
                 && (c.Status == LitigationAiAnalysisItemStatus.Completed || c.Status == LitigationAiAnalysisItemStatus.InsufficientEvidence))
+            .Select(c => new LitigationOrderClassification
+            {
+                LitigationOrderClassificationId = c.LitigationOrderClassificationId,
+                LitigationOrderDocumentId = c.LitigationOrderDocumentId, LitigationCaseOrderId = c.LitigationCaseOrderId,
+                LitigationCaseId = c.LitigationCaseId, Status = c.Status, EvidenceHash = c.EvidenceHash, PromptHash = c.PromptHash,
+                OutcomeTypesJson = c.OutcomeTypesJson, FineAmount = c.FineAmount, Confidence = c.Confidence, EvidenceTruncated = c.EvidenceTruncated
+            })
             .ToListAsync(ct);
         if (successful.Count == 0)
             return new OrderOutcomeLookup([], chunkVersion.Documents, 0);
