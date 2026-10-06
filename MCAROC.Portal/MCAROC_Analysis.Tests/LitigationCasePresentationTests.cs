@@ -8,60 +8,64 @@ namespace MCAROC_Analysis.Tests;
 public sealed class LitigationCasePresentationTests
 {
     [Theory]
-    [InlineData("supreme_court", "SupremeCourt", LitigationInstitution.SupremeCourt)]
-    [InlineData("high_court", "BombayHighCourt", LitigationInstitution.HighCourt)]
-    [InlineData("district_court", "ADDL. CHIEF JUDICIAL MAGISTRATE, ANDHERI", LitigationInstitution.DistrictCourt)]
-    // The vendor files these under a "high risk court" category that is not a forum: the court name decides.
-    [InlineData("high_risk_court", "Drt", LitigationInstitution.Drt)]
-    [InlineData("high_risk_court", "Nclt", LitigationInstitution.Nclt)]
-    [InlineData("high_risk_court", "nclt", LitigationInstitution.Nclt)]
-    [InlineData("high_risk_court", "Nclat", LitigationInstitution.Nclat)]
-    [InlineData("tribunal_cases", "Drat", LitigationInstitution.Drat)]
-    [InlineData("tribunal_cases", "Itat", LitigationInstitution.Itat)]
-    [InlineData("tribunal_cases", "Cestat", LitigationInstitution.Cestat)]
-    [InlineData("tribunal_cases", "Consumer Court", LitigationInstitution.ConsumerCourt)]
-    [InlineData("tribunal_cases", "Unspecified Court", LitigationInstitution.Others)]
-    [InlineData("tribunal_cases", null, LitigationInstitution.Others)]
-    [InlineData(null, "Debts Recovery Tribunal, Kolkata", LitigationInstitution.Drt)]
-    public void Resolve_maps_vendor_category_and_court_name_to_a_fixed_forum(string? category, string? court, LitigationInstitution expected) =>
-        Assert.Equal(expected, LitigationCasePresentation.Resolve(category, court));
+    // the vendor's own type decides, exactly as the baseline risk reads it
+    [InlineData("supreme", "SupremeCourt", "supreme_court", LitigationInstitution.SupremeCourt)]
+    [InlineData("highcourt", "BombayHighCourt", "high_court", LitigationInstitution.HighCourt)]
+    [InlineData("district", "ADDL. CHIEF JUDICIAL MAGISTRATE, ANDHERI", "district_court", LitigationInstitution.DistrictCourt)]
+    [InlineData("drt", "Drt", "high_risk_court", LitigationInstitution.Drt)]
+    [InlineData("nclt", "Nclt", "high_risk_court", LitigationInstitution.Nclt)]
+    [InlineData("nclat", "Nclat", "high_risk_court", LitigationInstitution.Nclat)]
+    [InlineData("drat", "Drat", "tribunal_cases", LitigationInstitution.Drat)]
+    [InlineData("itat", "Itat", "tribunal_cases", LitigationInstitution.Itat)]
+    [InlineData("cestat", "Cestat", "tribunal_cases", LitigationInstitution.Cestat)]
+    [InlineData("consumer", "Consumer Court", "tribunal_cases", LitigationInstitution.ConsumerCourt)]
+    [InlineData("others", "Unspecified Court", "tribunal_cases", LitigationInstitution.Others)]
+    [InlineData("rera", "State RERA", null, LitigationInstitution.Others)]
+    // no type: the court name, then the vendor's category for the three court tiers
+    [InlineData(null, "Debts Recovery Tribunal, Kolkata", null, LitigationInstitution.Drt)]
+    [InlineData(null, "SupremeCourt", "supreme_court", LitigationInstitution.SupremeCourt)]
+    [InlineData(null, "KarnatakaHighCourt", "high_court", LitigationInstitution.HighCourt)]
+    [InlineData(null, "Sub Judge", "district_court", LitigationInstitution.DistrictCourt)]
+    // "high_risk_court" is not a forum
+    [InlineData(null, null, "high_risk_court", LitigationInstitution.Others)]
+    public void Resolve_maps_a_case_to_a_fixed_forum(string? type, string? court, string? category, LitigationInstitution expected) =>
+        Assert.Equal(expected, LitigationCasePresentation.Resolve(type, court, category));
 
     [Fact]
     public void Resolve_does_not_mistake_an_appellate_tribunal_for_its_first_instance_forum()
     {
-        Assert.Equal(LitigationInstitution.Nclat, LitigationCasePresentation.Resolve(null, "NCLAT Principal Bench"));
-        Assert.Equal(LitigationInstitution.Drat, LitigationCasePresentation.Resolve(null, "DRAT Mumbai"));
+        Assert.Equal(LitigationInstitution.Nclat, LitigationCasePresentation.Resolve(null, "NCLAT Principal Bench", null));
+        Assert.Equal(LitigationInstitution.Drat, LitigationCasePresentation.Resolve(null, "DRAT Mumbai", null));
     }
 
     private static readonly string[] Targets = ["Coastal Projects Limited", "COASTAL PROJECTS PRIVATE LIMITED", "Coastal Projects Ltd"];
 
     [Theory]
-    [InlineData("by", "[]", "[]", LitigationDirection.By)]
-    [InlineData("against", "[]", "[]", LitigationDirection.Against)]
-    [InlineData("AGAINST", """[{"name":"COASTAL PROJECTS LTD"}]""", "[]", LitigationDirection.Against)] // the vendor wins, even over the party lists
-    public void ResolveDirection_prefers_the_vendors_direction(string vendor, string pet, string res, LitigationDirection expected) =>
-        Assert.Equal(expected, LitigationCasePresentation.ResolveDirection(vendor, pet, res, Targets));
+    // the vendor's direction settles the side when the party names do not
+    [InlineData("by", "[]", "[]", LitigationCompanySide.ByCompany)]
+    [InlineData("against", "[]", "[]", LitigationCompanySide.AgainstCompany)]
+    [InlineData("AGAINST", """[{"name":"A"}]""", """[{"name":"B"}]""", LitigationCompanySide.AgainstCompany)]
+    // a case naming the company on both sides keeps the vendor's direction rather than being left undetermined
+    [InlineData("against", """[{"name":"COASTAL PROJECTS LTD"}]""", """[{"name":"COASTAL PROJECTS PVT LTD"}]""", LitigationCompanySide.AgainstCompany)]
+    [InlineData("by", """[{"name":"COASTAL PROJECTS LTD"}]""", """[{"name":"COASTAL PROJECTS PVT LTD"}]""", LitigationCompanySide.ByCompany)]
+    public void Side_uses_the_vendors_direction_when_the_names_leave_it_open(string vendor, string pet, string res, LitigationCompanySide expected) =>
+        Assert.Equal(expected, LitigationCasePresentation.Side(vendor, pet, res, Targets));
 
     [Theory]
     // company among the petitioners: it brought the case
-    [InlineData("""[{"name":"COASTAL PROJECTS PRIVATE LIMITED","address":"Hyderabad"}]""", """[{"name":"DY. COMMISSIONER OF INCOME TAX"}]""", LitigationDirection.By)]
-    [InlineData("""[{"name":"M/S COASTAL PROJECTS (P) LTD"}]""", """[{"name":"ACIT"}]""", LitigationDirection.By)]
+    [InlineData("""[{"name":"COASTAL PROJECTS PRIVATE LIMITED","address":"Hyderabad"}]""", """[{"name":"DY. COMMISSIONER OF INCOME TAX"}]""", LitigationCompanySide.ByCompany)]
+    [InlineData("""[{"name":"M/S COASTAL PROJECTS (P) LTD"}]""", """[{"name":"ACIT"}]""", LitigationCompanySide.ByCompany)]
     // company among the respondents: it is defending
-    [InlineData("""[{"name":"OM PRAKASH"}]""", """[{"name":"COASTAL PROJECTS LTD."}]""", LitigationDirection.Against)]
-    [InlineData("""[{"name":"IFCI LTD"}]""", """[{"name":"COASTAL PROJECTS LTD  and ORS."}]""", LitigationDirection.Against)]
-    // on both sides, or on neither: not guessed
-    [InlineData("""[{"name":"COASTAL PROJECTS LTD"}]""", """[{"name":"COASTAL PROJECTS PVT LTD"}]""", LitigationDirection.Unspecified)]
-    [InlineData("""[{"name":"A"}]""", """[{"name":"B"}]""", LitigationDirection.Unspecified)]
-    [InlineData(null, null, LitigationDirection.Unspecified)]
+    [InlineData("""[{"name":"OM PRAKASH"}]""", """[{"name":"COASTAL PROJECTS LTD."}]""", LitigationCompanySide.AgainstCompany)]
+    [InlineData("""[{"name":"IFCI LTD"}]""", """[{"name":"COASTAL PROJECTS LTD  and ORS."}]""", LitigationCompanySide.AgainstCompany)]
+    // on both sides, or on neither, with no vendor direction: not guessed
+    [InlineData("""[{"name":"COASTAL PROJECTS LTD"}]""", """[{"name":"COASTAL PROJECTS PVT LTD"}]""", LitigationCompanySide.Both)]
+    [InlineData("""[{"name":"A"}]""", """[{"name":"B"}]""", LitigationCompanySide.Unknown)]
+    [InlineData(null, null, LitigationCompanySide.Unknown)]
     // a different company that merely shares a word is not the target
-    [InlineData("""[{"name":"COASTAL PROJECT"}]""", """[{"name":"X"}]""", LitigationDirection.Unspecified)]
-    public void ResolveDirection_reads_the_side_from_the_party_lists_when_the_vendor_gives_none(string? pet, string? res, LitigationDirection expected) =>
-        Assert.Equal(expected, LitigationCasePresentation.ResolveDirection(null, pet, res, Targets));
-
-    [Fact]
-    public void ResolveDirection_without_a_target_name_is_unspecified() =>
-        Assert.Equal(LitigationDirection.Unspecified,
-            LitigationCasePresentation.ResolveDirection(null, """[{"name":"COASTAL PROJECTS LTD"}]""", "[]", []));
+    [InlineData("""[{"name":"COASTAL PROJECT"}]""", """[{"name":"X"}]""", LitigationCompanySide.Unknown)]
+    public void Side_reads_the_company_from_the_party_lists_when_the_vendor_gives_none(string? pet, string? res, LitigationCompanySide expected) =>
+        Assert.Equal(expected, LitigationCasePresentation.Side(null, pet, res, Targets));
 
     private static readonly DateOnly Today = new(2026, 10, 6);
 
@@ -122,7 +126,7 @@ public sealed class LitigationCasePresentationTests
 
         var view = Assert.Single(LitigationReportArtifacts.BuildCaseViews(report));
 
-        Assert.Equal(LitigationDirection.By, view.Direction);
+        Assert.Equal(LitigationCompanySide.ByCompany, view.Side);
         Assert.Equal(LitigationInstitution.Itat, view.Institution);
         Assert.Equal("Pending 1 yr", view.Age);
     }

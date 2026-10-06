@@ -1,6 +1,5 @@
 using System.Globalization;
 using MCAROC_Analysis.Models;
-using MCAROC_Analysis.Services.CompanyMaster;
 
 namespace MCAROC_Analysis.Services.LitigationData;
 
@@ -21,11 +20,7 @@ public enum LitigationInstitution
     Others
 }
 
-/// <summary>Whether the company brought the case or the case was brought against it.</summary>
-public enum LitigationDirection { By, Against, Unspecified }
-
-/// <summary>Presentation rules shared by the litigation report and the portal: which forum a case belongs to, whose
-/// side the company is on, how long the case has been open, and the order cases are listed in. Pure functions of
+/// <summary>Presentation rules shared by the litigation report and the portal: which forum a case belongs to, how long the case has been open, and the order cases are listed in. Pure functions of
 /// the stored case — nothing here reads the database or the vendor.</summary>
 public static class LitigationCasePresentation
 {
@@ -44,65 +39,49 @@ public static class LitigationCasePresentation
         _ => "Others"
     };
 
-    /// <summary>The vendor's category is trusted for the three court tiers. Anything else (its "high_risk_court",
-    /// "tribunal_cases", a blank) is a tribunal, which the court name identifies — the vendor files DRT, NCLT and
-    /// NCLAT under a "high risk court" category that is not a forum.</summary>
-    public static LitigationInstitution Resolve(string? courtCategory, string? court)
+    /// <summary>The forum a case sits in, from the same reading of the vendor's type and court name that the baseline risk uses
+    /// (<see cref="LitigationBaselineRisk.ForumOf"/>), so a case is never in one forum for its risk and another for its summary.
+    /// RERA and anything unrecognised are "Others". The vendor's court category is only a last resort for the three court tiers: its
+    /// "high_risk_court" is not a forum.</summary>
+    public static LitigationInstitution Resolve(string? type, string? court, string? courtCategory)
     {
-        switch (courtCategory?.Trim().ToLowerInvariant())
+        var institution = LitigationBaselineRisk.ForumOf(type, court, courtCategory) switch
         {
-            case "supreme_court": return LitigationInstitution.SupremeCourt;
-            case "high_court": return LitigationInstitution.HighCourt;
-            case "district_court": return LitigationInstitution.DistrictCourt;
-        }
-
-        var name = new string((court ?? string.Empty).Where(char.IsLetter).ToArray()).ToLowerInvariant();
-        if (name.Contains("nclat") || name.Contains("nationalcompanylawappellate")) return LitigationInstitution.Nclat;
-        if (name.Contains("nclt") || name.Contains("nationalcompanylawtribunal")) return LitigationInstitution.Nclt;
-        if (name.Contains("drat") || name.Contains("debtsrecoveryappellate")) return LitigationInstitution.Drat;
-        if (name.Contains("drt") || name.Contains("debtsrecoverytribunal") || name.Contains("debtrecoverytribunal")) return LitigationInstitution.Drt;
-        if (name.Contains("itat") || name.Contains("incometaxappellate")) return LitigationInstitution.Itat;
-        if (name.Contains("cestat") || name.Contains("customsexcise")) return LitigationInstitution.Cestat;
-        if (name.Contains("consumer")) return LitigationInstitution.ConsumerCourt;
-        return LitigationInstitution.Others;
-    }
-
-    /// <summary>The vendor's direction when it gives one. A few categories (tribunal cases) carry none, so otherwise the
-    /// side is read from the party lists: the company among the petitioners means it brought the case, among the
-    /// respondents means it is defending. In both lists or neither the side cannot be told, and is not guessed.</summary>
-    public static LitigationDirection ResolveDirection(
-        string? vendorDirection, string? petitionersJson, string? respondentsJson, IEnumerable<string> targetNames)
-    {
-        switch (vendorDirection?.Trim().ToLowerInvariant())
+            LitigationForum.SupremeCourt => LitigationInstitution.SupremeCourt,
+            LitigationForum.HighCourt => LitigationInstitution.HighCourt,
+            LitigationForum.DistrictCourt => LitigationInstitution.DistrictCourt,
+            LitigationForum.Consumer => LitigationInstitution.ConsumerCourt,
+            LitigationForum.Cestat => LitigationInstitution.Cestat,
+            LitigationForum.Nclt => LitigationInstitution.Nclt,
+            LitigationForum.Nclat => LitigationInstitution.Nclat,
+            LitigationForum.Itat => LitigationInstitution.Itat,
+            LitigationForum.Drt => LitigationInstitution.Drt,
+            LitigationForum.Drat => LitigationInstitution.Drat,
+            _ => LitigationInstitution.Others
+        };
+        if (institution != LitigationInstitution.Others) return institution;
+        return courtCategory?.Trim().ToLowerInvariant() switch
         {
-            case "by": return LitigationDirection.By;
-            case "against": return LitigationDirection.Against;
-        }
-
-        var targets = targetNames.Select(NameCore).Where(t => t.Length > 0).Distinct().ToList();
-        if (targets.Count == 0) return LitigationDirection.Unspecified;
-
-        var asPetitioner = Names(petitionersJson).Any(p => MentionsAny(p, targets));
-        var asRespondent = Names(respondentsJson).Any(p => MentionsAny(p, targets));
-        return (asPetitioner, asRespondent) switch
-        {
-            (true, false) => LitigationDirection.By,
-            (false, true) => LitigationDirection.Against,
-            _ => LitigationDirection.Unspecified
+            "supreme_court" => LitigationInstitution.SupremeCourt,
+            "high_court" => LitigationInstitution.HighCourt,
+            "district_court" => LitigationInstitution.DistrictCourt,
+            _ => LitigationInstitution.Others
         };
     }
 
-    private static IEnumerable<string> Names(string? json) =>
-        LitigationReportArtifacts.PartyText(json).Split("; ", StringSplitOptions.RemoveEmptyEntries).Where(n => n != "-");
+    /// <summary>The company's side as the report and the register show it: the same <see cref="LitigationCompanySides.Determine"/> the
+    /// case page uses.</summary>
+    public static LitigationCompanySide Side(string? vendorDirection, string? petitionersJson, string? respondentsJson, IEnumerable<string> companyNames) =>
+        LitigationCompanySides.Determine(
+            LitigationCaseCardMapper.ParseNames(petitionersJson), LitigationCaseCardMapper.ParseNames(respondentsJson), companyNames, vendorDirection);
 
-    private static string NameCore(string name) => CompanyNameNormalizer.Normalize(name).NameCore;
-
-    /// <summary>Whole-word match, so "COASTAL PROJECTS" matches "COASTAL PROJECTS AND ORS" but never "COASTALPROJECTSX".</summary>
-    private static bool MentionsAny(string partyName, List<string> targetCores)
+    public static string SideLabel(LitigationCompanySide side) => side switch
     {
-        var party = " " + CompanyNameNormalizer.Normalize(partyName).NameNormalized + " ";
-        return targetCores.Any(core => party.Contains(" " + core + " ", StringComparison.Ordinal));
-    }
+        LitigationCompanySide.ByCompany => "By the company",
+        LitigationCompanySide.AgainstCompany => "Against the company",
+        LitigationCompanySide.Both => "Company on both sides",
+        _ => "Not determined"
+    };
 
     public static readonly string[] DateFormats = ["dd-MM-yyyy", "d-M-yyyy", "yyyy-MM-dd", "dd/MM/yyyy", "d/M/yyyy"];
 
@@ -151,11 +130,13 @@ public static class LitigationCasePresentation
         _ => 2
     };
 
-    public static int DirectionOrder(LitigationDirection direction) => direction switch
+    /// <summary>Against the company first (the cases a lender cares about), then by the company, then the undetermined.</summary>
+    public static int SideOrder(LitigationCompanySide side) => side switch
     {
-        LitigationDirection.Against => 0,
-        LitigationDirection.By => 1,
-        _ => 2
+        LitigationCompanySide.AgainstCompany => 0,
+        LitigationCompanySide.ByCompany => 1,
+        LitigationCompanySide.Both => 2,
+        _ => 3
     };
 
     /// <summary>Filing date as a sortable number, so cases without one sort last.</summary>

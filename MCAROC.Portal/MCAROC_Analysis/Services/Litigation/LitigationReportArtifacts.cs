@@ -205,7 +205,7 @@ public static class LitigationReportArtifacts
     /// and how old it is.</summary>
     internal sealed record CaseView(
         StandaloneReportCaseDto Item, LitigationCaseStatusBucket Bucket, LitigationInstitution Institution,
-        LitigationDirection Direction, string Age);
+        LitigationCompanySide Side, string Age);
 
     /// <summary>Every case, in report order: pending, then disposed, then status not reported; within a section by forum
     /// seniority, cases against the company before ones it brought, newest filing first.</summary>
@@ -218,23 +218,16 @@ public static class LitigationReportArtifacts
             {
                 var bucket = LitigationCaseStatusClassifier.Classify(item.CaseStatus, item.CaseStage);
                 return new CaseView(
-                    item, bucket, LitigationCasePresentation.Resolve(item.CourtCategory, item.Court),
-                    LitigationCasePresentation.ResolveDirection(item.Direction, item.PetitionersJson, item.RespondentsJson, targets),
+                    item, bucket, LitigationCasePresentation.Resolve(item.Type, item.Court, item.CourtCategory),
+                    LitigationCasePresentation.Side(item.Direction, item.PetitionersJson, item.RespondentsJson, targets),
                     LitigationCasePresentation.Age(item.FilingDate, item.DecisionDate, bucket, today));
             })
             .OrderBy(v => LitigationCasePresentation.SectionOrder(v.Bucket))
             .ThenBy(v => v.Institution)
-            .ThenBy(v => LitigationCasePresentation.DirectionOrder(v.Direction))
+            .ThenBy(v => LitigationCasePresentation.SideOrder(v.Side))
             .ThenByDescending(v => LitigationCasePresentation.FilingSortKey(v.Item.FilingDate))
             .ToList();
     }
-
-    internal static string DirectionLabel(LitigationDirection direction) => direction switch
-    {
-        LitigationDirection.By => "By the company",
-        LitigationDirection.Against => "Against the company",
-        _ => "Not determined"
-    };
 
     public static byte[] RenderCsv(StandaloneLitigationReport report)
     {
@@ -302,7 +295,7 @@ public static class LitigationReportArtifacts
         foreach (var value in new[]
         {
             serial.ToString(CultureInfo.InvariantCulture), report.AssignmentNumber, report.CompanyName,
-            item.ProviderCaseId, item.CnrNumber, item.CourtCategory, view.Direction == LitigationDirection.Unspecified ? null : view.Direction.ToString(),
+            item.ProviderCaseId, item.CnrNumber, item.CourtCategory, view.Side switch { LitigationCompanySide.ByCompany => "By", LitigationCompanySide.AgainstCompany => "Against", _ => null },
             LitigationCasePresentation.Label(view.Institution), view.Age, item.Type, item.Court, item.Bench,
             item.CaseNumber, item.CaseType, item.CaseYear, item.CaseStage, item.CaseStatus, item.Act, item.FilingDate,
             item.LastHearingDate, item.NextHearingDate, item.DecisionDate, item.State, item.District,
@@ -511,7 +504,7 @@ internal sealed class LitigationReportPdfDocument(StandaloneLitigationReport rep
     /// the company and cases it brought each show total (pending / disposed / unknown).</summary>
     private void ComposeForumSummary(IContainer container)
     {
-        var showUnspecified = views.Any(v => v.Direction == LitigationDirection.Unspecified);
+        var showUnspecified = views.Any(v => v.Side is LitigationCompanySide.Both or LitigationCompanySide.Unknown);
         container.Table(table =>
         {
             table.ColumnsDefinition(columns =>
@@ -536,9 +529,9 @@ internal sealed class LitigationReportPdfDocument(StandaloneLitigationReport rep
                     : c.BorderBottom(0.5f).BorderColor("#D7E3F2").Padding(4);
                 table.Cell().Element(Cell).Text(t => { var span = t.Span(label).FontSize(7.5f); if (total) span.Bold(); });
                 table.Cell().Element(Cell).AlignRight().Text(t => { var span = t.Span(rows.Count.ToString(CultureInfo.InvariantCulture)).FontSize(7.5f); if (total) span.Bold(); });
-                Breakdown(table.Cell().Element(Cell), rows.Where(v => v.Direction == LitigationDirection.Against).ToList());
-                Breakdown(table.Cell().Element(Cell), rows.Where(v => v.Direction == LitigationDirection.By).ToList());
-                if (showUnspecified) Breakdown(table.Cell().Element(Cell), rows.Where(v => v.Direction == LitigationDirection.Unspecified).ToList());
+                Breakdown(table.Cell().Element(Cell), rows.Where(v => v.Side == LitigationCompanySide.AgainstCompany).ToList());
+                Breakdown(table.Cell().Element(Cell), rows.Where(v => v.Side == LitigationCompanySide.ByCompany).ToList());
+                if (showUnspecified) Breakdown(table.Cell().Element(Cell), rows.Where(v => v.Side is LitigationCompanySide.Both or LitigationCompanySide.Unknown).ToList());
             }
 
             foreach (var institution in Enum.GetValues<LitigationInstitution>())
@@ -667,7 +660,7 @@ internal sealed class LitigationReportPdfDocument(StandaloneLitigationReport rep
         var fields = new (string Label, string Value)[]
         {
             ("CNR NO", Display(item.CnrNumber)), ("CASE AGE", view.Age), ("FORUM", LitigationCasePresentation.Label(view.Institution)), ("TYPE", Humanize(item.Type)),
-            ("DIRECTION", LitigationReportArtifacts.DirectionLabel(view.Direction)), ("BENCH", Display(item.Bench)), ("CASE TYPE / YEAR", JoinValues(item.CaseType, item.CaseYear)),
+            ("DIRECTION", LitigationCasePresentation.SideLabel(view.Side)), ("BENCH", Display(item.Bench)), ("CASE TYPE / YEAR", JoinValues(item.CaseType, item.CaseYear)),
             ("CASE STAGE", Display(item.CaseStage)), ("FILING DATE", Display(item.FilingDate)), ("LAST HEARING", Display(item.LastHearingDate)),
             ("NEXT HEARING", Display(item.NextHearingDate)), ("DECISION DATE", Display(item.DecisionDate)), ("STATE / DISTRICT", JoinValues(item.State, item.District)), ("ACT", Display(item.Act))
         };
