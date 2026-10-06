@@ -181,12 +181,17 @@ public static partial class LitigationOrderAddressMatcher
         if (addressPool.Count == 0 || cases.Count == 0)
             return [];
 
-        var results = new List<LitigationPropertyMatchResult>();
-
-        foreach (var c in cases)
+        // Every case is matched independently of the others and the matcher is pure, so the cases run in parallel (a few hundred cases with
+        // thousands of order pages took ~9 minutes on one core). Results are gathered per case and joined in case order, so the output is
+        // exactly what the sequential loop produced.
+        var perCase = new List<LitigationPropertyMatchResult>[cases.Count];
+        Parallel.For(0, cases.Count, i =>
         {
+            var c = cases[i];
+            var caseResults = new List<LitigationPropertyMatchResult>();
+            perCase[i] = caseResults;
             if (IsNcltCase(c))
-                continue;
+                return;
 
             foreach (var order in c.Orders)
             {
@@ -200,12 +205,11 @@ public static partial class LitigationOrderAddressMatcher
                     doc.TextExtractionStatus != FilingDocumentProcessingStatus.TextExtracted)
                     continue;
 
-                var orderMatches = MatchText(addressPool, order.LitigationCaseOrderId, order.OrderDate, order.OrderType, doc.ExtractedText);
-                results.AddRange(orderMatches);
+                caseResults.AddRange(MatchText(addressPool, order.LitigationCaseOrderId, order.OrderDate, order.OrderType, doc.ExtractedText));
             }
-        }
+        });
 
-        return results;
+        return perCase.SelectMany(r => r).ToList();
     }
 
     /// <summary>
@@ -336,19 +340,27 @@ public static partial class LitigationOrderAddressMatcher
 
         var pages = SegmentPages(extractedText);
         var matches = new List<LitigationPropertyMatchResult>();
+        // Skipped comparisons are exactly those that cannot match (AddressMatcher.MayMatch), so the results are unchanged.
+        var targetSignals = addressPool.Select(t => AddressMatcher.SignalsOfAddress(t.AddressText)).ToList();
 
         foreach (var page in pages)
         {
             var paragraphs = SplitParagraphs(page.Text);
+            var paragraphSignals = paragraphs.Select(p => string.IsNullOrWhiteSpace(p) ? default : AddressMatcher.SignalsOfText(p)).ToList();
+            var pageSignals = AddressMatcher.SignalsOfText(page.Text);
 
-            foreach (var target in addressPool)
+            for (var ti = 0; ti < addressPool.Count; ti++)
             {
+                var target = addressPool[ti];
+                var signals = targetSignals[ti];
                 // First pass: test paragraph by paragraph. This bounds the text scope and avoids false PIN conflicts
                 // caused by unrelated court headers, parties, or advocates appearing elsewhere on the same page.
                 bool matchedInParagraph = false;
-                foreach (var para in paragraphs)
+                for (var pi = 0; pi < paragraphs.Count; pi++)
                 {
+                    var para = paragraphs[pi];
                     if (string.IsNullOrWhiteSpace(para)) continue;
+                    if (!AddressMatcher.MayMatch(signals, paragraphSignals[pi])) continue;
 
                     var paraResult = AddressMatcher.Match(target.AddressText, para, target.ExcludedPlaceNames);
                     if (paraResult.Strength != AddressMatchStrength.None)
@@ -375,6 +387,7 @@ public static partial class LitigationOrderAddressMatcher
                 }
 
                 if (matchedInParagraph) continue;
+                if (!AddressMatcher.MayMatch(signals, pageSignals)) continue;
 
                 // Fallback pass: test entire page text (in case property description spanned a line break)
                 var pageResult = AddressMatcher.Match(target.AddressText, page.Text, target.ExcludedPlaceNames);
