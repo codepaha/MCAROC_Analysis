@@ -210,7 +210,17 @@
 
     <!-- Order timeline -->
     <div class="card shadow-sm mb-3" id="case-orders">
-        <div class="card-header bg-light small fw-bold text-uppercase"><i class="bi bi-clock-history me-1 text-primary"></i>Orders <span class="badge bg-secondary">@card.Orders.Count</span></div>
+        @{ var downloadable = card.Orders.Count(o => o.DocumentStatus == LitigationOrderDocumentStatus.Downloaded && o.LitigationOrderDocumentId is not null); }
+        <div class="card-header bg-light small fw-bold text-uppercase d-flex align-items-center gap-2">
+            <button type="button" class="btn btn-link p-0 text-decoration-none fw-bold text-uppercase text-dark d-flex align-items-center gap-2" data-bs-toggle="collapse" data-bs-target="#case-orders-body" aria-expanded="true" aria-controls="case-orders-body" title="Show or hide the orders">
+                <i class="bi bi-chevron-down" data-orders-chevron></i><i class="bi bi-clock-history text-primary"></i>Orders <span class="badge bg-secondary">@card.Orders.Count</span>
+            </button>
+            @if (downloadable > 0)
+            {
+                <a class="btn btn-sm btn-outline-secondary ms-auto text-nowrap" href="/Requests/@request.RequestId/Litigation/Cases/@card.LitigationCaseId/OrdersZip" title="Download every available order PDF of this case as one ZIP"><i class="bi bi-file-earmark-zip me-1"></i>Download all orders (@downloadable) as ZIP</a>
+            }
+        </div>
+        <div class="collapse show" id="case-orders-body">
         <div class="card-body">
             @if (card.Orders.Count == 0)
             {
@@ -254,6 +264,7 @@
                     }
                 </ul>
             }
+        </div>
         </div>
     </div>
 
@@ -325,3 +336,14 @@
         Provider case id @Or(card.ProviderCaseId) · first seen @Ist.Format(card.FirstSeenUtc) · last seen @Ist.Format(card.LastSeenUtc)
     </div>
 </div>
+
+@section Scripts {
+    <script>
+        (function () {
+            var body = document.getElementById('case-orders-body'), chev = document.querySelector('[data-orders-chevron]');
+            if (!body || !chev) return;
+            body.addEventListener('hide.bs.collapse', function () { chev.className = 'bi bi-chevron-right'; chev.setAttribute('data-orders-chevron', ''); });
+            body.addEventListener('show.bs.collapse', function () { chev.className = 'bi bi-chevron-down'; chev.setAttribute('data-orders-chevron', ''); });
+        })();
+    </script>
+}

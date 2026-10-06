@@ -126,13 +126,16 @@
 * { box-sizing: border-box; }
 
 html { font-size: 16px; }
+/* Bootstrap's .small / <small> is 0.875em (14px at 16px); labels, captions and table cells read too small, so 0.925em keeps them subordinate but legible. */
+.small, small { font-size: 0.925em; }
+.badge { font-size: 0.82em; }
 
 body {
     margin: 0;
     background: var(--bg);
     color: var(--text);
     font-family: var(--font);
-    font-size: 15px;
+    font-size: 16px;
     line-height: 1.5;
     letter-spacing: 0;
     -webkit-font-smoothing: antialiased;

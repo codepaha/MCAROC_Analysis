@@ -687,10 +687,10 @@ details > summary.mca-json-toggle {
     position: fixed;
     bottom: 24px;
     right: 24px;
-    width: 440px;
+    width: 620px;
     max-width: calc(100vw - 32px);
-    height: 600px;
-    max-height: calc(100vh - 80px);
+    height: calc(100vh - 48px);
+    max-height: calc(100vh - 48px);
     z-index: 100;
     display: flex;
     flex-direction: column;
@@ -718,14 +718,14 @@ details > summary.mca-json-toggle {
     gap: 12px;
 }
 .mca-chat-messages { display: flex; flex-direction: column; gap: 12px; }
-.mca-chat-turn { display: flex; flex-direction: column; max-width: 88%; }
+.mca-chat-turn { display: flex; flex-direction: column; max-width: 94%; }
 .mca-chat-turn.user { align-self: flex-end; }
 .mca-chat-turn.assistant { align-self: flex-start; }
 .mca-chat-bubble {
     padding: 10px 14px;
     border-radius: 12px;
-    font-size: 13px;
-    line-height: 1.45;
+    font-size: 14.5px;
+    line-height: 1.5;
 }
 .mca-chat-turn.user .mca-chat-bubble {
     background: var(--brand);
@@ -770,13 +770,19 @@ details > summary.mca-json-toggle {
 }
 .mca-chat-suggestions {
     display: flex;
-    flex-wrap: wrap;
+    flex-wrap: nowrap;
     gap: 4px;
     margin-bottom: 8px;
+    overflow-x: auto;
+    padding-bottom: 2px;
 }
+.mca-chat-suggestions .btn { white-space: nowrap; flex: 0 0 auto; }
 .mca-chat-suggestions .btn { font-size: 11px; padding: 2px 8px; }
 .mca-chat-input-row { display: flex; gap: 8px; }
-.mca-chat-input-row textarea { resize: none; font-size: 13px; }
+.mca-chat-input-row textarea { resize: none; font-size: 14px; height: 48px; min-height: 48px; }
+.mca-chat-footer { padding: 8px 12px; }
+/* The server notices (keyword search, indexing) were taking a third of the panel: one line each, full text on hover. */
+.mca-chat-panel .alert { margin: 6px 12px !important; padding: 4px 10px !important; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 @media (max-width: 576px) {
     .mca-chat-panel {
         bottom: 0;
