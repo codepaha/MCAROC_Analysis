@@ -30,6 +30,8 @@ public sealed class RegistrySnapshotMetadata
 {
     public DateTime? CalculatedUtc { get; set; }
     public bool IsImportedBaseline { get; set; }
+    /// <summary>The registry's row count when an imported baseline was built: while it is unchanged the baseline is still current.</summary>
+    public long? SourceRowCount { get; set; }
     public DateOnly? PublishedDate { get; set; }
     public DateTime? CompletedUtc { get; set; }
     public string Source { get; set; } = "MCA Corporate Data Management (mcacdm.nic.in)";
