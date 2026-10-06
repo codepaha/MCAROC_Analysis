@@ -239,4 +239,35 @@ public class AddressMatcherTests
         Assert.NotEqual(AddressMatchStrength.Strong, result.Strength);
         Assert.DoesNotContain("51", result.MatchedPlotNumbers);
     }
+
+    [Fact]
+    public void MayMatch_IsFalseOnlyWhenMatchWouldReturnNone()
+    {
+        string[] addresses = [KanpurRegistered, KanpurEpfo, CoastalRegistered, CoastalHyderabadMortgage,
+            "Flat 12, Banjara Hills, Hyderabad, Telangana, 500034", "Survey No 51/2, Whitefield, Bangalore, Karnataka, 560066"];
+        string[] texts =
+        [
+            "Mortgage on Arazi No. 428 and 429, Village Bhauti, Kanpur, PIN 209305.",
+            "The registered premises at Plot No. A-36, Nilakantha Nagar, Nayapalli, Bhubaneswar, 751012.",
+            "Equitable mortgage on 8-2-293/82/F-B-1/F, Film Nagar, Hyderabad",
+            "Banjara Hills, Hyderabad 500034 is the locality in dispute",            // PIN + locality, no plot: Partial
+            "Banjara Hills, Hyderabad 500099",                                       // different PIN
+            "Survey No 51/2 Whitefield 560066 Bangalore",
+            "The matter is adjourned to a later date for filing of replies.",
+            "Hearing on 14 March 2021 before the Hon'ble Court at 10.30 am, item 17.",
+            ""
+        ];
+
+        foreach (var address in addresses)
+        foreach (var text in texts)
+        {
+            var strength = AddressMatcher.Match(address, text).Strength;
+            var may = AddressMatcher.MayMatch(AddressMatcher.SignalsOfAddress(address), AddressMatcher.SignalsOfText(text));
+            // the pre-check may say "maybe" for a non-match, but must never say "no" for a real one
+            if (strength != AddressMatchStrength.None)
+                Assert.True(may, $"pre-check ruled out a {strength} match: [{address}] vs [{text}]");
+        }
+
+        Assert.False(AddressMatcher.MayMatch(AddressMatcher.SignalsOfAddress(KanpurRegistered), AddressMatcher.SignalsOfText("Adjourned to a later date.")));
+    }
 }

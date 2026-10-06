@@ -204,7 +204,7 @@ public class LitigationTabAndControllerTests : IAsyncLifetime
 
         // Litigation is client-facing: no endpoint may be pinned to the internal-reviewer scheme.
         // Portal login still applies through the app's fallback authorization policy.
-        foreach (var name in new[] { "StartSearch", "GetSearchStatus", "DownloadOrderDocument", "DownloadOrdersZip", "DownloadPdfReport", "DownloadCsvReport", "StartAnalysis", "GetAnalysis" })
+        foreach (var name in new[] { "StartSearch", "GetSearchStatus", "DownloadOrderDocument", "DownloadOrdersZip", "DownloadCaseOrdersZip", "DownloadPdfReport", "DownloadCsvReport", "StartAnalysis", "GetAnalysis" })
         {
             var method = controllerType.GetMethod(name);
             Assert.NotNull(method);
