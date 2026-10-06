@@ -232,6 +232,43 @@ public class LitigationOrderAddressMatcherTests
     }
 
     [Fact]
+    public void MatchCases_ParallelRun_GivesTheSequentialResultInCaseOrder()
+    {
+        var pool = new List<LitigationAddressTarget>
+        {
+            new("Charge CHG-999 (SBI)", CoastalHyderabadMortgage, ["Hyderabad"], IsCompanyPremises: false, RocChargeId: 999, RocChargeNumber: "CHG-999", ChargeHolder: "State Bank of India")
+        };
+        var cases = new List<LitigationCase>();
+        var docs = new Dictionary<long, LitigationOrderDocument>();
+        for (var i = 1; i <= 60; i++)
+        {
+            var orderId = 1000 + i;
+            cases.Add(new LitigationCase
+            {
+                LitigationCaseId = i, Court = "High Court", ProceedingType = "WP",
+                Orders = [new LitigationCaseOrder { LitigationCaseOrderId = orderId, OrderDate = "05-03-2020", OrderType = "Order" }]
+            });
+            docs[orderId] = new LitigationOrderDocument
+            {
+                LitigationCaseOrderId = orderId, TextExtractionStatus = FilingDocumentProcessingStatus.TextExtracted,
+                // every third order does not name the property, so the output has gaps the order must survive
+                ExtractedText = i % 3 == 0
+                    ? "--- Page 1 (native) ---\nAdjourned to a later date."
+                    : "--- Page 1 (native) ---\nInterim injunction restraining alienation of immovable property bearing municipal no.\n8-2-293/82/F-B-1/F, Film Nagar, Hyderabad until further orders."
+            };
+        }
+
+        var parallel = LitigationOrderAddressMatcher.MatchCases(pool, cases, docs);
+        var sequential = cases.SelectMany(c => c.Orders)
+            .SelectMany(o => LitigationOrderAddressMatcher.MatchText(pool, o.LitigationCaseOrderId, o.OrderDate, o.OrderType, docs[o.LitigationCaseOrderId].ExtractedText!))
+            .ToList();
+
+        Assert.Equal(40, parallel.Count);
+        Assert.Equal(sequential.Select(m => m.LitigationCaseOrderId), parallel.Select(m => m.LitigationCaseOrderId));
+        Assert.Equal(sequential.Select(m => (m.PageNumber, m.Strength, m.AddressText)), parallel.Select(m => (m.PageNumber, m.Strength, m.AddressText)));
+    }
+
+    [Fact]
     public void MatchOrders_OnlyProcessesDownloadedAndExtractedDocuments()
     {
         var pool = new List<LitigationAddressTarget>

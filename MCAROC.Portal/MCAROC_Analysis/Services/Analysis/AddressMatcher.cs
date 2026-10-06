@@ -261,6 +261,31 @@ public static partial class AddressMatcher
             .ToHashSet(StringComparer.Ordinal);
     }
 
+    /// <summary>What a known address contributes to a match: its PIN code and its plot keys, as <see cref="Match"/> counts them.</summary>
+    public readonly record struct AddressSignals(string? Pin, HashSet<string> PlotKeys);
+
+    /// <summary>What a free text contributes to a match: the PIN codes it states and the plot keys it contains.</summary>
+    public readonly record struct TextSignals(HashSet<string> Pins, HashSet<string> PlotKeys);
+
+    public static AddressSignals SignalsOfAddress(string? address) =>
+        string.IsNullOrWhiteSpace(address)
+            ? new AddressSignals(null, [])
+            : new AddressSignals(ExtractPinCodes(Normalize(address)).LastOrDefault(), PlotKeysOfAddress(address));
+
+    public static TextSignals SignalsOfText(string? text) =>
+        string.IsNullOrWhiteSpace(text)
+            ? new TextSignals([], [])
+            : new TextSignals(ExtractPinCodes(Normalize(text)).ToHashSet(StringComparer.Ordinal), PlotKeysIn(text));
+
+    /// <summary>
+    /// A necessary condition for <see cref="Match"/> to return anything other than None: a Strong match needs a shared plot key and a Partial
+    /// match needs the known address's PIN code in the text, and nothing else produces a match. So when this is false the result is None and the
+    /// full comparison can be skipped; when it is true the full comparison still decides. The signals are computed once per paragraph and per
+    /// address instead of once per (paragraph, address) pair.
+    /// </summary>
+    public static bool MayMatch(AddressSignals address, TextSignals text) =>
+        (address.Pin is not null && text.Pins.Contains(address.Pin)) || address.PlotKeys.Overlaps(text.PlotKeys);
+
     /// <summary>Plot, survey, and unit keys found in a structured property reading item.
     /// Only actual survey, unit, or parcel identifiers are treated as plot keys; locality numbers
     /// such as sector or phase do not count.</summary>
