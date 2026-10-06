@@ -163,7 +163,8 @@ public class StructuredFactsProvider(AppDbContext db)
             // at are counted, not listed.
             var listed = litigations.Count <= MaxWorkbookLitigationRows
                 ? (detailed.Contains("Litigation") ? litigations : [])
-                : litigations.Where(l => WorkbookRowAsked(l, hints)).Take(MaxWorkbookLitigationRows).ToList();
+                : litigations.Select(l => (Row: l, Score: WorkbookRowRelevance(l, hints))).Where(x => x.Score > 0)
+                    .OrderByDescending(x => x.Score).Take(MaxWorkbookLitigationRows).Select(x => x.Row).ToList();
             foreach (var l in listed)
             {
                 var courtSuffix = string.IsNullOrWhiteSpace(l.Court) ? "" : $", Court: {l.Court}";
@@ -275,19 +276,32 @@ public class StructuredFactsProvider(AppDbContext db)
         return names.Where(n => !string.IsNullOrWhiteSpace(n)).Distinct().ToList();
     }
 
-    /// <summary>Whether a workbook litigation row is one the question points at: a quoted case number (compared without punctuation, since the
-    /// workbook and the question space them differently), a lender or party it names, or a forum, status and side it describes.</summary>
-    internal static bool WorkbookRowAsked(Litigation l, QuestionHints hints)
+    /// <summary>How strongly a question points at a workbook litigation row; 0 means not at all. A quoted case number or a named lender or party
+    /// counts most (compared without punctuation, since the workbook and the question space them differently), then the forum, status and side
+    /// the question describes, then each subject word of the question found anywhere in the row's own wording (its case type, court, parties or
+    /// number), so "criminal cases" finds a row whose case type says "Criminal" even though the question names no number, party or forum.</summary>
+    internal static int WorkbookRowRelevance(Litigation l, QuestionHints hints)
     {
         static string Flat(string? value) => new([.. (value ?? "").Where(char.IsLetterOrDigit).Select(char.ToLowerInvariant)]);
         var number = Flat(l.CaseNumber);
         var parties = Flat(l.Litigants);
+        var score = 0;
         if (hints.LexicalTerms is { Count: > 0 } terms && terms.Any(t => Flat(t) is { Length: >= 5 } flat && (number.Contains(flat) || parties.Contains(flat))))
-            return true;
+            score += 100;
         if (hints.LenderNameKeyword is { } lender && Flat(lender) is { Length: >= 3 } flatLender && parties.Contains(flatLender))
-            return true;
-        if (hints.CaseList is not { } filter) return false;
+            score += 100;
+        if (hints.CaseList is { } filter && MatchesFilter(l, filter))
+            score += 10;
+        if (hints.TopicTerms is { Count: > 0 } topics)
+        {
+            var wording = Flat(l.CaseType) + "|" + Flat(l.Court) + "|" + parties + "|" + number;
+            score += topics.Count(t => wording.Contains(t, StringComparison.Ordinal));
+        }
+        return score;
+    }
 
+    private static bool MatchesFilter(Litigation l, CaseListFilter filter)
+    {
         if (filter.Forums.Count > 0 && !filter.Forums.Contains(LitigationCasePresentation.Resolve(null, l.Court, null))) return false;
         if (filter.Status is { } status && LitigationCaseStatusClassifier.Classify(l.CaseStatus, null) != status) return false;
         if (filter.Side is { } side)

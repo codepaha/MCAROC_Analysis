@@ -287,6 +287,37 @@ public class CopilotCaseAndChargeFactsTests
     }
 
     [Fact]
+    public async Task A_long_workbook_list_is_narrowed_by_the_subject_words_of_the_question_too()
+    {
+        await using var db = CreateContext();
+        var (requestId, runId) = await SeedWorkbookRowsAsync(db, StructuredFactsProvider.MaxWorkbookLitigationRows + 20);
+        // the word "criminal" appears only in the case type: no number, party or forum in the question points at these rows
+        db.Litigations.Add(new Litigation { RequestId = requestId, IngestionRunId = runId, CaseType = "Criminal Case Filed Against this Corporate", CaseStatus = "Pending",
+            Court = "METROPOLITAN MAGISTRATE", Litigants = "SOME COMPLAINANT", CaseNumber = "CC 12/2020" });
+        db.Litigations.Add(new Litigation { RequestId = requestId, IngestionRunId = runId, CaseType = "Criminal Appeal", CaseStatus = "Pending",
+            Court = "SESSIONS COURT", Litigants = "ANOTHER PARTY", CaseNumber = "CRL A 5/2021" });
+        await db.SaveChangesAsync();
+
+        var facts = await new StructuredFactsProvider(db).BuildDigestAsync(requestId,
+            QuestionHintExtractor.Extract("Are there any criminal cases against the company?", [], []), default);
+
+        var rows = facts.Where(f => f.EntityType == "Litigation").Select(f => f.Text).ToList();
+        Assert.Contains(rows, r => r.Contains("CC 12/2020"));      // "criminal" is only in the case type
+        Assert.Contains(rows, r => r.Contains("CRL A 5/2021"));
+        Assert.Equal(2, rows.Count(r => r.Contains("Criminal")));
+        // the two criminal rows rank first (a row the subject word AND the "against" filter point at outranks one only the filter does)
+        Assert.Contains("CC 12/2020", rows[0]);
+        Assert.DoesNotContain(rows, r => r.Contains("GENERIC PARTY"));
+    }
+
+    [Theory]
+    [InlineData("Are there any criminal cases against the company?", new[] { "criminal" })]
+    [InlineData("Summarise the arbitration awards and cheque dishonour matters", new[] { "arbitration", "awards", "cheque", "dishonour" })]
+    [InlineData("What is the status of the cases?", new string[0])]    // only words that say nothing about the subject
+    public void The_subject_words_of_a_question_exclude_the_words_that_only_frame_it(string question, string[] expected) =>
+        Assert.Equal(expected, QuestionHintExtractor.ExtractTopicTerms(question.ToLowerInvariant()));
+
+    [Fact]
     public async Task A_long_workbook_list_with_nothing_to_pick_by_is_counted_not_listed_and_says_so()
     {
         await using var db = CreateContext();
