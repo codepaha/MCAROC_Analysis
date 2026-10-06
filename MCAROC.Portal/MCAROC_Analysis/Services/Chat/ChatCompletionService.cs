@@ -48,21 +48,49 @@ public class ChatCompletionService
     {
         var prompt = BuildPrompt(companyName, context, history, question);
 
-        string rawResponse;
+        var rawResponse = await GenerateRawAsync(prompt, ct);
+        var (result, outcome) = ValidateWithOutcome(rawResponse, context.Sources);
+        if (!IsUnusable(outcome)) return result;
+
+        // The model did not say the evidence was insufficient; its reply was unusable (empty, not the JSON asked for, or no valid citation). A
+        // small model does this now and then on a long prompt, and the fixed "could not verify" message would then be shown although the sources
+        // support an answer. Ask once more, and say why, before giving up.
+        _logger?.LogWarning("Chat reply was unusable ({Outcome}); asking once more. First characters: {Reply}", outcome, Excerpt(rawResponse));
+        var retryPrompt = prompt + "\n\nYour previous reply could not be used (" + Describe(outcome) + "). Reply again with ONLY the JSON object. "
+            + "If the [FACT]/[SOURCE] blocks support an answer, give it and list the tags you used in citedTags; if they do not, set insufficientEvidence=true.";
+        var retryResponse = await GenerateRawAsync(retryPrompt, ct);
+        (result, outcome) = ValidateWithOutcome(retryResponse, context.Sources);
+        if (IsUnusable(outcome))
+            _logger?.LogWarning("Chat reply was unusable again ({Outcome}); showing the fixed message. First characters: {Reply}", outcome, Excerpt(retryResponse));
+        return result;
+    }
+
+    /// <summary>One call to the model, returning its raw text. A seam so the retry can be tested without Vertex.</summary>
+    protected virtual async Task<string> GenerateRawAsync(string prompt, CancellationToken ct)
+    {
         try
         {
             var config = new GenerateContentConfig { ResponseMimeType = "application/json" };
             var response = await _client.Models.GenerateContentAsync(ModelId, prompt, config, ct);
-            rawResponse = response.Candidates?.FirstOrDefault()?.Content?.Parts?.FirstOrDefault()?.Text ?? "";
+            return response.Candidates?.FirstOrDefault()?.Content?.Parts?.FirstOrDefault()?.Text ?? "";
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Vertex AI chat completion call failed");
+            _logger?.LogWarning(ex, "Vertex AI chat completion call failed");
             throw;
         }
-
-        return Validate(rawResponse, context.Sources);
     }
+
+    private static bool IsUnusable(ChatReplyOutcome outcome) => outcome is ChatReplyOutcome.Empty or ChatReplyOutcome.Unparseable or ChatReplyOutcome.Uncited;
+
+    private static string Describe(ChatReplyOutcome outcome) => outcome switch
+    {
+        ChatReplyOutcome.Empty => "it was empty",
+        ChatReplyOutcome.Unparseable => "it was not the JSON object asked for",
+        _ => "it cited no tag from the blocks above"
+    };
+
+    private static string Excerpt(string raw) => raw.Length <= 300 ? raw : raw[..300] + "...";
 
     private static string BuildPrompt(string companyName, RetrievalContext context, IReadOnlyList<ChatMessage> history, string question)
     {
@@ -104,10 +132,17 @@ public class ChatCompletionService
         return sb.ToString();
     }
 
-    internal static ChatCompletionResult Validate(string rawResponse, IReadOnlyList<RetrievedSource> sources)
+    /// <summary>Why a reply was or was not usable. Only the first three say the model failed to follow the format; <see cref="ModelSaidInsufficient"/>
+    /// is the model honestly reporting that the sources do not support an answer, which is never retried.</summary>
+    public enum ChatReplyOutcome { Valid, ModelSaidInsufficient, Empty, Unparseable, Uncited }
+
+    internal static ChatCompletionResult Validate(string rawResponse, IReadOnlyList<RetrievedSource> sources) =>
+        ValidateWithOutcome(rawResponse, sources).Result;
+
+    internal static (ChatCompletionResult Result, ChatReplyOutcome Outcome) ValidateWithOutcome(string rawResponse, IReadOnlyList<RetrievedSource> sources)
     {
         if (string.IsNullOrWhiteSpace(rawResponse))
-            return new ChatCompletionResult(InsufficientAnswer, true, []);
+            return (new ChatCompletionResult(InsufficientAnswer, true, []), ChatReplyOutcome.Empty);
 
         AiChatResponseDto? dto;
         try
@@ -116,10 +151,10 @@ public class ChatCompletionService
         }
         catch (JsonException)
         {
-            return new ChatCompletionResult(InsufficientAnswer, true, []);
+            return (new ChatCompletionResult(InsufficientAnswer, true, []), ChatReplyOutcome.Unparseable);
         }
         if (dto is null)
-            return new ChatCompletionResult(InsufficientAnswer, true, []);
+            return (new ChatCompletionResult(InsufficientAnswer, true, []), ChatReplyOutcome.Unparseable);
 
         var sourcesByTag = sources.ToDictionary(s => s.Tag);
         var validTags = (dto.CitedTags ?? []).Where(sourcesByTag.ContainsKey).Distinct().ToList();
@@ -128,13 +163,13 @@ public class ChatCompletionService
         // full stop — no separate attempt to classify whether the answer "contains a factual claim" (round
         // 3 judged that distinction unnecessary and harder to get right than the simple binary).
         if (!dto.InsufficientEvidence && validTags.Count == 0)
-            return new ChatCompletionResult(InsufficientAnswer, true, []);
+            return (new ChatCompletionResult(InsufficientAnswer, true, []), ChatReplyOutcome.Uncited);
 
         // Always the fixed message and no citations here, never dto.Answer verbatim — the model flagging
         // insufficientEvidence=true doesn't stop it from also writing an uncited, unvalidated answer
         // string alongside that flag, and displaying that text would show an arbitrary uncited claim.
         if (dto.InsufficientEvidence)
-            return new ChatCompletionResult(InsufficientAnswer, true, []);
+            return (new ChatCompletionResult(InsufficientAnswer, true, []), ChatReplyOutcome.ModelSaidInsufficient);
 
         var citations = validTags.Select(tag =>
         {
@@ -159,7 +194,7 @@ public class ChatCompletionService
             };
         }).ToList();
 
-        return new ChatCompletionResult(dto.Answer ?? InsufficientAnswer, false, citations);
+        return (new ChatCompletionResult(dto.Answer ?? InsufficientAnswer, false, citations), ChatReplyOutcome.Valid);
     }
 
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNameCaseInsensitive = true };
