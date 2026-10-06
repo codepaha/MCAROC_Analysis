@@ -15,4 +15,9 @@ public sealed class LitigationAiAnalysisOptions
     public int SplitAboveChars { get; set; } = 100_000;
     /// <summary>The most order text sent in one group call.</summary>
     public int GroupChars { get; set; } = 80_000;
+    /// <summary>Case analyses in flight at once. A run used to analyse its cases one after another, so a few hundred cases took many hours; each
+    /// result is also saved the moment it completes, so a restart or a lost lease never discards paid work.</summary>
+    public int CaseConcurrency { get; set; } = 4;
+    /// <summary>Order classifications in flight at once (each is a short call).</summary>
+    public int OrderConcurrency { get; set; } = 6;
 }

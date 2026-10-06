@@ -16,6 +16,8 @@ public sealed class LitigationAiAnalysisOrchestrator(AppDbContext db, ILitigatio
 {
     private static readonly string LeaseOwner = $"{Environment.MachineName}:{Environment.ProcessId}";
     private const int LeaseMarginSeconds = 60;
+    /// <summary>The model calls of a run overlap, but the DbContext is not thread-safe: every write to it goes through this gate.</summary>
+    private readonly SemaphoreSlim _dbGate = new(1, 1);
     private int LeaseSeconds => Math.Max(options.Value.TimeoutSeconds, options.Value.CaseTimeoutSeconds) + LeaseMarginSeconds;
 
     /// <summary>Plan §4.2/§4.2a. <paramref name="triggerSnapshotId"/> is this request's own newest
@@ -77,20 +79,20 @@ public sealed class LitigationAiAnalysisOrchestrator(AppDbContext db, ILitigatio
             // A case whose evidence is byte-identical to one already analysed is never sent to the model again:
             // its earlier result is carried into this run. Only new or changed cases cost an AI call.
             var prior = await LoadPriorAsync(requestId, runId, ct);
-            var additions = new List<LitigationCaseAiAnalysis>(); var reused = 0;
-            foreach (var c in cases.Where(x => !present.Contains(x.LitigationCaseId)))
+            var todo = cases.Where(x => !present.Contains(x.LitigationCaseId)).ToList(); var reused = 0;
+            await RunBoundedAsync(todo, options.Value.CaseConcurrency, ct, async (c, token2) =>
             {
-                var item = await AnalyzeCaseAsync(runId, token, c, context, prior.GetValueOrDefault(c.LitigationCaseId), ct);
-                if (item.ReusedFromAnalysis) reused++;
-                additions.Add(item.Row);
-            }
-            await PublishCasesAsync(runId, token, additions, ct);
+                var item = await AnalyzeCaseAsync(runId, token, c, context, prior.GetValueOrDefault(c.LitigationCaseId), token2);
+                if (item.ReusedFromAnalysis) Interlocked.Increment(ref reused);
+                // Saved as soon as it exists: a crash, restart or lost lease keeps everything already paid for, and a retried run skips what is present.
+                await PublishCasesAsync(runId, token, [item.Row], token2);
+            });
             await ClassifyOrdersAsync(runId, token, requestId, chunks, ct);
             var persisted = await db.LitigationCaseAiAnalyses.Where(x => x.LitigationAiAnalysisRunId == runId).OrderBy(x => x.LitigationCaseAiAnalysisId).ToListAsync(ct);
             if (!await db.LitigationPortfolioAiAnalyses.AnyAsync(x => x.LitigationAiAnalysisRunId == runId, ct))
             {
                 LitigationPortfolioAiAnalysis? priorPortfolio = null;
-                if (reused == additions.Count && additions.Count > 0)
+                if (reused == todo.Count && todo.Count > 0)
                     priorPortfolio = await db.LitigationPortfolioAiAnalyses.AsNoTracking()
                         .Where(p => p.LitigationAiAnalysisRunId != runId && p.Status == LitigationAiAnalysisItemStatus.Completed
                             && db.LitigationAiAnalysisRuns.Any(r => r.LitigationAiAnalysisRunId == p.LitigationAiAnalysisRunId && r.RequestId == requestId))
@@ -184,19 +186,55 @@ public sealed class LitigationAiAnalysisOrchestrator(AppDbContext db, ILitigatio
                 Offer(d.Evidence, current);
         }
 
-        foreach (var d in documents.Where(x => !presentByDocument.ContainsKey(x.Id)))
+        // Identical text is classified once and copied (#350). Documents with the same text therefore run one after another within their group, so the
+        // second finds the first's result; different groups run in parallel. The shared "same text" map is read and written under a lock.
+        var sameTextLock = new object();
+        var groups = documents.Where(x => !presentByDocument.ContainsKey(x.Id)).GroupBy(x => LitigationOrderClassifier.ContentKey(x.Evidence)).ToList();
+        await RunBoundedAsync(groups, options.Value.OrderConcurrency, ct, async (group, token2) =>
         {
-            var row = await ClassifyOrderAsync(runId, token, requestId, d.Chunks, prior.GetValueOrDefault(d.Id),
-                sameText.GetValueOrDefault(LitigationOrderClassifier.ContentKey(d.Evidence)), ct);
-            await using var tx = await db.Database.BeginTransactionAsync(ct);
-            await RenewAsync(runId, token, ct);
-            if (!await db.LitigationOrderClassifications.AnyAsync(x => x.LitigationAiAnalysisRunId == runId && x.LitigationOrderDocumentId == d.Id, ct))
+            foreach (var d in group)
             {
-                db.LitigationOrderClassifications.Add(row);
-                await db.SaveChangesAsync(ct);
-                Offer(d.Evidence, row);
+                LitigationOrderClassification? source;
+                lock (sameTextLock) source = sameText.GetValueOrDefault(group.Key);
+                var row = await ClassifyOrderAsync(runId, token, requestId, d.Chunks, prior.GetValueOrDefault(d.Id), source, token2);
+                await _dbGate.WaitAsync(token2);
+                try
+                {
+                    await using var tx = await db.Database.BeginTransactionAsync(token2);
+                    await RenewCoreAsync(runId, token, token2);
+                    if (!await db.LitigationOrderClassifications.AnyAsync(x => x.LitigationAiAnalysisRunId == runId && x.LitigationOrderDocumentId == d.Id, token2))
+                    {
+                        db.LitigationOrderClassifications.Add(row);
+                        await db.SaveChangesAsync(token2);
+                        lock (sameTextLock) Offer(d.Evidence, row);
+                    }
+                    await tx.CommitAsync(token2);
+                }
+                finally { _dbGate.Release(); }
             }
-            await tx.CommitAsync(ct);
+        });
+    }
+
+    /// <summary>Runs <paramref name="work"/> over every item with at most <paramref name="concurrency"/> in flight. The first failure cancels the work still
+    /// waiting to start (no further paid calls once the run is going to fail) and is rethrown after the calls already running have finished.</summary>
+    private static async Task RunBoundedAsync<T>(IReadOnlyList<T> items, int concurrency, CancellationToken ct, Func<T, CancellationToken, Task> work)
+    {
+        if (items.Count == 0) return;
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        using var gate = new SemaphoreSlim(Math.Max(1, concurrency));
+        var tasks = items.Select(async item =>
+        {
+            await gate.WaitAsync(cts.Token);
+            try { await work(item, cts.Token); }
+            catch { cts.Cancel(); throw; }
+            finally { gate.Release(); }
+        }).ToList();
+        try { await Task.WhenAll(tasks); }
+        catch
+        {
+            // report the failure that started the cancellation, not the cancellations it caused
+            var first = tasks.FirstOrDefault(t => t.IsFaulted) ?? tasks.First(t => t.IsFaulted || t.IsCanceled);
+            if (first.IsFaulted) await first; else throw;
         }
     }
 
@@ -331,13 +369,27 @@ public sealed class LitigationAiAnalysisOrchestrator(AppDbContext db, ILitigatio
 
     private async Task RenewAsync(long id, Guid token, CancellationToken ct)
     {
+        await _dbGate.WaitAsync(ct);
+        try { await RenewCoreAsync(id, token, ct); }
+        finally { _dbGate.Release(); }
+    }
+
+    /// <summary>Renews the lease; the caller already holds <see cref="_dbGate"/>.</summary>
+    private async Task RenewCoreAsync(long id, Guid token, CancellationToken ct)
+    {
         if (await db.LitigationAiAnalysisRuns.Where(x => x.LitigationAiAnalysisRunId == id && x.Status == LitigationAiAnalysisRunStatus.InProgress && x.LeaseToken == token).ExecuteUpdateAsync(s => s.SetProperty(x => x.LeaseExpiresUtc, DateTime.UtcNow.AddSeconds(LeaseSeconds)), ct) != 1) throw new LeaseLostException();
     }
     private async Task PublishCasesAsync(long id, Guid token, List<LitigationCaseAiAnalysis> rows, CancellationToken ct)
     {
-        if (rows.Count == 0) return; await using var tx = await db.Database.BeginTransactionAsync(ct); await RenewAsync(id, token, ct);
+        if (rows.Count == 0) return;
+        await _dbGate.WaitAsync(ct);
+        try
+        {
+        await using var tx = await db.Database.BeginTransactionAsync(ct); await RenewCoreAsync(id, token, ct);
         var present = await db.LitigationCaseAiAnalyses.Where(x => x.LitigationAiAnalysisRunId == id).Select(x => x.LitigationCaseId).ToHashSetAsync(ct);
-        db.LitigationCaseAiAnalyses.AddRange(rows.Where(x => !present.Contains(x.LitigationCaseId))); await db.SaveChangesAsync(ct); await RenewAsync(id, token, ct); await tx.CommitAsync(ct);
+        db.LitigationCaseAiAnalyses.AddRange(rows.Where(x => !present.Contains(x.LitigationCaseId))); await db.SaveChangesAsync(ct); await RenewCoreAsync(id, token, ct); await tx.CommitAsync(ct);
+        }
+        finally { _dbGate.Release(); }
     }
     private async Task PublishPortfolioAsync(long id, Guid token, List<LitigationCaseAiAnalysis> rows, LitigationPortfolioAiAnalysis? reusable, CancellationToken ct)
     {
