@@ -89,6 +89,88 @@ public class LitigationRegisterUiTests
         Assert.Contains(focused.Cases, c => c.CaseNumber == "F-itat-unknown");
     }
 
+    [Fact]
+    public async Task The_register_order_is_the_reports_order_for_cases_with_no_vendor_direction_or_type_across_a_page_boundary()
+    {
+        await using var isolated = await TestDatabase.CreateIsolatedDatabaseAsync("LitigationRegisterExact");
+        AppDbContext Db() => new(new DbContextOptionsBuilder<AppDbContext>().UseSqlServer(isolated.ConnectionString).Options);
+        await using var seed = Db();
+        var client = new Client { ClientCode = "RX", ClientName = "Exact Order", CreatedDate = DateTime.UtcNow };
+        var request = new McaRequest { Client = client, CompanyName = "Target Company", RequestNumber = "UI-EXACT" };
+        seed.Requests.Add(request); await seed.SaveChangesAsync();
+        var job = new LitigationSearchJob { RequestId = request.RequestId, Status = LitigationSearchJobStatus.Completed, RawResponseHash = "h" };
+        seed.LitigationSearchJobs.Add(job); await seed.SaveChangesAsync();
+        var snapshot = new LitigationReportSnapshot { RequestId = request.RequestId, LitigationSearchJobId = job.LitigationSearchJobId,
+            ReportHash = "h", RetrievedUtc = Retrieved, Status = LitigationReportSnapshotStatus.Completed };
+        seed.LitigationReportSnapshots.Add(snapshot); await seed.SaveChangesAsync();
+
+        LitigationCase Mk(string number, string? type, string? category, string court, string? direction, int day, string petitioner, string respondent)
+        {
+            var c = Case(number, type!, category, "Pending", direction, $"{day:D2}-01-2024");
+            c.Type = type; c.Court = court;
+            c.PetitionersJson = $"[\"{petitioner}\"]"; c.RespondentsJson = $"[\"{respondent}\"]";
+            c.RequestId = request.RequestId;
+            return c;
+        }
+
+        var cases = new List<LitigationCase>();
+        // The forum is found from the court name alone (no type, no category).
+        cases.Add(Mk("SC-by-name", null, null, "Supreme Court of India", null, 1, "Someone", "Target Company"));
+        // High Court: the vendor says "by" for ten, says nothing for twenty whose party names put the company as respondent (against).
+        for (var i = 1; i <= 10; i++) cases.Add(Mk($"HC-by-{i:D2}", "highcourt", "high_court", "Delhi High Court", "by", i, "Target Company", "Other"));
+        for (var i = 1; i <= 20; i++) cases.Add(Mk($"HC-blank-{i:D2}", "highcourt", "high_court", "Delhi High Court", null, i, "Other", "Target Company"));
+        // A debts recovery tribunal known only by its court name, and two unplaceable cases.
+        for (var i = 1; i <= 6; i++) cases.Add(Mk($"DRT-name-{i}", null, null, "Debts Recovery Tribunal, Kolkata", null, i, "Target Company", "Bank"));
+        for (var i = 1; i <= 2; i++) cases.Add(Mk($"OTHER-{i}", "others", null, "Unspecified Court", "against", i, "X", "Y"));
+        cases.Reverse(); // inserted in the opposite order, so ids do not give the answer
+        seed.LitigationCases.AddRange(cases); await seed.SaveChangesAsync();
+        seed.LitigationCaseSourceReports.AddRange(cases.Select(c => new LitigationCaseSourceReport
+            { LitigationReportSnapshotId = snapshot.LitigationReportSnapshotId, LitigationCaseId = c.LitigationCaseId }));
+        await seed.SaveChangesAsync();
+
+        await using var read = Db();
+        var query = new LitigationCaseListQuery(read);
+        var page1 = (await query.BuildAsync(request.RequestId, null, null, 1, 25, null, null, null, default))!;
+        var page2 = (await query.BuildAsync(request.RequestId, null, null, 2, 25, null, null, null, default))!;
+        Assert.Equal(39, page1.Total);
+        var register = page1.Cases.Concat(page2.Cases).ToList();
+        Assert.Equal(39, register.Count);
+
+        // Expected, from the rules: pending Supreme Court; then High Court cases against the company (the twenty with no vendor
+        // direction, newest filing first), then the ones it brought; then DRT; then Others.
+        string[] expected =
+        [
+            "SC-by-name",
+            .. Enumerable.Range(1, 20).Reverse().Select(i => $"HC-blank-{i:D2}"),
+            .. Enumerable.Range(1, 10).Reverse().Select(i => $"HC-by-{i:D2}"),
+            .. Enumerable.Range(1, 6).Reverse().Select(i => $"DRT-name-{i}"),
+            "OTHER-2", "OTHER-1" // direction "against" for both; newest filing first
+        ];
+        Assert.Equal(expected, register.Select(c => c.CaseNumber).ToArray());
+
+        // The page boundary falls inside the "by" group: the first page ends with its four newest, the second starts with the rest.
+        Assert.Equal("HC-by-10", page1.Cases[21].CaseNumber);
+        Assert.Equal("HC-by-07", page1.Cases[^1].CaseNumber);
+        Assert.Equal("HC-by-06", page2.Cases[0].CaseNumber);
+
+        // What each row displays is what it was ordered by.
+        Assert.Equal(LitigationInstitution.SupremeCourt, register[0].Institution);
+        Assert.All(register.Where(c => c.CaseNumber!.StartsWith("HC-blank")), c => Assert.Equal(LitigationCompanySide.AgainstCompany, c.CompanySide));
+        Assert.All(register.Where(c => c.CaseNumber!.StartsWith("DRT-name")), c => Assert.Equal(LitigationInstitution.Drt, c.Institution));
+
+        // And it is the report's order: the same cases, put through the report's own view builder.
+        var dtos = cases.Select(c => new StandaloneReportCaseDto(c.LitigationCaseId, null, null, c.Cnr, c.CourtCategory, c.Direction, null, c.Type,
+            c.Court, null, c.CaseNumber, c.CaseType, c.CaseYear, c.CaseStage, c.CaseStatus, null, c.FilingDate, null, null, c.DecisionDate, null, null,
+            c.PetitionersJson, c.RespondentsJson, null, null, [])).ToList();
+        var report = new StandaloneLitigationReport("A", "Target Company", new DateTimeOffset(Retrieved), snapshot.LitigationReportSnapshotId, Retrieved,
+            false, ["Target Company"], new LitigationCourtSummaryGrid(), dtos);
+        Assert.Equal(LitigationReportArtifacts.BuildCaseViews(report).Select(v => v.Item.LitigationCaseId), register.Select(c => c.LitigationCaseId));
+
+        // a deep link to a case on the second page lands on that page
+        var deepLink = (await query.BuildAsync(request.RequestId, null, null, 1, 25, null, null, page2.Cases[3].LitigationCaseId, default))!;
+        Assert.Equal(2, deepLink.Page);
+    }
+
     private static PartialViewResult AsPartial(LitigationCaseListViewModel model) => new()
     {
         ViewData = new ViewDataDictionary(new Microsoft.AspNetCore.Mvc.ModelBinding.EmptyModelMetadataProvider(), new ModelStateDictionary()) { Model = model }

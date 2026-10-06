@@ -74,24 +74,41 @@ public sealed class LitigationCaseListQuery(AppDbContext db, LitigationOrderOutc
             await unsegmented.CountAsync(LitigationCaseStatusClassifier.IsPendingExpr, ct),
             await unsegmented.CountAsync(LitigationCaseStatusClassifier.IsDisposedExpr, ct),
             await unsegmented.CountAsync(LitigationCaseStatusClassifier.IsUnknownExpr, ct));
-        model.Total = await query.CountAsync(ct);
-        model.Page = Math.Clamp(page, 1, model.TotalPages);
-        var ordered = LitigationRegisterOrder.Apply(query);
-        if (focusCase is { } focused && await query.AnyAsync(c => c.LitigationCaseId == focused, ct))
+        var names = new List<string>();
+        if (!string.IsNullOrWhiteSpace(request.CompanyName)) names.Add(request.CompanyName);
+        if (request.LatestCompletedIngestionRunId is { } rid)
+            names.AddRange(await db.CompanyNameHistories.AsNoTracking().Where(h => h.RequestId == requestId && h.IngestionRunId == rid)
+                .Select(h => h.PreviousName).ToListAsync(ct));
+        // The register's order is the report's (LitigationCasePresentation.SortKey), which needs each case's forum, side and status exactly as
+        // they are displayed. The side comes from the party names, so every matching case is read as a narrow projection (no orders, no
+        // evidence, no PDF links) and ordered here; only the displayed page's rows are then read in full.
+        var keys = await query.Select(c => new
         {
-            // A deep link needs the case's position in the register order. Only ids are read, and only for a deep link.
-            var position = (await ordered.Select(c => c.LitigationCaseId).ToListAsync(ct)).IndexOf(focused);
-            if (position >= 0) model.Page = position / model.PageSize + 1;
-        }
-        var rows = await ordered
-            .Skip((model.Page - 1) * model.PageSize).Take(model.PageSize)
+            c.LitigationCaseId, c.Type, c.Court, c.CourtCategory, c.Direction, c.CaseStatus, c.CaseStage, c.FilingDate,
+            c.PetitionersJson, c.RespondentsJson
+        }).ToListAsync(ct);
+        var orderedIds = keys
+            .OrderBy(k => LitigationCasePresentation.SortKey(
+                LitigationCaseStatusClassifier.Classify(k.CaseStatus, k.CaseStage),
+                LitigationCasePresentation.Resolve(k.Type, k.Court, k.CourtCategory),
+                LitigationCompanySides.Determine(LitigationCaseCardMapper.ParseNames(k.PetitionersJson),
+                    LitigationCaseCardMapper.ParseNames(k.RespondentsJson), names, k.Direction),
+                k.FilingDate, k.LitigationCaseId))
+            .Select(k => k.LitigationCaseId).ToList();
+        model.Total = orderedIds.Count;
+        model.Page = Math.Clamp(page, 1, model.TotalPages);
+        if (focusCase is { } focused && orderedIds.IndexOf(focused) is var position and >= 0)
+            model.Page = position / model.PageSize + 1;
+        var displayedIds = orderedIds.Skip((model.Page - 1) * model.PageSize).Take(model.PageSize).ToArray();
+        var rowsById = (await db.LitigationCases.AsNoTracking().Where(c => displayedIds.Contains(c.LitigationCaseId))
             .Select(c => new
             {
                 c.LitigationCaseId, c.CaseNumber, c.Cnr, c.Court, c.CourtCategory, c.CaseType, c.Type, c.Act,
                 c.CaseStage, c.CaseClassification, c.ProceedingType, c.CaseStatus, c.Direction,
                 c.PetitionersJson, c.RespondentsJson, c.NextHearingDate, c.LastSeenUtc,
                 c.FilingDate, c.DecisionDate, c.CaseYear
-            }).ToListAsync(ct);
+            }).ToListAsync(ct)).ToDictionary(c => c.LitigationCaseId);
+        var rows = displayedIds.Where(rowsById.ContainsKey).Select(id => rowsById[id]).ToList(); // a case deleted since the keys were read is simply absent
         var pageIds = rows.Select(c => c.LitigationCaseId).ToArray();
         // Page first, then aggregate only those cases. Avoid correlated document-count subqueries in the paging plan.
         var orderCounts = await (from o in db.LitigationCaseOrders
@@ -116,11 +133,6 @@ public sealed class LitigationCaseListQuery(AppDbContext db, LitigationOrderOutc
                 JSON_VALUE(CASE WHEN ISJSON([AnalysisJson]) = 1 THEN [AnalysisJson] ELSE N'{}' END, '$.lis_pendens') AS [LisPendens]
             FROM [LitigationCaseAiAnalyses] WHERE [LitigationAiAnalysisRunId] = {{run.LitigationAiAnalysisRunId}}
             """).Where(a => pageIds.Contains(a.LitigationCaseId)).ToListAsync(ct);
-        var names = new List<string>();
-        if (!string.IsNullOrWhiteSpace(request.CompanyName)) names.Add(request.CompanyName);
-        if (request.LatestCompletedIngestionRunId is { } rid)
-            names.AddRange(await db.CompanyNameHistories.AsNoTracking().Where(h => h.RequestId == requestId && h.IngestionRunId == rid)
-                .Select(h => h.PreviousName).ToListAsync(ct));
         foreach (var row in rows)
         {
             var petitioners = LitigationCaseCardMapper.ParseNames(row.PetitionersJson);
