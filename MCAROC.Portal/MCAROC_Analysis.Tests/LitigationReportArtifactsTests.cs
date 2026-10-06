@@ -9,9 +9,12 @@ public sealed class LitigationReportArtifactsTests
     [Fact]
     public void RenderCsv_contains_full_case_fields_and_neutralises_formula_values()
     {
-        var csv = Encoding.UTF8.GetString(LitigationReportArtifacts.RenderCsv(ReportWithSingleCase("=danger")));
+        var report = ReportWithSingleCase("internal-id");
+        report = report with { Cases = [report.Cases[0] with { CaseNumber = "=danger" }] };
+        var csv = Encoding.UTF8.GetString(LitigationReportArtifacts.RenderCsv(report));
 
-        Assert.Contains("CSP ID", csv);
+        Assert.DoesNotContain("CSP ID", csv); // internal identifier: never exported
+        Assert.DoesNotContain("internal-id", csv);
         Assert.Contains("CNR Number", csv);
         Assert.Contains("Order Count", csv);
         Assert.Contains("Analysis Summary", csv);
@@ -268,7 +271,7 @@ public sealed class LitigationReportArtifactsTests
     private static string Squash(string s) => new string(s.Where(c => !char.IsWhiteSpace(c) && c != '\0').ToArray());
 
     [SkippableFact]
-    public void RenderPdf_shows_the_charged_property_section_with_links_evidence_and_caveats()
+    public void RenderPdf_has_no_charged_property_section_even_when_charge_links_exist()
     {
         Skip.IfNot(OperatingSystem.IsWindows(),
             "PdfPig text extraction is unreliable off Windows fonts; covered by the windows-tests CI job.");
@@ -276,45 +279,14 @@ public sealed class LitigationReportArtifactsTests
         var report = ReportWithSingleCase("csp-1") with
         {
             ChargeLinks = new MCAROC_Analysis.Services.LitigationData.ChargeLitigationSummary([
-                Link(MCAROC_Analysis.Services.LitigationData.ChargeLitigationSignal.ImmovableAddress, 1, "The order names the property charged under CHG-7.", "Plot No. A-36, Nayapalli is attached.", 2),
-                Link(MCAROC_Analysis.Services.LitigationData.ChargeLitigationSignal.LenderRecoveryCase, null, "The holder is litigating (DRT).")], 3, 2, 1, true, 1, 2)
+                Link(MCAROC_Analysis.Services.LitigationData.ChargeLitigationSignal.ImmovableAddress, 1, "The order names the property charged under CHG-7.", "Plot No. A-36, Nayapalli is attached.", 2)], 3, 2, 1, true, 1, 2)
         };
 
         using var doc = PdfDocument.Open(new MemoryStream(LitigationReportArtifacts.RenderPdf(report)));
         var text = Squash(string.Concat(doc.GetPages().Select(p => p.Text)));
 
-        Assert.Contains(Squash("PROPERTY & LITIGATION"), text);
-        Assert.Contains("CHG-7", text);
-        Assert.Contains(Squash("Case names the charged"), text);
-        Assert.Contains(Squash("Lender is"), text);
-        Assert.Contains("(indirect)", text);
-        Assert.Contains("Nayapalli", text);
-        Assert.Contains(Squash("Only strong matches are shown."), text);
-        Assert.Contains(Squash("NCLT/NCLAT orders are not scanned."), text);
-        Assert.Contains(Squash("1 order(s) had no extractable text"), text);
-        Assert.Contains(Squash("2 movable-asset charge(s) name"), text);
-        Assert.Contains(Squash("vehicle or serial numbers"), text);
-    }
-
-    [SkippableFact]
-    public void RenderPdf_with_no_links_says_what_was_compared_instead_of_implying_clean()
-    {
-        Skip.IfNot(OperatingSystem.IsWindows(),
-            "PdfPig text extraction is unreliable off Windows fonts; covered by the windows-tests CI job.");
-
-        var report = ReportWithSingleCase("csp-1") with
-        {
-            ChargeLinks = new MCAROC_Analysis.Services.LitigationData.ChargeLitigationSummary([], 3, 2, 1, false)
-        };
-
-        using var doc = PdfDocument.Open(new MemoryStream(LitigationReportArtifacts.RenderPdf(report)));
-        var text = Squash(string.Concat(doc.GetPages().Select(p => p.Text)));
-
-        Assert.Contains(Squash("PROPERTY & LITIGATION"), text);
-        Assert.Contains(Squash("No case was"), text);
-        Assert.Contains(Squash("a named asset"), text);
-        Assert.Contains(Squash("2 order(s) with text were compared"), text);
-        Assert.Contains(Squash("cannot be compared"), text);
+        Assert.DoesNotContain(Squash("PROPERTY & LITIGATION"), text);
+        Assert.DoesNotContain("Nayapalli", text);
     }
 
     [Fact]

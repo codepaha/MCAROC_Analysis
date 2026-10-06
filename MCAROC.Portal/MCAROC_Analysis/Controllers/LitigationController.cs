@@ -327,7 +327,7 @@ public class LitigationController(
         if (report is null)
             return NotFound("No completed litigation snapshot is available for this request.");
 
-        var pdfBytes = LitigationReportArtifacts.RenderPdf(report);
+        var pdfBytes = LitigationReportArtifacts.RenderPdf(report, LitigationReportArtifacts.TryLoadLogo(env.WebRootPath));
         var safeCompany = AutoFetchArchiveBuilder.CompanyToken(report.CompanyName);
         var fileName = $"LitigationReport_{(withAnalysis ? "WithAnalysis" : "PreAnalysis")}_{safeCompany}_{id}.pdf";
 
