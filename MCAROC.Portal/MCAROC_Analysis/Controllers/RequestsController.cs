@@ -1,4 +1,5 @@
 using System.Security.Cryptography;
+using System.Text.RegularExpressions;
 using MCAROC_Analysis.Data;
 using MCAROC_Analysis.Data.Entities;
 using MCAROC_Analysis.Models;
@@ -19,10 +20,11 @@ using Microsoft.AspNetCore.Authorization;
 using MCAROC_Analysis.Services.LitigationData;
 using MCAROC_Analysis.Services.AnalystAccess;
 using MCAROC_Analysis.Services.PropertyParticulars;
+using MCAROC_Analysis.Services.CompanyMaster;
 
 namespace MCAROC_Analysis.Controllers;
 
-public class RequestsController(
+public partial class RequestsController(
     AppDbContext db,
     IngestionOrchestrator orchestrator,
     FileValidationService fileValidation,
@@ -72,7 +74,12 @@ public class RequestsController(
             return View(model);
         }
 
-        var entityType = InferEntityType(model.Cin, model.Pan);
+        var (inferredType, entityTypeError) = InferEntityType(model.Cin, model.Pan);
+        if (inferredType is not { } entityType)
+        {
+            model.ErrorMessage = entityTypeError;
+            return View(model);
+        }
 
         if (model.RocFile is null || model.RocFile.Length == 0)
         {
@@ -669,15 +676,29 @@ public class RequestsController(
         return Json(new { queued = reset });
     }
 
-    /// <summary>The legal entity type follows from the identifier: an LLPIN (AAA-1234) is an LLP, a CIN a
-    /// company. With only a PAN, its 4th character says the holder type (F = firm / LLP, C = company).</summary>
-    private static EntityType InferEntityType(string? cin, string? pan)
+    /// <summary>The legal entity type follows from evidence, never a guess: a well-formed LLPIN (AAA-1234) is an
+    /// LLP, a well-formed CIN a company. A PAN alone settles it only for a company PAN (4th character C): an F
+    /// PAN is held by ordinary partnership firms as well as LLPs, and other holder types are not MCA entities,
+    /// so those need the CIN / LLPIN. Returns the error to show when the type cannot be established.</summary>
+    internal static (EntityType? Type, string? Error) InferEntityType(string? cin, string? pan)
     {
         if (!string.IsNullOrWhiteSpace(cin))
-            return cin.Contains('-') ? EntityType.LLP : EntityType.Company;
-        var trimmedPan = pan?.Trim();
-        return trimmedPan is { Length: 10 } && char.ToUpperInvariant(trimmedPan[3]) == 'F' ? EntityType.LLP : EntityType.Company;
+        {
+            var identifier = cin.Trim().ToUpperInvariant();
+            if (!CompanyNameResolver.IsValidIdentifier(identifier))
+                return (null, "Enter a valid company CIN (e.g. U24246DL2003PTC118255) or LLPIN (e.g. AAA-1234).");
+            return (identifier.Contains('-') ? EntityType.LLP : EntityType.Company, null);
+        }
+        var normalizedPan = pan?.Trim().ToUpperInvariant();
+        if (normalizedPan is null || !PanPattern().IsMatch(normalizedPan))
+            return (null, "PAN must be 10 characters, e.g. AABCV6369H.");
+        return normalizedPan[3] == 'C'
+            ? (EntityType.Company, null)
+            : (null, "This PAN does not identify a company. Enter the borrower's CIN or LLPIN.");
     }
+
+    [GeneratedRegex("^[A-Z]{5}[0-9]{4}[A-Z]$")]
+    private static partial Regex PanPattern();
 
     private async Task<RequestDocument> SaveDocumentAsync(long requestId, IFormFile file, DocumentType documentType, bool validateAsExcel = true)
     {
