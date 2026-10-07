@@ -1,4 +1,5 @@
 using System.Text;
+using MCAROC_Analysis.Data.Entities;
 using MCAROC_Analysis.Models;
 using MCAROC_Analysis.Services.LitigationData;
 using UglyToad.PdfPig;
@@ -240,6 +241,9 @@ public sealed class LitigationCasePresentationTests
 
     private static readonly StandaloneReportOrderDto[] NoDocument = [OrderIn(1, LitigationOrderAvailabilityBucket.Failed)];
     private static readonly StandaloneReportOrderDto[] DownloadedDocument = [OrderIn(1, LitigationOrderAvailabilityBucket.Downloaded)];
+    private static readonly StandaloneReportOrderDto[] ExpiredDocument = [OrderIn(1, LitigationOrderAvailabilityBucket.Expired)];
+    private const string MetadataLed = "Metadata-Led";
+    private const string OrderConfirmed = "Order-Confirmed";
 
     [Theory]
     // Says only that no order text was there — the orders panel discloses that in full when no document is in the portal
@@ -253,12 +257,14 @@ public sealed class LitigationCasePresentationTests
     [InlineData("No order text available; analysis based on metadata only.")]
     [InlineData("Order text not available for any order; analysis is based solely on metadata.")]
     [InlineData("Analysis is metadata-led as no order text was available.")]
-    public void A_bare_no_order_text_note_is_left_out_only_when_no_order_document_is_in_the_portal(string unknown)
+    public void A_bare_no_order_text_note_is_left_out_only_for_a_metadata_led_analysis_with_no_order_document_in_the_portal(string unknown)
     {
-        Assert.Empty(LitigationReportPdfDocument.EvidenceLimitations([unknown], NoDocument));
-        Assert.Empty(LitigationReportPdfDocument.EvidenceLimitations([unknown], []));
+        Assert.Empty(LitigationReportPdfDocument.EvidenceLimitations([unknown], NoDocument, metadataLed: true));
+        Assert.Empty(LitigationReportPdfDocument.EvidenceLimitations([unknown], [], metadataLed: true));
         // a downloaded PDF can still have no readable text: then nothing else says so, and the note stays
-        Assert.Equal([unknown], LitigationReportPdfDocument.EvidenceLimitations([unknown], DownloadedDocument));
+        Assert.Equal([unknown], LitigationReportPdfDocument.EvidenceLimitations([unknown], DownloadedDocument, metadataLed: true));
+        // an expired PDF can keep its extracted text, which an order-grounded analysis read: the panel then claims nothing
+        Assert.Equal([unknown], LitigationReportPdfDocument.EvidenceLimitations([unknown], ExpiredDocument, metadataLed: false));
     }
 
     [Theory]
@@ -276,8 +282,8 @@ public sealed class LitigationCasePresentationTests
     [InlineData("Case stage, type, and specific act details are not available in metadata.")]
     public void Material_and_compound_notes_are_always_kept(string unknown)
     {
-        Assert.Equal([unknown], LitigationReportPdfDocument.EvidenceLimitations([unknown], NoDocument));
-        Assert.Equal([unknown], LitigationReportPdfDocument.EvidenceLimitations([unknown], DownloadedDocument));
+        Assert.Equal([unknown], LitigationReportPdfDocument.EvidenceLimitations([unknown], NoDocument, metadataLed: true));
+        Assert.Equal([unknown], LitigationReportPdfDocument.EvidenceLimitations([unknown], DownloadedDocument, metadataLed: true));
     }
 
     [Theory]
@@ -286,13 +292,17 @@ public sealed class LitigationCasePresentationTests
     [InlineData("Case stage could not be determined from the provided metadata.")]
     [InlineData("Amount in dispute not specified in court record.")]
     public void A_note_that_the_record_gives_no_stage_or_amount_is_left_out_since_the_card_shows_it(string unknown) =>
-        Assert.Empty(LitigationReportPdfDocument.EvidenceLimitations([unknown], DownloadedDocument));
+        Assert.Empty(LitigationReportPdfDocument.EvidenceLimitations([unknown], DownloadedDocument, metadataLed: false));
 
-    private static StandaloneLitigationReport AnalysedReport(StandaloneReportOrderDto[] orders, params string[] unknowns)
+    private static StandaloneLitigationReport AnalysedReport(StandaloneReportOrderDto[] orders, params string[] unknowns) =>
+        AnalysedReport(orders, MetadataLed, null, unknowns);
+
+    private static StandaloneLitigationReport AnalysedReport(StandaloneReportOrderDto[] orders, string basis,
+        IReadOnlyList<LitigationAnalysisQuote>? passages, params string[] unknowns)
     {
         var one = Case(1, "high_court", "KarnatakaHighCourt", "Pending", "against", "03-04-2024") with { Orders = orders };
         var analysis = new LitigationCaseAnalysis("Completed", "R2", "Recovery suit by a bank.", unknowns, null,
-            RiskTrigger: "Recovery claim", RiskReason: "A bank seeks recovery from the company.");
+            RiskTrigger: "Recovery claim", RiskReason: "A bank seeks recovery from the company.", Passages: passages, AnalysisBasis: basis);
         return Report(one) with { CaseAnalysesByCaseId = new Dictionary<long, LitigationCaseAnalysis> { [1] = analysis } };
     }
 
@@ -331,6 +341,35 @@ public sealed class LitigationCasePresentationTests
         Assert.DoesNotContain("documentisnotavailable", text);
         Assert.DoesNotContain("restsonthecaserecordalone", text);
     }
+
+    [SkippableFact]
+    public void Pdf_never_calls_an_order_grounded_analysis_metadata_only_when_the_pdf_expired_but_its_text_was_retained()
+    {
+        Skip.IfNot(OperatingSystem.IsWindows(),
+            "PdfPig text extraction is unreliable off Windows fonts; covered by the windows-tests CI job.");
+
+        // The order's PDF expired at the source, but its extracted text stayed in the portal and the analysis quoted it.
+        var expired = OrderIn(1, LitigationOrderAvailabilityBucket.Expired) with
+        {
+            DocumentStatus = LitigationOrderDocumentStatus.Expired, TextExtractionStatus = FilingDocumentProcessingStatus.TextExtracted
+        };
+        var passage = new LitigationAnalysisQuote { Claim = "risk", OrderId = 1, Quote = "the respondent shall deposit the decretal sum", Page = 2 };
+        var text = Squashed(AnalysedReport([expired], OrderConfirmed, [passage]));
+
+        Assert.Contains("PASSAGESTHISRESTSON", text);
+        Assert.Contains("therespondentshalldepositthedecretalsum", text);
+        Assert.Contains("butitsdocumentisnotavailable.", text);
+        Assert.DoesNotContain("restsonthecaserecordalone", text);
+    }
+
+    [Theory]
+    [InlineData("{\"analysis_basis\":\"Order-Confirmed\",\"summary\":\"x\"}", "Order-Confirmed")]
+    [InlineData("{\"analysis_basis\":\"Metadata-Led\"}", "Metadata-Led")]
+    [InlineData("{\"summary\":\"v1.0 shape\"}", null)]
+    [InlineData("not json", null)]
+    [InlineData(null, null)]
+    public void The_report_reads_the_analysis_basis_the_analysis_checks_stored(string? json, string? expected) =>
+        Assert.Equal(expected, LitigationReportAssembler.AnalysisBasis(json));
 
     [SkippableFact]
     public void Pdf_says_the_analysis_rests_on_the_record_when_no_order_was_returned()
