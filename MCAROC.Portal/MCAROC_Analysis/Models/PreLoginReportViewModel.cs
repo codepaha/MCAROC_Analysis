@@ -32,14 +32,37 @@ public sealed class PreLoginReportViewModel : IValidatableObject
     [Display(Name = "Report format")]
     public PreLoginReportFormat Format { get; set; } = PreLoginReportFormat.Sbi;
 
+    /// <summary>Never asked for: <see cref="InferEntityType"/> derives it from what was entered. Null for a
+    /// name-only MCA borrower until the registered-name match fixes it.</summary>
     [Display(Name = "Entity type")]
-    [Required]
     public PreLoginReportEntityType? EntityType { get; set; }
 
-    public bool EntityTypeConfirmed { get; set; }
+    public bool IsLitigationOnly => EntityType is PreLoginReportEntityType.Partnership or PreLoginReportEntityType.Proprietorship
+        or PreLoginReportEntityType.Trust or PreLoginReportEntityType.Other;
 
-    public bool IsLitigationOnly => EntityType is not (PreLoginReportEntityType.Company or PreLoginReportEntityType.Llp or PreLoginReportEntityType.ForeignCompany);
+    /// <summary>Legal form of a borrower not registered with MCA, as written on the request (partnership,
+    /// proprietorship, trust, society, ...).</summary>
+    [Display(Name = "Entity type")]
     [StringLength(100)] public string? OtherEntityType { get; set; }
+
+    /// <summary>The legal entity type follows from the input: an LLPIN (AAA-1234) is an LLP, a CIN a company,
+    /// and a borrower entered only through the not-registered-with-MCA details is litigation-only, typed by
+    /// its written legal form.</summary>
+    public void InferEntityType()
+    {
+        if (EntityType is not null) return;
+        var identifier = Cin?.Trim();
+        if (!string.IsNullOrEmpty(identifier))
+            EntityType = identifier.Contains('-') ? PreLoginReportEntityType.Llp : PreLoginReportEntityType.Company;
+        else if (string.IsNullOrWhiteSpace(CompanyName) && !string.IsNullOrWhiteSpace(PartnershipName))
+            EntityType = OtherEntityType?.Trim().ToLowerInvariant() switch
+            {
+                null or "" or "partnership" or "partnership firm" => PreLoginReportEntityType.Partnership,
+                "proprietorship" or "sole proprietorship" => PreLoginReportEntityType.Proprietorship,
+                "trust" => PreLoginReportEntityType.Trust,
+                _ => PreLoginReportEntityType.Other
+            };
+    }
 
     [Display(Name = "Borrower name")]
     [StringLength(250)]
@@ -61,10 +84,9 @@ public sealed class PreLoginReportViewModel : IValidatableObject
 
     public IEnumerable<ValidationResult> Validate(ValidationContext validationContext)
     {
-        if (EntityType is not { } entityType || !Enum.IsDefined(entityType) || !Enum.IsDefined(Format))
-            yield return new ValidationResult("Select a valid entity type and report format.");
-        if (!EntityTypeConfirmed)
-            yield return new ValidationResult("Confirm the borrower's legal entity type before generating the report.", [nameof(EntityTypeConfirmed)]);
+        InferEntityType();
+        if (EntityType is { } entityType && !Enum.IsDefined(entityType) || !Enum.IsDefined(Format))
+            yield return new ValidationResult("Select a valid report format.");
         if (IsLitigationOnly)
         {
             if (Format != PreLoginReportFormat.Sbi)
@@ -78,9 +100,8 @@ public sealed class PreLoginReportViewModel : IValidatableObject
             yield break;
         }
 
-        if (string.IsNullOrWhiteSpace(Cin) &&
-            (EntityType == PreLoginReportEntityType.ForeignCompany || string.IsNullOrWhiteSpace(CompanyName)))
-            yield return new ValidationResult("Enter a CIN / LLPIN or a registered company / LLP name.", [nameof(Cin), nameof(CompanyName)]);
+        if (string.IsNullOrWhiteSpace(Cin) && string.IsNullOrWhiteSpace(CompanyName))
+            yield return new ValidationResult("Enter a CIN / LLPIN or a registered company / LLP name, or the details of a borrower not registered with MCA.", [nameof(Cin), nameof(CompanyName)]);
         if (string.IsNullOrWhiteSpace(Cin) && !string.IsNullOrWhiteSpace(CompanyName) && CompanyName.Trim().Length < 3)
             yield return new ValidationResult("Enter at least 3 characters of the registered name.", [nameof(CompanyName)]);
     }

@@ -11,11 +11,6 @@ public class NewRequestViewModel
     public List<Client> Clients { get; set; } = [];
 
     [Required]
-    public EntityType? EntityType { get; set; }
-
-    public bool EntityTypeConfirmed { get; set; }
-
-    [Required]
     [Display(Name = "Company / LLP Name")]
     public string CompanyName { get; set; } = string.Empty;
 

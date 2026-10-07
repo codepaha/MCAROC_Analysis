@@ -25,43 +25,48 @@ namespace MCAROC_Analysis.Tests;
 
 public class BorrowerAssignmentTests
 {
-    [Fact]
-    public void Direct_report_intake_requires_an_asserted_entity_type()
+    [Theory]
+    [InlineData("U45203OR1995PLC003982", PreLoginReportEntityType.Company)]
+    [InlineData("AAB-9876", PreLoginReportEntityType.Llp)]
+    public void Direct_report_intake_infers_the_entity_type_from_the_identifier(string identifier, PreLoginReportEntityType expected)
     {
-        var model = new PreLoginReportViewModel { Cin = "U45203OR1995PLC003982" };
+        var model = new PreLoginReportViewModel { Cin = identifier };
         var errors = new List<System.ComponentModel.DataAnnotations.ValidationResult>();
-        Assert.False(Validator.TryValidateObject(model, new ValidationContext(model), errors, true));
-        Assert.Contains(errors, error => error.MemberNames.Contains(nameof(model.EntityType)));
-
-        model.EntityType = PreLoginReportEntityType.Company;
-        errors.Clear();
-        Assert.False(Validator.TryValidateObject(model, new ValidationContext(model), errors, true));
-        Assert.Contains(errors, error => error.MemberNames.Contains(nameof(model.EntityTypeConfirmed)));
-
-        model.EntityTypeConfirmed = true;
-        errors.Clear();
         Assert.True(Validator.TryValidateObject(model, new ValidationContext(model), errors, true));
+        Assert.Equal(expected, model.EntityType);
+        Assert.False(model.IsLitigationOnly);
+    }
+
+    [Theory]
+    [InlineData(null, PreLoginReportEntityType.Partnership)]
+    [InlineData("Proprietorship", PreLoginReportEntityType.Proprietorship)]
+    [InlineData("Trust", PreLoginReportEntityType.Trust)]
+    [InlineData("Society", PreLoginReportEntityType.Other)]
+    public void Borrower_not_registered_with_MCA_is_litigation_only_typed_by_its_written_form(string? writtenForm, PreLoginReportEntityType expected)
+    {
+        var model = new PreLoginReportViewModel
+        {
+            OtherEntityType = writtenForm, PartnershipName = "Example Firm", PartnershipRegistrationNumber = "AAAFE1234F",
+            PartnershipAddress = "1 Main Road, Pune"
+        };
+        var errors = new List<System.ComponentModel.DataAnnotations.ValidationResult>();
+        Assert.True(Validator.TryValidateObject(model, new ValidationContext(model), errors, true));
+        Assert.Equal(expected, model.EntityType);
+        Assert.True(model.IsLitigationOnly);
     }
 
     [Fact]
-    public void Direct_report_accepts_a_registered_name_without_an_identifier_after_type_confirmation()
+    public void Direct_report_accepts_a_registered_name_without_an_identifier()
     {
         var model = new PreLoginReportViewModel
         {
             CompanyName = "SILVER PORCH DEVELOPERS PRIVATE LIMITED",
-            EntityType = PreLoginReportEntityType.Company,
-            EntityTypeConfirmed = true,
             Format = PreLoginReportFormat.Prr
         };
         var errors = new List<System.ComponentModel.DataAnnotations.ValidationResult>();
         Assert.True(Validator.TryValidateObject(model, new ValidationContext(model), errors, true));
 
         model.CompanyName = "Si";
-        Assert.False(Validator.TryValidateObject(model, new ValidationContext(model), errors, true));
-
-        model.CompanyName = "SILVER PORCH DEVELOPERS PRIVATE LIMITED";
-        model.EntityType = PreLoginReportEntityType.ForeignCompany;
-        errors.Clear();
         Assert.False(Validator.TryValidateObject(model, new ValidationContext(model), errors, true));
     }
 

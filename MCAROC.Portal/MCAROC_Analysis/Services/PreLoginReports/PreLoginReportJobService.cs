@@ -64,14 +64,12 @@ public sealed class PreLoginReportJobService(AppDbContext db, PreLoginReportQueu
         ? DeserializeStoredData(job.DataJson) : null;
 
     public async Task CompleteAssignmentAsync(Guid batch, long id, string? borrowerName, string? entityType,
-        string? mcaIdentifier, IFormFile? legalCasesFile, bool noCasesConfirmed, bool entityTypeConfirmed, CancellationToken ct)
+        string? mcaIdentifier, IFormFile? legalCasesFile, bool noCasesConfirmed, CancellationToken ct)
     {
         var job = await FindInBatchAsync(batch, id, ct) ?? throw new PreLoginReportException("Assignment not found.");
         if (job.Status != PreLoginReportJobStatus.AwaitingReview) throw new PreLoginReportException("This assignment is not awaiting details or results.");
         var stored = AssignmentData(job) ?? throw new PreLoginReportException("Assignment recognition has not completed.");
         var details = stored.Assignment ?? throw new PreLoginReportException("Assignment details are unavailable.");
-        if (!entityTypeConfirmed)
-            throw new PreLoginReportException("Confirm the borrower's legal entity type before generating the report.");
         if (string.IsNullOrWhiteSpace(borrowerName) || borrowerName.Length > 250 || string.IsNullOrWhiteSpace(entityType) || entityType.Length > 100)
             throw new PreLoginReportException("A borrower name and entity type are required to complete this assignment.");
         details.CompanyDetails.CompanyName = borrowerName.Trim();
@@ -160,13 +158,16 @@ public sealed class PreLoginReportJobService(AppDbContext db, PreLoginReportQueu
 
     /// <summary>Resolve only an exact registered Company/LLP name. A non-unique name must be
     /// disambiguated by selecting its CIN/LLPIN before any report-data request is queued.</summary>
-    public async Task<(string Identifier, string Name)> ResolveExactCorporateNameAsync(
-        string? name, PreLoginReportEntityType entityType, CancellationToken cancellationToken)
+    /// <summary>Exact registered-name match. With no <paramref name="entityType"/> both companies and LLPs are
+    /// searched; the match's record type then says which one the borrower is.</summary>
+    public async Task<(string Identifier, string Name, PreLoginReportEntityType EntityType)> ResolveExactCorporateNameAsync(
+        string? name, PreLoginReportEntityType? entityType, CancellationToken cancellationToken)
     {
-        var recordType = entityType switch
+        CompanyMasterRecordType[] recordTypes = entityType switch
         {
-            PreLoginReportEntityType.Company => CompanyMasterRecordType.Company,
-            PreLoginReportEntityType.Llp => CompanyMasterRecordType.Llp,
+            null => [CompanyMasterRecordType.Company, CompanyMasterRecordType.Llp],
+            PreLoginReportEntityType.Company => [CompanyMasterRecordType.Company],
+            PreLoginReportEntityType.Llp => [CompanyMasterRecordType.Llp],
             _ => throw new PreLoginReportException("Name-only lookup is available for companies and LLPs only.")
         };
         var trimmed = name?.Trim() ?? string.Empty;
@@ -174,19 +175,21 @@ public sealed class PreLoginReportJobService(AppDbContext db, PreLoginReportQueu
             throw new PreLoginReportException("Enter at least 3 characters of the registered borrower name.");
         var normalized = CompanyNameNormalizer.Normalize(trimmed).NameNormalized;
         var matches = await db.CompanyMasterRecords.AsNoTracking()
-            .Where(x => x.RecordType == recordType && x.NameNormalized == normalized)
+            .Where(x => recordTypes.Contains(x.RecordType) && x.NameNormalized == normalized)
             .OrderBy(x => x.Identifier).Take(2)
-            .Select(x => new { x.Identifier, x.Name }).ToListAsync(cancellationToken);
+            .Select(x => new { x.Identifier, x.Name, x.RecordType }).ToListAsync(cancellationToken);
         if (matches.Count == 0)
             matches = await db.CompanyMasterRecords.AsNoTracking()
-                .Where(x => x.RecordType == recordType && x.Name == trimmed)
+                .Where(x => recordTypes.Contains(x.RecordType) && x.Name == trimmed)
                 .OrderBy(x => x.Identifier).Take(2)
-                .Select(x => new { x.Identifier, x.Name }).ToListAsync(cancellationToken);
+                .Select(x => new { x.Identifier, x.Name, x.RecordType }).ToListAsync(cancellationToken);
         if (matches.Count == 0)
             throw new PreLoginReportException("No exact registered borrower match was found. Select a suggestion or enter the CIN / LLPIN.");
         if (matches.Count > 1)
             throw new PreLoginReportException("More than one registered borrower has this name. Select the correct CIN / LLPIN from the suggestions.");
-        return (matches[0].Identifier, matches[0].Name);
+        var match = matches[0];
+        return (match.Identifier, match.Name,
+            match.RecordType == CompanyMasterRecordType.Llp ? PreLoginReportEntityType.Llp : PreLoginReportEntityType.Company);
     }
 
     /// <summary>Partnership reports are intentionally self-contained: their details and legal-case counts
@@ -351,6 +354,7 @@ public sealed class PreLoginReportJobService(AppDbContext db, PreLoginReportQueu
                 var assignment = intakeData.Assignment!;
                 var entity = BorrowerRequestParser.EntityType(assignment);
                 string? reviewReason = recognized.MissingDetails;
+                var identityConfirmed = false;
                 if (!intakeData.Company.LitigationOnly && entity is PreLoginReportEntityType.Company or PreLoginReportEntityType.Llp)
                 {
                     var resolution = await (identityResolver ?? throw new PreLoginReportException("MCA identity resolution is not configured.", true))
@@ -360,6 +364,7 @@ public sealed class PreLoginReportJobService(AppDbContext db, PreLoginReportQueu
                     {
                         if (entity == PreLoginReportEntityType.Company) assignment.CompanyDetails.Cin = confirmed;
                         reviewReason = null;
+                        identityConfirmed = true;
                     }
                     else reviewReason = $"MCA identity needs review ({resolution.ReasonCode}). Select the correct database match before requesting details.";
                 }
@@ -369,13 +374,20 @@ public sealed class PreLoginReportJobService(AppDbContext db, PreLoginReportQueu
                 job.SubmittedCompanyName = assignment.CompanyDetails.CompanyName;
                 job.Cin = intakeData.McaIdentifier ?? assignment.CompanyDetails.Cin ?? intakeData.Company.RegistrationNumber;
                 if (job.Cin == "-") job.Cin = "ASSIGN-" + job.BatchId.ToString("N")[..20];
-                // Extraction and local identity lookup are suggestions, not a legal-form assertion.
-                // Every uploaded assignment waits for the reviewer before any external report-data fetch.
-                reviewReason ??= "Confirm the borrower entity type before report generation.";
-                job.Status = PreLoginReportJobStatus.AwaitingReview; job.ProgressPercent = 100;
-                job.FailureReason = reviewReason;
+                // A company / LLP whose identity the MCA master confirmed goes straight on to the report; the
+                // entity type follows from that record. Everything else waits only for what is actually missing:
+                // an ambiguous identity, unreadable details, or a litigation-only borrower's case results.
+                if (!identityConfirmed)
+                {
+                    reviewReason ??= intakeData.Company.LitigationOnly
+                        ? "Attach the litigation results, or confirm that a completed search returned no cases."
+                        : "Enter the borrower's CIN / LLPIN before report generation.";
+                    job.Status = PreLoginReportJobStatus.AwaitingReview; job.ProgressPercent = 100;
+                    job.FailureReason = reviewReason;
+                    await db.SaveChangesAsync(cancellationToken);
+                    return;
+                }
                 await db.SaveChangesAsync(cancellationToken);
-                return;
             }
             var stored = DeserializeStoredData(job.DataJson);
             var data = stored?.Company.LitigationOnly == true || stored?.LegalCases is not null ? stored! :

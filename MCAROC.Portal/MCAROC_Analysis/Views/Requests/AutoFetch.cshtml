@@ -42,20 +42,6 @@
             </select>
         </div>
 
-        <div class="mb-3">
-            <label class="form-label d-block">Entity Type</label>
-            <div class="form-check form-check-inline">
-                <input class="form-check-input" type="radio" asp-for="EntityType" value="Company" id="entityCompany" required />
-                <label class="form-check-label" for="entityCompany">Company</label>
-            </div>
-            <div class="form-check form-check-inline">
-                <input class="form-check-input" type="radio" asp-for="EntityType" value="LLP" id="entityLlp" required />
-                <label class="form-check-label" for="entityLlp">LLP</label>
-            </div>
-        </div>
-
-        <div class="form-check mb-3"><input class="form-check-input" type="checkbox" asp-for="EntityTypeConfirmed" required /><label class="form-check-label" asp-for="EntityTypeConfirmed">I have checked and confirmed the borrower's legal entity type.</label></div>
-
         <input type="hidden" asp-for="SelectedIdentifier" id="afSelectedIdentifier" />
 
         <div class="mb-3 position-relative">
@@ -236,9 +222,6 @@
                         name.value = h.name || h.legalName || h.Name || h.LegalName || '';
                         selectedId.value = id;
 
-                        var isLlp = id.indexOf('-') >= 0;
-                        document.getElementById(isLlp ? 'entityLlp' : 'entityCompany').checked = true;
-
                         if (h.state || h.State) hintState.value = h.state || h.State;
                         if (h.district || h.District) hintDistrict.value = h.district || h.District;
 
@@ -262,9 +245,6 @@
                     if (hintDistrict.value.trim()) reqUrl += '&district=' + encodeURIComponent(hintDistrict.value.trim());
                     if (hintPin.value.trim()) reqUrl += '&pin=' + encodeURIComponent(hintPin.value.trim());
                     if (hintYear.value.trim()) reqUrl += '&year=' + encodeURIComponent(hintYear.value.trim());
-
-                    var isLlp = document.getElementById('entityLlp').checked;
-                    reqUrl += '&entityType=' + (isLlp ? 'LLP' : 'Company');
 
                     fetch(reqUrl, { headers: { 'Accept': 'application/json' } })
                         .then(function (r) {
@@ -294,12 +274,6 @@
                 el.addEventListener('input', function () {
                     var q = (name.value || cin.value || '').trim();
                     if (q.length >= 3) triggerSearch(q);
-                });
-            });
-
-            [document.getElementById('entityCompany'), document.getElementById('entityLlp')].forEach(function (el) {
-                el.addEventListener('change', function () {
-                    triggerSearch((name.value || cin.value || '').trim());
                 });
             });
 

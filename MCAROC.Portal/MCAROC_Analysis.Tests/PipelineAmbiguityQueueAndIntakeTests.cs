@@ -168,9 +168,7 @@ public class PipelineAmbiguityQueueAndIntakeTests : IAsyncLifetime
             var model = new AutoFetchRequestViewModel
             {
                 ClientId = 1,
-                CompanyName = $"{_token} UNREGISTERED VENTURE",
-                EntityType = EntityType.Company,
-                EntityTypeConfirmed = true
+                CompanyName = $"{_token} UNREGISTERED VENTURE"
             };
 
             var actionResult = await controller.New(model, CancellationToken.None);
@@ -217,9 +215,7 @@ public class PipelineAmbiguityQueueAndIntakeTests : IAsyncLifetime
                 ClientId = 1,
                 CompanyName = $"{_token} ENTERPRISES PRIVATE LIMITED",
                 Cin = cin,
-                SelectedIdentifier = cin,
-                EntityType = EntityType.Company,
-                EntityTypeConfirmed = true
+                SelectedIdentifier = cin
             };
 
             var actionResult = await controller.New(model, CancellationToken.None);
@@ -260,9 +256,7 @@ public class PipelineAmbiguityQueueAndIntakeTests : IAsyncLifetime
             var model = new AutoFetchRequestViewModel
             {
                 ClientId = 1,
-                CompanyName = $"{_token} Trading Pvt Ltd",
-                EntityType = EntityType.Company,
-                EntityTypeConfirmed = true
+                CompanyName = $"{_token} Trading Pvt Ltd"
             };
             var result = await afController.New(model, CancellationToken.None);
             var reqId = (long)((RedirectToActionResult)result).RouteValues!["id"]!;
@@ -307,9 +301,7 @@ public class PipelineAmbiguityQueueAndIntakeTests : IAsyncLifetime
             var model = new AutoFetchRequestViewModel
             {
                 ClientId = 1,
-                CompanyName = $"{_token} Motors",
-                EntityType = EntityType.Company,
-                EntityTypeConfirmed = true
+                CompanyName = $"{_token} Motors"
             };
             var result = await afController.New(model, CancellationToken.None);
             var reqId = (long)((RedirectToActionResult)result).RouteValues!["id"]!;
