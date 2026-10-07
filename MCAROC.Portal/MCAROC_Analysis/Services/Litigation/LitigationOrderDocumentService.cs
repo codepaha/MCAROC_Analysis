@@ -89,10 +89,12 @@ public sealed class LitigationOrderDocumentService(
                 return;
             }
 
-            string token;
+            // Sign in only for a link on BPR's own host; a pre-signed document link needs no token.
+            var token = string.Empty;
             try
             {
-                token = await client.AuthenticateAsync(ct);
+                if (client.OrderDocumentNeedsToken(document.Order.PdfUrl))
+                    token = await client.AuthenticateAsync(ct);
             }
             catch (BprLitigationException ex)
             {
