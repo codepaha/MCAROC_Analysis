@@ -248,7 +248,8 @@ public sealed class LitigationReuseService(
         if (!File.Exists(sourcePath)) return null;
         var directory = Path.Combine(env.ContentRootPath, "App_Data", "Requests", requestId.ToString(), "litigation-orders");
         Directory.CreateDirectory(directory);
-        var newPath = Path.Combine(directory, $"{newDocumentId}-reused.pdf");
+        var extension = string.Equals(Path.GetExtension(sourcePath), ".txt", StringComparison.OrdinalIgnoreCase) ? ".txt" : ".pdf";
+        var newPath = Path.Combine(directory, $"{newDocumentId}-reused{extension}");
         await using var src = File.OpenRead(sourcePath);
         await using var dst = File.Create(newPath);
         await src.CopyToAsync(dst, ct);

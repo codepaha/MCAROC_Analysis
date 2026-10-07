@@ -69,6 +69,9 @@ public static class LitigationOrderAvailabilityResolver
             return (LitigationOrderAvailabilityBucket.Expired, $"Vendor PDF expired{dateStr}{textNote}", "Expired", extractionLabel);
         }
 
+        if (doc.Status == LitigationOrderDocumentStatus.NotPublished)
+            return (LitigationOrderAvailabilityBucket.Failed, "Not published at the source", "NotPublished", extractionLabel);
+
         if (doc.Status == LitigationOrderDocumentStatus.Failed)
             return (LitigationOrderAvailabilityBucket.Failed, "Retrieval failed", "Failed", extractionLabel);
 

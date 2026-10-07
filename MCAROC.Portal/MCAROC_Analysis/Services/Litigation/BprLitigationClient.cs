@@ -224,6 +224,8 @@ public sealed class BprLitigationClient(
 
         using (response)
         {
+            if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
+                return BprOrderDownloadResult.NotPublishedAtSource("The source has no file for this order (HTTP 404).");
             if (!response.IsSuccessStatusCode)
                 return BprOrderDownloadResult.Failed($"HTTP {(int)response.StatusCode} downloading order PDF.");
 
@@ -244,12 +246,22 @@ public sealed class BprLitigationClient(
 
             if (bytes.Length == 0)
                 return BprOrderDownloadResult.Failed("Order PDF download returned an empty body.");
-            if (!HasPdfSignature(bytes))
-                return BprOrderDownloadResult.Failed(
-                    $"Downloaded content ({bytes.Length:N0} bytes) does not start with the PDF signature — " +
-                    "likely an error page or an expired link, not the order.");
+            if (HasPdfSignature(bytes))
+                return BprOrderDownloadResult.Success(bytes, response.Content.Headers.ContentType?.MediaType);
 
-            return BprOrderDownloadResult.Success(bytes, response.Content.Headers.ContentType?.MediaType);
+            // Not a PDF. Some forums' orders are an HTML page carrying the order's text, others a notice that the
+            // order is not uploaded; anything that looks like an error (JSON, the storage service's error document,
+            // a short "Expired" page) is a failure to retry, never stored as an order.
+            var (kind, text) = LitigationOrderText.Classify(bytes);
+            return kind switch
+            {
+                LitigationOrderPageKind.OrderText => BprOrderDownloadResult.OrderText(text),
+                LitigationOrderPageKind.NotPublished => BprOrderDownloadResult.NotPublishedAtSource(
+                    $"The source has not published this order: \"{(text.Length > 160 ? text[..160] + "…" : text)}\""),
+                _ => BprOrderDownloadResult.Failed(
+                    $"Downloaded content ({bytes.Length:N0} bytes) does not start with the PDF signature and is not an order page — " +
+                    "likely an error page or an expired link, not the order.")
+            };
         }
     }
 
@@ -555,8 +567,13 @@ public sealed record BprReportPollResult(BprReportPollStatus Status, byte[]? Byt
 /// shape. Never carries the token/secret; callers may log this exception's message safely.</summary>
 public sealed class BprLitigationException(string message) : Exception(message);
 
-public sealed record BprOrderDownloadResult(bool Ok, byte[]? Bytes, string? ContentType, string? Error)
+/// <summary>One order download: a PDF (<see cref="Bytes"/>), an order the source serves as an HTML page (its
+/// <see cref="Text"/>, never the HTML itself), an order the source has not published (<see cref="NotPublished"/>,
+/// terminal), or a failure to retry.</summary>
+public sealed record BprOrderDownloadResult(bool Ok, byte[]? Bytes, string? ContentType, string? Error, string? Text = null, bool NotPublished = false)
 {
     public static BprOrderDownloadResult Success(byte[] bytes, string? contentType) => new(true, bytes, contentType, null);
+    public static BprOrderDownloadResult OrderText(string text) => new(true, null, "text/plain; charset=utf-8", null, text);
+    public static BprOrderDownloadResult NotPublishedAtSource(string reason) => new(false, null, null, reason, NotPublished: true);
     public static BprOrderDownloadResult Failed(string error) => new(false, null, null, error);
 }

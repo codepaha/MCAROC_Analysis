@@ -28,6 +28,7 @@
         LitigationOrderDocumentStatus.Pending or LitigationOrderDocumentStatus.InProgress => "PDF is being fetched",
         LitigationOrderDocumentStatus.Failed => "PDF could not be fetched",
         LitigationOrderDocumentStatus.Expired => "PDF link expired — refresh the litigation data to fetch it again",
+        LitigationOrderDocumentStatus.NotPublished => "Not published by the court",
         _ => "No PDF in the report"
     };
 }
@@ -253,7 +254,7 @@
                             <div class="small text-end text-nowrap">
                                 @if (o.DocumentStatus == LitigationOrderDocumentStatus.Downloaded && o.LitigationOrderDocumentId is { } docId)
                                 {
-                                    <a href="/Requests/@request.RequestId/Litigation/Orders/@docId/download"><i class="bi bi-file-earmark-pdf me-1"></i>Order PDF</a>
+                                    <a href="/Requests/@request.RequestId/Litigation/Orders/@docId/download"><i class="bi @(o.IsTextOrder ? "bi-file-earmark-text" : "bi-file-earmark-pdf") me-1"></i>@(o.IsTextOrder ? "Order text" : "Order PDF")</a>
                                 }
                                 else
                                 {

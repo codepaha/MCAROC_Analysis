@@ -306,6 +306,8 @@ public sealed class LitigationOrderRowViewModel
     public string? OrderType { get; set; }
     public LitigationOrderDocumentStatus? DocumentStatus { get; set; }
     public bool IsExpired => DocumentStatus == LitigationOrderDocumentStatus.Expired;
+    /// <summary>The source served this order as a page, kept as its text rather than a PDF.</summary>
+    public bool IsTextOrder { get; set; }
     public string? FailureReason { get; set; }
     public int RefreshCount { get; set; }
     public List<LitigationPropertyMatchViewModel> PropertyMatches { get; set; } = [];

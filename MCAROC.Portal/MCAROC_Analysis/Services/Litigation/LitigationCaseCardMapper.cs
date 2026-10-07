@@ -73,6 +73,7 @@ public static class LitigationCaseCardMapper
                 OrderDate = o.OrderDate,
                 OrderType = o.OrderType,
                 DocumentStatus = od?.Status,
+                IsTextOrder = od?.TextExtractionMethod == TextExtractionMethod.Html,
                 FailureReason = od?.FailureReason,
                 RefreshCount = od?.RefreshCount ?? 0,
                 Outcomes = outcomeMatch?.Outcomes.ToList() ?? [],

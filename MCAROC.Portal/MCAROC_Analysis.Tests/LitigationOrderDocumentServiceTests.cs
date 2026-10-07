@@ -212,7 +212,7 @@ public class LitigationOrderDocumentServiceTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task DownloadAndExtractAsync_marks_Failed_with_a_reason_on_a_non_PDF_response()
+    public async Task DownloadAndExtractAsync_marks_Failed_on_the_storage_services_error_document()
     {
         await using var db = CreateContext();
         var (_, _, order) = await SeedOrderAsync(db, "A2", "https://bpr.example/orders/a2.pdf");
@@ -222,7 +222,8 @@ public class LitigationOrderDocumentServiceTests : IAsyncLifetime
         StubAuthenticate(handler);
         handler.OnPath("orders/a2.pdf", _ => new HttpResponseMessage(HttpStatusCode.OK)
         {
-            Content = new StringContent("<html>expired link</html>", Encoding.UTF8, "text/html")
+            Content = new StringContent("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<Error><Code>AccessDenied</Code><Message>Request has expired</Message></Error>",
+                Encoding.UTF8, "application/xml")
         });
         var service = NewService(db, handler);
 
@@ -231,8 +232,70 @@ public class LitigationOrderDocumentServiceTests : IAsyncLifetime
         await using var verifyDb = CreateContext();
         var reloaded = await verifyDb.LitigationOrderDocuments.FirstAsync(d => d.LitigationOrderDocumentId == document.LitigationOrderDocumentId);
         Assert.Equal(LitigationOrderDocumentStatus.Failed, reloaded.Status); // retryable, never falsely "complete"
-        Assert.Contains("PDF signature", reloaded.FailureReason);
+        Assert.Contains("is not an order page", reloaded.FailureReason);
         Assert.Null(reloaded.StoragePath);
+    }
+
+    [Fact]
+    public async Task DownloadAndExtractAsync_keeps_an_order_served_as_an_HTML_page_as_its_plain_text()
+    {
+        await using var db = CreateContext();
+        var (_, _, order) = await SeedOrderAsync(db, "H1", "https://bpr.example/drt/orders/h1.pdf");
+        var document = await SeedDocumentAsync(db, order.LitigationCaseOrderId, DateTime.UtcNow.AddDays(5));
+
+        var handler = new StubHandler();
+        StubAuthenticate(handler);
+        handler.OnPath("orders/h1.pdf", _ => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent("<table><tr><td><p>Counsel for D1 to D4 reported No rejoinder. Placed before Honble P.O. Call on 29-04-2019.</p>" +
+                "<script>alert(1)</script></td></tr></table>", Encoding.UTF8, "binary/octet-stream")
+        });
+        var chunking = new LitigationOrderChunkingQueue();
+        var service = NewService(db, handler, chunkingQueue: chunking);
+
+        await service.DownloadAndExtractAsync(document.LitigationOrderDocumentId, CancellationToken.None);
+
+        await using var verifyDb = CreateContext();
+        var reloaded = await verifyDb.LitigationOrderDocuments.FirstAsync(d => d.LitigationOrderDocumentId == document.LitigationOrderDocumentId);
+        Assert.Equal(LitigationOrderDocumentStatus.Downloaded, reloaded.Status);
+        Assert.EndsWith(".txt", reloaded.StoragePath);
+        Assert.StartsWith("text/plain", reloaded.ContentType);
+        var stored = await File.ReadAllTextAsync(reloaded.StoragePath!);
+        Assert.Equal("Counsel for D1 to D4 reported No rejoinder. Placed before Honble P.O. Call on 29-04-2019.", stored);
+        Assert.DoesNotContain("<", stored); // never the source's HTML
+        Assert.Equal(FilingDocumentProcessingStatus.TextExtracted, reloaded.TextExtractionStatus);
+        Assert.Equal(TextExtractionMethod.Html, reloaded.TextExtractionMethod);
+        Assert.Equal("--- Page 1 (native) ---\n" + stored, reloaded.ExtractedText);
+        Assert.Equal(new System.Text.UTF8Encoding(false).GetByteCount(stored), reloaded.FileSizeBytes);
+    }
+
+    [Theory]
+    [InlineData(HttpStatusCode.OK, "\uFEFF Orders is not uploaded for case number CRLRC/292/2016 ", "not uploaded")]
+    [InlineData(HttpStatusCode.OK, "<p>File does not exist.</p>", "File does not exist")]
+    [InlineData(HttpStatusCode.NotFound, "<?xml version=\"1.0\"?><Error><Code>NoSuchKey</Code></Error>", "HTTP 404")]
+    public async Task DownloadAndExtractAsync_marks_an_order_the_source_has_not_published_as_final(HttpStatusCode status, string body, string reason)
+    {
+        await using var db = CreateContext();
+        var (_, _, order) = await SeedOrderAsync(db, "N" + (int)status + body.Length, "https://bpr.example/orders/np.pdf");
+        var document = await SeedDocumentAsync(db, order.LitigationCaseOrderId, DateTime.UtcNow.AddDays(5));
+
+        var handler = new StubHandler();
+        StubAuthenticate(handler);
+        handler.OnPath("orders/np.pdf", _ => new HttpResponseMessage(status) { Content = new StringContent(body, Encoding.UTF8, "text/html") });
+        var queue = new LitigationOrderDocumentQueue();
+        var service = NewService(db, handler, queue);
+
+        await service.DownloadAndExtractAsync(document.LitigationOrderDocumentId, CancellationToken.None);
+
+        await using var verifyDb = CreateContext();
+        var reloaded = await verifyDb.LitigationOrderDocuments.FirstAsync(d => d.LitigationOrderDocumentId == document.LitigationOrderDocumentId);
+        Assert.Equal(LitigationOrderDocumentStatus.NotPublished, reloaded.Status);
+        Assert.Contains(reason, reloaded.FailureReason);
+        Assert.Null(reloaded.NextAttemptUtc);
+        Assert.Null(reloaded.StoragePath);
+        // final: neither this attempt nor a restart's recovery sweep queues it again
+        await service.RecoverStaleWorkAsync(CancellationToken.None);
+        Assert.DoesNotContain(document.LitigationOrderDocumentId, await DrainAvailableAsync(queue, TimeSpan.FromMilliseconds(200)));
     }
 
     [Fact]

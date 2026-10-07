@@ -237,13 +237,15 @@ public class LitigationController(
         Response.Headers.CacheControl = "no-store, private";
         Response.Headers["X-Content-Type-Options"] = "nosniff";
 
+        // An order the source served as an HTML page is stored as its plain text: served as text, never as PDF or HTML.
+        var isText = string.Equals(Path.GetExtension(fullPath), ".txt", StringComparison.OrdinalIgnoreCase);
         var safeCase = string.IsNullOrWhiteSpace(doc.CaseLabel) ? "Case" : AutoFetchArchiveBuilder.CompanyToken(doc.CaseLabel);
-        var fileName = $"Order_{safeCase}_{doc.OrderDate ?? "undated"}_{documentId}.pdf";
+        var fileName = $"Order_{safeCase}_{doc.OrderDate ?? "undated"}_{documentId}{(isText ? ".txt" : ".pdf")}";
         var contentDisposition = new Microsoft.Net.Http.Headers.ContentDispositionHeaderValue("attachment");
         contentDisposition.SetHttpFileName(fileName);
         Response.Headers.ContentDisposition = contentDisposition.ToString();
 
-        return PhysicalFile(fullPath, "application/pdf");
+        return PhysicalFile(fullPath, isText ? "text/plain; charset=utf-8" : "application/pdf");
     }
 
     [HttpGet("/Requests/{id:long}/Litigation/OrdersZip")]

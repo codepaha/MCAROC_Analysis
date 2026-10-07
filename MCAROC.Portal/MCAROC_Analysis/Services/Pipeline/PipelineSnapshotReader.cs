@@ -110,8 +110,8 @@ public class PipelineSnapshotReader(AppDbContext db, IConfiguration config, IOpt
                 .Where(d => d.Order!.Case!.RequestId == requestId)
                 .Select(d => new { d.Status, d.ChunkingStatus, d.CreatedUtc }).ToListAsync(ct);
             var ordersFullyProcessed = orderDocs.All(d =>
-                d.Status is LitigationOrderDocumentStatus.Downloaded or LitigationOrderDocumentStatus.Expired
-                && (d.Status == LitigationOrderDocumentStatus.Expired || d.ChunkingStatus is ChunkingStatus.Chunked or ChunkingStatus.Failed));
+                d.Status is LitigationOrderDocumentStatus.Expired or LitigationOrderDocumentStatus.NotPublished
+                || (d.Status == LitigationOrderDocumentStatus.Downloaded && d.ChunkingStatus is ChunkingStatus.Chunked or ChunkingStatus.Failed));
             var staleCutoff = DateTime.UtcNow.AddDays(-5);
             var hasStalledOrderDownload = orderDocs.Any(d => d.Status == LitigationOrderDocumentStatus.Pending && d.CreatedUtc <= staleCutoff);
 
