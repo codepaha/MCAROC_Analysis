@@ -261,6 +261,8 @@ public sealed class LitigationCaseCardViewModel
 
     public string? CaseType { get; set; }
     public string? CaseYear { get; set; }
+    /// <summary>The case as it is cited ("WP 11374/2024"), shared with the litigation report.</summary>
+    public string? CaseTitle => MCAROC_Analysis.Services.LitigationData.LitigationCasePresentation.CaseTitle(CaseNumber, CaseType, CaseYear);
     public string? CaseStage { get; set; }
     public string? CaseStatus { get; set; }
     public LitigationCaseStatusBucket StatusBucket { get; set; } = LitigationCaseStatusBucket.Unknown;

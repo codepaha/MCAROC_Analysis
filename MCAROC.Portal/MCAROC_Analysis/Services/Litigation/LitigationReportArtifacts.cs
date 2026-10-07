@@ -605,7 +605,7 @@ internal sealed class LitigationReportPdfDocument(StandaloneLitigationReport rep
             row.RelativeItem().Column(title =>
             {
                 title.Item().Text($"CASE {serial:000}").Bold().FontSize(7.5f).FontColor(Navy);
-                title.Item().PaddingTop(2).Text(Display(item.CaseNumber)).Bold().FontSize(14).FontColor(Ink);
+                title.Item().PaddingTop(2).Text(Display(LitigationCasePresentation.CaseTitle(item.CaseNumber, item.CaseType, item.CaseYear))).Bold().FontSize(14).FontColor(Ink);
                 title.Item().PaddingTop(1).Text($"{LitigationCasePresentation.Label(view.Institution)}  ·  {Display(item.Court)}").FontSize(8.5f).FontColor(Colors.Grey.Darken1);
             });
             row.AutoItem().Column(badges =>
@@ -715,7 +715,8 @@ internal sealed class LitigationReportPdfDocument(StandaloneLitigationReport rep
                     });
             }
         }
-        if (analysis?.KeyIssues is { Count: > 0 }) { panel.Item().PaddingTop(5).Text("KEY ISSUES").Bold().FontSize(7).FontColor(Navy); foreach (var issue in analysis.KeyIssues) panel.Item().PaddingTop(2).Text(text => { text.Span("• ").FontColor(Navy); text.Span(issue); }); }
+        // The analysis's unknowns ("order text not available", "case status unknown") are caveats about the data the
+        // analysis had, not issues in the case; they stay on the portal case page and out of the deliverable.
         if (!string.IsNullOrWhiteSpace(analysis?.RecommendedAction)) panel.Item().PaddingTop(5).Text(text => { text.Span("RECOMMENDED ACTION  ").Bold().FontSize(7).FontColor(Green); text.Span(analysis.RecommendedAction).FontSize(8); });
         if (!string.IsNullOrWhiteSpace(analysis?.EvidenceNote)) panel.Item().PaddingTop(4).Text(analysis.EvidenceNote).Italic().FontSize(7.2f).FontColor(Colors.Grey.Darken1);
     });
@@ -726,9 +727,8 @@ internal sealed class LitigationReportPdfDocument(StandaloneLitigationReport rep
         if (orders.Count == 0) { panel.Item().PaddingTop(4).Text("No order record was returned for this case.").FontSize(8).FontColor(Colors.Grey.Darken1); return; }
         var available = orders.Count(o => o.AvailabilityBucket == LitigationOrderAvailabilityBucket.Downloaded);
         if (available < orders.Count)
-            // A neutral count: whether the rest are failed, expired or pending is a pipeline detail the reader cannot act on.
-            panel.Item().PaddingTop(2).Text($"{available} of {orders.Count} order documents are available in the portal.")
-                .FontSize(7.2f).FontColor(Colors.Grey.Darken1);
+            // Neutral wording: whether a document failed, expired or is still pending is a pipeline detail the reader cannot act on.
+            panel.Item().PaddingTop(2).Text(OrderAvailabilityNote(available, orders.Count)).FontSize(7.2f).FontColor(Colors.Grey.Darken1);
         foreach (var order in orders)
         {
             panel.Item().PaddingTop(4).Background("#FFFCF4").BorderLeft(3).BorderColor(Amber).Padding(5).Column(entry =>
@@ -738,6 +738,8 @@ internal sealed class LitigationReportPdfDocument(StandaloneLitigationReport rep
                     text.Span(Display(order.OrderDate)).Bold().FontColor(Amber);
                     text.Span("  |  ");
                     text.Span(Display(order.OrderType));
+                    if (order.AvailabilityBucket != LitigationOrderAvailabilityBucket.Downloaded)
+                        text.Span("  ·  document not available").FontSize(7.2f).FontColor(Colors.Grey.Darken1);
                 });
                 if (order.PropertyMatches is { Count: > 0 })
                 {
@@ -781,6 +783,13 @@ internal sealed class LitigationReportPdfDocument(StandaloneLitigationReport rep
         "risk_trigger" => "Why the tier was raised", "restraint" => "Restraint", "lis_pendens" => "Lis pendens",
         "operative_order" => "Operative order", "outcome" => "Outcome", "target_party" => "The company's role", _ => claim
     };
+    /// <summary>The orders are listed by the court record either way; this says which of their documents the portal holds.</summary>
+    internal static string OrderAvailabilityNote(int available, int listed) => available == 0
+        ? listed == 1
+            ? "The court record lists this order, but its document is not available."
+            : $"The court record lists these {listed} orders, but their documents are not available."
+        : $"Documents are available for {available} of the {listed} orders listed.";
+
     private static string Display(string? value) => string.IsNullOrWhiteSpace(value) ? "-" : value;
     private static string JoinValues(string? first, string? second) => string.Join(" / ", new[] { first, second }.Where(value => !string.IsNullOrWhiteSpace(value)));
     private static string Humanize(string? value) => string.IsNullOrWhiteSpace(value) ? "-" : value.Replace('_', ' ').ToUpperInvariant();

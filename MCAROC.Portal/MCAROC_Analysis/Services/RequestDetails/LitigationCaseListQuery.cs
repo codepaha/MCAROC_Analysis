@@ -143,7 +143,7 @@ public sealed class LitigationCaseListQuery(AppDbContext db, LitigationOrderOutc
             model.Cases.Add(new LitigationCaseCardViewModel
             {
                 LitigationCaseId = row.LitigationCaseId, CaseNumber = row.CaseNumber, Cnr = row.Cnr, Court = row.Court,
-                CaseType = row.CaseType, Petitioners = petitioners, Respondents = respondents,
+                CaseType = row.CaseType, CaseYear = row.CaseYear, Petitioners = petitioners, Respondents = respondents,
                 CompanySide = side, StatusBucket = statusBucket, NextHearingDate = row.NextHearingDate,
                 Institution = LitigationCasePresentation.Resolve(row.Type, row.Court, row.CourtCategory),
                 FilingDate = row.FilingDate,

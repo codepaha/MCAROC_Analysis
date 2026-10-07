@@ -22,7 +22,7 @@ public enum LitigationInstitution
 
 /// <summary>Presentation rules shared by the litigation report and the portal: which forum a case belongs to, how long the case has been open, and the order cases are listed in. Pure functions of
 /// the stored case — nothing here reads the database or the vendor.</summary>
-public static class LitigationCasePresentation
+public static partial class LitigationCasePresentation
 {
     public static string Label(LitigationInstitution institution) => institution switch
     {
@@ -74,6 +74,46 @@ public static class LitigationCasePresentation
     public static LitigationCompanySide Side(string? vendorDirection, string? petitionersJson, string? respondentsJson, IEnumerable<string> companyNames) =>
         LitigationCompanySides.Determine(
             LitigationCaseCardMapper.ParseNames(petitionersJson), LitigationCaseCardMapper.ParseNames(respondentsJson), companyNames, vendorDirection);
+
+    /// <summary>The case as it is cited — "WP 11374/2024", "OMP 488/2016". The source keeps the type, number and
+    /// year apart and in several shapes: a bare serial ("488") with the year only in its own field, a long-form
+    /// type ("OMP - Original Misc. Petition"), the type folded into the number ("Suit For Recovery/14/2021"), or a
+    /// tribunal's joined petition-and-applications reference repeated as its type
+    /// ("C.P.(IB)593/KB/2017C.A.(IB)506/KB/2018"), which already carries its own years. Null when there is no number.</summary>
+    public static string? CaseTitle(string? caseNumber, string? caseType, string? caseYear)
+    {
+        var number = caseNumber?.Trim();
+        if (string.IsNullOrEmpty(number)) return null;
+        var type = ShortCaseType(caseType);
+
+        if (EmbeddedTypePattern().Match(number) is { Success: true } embedded)
+            return $"{embedded.Groups["type"].Value.Trim()} {embedded.Groups["rest"].Value}";
+        if (number.Any(char.IsLetter))
+            return JoinedReferencePattern().Replace(number, " · ");
+
+        if (!number.Contains('/') && caseYear?.Trim() is { Length: 4 } year && int.TryParse(year, out var y) && y is >= 1900 and <= 2100)
+            number = $"{number}/{year}";
+        return type is null ? number : $"{type} {number}";
+    }
+
+    /// <summary>The short form of a case type: "OMP - Original Misc. Petition" → "OMP", "Original Application-" →
+    /// "Original Application". Null when empty or when it is a full reference rather than a type.</summary>
+    private static string? ShortCaseType(string? caseType)
+    {
+        var type = caseType?.Trim();
+        if (string.IsNullOrEmpty(type) || type.Any(char.IsDigit)) return null;
+        var separator = type.IndexOf(" - ", StringComparison.Ordinal);
+        if (separator > 0) type = type[..separator];
+        type = type.TrimEnd('-', ' ');
+        return type.Length == 0 ? null : type;
+    }
+
+    [System.Text.RegularExpressions.GeneratedRegex(@"^(?<type>[A-Za-z][A-Za-z .()&-]*?)\s*/\s*(?<rest>\d+/\d{4})$")]
+    private static partial System.Text.RegularExpressions.Regex EmbeddedTypePattern();
+
+    /// <summary>Where one reference ends with its year and the next begins straight after it.</summary>
+    [System.Text.RegularExpressions.GeneratedRegex(@"(?<=/\d{4})(?=[A-Za-z])")]
+    private static partial System.Text.RegularExpressions.Regex JoinedReferencePattern();
 
     public static string SideLabel(LitigationCompanySide side) => side switch
     {

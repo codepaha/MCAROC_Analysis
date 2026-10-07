@@ -216,13 +216,51 @@ public sealed class LitigationCasePresentationTests
         Assert.DoesNotContain("Retrieval pending", text);
     }
 
+    [SkippableFact]
+    public void Pdf_headlines_each_case_as_cited_and_marks_an_order_whose_document_is_missing()
+    {
+        Skip.IfNot(OperatingSystem.IsWindows(),
+            "PdfPig text extraction is unreliable off Windows fonts; covered by the windows-tests CI job.");
+
+        var one = Case(1, "high_court", "KarnatakaHighCourt", "Pending", "against", "03-04-2024")
+            with { CaseNumber = "488", CaseType = "OMP - Original Misc. Petition", CaseYear = "2016",
+                Orders = [OrderIn(1, LitigationOrderAvailabilityBucket.Pending)] };
+        var text = new string(PdfText(Report(one)).Where(c => !char.IsWhiteSpace(c)).ToArray());
+
+        Assert.Contains("OMP488/2016", text);
+        Assert.Contains("1ORDERONRECORD", text);
+        Assert.Contains("Thecourtrecordliststhisorder,butitsdocumentisnotavailable.", text);
+        Assert.Contains("documentnotavailable", text);
+        Assert.DoesNotContain("KEYISSUES", text);
+    }
+
+    [Theory]
+    [InlineData("11374/2024", "WP", "2024", "WP 11374/2024")]
+    [InlineData("488", "OMP - Original Misc. Petition", "2016", "OMP 488/2016")]
+    [InlineData("84", "ITA - ITA-Appeals Income-tax", "2010", "ITA 84/2010")]
+    [InlineData("814", "Original Application-", "2018", "Original Application 814/2018")]
+    [InlineData("9083", "CIVIL WRIT", "2010", "CIVIL WRIT 9083/2010")]
+    [InlineData("17792/2024", "W.P.(C)", "2024", "W.P.(C) 17792/2024")]
+    [InlineData("383/2020", null, null, "383/2020")]
+    [InlineData("6", "OMP", null, "OMP 6")] // no year recorded: never invent one
+    [InlineData("6", "OMP", "17", "OMP 6")]
+    [InlineData("Suit For Recovery/14/2021", null, null, "Suit For Recovery 14/2021")]
+    [InlineData("C.P.(IB)593/KB/2017C.A.(IB)506/KB/2018", "C.P.(IB)593/KB/2017C.A.(IB)506/KB/2018", "2010",
+        "C.P.(IB)593/KB/2017 · C.A.(IB)506/KB/2018")]
+    [InlineData("Misc.A.No.36/CTB/2019CP(IB)No.593/KB/2017", "Misc.A.No.36/CTB/2019CP(IB)No.593/KB/2017", null,
+        "Misc.A.No.36/CTB/2019 · CP(IB)No.593/KB/2017")]
+    [InlineData(" ", "WP", "2024", null)]
+    [InlineData(null, "WP", "2024", null)]
+    public void Case_title_cites_type_number_and_year_from_the_sources_shapes(string? number, string? type, string? year, string? expected) =>
+        Assert.Equal(expected, LitigationCasePresentation.CaseTitle(number, type, year));
+
     private static StandaloneReportOrderDto OrderIn(long id, LitigationOrderAvailabilityBucket bucket) =>
         new(id, "10-01-2025", "order/judgement", bucket, null, null, null, "internal pipeline wording", "x", "x");
 
     [SkippableTheory]
-    [InlineData(LitigationOrderAvailabilityBucket.Failed, LitigationOrderAvailabilityBucket.Expired, "0of2orderdocumentsareavailableintheportal.")]
-    [InlineData(LitigationOrderAvailabilityBucket.Downloaded, LitigationOrderAvailabilityBucket.Failed, "1of2orderdocumentsareavailableintheportal.")]
-    [InlineData(LitigationOrderAvailabilityBucket.Pending, LitigationOrderAvailabilityBucket.Pending, "0of2orderdocumentsareavailableintheportal.")]
+    [InlineData(LitigationOrderAvailabilityBucket.Failed, LitigationOrderAvailabilityBucket.Expired, "Thecourtrecordliststhese2orders,buttheirdocumentsarenotavailable.")]
+    [InlineData(LitigationOrderAvailabilityBucket.Downloaded, LitigationOrderAvailabilityBucket.Failed, "Documentsareavailablefor1ofthe2orderslisted.")]
+    [InlineData(LitigationOrderAvailabilityBucket.Pending, LitigationOrderAvailabilityBucket.Pending, "Thecourtrecordliststhese2orders,buttheirdocumentsarenotavailable.")]
     public void Pdf_states_order_availability_as_a_neutral_count_whatever_the_unavailable_orders_state(
         LitigationOrderAvailabilityBucket first, LitigationOrderAvailabilityBucket second, string expectedSquashed)
     {

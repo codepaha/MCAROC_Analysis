@@ -21,7 +21,7 @@
             {
                 <span class="badge @LitigationBaselineRisk.BadgeCss(cardRisk.Tier)" title="@cardRisk.Trigger — @cardRisk.Reason" data-risk-tier="@cardRisk.Tier">@cardRisk.Tier</span>
             }
-            <strong>@(string.IsNullOrWhiteSpace(Model.CaseNumber) ? "Case #" + Model.LitigationCaseId : Model.CaseNumber)</strong>
+            <strong>@(Model.CaseTitle ?? "Case #" + Model.LitigationCaseId)</strong>
             @if ((long?)ViewBag.RequestId is > 0)
             {
                 <a class="small" href="/Requests/@ViewBag.RequestId/Litigation/Cases/@Model.LitigationCaseId">case page</a>
