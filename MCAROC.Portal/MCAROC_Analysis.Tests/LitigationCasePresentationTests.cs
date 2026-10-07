@@ -238,25 +238,65 @@ public sealed class LitigationCasePresentationTests
         "The figure(s) 12,50,000 in this analysis are not confirmed by the printed order text (the scan may be damaged); check the order.";
     private const string DroppedAmount = "An amount of 'Rs. 4.2 crore' was reported but could not be matched to the printed order text, so it is not shown.";
 
+    private static readonly StandaloneReportOrderDto[] NoDocument = [OrderIn(1, LitigationOrderAvailabilityBucket.Failed)];
+    private static readonly StandaloneReportOrderDto[] DownloadedDocument = [OrderIn(1, LitigationOrderAvailabilityBucket.Downloaded)];
+
     [Theory]
-    // Notes that only restate a gap the card already shows (the most frequent unknowns on the Coastal report)
-    [InlineData("Order text not available for any order.", false)]
-    [InlineData("Order text is not available for any order.", false)]
-    [InlineData("Order texts are not available for analysis.", false)]
-    [InlineData("order text not available", false)]
-    [InlineData("No order text available for analysis.", false)]
-    [InlineData("No order text was provided for analysis.", false)]
-    [InlineData("No order text available; analysis based on metadata only.", false)]
-    [InlineData("Case stage not specified in the record.", false)]
-    [InlineData("Amount in dispute not specified in court record.", false)]
-    // Material warnings the analysis checks add — always kept
-    [InlineData(FigureWarning, true)]
-    [InlineData(DroppedAmount, true)]
-    [InlineData("Some order text was left out for length.", true)]
-    [InlineData("Case status is UNKNOWN, treated as PENDING for risk assessment.", true)]
-    [InlineData("A long case: its orders were read in 2 groups, newest first.", true)]
-    public void Evidence_limitations_keep_material_warnings_and_drop_redundant_availability_notes(string unknown, bool kept) =>
-        Assert.Equal(kept, LitigationReportPdfDocument.EvidenceLimitations([unknown]).Contains(unknown));
+    // Says only that no order text was there — the orders panel discloses that in full when no document is in the portal
+    [InlineData("Order text not available for any order.")]
+    [InlineData("Order text is not available for any order.")]
+    [InlineData("Order text not available for any orders in this case.")]
+    [InlineData("Order texts are not available for analysis.")]
+    [InlineData("order text not available")]
+    [InlineData("No order text available for analysis.")]
+    [InlineData("No order text was provided for analysis.")]
+    [InlineData("No order text available; analysis based on metadata only.")]
+    [InlineData("Order text not available for any order; analysis is based solely on metadata.")]
+    [InlineData("Analysis is metadata-led as no order text was available.")]
+    public void A_bare_no_order_text_note_is_left_out_only_when_no_order_document_is_in_the_portal(string unknown)
+    {
+        Assert.Empty(LitigationReportPdfDocument.EvidenceLimitations([unknown], NoDocument));
+        Assert.Empty(LitigationReportPdfDocument.EvidenceLimitations([unknown], []));
+        // a downloaded PDF can still have no readable text: then nothing else says so, and the note stays
+        Assert.Equal([unknown], LitigationReportPdfDocument.EvidenceLimitations([unknown], DownloadedDocument));
+    }
+
+    [Theory]
+    // Compound notes say what could not be determined — never left out
+    [InlineData("No order text available to determine the specific nature of the suit, the relief sought, or the claim amount.")]
+    [InlineData("Order text is not available for any of the orders, limiting detailed analysis.")]
+    [InlineData("No order text is available for analysis, limiting insight into case specifics and exact stage.")]
+    [InlineData("Outcome of the disposed case cannot be determined without order text.")]
+    [InlineData("The latest order is unreadable and no order text was available for it.")]
+    // Material warnings the analysis checks add
+    [InlineData(FigureWarning)]
+    [InlineData(DroppedAmount)]
+    [InlineData("Some order text was left out for length.")]
+    [InlineData("Case status is UNKNOWN, treated as PENDING for risk assessment.")]
+    [InlineData("Case stage, type, and specific act details are not available in metadata.")]
+    public void Material_and_compound_notes_are_always_kept(string unknown)
+    {
+        Assert.Equal([unknown], LitigationReportPdfDocument.EvidenceLimitations([unknown], NoDocument));
+        Assert.Equal([unknown], LitigationReportPdfDocument.EvidenceLimitations([unknown], DownloadedDocument));
+    }
+
+    [Theory]
+    [InlineData("Case stage not specified in the record.")]
+    [InlineData("The case stage is not specified in the metadata.")]
+    [InlineData("Case stage could not be determined from the provided metadata.")]
+    [InlineData("Amount in dispute not specified in court record.")]
+    public void A_note_that_the_record_gives_no_stage_or_amount_is_left_out_since_the_card_shows_it(string unknown) =>
+        Assert.Empty(LitigationReportPdfDocument.EvidenceLimitations([unknown], DownloadedDocument));
+
+    private static StandaloneLitigationReport AnalysedReport(StandaloneReportOrderDto[] orders, params string[] unknowns)
+    {
+        var one = Case(1, "high_court", "KarnatakaHighCourt", "Pending", "against", "03-04-2024") with { Orders = orders };
+        var analysis = new LitigationCaseAnalysis("Completed", "R2", "Recovery suit by a bank.", unknowns, null,
+            RiskTrigger: "Recovery claim", RiskReason: "A bank seeks recovery from the company.");
+        return Report(one) with { CaseAnalysesByCaseId = new Dictionary<long, LitigationCaseAnalysis> { [1] = analysis } };
+    }
+
+    private static string Squashed(StandaloneLitigationReport report) => new(PdfText(report).Where(c => !char.IsWhiteSpace(c)).ToArray());
 
     [SkippableFact]
     public void Pdf_keeps_material_analysis_warnings_under_evidence_limitations()
@@ -264,19 +304,44 @@ public sealed class LitigationCasePresentationTests
         Skip.IfNot(OperatingSystem.IsWindows(),
             "PdfPig text extraction is unreliable off Windows fonts; covered by the windows-tests CI job.");
 
-        var one = Case(1, "high_court", "KarnatakaHighCourt", "Pending", "against", "03-04-2024");
-        var analysis = new LitigationCaseAnalysis("Completed", "R2", "Recovery suit by a bank.",
-            ["Order text not available for any order.", FigureWarning, DroppedAmount, "Some order text was left out for length."], null,
-            RiskTrigger: "Recovery claim", RiskReason: "A bank seeks recovery from the company.");
-        var report = Report(one) with { CaseAnalysesByCaseId = new Dictionary<long, LitigationCaseAnalysis> { [1] = analysis } };
-        var text = new string(PdfText(report).Where(c => !char.IsWhiteSpace(c)).ToArray());
+        var text = Squashed(AnalysedReport(NoDocument, "Order text not available for any order.", FigureWarning, DroppedAmount,
+            "Some order text was left out for length.", "No order text available to determine details of dispute."));
 
         Assert.Contains("EVIDENCELIMITATIONS", text);
         Assert.Contains("12,50,000inthisanalysisarenot", text); // ligatures ("fi", "ft") do not extract: match around them
         Assert.Contains("couldnotbematchedtotheprintedordertext", text);
         Assert.Contains("outforlength.", text);
+        Assert.Contains("Noordertextavailabletodeterminedetailsofdispute.", text);
+        // the bare note is covered in full by the orders panel, which says the analysis rests on the record
         Assert.DoesNotContain("Ordertextnotavailableforanyorder", text);
+        Assert.Contains("butitsdocumentisnotavailable.Theanalysisrestsonthecaserecordalone.", text);
         Assert.DoesNotContain("KEYISSUES", text);
+    }
+
+    [SkippableFact]
+    public void Pdf_keeps_the_no_order_text_note_when_a_downloaded_order_has_no_readable_text()
+    {
+        Skip.IfNot(OperatingSystem.IsWindows(),
+            "PdfPig text extraction is unreliable off Windows fonts; covered by the windows-tests CI job.");
+
+        var text = Squashed(AnalysedReport(DownloadedDocument, "Order text not available for any order; analysis is metadata-led."));
+
+        Assert.Contains("EVIDENCELIMITATIONS", text);
+        Assert.Contains("Ordertextnotavailableforanyorder;analysisismetadata-led.", text);
+        Assert.DoesNotContain("documentisnotavailable", text);
+        Assert.DoesNotContain("restsonthecaserecordalone", text);
+    }
+
+    [SkippableFact]
+    public void Pdf_says_the_analysis_rests_on_the_record_when_no_order_was_returned()
+    {
+        Skip.IfNot(OperatingSystem.IsWindows(),
+            "PdfPig text extraction is unreliable off Windows fonts; covered by the windows-tests CI job.");
+
+        var text = Squashed(AnalysedReport([], "No order text available for analysis."));
+
+        Assert.Contains("Noorderrecordwasreturnedforthiscase.Theanalysisrestsonthecaserecordalone.", text);
+        Assert.DoesNotContain("EVIDENCELIMITATIONS", text);
     }
 
     [Theory]
