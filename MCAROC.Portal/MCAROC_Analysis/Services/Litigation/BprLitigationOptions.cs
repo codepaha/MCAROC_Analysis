@@ -76,8 +76,9 @@ public sealed class BprLitigationOptions
     /// report's <c>pdf_url</c> is untrusted input; without this, <see cref="BprLitigationClient.DownloadOrderDocumentAsync"/>
     /// would make the application fetch (and potentially retain, if the response happens to start with the
     /// PDF signature) whatever URL the report asserts — a server-side request forgery path onto internal
-    /// services or cloud metadata endpoints. Empty by default: until an operator confirms a real vendor
-    /// document/CDN host and adds it here, only BPR's own host is ever fetched from. Case-insensitive exact
+    /// services or cloud metadata endpoints. Empty in code; <c>appsettings.json</c> lists the litigation
+    /// data service's own order-document store (every order link it returns points there, as pre-signed S3
+    /// links), so order PDFs download in every environment without per-machine setup. Case-insensitive exact
     /// match only, no wildcards.</summary>
     public IReadOnlyList<string> AllowedOrderDocumentHosts { get; init; } = [];
 
