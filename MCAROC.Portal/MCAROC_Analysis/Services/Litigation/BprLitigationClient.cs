@@ -185,6 +185,13 @@ public sealed class BprLitigationClient(
     /// Validates the downloaded bytes actually start with the PDF signature before calling it a success — a
     /// dead/expired link commonly returns an HTML error page or a JSON error body with HTTP 200, which must
     /// never be stored and reported as a retrieved order.</summary>
+    /// <summary>Whether downloading <paramref name="pdfUrl"/> needs a sign-in token: only a link on BPR's own host
+    /// does. A pre-signed link on an allowed document host carries its own authorization, and the token is never
+    /// sent there, so signing in first would only make the download depend on BPR's API being reachable.</summary>
+    public bool OrderDocumentNeedsToken(string pdfUrl) =>
+        Uri.TryCreate(pdfUrl, UriKind.Absolute, out var uri) && http.BaseAddress?.Host is { } bprHost
+        && string.Equals(uri.Host, bprHost, StringComparison.OrdinalIgnoreCase);
+
     public async Task<BprOrderDownloadResult> DownloadOrderDocumentAsync(string token, string pdfUrl, long maxBytes, CancellationToken ct)
     {
         RequireConfigured();

@@ -47,9 +47,9 @@ public class LitigationOrderDocumentServiceTests : IAsyncLifetime
     // A fake DNS map, never real network/DNS — see BprLitigationClientTests' own copy of this reasoning.
     // "bpr.example" resolves to an RFC 5737 documentation address (public-looking, reserved, never blocked).
     private static Task<IPAddress[]> FakeResolver(string host, CancellationToken ct) =>
-        string.Equals(host, "bpr.example", StringComparison.OrdinalIgnoreCase)
-            ? Task.FromResult(new[] { IPAddress.Parse("203.0.113.10") })
-            : Task.FromException<IPAddress[]>(new System.Net.Sockets.SocketException((int)System.Net.Sockets.SocketError.HostNotFound));
+        string.Equals(host, "bpr.example", StringComparison.OrdinalIgnoreCase) ? Task.FromResult(new[] { IPAddress.Parse("203.0.113.10") })
+        : string.Equals(host, "orders-store.example", StringComparison.OrdinalIgnoreCase) ? Task.FromResult(new[] { IPAddress.Parse("203.0.113.11") })
+        : Task.FromException<IPAddress[]>(new System.Net.Sockets.SocketException((int)System.Net.Sockets.SocketError.HostNotFound));
 
     private LitigationOrderDocumentService NewService(
         AppDbContext db, StubHandler handler, LitigationOrderDocumentQueue? queue = null, BprLitigationOptions? options = null,
@@ -176,6 +176,39 @@ public class LitigationOrderDocumentServiceTests : IAsyncLifetime
         Assert.Equal(FilingDocumentProcessingStatus.TextExtracted, reloaded.TextExtractionStatus);
         Assert.Equal(TextExtractionMethod.Native, reloaded.TextExtractionMethod);
         Assert.Contains("genuine order text for case A1", reloaded.ExtractedText);
+    }
+
+    [Fact]
+    public async Task DownloadAndExtractAsync_fetches_a_presigned_link_without_signing_in_so_an_API_outage_does_not_block_it()
+    {
+        await using var db = CreateContext();
+        var (_, _, order) = await SeedOrderAsync(db, "P1",
+            "https://orders-store.example/orders/p1.pdf?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Signature=sig");
+        var document = await SeedDocumentAsync(db, order.LitigationCaseOrderId, DateTime.UtcNow.AddDays(5));
+
+        var pdfBytes = ExtractablePdfBytes(
+            "Order text for case P1 served from the pre-signed document store, long enough that native extraction applies.");
+        var handler = new StubHandler();
+        // BPR's API is down: any sign-in attempt fails
+        handler.OnPath("sec/authenticate", _ => throw new HttpRequestException("No connection could be made because the target machine actively refused it."));
+        handler.OnPath("orders/p1.pdf", _ => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new ByteArrayContent(pdfBytes) { Headers = { ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/pdf") } }
+        });
+        var service = NewService(db, handler, options: new BprLitigationOptions
+        {
+            BaseUrl = DefaultOptions.BaseUrl, Id = DefaultOptions.Id, SecretKey = DefaultOptions.SecretKey, OrderRetentionDays = DefaultOptions.OrderRetentionDays,
+            MaxOrderPdfBytes = DefaultOptions.MaxOrderPdfBytes, AllowedOrderDocumentHosts = ["orders-store.example"]
+        });
+
+        await service.DownloadAndExtractAsync(document.LitigationOrderDocumentId, CancellationToken.None);
+
+        await using var verifyDb = CreateContext();
+        var reloaded = await verifyDb.LitigationOrderDocuments.FirstAsync(d => d.LitigationOrderDocumentId == document.LitigationOrderDocumentId);
+        Assert.Equal(LitigationOrderDocumentStatus.Downloaded, reloaded.Status);
+        Assert.Contains("served from the pre-signed document store", reloaded.ExtractedText);
+        Assert.DoesNotContain(handler.Requests, r => r.RequestUri!.AbsolutePath.Contains("sec/authenticate", StringComparison.Ordinal));
+        Assert.All(handler.Requests, r => Assert.False(r.Headers.Contains("Authorization")));
     }
 
     [Fact]
