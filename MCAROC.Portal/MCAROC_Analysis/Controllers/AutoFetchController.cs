@@ -60,10 +60,7 @@ public partial class AutoFetchController(
         {
             var trimmed = cin.Trim().ToUpperInvariant();
             if (IdentifierPattern().IsMatch(trimmed))
-            {
                 vm.Cin = trimmed;
-                vm.EntityType = trimmed.Contains('-') ? EntityType.LLP : EntityType.Company;
-            }
         }
 
         return View("~/Views/Requests/AutoFetch.cshtml", vm);
@@ -75,9 +72,6 @@ public partial class AutoFetchController(
     {
         model.Clients = await ActiveClientsAsync();
         model.IsConfigured = options.Value.IsConfigured;
-
-        if (model.EntityType is not { } entityType || !Enum.IsDefined(entityType) || !model.EntityTypeConfirmed)
-            return Fail(model, "Select and confirm the borrower's legal entity type before creating the request.");
 
         if (!model.IsConfigured)
             return Fail(model, "Auto-fetch is not configured on this server — set ReferenceTool:BaseUrl and ReferenceTool:SessionCookie (see README, \"Configuring secrets\").");
@@ -95,6 +89,14 @@ public partial class AutoFetchController(
         if (!hasCin && !hasName)
             return Fail(model, "A company name or a CIN / LLPIN is required.");
 
+        var identifier = hasCin ? model.Cin!.Trim().ToUpperInvariant() : null;
+        if (identifier is not null && !IdentifierPattern().IsMatch(identifier))
+            return Fail(model, "Enter a valid company CIN (e.g. U24246DL2003PTC118255) or LLPIN (e.g. AAA-1234).");
+
+        // The identifier's shape fixes the legal entity type (LLPIN = AAA-1234); a name-only request has none
+        // yet, so its hint stays open and identity resolution sets the type when it picks the record.
+        EntityType? entityType = identifier is null ? null : identifier.Contains('-') ? EntityType.LLP : EntityType.Company;
+
         var hints = new ResolutionHints(
             State: string.IsNullOrWhiteSpace(model.State) ? null : model.State.Trim(),
             District: string.IsNullOrWhiteSpace(model.District) ? null : model.District.Trim(),
@@ -105,16 +107,8 @@ public partial class AutoFetchController(
 
         var actor = User.Identity?.Name ?? "auto-fetch";
 
-        if (hasCin)
+        if (identifier is not null)
         {
-            var identifier = model.Cin!.Trim().ToUpperInvariant();
-            if (!IdentifierPattern().IsMatch(identifier))
-                return Fail(model, "Enter a valid company CIN (e.g. U24246DL2003PTC118255) or LLPIN (e.g. AAA-1234).");
-
-            var isLlpin = identifier.Contains('-');
-            if ((entityType == EntityType.LLP) != isLlpin)
-                return Fail(model, isLlpin ? "That identifier is an LLPIN — select LLP as the entity type." : "That identifier is a company CIN — select Company as the entity type.");
-
             // This lookup is scoped to ClientId on purpose. A matching company for another client is not a
             // duplicate and must never be surfaced here: its request, documents and results belong only to
             // that other client. The unique index below is the concurrency-safe backstop for this friendly
@@ -126,7 +120,7 @@ public partial class AutoFetchController(
             var request = new McaRequest
             {
                 ClientId = model.ClientId,
-                EntityType = entityType,
+                EntityType = entityType.Value,
                 // The tool's search / the workbook fills this in during the job; the identifier stands in until then.
                 CompanyName = string.IsNullOrWhiteSpace(model.CompanyName) ? identifier : model.CompanyName.Trim(),
                 Cin = identifier,
@@ -199,7 +193,8 @@ public partial class AutoFetchController(
             var request = new McaRequest
             {
                 ClientId = model.ClientId,
-                EntityType = entityType,
+                // Placeholder until identity resolution picks the record and sets the real type from it.
+                EntityType = EntityType.Company,
                 CompanyName = inputName,
                 Cin = null,
                 Llpin = null,

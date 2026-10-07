@@ -427,7 +427,6 @@ public class RegistryDashboardTests : IAsyncLifetime
         var modelCo = resultCo.Model as MCAROC_Analysis.Models.AutoFetchRequestViewModel;
         Assert.NotNull(modelCo);
         Assert.Equal("U24246DL2003PTC118255", modelCo.Cin);
-        Assert.Equal(EntityType.Company, modelCo.EntityType);
 
         // LLPIN prefill
         var resultLlp = await controller.New("AAA-1234") as ViewResult;
@@ -435,7 +434,6 @@ public class RegistryDashboardTests : IAsyncLifetime
         var modelLlp = resultLlp.Model as MCAROC_Analysis.Models.AutoFetchRequestViewModel;
         Assert.NotNull(modelLlp);
         Assert.Equal("AAA-1234", modelLlp.Cin);
-        Assert.Equal(EntityType.LLP, modelLlp.EntityType);
 
         // Null / blank leaves blank
         var resultEmpty = await controller.New(null) as ViewResult;

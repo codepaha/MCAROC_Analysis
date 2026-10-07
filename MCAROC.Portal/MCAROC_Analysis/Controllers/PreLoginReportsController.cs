@@ -116,9 +116,9 @@ public sealed class PreLoginReportsController(PreLoginReportJobService jobs, App
     [ValidateAntiForgeryToken]
     [RequestSizeLimit(11 * 1024 * 1024)]
     public async Task<IActionResult> CompleteAssignment(Guid batch, long id, string? borrowerName, string? entityType,
-        string? mcaIdentifier, IFormFile? legalCasesFile, bool noCasesConfirmed, bool entityTypeConfirmed, CancellationToken cancellationToken)
+        string? mcaIdentifier, IFormFile? legalCasesFile, bool noCasesConfirmed, CancellationToken cancellationToken)
     {
-        try { await jobs.CompleteAssignmentAsync(batch, id, borrowerName, entityType, mcaIdentifier, legalCasesFile, noCasesConfirmed, entityTypeConfirmed, cancellationToken); }
+        try { await jobs.CompleteAssignmentAsync(batch, id, borrowerName, entityType, mcaIdentifier, legalCasesFile, noCasesConfirmed, cancellationToken); }
         catch (PreLoginReportException ex) { TempData["ReportError"] = ex.Message; return RedirectToAction(nameof(Assignment), new { batch, id }); }
         return RedirectToAction(nameof(History), new { batch });
     }
@@ -128,21 +128,18 @@ public sealed class PreLoginReportsController(PreLoginReportJobService jobs, App
     public async Task<IActionResult> Fetch(PreLoginReportViewModel model, CancellationToken cancellationToken)
     {
         model.Cin = (model.Cin ?? string.Empty).Trim().ToUpperInvariant();
-        if (model.EntityType is not { } entityType || !Enum.IsDefined(entityType) || !model.EntityTypeConfirmed)
-            ModelState.AddModelError(nameof(model.EntityType), "Select and confirm the borrower's legal entity type.");
+        model.InferEntityType();
         if (!ModelState.IsValid) return View("Index", model);
 
         try
         {
             if (!model.IsLitigationOnly && string.IsNullOrWhiteSpace(model.Cin))
             {
-                var match = await jobs.ResolveExactCorporateNameAsync(model.CompanyName, model.EntityType!.Value, cancellationToken);
+                var match = await jobs.ResolveExactCorporateNameAsync(model.CompanyName, model.EntityType, cancellationToken);
                 model.Cin = match.Identifier;
                 model.CompanyName = match.Name;
+                model.EntityType = match.EntityType;
             }
-            if ((model.EntityType == PreLoginReportEntityType.Company && model.Cin.Contains('-')) ||
-                (model.EntityType == PreLoginReportEntityType.Llp && !model.Cin.Contains('-')))
-                throw new PreLoginReportException("The confirmed entity type does not match the CIN / LLPIN.");
             var batchId = model.IsLitigationOnly
                 ? await jobs.QueuePartnershipAsync(model, cancellationToken)
                 : await jobs.QueueSingleAsync(model.Cin, model.CompanyName, model.Format, cancellationToken);
@@ -159,11 +156,6 @@ public sealed class PreLoginReportsController(PreLoginReportJobService jobs, App
     [ValidateAntiForgeryToken]
     public async Task<IActionResult> Batch(PreLoginReportViewModel model, CancellationToken cancellationToken)
     {
-        if (model.EntityType != PreLoginReportEntityType.Company || !model.EntityTypeConfirmed)
-        {
-            ModelState.AddModelError(nameof(model.EntityType), "Confirm that every identifier in this batch belongs to a company.");
-            return View("Index", model);
-        }
         try
         {
             var batchId = await jobs.QueueBatchAsync((model.Cins ?? string.Empty).Split(['\r', '\n', ',', ';'], StringSplitOptions.RemoveEmptyEntries), model.Format, cancellationToken);

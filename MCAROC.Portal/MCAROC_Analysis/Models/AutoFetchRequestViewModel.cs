@@ -12,11 +12,6 @@ public class AutoFetchRequestViewModel
 
     public List<Client> Clients { get; set; } = [];
 
-    [Required]
-    public EntityType? EntityType { get; set; }
-
-    public bool EntityTypeConfirmed { get; set; }
-
     /// <summary>Optional — filled from the reference tool's search, or from the workbook once extracted.</summary>
     [Display(Name = "Company / LLP Name")]
     public string? CompanyName { get; set; }

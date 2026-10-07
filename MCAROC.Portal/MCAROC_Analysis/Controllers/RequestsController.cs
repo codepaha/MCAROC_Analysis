@@ -66,17 +66,13 @@ public class RequestsController(
     {
         model.Clients = await db.Clients.Where(c => c.IsActive).OrderBy(c => c.ClientName).ToListAsync();
 
-        if (model.EntityType is not { } entityType || !Enum.IsDefined(entityType) || !model.EntityTypeConfirmed)
-        {
-            model.ErrorMessage = "Select and confirm the borrower's legal entity type before creating the request.";
-            return View(model);
-        }
-
         if (string.IsNullOrWhiteSpace(model.Cin) && string.IsNullOrWhiteSpace(model.Pan))
         {
             model.ErrorMessage = "At least one of CIN/LLPIN or PAN is required.";
             return View(model);
         }
+
+        var entityType = InferEntityType(model.Cin, model.Pan);
 
         if (model.RocFile is null || model.RocFile.Length == 0)
         {
@@ -671,6 +667,16 @@ public class RequestsController(
 
         var reset = await chunkingOrchestrator.RetryFailedDocumentAsync(documentId, batch.BatchId, ct);
         return Json(new { queued = reset });
+    }
+
+    /// <summary>The legal entity type follows from the identifier: an LLPIN (AAA-1234) is an LLP, a CIN a
+    /// company. With only a PAN, its 4th character says the holder type (F = firm / LLP, C = company).</summary>
+    private static EntityType InferEntityType(string? cin, string? pan)
+    {
+        if (!string.IsNullOrWhiteSpace(cin))
+            return cin.Contains('-') ? EntityType.LLP : EntityType.Company;
+        var trimmedPan = pan?.Trim();
+        return trimmedPan is { Length: 10 } && char.ToUpperInvariant(trimmedPan[3]) == 'F' ? EntityType.LLP : EntityType.Company;
     }
 
     private async Task<RequestDocument> SaveDocumentAsync(long requestId, IFormFile file, DocumentType documentType, bool validateAsExcel = true)

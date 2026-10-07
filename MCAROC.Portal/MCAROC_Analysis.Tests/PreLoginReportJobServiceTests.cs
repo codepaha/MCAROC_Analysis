@@ -92,12 +92,13 @@ public class PreLoginReportJobServiceTests : IAsyncLifetime
             Assert.Equal(companyName, company.Name);
             var llp = await service.ResolveExactCorporateNameAsync(llpName, PreLoginReportEntityType.Llp, CancellationToken.None);
             Assert.Equal(llpId, llp.Identifier);
+            var untyped = await service.ResolveExactCorporateNameAsync(llpName, null, CancellationToken.None);
+            Assert.Equal((llpId, PreLoginReportEntityType.Llp), (untyped.Identifier, untyped.EntityType));
 
             var controller = new PreLoginReportsController(service, db);
             var result = Assert.IsType<RedirectToActionResult>(await controller.Fetch(new PreLoginReportViewModel
             {
-                CompanyName = companyName, EntityType = PreLoginReportEntityType.Company,
-                EntityTypeConfirmed = true, Format = PreLoginReportFormat.Prr
+                CompanyName = companyName, Format = PreLoginReportFormat.Prr
             }, CancellationToken.None));
             Assert.Equal(nameof(PreLoginReportsController.History), result.ActionName);
             var batch = Assert.IsType<Guid>(result.RouteValues!["batch"]);
@@ -410,17 +411,16 @@ public class PreLoginReportJobServiceTests : IAsyncLifetime
             await service.ProcessAsync(id, CancellationToken.None);
             await db.Entry(job).ReloadAsync();
             Assert.Equal(PreLoginReportJobStatus.AwaitingReview, job.Status);
-            Assert.Contains("Confirm", job.FailureReason);
+            Assert.Contains("litigation results", job.FailureReason);
             var data = service.AssignmentData(job)!;
             Assert.True(data.Company.LitigationOnly);
             Assert.Null(data.LegalCases);
             Assert.Equal("Example Trust", data.Assignment!.CompanyDetails.CompanyName);
             await service.ProcessAsync(id, CancellationToken.None);
             Assert.Equal(1, ai.Calls);
-            await Assert.ThrowsAsync<PreLoginReportException>(() => service.CompleteAssignmentAsync(batch, id, "Example Trust", "Trust", null, null, true, false, CancellationToken.None));
-            await Assert.ThrowsAsync<PreLoginReportException>(() => service.CompleteAssignmentAsync(Guid.NewGuid(), id, "Example Trust", "Trust", null, null, true, true, CancellationToken.None));
-            await Assert.ThrowsAsync<PreLoginReportException>(() => service.CompleteAssignmentAsync(batch, id, "Example Trust", "Trust", null, null, false, true, CancellationToken.None));
-            await service.CompleteAssignmentAsync(batch, id, "Example Trust", "Trust", null, null, true, true, CancellationToken.None);
+            await Assert.ThrowsAsync<PreLoginReportException>(() => service.CompleteAssignmentAsync(Guid.NewGuid(), id, "Example Trust", "Trust", null, null, true, CancellationToken.None));
+            await Assert.ThrowsAsync<PreLoginReportException>(() => service.CompleteAssignmentAsync(batch, id, "Example Trust", "Trust", null, null, false, CancellationToken.None));
+            await service.CompleteAssignmentAsync(batch, id, "Example Trust", "Trust", null, null, true, CancellationToken.None);
             await service.ProcessAsync(id, CancellationToken.None);
             job = (await service.FindAsync(id, CancellationToken.None))!;
             Assert.Equal(PreLoginReportJobStatus.Completed, job.Status);
@@ -463,7 +463,7 @@ public class PreLoginReportJobServiceTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task OCR_name_resolves_unique_master_CIN_but_waits_for_type_confirmation()
+    public async Task OCR_name_resolves_unique_master_CIN_and_generates_the_report_without_review()
     {
         await using var db = CreateContext();
         var suffix = Random.Shared.Next(100000, 999999);
@@ -488,23 +488,13 @@ public class PreLoginReportJobServiceTests : IAsyncLifetime
         {
             await service.ProcessAsync(job.PreLoginReportJobId, CancellationToken.None);
             job = (await service.FindAsync(job.PreLoginReportJobId, CancellationToken.None))!;
-            Assert.Equal(PreLoginReportJobStatus.AwaitingReview, job.Status);
-            Assert.Equal(0, handler.Calls);
-            Assert.Equal(cin, job.Cin);
-            Assert.Equal(ResolutionReasonCodes.AutoSelected, service.AssignmentData(job)!.IdentityResolution!.ReasonCode);
-            await Assert.ThrowsAsync<PreLoginReportException>(() => service.CompleteAssignmentAsync(batch, job.PreLoginReportJobId,
-                name, "Private Limited", cin, null, false, false, CancellationToken.None));
-            await service.CompleteAssignmentAsync(batch, job.PreLoginReportJobId,
-                name, "Private Limited", cin, null, false, true, CancellationToken.None);
-            await service.ProcessAsync(job.PreLoginReportJobId, CancellationToken.None);
-            job = (await service.FindAsync(job.PreLoginReportJobId, CancellationToken.None))!;
             Assert.Equal(PreLoginReportJobStatus.Completed, job.Status);
             Assert.Equal(cin, job.Cin);
             Assert.Equal(1, handler.Calls);
             Assert.Contains(cin, handler.LastUrl);
             var data = service.AssignmentData(job)!;
             Assert.Equal(cin, data.Assignment!.CompanyDetails.Cin);
-            Assert.Equal(ResolutionReasonCodes.UserProvidedIdentifier, data.IdentityResolution!.ReasonCode);
+            Assert.Equal(ResolutionReasonCodes.AutoSelected, data.IdentityResolution!.ReasonCode);
             Assert.True(File.Exists(job.ReportStoragePath));
         }
         finally
@@ -547,7 +537,7 @@ public class PreLoginReportJobServiceTests : IAsyncLifetime
             Assert.Contains(candidates, x => x.Identifier == cin1);
             Assert.Contains(candidates, x => x.Identifier == cin2);
             await Assert.ThrowsAsync<PreLoginReportException>(() => service.CompleteAssignmentAsync(batch, job.PreLoginReportJobId,
-                name, "Private Limited", "U12345MH2026PTC000000", null, false, true, CancellationToken.None));
+                name, "Private Limited", "U12345MH2026PTC000000", null, false, CancellationToken.None));
         }
         finally
         {
