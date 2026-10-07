@@ -51,7 +51,7 @@
                 var caseUrl = Microsoft.AspNetCore.WebUtilities.QueryHelpers.AddQueryString($"/Requests/{Model.RequestId}/Litigation/Cases/{c.LitigationCaseId}", "returnUrl", Model.PageUrl(Model.Page));
                 <tr id="case-card-@c.LitigationCaseId" tabindex="-1">
                     <td class="litigation-case-identity">
-                        <a class="fw-semibold" href="@caseUrl">@(c.CaseNumber ?? c.Cnr ?? $"Case #{c.LitigationCaseId}")</a>
+                        <a class="fw-semibold" href="@caseUrl">@(c.CaseTitle ?? c.Cnr ?? $"Case #{c.LitigationCaseId}")</a>
                         <span class="litigation-party-line" title="@string.Join(", ", c.Petitioners) v. @string.Join(", ", c.Respondents)">@ShortNames(c.Petitioners) <span class="text-muted">v.</span> @ShortNames(c.Respondents)</span>
                         @if (c.Analysis?.ActiveRestraint == true) { <span class="mca-badge sev-critical">Restraint in force</span> }
                         @if (c.Analysis?.LisPendens == true) { <span class="mca-badge sev-watch">Lis pendens</span> }
@@ -80,7 +80,7 @@
                     </td>
                     <td class="text-nowrap">@Or(c.NextHearingDate)</td>
                     <td class="text-nowrap"><span>@c.DownloadedOrderCount / @c.OrderCount</span><small class="d-block text-muted">PDFs available</small></td>
-                    <td><a class="btn btn-sm btn-outline-primary" href="@caseUrl" aria-label="View case @(c.CaseNumber ?? c.Cnr ?? c.LitigationCaseId.ToString())">View</a></td>
+                    <td><a class="btn btn-sm btn-outline-primary" href="@caseUrl" aria-label="View case @(c.CaseTitle ?? c.Cnr ?? c.LitigationCaseId.ToString())">View</a></td>
                 </tr>
             }
             </tbody>

@@ -174,10 +174,15 @@ public sealed record LitigationCaseAnalysis(
     string? RiskTrigger = null, string? RiskReason = null, string? BaselineRisk = null, bool RiskRaised = false,
     bool ActiveRestraint = false, string? RestraintType = null, bool LisPendens = false,
     string? Consequence = null, string? Outcome = null, string? Subject = null, string? Amount = null,
-    IReadOnlyList<string>? Provisions = null, IReadOnlyList<LitigationAnalysisQuote>? Passages = null, IReadOnlyList<string>? KeyPoints = null)
+    IReadOnlyList<string>? Provisions = null, IReadOnlyList<LitigationAnalysisQuote>? Passages = null, IReadOnlyList<string>? KeyPoints = null,
+    string? AnalysisBasis = null)
 {
     /// <summary>True for the detailed analysis (tier, trigger, quoted passages); false for a summary-only one.</summary>
     public bool IsDetailed => RiskTrigger is not null || Passages is { Count: > 0 };
+
+    /// <summary>The analysis read no order text: its basis, as the analysis checks set it from the text actually supplied
+    /// (an expired PDF's retained text still counts), is "Metadata-Led".</summary>
+    public bool IsMetadataLed => string.Equals(AnalysisBasis, "Metadata-Led", StringComparison.OrdinalIgnoreCase);
 }
 
 /// <summary>Renders the standalone litigation deliverables for one MCA ROC assignment.</summary>
@@ -605,7 +610,7 @@ internal sealed class LitigationReportPdfDocument(StandaloneLitigationReport rep
             row.RelativeItem().Column(title =>
             {
                 title.Item().Text($"CASE {serial:000}").Bold().FontSize(7.5f).FontColor(Navy);
-                title.Item().PaddingTop(2).Text(Display(item.CaseNumber)).Bold().FontSize(14).FontColor(Ink);
+                title.Item().PaddingTop(2).Text(Display(LitigationCasePresentation.CaseTitle(item.CaseNumber, item.CaseType, item.CaseYear))).Bold().FontSize(14).FontColor(Ink);
                 title.Item().PaddingTop(1).Text($"{LitigationCasePresentation.Label(view.Institution)}  ·  {Display(item.Court)}").FontSize(8.5f).FontColor(Colors.Grey.Darken1);
             });
             row.AutoItem().Column(badges =>
@@ -621,8 +626,8 @@ internal sealed class LitigationReportPdfDocument(StandaloneLitigationReport rep
             body.Item().PaddingTop(9).Element(c => PartiesPanel(c, item));
             if (item.PropertyMatches is { Count: > 0 })
                 body.Item().PaddingTop(9).Element(c => PropertyMatchesPanel(c, item.PropertyMatches));
-            body.Item().PaddingTop(9).Element(c => AnalysisPanel(c, analysis));
-            body.Item().PaddingTop(9).Element(c => OrdersPanel(c, item.Orders));
+            body.Item().PaddingTop(9).Element(c => AnalysisPanel(c, analysis, item.Orders));
+            body.Item().PaddingTop(9).Element(c => OrdersPanel(c, item.Orders, analysis?.IsMetadataLed == true));
         });
     });
 
@@ -679,7 +684,7 @@ internal sealed class LitigationReportPdfDocument(StandaloneLitigationReport rep
         if (advocates != "-") col.Item().PaddingTop(3).Text(text => { text.Span("Advocate: ").SemiBold().FontSize(7.2f).FontColor(Colors.Grey.Darken1); text.Span(advocates).FontSize(7.5f); });
     });
 
-    private static void AnalysisPanel(IContainer container, LitigationCaseAnalysis? analysis) => container.Background("#F5F8FD").Border(0.8f).BorderColor(Border).Padding(8).Column(panel =>
+    private static void AnalysisPanel(IContainer container, LitigationCaseAnalysis? analysis, IReadOnlyList<StandaloneReportOrderDto> orders) => container.Background("#F5F8FD").Border(0.8f).BorderColor(Border).Padding(8).Column(panel =>
     {
         panel.Item().Row(row => { row.RelativeItem().Text("CASE ANALYSIS").Bold().FontSize(8.5f).FontColor(Navy); row.AutoItem().Element(c => Pill(c, analysis?.RiskLevel ?? "PENDING", analysis is null ? Navy : RiskColor(analysis.RiskLevel))); });
         if (analysis is { IsDetailed: true })
@@ -715,20 +720,23 @@ internal sealed class LitigationReportPdfDocument(StandaloneLitigationReport rep
                     });
             }
         }
-        if (analysis?.KeyIssues is { Count: > 0 }) { panel.Item().PaddingTop(5).Text("KEY ISSUES").Bold().FontSize(7).FontColor(Navy); foreach (var issue in analysis.KeyIssues) panel.Item().PaddingTop(2).Text(text => { text.Span("• ").FontColor(Navy); text.Span(issue); }); }
+        if (EvidenceLimitations(analysis?.KeyIssues, orders, analysis?.IsMetadataLed == true) is { Count: > 0 } limitations)
+        {
+            panel.Item().PaddingTop(5).Text("EVIDENCE LIMITATIONS").Bold().FontSize(7).FontColor(Navy);
+            foreach (var limitation in limitations) panel.Item().PaddingTop(2).Text(text => { text.Span("\u2022 ").FontColor(Navy); text.Span(limitation).FontSize(8); });
+        }
         if (!string.IsNullOrWhiteSpace(analysis?.RecommendedAction)) panel.Item().PaddingTop(5).Text(text => { text.Span("RECOMMENDED ACTION  ").Bold().FontSize(7).FontColor(Green); text.Span(analysis.RecommendedAction).FontSize(8); });
         if (!string.IsNullOrWhiteSpace(analysis?.EvidenceNote)) panel.Item().PaddingTop(4).Text(analysis.EvidenceNote).Italic().FontSize(7.2f).FontColor(Colors.Grey.Darken1);
     });
 
-    private static void OrdersPanel(IContainer container, IReadOnlyList<StandaloneReportOrderDto> orders) => container.Column(panel =>
+    private static void OrdersPanel(IContainer container, IReadOnlyList<StandaloneReportOrderDto> orders, bool metadataLed) => container.Column(panel =>
     {
         panel.Item().EnsureSpace(80).Text("ORDERS & JUDGMENTS").Bold().FontSize(8).FontColor(Navy);
-        if (orders.Count == 0) { panel.Item().PaddingTop(4).Text("No order record was returned for this case.").FontSize(8).FontColor(Colors.Grey.Darken1); return; }
+        if (orders.Count == 0) { panel.Item().PaddingTop(4).Text("No order record was returned for this case." + (metadataLed ? RestsOnRecord : "")).FontSize(8).FontColor(Colors.Grey.Darken1); return; }
         var available = orders.Count(o => o.AvailabilityBucket == LitigationOrderAvailabilityBucket.Downloaded);
         if (available < orders.Count)
-            // A neutral count: whether the rest are failed, expired or pending is a pipeline detail the reader cannot act on.
-            panel.Item().PaddingTop(2).Text($"{available} of {orders.Count} order documents are available in the portal.")
-                .FontSize(7.2f).FontColor(Colors.Grey.Darken1);
+            // Neutral wording: whether a document failed, expired or is still pending is a pipeline detail the reader cannot act on.
+            panel.Item().PaddingTop(2).Text(OrderAvailabilityNote(available, orders.Count) + (available == 0 && metadataLed ? RestsOnRecord : "")).FontSize(7.2f).FontColor(Colors.Grey.Darken1);
         foreach (var order in orders)
         {
             panel.Item().PaddingTop(4).Background("#FFFCF4").BorderLeft(3).BorderColor(Amber).Padding(5).Column(entry =>
@@ -738,6 +746,8 @@ internal sealed class LitigationReportPdfDocument(StandaloneLitigationReport rep
                     text.Span(Display(order.OrderDate)).Bold().FontColor(Amber);
                     text.Span("  |  ");
                     text.Span(Display(order.OrderType));
+                    if (order.AvailabilityBucket != LitigationOrderAvailabilityBucket.Downloaded)
+                        text.Span("  ·  document not available").FontSize(7.2f).FontColor(Colors.Grey.Darken1);
                 });
                 if (order.PropertyMatches is { Count: > 0 })
                 {
@@ -781,6 +791,52 @@ internal sealed class LitigationReportPdfDocument(StandaloneLitigationReport rep
         "risk_trigger" => "Why the tier was raised", "restraint" => "Restraint", "lis_pendens" => "Lis pendens",
         "operative_order" => "Operative order", "outcome" => "Outcome", "target_party" => "The company's role", _ => claim
     };
+
+    /// <summary>Said under the orders when the analysis read no order text (its basis is Metadata-Led) and none of the
+    /// documents is in the portal, so the reader knows why it rests on metadata.</summary>
+    private const string RestsOnRecord = " The analysis rests on the case record alone.";
+
+    /// <summary>The analysis's unknowns, as the deliverable shows them. They hold material warnings the analysis
+    /// checks add (a figure not confirmed by the printed order text, an amount dropped, order text left out for length),
+    /// which must reach the reader. A note is left out only when it says nothing beyond what the card already discloses
+    /// in full: that no order text was there to read — and only when the analysis is Metadata-Led and no order document
+    /// of the case is in the portal, so the orders panel states both — or that the record gives no case stage or amount in
+    /// dispute. A compound note ("no order text available to determine the relief sought"), a note on a case with a
+    /// downloaded order (whose text may be unreadable) and a note on an analysis that did read order text are kept as written.</summary>
+    internal static IReadOnlyList<string> EvidenceLimitations(IEnumerable<string>? unknowns, IReadOnlyList<StandaloneReportOrderDto> orders, bool metadataLed)
+    {
+        var disclosedByOrdersPanel = metadataLed && orders.All(o => o.AvailabilityBucket != LitigationOrderAvailabilityBucket.Downloaded);
+        return (unknowns ?? [])
+            .Where(u => !string.IsNullOrWhiteSpace(u))
+            .Where(u => !(disclosedByOrdersPanel && OnlyNoOrderText.IsMatch(u.Trim())) && !OnlyFieldNotGiven.IsMatch(u.Trim()))
+            .ToList();
+    }
+
+    private const System.Text.RegularExpressions.RegexOptions NoteOptions =
+        System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.CultureInvariant;
+
+    /// <summary>A whole note saying only that no order text was available, optionally that the analysis is therefore
+    /// metadata-based — nothing about what in particular could not be determined.</summary>
+    private static readonly System.Text.RegularExpressions.Regex OnlyNoOrderText = new(
+        @"^(?:(?:no\s+order\s+texts?(?:\s+(?:is|was))?\s+(?:available|provided)" +
+        @"|order\s+texts?(?:\s+(?:is|are|was|were))?\s+not\s+available)" +
+        @"(?:\s+for\s+(?:any|all)(?:\s+of\s+the)?\s+orders?(?:\s+in\s+this\s+case)?|\s+for\s+(?:detailed\s+)?analysis)?" +
+        @"(?:\s*[;,]\s*(?:the\s+)?analysis\s+(?:is\s+)?(?:based\s+(?:solely\s+|only\s+)?on\s+(?:case\s+)?metadata(?:\s+only)?|metadata-led(?:\s+only)?))?" +
+        @"|analysis\s+is\s+metadata-led\s+as\s+no\s+order\s+text\s+was\s+available)\.?$", NoteOptions);
+
+    /// <summary>A whole note saying only that the record gives no case stage or amount in dispute — the card shows "-".</summary>
+    private static readonly System.Text.RegularExpressions.Regex OnlyFieldNotGiven = new(
+        @"^(?:the\s+)?(?:case\s+stage|amount\s+in\s+dispute)(?:\s+(?:is|was))?\s+" +
+        @"(?:not\s+(?:specified|available|recorded|stated|given)|could\s+not\s+be\s+determined)" +
+        @"(?:\s+(?:in|from)\s+(?:the\s+)?(?:provided\s+)?(?:court\s+record|record|metadata))?\.?$", NoteOptions);
+
+    /// <summary>The orders are listed by the court record either way; this says which of their documents the portal holds.</summary>
+    internal static string OrderAvailabilityNote(int available, int listed) => available == 0
+        ? listed == 1
+            ? "The court record lists this order, but its document is not available."
+            : $"The court record lists these {listed} orders, but their documents are not available."
+        : $"Documents are available for {available} of the {listed} orders listed.";
+
     private static string Display(string? value) => string.IsNullOrWhiteSpace(value) ? "-" : value;
     private static string JoinValues(string? first, string? second) => string.Join(" / ", new[] { first, second }.Where(value => !string.IsNullOrWhiteSpace(value)));
     private static string Humanize(string? value) => string.IsNullOrWhiteSpace(value) ? "-" : value.Replace('_', ' ').ToUpperInvariant();

@@ -170,7 +170,8 @@ public class LitigationReportAssembler(
                         ca.Status.ToString(), detailed.RiskLevel, detailed.Summary, detailed.Unknowns, null, null,
                         detailed.RiskTrigger, detailed.RiskReason, detailed.BaselineRisk, detailed.RiskRaised,
                         detailed.ActiveRestraint, detailed.RestraintType, detailed.LisPendens, detailed.ConsequenceNote, detailed.FinalOrderSummary,
-                        detailed.Subject, detailed.Amount, detailed.Provisions, detailed.Quotes, detailed.KeyPoints);
+                        detailed.Subject, detailed.Amount, detailed.Provisions, detailed.Quotes, detailed.KeyPoints,
+                        AnalysisBasis(ca.AnalysisJson));
                     continue;
                 }
                 try
@@ -360,6 +361,19 @@ public class LitigationReportAssembler(
             authoritativeSnapshot.ReusedFromRequestId,
             authoritativeSnapshot.OriginSnapshotId,
             chargeLinks);
+    }
+
+    /// <summary>The stored analysis's <c>analysis_basis</c> ("Order-Confirmed" / "Metadata-Led"), or null when absent.</summary>
+    internal static string? AnalysisBasis(string? analysisJson)
+    {
+        if (string.IsNullOrWhiteSpace(analysisJson)) return null;
+        try
+        {
+            using var doc = JsonDocument.Parse(analysisJson);
+            return doc.RootElement.ValueKind == JsonValueKind.Object && doc.RootElement.TryGetProperty("analysis_basis", out var basis)
+                && basis.ValueKind == JsonValueKind.String ? basis.GetString() : null;
+        }
+        catch (JsonException) { return null; }
     }
 
     internal static DateTime? ParseOrderDate(string? raw)
