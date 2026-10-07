@@ -234,6 +234,51 @@ public sealed class LitigationCasePresentationTests
         Assert.DoesNotContain("KEYISSUES", text);
     }
 
+    private const string FigureWarning =
+        "The figure(s) 12,50,000 in this analysis are not confirmed by the printed order text (the scan may be damaged); check the order.";
+    private const string DroppedAmount = "An amount of 'Rs. 4.2 crore' was reported but could not be matched to the printed order text, so it is not shown.";
+
+    [Theory]
+    // Notes that only restate a gap the card already shows (the most frequent unknowns on the Coastal report)
+    [InlineData("Order text not available for any order.", false)]
+    [InlineData("Order text is not available for any order.", false)]
+    [InlineData("Order texts are not available for analysis.", false)]
+    [InlineData("order text not available", false)]
+    [InlineData("No order text available for analysis.", false)]
+    [InlineData("No order text was provided for analysis.", false)]
+    [InlineData("No order text available; analysis based on metadata only.", false)]
+    [InlineData("Case stage not specified in the record.", false)]
+    [InlineData("Amount in dispute not specified in court record.", false)]
+    // Material warnings the analysis checks add — always kept
+    [InlineData(FigureWarning, true)]
+    [InlineData(DroppedAmount, true)]
+    [InlineData("Some order text was left out for length.", true)]
+    [InlineData("Case status is UNKNOWN, treated as PENDING for risk assessment.", true)]
+    [InlineData("A long case: its orders were read in 2 groups, newest first.", true)]
+    public void Evidence_limitations_keep_material_warnings_and_drop_redundant_availability_notes(string unknown, bool kept) =>
+        Assert.Equal(kept, LitigationReportPdfDocument.EvidenceLimitations([unknown]).Contains(unknown));
+
+    [SkippableFact]
+    public void Pdf_keeps_material_analysis_warnings_under_evidence_limitations()
+    {
+        Skip.IfNot(OperatingSystem.IsWindows(),
+            "PdfPig text extraction is unreliable off Windows fonts; covered by the windows-tests CI job.");
+
+        var one = Case(1, "high_court", "KarnatakaHighCourt", "Pending", "against", "03-04-2024");
+        var analysis = new LitigationCaseAnalysis("Completed", "R2", "Recovery suit by a bank.",
+            ["Order text not available for any order.", FigureWarning, DroppedAmount, "Some order text was left out for length."], null,
+            RiskTrigger: "Recovery claim", RiskReason: "A bank seeks recovery from the company.");
+        var report = Report(one) with { CaseAnalysesByCaseId = new Dictionary<long, LitigationCaseAnalysis> { [1] = analysis } };
+        var text = new string(PdfText(report).Where(c => !char.IsWhiteSpace(c)).ToArray());
+
+        Assert.Contains("EVIDENCELIMITATIONS", text);
+        Assert.Contains("12,50,000inthisanalysisarenot", text); // ligatures ("fi", "ft") do not extract: match around them
+        Assert.Contains("couldnotbematchedtotheprintedordertext", text);
+        Assert.Contains("outforlength.", text);
+        Assert.DoesNotContain("Ordertextnotavailableforanyorder", text);
+        Assert.DoesNotContain("KEYISSUES", text);
+    }
+
     [Theory]
     [InlineData("11374/2024", "WP", "2024", "WP 11374/2024")]
     [InlineData("488", "OMP - Original Misc. Petition", "2016", "OMP 488/2016")]

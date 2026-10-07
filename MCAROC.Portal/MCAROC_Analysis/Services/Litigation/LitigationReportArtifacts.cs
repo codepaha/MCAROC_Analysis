@@ -715,8 +715,11 @@ internal sealed class LitigationReportPdfDocument(StandaloneLitigationReport rep
                     });
             }
         }
-        // The analysis's unknowns ("order text not available", "case status unknown") are caveats about the data the
-        // analysis had, not issues in the case; they stay on the portal case page and out of the deliverable.
+        if (EvidenceLimitations(analysis?.KeyIssues) is { Count: > 0 } limitations)
+        {
+            panel.Item().PaddingTop(5).Text("EVIDENCE LIMITATIONS").Bold().FontSize(7).FontColor(Navy);
+            foreach (var limitation in limitations) panel.Item().PaddingTop(2).Text(text => { text.Span("\u2022 ").FontColor(Navy); text.Span(limitation).FontSize(8); });
+        }
         if (!string.IsNullOrWhiteSpace(analysis?.RecommendedAction)) panel.Item().PaddingTop(5).Text(text => { text.Span("RECOMMENDED ACTION  ").Bold().FontSize(7).FontColor(Green); text.Span(analysis.RecommendedAction).FontSize(8); });
         if (!string.IsNullOrWhiteSpace(analysis?.EvidenceNote)) panel.Item().PaddingTop(4).Text(analysis.EvidenceNote).Italic().FontSize(7.2f).FontColor(Colors.Grey.Darken1);
     });
@@ -783,6 +786,20 @@ internal sealed class LitigationReportPdfDocument(StandaloneLitigationReport rep
         "risk_trigger" => "Why the tier was raised", "restraint" => "Restraint", "lis_pendens" => "Lis pendens",
         "operative_order" => "Operative order", "outcome" => "Outcome", "target_party" => "The company's role", _ => claim
     };
+
+    /// <summary>The analysis's unknowns, as the deliverable shows them. They hold material warnings the analysis
+    /// checks add (a figure not confirmed by the printed order text, an amount dropped, order text left out for length),
+    /// which must reach the reader. Notes that only restate a gap the card already shows — no order text, a stage or
+    /// amount the record does not give — are left out.</summary>
+    internal static IReadOnlyList<string> EvidenceLimitations(IEnumerable<string>? unknowns) =>
+        (unknowns ?? []).Where(u => !string.IsNullOrWhiteSpace(u) && !RedundantAvailabilityNote.IsMatch(u)).ToList();
+
+    private static readonly System.Text.RegularExpressions.Regex RedundantAvailabilityNote = new(
+        @"^\s*(no\s+order\s+texts?\b" +
+        @"|order\s+texts?\s+(is\s+|are\s+|was\s+|were\s+)?not\s+(available|provided)\b" +
+        @"|(the\s+)?(case\s+stage|amount\s+in\s+dispute)\b[^.]*\bnot\s+(specified|available|stated|given)\b)",
+        System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+
     /// <summary>The orders are listed by the court record either way; this says which of their documents the portal holds.</summary>
     internal static string OrderAvailabilityNote(int available, int listed) => available == 0
         ? listed == 1
