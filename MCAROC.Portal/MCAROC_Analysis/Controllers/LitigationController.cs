@@ -97,7 +97,8 @@ public class LitigationController(
                 return Redirect($"/Requests/{id}#tab-litigation");
             }
 
-            var refresh = await LitigationRefreshPolicy.GetAsync(db, id, _opts, DateTime.UtcNow, ct);
+            var refresh = await LitigationRefreshPolicy.GetAsync(db, id, _opts, DateTime.UtcNow, ct,
+                unlimited: Services.AnalystAccess.PortalAccess.HasFullAccess(User));
             if (!refresh.Allowed)
             {
                 if (Request.Headers.Accept.ToString().Contains("application/json"))
