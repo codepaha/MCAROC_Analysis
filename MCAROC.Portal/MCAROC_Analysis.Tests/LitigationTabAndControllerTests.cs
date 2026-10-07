@@ -1158,6 +1158,43 @@ public class LitigationTabAndControllerTests : IAsyncLifetime
         Assert.Equal(remaining, state.Remaining);
     }
 
+    [Theory]
+    [InlineData(1, 5)]    // inside the 15-day gap
+    [InlineData(4, 400)]  // all three client refreshes used
+    [InlineData(9, 0)]    // well past the cap, the same day
+    public void RefreshPolicy_LimitsAreForClients_AFullAccessUserMayAlwaysRefresh(int committed, int daysSinceLast)
+    {
+        var now = DateTime.UtcNow;
+        var state = LitigationRefreshPolicy.Evaluate(committed, now.AddDays(-daysSinceLast), now, 3, 15, unlimited: true);
+        Assert.True(state.Allowed);
+        Assert.True(state.Unlimited);
+        Assert.Null(state.Reason);
+        Assert.False(LitigationRefreshPolicy.Evaluate(committed, now.AddDays(-daysSinceLast), now, 3, 15).Allowed);
+    }
+
+    [Fact]
+    public async Task RenderLitigationTab_FullAccess_RefreshIsNeverBlockedOrCounted()
+    {
+        var lake = new LitigationTabViewModel
+        {
+            Request = new McaRequest { RequestId = 7, CompanyName = "Client View Co" },
+            SearchJob = new LitigationSearchJob { Status = LitigationSearchJobStatus.Completed },
+            AuthoritativeSnapshot = new LitigationReportSnapshot { RetrievedUtc = DateTime.UtcNow.AddDays(-1) },
+            RefreshIntervalDays = 15,
+            Refresh = LitigationRefreshPolicy.Evaluate(4, DateTime.UtcNow.AddDays(-1), DateTime.UtcNow, 3, 15, unlimited: true)
+        };
+
+        var html = (await RenderTabAsync(ClientModel(lake))).Replace("\r", "").Replace("\n", " ");
+        var form = html.Substring(html.IndexOf("litigation-refresh-form", StringComparison.Ordinal));
+        var button = form[..form.IndexOf("</button>", StringComparison.Ordinal)];
+
+        Assert.DoesNotContain("disabled", button);
+        Assert.DoesNotContain("refreshes remaining", html);
+        Assert.DoesNotContain("refreshes left", html);
+        Assert.DoesNotContain("one of your", html);
+        Assert.DoesNotContain("can next be refreshed", html);
+    }
+
     [Fact]
     public async Task RenderLitigationTab_ShowsCompactRegister_AndLeavesOrderEvidenceOnCasePage()
     {

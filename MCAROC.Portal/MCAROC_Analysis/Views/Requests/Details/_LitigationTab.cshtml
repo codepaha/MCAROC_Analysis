@@ -133,18 +133,18 @@
             @if (lake.SearchJob is not null || hasReport)
             {
                 <form method="post" action="/Requests/@reqId/Litigation/Search" class="d-inline" id="litigation-refresh-form"
-                      onsubmit="return confirm('@(hasReport ? "This refresh is chargeable. " : "")Refresh litigation data? This uses one of your @lake.Refresh.Max refreshes.');">
+                      onsubmit="return confirm('@(hasReport ? "This refresh is chargeable. " : "")Refresh litigation data?@(lake.Refresh.Unlimited ? "" : $" This uses one of your {lake.Refresh.Max} refreshes.")');">
                     @Html.AntiForgeryToken()
                     <input type="hidden" name="confirmChargeableRefresh" value="true" />
                     <button type="submit" class="btn btn-sm btn-outline-primary" disabled="@(searchRunning || refreshBlocked)"
-                            title="@(refreshBlocked ? lake.Refresh.Reason : $"Fetch fresh court records. {lake.Refresh.Remaining} of {lake.Refresh.Max} refreshes left.")">
+                            title="@(refreshBlocked ? lake.Refresh.Reason : lake.Refresh.Unlimited ? "Fetch fresh court records." : $"Fetch fresh court records. {lake.Refresh.Remaining} of {lake.Refresh.Max} refreshes left.")">
                         <i class="bi bi-arrow-repeat me-1"></i>Refresh data
                     </button>
                 </form>
             }
         </div>
     </div>
-    @if (isRefresh)
+    @if (isRefresh && !lake.Refresh.Unlimited)
     {
         <p class="small text-muted mb-3" id="litigation-refresh-note">
             <i class="bi bi-arrow-repeat me-1"></i>@lake.Refresh.Remaining of @lake.Refresh.Max refreshes remaining.

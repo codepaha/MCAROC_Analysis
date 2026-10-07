@@ -44,7 +44,7 @@ public sealed class LitigationDetailsQuery(AppDbContext db,
                 .ToDictionary(g => g.Key, g => g.First());
 
             var bprOpts = bprOptions?.Value ?? new BprLitigationOptions();
-            litVm.Refresh = await LitigationRefreshPolicy.GetAsync(db, id, bprOpts, DateTime.UtcNow, litCt);
+            litVm.Refresh = await LitigationRefreshPolicy.GetAsync(db, id, bprOpts, DateTime.UtcNow, litCt, unlimited: vm.HasFullAccess);
             litVm.HasCompletedAnalysis = await db.LitigationAiAnalysisRuns.AsNoTracking().AnyAsync(r => r.RequestId == id
                 && (r.Status == LitigationAiAnalysisRunStatus.Completed || r.Status == LitigationAiAnalysisRunStatus.CompletedWithErrors));
             litVm.AnalysisInProgress = await db.LitigationAiAnalysisRuns.AsNoTracking().AnyAsync(r => r.RequestId == id
