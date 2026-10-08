@@ -94,7 +94,12 @@ public sealed class InstaFinancialsClient(HttpClient http, IOptions<InstaFinanci
         var directors = Array(Property(reportData, "directorData"))
             .Select(d =>
             {
-                var name = string.Join(' ', new[] { Text(d, "FirstName", ""), Text(d, "MiddleName", ""), Text(d, "LastName", "") }.Where(x => !string.IsNullOrWhiteSpace(x) && x != "-"));
+                var name = JoinName(d, "FirstName", "MiddleName", "LastName");
+                // Some records leave the top-level name parts null and carry the name only on the company's
+                // MCAUserRole entry — there firstName holds the full name and middleName repeats it, hence the
+                // Distinct in JoinName (seen live on U68100MH2023PLC403724: all 4 directors dropped otherwise).
+                if (string.IsNullOrWhiteSpace(name))
+                    name = Roles(d, cin).Select(r => JoinName(r, "firstName", "middleName", "lastName")).FirstOrDefault(x => x.Length > 0) ?? "";
                 // All 3 name parts can be individually filtered out (e.g. all "." placeholders), leaving an
                 // empty join that the "-" checks below wouldn't catch — normalize it to "-" so this entry is
                 // excluded like any other nameless record, instead of appearing with a blank name.
@@ -153,9 +158,13 @@ public sealed class InstaFinancialsClient(HttpClient http, IOptions<InstaFinanci
             .Select(x => Text(candidate, x, "")).Where(x => !string.IsNullOrWhiteSpace(x) && x != "-").Distinct(StringComparer.OrdinalIgnoreCase);
         return string.Join(", ", pieces).Trim() is { Length: > 0 } address ? address : "-";
     }
+    private static string JoinName(JsonElement value, params string[] parts) =>
+        string.Join(' ', parts.Select(p => Text(value, p, "")).Where(x => !string.IsNullOrWhiteSpace(x) && x != "-").Distinct(StringComparer.OrdinalIgnoreCase));
+    private static IEnumerable<JsonElement> Roles(JsonElement director, string cin) =>
+        Array(Property(director, "MCAUserRole")).Where(r => Text(r, "cin", "") == cin || Text(r, "ucin", "") == cin);
     private static string Designation(JsonElement director, string cin)
     {
-        var roles = Array(Property(director, "MCAUserRole")).Where(r => Text(r, "cin", "") == cin || Text(r, "ucin", "") == cin).ToList();
+        var roles = Roles(director, cin).ToList();
         // Text()'s default fallback is "-", which is required here: passing "" as the fallback would make
         // a genuinely blank "designation" field return "" instead of "-", which already satisfies the
         // `!= "-"` check below and short-circuits before ever trying the roleLICValue fallback.
