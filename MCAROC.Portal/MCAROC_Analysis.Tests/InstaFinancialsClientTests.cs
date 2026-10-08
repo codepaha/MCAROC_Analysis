@@ -61,6 +61,20 @@ public class InstaFinancialsClientTests
         Assert.Equal("Director/Designated Partner", director.Designation);
     }
 
+    [Theory]
+    // PR #424 review: de-duplicating name parts turned "RAM RAM SHARMA" into "Ram Sharma"
+    [InlineData("""{"FirstName":"RAM","MiddleName":"RAM","LastName":"SHARMA","DIN":"01234567","MCAUserRole":[]}""")]
+    [InlineData("""{"FirstName":null,"MiddleName":null,"LastName":null,"DIN":"01234567","MCAUserRole":[{"cin":"U12345DL2025PTC123456","firstName":"RAM","middleName":"RAM","lastName":"SHARMA"}]}""")]
+    public async Task A_genuinely_repeated_name_part_is_kept(string director)
+    {
+        var payload = $$"""{ "ReportData": { "companyData": { "company":"Example Private Limited" }, "indexChargesData":[], "directorData":[{{director}}] } }""";
+        var client = NewClient(HttpStatusCode.OK, payload, "configured-key");
+
+        var result = await client.GetCompanyAsync("U12345DL2025PTC123456", CancellationToken.None);
+
+        Assert.Equal("Ram Ram Sharma", Assert.Single(result.Directors).Name);
+    }
+
     [Fact]
     public async Task Director_name_falls_back_to_the_company_role_when_top_level_name_is_null()
     {
