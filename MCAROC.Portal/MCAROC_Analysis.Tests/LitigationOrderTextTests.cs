@@ -120,6 +120,28 @@ public class LitigationOrderTextTests
         Assert.Equal(LitigationOrderPageKind.OrderText, LitigationOrderText.Classify(Utf8(page)).Kind);
     }
 
+    [Theory]
+    // PR #423 re-review: a short order was rejected merely for containing "expired" or "error"
+    [InlineData("The limitation period has expired. The petition is dismissed as time-barred.")]
+    [InlineData("There is an error apparent on the face of the record. The decree is corrected accordingly.")]
+    [InlineData("The interim order has expired. Not extended. Call on 3.5.19.")]
+    [InlineData("Access denied to the suit premises is alleged. Notice to respondent.")]
+    [InlineData("Error in the cause title is corrected. List on 12.06.2019.")]
+    public void A_short_order_using_error_words_is_order_text(string order)
+    {
+        var (kind, text) = LitigationOrderText.Classify(Utf8($"<p>{order}</p>"));
+        Assert.Equal(LitigationOrderPageKind.OrderText, kind);
+        Assert.Equal(order, text);
+    }
+
+    [Theory]
+    [InlineData("<html><body><h2>Error: Invalid Token</h2><p>Reference 7f3a-91c2.</p></body></html>")]
+    [InlineData("<p>The link you used is invalid or has expired. Request a new one.</p>")]
+    [InlineData("<html><head><title>404 Not Found</title></head><body>The requested URL was not found on this server.</body></html>")]
+    [InlineData("<html><body><h1>Permission Denied</h1><p>Signature is invalid for this resource.</p></body></html>")]
+    public void A_short_error_page_is_rejected_by_its_structure_or_phrasing(string page) =>
+        Assert.Equal(LitigationOrderPageKind.Rejected, LitigationOrderText.Classify(Utf8(page)).Kind);
+
     [Fact]
     public void A_short_order_that_mentions_an_unuploaded_order_keeps_its_directions()
     {

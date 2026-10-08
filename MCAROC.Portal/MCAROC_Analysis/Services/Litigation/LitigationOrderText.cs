@@ -68,15 +68,12 @@ public static partial class LitigationOrderText
     public static bool IsPlaceholder(string text) =>
         string.IsNullOrWhiteSpace(text) || (text.Length <= 300 && NotUploadedNotice().IsMatch(text));
 
-    /// <summary>An error page, whatever its length: a short page with any error word; at any length, a title or
-    /// heading line that is nothing but error terms ("Access Denied", "403 Forbidden", "Access Denied / Session
-    /// Expired") or a phrase only a login / expired-link page uses ("your session has expired", "sign in again").
-    /// Words an order uses in passing ("the limitation period has expired", "error apparent on the face of the
-    /// record") do not reject a long page.</summary>
+    /// <summary>An error page, whatever its length: a title or heading line that is nothing but error terms ("Access
+    /// Denied", "403 Forbidden", "Access Denied / Session Expired"), or a phrase only a transport / sign-in error uses
+    /// ("your session has expired", "sign in again", "invalid or expired"). A bare word is never enough — orders say
+    /// "the limitation period has expired" or "error apparent on the face of the record", however short.</summary>
     private static bool IsErrorPage(string text) =>
-        (text.Length < 200 && ErrorWords().IsMatch(text))
-        || text.Split('\n').Take(3).Any(line => ErrorHeading().IsMatch(line))
-        || ErrorPhrase().IsMatch(text);
+        text.Split('\n').Take(3).Any(line => ErrorHeading().IsMatch(line)) || ErrorPhrase().IsMatch(text);
 
     /// <summary>The order text in the shape the extractor gives a one-page document, so chunking, page citations
     /// and address matching treat it like any other order.</summary>
@@ -94,18 +91,14 @@ public static partial class LitigationOrderText
     [GeneratedRegex(@"[ \t\r\f\v]+")]
     private static partial Regex Spaces();
 
-    [GeneratedRegex(@"\b(expired|access\s+denied|forbidden|unauthori[sz]ed|permission\s+deni\w*|invalid\s+(token|link|url|request)|error)\b",
-        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
-    private static partial Regex ErrorWords();
-
     /// <summary>A line made only of error terms, optionally with an HTTP status code ("403 Forbidden", "Access Denied /
     /// Session Expired").</summary>
-    [GeneratedRegex(@"^\W*(?:\d{3}\W*)?(?:access\s+denied|forbidden|unauthori[sz]ed|not\s+found|bad\s+request|(?:internal\s+)?server\s+error|service\s+unavailable|(?:session|link|token|request)\s+(?:has\s+)?expired|expired|error|invalid\s+(?:token|link|url|request))(?:\W+(?:\d{3}\W*)?(?:access\s+denied|forbidden|unauthori[sz]ed|not\s+found|bad\s+request|(?:internal\s+)?server\s+error|service\s+unavailable|(?:session|link|token|request)\s+(?:has\s+)?expired|expired|error|invalid\s+(?:token|link|url|request)))*\W*$",
+    [GeneratedRegex(@"^\W*(?:\d{3}\W*)?(?:access\s*denied|forbidden|unauthori[sz]ed|permission\s+denied|not\s+found|bad\s+request|(?:internal\s+)?server\s+error|service\s+unavailable|(?:session|link|token|request)\s+(?:has\s+)?expired|expired|error|invalid\s+(?:token|link|url|request))(?:\W+(?:\d{3}\W*)?(?:access\s*denied|forbidden|unauthori[sz]ed|permission\s+denied|not\s+found|bad\s+request|(?:internal\s+)?server\s+error|service\s+unavailable|(?:session|link|token|request)\s+(?:has\s+)?expired|expired|error|invalid\s+(?:token|link|url|request)))*\W*$",
         RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex ErrorHeading();
 
-    /// <summary>Phrases only a login or expired-link page uses, never an order.</summary>
-    [GeneratedRegex(@"\b(?:session\s+(?:has\s+)?(?:expired|timed\s+out)|(?:sign|log)\s*in\s+again|(?:link|token|url|request)\s+(?:has\s+)?expired|you\s+do\s+not\s+have\s+permission\s+to\s+access)\b",
+    /// <summary>Phrases only a transport or sign-in error uses, never an order.</summary>
+    [GeneratedRegex(@"\b(?:session\s+(?:has\s+)?(?:expired|timed\s+out)|(?:sign|log)\s*in\s+again|(?:link|token|url|signature)\s+(?:has\s+)?expired|request\s+has\s+expired|invalid\s+or\s+(?:has\s+)?expired|(?:token|signature)\s+(?:is\s+)?invalid|invalid\s+(?:token|signature|session)|you\s+do\s+not\s+have\s+permission\s+to\s+access|requested\s+(?:url|resource|document|file)\s+was\s+not\s+found)\b",
         RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex ErrorPhrase();
 
