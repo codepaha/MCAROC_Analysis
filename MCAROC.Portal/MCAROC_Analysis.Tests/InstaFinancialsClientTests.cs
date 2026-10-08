@@ -61,6 +61,41 @@ public class InstaFinancialsClientTests
         Assert.Equal("Director/Designated Partner", director.Designation);
     }
 
+    [Theory]
+    // PR #424 review: de-duplicating name parts turned "RAM RAM SHARMA" into "Ram Sharma"
+    [InlineData("""{"FirstName":"RAM","MiddleName":"RAM","LastName":"SHARMA","DIN":"01234567","MCAUserRole":[]}""")]
+    [InlineData("""{"FirstName":null,"MiddleName":null,"LastName":null,"DIN":"01234567","MCAUserRole":[{"cin":"U12345DL2025PTC123456","firstName":"RAM","middleName":"RAM","lastName":"SHARMA"}]}""")]
+    public async Task A_genuinely_repeated_name_part_is_kept(string director)
+    {
+        var payload = $$"""{ "ReportData": { "companyData": { "company":"Example Private Limited" }, "indexChargesData":[], "directorData":[{{director}}] } }""";
+        var client = NewClient(HttpStatusCode.OK, payload, "configured-key");
+
+        var result = await client.GetCompanyAsync("U12345DL2025PTC123456", CancellationToken.None);
+
+        Assert.Equal("Ram Ram Sharma", Assert.Single(result.Directors).Name);
+    }
+
+    [Fact]
+    public async Task Director_name_falls_back_to_the_company_role_when_top_level_name_is_null()
+    {
+        // Live shape (U68100MH2023PLC403724): FirstName/MiddleName/LastName all null, the name only on the
+        // MCAUserRole entry with firstName = full name and middleName repeating it.
+        const string payload = """
+        { "ReportData": { "companyData": { "company":"Example Private Limited" }, "indexChargesData":[], "directorData":[
+          {"FirstName":null,"MiddleName":null,"LastName":null,"DIN":"08558024","PAN":null,"dateOfAppointment":"2026-07-08T00:00:00",
+           "MCAUserRole":[{"ucin":"U12345DL2025PTC123456","cin":"U12345DL2025PTC123456","firstName":"NILAY DHIMANT MEHTA","middleName":"NILAY DHIMANT MEHTA","lastName":null,"designation":"Additional Director"}]}
+        ] } }
+        """;
+        var client = NewClient(HttpStatusCode.OK, payload, "configured-key");
+
+        var result = await client.GetCompanyAsync("U12345DL2025PTC123456", CancellationToken.None);
+
+        var director = Assert.Single(result.Directors);
+        Assert.Equal("Nilay Dhimant Mehta", director.Name);
+        Assert.Equal("08558024", director.DinOrPan);
+        Assert.Equal("Additional Director", director.Designation);
+    }
+
     [Fact]
     public async Task Missing_api_key_fails_without_a_network_request()
     {
