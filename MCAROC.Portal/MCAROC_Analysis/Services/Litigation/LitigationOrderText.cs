@@ -11,8 +11,8 @@ public enum LitigationOrderPageKind
     OrderText,
     /// <summary>Only the source's notice that the order is not there ("Orders is not uploaded…", "File does not exist.").</summary>
     NotPublished,
-    /// <summary>Not an order: an error body (JSON, the storage service's error document, a short "Expired" / "Access
-    /// Denied" page) or content that mentions the PDF header — never stored as an order; retried.</summary>
+    /// <summary>Not an order: an error body (JSON, the storage service's error document, an "Expired" / "Access
+    /// Denied" page of any length) or content that mentions the PDF header — never stored as an order; retried.</summary>
     Rejected
 }
 
@@ -38,7 +38,7 @@ public static partial class LitigationOrderText
         var text = FromHtml(bytes);
         if (text.Length > 0 && IsPlaceholder(text))
             return (LitigationOrderPageKind.NotPublished, text);
-        if (text.Length < MinOrderTextLength || (text.Length < 200 && ErrorWords().IsMatch(text)))
+        if (text.Length < MinOrderTextLength || IsErrorPage(text))
             return (LitigationOrderPageKind.Rejected, text);
         return (LitigationOrderPageKind.OrderText, text);
     }
@@ -62,9 +62,21 @@ public static partial class LitigationOrderText
         return head.StartsWith("<?xml", StringComparison.OrdinalIgnoreCase) && head.Contains("<Error>", StringComparison.Ordinal);
     }
 
-    /// <summary>The page carries no order: empty, or only the source's notice that the order is not uploaded.</summary>
+    /// <summary>The page carries no order: empty, or nothing but the source's notice that the order is not uploaded
+    /// (optionally naming the case). A notice inside other text ("The earlier order is not uploaded. The respondent
+    /// shall file…") is an order that mentions it, not a placeholder.</summary>
     public static bool IsPlaceholder(string text) =>
-        string.IsNullOrWhiteSpace(text) || (text.Length <= 300 && NotUploaded().IsMatch(text));
+        string.IsNullOrWhiteSpace(text) || (text.Length <= 300 && NotUploadedNotice().IsMatch(text));
+
+    /// <summary>An error page, whatever its length: a short page with any error word; at any length, a title or
+    /// heading line that is nothing but error terms ("Access Denied", "403 Forbidden", "Access Denied / Session
+    /// Expired") or a phrase only a login / expired-link page uses ("your session has expired", "sign in again").
+    /// Words an order uses in passing ("the limitation period has expired", "error apparent on the face of the
+    /// record") do not reject a long page.</summary>
+    private static bool IsErrorPage(string text) =>
+        (text.Length < 200 && ErrorWords().IsMatch(text))
+        || text.Split('\n').Take(3).Any(line => ErrorHeading().IsMatch(line))
+        || ErrorPhrase().IsMatch(text);
 
     /// <summary>The order text in the shape the extractor gives a one-page document, so chunking, page citations
     /// and address matching treat it like any other order.</summary>
@@ -73,7 +85,7 @@ public static partial class LitigationOrderText
     [GeneratedRegex(@"<(script|style)\b[^>]*>.*?</\1\s*>", RegexOptions.IgnoreCase | RegexOptions.Singleline)]
     private static partial Regex ScriptOrStyle();
 
-    [GeneratedRegex(@"<\s*(br|/p|/div|/tr|/li|/h[1-6]|/table)\b[^>]*>", RegexOptions.IgnoreCase)]
+    [GeneratedRegex(@"<\s*(br|/p|/div|/tr|/li|/h[1-6]|/table|/title)\b[^>]*>", RegexOptions.IgnoreCase)]
     private static partial Regex BlockEnd();
 
     [GeneratedRegex(@"<[^>]*>", RegexOptions.Singleline)]
@@ -86,7 +98,21 @@ public static partial class LitigationOrderText
         RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex ErrorWords();
 
-    [GeneratedRegex(@"\b(orders?|judg(e)?ments?)\s+(is|are|has|have)\s+not\s+(been\s+)?(uploaded|available|found)\b|\bno\s+(orders?|records?)\s+(found|available|uploaded)\b|\bfile\s+does\s+not\s+exist\b",
+    /// <summary>A line made only of error terms, optionally with an HTTP status code ("403 Forbidden", "Access Denied /
+    /// Session Expired").</summary>
+    [GeneratedRegex(@"^\W*(?:\d{3}\W*)?(?:access\s+denied|forbidden|unauthori[sz]ed|not\s+found|bad\s+request|(?:internal\s+)?server\s+error|service\s+unavailable|(?:session|link|token|request)\s+(?:has\s+)?expired|expired|error|invalid\s+(?:token|link|url|request))(?:\W+(?:\d{3}\W*)?(?:access\s+denied|forbidden|unauthori[sz]ed|not\s+found|bad\s+request|(?:internal\s+)?server\s+error|service\s+unavailable|(?:session|link|token|request)\s+(?:has\s+)?expired|expired|error|invalid\s+(?:token|link|url|request)))*\W*$",
         RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
-    private static partial Regex NotUploaded();
+    private static partial Regex ErrorHeading();
+
+    /// <summary>Phrases only a login or expired-link page uses, never an order.</summary>
+    [GeneratedRegex(@"\b(?:session\s+(?:has\s+)?(?:expired|timed\s+out)|(?:sign|log)\s*in\s+again|(?:link|token|url|request)\s+(?:has\s+)?expired|you\s+do\s+not\s+have\s+permission\s+to\s+access)\b",
+        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex ErrorPhrase();
+
+    /// <summary>The whole text is one or more not-uploaded notices, each optionally naming the case ("Orders is not
+    /// uploaded for case number CRLRC/292/2016"). The case reference must start with a capital or a digit, so a notice
+    /// followed by a direction ("…not uploaded in the respondent's reply") never matches.</summary>
+    [GeneratedRegex(@"^(?:\s*(?:the\s+)?(?:(?:orders?|judg(?:e)?ments?)\s+(?:is|are|has|have)\s+not\s+(?:yet\s+)?(?:been\s+)?(?:uploaded|available|found)|no\s+(?:orders?|records?)\s+(?:found|available|uploaded)|file\s+does\s+not\s+exist)(?:\s+(?:for|in|of)\s+(?:the\s+)?(?:case|matter|petition|appeal)?(?:\s+(?:number|no\.?))?\s*[:\-]?\s*(?-i:[A-Z0-9][A-Za-z0-9./()\-]*(?:\s+(?:of\s+)?[A-Z0-9][A-Za-z0-9./()\-]*)*))?\s*[.!]?)+\s*$",
+        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex NotUploadedNotice();
 }
