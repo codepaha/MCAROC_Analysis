@@ -329,6 +329,9 @@
                                                 <span class="badge bg-danger">URL Expired</span>
                                                 <small class="text-muted ms-1">(Cannot be refetched individually; requires full search rerun)</small>
                                                 break;
+                                            case LitigationOrderDocumentStatus.NotPublished:
+                                                <span class="badge bg-light text-dark border" title="@order.FailureReason">Not published by the court</span>
+                                                break;
                                             case LitigationOrderDocumentStatus.Failed:
                                                 <span class="badge bg-secondary">Download Failed</span>
                                                 @if (!string.IsNullOrWhiteSpace(order.FailureReason))

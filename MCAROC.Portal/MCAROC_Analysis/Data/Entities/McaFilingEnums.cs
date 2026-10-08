@@ -50,7 +50,9 @@ public enum TextExtractionMethod
     Ocr,
     Mixed,
     /// <summary>#369: an XFA e-form with no page text; the text is the form's filed field values.</summary>
-    Xfa
+    Xfa,
+    /// <summary>A litigation order the source serves as an HTML page rather than a PDF; the text is the page's.</summary>
+    Html
 }
 
 public enum AiExtractionStatus

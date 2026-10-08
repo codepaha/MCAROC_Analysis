@@ -103,20 +103,29 @@ public sealed class LitigationOrderDocumentService(
             }
 
             var download = await client.DownloadOrderDocumentAsync(token, document.Order.PdfUrl, _opts.MaxOrderPdfBytes, ct);
+            if (download.NotPublished)
+            {
+                await MarkNotPublishedAsync(orderDocumentId, myLeaseToken, download.Error!, ct);
+                return;
+            }
             if (!download.Ok)
             {
                 await MarkFailedOrExpiredAsync(orderDocumentId, myLeaseToken, retainedUntilUtc, attemptCount, download.Error!, ct);
                 return;
             }
 
+            // An order served as an HTML page is kept as its plain text (.txt), never as HTML.
+            var isText = download.Text is not null;
+            var fileBytes = isText ? new System.Text.UTF8Encoding(false).GetBytes(download.Text!) : download.Bytes!;
+
             Directory.CreateDirectory(directory);
             // Keyed by this attempt's own lease token — never a fixed/shared path — so a stale straggler and
             // a takeover can never write the same file (see this type's own remarks).
-            myPath = Path.Combine(directory, $"{orderDocumentId}-{myLeaseToken:N}.pdf");
+            myPath = Path.Combine(directory, $"{orderDocumentId}-{myLeaseToken:N}{(isText ? ".txt" : ".pdf")}");
             var reservationOwnerId = $"{orderDocumentId}:{myLeaseToken:N}";
 
             var reservation = await reservations.TryReserveAsync(
-                "LitigationOrderDocument", reservationOwnerId, directory, download.Bytes!.LongLength, TimeSpan.FromMinutes(LeaseMinutes), ct);
+                "LitigationOrderDocument", reservationOwnerId, directory, fileBytes.LongLength, TimeSpan.FromMinutes(LeaseMinutes), ct);
             if (!reservation.Success)
             {
                 await MarkFailedOrExpiredAsync(orderDocumentId, myLeaseToken, retainedUntilUtc, attemptCount, $"Not enough disk space to retain this order: {reservation.Error}", ct);
@@ -126,14 +135,14 @@ public sealed class LitigationOrderDocumentService(
 
             try
             {
-                await File.WriteAllBytesAsync(myPath, download.Bytes, ct);
+                await File.WriteAllBytesAsync(myPath, fileBytes, ct);
             }
             finally
             {
                 await reservations.ReleaseReservationsAsync("LitigationOrderDocument", reservationOwnerId, CancellationToken.None);
             }
 
-            var fileHash = Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(download.Bytes));
+            var fileHash = Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(fileBytes));
             var contentType = download.ContentType ?? "application/pdf";
             var downloadedUtc = DateTime.UtcNow;
 
@@ -144,7 +153,14 @@ public sealed class LitigationOrderDocumentService(
             FilingDocumentProcessingStatus? textStatus = null;
             TextExtractionMethod? textMethod = null;
             DateTime? extractedUtc = null;
-            try
+            if (isText)
+            {
+                extractedText = LitigationOrderText.AsExtractedText(download.Text!);
+                textStatus = FilingDocumentProcessingStatus.TextExtracted;
+                textMethod = TextExtractionMethod.Html;
+                extractedUtc = DateTime.UtcNow;
+            }
+            else try
             {
                 var tempDir = Path.Combine(directory, "tmp");
                 var extraction = await textExtractor.ExtractAsync(myPath, tempDir, ct);
@@ -167,7 +183,7 @@ public sealed class LitigationOrderDocumentService(
             var claimed = await LeaseGuarded(orderDocumentId, myLeaseToken).ExecuteUpdateAsync(s => s
                 .SetProperty(d => d.Status, LitigationOrderDocumentStatus.Downloaded)
                 .SetProperty(d => d.StoragePath, myPath)
-                .SetProperty(d => d.FileSizeBytes, download.Bytes.LongLength)
+                .SetProperty(d => d.FileSizeBytes, fileBytes.LongLength)
                 .SetProperty(d => d.FileHash, fileHash)
                 .SetProperty(d => d.ContentType, contentType)
                 .SetProperty(d => d.DownloadedUtc, downloadedUtc)
@@ -188,7 +204,7 @@ public sealed class LitigationOrderDocumentService(
             published = true;
             logger.LogInformation(
                 "Litigation order document {Id} downloaded and extracted ({Bytes} bytes, {Method}).",
-                orderDocumentId, download.Bytes.LongLength, textMethod);
+                orderDocumentId, fileBytes.LongLength, textMethod);
 
             // #244/LIT-04: only enqueue for chunking once text extraction actually succeeded — a Downloaded
             // document with no (or failed) extraction has nothing in ExtractedText for the orchestrator's own
@@ -258,6 +274,20 @@ public sealed class LitigationOrderDocumentService(
     /// guarded exactly like the success path above: a fenced-out attempt must not resurrect a row a takeover
     /// has already moved on. A still-retryable failure schedules its own delayed re-attempt so it does not sit
     /// idle until the next app restart's recovery sweep.</summary>
+    /// <summary>Terminal: the source has no order document behind this link. Never retried — only a refresh that
+    /// brings a new link (see <c>LitigationCasePersistenceService</c>) puts it back to Pending.</summary>
+    private async Task MarkNotPublishedAsync(long documentId, Guid leaseToken, string reason, CancellationToken ct)
+    {
+        var claimed = await LeaseGuarded(documentId, leaseToken).ExecuteUpdateAsync(s => s
+            .SetProperty(d => d.Status, LitigationOrderDocumentStatus.NotPublished)
+            .SetProperty(d => d.FailureReason, reason)
+            .SetProperty(d => d.NextAttemptUtc, (DateTime?)null), ct);
+        if (claimed == 0)
+            logger.LogWarning(
+                "Litigation order document {Id} lost its lease before 'not published' could be recorded — leaving it to whichever attempt now owns it.",
+                documentId);
+    }
+
     private async Task MarkFailedOrExpiredAsync(
         long documentId, Guid leaseToken, DateTime retainedUntilUtc, int attemptCount, string reason, CancellationToken ct)
     {

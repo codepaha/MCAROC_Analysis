@@ -428,6 +428,7 @@ public sealed class LitigationCasePersistenceService(
                     admittedExistingDocuments[match.LitigationCaseOrderId] = document;
                 }
                 else if (document.Status is LitigationOrderDocumentStatus.Failed or LitigationOrderDocumentStatus.Expired
+                        or LitigationOrderDocumentStatus.NotPublished
                     && (retainedUntilUtc > document.RetainedUntilUtc || urlChanged))
                 {
                     if (retainedUntilUtc > document.RetainedUntilUtc)

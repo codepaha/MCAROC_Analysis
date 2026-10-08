@@ -33,6 +33,8 @@ public static class LitigationOrdersArchiveBuilder
 
             var folder = AutoFetchArchiveBuilder.SanitizeFolder(entry.CaseFolderLabel);
             var fileName = AutoFetchArchiveBuilder.SanitizeEntryName(entry.EntryLabel);
+            if (string.Equals(Path.GetExtension(entry.LocalPath), ".txt", StringComparison.OrdinalIgnoreCase))
+                fileName = Path.ChangeExtension(fileName, ".txt"); // an order the source served as a page, kept as text
             var name = UniqueEntryName($"{folder}/{fileName}", usedNames);
             archive.CreateEntryFromFile(entry.LocalPath, name, CompressionLevel.Fastest);
             written++;

@@ -12,7 +12,11 @@ public enum LitigationOrderDocumentStatus
     InProgress,
     Downloaded,
     Failed,
-    Expired
+    Expired,
+    /// <summary>Terminal: the source holds no order document for this link — its storage has no such file (404),
+    /// or the page it serves is only a "not uploaded" notice or empty. Not retried; a refresh that brings a new
+    /// link fetches again.</summary>
+    NotPublished
 }
 
 /// <summary>One row per <see cref="LitigationCaseOrder"/> (1:1, unique on <see cref="LitigationCaseOrderId"/>),
