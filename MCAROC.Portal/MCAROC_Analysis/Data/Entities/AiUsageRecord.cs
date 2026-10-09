@@ -23,6 +23,9 @@ public class AiUsageRecord
     /// <summary>Embedding calls report billable characters; null for generations.</summary>
     public long? BillableCharacters { get; set; }
 
+    /// <summary>Google Search queries the model ran for this call (grounded search only; 0 otherwise). Summed per month against the free allowance.</summary>
+    public int GroundingQueries { get; set; }
+
     public bool Succeeded { get; set; } = true;
 
     /// <summary>True when the token counts are an estimate (an embedding batch the provider gave no token count for, or a generation with no usage

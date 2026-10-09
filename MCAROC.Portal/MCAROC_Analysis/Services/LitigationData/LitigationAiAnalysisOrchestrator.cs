@@ -345,6 +345,8 @@ public sealed class LitigationAiAnalysisOrchestrator(AppDbContext db, ILitigatio
         return (await AnalyzeCaseFreshAsync(runId, token, c, context, input, casePromptHash, ct), false);
     }
 
+    private const int MalformedReplyRetries = 1;
+
     private async Task<LitigationCaseAiAnalysis> AnalyzeCaseFreshAsync(long runId, Guid token, LitigationCase c, AnalysisContext context, CaseAnalysisInput input, string promptHash, CancellationToken ct)
     {
         var item = new LitigationCaseAiAnalysis { LitigationAiAnalysisRunId = runId, LitigationCaseId = c.LitigationCaseId, EvidenceJson = input.EvidenceJson, EvidenceHash = input.EvidenceHash, PromptHash = promptHash };
@@ -356,11 +358,18 @@ public sealed class LitigationAiAnalysisOrchestrator(AppDbContext db, ILitigatio
             // One group is the whole case; otherwise each group is built and checked against its own orders' text.
             var part = groups.Count == 1 ? input : context.Build(c, ids, input);
             await RenewAsync(runId, token, ct);
-            var response = await client.CallAsync(LitigationCaseAnalysisPrompt.Build(part.CaseJson), options.Value.CaseTimeoutSeconds, ct, options.Value.CaseModelId);
-            await RenewAsync(runId, token, ct);
+            // A small model now and then returns JSON that cannot be read (a repeated field name, a stray character). The same call usually
+            // comes back clean, so a malformed reply is asked for once more before the case is marked failed.
+            LitigationAiCallResult response; CaseAnalysisValidation v;
+            for (var attempt = 0; ; attempt++)
+            {
+                response = await client.CallAsync(LitigationCaseAnalysisPrompt.Build(part.CaseJson), options.Value.CaseTimeoutSeconds, ct, options.Value.CaseModelId);
+                await RenewAsync(runId, token, ct);
+                v = response.Success ? LitigationCaseAnalysisValidator.Validate(response.RawResponse, part, baseline.Tier, baseline.Trigger)
+                    : new CaseAnalysisValidation(false, null, response.FailureReason ?? "Case AI call failed.", []);
+                if (v.IsAccepted || !response.Success || attempt >= MalformedReplyRetries || !LitigationCaseAnalysisValidator.IsMalformed(v.RejectReason)) break;
+            }
             raws.Add(response.RawResponse);
-            var v = response.Success ? LitigationCaseAnalysisValidator.Validate(response.RawResponse, part, baseline.Tier, baseline.Trigger)
-                : new CaseAnalysisValidation(false, null, response.FailureReason ?? "Case AI call failed.", []);
             if (!v.IsAccepted)
             {
                 valid = new CaseAnalysisValidation(false, null, groups.Count == 1 ? v.RejectReason : $"Group {raws.Count} of {groups.Count}: {v.RejectReason}", []);

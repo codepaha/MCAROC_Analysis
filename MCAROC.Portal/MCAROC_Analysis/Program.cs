@@ -185,7 +185,7 @@ builder.Services.AddSingleton<ILitigationAiAnalysisClient>(sp =>
 {
     var config = sp.GetRequiredService<IConfiguration>();
     var projectId = config["GoogleCloud:ProjectId"] ?? throw new InvalidOperationException("GoogleCloud:ProjectId is required for litigation AI analysis.");
-    var location = config["GoogleCloud:Location"] ?? "us-central1";
+    var location = config["GoogleCloud:GenerationLocation"] ?? "global";
     var credentialsPath = config["GoogleCloud:CredentialsPath"] ?? throw new InvalidOperationException("GoogleCloud:CredentialsPath is required for litigation AI analysis.");
     return new VertexLitigationAiAnalysisClient(projectId, location, credentialsPath, sp.GetRequiredService<ILogger<VertexLitigationAiAnalysisClient>>());
 });
@@ -196,6 +196,19 @@ builder.Services.AddScoped<LitigationCasePageService>();
 // What each model call cost, recorded as calls are made and read back per assignment (Services/AiUsage).
 builder.Services.Configure<MCAROC_Analysis.Services.AiUsage.AiPricingOptions>(builder.Configuration.GetSection(MCAROC_Analysis.Services.AiUsage.AiPricingOptions.SectionName));
 builder.Services.AddScoped<MCAROC_Analysis.Services.AiUsage.AiCostReportService>();
+// Google Search grounding for adverse-news / sentiment lookups, capped at GroundedSearch:MonthlyQueryLimit (5,000 = the free monthly allowance).
+builder.Services.Configure<MCAROC_Analysis.Services.GroundedSearch.GroundedSearchOptions>(builder.Configuration.GetSection(MCAROC_Analysis.Services.GroundedSearch.GroundedSearchOptions.SectionName));
+builder.Services.AddSingleton<MCAROC_Analysis.Services.GroundedSearch.GroundingQuota>();
+builder.Services.AddSingleton<MCAROC_Analysis.Services.GroundedSearch.IGroundedSearchService>(sp =>
+{
+    var config = sp.GetRequiredService<IConfiguration>();
+    var projectId = config["GoogleCloud:ProjectId"] ?? throw new InvalidOperationException("GoogleCloud:ProjectId is required for grounded search.");
+    var credentialsPath = config["GoogleCloud:CredentialsPath"] ?? throw new InvalidOperationException("GoogleCloud:CredentialsPath is required for grounded search.");
+    return new MCAROC_Analysis.Services.GroundedSearch.GroundedSearchService(projectId, credentialsPath,
+        sp.GetRequiredService<MCAROC_Analysis.Services.GroundedSearch.GroundingQuota>(),
+        sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<MCAROC_Analysis.Services.GroundedSearch.GroundedSearchOptions>>(),
+        sp.GetRequiredService<ILogger<MCAROC_Analysis.Services.GroundedSearch.GroundedSearchService>>());
+});
 builder.Services.AddSingleton<MCAROC_Analysis.Services.AiUsage.AiUsageQueue>();
 builder.Services.AddHostedService<MCAROC_Analysis.Services.AiUsage.AiUsageWriterService>();
 // Gemini split/label of charge "Particulars of Property Charged" (column M), grounded against the source text.
@@ -207,7 +220,7 @@ builder.Services.AddSingleton<MCAROC_Analysis.Services.PropertyParticulars.IProp
 {
     var config = sp.GetRequiredService<IConfiguration>();
     var projectId = config["GoogleCloud:ProjectId"] ?? throw new InvalidOperationException("GoogleCloud:ProjectId is required for property particulars extraction.");
-    var location = config["GoogleCloud:Location"] ?? "us-central1";
+    var location = config["GoogleCloud:GenerationLocation"] ?? "global";
     var credentialsPath = config["GoogleCloud:CredentialsPath"] ?? throw new InvalidOperationException("GoogleCloud:CredentialsPath is required for property particulars extraction.");
     return new MCAROC_Analysis.Services.PropertyParticulars.VertexPropertyParticularsAiClient(projectId, location, credentialsPath,
         sp.GetRequiredService<ILogger<MCAROC_Analysis.Services.PropertyParticulars.VertexPropertyParticularsAiClient>>());
@@ -265,7 +278,7 @@ builder.Services.AddSingleton(sp =>
 {
     var config = sp.GetRequiredService<IConfiguration>();
     var projectId = config["GoogleCloud:ProjectId"] ?? throw new InvalidOperationException("GoogleCloud:ProjectId is not configured.");
-    var location = config["GoogleCloud:Location"] ?? "us-central1";
+    var location = config["GoogleCloud:GenerationLocation"] ?? "global";
     var credentialsPath = config["GoogleCloud:CredentialsPath"] ?? throw new InvalidOperationException("GoogleCloud:CredentialsPath is not configured.");
     return new VertexAiExtractionService(projectId, location, credentialsPath, sp.GetRequiredService<ILogger<VertexAiExtractionService>>());
 });
@@ -287,7 +300,7 @@ builder.Services.AddSingleton(sp =>
 {
     var config = sp.GetRequiredService<IConfiguration>();
     var projectId = config["GoogleCloud:ProjectId"] ?? throw new InvalidOperationException("GoogleCloud:ProjectId is not configured.");
-    var location = config["GoogleCloud:Location"] ?? "us-central1";
+    var location = config["GoogleCloud:GenerationLocation"] ?? "global";
     var credentialsPath = config["GoogleCloud:CredentialsPath"] ?? throw new InvalidOperationException("GoogleCloud:CredentialsPath is not configured.");
     return new AiCrossSectionAnalysisService(projectId, location, credentialsPath, sp.GetRequiredService<ILogger<AiCrossSectionAnalysisService>>());
 });
@@ -295,7 +308,7 @@ builder.Services.AddSingleton(sp =>
 {
     var config = sp.GetRequiredService<IConfiguration>();
     var projectId = config["GoogleCloud:ProjectId"] ?? throw new InvalidOperationException("GoogleCloud:ProjectId is not configured.");
-    var location = config["GoogleCloud:Location"] ?? "us-central1";
+    var location = config["GoogleCloud:GenerationLocation"] ?? "global";
     var credentialsPath = config["GoogleCloud:CredentialsPath"] ?? throw new InvalidOperationException("GoogleCloud:CredentialsPath is not configured.");
     return new AiChargesNarrativeService(projectId, location, credentialsPath, sp.GetRequiredService<ILogger<AiChargesNarrativeService>>());
 });
@@ -313,7 +326,7 @@ builder.Services.AddSingleton(sp =>
 {
     var config = sp.GetRequiredService<IConfiguration>();
     var projectId = config["GoogleCloud:ProjectId"] ?? throw new InvalidOperationException("GoogleCloud:ProjectId is not configured.");
-    var location = config["GoogleCloud:Location"] ?? "us-central1";
+    var location = config["GoogleCloud:GenerationLocation"] ?? "global";
     var credentialsPath = config["GoogleCloud:CredentialsPath"] ?? throw new InvalidOperationException("GoogleCloud:CredentialsPath is not configured.");
     return new MCAROC_Analysis.Services.CalculationAssurance.CalculationAiAuditService(
         projectId, location, credentialsPath, sp.GetRequiredService<ILogger<MCAROC_Analysis.Services.CalculationAssurance.CalculationAiAuditService>>());
@@ -341,7 +354,7 @@ builder.Services.AddSingleton(sp =>
 {
     var config = sp.GetRequiredService<IConfiguration>();
     var projectId = config["GoogleCloud:ProjectId"] ?? throw new InvalidOperationException("GoogleCloud:ProjectId is not configured.");
-    var location = config["GoogleCloud:Location"] ?? "us-central1";
+    var location = config["GoogleCloud:GenerationLocation"] ?? "global";
     var credentialsPath = config["GoogleCloud:CredentialsPath"] ?? throw new InvalidOperationException("GoogleCloud:CredentialsPath is not configured.");
     // Chat:CompletionModel overrides the default answering model (a larger model follows the citation format more reliably, at a higher cost per answer).
     return new ChatCompletionService(projectId, location, credentialsPath, sp.GetRequiredService<ILogger<ChatCompletionService>>(), config["Chat:CompletionModel"]);

@@ -22,7 +22,7 @@ public record ChatCompletionResult(string Answer, bool InsufficientEvidence, Lis
 public class ChatCompletionService
 {
     /// <summary>The model that answers unless <c>Chat:CompletionModel</c> names another.</summary>
-    public const string ModelId = "gemini-2.5-flash-lite";
+    public const string ModelId = "gemini-3.1-flash-lite";
     public const string PromptVersion = "1.3";
     private const string InsufficientAnswer = "I could not verify this from the uploaded records.";
 

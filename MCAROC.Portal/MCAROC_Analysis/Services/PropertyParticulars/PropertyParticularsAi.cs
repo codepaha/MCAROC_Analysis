@@ -33,7 +33,7 @@ public sealed record PropertyParticularsValidation(bool IsAccepted, PropertyPart
 public static partial class PropertyParticularsAi
 {
     public const string PromptVersion = "2.0";
-    public const string ModelId = "gemini-2.5-flash-lite";
+    public const string ModelId = "gemini-3.1-flash-lite";
     internal const int MaxProperties = 20;
     internal const string PromptMarker = "You are splitting and labelling the \"Particulars of Property Charged\"";
 

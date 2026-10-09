@@ -37,6 +37,9 @@ namespace MCAROC_Analysis.Migrations
                     b.Property<DateTime>("CreatedUtc")
                         .HasColumnType("datetime2");
 
+                    b.Property<int>("GroundingQueries")
+                        .HasColumnType("int");
+
                     b.Property<int>("InputTokens")
                         .HasColumnType("int");
 
@@ -66,6 +69,9 @@ namespace MCAROC_Analysis.Migrations
                         .HasColumnType("bit");
 
                     b.HasKey("AiUsageRecordId");
+
+                    b.HasIndex("CreatedUtc")
+                        .HasFilter("[GroundingQueries] > 0");
 
                     b.HasIndex("RequestId", "CreatedUtc");
 

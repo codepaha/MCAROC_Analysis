@@ -275,6 +275,13 @@ public static class LitigationCaseAnalysisValidator
 
     public static CaseAnalysisValidation Validate(string rawJson, CaseAnalysisInput input, LitigationRiskTier baseline, string baselineTrigger)
     {
+        // A reply that repeats a key parses, but reading that key throws ArgumentException; that is a rejected answer, not a crashed run.
+        try { return ValidateCore(rawJson, input, baseline, baselineTrigger); }
+        catch (ArgumentException) { return Rejected(RepeatedFieldReason); }
+    }
+
+    private static CaseAnalysisValidation ValidateCore(string rawJson, CaseAnalysisInput input, LitigationRiskTier baseline, string baselineTrigger)
+    {
         JsonObject? root;
         try { root = JsonNode.Parse(PropertyParticularsAi.UnwrapSingleElementArray(rawJson)) as JsonObject; }
         catch (JsonException ex) { return Rejected($"Invalid JSON: {ex.Message}"); }
@@ -512,6 +519,12 @@ public static class LitigationCaseAnalysisValidator
                 if (x is JsonValue v && v.TryGetValue<string>(out var s) && !string.IsNullOrWhiteSpace(s)) result.Add(s.Trim());
         return result;
     }
+
+    /// <summary>True when the answer was rejected only because it could not be read as the JSON object asked for, so asking again is worthwhile.</summary>
+    public static bool IsMalformed(string? rejectReason) =>
+        rejectReason is not null && (rejectReason.StartsWith("Invalid JSON", StringComparison.Ordinal) || rejectReason == RepeatedFieldReason);
+
+    private const string RepeatedFieldReason = "The answer repeats a field name.";
 
     private static CaseAnalysisValidation Rejected(string reason) => new(false, null, reason, []);
 }

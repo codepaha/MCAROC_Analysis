@@ -12,12 +12,12 @@ public static class AiUsageLog
     public static void Configure(AiUsageQueue? queue) => _queue = queue;
 
     /// <summary>A generation. <paramref name="usage"/> is what the provider reported with the response (null when it reported none).</summary>
-    public static void RecordGeneration(string defaultPurpose, string model, GenerateContentResponseUsageMetadata? usage, bool succeeded = true) =>
+    public static void RecordGeneration(string defaultPurpose, string model, GenerateContentResponseUsageMetadata? usage, bool succeeded = true, int groundingQueries = 0) =>
         Write(new AiUsageRecord
         {
             Purpose = AiUsageContext.Purpose ?? defaultPurpose, Model = model, Succeeded = succeeded,
             InputTokens = usage?.PromptTokenCount ?? 0, OutputTokens = usage?.CandidatesTokenCount ?? 0, ThoughtTokens = usage?.ThoughtsTokenCount ?? 0,
-            TokensEstimated = usage is null
+            TokensEstimated = usage is null, GroundingQueries = groundingQueries
         });
 
     /// <summary>An embedding batch. <paramref name="reportedTokens"/> is the token count the provider reported for the batch; without it the tokens are

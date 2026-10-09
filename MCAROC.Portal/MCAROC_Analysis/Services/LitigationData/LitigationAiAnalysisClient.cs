@@ -18,7 +18,7 @@ public interface ILitigationAiAnalysisClient
 
 public sealed class VertexLitigationAiAnalysisClient : ILitigationAiAnalysisClient
 {
-    public const string ModelId = "gemini-2.5-flash-lite";
+    public const string ModelId = "gemini-3.1-flash-lite";
     private const int HttpTimeoutMilliseconds = 1_200_000;
     private readonly GenAiClient _client;
     private readonly ILogger<VertexLitigationAiAnalysisClient> _logger;

@@ -12,7 +12,7 @@ public class McaFilingExtraction
     public long? FilingDocumentId { get; set; }
     public McaFilingDocument? FilingDocument { get; set; }
 
-    public string Model { get; set; } = "gemini-2.5-flash-lite";
+    public string Model { get; set; } = "gemini-3.1-flash-lite";
     public string PromptVersion { get; set; } = "1.0";
     public string SchemaName { get; set; } = string.Empty;
     public string SchemaVersion { get; set; } = "1.0";

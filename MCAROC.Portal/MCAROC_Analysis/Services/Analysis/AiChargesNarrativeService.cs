@@ -27,7 +27,7 @@ public record ChargesNarrativeOutcome(bool Success, ChargesNarrative? Narrative,
 /// call: own prompt, own PromptVersion, own failure mode that never touches AnalysisRun.Status.</summary>
 public partial class AiChargesNarrativeService
 {
-    public const string ModelId = "gemini-2.5-flash-lite";
+    public const string ModelId = "gemini-3.1-flash-lite";
     public const string PromptVersion = "1.0";
 
     /// <summary>Charges are sorted by CurrentAmount descending (DossierComputations.OpenChargesByAmount)

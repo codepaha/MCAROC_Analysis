@@ -13,7 +13,7 @@ public record CalculationAiAuditCallResult(bool Success, string RawResponse, str
 /// appears). One call per CalculationAiAuditRun.</summary>
 public class CalculationAiAuditService
 {
-    public const string ModelId = "gemini-2.5-flash-lite";
+    public const string ModelId = "gemini-3.1-flash-lite";
 
     private readonly GenAiClient _client;
     private readonly ILogger<CalculationAiAuditService> _logger;

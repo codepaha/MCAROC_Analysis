@@ -1069,6 +1069,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             e.Property(x => x.Purpose).HasMaxLength(80);
             e.Property(x => x.Model).HasMaxLength(100);
             e.HasIndex(x => new { x.RequestId, x.CreatedUtc });
+            e.HasIndex(x => x.CreatedUtc).HasFilter("[GroundingQueries] > 0"); // the monthly grounded-search allowance reads only these rows
         });
 
         modelBuilder.Entity<CalculationAiAuditRun>(e =>
