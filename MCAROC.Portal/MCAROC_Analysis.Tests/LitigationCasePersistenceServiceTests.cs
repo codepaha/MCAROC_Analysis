@@ -437,6 +437,46 @@ public class LitigationCasePersistenceServiceTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task PersistSnapshotAsync_a_refresh_adopts_a_case_stored_before_provider_record_ids_were_read()
+    {
+        // #425: rows imported before #388 have no provider record id. The refresh that returns the same record with its id must fill
+        // in that row, not store the case a second time.
+        await using var db = CreateContext();
+        var request = await SeedRequestAsync(db, "LG1");
+        var service = NewService(db);
+        await PersistJobAsync(service, await SeedCompletedJobAsync(db, request.RequestId, ReportJson("", "OS", caseNo: "22/2020", cspId: "csp-legacy", providerId: "rec-legacy")), CancellationToken.None);
+        await db.LitigationCases.Where(c => c.RequestId == request.RequestId).ExecuteUpdateAsync(s => s.SetProperty(c => c.ProviderCaseId, (string?)null)); db.ChangeTracker.Clear();
+
+        await PersistJobAsync(service, await SeedCompletedJobAsync(db, request.RequestId, ReportJson("", "OS", caseNo: "22/2020", cspId: "csp-legacy", providerId: "rec-legacy", orderUrl: "https://source.example/o2.pdf")), CancellationToken.None);
+
+        await using var verifyDb = CreateContext();
+        var only = Assert.Single(await verifyDb.LitigationCases.Where(c => c.RequestId == request.RequestId).ToListAsync());
+        Assert.Equal("rec-legacy", only.ProviderCaseId);
+        Assert.Equal(2, await verifyDb.LitigationCaseSourceReports.CountAsync(s => s.LitigationCaseId == only.LitigationCaseId));
+    }
+
+    [Fact]
+    public async Task PersistSnapshotAsync_does_not_adopt_a_legacy_row_with_a_different_case_number_or_an_ambiguous_match()
+    {
+        // The same CSP alone is not identity: a legacy row with a different number stays separate, and when two legacy rows could
+        // match, neither is adopted.
+        await using var db = CreateContext();
+        var request = await SeedRequestAsync(db, "LG2");
+        var service = NewService(db);
+        await PersistJobAsync(service, await SeedCompletedJobAsync(db, request.RequestId, ReportJson("", "OS", caseNo: "22/2020", cspId: "csp-x", providerId: "rec-1")), CancellationToken.None);
+        await PersistJobAsync(service, await SeedCompletedJobAsync(db, request.RequestId, ReportJson("", "OS", caseNo: "22/2020", cspId: "csp-x", providerId: "rec-2")), CancellationToken.None);
+        await db.LitigationCases.Where(c => c.RequestId == request.RequestId).ExecuteUpdateAsync(s => s.SetProperty(c => c.ProviderCaseId, (string?)null)); db.ChangeTracker.Clear();
+
+        await PersistJobAsync(service, await SeedCompletedJobAsync(db, request.RequestId, ReportJson("", "OS", caseNo: "24/2020", cspId: "csp-x", providerId: "rec-3")), CancellationToken.None);
+        await PersistJobAsync(service, await SeedCompletedJobAsync(db, request.RequestId, ReportJson("", "OS", caseNo: "22/2020", cspId: "csp-x", providerId: "rec-1", orderUrl: "https://source.example/o2.pdf")), CancellationToken.None);
+
+        await using var verifyDb = CreateContext();
+        var rows = await verifyDb.LitigationCases.Where(c => c.RequestId == request.RequestId).ToListAsync();
+        Assert.Equal(4, rows.Count);
+        Assert.Equal(2, rows.Count(r => r.ProviderCaseId is null)); // both legacy rows left as they were
+    }
+
+    [Fact]
     public async Task PersistSnapshotAsync_a_refresh_that_adds_a_CNR_already_held_by_another_record_does_not_fail_and_keeps_both_rows()
     {
         // rec-a first arrives with no CNR; rec-b arrives with a CNR; a refresh then gives rec-a that same CNR. The CNR says rec-a is the case

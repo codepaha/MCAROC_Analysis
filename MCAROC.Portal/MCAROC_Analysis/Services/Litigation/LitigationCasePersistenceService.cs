@@ -234,7 +234,8 @@ public sealed class LitigationCasePersistenceService(
 
             var byCnr = await FindAutoDedupeMatchAsync(requestId, identity, ct);
             var byProviderRecord = await FindSameProviderRecordAsync(requestId, item.ProviderCaseId, ct);
-            var litigationCase = byCnr ?? byProviderRecord;
+            var litigationCase = byCnr ?? byProviderRecord
+                ?? await FindLegacyRowWithoutProviderRecordAsync(requestId, identity, item, ct);
             // The CNR says this is case C; the provider's record id is already held by a different stored row P (an earlier report listed
             // the record before its CNR was known). The CNR is the stronger identity, so C takes the item — but the id stays with P, which is
             // left as it was with its reports, orders and documents: assigning it to C would break the per-request unique id, and giving C's
@@ -309,6 +310,28 @@ public sealed class LitigationCasePersistenceService(
         if (string.IsNullOrWhiteSpace(providerCaseId)) return null;
         var id = providerCaseId.Trim();
         return await db.LitigationCases.FirstOrDefaultAsync(c => c.RequestId == requestId && c.ProviderCaseId == id, ct);
+    }
+
+    /// <summary>#425: rows stored before #388 have no provider record id, so a refresh that returns the same record (now with its id)
+    /// finds nothing above and would store the case a second time. Such a row is this case only when it is the single row in the request
+    /// that has no id, the same CSP, and the same proceeding type, case number and year. Applying the item then fills in the id, so this
+    /// runs once per legacy row. CSP is not an identity on its own: a row that already has an id is never adopted.</summary>
+    private async Task<LitigationCase?> FindLegacyRowWithoutProviderRecordAsync(
+        long requestId, LitigationCaseIdentityEvidence identity, BprLitigationCase item, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(item.ProviderCaseId) || string.IsNullOrWhiteSpace(item.CspId)) return null;
+
+        var candidates = await db.LitigationCases
+            .Where(c => c.RequestId == requestId && c.ProviderCaseId == null && c.CspId == item.CspId)
+            .ToListAsync(ct);
+        var matches = candidates.Where(c =>
+            c.ProceedingType == identity.ProceedingType
+            && SameText(c.CaseNumber, item.CaseNumber)
+            && SameText(c.CaseYear, item.CaseYear)).ToList();
+        return matches.Count == 1 ? matches[0] : null;
+
+        static bool SameText(string? left, string? right) =>
+            string.Equals(left?.Trim() ?? "", right?.Trim() ?? "", StringComparison.OrdinalIgnoreCase);
     }
 
     private static void ApplyFields(LitigationCase litigationCase, LitigationCaseIdentityEvidence identity, BprLitigationCase item, DateTime now, bool keepProviderCaseId = false)
