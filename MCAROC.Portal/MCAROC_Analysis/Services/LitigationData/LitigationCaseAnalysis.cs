@@ -124,6 +124,31 @@ public static class LitigationCaseAnalysisProjection
         ["case_key", "risk", "risk_trigger", "risk_category", "baseline_risk", "relevance", "case_nature", "liability_type", "subject", "summary", "key_points",
          "target_party_role", "legal_exposure_direction", "active_restraint", "restraint_type", "lis_pendens", "amount", "analysis_basis", "unknowns"];
 
+    /// <summary>The portfolio projection plus the verified order quotes (claim, order, quote, page) and the outcome, for the small batches that read
+    /// each case together with the order text it rests on. Quotes are capped so a batch stays a few thousand tokens.</summary>
+    public static string? ForPortfolioBatch(string? analysisJson)
+    {
+        if (string.IsNullOrWhiteSpace(analysisJson)) return analysisJson;
+        try
+        {
+            if (JsonNode.Parse(ForPortfolio(analysisJson) ?? "") is not JsonObject compact) return analysisJson;
+            if (JsonNode.Parse(analysisJson) is JsonObject root)
+            {
+                if (root["evidence"] is JsonArray evidence)
+                    compact["order_quotes"] = new JsonArray(evidence.OfType<JsonObject>().Take(MaxQuotesPerCase).Select(e => (JsonNode)new JsonObject
+                    {
+                        ["claim"] = e["claim"]?.DeepClone(), ["order_id"] = e["order_id"]?.DeepClone(), ["quote"] = e["quote"]?.DeepClone(), ["page"] = e["page"]?.DeepClone()
+                    }).ToArray());
+                if (root["outcome"] is { } outcome) compact["outcome"] = outcome.DeepClone();
+                if (root["consequence_note"] is { } note) compact["consequence_note"] = note.DeepClone();
+            }
+            return compact.ToJsonString(new JsonSerializerOptions { Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping });
+        }
+        catch (JsonException) { return analysisJson; }
+    }
+
+    private const int MaxQuotesPerCase = 6;
+
     public static string? ForPortfolio(string? analysisJson)
     {
         if (string.IsNullOrWhiteSpace(analysisJson)) return analysisJson;

@@ -77,6 +77,11 @@ public sealed class LitigationAiAnalysisOrchestrator(AppDbContext db, ILitigatio
             var cases = await db.LitigationCases.Include(x => x.Orders).Where(x => x.RequestId == requestId).ToListAsync(ct);
             var chunks = await db.LitigationOrderChunks.Where(x => x.RequestId == requestId).ToListAsync(ct);
             var context = await LoadAnalysisContextAsync(requestId, ct);
+            _breaker = new LitigationOutageBreaker(options.Value.OutageAfterConsecutiveFailures);
+            // A retried run (after an outage, a restart or an error) tries again what failed; only finished work is skipped.
+            await db.LitigationCaseAiAnalyses.Where(x => x.LitigationAiAnalysisRunId == runId && x.Status == LitigationAiAnalysisItemStatus.Failed).ExecuteDeleteAsync(ct);
+            await db.LitigationOrderClassifications.Where(x => x.LitigationAiAnalysisRunId == runId && x.Status == LitigationAiAnalysisItemStatus.Failed).ExecuteDeleteAsync(ct);
+            await db.LitigationPortfolioAiAnalyses.Where(x => x.LitigationAiAnalysisRunId == runId && x.Status == LitigationAiAnalysisItemStatus.Failed).ExecuteDeleteAsync(ct);
             var present = await db.LitigationCaseAiAnalyses.Where(x => x.LitigationAiAnalysisRunId == runId).Select(x => x.LitigationCaseId).ToHashSetAsync(ct);
             // A case whose evidence is byte-identical to one already analysed is never sent to the model again:
             // its earlier result is carried into this run. Only new or changed cases cost an AI call.
@@ -85,7 +90,16 @@ public sealed class LitigationAiAnalysisOrchestrator(AppDbContext db, ILitigatio
             var todo = selected.Where(x => !present.Contains(x.LitigationCaseId)).ToList(); var reused = 0;
             await RunBoundedAsync(todo, options.Value.CaseConcurrency, ct, async (c, token2) =>
             {
-                var item = await AnalyzeCaseAsync(runId, token, c, context, prior.GetValueOrDefault(c.LitigationCaseId), token2);
+                // One case that throws (bad data, a validator edge) fails that case only; the rest of the run carries on.
+                (LitigationCaseAiAnalysis Row, bool ReusedFromAnalysis) item;
+                try { item = await AnalyzeCaseAsync(runId, token, c, context, prior.GetValueOrDefault(c.LitigationCaseId), token2); }
+                // Only errors a bad case's own data can cause; a database, lease or cancellation failure still stops the run, as before.
+                catch (Exception ex) when (ex is JsonException or ArgumentException or FormatException or KeyNotFoundException or InvalidCastException
+                    or NullReferenceException or IndexOutOfRangeException)
+                {
+                    logger.LogWarning(ex, "Litigation case {CaseId} could not be analysed", c.LitigationCaseId);
+                    item = (UnexpectedFailure(runId, c, ex), false);
+                }
                 if (item.ReusedFromAnalysis) Interlocked.Increment(ref reused);
                 // Saved as soon as it exists: a crash, restart or lost lease keeps everything already paid for, and a retried run skips what is present.
                 await PublishCasesAsync(runId, token, [item.Row], token2);
@@ -282,6 +296,7 @@ public sealed class LitigationAiAnalysisOrchestrator(AppDbContext db, ILitigatio
         }
 
         await RenewAsync(runId, token, ct); var response = await client.CallAsync(prompt, options.Value.TimeoutSeconds, ct); await RenewAsync(runId, token, ct);
+        NoteProviderResult(response);
         row.RawResponseJson = response.RawResponse;
         row.ResponseHash = string.IsNullOrWhiteSpace(response.RawResponse) ? null : LitigationAnalysisPromptBuilder.ComputeHash(response.RawResponse);
         var result = response.Success
@@ -345,6 +360,24 @@ public sealed class LitigationAiAnalysisOrchestrator(AppDbContext db, ILitigatio
             request, names, DateOnly.FromDateTime(DateTime.UtcNow));
     }
 
+    private LitigationOutageBreaker _breaker = new(10);
+
+    /// <summary>Notes whether a model call got a reply. Enough failed calls in a row mean the service is down: stop and let the run wait.</summary>
+    private void NoteProviderResult(LitigationAiCallResult response)
+    {
+        _breaker.Record(!response.Success);
+        if (_breaker.Tripped)
+            throw new ProviderUnavailableException($"The AI service stopped answering ({_breaker.ConsecutiveFailures} calls in a row failed). "
+                + $"The run pauses and retries in {options.Value.OutageRetryMinutes} minutes; everything already analysed is kept.");
+    }
+
+    private static LitigationCaseAiAnalysis UnexpectedFailure(long runId, LitigationCase c, Exception ex) => new()
+    {
+        LitigationAiAnalysisRunId = runId, LitigationCaseId = c.LitigationCaseId, Status = LitigationAiAnalysisItemStatus.Failed,
+        EvidenceJson = "{}", EvidenceHash = "", PromptHash = "",
+        FailureReason = $"Unexpected error while analysing this case ({ex.GetType().Name}).", CompletedUtc = DateTime.UtcNow
+    };
+
     private async Task<(LitigationCaseAiAnalysis Row, bool ReusedFromAnalysis)> AnalyzeCaseAsync(long runId, Guid token, LitigationCase c, AnalysisContext context, List<LitigationCaseAiAnalysis>? priorForCase, CancellationToken ct)
     {
         var input = context.Build(c);
@@ -375,6 +408,7 @@ public sealed class LitigationAiAnalysisOrchestrator(AppDbContext db, ILitigatio
             {
                 response = await client.CallAsync(LitigationCaseAnalysisPrompt.Build(part.CaseJson), options.Value.CaseTimeoutSeconds, ct, options.Value.CaseModelId);
                 await RenewAsync(runId, token, ct);
+                NoteProviderResult(response);
                 v = response.Success ? LitigationCaseAnalysisValidator.Validate(response.RawResponse, part, baseline.Tier, baseline.Trigger)
                     : new CaseAnalysisValidation(false, null, response.FailureReason ?? "Case AI call failed.", []);
                 if (v.IsAccepted || !response.Success || attempt >= MalformedReplyRetries || !LitigationCaseAnalysisValidator.IsMalformed(v.RejectReason)) break;
@@ -392,13 +426,6 @@ public sealed class LitigationAiAnalysisOrchestrator(AppDbContext db, ILitigatio
         item.RawResponseJson = raw; item.ResponseHash = string.IsNullOrWhiteSpace(raw) ? null : LitigationCaseAnalysisInputBuilder.Hash(raw);
         item.Status = valid.IsAccepted ? LitigationAiAnalysisItemStatus.Completed : LitigationAiAnalysisItemStatus.Failed; item.AnalysisJson = valid.AnalysisJson; item.FailureReason = valid.RejectReason; item.CompletedUtc = DateTime.UtcNow;
         return item;
-    }
-
-    /// <summary>R3 first: the risk the validated analysis settled on, 0 when it has none.</summary>
-    private static int RiskRank(LitigationCaseAiAnalysis row)
-    {
-        try { return System.Text.Json.Nodes.JsonNode.Parse(row.AnalysisJson ?? "{}")?["risk"]?.ToString() switch { "R3" => 3, "R2" => 2, "R1" => 1, _ => 0 }; }
-        catch (JsonException) { return 0; }
     }
 
     private async Task RenewAsync(long id, Guid token, CancellationToken ct)
@@ -440,18 +467,18 @@ public sealed class LitigationAiAnalysisOrchestrator(AppDbContext db, ILitigatio
 
     private async Task PublishPortfolioAsync(long id, Guid token, List<LitigationCaseAiAnalysis> rows, LitigationPortfolioAiAnalysis? reusable, int totalCases, CancellationToken ct)
     {
-        // Below the cap and with every case read, the synthesis sees exactly what it always did. Otherwise it sees the highest-risk analyses and a
-        // coverage note, so a company with thousands of cases never sends them all in one prompt and the summary says how much was read.
-        var cap = options.Value.PortfolioMaxCases;
+        // Up to one batch of analysed cases, with every case read, the synthesis is the single prompt it always was. More than that is summarised
+        // in small batches (LitigationPortfolioSynthesizer) that each read the cases together with their order quotes, then combined; and when
+        // not every case was read, the synthesis is told how many cases exist.
+        var batched = rows.Count(x => x.Status == LitigationAiAnalysisItemStatus.Completed) > Math.Max(2, options.Value.PortfolioBatchSize);
         string evidence, prompt;
-        if (rows.Count <= cap && rows.Count >= totalCases)
+        if (rows.Count >= totalCases || batched)
         {
             evidence = JsonSerializer.Serialize(rows.Select(x => new { x.LitigationCaseAiAnalysisId, x.LitigationCaseId, x.Status, AnalysisJson = LitigationCaseAnalysisProjection.ForPortfolio(x.AnalysisJson), x.EvidenceHash }));
             prompt = LitigationAnalysisPromptBuilder.BuildPortfolioPrompt(evidence);
         }
         else
         {
-            rows = rows.OrderByDescending(RiskRank).ThenBy(x => x.LitigationCaseAiAnalysisId).Take(cap).OrderBy(x => x.LitigationCaseAiAnalysisId).ToList();
             var coverage = new { totalCases, casesShown = rows.Count,
                 note = "Cases not analysed were ranked lower by a fixed rule (the company as claimant, no financial act) and keep their court-record risk tier; they are not negative findings." };
             evidence = JsonSerializer.Serialize(new { coverage, analyses = rows.Select(x => new { x.LitigationCaseAiAnalysisId, x.LitigationCaseId, x.Status, AnalysisJson = LitigationCaseAnalysisProjection.ForPortfolio(x.AnalysisJson), x.EvidenceHash }) });
@@ -463,6 +490,13 @@ public sealed class LitigationAiAnalysisOrchestrator(AppDbContext db, ILitigatio
         {
             // Every case result was carried over unchanged, so the earlier portfolio synthesis still holds.
             item.RawResponseJson = reusable.RawResponseJson; item.ResponseHash = reusable.ResponseHash; item.Status = reusable.Status; item.AnalysisJson = reusable.AnalysisJson;
+        }
+        else if (batched)
+        {
+            var result = await new LitigationPortfolioSynthesizer(client, options.Value).RunAsync(rows, totalCases, () => RenewAsync(id, token, ct), ct);
+            item.EvidenceJson = result.Evidence; item.EvidenceHash = LitigationAnalysisPromptBuilder.ComputeHash(result.Evidence); item.PromptHash = result.PromptKey;
+            item.RawResponseJson = result.RawResponse; item.ResponseHash = string.IsNullOrWhiteSpace(result.RawResponse) ? null : LitigationAnalysisPromptBuilder.ComputeHash(result.RawResponse);
+            item.Status = result.Success ? LitigationAiAnalysisItemStatus.Completed : LitigationAiAnalysisItemStatus.Failed; item.AnalysisJson = result.AnalysisJson; item.FailureReason = result.FailureReason;
         }
         else if (usable.Count == 0) { item.Status = LitigationAiAnalysisItemStatus.InsufficientEvidence; item.AnalysisJson = "{\"status\":\"InsufficientEvidence\",\"summary\":\"No completed evidence-grounded case analysis is available for synthesis.\",\"unknowns\":[\"Case analyses unavailable\"],\"caseAnalysisIds\":[]}"; }
         else { await RenewAsync(id, token, ct); var response = await client.CallAsync(prompt, options.Value.TimeoutSeconds, ct); await RenewAsync(id, token, ct); item.RawResponseJson = response.RawResponse; item.ResponseHash = string.IsNullOrWhiteSpace(response.RawResponse) ? null : LitigationAnalysisPromptBuilder.ComputeHash(response.RawResponse); var valid = response.Success ? LitigationAnalysisResponseValidator.ValidatePortfolio(response.RawResponse, usable) : LitigationAnalysisValidationResult.Rejected(response.FailureReason ?? "Portfolio AI call failed."); item.Status = valid.IsAccepted ? LitigationAiAnalysisItemStatus.Completed : LitigationAiAnalysisItemStatus.Failed; item.AnalysisJson = valid.AnalysisJson; item.FailureReason = valid.RejectReason; }
@@ -477,7 +511,10 @@ public sealed class LitigationAiAnalysisOrchestrator(AppDbContext db, ILitigatio
     private async Task FailOrRetryAsync(long id, Guid token, Exception ex, CancellationToken ct)
     {
         logger.LogWarning(ex, "Litigation AI analysis {RunId} failed", id); var attempt = await db.LitigationAiAnalysisRuns.Where(x => x.LitigationAiAnalysisRunId == id && x.LeaseToken == token).Select(x => (int?)x.AttemptCount).SingleOrDefaultAsync(ct); if (attempt is null) return;
-        var retry = attempt < options.Value.MaxAttempts; var next = DateTime.UtcNow.AddSeconds(5 * Math.Pow(3, Math.Max(0, attempt.Value - 1)));
+        // An outage waits longer and gets more tries than an ordinary error: the work done so far is kept, so waiting costs nothing.
+        var outage = ex is ProviderUnavailableException;
+        var retry = attempt < (outage ? options.Value.OutageMaxAttempts : options.Value.MaxAttempts);
+        var next = outage ? DateTime.UtcNow.AddMinutes(options.Value.OutageRetryMinutes) : DateTime.UtcNow.AddSeconds(5 * Math.Pow(3, Math.Max(0, attempt.Value - 1)));
         var updated = await db.LitigationAiAnalysisRuns.Where(x => x.LitigationAiAnalysisRunId == id && x.LeaseToken == token).ExecuteUpdateAsync(s => s.SetProperty(x => x.Status, retry ? LitigationAiAnalysisRunStatus.Pending : LitigationAiAnalysisRunStatus.Failed).SetProperty(x => x.FailureReason, ex.Message).SetProperty(x => x.NextAttemptUtc, retry ? next : (DateTime?)null).SetProperty(x => x.CompletedUtc, retry ? (DateTime?)null : DateTime.UtcNow).SetProperty(x => x.LeaseToken, (Guid?)null).SetProperty(x => x.LeaseExpiresUtc, (DateTime?)null), ct); if (updated == 1 && retry) ScheduleRetry(id, next, ct);
     }
     public async Task<int> RecoverStaleWorkAsync(CancellationToken ct) { var now = DateTime.UtcNow; await db.LitigationAiAnalysisRuns.Where(x => x.Status == LitigationAiAnalysisRunStatus.InProgress && (x.LeaseExpiresUtc == null || x.LeaseExpiresUtc < now)).ExecuteUpdateAsync(s => s.SetProperty(x => x.Status, LitigationAiAnalysisRunStatus.Pending).SetProperty(x => x.LeaseToken, (Guid?)null), ct); var pending = await db.LitigationAiAnalysisRuns.Where(x => x.Status == LitigationAiAnalysisRunStatus.Pending).Select(x => new { x.LitigationAiAnalysisRunId, x.NextAttemptUtc }).ToListAsync(ct); foreach (var x in pending) if (x.NextAttemptUtc is { } due && due > now) ScheduleRetry(x.LitigationAiAnalysisRunId, due, ct); else queue.Enqueue(x.LitigationAiAnalysisRunId); return pending.Count; }
