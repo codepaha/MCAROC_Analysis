@@ -81,7 +81,8 @@ public sealed class LitigationAiAnalysisOrchestrator(AppDbContext db, ILitigatio
             // A case whose evidence is byte-identical to one already analysed is never sent to the model again:
             // its earlier result is carried into this run. Only new or changed cases cost an AI call.
             var prior = await LoadPriorAsync(requestId, runId, ct);
-            var todo = cases.Where(x => !present.Contains(x.LitigationCaseId)).ToList(); var reused = 0;
+            var selected = SelectForAnalysis(cases, context);
+            var todo = selected.Where(x => !present.Contains(x.LitigationCaseId)).ToList(); var reused = 0;
             await RunBoundedAsync(todo, options.Value.CaseConcurrency, ct, async (c, token2) =>
             {
                 var item = await AnalyzeCaseAsync(runId, token, c, context, prior.GetValueOrDefault(c.LitigationCaseId), token2);
@@ -99,7 +100,7 @@ public sealed class LitigationAiAnalysisOrchestrator(AppDbContext db, ILitigatio
                         .Where(p => p.LitigationAiAnalysisRunId != runId && p.Status == LitigationAiAnalysisItemStatus.Completed
                             && db.LitigationAiAnalysisRuns.Any(r => r.LitigationAiAnalysisRunId == p.LitigationAiAnalysisRunId && r.RequestId == requestId))
                         .OrderByDescending(p => p.LitigationPortfolioAiAnalysisId).FirstOrDefaultAsync(ct);
-                await PublishPortfolioAsync(runId, token, persisted, priorPortfolio, ct);
+                await PublishPortfolioAsync(runId, token, persisted, priorPortfolio, cases.Count, ct);
             }
             await CompleteAsync(runId, token, ct);
         }
@@ -135,7 +136,7 @@ public sealed class LitigationAiAnalysisOrchestrator(AppDbContext db, ILitigatio
         var prior = await LoadPriorAsync(requestId, 0, ct);
         var context = await LoadAnalysisContextAsync(requestId, ct);
         var casePromptHash = LitigationCaseAnalysisInputBuilder.Hash(LitigationCaseAnalysisPrompt.Instructions);
-        foreach (var c in cases)
+        foreach (var c in SelectForAnalysis(cases, context))
         {
             var hash = context.Build(c).EvidenceHash;
             if (!(prior.GetValueOrDefault(c.LitigationCaseId)?.Any(p => p.EvidenceHash == hash && p.PromptHash == casePromptHash) ?? false)) return true;
@@ -310,6 +311,15 @@ public sealed class LitigationAiAnalysisOrchestrator(AppDbContext db, ILitigatio
             LitigationCaseAnalysisInputBuilder.Build(c, documentsByOrderId, targetEntity, targetNames, asOf, onlyOrderIds,
                 whole?.Orders.Where(o => o.Text is null && o.TotalChars > 0).Select(o => o.OrderId).ToHashSet());
 
+        /// <summary>How worthwhile a full AI reading of the case is (see <see cref="LitigationCasePriority"/>).</summary>
+        public LitigationCasePriorityResult Priority(LitigationCase c)
+        {
+            var petitioners = LitigationPartyNames.Parse(c.PetitionersJson);
+            var side = LitigationCompanySides.Determine(petitioners, LitigationPartyNames.Parse(c.RespondentsJson), targetNames, c.Direction);
+            return LitigationCasePriority.Evaluate(new LitigationRiskInput(c.Type, c.Court, c.CourtCategory, c.CaseType, c.Act, c.CaseStage,
+                c.CaseClassification, c.ProceedingType, LitigationCaseStatusClassifier.Classify(c.CaseStatus, c.CaseStage), side, petitioners));
+        }
+
         /// <summary>The tier and trigger the case's own record gives it, which the model may confirm or raise but not lower.</summary>
         public LitigationRiskAssessment Baseline(LitigationCase c)
         {
@@ -384,6 +394,13 @@ public sealed class LitigationAiAnalysisOrchestrator(AppDbContext db, ILitigatio
         return item;
     }
 
+    /// <summary>R3 first: the risk the validated analysis settled on, 0 when it has none.</summary>
+    private static int RiskRank(LitigationCaseAiAnalysis row)
+    {
+        try { return System.Text.Json.Nodes.JsonNode.Parse(row.AnalysisJson ?? "{}")?["risk"]?.ToString() switch { "R3" => 3, "R2" => 2, "R1" => 1, _ => 0 }; }
+        catch (JsonException) { return 0; }
+    }
+
     private async Task RenewAsync(long id, Guid token, CancellationToken ct)
     {
         await _dbGate.WaitAsync(ct);
@@ -408,9 +425,38 @@ public sealed class LitigationAiAnalysisOrchestrator(AppDbContext db, ILitigatio
         }
         finally { _dbGate.Release(); }
     }
-    private async Task PublishPortfolioAsync(long id, Guid token, List<LitigationCaseAiAnalysis> rows, LitigationPortfolioAiAnalysis? reusable, CancellationToken ct)
+    /// <summary>The cases to read in full. Every case up to <c>TieringAboveCases</c>; beyond that, the tier-A cases by score (insolvency first),
+    /// at most <c>MaxAiCases</c>. The same choice is used to decide whether a run still has work, so cases left unread never keep a run alive.</summary>
+    internal IReadOnlyList<LitigationCase> SelectForAnalysis(IReadOnlyList<LitigationCase> cases, AnalysisContext context)
     {
-        var evidence = JsonSerializer.Serialize(rows.Select(x => new { x.LitigationCaseAiAnalysisId, x.LitigationCaseId, x.Status, AnalysisJson = LitigationCaseAnalysisProjection.ForPortfolio(x.AnalysisJson), x.EvidenceHash })); var prompt = LitigationAnalysisPromptBuilder.BuildPortfolioPrompt(evidence);
+        if (cases.Count <= options.Value.TieringAboveCases) return cases;
+        return cases
+            .Select(c => (Case: c, Priority: context.Priority(c)))
+            .Where(x => x.Priority.Priority == LitigationAnalysisPriority.A)
+            .OrderByDescending(x => x.Priority.Score).ThenBy(x => x.Case.LitigationCaseId)
+            .Take(options.Value.MaxAiCases)
+            .Select(x => x.Case).ToList();
+    }
+
+    private async Task PublishPortfolioAsync(long id, Guid token, List<LitigationCaseAiAnalysis> rows, LitigationPortfolioAiAnalysis? reusable, int totalCases, CancellationToken ct)
+    {
+        // Below the cap and with every case read, the synthesis sees exactly what it always did. Otherwise it sees the highest-risk analyses and a
+        // coverage note, so a company with thousands of cases never sends them all in one prompt and the summary says how much was read.
+        var cap = options.Value.PortfolioMaxCases;
+        string evidence, prompt;
+        if (rows.Count <= cap && rows.Count >= totalCases)
+        {
+            evidence = JsonSerializer.Serialize(rows.Select(x => new { x.LitigationCaseAiAnalysisId, x.LitigationCaseId, x.Status, AnalysisJson = LitigationCaseAnalysisProjection.ForPortfolio(x.AnalysisJson), x.EvidenceHash }));
+            prompt = LitigationAnalysisPromptBuilder.BuildPortfolioPrompt(evidence);
+        }
+        else
+        {
+            rows = rows.OrderByDescending(RiskRank).ThenBy(x => x.LitigationCaseAiAnalysisId).Take(cap).OrderBy(x => x.LitigationCaseAiAnalysisId).ToList();
+            var coverage = new { totalCases, casesShown = rows.Count,
+                note = "Cases not analysed were ranked lower by a fixed rule (the company as claimant, no financial act) and keep their court-record risk tier; they are not negative findings." };
+            evidence = JsonSerializer.Serialize(new { coverage, analyses = rows.Select(x => new { x.LitigationCaseAiAnalysisId, x.LitigationCaseId, x.Status, AnalysisJson = LitigationCaseAnalysisProjection.ForPortfolio(x.AnalysisJson), x.EvidenceHash }) });
+            prompt = LitigationAnalysisPromptBuilder.BuildPortfolioPrompt(evidence, withCoverage: true);
+        }
         var item = new LitigationPortfolioAiAnalysis { LitigationAiAnalysisRunId = id, EvidenceJson = evidence, EvidenceHash = LitigationAnalysisPromptBuilder.ComputeHash(evidence), PromptHash = LitigationAnalysisPromptBuilder.ComputeHash(prompt) };
         var usable = rows.Where(x => x.Status == LitigationAiAnalysisItemStatus.Completed).Select(x => x.LitigationCaseAiAnalysisId).ToHashSet();
         if (reusable is not null)

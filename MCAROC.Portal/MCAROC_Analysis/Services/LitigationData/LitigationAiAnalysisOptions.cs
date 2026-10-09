@@ -18,6 +18,13 @@ public sealed class LitigationAiAnalysisOptions
     /// <summary>Case analyses in flight at once. A run used to analyse its cases one after another, so a few hundred cases took many hours; each
     /// result is also saved the moment it completes, so a restart or a lost lease never discards paid work.</summary>
     public int CaseConcurrency { get; set; } = 4;
+    /// <summary>A company with more cases than this has its cases ranked (<see cref="LitigationCasePriority"/>) and only the highest-value ones
+    /// read in full; the rest keep their court-record tier, and their orders are still classified. At or below it, every case is read.</summary>
+    public int TieringAboveCases { get; set; } = 1000;
+    /// <summary>The most cases read in full for one company once tiering applies (the highest scores first, insolvency always first).</summary>
+    public int MaxAiCases { get; set; } = 1500;
+    /// <summary>The most case analyses shown to the portfolio synthesis; the highest risk first. The synthesis is also told how many cases exist.</summary>
+    public int PortfolioMaxCases { get; set; } = 200;
     /// <summary>Order classifications in flight at once (each is a short call).</summary>
     public int OrderConcurrency { get; set; } = 6;
 }

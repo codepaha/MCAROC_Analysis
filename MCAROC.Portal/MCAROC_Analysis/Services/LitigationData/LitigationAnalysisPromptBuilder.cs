@@ -49,6 +49,19 @@ public static class LitigationAnalysisPromptBuilder
             """;
     }
 
+    public static string BuildPortfolioPrompt(string persistedCaseAnalysesJson, bool withCoverage) => withCoverage
+        ? $$"""
+        You are preparing a portfolio-level litigation synthesis for a company with many cases. Use only the persisted, validated case
+        analyses below, which are the highest-risk ones. A coverage object says how many cases exist and how many are shown: state that
+        plainly in the summary, and treat the cases not shown as unknowns, not as negative findings. Do not add a fact, outcome, trend, or
+        risk conclusion not supported by an exact caseAnalysisId. Failed and InsufficientEvidence entries are unknowns.
+        Respond only with JSON:
+        {"status":"Completed|InsufficientEvidence","summary":"string","unknowns":["string"],"caseAnalysisIds":[1]}
+        Persisted case analyses:
+        {{persistedCaseAnalysesJson}}
+        """
+        : BuildPortfolioPrompt(persistedCaseAnalysesJson);
+
     public static string BuildPortfolioPrompt(string persistedCaseAnalysesJson) => $$"""
         You are preparing a portfolio-level litigation synthesis. Use only the persisted, validated case
         analyses below. Do not add a fact, outcome, trend, or risk conclusion not supported by an exact
