@@ -314,12 +314,14 @@ public sealed class LitigationCasePersistenceService(
 
     /// <summary>#425: rows stored before #388 have no provider record id, so a refresh that returns the same record (now with its id)
     /// finds nothing above and would store the case a second time. Such a row is this case only when it is the single row in the request
-    /// that has no id, the same CSP, and the same proceeding type, case number and year. Applying the item then fills in the id, so this
-    /// runs once per legacy row. CSP is not an identity on its own: a row that already has an id is never adopted.</summary>
+    /// that has no id, the same CSP, and the same proceeding type, case number and year — all three present on both sides, so blank
+    /// fields never reduce the match to CSP alone — and no conflicting CNR (two different CNRs are two cases). Applying the item then
+    /// fills in the id, so this runs once per legacy row. A row that already has an id is never adopted.</summary>
     private async Task<LitigationCase?> FindLegacyRowWithoutProviderRecordAsync(
         long requestId, LitigationCaseIdentityEvidence identity, BprLitigationCase item, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(item.ProviderCaseId) || string.IsNullOrWhiteSpace(item.CspId)) return null;
+        if (identity.ProceedingType is null || string.IsNullOrWhiteSpace(item.CaseNumber) || string.IsNullOrWhiteSpace(item.CaseYear)) return null;
 
         var candidates = await db.LitigationCases
             .Where(c => c.RequestId == requestId && c.ProviderCaseId == null && c.CspId == item.CspId)
@@ -327,7 +329,8 @@ public sealed class LitigationCasePersistenceService(
         var matches = candidates.Where(c =>
             c.ProceedingType == identity.ProceedingType
             && SameText(c.CaseNumber, item.CaseNumber)
-            && SameText(c.CaseYear, item.CaseYear)).ToList();
+            && SameText(c.CaseYear, item.CaseYear)
+            && (c.Cnr is null || identity.Cnr is null || c.Cnr == identity.Cnr)).ToList();
         return matches.Count == 1 ? matches[0] : null;
 
         static bool SameText(string? left, string? right) =>
