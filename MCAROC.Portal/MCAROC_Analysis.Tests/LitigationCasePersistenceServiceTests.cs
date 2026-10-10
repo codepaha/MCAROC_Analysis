@@ -1178,4 +1178,24 @@ public class LitigationCasePersistenceServiceTests : IAsyncLifetime
         Assert.Equal("NA", c.State);
         Assert.Equal("NA", c.CaseStatus);
     }
+
+    [Theory]
+    [InlineData("NA")]
+    [InlineData("")]
+    public async Task A_rerun_with_a_placeholder_provider_id_keeps_the_provider_id_already_held(string placeholder)
+    {
+        await using var db = CreateContext();
+        var request = await SeedRequestAsync(db, "NDM-PID" + placeholder.Length);
+        var first = await SeedCompletedJobAsync(db, request.RequestId, ReportWithMissingFields("TNKP070001332022"));
+        var service = NewService(db);
+        await PersistJobAsync(service, first, CancellationToken.None);
+
+        var second = await SeedCompletedJobAsync(db, request.RequestId,
+            ReportWithMissingFields("TNKP070001332022", reportDate: "2026-09-22").Replace("\"id\": \"provider-1\"", $"\"id\": \"{placeholder}\""));
+        await PersistJobAsync(service, second, CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var c = Assert.Single(await verify.LitigationCases.Where(x => x.RequestId == request.RequestId).ToListAsync());
+        Assert.Equal("provider-1", c.ProviderCaseId);
+    }
 }

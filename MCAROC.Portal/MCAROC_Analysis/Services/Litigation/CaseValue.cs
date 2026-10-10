@@ -16,12 +16,20 @@ public static partial class CaseValue
     };
 
     /// <summary>True for null, empty or whitespace text, a placeholder (<c>NA</c>, <c>-</c>, <c>NULL</c> ...), and an empty JSON list
-    /// or object (<c>[]</c>, <c>{}</c>), which is how the list-valued fields (parties, advocates) are stored when there are none.</summary>
+    /// or object (<c>[]</c>, <c>{}</c>), and any of these wrapped as a JSON string (<c>""</c>, <c>"NA"</c>), which is how the list-valued fields (parties, advocates) are stored when there are none.</summary>
     public static bool IsMissing(string? value)
     {
         if (value is null) return true;
         var trimmed = value.Trim();
+        if (trimmed.Length >= 2 && trimmed[0] == '"' && trimmed[^1] == '"' && DecodeJsonString(trimmed) is { } decoded) trimmed = decoded.Trim();
         return trimmed.Length == 0 || Placeholders.Contains(trimmed) || EmptyJson().IsMatch(trimmed);
+    }
+
+    /// <summary>The parsers hand some fields over as raw JSON, so "no value" can arrive as <c>""</c>, <c>"NA"</c> or a quoted blank.</summary>
+    private static string? DecodeJsonString(string quoted)
+    {
+        try { return System.Text.Json.JsonSerializer.Deserialize<string>(quoted); }
+        catch (System.Text.Json.JsonException) { return null; }
     }
 
     /// <summary>The value a field should hold after an incoming observation:

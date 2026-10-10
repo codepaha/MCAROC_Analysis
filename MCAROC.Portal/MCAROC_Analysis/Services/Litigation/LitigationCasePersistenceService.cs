@@ -342,7 +342,7 @@ public sealed class LitigationCasePersistenceService(
     /// been filled by an earlier report or another source (<see cref="CaseValue"/>).</summary>
     private static void ApplyFields(LitigationCase litigationCase, LitigationCaseIdentityEvidence identity, BprLitigationCase item, DateTime now, bool keepProviderCaseId)
     {
-        if (!keepProviderCaseId) litigationCase.ProviderCaseId = item.ProviderCaseId ?? litigationCase.ProviderCaseId;
+        if (!keepProviderCaseId) litigationCase.ProviderCaseId = CaseValue.Merge(litigationCase.ProviderCaseId, item.ProviderCaseId);
         litigationCase.CspId = CaseValue.Merge(litigationCase.CspId, item.CspId);
         litigationCase.Cnr = CaseValue.Merge(litigationCase.Cnr, identity.Cnr);
         litigationCase.ProceedingType = CaseValue.Merge(litigationCase.ProceedingType, identity.ProceedingType);
