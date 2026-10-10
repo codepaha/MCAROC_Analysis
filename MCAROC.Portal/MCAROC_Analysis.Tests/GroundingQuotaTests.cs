@@ -73,4 +73,26 @@ public class GroundingQuotaTests
         Assert.NotNull(await quota.TryReserveAsync(default));
         Assert.Equal(2, loads.Count);
     }
+
+    [Fact]
+    public async Task With_the_default_reserve_a_call_that_could_run_14_queries_is_not_started_at_4990_used()
+    {
+        // the largest call seen ran 14 queries: starting it with 4,990 used would end the month at 5,004
+        var quota = new GroundingQuota((_, _) => Task.FromResult(4990), Options.Create(new GroundedSearchOptions()), () => June);
+        Assert.True(new GroundedSearchOptions().ReservedQueriesPerCall >= 14);
+        Assert.Null(await quota.TryReserveAsync(default));
+    }
+
+    [Fact]
+    public async Task A_call_that_runs_past_its_reserve_is_counted_in_full_and_closes_the_month()
+    {
+        // the model ignores the limit it was given: 14 queries against a reserve of 10
+        var quota = Quota(alreadyUsed: 4990, () => June, reserve: 10);
+        var held = await quota.TryReserveAsync(default);
+        Assert.NotNull(held);
+        quota.Complete(held.Value, actualQueries: 14);
+
+        Assert.Equal(5004, await quota.UsedThisMonthAsync(default));   // the overshoot is visible, never hidden
+        Assert.Null(await quota.TryReserveAsync(default));              // and nothing more starts this month
+    }
 }
