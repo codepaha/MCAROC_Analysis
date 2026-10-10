@@ -21,7 +21,7 @@ public interface IGroundedSearchService
 }
 
 /// <summary>Google Search grounding on Vertex AI for adverse-news and sentiment lookups. Only Gemini models can ground; the calls are counted against
-/// <see cref="GroundedSearchOptions.MonthlyQueryLimit"/> through <see cref="GroundingQuota"/> so the free allowance is never exceeded.</summary>
+/// <see cref="GroundedSearchOptions.SoftCapQueries"/> (4,950, hard stop 5,050) through <see cref="GroundingQuota"/> so the free allowance is never exceeded.</summary>
 public sealed class GroundedSearchService : IGroundedSearchService
 {
     private readonly GenAiClient _client;
@@ -48,7 +48,7 @@ public sealed class GroundedSearchService : IGroundedSearchService
         var reserved = await _quota.TryReserveAsync(ct);
         if (reserved is null)
         {
-            _logger.LogWarning("Grounded search refused: the monthly allowance of {Limit} queries is used up.", _quota.Limit);
+            _logger.LogWarning("Grounded search refused: the monthly cap of {Limit} queries (hard stop {Hard}) is reached.", _quota.Limit, _options.Value.HardStopQueries);
             return new(false, "", [], [], "The monthly web-search allowance has been used up; searches resume next month.", QuotaExhausted: true);
         }
 

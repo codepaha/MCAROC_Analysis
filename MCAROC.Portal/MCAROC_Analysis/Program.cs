@@ -196,7 +196,7 @@ builder.Services.AddScoped<LitigationCasePageService>();
 // What each model call cost, recorded as calls are made and read back per assignment (Services/AiUsage).
 builder.Services.Configure<MCAROC_Analysis.Services.AiUsage.AiPricingOptions>(builder.Configuration.GetSection(MCAROC_Analysis.Services.AiUsage.AiPricingOptions.SectionName));
 builder.Services.AddScoped<MCAROC_Analysis.Services.AiUsage.AiCostReportService>();
-// Google Search grounding for adverse-news / sentiment lookups, capped at GroundedSearch:MonthlyQueryLimit (5,000 = the free monthly allowance).
+// Google Search grounding for adverse-news / sentiment lookups, capped at GroundedSearch:SoftCapQueries (4,950) with a hard stop at HardStopQueries (5,050) (5,000 = the free monthly allowance).
 builder.Services.Configure<MCAROC_Analysis.Services.GroundedSearch.GroundedSearchOptions>(builder.Configuration.GetSection(MCAROC_Analysis.Services.GroundedSearch.GroundedSearchOptions.SectionName));
 builder.Services.AddSingleton<MCAROC_Analysis.Services.GroundedSearch.GroundingQuota>();
 builder.Services.AddSingleton<MCAROC_Analysis.Services.GroundedSearch.IGroundedSearchService>(sp =>

@@ -8,7 +8,7 @@ public class GroundingQuotaTests
 {
     private static GroundingQuota Quota(int alreadyUsed, Func<DateTime> now, int limit = 5000, int reserve = 10, List<DateTime>? loads = null) =>
         new((monthStart, _) => { loads?.Add(monthStart); return Task.FromResult(alreadyUsed); },
-            Options.Create(new GroundedSearchOptions { MonthlyQueryLimit = limit, ReservedQueriesPerCall = reserve, SafetyMarginQueries = 0 }), now);
+            Options.Create(new GroundedSearchOptions { SoftCapQueries = limit, HardStopQueries = limit + 100, ReservedQueriesPerCall = reserve }), now);
 
     private static readonly DateTime June = new(2026, 6, 15, 0, 0, 0, DateTimeKind.Utc);
 
@@ -97,34 +97,55 @@ public class GroundingQuotaTests
     }
 
     [Fact]
-    public async Task The_reviewed_case_4985_used_and_a_16_query_call_never_starts_with_the_default_settings()
+    public async Task The_reviewed_case_4985_used_never_starts_with_the_default_settings()
     {
-        // 4,985 used + the 15 reserved would pass the stopping point (5,000 - 100): the search is refused before any query runs
         var quota = new GroundingQuota((_, _) => Task.FromResult(4985), Options.Create(new GroundedSearchOptions()), () => June);
         Assert.Null(await quota.TryReserveAsync(default));
     }
 
     [Fact]
-    public async Task Searches_stop_a_safety_margin_short_of_the_limit()
+    public async Task The_defaults_are_a_working_cap_of_4950_and_a_hard_stop_of_5050()
     {
-        var options = new GroundedSearchOptions();   // limit 5000, reserve 15, margin 100
-        var atCeiling = new GroundingQuota((_, _) => Task.FromResult(4885), Options.Create(options), () => June);
-        Assert.NotNull(await atCeiling.TryReserveAsync(default));   // 4885 + 15 = 4900: allowed
-        var over = new GroundingQuota((_, _) => Task.FromResult(4886), Options.Create(options), () => June);
-        Assert.Null(await over.TryReserveAsync(default));           // 4886 + 15 = 4901: refused
+        var options = new GroundedSearchOptions();
+        Assert.Equal((4950, 5050, 15), (options.SoftCapQueries, options.HardStopQueries, options.ReservedQueriesPerCall));
+        var atCap = new GroundingQuota((_, _) => Task.FromResult(4935), Options.Create(options), () => June);
+        Assert.NotNull(await atCap.TryReserveAsync(default));        // 4935 + 15 = 4950: allowed
+        var over = new GroundingQuota((_, _) => Task.FromResult(4936), Options.Create(options), () => June);
+        Assert.Null(await over.TryReserveAsync(default));            // 4936 + 15 = 4951: refused
     }
 
     [Fact]
-    public async Task A_call_that_overshoots_its_reserve_from_the_ceiling_still_ends_inside_the_limit()
+    public async Task A_call_that_overshoots_its_reserve_ends_between_the_cap_and_the_hard_stop_and_closes_the_month()
     {
-        var quota = new GroundingQuota((_, _) => Task.FromResult(4885), Options.Create(new GroundedSearchOptions()), () => June);
+        var quota = new GroundingQuota((_, _) => Task.FromResult(4935), Options.Create(new GroundedSearchOptions()), () => June);
         var held = await quota.TryReserveAsync(default);
         Assert.NotNull(held);
-        quota.Complete(held.Value, actualQueries: 16);   // one over its reserve of 15
+        quota.Complete(held.Value, actualQueries: 40);               // far past its reserve of 15
         var used = await quota.UsedThisMonthAsync(default);
-        Assert.Equal(4901, used);
-        Assert.True(used <= new GroundedSearchOptions().MonthlyQueryLimit);
-        Assert.Null(await quota.TryReserveAsync(default));
+        Assert.Equal(4975, used);
+        Assert.True(used < new GroundedSearchOptions().HardStopQueries);
+        Assert.Null(await quota.TryReserveAsync(default));           // 4975 + 15 > 4950: nothing more starts
+    }
+
+    [Fact]
+    public async Task The_hard_stop_holds_even_if_the_working_cap_were_set_higher()
+    {
+        var options = new GroundedSearchOptions { SoftCapQueries = 9999, HardStopQueries = 5050 };   // reserve 15
+        var atStop = new GroundingQuota((_, _) => Task.FromResult(5035), Options.Create(options), () => June);
+        Assert.NotNull(await atStop.TryReserveAsync(default));       // 5035 + 15 = 5050: allowed
+        var past = new GroundingQuota((_, _) => Task.FromResult(5036), Options.Create(options), () => June);
+        Assert.Null(await past.TryReserveAsync(default));            // 5036 + 15 = 5051: refused
+        var beyond = new GroundingQuota((_, _) => Task.FromResult(5050), Options.Create(options), () => June);
+        Assert.Null(await beyond.TryReserveAsync(default));
+    }
+
+    [Fact]
+    public async Task Searches_in_flight_count_toward_the_hard_stop()
+    {
+        var options = new GroundedSearchOptions { SoftCapQueries = 9999, HardStopQueries = 5050, ReservedQueriesPerCall = 30 };
+        var quota = new GroundingQuota((_, _) => Task.FromResult(5000), Options.Create(options), () => June);
+        Assert.NotNull(await quota.TryReserveAsync(default));        // 5000 + 30 held
+        Assert.Null(await quota.TryReserveAsync(default));           // 5030 + 30 = 5060 > 5050
     }
 
     [Theory]
