@@ -1070,33 +1070,59 @@ public sealed class PreLoginReportJobService(
         var updatedData = reportData with { LegalCases = updatedLegalCases };
         var updatedJson = JsonSerializer.Serialize(updatedData);
 
-        string? newReportPath = null;
+        string? tempReportPath = null;
+        string? finalReportPath = null;
+        string? oldReportPath = job.ReportStoragePath;
+
         if (!string.IsNullOrWhiteSpace(job.ReportStoragePath) || job.Status == PreLoginReportJobStatus.Completed)
         {
             var format = Enum.Parse<PreLoginReportFormat>(job.Format);
             var identifier = updatedData.Company.LitigationOnly ? updatedData.Company.RegistrationNumber : job.Cin;
             var generated = await reports.GenerateFromDataAsync(identifier, format, updatedData, ct);
-            if (!string.IsNullOrWhiteSpace(job.ReportStoragePath) && File.Exists(job.ReportStoragePath))
-            {
-                try { File.Delete(job.ReportStoragePath); } catch { }
-            }
-            newReportPath = await StoreReportAsync(job.PreLoginReportJobId, generated, ct);
+
+            var directory = Path.Combine(environment.ContentRootPath, "App_Data", "PreLoginReports");
+            Directory.CreateDirectory(directory);
+            var tempFileName = $"{job.PreLoginReportJobId}-{Guid.NewGuid():N}.docx";
+            tempReportPath = Path.Combine(directory, tempFileName);
+            await File.WriteAllBytesAsync(tempReportPath, generated.Bytes, ct);
+
+            finalReportPath = Path.Combine(directory, $"{job.PreLoginReportJobId}-{generated.FileName}");
         }
 
         var affected = await db.PreLoginReportJobs
             .Where(j => j.PreLoginReportJobId == id && j.BatchId == batch && j.DataVersion == submittedDataVersion)
             .ExecuteUpdateAsync(s => s
                 .SetProperty(x => x.DataJson, updatedJson)
-                .SetProperty(x => x.ReportStoragePath, x => newReportPath ?? x.ReportStoragePath)
+                .SetProperty(x => x.ReportStoragePath, x => finalReportPath ?? x.ReportStoragePath)
                 .SetProperty(x => x.DataVersion, x => x.DataVersion + 1), ct);
 
         if (affected == 0)
         {
+            if (tempReportPath != null && File.Exists(tempReportPath))
+            {
+                try { File.Delete(tempReportPath); } catch { }
+            }
             await tx.RollbackAsync(ct);
             throw new PreLoginConcurrencyException("Concurrent update detected at write time. Changes rolled back.");
         }
 
         await tx.CommitAsync(ct);
+
+        if (tempReportPath != null && finalReportPath != null && File.Exists(tempReportPath))
+        {
+            try
+            {
+                if (!string.Equals(oldReportPath, finalReportPath, StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(oldReportPath) && File.Exists(oldReportPath))
+                {
+                    File.Delete(oldReportPath);
+                }
+                File.Move(tempReportPath, finalReportPath, overwrite: true);
+            }
+            catch
+            {
+                // Fallback: file move non-fatal if written
+            }
+        }
     }
 
     public async Task<BatchUpdateResult> BatchUpdateCasesAsync(Guid batch, long id, BatchUpdateCasesPayload payload, CancellationToken ct)
@@ -1158,33 +1184,59 @@ public sealed class PreLoginReportJobService(
         var updatedData = reportData with { LegalCases = updatedLegalCases };
         var updatedJson = JsonSerializer.Serialize(updatedData);
 
-        string? newReportPath = null;
+        string? tempReportPath = null;
+        string? finalReportPath = null;
+        string? oldReportPath = job.ReportStoragePath;
+
         if (!string.IsNullOrWhiteSpace(job.ReportStoragePath) || job.Status == PreLoginReportJobStatus.Completed)
         {
             var format = Enum.Parse<PreLoginReportFormat>(job.Format);
             var identifier = updatedData.Company.LitigationOnly ? updatedData.Company.RegistrationNumber : job.Cin;
             var generated = await reports.GenerateFromDataAsync(identifier, format, updatedData, ct);
-            if (!string.IsNullOrWhiteSpace(job.ReportStoragePath) && File.Exists(job.ReportStoragePath))
-            {
-                try { File.Delete(job.ReportStoragePath); } catch { }
-            }
-            newReportPath = await StoreReportAsync(job.PreLoginReportJobId, generated, ct);
+
+            var directory = Path.Combine(environment.ContentRootPath, "App_Data", "PreLoginReports");
+            Directory.CreateDirectory(directory);
+            var tempFileName = $"{job.PreLoginReportJobId}-{Guid.NewGuid():N}.docx";
+            tempReportPath = Path.Combine(directory, tempFileName);
+            await File.WriteAllBytesAsync(tempReportPath, generated.Bytes, ct);
+
+            finalReportPath = Path.Combine(directory, $"{job.PreLoginReportJobId}-{generated.FileName}");
         }
 
         var affected = await db.PreLoginReportJobs
             .Where(j => j.PreLoginReportJobId == id && j.BatchId == batch && j.DataVersion == payload.SubmittedDataVersion)
             .ExecuteUpdateAsync(s => s
                 .SetProperty(x => x.DataJson, updatedJson)
-                .SetProperty(x => x.ReportStoragePath, x => newReportPath ?? x.ReportStoragePath)
+                .SetProperty(x => x.ReportStoragePath, x => finalReportPath ?? x.ReportStoragePath)
                 .SetProperty(x => x.DataVersion, x => x.DataVersion + 1), ct);
 
         if (affected == 0)
         {
+            if (tempReportPath != null && File.Exists(tempReportPath))
+            {
+                try { File.Delete(tempReportPath); } catch { }
+            }
             await tx.RollbackAsync(ct);
             throw new PreLoginConcurrencyException("Concurrent update detected at write time. Changes rolled back.");
         }
 
         await tx.CommitAsync(ct);
+
+        if (tempReportPath != null && finalReportPath != null && File.Exists(tempReportPath))
+        {
+            try
+            {
+                if (!string.Equals(oldReportPath, finalReportPath, StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(oldReportPath) && File.Exists(oldReportPath))
+                {
+                    File.Delete(oldReportPath);
+                }
+                File.Move(tempReportPath, finalReportPath, overwrite: true);
+            }
+            catch
+            {
+                // Fallback: file move non-fatal if written
+            }
+        }
 
         return new BatchUpdateResult
         {
