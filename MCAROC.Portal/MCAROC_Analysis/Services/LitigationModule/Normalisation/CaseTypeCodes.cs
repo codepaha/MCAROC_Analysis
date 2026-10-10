@@ -23,6 +23,20 @@ public static partial class CaseTypeCodes
         ["income tax appeal"] = "ITA", ["transfer petition(companies act)"] = "TP(CA)",
     };
 
+    /// <summary>Every code the resolver will confirm. An abbreviation-shaped string that is not here (<c>ZZZ</c>, <c>APPEAL</c>) stays unknown, so a
+    /// guessed type is never presented as a confirmed one. Seeded from the two sample files plus the common court types; grows with a test per addition.</summary>
+    private static readonly HashSet<string> KnownCodes = new(StringComparer.OrdinalIgnoreCase)
+    {
+        // Supreme Court
+        "SLP(C)", "SLP(CRL)", "SLP", "CA", "CRA", "WP(C)", "WP(CRL)", "TC(C)", "TC(CRL)", "TP(C)", "TP(CRL)", "RP(C)", "RP(CRL)", "CONMT.PET.(C)", "SA(C)",
+        // High courts and district courts
+        "WP", "WPC", "CWP", "CW", "CRLRC", "CRM", "CRM-M", "CRA-S", "CRA-D", "CRR", "CRP", "CRLP", "CRLA", "CRL.A", "CRLMC", "RFA", "RSA", "FAO", "FA", "LPA", "MFA", "SAO",
+        "CM", "CMA", "CMP", "COMAS", "COMS", "COMA", "OS", "CS", "EX", "EXE", "EP", "OP", "OMP", "AP", "ARB", "ITA", "CEA", "STA", "TA", "TSA", "TP", "TP(CA)", "SS", "CC",
+        "NDPS", "NACT", "SC", "CRL", "MC", "MCA", "RCA", "RCC", "SCC", "SCS", "ST", "MVC", "LAC", "LAR", "ELP", "HMA", "OA", "RA", "MA", "SA", "IA", "RP", "FR", "PCR",
+        // NCLT / NCLAT / DRT / consumer
+        "CP", "CP(IB)", "CA(IB)", "IA(IB)", "IB", "CP(CAA)", "CA(CAA)", "TSA", "TA", "MA", "IA", "OA", "SA", "RC", "RP", "FA", "CC",
+    };
+
     /// <summary>Long names that carry a suffix (<c>Interlocutory Application (I.B.C)</c>).</summary>
     private static readonly (string Prefix, string Code)[] LongPrefixes = [("interlocutory appli", "IA")];
 
@@ -32,9 +46,9 @@ public static partial class CaseTypeCodes
         var t = TrailingJunk().Replace(Collapse(raw), "");               // "Original Application-" / "ARBITRATION PETITION."
         if (t.Length == 0) return null;
 
-        if ((CodeThenName().Match(t) is { Success: true } a)) return Clean(a.Groups["code"].Value);      // "AP - ARBITRATION PETITION"
-        if ((CodeThenBracketName().Match(t) is { Success: true } b)) return Clean(b.Groups["code"].Value); // "CMP (Civil Misc Petition)"
-        if (t.Length > 8 && (NameThenBracketCode().Match(t) is { Success: true } c)) return Clean(c.Groups["code"].Value); // "consumer case(CC)"
+        if ((CodeThenName().Match(t) is { Success: true } a)) return Known(a.Groups["code"].Value);      // "AP - ARBITRATION PETITION"
+        if ((CodeThenBracketName().Match(t) is { Success: true } b)) return Known(b.Groups["code"].Value); // "CMP (Civil Misc Petition)"
+        if (t.Length > 8 && (NameThenBracketCode().Match(t) is { Success: true } c)) return Known(c.Groups["code"].Value); // "consumer case(CC)"
 
         if (LongNames.TryGetValue(t, out var known)) return known;
         foreach (var (prefix, code) in LongPrefixes)
@@ -45,11 +59,12 @@ public static partial class CaseTypeCodes
         if (Abbreviation().IsMatch(t))
         {
             var firstToken = Regex.Match(t, @"[A-Za-z]+").Value;
-            if (!(firstToken.Length >= 4 && firstToken.Any(char.IsLower))) return Clean(t);
+            if (!(firstToken.Length >= 4 && firstToken.Any(char.IsLower))) return Known(t);
         }
         return null;
     }
 
+    private static string? Known(string code) { var c = Clean(code); return KnownCodes.Contains(c) ? c : null; }
     private static string Clean(string code) => Regex.Replace(code, @"[.\s]", "").ToUpperInvariant();
     private static string Collapse(string s) => Whitespace().Replace(s.Trim(), " ");
 

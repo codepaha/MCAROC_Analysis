@@ -86,6 +86,16 @@ public class CaseNumberNormaliserTests
         Assert.Single(q.ConnectedMatters);
     }
 
+    [Theory]
+    [InlineData("CP/123/2020,TPNo.93/CTB/2019", "CP/123/2020", "TPNo.93/CTB/2019")]
+    [InlineData("TPNo.93/CTB/2019,CP/123/2020", "TP/93/2019", "CP/123/2020")]
+    public void Mixed_connected_matters_keep_every_matter_in_source_order(string number, string display, string connected)
+    {
+        var p = P(number);
+        Assert.Equal(display, p.Display);
+        Assert.Equal(connected, Assert.Single(p.ConnectedMatters));
+    }
+
     [Fact]
     public void The_portals_full_number_forms_display_as_type_number_year_and_keep_the_full_form_for_lookups()
     {
@@ -112,12 +122,14 @@ public class CaseNumberNormaliserTests
     // ---- partial and unresolved: show what is known, say what is missing, never invent ----
 
     [Theory]
-    [InlineData("88", "CONTEMPT PETITION", "2014", "88/2014", "type not stated")]
-    [InlineData("Temporary Injunction/3/2020", "", "", "3/2020", "type not stated")]
-    [InlineData("Company Appeal(AT)(Ins) - 383/2020", "", "", "383/2020", "type not stated")]
-    [InlineData("15/2019", "Civil Misc.(execution)", "2019", "15/2019", "type not stated")]
+    [InlineData("88", "CONTEMPT PETITION", "2014", "CONTEMPT PETITION/88/2014", "type not recognised")]
+    [InlineData("Temporary Injunction/3/2020", "", "", "Temporary Injunction/3/2020", "type not recognised")]
+    [InlineData("Company Appeal(AT)(Ins) - 383/2020", "", "", "Company Appeal(AT)(Ins)/383/2020", "type not recognised")]
+    [InlineData("15/2019", "Civil Misc.(execution)", "2019", "Civil Misc.(execution)/15/2019", "type not recognised")]
     [InlineData("175/2017", "", "", "175/2017", "type not stated")]
-    [InlineData("75643", "SERVICE TAX", "", "75643", "type and year not stated")]            // a category, not a case type
+    [InlineData("75643", "SERVICE TAX", "", "SERVICE TAX/75643", "type not recognised; year not stated")]   // a category, not a case type
+    [InlineData("12/2020", "ZZZ", "2020", "ZZZ/12/2020", "type not recognised")]
+    [InlineData("12/2020", "APPEAL", "2020", "APPEAL/12/2020", "type not recognised")]
     [InlineData("10555", "", "", "10555", "type and year not stated")]
     public void An_unknown_or_missing_type_or_year_is_left_out_and_noted(string number, string type, string year, string display, string note)
     {
@@ -207,7 +219,7 @@ public class CaseNumberNormaliserTests
     public void A_word_that_merely_starts_with_No_is_not_stripped_as_a_number_token()
     {
         // "Notice" must not be read as the number token "No" + "tice"
-        Assert.Equal("12/2020", P("Notice/12/2020").Display);   // an unknown word is dropped whole, not clipped
+        Assert.Equal("Notice/12/2020", P("Notice/12/2020").Display);   // shown as supplied, not clipped and not coded
     }
 
     [Theory]

@@ -20,7 +20,7 @@ public sealed record CaseNumberInput(string? CaseNumber, string? CaseType = null
 
 /// <param name="TypeCode">Canonical short type (<c>OA</c>, <c>CRM-M</c>, <c>SLP(C)</c>), or null when unknown - never guessed.</param>
 /// <param name="No">The case number without leading zeros.</param>
-/// <param name="Display">The number in the one fixed format, <c>TYPE/NO/YEAR</c>, with any unknown part omitted; the text as filed when nothing could be read.</param>
+/// <param name="Display">The number in the one fixed format, <c>TYPE/NO/YEAR</c>; an unrecognised type is shown as supplied (never turned into a code) and a missing part is omitted; the text as filed when nothing could be read.</param>
 /// <param name="Note">A short muted note for the UI ("type not stated"), or null when nothing is missing.</param>
 /// <param name="ConnectedMatters">Further numbers that arrived in the same source string; the first is the primary.</param>
 /// <param name="ActHint">An act the type text identifies (for example section 138 of the Negotiable Instruments Act), only ever used to fill an empty act.</param>
@@ -53,50 +53,57 @@ public static partial class CaseNumberNormaliser
             typeFromNumber = full.Groups["type"].Value; no = StripZeros(full.Groups["no"].Value); yearText = full.Groups["year"].Value;
             portalNumber = text;
         }
-        else if (BenchForm().Matches(text) is { Count: > 0 } bench)
-        {
-            // NCLT/NCLAT: TPNo.93/CTB/2019 - the bench sits between number and year, and several numbers can be run together with no separator.
-            var first = bench[0];
-            typeFromNumber = first.Groups["type"].Value; no = StripZeros(first.Groups["no"].Value); yearText = first.Groups["year"].Value;
-            notes.Add("bench:" + first.Groups["bench"].Value.ToUpperInvariant());
-            foreach (Match m in bench.Skip(1)) connected.Add(Collapse(m.Value));
-        }
         else
         {
-            // Supreme Court style lists separate connected matters with commas; the first is the primary.
-            var segments = text.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-            var primary = segments.Length > 0 ? segments[0] : text;
-            foreach (var extra in segments.Skip(1)) connected.Add(extra);
+            // Matters are kept in source order: commas separate connected matters (Supreme Court style), and inside a segment NCLT/NCLAT numbers
+            // can be run together with no separator (TPNo.93/CTB/2019CPNo.1317/KB/2018). The first matter is the primary, the rest are listed.
+            var matters = new List<(string Text, Match? Bench)>();
+            foreach (var segment in text.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            {
+                var benches = BenchForm().Matches(segment);
+                if (benches.Count > 0) foreach (Match b in benches) matters.Add((Collapse(b.Value), b));
+                else matters.Add((segment, null));
+            }
+            if (matters.Count == 0) matters.Add((text, null));
+            foreach (var extra in matters.Skip(1)) connected.Add(extra.Text);
 
-            var cleaned = NoToken().Replace(primary, " ").Trim();
-            cleaned = DashBeforeSlash().Replace(cleaned, "/");
-            Match m;
-            if ((m = TypeDashNameSlash().Match(cleaned)).Success)          // CS - CIVIL SUIT/1411/2019
+            if (matters[0].Bench is { } first)
             {
-                typeFromNumber = m.Groups["type"].Value; no = StripZeros(m.Groups["no"].Value); yearText = m.Groups["year"].Value;
-                actHint = ActFromName(m.Groups["name"].Value);
+                typeFromNumber = first.Groups["type"].Value; no = StripZeros(first.Groups["no"].Value); yearText = first.Groups["year"].Value;
+                notes.Add("bench:" + first.Groups["bench"].Value.ToUpperInvariant());
             }
-            else if ((m = TypeNoYear().Match(cleaned)).Success)             // OA/413/2022, SLP(C) 6459/2019
+            else
             {
-                typeFromNumber = m.Groups["type"].Value.Trim(); no = StripZeros(m.Groups["no"].Value); yearText = m.Groups["year"].Value;
-            }
-            else if ((m = TypeDashNoYear().Match(cleaned)).Success)         // Company Appeal(AT)(Ins) - 383/2020
-            {
-                typeFromNumber = m.Groups["type"].Value.Trim(); no = StripZeros(m.Groups["no"].Value); yearText = m.Groups["year"].Value;
-            }
-            else if ((m = NoYear().Match(cleaned)).Success)                 // 292/2016
-            {
-                no = StripZeros(m.Groups["no"].Value); yearText = m.Groups["year"].Value;
-            }
-            else if ((m = NumberOnly().Match(cleaned)).Success)             // 10555
-            {
-                no = StripZeros(m.Groups["no"].Value);
+                var cleaned = NoToken().Replace(matters[0].Text, " ").Trim();
+                cleaned = DashBeforeSlash().Replace(cleaned, "/");
+                Match m;
+                if ((m = TypeDashNameSlash().Match(cleaned)).Success)          // CS - CIVIL SUIT/1411/2019
+                {
+                    typeFromNumber = m.Groups["type"].Value; no = StripZeros(m.Groups["no"].Value); yearText = m.Groups["year"].Value;
+                    actHint = ActFromName(m.Groups["name"].Value);
+                }
+                else if ((m = TypeNoYear().Match(cleaned)).Success)             // OA/413/2022, SLP(C) 6459/2019
+                {
+                    typeFromNumber = m.Groups["type"].Value.Trim(); no = StripZeros(m.Groups["no"].Value); yearText = m.Groups["year"].Value;
+                }
+                else if ((m = TypeDashNoYear().Match(cleaned)).Success)         // Company Appeal(AT)(Ins) - 383/2020
+                {
+                    typeFromNumber = m.Groups["type"].Value.Trim(); no = StripZeros(m.Groups["no"].Value); yearText = m.Groups["year"].Value;
+                }
+                else if ((m = NoYear().Match(cleaned)).Success)                 // 292/2016
+                {
+                    no = StripZeros(m.Groups["no"].Value); yearText = m.Groups["year"].Value;
+                }
+                else if ((m = NumberOnly().Match(cleaned)).Success)             // 10555
+                {
+                    no = StripZeros(m.Groups["no"].Value);
+                }
             }
         }
         if (connected.Count > 0) notes.Add("connected:" + connected.Count);
 
         // Type: the number's own prefix wins; otherwise the type column - unless that column actually holds a number ("SLP(Crl) No. 004537 - ").
-        string? typeCode = null;
+        string? typeCode = null, unknownType = null;
         var typeSource = typeFromNumber;
         if (typeSource is null && !string.IsNullOrWhiteSpace(input.CaseType))
         {
@@ -106,7 +113,7 @@ public static partial class CaseNumberNormaliser
         if (!string.IsNullOrWhiteSpace(typeSource))
         {
             typeCode = CaseTypeCodes.Resolve(typeSource);
-            if (typeCode is null) notes.Add("type-unknown:" + Collapse(typeSource));
+            if (typeCode is null) { unknownType = Collapse(typeSource).TrimEnd(' ', '-'); notes.Add("type-unknown:" + unknownType); }
         }
         else if (no is not null) notes.Add("type-missing");
 
@@ -137,19 +144,27 @@ public static partial class CaseNumberNormaliser
 
         var display = no is null
             ? (raw.Length == 0 ? string.Empty : raw)
-            : string.Join('/', new[] { typeCode, no, year?.ToString() }.Where(p => !string.IsNullOrEmpty(p)));
-        return new CaseNumberParts(typeCode, no, year, yearSource, completeness, display, NoteFor(no, typeCode, year, yearSource),
+            : string.Join('/', new[] { typeCode ?? unknownType, no, year?.ToString() }.Where(p => !string.IsNullOrEmpty(p)));
+        return new CaseNumberParts(typeCode, no, year, yearSource, completeness, display, NoteFor(no, typeCode, unknownType, year, yearSource),
             connected, actHint, portalNumber, notes, raw);
     }
 
-    private static string? NoteFor(string? no, string? type, int? year, YearSource yearSource)
+    private static string? NoteFor(string? no, string? type, string? unknownType, int? year, YearSource yearSource)
     {
         if (no is null) return raw_not_recognised;
         var parts = new List<string>();
-        var missing = new List<string>();
-        if (type is null) missing.Add("type");
-        if (year is null) missing.Add("year");
-        if (missing.Count > 0) parts.Add(string.Join(" and ", missing) + " not stated");
+        if (unknownType is not null)
+        {
+            parts.Add("type not recognised");
+            if (year is null) parts.Add("year not stated");
+        }
+        else
+        {
+            var missing = new List<string>();
+            if (type is null) missing.Add("type");
+            if (year is null) missing.Add("year");
+            if (missing.Count > 0) parts.Add(string.Join(" and ", missing) + " not stated");
+        }
         if (yearSource is YearSource.InferredFilingAndCnr or YearSource.InferredFilingOnly or YearSource.InferredCnrOnly)
             parts.Add("year inferred from " + (yearSource == YearSource.InferredCnrOnly ? "the CNR" : "the filing date"));
         return parts.Count == 0 ? null : string.Join("; ", parts);
