@@ -163,16 +163,51 @@
                                     <tbody>
                                         @if (Model.Assignment?.CompanyDetails?.DirectorsOrPartners is { Count: > 0 } directors)
                                         {
-                                            @foreach (var dir in directors)
+                                            @for (int i = 0; i < directors.Count; i++)
                                             {
+                                                var dir = directors[i];
+                                                var dirTarget = Model.DirectorTargets.FirstOrDefault(t => t.TargetIndex == i);
                                                 <tr>
                                                     <td class="fw-semibold">@dir.Name</td>
                                                     <td class="font-monospace small">@(dir.Din ?? dir.Pan ?? "-")</td>
                                                     <td>Director / Partner</td>
                                                     <td style="text-align: right;">
-                                                        <button type="button" class="btn btn-sm btn-outline-secondary" onclick="alert('Director litigation search is available on-demand.')">
-                                                            <i class="bi bi-search me-1"></i> Search
-                                                        </button>
+                                                        @if (dirTarget is null)
+                                                        {
+                                                            <form method="post" asp-action="SearchDirector" asp-route-batch="@Model.BatchId" asp-route-id="@Model.PreLoginReportJobId" class="d-inline">
+                                                                @Html.AntiForgeryToken()
+                                                                <input type="hidden" name="directorName" value="@dir.Name" />
+                                                                <input type="hidden" name="dinPan" value="@(dir.Din ?? dir.Pan)" />
+                                                                <input type="hidden" name="targetIndex" value="@i" />
+                                                                <button type="submit" class="btn btn-sm btn-outline-primary">
+                                                                    <i class="bi bi-search me-1"></i> Search
+                                                                </button>
+                                                            </form>
+                                                        }
+                                                        else if (dirTarget.Status == "Completed")
+                                                        {
+                                                            <span class="badge bg-success-subtle text-success border border-success-subtle">
+                                                                <i class="bi bi-check-circle me-1"></i> Completed
+                                                            </span>
+                                                        }
+                                                        else if (dirTarget.Status == "Failed")
+                                                        {
+                                                            <form method="post" asp-action="SearchDirector" asp-route-batch="@Model.BatchId" asp-route-id="@Model.PreLoginReportJobId" class="d-inline">
+                                                                @Html.AntiForgeryToken()
+                                                                <input type="hidden" name="directorName" value="@dir.Name" />
+                                                                <input type="hidden" name="dinPan" value="@(dir.Din ?? dir.Pan)" />
+                                                                <input type="hidden" name="targetIndex" value="@i" />
+                                                                <button type="submit" class="btn btn-sm btn-outline-danger">
+                                                                    <i class="bi bi-arrow-repeat me-1"></i> Retry
+                                                                </button>
+                                                            </form>
+                                                        }
+                                                        else
+                                                        {
+                                                            <span class="badge bg-warning-subtle text-warning border border-warning-subtle">
+                                                                <i class="spinner-border spinner-border-sm me-1" style="width:0.75rem;height:0.75rem;"></i> @dirTarget.Status
+                                                            </span>
+                                                        }
                                                     </td>
                                                 </tr>
                                             }

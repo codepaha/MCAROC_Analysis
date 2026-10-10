@@ -44,6 +44,7 @@ public sealed class AssignmentDetailViewModel
     public BorrowerAssignmentDetails? Assignment { get; init; }
     public InstaReportData? StoredData { get; init; }
     public PreLoginLitigationTarget? BorrowerTarget { get; init; }
+    public IReadOnlyList<PreLoginLitigationTarget> DirectorTargets { get; init; } = [];
     public IReadOnlyList<LegalCaseRecord> Cases { get; init; } = [];
 
     // KPI Metrics

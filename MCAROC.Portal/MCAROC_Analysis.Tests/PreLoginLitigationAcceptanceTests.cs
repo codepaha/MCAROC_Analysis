@@ -117,9 +117,10 @@ public class PreLoginLitigationAcceptanceTests : IAsyncLifetime
 
         await using var db = CreateContext();
         var queue = new PreLoginReportQueue();
+        var targetQueue = new PreLoginLitigationTargetQueue();
         var targetService = new PreLoginLitigationTargetService(
             db, new BprLitigationClient(new HttpClient(), Options.Create(new BprLitigationOptions()), NullLogger<BprLitigationClient>.Instance),
-            Options.Create(new BprLitigationOptions()), queue, NullLogger<PreLoginLitigationTargetService>.Instance);
+            Options.Create(new BprLitigationOptions()), queue, targetQueue, NullLogger<PreLoginLitigationTargetService>.Instance);
 
         await targetService.RecoverStaleWorkAsync(CancellationToken.None);
 
@@ -140,9 +141,10 @@ public class PreLoginLitigationAcceptanceTests : IAsyncLifetime
 
         await using var db = CreateContext();
         var queue = new PreLoginReportQueue();
+        var targetQueue = new PreLoginLitigationTargetQueue();
         var targetService = new PreLoginLitigationTargetService(
             db, new BprLitigationClient(new HttpClient(), Options.Create(new BprLitigationOptions()), NullLogger<BprLitigationClient>.Instance),
-            Options.Create(new BprLitigationOptions()), queue, NullLogger<PreLoginLitigationTargetService>.Instance);
+            Options.Create(new BprLitigationOptions()), queue, targetQueue, NullLogger<PreLoginLitigationTargetService>.Instance);
 
         await targetService.ProcessAsync(targetId, CancellationToken.None);
 
@@ -568,6 +570,154 @@ public class PreLoginLitigationAcceptanceTests : IAsyncLifetime
             if (expected == LitigationCaseStatusBucket.Pending) Assert.True(isPending);
             if (expected == LitigationCaseStatusBucket.Unknown) Assert.True(isUnknown);
         }
+    }
+
+    [Fact]
+    public async Task T31_ResolutionActions_ReopenParentJobFromAwaitingReview()
+    {
+        var (jobId, batchId) = await SeedJobAsync(PreLoginReportJobStatus.AwaitingReview, "{}", null, 1);
+        await using (var dbInit = CreateContext())
+        {
+            var job = await dbInit.PreLoginReportJobs.FindAsync(jobId);
+            job!.FailureReason = "Litigation search requires manual reconciliation";
+            await dbInit.SaveChangesAsync();
+        }
+
+        var targetId = await SeedTargetAsync(jobId, "AmbiguousRegistration", vendorJobId: null, version: 1);
+
+        await using var db = CreateContext();
+        var queue = new PreLoginReportQueue();
+        var targetQueue = new PreLoginLitigationTargetQueue();
+        var jobService = CreateJobService(db, queue, targetQueue);
+
+        await jobService.ConfirmNoSearchExistsAsync(batchId, jobId, targetId, "No search exists confirmed", 1, CancellationToken.None);
+
+        await using var dbCheck = CreateContext();
+        var reopenedJob = await dbCheck.PreLoginReportJobs.FindAsync(jobId);
+        Assert.NotNull(reopenedJob);
+        Assert.Equal(PreLoginReportJobStatus.AwaitingLitigation, reopenedJob.Status);
+        Assert.Null(reopenedJob.FailureReason);
+        Assert.Equal(40, reopenedJob.ProgressPercent);
+    }
+
+    [Fact]
+    public async Task T32_ActiveLeaseProtection_CannotStealActiveLease()
+    {
+        var (jobId, _) = await SeedJobAsync(PreLoginReportJobStatus.AwaitingLitigation, "{}");
+        var activeToken = Guid.NewGuid();
+        var targetId = await SeedTargetAsync(
+            jobId, "Polling", vendorJobId: "VEN-1234", version: 1,
+            leaseToken: activeToken, leaseExpires: DateTime.UtcNow.AddMinutes(5), leaseOwner: "Worker-Active");
+
+        await using var db = CreateContext();
+        var queue = new PreLoginReportQueue();
+        var targetQueue = new PreLoginLitigationTargetQueue();
+        var targetService = new PreLoginLitigationTargetService(
+            db, new BprLitigationClient(new HttpClient(), Options.Create(new BprLitigationOptions()), NullLogger<BprLitigationClient>.Instance),
+            Options.Create(new BprLitigationOptions()), queue, targetQueue, NullLogger<PreLoginLitigationTargetService>.Instance);
+
+        await targetService.ProcessAsync(targetId, CancellationToken.None);
+
+        var target = await db.PreLoginLitigationTargets.FindAsync(targetId);
+        Assert.NotNull(target);
+        Assert.Equal("Polling", target.Status);
+        Assert.Equal(activeToken, target.LeaseToken);
+        Assert.Equal("Worker-Active", target.LeaseOwner);
+    }
+
+    [Fact]
+    public async Task T33_WordReportGeneration_SuppressesExcludedCases()
+    {
+        var legalCases = new InstaLegalCases(2, 1, 1, 0, 0, 0, 0, 0, 0,
+        [
+            new LegalCaseRecord("highcourt", "High Court of Delhi", "DLHC010000012022", "1234/2022", "WP", "2022", "Hearing", "CPC", "01/01/2022", "Delhi", "New Delhi", "A VS B", "10/10/2026", "Pending", CaseRowId: "C-1", ProceedingType: "WP", Petitioner: "A", Respondent: "B", IsExcludedFromReport: false),
+            new LegalCaseRecord("highcourt", "High Court of Delhi", "DLHC010000022022", "9999/2022", "WP", "2022", "Disposed", "CPC", "01/01/2022", "Delhi", "New Delhi", "C VS D", "10/10/2026", "Disposed", CaseRowId: "C-2", ProceedingType: "WP", Petitioner: "C", Respondent: "D", IsExcludedFromReport: true, ExclusionReason: "Settled out of court")
+        ]);
+
+        var data = new InstaReportData(
+            new InstaCompany("ACME LOGISTICS LIMITED", "-", "U74899DL1991PTC043274", "Company", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-"),
+            [], [], LegalCases: legalCases);
+
+        var reportService = new PreLoginReportService(null!, new TestEnvironment());
+        var generated = await reportService.GenerateFromDataAsync("U74899DL1991PTC043274", PreLoginReportFormat.Sbi, data, CancellationToken.None);
+
+        using var ms = new MemoryStream(generated.Bytes);
+        using var zip = new System.IO.Compression.ZipArchive(ms);
+        var entry = zip.GetEntry("word/document.xml");
+        Assert.NotNull(entry);
+        using var reader = new StreamReader(entry.Open());
+        var xmlContent = await reader.ReadToEndAsync();
+
+        Assert.Contains("1234/2022", xmlContent);
+        Assert.DoesNotContain("9999/2022", xmlContent);
+    }
+
+    [Fact]
+    public void T34_BprParser_DeduplicatesSameCnrAndProceedingType()
+    {
+        var json = """
+        {
+            "status": "success",
+            "request_details": { "job_id": "JOB-1", "report_date": "2026-10-10", "keywords": ["ACME"] },
+            "high_court": {
+                "by": {
+                    "live": [
+                        {
+                            "cnr_number": "DLHC010000012022",
+                            "case_no": "1234/2022",
+                            "case_type": "WP",
+                            "case_year": "2022",
+                            "court": "High Court of Delhi",
+                            "case_status": "Pending",
+                            "case_stage": "Hearing",
+                            "petitioners": "ACME LOGISTICS",
+                            "respondents": "UNION OF INDIA"
+                        }
+                    ]
+                },
+                "against": {
+                    "live": [
+                        {
+                            "cnr_number": "DLHC010000012022",
+                            "case_no": "1234/2022",
+                            "case_type": "WP",
+                            "case_year": "2022",
+                            "court": "High Court of Delhi",
+                            "case_status": "Pending",
+                            "case_stage": "Hearing",
+                            "petitioners": "ACME LOGISTICS",
+                            "respondents": "UNION OF INDIA"
+                        }
+                    ]
+                }
+            }
+        }
+        """;
+
+        var parsed = BprLitigationReportParser.Parse(json);
+        var records = parsed.ToLegalCaseRecords();
+
+        Assert.Single(records);
+        Assert.Equal("DLHC010000012022", records[0].CnrNumber);
+    }
+
+    [Fact]
+    public async Task T35_DirectorSearch_CreatesAndEnqueuesTarget()
+    {
+        var (jobId, batchId) = await SeedJobAsync(PreLoginReportJobStatus.AwaitingLitigation, "{}");
+
+        await using var db = CreateContext();
+        var targetQueue = new PreLoginLitigationTargetQueue();
+        var jobService = CreateJobService(db, targetQueue: targetQueue);
+
+        var targetId = await jobService.SearchDirectorAsync(batchId, jobId, "John Doe", "DIN123456", 0, CancellationToken.None);
+
+        var target = await db.PreLoginLitigationTargets.FindAsync(targetId);
+        Assert.NotNull(target);
+        Assert.Equal(PreLoginTargetKind.Director, target.TargetKind);
+        Assert.Equal("John Doe", target.TargetName);
+        Assert.Equal("Pending", target.Status);
+        Assert.Equal("individual", target.EntityType);
     }
 }
 

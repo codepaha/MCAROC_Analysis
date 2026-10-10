@@ -322,6 +322,7 @@ public sealed class PreLoginReportJobService(
         job.ReportStoragePath = await StoreReportAsync(job.PreLoginReportJobId, generated, cancellationToken);
         job.DataJson = JsonSerializer.Serialize(data);
         job.Cin = identifier;
+        job.DataVersion++;
         job.Status = PreLoginReportJobStatus.Completed; job.ProgressPercent = 100; job.CompletedUtc = DateTime.UtcNow;
         await db.SaveChangesAsync(cancellationToken);
     }
@@ -473,7 +474,7 @@ public sealed class PreLoginReportJobService(
                     TargetIndex = 0,
                     TargetName = companyName,
                     EntityType = "company",
-                    ExactMatch = true,
+                    ExactMatch = litigationOptions?.Value.ExactMatchForCompanies ?? false,
                     KeywordsJson = JsonSerializer.Serialize(keywords.Distinct().ToList()),
                     Status = "Pending",
                     CreatedUtc = DateTime.UtcNow,
@@ -551,24 +552,16 @@ public sealed class PreLoginReportJobService(
 
                 var updatedJson = JsonSerializer.Serialize(updatedData);
 
-                // Conditional atomic write enforcing DataVersion increment (T29):
-                var affected = await db.PreLoginReportJobs
-                    .Where(j => j.PreLoginReportJobId == job.PreLoginReportJobId && j.DataVersion == job.DataVersion)
-                    .ExecuteUpdateAsync(s => s
-                        .SetProperty(j => j.DataJson, updatedJson)
-                        .SetProperty(j => j.DataVersion, j => j.DataVersion + 1)
-                        .SetProperty(j => j.Status, PreLoginReportJobStatus.Generating)
-                        .SetProperty(j => j.ProgressPercent, 80), cancellationToken);
-
-                if (affected == 0)
-                {
-                    await db.Entry(job).ReloadAsync(cancellationToken);
-                    queue.Enqueue(job.PreLoginReportJobId);
-                    return;
-                }
+                // Atomic write enforcing DataVersion increment on tracked entity (T29):
+                job.DataJson = updatedJson;
+                job.DataVersion++;
+                job.Status = PreLoginReportJobStatus.Generating;
+                job.ProgressPercent = 80;
+                await db.SaveChangesAsync(cancellationToken);
 
                 var generated = await reports.GenerateFromDataAsync(job.Cin, format, updatedData, cancellationToken);
                 job.ReportStoragePath = await StoreReportAsync(job.PreLoginReportJobId, generated, cancellationToken);
+                job.DataVersion++;
                 job.Status = PreLoginReportJobStatus.Completed;
                 job.ProgressPercent = 100;
                 job.CompletedUtc = DateTime.UtcNow;
@@ -576,22 +569,31 @@ public sealed class PreLoginReportJobService(
                 await db.SaveChangesAsync(cancellationToken);
             }
         }
+        catch (DbUpdateConcurrencyException)
+        {
+            try { await db.Entry(job).ReloadAsync(cancellationToken); } catch { }
+            queue.Enqueue(job.PreLoginReportJobId);
+            return;
+        }
         catch (PreLoginReportException ex) { await FailOrRetryAsync(job, ex.Message, ex.Retryable, cancellationToken); }
         catch (Exception) { await FailOrRetryAsync(job, "Unexpected report processing failure.", retryable: true, cancellationToken); }
     }
 
     private async Task FailOrRetryAsync(PreLoginReportJob job, string reason, bool retryable, CancellationToken cancellationToken)
     {
+        try { await db.Entry(job).ReloadAsync(cancellationToken); } catch { }
         job.FailureReason = reason;
         if (retryable && job.AttemptCount < 3)
         {
             job.Status = PreLoginReportJobStatus.Queued; job.ProgressPercent = 0; job.NextAttemptUtc = DateTime.UtcNow.AddSeconds(20 * job.AttemptCount);
-            await db.SaveChangesAsync(cancellationToken);
+            job.DataVersion++;
+            try { await db.SaveChangesAsync(cancellationToken); } catch { }
             Schedule(job.PreLoginReportJobId, TimeSpan.FromSeconds(20 * job.AttemptCount));
             return;
         }
         job.Status = PreLoginReportJobStatus.Failed; job.ProgressPercent = 100; job.CompletedUtc = DateTime.UtcNow;
-        await db.SaveChangesAsync(cancellationToken);
+        job.DataVersion++;
+        try { await db.SaveChangesAsync(cancellationToken); } catch { }
     }
 
     private void Schedule(long jobId, TimeSpan delay) => _ = Task.Run(async () => { await Task.Delay(delay); queue.Enqueue(jobId); });
@@ -673,6 +675,13 @@ public sealed class PreLoginReportJobService(
         db.PreLoginLitigationReconciliationEvents.Add(reconciliationEvent);
         await db.SaveChangesAsync(ct);
 
+        // Reopen parent job from AwaitingReview to AwaitingLitigation
+        await db.PreLoginReportJobs.Where(j => j.PreLoginReportJobId == id)
+            .ExecuteUpdateAsync(s => s
+                .SetProperty(j => j.Status, PreLoginReportJobStatus.AwaitingLitigation)
+                .SetProperty(j => j.FailureReason, (string?)null)
+                .SetProperty(j => j.ProgressPercent, 40), ct);
+
         await tx.CommitAsync(ct);
 
         targetQueue?.Enqueue(targetId);
@@ -746,6 +755,13 @@ public sealed class PreLoginReportJobService(
         db.PreLoginLitigationReconciliationEvents.Add(reconciliationEvent);
         await db.SaveChangesAsync(ct);
 
+        // Reopen parent job from AwaitingReview to AwaitingLitigation
+        await db.PreLoginReportJobs.Where(j => j.PreLoginReportJobId == id)
+            .ExecuteUpdateAsync(s => s
+                .SetProperty(j => j.Status, PreLoginReportJobStatus.AwaitingLitigation)
+                .SetProperty(j => j.FailureReason, (string?)null)
+                .SetProperty(j => j.ProgressPercent, 40), ct);
+
         await tx.CommitAsync(ct);
 
         targetQueue?.Enqueue(targetId);
@@ -808,6 +824,13 @@ public sealed class PreLoginReportJobService(
         db.PreLoginLitigationReconciliationEvents.Add(reconciliationEvent);
         await db.SaveChangesAsync(ct);
 
+        // Reopen parent job from AwaitingReview to AwaitingLitigation
+        await db.PreLoginReportJobs.Where(j => j.PreLoginReportJobId == id)
+            .ExecuteUpdateAsync(s => s
+                .SetProperty(j => j.Status, PreLoginReportJobStatus.AwaitingLitigation)
+                .SetProperty(j => j.FailureReason, (string?)null)
+                .SetProperty(j => j.ProgressPercent, 40), ct);
+
         await tx.CommitAsync(ct);
 
         targetQueue?.Enqueue(targetId);
@@ -867,10 +890,70 @@ public sealed class PreLoginReportJobService(
         db.PreLoginLitigationReconciliationEvents.Add(reconciliationEvent);
         await db.SaveChangesAsync(ct);
 
+        // Reopen parent job from AwaitingReview to AwaitingLitigation
+        await db.PreLoginReportJobs.Where(j => j.PreLoginReportJobId == id)
+            .ExecuteUpdateAsync(s => s
+                .SetProperty(j => j.Status, PreLoginReportJobStatus.AwaitingLitigation)
+                .SetProperty(j => j.FailureReason, (string?)null)
+                .SetProperty(j => j.ProgressPercent, 40), ct);
+
         await tx.CommitAsync(ct);
 
         targetQueue?.Enqueue(targetId);
         queue.Enqueue(id);
+    }
+
+    public async Task<long> SearchDirectorAsync(Guid batch, long id, string directorName, string? dinPan, int targetIndex, CancellationToken ct)
+    {
+        var job = await FindInBatchAsync(batch, id, ct) ?? throw new PreLoginReportNotFoundException();
+        if (string.IsNullOrWhiteSpace(directorName))
+            throw new PreLoginReportException("Director name is required.");
+
+        var existingTarget = await db.PreLoginLitigationTargets
+            .FirstOrDefaultAsync(t => t.PreLoginReportJobId == id && t.TargetKind == PreLoginTargetKind.Director && t.TargetIndex == targetIndex, ct);
+
+        if (existingTarget != null)
+        {
+            if (existingTarget.Status is "Pending" or "Authenticating" or "Registering" or "Polling" or "Completed")
+                return existingTarget.PreLoginLitigationTargetId;
+
+            existingTarget.Status = "Pending";
+            existingTarget.AttemptCount = 0;
+            existingTarget.FailureReason = null;
+            existingTarget.StatusMessage = "Director litigation search re-initiated.";
+            existingTarget.NextAttemptUtc = null;
+            existingTarget.AttemptVersion++;
+            await db.SaveChangesAsync(ct);
+            targetQueue?.Enqueue(existingTarget.PreLoginLitigationTargetId);
+            return existingTarget.PreLoginLitigationTargetId;
+        }
+
+        var keywords = new List<string> { directorName.Trim() };
+        if (!string.IsNullOrWhiteSpace(dinPan))
+        {
+            keywords.Add(dinPan.Trim());
+        }
+
+        var target = new PreLoginLitigationTarget
+        {
+            PreLoginReportJobId = id,
+            TargetKind = PreLoginTargetKind.Director,
+            TargetIndex = targetIndex,
+            TargetName = directorName.Trim(),
+            EntityType = "individual",
+            ExactMatch = litigationOptions?.Value.ExactMatch ?? true,
+            KeywordsJson = JsonSerializer.Serialize(keywords.Distinct().ToList()),
+            Status = "Pending",
+            CreatedUtc = DateTime.UtcNow,
+            AttemptVersion = 1,
+            StatusMessage = "Director litigation search initiated."
+        };
+
+        db.PreLoginLitigationTargets.Add(target);
+        await db.SaveChangesAsync(ct);
+
+        targetQueue?.Enqueue(target.PreLoginLitigationTargetId);
+        return target.PreLoginLitigationTargetId;
     }
 
     public async Task SingleCaseEditAsync(Guid batch, long id, string caseRowId, SingleCaseEditPayload payload, int submittedDataVersion, CancellationToken ct)

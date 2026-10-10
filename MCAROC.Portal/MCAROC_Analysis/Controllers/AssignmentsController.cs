@@ -79,6 +79,7 @@ public sealed class AssignmentsController(AppDbContext db, PreLoginReportJobServ
         var borrowerName = job.SubmittedCompanyName ?? stored?.Company?.Name ?? assignment?.CompanyDetails?.CompanyName ?? job.Cin;
         var entityType = stored?.Company?.EntityType ?? assignment?.CompanyDetails?.EntityType ?? "Company";
         var borrowerTarget = job.LitigationTargets?.FirstOrDefault(t => t.TargetKind == PreLoginTargetKind.Borrower && t.TargetIndex == 0);
+        var directorTargets = job.LitigationTargets?.Where(t => t.TargetKind == PreLoginTargetKind.Director).ToList() ?? [];
 
         var viewModel = new AssignmentDetailViewModel
         {
@@ -96,10 +97,28 @@ public sealed class AssignmentsController(AppDbContext db, PreLoginReportJobServ
             Assignment = assignment,
             StoredData = stored,
             BorrowerTarget = borrowerTarget,
+            DirectorTargets = directorTargets,
             Cases = stored?.LegalCases?.Cases ?? []
         };
 
         return View(viewModel);
+    }
+
+    [HttpPost("search-director/{batch:guid}/{id:long}")]
+    [ValidateAntiForgeryToken]
+    public async Task<IActionResult> SearchDirector(Guid batch, long id, string directorName, string? dinPan, int targetIndex, CancellationToken ct)
+    {
+        try
+        {
+            await jobs.SearchDirectorAsync(batch, id, directorName, dinPan, targetIndex, ct);
+            TempData["SuccessMessage"] = $"Litigation search initiated for director {directorName}.";
+        }
+        catch (Exception ex)
+        {
+            TempData["ErrorMessage"] = ex.Message;
+        }
+
+        return RedirectToAction(nameof(ViewAssignment), new { batch, id });
     }
 
     [HttpPost("provide-vendor-job-id/{batch:guid}/{id:long}")]

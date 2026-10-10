@@ -15,6 +15,7 @@ public sealed partial class PreLoginLitigationTargetService(
     BprLitigationClient client,
     IOptions<BprLitigationOptions> options,
     PreLoginReportQueue parentQueue,
+    PreLoginLitigationTargetQueue targetQueue,
     ILogger<PreLoginLitigationTargetService> logger)
 {
     private const int LeaseSeconds = 120;
@@ -32,10 +33,11 @@ public sealed partial class PreLoginLitigationTargetService(
         var now = DateTime.UtcNow;
         var leaseToken = Guid.NewGuid();
 
-        // 1. Atomic claim directly from Pending or Polling -> Authenticating
+        // 1. Atomic claim directly from Pending or Polling -> Authenticating (lease expiry check prevents stealing active leases)
         var claimed = await db.PreLoginLitigationTargets
             .Where(t => t.PreLoginLitigationTargetId == targetId
                 && (t.Status == "Pending" || t.Status == "Polling")
+                && (t.LeaseExpiresUtc == null || t.LeaseExpiresUtc <= now)
                 && (t.NextAttemptUtc == null || t.NextAttemptUtc <= now))
             .ExecuteUpdateAsync(s => s
                 .SetProperty(t => t.Status, "Authenticating")
@@ -239,6 +241,43 @@ public sealed partial class PreLoginLitigationTargetService(
                 else
                 {
                     // XLSX or binary formats
+                    if (isUserSupplied)
+                    {
+                        var targetEntity = await db.PreLoginLitigationTargets.AsNoTracking().FirstAsync(t => t.PreLoginLitigationTargetId == targetId, ct);
+                        var targetKeywords = JsonSerializer.Deserialize<List<string>>(targetEntity.KeywordsJson) ?? [targetEntity.TargetName];
+
+                        List<LegalCaseRecord> parsedCases;
+                        try
+                        {
+                            using var ms = new MemoryStream(bytes);
+                            parsedCases = LegalCaseFileParser.Parse(ms, "report.xlsx").ToList();
+                        }
+                        catch
+                        {
+                            parsedCases = [];
+                        }
+
+                        var hasOverlap = parsedCases.Count > 0 && parsedCases.Any(c =>
+                            targetKeywords.Any(tk =>
+                            {
+                                var ntk = NormalizeKeyword(tk);
+                                if (string.IsNullOrEmpty(ntk)) return false;
+                                var np = NormalizeKeyword(c.Petitioner);
+                                var nr = NormalizeKeyword(c.Respondent);
+                                var nd = NormalizeKeyword(c.CaseDetails);
+                                return (np.Length > 0 && (np.Contains(ntk) || ntk.Contains(np)))
+                                    || (nr.Length > 0 && (nr.Contains(ntk) || ntk.Contains(nr)))
+                                    || (nd.Length > 0 && (nd.Contains(ntk) || ntk.Contains(nd)));
+                            }));
+
+                        if (!hasOverlap)
+                        {
+                            await MarkAmbiguousAsync(targetId, leaseToken, parentJobId,
+                                $"User-supplied vendor job ID {vendorJobId} could not be corroborated: XLSX report does not contain matching parties or keywords for '{targetEntity.TargetName}'.", ct);
+                            return;
+                        }
+                    }
+
                     await MarkCompletedAsync(targetId, leaseToken, parentJobId, bytes, format, noLitigation: false, ct);
                     return;
                 }
@@ -332,13 +371,17 @@ public sealed partial class PreLoginLitigationTargetService(
         }
     }
 
-    private static void ScheduleRetry(long targetId, DateTime nextUtc)
+    private void ScheduleRetry(long targetId, DateTime nextUtc)
     {
         var delay = nextUtc - DateTime.UtcNow;
-        if (delay > TimeSpan.Zero)
+        _ = Task.Run(async () =>
         {
-            _ = Task.Delay(delay);
-        }
+            if (delay > TimeSpan.Zero)
+            {
+                await Task.Delay(delay);
+            }
+            targetQueue.Enqueue(targetId);
+        });
     }
 
     public async Task RecoverStaleWorkAsync(CancellationToken ct)

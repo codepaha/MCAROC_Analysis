@@ -193,6 +193,8 @@ public static class BprLitigationReportParser
     public static List<MCAROC_Analysis.Services.PreLoginReports.LegalCaseRecord> ToLegalCaseRecords(this BprLitigationReport report)
     {
         var records = new List<MCAROC_Analysis.Services.PreLoginReports.LegalCaseRecord>();
+        var seenCnrKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
         foreach (var c in report.Cases)
         {
             var category = (c.CourtCategory ?? "other").ToLowerInvariant();
@@ -202,6 +204,20 @@ public static class BprLitigationReportParser
             var caseDetails = (string.IsNullOrWhiteSpace(pet) && string.IsNullOrWhiteSpace(resp))
                 ? "-"
                 : $"{(string.IsNullOrWhiteSpace(pet) ? "Unknown" : pet)} VS {(string.IsNullOrWhiteSpace(resp) ? "Unknown" : resp)}";
+
+            var proceedingType = !string.IsNullOrWhiteSpace(c.CaseType) && c.CaseType != "-" ? c.CaseType : (c.Type ?? "-");
+            var normCnr = MCAROC_Analysis.Services.LitigationData.LitigationCaseIdentity.NormaliseCnr(c.CnrNumber);
+            var normProceeding = MCAROC_Analysis.Services.LitigationData.LitigationCaseIdentity.NormaliseProceedingType(proceedingType);
+
+            // Deduplication: consolidate duplicate observations sharing a valid CNR and proceeding type
+            if (normCnr is not null && normProceeding is not null)
+            {
+                var dedupeKey = $"{normCnr}:{normProceeding}";
+                if (!seenCnrKeys.Add(dedupeKey))
+                {
+                    continue;
+                }
+            }
 
             records.Add(new MCAROC_Analysis.Services.PreLoginReports.LegalCaseRecord(
                 Category: category,
@@ -218,7 +234,7 @@ public static class BprLitigationReportParser
                 CaseDetails: caseDetails,
                 DateOfHearing: c.NextHearingDate ?? c.LastHearingDate ?? "-",
                 Status: c.CaseStatus ?? "-",
-                ProceedingType: c.Type ?? c.CaseType,
+                ProceedingType: proceedingType,
                 Petitioner: string.IsNullOrWhiteSpace(pet) ? null : pet,
                 Respondent: string.IsNullOrWhiteSpace(resp) ? null : resp
             ));

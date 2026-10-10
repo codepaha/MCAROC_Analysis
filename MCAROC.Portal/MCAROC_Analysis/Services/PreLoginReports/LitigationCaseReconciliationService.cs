@@ -33,60 +33,46 @@ public static partial class LitigationCaseReconciliationService
         }
 
         var reconciled = new List<LegalCaseRecord>();
-        var matchedExisting = new HashSet<string>();
 
-        // Build existing lookup structures
-        var existingWithCnr = existingCases
-            .Where(e => !string.IsNullOrWhiteSpace(LitigationCaseIdentity.NormaliseCnr(e.CnrNumber)))
-            .GroupBy(e => LitigationCaseIdentity.NormaliseCnr(e.CnrNumber)!)
-            .ToDictionary(g => g.Key, g => g.ToList());
+        // Precompute compatibility between existing and incoming records
+        var existingToIncoming = new Dictionary<LegalCaseRecord, List<LegalCaseRecord>>();
+        var incomingToExisting = new Dictionary<LegalCaseRecord, List<LegalCaseRecord>>();
 
-        var existingCnrLess = existingCases
-            .Where(e => string.IsNullOrWhiteSpace(LitigationCaseIdentity.NormaliseCnr(e.CnrNumber)))
-            .ToList();
+        foreach (var ext in existingCases) existingToIncoming[ext] = [];
+        foreach (var inc in incoming) incomingToExisting[inc] = [];
+
+        foreach (var ext in existingCases)
+        {
+            foreach (var inc in incoming)
+            {
+                if (AreCompatibleCases(ext, inc))
+                {
+                    existingToIncoming[ext].Add(inc);
+                    incomingToExisting[inc].Add(ext);
+                }
+            }
+        }
+
+        var matchedExistingIds = new HashSet<string>();
 
         foreach (var inc in incoming)
         {
-            var normCnr = LitigationCaseIdentity.NormaliseCnr(inc.CnrNumber);
+            var candidateExisting = incomingToExisting[inc];
             LegalCaseRecord? match = null;
 
-            if (normCnr is not null)
+            // Strictly 1-to-1: Exactly one existing candidate matches, AND that existing candidate matches ONLY this incoming record
+            if (candidateExisting.Count == 1)
             {
-                // CNR-based 1-to-1 match
-                if (existingWithCnr.TryGetValue(normCnr, out var candidates))
+                var candidate = candidateExisting[0];
+                if (existingToIncoming[candidate].Count == 1 && !matchedExistingIds.Contains(candidate.CaseRowId))
                 {
-                    var compatible = candidates.Where(c =>
-                        !matchedExisting.Contains(c.CaseRowId) &&
-                        AreCompatibleProceedingTypes(c.ProceedingType ?? c.CaseType, inc.ProceedingType ?? inc.CaseType)
-                    ).ToList();
-
-                    if (compatible.Count == 1)
-                    {
-                        match = compatible[0];
-                    }
-                }
-            }
-            else
-            {
-                // Strict Non-CNR / Court Proceeding Match (§8 exception to §2.4)
-                if (IsCompleteIdentity(inc))
-                {
-                    var compatible = existingCnrLess.Where(c =>
-                        !matchedExisting.Contains(c.CaseRowId) &&
-                        IsCompleteIdentity(c) &&
-                        IsExactTupleMatch(c, inc)
-                    ).ToList();
-
-                    if (compatible.Count == 1)
-                    {
-                        match = compatible[0];
-                    }
+                    match = candidate;
                 }
             }
 
             if (match is not null)
             {
-                matchedExisting.Add(match.CaseRowId);
+                matchedExistingIds.Add(match.CaseRowId);
 
                 // Preserve existing CaseRowId and analyst state
                 var isConcluded = LitigationCaseStatusClassifier.IsConcluded(match.Status, match.CaseStage);
@@ -122,6 +108,25 @@ public static partial class LitigationCaseReconciliationService
             throw new InvalidDataException($"Duplicate or conflicting CaseRowId detected during reconciliation: {duplicate.Key}");
 
         return LegalCaseFileParser.ToInstaLegalCases(reconciled) with { NextCaseRowIdIndex = nextIndex };
+    }
+
+    private static bool AreCompatibleCases(LegalCaseRecord left, LegalCaseRecord right)
+    {
+        var leftCnr = LitigationCaseIdentity.NormaliseCnr(left.CnrNumber);
+        var rightCnr = LitigationCaseIdentity.NormaliseCnr(right.CnrNumber);
+
+        if (leftCnr != null && rightCnr != null)
+        {
+            return leftCnr == rightCnr &&
+                   AreCompatibleProceedingTypes(left.ProceedingType ?? left.CaseType, right.ProceedingType ?? right.CaseType);
+        }
+
+        if (leftCnr == null && rightCnr == null && IsCompleteIdentity(left) && IsCompleteIdentity(right))
+        {
+            return IsExactTupleMatch(left, right);
+        }
+
+        return false;
     }
 
     private static bool IsCompleteIdentity(LegalCaseRecord r)
