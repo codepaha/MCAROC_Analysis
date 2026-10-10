@@ -1,5 +1,6 @@
 using System.Text;
 using MCAROC_Analysis.Data;
+using MCAROC_Analysis.Services.LitigationData;
 using Microsoft.EntityFrameworkCore;
 
 namespace MCAROC_Analysis.Services.LitigationModule.Normalisation;
@@ -51,7 +52,9 @@ public static class CaseNumberBackfill
         // after the alias table, which is enough for a report and is not identity.
         var groups = parsed
             .Where(p => p.Parts.Completeness == CaseNumberCompleteness.Complete && p.Parts.ConnectedMatters.Count == 0)
-            .GroupBy(p => (p.Row.RequestId, Court: CourtNames.Normalise(p.Row.Court).Canonical.ToUpperInvariant(), p.Parts.Display))
+            .Select(p => (p.Row, p.Parts, Court: CourtNames.Normalise(p.Row.Court).Canonical.ToUpperInvariant()))
+            .Where(p => p.Court.Length > 0)                                                                 // no court evidence: nothing to say they are the same court
+            .GroupBy(p => (p.Row.RequestId, p.Court, p.Parts.Display))
             .Where(g => g.Select(x => x.Row.LitigationCaseId).Distinct().Count() > 1 && !AllShareACnr(g.Select(x => x.Row)))
             .OrderBy(g => g.Key.RequestId).ThenBy(g => g.Key.Display, StringComparer.Ordinal).ThenBy(g => g.Key.Court, StringComparer.Ordinal)
             .Select(g => new CasePossibleDuplicateGroup(g.Key.RequestId, g.Key.Display, g.Select(x => x.Row.LitigationCaseId).OrderBy(i => i).ToList()))
@@ -65,11 +68,13 @@ public static class CaseNumberBackfill
             issues, groups);
     }
 
-    /// <summary>Two rows with different, valid CNRs are different cases even when the numbers read alike (two courts, same number), so they are not suspected.</summary>
+    /// <summary>Two rows with different, valid CNRs are different cases even when the numbers read alike, so they are not suspected. Invalid CNRs are ignored.</summary>
     private static bool AllShareACnr(IEnumerable<CaseBackfillRow> rows)
     {
-        var cnrs = rows.Select(r => r.Cnr).Where(c => !string.IsNullOrWhiteSpace(c)).Select(c => c!.Trim().ToUpperInvariant()).ToList();
-        return cnrs.Count == rows.Count() && cnrs.Distinct().Count() == cnrs.Count;
+        // Only a CNR that validates counts as evidence; a legacy or malformed one proves nothing and must not hide a real candidate.
+        var list = rows.ToList();
+        var cnrs = list.Select(r => LitigationCaseIdentity.NormaliseCnr(r.Cnr)).Where(c => c is not null).ToList();
+        return cnrs.Count == list.Count && cnrs.Distinct().Count() == cnrs.Count;
     }
 
     /// <summary>Reads the stored cases (one request, or all when <paramref name="requestId"/> is null) and analyses them. Writes nothing.</summary>

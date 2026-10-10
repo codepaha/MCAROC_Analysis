@@ -53,6 +53,17 @@ public class CaseNumberBackfillTests : IAsyncLifetime
         Assert.Empty(CaseNumberBackfill.Analyse([Row(1, "413", "OA", "2022", cnr: "MHDR010000012022"), Row(2, "413", "OA", "2022", cnr: "MHDR010000022022")]).PossibleDuplicates);
 
     [Fact]
+    public void Malformed_cnrs_do_not_hide_a_duplicate_candidate() =>
+        Assert.Single(CaseNumberBackfill.Analyse([Row(1, "413", "OA", "2022", cnr: "legacy-1"), Row(2, "413", "OA", "2022", cnr: "legacy-2")]).PossibleDuplicates);
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("NA")]
+    public void Rows_with_no_court_are_not_grouped_as_same_court(string? court) =>
+        Assert.Empty(CaseNumberBackfill.Analyse([Row(1, "413", "OA", "2022", court: court), Row(2, "413", "OA", "2022", court: court)]).PossibleDuplicates);
+
+    [Fact]
     public void Two_spellings_of_one_court_are_still_the_same_court()
     {
         var r = CaseNumberBackfill.Analyse([Row(1, "5", "CRM-M", "2020", court: "PunjabHighCourt"), Row(2, "5", "CRM-M", "2020", court: "High Court of Punjab and Haryana")]);
