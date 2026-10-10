@@ -24,6 +24,12 @@ public sealed class AiPricingOptions
         ["gemini-2.5-flash"] = new() { InputPerMillion = 0.30m, OutputPerMillion = 2.50m },
         ["gemini-2.5-flash-lite"] = new() { InputPerMillion = 0.10m, OutputPerMillion = 0.40m },
         ["gemini-2.5-pro"] = new() { InputPerMillion = 1.25m, OutputPerMillion = 10.00m },
+        // Global-endpoint list prices (text/image/video input); the 3.x models are served from the global location only.
+        ["gemini-3.1-flash-lite"] = new() { InputPerMillion = 0.25m, OutputPerMillion = 1.50m },
+        ["gemini-3.5-flash-lite"] = new() { InputPerMillion = 0.30m, OutputPerMillion = 2.50m },
+        ["gemini-3.5-flash"] = new() { InputPerMillion = 1.50m, OutputPerMillion = 9.00m },
+        // 3.8 Flash: introductory $0.75 / $3.75 through 2026-12-31; this is the standard rate from 2027-01-01.
+        ["gemini-3.8-flash"] = new() { InputPerMillion = 1.50m, OutputPerMillion = 7.50m },
         ["gemini-embedding-001"] = new() { InputPerMillion = 0.15m, OutputPerMillion = 0m },
     };
 }

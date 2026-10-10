@@ -124,6 +124,31 @@ public static class LitigationCaseAnalysisProjection
         ["case_key", "risk", "risk_trigger", "risk_category", "baseline_risk", "relevance", "case_nature", "liability_type", "subject", "summary", "key_points",
          "target_party_role", "legal_exposure_direction", "active_restraint", "restraint_type", "lis_pendens", "amount", "analysis_basis", "unknowns"];
 
+    /// <summary>The portfolio projection plus the verified order quotes (claim, order, quote, page) and the outcome, for the small batches that read
+    /// each case together with the order text it rests on. Quotes are capped so a batch stays a few thousand tokens.</summary>
+    public static string? ForPortfolioBatch(string? analysisJson)
+    {
+        if (string.IsNullOrWhiteSpace(analysisJson)) return analysisJson;
+        try
+        {
+            if (JsonNode.Parse(ForPortfolio(analysisJson) ?? "") is not JsonObject compact) return analysisJson;
+            if (JsonNode.Parse(analysisJson) is JsonObject root)
+            {
+                if (root["evidence"] is JsonArray evidence)
+                    compact["order_quotes"] = new JsonArray(evidence.OfType<JsonObject>().Take(MaxQuotesPerCase).Select(e => (JsonNode)new JsonObject
+                    {
+                        ["claim"] = e["claim"]?.DeepClone(), ["order_id"] = e["order_id"]?.DeepClone(), ["quote"] = e["quote"]?.DeepClone(), ["page"] = e["page"]?.DeepClone()
+                    }).ToArray());
+                if (root["outcome"] is { } outcome) compact["outcome"] = outcome.DeepClone();
+                if (root["consequence_note"] is { } note) compact["consequence_note"] = note.DeepClone();
+            }
+            return compact.ToJsonString(new JsonSerializerOptions { Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping });
+        }
+        catch (JsonException) { return analysisJson; }
+    }
+
+    private const int MaxQuotesPerCase = 6;
+
     public static string? ForPortfolio(string? analysisJson)
     {
         if (string.IsNullOrWhiteSpace(analysisJson)) return analysisJson;
@@ -274,6 +299,13 @@ public static class LitigationCaseAnalysisValidator
     private const int MinQuote = 12, MaxQuote = 500;
 
     public static CaseAnalysisValidation Validate(string rawJson, CaseAnalysisInput input, LitigationRiskTier baseline, string baselineTrigger)
+    {
+        // A reply that repeats a key parses, but reading that key throws ArgumentException; that is a rejected answer, not a crashed run.
+        try { return ValidateCore(rawJson, input, baseline, baselineTrigger); }
+        catch (ArgumentException) { return Rejected(RepeatedFieldReason); }
+    }
+
+    private static CaseAnalysisValidation ValidateCore(string rawJson, CaseAnalysisInput input, LitigationRiskTier baseline, string baselineTrigger)
     {
         JsonObject? root;
         try { root = JsonNode.Parse(PropertyParticularsAi.UnwrapSingleElementArray(rawJson)) as JsonObject; }
@@ -512,6 +544,12 @@ public static class LitigationCaseAnalysisValidator
                 if (x is JsonValue v && v.TryGetValue<string>(out var s) && !string.IsNullOrWhiteSpace(s)) result.Add(s.Trim());
         return result;
     }
+
+    /// <summary>True when the answer was rejected only because it could not be read as the JSON object asked for, so asking again is worthwhile.</summary>
+    public static bool IsMalformed(string? rejectReason) =>
+        rejectReason is not null && (rejectReason.StartsWith("Invalid JSON", StringComparison.Ordinal) || rejectReason == RepeatedFieldReason);
+
+    private const string RepeatedFieldReason = "The answer repeats a field name.";
 
     private static CaseAnalysisValidation Rejected(string reason) => new(false, null, reason, []);
 }

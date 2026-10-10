@@ -22,7 +22,7 @@ public record ExtractionOutcome(
 /// grouping all of its documents' text into a single prompt/call rather than one call per document.</summary>
 public class VertexAiExtractionService
 {
-    public const string ModelId = "gemini-2.5-flash-lite";
+    public const string ModelId = "gemini-3.1-flash-lite";
     public const string PromptVersion = "1.0";
     private const int MaxContextCharsPerDocument = 40_000; // guards prompt size for very large native-text documents
 

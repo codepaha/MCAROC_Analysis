@@ -44,11 +44,7 @@ public sealed class LitigationOrderClassificationTests : IAsyncLifetime
                 Interlocked.Increment(ref ClassificationCalls);
                 return Ok(classify(prompt));
             }
-            if (prompt.Contains("portfolio-level", StringComparison.Ordinal))
-            {
-                var ids = Regex.Matches(prompt, "\"LitigationCaseAiAnalysisId\":(\\d+)").Select(m => m.Groups[1].Value);
-                return Ok($$"""{"status":"Completed","summary":"Portfolio.","unknowns":[],"caseAnalysisIds":[{{string.Join(",", ids)}}]}""");
-            }
+            if (PortfolioAnswers.For(prompt) is { } portfolioAnswer) return Ok(portfolioAnswer);
             if (prompt.StartsWith(LitigationCaseAnalysisPrompt.Marker, StringComparison.Ordinal))
                 return Ok(CaseAnalysisAnswers.For(prompt));
             // Only after "Evidence:" — the prompt's own response-shape example also contains a reference.
@@ -415,11 +411,7 @@ public sealed class LitigationOrderClassificationTests : IAsyncLifetime
                 await Task.Delay(holdMilliseconds, ct);
                 if (prompt.StartsWith(LitigationOrderClassifier.PromptMarker, StringComparison.Ordinal))
                     return await OkResult(classify(prompt));
-                if (prompt.Contains("portfolio-level", StringComparison.Ordinal))
-                {
-                    var ids = Regex.Matches(prompt, "\"LitigationCaseAiAnalysisId\":(\\d+)").Select(m => m.Groups[1].Value);
-                    return await OkResult($$"""{"status":"Completed","summary":"Portfolio.","unknowns":[],"caseAnalysisIds":[{{string.Join(",", ids)}}]}""");
-                }
+                if (PortfolioAnswers.For(prompt) is { } portfolioAnswer) return await OkResult(portfolioAnswer);
                 return await OkResult(CaseAnalysisAnswers.For(prompt));
             }
             finally { Interlocked.Decrement(ref _inFlight); }
@@ -664,5 +656,59 @@ public sealed class LitigationOrderClassificationTests : IAsyncLifetime
         });
         await db.SaveChangesAsync();
         return document.LitigationOrderDocumentId;
+    }
+
+    /// <summary>The AI service answers nothing: every call fails before any reply.</summary>
+    private sealed class DownClient : ILitigationAiAnalysisClient
+    {
+        public int Calls;
+        public Task<LitigationAiCallResult> CallAsync(string prompt, int timeoutSeconds, CancellationToken ct, string? modelId = null)
+        {
+            Interlocked.Increment(ref Calls);
+            return Task.FromResult(new LitigationAiCallResult(false, string.Empty, "503 Service Unavailable"));
+        }
+    }
+
+    [Fact]
+    public async Task A_service_outage_pauses_the_run_and_the_retry_picks_up_what_failed()
+    {
+        var (requestId, _, _) = await SeedRequestWithOrdersAsync();
+        await AddCasesWithOrdersAsync(requestId, 9);   // 10 cases
+        var down = new DownClient();
+        long runId;
+        await using (var db = CreateContext())
+        {
+            var options = new LitigationAiAnalysisOptions { CaseConcurrency = 1, OrderConcurrency = 1, OutageAfterConsecutiveFailures = 3, OutageRetryMinutes = 10 };
+            var orchestrator = new LitigationAiAnalysisOrchestrator(db, down, new LitigationAiAnalysisQueue(), Options.Create(options), NullLogger<LitigationAiAnalysisOrchestrator>.Instance);
+            var run = await orchestrator.CreateOrJoinAsync(requestId, LitigationAiAnalysisTrigger.Manual, null, null, CancellationToken.None);
+            runId = run.LitigationAiAnalysisRunId;
+            await orchestrator.RunAsync(runId, CancellationToken.None);
+        }
+
+        await using (var verify = CreateContext())
+        {
+            var paused = await verify.LitigationAiAnalysisRuns.AsNoTracking().SingleAsync(r => r.LitigationAiAnalysisRunId == runId);
+            // paused to try again later, not failed, and the service was not hammered for every case
+            Assert.Equal(LitigationAiAnalysisRunStatus.Pending, paused.Status);
+            Assert.Contains("stopped answering", paused.FailureReason);
+            Assert.True(paused.NextAttemptUtc > DateTime.UtcNow.AddMinutes(5));
+            Assert.Equal(3, down.Calls);
+            // make the pause elapse
+            await verify.LitigationAiAnalysisRuns.Where(r => r.LitigationAiAnalysisRunId == runId).ExecuteUpdateAsync(s => s.SetProperty(r => r.NextAttemptUtc, (DateTime?)null));
+        }
+
+        var healthy = new ScriptedClient(ClassifyByText);
+        await using (var db = CreateContext())
+        {
+            var orchestrator = Orchestrator(db, healthy);
+            await orchestrator.RunAsync(runId, CancellationToken.None);
+        }
+
+        await using var done = CreateContext();
+        var finished = await done.LitigationAiAnalysisRuns.AsNoTracking().SingleAsync(r => r.LitigationAiAnalysisRunId == runId);
+        Assert.True(finished.Status == LitigationAiAnalysisRunStatus.Completed, "status " + finished.Status + ": " + finished.FailureReason);
+        var cases = await done.LitigationCaseAiAnalyses.AsNoTracking().Where(c => c.LitigationAiAnalysisRunId == runId).ToListAsync();
+        Assert.Equal(10, cases.Count);
+        Assert.All(cases, c => Assert.NotEqual(LitigationAiAnalysisItemStatus.Failed, c.Status));   // the ones that failed during the outage were redone
     }
 }

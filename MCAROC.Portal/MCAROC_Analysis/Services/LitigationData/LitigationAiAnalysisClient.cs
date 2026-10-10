@@ -18,7 +18,7 @@ public interface ILitigationAiAnalysisClient
 
 public sealed class VertexLitigationAiAnalysisClient : ILitigationAiAnalysisClient
 {
-    public const string ModelId = "gemini-2.5-flash-lite";
+    public const string ModelId = "gemini-3.1-flash-lite";
     private const int HttpTimeoutMilliseconds = 1_200_000;
     private readonly GenAiClient _client;
     private readonly ILogger<VertexLitigationAiAnalysisClient> _logger;
@@ -40,8 +40,22 @@ public sealed class VertexLitigationAiAnalysisClient : ILitigationAiAnalysisClie
         : prompt.StartsWith(LitigationCaseAnalysisPrompt.Marker, StringComparison.Ordinal) ? AiUsagePurposes.CaseAnalysis
         : AiUsagePurposes.LitigationPortfolio;
 
+    /// <summary>Waits before a retry of a call that failed for a reason that passes (quota, a busy or briefly unavailable service, a dropped connection).</summary>
+    private static readonly TimeSpan[] TransientRetryDelays = [TimeSpan.FromSeconds(3), TimeSpan.FromSeconds(10), TimeSpan.FromSeconds(30)];
+
+    /// <summary>True for an error worth trying again: rate limits, server errors, overload, timeouts and network faults. Not for a bad request,
+    /// a permission error or a refused prompt, which would fail the same way again.</summary>
+    internal static bool IsTransient(Exception ex)
+    {
+        if (ex is HttpRequestException or IOException or TimeoutException) return true;
+        var message = ex.Message;
+        return new[] { "429", "500", "502", "503", "504", "RESOURCE_EXHAUSTED", "UNAVAILABLE", "INTERNAL", "DEADLINE_EXCEEDED", "overloaded", "try again" }
+            .Any(m => message.Contains(m, StringComparison.OrdinalIgnoreCase));
+    }
+
     public async Task<LitigationAiCallResult> CallAsync(string prompt, int timeoutSeconds, CancellationToken ct, string? modelId = null)
     {
+        for (var attempt = 0; ; attempt++)
         try
         {
             var (_, text, timedOut) = await CalculationAiAuditTimeoutRunner.RunAsync(async innerCt =>
@@ -55,6 +69,13 @@ public sealed class VertexLitigationAiAnalysisClient : ILitigationAiAnalysisClie
             return timedOut
                 ? new(false, string.Empty, $"Vertex AI call timed out after {timeoutSeconds}s.")
                 : new(true, text ?? string.Empty, null);
+        }
+        catch (Exception ex) when (attempt < TransientRetryDelays.Length && IsTransient(ex) && !ct.IsCancellationRequested)
+        {
+            // Jittered, so the parallel calls of a run do not all come back at the same instant.
+            var delay = TransientRetryDelays[attempt] + TimeSpan.FromMilliseconds(Random.Shared.Next(0, 1000));
+            _logger.LogInformation("Litigation Gemini call hit a passing error ({Error}); trying again in {Seconds:0}s", ex.Message, delay.TotalSeconds);
+            await Task.Delay(delay, ct);
         }
         catch (Exception ex)
         {

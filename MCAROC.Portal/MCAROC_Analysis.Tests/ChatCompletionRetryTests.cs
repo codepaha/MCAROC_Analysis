@@ -156,7 +156,7 @@ public class ChatCompletionRetryTests
     {
         Assert.Equal(ChatCompletionService.ModelId, new ScriptedModel().Model);
         // a configured model is recorded with every answer; the constructor that reads it needs credentials, so check the seam directly
-        Assert.Equal("gemini-2.5-flash-lite", ChatCompletionService.ModelId);
+        Assert.Equal("gemini-3.1-flash-lite", ChatCompletionService.ModelId);
     }
 
     [Fact]

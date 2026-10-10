@@ -16,4 +16,5 @@ public static class AiUsagePurposes
     public const string CrossSection = "CrossSectionAnalysis";
     public const string CalculationAudit = "CalculationAudit";
     public const string BorrowerExtraction = "BorrowerExtraction";
+    public const string GroundedSearch = "GroundedSearch";
 }

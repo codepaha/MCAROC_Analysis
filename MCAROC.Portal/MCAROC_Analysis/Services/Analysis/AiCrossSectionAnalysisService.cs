@@ -33,7 +33,7 @@ public record AiSynthesisOutcome(
 /// new numeric fact. One call per AnalysisRun.</summary>
 public partial class AiCrossSectionAnalysisService
 {
-    public const string ModelId = "gemini-2.5-flash-lite";
+    public const string ModelId = "gemini-3.1-flash-lite";
     public const string PromptVersion = "1.0";
     private const int MaxAiCrossSectionFindings = 3;
 
