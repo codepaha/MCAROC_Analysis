@@ -12,12 +12,16 @@ public sealed record LitigationCasePriorityResult(int Score, LitigationAnalysisP
 /// <summary>Ranks cases by what a lender stands to learn from reading their orders, so a company with thousands of cases (a bank, an NBFC)
 /// spends its AI budget where it matters. It is free, deterministic and only used when a company has more cases than
 /// <c>LitigationAiAnalysis:TieringAboveCases</c>; a smaller company has every case read as before.
-/// <para>What counts: the company as respondent, accused or defendant weighs far more than the company as claimant (a bank's own recovery
-/// suits are low priority); a financial act or a fraud / criminal marker adds weight; a disposed case adds a little, because the final
-/// judgment and its outcome are in it. Score = side + act + forum + criminal + disposed; A at 50 or more, B at 30 or more. An insolvency proceeding adds 200, so it is always A and always first.</para></summary>
+/// <para>Tier A is the cases worth a full reading: insolvency always; otherwise a case <b>against</b> the company that also carries something
+/// substantive - a financial or regulatory act, a criminal or fraud proceeding, a tax tribunal, or a disposed case in a superior forum (DRT, NCLT,
+/// High Court, Supreme Court), where the judgment weighs most. A case against the company with only a status or only a forum (a pending High Court
+/// matter, a plain civil case that was disposed) is tier B: its orders are still classified, but it is not read in full. A case the company itself
+/// filed is never above B, whatever the act. Score = side (40 against, 10 by) + act (up to 35, half for the company's own filings) + forum (10, or
+/// 20 for tax tribunals) + criminal (20) + disposed (10, or 5 by the company); A at 60 or more, B at 30 or more. An insolvency proceeding adds 200,
+/// so it is always A and always first.</para></summary>
 public static partial class LitigationCasePriority
 {
-    public const int AThreshold = 50, BThreshold = 30;
+    public const int AThreshold = 60, BThreshold = 30;
     private const int AgainstBase = 40, ByCompanyBase = 10, InsolvencyWeight = 200;
 
     public static LitigationCasePriorityResult Evaluate(LitigationRiskInput c)
@@ -54,13 +58,13 @@ public static partial class LitigationCasePriority
         {
             LitigationForum.Drt or LitigationForum.Drat or LitigationForum.Nclt or LitigationForum.Nclat
                 or LitigationForum.SupremeCourt or LitigationForum.HighCourt => 10,
-            LitigationForum.Itat or LitigationForum.Cestat => 15,
+            LitigationForum.Itat or LitigationForum.Cestat => 20,
             LitigationForum.Consumer => 5,
             _ => 0
         };
         if (forumWeight > 0) { score += forumWeight; reasons.Add($"{forum} (+{forumWeight})"); }
 
-        if (!byCompany && Criminal().IsMatch(text)) { score += 15; reasons.Add("criminal or fraud proceeding (+15)"); }
+        if (!byCompany && Criminal().IsMatch(text)) { score += 20; reasons.Add("criminal or fraud proceeding (+20)"); }
 
         if (c.Status == LitigationCaseStatusBucket.Disposed)
         {

@@ -711,4 +711,38 @@ public sealed class LitigationOrderClassificationTests : IAsyncLifetime
         Assert.Equal(10, cases.Count);
         Assert.All(cases, c => Assert.NotEqual(LitigationAiAnalysisItemStatus.Failed, c.Status));   // the ones that failed during the outage were redone
     }
+
+    private const string AdjournmentOrderText = "The matter is adjourned. List the matter on 12 March 2022 for hearing.";
+
+    private static async Task<int> ClassificationCallsAsync(long requestId, int tieringAboveCases)
+    {
+        var client = new ScriptedClient(ClassifyByText);
+        await using var db = CreateContext();
+        var options = new LitigationAiAnalysisOptions { TieringAboveCases = tieringAboveCases };
+        var orchestrator = new LitigationAiAnalysisOrchestrator(db, client, new LitigationAiAnalysisQueue(), Options.Create(options), NullLogger<LitigationAiAnalysisOrchestrator>.Instance);
+        var run = await orchestrator.CreateOrJoinAsync(requestId, LitigationAiAnalysisTrigger.Manual, null, null, CancellationToken.None);
+        await orchestrator.RunAsync(run.LitigationAiAnalysisRunId, CancellationToken.None);
+        return client.ClassificationCalls;
+    }
+
+    [Fact]
+    public async Task A_company_with_many_cases_has_only_its_judgments_classified_and_a_small_one_has_every_order_classified()
+    {
+        // a small company (not tiered): all three orders are classified, adjournment included
+        var (small, _, smallCase) = await SeedRequestWithOrdersAsync();
+        await using (var db = CreateContext()) await SeedOrderAsync(db, small, smallCase, AdjournmentOrderText);
+        Assert.Equal(3, await ClassificationCallsAsync(small, tieringAboveCases: 1000));
+
+        // the same orders for a company above the tiering threshold: the adjournment is skipped
+        var (large, _, largeCase) = await SeedRequestWithOrdersAsync();
+        await using (var db = CreateContext()) await SeedOrderAsync(db, large, largeCase, AdjournmentOrderText);
+        Assert.Equal(2, await ClassificationCallsAsync(large, tieringAboveCases: 0));
+
+        // and a skipped order does not keep the run alive: nothing is left to do
+        await using var verify = CreateContext();
+        var client = new ScriptedClient(ClassifyByText);
+        var options = new LitigationAiAnalysisOptions { TieringAboveCases = 0 };
+        var orchestrator = new LitigationAiAnalysisOrchestrator(verify, client, new LitigationAiAnalysisQueue(), Options.Create(options), NullLogger<LitigationAiAnalysisOrchestrator>.Instance);
+        Assert.False(await orchestrator.NeedsAnalysisAsync(large, CancellationToken.None));
+    }
 }
