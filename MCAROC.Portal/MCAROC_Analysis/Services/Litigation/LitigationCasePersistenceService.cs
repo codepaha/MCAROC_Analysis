@@ -337,34 +337,37 @@ public sealed class LitigationCasePersistenceService(
             string.Equals(left?.Trim() ?? "", right?.Trim() ?? "", StringComparison.OrdinalIgnoreCase);
     }
 
-    private static void ApplyFields(LitigationCase litigationCase, LitigationCaseIdentityEvidence identity, BprLitigationCase item, DateTime now, bool keepProviderCaseId = false)
+    /// <summary>Applies one vendor observation to a case. The vendor's newer real values replace the held ones, as always; a field the vendor
+    /// leaves <b>missing</b> (null, empty, a placeholder such as NA, an empty list) never erases a value the case already holds - it may have
+    /// been filled by an earlier report or another source (<see cref="CaseValue"/>).</summary>
+    private static void ApplyFields(LitigationCase litigationCase, LitigationCaseIdentityEvidence identity, BprLitigationCase item, DateTime now, bool keepProviderCaseId)
     {
         if (!keepProviderCaseId) litigationCase.ProviderCaseId = item.ProviderCaseId ?? litigationCase.ProviderCaseId;
-        litigationCase.CspId = item.CspId;
-        litigationCase.Cnr = identity.Cnr;
-        litigationCase.ProceedingType = identity.ProceedingType;
-        litigationCase.CourtCategory = item.CourtCategory;
-        litigationCase.Direction = item.Direction;
-        litigationCase.CaseClassification = item.CaseClassification;
-        litigationCase.Type = item.Type;
-        litigationCase.Court = item.Court;
-        litigationCase.Bench = item.Bench;
-        litigationCase.CaseNumber = item.CaseNumber;
-        litigationCase.CaseType = item.CaseType;
-        litigationCase.CaseYear = item.CaseYear;
-        litigationCase.CaseStage = item.CaseStage;
-        litigationCase.CaseStatus = item.CaseStatus;
-        litigationCase.Act = item.Act;
-        litigationCase.FilingDate = item.FilingDate;
-        litigationCase.LastHearingDate = item.LastHearingDate;
-        litigationCase.NextHearingDate = item.NextHearingDate;
-        litigationCase.DecisionDate = item.DecisionDate;
-        litigationCase.State = item.State;
-        litigationCase.District = item.District;
-        litigationCase.PetitionersJson = item.PetitionersJson;
-        litigationCase.RespondentsJson = item.RespondentsJson;
-        litigationCase.PetitionerAdvocatesJson = item.PetitionerAdvocatesJson;
-        litigationCase.RespondentAdvocatesJson = item.RespondentAdvocatesJson;
+        litigationCase.CspId = CaseValue.Merge(litigationCase.CspId, item.CspId);
+        litigationCase.Cnr = CaseValue.Merge(litigationCase.Cnr, identity.Cnr);
+        litigationCase.ProceedingType = CaseValue.Merge(litigationCase.ProceedingType, identity.ProceedingType);
+        litigationCase.CourtCategory = CaseValue.Merge(litigationCase.CourtCategory, item.CourtCategory);
+        litigationCase.Direction = CaseValue.Merge(litigationCase.Direction, item.Direction);
+        litigationCase.CaseClassification = CaseValue.Merge(litigationCase.CaseClassification, item.CaseClassification);
+        litigationCase.Type = CaseValue.Merge(litigationCase.Type, item.Type);
+        litigationCase.Court = CaseValue.Merge(litigationCase.Court, item.Court);
+        litigationCase.Bench = CaseValue.Merge(litigationCase.Bench, item.Bench);
+        litigationCase.CaseNumber = CaseValue.Merge(litigationCase.CaseNumber, item.CaseNumber);
+        litigationCase.CaseType = CaseValue.Merge(litigationCase.CaseType, item.CaseType);
+        litigationCase.CaseYear = CaseValue.Merge(litigationCase.CaseYear, item.CaseYear);
+        litigationCase.CaseStage = CaseValue.Merge(litigationCase.CaseStage, item.CaseStage);
+        litigationCase.CaseStatus = CaseValue.Merge(litigationCase.CaseStatus, item.CaseStatus);
+        litigationCase.Act = CaseValue.Merge(litigationCase.Act, item.Act);
+        litigationCase.FilingDate = CaseValue.Merge(litigationCase.FilingDate, item.FilingDate);
+        litigationCase.LastHearingDate = CaseValue.Merge(litigationCase.LastHearingDate, item.LastHearingDate);
+        litigationCase.NextHearingDate = CaseValue.Merge(litigationCase.NextHearingDate, item.NextHearingDate);
+        litigationCase.DecisionDate = CaseValue.Merge(litigationCase.DecisionDate, item.DecisionDate);
+        litigationCase.State = CaseValue.Merge(litigationCase.State, item.State);
+        litigationCase.District = CaseValue.Merge(litigationCase.District, item.District);
+        litigationCase.PetitionersJson = CaseValue.Merge(litigationCase.PetitionersJson, item.PetitionersJson);
+        litigationCase.RespondentsJson = CaseValue.Merge(litigationCase.RespondentsJson, item.RespondentsJson);
+        litigationCase.PetitionerAdvocatesJson = CaseValue.Merge(litigationCase.PetitionerAdvocatesJson, item.PetitionerAdvocatesJson);
+        litigationCase.RespondentAdvocatesJson = CaseValue.Merge(litigationCase.RespondentAdvocatesJson, item.RespondentAdvocatesJson);
         litigationCase.LastSeenUtc = now;
     }
 
