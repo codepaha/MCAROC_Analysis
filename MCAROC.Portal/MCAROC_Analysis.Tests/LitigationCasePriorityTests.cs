@@ -46,10 +46,31 @@ public class LitigationCasePriorityTests
     }
 
     [Fact]
-    public void A_disposed_case_against_the_company_is_read_in_full_because_the_judgment_is_in_it()
+    public void A_disposed_case_against_the_company_in_a_superior_forum_is_read_in_full_because_the_judgment_weighs_most()
     {
-        var disposed = Rate(caseType: "Civil suit", status: LitigationCaseStatusBucket.Disposed);
-        Assert.Equal(LitigationAnalysisPriority.A, disposed.Priority);
+        Assert.Equal(LitigationAnalysisPriority.A, Rate(type: "highcourt", caseType: "Civil suit", status: LitigationCaseStatusBucket.Disposed).Priority);
+        Assert.Equal(LitigationAnalysisPriority.A, Rate(type: "drt", status: LitigationCaseStatusBucket.Disposed).Priority);
+    }
+
+    [Fact]
+    public void A_plain_civil_case_against_the_company_is_tier_B_even_when_disposed_and_so_is_a_pending_High_Court_matter()
+    {
+        Assert.Equal(LitigationAnalysisPriority.B, Rate(caseType: "Civil suit", status: LitigationCaseStatusBucket.Disposed).Priority);
+        Assert.Equal(LitigationAnalysisPriority.B, Rate(type: "highcourt", caseType: "Civil suit").Priority);
+    }
+
+    [Fact]
+    public void A_pending_case_with_a_financial_act_or_a_fraud_charge_is_tier_A()
+    {
+        Assert.Equal(LitigationAnalysisPriority.A, Rate(act: "Arbitration and Conciliation Act", type: "highcourt").Priority);
+        Assert.Equal(LitigationAnalysisPriority.A, Rate(caseType: "Criminal complaint - cheating", type: "district").Priority);
+    }
+
+    [Fact]
+    public void A_case_the_company_filed_is_never_above_B_whatever_the_act()
+    {
+        var best = Rate(act: "SARFAESI Act", type: "drt", side: LitigationCompanySide.ByCompany, status: LitigationCaseStatusBucket.Disposed);
+        Assert.Equal(LitigationAnalysisPriority.B, best.Priority);
     }
 
     [Theory]

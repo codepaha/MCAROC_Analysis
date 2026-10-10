@@ -1,3 +1,4 @@
+using MCAROC_Analysis.Models;
 using System.Diagnostics;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -166,5 +167,38 @@ public class LitigationModelComparisonHarness
         lines.AddRange(rows.Where(r => r.P.Priority == LitigationAnalysisPriority.B).GroupBy(r => r.P.Reasons).OrderByDescending(g => g.Count()).Take(8).Select(g => $"{g.Count()} x {g.Key}"));
         System.IO.File.WriteAllLines(outPath, lines);
         Assert.NotEmpty(rows);
+    }
+
+    /// <summary>Dev-only, no model calls: how many of a request's order documents the judgment filter keeps. Set MCAROC_JUDGMENT_OUT to run.</summary>
+    [Fact]
+    public async Task Show_judgment_split()
+    {
+        var outPath = Env("MCAROC_JUDGMENT_OUT");
+        if (outPath is null) return;
+        var requestId = long.Parse(Env("MCAROC_COMPARE_REQUEST") ?? "4");
+        var conn = Env("MCAROC_COMPARE_CONN") ?? "Server=.\\SQLEXPRESS;Database=MCAROC_Analysis;Trusted_Connection=True;TrustServerCertificate=True;";
+        await using var db = new AppDbContext(new DbContextOptionsBuilder<AppDbContext>().UseSqlServer(conn).Options);
+        var chunks = await db.LitigationOrderChunks.AsNoTracking().Where(c => c.RequestId == requestId).ToListAsync();
+        var cases = await db.LitigationCases.AsNoTracking().Where(c => c.RequestId == requestId).ToListAsync();
+        var status = cases.ToDictionary(c => c.LitigationCaseId, c => LitigationCaseStatusClassifier.Classify(c.CaseStatus, c.CaseStage));
+        var judgments = LitigationJudgmentFilter.JudgmentDocumentIds(chunks, status);
+        var docs = chunks.GroupBy(c => c.LitigationOrderDocumentId).ToList();
+        var lines = new List<string> { $"documents={docs.Count} judgments={judgments.Count} ({100 * judgments.Count / Math.Max(1, docs.Count)}%)" };
+        foreach (var g in docs.GroupBy(d => d.First().OrderType ?? "(null)").OrderByDescending(g => g.Count()))
+            lines.Add($"type '{g.Key}': {g.Count()} docs, {g.Count(d => judgments.Contains(d.Key))} judgments");
+        string Head(IGrouping<long, LitigationOrderChunk> d)
+        {
+            var ordered = d.OrderBy(c => c.PageNumber).ThenBy(c => c.ChunkIndex).ToList();
+            var body = LitigationJudgmentFilter.Body(ordered[0].ChunkText);
+            var tail = LitigationJudgmentFilter.Body(ordered[^1].ChunkText);
+            var s = new string(body.Take(110).ToArray()) + " ... " + new string(tail.Skip(Math.Max(0, tail.Length - 150)).ToArray());
+            return s.Replace('\n', ' ').Replace('\r', ' ');
+        }
+        lines.Add("-- sample KEPT --");
+        lines.AddRange(docs.Where(d => judgments.Contains(d.Key)).Take(8).Select(Head));
+        lines.Add("-- sample SKIPPED --");
+        lines.AddRange(docs.Where(d => !judgments.Contains(d.Key)).Take(8).Select(Head));
+        System.IO.File.WriteAllLines(outPath, lines);
+        Assert.NotEmpty(docs);
     }
 }

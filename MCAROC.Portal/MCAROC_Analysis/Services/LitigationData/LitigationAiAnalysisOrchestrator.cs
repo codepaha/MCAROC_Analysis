@@ -104,7 +104,7 @@ public sealed class LitigationAiAnalysisOrchestrator(AppDbContext db, ILitigatio
                 // Saved as soon as it exists: a crash, restart or lost lease keeps everything already paid for, and a retried run skips what is present.
                 await PublishCasesAsync(runId, token, [item.Row], token2);
             });
-            await ClassifyOrdersAsync(runId, token, requestId, chunks, ct);
+            await ClassifyOrdersAsync(runId, token, requestId, ClassifiableChunks(cases, chunks), ct);
             var persisted = await db.LitigationCaseAiAnalyses.Where(x => x.LitigationAiAnalysisRunId == runId).OrderBy(x => x.LitigationCaseAiAnalysisId).ToListAsync(ct);
             if (!await db.LitigationPortfolioAiAnalyses.AnyAsync(x => x.LitigationAiAnalysisRunId == runId, ct))
             {
@@ -158,7 +158,7 @@ public sealed class LitigationAiAnalysisOrchestrator(AppDbContext db, ILitigatio
         // An order with retained text but no outcome classification for its current evidence (e.g. analysed
         // before #195's classification existed) is also work a run would do — never report "up to date" over it.
         var priorClassifications = await LoadPriorClassificationsAsync(requestId, 0, ct);
-        foreach (var document in chunks.GroupBy(x => x.LitigationOrderDocumentId))
+        foreach (var document in ClassifiableChunks(cases, chunks).GroupBy(x => x.LitigationOrderDocumentId))
         {
             var (hash, promptHash) = LitigationOrderClassifier.Hashes(LitigationOrderClassifier.BuildEvidence(document.ToList()));
             if (!(priorClassifications.GetValueOrDefault(document.Key)?.Any(p => p.EvidenceHash == hash && p.PromptHash == promptHash) ?? false)) return true;
@@ -452,6 +452,17 @@ public sealed class LitigationAiAnalysisOrchestrator(AppDbContext db, ILitigatio
         }
         finally { _dbGate.Release(); }
     }
+    /// <summary>The order chunks to classify. Every order for a company at or below <c>TieringAboveCases</c>; above it, only the judgments
+    /// (<see cref="LitigationJudgmentFilter"/>) - the orders where the outcome is - since classifying every adjournment of thousands of cases
+    /// would take hours for labels nobody reads. The same set decides whether a run still has work, so skipped orders never keep a run alive.</summary>
+    internal List<LitigationOrderChunk> ClassifiableChunks(IReadOnlyList<LitigationCase> cases, List<LitigationOrderChunk> chunks)
+    {
+        if (cases.Count <= options.Value.TieringAboveCases) return chunks;
+        var status = cases.ToDictionary(c => c.LitigationCaseId, c => LitigationCaseStatusClassifier.Classify(c.CaseStatus, c.CaseStage));
+        var judgments = LitigationJudgmentFilter.JudgmentDocumentIds(chunks, status);
+        return chunks.Where(c => judgments.Contains(c.LitigationOrderDocumentId)).ToList();
+    }
+
     /// <summary>The cases to read in full. Every case up to <c>TieringAboveCases</c>; beyond that, the tier-A cases by score (insolvency first),
     /// at most <c>MaxAiCases</c>. The same choice is used to decide whether a run still has work, so cases left unread never keep a run alive.</summary>
     internal IReadOnlyList<LitigationCase> SelectForAnalysis(IReadOnlyList<LitigationCase> cases, AnalysisContext context)
