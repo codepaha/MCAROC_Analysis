@@ -76,18 +76,32 @@ public static partial class LitigationCaseReconciliationService
 
                 // Preserve existing CaseRowId and analyst state
                 var isConcluded = LitigationCaseStatusClassifier.IsConcluded(match.Status, match.CaseStage);
-                var mergedStatus = isConcluded ? match.Status : inc.Status;
-                var mergedStage = isConcluded ? match.CaseStage : inc.CaseStage;
+                var mergedStatus = isConcluded ? match.Status : MergeField(match.Status, inc.Status);
+                var mergedStage = isConcluded ? match.CaseStage : MergeField(match.CaseStage, inc.CaseStage);
 
-                reconciled.Add(inc with
-                {
-                    CaseRowId = match.CaseRowId,
-                    Status = mergedStatus,
-                    CaseStage = mergedStage,
-                    IsExcludedFromReport = match.IsExcludedFromReport,
-                    ExclusionReason = match.ExclusionReason,
-                    AnalystNote = match.AnalystNote
-                });
+                reconciled.Add(new LegalCaseRecord(
+                    Category: MergeField(match.Category, inc.Category),
+                    Court: MergeField(match.Court, inc.Court),
+                    CnrNumber: MergeField(match.CnrNumber, inc.CnrNumber),
+                    CaseNo: MergeField(match.CaseNo, inc.CaseNo),
+                    CaseType: MergeField(match.CaseType, inc.CaseType),
+                    CaseYear: MergeField(match.CaseYear, inc.CaseYear),
+                    CaseStage: mergedStage,
+                    Act: MergeField(match.Act, inc.Act),
+                    DateOfFiling: MergeField(match.DateOfFiling, inc.DateOfFiling),
+                    State: MergeField(match.State, inc.State),
+                    District: MergeField(match.District, inc.District),
+                    CaseDetails: MergeField(match.CaseDetails, inc.CaseDetails),
+                    DateOfHearing: MergeField(match.DateOfHearing, inc.DateOfHearing),
+                    Status: mergedStatus,
+                    CaseRowId: match.CaseRowId,
+                    ProceedingType: MergeField(match.ProceedingType, inc.ProceedingType),
+                    Petitioner: MergeField(match.Petitioner, inc.Petitioner),
+                    Respondent: MergeField(match.Respondent, inc.Respondent),
+                    IsExcludedFromReport: match.IsExcludedFromReport,
+                    ExclusionReason: match.ExclusionReason,
+                    AnalystNote: match.AnalystNote
+                ));
             }
             else
             {
@@ -102,12 +116,45 @@ public static partial class LitigationCaseReconciliationService
             }
         }
 
+        // Retain unmatched existing records and label them as absent from latest feed
+        foreach (var ext in existingCases)
+        {
+            if (!matchedExistingIds.Contains(ext.CaseRowId))
+            {
+                var label = "(not in latest feed)";
+                var note = string.IsNullOrWhiteSpace(ext.AnalystNote)
+                    ? label
+                    : ext.AnalystNote.Contains(label, StringComparison.OrdinalIgnoreCase)
+                        ? ext.AnalystNote
+                        : $"{ext.AnalystNote} {label}";
+
+                reconciled.Add(ext with
+                {
+                    AnalystNote = note
+                });
+            }
+        }
+
         // Check for duplicate CaseRowIds in reconciled output
         var duplicate = reconciled.GroupBy(r => r.CaseRowId).FirstOrDefault(g => g.Count() > 1);
         if (duplicate is not null)
             throw new InvalidDataException($"Duplicate or conflicting CaseRowId detected during reconciliation: {duplicate.Key}");
 
         return LegalCaseFileParser.ToInstaLegalCases(reconciled) with { NextCaseRowIdIndex = nextIndex };
+    }
+
+    private static string MergeField(string? held, string? incoming)
+    {
+        if (LitigationCaseIdentity.IsMissing(incoming))
+            return held ?? string.Empty;
+        return incoming!;
+    }
+
+    private static string? MergeField(string? held, string? incoming, bool nullable)
+    {
+        if (LitigationCaseIdentity.IsMissing(incoming))
+            return held;
+        return incoming;
     }
 
     private static bool AreCompatibleCases(LegalCaseRecord left, LegalCaseRecord right)
@@ -156,12 +203,8 @@ public static partial class LitigationCaseReconciliationService
         return normLeft is not null && normRight is not null && string.Equals(normLeft, normRight, StringComparison.OrdinalIgnoreCase);
     }
 
-    private static bool IsPlaceholder(string? value)
-    {
-        if (string.IsNullOrWhiteSpace(value)) return true;
-        var trimmed = value.Trim();
-        return trimmed is "-" or "." or "NA" or "NIL" or "NULL" or "DUMMY" or "TEST" or "Not Found";
-    }
+    private static bool IsPlaceholder(string? value) =>
+        LitigationCaseIdentity.IsMissing(value);
 
     private static string NormalizeText(string? value)
     {

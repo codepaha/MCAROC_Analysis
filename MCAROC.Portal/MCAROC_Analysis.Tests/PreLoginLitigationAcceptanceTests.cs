@@ -901,5 +901,100 @@ public partial class PreLoginLitigationAcceptanceTests : IAsyncLifetime
 
     [System.Text.RegularExpressions.GeneratedRegex(@"\s+")]
     private static partial System.Text.RegularExpressions.Regex WhitespaceRegex();
+
+    [Fact]
+    public void T40_ReconcileCases_MatchedCaseDoesNotLoseHeldValuesWhenIncomingHasBlanks()
+    {
+        var existingRecord = new LegalCaseRecord(
+            Category: "highcourt",
+            Court: "High Court of Delhi",
+            CnrNumber: "DLHC010000012022",
+            CaseNo: "1234/2022",
+            CaseType: "WP",
+            CaseYear: "2022",
+            CaseStage: "Final Hearing",
+            Act: "Companies Act",
+            DateOfFiling: "2022-01-15",
+            State: "Delhi",
+            District: "New Delhi",
+            CaseDetails: "Petitioner VS Respondent",
+            DateOfHearing: "2026-12-01",
+            Status: "Pending",
+            CaseRowId: "C-1",
+            ProceedingType: "WP",
+            Petitioner: "Petitioner Corp",
+            Respondent: "Respondent Ltd",
+            IsExcludedFromReport: false,
+            ExclusionReason: null,
+            AnalystNote: "Verified by analyst"
+        );
+
+        var existingCases = LegalCaseFileParser.ToInstaLegalCases([existingRecord]);
+
+        // Incoming vendor record with blank/placeholder fields for filing date, state, district, hearing date, act
+        var incomingRecord = new LegalCaseRecord(
+            Category: "highcourt",
+            Court: "High Court of Delhi",
+            CnrNumber: "DLHC010000012022",
+            CaseNo: "1234/2022",
+            CaseType: "WP",
+            CaseYear: "2022",
+            CaseStage: "Hearing",
+            Act: "-",
+            DateOfFiling: "",
+            State: "NA",
+            District: "-",
+            CaseDetails: "Petitioner VS Respondent",
+            DateOfHearing: "-",
+            Status: "Pending",
+            ProceedingType: "WP",
+            Petitioner: null,
+            Respondent: null
+        );
+
+        var reconciled = LitigationCaseReconciliationService.ReconcileCases(existingCases, [incomingRecord]);
+        var resultCase = Assert.Single(reconciled.Cases);
+
+        Assert.Equal("C-1", resultCase.CaseRowId);
+        // Held values must NOT be erased by blanks or placeholders:
+        Assert.Equal("Companies Act", resultCase.Act);
+        Assert.Equal("2022-01-15", resultCase.DateOfFiling);
+        Assert.Equal("Delhi", resultCase.State);
+        Assert.Equal("New Delhi", resultCase.District);
+        Assert.Equal("2026-12-01", resultCase.DateOfHearing);
+        Assert.Equal("Petitioner Corp", resultCase.Petitioner);
+        Assert.Equal("Respondent Ltd", resultCase.Respondent);
+        Assert.Equal("Verified by analyst", resultCase.AnalystNote);
+        // Real incoming values (stage) are merged:
+        Assert.Equal("Hearing", resultCase.CaseStage);
+    }
+
+    [Fact]
+    public void T41_ReconcileCases_RetainsUnmatchedExistingCasesWithAbsentLabel()
+    {
+        var existingCases = LegalCaseFileParser.ToInstaLegalCases([
+            new("highcourt", "High Court of Delhi", "DLHC010000012022", "1234/2022", "WP", "2022", "Hearing", "CPC", "2022-01-01", "Delhi", "New Delhi", "Details 1", "-", "Pending", CaseRowId: "C-1", ProceedingType: "WP", AnalystNote: "Note 1"),
+            new("district", "District Court", "DLCT010000022022", "5678/2022", "CS", "2022", "Hearing", "CPC", "2022-01-01", "Delhi", "Central", "Details 2", "-", "Pending", CaseRowId: "C-2", ProceedingType: "CS", IsExcludedFromReport: true, ExclusionReason: "Settled", AnalystNote: "Note 2")
+        ]);
+
+        // Incoming report contains only a match for C-1, completely omitting C-2
+        var incoming = new List<LegalCaseRecord>
+        {
+            new("highcourt", "High Court of Delhi", "DLHC010000012022", "1234/2022", "WP", "2022", "Arguments", "CPC", "2022-01-01", "Delhi", "New Delhi", "Details 1", "-", "Pending", ProceedingType: "WP")
+        };
+
+        var reconciled = LitigationCaseReconciliationService.ReconcileCases(existingCases, incoming);
+        Assert.Equal(2, reconciled.Cases.Count);
+
+        var c1 = reconciled.Cases.First(c => c.CaseRowId == "C-1");
+        Assert.Equal("Arguments", c1.CaseStage);
+        Assert.Equal("Note 1", c1.AnalystNote);
+
+        var c2 = reconciled.Cases.First(c => c.CaseRowId == "C-2");
+        Assert.Equal("C-2", c2.CaseRowId);
+        Assert.True(c2.IsExcludedFromReport);
+        Assert.Equal("Settled", c2.ExclusionReason);
+        Assert.Contains("(not in latest feed)", c2.AnalystNote);
+    }
 }
 
