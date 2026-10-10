@@ -15,7 +15,7 @@ using Xunit;
 
 namespace MCAROC_Analysis.Tests;
 
-public class PreLoginLitigationAcceptanceTests : IAsyncLifetime
+public partial class PreLoginLitigationAcceptanceTests : IAsyncLifetime
 {
     private sealed class TestEnvironment : IWebHostEnvironment
     {
@@ -719,5 +719,186 @@ public class PreLoginLitigationAcceptanceTests : IAsyncLifetime
         Assert.Equal("Pending", target.Status);
         Assert.Equal("individual", target.EntityType);
     }
+
+    [Fact]
+    public async Task T36_DirectorResults_IncludedInReconciliationAndReport()
+    {
+        var company = new InstaCompany("ACME LOGISTICS LIMITED", "-", "U74899DL1991PTC043274", "Company", "-", "-", "-", "-", "-", "-",
+            "ADDRESS", "-", "-", "-", "-", "-");
+        var reportData = new InstaReportData(company, [], []);
+        var (jobId, _) = await SeedJobAsync(PreLoginReportJobStatus.AwaitingLitigation, JsonSerializer.Serialize(reportData), mcaFetched: DateTime.UtcNow);
+
+        var bprJsonBorrower = """
+        {
+            "status": "success",
+            "request_details": { "job_id": "JOB-B", "report_date": "2026-10-10", "keywords": ["ACME LOGISTICS LIMITED"] },
+            "high_court": {
+                "by": {
+                    "live": [
+                        { "cnr_number": "DLHC010000012022", "case_no": "100/2022", "case_type": "WP", "case_year": "2022", "court": "Delhi HC", "case_status": "Pending", "case_stage": "Hearing" }
+                    ]
+                }
+            }
+        }
+        """;
+        var bprJsonDirector = """
+        {
+            "status": "success",
+            "request_details": { "job_id": "JOB-D", "report_date": "2026-10-10", "keywords": ["JOHN DOE"] },
+            "district_court": {
+                "by": {
+                    "live": [
+                        { "cnr_number": "DLDL010000022022", "case_no": "200/2022", "case_type": "CS", "case_year": "2022", "court": "Tis Hazari", "case_status": "Pending", "case_stage": "Hearing" }
+                    ]
+                }
+            }
+        }
+        """;
+
+        await SeedTargetAsync(jobId, "Completed", vendorJobId: "JOB-B", version: 1);
+        await using (var dbInit = CreateContext())
+        {
+            var bTarget = await dbInit.PreLoginLitigationTargets.FirstAsync(t => t.PreLoginReportJobId == jobId);
+            bTarget.ReportFormat = "Json";
+            bTarget.RawReportBytes = System.Text.Encoding.UTF8.GetBytes(bprJsonBorrower);
+            bTarget.NoLitigationFound = false;
+
+            var dTarget = new PreLoginLitigationTarget
+            {
+                PreLoginReportJobId = jobId,
+                TargetKind = PreLoginTargetKind.Director,
+                TargetIndex = 1,
+                TargetName = "JOHN DOE",
+                EntityType = "individual",
+                KeywordsJson = "[\"JOHN DOE\"]",
+                Status = "Completed",
+                VendorJobId = "JOB-D",
+                ReportFormat = "Json",
+                RawReportBytes = System.Text.Encoding.UTF8.GetBytes(bprJsonDirector),
+                NoLitigationFound = false,
+                AttemptVersion = 1,
+                CreatedUtc = DateTime.UtcNow
+            };
+            dbInit.PreLoginLitigationTargets.Add(dTarget);
+            await dbInit.SaveChangesAsync();
+        }
+
+        await using var db = CreateContext();
+        var jobService = CreateJobService(db);
+        await jobService.ProcessAsync(jobId, CancellationToken.None);
+
+        await using var dbCheck = CreateContext();
+        var completedJob = await dbCheck.PreLoginReportJobs.FindAsync(jobId);
+        Assert.NotNull(completedJob);
+        Assert.Equal(PreLoginReportJobStatus.Completed, completedJob.Status);
+
+        var data = PreLoginReportJobService.DeserializeStoredData(completedJob.DataJson);
+        Assert.NotNull(data?.LegalCases);
+        Assert.Equal(2, data.LegalCases.Cases.Count);
+        Assert.Contains(data.LegalCases.Cases, c => c.CnrNumber == "DLHC010000012022");
+        Assert.Contains(data.LegalCases.Cases, c => c.CnrNumber == "DLDL010000022022");
+    }
+
+    [Fact]
+    public async Task T37_DirectorSearch_KeywordsAreNameOnly()
+    {
+        var (jobId, batchId) = await SeedJobAsync(PreLoginReportJobStatus.AwaitingLitigation, "{}");
+
+        await using var db = CreateContext();
+        var jobService = CreateJobService(db);
+        var targetId = await jobService.SearchDirectorAsync(batchId, jobId, "Jane Smith", "DIN09876543", 0, CancellationToken.None);
+
+        var target = await db.PreLoginLitigationTargets.FindAsync(targetId);
+        Assert.NotNull(target);
+        var keywords = JsonSerializer.Deserialize<List<string>>(target.KeywordsJson);
+        Assert.NotNull(keywords);
+        Assert.Single(keywords);
+        Assert.Equal("Jane Smith", keywords[0]);
+        Assert.DoesNotContain("DIN09876543", target.KeywordsJson);
+    }
+
+    [Fact]
+    public async Task T38_DirectorRetry_ClearsExpiredDeadlineAndRejectsAmbiguous()
+    {
+        var (jobId, batchId) = await SeedJobAsync(PreLoginReportJobStatus.AwaitingReview, "{}");
+
+        // 1. Ambiguous registration rejection
+        await using (var dbInit = CreateContext())
+        {
+            var target = new PreLoginLitigationTarget
+            {
+                PreLoginReportJobId = jobId,
+                TargetKind = PreLoginTargetKind.Director,
+                TargetIndex = 0,
+                TargetName = "Director Ambiguous",
+                EntityType = "individual",
+                KeywordsJson = "[\"Director Ambiguous\"]",
+                Status = "AmbiguousRegistration",
+                AttemptVersion = 1,
+                CreatedUtc = DateTime.UtcNow
+            };
+            dbInit.PreLoginLitigationTargets.Add(target);
+            await dbInit.SaveChangesAsync();
+        }
+
+        await using var dbAmb = CreateContext();
+        var jobService = CreateJobService(dbAmb);
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            jobService.SearchDirectorAsync(batchId, jobId, "Director Ambiguous", null, 0, CancellationToken.None));
+
+        // 2. Failed target retry cleans expired deadline and enqueues
+        await using (var dbFail = CreateContext())
+        {
+            var target = await dbFail.PreLoginLitigationTargets.FirstAsync(t => t.PreLoginReportJobId == jobId);
+            target.Status = "Failed";
+            target.VendorJobId = "VEN-OLD";
+            target.PollingDeadlineUtc = DateTime.UtcNow.AddMinutes(-10);
+            target.AttemptCount = 3;
+            target.LeaseToken = Guid.NewGuid();
+            target.LeaseExpiresUtc = DateTime.UtcNow.AddMinutes(-5);
+            target.LeaseOwner = "DeadWorker";
+            await dbFail.SaveChangesAsync();
+        }
+
+        await using var dbRetry = CreateContext();
+        var targetQueue = new PreLoginLitigationTargetQueue();
+        var jobServiceRetry = CreateJobService(dbRetry, targetQueue: targetQueue);
+        var retriedId = await jobServiceRetry.SearchDirectorAsync(batchId, jobId, "Director Ambiguous", null, 0, CancellationToken.None);
+
+        await using var dbCheck = CreateContext();
+        var cleanTarget = await dbCheck.PreLoginLitigationTargets.FindAsync(retriedId);
+        Assert.NotNull(cleanTarget);
+        Assert.Equal("Pending", cleanTarget.Status);
+        Assert.Null(cleanTarget.VendorJobId);
+        Assert.Null(cleanTarget.PollingDeadlineUtc);
+        Assert.Null(cleanTarget.LeaseToken);
+        Assert.Null(cleanTarget.LeaseExpiresUtc);
+        Assert.Null(cleanTarget.LeaseOwner);
+        Assert.Equal(0, cleanTarget.AttemptCount);
+        Assert.Equal(2, cleanTarget.AttemptVersion);
+
+        var parentJob = await dbCheck.PreLoginReportJobs.FindAsync(jobId);
+        Assert.Equal(PreLoginReportJobStatus.AwaitingLitigation, parentJob!.Status);
+    }
+
+    [Fact]
+    public void T39_TargetCorroboration_RejectsSubstringMatches()
+    {
+        var targetKeyword = "ACME LOGISTICS LIMITED";
+        var unrelatedKeyword = "ACME LOGISTICS LIMITED EMPLOYEES COOPERATIVE SOCIETY";
+
+        // PreLoginLitigationTargetService corroboration logic:
+        // Must reject substring entity
+        var targetNorm = WhitespaceRegex().Replace(targetKeyword.Trim(), " ").ToUpperInvariant();
+        targetNorm = System.Text.RegularExpressions.Regex.Replace(targetNorm, @"\bLIMITED\b", "LTD");
+
+        var reportNorm = WhitespaceRegex().Replace(unrelatedKeyword.Trim(), " ").ToUpperInvariant();
+        reportNorm = System.Text.RegularExpressions.Regex.Replace(reportNorm, @"\bLIMITED\b", "LTD");
+
+        Assert.NotEqual(targetNorm, reportNorm);
+    }
+
+    [System.Text.RegularExpressions.GeneratedRegex(@"\s+")]
+    private static partial System.Text.RegularExpressions.Regex WhitespaceRegex();
 }
 

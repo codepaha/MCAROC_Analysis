@@ -76,7 +76,7 @@
                             <tr>
                                 <td>
                                     <span class="font-monospace fw-bold text-dark">@item.Identifier</span>
-                                    <div class="small text-muted">@item.CreatedUtc.ToString("dd MMM yyyy, HH:mm") UTC</div>
+                                    <div class="small text-muted">@Ist.Format(item.CreatedUtc, "dd MMM yyyy, HH:mm")</div>
                                 </td>
                                 <td>
                                     <div class="fw-semibold text-dark">@item.BorrowerName</div>

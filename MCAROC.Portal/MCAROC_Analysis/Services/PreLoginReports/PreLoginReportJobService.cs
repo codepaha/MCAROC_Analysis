@@ -490,7 +490,13 @@ public sealed class PreLoginReportJobService(
             }
 
             // 5. COMPLETION & GENERATION
-            if (borrowerTarget.Status is "Pending" or "Authenticating" or "Registering" or "Polling")
+            var allTargets = await db.PreLoginLitigationTargets
+                .Where(t => t.PreLoginReportJobId == job.PreLoginReportJobId)
+                .OrderBy(t => t.TargetKind)
+                .ThenBy(t => t.TargetIndex)
+                .ToListAsync(cancellationToken);
+
+            if (allTargets.Any(t => t.Status is "Pending" or "Authenticating" or "Registering" or "Polling"))
             {
                 if (job.Status != PreLoginReportJobStatus.AwaitingLitigation)
                 {
@@ -501,56 +507,53 @@ public sealed class PreLoginReportJobService(
                 return;
             }
 
-            if (borrowerTarget.Status == "AmbiguousRegistration")
+            var ambiguousTarget = allTargets.FirstOrDefault(t => t.Status == "AmbiguousRegistration");
+            if (ambiguousTarget != null)
             {
                 job.Status = PreLoginReportJobStatus.AwaitingReview;
                 job.ProgressPercent = 50;
-                job.FailureReason = borrowerTarget.FailureReason ?? "Litigation search requires manual reconciliation (Ambiguous Registration).";
+                job.FailureReason = ambiguousTarget.FailureReason ?? $"Litigation search for {ambiguousTarget.TargetName} requires manual reconciliation (Ambiguous Registration).";
                 await db.SaveChangesAsync(cancellationToken);
                 return;
             }
 
-            if (borrowerTarget.Status == "Failed")
+            var failedTarget = allTargets.FirstOrDefault(t => t.Status == "Failed");
+            if (failedTarget != null)
             {
                 job.Status = PreLoginReportJobStatus.AwaitingReview;
                 job.ProgressPercent = 50;
-                job.FailureReason = borrowerTarget.FailureReason ?? "Litigation search failed.";
+                job.FailureReason = failedTarget.FailureReason ?? $"Litigation search for {failedTarget.TargetName} failed.";
                 await db.SaveChangesAsync(cancellationToken);
                 return;
             }
 
-            if (borrowerTarget.Status == "Completed")
+            // All targets are Completed: collect incoming cases from all completed targets
+            var allIncomingCases = new List<LegalCaseRecord>();
+            foreach (var t in allTargets.Where(t => t.Status == "Completed"))
             {
-                InstaLegalCases reconciledLegalCases;
-                if (borrowerTarget.NoLitigationFound == true)
+                if (t.NoLitigationFound == true || t.RawReportBytes is null or { Length: 0 })
+                    continue;
+
+                if (string.Equals(t.ReportFormat, "Json", StringComparison.OrdinalIgnoreCase))
                 {
-                    reconciledLegalCases = new InstaLegalCases(0, 0, 0, 0, 0, 0, 0, 0, 0, []);
-                }
-                else if (borrowerTarget.RawReportBytes is { Length: > 0 })
-                {
-                    if (string.Equals(borrowerTarget.ReportFormat, "Json", StringComparison.OrdinalIgnoreCase))
-                    {
-                        var json = System.Text.Encoding.UTF8.GetString(borrowerTarget.RawReportBytes);
-                        var bprReport = BprLitigationReportParser.Parse(json);
-                        var incoming = bprReport.ToLegalCaseRecords();
-                        reconciledLegalCases = LitigationCaseReconciliationService.ReconcileCases(stored?.LegalCases, incoming);
-                    }
-                    else
-                    {
-                        using var ms = new MemoryStream(borrowerTarget.RawReportBytes);
-                        var incoming = LegalCaseFileParser.Parse(ms, "report.xlsx");
-                        reconciledLegalCases = LitigationCaseReconciliationService.ReconcileCases(stored?.LegalCases, incoming);
-                    }
+                    var json = System.Text.Encoding.UTF8.GetString(t.RawReportBytes);
+                    var bprReport = BprLitigationReportParser.Parse(json);
+                    allIncomingCases.AddRange(bprReport.ToLegalCaseRecords());
                 }
                 else
                 {
-                    reconciledLegalCases = stored?.LegalCases ?? new InstaLegalCases(0, 0, 0, 0, 0, 0, 0, 0, 0, []);
+                    using var ms = new MemoryStream(t.RawReportBytes);
+                    var incoming = LegalCaseFileParser.Parse(ms, "report.xlsx");
+                    allIncomingCases.AddRange(incoming);
                 }
+            }
 
-                var updatedData = (stored ?? new InstaReportData(new InstaCompany(job.SubmittedCompanyName ?? job.Cin, "-", job.Cin, "Company", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-"), [], []))
-                    with { LegalCases = reconciledLegalCases };
+            var reconciledLegalCases = LitigationCaseReconciliationService.ReconcileCases(stored?.LegalCases, allIncomingCases);
 
-                var updatedJson = JsonSerializer.Serialize(updatedData);
+            var updatedData = (stored ?? new InstaReportData(new InstaCompany(job.SubmittedCompanyName ?? job.Cin, "-", job.Cin, "Company", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-"), [], []))
+                with { LegalCases = reconciledLegalCases };
+
+            var updatedJson = JsonSerializer.Serialize(updatedData);
 
                 // Atomic write enforcing DataVersion increment on tracked entity (T29):
                 job.DataJson = updatedJson;
@@ -567,7 +570,6 @@ public sealed class PreLoginReportJobService(
                 job.CompletedUtc = DateTime.UtcNow;
                 job.FailureReason = null;
                 await db.SaveChangesAsync(cancellationToken);
-            }
         }
         catch (DbUpdateConcurrencyException)
         {
@@ -912,48 +914,69 @@ public sealed class PreLoginReportJobService(
         var existingTarget = await db.PreLoginLitigationTargets
             .FirstOrDefaultAsync(t => t.PreLoginReportJobId == id && t.TargetKind == PreLoginTargetKind.Director && t.TargetIndex == targetIndex, ct);
 
+        long targetId;
         if (existingTarget != null)
         {
+            if (existingTarget.Status == "AmbiguousRegistration")
+                throw new InvalidOperationException("Director litigation search requires guarded reconciliation (Ambiguous Registration).");
+
             if (existingTarget.Status is "Pending" or "Authenticating" or "Registering" or "Polling" or "Completed")
                 return existingTarget.PreLoginLitigationTargetId;
 
+            // Clean reset of Failed target:
             existingTarget.Status = "Pending";
+            existingTarget.VendorJobId = null;
+            existingTarget.IsUserSuppliedVendorJobId = false;
+            existingTarget.RegistrationAttemptedUtc = null;
+            existingTarget.RegisteredUtc = null;
+            existingTarget.PollingDeadlineUtc = null;
+            existingTarget.LeaseToken = null;
+            existingTarget.LeaseExpiresUtc = null;
+            existingTarget.LeaseOwner = null;
             existingTarget.AttemptCount = 0;
+            existingTarget.NextAttemptUtc = null;
+            existingTarget.ProgressPercent = 0;
             existingTarget.FailureReason = null;
             existingTarget.StatusMessage = "Director litigation search re-initiated.";
-            existingTarget.NextAttemptUtc = null;
             existingTarget.AttemptVersion++;
             await db.SaveChangesAsync(ct);
-            targetQueue?.Enqueue(existingTarget.PreLoginLitigationTargetId);
-            return existingTarget.PreLoginLitigationTargetId;
+            targetId = existingTarget.PreLoginLitigationTargetId;
+        }
+        else
+        {
+            // Name-only keywords per design requirement:
+            var keywords = new List<string> { directorName.Trim() };
+
+            var target = new PreLoginLitigationTarget
+            {
+                PreLoginReportJobId = id,
+                TargetKind = PreLoginTargetKind.Director,
+                TargetIndex = targetIndex,
+                TargetName = directorName.Trim(),
+                EntityType = "individual",
+                ExactMatch = litigationOptions?.Value.ExactMatch ?? true,
+                KeywordsJson = JsonSerializer.Serialize(keywords),
+                Status = "Pending",
+                CreatedUtc = DateTime.UtcNow,
+                AttemptVersion = 1,
+                StatusMessage = "Director litigation search initiated."
+            };
+
+            db.PreLoginLitigationTargets.Add(target);
+            await db.SaveChangesAsync(ct);
+            targetId = target.PreLoginLitigationTargetId;
         }
 
-        var keywords = new List<string> { directorName.Trim() };
-        if (!string.IsNullOrWhiteSpace(dinPan))
-        {
-            keywords.Add(dinPan.Trim());
-        }
+        // Reopen parent job to AwaitingLitigation
+        await db.PreLoginReportJobs.Where(j => j.PreLoginReportJobId == id)
+            .ExecuteUpdateAsync(s => s
+                .SetProperty(j => j.Status, PreLoginReportJobStatus.AwaitingLitigation)
+                .SetProperty(j => j.FailureReason, (string?)null)
+                .SetProperty(j => j.ProgressPercent, 40), ct);
 
-        var target = new PreLoginLitigationTarget
-        {
-            PreLoginReportJobId = id,
-            TargetKind = PreLoginTargetKind.Director,
-            TargetIndex = targetIndex,
-            TargetName = directorName.Trim(),
-            EntityType = "individual",
-            ExactMatch = litigationOptions?.Value.ExactMatch ?? true,
-            KeywordsJson = JsonSerializer.Serialize(keywords.Distinct().ToList()),
-            Status = "Pending",
-            CreatedUtc = DateTime.UtcNow,
-            AttemptVersion = 1,
-            StatusMessage = "Director litigation search initiated."
-        };
-
-        db.PreLoginLitigationTargets.Add(target);
-        await db.SaveChangesAsync(ct);
-
-        targetQueue?.Enqueue(target.PreLoginLitigationTargetId);
-        return target.PreLoginLitigationTargetId;
+        targetQueue?.Enqueue(targetId);
+        queue.Enqueue(id);
+        return targetId;
     }
 
     public async Task SingleCaseEditAsync(Guid batch, long id, string caseRowId, SingleCaseEditPayload payload, int submittedDataVersion, CancellationToken ct)

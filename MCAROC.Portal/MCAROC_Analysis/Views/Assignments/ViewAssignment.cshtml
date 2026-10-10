@@ -261,7 +261,7 @@
                                     </div>
                                     <div class="col-6">
                                         <label class="text-muted small">Polling Deadline</label>
-                                        <div class="small">@(target.PollingDeadlineUtc?.ToString("dd MMM HH:mm:ss") ?? "(Not active)")</div>
+                                        <div class="small">@(target.PollingDeadlineUtc.HasValue ? Ist.Format(target.PollingDeadlineUtc.Value, "dd MMM HH:mm:ss") : "(Not active)")</div>
                                     </div>
                                 </div>
 

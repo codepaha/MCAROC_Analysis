@@ -219,12 +219,7 @@ public sealed partial class PreLoginLitigationTargetService(
                         var targetKeywords = JsonSerializer.Deserialize<List<string>>(targetEntity.KeywordsJson) ?? [targetEntity.TargetName];
 
                         var hasOverlap = parsedReport.Request.Keywords.Count > 0 && parsedReport.Request.Keywords.Any(k =>
-                            targetKeywords.Any(tk =>
-                            {
-                                var ntk = NormalizeKeyword(tk);
-                                var nk = NormalizeKeyword(k);
-                                return ntk == nk || (ntk.Length > 0 && nk.Contains(ntk)) || (nk.Length > 0 && ntk.Contains(nk));
-                            }));
+                            targetKeywords.Any(tk => AreCorroboratingKeywords(k, tk)));
 
                         if (!hasOverlap)
                         {
@@ -259,16 +254,9 @@ public sealed partial class PreLoginLitigationTargetService(
 
                         var hasOverlap = parsedCases.Count > 0 && parsedCases.Any(c =>
                             targetKeywords.Any(tk =>
-                            {
-                                var ntk = NormalizeKeyword(tk);
-                                if (string.IsNullOrEmpty(ntk)) return false;
-                                var np = NormalizeKeyword(c.Petitioner);
-                                var nr = NormalizeKeyword(c.Respondent);
-                                var nd = NormalizeKeyword(c.CaseDetails);
-                                return (np.Length > 0 && (np.Contains(ntk) || ntk.Contains(np)))
-                                    || (nr.Length > 0 && (nr.Contains(ntk) || ntk.Contains(nr)))
-                                    || (nd.Length > 0 && (nd.Contains(ntk) || ntk.Contains(nd)));
-                            }));
+                                PartyCorroboratesTarget(c.Petitioner, tk)
+                                || PartyCorroboratesTarget(c.Respondent, tk)
+                                || PartyCorroboratesTarget(c.CaseDetails, tk)));
 
                         if (!hasOverlap)
                         {
@@ -285,8 +273,44 @@ public sealed partial class PreLoginLitigationTargetService(
         }
     }
 
-    private static string NormalizeKeyword(string? kw) =>
-        string.IsNullOrWhiteSpace(kw) ? string.Empty : Whitespace().Replace(kw.Trim(), " ").ToLowerInvariant();
+    private static string NormalizeCorroborationName(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return string.Empty;
+        var norm = Whitespace().Replace(text.Trim(), " ").ToUpperInvariant();
+        norm = Regex.Replace(norm, @"\b(M/S|MS)\b\.?", " ");
+        norm = Regex.Replace(norm, @"\bLIMITED\b", "LTD");
+        norm = Regex.Replace(norm, @"\bPRIVATE\b", "PVT");
+        norm = Regex.Replace(norm, @"\bCORPORATION\b", "CORP");
+        norm = Regex.Replace(norm, @"\bCOMPANY\b", "CO");
+        norm = Regex.Replace(norm, @"[^A-Z0-9 ]", " ");
+        return Whitespace().Replace(norm.Trim(), " ");
+    }
+
+    private static bool AreCorroboratingKeywords(string reportKeyword, string targetKeyword)
+    {
+        var nrk = NormalizeCorroborationName(reportKeyword);
+        var ntk = NormalizeCorroborationName(targetKeyword);
+        if (string.IsNullOrEmpty(nrk) || string.IsNullOrEmpty(ntk)) return false;
+        return string.Equals(nrk, ntk, StringComparison.Ordinal);
+    }
+
+    private static bool PartyCorroboratesTarget(string? partyText, string targetKeyword)
+    {
+        if (string.IsNullOrWhiteSpace(partyText)) return false;
+        var ntk = NormalizeCorroborationName(targetKeyword);
+        if (string.IsNullOrEmpty(ntk)) return false;
+
+        var tokens = Regex.Split(partyText, @"(?i)[,;\r\n]+|\bAND\s+ORS\b|\b&\s*ORS\b|\bET\s+AL\b");
+        foreach (var token in tokens)
+        {
+            var nToken = NormalizeCorroborationName(token);
+            if (string.Equals(nToken, ntk, StringComparison.Ordinal))
+            {
+                return true;
+            }
+        }
+        return false;
+    }
 
     private async Task MarkCompletedAsync(
         long targetId, Guid leaseToken, long parentJobId, byte[] reportBytes, string reportFormat, bool noLitigation, CancellationToken ct)
@@ -359,7 +383,7 @@ public sealed partial class PreLoginLitigationTargetService(
                 .ExecuteUpdateAsync(s => s
                     .SetProperty(t => t.Status, "Pending")
                     .SetProperty(t => t.NextAttemptUtc, next)
-                    .SetProperty(t => t.StatusMessage, $"Transient failure: {message}. Retrying at {next:u}.")
+                    .SetProperty(t => t.StatusMessage, $"Transient failure: {message}. Retrying shortly.")
                     .SetProperty(t => t.LeaseToken, (Guid?)null)
                     .SetProperty(t => t.LeaseExpiresUtc, (DateTime?)null), ct);
 
