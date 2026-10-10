@@ -6415,6 +6415,177 @@ namespace MCAROC_Analysis.Migrations
                     b.ToTable("UnlockApprovals");
                 });
 
+            modelBuilder.Entity("MCAROC_Analysis.Services.LitigationModule.Store.ModuleCase", b =>
+                {
+                    b.Property<long>("CaseId")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("CaseId"));
+
+                    b.Property<string>("CaseKey")
+                        .HasMaxLength(256)
+                        .HasColumnType("nvarchar(256)");
+
+                    b.Property<DateTime>("CreatedUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("LegacyCaseRowId")
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<long?>("LegacyJobId")
+                        .HasColumnType("bigint");
+
+                    b.Property<long?>("LegacyLitigationCaseId")
+                        .HasColumnType("bigint");
+
+                    b.HasKey("CaseId");
+
+                    b.HasIndex("CaseKey");
+
+                    b.HasIndex("LegacyLitigationCaseId")
+                        .IsUnique()
+                        .HasFilter("[LegacyLitigationCaseId] IS NOT NULL");
+
+                    b.HasIndex("LegacyJobId", "LegacyCaseRowId")
+                        .IsUnique()
+                        .HasFilter("[LegacyJobId] IS NOT NULL AND [LegacyCaseRowId] IS NOT NULL");
+
+                    b.ToTable("Cases", "litigation");
+                });
+
+            modelBuilder.Entity("MCAROC_Analysis.Services.LitigationModule.Store.ModuleScope", b =>
+                {
+                    b.Property<long>("ScopeId")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("ScopeId"));
+
+                    b.Property<DateTime>("CreatedUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<long>("ExternalId")
+                        .HasColumnType("bigint");
+
+                    b.Property<int>("Kind")
+                        .HasColumnType("int");
+
+                    b.Property<int>("NextAliasIndex")
+                        .IsConcurrencyToken()
+                        .HasColumnType("int");
+
+                    b.Property<long>("SubjectId")
+                        .HasColumnType("bigint");
+
+                    b.Property<long>("Version")
+                        .IsConcurrencyToken()
+                        .HasColumnType("bigint");
+
+                    b.HasKey("ScopeId");
+
+                    b.HasIndex("SubjectId");
+
+                    b.HasIndex("Kind", "ExternalId")
+                        .IsUnique();
+
+                    b.ToTable("Scopes", "litigation");
+                });
+
+            modelBuilder.Entity("MCAROC_Analysis.Services.LitigationModule.Store.ModuleScopeCase", b =>
+                {
+                    b.Property<long>("ScopeCaseId")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("ScopeCaseId"));
+
+                    b.Property<string>("Alias")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<int>("AliasIndex")
+                        .HasColumnType("int");
+
+                    b.Property<string>("AnalystNote")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<long>("CaseId")
+                        .HasColumnType("bigint");
+
+                    b.Property<DateTime>("CreatedUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("ExclusionReason")
+                        .HasMaxLength(1000)
+                        .HasColumnType("nvarchar(1000)");
+
+                    b.Property<DateTime?>("FeedLastSeenUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<bool>("IncludedInReport")
+                        .HasColumnType("bit");
+
+                    b.Property<bool>("IsExcluded")
+                        .HasColumnType("bit");
+
+                    b.Property<bool>("IsHidden")
+                        .HasColumnType("bit");
+
+                    b.Property<string>("PinnedFieldsJson")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("RedirectAliasesJson")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<long>("ScopeId")
+                        .HasColumnType("bigint");
+
+                    b.Property<DateTime?>("UpdatedUtc")
+                        .HasColumnType("datetime2");
+
+                    b.HasKey("ScopeCaseId");
+
+                    b.HasIndex("CaseId");
+
+                    b.HasIndex("ScopeId", "Alias")
+                        .IsUnique();
+
+                    b.HasIndex("ScopeId", "CaseId")
+                        .IsUnique();
+
+                    b.ToTable("ScopeCases", "litigation");
+                });
+
+            modelBuilder.Entity("MCAROC_Analysis.Services.LitigationModule.Store.ModuleSubject", b =>
+                {
+                    b.Property<long>("SubjectId")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("SubjectId"));
+
+                    b.Property<DateTime>("CreatedUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("IdentifiersJson")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<int>("Kind")
+                        .HasColumnType("int");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(512)
+                        .HasColumnType("nvarchar(512)");
+
+                    b.HasKey("SubjectId");
+
+                    b.ToTable("Subjects", "litigation");
+                });
+
             modelBuilder.Entity("MCAROC_Analysis.Data.Entities.AnalysisFinding", b =>
                 {
                     b.HasOne("MCAROC_Analysis.Data.Entities.AnalysisRun", null)
@@ -7003,6 +7174,36 @@ namespace MCAROC_Analysis.Migrations
                         .IsRequired();
 
                     b.Navigation("RocCharge");
+                });
+
+            modelBuilder.Entity("MCAROC_Analysis.Services.LitigationModule.Store.ModuleScope", b =>
+                {
+                    b.HasOne("MCAROC_Analysis.Services.LitigationModule.Store.ModuleSubject", "Subject")
+                        .WithMany()
+                        .HasForeignKey("SubjectId")
+                        .OnDelete(DeleteBehavior.NoAction)
+                        .IsRequired();
+
+                    b.Navigation("Subject");
+                });
+
+            modelBuilder.Entity("MCAROC_Analysis.Services.LitigationModule.Store.ModuleScopeCase", b =>
+                {
+                    b.HasOne("MCAROC_Analysis.Services.LitigationModule.Store.ModuleCase", "Case")
+                        .WithMany()
+                        .HasForeignKey("CaseId")
+                        .OnDelete(DeleteBehavior.NoAction)
+                        .IsRequired();
+
+                    b.HasOne("MCAROC_Analysis.Services.LitigationModule.Store.ModuleScope", "Scope")
+                        .WithMany()
+                        .HasForeignKey("ScopeId")
+                        .OnDelete(DeleteBehavior.NoAction)
+                        .IsRequired();
+
+                    b.Navigation("Case");
+
+                    b.Navigation("Scope");
                 });
 
             modelBuilder.Entity("MCAROC_Analysis.Data.Entities.AnalysisRun", b =>
