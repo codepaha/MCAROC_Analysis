@@ -4136,3 +4136,13 @@ new cap, not 4; `BytesDownloaded` asserted `<=` the cap, never `>`). â†’ **
 
 - Resolved P1 review blocker on `82f8973`: in `SingleCaseEditAsync` and `BatchUpdateCasesAsync`, reports are published directly to a unique versioned path (`{jobId}-v{nextVersion}-{generated.FileName}`) prior to the guarded database pointer and DataVersion update. If concurrency conflict occurs (`affected == 0`), the new versioned file is cleaned up and transaction rolled back. Old report file is cleaned up best-effort post-commit.
 - Verified: both `Review430_Active_download_does_not_leave_successful_edit_with_stale_report` probes (`bulk=false` and `bulk=true`) pass with active read locks on the previous report file; all 32 `PreLoginLitigationAcceptanceTests` and 21 `PreLoginReportJobServiceTests` pass.
+
+### 2026-10-10 - Codex PR #430 re-review
+
+- `2ac59e7`: changes required. Previous active-download and normal publication probes pass. Current single/bulk concurrent edit probes fail: same expected version yields the same filename, so the losing conditional update deletes the winning edit's published DOCX. Use a per-attempt unique filename and only clean that attempt's file on conflict.
+- 133 checks passed; 2 deterministic concurrency probes failed. Evidence: `tmp/pr430-review-2ac59e7-summary.md` and linked TRX. No merge or product source edits.
+
+### 2026-10-10 - Codex PR #430 per-attempt publication fix
+
+- Resolved P1 review blocker on `2ac59e7`: in `SingleCaseEditAsync` and `BatchUpdateCasesAsync`, publications now include a unique per-attempt identifier (`attemptId = Guid.NewGuid().ToString("N")`) in the filename: `{job.PreLoginReportJobId}-v{nextVersion}-{attemptId}-{generated.FileName}`. If a losing concurrent edit encounters a DataVersion mismatch (`affected == 0`), it deletes only its own attempt's publication file, leaving the winning attempt's published DOCX intact.
+- Verified: all four publication probes (`Review430_Active_download...` and `Review430_Losing_concurrent_edit...` for both bulk=false and bulk=true) pass; all 32 `PreLoginLitigationAcceptanceTests` pass.

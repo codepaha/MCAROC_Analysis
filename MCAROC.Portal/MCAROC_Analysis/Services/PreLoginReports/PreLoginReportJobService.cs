@@ -1082,7 +1082,8 @@ public sealed class PreLoginReportJobService(
             var directory = Path.Combine(environment.ContentRootPath, "App_Data", "PreLoginReports");
             Directory.CreateDirectory(directory);
             var nextVersion = submittedDataVersion + 1;
-            var versionedFileName = $"{job.PreLoginReportJobId}-v{nextVersion}-{generated.FileName}";
+            var attemptId = Guid.NewGuid().ToString("N");
+            var versionedFileName = $"{job.PreLoginReportJobId}-v{nextVersion}-{attemptId}-{generated.FileName}";
             newReportPath = Path.Combine(directory, versionedFileName);
             await File.WriteAllBytesAsync(newReportPath, generated.Bytes, ct);
         }
@@ -1183,7 +1184,8 @@ public sealed class PreLoginReportJobService(
             var directory = Path.Combine(environment.ContentRootPath, "App_Data", "PreLoginReports");
             Directory.CreateDirectory(directory);
             var nextVersion = payload.SubmittedDataVersion + 1;
-            var versionedFileName = $"{job.PreLoginReportJobId}-v{nextVersion}-{generated.FileName}";
+            var attemptId = Guid.NewGuid().ToString("N");
+            var versionedFileName = $"{job.PreLoginReportJobId}-v{nextVersion}-{attemptId}-{generated.FileName}";
             newReportPath = Path.Combine(directory, versionedFileName);
             await File.WriteAllBytesAsync(newReportPath, generated.Bytes, ct);
         }
