@@ -69,6 +69,8 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<CompanyOfficer> CompanyOfficers => Set<CompanyOfficer>();
     public DbSet<CompanyEmail> CompanyEmails => Set<CompanyEmail>();
     public DbSet<PreLoginReportJob> PreLoginReportJobs => Set<PreLoginReportJob>();
+    public DbSet<PreLoginLitigationTarget> PreLoginLitigationTargets => Set<PreLoginLitigationTarget>();
+    public DbSet<PreLoginLitigationReconciliationEvent> PreLoginLitigationReconciliationEvents => Set<PreLoginLitigationReconciliationEvent>();
     public DbSet<AutoFetchJob> AutoFetchJobs => Set<AutoFetchJob>();
 
     // Pipeline automation (epic #262)
@@ -153,6 +155,39 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             e.Property(x => x.Format).HasMaxLength(10);
             e.Property(x => x.Status).HasConversion<string>().HasMaxLength(30);
             e.Property(x => x.Cin).HasMaxLength(30);
+            e.Property(x => x.DataVersion).IsConcurrencyToken();
+            e.HasMany(x => x.LitigationTargets)
+                .WithOne(t => t.PreLoginReportJob)
+                .HasForeignKey(t => t.PreLoginReportJobId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<PreLoginLitigationTarget>(e =>
+        {
+            e.HasKey(x => x.PreLoginLitigationTargetId);
+            e.HasIndex(x => new { x.PreLoginReportJobId, x.TargetKind, x.TargetIndex }).IsUnique();
+            e.HasIndex(x => new { x.Status, x.NextAttemptUtc });
+            e.HasIndex(x => x.VendorJobId);
+            e.Property(x => x.TargetKind).HasConversion<string>().HasMaxLength(20);
+            e.Property(x => x.Status).HasMaxLength(30);
+            e.Property(x => x.TargetName).HasMaxLength(300);
+            e.Property(x => x.EntityType).HasMaxLength(30);
+            e.Property(x => x.AttemptVersion).IsConcurrencyToken();
+            e.HasMany(x => x.ReconciliationEvents)
+                .WithOne(r => r.Target)
+                .HasForeignKey(r => r.PreLoginLitigationTargetId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<PreLoginLitigationReconciliationEvent>(e =>
+        {
+            e.HasKey(x => x.PreLoginLitigationReconciliationEventId);
+            e.HasIndex(x => new { x.PreLoginLitigationTargetId, x.TimestampUtc });
+            e.Property(x => x.Action).HasMaxLength(50);
+            e.Property(x => x.Actor).HasMaxLength(100);
+            e.Property(x => x.PreviousStatus).HasMaxLength(30);
+            e.Property(x => x.PreviousVendorJobId).HasMaxLength(100);
+            e.Property(x => x.SuppliedVendorJobId).HasMaxLength(100);
         });
 
         modelBuilder.Entity<AutoFetchJob>(e =>

@@ -9,6 +9,70 @@ namespace MCAROC_Analysis.Services.LitigationData;
 /// </summary>
 public static class BprLitigationReportParser
 {
+    public static BprEnvelopeValidationResult ValidateEnvelope(string json, string expectedVendorJobId)
+    {
+        using var document = JsonDocument.Parse(json);
+        if (document.RootElement.ValueKind != JsonValueKind.Object)
+            return BprEnvelopeValidationResult.MalformedRoot;
+
+        var root = document.RootElement;
+        if (!root.TryGetProperty("request_details", out var requestDetails) || requestDetails.ValueKind != JsonValueKind.Object)
+            return BprEnvelopeValidationResult.MissingRequestDetails;
+
+        if (!requestDetails.TryGetProperty("job_id", out var jobIdProp) || jobIdProp.GetString() != expectedVendorJobId)
+            return BprEnvelopeValidationResult.JobIdMismatch;
+
+        if (!requestDetails.TryGetProperty("report_date", out var reportDateProp) || string.IsNullOrWhiteSpace(reportDateProp.GetString()))
+            return BprEnvelopeValidationResult.MissingReportDate;
+
+        foreach (var property in root.EnumerateObject())
+        {
+            if (property.NameEquals("request_details")) continue;
+            if (IsCourtCategory(property.Name))
+            {
+                if (!ValidateCourtNode(property.Value))
+                    return BprEnvelopeValidationResult.MalformedCourtSection;
+            }
+        }
+
+        var cases = new List<BprLitigationCase>();
+        Visit(root, [], cases);
+
+        return cases.Count == 0 ? BprEnvelopeValidationResult.NoLitigation : BprEnvelopeValidationResult.ValidWithCases;
+    }
+
+    public static bool ValidateCourtNode(JsonElement node)
+    {
+        switch (node.ValueKind)
+        {
+            case JsonValueKind.Object:
+                if (IsCase(node))
+                    return true;
+
+                foreach (var prop in node.EnumerateObject())
+                {
+                    if (prop.Value.ValueKind is not (JsonValueKind.Object or JsonValueKind.Array))
+                        return false;
+                    if (!ValidateCourtNode(prop.Value))
+                        return false;
+                }
+                return true;
+
+            case JsonValueKind.Array:
+                foreach (var item in node.EnumerateArray())
+                {
+                    if (item.ValueKind is not JsonValueKind.Object)
+                        return false;
+                    if (!ValidateCourtNode(item))
+                        return false;
+                }
+                return true;
+
+            default:
+                return false;
+        }
+    }
+
     public static BprLitigationReport Parse(string json)
     {
         using var document = JsonDocument.Parse(json);
@@ -125,6 +189,71 @@ public static class BprLitigationReportParser
         item.TryGetProperty(property, out var value) && value.ValueKind is not JsonValueKind.Null and not JsonValueKind.Undefined
             ? value.GetRawText()
             : null;
+
+    public static List<MCAROC_Analysis.Services.PreLoginReports.LegalCaseRecord> ToLegalCaseRecords(this BprLitigationReport report)
+    {
+        var records = new List<MCAROC_Analysis.Services.PreLoginReports.LegalCaseRecord>();
+        foreach (var c in report.Cases)
+        {
+            var category = (c.CourtCategory ?? "other").ToLowerInvariant();
+            var court = c.Court ?? c.Bench ?? c.CourtCategory ?? "-";
+            var pet = ParsePartyJson(c.PetitionersJson);
+            var resp = ParsePartyJson(c.RespondentsJson);
+            var caseDetails = (string.IsNullOrWhiteSpace(pet) && string.IsNullOrWhiteSpace(resp))
+                ? "-"
+                : $"{(string.IsNullOrWhiteSpace(pet) ? "Unknown" : pet)} VS {(string.IsNullOrWhiteSpace(resp) ? "Unknown" : resp)}";
+
+            records.Add(new MCAROC_Analysis.Services.PreLoginReports.LegalCaseRecord(
+                Category: category,
+                Court: court,
+                CnrNumber: c.CnrNumber ?? "-",
+                CaseNo: c.CaseNumber ?? "-",
+                CaseType: c.CaseType ?? "-",
+                CaseYear: c.CaseYear ?? "-",
+                CaseStage: c.CaseStage ?? "-",
+                Act: c.Act ?? "-",
+                DateOfFiling: c.FilingDate ?? "-",
+                State: c.State ?? "-",
+                District: c.District ?? "-",
+                CaseDetails: caseDetails,
+                DateOfHearing: c.NextHearingDate ?? c.LastHearingDate ?? "-",
+                Status: c.CaseStatus ?? "-",
+                ProceedingType: c.Type ?? c.CaseType,
+                Petitioner: string.IsNullOrWhiteSpace(pet) ? null : pet,
+                Respondent: string.IsNullOrWhiteSpace(resp) ? null : resp
+            ));
+        }
+        return records;
+    }
+
+    private static string? ParsePartyJson(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json)) return null;
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            if (doc.RootElement.ValueKind == JsonValueKind.Array)
+            {
+                var names = new List<string>();
+                foreach (var el in doc.RootElement.EnumerateArray())
+                {
+                    if (el.ValueKind == JsonValueKind.String)
+                    {
+                        var s = el.GetString();
+                        if (!string.IsNullOrWhiteSpace(s)) names.Add(s);
+                    }
+                    else if (el.ValueKind == JsonValueKind.Object && el.TryGetProperty("name", out var n) && n.ValueKind == JsonValueKind.String)
+                    {
+                        var s = n.GetString();
+                        if (!string.IsNullOrWhiteSpace(s)) names.Add(s);
+                    }
+                }
+                if (names.Count > 0) return string.Join(", ", names);
+            }
+        }
+        catch { }
+        return json.Trim();
+    }
 }
 
 public sealed record BprLitigationReport(BprLitigationRequest Request, IReadOnlyList<BprLitigationCase> Cases);
@@ -140,3 +269,14 @@ public sealed record BprLitigationCase(
     IReadOnlyList<BprLitigationOrder> Orders);
 
 public sealed record BprLitigationOrder(string? PdfUrl, string? OrderDate, string? OrderType);
+
+public enum BprEnvelopeValidationResult
+{
+    ValidWithCases,
+    NoLitigation,
+    MalformedRoot,
+    MissingRequestDetails,
+    JobIdMismatch,
+    MissingReportDate,
+    MalformedCourtSection
+}

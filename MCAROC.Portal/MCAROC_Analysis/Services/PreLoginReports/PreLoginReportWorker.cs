@@ -24,18 +24,34 @@ public sealed class PreLoginReportWorker(IServiceScopeFactory scopes, PreLoginRe
     }
     private async Task RecoverAsync(CancellationToken token)
     {
-        using var scope = scopes.CreateScope(); var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        using var scope = scopes.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         // A job left mid-run by a restart is reset to Queued before re-enqueue — otherwise a
         // Fetching/Generating job would be skipped by ProcessAsync's own in-flight guard.
+        // AwaitingLitigation jobs are preserved without status reset.
         var interrupted = await db.PreLoginReportJobs
-            .Where(x => x.Status == PreLoginReportJobStatus.Queued || x.Status == PreLoginReportJobStatus.Fetching || x.Status == PreLoginReportJobStatus.Generating)
+            .Where(x => x.Status == PreLoginReportJobStatus.Queued || x.Status == PreLoginReportJobStatus.Fetching || x.Status == PreLoginReportJobStatus.Generating || x.Status == PreLoginReportJobStatus.AwaitingLitigation)
             .ToListAsync(token);
         foreach (var job in interrupted)
         {
-            job.Status = PreLoginReportJobStatus.Queued;
-            job.ProgressPercent = 0;
+            if (job.Status != PreLoginReportJobStatus.AwaitingLitigation)
+            {
+                job.Status = PreLoginReportJobStatus.Queued;
+                job.ProgressPercent = 0;
+            }
         }
         await db.SaveChangesAsync(token);
+
+        var targetService = scope.ServiceProvider.GetRequiredService<PreLoginLitigationTargetService>();
+        await targetService.RecoverStaleWorkAsync(token);
+
+        var targetQueue = scope.ServiceProvider.GetRequiredService<PreLoginLitigationTargetQueue>();
+        var pendingTargets = await db.PreLoginLitigationTargets
+            .Where(t => t.Status == "Pending" || t.Status == "Polling")
+            .Select(t => t.PreLoginLitigationTargetId)
+            .ToListAsync(token);
+        foreach (var tId in pendingTargets) targetQueue.Enqueue(tId);
+
         foreach (var job in interrupted) queue.Enqueue(job.PreLoginReportJobId);
     }
     private async Task RunAsync(long jobId, CancellationToken token)

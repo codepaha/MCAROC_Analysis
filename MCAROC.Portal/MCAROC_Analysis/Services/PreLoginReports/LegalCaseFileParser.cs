@@ -11,7 +11,9 @@ namespace MCAROC_Analysis.Services.PreLoginReports;
 /// report shows <see cref="Court"/> (a real court/forum name) instead.</summary>
 public sealed record LegalCaseRecord(
     string Category, string Court, string CnrNumber, string CaseNo, string CaseType, string CaseYear, string CaseStage,
-    string Act, string DateOfFiling, string State, string District, string CaseDetails, string DateOfHearing, string Status);
+    string Act, string DateOfFiling, string State, string District, string CaseDetails, string DateOfHearing, string Status,
+    string CaseRowId = "", string? ProceedingType = null, string? Petitioner = null, string? Respondent = null,
+    bool IsExcludedFromReport = false, string? ExclusionReason = null, string? AnalystNote = null);
 
 /// <summary>Parses the two litigation-tracker export shapes seen from clients into <see cref="LegalCaseRecord"/>:
 /// a multi-sheet workbook with one sheet per court level (District/High Court/Supreme/Other/Appellate Cases —
@@ -54,13 +56,31 @@ public static class LegalCaseFileParser
 
     public static InstaLegalCases ToInstaLegalCases(IReadOnlyList<LegalCaseRecord> cases)
     {
-        int Count(params string[] categories) => cases.Count(c => categories.Contains(c.Category, StringComparer.OrdinalIgnoreCase));
+        var activeCases = cases.Where(c => !c.IsExcludedFromReport).ToList();
+        int Count(params string[] categories) => activeCases.Count(c => categories.Contains(c.Category, StringComparer.OrdinalIgnoreCase));
         return new InstaLegalCases(
             SupremeCourt: Count("supreme"), HighCourt: Count("highcourt"), DistrictCourt: Count("district"),
             ConsumerForum: Count("consumer"), ItatTax: Count("itat", "cestat"), NcltNclat: Count("nclt", "nclat"),
             DrtDrat: Count("drt"), Rera: Count("rera"),
-            NgtOthers: cases.Count(c => !KnownCategories.Contains(c.Category, StringComparer.OrdinalIgnoreCase)),
+            NgtOthers: activeCases.Count(c => !KnownCategories.Contains(c.Category, StringComparer.OrdinalIgnoreCase)),
             Cases: cases);
+    }
+
+    public static IReadOnlyList<LegalCaseRecord> AssignCaseRowIds(IReadOnlyList<LegalCaseRecord> cases, ref int nextIndex)
+    {
+        var result = new List<LegalCaseRecord>(cases.Count);
+        foreach (var c in cases)
+        {
+            if (string.IsNullOrWhiteSpace(c.CaseRowId))
+            {
+                result.Add(c with { CaseRowId = $"C-{nextIndex++}" });
+            }
+            else
+            {
+                result.Add(c);
+            }
+        }
+        return result;
     }
 
     public static IReadOnlyList<LegalCaseRecord> Parse(Stream stream, string fileName)
@@ -116,22 +136,28 @@ public static class LegalCaseFileParser
             // Appellate-tribunal rows never populate Court_Forum — "Bench" (e.g. "nclt,cuttack bench.") is
             // the only court-identifying text those rows carry, so fall back to it rather than show "-".
             var court = courtForum != "-" ? courtForum : NormalizeBench(Field(row, columns, "Bench"));
+            var pet = Field(row, columns, "Petitioners");
+            var resp = Field(row, columns, "Respondents");
+            var caseType = Field(row, columns, "Case_Type");
 
             records.Add(new LegalCaseRecord(
                 Category: category,
                 Court: court,
                 CnrNumber: Field(row, columns, "Cnr_Number"),
                 CaseNo: caseNo,
-                CaseType: Field(row, columns, "Case_Type"),
+                CaseType: caseType,
                 CaseYear: Field(row, columns, "Case_Year"),
                 CaseStage: Field(row, columns, "Case_Stage"),
                 Act: Field(row, columns, "Act"),
                 DateOfFiling: Field(row, columns, "Filing_Date"),
                 State: Field(row, columns, "State"),
                 District: Field(row, columns, "District"),
-                CaseDetails: BuildCaseDetails(Field(row, columns, "Petitioners"), Field(row, columns, "Respondents")),
+                CaseDetails: BuildCaseDetails(pet, resp),
                 DateOfHearing: Field(row, columns, "LDOH_NDOH"),
-                Status: Field(row, columns, "Case_Status")));
+                Status: Field(row, columns, "Case_Status"),
+                ProceedingType: string.IsNullOrWhiteSpace(caseType) || caseType == "-" ? null : caseType,
+                Petitioner: string.IsNullOrWhiteSpace(pet) || pet == "-" ? null : pet,
+                Respondent: string.IsNullOrWhiteSpace(resp) || resp == "-" ? null : resp));
         }
     }
 

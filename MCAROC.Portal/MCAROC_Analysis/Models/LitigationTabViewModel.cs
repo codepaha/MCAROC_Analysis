@@ -32,13 +32,15 @@ public static class LitigationCaseStatusClassifier
             c.CaseStatus.ToLower().Contains("dismis") || c.CaseStatus.ToLower().Contains("withdr") ||
             c.CaseStatus.ToLower().Contains("settl")  || c.CaseStatus.ToLower().Contains("decid") ||
             c.CaseStatus.ToLower().Contains("quash")  || c.CaseStatus.ToLower().Contains("decree") ||
-            c.CaseStatus.ToLower().Contains("allow")  || c.CaseStatus.ToLower().Contains("reject")
+            c.CaseStatus.ToLower().Contains("allow")  || c.CaseStatus.ToLower().Contains("reject") ||
+            c.CaseStatus.ToLower().Contains("transfer") || c.CaseStatus.ToLower().Contains("compromis")
         )) || (c.CaseStage != null && (
             c.CaseStage.ToLower().Contains("dispos") || c.CaseStage.ToLower().Contains("clos") ||
             c.CaseStage.ToLower().Contains("dismis") || c.CaseStage.ToLower().Contains("withdr") ||
             c.CaseStage.ToLower().Contains("settl")  || c.CaseStage.ToLower().Contains("decid") ||
             c.CaseStage.ToLower().Contains("quash")  || c.CaseStage.ToLower().Contains("decree") ||
-            c.CaseStage.ToLower().Contains("allow")  || c.CaseStage.ToLower().Contains("reject")
+            c.CaseStage.ToLower().Contains("allow")  || c.CaseStage.ToLower().Contains("reject") ||
+            c.CaseStage.ToLower().Contains("transfer") || c.CaseStage.ToLower().Contains("compromis")
         ));
 
     public static readonly Expression<Func<LitigationCase, bool>> IsPendingExpr = c =>
@@ -48,13 +50,15 @@ public static class LitigationCaseStatusClassifier
                 c.CaseStatus.ToLower().Contains("dismis") || c.CaseStatus.ToLower().Contains("withdr") ||
                 c.CaseStatus.ToLower().Contains("settl")  || c.CaseStatus.ToLower().Contains("decid") ||
                 c.CaseStatus.ToLower().Contains("quash")  || c.CaseStatus.ToLower().Contains("decree") ||
-                c.CaseStatus.ToLower().Contains("allow")  || c.CaseStatus.ToLower().Contains("reject")
+                c.CaseStatus.ToLower().Contains("allow")  || c.CaseStatus.ToLower().Contains("reject") ||
+                c.CaseStatus.ToLower().Contains("transfer") || c.CaseStatus.ToLower().Contains("compromis")
             )) || (c.CaseStage != null && (
                 c.CaseStage.ToLower().Contains("dispos") || c.CaseStage.ToLower().Contains("clos") ||
                 c.CaseStage.ToLower().Contains("dismis") || c.CaseStage.ToLower().Contains("withdr") ||
                 c.CaseStage.ToLower().Contains("settl")  || c.CaseStage.ToLower().Contains("decid") ||
                 c.CaseStage.ToLower().Contains("quash")  || c.CaseStage.ToLower().Contains("decree") ||
-                c.CaseStage.ToLower().Contains("allow")  || c.CaseStage.ToLower().Contains("reject")
+                c.CaseStage.ToLower().Contains("allow")  || c.CaseStage.ToLower().Contains("reject") ||
+                c.CaseStage.ToLower().Contains("transfer") || c.CaseStage.ToLower().Contains("compromis")
             ))
         ) && (
             (c.CaseStatus != null && (
@@ -79,13 +83,15 @@ public static class LitigationCaseStatusClassifier
                 c.CaseStatus.ToLower().Contains("dismis") || c.CaseStatus.ToLower().Contains("withdr") ||
                 c.CaseStatus.ToLower().Contains("settl")  || c.CaseStatus.ToLower().Contains("decid") ||
                 c.CaseStatus.ToLower().Contains("quash")  || c.CaseStatus.ToLower().Contains("decree") ||
-                c.CaseStatus.ToLower().Contains("allow")  || c.CaseStatus.ToLower().Contains("reject")
+                c.CaseStatus.ToLower().Contains("allow")  || c.CaseStatus.ToLower().Contains("reject") ||
+                c.CaseStatus.ToLower().Contains("transfer") || c.CaseStatus.ToLower().Contains("compromis")
             )) || (c.CaseStage != null && (
                 c.CaseStage.ToLower().Contains("dispos") || c.CaseStage.ToLower().Contains("clos") ||
                 c.CaseStage.ToLower().Contains("dismis") || c.CaseStage.ToLower().Contains("withdr") ||
                 c.CaseStage.ToLower().Contains("settl")  || c.CaseStage.ToLower().Contains("decid") ||
                 c.CaseStage.ToLower().Contains("quash")  || c.CaseStage.ToLower().Contains("decree") ||
-                c.CaseStage.ToLower().Contains("allow")  || c.CaseStage.ToLower().Contains("reject")
+                c.CaseStage.ToLower().Contains("allow")  || c.CaseStage.ToLower().Contains("reject") ||
+                c.CaseStage.ToLower().Contains("transfer") || c.CaseStage.ToLower().Contains("compromis")
             ))
         ) && !(
             (c.CaseStatus != null && (
@@ -139,6 +145,9 @@ public static class LitigationCaseStatusClassifier
 
     public static LitigationCaseStatusBucket Classify(string? caseStatus, string? caseStage = null) =>
         Classify(new LitigationCase { CaseStatus = caseStatus, CaseStage = caseStage });
+
+    public static bool IsConcluded(string? caseStatus, string? caseStage = null) =>
+        Classify(caseStatus, caseStage) == LitigationCaseStatusBucket.Disposed;
 }
 
 public enum SnapshotImportState
