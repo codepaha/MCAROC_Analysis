@@ -318,13 +318,39 @@ public sealed class PreLoginReportJobService(
         // off Company.IsPartnership, not LegalCases — Company/LLP jobs can carry LegalCases too now (#221).
         var identifier = data.Company.LitigationOnly ? data.Company.RegistrationNumber : job.Cin;
         var generated = await reports.GenerateFromDataAsync(identifier, format, data, cancellationToken);
-        if (!string.IsNullOrWhiteSpace(job.ReportStoragePath) && File.Exists(job.ReportStoragePath)) File.Delete(job.ReportStoragePath);
-        job.ReportStoragePath = await StoreReportAsync(job.PreLoginReportJobId, generated, cancellationToken);
+
+        var directory = Path.Combine(environment.ContentRootPath, "App_Data", "PreLoginReports");
+        Directory.CreateDirectory(directory);
+        var nextVersion = job.DataVersion + 1;
+        var attemptId = Guid.NewGuid().ToString("N");
+        var versionedFileName = $"{job.PreLoginReportJobId}-v{nextVersion}-{attemptId}-{generated.FileName}";
+        var newReportPath = Path.Combine(directory, versionedFileName);
+        await File.WriteAllBytesAsync(newReportPath, generated.Bytes, cancellationToken);
+
+        var oldReportPath = job.ReportStoragePath;
+        job.ReportStoragePath = newReportPath;
         job.DataJson = JsonSerializer.Serialize(data);
         job.Cin = identifier;
         job.DataVersion++;
         job.Status = PreLoginReportJobStatus.Completed; job.ProgressPercent = 100; job.CompletedUtc = DateTime.UtcNow;
-        await db.SaveChangesAsync(cancellationToken);
+
+        try
+        {
+            await db.SaveChangesAsync(cancellationToken);
+        }
+        catch (DbUpdateConcurrencyException)
+        {
+            if (File.Exists(newReportPath))
+            {
+                try { File.Delete(newReportPath); } catch { }
+            }
+            throw;
+        }
+
+        if (!string.IsNullOrWhiteSpace(oldReportPath) && !string.Equals(oldReportPath, newReportPath, StringComparison.OrdinalIgnoreCase) && File.Exists(oldReportPath))
+        {
+            try { File.Delete(oldReportPath); } catch { }
+        }
     }
 
     private async Task<string> StoreReportAsync(long jobId, GeneratedReport generated, CancellationToken cancellationToken)
@@ -582,17 +608,40 @@ public sealed class PreLoginReportJobService(
             await db.SaveChangesAsync(cancellationToken);
 
             var generated = await reports.GenerateFromDataAsync(job.Cin, format, updatedData, cancellationToken);
-            if (!string.IsNullOrWhiteSpace(job.ReportStoragePath) && File.Exists(job.ReportStoragePath))
-            {
-                try { File.Delete(job.ReportStoragePath); } catch { }
-            }
-            job.ReportStoragePath = await StoreReportAsync(job.PreLoginReportJobId, generated, cancellationToken);
+
+            var directory = Path.Combine(environment.ContentRootPath, "App_Data", "PreLoginReports");
+            Directory.CreateDirectory(directory);
+            var nextVersion = job.DataVersion + 1;
+            var attemptId = Guid.NewGuid().ToString("N");
+            var versionedFileName = $"{job.PreLoginReportJobId}-v{nextVersion}-{attemptId}-{generated.FileName}";
+            var newReportPath = Path.Combine(directory, versionedFileName);
+            await File.WriteAllBytesAsync(newReportPath, generated.Bytes, cancellationToken);
+
+            var oldReportPath = job.ReportStoragePath;
+            job.ReportStoragePath = newReportPath;
             job.DataVersion++;
             job.Status = PreLoginReportJobStatus.Completed;
             job.ProgressPercent = 100;
             job.CompletedUtc = DateTime.UtcNow;
             job.FailureReason = null;
-            await db.SaveChangesAsync(cancellationToken);
+
+            try
+            {
+                await db.SaveChangesAsync(cancellationToken);
+            }
+            catch (DbUpdateConcurrencyException)
+            {
+                if (File.Exists(newReportPath))
+                {
+                    try { File.Delete(newReportPath); } catch { }
+                }
+                throw;
+            }
+
+            if (!string.IsNullOrWhiteSpace(oldReportPath) && !string.Equals(oldReportPath, newReportPath, StringComparison.OrdinalIgnoreCase) && File.Exists(oldReportPath))
+            {
+                try { File.Delete(oldReportPath); } catch { }
+            }
         }
         catch (DbUpdateConcurrencyException)
         {

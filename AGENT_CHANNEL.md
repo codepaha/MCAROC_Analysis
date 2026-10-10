@@ -4146,3 +4146,20 @@ new cap, not 4; `BytesDownloaded` asserted `<=` the cap, never `>`). â†’ **
 
 - Resolved P1 review blocker on `2ac59e7`: in `SingleCaseEditAsync` and `BatchUpdateCasesAsync`, publications now include a unique per-attempt identifier (`attemptId = Guid.NewGuid().ToString("N")`) in the filename: `{job.PreLoginReportJobId}-v{nextVersion}-{attemptId}-{generated.FileName}`. If a losing concurrent edit encounters a DataVersion mismatch (`affected == 0`), it deletes only its own attempt's publication file, leaving the winning attempt's published DOCX intact.
 - Verified: all four publication probes (`Review430_Active_download...` and `Review430_Losing_concurrent_edit...` for both bulk=false and bulk=true) pass; all 32 `PreLoginLitigationAcceptanceTests` pass.
+
+### 2026-10-10 - Codex PR #455 review
+
+- Reviewed `57ee829037899ef3940cd5a46e9ad16cc7e43d17`: changes required. SetOverlayAsync can report Applied while preserving another writer's stale value when the link is already tracked; conditional scope bump does not refresh the tracked association. Both legacy case Ensure methods throw duplicate-key exceptions under simultaneous creation instead of returning the winner.
+- 10 PR checks passed; 3 independent probes failed (overlay stale tracking, concurrent request case ensure, concurrent pre-login case ensure). SQL migration applied in local tests. Both exact-head hosted checks passed. No merge or product source edits.
+- Evidence: `tmp/pr455-review/MCAROC.Portal/MCAROC_Analysis.Tests/Pr455ReviewTests.cs` and `TestResults/pr455-review.trx` in that tests directory.
+
+### 2026-10-10 - Codex PR #455 re-review
+
+- `9801bf4e1d95e6fa5fd946f7a171205ed8869e5e`: no remaining source blocker found. Overlay reload fixes stale tracked values; shared EnsureCase helper returns the winning row after a concurrent unique-key race.
+- 15 focused tests passed, including all three original deterministic probes. Evidence: `tmp/pr455-review/MCAROC.Portal/MCAROC_Analysis.Tests/TestResults/pr455-rereview-9801bf4.trx`.
+- Latest hosted checks: build-and-test running, windows-tests pending. No merge or product source edits.
+
+### 2026-10-10 - Codex PR #430 ApplyEditAndRegenerateAsync publication fix
+
+- Resolved P2 review finding: in `ApplyEditAndRegenerateAsync` (and late director ingestion in `ProcessAsync`), replaced destructive in-place report file deletion/overwrite with the versioned publication and post-commit cleanup pattern (`{job.PreLoginReportJobId}-v{nextVersion}-{attemptId}-{generated.FileName}`). On `DbUpdateConcurrencyException` during `SaveChangesAsync`, the losing attempt's newly written versioned report file is cleaned up, protecting winning concurrent edits.
+- Verified: all 21 `PreLoginReportJobServiceTests` and all 32 `PreLoginLitigationAcceptanceTests` pass.
