@@ -1040,5 +1040,162 @@ public class LitigationCasePersistenceServiceTests : IAsyncLifetime
         Assert.Equal(LitigationReportSnapshotStatus.Completed, (await verify.LitigationReportSnapshots.SingleAsync(s => s.LitigationReportSnapshotId == snapshot)).Status);
         Assert.Single(await verify.LitigationOrderDocuments.Where(d => d.LitigationCaseOrderId == existingOrderId).ToListAsync());
     }
-}
 
+    // ---- Non-destructive merge (#433): a missing value never erases one the case already holds ----
+
+    /// <summary>The same case (same CNR) as <see cref="ReportJson"/>, as a later report that has lost or blanked fields: empty strings,
+    /// the source placeholders and empty lists, with no orders.</summary>
+    private static string ReportWithMissingFields(string cnr, string caseNo = "22/2020", string reportDate = "2026-09-21") => $$"""
+        {
+            "request_details": {"job_id": "job-1", "report_date": "{{reportDate}}", "keywords": ["Test Company"]},
+            "district_court": {
+                "against": {
+                    "civil": [
+                        {
+                            "id": "provider-1", "csp_id": "csp-1", "cnr_number": "{{cnr}}",
+                            "type": "district", "court": "Sub Judge", "bench": "",
+                            "case_no": "{{caseNo}}", "case_type": "OS", "case_year": "2020",
+                            "case_stage": "", "case_status": "NA", "act": "-",
+                            "filing_date": "", "state": "NA", "district": "",
+                            "petitioners": [], "respondents": [],
+                            "orders": []
+                        }
+                    ]
+                }
+            }
+        }
+        """;
+
+    [Fact]
+    public async Task A_rerun_that_has_lost_fields_does_not_erase_the_values_the_case_already_holds()
+    {
+        await using var db = CreateContext();
+        var request = await SeedRequestAsync(db, "NDM1");
+        var first = await SeedCompletedJobAsync(db, request.RequestId, ReportJson("TNKP070001332022", "OS"));
+        var service = NewService(db);
+        await PersistJobAsync(service, first, CancellationToken.None);
+
+        var second = await SeedCompletedJobAsync(db, request.RequestId, ReportWithMissingFields("TNKP070001332022"));
+        await PersistJobAsync(service, second, CancellationToken.None);
+
+        await using var verifyDb = CreateContext();
+        var c = Assert.Single(await verifyDb.LitigationCases.Where(x => x.RequestId == request.RequestId).ToListAsync());
+        Assert.Equal("DISPOSED", c.CaseStatus);          // "NA" did not erase it
+        Assert.Equal("Trial", c.CaseStage);              // "" did not erase it
+        Assert.Equal("Code", c.Act);                     // "-" did not erase it
+        Assert.Equal("29-01-2020", c.FilingDate);        // "" did not erase it
+        Assert.Equal("Tamil Nadu", c.State);             // "NA" did not erase it
+        Assert.Equal("Kancheepuram", c.District);        // "" did not erase it
+        Assert.Equal("Bench", c.Bench);
+        Assert.Contains("Petitioner One", c.PetitionersJson);   // an empty list did not replace the parties
+        Assert.Contains("Respondent One", c.RespondentsJson);
+    }
+
+    [Fact]
+    public async Task A_value_filled_after_the_first_report_survives_a_later_report_that_still_lacks_it()
+    {
+        // The owner rule: the field was empty in the data lake, we filled it (here directly, standing in for the court portal), and a
+        // refetch that is still empty must not delete our value.
+        await using var db = CreateContext();
+        var request = await SeedRequestAsync(db, "NDM2");
+        var first = await SeedCompletedJobAsync(db, request.RequestId, ReportWithMissingFields("TNKP070001332022"));
+        var service = NewService(db);
+        await PersistJobAsync(service, first, CancellationToken.None);
+
+        await using (var fill = CreateContext())
+        {
+            var c = await fill.LitigationCases.SingleAsync(x => x.RequestId == request.RequestId);
+            c.FilingDate = "29-01-2020"; c.State = "Tamil Nadu"; c.District = "Kancheepuram"; c.CaseStatus = "DISPOSED";
+            await fill.SaveChangesAsync();
+        }
+
+        // A fresh context, as in production: a later import does not share the first import's tracked entities. (With the first context the case
+        // would still hold its old in-memory values, "assigning" the same values would be a no-op, and the filled values would survive by accident.)
+        await using var laterDb = CreateContext();
+        var again = await SeedCompletedJobAsync(laterDb, request.RequestId, ReportWithMissingFields("TNKP070001332022", reportDate: "2026-09-22"));
+        await PersistJobAsync(NewService(laterDb), again, CancellationToken.None);
+
+        await using var verifyDb = CreateContext();
+        var after = await verifyDb.LitigationCases.SingleAsync(x => x.RequestId == request.RequestId);
+        Assert.Equal("29-01-2020", after.FilingDate);
+        Assert.Equal("Tamil Nadu", after.State);
+        Assert.Equal("Kancheepuram", after.District);
+        Assert.Equal("DISPOSED", after.CaseStatus);
+    }
+
+    [Fact]
+    public async Task A_real_value_in_a_later_report_still_replaces_the_held_one()
+    {
+        await using var db = CreateContext();
+        var request = await SeedRequestAsync(db, "NDM3");
+        var first = await SeedCompletedJobAsync(db, request.RequestId, ReportJson("TNKP070001332022", "OS"));
+        var service = NewService(db);
+        await PersistJobAsync(service, first, CancellationToken.None);
+
+        var changed = ReportJson("TNKP070001332022", "OS", caseNo: "23/2020").Replace("\"DISPOSED\"", "\"PENDING\"").Replace("Kancheepuram", "Chengalpattu");
+        var second = await SeedCompletedJobAsync(db, request.RequestId, changed);
+        await PersistJobAsync(service, second, CancellationToken.None);
+
+        await using var verifyDb = CreateContext();
+        var c = await verifyDb.LitigationCases.SingleAsync(x => x.RequestId == request.RequestId);
+        Assert.Equal("PENDING", c.CaseStatus);
+        Assert.Equal("Chengalpattu", c.District);
+        Assert.Equal("23/2020", c.CaseNumber);
+    }
+
+    [Fact]
+    public async Task A_report_that_omits_a_case_or_its_orders_removes_neither()
+    {
+        await using var db = CreateContext();
+        var request = await SeedRequestAsync(db, "NDM4");
+        var first = await SeedCompletedJobAsync(db, request.RequestId, ReportJson("TNKP070001332022", "OS"));
+        var service = NewService(db);
+        await PersistJobAsync(service, first, CancellationToken.None);
+
+        // the later report lists a different case only
+        var second = await SeedCompletedJobAsync(db, request.RequestId, ReportJson("TNKP070001442022", "OS", providerId: "provider-9", cspId: "csp-9"));
+        await PersistJobAsync(service, second, CancellationToken.None);
+
+        await using var verifyDb = CreateContext();
+        var cases = await verifyDb.LitigationCases.Where(x => x.RequestId == request.RequestId).ToListAsync();
+        Assert.Equal(2, cases.Count);
+        var original = cases.Single(x => x.Cnr == "TNKP070001332022");
+        Assert.Equal("Tamil Nadu", original.State);
+        Assert.Single(await verifyDb.LitigationCaseOrders.Where(o => o.LitigationCaseId == original.LitigationCaseId).ToListAsync());
+    }
+
+    [Fact]
+    public async Task A_new_case_stores_the_source_placeholder_as_received()
+    {
+        // fidelity: these columns are source-faithful, so a first observation NA is kept, not turned into null
+        await using var db = CreateContext();
+        var request = await SeedRequestAsync(db, "NDM5");
+        var job = await SeedCompletedJobAsync(db, request.RequestId, ReportWithMissingFields("TNKP070001332022"));
+        await PersistJobAsync(NewService(db), job, CancellationToken.None);
+
+        await using var verifyDb = CreateContext();
+        var c = await verifyDb.LitigationCases.SingleAsync(x => x.RequestId == request.RequestId);
+        Assert.Equal("NA", c.State);
+        Assert.Equal("NA", c.CaseStatus);
+    }
+
+    [Theory]
+    [InlineData("NA")]
+    [InlineData("")]
+    public async Task A_rerun_with_a_placeholder_provider_id_keeps_the_provider_id_already_held(string placeholder)
+    {
+        await using var db = CreateContext();
+        var request = await SeedRequestAsync(db, "NDM-PID" + placeholder.Length);
+        var first = await SeedCompletedJobAsync(db, request.RequestId, ReportWithMissingFields("TNKP070001332022"));
+        var service = NewService(db);
+        await PersistJobAsync(service, first, CancellationToken.None);
+
+        var second = await SeedCompletedJobAsync(db, request.RequestId,
+            ReportWithMissingFields("TNKP070001332022", reportDate: "2026-09-22").Replace("\"id\": \"provider-1\"", $"\"id\": \"{placeholder}\""));
+        await PersistJobAsync(service, second, CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var c = Assert.Single(await verify.LitigationCases.Where(x => x.RequestId == request.RequestId).ToListAsync());
+        Assert.Equal("provider-1", c.ProviderCaseId);
+    }
+}
