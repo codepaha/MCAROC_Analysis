@@ -42,25 +42,27 @@ public sealed class LitigationModuleStore(AppDbContext db, TimeProvider? time = 
     }
 
     /// <summary>A registry case, found by its legacy request-side id or created. The legacy reference is permanent.</summary>
-    public async Task<ModuleCase> EnsureCaseForLegacyAsync(long legacyLitigationCaseId, CancellationToken ct)
-    {
-        var existing = await db.Set<ModuleCase>().FirstOrDefaultAsync(c => c.LegacyLitigationCaseId == legacyLitigationCaseId, ct);
-        if (existing is not null) return existing;
-        var created = new ModuleCase { LegacyLitigationCaseId = legacyLitigationCaseId, CreatedUtc = _time.GetUtcNow().UtcDateTime };
-        db.Set<ModuleCase>().Add(created);
-        await db.SaveChangesAsync(ct);
-        return created;
-    }
+    public Task<ModuleCase> EnsureCaseForLegacyAsync(long legacyLitigationCaseId, CancellationToken ct) =>
+        EnsureCaseAsync(c => c.LegacyLitigationCaseId == legacyLitigationCaseId, () => new ModuleCase { LegacyLitigationCaseId = legacyLitigationCaseId }, ct);
 
     /// <summary>A registry case for a pre-login record, found by (job, <c>CaseRowId</c>) or created.</summary>
-    public async Task<ModuleCase> EnsureCaseForLegacyRowAsync(long legacyJobId, string caseRowId, CancellationToken ct)
+    public Task<ModuleCase> EnsureCaseForLegacyRowAsync(long legacyJobId, string caseRowId, CancellationToken ct) =>
+        EnsureCaseAsync(c => c.LegacyJobId == legacyJobId && c.LegacyCaseRowId == caseRowId, () => new ModuleCase { LegacyJobId = legacyJobId, LegacyCaseRowId = caseRowId }, ct);
+
+    /// <summary>Find-or-create under a unique index: when two callers create the same case at once, the loser's insert fails on the index and it returns the winner's row.</summary>
+    private async Task<ModuleCase> EnsureCaseAsync(System.Linq.Expressions.Expression<Func<ModuleCase, bool>> match, Func<ModuleCase> create, CancellationToken ct)
     {
-        var existing = await db.Set<ModuleCase>().FirstOrDefaultAsync(c => c.LegacyJobId == legacyJobId && c.LegacyCaseRowId == caseRowId, ct);
+        var existing = await db.Set<ModuleCase>().FirstOrDefaultAsync(match, ct);
         if (existing is not null) return existing;
-        var created = new ModuleCase { LegacyJobId = legacyJobId, LegacyCaseRowId = caseRowId, CreatedUtc = _time.GetUtcNow().UtcDateTime };
+        var created = create();
+        created.CreatedUtc = _time.GetUtcNow().UtcDateTime;
         db.Set<ModuleCase>().Add(created);
-        await db.SaveChangesAsync(ct);
-        return created;
+        try { await db.SaveChangesAsync(ct); return created; }
+        catch (DbUpdateException)
+        {
+            db.Entry(created).State = EntityState.Detached;
+            return await db.Set<ModuleCase>().AsNoTracking().FirstAsync(match, ct);   // the winner of the race; a real failure would not find a row and throws here
+        }
     }
 
     /// <summary>Puts a case in a scope and gives it the scope's next alias (<c>C-n</c>), from a counter that is monotonic per scope and safe under concurrent callers.
@@ -112,6 +114,7 @@ public sealed class LitigationModuleStore(AppDbContext db, TimeProvider? time = 
 
         var link = await db.Set<ModuleScopeCase>().FirstOrDefaultAsync(x => x.ScopeId == scopeId && x.CaseId == caseId, ct);
         if (link is null) { await tx.RollbackAsync(ct); return OverlayWriteResult.NotFound; }
+        await db.Entry(link).ReloadAsync(ct);   // a tracked copy may be stale; apply the change to what is stored now, so another writer's fields survive
 
         if (change.IsHidden is { } hidden) link.IsHidden = hidden;
         if (change.IsExcluded is { } excluded) link.IsExcluded = excluded;

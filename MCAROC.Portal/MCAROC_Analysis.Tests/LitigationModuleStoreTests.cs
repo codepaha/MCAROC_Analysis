@@ -170,4 +170,47 @@ public class LitigationModuleStoreTests : IAsyncLifetime
         Assert.Equal(first.ScopeId, again.ScopeId);
         Assert.NotEqual(first.ScopeId, other.ScopeId);
     }
+
+    [Fact]
+    public async Task Concurrent_creation_of_the_same_legacy_case_returns_one_row()
+    {
+        var legacy = NewExternalId();
+        var ids = await Task.WhenAll(Enumerable.Range(0, 8).Select(async _ =>
+        {
+            await using var db = Ctx();
+            return (await new LitigationModuleStore(db).EnsureCaseForLegacyAsync(legacy, default)).CaseId;
+        }));
+        Assert.Single(ids.Distinct());
+
+        var job = NewExternalId();
+        var rowIds = await Task.WhenAll(Enumerable.Range(0, 8).Select(async _ =>
+        {
+            await using var db = Ctx();
+            return (await new LitigationModuleStore(db).EnsureCaseForLegacyRowAsync(job, "C-3", default)).CaseId;
+        }));
+        Assert.Single(rowIds.Distinct());
+    }
+
+    [Fact]
+    public async Task An_overlay_applied_through_a_stale_tracked_association_keeps_another_writers_fields()
+    {
+        var (a, _, cases) = await TwoScopesOneSubjectAsync(1);
+        await using var db = Ctx();
+        var store = new LitigationModuleStore(db);
+        await store.AddCaseToScopeAsync(a.ScopeId, cases[0], null, default);   // the association is now tracked in db
+
+        await using (var other = Ctx())    // another writer sets the note
+        {
+            var v = (await other.Set<ModuleScope>().AsNoTracking().FirstAsync(s => s.ScopeId == a.ScopeId)).Version;
+            Assert.Equal(OverlayWriteResult.Applied, await new LitigationModuleStore(other).SetOverlayAsync(a.ScopeId, cases[0], new ScopeOverlayChange(AnalystNote: "from the other writer"), v, default));
+        }
+
+        var current = (await db.Set<ModuleScope>().AsNoTracking().FirstAsync(s => s.ScopeId == a.ScopeId)).Version;
+        Assert.Equal(OverlayWriteResult.Applied, await store.SetOverlayAsync(a.ScopeId, cases[0], new ScopeOverlayChange(IsHidden: true), current, default));
+
+        await using var verify = Ctx();
+        var link = await verify.Set<ModuleScopeCase>().AsNoTracking().FirstAsync(x => x.ScopeId == a.ScopeId);
+        Assert.True(link.IsHidden);
+        Assert.Equal("from the other writer", link.AnalystNote);
+    }
 }
