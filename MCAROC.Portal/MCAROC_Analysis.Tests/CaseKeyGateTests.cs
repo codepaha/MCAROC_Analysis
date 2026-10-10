@@ -87,4 +87,13 @@ public class CaseKeyGateTests
     [Fact]
     public void A_portal_identity_returned_with_a_glued_number_gives_no_key() =>
         Assert.Null(Gate(P("OA/413/2022"), portal: P("OA/413/2022,OA/9/2022"), fromPortal: true).Key);
+
+    [Fact]
+    public void A_portal_identity_whose_year_was_inferred_from_one_signal_gives_no_key()
+    {
+        var returned = P("413", "OA", "", filing: "05-12-2022");   // year from the filing date alone
+        var r = Gate(P("OA/413/2022"), portal: returned, fromPortal: true);
+        Assert.Null(r.Key);
+        Assert.Contains("inferred", r.Reason);
+    }
 }

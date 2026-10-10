@@ -23,18 +23,20 @@ public static class CaseKeyGate
         if (p.No is null) return No("no case number");
         if (p.ConnectedMatters.Count > 0) return No("several numbers glued in one value");                        // each may be keyed on its own, never the glued whole
         if (p.Year is null) return No("no year");
-        if (p.YearSource is not (YearSource.Number or YearSource.Column or YearSource.InferredFilingAndCnr))
-            return No("year rests on one inferred signal");                                                        // filing date alone, or CNR alone, is not enough
+        if (!YearIsKeyable(p)) return No("year rests on one inferred signal");                                      // filing date alone, or CNR alone, is not enough
 
         if (input.FromPortal)
         {
             var r = input.PortalReturned;
             if (r is null) return No("the portal returned no identity to compare");
+            if (!YearIsKeyable(r)) return No("the portal's returned year rests on one inferred signal");              // the returned identity must pass the same year rule
             if (!SameIdentity(p, r)) return No("the identity the portal returned differs from the one looked up");
             p = r;                                                                                                  // minted from what the portal returned
         }
         return new CaseKeyResult($"{input.Forum.Trim().ToUpperInvariant()}|{input.CourtKey.Trim().ToUpperInvariant()}|{p.TypeCode}|{p.No}|{p.Year}", string.Empty);
     }
+
+    private static bool YearIsKeyable(CaseNumberParts p) => p.YearSource is YearSource.Number or YearSource.Column or YearSource.InferredFilingAndCnr;
 
     private static bool SameIdentity(CaseNumberParts a, CaseNumberParts b) =>
         a.TypeCode is not null && a.TypeCode == b.TypeCode && a.No is not null && a.No == b.No && a.Year is not null && a.Year == b.Year && b.ConnectedMatters.Count == 0;
