@@ -496,56 +496,75 @@ public sealed class PreLoginReportJobService(
                 .ThenBy(t => t.TargetIndex)
                 .ToListAsync(cancellationToken);
 
-            if (allTargets.Any(t => t.Status is "Pending" or "Authenticating" or "Registering" or "Polling"))
+            var borrower = allTargets.FirstOrDefault(t => t.TargetKind == PreLoginTargetKind.Borrower);
+            if (borrower != null)
             {
-                if (job.Status != PreLoginReportJobStatus.AwaitingLitigation)
+                if (borrower.Status is "Pending" or "Authenticating" or "Registering" or "Polling")
                 {
-                    job.Status = PreLoginReportJobStatus.AwaitingLitigation;
-                    job.ProgressPercent = 40;
-                    await db.SaveChangesAsync(cancellationToken);
+                    if (job.Status != PreLoginReportJobStatus.AwaitingLitigation)
+                    {
+                        job.Status = PreLoginReportJobStatus.AwaitingLitigation;
+                        job.ProgressPercent = 40;
+                        await db.SaveChangesAsync(cancellationToken);
+                    }
+                    return;
                 }
-                return;
+
+                if (borrower.Status == "AmbiguousRegistration")
+                {
+                    job.Status = PreLoginReportJobStatus.AwaitingReview;
+                    job.ProgressPercent = 50;
+                    job.FailureReason = borrower.FailureReason ?? $"Litigation search for {borrower.TargetName} requires manual reconciliation (Ambiguous Registration).";
+                    await db.SaveChangesAsync(cancellationToken);
+                    return;
+                }
+
+                if (borrower.Status == "Failed")
+                {
+                    job.Status = PreLoginReportJobStatus.AwaitingReview;
+                    job.ProgressPercent = 50;
+                    job.FailureReason = borrower.FailureReason ?? $"Litigation search for {borrower.TargetName} failed.";
+                    await db.SaveChangesAsync(cancellationToken);
+                    return;
+                }
             }
 
-            var ambiguousTarget = allTargets.FirstOrDefault(t => t.Status == "AmbiguousRegistration");
-            if (ambiguousTarget != null)
-            {
-                job.Status = PreLoginReportJobStatus.AwaitingReview;
-                job.ProgressPercent = 50;
-                job.FailureReason = ambiguousTarget.FailureReason ?? $"Litigation search for {ambiguousTarget.TargetName} requires manual reconciliation (Ambiguous Registration).";
-                await db.SaveChangesAsync(cancellationToken);
-                return;
-            }
-
-            var failedTarget = allTargets.FirstOrDefault(t => t.Status == "Failed");
-            if (failedTarget != null)
-            {
-                job.Status = PreLoginReportJobStatus.AwaitingReview;
-                job.ProgressPercent = 50;
-                job.FailureReason = failedTarget.FailureReason ?? $"Litigation search for {failedTarget.TargetName} failed.";
-                await db.SaveChangesAsync(cancellationToken);
-                return;
-            }
-
-            // All targets are Completed: collect incoming cases from all completed targets
+            // Borrower is Completed (or absent). Collect incoming cases from all completed targets
             var allIncomingCases = new List<LegalCaseRecord>();
             foreach (var t in allTargets.Where(t => t.Status == "Completed"))
             {
                 if (t.NoLitigationFound == true || t.RawReportBytes is null or { Length: 0 })
                     continue;
 
+                IEnumerable<LegalCaseRecord> targetCases;
                 if (string.Equals(t.ReportFormat, "Json", StringComparison.OrdinalIgnoreCase))
                 {
                     var json = System.Text.Encoding.UTF8.GetString(t.RawReportBytes);
                     var bprReport = BprLitigationReportParser.Parse(json);
-                    allIncomingCases.AddRange(bprReport.ToLegalCaseRecords());
+                    targetCases = bprReport.ToLegalCaseRecords();
                 }
                 else
                 {
                     using var ms = new MemoryStream(t.RawReportBytes);
-                    var incoming = LegalCaseFileParser.Parse(ms, "report.xlsx");
-                    allIncomingCases.AddRange(incoming);
+                    targetCases = LegalCaseFileParser.Parse(ms, "report.xlsx");
                 }
+
+                if (t.TargetKind == PreLoginTargetKind.Director)
+                {
+                    targetCases = targetCases.Select(c =>
+                    {
+                        if (c.CaseDetails.Contains("name-match only", StringComparison.OrdinalIgnoreCase))
+                            return c;
+
+                        var originDisclosure = $"Director: {t.TargetName} (name-match only)";
+                        var details = string.IsNullOrWhiteSpace(c.CaseDetails) || c.CaseDetails == "-"
+                            ? originDisclosure
+                            : $"{originDisclosure} | {c.CaseDetails}";
+                        return c with { CaseDetails = details };
+                    }).ToList();
+                }
+
+                allIncomingCases.AddRange(targetCases);
             }
 
             var reconciledLegalCases = LitigationCaseReconciliationService.ReconcileCases(stored?.LegalCases, allIncomingCases);
@@ -923,22 +942,42 @@ public sealed class PreLoginReportJobService(
             if (existingTarget.Status is "Pending" or "Authenticating" or "Registering" or "Polling" or "Completed")
                 return existingTarget.PreLoginLitigationTargetId;
 
-            // Clean reset of Failed target:
-            existingTarget.Status = "Pending";
-            existingTarget.VendorJobId = null;
-            existingTarget.IsUserSuppliedVendorJobId = false;
-            existingTarget.RegistrationAttemptedUtc = null;
-            existingTarget.RegisteredUtc = null;
-            existingTarget.PollingDeadlineUtc = null;
-            existingTarget.LeaseToken = null;
-            existingTarget.LeaseExpiresUtc = null;
-            existingTarget.LeaseOwner = null;
-            existingTarget.AttemptCount = 0;
-            existingTarget.NextAttemptUtc = null;
-            existingTarget.ProgressPercent = 0;
-            existingTarget.FailureReason = null;
-            existingTarget.StatusMessage = "Director litigation search re-initiated.";
-            existingTarget.AttemptVersion++;
+            var pollTimeout = litigationOptions?.Value.PollTimeoutMinutes > 0 ? litigationOptions.Value.PollTimeoutMinutes : 30;
+
+            if (!string.IsNullOrWhiteSpace(existingTarget.VendorJobId))
+            {
+                // Re-poll the known job with a renewed deadline, preserving VendorJobId and registration intent
+                existingTarget.Status = "Polling";
+                existingTarget.PollingDeadlineUtc = DateTime.UtcNow.AddMinutes(pollTimeout);
+                existingTarget.LeaseToken = null;
+                existingTarget.LeaseExpiresUtc = null;
+                existingTarget.LeaseOwner = null;
+                existingTarget.AttemptCount = 0;
+                existingTarget.NextAttemptUtc = null;
+                existingTarget.ProgressPercent = 30;
+                existingTarget.FailureReason = null;
+                existingTarget.StatusMessage = "Director litigation search re-poll with renewed deadline.";
+                existingTarget.AttemptVersion++;
+            }
+            else
+            {
+                // Clean reset of Failed target without vendor job:
+                existingTarget.Status = "Pending";
+                existingTarget.VendorJobId = null;
+                existingTarget.IsUserSuppliedVendorJobId = false;
+                existingTarget.RegistrationAttemptedUtc = null;
+                existingTarget.RegisteredUtc = null;
+                existingTarget.PollingDeadlineUtc = null;
+                existingTarget.LeaseToken = null;
+                existingTarget.LeaseExpiresUtc = null;
+                existingTarget.LeaseOwner = null;
+                existingTarget.AttemptCount = 0;
+                existingTarget.NextAttemptUtc = null;
+                existingTarget.ProgressPercent = 0;
+                existingTarget.FailureReason = null;
+                existingTarget.StatusMessage = "Director litigation search re-initiated.";
+                existingTarget.AttemptVersion++;
+            }
             await db.SaveChangesAsync(ct);
             targetId = existingTarget.PreLoginLitigationTargetId;
         }
@@ -967,12 +1006,15 @@ public sealed class PreLoginReportJobService(
             targetId = target.PreLoginLitigationTargetId;
         }
 
-        // Reopen parent job to AwaitingLitigation
-        await db.PreLoginReportJobs.Where(j => j.PreLoginReportJobId == id)
-            .ExecuteUpdateAsync(s => s
-                .SetProperty(j => j.Status, PreLoginReportJobStatus.AwaitingLitigation)
-                .SetProperty(j => j.FailureReason, (string?)null)
-                .SetProperty(j => j.ProgressPercent, 40), ct);
+        // Only reopen parent job to AwaitingLitigation if the parent job is not already completed
+        if (job.Status != PreLoginReportJobStatus.Completed)
+        {
+            await db.PreLoginReportJobs.Where(j => j.PreLoginReportJobId == id && j.Status != PreLoginReportJobStatus.Completed)
+                .ExecuteUpdateAsync(s => s
+                    .SetProperty(j => j.Status, PreLoginReportJobStatus.AwaitingLitigation)
+                    .SetProperty(j => j.FailureReason, (string?)null)
+                    .SetProperty(j => j.ProgressPercent, 40), ct);
+        }
 
         targetQueue?.Enqueue(targetId);
         queue.Enqueue(id);

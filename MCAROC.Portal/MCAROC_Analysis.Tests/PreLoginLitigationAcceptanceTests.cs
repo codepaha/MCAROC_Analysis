@@ -868,9 +868,10 @@ public partial class PreLoginLitigationAcceptanceTests : IAsyncLifetime
         await using var dbCheck = CreateContext();
         var cleanTarget = await dbCheck.PreLoginLitigationTargets.FindAsync(retriedId);
         Assert.NotNull(cleanTarget);
-        Assert.Equal("Pending", cleanTarget.Status);
-        Assert.Null(cleanTarget.VendorJobId);
-        Assert.Null(cleanTarget.PollingDeadlineUtc);
+        Assert.Equal("Polling", cleanTarget.Status);
+        Assert.Equal("VEN-OLD", cleanTarget.VendorJobId);
+        Assert.NotNull(cleanTarget.PollingDeadlineUtc);
+        Assert.True(cleanTarget.PollingDeadlineUtc > DateTime.UtcNow);
         Assert.Null(cleanTarget.LeaseToken);
         Assert.Null(cleanTarget.LeaseExpiresUtc);
         Assert.Null(cleanTarget.LeaseOwner);
