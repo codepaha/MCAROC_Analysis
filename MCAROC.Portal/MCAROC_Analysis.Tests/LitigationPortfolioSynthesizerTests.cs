@@ -139,4 +139,32 @@ public class LitigationPortfolioSynthesizerTests
         Assert.Equal(10, client.BatchCalls);
         Assert.True(client.CombineCalls > 2);   // 10 -> 4 -> 2, then the final
     }
+
+    [Fact]
+    public async Task The_final_summary_cannot_cite_a_case_from_a_batch_that_failed_and_was_left_out()
+    {
+        // ids 4, 8, 12 are the highest risk, so they are read together in the first batch; make that batch always fail
+        var client = new FakeClient((p, _) =>
+        {
+            if (p.Contains("small batch")) return p.Contains("\"LitigationCaseAiAnalysisId\":4,") ? new LitigationAiCallResult(false, "", "503") : null;
+            // the final call cites a case from the omitted batch (4) along with ones it was given
+            return new LitigationAiCallResult(true, "{\"status\":\"Completed\",\"summary\":\"x\",\"unknowns\":[],\"caseAnalysisIds\":[4,1]}", null);
+        });
+        var result = await Synth(client).RunAsync(Rows(14), 14, () => Task.CompletedTask, CancellationToken.None);
+
+        Assert.False(result.Success);
+        Assert.Null(result.AnalysisJson);
+    }
+
+    [Fact]
+    public async Task The_final_summary_may_cite_the_cases_in_the_batches_it_was_given_even_when_another_batch_failed()
+    {
+        var client = new FakeClient((p, _) => p.Contains("small batch") && p.Contains("\"LitigationCaseAiAnalysisId\":4,") ? new LitigationAiCallResult(false, "", "503") : null);
+        var result = await Synth(client).RunAsync(Rows(14), 14, () => Task.CompletedTask, CancellationToken.None);
+
+        Assert.True(result.Success);
+        var cited = JsonNode.Parse(result.AnalysisJson!)!["caseAnalysisIds"]!.AsArray().Select(n => n!.GetValue<long>()).ToList();
+        Assert.DoesNotContain(4L, cited);
+        Assert.NotEmpty(cited);
+    }
 }

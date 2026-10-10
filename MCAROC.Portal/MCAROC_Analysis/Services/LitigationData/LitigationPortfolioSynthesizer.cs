@@ -23,7 +23,6 @@ public sealed class LitigationPortfolioSynthesizer(ILitigationAiAnalysisClient c
             .OrderByDescending(RiskRank).ThenBy(x => x.LitigationCaseAiAnalysisId).ToList();
         var batchSize = Math.Max(2, options.PortfolioBatchSize);
         var batches = usable.Chunk(batchSize).ToList();
-        var allIds = usable.Select(x => x.LitigationCaseAiAnalysisId).ToHashSet();
 
         // Map: each batch on its own, a few at a time.
         var summaries = new BatchSummary?[batches.Count];
@@ -67,7 +66,9 @@ public sealed class LitigationPortfolioSynthesizer(ILitigationAiAnalysisClient c
             level = next;
         }
         await renew();
-        var final = await ReduceFinalAsync(level, coverage, allIds, ct);
+        // The final answer may cite only the cases whose summaries it was given: a batch that failed is not among them.
+        var supplied = level.SelectMany(b => b.Ids).ToHashSet();
+        var final = await ReduceFinalAsync(level, coverage, supplied, ct);
         if (final.Analysis is null) return Failed(final.Reason ?? "The portfolio summary could not be produced.", evidence);
         return new(true, evidence, LitigationAnalysisPromptBuilder.ComputeHash(evidence), final.Raw, final.Analysis, null);
     }
@@ -106,7 +107,7 @@ public sealed class LitigationPortfolioSynthesizer(ILitigationAiAnalysisClient c
         return null;
     }
 
-    private async Task<(string? Raw, string? Analysis, string? Reason)> ReduceFinalAsync(IReadOnlyList<BatchSummary> items, object coverage, ISet<long> allIds, CancellationToken ct)
+    private async Task<(string? Raw, string? Analysis, string? Reason)> ReduceFinalAsync(IReadOnlyList<BatchSummary> items, object coverage, ISet<long> allowedIds, CancellationToken ct)
     {
         var prompt = LitigationAnalysisPromptBuilder.BuildPortfolioReducePrompt(Serialise(items), JsonSerializer.Serialize(coverage));
         string? reason = null;
@@ -114,7 +115,7 @@ public sealed class LitigationPortfolioSynthesizer(ILitigationAiAnalysisClient c
         {
             var response = await client.CallAsync(prompt, options.TimeoutSeconds, ct);
             if (!response.Success) { reason = response.FailureReason; continue; }
-            var valid = LitigationAnalysisResponseValidator.ValidatePortfolio(response.RawResponse, allIds);
+            var valid = LitigationAnalysisResponseValidator.ValidatePortfolio(response.RawResponse, allowedIds);
             if (valid.IsAccepted) return (response.RawResponse, valid.AnalysisJson, null);
             reason = valid.RejectReason;
         }
