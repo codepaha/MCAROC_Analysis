@@ -12,12 +12,19 @@ public sealed class GroundedSearchOptions
     public string Model { get; set; } = "gemini-3.1-flash-lite";
 
     /// <summary>Google Search queries allowed per calendar month (UTC). 5,000 is the free allowance across the Gemini 3 models; each query past it
-    /// is billed at $14 per 1,000, so the cap is hard: once reached, searches are refused until the month rolls over.</summary>
+    /// is billed at $14 per 1,000. A search is only started when <see cref="ReservedQueriesPerCall"/> queries are still free, and once the month's
+    /// total reaches the limit (or leaves less than that reserve) searches are refused until the month rolls over.
+    /// <para>The guarantee is therefore: <b>no search starts unless the month stays within the limit if that search runs no more than
+    /// <see cref="ReservedQueriesPerCall"/> queries.</b> The API has no setting that bounds how many queries one call runs. The call is also told
+    /// in its instructions to stay within the reserve, but that is a hint, not a limit: measured on 2026-10-10, the default gemini-3.1-flash-lite ran
+    /// 3 queries however it was asked, while gemini-3.5-flash ran 11-13 even when told to run at most 5. So keep the search model on a Flash-Lite
+    /// model. If a call does run past its reserve the extra queries are counted (and logged), and the month can end past the limit by at most that
+    /// one call's excess - $0.014 per query.</para></summary>
     public int MonthlyQueryLimit { get; set; } = 5000;
 
-    /// <summary>Queries held back for each search while it runs. The model chooses how many queries one call makes (2-3 is typical, 14 was seen
-    /// on the larger model), so a call is only started when this many are still free.</summary>
-    public int ReservedQueriesPerCall { get; set; } = 10;
+    /// <summary>Queries held back for each search while it runs, and the number the search is told it may run at most. The model chooses how many
+    /// queries one call makes (2-3 is typical; 14 was seen on the larger model), so this covers the largest call observed.</summary>
+    public int ReservedQueriesPerCall { get; set; } = 15;
 
     public int TimeoutSeconds { get; set; } = 90;
 }

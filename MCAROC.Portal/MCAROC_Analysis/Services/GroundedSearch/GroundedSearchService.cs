@@ -55,12 +55,20 @@ public sealed class GroundedSearchService : IGroundedSearchService
         {
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
             timeout.CancelAfter(TimeSpan.FromSeconds(_options.Value.TimeoutSeconds));
-            var config = new GenerateContentConfig { Temperature = 0, Tools = [new Tool { GoogleSearch = new GoogleSearch() }] };
+            // The API cannot cap how many queries a call runs, so the model is told the limit; the quota reserves the same number up front.
+            var reserve = _options.Value.ReservedQueriesPerCall;
+            var config = new GenerateContentConfig
+            {
+                Temperature = 0, Tools = [new Tool { GoogleSearch = new GoogleSearch() }],
+                SystemInstruction = new Content { Parts = [new Part { Text = $"Run at most {reserve} web searches in total. Combine related questions into one search." }] }
+            };
             var response = await _client.Models.GenerateContentAsync(model, prompt, config, timeout.Token);
             var candidate = response.Candidates?.FirstOrDefault();
             var metadata = candidate?.GroundingMetadata;
             var searched = metadata?.WebSearchQueries ?? [];
             queries = searched.Count;
+            if (queries > reserved.Value)
+                _logger.LogWarning("Grounded search ran {Queries} queries against a reserve of {Reserved}; the extra are counted against the month.", queries, reserved.Value);
             AiUsageLog.RecordGeneration(AiUsagePurposes.GroundedSearch, model, response.UsageMetadata, groundingQueries: queries);
             var text = string.Concat(candidate?.Content?.Parts?.Where(p => p.Thought != true).Select(p => p.Text) ?? []);
             var sources = (metadata?.GroundingChunks ?? [])
