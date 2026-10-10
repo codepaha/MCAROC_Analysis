@@ -21,7 +21,7 @@ public interface IGroundedSearchService
 }
 
 /// <summary>Google Search grounding on Vertex AI for adverse-news and sentiment lookups. Only Gemini models can ground; the calls are counted against
-/// <see cref="GroundedSearchOptions.SoftCapQueries"/> (4,950, hard stop 5,050) through <see cref="GroundingQuota"/> so the free allowance is never exceeded.</summary>
+/// <see cref="GroundedSearchOptions.SoftCapQueries"/> (4,950, hard stop 5,050) through <see cref="GroundingQuota"/>, which decides whether a search may <i>start</i>; it cannot limit how many queries a started search runs, so staying inside the free allowance is a policy backed by the Flash-Lite model guard, not a guarantee.</summary>
 public sealed class GroundedSearchService : IGroundedSearchService
 {
     private readonly GenAiClient _client;

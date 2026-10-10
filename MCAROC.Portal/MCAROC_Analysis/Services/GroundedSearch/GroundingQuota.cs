@@ -11,15 +11,20 @@ public sealed class GroundedSearchOptions
     /// <summary>Model that runs the search. Gemma cannot ground, so this has to be a Gemini model.</summary>
     public string Model { get; set; } = "gemini-3.1-flash-lite";
 
-    /// <summary>The working cap on Google Search queries per calendar month (UTC): a search is started only if the month's count plus
-    /// <see cref="ReservedQueriesPerCall"/> stays at or below this. 5,000 queries a month are free across the Gemini 3 models, and each query past
-    /// that is billed at $14 per 1,000, so this sits 50 under the free allowance.</summary>
+    /// <summary>The working cap on Google Search queries per calendar month (UTC): an <b>admission</b> rule - a search is started only if the
+    /// month's count plus <see cref="ReservedQueriesPerCall"/> stays at or below this. It does not limit what a started search then runs. 5,000
+    /// queries a month are free across the Gemini 3 models and each query past that is billed at $14 per 1,000; this sits 50 under the free allowance.</summary>
     public int SoftCapQueries { get; set; } = 4950;
 
-    /// <summary>The hard stop: no search starts if the month's count (searches in flight included) plus its reserve would pass this, whatever the soft cap says. The
-    /// 100 queries between the two absorb a call that runs more queries than it reserved. Nothing can stop a call mid-way - the API has no setting
-    /// that bounds how many queries one call runs, and a model ran 12 when told to run 5 - so the buffer is a budget policy, not a mathematical
-    /// bound. The most a month can then cost beyond the free allowance is 50 queries ($0.70) if the buffer is fully used.</summary>
+    /// <summary>The hard stop, also an <b>admission</b> rule: no search starts if the month's count (searches in flight included) plus its reserve
+    /// would pass this, whatever the soft cap says. The 100 queries between the two are room for a call that runs more queries than it reserved.
+    /// <para><b>This is not a guarantee about spend.</b> Nothing can stop a call once it has started: the API has no setting that bounds how many
+    /// queries one call runs, and a model ran 12 when told to run 5. A call admitted at the edge (for example at 4,935 used) can run any number of
+    /// queries, so the month can end above 5,050 and above the free 5,000, and the overage is not bounded by the buffer. What bounds the risk in
+    /// practice is the model: the Flash-Lite search models ran 3 queries per search in every test (the model guard refuses larger models), so a
+    /// month ends inside the buffer unless a single call runs about a hundred queries more than it reserved. Any queries past 5,000 are billed at
+    /// $0.014 each, counted in full here, and logged when a call exceeds its reserve. A strictly enforced limit would need a Google Cloud quota or
+    /// budget on the project.</para></summary>
     public int HardStopQueries { get; set; } = 5050;
 
     /// <summary>Queries held back for each search while it runs, and the number the search is told it may run at most (a hint, not a limit). The
