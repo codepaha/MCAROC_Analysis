@@ -89,6 +89,8 @@ public class CaseNumberNormaliserTests
     [Theory]
     [InlineData("CP/123/2020,TPNo.93/CTB/2019", "CP/123/2020", "TPNo.93/CTB/2019")]
     [InlineData("TPNo.93/CTB/2019,CP/123/2020", "TP/93/2019", "CP/123/2020")]
+    [InlineData("TPNo.93/CTB/2019CP/1317/2018", "TP/93/2019", "CP/1317/2018")]
+    [InlineData("CP/1317/2018TPNo.93/CTB/2019", "CP/1317/2018", "TPNo.93/CTB/2019")]
     public void Mixed_connected_matters_keep_every_matter_in_source_order(string number, string display, string connected)
     {
         var p = P(number);

@@ -61,8 +61,16 @@ public static partial class CaseNumberNormaliser
             foreach (var segment in text.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
             {
                 var benches = BenchForm().Matches(segment);
-                if (benches.Count > 0) foreach (Match b in benches) matters.Add((Collapse(b.Value), b));
-                else matters.Add((segment, null));
+                if (benches.Count == 0) { matters.Add((segment, null)); continue; }
+                // Text between or around the bench-form matches is a matter of another shape (TPNo.93/CTB/2019CP/1317/2018): keep it, in order.
+                var at = 0;
+                foreach (Match b in benches)
+                {
+                    if (Collapse(segment[at..b.Index]) is { Length: > 0 } before) matters.Add((before, null));
+                    matters.Add((Collapse(b.Value), b));
+                    at = b.Index + b.Length;
+                }
+                if (Collapse(segment[at..]) is { Length: > 0 } after) matters.Add((after, null));
             }
             if (matters.Count == 0) matters.Add((text, null));
             foreach (var extra in matters.Skip(1)) connected.Add(extra.Text);
