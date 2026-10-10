@@ -32,6 +32,9 @@ public sealed class GroundedSearchService : IGroundedSearchService
     public GroundedSearchService(string projectId, string credentialsPath, GroundingQuota quota, IOptions<GroundedSearchOptions> options,
         ILogger<GroundedSearchService> logger)
     {
+        if (!options.Value.ModelHasBoundedQueries)
+            throw new InvalidOperationException($"GroundedSearch:Model '{options.Value.Model}' is not a Flash-Lite model, whose search-query count was measured to stay small; "
+                + "a larger model ran 11-13 queries per search and ignored a limit. Use a Flash-Lite model, or set GroundedSearch:AllowLargerSearchModel after measuring.");
         _quota = quota;
         _options = options;
         _logger = logger;

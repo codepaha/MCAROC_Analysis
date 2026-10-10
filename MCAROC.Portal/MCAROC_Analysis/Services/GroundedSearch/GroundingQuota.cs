@@ -14,6 +14,9 @@ public sealed class GroundedSearchOptions
     /// <summary>Google Search queries allowed per calendar month (UTC). 5,000 is the free allowance across the Gemini 3 models; each query past it
     /// is billed at $14 per 1,000. A search is only started when <see cref="ReservedQueriesPerCall"/> queries are still free, and once the month's
     /// total reaches the limit (or leaves less than that reserve) searches are refused until the month rolls over.
+    /// <para>Searches stop at the limit minus <see cref="SafetyMarginQueries"/> (default 100), so a call that overshoots its reserve still ends the
+    /// month inside the limit unless it runs more than the margin beyond the reserve - never seen: 3 queries on the default model, 14 at most on a
+    /// larger one. This is a budget policy, not a mathematical bound, because nothing can stop a call mid-way.</para>
     /// <para>The guarantee is therefore: <b>no search starts unless the month stays within the limit if that search runs no more than
     /// <see cref="ReservedQueriesPerCall"/> queries.</b> The API has no setting that bounds how many queries one call runs. The call is also told
     /// in its instructions to stay within the reserve, but that is a hint, not a limit: measured on 2026-10-10, the default gemini-3.1-flash-lite ran
@@ -25,6 +28,18 @@ public sealed class GroundedSearchOptions
     /// <summary>Queries held back for each search while it runs, and the number the search is told it may run at most. The model chooses how many
     /// queries one call makes (2-3 is typical; 14 was seen on the larger model), so this covers the largest call observed.</summary>
     public int ReservedQueriesPerCall { get; set; } = 15;
+
+    /// <summary>Queries kept clear below <see cref="MonthlyQueryLimit"/>: searches stop at <c>limit - margin</c>, not at the limit. A call can run
+    /// more queries than it reserved and nothing can stop it mid-call, so without a margin a call starting just under the limit could end over it.
+    /// With a margin of 100 a single call would have to run more than 100 queries beyond its reserve to pass 5,000 (the largest seen is 14).</summary>
+    public int SafetyMarginQueries { get; set; } = 100;
+
+    /// <summary>The search model must be a Flash-Lite model: those ran 3 queries per search in every test, while gemini-3.5-flash ran 11-13 and
+    /// ignored an instruction to run 5. Set true only after measuring a larger model's query counts.</summary>
+    public bool AllowLargerSearchModel { get; set; }
+
+    /// <summary>True when <see cref="Model"/> is one whose query count was measured to stay small, or the larger model was explicitly allowed.</summary>
+    public bool ModelHasBoundedQueries => AllowLargerSearchModel || Model.Contains("flash-lite", StringComparison.OrdinalIgnoreCase);
 
     public int TimeoutSeconds { get; set; } = 90;
 }
@@ -74,7 +89,8 @@ public sealed class GroundingQuota
         try
         {
             await EnsureMonthAsync(ct);
-            if (_used + _reserved + want > _options.Value.MonthlyQueryLimit) return null;
+            // Stop short of the limit by the safety margin: see GroundedSearchOptions.SafetyMarginQueries.
+            if (_used + _reserved + want > _options.Value.MonthlyQueryLimit - Math.Max(0, _options.Value.SafetyMarginQueries)) return null;
             _reserved += want;
             return want;
         }
