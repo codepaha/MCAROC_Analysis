@@ -84,4 +84,62 @@ public class LitigationJudgmentFilterTests
         var kept = LitigationJudgmentFilter.JudgmentDocumentIds(chunks, new Dictionary<long, LitigationCaseStatusBucket> { [100] = LitigationCaseStatusBucket.Disposed });
         Assert.Equal([2L], kept.OrderBy(x => x));
     }
+
+    private static LitigationOrderChunk Page(long doc, long order, long caseId, int page, int chunk, string text) => new()
+    {
+        LitigationOrderDocumentId = doc, LitigationCaseOrderId = order, LitigationCaseId = caseId, OrderDate = "05-03-2022", OrderType = "order/judgement",
+        PageNumber = page, ChunkIndex = chunk, ChunkText = "[Court: HighCourt | Case: 1/2020 | Order: order/judgement 05-03-2022 | Page " + page + "]  " + text
+    };
+
+    [Fact]
+    public void A_dismissal_on_the_page_before_the_signature_page_is_found_in_a_pending_case_that_is_not_disposed()
+    {
+        // production shape: one chunk per page, the operative part on page 2 of 3 and only signatures on the last page
+        var chunks = new[]
+        {
+            Page(1, 10, 100, 1, 0, "IN THE HIGH COURT. Present: counsel for the petitioner. Arguments heard at length."),
+            Page(1, 10, 100, 2, 0, "For the reasons above the writ petition is dismissed. No order as to costs."),
+            Page(1, 10, 100, 3, 0, "Signed by Registrar. Digitally signed. Date: 05.03.2022. Reason: authenticated."),
+        };
+        var pending = new Dictionary<long, LitigationCaseStatusBucket> { [100] = LitigationCaseStatusBucket.Pending };
+
+        Assert.Equal([1L], LitigationJudgmentFilter.JudgmentDocumentIds(chunks, pending).OrderBy(x => x));
+    }
+
+    [Fact]
+    public void The_same_dismissal_is_found_when_the_order_is_not_the_newest_of_a_disposed_case()
+    {
+        var chunks = new[]
+        {
+            Page(1, 10, 100, 1, 0, "Present: counsel."),
+            Page(1, 10, 100, 2, 0, "The appeal is allowed and the impugned order is set aside."),
+            Page(1, 10, 100, 3, 0, "Signature page."),
+            Page(2, 11, 100, 1, 0, "Compliance report to be filed. List on 5 April."),   // a later order of the same case
+        };
+        chunks[3].OrderDate = "05-04-2022";
+        var disposed = new Dictionary<long, LitigationCaseStatusBucket> { [100] = LitigationCaseStatusBucket.Disposed };
+
+        Assert.Contains(1L, LitigationJudgmentFilter.JudgmentDocumentIds(chunks, disposed));
+    }
+
+    [Fact]
+    public void A_long_order_is_judged_on_its_last_few_chunks_not_only_the_final_one()
+    {
+        var chunks = Enumerable.Range(1, 8).Select(i => Page(1, 10, 100, i, 0,
+            i == 6 ? "In the result, the suit is decreed with costs." : i == 8 ? "Signature page." : "Submissions recorded.")).ToList();
+        Assert.True(LitigationJudgmentFilter.TailWindow(chunks).Contains("decreed"));
+        Assert.False(LitigationJudgmentFilter.TailWindow(Enumerable.Range(1, 8).Select(i => Page(1, 10, 100, i, 0, "x" + new string('y', 3500))).ToList()).Length > 3000);
+    }
+
+    [Fact]
+    public void An_adjournment_with_a_trailing_signature_page_is_still_skipped()
+    {
+        var chunks = new[]
+        {
+            Page(1, 10, 100, 1, 0, "Present: counsel. The matter is adjourned. List on 12 March 2022."),
+            Page(1, 10, 100, 2, 0, "Signature page."),
+        };
+        var pending = new Dictionary<long, LitigationCaseStatusBucket> { [100] = LitigationCaseStatusBucket.Pending };
+        Assert.Empty(LitigationJudgmentFilter.JudgmentDocumentIds(chunks, pending));
+    }
 }

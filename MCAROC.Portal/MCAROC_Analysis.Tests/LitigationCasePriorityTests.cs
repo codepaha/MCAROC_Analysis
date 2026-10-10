@@ -85,4 +85,24 @@ public class LitigationCasePriorityTests
     [Fact]
     public void A_short_act_name_does_not_match_inside_another_word() =>
         Assert.Equal(0, LitigationCasePriority.ActWeight("calcibcentre gstreet", out _));
+
+    [Theory]
+    [InlineData("criminal", null, null)]                           // a pending criminal case against the company
+    [InlineData(null, "ITAT", null)]                               // a pending tax tribunal matter
+    [InlineData(null, "CESTAT", null)]
+    [InlineData(null, null, "Arbitration and Conciliation Act")]
+    [InlineData(null, null, "Companies Act, 2013 - oppression and mismanagement")]
+    [InlineData(null, null, "SEBI Act")]
+    [InlineData(null, null, "Consumer Protection Act - deficiency in service")]
+    [InlineData(null, null, "Information Technology Act")]
+    [InlineData(null, null, "Income Tax Act")]
+    public void Every_category_the_rule_names_reaches_tier_A_when_pending_and_against_the_company(string? caseType, string? type, string? act) =>
+        Assert.Equal(LitigationAnalysisPriority.A, Rate(caseType: caseType, type: type, act: act).Priority);
+
+    [Fact]
+    public void A_pending_criminal_case_and_a_tax_tribunal_matter_score_at_least_the_threshold()
+    {
+        Assert.True(Rate(caseType: "criminal").Score >= LitigationCasePriority.AThreshold);
+        Assert.True(Rate(type: "ITAT").Score >= LitigationCasePriority.AThreshold);
+    }
 }

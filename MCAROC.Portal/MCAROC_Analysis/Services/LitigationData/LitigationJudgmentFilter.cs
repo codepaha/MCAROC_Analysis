@@ -25,7 +25,7 @@ public static partial class LitigationJudgmentFilter
             var ordered = g.OrderBy(c => c.PageNumber).ThenBy(c => c.ChunkIndex).ToList();
             var first = ordered[0];
             return (Id: g.Key, first.LitigationCaseId, first.LitigationCaseOrderId, first.OrderType, first.OrderDate,
-                Head: Take(ordered[0].ChunkText, head: true), Tail: Take(ordered[^1].ChunkText, head: false));
+                Head: HeadWindow(ordered), Tail: TailWindow(ordered));
         }).ToList();
 
         // The newest order with text of each disposed case is the one that disposed it.
@@ -50,10 +50,33 @@ public static partial class LitigationJudgmentFilter
     /// is the source's metadata, not the order, and would make every order look like a judgment.</summary>
     internal static string Body(string chunkText) => ChunkLabel().Replace(chunkText, "", 1);
 
-    private static string Take(string chunkText, bool head)
+    /// <summary>The first <see cref="HeadChars"/> of the order's own words, across as many consecutive chunks as it takes.</summary>
+    internal static string HeadWindow(IReadOnlyList<LitigationOrderChunk> ordered)
     {
-        var text = Body(chunkText);
-        return head ? (text.Length <= HeadChars ? text : text[..HeadChars]) : (text.Length <= TailChars ? text : text[^TailChars..]);
+        var text = new System.Text.StringBuilder();
+        foreach (var chunk in ordered)
+        {
+            text.Append(Body(chunk.ChunkText)).Append('\n');
+            if (text.Length >= HeadChars) break;
+        }
+        return text.Length <= HeadChars ? text.ToString() : text.ToString(0, HeadChars);
+    }
+
+    /// <summary>The last <see cref="TailChars"/> of the order's own words, across consecutive chunks: the operative part is often a page or more
+    /// before the signature page, so the last chunk alone can hold nothing but the signatures.</summary>
+    internal static string TailWindow(IReadOnlyList<LitigationOrderChunk> ordered)
+    {
+        var parts = new List<string>();
+        var length = 0;
+        for (var i = ordered.Count - 1; i >= 0 && length < TailChars; i--)
+        {
+            var body = Body(ordered[i].ChunkText);
+            parts.Add(body);
+            length += body.Length + 1;
+        }
+        parts.Reverse();
+        var text = string.Join('\n', parts);
+        return text.Length <= TailChars ? text : text[^TailChars..];
     }
 
     [GeneratedRegex(@"^\s*\[[^\]]*\]")]

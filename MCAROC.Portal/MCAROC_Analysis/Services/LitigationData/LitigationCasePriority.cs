@@ -17,7 +17,7 @@ public sealed record LitigationCasePriorityResult(int Score, LitigationAnalysisP
 /// High Court, Supreme Court), where the judgment weighs most. A case against the company with only a status or only a forum (a pending High Court
 /// matter, a plain civil case that was disposed) is tier B: its orders are still classified, but it is not read in full. A case the company itself
 /// filed is never above B, whatever the act. Score = side (40 against, 10 by) + act (up to 35, half for the company's own filings) + forum (10, or
-/// 15 for tax tribunals) + criminal (15) + disposed (10, or 5 by the company); A at 60 or more, B at 30 or more. An insolvency proceeding adds 200,
+/// 20 for tax tribunals) + criminal (20) + disposed (10, or 5 by the company); A at 60 or more, B at 30 or more. An insolvency proceeding adds 200,
 /// so it is always A and always first.</para></summary>
 public static partial class LitigationCasePriority
 {
@@ -58,13 +58,13 @@ public static partial class LitigationCasePriority
         {
             LitigationForum.Drt or LitigationForum.Drat or LitigationForum.Nclt or LitigationForum.Nclat
                 or LitigationForum.SupremeCourt or LitigationForum.HighCourt => 10,
-            LitigationForum.Itat or LitigationForum.Cestat => 15,
+            LitigationForum.Itat or LitigationForum.Cestat => 20,
             LitigationForum.Consumer => 5,
             _ => 0
         };
         if (forumWeight > 0) { score += forumWeight; reasons.Add($"{forum} (+{forumWeight})"); }
 
-        if (!byCompany && Criminal().IsMatch(text)) { score += 15; reasons.Add("criminal or fraud proceeding (+15)"); }
+        if (!byCompany && Criminal().IsMatch(text)) { score += 20; reasons.Add("criminal or fraud proceeding (+20)"); }
 
         if (c.Status == LitigationCaseStatusBucket.Disposed)
         {
