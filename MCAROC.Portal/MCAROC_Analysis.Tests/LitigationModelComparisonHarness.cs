@@ -142,4 +142,29 @@ public class LitigationModelComparisonHarness
             .ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
         Assert.NotEmpty(results);
     }
+
+    /// <summary>Dev-only, no model calls: how the priority score splits a request's cases. Set MCAROC_PRIORITY_OUT to run.</summary>
+    [Fact]
+    public async Task Show_case_priority_split()
+    {
+        var outPath = Env("MCAROC_PRIORITY_OUT");
+        if (outPath is null) return;
+        var requestId = long.Parse(Env("MCAROC_COMPARE_REQUEST") ?? "4");
+        var conn = Env("MCAROC_COMPARE_CONN") ?? "Server=.\\SQLEXPRESS;Database=MCAROC_Analysis;Trusted_Connection=True;TrustServerCertificate=True;";
+        await using var db = new AppDbContext(new DbContextOptionsBuilder<AppDbContext>().UseSqlServer(conn).Options);
+        var company = await db.Requests.AsNoTracking().Where(r => r.RequestId == requestId).Select(r => r.CompanyName).SingleAsync();
+        var names = new List<string> { company };
+        var context = new LitigationAiAnalysisOrchestrator.AnalysisContext(new Dictionary<long, LitigationOrderDocument>(), company, names, DateOnly.FromDateTime(DateTime.UtcNow));
+        var cases = await db.LitigationCases.AsNoTracking().Where(c => c.RequestId == requestId).ToListAsync();
+        var rows = cases.Select(c => (Case: c, P: context.Priority(c))).ToList();
+        var lines = new List<string> { $"cases={rows.Count}" };
+        foreach (var g in rows.GroupBy(r => r.P.Priority).OrderByDescending(g => g.Key)) lines.Add($"{g.Key}: {g.Count()}");
+        foreach (var g in rows.GroupBy(r => r.P.Reasons.Split(';')[0]).OrderByDescending(g => g.Count())) lines.Add($"side '{g.Key}': {g.Count()} (A {g.Count(x => x.P.Priority == LitigationAnalysisPriority.A)})");
+        lines.Add("-- sample A reasons --");
+        lines.AddRange(rows.Where(r => r.P.Priority == LitigationAnalysisPriority.A).GroupBy(r => r.P.Reasons).OrderByDescending(g => g.Count()).Take(12).Select(g => $"{g.Count()} x {g.Key}"));
+        lines.Add("-- sample B reasons --");
+        lines.AddRange(rows.Where(r => r.P.Priority == LitigationAnalysisPriority.B).GroupBy(r => r.P.Reasons).OrderByDescending(g => g.Count()).Take(8).Select(g => $"{g.Count()} x {g.Key}"));
+        System.IO.File.WriteAllLines(outPath, lines);
+        Assert.NotEmpty(rows);
+    }
 }
