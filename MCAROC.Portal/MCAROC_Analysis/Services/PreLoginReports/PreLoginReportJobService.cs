@@ -348,7 +348,7 @@ public sealed class PreLoginReportJobService(
     public async Task ProcessAsync(long id, CancellationToken cancellationToken)
     {
         var job = await FindAsync(id, cancellationToken);
-        if (job is null || (job.Status != PreLoginReportJobStatus.Queued && job.Status != PreLoginReportJobStatus.AwaitingLitigation)) return;
+        if (job is null || (job.Status != PreLoginReportJobStatus.Queued && job.Status != PreLoginReportJobStatus.AwaitingLitigation && job.Status != PreLoginReportJobStatus.Completed)) return;
         if (job.NextAttemptUtc is { } next && next > DateTime.UtcNow) { Schedule(id, next - DateTime.UtcNow); return; }
         var now = DateTime.UtcNow;
 
@@ -574,21 +574,25 @@ public sealed class PreLoginReportJobService(
 
             var updatedJson = JsonSerializer.Serialize(updatedData);
 
-                // Atomic write enforcing DataVersion increment on tracked entity (T29):
-                job.DataJson = updatedJson;
-                job.DataVersion++;
-                job.Status = PreLoginReportJobStatus.Generating;
-                job.ProgressPercent = 80;
-                await db.SaveChangesAsync(cancellationToken);
+            // Atomic write enforcing DataVersion increment on tracked entity (T29):
+            job.DataJson = updatedJson;
+            job.DataVersion++;
+            job.Status = PreLoginReportJobStatus.Generating;
+            job.ProgressPercent = 80;
+            await db.SaveChangesAsync(cancellationToken);
 
-                var generated = await reports.GenerateFromDataAsync(job.Cin, format, updatedData, cancellationToken);
-                job.ReportStoragePath = await StoreReportAsync(job.PreLoginReportJobId, generated, cancellationToken);
-                job.DataVersion++;
-                job.Status = PreLoginReportJobStatus.Completed;
-                job.ProgressPercent = 100;
-                job.CompletedUtc = DateTime.UtcNow;
-                job.FailureReason = null;
-                await db.SaveChangesAsync(cancellationToken);
+            var generated = await reports.GenerateFromDataAsync(job.Cin, format, updatedData, cancellationToken);
+            if (!string.IsNullOrWhiteSpace(job.ReportStoragePath) && File.Exists(job.ReportStoragePath))
+            {
+                try { File.Delete(job.ReportStoragePath); } catch { }
+            }
+            job.ReportStoragePath = await StoreReportAsync(job.PreLoginReportJobId, generated, cancellationToken);
+            job.DataVersion++;
+            job.Status = PreLoginReportJobStatus.Completed;
+            job.ProgressPercent = 100;
+            job.CompletedUtc = DateTime.UtcNow;
+            job.FailureReason = null;
+            await db.SaveChangesAsync(cancellationToken);
         }
         catch (DbUpdateConcurrencyException)
         {
@@ -1066,11 +1070,25 @@ public sealed class PreLoginReportJobService(
         var updatedData = reportData with { LegalCases = updatedLegalCases };
         var updatedJson = JsonSerializer.Serialize(updatedData);
 
+        string? newReportPath = null;
+        if (!string.IsNullOrWhiteSpace(job.ReportStoragePath) || job.Status == PreLoginReportJobStatus.Completed)
+        {
+            var format = Enum.Parse<PreLoginReportFormat>(job.Format);
+            var identifier = updatedData.Company.LitigationOnly ? updatedData.Company.RegistrationNumber : job.Cin;
+            var generated = await reports.GenerateFromDataAsync(identifier, format, updatedData, ct);
+            if (!string.IsNullOrWhiteSpace(job.ReportStoragePath) && File.Exists(job.ReportStoragePath))
+            {
+                try { File.Delete(job.ReportStoragePath); } catch { }
+            }
+            newReportPath = await StoreReportAsync(job.PreLoginReportJobId, generated, ct);
+        }
+
         var affected = await db.PreLoginReportJobs
             .Where(j => j.PreLoginReportJobId == id && j.BatchId == batch && j.DataVersion == submittedDataVersion)
             .ExecuteUpdateAsync(s => s
-                .SetProperty(j => j.DataJson, updatedJson)
-                .SetProperty(j => j.DataVersion, j => j.DataVersion + 1), ct);
+                .SetProperty(x => x.DataJson, updatedJson)
+                .SetProperty(x => x.ReportStoragePath, x => newReportPath ?? x.ReportStoragePath)
+                .SetProperty(x => x.DataVersion, x => x.DataVersion + 1), ct);
 
         if (affected == 0)
         {
@@ -1140,11 +1158,25 @@ public sealed class PreLoginReportJobService(
         var updatedData = reportData with { LegalCases = updatedLegalCases };
         var updatedJson = JsonSerializer.Serialize(updatedData);
 
+        string? newReportPath = null;
+        if (!string.IsNullOrWhiteSpace(job.ReportStoragePath) || job.Status == PreLoginReportJobStatus.Completed)
+        {
+            var format = Enum.Parse<PreLoginReportFormat>(job.Format);
+            var identifier = updatedData.Company.LitigationOnly ? updatedData.Company.RegistrationNumber : job.Cin;
+            var generated = await reports.GenerateFromDataAsync(identifier, format, updatedData, ct);
+            if (!string.IsNullOrWhiteSpace(job.ReportStoragePath) && File.Exists(job.ReportStoragePath))
+            {
+                try { File.Delete(job.ReportStoragePath); } catch { }
+            }
+            newReportPath = await StoreReportAsync(job.PreLoginReportJobId, generated, ct);
+        }
+
         var affected = await db.PreLoginReportJobs
             .Where(j => j.PreLoginReportJobId == id && j.BatchId == batch && j.DataVersion == payload.SubmittedDataVersion)
             .ExecuteUpdateAsync(s => s
-                .SetProperty(j => j.DataJson, updatedJson)
-                .SetProperty(j => j.DataVersion, j => j.DataVersion + 1), ct);
+                .SetProperty(x => x.DataJson, updatedJson)
+                .SetProperty(x => x.ReportStoragePath, x => newReportPath ?? x.ReportStoragePath)
+                .SetProperty(x => x.DataVersion, x => x.DataVersion + 1), ct);
 
         if (affected == 0)
         {
