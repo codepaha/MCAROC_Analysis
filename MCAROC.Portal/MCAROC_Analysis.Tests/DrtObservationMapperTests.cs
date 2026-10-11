@@ -128,4 +128,37 @@ public class DrtObservationMapperTests
         var obs = new ProjectionObservation(1, ObservationSource.DrtPortal, m.Outcome, m.Verified, DateTime.UtcNow, m.Snapshot!);
         Assert.Equal(ProjectionOutcome.IgnoredNotVerified, LiveProjectionEngine.Apply(LiveProjectionState.Empty, obs).Outcome);
     }
+
+    // ---- a response that omits its own identifiers must not match the lookup by echo ----
+
+    private static async Task<DrtCaseLookupResult> LookupAsync(string json, string no = "413", int year = 2022)
+    {
+        var http = new HttpClient { BaseAddress = new Uri("https://example.test/drtapi/") };
+        var options = new DrtClientOptions { RequestsPerSecond = 1000.0, TimeoutSeconds = 5, MaxRetries = 1 };
+        var client = new DrtClient(http, Microsoft.Extensions.Options.Options.Create(options), Microsoft.Extensions.Logging.Abstractions.NullLogger<DrtClient>.Instance, null,
+            new DrtCircuitBreaker(), (req, ct) => Task.FromResult(new HttpResponseMessage(System.Net.HttpStatusCode.OK) { Content = new StringContent(json, System.Text.Encoding.UTF8, "application/json") }));
+        return await client.GetCaseByNumberAsync(7, 1, no, year);
+    }
+
+    [Theory]
+    [InlineData("{\"casetype\":\"OA\",\"caseyear\":\"2022\",\"casestatus\":\"PENDING\",\"applicant\":\"X\",\"respondent\":\"ALPHA INDUSTRIES LIMITED\"}")]                      // no caseno
+    [InlineData("{\"caseno\":\"413\",\"casetype\":\"OA\",\"casestatus\":\"PENDING\",\"applicant\":\"X\",\"respondent\":\"ALPHA INDUSTRIES LIMITED\"}")]                      // no caseyear
+    [InlineData("{\"caseno\":\"413\",\"caseyear\":\"2022\",\"casestatus\":\"PENDING\",\"applicant\":\"X\",\"respondent\":\"ALPHA INDUSTRIES LIMITED\"}")]                       // no casetype
+    [InlineData("{\"casestatus\":\"PENDING\",\"applicant\":\"X\",\"respondent\":\"ALPHA INDUSTRIES LIMITED\"}")]                                                                // none of the three
+    public async Task A_response_that_omits_its_case_number_year_or_type_is_not_verified_even_though_the_request_supplied_them(string json)
+    {
+        var result = await LookupAsync(json);
+        Assert.True(result.IsFound);
+        var m = DrtObservationMapper.Map(result, new DrtLookup(7, P("OA/413/2022")), Tribunal, Subject, null, null, Today);
+        Assert.Equal((ObservationOutcome.IdentityRejected, false), (m.Outcome, m.Verified));
+        Assert.False(m.Verification!.IdentityVerified);
+    }
+
+    [Fact]
+    public async Task A_response_that_returns_all_three_identifiers_and_matches_is_still_verified()
+    {
+        var result = await LookupAsync("{\"caseno\":\"413\",\"casetype\":\"OA\",\"caseyear\":\"2022\",\"casestatus\":\"PENDING\",\"applicant\":\"X\",\"respondent\":\"ALPHA INDUSTRIES LIMITED\"}");
+        var m = DrtObservationMapper.Map(result, new DrtLookup(7, P("OA/413/2022")), Tribunal, Subject, null, null, Today);
+        Assert.Equal((ObservationOutcome.Found, true), (m.Outcome, m.Verified));
+    }
 }

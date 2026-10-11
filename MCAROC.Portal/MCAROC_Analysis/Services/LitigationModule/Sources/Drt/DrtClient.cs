@@ -529,10 +529,12 @@ public sealed class DrtClient : IDrtClient
                 return DrtCaseLookupResult.NotFoundCandidate("Response missing identifying case fields", json, apiResponse.ExitAddress);
             }
 
-            var caseNo = TryGetString(root, "caseno") ?? requestedNo;
+            // Identity fields are kept exactly as the portal returned them. They are NOT filled from the request: a response that omits its own number or year
+            // must not be able to "match" the lookup by echoing it back (plan section 4.3); the case number below is parsed from what was returned only.
+            var caseNo = TryGetString(root, "caseno");
             var caseType = TryGetString(root, "casetype");
             var caseTypeId = TryGetInt(root, "casetypeId") ?? requestedTypeId;
-            var caseYear = TryGetInt(root, "caseyear") ?? requestedYear;
+            var caseYear = TryGetInt(root, "caseyear");
             var diaryNo = TryGetString(root, "diaryno");
             var diaryYear = TryGetInt(root, "diaryyear");
             var filingNo = TryGetString(root, "filingNo");
