@@ -62,7 +62,7 @@ public static class LiveProjectionEngine
         var heldBefore = current.HeldChange;
         var currentBucket = LitigationCaseStatusClassifier.Classify(current.Status, current.Stage);
         var incomingBucket = LitigationCaseStatusClassifier.Classify(snap.Status, snap.Stage);
-        if (currentBucket == LitigationCaseStatusBucket.Disposed && incomingBucket == LitigationCaseStatusBucket.Pending && !CaseValue.IsMissing(snap.Status))
+        if (!(o.Source == ObservationSource.Vendor && StatusPortalOwned(current)) && currentBucket == LitigationCaseStatusBucket.Disposed && incomingBucket == LitigationCaseStatusBucket.Pending && !CaseValue.IsMissing(snap.Status))
         {
             var marker = "status:" + snap.Status!.Trim().ToUpperInvariant();
             if (heldBefore != marker) return new(current with { HeldChange = marker }, ProjectionOutcome.HeldStatusRegression, []);
@@ -80,18 +80,31 @@ public static class LiveProjectionEngine
         var changed = new List<string>();
         var src = SourceName(o.Source);
 
+        var vendor = o.Source == ObservationSource.Vendor;
+        // Source precedence (plan 4.2e rule 3): once the portal has supplied a field - a value, or a confirmed empty - a vendor observation neither replaces it nor
+        // resurrects a stale value; the vendor only fills what no portal has spoken about.
+        bool PortalOwns(string field) => sources.TryGetValue(field, out var fs) && fs.Source is "Portal" or "Derived";
+
         string? Merge(string field, string? held, string? incoming)
         {
+            if (vendor && PortalOwns(field)) return held;
+            var derivedDecision = field == FDecisionDate && snap.DecisionDateDerived;
+
             if (!CaseValue.IsMissing(incoming))
             {
-                if (!string.Equals(held, incoming, StringComparison.Ordinal) || sources.GetValueOrDefault(field)?.ConfirmedEmpty == true)
-                {
+                var heldSource = sources.GetValueOrDefault(field);
+                // A derived decision date is weaker than one the portal returned explicitly: it never replaces it. Where the held value is itself derived (or absent),
+                // the new observation owns the entry - source, observation id and time move together.
+                if (derivedDecision && heldSource is { Source: "Portal", ConfirmedEmpty: false } && !CaseValue.IsMissing(held)) return held;
+                var provenance = derivedDecision ? "Derived" : src;
+                var sameValue = string.Equals(held, incoming, StringComparison.Ordinal);
+                if (!sameValue || heldSource is null || heldSource.ConfirmedEmpty || heldSource.Source != provenance)
                     changed.Add(field);
-                    sources[field] = new FieldSource(src, o.RetrievedUtc, o.ObservationId);
-                }
+                if (!sameValue || heldSource is null || heldSource.ConfirmedEmpty || heldSource.Source != provenance || derivedDecision)
+                    sources[field] = new FieldSource(provenance, o.RetrievedUtc, o.ObservationId);
                 return incoming;
             }
-            if (MeaningfulEmpty.Contains(field) && complete)
+            if (MeaningfulEmpty.Contains(field) && complete && !vendor)
             {
                 // Confirmed empty: the portal itself says there is nothing, so a stale held value is replaced and not resurrected.
                 if (!CaseValue.IsMissing(held) || sources.GetValueOrDefault(field)?.ConfirmedEmpty != true) changed.Add(field);
@@ -116,10 +129,10 @@ public static class LiveProjectionEngine
             LastRetrievedUtc = o.RetrievedUtc, LastObservationId = o.ObservationId,
             Sources = sources, HeldChange = null
         };
-        if (snap.DecisionDateDerived && !CaseValue.IsMissing(snap.DecisionDate) && sources.TryGetValue(FDecisionDate, out var ds))
-            sources[FDecisionDate] = ds with { Source = "Derived" };
         return new(next, ProjectionOutcome.Applied, changed);
     }
+
+    private static bool StatusPortalOwned(LiveProjectionState s) => s.Sources.TryGetValue(FStatus, out var fs) && fs.Source is "Portal" or "Derived";
 
     /// <summary>The "confirmed empty" marks as the eligibility rule consumes them (field name to when the portal last said empty).</summary>
     public static IReadOnlyDictionary<string, DateTime> ConfirmedEmptyMarks(LiveProjectionState s) =>

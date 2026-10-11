@@ -159,6 +159,74 @@ public class LiveProjectionEngineTests
     }
 
     [Fact]
+    public void A_later_vendor_observation_does_not_overwrite_a_value_the_portal_supplied()
+    {
+        var before = Applied(Obs(1, Snap(status: "DISPOSAL", court: "DRT Mumbai 1", next: null, decision: "01-09-2026")));
+        var r = LiveProjectionEngine.Apply(before, Obs(2, Snap(status: "PENDING", court: "Vendor Court Name", filing: "01-01-2020", next: "30-12-2026", decision: "02-02-2026"),
+            10, source: ObservationSource.Vendor));
+        Assert.Equal(ProjectionOutcome.Applied, r.Outcome);
+        Assert.Equal(("DISPOSAL", "DRT Mumbai 1", "01-09-2026", "05-12-2022"), (r.State.Status, r.State.Court, r.State.DecisionDate, r.State.FilingDate));
+        Assert.Equal("Portal", r.State.Sources[LiveProjectionEngine.FStatus].Source);
+        Assert.Empty(r.ChangedFields);
+    }
+
+    [Fact]
+    public void A_later_vendor_observation_does_not_resurrect_a_value_the_portal_confirmed_empty()
+    {
+        var emptied = Applied(Obs(1, Snap(next: "20-10-2026")), Obs(2, Snap(next: null), 5));
+        Assert.True(emptied.Sources[LiveProjectionEngine.FNextHearing].ConfirmedEmpty);
+
+        var r = LiveProjectionEngine.Apply(emptied, Obs(3, Snap(next: "20-10-2026"), 10, source: ObservationSource.Vendor));
+        Assert.Null(r.State.NextHearingDate);
+        Assert.True(r.State.Sources[LiveProjectionEngine.FNextHearing].ConfirmedEmpty);
+    }
+
+    [Fact]
+    public void A_vendor_observation_still_fills_a_field_no_portal_has_spoken_about_and_never_blanks_a_portal_value()
+    {
+        var portal = Applied(Obs(1, Snap(court: null)));
+        var r = LiveProjectionEngine.Apply(portal, Obs(2, Snap(court: "Vendor Court", next: null), 5, source: ObservationSource.Vendor));
+        Assert.Equal("Vendor Court", r.State.Court);
+        Assert.Equal("Vendor", r.State.Sources[LiveProjectionEngine.FCourt].Source);
+        Assert.Equal("20-10-2026", r.State.NextHearingDate);
+    }
+
+    [Fact]
+    public void A_vendor_report_of_pending_does_not_trigger_the_status_regression_hold_over_a_portal_disposal()
+    {
+        var disposed = Applied(Obs(1, Snap(status: "DISPOSAL", next: null)));
+        var r = LiveProjectionEngine.Apply(disposed, Obs(2, Snap(status: "PENDING"), 5, source: ObservationSource.Vendor));
+        Assert.Equal(ProjectionOutcome.Applied, r.Outcome);
+        Assert.Equal("DISPOSAL", r.State.Status);
+        Assert.Null(r.State.HeldChange);
+    }
+
+    [Fact]
+    public void A_derived_decision_date_repeated_by_a_new_observation_moves_source_observation_and_time_together()
+    {
+        var derived = Snap(status: "ALLOWED", next: null, decision: "05-10-2026") with { DecisionDateDerived = true };
+        var first = LiveProjectionEngine.Apply(LiveProjectionState.Empty, Obs(1, derived, 0, source: ObservationSource.ConsumerPortal));
+        var again = LiveProjectionEngine.Apply(first.State, Obs(2, derived, 30, source: ObservationSource.ConsumerPortal));
+
+        var source = again.State.Sources[LiveProjectionEngine.FDecisionDate];
+        Assert.Equal(("Derived", 2L, T0.AddMinutes(30)), (source.Source, source.ObservationId, source.WhenUtc));
+        Assert.Equal("05-10-2026", again.State.DecisionDate);
+    }
+
+    [Fact]
+    public void A_derived_decision_date_never_replaces_one_the_portal_returned_explicitly()
+    {
+        var explicitDate = Applied(Obs(1, Snap(status: "DISPOSAL", next: null, decision: "01-09-2026")));
+        var derived = Snap(status: "DISPOSAL", next: null, decision: "01-09-2026") with { DecisionDateDerived = true };
+        var same = LiveProjectionEngine.Apply(explicitDate, Obs(2, derived, 5, source: ObservationSource.ConsumerPortal));
+        Assert.Equal(("Portal", 1L), (same.State.Sources[LiveProjectionEngine.FDecisionDate].Source, same.State.Sources[LiveProjectionEngine.FDecisionDate].ObservationId));
+
+        var different = LiveProjectionEngine.Apply(explicitDate, Obs(3, derived with { DecisionDate = "03-09-2026" }, 10, source: ObservationSource.ConsumerPortal));
+        Assert.Equal("01-09-2026", different.State.DecisionDate);
+        Assert.Equal("Portal", different.State.Sources[LiveProjectionEngine.FDecisionDate].Source);
+    }
+
+    [Fact]
     public void The_same_observation_applied_twice_changes_nothing_the_second_time()
     {
         var o = Obs(1, Snap());
