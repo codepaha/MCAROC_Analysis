@@ -265,4 +265,43 @@ public class LitigationModuleReaderTests : IAsyncLifetime
         };
         Assert.Empty(LitigationModuleParity.FieldDifferences(legacy, reader));
     }
+
+    [Fact]
+    public void Overlay_comparison_reports_note_pinned_edits_reason_inclusion_and_redirects()
+    {
+        var stored = new Dictionary<long, ModuleScopeCase>
+        {
+            [1] = new() { Alias = "C-1", IsExcluded = true, ExclusionReason = "namesake", AnalystNote = "checked with RM", PinnedFieldsJson = "{\"status\":\"DISPOSED\"}", IncludedInReport = false, RedirectAliasesJson = "[\"C-9\"]" }
+        };
+        ModuleCaseSummary Shown(string? reason, string? note, string? pinned, bool included, string? redirects) =>
+            new(1, 5, "C-1", "OA/1/2022", MCAROC_Analysis.Services.LitigationModule.Normalisation.CaseNumberCompleteness.Complete, null, null, LitigationCaseStatusBucket.Unknown,
+                null, null, true, false, true, reason, note, pinned, included, redirects);
+
+        Assert.Empty(LitigationModuleParity.OverlayDifferences(stored,
+            new Dictionary<long, ModuleCaseSummary> { [1] = Shown("namesake", "checked with RM", "{\"status\":\"DISPOSED\"}", false, "[\"C-9\"]") }));
+
+        var diffs = LitigationModuleParity.OverlayDifferences(stored, new Dictionary<long, ModuleCaseSummary> { [1] = Shown(null, "other", "{}", true, null) });
+        foreach (var field in new[] { "exclusion reason", "analyst note", "pinned field edits", "report inclusion", "redirect aliases" })
+            Assert.Contains(diffs, d => d.Contains(field));
+    }
+
+    [Fact]
+    public async Task Notes_pinned_edits_and_report_inclusion_set_through_the_store_are_read_back_unchanged_and_parity_stays_clean()
+    {
+        var w = await SeedAsync();
+        await using var db = Ctx();
+        var store = new LitigationModuleStore(db);
+        var subject = await store.CreateSubjectAsync(ModuleSubjectKind.Company, "Parity Subject 3", null, default);
+        var scope = await store.EnsureScopeAsync(ModuleScopeKind.Request, w.RequestId, subject.SubjectId, default);
+        var mc = await store.EnsureCaseForLegacyAsync(w.CaseIds[0], default);
+        await store.AddCaseToScopeAsync(scope.ScopeId, mc.CaseId, null, default);
+        var v = (await db.Set<ModuleScope>().AsNoTracking().FirstAsync(s => s.ScopeId == scope.ScopeId)).Version;
+        await store.SetOverlayAsync(scope.ScopeId, mc.CaseId,
+            new ScopeOverlayChange(IsExcluded: true, ExclusionReason: "namesake", AnalystNote: "not our borrower", IncludedInReport: false, PinnedFieldsJson: "{\"status\":\"DISPOSED\"}"), v, default);
+
+        var item = await new LitigationModuleReader(db).GetCaseAsync(Scope(w), w.CaseIds[0], default);
+        Assert.Equal(("namesake", "not our borrower", false, "{\"status\":\"DISPOSED\"}"), (item!.ExclusionReason, item.AnalystNote, item.IncludedInReport, item.PinnedFieldsJson));
+        var report = await new LitigationModuleParity(db).CheckRequestAsync(w.RequestId, default);
+        Assert.True(report.IsClean, string.Join("; ", report.UnexplainedDifferences));
+    }
 }

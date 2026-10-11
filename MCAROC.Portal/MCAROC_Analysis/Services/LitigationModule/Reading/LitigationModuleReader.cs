@@ -26,7 +26,8 @@ public sealed record PageRequest(long? AfterCaseId = null, int Size = 100)
 /// <summary>One case of a scope's view. <see cref="LegacyLitigationCaseId"/> is the stable key today; <see cref="CaseId"/> and <see cref="Alias"/> are filled once the case is in the module.</summary>
 public sealed record ModuleCaseSummary(
     long LegacyLitigationCaseId, long? CaseId, string? Alias, string NumberDisplay, CaseNumberCompleteness NumberCompleteness, string? Court, string? CaseStatus,
-    LitigationCaseStatusBucket StatusBucket, string? LastHearingDate, string? NextHearingDate, bool InLatestFeed, bool IsHidden, bool IsExcluded);
+    LitigationCaseStatusBucket StatusBucket, string? LastHearingDate, string? NextHearingDate, bool InLatestFeed, bool IsHidden, bool IsExcluded,
+    string? ExclusionReason = null, string? AnalystNote = null, string? PinnedFieldsJson = null, bool IncludedInReport = true, string? RedirectAliasesJson = null);
 
 public sealed record ModuleCaseCounts(int Total, int Pending, int Disposed, int Unknown, int NotInLatestFeed, int Hidden);
 
@@ -80,7 +81,7 @@ public sealed class LitigationModuleReader(AppDbContext db)
         var overlays = scopeId is null ? [] : await (from sc in db.Set<ModuleScopeCase>().AsNoTracking()
             join mc in db.Set<ModuleCase>().AsNoTracking() on sc.CaseId equals mc.CaseId
             where sc.ScopeId == scopeId && mc.LegacyLitigationCaseId != null && ids.Contains(mc.LegacyLitigationCaseId.Value)
-            select new { Legacy = mc.LegacyLitigationCaseId!.Value, mc.CaseId, sc.Alias, sc.IsHidden, sc.IsExcluded }).ToDictionaryAsync(x => x.Legacy, ct);
+            select new { Legacy = mc.LegacyLitigationCaseId!.Value, mc.CaseId, sc.Alias, sc.IsHidden, sc.IsExcluded, sc.ExclusionReason, sc.AnalystNote, sc.PinnedFieldsJson, sc.IncludedInReport, sc.RedirectAliasesJson }).ToDictionaryAsync(x => x.Legacy, ct);
 
         var items = pageRows.Select(r =>
         {
@@ -88,7 +89,7 @@ public sealed class LitigationModuleReader(AppDbContext db)
             overlays.TryGetValue(r.LitigationCaseId, out var o);
             return new ModuleCaseSummary(r.LitigationCaseId, o?.CaseId, o?.Alias, parts.Display, parts.Completeness, r.Court, r.CaseStatus,
                 LitigationCaseStatusClassifier.Classify(r.CaseStatus, r.CaseStage), r.LastHearingDate, r.NextHearingDate, r.InLatestFeed,
-                o?.IsHidden ?? false, o?.IsExcluded ?? false);
+                o?.IsHidden ?? false, o?.IsExcluded ?? false, o?.ExclusionReason, o?.AnalystNote, o?.PinnedFieldsJson, o?.IncludedInReport ?? true, o?.RedirectAliasesJson);
         }).ToList();
 
         return new ModuleCasePage(items, rows.Count > size ? pageRows[^1].LitigationCaseId : null, counts);

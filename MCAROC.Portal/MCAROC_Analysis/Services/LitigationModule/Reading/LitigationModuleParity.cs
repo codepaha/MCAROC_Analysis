@@ -64,21 +64,7 @@ public sealed class LitigationModuleParity(AppDbContext db)
 
         // 4. Aliases and overlays: what the reader shows must be what the scope stores, and nothing stored may point outside the scope's retained set.
         var stored = await StoredOverlaysAsync(requestId, ct);
-        foreach (var (legacyId, o) in stored.OrderBy(kv => kv.Key))
-        {
-            if (!allById.TryGetValue(legacyId, out var item))
-            {
-                unexplained.Add($"case {legacyId} has an overlay in this scope but is not in the scope's retained set");
-                continue;
-            }
-            Diff(unexplained, legacyId, "alias", o.Alias, item.Alias);
-            Diff(unexplained, legacyId, "hidden", o.IsHidden, item.IsHidden);
-            Diff(unexplained, legacyId, "excluded", o.IsExcluded, item.IsExcluded);
-        }
-        foreach (var item in all.Where(i => i.Alias is not null && !stored.ContainsKey(i.LegacyLitigationCaseId)))
-            unexplained.Add($"case {item.LegacyLitigationCaseId} shows alias {item.Alias} but the scope stores none");
-        foreach (var dup in all.Where(i => i.Alias is not null).GroupBy(i => i.Alias).Where(g => g.Count() > 1))
-            unexplained.Add($"alias {dup.Key} is shown for {dup.Count()} different cases");
+        unexplained.AddRange(OverlayDifferences(stored, allById));
 
         return new ParityReport(requestId, legacy.Count, all.Count, unexplained, explained);
     }
@@ -103,6 +89,34 @@ public sealed class LitigationModuleParity(AppDbContext db)
         return differences;
     }
 
+    /// <summary>The scope's stored associations against what the reader shows: alias, hidden, excluded (and its reason), analyst note, pinned edits, report inclusion and
+    /// redirect aliases. Nothing stored may point outside the retained set, and no alias may be shown that is not stored or shown twice.</summary>
+    public static List<string> OverlayDifferences(IReadOnlyDictionary<long, ModuleScopeCase> stored, IReadOnlyDictionary<long, ModuleCaseSummary> reader)
+    {
+        var differences = new List<string>();
+        foreach (var (legacyId, o) in stored.OrderBy(kv => kv.Key))
+        {
+            if (!reader.TryGetValue(legacyId, out var item))
+            {
+                differences.Add($"case {legacyId} has an overlay in this scope but is not in the scope's retained set");
+                continue;
+            }
+            Diff(differences, legacyId, "alias", o.Alias, item.Alias);
+            Diff(differences, legacyId, "hidden", o.IsHidden, item.IsHidden);
+            Diff(differences, legacyId, "excluded", o.IsExcluded, item.IsExcluded);
+            Diff(differences, legacyId, "exclusion reason", o.ExclusionReason, item.ExclusionReason);
+            Diff(differences, legacyId, "analyst note", o.AnalystNote, item.AnalystNote);
+            Diff(differences, legacyId, "pinned field edits", o.PinnedFieldsJson, item.PinnedFieldsJson);
+            Diff(differences, legacyId, "report inclusion", o.IncludedInReport, item.IncludedInReport);
+            Diff(differences, legacyId, "redirect aliases", o.RedirectAliasesJson, item.RedirectAliasesJson);
+        }
+        foreach (var item in reader.Values.Where(i => i.Alias is not null && !stored.ContainsKey(i.LegacyLitigationCaseId)).OrderBy(i => i.LegacyLitigationCaseId))
+            differences.Add($"case {item.LegacyLitigationCaseId} shows alias {item.Alias} but the scope stores none");
+        foreach (var dup in reader.Values.Where(i => i.Alias is not null).GroupBy(i => i.Alias).Where(g => g.Count() > 1))
+            differences.Add($"alias {dup.Key} is shown for {dup.Count()} different cases");
+        return differences;
+    }
+
     private static void Diff<T>(List<string> unexplained, long id, string field, T expected, T actual)
     {
         if (!EqualityComparer<T>.Default.Equals(expected, actual))
@@ -122,15 +136,15 @@ public sealed class LitigationModuleParity(AppDbContext db)
         }
     }
 
-    private async Task<Dictionary<long, (string Alias, bool IsHidden, bool IsExcluded)>> StoredOverlaysAsync(long requestId, CancellationToken ct)
+    private async Task<Dictionary<long, ModuleScopeCase>> StoredOverlaysAsync(long requestId, CancellationToken ct)
     {
         var rows = await (from s in db.Set<ModuleScope>().AsNoTracking()
             where s.Kind == ModuleScopeKind.Request && s.ExternalId == requestId
             join sc in db.Set<ModuleScopeCase>().AsNoTracking() on s.ScopeId equals sc.ScopeId
             join mc in db.Set<ModuleCase>().AsNoTracking() on sc.CaseId equals mc.CaseId
             where mc.LegacyLitigationCaseId != null
-            select new { Legacy = mc.LegacyLitigationCaseId!.Value, sc.Alias, sc.IsHidden, sc.IsExcluded }).ToListAsync(ct);
-        return rows.ToDictionary(r => r.Legacy, r => (r.Alias, r.IsHidden, r.IsExcluded));
+            select new { Legacy = mc.LegacyLitigationCaseId!.Value, Link = sc }).ToListAsync(ct);
+        return rows.ToDictionary(r => r.Legacy, r => r.Link);
     }
 
     private async Task<Dictionary<long, LegacyRow>> LegacyCasesAsync(long requestId, CancellationToken ct)
