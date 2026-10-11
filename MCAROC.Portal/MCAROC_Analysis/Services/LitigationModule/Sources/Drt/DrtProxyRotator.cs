@@ -9,7 +9,7 @@ public sealed class DrtProxyRotator : IWebProxy
     private readonly int _rotateFrequency;
     private int _index;
     private int _requestCount;
-    private readonly AsyncLocal<string?> _lastQueriedProxy = new();
+    private volatile string? _lastQueriedProxy;
 
     public DrtProxyRotator(string[]? proxies, int rotateFrequency = 10)
     {
@@ -28,11 +28,11 @@ public sealed class DrtProxyRotator : IWebProxy
         }
     }
 
-    /// <summary>The exit address queried by the HTTP transport for the current asynchronous call flow.</summary>
+    /// <summary>The exit address queried by the HTTP transport for the current request.</summary>
     public string? LastQueriedExit
     {
-        get => _lastQueriedProxy.Value;
-        set => _lastQueriedProxy.Value = value;
+        get => _lastQueriedProxy;
+        set => _lastQueriedProxy = value;
     }
 
     /// <summary>Total configured proxies in the pool.</summary>
@@ -61,11 +61,11 @@ public sealed class DrtProxyRotator : IWebProxy
     {
         if (_proxies.Length == 0)
         {
-            _lastQueriedProxy.Value = "direct";
+            _lastQueriedProxy = "direct";
             return null;
         }
         var exit = CurrentExit;
-        _lastQueriedProxy.Value = exit;
+        _lastQueriedProxy = exit;
         return Uri.TryCreate(exit, UriKind.Absolute, out var uri) ? uri : null;
     }
 

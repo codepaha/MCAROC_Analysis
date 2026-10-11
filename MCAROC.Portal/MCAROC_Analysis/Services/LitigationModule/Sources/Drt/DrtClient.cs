@@ -25,6 +25,9 @@ public sealed class DrtClient : IDrtClient
     private readonly IWebProxy? _transportProxy;
     private long _lastRequestTimestamp;
 
+    /// <summary>Request option key used to track exit provenance explicitly per request.</summary>
+    public static readonly HttpRequestOptionsKey<string> ExitProvenanceKey = new("DrtExitAddress");
+
     public DrtClient(
         HttpClient http,
         IOptions<DrtClientOptions> options,
@@ -39,8 +42,8 @@ public sealed class DrtClient : IDrtClient
         _timeProvider = timeProvider ?? TimeProvider.System;
         _breaker = breaker ?? ResolveSharedBreaker(_options, _timeProvider);
         _sendHook = sendHook;
-        _rotator = new DrtProxyRotator(_options.ProxyPool, _options.ProxyRotationFrequency);
         _transportProxy = TryGetTransportProxy(_http);
+        _rotator = _transportProxy as DrtProxyRotator ?? new DrtProxyRotator(_options.ProxyPool, _options.ProxyRotationFrequency);
 
         if (_http.BaseAddress is null && !string.IsNullOrWhiteSpace(_options.BaseUrl))
         {
@@ -709,12 +712,6 @@ public sealed class DrtClient : IDrtClient
             _rotator.NotifyRequest();
             if (attempt > 1) _rotator.Rotate();
 
-            if (_transportProxy is DrtProxyRotator tr)
-            {
-                tr.NotifyRequest();
-                if (attempt > 1) tr.Rotate();
-            }
-
             try
             {
                 using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
@@ -723,12 +720,15 @@ public sealed class DrtClient : IDrtClient
                     timeoutCts.CancelAfter(TimeSpan.FromSeconds(_options.TimeoutSeconds));
                 }
 
+                var requestExit = CurrentExit;
+
                 // Finding 2: Create fresh content for EACH attempt so disposed content is never reused!
                 using var content = new FormUrlEncodedContent(formFields);
                 using var request = new HttpRequestMessage(HttpMethod.Post, endpoint);
                 request.Headers.UserAgent.ParseAdd(_options.UserAgent);
                 request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
                 request.Content = content;
+                request.Options.Set(ExitProvenanceKey, requestExit);
 
                 using var response = _sendHook is not null
                     ? await _sendHook(request, timeoutCts.Token)
@@ -830,7 +830,13 @@ public sealed class DrtClient : IDrtClient
     {
         if (request.Headers.TryGetValues("X-Exit-Address", out var customExits))
         {
-            return customExits.FirstOrDefault() ?? "direct";
+            var custom = customExits.FirstOrDefault();
+            if (!string.IsNullOrWhiteSpace(custom)) return custom;
+        }
+
+        if (_transportProxy is null)
+        {
+            return "direct";
         }
 
         if (_transportProxy is DrtProxyRotator rotator && rotator.LastQueriedExit is not null)
@@ -838,9 +844,9 @@ public sealed class DrtClient : IDrtClient
             return rotator.LastQueriedExit;
         }
 
-        if (_rotator.LastQueriedExit is not null && _transportProxy is not null)
+        if (request.Options.TryGetValue(ExitProvenanceKey, out var explicitExit) && !string.IsNullOrWhiteSpace(explicitExit))
         {
-            return _rotator.LastQueriedExit;
+            return explicitExit;
         }
 
         if (_transportProxy is WebProxy webProxy && webProxy.Address is not null)
@@ -907,11 +913,10 @@ public sealed class DrtClient : IDrtClient
             var baseSeconds = Math.Pow(3, attempt - 1) * 2.0;
             var jitter = Random.Shared.NextDouble() * 1.5;
             delay = TimeSpan.FromSeconds(baseSeconds + jitter);
-        }
-
-        if (delay > TimeSpan.FromSeconds(60))
-        {
-            delay = TimeSpan.FromSeconds(60);
+            if (delay > TimeSpan.FromSeconds(60))
+            {
+                delay = TimeSpan.FromSeconds(60);
+            }
         }
 
         await Task.Delay(delay, _timeProvider, ct);
