@@ -53,6 +53,7 @@ public static class DrtObservationMapper
             : expected.TypeCode is null || got.TypeCode is null ? "the case type could not be compared"
             : expected.TypeCode != got.TypeCode ? $"the portal returned type {got.TypeCode}, not {expected.TypeCode}"
             : expected.No is null || got.No != expected.No ? $"the portal returned number {got.No}, not {expected.No}"
+            : got.YearSource is not (YearSource.Number or YearSource.Column) ? "the portal did not return the case year itself (a year inferred from the filing date is not identity)"
             : expected.Year is null || got.Year != expected.Year ? $"the portal returned year {got.Year}, not {expected.Year}"
             : null;
         if (identityProblem is not null) return new(false, identityProblem, null, null, false, null);

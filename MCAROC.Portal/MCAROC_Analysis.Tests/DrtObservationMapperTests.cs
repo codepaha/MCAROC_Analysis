@@ -155,6 +155,15 @@ public class DrtObservationMapperTests
     }
 
     [Fact]
+    public async Task A_filing_date_in_the_expected_year_does_not_stand_in_for_a_missing_case_year()
+    {
+        var result = await LookupAsync("{\"caseno\":\"413\",\"casetype\":\"OA\",\"dateoffiling\":\"5/12/2022\",\"casestatus\":\"PENDING\",\"applicant\":\"X\",\"respondent\":\"ALPHA INDUSTRIES LIMITED\"}");
+        var m = DrtObservationMapper.Map(result, new DrtLookup(7, P("OA/413/2022")), Tribunal, Subject, null, null, Today);
+        Assert.Equal((ObservationOutcome.IdentityRejected, false), (m.Outcome, m.Verified));
+        Assert.Contains("did not return the case year", m.Message);
+    }
+
+    [Fact]
     public async Task A_response_that_returns_all_three_identifiers_and_matches_is_still_verified()
     {
         var result = await LookupAsync("{\"caseno\":\"413\",\"casetype\":\"OA\",\"caseyear\":\"2022\",\"casestatus\":\"PENDING\",\"applicant\":\"X\",\"respondent\":\"ALPHA INDUSTRIES LIMITED\"}");
