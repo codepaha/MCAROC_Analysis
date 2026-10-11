@@ -6682,6 +6682,115 @@ namespace MCAROC_Analysis.Migrations
                     b.ToTable("Cases", "litigation");
                 });
 
+            modelBuilder.Entity("MCAROC_Analysis.Services.LitigationModule.Store.ModuleCaseLive", b =>
+                {
+                    b.Property<long>("CaseId")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("Court")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("DecisionDate")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("DisposalNature")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("FieldSourcesJson")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("FilingDate")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<int>("HearingCount")
+                        .HasColumnType("int");
+
+                    b.Property<string>("HeldChange")
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<string>("LastHearingDate")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<long?>("LastObservationId")
+                        .HasColumnType("bigint");
+
+                    b.Property<DateTime?>("LastRetrievedUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("NextHearingDate")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("Stage")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("Status")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("SuitAmount")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<DateTime>("UpdatedUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<long>("Version")
+                        .IsConcurrencyToken()
+                        .HasColumnType("bigint");
+
+                    b.HasKey("CaseId");
+
+                    b.ToTable("CaseLive", "litigation");
+                });
+
+            modelBuilder.Entity("MCAROC_Analysis.Services.LitigationModule.Store.ModuleCaseObservation", b =>
+                {
+                    b.Property<long>("ObservationId")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("ObservationId"));
+
+                    b.Property<string>("AppliedAs")
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<long>("CaseId")
+                        .HasColumnType("bigint");
+
+                    b.Property<DateTime>("CreatedUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<long?>("EventWatermark")
+                        .HasColumnType("bigint");
+
+                    b.Property<int>("Outcome")
+                        .HasColumnType("int");
+
+                    b.Property<int>("ParserVersion")
+                        .HasColumnType("int");
+
+                    b.Property<DateTime>("RetrievedUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("SnapshotJson")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<int>("Source")
+                        .HasColumnType("int");
+
+                    b.Property<DateTime?>("SourceUpdatedUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<bool>("Verified")
+                        .HasColumnType("bit");
+
+                    b.HasKey("ObservationId");
+
+                    b.HasIndex("CaseId", "RetrievedUtc");
+
+                    b.ToTable("CaseObservations", "litigation");
+                });
+
             modelBuilder.Entity("MCAROC_Analysis.Services.LitigationModule.Store.ModuleScope", b =>
                 {
                     b.Property<long>("ScopeId")
@@ -7434,6 +7543,28 @@ namespace MCAROC_Analysis.Migrations
                         .IsRequired();
 
                     b.Navigation("LegacyCase");
+                });
+
+            modelBuilder.Entity("MCAROC_Analysis.Services.LitigationModule.Store.ModuleCaseLive", b =>
+                {
+                    b.HasOne("MCAROC_Analysis.Services.LitigationModule.Store.ModuleCase", "Case")
+                        .WithMany()
+                        .HasForeignKey("CaseId")
+                        .OnDelete(DeleteBehavior.NoAction)
+                        .IsRequired();
+
+                    b.Navigation("Case");
+                });
+
+            modelBuilder.Entity("MCAROC_Analysis.Services.LitigationModule.Store.ModuleCaseObservation", b =>
+                {
+                    b.HasOne("MCAROC_Analysis.Services.LitigationModule.Store.ModuleCase", "Case")
+                        .WithMany()
+                        .HasForeignKey("CaseId")
+                        .OnDelete(DeleteBehavior.NoAction)
+                        .IsRequired();
+
+                    b.Navigation("Case");
                 });
 
             modelBuilder.Entity("MCAROC_Analysis.Services.LitigationModule.Store.ModuleScope", b =>

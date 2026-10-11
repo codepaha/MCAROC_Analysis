@@ -112,3 +112,69 @@ public sealed class ModuleBridgeOutbox
     public string? LastError { get; set; }
     public DateTime? DeadLetteredUtc { get; set; }
 }
+
+/// <summary>One portal or vendor observation of a case, append-only (plan section 4.1). No raw response is kept: only the compact parsed snapshot, the outcome and the
+/// parser version. An observation is never updated after it is written.</summary>
+public sealed class ModuleCaseObservation
+{
+    public long ObservationId { get; set; }
+    public long CaseId { get; set; }
+    public ModuleCase? Case { get; set; }
+
+    /// <summary>1 vendor, 2 DRT portal, 3 consumer portal (see <c>ObservationSource</c>).</summary>
+    public int Source { get; set; }
+
+    /// <summary>1 found, 2 not found, 3 error, 4 identity rejected (see <c>ObservationOutcome</c>).</summary>
+    public int Outcome { get; set; }
+
+    /// <summary>True only for a found response whose identity check passed.</summary>
+    public bool Verified { get; set; }
+
+    public int ParserVersion { get; set; }
+    public DateTime RetrievedUtc { get; set; }
+
+    /// <summary>A source-side change counter when the source has one; null otherwise.</summary>
+    public long? EventWatermark { get; set; }
+
+    /// <summary>Set only from a real timestamp the source itself returned. Null in v1: no current source gives one.</summary>
+    public DateTime? SourceUpdatedUtc { get; set; }
+
+    /// <summary>The compact parsed snapshot as JSON (<c>ParsedCaseSnapshot</c>); null for not-found and error outcomes.</summary>
+    public string? SnapshotJson { get; set; }
+
+    /// <summary>What the projection did with it (<c>ProjectionOutcome</c>), recorded for audit.</summary>
+    public string? AppliedAs { get; set; }
+
+    public DateTime CreatedUtc { get; set; }
+}
+
+/// <summary>The verified projection of a case: its last verified observations folded in field by field. One row per case. <see cref="Version"/> is the compare-and-set token
+/// for publication: a stale writer's save fails and it re-reads (plan section 4.1).</summary>
+public sealed class ModuleCaseLive
+{
+    public long CaseId { get; set; }
+    public ModuleCase? Case { get; set; }
+
+    public string? Status { get; set; }
+    public string? Stage { get; set; }
+    public string? Court { get; set; }
+    public string? FilingDate { get; set; }
+    public string? LastHearingDate { get; set; }
+    public string? NextHearingDate { get; set; }
+    public string? DecisionDate { get; set; }
+    public string? DisposalNature { get; set; }
+    public string? SuitAmount { get; set; }
+    public int HearingCount { get; set; }
+
+    public DateTime? LastRetrievedUtc { get; set; }
+    public long? LastObservationId { get; set; }
+
+    /// <summary>Per-field provenance and confirmed-empty marks as JSON (<c>FieldSource</c> by field name).</summary>
+    public string? FieldSourcesJson { get; set; }
+
+    /// <summary>A change held until a second observation agrees (<c>status:PENDING</c>, <c>history:4</c>); null when nothing is held.</summary>
+    public string? HeldChange { get; set; }
+
+    public long Version { get; set; }
+    public DateTime UpdatedUtc { get; set; }
+}
