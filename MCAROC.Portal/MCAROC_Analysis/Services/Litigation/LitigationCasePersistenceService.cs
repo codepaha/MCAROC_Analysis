@@ -39,7 +39,8 @@ namespace MCAROC_Analysis.Services.LitigationData;
 /// silently retried forever) rather than guessed at.</summary>
 public sealed class LitigationCasePersistenceService(
     AppDbContext db, LitigationCasePersistenceQueue queue, LitigationOrderDocumentQueue orderDocumentQueue,
-    IOptions<BprLitigationOptions> options, ILogger<LitigationCasePersistenceService> logger)
+    IOptions<BprLitigationOptions> options, ILogger<LitigationCasePersistenceService> logger,
+    IOptions<MCAROC_Analysis.Services.LitigationModule.Bridge.LitigationBridgeOptions>? bridgeOptions = null)
 {
     private const int LeaseMinutes = 15; // generous: pure CPU/DB work, no external calls, "tens not thousands" of cases
     private static readonly string LeaseOwnerId = $"{Environment.MachineName}:{Environment.ProcessId}";
@@ -250,6 +251,9 @@ public sealed class LitigationCasePersistenceService(
             }
 
             ApplyFields(litigationCase, identity, item, now, keepProviderCaseId: providerIdHeldElsewhere);
+            // The bridge to the litigation module: the event is saved in the same transaction as this write (nothing is recorded while the bridge is off).
+            if (MCAROC_Analysis.Services.LitigationModule.Bridge.LitigationBridgeWriter.RecordCaseUpserted(db, litigationCase, bridgeOptions?.Value, now) is { } bridgeEvent)
+                addedThisAttempt.Add(bridgeEvent);
             var (orderEntities, orderDocumentsToEnqueue) =
                 await UpsertOrdersAsync(litigationCase, item.Orders, now, orderRetainedUntilUtc, ct);
             addedThisAttempt.AddRange(orderEntities);

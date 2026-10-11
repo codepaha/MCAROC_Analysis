@@ -8,7 +8,7 @@ public class LitigationModuleArchitectureTests
 {
     private static readonly string[] Forbidden =
     [
-        "LitigationModule.Store", "ModuleCase", "ModuleSubject", "ModuleScope", "ModuleScopeCase", "LitigationModuleModel", "LitigationModuleStore"
+        "LitigationModule.Store", "ModuleCase", "ModuleSubject", "ModuleScope", "ModuleScopeCase", "ModuleBridgeOutbox", "BridgeEventKind", "LitigationModuleModel", "LitigationModuleStore"
     ];
 
     private static string AppRoot()

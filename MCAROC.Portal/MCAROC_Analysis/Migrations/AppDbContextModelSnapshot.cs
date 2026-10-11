@@ -6598,6 +6598,50 @@ namespace MCAROC_Analysis.Migrations
                     b.ToTable("UnlockApprovals");
                 });
 
+            modelBuilder.Entity("MCAROC_Analysis.Services.LitigationModule.Store.ModuleBridgeOutbox", b =>
+                {
+                    b.Property<long>("OutboxId")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("OutboxId"));
+
+                    b.Property<int>("Attempts")
+                        .HasColumnType("int");
+
+                    b.Property<DateTime>("CreatedUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<DateTime?>("DeadLetteredUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<int>("Kind")
+                        .HasColumnType("int");
+
+                    b.Property<string>("LastError")
+                        .HasMaxLength(2000)
+                        .HasColumnType("nvarchar(2000)");
+
+                    b.Property<long>("LegacyLitigationCaseId")
+                        .HasColumnType("bigint");
+
+                    b.Property<DateTime?>("ProcessedUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<long>("RequestId")
+                        .HasColumnType("bigint");
+
+                    b.HasKey("OutboxId");
+
+                    b.HasIndex("LegacyLitigationCaseId");
+
+                    b.HasIndex("OutboxId")
+                        .HasDatabaseName("IX_BridgeOutbox_Pending")
+                        .HasFilter("[ProcessedUtc] IS NULL AND [DeadLetteredUtc] IS NULL");
+
+                    b.ToTable("BridgeOutbox", "litigation");
+                });
+
             modelBuilder.Entity("MCAROC_Analysis.Services.LitigationModule.Store.ModuleCase", b =>
                 {
                     b.Property<long>("CaseId")
@@ -7379,6 +7423,17 @@ namespace MCAROC_Analysis.Migrations
                         .IsRequired();
 
                     b.Navigation("RocCharge");
+                });
+
+            modelBuilder.Entity("MCAROC_Analysis.Services.LitigationModule.Store.ModuleBridgeOutbox", b =>
+                {
+                    b.HasOne("MCAROC_Analysis.Data.Entities.LitigationCase", "LegacyCase")
+                        .WithMany()
+                        .HasForeignKey("LegacyLitigationCaseId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("LegacyCase");
                 });
 
             modelBuilder.Entity("MCAROC_Analysis.Services.LitigationModule.Store.ModuleScope", b =>

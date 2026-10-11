@@ -92,3 +92,23 @@ public sealed class ModuleScopeCase
     public DateTime CreatedUtc { get; set; }
     public DateTime? UpdatedUtc { get; set; }
 }
+
+public enum BridgeEventKind { CaseUpserted = 1 }
+
+/// <summary>The transactional outbox of the bridge (plan section 12.5). A legacy writer adds a row in the same transaction as its own write; the bridge processor applies
+/// the rows idempotently and in order. A row that keeps failing is dead-lettered, never dropped.</summary>
+public sealed class ModuleBridgeOutbox
+{
+    public long OutboxId { get; set; }
+    public BridgeEventKind Kind { get; set; }
+
+    public long LegacyLitigationCaseId { get; set; }
+    public MCAROC_Analysis.Data.Entities.LitigationCase? LegacyCase { get; set; }
+    public long RequestId { get; set; }
+
+    public DateTime CreatedUtc { get; set; }
+    public DateTime? ProcessedUtc { get; set; }
+    public int Attempts { get; set; }
+    public string? LastError { get; set; }
+    public DateTime? DeadLetteredUtc { get; set; }
+}
