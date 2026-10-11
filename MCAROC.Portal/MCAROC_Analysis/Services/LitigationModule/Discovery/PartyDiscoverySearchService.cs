@@ -49,6 +49,10 @@ public sealed class PartyDiscoverySearchService : IPartyDiscoverySearchService
                 var tribunals = await _drtClient.GetTribunalsAsync(ct);
                 targets = tribunals.Select(t => t.Id).Distinct().ToList();
             }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
             catch (Exception ex)
             {
                 _logger.LogWarning(ex, "Failed to fetch DRT tribunal list; falling back to default tribunal range");
@@ -111,6 +115,10 @@ public sealed class PartyDiscoverySearchService : IPartyDiscoverySearchService
                             StableSourceId: row.FilingNo));
                     }
                 }
+                catch (OperationCanceledException)
+                {
+                    throw;
+                }
                 catch (Exception ex)
                 {
                     _logger.LogWarning(ex, "Error searching DRT tribunal {TribunalId} for query '{QueryName}'", tribId, queryName);
@@ -157,9 +165,8 @@ public sealed class PartyDiscoverySearchService : IPartyDiscoverySearchService
         var targets = commissions?.ToList();
         if (targets is null || targets.Count == 0)
         {
-            // Default: search NCDRC (TypeId 1, Id 11000000) and state commissions
+            // Default: search all commissions across all tiers (NCDRC, SCDRC, and DCDRC district commissions)
             targets = ConsumerCommissionRegistry.GetAll()
-                .Where(c => c.Tier is ConsumerCommissionTier.National or ConsumerCommissionTier.State)
                 .Select(c => (c.CommissionTypeId, c.CommissionId))
                 .Distinct()
                 .ToList();
@@ -223,6 +230,10 @@ public sealed class PartyDiscoverySearchService : IPartyDiscoverySearchService
                             DiaryNo: c.FileApplicationNumber,
                             RawPayload: c.RawJson));
                     }
+                }
+                catch (OperationCanceledException)
+                {
+                    throw;
                 }
                 catch (Exception ex)
                 {
@@ -321,10 +332,17 @@ public sealed class PartyDiscoverySearchService : IPartyDiscoverySearchService
 
     private static string? GetDeduplicationKey(DiscoveredCaseCandidate c)
     {
-        // 1. Decisive normalized case number or non-empty raw case number
-        if (!string.IsNullOrWhiteSpace(c.CaseNumber))
+        // 1. Decisive complete case number (type, number, and explicit year established)
+        if (c.NormalizedCaseNumber?.Completeness == CaseNumberCompleteness.Complete)
         {
-            return $"{c.Source}:{c.SourceVenueId}:case:{c.CaseNumber.Trim()}";
+            var caseText = !string.IsNullOrWhiteSpace(c.NormalizedCaseNumber.Display)
+                ? c.NormalizedCaseNumber.Display.Trim()
+                : c.CaseNumber.Trim();
+
+            if (!string.IsNullOrWhiteSpace(caseText))
+            {
+                return $"{c.Source}:{c.SourceVenueId}:case:{caseText}";
+            }
         }
 
         // 2. Stable source filing number if available
@@ -339,6 +357,8 @@ public sealed class PartyDiscoverySearchService : IPartyDiscoverySearchService
             return $"{c.Source}:{c.SourceVenueId}:diary:{c.DiaryNo.Trim()}";
         }
 
+        // Incomplete case numbers without stable filing or diary identity cannot establish
+        // decisive equivalence; retain observations individually to prevent false collapse.
         return null;
     }
 }

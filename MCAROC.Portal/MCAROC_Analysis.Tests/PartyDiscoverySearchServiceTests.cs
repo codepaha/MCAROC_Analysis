@@ -32,6 +32,40 @@ public sealed class PartyDiscoverySearchServiceTests
     }
 
     [Fact]
+    public async Task DiscoverConsumerCandidatesAsync_defaults_to_searching_all_commissions_including_districts()
+    {
+        var consumer = new MockConsumerDiscoveryClient();
+        var service = new PartyDiscoverySearchService(new MockDrtDiscoveryClient(), consumer, NullLogger<PartyDiscoverySearchService>.Instance);
+
+        var result = await service.DiscoverConsumerCandidatesAsync(["Bank Limited"]);
+
+        // Total commissions in registry is > 700 including all DCDRC district commissions
+        Assert.True(result.VenuesSearchedCount > 600, $"Expected > 600 venues searched, but got {result.VenuesSearchedCount}");
+    }
+
+    [Fact]
+    public async Task DiscoverCandidates_propagates_caller_cancellation()
+    {
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        var service = new PartyDiscoverySearchService(
+            new MockDrtDiscoveryClient(),
+            new MockConsumerDiscoveryClient(),
+            NullLogger<PartyDiscoverySearchService>.Instance);
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(async () =>
+        {
+            await service.DiscoverDrtCandidatesAsync(["Bank Limited"], ct: cts.Token);
+        });
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(async () =>
+        {
+            await service.DiscoverConsumerCandidatesAsync(["Bank Limited"], ct: cts.Token);
+        });
+    }
+
+    [Fact]
     public async Task DiscoverDrtCandidatesAsync_preserves_distinct_keyless_observations()
     {
         var drt = new MockDrtDiscoveryClient();
@@ -210,6 +244,36 @@ public sealed class PartyDiscoverySearchServiceTests
         var cand = Assert.Single(result.Candidates);
         Assert.Equal("OA/500/2021", cand.CaseNumber);
         Assert.True(cand.IsAccepted);
+    }
+
+    [Fact]
+    public async Task DiscoverDrtCandidatesAsync_partial_case_numbers_do_not_override_distinct_diary_identities()
+    {
+        var drt = new MockDrtDiscoveryClient();
+        foreach (var diary in new[] { "100/2020", "200/2021" })
+        {
+            drt.AddResult(1, new DrtPartySearchResult(1, "OA", "100",
+                CaseNumberNormaliser.Parse(new CaseNumberInput(CaseNumber: "100", CaseType: "OA")), diary,
+                null, "New Bank Limited", "Borrower", null, null, null));
+        }
+        var service = new PartyDiscoverySearchService(drt, new MockConsumerDiscoveryClient(), NullLogger<PartyDiscoverySearchService>.Instance);
+        var result = await service.DiscoverDrtCandidatesAsync(["New Bank Limited"], tribunalIds: [1]);
+        Assert.Equal(2, result.Candidates.Count);
+    }
+
+    [Fact]
+    public async Task DiscoverDrtCandidatesAsync_incomplete_case_numbers_without_diary_are_preserved_individually()
+    {
+        var drt = new MockDrtDiscoveryClient();
+        drt.AddResult(1, new DrtPartySearchResult(1, "OA", "100",
+            CaseNumberNormaliser.Parse(new CaseNumberInput(CaseNumber: "100", CaseType: "OA")), null,
+            null, "New Bank Limited", "Borrower A", null, null, null));
+        drt.AddResult(1, new DrtPartySearchResult(1, "OA", "100",
+            CaseNumberNormaliser.Parse(new CaseNumberInput(CaseNumber: "100", CaseType: "OA")), null,
+            null, "New Bank Limited", "Borrower B", null, null, null));
+        var service = new PartyDiscoverySearchService(drt, new MockConsumerDiscoveryClient(), NullLogger<PartyDiscoverySearchService>.Instance);
+        var result = await service.DiscoverDrtCandidatesAsync(["New Bank Limited"], tribunalIds: [1]);
+        Assert.Equal(2, result.Candidates.Count);
     }
 
     private sealed class MockDrtDiscoveryClient : IDrtClient

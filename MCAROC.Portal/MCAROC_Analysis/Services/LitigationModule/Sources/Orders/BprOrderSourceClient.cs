@@ -64,6 +64,10 @@ public sealed class BprOrderSourceClient : IOrderSourceClient
 
             return OrderSourceDownloadResult.Success(res.Bytes ?? [], res.ContentType ?? "application/pdf");
         }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
         catch (Exception ex)
         {
             return OrderSourceDownloadResult.Failed($"BPR download error: {ex.Message}");
