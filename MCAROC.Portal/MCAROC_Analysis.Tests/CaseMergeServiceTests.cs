@@ -12,6 +12,12 @@ namespace MCAROC_Analysis.Tests;
 
 public class CaseMergeServiceTests : IAsyncLifetime
 {
+    private sealed class FakeEmbeddingForMerge : MCAROC_Analysis.Services.Chat.EmbeddingService
+    {
+        public override Task<List<float[]>> EmbedDocumentsAsync(IReadOnlyList<string> texts, CancellationToken ct) =>
+            Task.FromResult(texts.Select(_ => new float[MCAROC_Analysis.Services.Chat.EmbeddingService.Dimensions]).ToList());
+    }
+
     private static AppDbContext Ctx() => new(new DbContextOptionsBuilder<AppDbContext>().UseSqlServer(TestDatabase.ConnectionString).Options);
 
     public async Task InitializeAsync()
@@ -443,5 +449,45 @@ public class CaseMergeServiceTests : IAsyncLifetime
             Assert.Contains(w.SnapshotNew, await v.LitigationCaseSourceReports.AsNoTracking().Where(s => s.LitigationCaseId == w.B).Select(s => s.LitigationReportSnapshotId).ToListAsync());   // the loser's link stays
             Assert.StartsWith("1 litigation case(s)", FactText(await new MCAROC_Analysis.Services.Chat.StructuredFactsProvider(v).BuildDigestAsync(w.RequestId, new MCAROC_Analysis.Services.Chat.QuestionHints(null, null, null, null, null), default)));
         }
+    }
+
+    [Fact]
+    public async Task Chunks_published_after_the_order_moved_to_the_survivor_are_written_under_the_survivor()
+    {
+        var w = await SeedAsync();
+        await using var seed = Ctx();
+        var order = await seed.LitigationCaseOrders.AsNoTracking().SingleAsync(o => o.LitigationCaseId == w.B && o.PdfUrl == "https://x/3.pdf");   // moves to A on merge
+        var doc = new LitigationOrderDocument
+        {
+            LitigationCaseOrderId = order.LitigationCaseOrderId, ExtractedText = "The petition is dismissed for want of prosecution. " + new string('x', 200),
+            TextExtractionStatus = FilingDocumentProcessingStatus.TextExtracted, ExtractedUtc = DateTime.UtcNow
+        };
+        seed.LitigationOrderDocuments.Add(doc);
+        await seed.SaveChangesAsync();
+
+        // The chunker starts and loads the (unmerged) loser's order, then waits - here on the loser's lock, held by this test - while a merge commits.
+        await using var holderDb = Ctx();
+        await using var holder = await holderDb.Database.BeginTransactionAsync();
+        await CaseLock.AcquireAsync(holderDb, w.B, default);
+
+        var chunking = Task.Run(async () =>
+        {
+            await using var db = Ctx();
+            var orchestrator = new LitigationOrderChunkingOrchestrator(db, new FakeEmbeddingForMerge(), new LitigationOrderChunkingQueue(), Microsoft.Extensions.Logging.Abstractions.NullLogger<LitigationOrderChunkingOrchestrator>.Instance);
+            await orchestrator.ChunkOrderDocumentAsync(doc.LitigationOrderDocumentId, default);
+        });
+        await Task.Delay(1500);
+        Assert.False(chunking.IsCompleted);
+
+        Assert.True((await new CaseMergeService(holderDb).MergeAsync(w.RequestId, w.A, w.B, default)).Performed);
+        await holder.CommitAsync();
+        await chunking;
+
+        await using var v = Ctx();
+        var chunks = await v.LitigationOrderChunks.AsNoTracking().Where(c => c.LitigationOrderDocumentId == doc.LitigationOrderDocumentId).ToListAsync();
+        Assert.NotEmpty(chunks);
+        Assert.All(chunks, c => Assert.Equal(w.A, c.LitigationCaseId));                                  // under the survivor, not the hidden loser
+        Assert.Equal(chunks.Count, await LitigationAiAnalysisOrchestrator.LiveChunks(v, v.LitigationOrderChunks.AsNoTracking(), w.RequestId)
+            .CountAsync(c => c.LitigationOrderDocumentId == doc.LitigationOrderDocumentId));             // and visible to the analysis
     }
 }
