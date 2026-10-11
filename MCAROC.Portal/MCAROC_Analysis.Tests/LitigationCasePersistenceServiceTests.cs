@@ -1221,4 +1221,60 @@ public class LitigationCasePersistenceServiceTests : IAsyncLifetime
         }
         else Assert.Empty(events);
     }
+
+    private static async Task<(long RequestId, LitigationCase First, LitigationCasePersistenceService Service, AppDbContext Db)> ImportOnceAndLinkAsync(
+        string suffix, MCAROC_Analysis.Services.LitigationModule.Refresh.PartyMatchOutcome link)
+    {
+        var db = CreateContext();
+        var request = await SeedRequestAsync(db, suffix);
+        var first = await SeedCompletedJobAsync(db, request.RequestId, ReportJson("TNKP070001332022", "OS"));
+        var service = NewService(db);
+        await PersistJobAsync(service, first, CancellationToken.None);
+        var legacy = await db.LitigationCases.AsNoTracking().SingleAsync(c => c.RequestId == request.RequestId);
+
+        var moduleCaseId = (await new MCAROC_Analysis.Services.LitigationModule.Store.LitigationModuleStore(db).EnsureCaseForLegacyAsync(legacy.LitigationCaseId, CancellationToken.None)).CaseId;
+        await new MCAROC_Analysis.Services.LitigationModule.Refresh.LiveProjectionStore(db).PublishAsync(new MCAROC_Analysis.Services.LitigationModule.Refresh.ObservationInput(
+            moduleCaseId, MCAROC_Analysis.Services.LitigationModule.Refresh.ObservationSource.DrtPortal, MCAROC_Analysis.Services.LitigationModule.Refresh.ObservationOutcome.Found, true, DateTime.UtcNow,
+            new MCAROC_Analysis.Services.LitigationModule.Refresh.ParsedCaseSnapshot("PENDING", null, "DRT Mumbai 1", "29-1-2020", null, "20-10-2026", null, null, null, 3)), CancellationToken.None);
+        await new MCAROC_Analysis.Services.LitigationModule.Refresh.RequestLinkStore(db).UpsertAsync(request.RequestId, moduleCaseId,
+            new MCAROC_Analysis.Services.LitigationModule.Refresh.PartyMatchResult(link, "exact", "TEST COMPANY", null), "respondent", false, null, CancellationToken.None);
+        return (request.RequestId, legacy, service, db);
+    }
+
+    private static string VendorReportWithChanges() => ReportJson("TNKP070001332022", "OS")
+        .Replace("2026-09-20", "2026-10-01").Replace("\"case_status\": \"DISPOSED\"", "\"case_status\": \"PENDING-VENDOR\"")
+        .Replace("\"court\": \"Sub Judge\"", "\"court\": \"Vendor New Court\"").Replace("\"act\": \"Code\"", "\"act\": \"New Act\"");
+
+    [Fact]
+    public async Task A_vendor_re_import_does_not_overwrite_columns_the_portal_owns_but_still_updates_the_rest()
+    {
+        var (requestId, before, service, db) = await ImportOnceAndLinkAsync("VG1", MCAROC_Analysis.Services.LitigationModule.Refresh.PartyMatchOutcome.Verified);
+        await using var _ = db;
+        Assert.Equal(("DISPOSED", "Sub Judge", "Code"), (before.CaseStatus, before.Court, before.Act));
+
+        var second = await SeedCompletedJobAsync(db, requestId, VendorReportWithChanges());
+        await PersistJobAsync(service, second, CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var after = await verify.LitigationCases.AsNoTracking().SingleAsync(c => c.RequestId == requestId);
+        Assert.Equal("DISPOSED", after.CaseStatus);        // portal-owned: the vendor's different status was not assigned
+        Assert.Equal("Sub Judge", after.Court);            // portal-owned
+        Assert.Equal("New Act", after.Act);                // vendor-only column still updates
+    }
+
+    [Theory]
+    [InlineData(MCAROC_Analysis.Services.LitigationModule.Refresh.PartyMatchOutcome.Rejected)]
+    [InlineData(MCAROC_Analysis.Services.LitigationModule.Refresh.PartyMatchOutcome.Ambiguous)]
+    public async Task Without_a_verified_link_a_vendor_re_import_behaves_exactly_as_before(MCAROC_Analysis.Services.LitigationModule.Refresh.PartyMatchOutcome link)
+    {
+        var (requestId, _, service, db) = await ImportOnceAndLinkAsync("VG2" + link, link);
+        await using var _ = db;
+
+        var second = await SeedCompletedJobAsync(db, requestId, VendorReportWithChanges());
+        await PersistJobAsync(service, second, CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var after = await verify.LitigationCases.AsNoTracking().SingleAsync(c => c.RequestId == requestId);
+        Assert.Equal(("PENDING-VENDOR", "Vendor New Court", "New Act"), (after.CaseStatus, after.Court, after.Act));
+    }
 }

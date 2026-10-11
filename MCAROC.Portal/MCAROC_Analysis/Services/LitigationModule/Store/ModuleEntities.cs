@@ -178,3 +178,28 @@ public sealed class ModuleCaseLive
     public long Version { get; set; }
     public DateTime UpdatedUtc { get; set; }
 }
+
+/// <summary>Is a request's company really a party to a case? Per request and case, separate from the registry's fetch status (plan section 4.3). Only a <c>Verified</c> link lets
+/// portal data be published into that request's case; a Rejected link never blocks another request that legitimately is a party.</summary>
+public sealed class ModuleRequestLink
+{
+    public long LinkId { get; set; }
+    public long RequestId { get; set; }
+    public long CaseId { get; set; }
+    public ModuleCase? Case { get; set; }
+
+    /// <summary>0 verified, 1 ambiguous, 2 rejected (see <c>PartyMatchOutcome</c>).</summary>
+    public int Verdict { get; set; }
+
+    /// <summary>Which rule decided (<c>exact</c>, <c>exact-former-name</c>, <c>legal-form-differs</c>, <c>extra-words</c>, <c>no-match</c>).</summary>
+    public string? Rule { get; set; }
+
+    public string? MatchedParty { get; set; }
+    public string? MatchedSide { get; set; }
+
+    /// <summary>The stored direction disagrees with the side the portal lists the company on. Recorded, never resolved by guessing.</summary>
+    public bool RoleConflict { get; set; }
+
+    public string? RoleNote { get; set; }
+    public DateTime UpdatedUtc { get; set; }
+}

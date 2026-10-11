@@ -250,7 +250,9 @@ public sealed class LitigationCasePersistenceService(
                 addedThisAttempt.Add(litigationCase);
             }
 
-            ApplyFields(litigationCase, identity, item, now, keepProviderCaseId: providerIdHeldElsewhere);
+            // Vendor guard (plan 4.2c): columns the court portal owns for this request's case (verified link, portal-sourced) are not assigned from the vendor row.
+            var portalOwned = isNewCase ? null : await MCAROC_Analysis.Services.LitigationModule.Refresh.LivePortalOwnership.OwnedColumnsAsync(db, requestId, litigationCase.LitigationCaseId, ct);
+            ApplyFields(litigationCase, identity, item, now, keepProviderCaseId: providerIdHeldElsewhere, portalOwned);
             // The bridge to the litigation module: the event is saved in the same transaction as this write (nothing is recorded while the bridge is off).
             if (MCAROC_Analysis.Services.LitigationModule.Bridge.LitigationBridgeWriter.RecordCaseUpserted(db, litigationCase, bridgeOptions?.Value, now) is { } bridgeEvent)
                 addedThisAttempt.Add(bridgeEvent);
@@ -344,8 +346,11 @@ public sealed class LitigationCasePersistenceService(
     /// <summary>Applies one vendor observation to a case. The vendor's newer real values replace the held ones, as always; a field the vendor
     /// leaves <b>missing</b> (null, empty, a placeholder such as NA, an empty list) never erases a value the case already holds - it may have
     /// been filled by an earlier report or another source (<see cref="CaseValue"/>).</summary>
-    private static void ApplyFields(LitigationCase litigationCase, LitigationCaseIdentityEvidence identity, BprLitigationCase item, DateTime now, bool keepProviderCaseId)
+    private static void ApplyFields(LitigationCase litigationCase, LitigationCaseIdentityEvidence identity, BprLitigationCase item, DateTime now, bool keepProviderCaseId,
+        IReadOnlySet<string>? portalOwned = null)
     {
+        // A column the portal owns keeps its value; every other column merges from the vendor as always.
+        string? Merge(string column, string? current, string? incoming) => portalOwned is not null && portalOwned.Contains(column) ? current : CaseValue.Merge(current, incoming);
         if (!keepProviderCaseId) litigationCase.ProviderCaseId = CaseValue.Merge(litigationCase.ProviderCaseId, item.ProviderCaseId);
         litigationCase.CspId = CaseValue.Merge(litigationCase.CspId, item.CspId);
         litigationCase.Cnr = CaseValue.Merge(litigationCase.Cnr, identity.Cnr);
@@ -354,18 +359,18 @@ public sealed class LitigationCasePersistenceService(
         litigationCase.Direction = CaseValue.Merge(litigationCase.Direction, item.Direction);
         litigationCase.CaseClassification = CaseValue.Merge(litigationCase.CaseClassification, item.CaseClassification);
         litigationCase.Type = CaseValue.Merge(litigationCase.Type, item.Type);
-        litigationCase.Court = CaseValue.Merge(litigationCase.Court, item.Court);
+        litigationCase.Court = Merge("Court", litigationCase.Court, item.Court);
         litigationCase.Bench = CaseValue.Merge(litigationCase.Bench, item.Bench);
         litigationCase.CaseNumber = CaseValue.Merge(litigationCase.CaseNumber, item.CaseNumber);
         litigationCase.CaseType = CaseValue.Merge(litigationCase.CaseType, item.CaseType);
         litigationCase.CaseYear = CaseValue.Merge(litigationCase.CaseYear, item.CaseYear);
-        litigationCase.CaseStage = CaseValue.Merge(litigationCase.CaseStage, item.CaseStage);
-        litigationCase.CaseStatus = CaseValue.Merge(litigationCase.CaseStatus, item.CaseStatus);
+        litigationCase.CaseStage = Merge("CaseStage", litigationCase.CaseStage, item.CaseStage);
+        litigationCase.CaseStatus = Merge("CaseStatus", litigationCase.CaseStatus, item.CaseStatus);
         litigationCase.Act = CaseValue.Merge(litigationCase.Act, item.Act);
-        litigationCase.FilingDate = CaseValue.Merge(litigationCase.FilingDate, item.FilingDate);
-        litigationCase.LastHearingDate = CaseValue.Merge(litigationCase.LastHearingDate, item.LastHearingDate);
-        litigationCase.NextHearingDate = CaseValue.Merge(litigationCase.NextHearingDate, item.NextHearingDate);
-        litigationCase.DecisionDate = CaseValue.Merge(litigationCase.DecisionDate, item.DecisionDate);
+        litigationCase.FilingDate = Merge("FilingDate", litigationCase.FilingDate, item.FilingDate);
+        litigationCase.LastHearingDate = Merge("LastHearingDate", litigationCase.LastHearingDate, item.LastHearingDate);
+        litigationCase.NextHearingDate = Merge("NextHearingDate", litigationCase.NextHearingDate, item.NextHearingDate);
+        litigationCase.DecisionDate = Merge("DecisionDate", litigationCase.DecisionDate, item.DecisionDate);
         litigationCase.State = CaseValue.Merge(litigationCase.State, item.State);
         litigationCase.District = CaseValue.Merge(litigationCase.District, item.District);
         litigationCase.PetitionersJson = CaseValue.Merge(litigationCase.PetitionersJson, item.PetitionersJson);

@@ -6797,6 +6797,55 @@ namespace MCAROC_Analysis.Migrations
                     b.ToTable("CaseObservations", "litigation");
                 });
 
+            modelBuilder.Entity("MCAROC_Analysis.Services.LitigationModule.Store.ModuleRequestLink", b =>
+                {
+                    b.Property<long>("LinkId")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("LinkId"));
+
+                    b.Property<long>("CaseId")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("MatchedParty")
+                        .HasMaxLength(512)
+                        .HasColumnType("nvarchar(512)");
+
+                    b.Property<string>("MatchedSide")
+                        .HasMaxLength(16)
+                        .HasColumnType("nvarchar(16)");
+
+                    b.Property<long>("RequestId")
+                        .HasColumnType("bigint");
+
+                    b.Property<bool>("RoleConflict")
+                        .HasColumnType("bit");
+
+                    b.Property<string>("RoleNote")
+                        .HasMaxLength(500)
+                        .HasColumnType("nvarchar(500)");
+
+                    b.Property<string>("Rule")
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<DateTime>("UpdatedUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<int>("Verdict")
+                        .HasColumnType("int");
+
+                    b.HasKey("LinkId");
+
+                    b.HasIndex("CaseId");
+
+                    b.HasIndex("RequestId", "CaseId")
+                        .IsUnique();
+
+                    b.ToTable("RequestLinks", "litigation");
+                });
+
             modelBuilder.Entity("MCAROC_Analysis.Services.LitigationModule.Store.ModuleScope", b =>
                 {
                     b.Property<long>("ScopeId")
@@ -7563,6 +7612,17 @@ namespace MCAROC_Analysis.Migrations
                 });
 
             modelBuilder.Entity("MCAROC_Analysis.Services.LitigationModule.Store.ModuleCaseObservation", b =>
+                {
+                    b.HasOne("MCAROC_Analysis.Services.LitigationModule.Store.ModuleCase", "Case")
+                        .WithMany()
+                        .HasForeignKey("CaseId")
+                        .OnDelete(DeleteBehavior.NoAction)
+                        .IsRequired();
+
+                    b.Navigation("Case");
+                });
+
+            modelBuilder.Entity("MCAROC_Analysis.Services.LitigationModule.Store.ModuleRequestLink", b =>
                 {
                     b.HasOne("MCAROC_Analysis.Services.LitigationModule.Store.ModuleCase", "Case")
                         .WithMany()

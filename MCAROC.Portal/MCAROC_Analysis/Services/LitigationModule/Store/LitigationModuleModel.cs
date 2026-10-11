@@ -81,5 +81,17 @@ public static class LitigationModuleModel
             e.Property(x => x.Version).IsConcurrencyToken();
             e.HasOne(x => x.Case).WithMany().HasForeignKey(x => x.CaseId).OnDelete(DeleteBehavior.NoAction);
         });
+
+        modelBuilder.Entity<ModuleRequestLink>(e =>
+        {
+            e.ToTable("RequestLinks", Schema);
+            e.HasKey(x => x.LinkId);
+            e.Property(x => x.Rule).HasMaxLength(64);
+            e.Property(x => x.MatchedParty).HasMaxLength(512);
+            e.Property(x => x.MatchedSide).HasMaxLength(16);
+            e.Property(x => x.RoleNote).HasMaxLength(500);
+            e.HasOne(x => x.Case).WithMany().HasForeignKey(x => x.CaseId).OnDelete(DeleteBehavior.NoAction);
+            e.HasIndex(x => new { x.RequestId, x.CaseId }).IsUnique();
+        });
     }
 }
