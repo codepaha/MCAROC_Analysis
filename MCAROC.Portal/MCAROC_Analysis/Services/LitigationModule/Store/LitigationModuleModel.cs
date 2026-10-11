@@ -93,5 +93,24 @@ public static class LitigationModuleModel
             e.HasOne(x => x.Case).WithMany().HasForeignKey(x => x.CaseId).OnDelete(DeleteBehavior.NoAction);
             e.HasIndex(x => new { x.RequestId, x.CaseId }).IsUnique();
         });
+
+        modelBuilder.Entity<ModuleCaseMerge>(e =>
+        {
+            e.ToTable("CaseMerges", Schema);
+            e.HasKey(x => x.MergeId);
+            e.Property(x => x.Reason).HasMaxLength(500);
+            e.HasIndex(x => new { x.RequestId, x.LoserCaseId });
+        });
+
+        modelBuilder.Entity<ModuleCaseMergeChange>(e =>
+        {
+            e.ToTable("CaseMergeChanges", Schema);
+            e.HasKey(x => x.ChangeId);
+            e.Property(x => x.Table).HasMaxLength(64).IsRequired();
+            e.Property(x => x.Column).HasMaxLength(64).IsRequired();
+            e.Property(x => x.BeforeValue).HasMaxLength(256);
+            e.Property(x => x.AfterValue).HasMaxLength(256);
+            e.HasIndex(x => x.MergeId);
+        });
     }
 }

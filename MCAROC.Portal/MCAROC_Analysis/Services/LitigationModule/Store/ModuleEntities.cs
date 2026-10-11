@@ -208,3 +208,28 @@ public sealed class ModuleRequestLink
 
     public DateTime UpdatedUtc { get; set; }
 }
+
+/// <summary>One soft-merge of two cases of a request (plan section 4.6). Case ids here are the legacy <c>LitigationCaseId</c>s.</summary>
+public sealed class ModuleCaseMerge
+{
+    public long MergeId { get; set; }
+    public long RequestId { get; set; }
+    public long SurvivorCaseId { get; set; }
+    public long LoserCaseId { get; set; }
+    public string? Reason { get; set; }
+    public DateTime MergedUtc { get; set; }
+    public DateTime? ReversedUtc { get; set; }
+}
+
+/// <summary>One changed value of a merge: table, row, column, the value before and the value after. Written in the same transaction as the merge. Reversal restores a value only
+/// if it still equals <see cref="AfterValue"/>; a later change is kept and reported.</summary>
+public sealed class ModuleCaseMergeChange
+{
+    public long ChangeId { get; set; }
+    public long MergeId { get; set; }
+    public string Table { get; set; } = string.Empty;
+    public long RowId { get; set; }
+    public string Column { get; set; } = string.Empty;
+    public string? BeforeValue { get; set; }
+    public string? AfterValue { get; set; }
+}

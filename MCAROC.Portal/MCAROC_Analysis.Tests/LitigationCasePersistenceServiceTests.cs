@@ -1307,4 +1307,51 @@ public class LitigationCasePersistenceServiceTests : IAsyncLifetime
         Assert.Equal("PENDING", after.CaseStatus);
         Assert.Equal("New Act", after.Act);                        // vendor-only column still updated
     }
+
+    [Fact]
+    public async Task A_vendor_row_that_matches_a_soft_merged_case_is_applied_to_the_survivor_and_does_not_recreate_the_loser()
+    {
+        await using var db = CreateContext();
+        var request = await SeedRequestAsync(db, "MV");
+        var first = await SeedCompletedJobAsync(db, request.RequestId, ReportJson("TNKP070001332022", "OS"));
+        var service = NewService(db);
+        await PersistJobAsync(service, first, CancellationToken.None);
+        var loser = await db.LitigationCases.AsNoTracking().SingleAsync(c => c.RequestId == request.RequestId);
+
+        // A second row for the same case (no CNR), holding more orders so it survives; both certain and live-verified with the same key.
+        var survivor = new LitigationCase { RequestId = request.RequestId, CaseNumber = "22/2020", CaseType = "OS", CaseYear = "2020", Court = "Sub Judge", FirstSeenUtc = DateTime.UtcNow, LastSeenUtc = DateTime.UtcNow };
+        db.LitigationCases.Add(survivor);
+        await db.SaveChangesAsync();
+        db.LitigationCaseOrders.AddRange(
+            new LitigationCaseOrder { LitigationCaseId = survivor.LitigationCaseId, PdfUrl = "https://s/1.pdf", OrderDate = "01-01-2025", OrderType = "Order", CreatedUtc = DateTime.UtcNow },
+            new LitigationCaseOrder { LitigationCaseId = survivor.LitigationCaseId, PdfUrl = "https://s/2.pdf", OrderDate = "02-01-2025", OrderType = "Order", CreatedUtc = DateTime.UtcNow },
+            new LitigationCaseOrder { LitigationCaseId = survivor.LitigationCaseId, PdfUrl = "https://s/3.pdf", OrderDate = "03-01-2025", OrderType = "Order", CreatedUtc = DateTime.UtcNow });
+        await db.SaveChangesAsync();
+        var moduleStore = new MCAROC_Analysis.Services.LitigationModule.Store.LitigationModuleStore(db);
+        foreach (var legacyId in new[] { loser.LitigationCaseId, survivor.LitigationCaseId })
+        {
+            var mc = await moduleStore.EnsureCaseForLegacyAsync(legacyId, CancellationToken.None);
+            await db.Set<MCAROC_Analysis.Services.LitigationModule.Store.ModuleCase>().Where(m => m.CaseId == mc.CaseId)
+                .ExecuteUpdateAsync(x => x.SetProperty(m => m.CaseKey, "DRT|DRT-X|OS|22|2020"));
+            await new MCAROC_Analysis.Services.LitigationModule.Refresh.LiveProjectionStore(db).PublishAsync(new MCAROC_Analysis.Services.LitigationModule.Refresh.ObservationInput(
+                mc.CaseId, MCAROC_Analysis.Services.LitigationModule.Refresh.ObservationSource.DrtPortal, MCAROC_Analysis.Services.LitigationModule.Refresh.ObservationOutcome.Found, true, DateTime.UtcNow,
+                new MCAROC_Analysis.Services.LitigationModule.Refresh.ParsedCaseSnapshot("PENDING", null, "DRT X", "29-1-2020", null, "20-10-2026", null, null, null, 1)), CancellationToken.None);
+            await new MCAROC_Analysis.Services.LitigationModule.Refresh.RequestLinkStore(db).UpsertAsync(request.RequestId, mc.CaseId,
+                new MCAROC_Analysis.Services.LitigationModule.Refresh.PartyMatchResult(MCAROC_Analysis.Services.LitigationModule.Refresh.PartyMatchOutcome.Verified, "exact", "TEST COMPANY", null), "respondent", false, null, CancellationToken.None);
+        }
+        var merge = await new MCAROC_Analysis.Services.LitigationModule.Merging.CaseMergeService(db).MergeAsync(request.RequestId, loser.LitigationCaseId, survivor.LitigationCaseId, CancellationToken.None);
+        Assert.True(merge.Performed);
+        Assert.Equal((survivor.LitigationCaseId, loser.LitigationCaseId), (merge.SurvivorCaseId, merge.LoserCaseId));
+
+        // The vendor reports the same case again (same CNR, a changed act).
+        var changed = ReportJson("TNKP070001332022", "OS").Replace("2026-09-20", "2026-10-01").Replace("\"act\": \"Code\"", "\"act\": \"New Act\"");
+        var second = await SeedCompletedJobAsync(db, request.RequestId, changed);
+        await PersistJobAsync(service, second, CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var cases = await verify.LitigationCases.AsNoTracking().Where(c => c.RequestId == request.RequestId).ToListAsync();
+        Assert.Equal(2, cases.Count);                                                                   // the loser was not recreated, nothing new appeared
+        Assert.Equal("New Act", cases.Single(c => c.LitigationCaseId == survivor.LitigationCaseId).Act);  // applied to the survivor
+        Assert.Equal("Code", cases.Single(c => c.LitigationCaseId == loser.LitigationCaseId).Act);        // the loser is left as it was
+    }
 }

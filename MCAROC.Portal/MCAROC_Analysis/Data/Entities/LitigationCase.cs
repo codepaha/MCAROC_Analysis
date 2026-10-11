@@ -63,6 +63,10 @@ public sealed class LitigationCase
     /// <summary>When this case was first persisted (from whichever search job found it first).</summary>
     public DateTime FirstSeenUtc { get; set; }
 
+    /// <summary>Set when this case was soft-merged into another (the survivor) as a certain duplicate (plan section 4.6). The row is kept, never deleted; every list, count, report and
+    /// analysis ignores it, and a later vendor row that matches it is applied to the survivor. Cleared by a reversal.</summary>
+    public long? MergedIntoCaseId { get; set; }
+
     /// <summary>Updated every time a later search re-surfaces this same case (via CNR-first de-dup) — the
     /// mutable fields above (status, hearing dates, etc.) are refreshed to that later observation, since a
     /// case's real-world state can change between search runs.</summary>
@@ -86,6 +90,9 @@ public sealed class LitigationCaseOrder
     public string? PdfUrl { get; set; }
     public string? OrderDate { get; set; }
     public string? OrderType { get; set; }
+
+    /// <summary>Set when a merge found the survivor already holds the same order: this one is flagged as collapsed into it, not re-pointed (plan section 4.5). Never deleted.</summary>
+    public long? CollapsedIntoOrderId { get; set; }
 
     public DateTime CreatedUtc { get; set; }
 }

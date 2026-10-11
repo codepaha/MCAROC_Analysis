@@ -17,7 +17,7 @@ public sealed class LitigationCaseListQuery(AppDbContext db, LitigationOrderOutc
     {
         var ids = db.LitigationCaseSourceReports.Where(s => s.LitigationReportSnapshotId == snapshotId)
             .Select(s => s.LitigationCaseId);
-        var query = db.LitigationCases.AsNoTracking().Where(c => ids.Contains(c.LitigationCaseId));
+        var query = db.LitigationCases.AsNoTracking().Where(c => ids.Contains(c.LitigationCaseId) && c.MergedIntoCaseId == null);   // a soft-merged duplicate is not listed
         if (!string.IsNullOrWhiteSpace(court))
         {
             var name = court.Trim();
