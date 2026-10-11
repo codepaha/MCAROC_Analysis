@@ -190,4 +190,79 @@ public class LitigationModuleReaderTests : IAsyncLifetime
         Assert.False(report.IsClean);
         Assert.Contains(report.UnexplainedDifferences, d => d.Contains($"case {w.CaseIds[3]} is in the legacy list but not in the reader"));
     }
+
+    [Fact]
+    public async Task Parity_checks_aliases_and_overlays_and_flags_an_overlay_outside_the_retained_set()
+    {
+        var w = await SeedAsync();
+        await using var db = Ctx();
+        var store = new LitigationModuleStore(db);
+        var subject = await store.CreateSubjectAsync(ModuleSubjectKind.Company, "Parity Subject", null, default);
+        var scope = await store.EnsureScopeAsync(ModuleScopeKind.Request, w.RequestId, subject.SubjectId, default);
+        var a = await store.AddCaseToScopeAsync(scope.ScopeId, (await store.EnsureCaseForLegacyAsync(w.CaseIds[0], default)).CaseId, null, default);
+        Assert.Equal("C-1", a.Alias);
+
+        var clean = await new LitigationModuleParity(db).CheckRequestAsync(w.RequestId, default);
+        Assert.True(clean.IsClean, string.Join("; ", clean.UnexplainedDifferences));
+
+        // A stored overlay on a case that is not part of the scope's retained set is an inconsistency.
+        var strayCase = await store.EnsureCaseForLegacyAsync(long.MaxValue - 7, default);
+        await store.AddCaseToScopeAsync(scope.ScopeId, strayCase.CaseId, null, default);
+        var report = await new LitigationModuleParity(db).CheckRequestAsync(w.RequestId, default);
+        Assert.False(report.IsClean);
+        Assert.Contains(report.UnexplainedDifferences, d => d.Contains("overlay in this scope but is not in the scope's retained set"));
+    }
+
+    [Fact]
+    public async Task Parity_compares_the_default_view_with_the_hidden_state_and_explains_hidden_cases()
+    {
+        var w = await SeedAsync();
+        await using var db = Ctx();
+        var store = new LitigationModuleStore(db);
+        var subject = await store.CreateSubjectAsync(ModuleSubjectKind.Company, "Parity Subject 2", null, default);
+        var scope = await store.EnsureScopeAsync(ModuleScopeKind.Request, w.RequestId, subject.SubjectId, default);
+        var mc = await store.EnsureCaseForLegacyAsync(w.CaseIds[1], default);
+        await store.AddCaseToScopeAsync(scope.ScopeId, mc.CaseId, null, default);
+        var v = (await db.Set<ModuleScope>().AsNoTracking().FirstAsync(s => s.ScopeId == scope.ScopeId)).Version;
+        await store.SetOverlayAsync(scope.ScopeId, mc.CaseId, new ScopeOverlayChange(IsHidden: true, IsExcluded: true), v, default);
+
+        var report = await new LitigationModuleParity(db).CheckRequestAsync(w.RequestId, default);
+        Assert.True(report.IsClean, string.Join("; ", report.UnexplainedDifferences));
+        Assert.Contains(report.ExplainedDifferences, d => d.Contains($"case {w.CaseIds[1]} is hidden in this scope"));
+    }
+
+    [Fact]
+    public void Field_comparison_reports_each_field_that_differs()
+    {
+        var legacy = new Dictionary<long, LitigationModuleParity.LegacyRow>
+        {
+            [1] = new(1, "413", "OA", "2022", null, null, "DRT Mumbai 1", "PENDING", null, "01-09-2026", "20-10-2026"),
+            [2] = new(2, "88", "OA", "2014", null, null, "DRT Delhi 2", "DISPOSED", null, null, null)
+        };
+        ModuleCaseSummary Item(long id, string number, string? court, string? status, LitigationCaseStatusBucket bucket, string? last, string? next, bool inFeed = true) =>
+            new(id, null, null, number, MCAROC_Analysis.Services.LitigationModule.Normalisation.CaseNumberCompleteness.Complete, court, status, bucket, last, next, inFeed, false, false);
+        var reader = new Dictionary<long, ModuleCaseSummary>
+        {
+            [1] = Item(1, "OA/414/2022", "DRT Mumbai 2", "DISPOSED", LitigationCaseStatusBucket.Disposed, "02-09-2026", "21-10-2026", inFeed: false),
+            [2] = Item(2, "OA/88/2014", "DRT Delhi 2", "DISPOSED", LitigationCaseStatusBucket.Disposed, null, null)
+        };
+
+        var diffs = LitigationModuleParity.FieldDifferences(legacy, reader);
+
+        foreach (var field in new[] { "case number", "court", "status", "status bucket", "last hearing date", "next hearing date", "in the latest feed" })
+            Assert.Contains(diffs, d => d.StartsWith("case 1:") && d.Contains(field));
+        Assert.DoesNotContain(diffs, d => d.StartsWith("case 2:"));
+    }
+
+    [Fact]
+    public void Identical_data_has_no_field_differences()
+    {
+        var legacy = new Dictionary<long, LitigationModuleParity.LegacyRow> { [1] = new(1, "413", "OA", "2022", null, null, "DRT Mumbai 1", "PENDING", null, null, null) };
+        var reader = new Dictionary<long, ModuleCaseSummary>
+        {
+            [1] = new(1, null, null, "OA/413/2022", MCAROC_Analysis.Services.LitigationModule.Normalisation.CaseNumberCompleteness.Complete, "DRT Mumbai 1", "PENDING",
+                LitigationCaseStatusBucket.Pending, null, null, true, false, false)
+        };
+        Assert.Empty(LitigationModuleParity.FieldDifferences(legacy, reader));
+    }
 }
