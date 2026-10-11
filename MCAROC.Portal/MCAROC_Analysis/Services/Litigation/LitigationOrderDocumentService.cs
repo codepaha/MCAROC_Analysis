@@ -202,6 +202,14 @@ public sealed class LitigationOrderDocumentService(
             }
 
             published = true;
+            // Order text arriving changes what the request's litigation views and analyses read: it is a publication, so the request's live-data version moves (after the text is stored,
+            // so a cache filled in between is keyed on the old version and rebuilt).
+            if (textStatus == FilingDocumentProcessingStatus.TextExtracted)
+            {
+                var bumpRequestId = await db.LitigationOrderDocuments.AsNoTracking().Where(d => d.LitigationOrderDocumentId == orderDocumentId)
+                    .Select(d => (long?)d.Order!.Case!.RequestId).FirstOrDefaultAsync(ct);
+                if (bumpRequestId is { } rid) await MCAROC_Analysis.Services.LitigationModule.Refresh.RequestLiveData.BumpAsync(db, rid, ct);
+            }
             logger.LogInformation(
                 "Litigation order document {Id} downloaded and extracted ({Bytes} bytes, {Method}).",
                 orderDocumentId, fileBytes.LongLength, textMethod);

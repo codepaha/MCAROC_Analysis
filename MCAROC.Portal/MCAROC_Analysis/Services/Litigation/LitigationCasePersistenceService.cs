@@ -150,6 +150,8 @@ public sealed class LitigationCasePersistenceService(
             snapshot.Status = LitigationReportSnapshotStatus.Completed;
             snapshot.CompletedUtc = DateTime.UtcNow;
             await db.SaveChangesAsync(ct);
+            // The import changed the request's cases (new, updated, newly listed): a publication, so the request's live-data version moves.
+            await MCAROC_Analysis.Services.LitigationModule.Refresh.RequestLiveData.BumpAsync(db, requestId, ct);
 
             // Enqueued only after this snapshot's own commit succeeds — each order document was already
             // durably committed as part of its own case's SaveChangesAsync (see PersistOneCaseAsync), so this

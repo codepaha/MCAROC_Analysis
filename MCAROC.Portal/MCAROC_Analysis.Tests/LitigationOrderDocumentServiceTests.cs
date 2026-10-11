@@ -584,4 +584,26 @@ public class LitigationOrderDocumentServiceTests : IAsyncLifetime
                 : route.Respond(request));
         }
     }
+
+    [Fact]
+    public async Task DownloadAndExtractAsync_bumps_the_requests_live_data_version_when_text_arrives()
+    {
+        await using var db = CreateContext();
+        var (_, _, order) = await SeedOrderAsync(db, "VB1", "https://bpr.example/orders/vb1.pdf");
+        var document = await SeedDocumentAsync(db, order.LitigationCaseOrderId, DateTime.UtcNow.AddDays(5));
+        var requestId = await db.LitigationCaseOrders.AsNoTracking().Where(o => o.LitigationCaseOrderId == order.LitigationCaseOrderId).Select(o => o.Case!.RequestId).FirstAsync();
+        var before = await MCAROC_Analysis.Services.LitigationModule.Refresh.RequestLiveData.ReadAsync(db, requestId, CancellationToken.None);
+
+        var pdfBytes = ExtractablePdfBytes("This is the genuine order text for the version test, retained well past the eighty character native-text threshold so OCR never runs.");
+        var handler = new StubHandler();
+        StubAuthenticate(handler);
+        handler.OnPath("orders/vb1.pdf", _ => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new ByteArrayContent(pdfBytes) { Headers = { ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/pdf") } }
+        });
+        await NewService(db, handler).DownloadAndExtractAsync(document.LitigationOrderDocumentId, CancellationToken.None);
+
+        await using var verify = CreateContext();
+        Assert.Equal(before + 1, await MCAROC_Analysis.Services.LitigationModule.Refresh.RequestLiveData.ReadAsync(verify, requestId, CancellationToken.None));
+    }
 }

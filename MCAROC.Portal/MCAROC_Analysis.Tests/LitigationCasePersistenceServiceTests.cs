@@ -1408,4 +1408,17 @@ public class LitigationCasePersistenceServiceTests : IAsyncLifetime
         Assert.Equal("New Act", cases.Single(c => c.LitigationCaseId == survivor.LitigationCaseId).Act);   // the import ended on the survivor
         Assert.Equal("Code", cases.Single(c => c.LitigationCaseId == loser.LitigationCaseId).Act);          // not on the hidden loser
     }
+
+    [Fact]
+    public async Task A_completed_snapshot_import_bumps_the_requests_live_data_version_once()
+    {
+        await using var db = CreateContext();
+        var request = await SeedRequestAsync(db, "LVB");
+        var before = await MCAROC_Analysis.Services.LitigationModule.Refresh.RequestLiveData.ReadAsync(db, request.RequestId, CancellationToken.None);
+        var job = await SeedCompletedJobAsync(db, request.RequestId, ReportJson("TNKP070001332022", "OS"));
+        await PersistJobAsync(NewService(db), job, CancellationToken.None);
+
+        await using var verify = CreateContext();
+        Assert.Equal(before + 1, await MCAROC_Analysis.Services.LitigationModule.Refresh.RequestLiveData.ReadAsync(verify, request.RequestId, CancellationToken.None));
+    }
 }
