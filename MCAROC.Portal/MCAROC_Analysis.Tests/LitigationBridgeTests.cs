@@ -135,6 +135,9 @@ public class LitigationBridgeTests : IAsyncLifetime
         Assert.All(second, o => { Assert.Null(o.ProcessedUtc); Assert.NotNull(o.DeadLetteredUtc); Assert.Equal(2, o.Attempts); Assert.False(string.IsNullOrEmpty(o.LastError)); });
         var lag = await new LitigationBridgeProcessor(verify, On).GetLagAsync(default);
         Assert.True(lag.DeadLettered >= 1);
+        // A dead-lettered event is a case that never reached the module: the request must not look ready.
+        Assert.Equal(BridgeReadiness.Failed, await new LitigationBridgeProcessor(verify, On).GetReadinessAsync(requestId, default));
+        Assert.True(await new LitigationBridgeProcessor(verify, On).IsSyncingAsync(requestId, default));
     }
 
     [Fact]

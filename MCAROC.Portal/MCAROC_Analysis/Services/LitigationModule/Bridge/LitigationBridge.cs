@@ -128,11 +128,22 @@ public sealed class LitigationBridgeProcessor(AppDbContext db, LitigationBridgeO
         return new BridgeLag(count, dead, oldest is null ? null : _time.GetUtcNow().UtcDateTime - oldest.Value);
     }
 
-    /// <summary>Whether the request's scope has a backlog above the threshold, i.e. should be served from legacy rather than from half-synced module data.</summary>
-    public async Task<bool> IsSyncingAsync(long requestId, CancellationToken ct) =>
-        await db.Set<ModuleBridgeOutbox>().AsNoTracking()
-            .CountAsync(o => o.RequestId == requestId && o.ProcessedUtc == null && o.DeadLetteredUtc == null, ct) > options.SyncingBacklogThreshold;
+    /// <summary>Whether the module can be trusted for this request. <see cref="BridgeReadiness.Ready"/> only when nothing is waiting beyond the threshold <b>and</b> no event
+    /// has been dead-lettered: a dead-lettered event is a case that never reached the module, so serving module data would be serving an incomplete set.</summary>
+    public async Task<BridgeReadiness> GetReadinessAsync(long requestId, CancellationToken ct)
+    {
+        var events = db.Set<ModuleBridgeOutbox>().AsNoTracking().Where(o => o.RequestId == requestId);
+        if (await events.AnyAsync(o => o.DeadLetteredUtc != null && o.ProcessedUtc == null, ct)) return BridgeReadiness.Failed;
+        var pending = await events.CountAsync(o => o.ProcessedUtc == null && o.DeadLetteredUtc == null, ct);
+        return pending > options.SyncingBacklogThreshold ? BridgeReadiness.Syncing : BridgeReadiness.Ready;
+    }
+
+    /// <summary>True unless the request is <see cref="BridgeReadiness.Ready"/>: a consumer that gets true serves legacy data.</summary>
+    public async Task<bool> IsSyncingAsync(long requestId, CancellationToken ct) => await GetReadinessAsync(requestId, ct) != BridgeReadiness.Ready;
 }
+
+/// <summary>Ready: the module can serve this request. Syncing: a backlog is being applied. Failed: at least one event was dead-lettered and needs attention; serve legacy.</summary>
+public enum BridgeReadiness { Ready, Syncing, Failed }
 
 public sealed record BackfillResult(int Visited, int Applied, long? LastLegacyCaseId);
 
