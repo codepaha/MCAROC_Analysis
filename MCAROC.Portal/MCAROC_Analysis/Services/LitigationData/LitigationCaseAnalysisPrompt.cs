@@ -8,7 +8,7 @@ namespace MCAROC_Analysis.Services.LitigationData;
 /// by the portal's own code, so they are not asked of the model.</summary>
 public static class LitigationCaseAnalysisPrompt
 {
-    public const string Version = "2.1";
+    public const string Version = "2.2";
 
     /// <summary>First words of the prompt: tests and the validator-facing code recognise a v2.0 prompt by this.</summary>
     public const string Marker = "You are a litigation due-diligence analyst reading the record of one Indian court or tribunal case.";
@@ -28,10 +28,12 @@ public static class LitigationCaseAnalysisPrompt
         party_direction (by | against | unknown: whether the case is by or against the target as the data service reports it),
         case_category, case_status (PENDING | DISPOSED | UNKNOWN), case_stage, case_type, act (the raw act and section text from the
         court record, possibly several acts run together, with placeholder marks such as "---" where no section was recorded),
-        filing_date, last_hearing_date, next_hearing_date, state, district, petitioners, respondents, petitioner_advocates,
+        filing_date, state, district, petitioners, respondents, petitioner_advocates,
         respondent_advocates, and orders. Each order has order_id, order_date, order_type and order_text. order_text is the full text
         of the order with page markers "--- Page N (native|OCR) ---", or null when the order could not be read. target_entity is the
         company being examined; target_names lists its current and earlier names. as_of_date is today's date.
+        Hearing dates (last and next hearing) are not given to you and are not part of this task: do not state, estimate or comment on
+        any hearing date. Dates that appear in an order's own text are quoted from it as usual.
         When text_truncated is true some order text was left out for length; say so in unknowns.
 
         ## RULES
