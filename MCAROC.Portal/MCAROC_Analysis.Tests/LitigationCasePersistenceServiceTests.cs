@@ -21,9 +21,10 @@ public class LitigationCasePersistenceServiceTests : IAsyncLifetime
 
     private static LitigationCasePersistenceService NewService(
         AppDbContext db, LitigationCasePersistenceQueue? queue = null, LitigationOrderDocumentQueue? orderDocumentQueue = null,
-        BprLitigationOptions? options = null) =>
+        BprLitigationOptions? options = null, MCAROC_Analysis.Services.LitigationModule.Bridge.LitigationBridgeOptions? bridge = null) =>
         new(db, queue ?? new LitigationCasePersistenceQueue(), orderDocumentQueue ?? new LitigationOrderDocumentQueue(),
-            options is null ? DefaultOptions : Options.Create(options), NullLogger<LitigationCasePersistenceService>.Instance);
+            options is null ? DefaultOptions : Options.Create(options), NullLogger<LitigationCasePersistenceService>.Instance,
+            bridge is null ? null : Options.Create(bridge));
 
     public async Task InitializeAsync()
     {
@@ -1197,5 +1198,27 @@ public class LitigationCasePersistenceServiceTests : IAsyncLifetime
         await using var verify = CreateContext();
         var c = Assert.Single(await verify.LitigationCases.Where(x => x.RequestId == request.RequestId).ToListAsync());
         Assert.Equal("provider-1", c.ProviderCaseId);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task The_bridge_records_one_event_per_persisted_case_in_the_same_save_only_when_enabled(bool enabled)
+    {
+        await using var db = CreateContext();
+        var request = await SeedRequestAsync(db, "BR" + enabled);
+        var job = await SeedCompletedJobAsync(db, request.RequestId, ReportJson("TNKP070001332022", "OS"));
+        var service = NewService(db, bridge: new MCAROC_Analysis.Services.LitigationModule.Bridge.LitigationBridgeOptions { Enabled = enabled });
+        await PersistJobAsync(service, job, CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var savedCase = Assert.Single(await verify.LitigationCases.Where(c => c.RequestId == request.RequestId).ToListAsync());
+        var events = await verify.Set<MCAROC_Analysis.Services.LitigationModule.Store.ModuleBridgeOutbox>().Where(o => o.RequestId == request.RequestId).ToListAsync();
+        if (enabled)
+        {
+            var evt = Assert.Single(events);
+            Assert.Equal(savedCase.LitigationCaseId, evt.LegacyLitigationCaseId);   // the new case's id was filled in by the same save
+        }
+        else Assert.Empty(events);
     }
 }

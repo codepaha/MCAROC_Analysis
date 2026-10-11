@@ -50,5 +50,16 @@ public static class LitigationModuleModel
             e.HasIndex(x => new { x.ScopeId, x.CaseId }).IsUnique();
             e.HasIndex(x => new { x.ScopeId, x.Alias }).IsUnique();
         });
+
+        modelBuilder.Entity<ModuleBridgeOutbox>(e =>
+        {
+            e.ToTable("BridgeOutbox", Schema);
+            e.HasKey(x => x.OutboxId);
+            e.Property(x => x.LastError).HasMaxLength(2000);
+            // Deleting a legacy case (or its request) removes its pending events with it.
+            e.HasOne(x => x.LegacyCase).WithMany().HasForeignKey(x => x.LegacyLitigationCaseId).OnDelete(DeleteBehavior.Cascade);
+            e.HasIndex(x => x.OutboxId).HasFilter("[ProcessedUtc] IS NULL AND [DeadLetteredUtc] IS NULL").HasDatabaseName("IX_BridgeOutbox_Pending");
+            e.HasIndex(x => x.LegacyLitigationCaseId);
+        });
     }
 }
