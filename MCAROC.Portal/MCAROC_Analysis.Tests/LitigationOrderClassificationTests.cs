@@ -745,4 +745,83 @@ public sealed class LitigationOrderClassificationTests : IAsyncLifetime
         var orchestrator = new LitigationAiAnalysisOrchestrator(verify, client, new LitigationAiAnalysisQueue(), Options.Create(options), NullLogger<LitigationAiAnalysisOrchestrator>.Instance);
         Assert.False(await orchestrator.NeedsAnalysisAsync(large, CancellationToken.None));
     }
+
+    // ---- the portfolio summary is current only for the set of cases it was made over (plan 4.7b) ----
+
+    private static async Task<long> SeedSecondCaseAsync(long requestId, string caseNumber)
+    {
+        await using var db = CreateContext();
+        var second = new LitigationCase
+        {
+            RequestId = requestId, Cnr = "CNR" + Guid.NewGuid().ToString("N")[..10], CaseNumber = caseNumber,
+            Court = "NCLT Chennai", ProceedingType = "CP", FirstSeenUtc = DateTime.UtcNow, LastSeenUtc = DateTime.UtcNow
+        };
+        db.LitigationCases.Add(second);
+        await db.SaveChangesAsync();
+        await SeedOrderAsync(db, requestId, second.LitigationCaseId, "The petition is adjourned sine die.", caseNumber);
+        return second.LitigationCaseId;
+    }
+
+    [Fact]
+    public void The_case_set_hash_ignores_order_and_repeats_but_changes_with_the_set()
+    {
+        var a = LitigationAiAnalysisOrchestrator.CaseSetHash([3, 1, 2]);
+        Assert.Equal(a, LitigationAiAnalysisOrchestrator.CaseSetHash([1, 2, 3]));
+        Assert.Equal(a, LitigationAiAnalysisOrchestrator.CaseSetHash([2, 2, 1, 3]));
+        Assert.NotEqual(a, LitigationAiAnalysisOrchestrator.CaseSetHash([1, 2]));
+        Assert.NotEqual(a, LitigationAiAnalysisOrchestrator.CaseSetHash([1, 2, 3, 4]));
+    }
+
+    [Fact]
+    public async Task A_case_removed_from_the_set_makes_the_summary_not_current_although_no_remaining_case_changed_and_the_next_run_re_synthesises_only_the_summary()
+    {
+        var (requestId, _, _) = await SeedRequestWithOrdersAsync();
+        var secondId = await SeedSecondCaseAsync(requestId, "CP 13/2020");
+        var client = new ScriptedClient(ClassifyByText);
+        await RunAnalysisAsync(requestId, client);
+        await using (var db = CreateContext()) Assert.False(await Orchestrator(db, client).NeedsAnalysisAsync(requestId, CancellationToken.None));
+
+        // The second case is merged away (it leaves the set); the remaining case's evidence is untouched.
+        await using (var db = CreateContext())
+            await db.LitigationCases.Where(c => c.LitigationCaseId == secondId).ExecuteUpdateAsync(s => s.SetProperty(c => c.MergedIntoCaseId, 1L));
+        await using (var db = CreateContext()) Assert.True(await Orchestrator(db, client).NeedsAnalysisAsync(requestId, CancellationToken.None));
+
+        var run = await RunAnalysisAsync(requestId, client);
+        Assert.Equal(LitigationAiAnalysisRunStatus.Completed, run.Status);
+        await using var verify = CreateContext();
+        var portfolio = await verify.LitigationPortfolioAiAnalyses.AsNoTracking().SingleAsync(p => p.LitigationAiAnalysisRunId == run.LitigationAiAnalysisRunId);
+        Assert.Equal(LitigationAiAnalysisOrchestrator.CaseSetHash(await verify.LitigationCases.Where(c => c.RequestId == requestId && c.MergedIntoCaseId == null).Select(c => c.LitigationCaseId).ToListAsync()), portfolio.CaseSetHash);
+        Assert.False(await Orchestrator(verify, client).NeedsAnalysisAsync(requestId, CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task A_case_discovered_after_a_run_makes_the_request_need_analysis_and_a_returning_case_restores_the_old_summary_as_current_only_after_a_run()
+    {
+        var (requestId, _, _) = await SeedRequestWithOrdersAsync();
+        var client = new ScriptedClient(ClassifyByText);
+        await RunAnalysisAsync(requestId, client);
+        await using (var db = CreateContext()) Assert.False(await Orchestrator(db, client).NeedsAnalysisAsync(requestId, CancellationToken.None));
+
+        await SeedSecondCaseAsync(requestId, "CP 14/2020");                                    // newly discovered
+        await using (var db = CreateContext()) Assert.True(await Orchestrator(db, client).NeedsAnalysisAsync(requestId, CancellationToken.None));
+
+        await RunAnalysisAsync(requestId, client);
+        await using (var db = CreateContext()) Assert.False(await Orchestrator(db, client).NeedsAnalysisAsync(requestId, CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task A_summary_made_before_the_case_set_hash_existed_reads_as_not_current_once()
+    {
+        var (requestId, _, _) = await SeedRequestWithOrdersAsync();
+        var client = new ScriptedClient(ClassifyByText);
+        await RunAnalysisAsync(requestId, client);
+        await using (var db = CreateContext())
+        {
+            await db.LitigationPortfolioAiAnalyses.Where(p => db.LitigationAiAnalysisRuns.Any(r => r.LitigationAiAnalysisRunId == p.LitigationAiAnalysisRunId && r.RequestId == requestId))
+                .ExecuteUpdateAsync(s => s.SetProperty(p => p.CaseSetHash, (string?)null));
+        }
+        await using (var db = CreateContext()) Assert.True(await Orchestrator(db, client).NeedsAnalysisAsync(requestId, CancellationToken.None));
+        await RunAnalysisAsync(requestId, client);
+        await using (var db = CreateContext()) Assert.False(await Orchestrator(db, client).NeedsAnalysisAsync(requestId, CancellationToken.None));
+    }
 }
