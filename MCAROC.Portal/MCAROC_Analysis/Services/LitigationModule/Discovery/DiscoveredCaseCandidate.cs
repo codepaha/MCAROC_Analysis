@@ -27,6 +27,8 @@ public sealed record DiscoveredCaseCandidate(
     bool IsAccepted,
     string? Stage = null,
     DateOnly? HearingDate = null,
+    string? DiaryNo = null,
+    string? StableSourceId = null,
     string? RawPayload = null);
 
 /// <summary>Summary of a party discovery search operation across one or more tribunals/commissions.</summary>

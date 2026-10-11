@@ -13,6 +13,25 @@ namespace MCAROC_Analysis.Tests;
 public sealed class OrderSourceClientAdapterTests
 {
     [Fact]
+    public async Task DrtAdapter_detects_unsupported_docx_format_and_marks_unsupported()
+    {
+        var bytes = new byte[] { 0x50, 0x4B, 0x03, 0x04 }.Concat(Encoding.ASCII.GetBytes("word/document.xml")).ToArray();
+        var cleaned = DrtOrderCleaner.Clean(bytes);
+        Assert.Equal("docx", cleaned.Format);
+
+        var drtMock = new MockDrtClient { DownloadResult = cleaned };
+        var adapter = new DrtOrderSourceClient(drtMock);
+
+        var result = await adapter.DownloadAsync(new OrderSourceLocator(Source: "Drt", OrderUrl: "https://drt.gov.in/order.docx"));
+
+        Assert.True(result.Ok);
+        Assert.True(result.IsUnsupportedFormat);
+        Assert.Equal(bytes, result.Bytes);
+        Assert.Equal("application/vnd.openxmlformats-officedocument.wordprocessingml.document", result.ContentType);
+        Assert.Contains("Word .docx format is not supported", result.Error);
+    }
+
+    [Fact]
     public void CanHandle_identifies_matching_source_locators()
     {
         var drtMock = new MockDrtClient();

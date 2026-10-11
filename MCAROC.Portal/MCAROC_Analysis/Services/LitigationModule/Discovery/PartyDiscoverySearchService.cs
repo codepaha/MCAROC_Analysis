@@ -33,9 +33,10 @@ public sealed class PartyDiscoverySearchService : IPartyDiscoverySearchService
     {
         var namesList = companyNames.Where(n => !string.IsNullOrWhiteSpace(n)).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
         var formerList = (formerNames ?? []).Where(n => !string.IsNullOrWhiteSpace(n)).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
-        var primaryName = namesList.FirstOrDefault() ?? "Unknown";
+        var primaryName = namesList.FirstOrDefault() ?? formerList.FirstOrDefault() ?? "Unknown";
 
-        if (namesList.Count == 0)
+        var queryNames = namesList.Concat(formerList).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        if (queryNames.Count == 0)
         {
             return new PartyDiscoveryResult(primaryName, [], 0, 0, 0, 0, ["No company names provided for discovery"]);
         }
@@ -67,7 +68,7 @@ public sealed class PartyDiscoverySearchService : IPartyDiscoverySearchService
             var isDrat = tribId >= 100;
             var source = isDrat ? DiscoveredCaseSource.Drat : DiscoveredCaseSource.Drt;
 
-            foreach (var queryName in namesList)
+            foreach (var queryName in queryNames)
             {
                 ct.ThrowIfCancellationRequested();
                 try
@@ -105,7 +106,9 @@ public sealed class PartyDiscoverySearchService : IPartyDiscoverySearchService
                             Respondent: row.Respondent,
                             MatchResult: bestMatch,
                             QueriedPartyName: queryName,
-                            IsAccepted: isAccepted));
+                            IsAccepted: isAccepted,
+                            DiaryNo: row.DiaryNo,
+                            StableSourceId: row.FilingNo));
                     }
                 }
                 catch (Exception ex)
@@ -116,11 +119,9 @@ public sealed class PartyDiscoverySearchService : IPartyDiscoverySearchService
             }
         }
 
-        // Deduplicate candidate instances (same case number and venue found under multiple name variations)
-        var distinctCandidates = candidates
-            .GroupBy(c => (c.Source, c.SourceVenueId, c.CaseNumber), StringTupleComparer.Instance)
-            .Select(g => g.OrderByDescending(c => c.IsAccepted).First())
-            .ToList();
+        // Deduplicate candidate instances only on decisive identity (case number, diary number, or stable source id).
+        // Observations lacking decisive identity are preserved individually.
+        var distinctCandidates = DeduplicateCandidates(candidates);
 
         var accepted = distinctCandidates.Count(c => c.IsAccepted);
         var rejected = distinctCandidates.Count - accepted;
@@ -145,9 +146,10 @@ public sealed class PartyDiscoverySearchService : IPartyDiscoverySearchService
     {
         var namesList = companyNames.Where(n => !string.IsNullOrWhiteSpace(n)).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
         var formerList = (formerNames ?? []).Where(n => !string.IsNullOrWhiteSpace(n)).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
-        var primaryName = namesList.FirstOrDefault() ?? "Unknown";
+        var primaryName = namesList.FirstOrDefault() ?? formerList.FirstOrDefault() ?? "Unknown";
 
-        if (namesList.Count == 0)
+        var queryNames = namesList.Concat(formerList).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        if (queryNames.Count == 0)
         {
             return new PartyDiscoveryResult(primaryName, [], 0, 0, 0, 0, ["No company names provided for discovery"]);
         }
@@ -177,7 +179,7 @@ public sealed class PartyDiscoverySearchService : IPartyDiscoverySearchService
             var commInfo = ConsumerCommissionRegistry.GetById(commId);
             var venueName = commInfo?.CommissionName ?? $"Commission {commId}";
 
-            foreach (var queryName in namesList)
+            foreach (var queryName in queryNames)
             {
                 ct.ThrowIfCancellationRequested();
                 try
@@ -218,6 +220,7 @@ public sealed class PartyDiscoverySearchService : IPartyDiscoverySearchService
                             IsAccepted: isAccepted,
                             Stage: c.CaseStageName,
                             HearingDate: c.EffectiveHearingDate,
+                            DiaryNo: c.FileApplicationNumber,
                             RawPayload: c.RawJson));
                     }
                 }
@@ -229,10 +232,7 @@ public sealed class PartyDiscoverySearchService : IPartyDiscoverySearchService
             }
         }
 
-        var distinctCandidates = candidates
-            .GroupBy(c => (c.Source, c.SourceVenueId, c.CaseNumber), StringTupleComparer.Instance)
-            .Select(g => g.OrderByDescending(c => c.IsAccepted).First())
-            .ToList();
+        var distinctCandidates = DeduplicateCandidates(candidates);
 
         var accepted = distinctCandidates.Count(c => c.IsAccepted);
         var rejected = distinctCandidates.Count - accepted;
@@ -284,17 +284,62 @@ public sealed class PartyDiscoverySearchService : IPartyDiscoverySearchService
         return first;
     }
 
-    private sealed class StringTupleComparer : IEqualityComparer<(DiscoveredCaseSource, string, string)>
+    /// <summary>Deduplicates candidates on decisive identity (case number, diary number, or stable source id).
+    /// Preserves observations without decisive identity so distinct keyless cases are never falsely collapsed.</summary>
+    private static IReadOnlyList<DiscoveredCaseCandidate> DeduplicateCandidates(IEnumerable<DiscoveredCaseCandidate> candidates)
     {
-        public static readonly StringTupleComparer Instance = new();
+        var result = new List<DiscoveredCaseCandidate>();
+        var groupedByKey = new Dictionary<string, List<DiscoveredCaseCandidate>>(StringComparer.OrdinalIgnoreCase);
 
-        public bool Equals((DiscoveredCaseSource, string, string) x, (DiscoveredCaseSource, string, string) y) =>
-            x.Item1 == y.Item1 &&
-            string.Equals(x.Item2, y.Item2, StringComparison.OrdinalIgnoreCase) &&
-            string.Equals(x.Item3, y.Item3, StringComparison.OrdinalIgnoreCase);
+        foreach (var c in candidates)
+        {
+            var key = GetDeduplicationKey(c);
+            if (key is null)
+            {
+                // Keyless observation: preserve individually
+                result.Add(c);
+            }
+            else
+            {
+                if (!groupedByKey.TryGetValue(key, out var list))
+                {
+                    list = [];
+                    groupedByKey[key] = list;
+                }
+                list.Add(c);
+            }
+        }
 
-        public int GetHashCode((DiscoveredCaseSource, string, string) obj) =>
-            HashCode.Combine(obj.Item1, StringComparer.OrdinalIgnoreCase.GetHashCode(obj.Item2), StringComparer.OrdinalIgnoreCase.GetHashCode(obj.Item3));
+        foreach (var group in groupedByKey.Values)
+        {
+            // Pick accepted match if any, else first
+            result.Add(group.OrderByDescending(c => c.IsAccepted).First());
+        }
+
+        return result;
+    }
+
+    private static string? GetDeduplicationKey(DiscoveredCaseCandidate c)
+    {
+        // 1. Decisive normalized case number or non-empty raw case number
+        if (!string.IsNullOrWhiteSpace(c.CaseNumber))
+        {
+            return $"{c.Source}:{c.SourceVenueId}:case:{c.CaseNumber.Trim()}";
+        }
+
+        // 2. Stable source filing number if available
+        if (!string.IsNullOrWhiteSpace(c.StableSourceId))
+        {
+            return $"{c.Source}:{c.SourceVenueId}:filing:{c.StableSourceId.Trim()}";
+        }
+
+        // 3. Decisive diary number
+        if (!string.IsNullOrWhiteSpace(c.DiaryNo))
+        {
+            return $"{c.Source}:{c.SourceVenueId}:diary:{c.DiaryNo.Trim()}";
+        }
+
+        return null;
     }
 }
 

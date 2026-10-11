@@ -12,6 +12,41 @@ namespace MCAROC_Analysis.Tests;
 public sealed class PartyDiscoverySearchServiceTests
 {
     [Fact]
+    public async Task DiscoverDrtCandidatesAsync_queries_former_names_as_well_as_current_names()
+    {
+        var drt = new MockDrtDiscoveryClient();
+        var service = new PartyDiscoverySearchService(drt, new MockConsumerDiscoveryClient(), NullLogger<PartyDiscoverySearchService>.Instance);
+        await service.DiscoverDrtCandidatesAsync(["New Bank Limited"], ["Old Bank Limited"], [1]);
+        Assert.Contains("Old Bank Limited", drt.Queries);
+        Assert.Contains("New Bank Limited", drt.Queries);
+    }
+
+    [Fact]
+    public async Task DiscoverConsumerCandidatesAsync_queries_former_names_as_well_as_current_names()
+    {
+        var consumer = new MockConsumerDiscoveryClient();
+        var service = new PartyDiscoverySearchService(new MockDrtDiscoveryClient(), consumer, NullLogger<PartyDiscoverySearchService>.Instance);
+        await service.DiscoverConsumerCandidatesAsync(["New Bank Limited"], ["Old Bank Limited"], [(1, 11000000)]);
+        Assert.Contains("Old Bank Limited", consumer.Queries);
+        Assert.Contains("New Bank Limited", consumer.Queries);
+    }
+
+    [Fact]
+    public async Task DiscoverDrtCandidatesAsync_preserves_distinct_keyless_observations()
+    {
+        var drt = new MockDrtDiscoveryClient();
+        foreach (var diary in new[] { "100/2020", "200/2021" })
+        {
+            drt.AddResult(1, new DrtPartySearchResult(1, "OA", null,
+                CaseNumberNormaliser.Parse(new CaseNumberInput(CaseNumber: null)), diary,
+                null, "New Bank Limited", "Borrower", null, null, null));
+        }
+        var service = new PartyDiscoverySearchService(drt, new MockConsumerDiscoveryClient(), NullLogger<PartyDiscoverySearchService>.Instance);
+        var result = await service.DiscoverDrtCandidatesAsync(["New Bank Limited"], tribunalIds: [1]);
+        Assert.Equal(2, result.Candidates.Count);
+    }
+
+    [Fact]
     public async Task DiscoverDrtCandidatesAsync_accepts_whole_name_matches_and_rejects_extra_words_with_audit()
     {
         var drtMock = new MockDrtDiscoveryClient();
@@ -179,6 +214,7 @@ public sealed class PartyDiscoverySearchServiceTests
 
     private sealed class MockDrtDiscoveryClient : IDrtClient
     {
+        public List<string> Queries { get; } = [];
         private readonly Dictionary<int, List<DrtPartySearchResult>> _results = [];
 
         public string CurrentExit => "127.0.0.1:8080";
@@ -199,8 +235,11 @@ public sealed class PartyDiscoverySearchServiceTests
         public Task<IReadOnlyList<DrtCaseType>> GetCaseTypesAsync(int tribunalId, CancellationToken ct = default) =>
             Task.FromResult<IReadOnlyList<DrtCaseType>>([]);
 
-        public Task<IReadOnlyList<DrtPartySearchResult>> SearchByPartyNameAsync(int tribunalId, string partyName, CancellationToken ct = default) =>
-            Task.FromResult<IReadOnlyList<DrtPartySearchResult>>(_results.GetValueOrDefault(tribunalId) ?? []);
+        public Task<IReadOnlyList<DrtPartySearchResult>> SearchByPartyNameAsync(int tribunalId, string partyName, CancellationToken ct = default)
+        {
+            Queries.Add(partyName);
+            return Task.FromResult<IReadOnlyList<DrtPartySearchResult>>(_results.GetValueOrDefault(tribunalId) ?? []);
+        }
 
         public Task<DrtCaseLookupResult> GetCaseByNumberAsync(int tribunalId, int caseTypeId, string caseNo, int caseYear, CancellationToken ct = default) =>
             Task.FromResult(DrtCaseLookupResult.Error("Not implemented", null, HttpStatusCode.NotFound));
@@ -223,6 +262,7 @@ public sealed class PartyDiscoverySearchServiceTests
 
     private sealed class MockConsumerDiscoveryClient : IConsumerClient
     {
+        public List<string> Queries { get; } = [];
         private readonly Dictionary<(int, int), List<ConsumerCompanyCase>> _cases = [];
 
         public string CurrentExit => "127.0.0.1:8080";
@@ -242,8 +282,11 @@ public sealed class PartyDiscoverySearchServiceTests
         public Task<ConsumerCaseLookupResult> GetCaseStatusAsync(string caseNumber, CancellationToken ct = default) =>
             Task.FromResult(ConsumerCaseLookupResult.Error("Not implemented", null, HttpStatusCode.NotFound));
 
-        public Task<ConsumerCompanySearchResult> SearchByCompanyAsync(int commissionTypeId, int commissionId, string keyword, DateOnly fromDate, DateOnly toDate, CancellationToken ct = default) =>
-            Task.FromResult(new ConsumerCompanySearchResult(_cases.GetValueOrDefault((commissionTypeId, commissionId)) ?? [], true));
+        public Task<ConsumerCompanySearchResult> SearchByCompanyAsync(int commissionTypeId, int commissionId, string keyword, DateOnly fromDate, DateOnly toDate, CancellationToken ct = default)
+        {
+            Queries.Add(keyword);
+            return Task.FromResult(new ConsumerCompanySearchResult(_cases.GetValueOrDefault((commissionTypeId, commissionId)) ?? [], true));
+        }
 
         public Task<ConsumerOrderDownloadResult> GetDailyOrderPdfAsync(long filingReferenceNumber, DateOnly dateOfHearing, int orderTypeId = 1, CancellationToken ct = default) =>
             Task.FromResult(ConsumerOrderDownloadResult.NotFound());

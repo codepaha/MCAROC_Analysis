@@ -68,13 +68,14 @@ public sealed partial class DrtOrderSourceClient : IOrderSourceClient
             return OrderSourceDownloadResult.Failed(drtResult.ErrorMessage ?? "DRT order download failed", _client.CurrentExit);
         }
 
-        // Check unsupported formats in v1 (Word .doc, images, zip)
-        if (string.Equals(drtResult.Format, "doc", StringComparison.OrdinalIgnoreCase))
+        // Check unsupported formats in v1 (Word .doc/.docx, images, zip)
+        if (string.Equals(drtResult.Format, "doc", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(drtResult.Format, "docx", StringComparison.OrdinalIgnoreCase))
         {
             return OrderSourceDownloadResult.Unsupported(
                 drtResult.Bytes ?? [],
-                drtResult.ContentType ?? "application/msword",
-                "Word .doc format is not supported for text extraction in v1",
+                drtResult.ContentType ?? "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                $"Word .{drtResult.Format.ToLowerInvariant()} format is not supported for text extraction in v1",
                 _client.CurrentExit);
         }
 
