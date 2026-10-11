@@ -928,4 +928,41 @@ public class LitigationCaseAnalysisTests
         var supported = LitigationCaseAnalysisValidator.Validate(Answer(input, a => a["summary"] = "On 12.12.2025, the final hearing, the matter is to be heard."), input, LitigationRiskTier.R1, "t");
         Assert.DoesNotContain(supported.Notes, n => n.Contains("hearing date"));
     }
+
+    [Theory]
+    [InlineData("factual_background")]
+    [InlineData("relief_sought")]
+    [InlineData("core_issue")]
+    [InlineData("subject")]
+    public void An_unsupported_hearing_date_is_flagged_in_any_text_field_of_the_answer(string field)
+    {
+        var c = NewCase((1, "09-01-2025", "Order"));
+        var input = Input(c, Docs((1, 11, OrderOneText)));
+        var r = LitigationCaseAnalysisValidator.Validate(Answer(input, a => a[field] = "The matter is listed for hearing on 05-11-2026."), input, LitigationRiskTier.R1, "t");
+        Assert.Contains(r.Notes, n => n.Contains("hearing date"));
+    }
+
+    [Fact]
+    public void An_unsupported_hearing_date_is_flagged_in_the_list_fields_and_in_a_per_order_entry()
+    {
+        var c = NewCase((1, "09-01-2025", "Order"));
+        var input = Input(c, Docs((1, 11, OrderOneText)));
+
+        var inList = LitigationCaseAnalysisValidator.Validate(Answer(input, a => a["judicial_reasoning"] = new JsonArray("The Tribunal fixed the next hearing for 05-11-2026.")), input, LitigationRiskTier.R1, "t");
+        Assert.Contains(inList.Notes, n => n.Contains("hearing date"));
+
+        var inOrder = LitigationCaseAnalysisValidator.Validate(Answer(input, a =>
+            a["order_analysis"] = new JsonArray(new JsonObject { ["order_id"] = 1, ["summary"] = "Adjourned; next hearing 05-11-2026." })), input, LitigationRiskTier.R1, "t");
+        Assert.Contains(inOrder.Notes, n => n.Contains("hearing date"));
+    }
+
+    [Fact]
+    public void A_quoted_passage_from_an_order_is_not_scanned_as_generated_text()
+    {
+        var c = NewCase((1, "09-01-2025", "Order"));
+        var text = OrderOneText + " Next hearing on 12.12.2025 for arguments.";
+        var input = Input(c, Docs((1, 11, text)));
+        var r = LitigationCaseAnalysisValidator.Validate(Answer(input, a => a["summary"] = "A summary with no dates."), input, LitigationRiskTier.R1, "t");
+        Assert.DoesNotContain(r.Notes, n => n.Contains("hearing date"));
+    }
 }

@@ -420,7 +420,7 @@ public static class LitigationCaseAnalysisValidator
         var prose = string.Join(" ", new[] { summary, Str("risk_reason"), Str("consequence_note"), (root["outcome"] as JsonObject)?["final_order_summary"]?.ToString() }.Where(x => !string.IsNullOrWhiteSpace(x)));
         // Hearing dates are not given to the model (they change with every refresh and are shown from the stored columns). A hearing date in the prose that no order text carries
         // therefore came from nowhere the model was given: flagged for the reader, not trusted.
-        if (StatesHearingDateNotInOrders(string.Join(" ", new[] { prose }.Concat(Bullets(root["key_points"]).Select(b => b?.ToString() ?? ""))), input))
+        if (StatesHearingDateNotInOrders(AllGeneratedText(root), input))
             notes.Add("The analysis states a hearing date that is not in any order text; hearing dates were not given to the model, so it is not taken from the court record.");
         if (input.HasText && !FiguresPrinted(prose, printed, out var unmatched))
             unknownsOut.Add($"The figure(s) {string.Join(", ", unmatched)} in this analysis are not confirmed by the printed order text (the scan may be damaged); check the order.");
@@ -479,6 +479,23 @@ public static class LitigationCaseAnalysisValidator
 
     /// <summary>The numbers printed in the text sent for a case, each as digits only (thousands commas dropped, a decimal part kept), one set
     /// over all orders. A number is a whole token: "12345" is not found in "1234500" or "12345.50".</summary>
+    /// <summary>Every piece of generated text the caller will see: all string values of the answer, at any depth, except the verbatim quotes (which come from the orders themselves).</summary>
+    internal static string AllGeneratedText(JsonNode? node)
+    {
+        var parts = new List<string>();
+        void Walk(JsonNode? n, string? key)
+        {
+            switch (n)
+            {
+                case JsonValue v when v.TryGetValue<string>(out var text): if (key is not ("quote" or "claim")) parts.Add(text); break;
+                case JsonObject o: foreach (var (k, child) in o) if (k != "evidence") Walk(child, k); break;
+                case JsonArray a: foreach (var child in a) Walk(child, key); break;
+            }
+        }
+        Walk(node, null);
+        return string.Join(" \n ", parts);
+    }
+
     private static readonly System.Text.RegularExpressions.Regex DateText = new(
         @"\b\d{1,2}[./-]\d{1,2}[./-]\d{2,4}\b|\b\d{1,2}(?:st|nd|rd|th)?\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.?,?\s+\d{4}\b",
         System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.CultureInvariant);
