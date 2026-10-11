@@ -62,7 +62,8 @@ public static partial class WholeNamePartyMatcher
     [GeneratedRegex(@"\b(?:(?:THROUGH|THR\.?|THRU)\s+ITS\b|REPRESENTED\s+BY\b|REP\.?\s+BY\b|REPD\.?\s+BY\b|ITS\s+(?:MANAGING\s+DIRECTOR|DIRECTOR|AUTHORI[SZ]ED|PROPRIETOR|PARTNER)\b).*$", RegexOptions.CultureInvariant)]
     private static partial Regex RepresentationTail();
 
-    [GeneratedRegex(@"(?:&|\bAND\b)\s*(?:ANR|ANOTHER|ORS|OTHERS|ORS\.|ANR\.)\b\.?", RegexOptions.CultureInvariant)]
+    // "& Anr / & Ors / and others" is a suffix of the cause title only: anchored to the end, so "ALPHA AND ANOTHER INDUSTRIES LIMITED" stays a different party.
+    [GeneratedRegex(@"[\s,]*(?:&|\bAND\b)\s*(?:ANR|ANOTHER|ORS|OTHERS)\b[\s,.;)]*$", RegexOptions.CultureInvariant)]
     private static partial Regex Others();
 
     [GeneratedRegex(@"\(\s*(?:IN|UNDER)\s+(?:LIQUIDATION|CIRP|CIR\s+PROCESS|RESOLUTION|INSOLVENCY)[^)]*\)", RegexOptions.CultureInvariant)]

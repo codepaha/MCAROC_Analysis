@@ -39,6 +39,20 @@ public class WholeNamePartyMatcherTests
         Assert.NotEqual(PartyMatchOutcome.Verified, WholeNamePartyMatcher.Match(party, [subject]).Outcome);
 
     [Theory]
+    [InlineData("ALPHA AND ANOTHER INDUSTRIES LIMITED", "Alpha Industries Limited")]
+    [InlineData("ALPHA & ORS INDUSTRIES LIMITED", "Alpha Industries Limited")]
+    [InlineData("ALPHA AND OTHERS TRADING LIMITED", "Alpha Trading Limited")]
+    public void An_and_another_in_the_middle_of_a_name_is_not_boilerplate(string party, string subject) =>
+        Assert.NotEqual(PartyMatchOutcome.Verified, WholeNamePartyMatcher.Match(party, [subject]).Outcome);
+
+    [Theory]
+    [InlineData("Alpha Industries Limited & Anr.")]
+    [InlineData("Alpha Industries Limited, and others")]
+    [InlineData("ALPHA INDUSTRIES LTD & ORS")]
+    public void A_trailing_and_others_suffix_is_still_stripped(string party) =>
+        Assert.Equal(PartyMatchOutcome.Verified, WholeNamePartyMatcher.Match(party, ["Alpha Industries Limited"]).Outcome);
+
+    [Theory]
     [InlineData("Kotak Mahindra Bank Limited THR. ITS DIRECTOR")]
     [InlineData("Kotak Mahindra Bank Limited represented by its Manager")]
     [InlineData("Kotak Mahindra Bank Limited rep. by its Authorised Officer")]
