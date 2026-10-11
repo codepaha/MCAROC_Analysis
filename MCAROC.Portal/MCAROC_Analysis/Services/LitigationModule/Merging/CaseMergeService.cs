@@ -60,8 +60,11 @@ public sealed class CaseMergeService(AppDbContext db, TimeProvider? time = null)
             link.LitigationCaseId = survivorId;
         }
 
-        // Orders: an order the survivor already holds (same url, date and type) is collapsed into it - flagged, not re-pointed; any other is re-pointed.
+        // Orders: an order the survivor already holds - the same url (case-sensitive: document paths are), date and type - is collapsed into it, flagged and not moved; any other is
+        // re-pointed. An order whose url differs from a survivor order only by letter case is a different document, but the stored unique index ignores case and would refuse to put
+        // both on one case: it stays on the loser (still on record, not lost) and is reported.
         var survivorOrders = await db.LitigationCaseOrders.Where(o => o.LitigationCaseId == survivorId).ToListAsync(ct);
+        var unmoved = 0;
         foreach (var order in await db.LitigationCaseOrders.Where(o => o.LitigationCaseId == loserId).ToListAsync(ct))
         {
             var same = survivorOrders.FirstOrDefault(o => OrderKey(o) == OrderKey(order));
@@ -69,6 +72,10 @@ public sealed class CaseMergeService(AppDbContext db, TimeProvider? time = null)
             {
                 Record(TOrders, order.LitigationCaseOrderId, CCollapsedInto, order.CollapsedIntoOrderId, same.LitigationCaseOrderId);
                 order.CollapsedIntoOrderId = same.LitigationCaseOrderId;
+            }
+            else if (survivorOrders.Any(o => string.Equals(OrderKey(o), OrderKey(order), StringComparison.OrdinalIgnoreCase)))
+            {
+                unmoved++;
             }
             else
             {
@@ -86,7 +93,7 @@ public sealed class CaseMergeService(AppDbContext db, TimeProvider? time = null)
         await db.SaveChangesAsync(ct);
         await RequestLiveData.BumpAsync(db, requestId, ct);
         if (tx is not null) await tx.CommitAsync(ct);
-        return new CaseMergeResult(true, MergeRefusal.None, decision.Reason, merge.MergeId, survivorId, loserId, journal.Count);
+        return new CaseMergeResult(true, MergeRefusal.None, unmoved == 0 ? decision.Reason : $"{decision.Reason}; {unmoved} order(s) left on the merged case because their url differs from a survivor order only by letter case", merge.MergeId, survivorId, loserId, journal.Count);
     }
 
     /// <summary>Reverses a merge value by value. A value is restored only if it still equals what the merge wrote; anything changed since is kept and reported. Rows created after the merge
@@ -193,7 +200,7 @@ public sealed class CaseMergeService(AppDbContext db, TimeProvider? time = null)
         return new MergeCandidate(c.LitigationCaseId, requestId, module?.CaseKey, linkVerified && live is not null, orders, live?.HearingCount ?? 0, c.FirstSeenUtc, c.MergedIntoCaseId);
     }
 
-    private static string OrderKey(LitigationCaseOrder o) => $"{o.PdfUrl?.Trim().ToUpperInvariant()}|{o.OrderDate?.Trim().ToUpperInvariant()}|{o.OrderType?.Trim().ToUpperInvariant()}";
+    private static string OrderKey(LitigationCaseOrder o) => $"{o.PdfUrl?.Trim()}|{o.OrderDate?.Trim()}|{o.OrderType?.Trim()}";   // the url is compared exactly: two paths that differ in letter case can be two documents
     private static string? Text(long? value) => value?.ToString(CultureInfo.InvariantCulture);
     private static long? Parse(string? value) => long.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var v) ? v : null;
     private static CaseMergeResult Refused(MergeRefusal refusal, string reason) => new(false, refusal, reason, null, null, null, 0);

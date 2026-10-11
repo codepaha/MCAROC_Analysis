@@ -263,4 +263,35 @@ public class CaseMergeServiceTests : IAsyncLifetime
         row.Court = "unsaved edit";
         await Assert.ThrowsAsync<InvalidOperationException>(() => new CaseMergeService(db).MergeAsync(w.RequestId, w.A, w.B, default));
     }
+
+    [Fact]
+    public async Task Order_urls_are_compared_exactly_so_documents_whose_paths_differ_only_in_letter_case_are_not_collapsed()
+    {
+        var w = await SeedAsync();
+        await using (var seed = Ctx())
+        {
+            // Case B's order 3 gets the same url as one of A's but in different letter case, with the same date and type.
+            await seed.LitigationCaseOrders.Where(o => o.LitigationCaseId == w.B && o.PdfUrl == "https://x/3.pdf")
+                .ExecuteUpdateAsync(s => s.SetProperty(o => o.PdfUrl, "https://X/1.PDF").SetProperty(o => o.OrderDate, "01-01-2025"));
+        }
+        await using var db = Ctx();
+        var result = await new CaseMergeService(db).MergeAsync(w.RequestId, w.A, w.B, default);
+
+        Assert.True(result.Performed);
+        Assert.Contains("differs from a survivor order only by letter case", result.Reason);
+        await using var v = Ctx();
+        var differing = (await v.LitigationCaseOrders.AsNoTracking().Where(o => o.LitigationCaseId == w.B).ToListAsync()).Single(o => o.PdfUrl == "https://X/1.PDF");   // exact (case-sensitive) in memory
+        Assert.Null(differing.CollapsedIntoOrderId);           // not treated as the same order
+        Assert.Equal(w.B, differing.LitigationCaseId);         // and not lost: still on record on the merged case
+    }
+
+    [Fact]
+    public async Task Order_urls_that_are_exactly_equal_are_still_collapsed()
+    {
+        var w = await SeedAsync();
+        await using var db = Ctx();
+        await new CaseMergeService(db).MergeAsync(w.RequestId, w.A, w.B, default);
+        await using var v = Ctx();
+        Assert.NotNull((await v.LitigationCaseOrders.AsNoTracking().SingleAsync(o => o.LitigationCaseId == w.B && o.PdfUrl == "https://x/2.pdf")).CollapsedIntoOrderId);
+    }
 }
