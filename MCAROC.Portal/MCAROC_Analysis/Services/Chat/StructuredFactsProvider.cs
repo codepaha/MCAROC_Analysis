@@ -203,7 +203,7 @@ public class StructuredFactsProvider(AppDbContext db)
         if (snapshotId is null) return [];
 
         var cases = await db.LitigationCaseSourceReports.AsNoTracking()
-            .Where(l => l.LitigationReportSnapshotId == snapshotId)
+            .Where(l => l.LitigationReportSnapshotId == snapshotId && l.Case!.MergedIntoCaseId == null)
             .Select(l => l.Case!).ToListAsync(ct);
         if (cases.Count == 0) return [];
 

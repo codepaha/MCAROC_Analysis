@@ -294,4 +294,46 @@ public class CaseMergeServiceTests : IAsyncLifetime
         await using var v = Ctx();
         Assert.NotNull((await v.LitigationCaseOrders.AsNoTracking().SingleAsync(o => o.LitigationCaseId == w.B && o.PdfUrl == "https://x/2.pdf")).CollapsedIntoOrderId);
     }
+
+    // ---- every reader ignores a merged loser, including when the survivor already had the loser's snapshot (its link stays on the loser) ----
+
+    /// <summary>Makes the older snapshot (which both cases are linked to, and whose link on the loser stays after the merge) the authoritative one.</summary>
+    private static async Task MakeOldSnapshotAuthoritativeAsync(World w)
+    {
+        await using var db = Ctx();
+        var hash = await db.LitigationReportSnapshots.AsNoTracking().Where(s => s.LitigationReportSnapshotId == w.SnapshotOld).Select(s => s.ReportHash).SingleAsync();
+        await db.LitigationSearchJobs.Where(j => j.RequestId == w.RequestId).ExecuteUpdateAsync(s => s.SetProperty(j => j.RawResponseHash, hash).SetProperty(j => j.Status, LitigationSearchJobStatus.Completed));
+    }
+
+    [Fact]
+    public async Task The_generated_report_does_not_contain_a_merged_loser_even_when_its_snapshot_link_remains()
+    {
+        var w = await SeedAsync();
+        await MakeOldSnapshotAuthoritativeAsync(w);
+        await using (var db = Ctx())
+        {
+            var before = await new LitigationReportAssembler(db).AssembleAsync(w.RequestId, default, includeAnalysis: false);
+            Assert.Equal(2, before!.Cases.Count);                       // sanity: both cases are in the report before the merge
+        }
+        await using (var db = Ctx()) Assert.True((await new CaseMergeService(db).MergeAsync(w.RequestId, w.A, w.B, default)).Performed);
+        await using (var v = Ctx())
+        {
+            Assert.Contains(w.SnapshotOld, await v.LitigationCaseSourceReports.AsNoTracking().Where(s => s.LitigationCaseId == w.B).Select(s => s.LitigationReportSnapshotId).ToListAsync());   // the loser's link did stay
+
+            var report = await new LitigationReportAssembler(v).AssembleAsync(w.RequestId, default, includeAnalysis: false);
+            Assert.Equal([w.A], report!.Cases.Select(c => c.LitigationCaseId));
+        }
+    }
+
+    [Fact]
+    public async Task The_case_page_of_a_merged_loser_is_not_served_and_the_survivors_is()
+    {
+        var w = await SeedAsync();
+        await MakeOldSnapshotAuthoritativeAsync(w);
+        await using (var db = Ctx()) await new CaseMergeService(db).MergeAsync(w.RequestId, w.A, w.B, default);
+        await using var v = Ctx();
+        var pages = new LitigationCasePageService(v);
+        Assert.Null(await pages.GetAsync(w.RequestId, w.B, default));
+        Assert.NotNull(await pages.GetAsync(w.RequestId, w.A, default));
+    }
 }

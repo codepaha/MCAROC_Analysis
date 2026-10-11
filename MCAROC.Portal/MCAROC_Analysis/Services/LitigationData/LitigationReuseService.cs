@@ -125,7 +125,7 @@ public sealed class LitigationReuseService(
     private async Task<Dictionary<long, long>> CopyCasesAsync(long sourceRequestId, long sourceSnapshotId, long requestId, long newSnapshotId, CancellationToken ct)
     {
         var sourceCaseIds = await db.LitigationCaseSourceReports.AsNoTracking()
-            .Where(r => r.LitigationReportSnapshotId == sourceSnapshotId).Select(r => r.LitigationCaseId).ToListAsync(ct);
+            .Where(r => r.LitigationReportSnapshotId == sourceSnapshotId && r.Case!.MergedIntoCaseId == null).Select(r => r.LitigationCaseId).ToListAsync(ct);
         var sourceCases = await db.LitigationCases.AsNoTracking()
             .Where(c => c.RequestId == sourceRequestId && sourceCaseIds.Contains(c.LitigationCaseId)).ToListAsync(ct);
 

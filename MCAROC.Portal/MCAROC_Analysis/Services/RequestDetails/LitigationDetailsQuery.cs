@@ -130,7 +130,7 @@ public sealed class LitigationDetailsQuery(AppDbContext db,
                 {
                     var authoritativeSnapshotId = authoritativeSnapshot.LitigationReportSnapshotId;
                     var caseIdsQuery = db.LitigationCaseSourceReports.AsNoTracking()
-                        .Where(sr => sr.LitigationReportSnapshotId == authoritativeSnapshotId)
+                        .Where(sr => sr.LitigationReportSnapshotId == authoritativeSnapshotId && sr.Case!.MergedIntoCaseId == null)
                         .Select(sr => sr.LitigationCaseId)
                         .Distinct();
 

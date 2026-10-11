@@ -75,7 +75,7 @@ public sealed class AiCostReportService(AppDbContext db, IOptions<AiPricingOptio
     private async Task<AiCostVolumes> VolumesAsync(long requestId, CancellationToken ct) => new(
         await db.McaFilingDocuments.AsNoTracking().CountAsync(d => d.RequestId == requestId && d.DuplicateOfDocumentId == null, ct),
         await db.LitigationOrderDocuments.AsNoTracking().CountAsync(d => d.Order!.Case!.RequestId == requestId && d.ExtractedText != null, ct),
-        await db.LitigationCases.AsNoTracking().CountAsync(c => c.RequestId == requestId, ct),
+        await db.LitigationCases.AsNoTracking().CountAsync(c => c.RequestId == requestId && c.MergedIntoCaseId == null, ct),
         await db.ChatMessages.AsNoTracking().CountAsync(m => m.Role == ChatRole.User && db.ChatSessions.Any(s => s.ChatSessionId == m.ChatSessionId && s.RequestId == requestId), ct));
 
     /// <summary>Per-unit rates across every assignment that has recorded usage: the total cost of a driver divided by the total units of that driver, counting

@@ -31,7 +31,7 @@ public sealed class ChargeLitigationService(AppDbContext db, IMemoryCache cache)
         if (liveVersion is not { } live) return "none";   // no such request
         if (snapshotId is not { } sid) return $"none-L{live}";
 
-        var caseIds = db.LitigationCaseSourceReports.Where(sr => sr.LitigationReportSnapshotId == sid)
+        var caseIds = db.LitigationCaseSourceReports.Where(sr => sr.LitigationReportSnapshotId == sid && sr.Case!.MergedIntoCaseId == null)
             .Select(sr => sr.LitigationCaseId).Distinct();
         var orderIds = db.LitigationCaseOrders.Where(o => caseIds.Contains(o.LitigationCaseId))
             .Select(o => o.LitigationCaseOrderId);
@@ -90,7 +90,7 @@ public sealed class ChargeLitigationService(AppDbContext db, IMemoryCache cache)
         var docs = new Dictionary<long, LitigationOrderDocument>();
         if (snapshotId is { } sid)
         {
-            var caseIds = db.LitigationCaseSourceReports.Where(sr => sr.LitigationReportSnapshotId == sid)
+            var caseIds = db.LitigationCaseSourceReports.Where(sr => sr.LitigationReportSnapshotId == sid && sr.Case!.MergedIntoCaseId == null)
                 .Select(sr => sr.LitigationCaseId).Distinct();
             cases = await db.LitigationCases.AsNoTracking()
                 .Where(c => caseIds.Contains(c.LitigationCaseId)).Include(c => c.Orders).ToListAsync(ct);

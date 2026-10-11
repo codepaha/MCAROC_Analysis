@@ -77,7 +77,7 @@ public class LitigationReportAssembler(
         // Server-Side Subquery Loading for Case IDs
         var snapshotId = authoritativeSnapshot.LitigationReportSnapshotId;
         var caseIdsQuery = db.LitigationCaseSourceReports
-            .Where(sr => sr.LitigationReportSnapshotId == snapshotId)
+            .Where(sr => sr.LitigationReportSnapshotId == snapshotId && sr.Case!.MergedIntoCaseId == null)
             .Select(sr => sr.LitigationCaseId)
             .Distinct();
 
