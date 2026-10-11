@@ -36,6 +36,10 @@
   </ItemGroup>
 
   <ItemGroup>
+    <EmbeddedResource Include="Services\LitigationModule\Sources\Consumer\Data\*.json" />
+  </ItemGroup>
+
+  <ItemGroup>
     <Content Remove="appsettings.ApplicationLogin.json" />
     <None Include="appsettings.ApplicationLogin.json" CopyToOutputDirectory="Never" CopyToPublishDirectory="Never" />
   </ItemGroup>
