@@ -223,6 +223,16 @@ public sealed class ConsumerClient : IConsumerClient
                 return ConsumerCaseLookupResult.Error("Contract failure: portal response did not contain caseNumber", json, apiResponse.StatusCode, apiResponse.ExitAddress);
             }
 
+            if (!IsCaseNumberMatch(requestedCaseNumber, caseNumber))
+            {
+                _logger.LogWarning("Case number mismatch: requested '{Requested}' but portal returned '{Returned}'", requestedCaseNumber, caseNumber);
+                return ConsumerCaseLookupResult.Error(
+                    $"Case number mismatch: requested '{requestedCaseNumber}' but portal returned '{caseNumber}'",
+                    json,
+                    apiResponse.StatusCode,
+                    apiResponse.ExitAddress);
+            }
+
             // Pin portal misspelling: "fillingReferenceNumber"
             long? filingRefNumber = null;
             if (dataEl.TryGetProperty("fillingReferenceNumber", out var frEl))
@@ -358,6 +368,66 @@ public sealed class ConsumerClient : IConsumerClient
         }
 
         return null;
+    }
+
+    /// <summary>Validates that the returned case number matches the requested case number.
+    /// Supports exact matches and normalized display tail matching (e.g. "CC/599/2017" matching "DC/497/CC/599/2017").
+    /// Rejects mismatched sequence numbers, years, case types, or conflicting court prefixes.</summary>
+    public static bool IsCaseNumberMatch(string requested, string returned)
+    {
+        if (string.IsNullOrWhiteSpace(requested) || string.IsNullOrWhiteSpace(returned))
+        {
+            return false;
+        }
+
+        var reqClean = requested.Trim().ToUpperInvariant();
+        var retClean = returned.Trim().ToUpperInvariant();
+
+        if (string.Equals(reqClean, retClean, StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        var reqParts = CaseNumberNormaliser.Parse(new CaseNumberInput(CaseNumber: requested));
+        var retParts = CaseNumberNormaliser.Parse(new CaseNumberInput(CaseNumber: returned));
+
+        if (reqParts.Completeness == CaseNumberCompleteness.Complete &&
+            retParts.Completeness == CaseNumberCompleteness.Complete)
+        {
+            if (!string.Equals(reqParts.Display, retParts.Display, StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            if (!string.IsNullOrWhiteSpace(reqParts.PortalNumber) &&
+                !string.IsNullOrWhiteSpace(retParts.PortalNumber) &&
+                !string.Equals(reqParts.PortalNumber, retParts.PortalNumber, StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+        }
+
+        var reqSegs = reqClean.Split('/', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        var retSegs = retClean.Split('/', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+        if (reqSegs.Length == retSegs.Length)
+        {
+            return reqSegs.SequenceEqual(retSegs, StringComparer.OrdinalIgnoreCase);
+        }
+
+        if (reqSegs.Length < retSegs.Length)
+        {
+            var tail = retSegs.Skip(retSegs.Length - reqSegs.Length).ToArray();
+            return tail.SequenceEqual(reqSegs, StringComparer.OrdinalIgnoreCase);
+        }
+
+        if (reqSegs.Length > retSegs.Length)
+        {
+            var tail = reqSegs.Skip(reqSegs.Length - retSegs.Length).ToArray();
+            return tail.SequenceEqual(retSegs, StringComparer.OrdinalIgnoreCase);
+        }
+
+        return false;
     }
 
     private ConsumerCompanySearchResult ParseCompanySearchResponse(

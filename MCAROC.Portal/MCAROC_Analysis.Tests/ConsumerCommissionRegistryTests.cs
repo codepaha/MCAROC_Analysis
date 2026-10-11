@@ -91,6 +91,34 @@ public sealed class ConsumerCommissionRegistryTests
     }
 
     [Fact]
+    public void FindByCourtName_rejects_ambiguous_bare_district_names_without_state_hint()
+    {
+        // Bilaspur exists in both Chhattisgarh and Himachal Pradesh
+        var ambiguousBilaspur = ConsumerCommissionRegistry.FindByCourtName("Bilaspur");
+        Assert.Null(ambiguousBilaspur);
+
+        var chhattisgarhBilaspur = ConsumerCommissionRegistry.FindByCourtName("Bilaspur", "Chhattisgarh");
+        Assert.NotNull(chhattisgarhBilaspur);
+        Assert.Equal("CHHATTISGARH", chhattisgarhBilaspur.StateName);
+
+        var hpBilaspur = ConsumerCommissionRegistry.FindByCourtName("Bilaspur", "Himachal Pradesh");
+        Assert.NotNull(hpBilaspur);
+        Assert.Equal("HIMACHAL PRADESH", hpBilaspur.StateName);
+
+        // Hamirpur exists in both Himachal Pradesh and Uttar Pradesh
+        var ambiguousHamirpur = ConsumerCommissionRegistry.FindByCourtName("Hamirpur");
+        Assert.Null(ambiguousHamirpur);
+
+        var upHamirpur = ConsumerCommissionRegistry.FindByCourtName("Hamirpur", "Uttar Pradesh");
+        Assert.NotNull(upHamirpur);
+        Assert.Equal("UTTAR PRADESH", upHamirpur.StateName);
+
+        var hpHamirpur = ConsumerCommissionRegistry.FindByCourtName("Hamirpur", "Himachal Pradesh");
+        Assert.NotNull(hpHamirpur);
+        Assert.Equal("HIMACHAL PRADESH", hpHamirpur.StateName);
+    }
+
+    [Fact]
     public void Find_resolves_hierarchical_commission_selection()
     {
         var ncdrc = ConsumerCommissionRegistry.Find("NCDRC");

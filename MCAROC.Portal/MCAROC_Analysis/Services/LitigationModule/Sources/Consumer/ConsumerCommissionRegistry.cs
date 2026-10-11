@@ -40,33 +40,56 @@ public static partial class ConsumerCommissionRegistry
         return Data.Value.ByPrefix.GetValueOrDefault(p);
     }
 
-    /// <summary>Finds a commission by its display/court name (e.g. "Thane", "SCDRC BENCH JODHPUR", "NCDRC").</summary>
-    public static ConsumerCommission? FindByCourtName(string courtName)
+    /// <summary>Finds a commission by its display/court name (e.g. "Thane", "SCDRC BENCH JODHPUR", "NCDRC").
+    /// Rejects ambiguous bare district-name matches (e.g. "Bilaspur") unless disambiguated with a state hint.</summary>
+    public static ConsumerCommission? FindByCourtName(string courtName, string? stateHint = null)
     {
         if (string.IsNullOrWhiteSpace(courtName)) return null;
         var norm = NormalizeName(courtName);
-
-        if (Data.Value.ByName.TryGetValue(norm, out var direct))
-        {
-            return direct;
-        }
-
         var compact = norm.Replace(" ", "");
-        if (Data.Value.ByCompactName.TryGetValue(compact, out var compactMatch))
+
+        var candidates = new HashSet<ConsumerCommission>();
+
+        if (Data.Value.ByName.TryGetValue(norm, out var byNameList))
         {
-            return compactMatch;
+            foreach (var c in byNameList) candidates.Add(c);
         }
 
-        // Check if court name ends with district name or matches district
-        foreach (var c in Data.Value.All)
+        if (Data.Value.ByDistrictName.TryGetValue(norm, out var byDistList))
         {
-            if (c.DistrictName is { } dist && NormalizeName(dist) == norm)
-            {
-                return c;
-            }
+            foreach (var c in byDistList) candidates.Add(c);
         }
 
-        return null;
+        if (candidates.Count == 0 && Data.Value.ByCompactName.TryGetValue(compact, out var byCompactList))
+        {
+            foreach (var c in byCompactList) candidates.Add(c);
+        }
+
+        if (candidates.Count == 0)
+        {
+            return null;
+        }
+
+        // If state hint is provided, filter candidates to matching state/parent state
+        if (!string.IsNullOrWhiteSpace(stateHint))
+        {
+            var normState = NormalizeName(stateHint);
+            var compactState = normState.Replace(" ", "");
+            var stateFiltered = candidates.Where(c =>
+                string.Equals(NormalizeName(c.StateName), normState, StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(NormalizeName(c.ParentState), normState, StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(NormalizeName(c.StateName).Replace(" ", ""), compactState, StringComparison.OrdinalIgnoreCase)).ToList();
+
+            return stateFiltered.Count == 1 ? stateFiltered[0] : null;
+        }
+
+        // Reject ambiguous bare district-name matches when multiple commissions share the name
+        if (candidates.Count > 1)
+        {
+            return null;
+        }
+
+        return candidates.First();
     }
 
     /// <summary>Resolves a selection into a commission (plan section 4.9).</summary>
@@ -86,14 +109,16 @@ public static partial class ConsumerCommissionRegistry
 
         if (comm == "SCDRC")
         {
-            if (Data.Value.ByName.TryGetValue(normState, out var scdrcMatch) && scdrcMatch.Tier == ConsumerCommissionTier.State)
+            if (Data.Value.ByName.TryGetValue(normState, out var scdrcMatches))
             {
-                return scdrcMatch;
+                var match = scdrcMatches.FirstOrDefault(m => m.Tier == ConsumerCommissionTier.State);
+                if (match is not null) return match;
             }
             var compactState = normState.Replace(" ", "");
-            if (Data.Value.ByCompactName.TryGetValue(compactState, out var compactMatch) && compactMatch.Tier == ConsumerCommissionTier.State)
+            if (Data.Value.ByCompactName.TryGetValue(compactState, out var compactMatches))
             {
-                return compactMatch;
+                var match = compactMatches.FirstOrDefault(m => m.Tier == ConsumerCommissionTier.State);
+                if (match is not null) return match;
             }
             return null;
         }
@@ -179,8 +204,9 @@ public static partial class ConsumerCommissionRegistry
         IReadOnlyList<ConsumerCommission> All,
         Dictionary<int, ConsumerCommission> ById,
         Dictionary<string, ConsumerCommission> ByPrefix,
-        Dictionary<string, ConsumerCommission> ByName,
-        Dictionary<string, ConsumerCommission> ByCompactName,
+        Dictionary<string, List<ConsumerCommission>> ByName,
+        Dictionary<string, List<ConsumerCommission>> ByDistrictName,
+        Dictionary<string, List<ConsumerCommission>> ByCompactName,
         IReadOnlyList<ConsumerStateInfo> States,
         Dictionary<string, IReadOnlyList<ConsumerDistrictInfo>> DistrictsByState);
 
@@ -320,16 +346,40 @@ public static partial class ConsumerCommissionRegistry
             }
         }
 
-        var byName = new Dictionary<string, ConsumerCommission>(StringComparer.OrdinalIgnoreCase);
-        var byCompact = new Dictionary<string, ConsumerCommission>(StringComparer.OrdinalIgnoreCase);
+        var byName = new Dictionary<string, List<ConsumerCommission>>(StringComparer.OrdinalIgnoreCase);
+        var byDistrict = new Dictionary<string, List<ConsumerCommission>>(StringComparer.OrdinalIgnoreCase);
+        var byCompact = new Dictionary<string, List<ConsumerCommission>>(StringComparer.OrdinalIgnoreCase);
+
+        void AddToMap(Dictionary<string, List<ConsumerCommission>> map, string key, ConsumerCommission item)
+        {
+            if (!map.TryGetValue(key, out var list))
+            {
+                list = [];
+                map[key] = list;
+            }
+            if (!list.Contains(item))
+            {
+                list.Add(item);
+            }
+        }
+
         foreach (var c in all)
         {
             var norm = NormalizeName(c.CommissionName);
-            byName.TryAdd(norm, c);
-            byCompact.TryAdd(norm.Replace(" ", ""), c);
+            var compact = norm.Replace(" ", "");
+            AddToMap(byName, norm, c);
+            AddToMap(byCompact, compact, c);
+
+            if (!string.IsNullOrWhiteSpace(c.DistrictName))
+            {
+                var distNorm = NormalizeName(c.DistrictName);
+                var distCompact = distNorm.Replace(" ", "");
+                AddToMap(byDistrict, distNorm, c);
+                AddToMap(byCompact, distCompact, c);
+            }
         }
 
-        return new RegistryData(all, byId, byPrefix, byName, byCompact, statesList, districtsByState);
+        return new RegistryData(all, byId, byPrefix, byName, byDistrict, byCompact, statesList, districtsByState);
     }
 
     [GeneratedRegex(@"\s+", RegexOptions.CultureInvariant)]

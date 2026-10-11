@@ -564,6 +564,51 @@ public sealed class ConsumerSourceClientTests
         Assert.Contains("did not contain caseNumber", result.Message, StringComparison.OrdinalIgnoreCase);
     }
 
+    [Fact]
+    public async Task GetCaseStatusAsync_rejects_case_number_mismatch_between_request_and_response()
+    {
+        var mismatchJson = """
+        {
+            "status": 200,
+            "data": {
+                "caseNumber": "DC/497/CC/600/2017",
+                "complainant": "John Doe",
+                "respondent": "Corp Inc",
+                "caseStage": "PENDING"
+            }
+        }
+        """;
+
+        var client = CreateClient((req, ct) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(mismatchJson, Encoding.UTF8, "application/json")
+        }));
+
+        // Requested 599, but portal returned 600
+        var result = await client.GetCaseStatusAsync("DC/497/CC/599/2017");
+
+        Assert.True(result.IsError);
+        Assert.Null(result.Case);
+        Assert.Contains("mismatch", result.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("599", result.Message);
+        Assert.Contains("600", result.Message);
+    }
+
+    [Theory]
+    [InlineData("DC/497/CC/599/2017", "DC/497/CC/599/2017", true)]
+    [InlineData("CC/599/2017", "DC/497/CC/599/2017", true)]
+    [InlineData("NC/RP/836/2005", "NC/RP/836/2005", true)]
+    [InlineData("RP/836/2005", "NC/RP/836/2005", true)]
+    [InlineData("DC/497/CC/599/2017", "DC/497/CC/600/2017", false)]
+    [InlineData("DC/497/CC/599/2017", "DC/123/CC/599/2017", false)]
+    [InlineData("DC/497/CC/599/2017", "DC/497/EA/599/2017", false)]
+    [InlineData("DC/497/CC/599/2017", "DC/497/CC/599/2018", false)]
+    [InlineData("CC/599/2017", "DC/497/CC/600/2017", false)]
+    public void IsCaseNumberMatch_accurately_validates_identity_and_rejects_mismatches(string req, string ret, bool expected)
+    {
+        Assert.Equal(expected, ConsumerClient.IsCaseNumberMatch(req, ret));
+    }
+
     private sealed class DelayCapturingTimeProvider : TimeProvider
     {
         private readonly Action<TimeSpan> _onDelay;
