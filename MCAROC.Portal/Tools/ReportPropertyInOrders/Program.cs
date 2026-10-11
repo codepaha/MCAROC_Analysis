@@ -49,46 +49,12 @@ if (!string.IsNullOrWhiteSpace(customPath) && (Directory.Exists(customPath) || F
     {
         foreach (var file in Directory.GetFiles(customPath, "*.*", SearchOption.AllDirectories).Where(f => f.EndsWith(".txt", StringComparison.OrdinalIgnoreCase) || f.EndsWith(".json", StringComparison.OrdinalIgnoreCase)))
         {
-            customOrders.Add((Path.GetFileName(file), File.ReadAllText(file), null));
+            LoadOrdersFromFile(file, customOrders);
         }
     }
     else if (File.Exists(customPath))
     {
-        if (customPath.EndsWith(".json", StringComparison.OrdinalIgnoreCase))
-        {
-            try
-            {
-                var jsonText = File.ReadAllText(customPath);
-                using var doc = JsonDocument.Parse(jsonText);
-                if (doc.RootElement.ValueKind == JsonValueKind.Array)
-                {
-                    var idx = 1;
-                    foreach (var item in doc.RootElement.EnumerateArray())
-                    {
-                        var id = item.TryGetProperty("SampleId", out var sEl) ? sEl.ToString() :
-                                 item.TryGetProperty("Id", out var idEl) ? idEl.ToString() : $"item-{idx}";
-                        var forum = item.TryGetProperty("CourtForum", out var fEl) ? fEl.GetString() : null;
-                        var text = item.TryGetProperty("OperativeExcerpt", out var oEl) ? oEl.GetString() :
-                                   item.TryGetProperty("Text", out var tEl) ? tEl.GetString() :
-                                   item.TryGetProperty("OrderText", out var otEl) ? otEl.GetString() : item.ToString();
-                        customOrders.Add((id, text ?? "", forum));
-                        idx++;
-                    }
-                }
-                else
-                {
-                    customOrders.Add((Path.GetFileName(customPath), jsonText, null));
-                }
-            }
-            catch
-            {
-                customOrders.Add((Path.GetFileName(customPath), File.ReadAllText(customPath), null));
-            }
-        }
-        else
-        {
-            customOrders.Add((Path.GetFileName(customPath), File.ReadAllText(customPath), null));
-        }
+        LoadOrdersFromFile(customPath, customOrders);
     }
 
     if (customOrders.Count > 0)
@@ -229,5 +195,53 @@ static string FindRepoRoot()
         dir = dir.Parent;
     }
     return dir?.FullName ?? AppContext.BaseDirectory;
+}
+
+static void LoadOrdersFromFile(string filePath, List<(string Id, string Text, string? Forum)> targetList)
+{
+    if (filePath.EndsWith(".json", StringComparison.OrdinalIgnoreCase))
+    {
+        try
+        {
+            var jsonText = File.ReadAllText(filePath);
+            using var doc = JsonDocument.Parse(jsonText);
+            if (doc.RootElement.ValueKind == JsonValueKind.Array)
+            {
+                var idx = 1;
+                foreach (var item in doc.RootElement.EnumerateArray())
+                {
+                    var id = item.TryGetProperty("SampleId", out var sEl) ? sEl.ToString() :
+                             item.TryGetProperty("Id", out var idEl) ? idEl.ToString() : $"{Path.GetFileNameWithoutExtension(filePath)}-{idx}";
+                    var forum = item.TryGetProperty("CourtForum", out var fEl) ? fEl.GetString() : null;
+                    var text = item.TryGetProperty("OperativeExcerpt", out var oEl) ? oEl.GetString() :
+                               item.TryGetProperty("Text", out var tEl) ? tEl.GetString() :
+                               item.TryGetProperty("OrderText", out var otEl) ? otEl.GetString() : item.ToString();
+                    targetList.Add((id, text ?? "", forum));
+                    idx++;
+                }
+                return;
+            }
+            else if (doc.RootElement.ValueKind == JsonValueKind.Object)
+            {
+                var id = doc.RootElement.TryGetProperty("SampleId", out var sEl) ? sEl.ToString() :
+                         doc.RootElement.TryGetProperty("Id", out var idEl) ? idEl.ToString() : Path.GetFileName(filePath);
+                var forum = doc.RootElement.TryGetProperty("CourtForum", out var fEl) ? fEl.GetString() : null;
+                var text = doc.RootElement.TryGetProperty("OperativeExcerpt", out var oEl) ? oEl.GetString() :
+                           doc.RootElement.TryGetProperty("Text", out var tEl) ? tEl.GetString() :
+                           doc.RootElement.TryGetProperty("OrderText", out var otEl) ? otEl.GetString() : null;
+                if (text != null)
+                {
+                    targetList.Add((id, text, forum));
+                    return;
+                }
+            }
+        }
+        catch
+        {
+            // Fall back to reading raw text if JSON is malformed
+        }
+    }
+
+    targetList.Add((Path.GetFileName(filePath), File.ReadAllText(filePath), null));
 }
 

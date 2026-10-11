@@ -87,6 +87,18 @@ public sealed class PropertyInOrdersAnalyzerTests
     }
 
     [Fact]
+    public void AnalyzeOrder_with_generic_restraint_and_procedural_listing_is_marked_substantive_not_procedural()
+    {
+        const string text = "The promoters are restrained from transferring immovable property of the company. Matter adjourned to 15.11.2026 for compliance.";
+
+        var result = PropertyInOrdersAnalyzer.AnalyzeOrder(text, "order-restraint-adj", "High Court");
+
+        Assert.Equal(PropertyMentionLevel.GenericRestraint, result.PropertyObservation.Level);
+        Assert.Equal(ChargeMatchingFeasibility.Impossible, result.PropertyObservation.Feasibility);
+        Assert.False(result.IsProcedural);
+    }
+
+    [Fact]
     public void GenerateReport_aggregates_corpus_statistics()
     {
         var orders = new (string Identifier, string Text, string? Forum)[]

@@ -1,7 +1,7 @@
 ﻿# Property Details in Court Orders: Empirical Analysis & Feasibility Report
 
 > **Deliverable for Issue #443 (Order source adapters) under Epic #432 / Plan §4.5.**
-> **Date:** 2026-10-11 14:41:52 UTC
+> **Date:** 2026-10-11 14:56:46 UTC
 
 ## 1. Executive Summary
 

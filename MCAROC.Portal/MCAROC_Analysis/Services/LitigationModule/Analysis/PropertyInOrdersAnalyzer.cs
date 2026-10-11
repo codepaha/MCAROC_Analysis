@@ -95,7 +95,7 @@ public static partial class PropertyInOrdersAnalyzer
         var assetMatches = AssetMarkers().Matches(clean);
         var genericMatches = GenericRestraintMarkers().Matches(clean);
 
-        var isProcedural = length < 1000 && ProceduralMarkers().IsMatch(clean) && cadastralMatches.Count == 0 && assetMatches.Count == 0;
+        var isProcedural = length < 1000 && ProceduralMarkers().IsMatch(clean) && cadastralMatches.Count == 0 && assetMatches.Count == 0 && genericMatches.Count == 0;
 
         var surveyMarkers = cadastralMatches.Select(m => m.Value.Trim()).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
         var keywords = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
