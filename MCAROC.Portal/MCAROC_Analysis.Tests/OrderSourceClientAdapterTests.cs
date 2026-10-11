@@ -200,6 +200,71 @@ public sealed class OrderSourceClientAdapterTests
         Assert.Contains("not available", result.Error, StringComparison.OrdinalIgnoreCase);
     }
 
+    [Fact]
+    public async Task BprAdapter_applies_stricter_of_caller_maxBytes_and_configured_limit()
+    {
+        var pdfBytes = new byte[] { 0x25, 0x50, 0x44, 0x46, 0x2D, 0x31, 0x2E, 0x34, 0x0A }; // %PDF-1.4\n
+        var handler = new StubHandler();
+        handler.OnPath("sec/authenticate", _ => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent("""{"jwt":"test-token"}""", Encoding.UTF8, "application/json")
+        });
+        handler.OnPath("orders/o1.pdf", _ =>
+        {
+            var content = new ByteArrayContent(pdfBytes);
+            content.Headers.ContentLength = 5000;
+            return new HttpResponseMessage(HttpStatusCode.OK) { Content = content };
+        });
+
+        // 1. Configured options allow 50 MB, but caller asks for 1024 bytes -> caller's stricter cap applies
+        var options1 = Options.Create(new BprLitigationOptions
+        {
+            BaseUrl = "https://bpr.example/",
+            Id = "app",
+            SecretKey = "secret",
+            MaxOrderPdfBytes = 50 * 1024 * 1024
+        });
+
+        var client1 = new BprLitigationClient(
+            new HttpClient(handler) { BaseAddress = new Uri("https://bpr.example/") },
+            options1,
+            NullLogger<BprLitigationClient>.Instance,
+            (host, ct) => Task.FromResult(new[] { IPAddress.Parse("93.184.216.34") }));
+
+        var adapter1 = new BprOrderSourceClient(client1, options1);
+
+        var result1 = await adapter1.DownloadAsync(
+            new OrderSourceLocator(Source: "Bpr", PdfUrl: "https://bpr.example/orders/o1.pdf"),
+            maxBytes: 1024);
+
+        Assert.False(result1.Ok);
+        Assert.Contains("1,024-byte cap", result1.Error);
+
+        // 2. Configured options allow 2000 bytes, but caller asks for 50 MB -> configured stricter cap applies
+        var options2 = Options.Create(new BprLitigationOptions
+        {
+            BaseUrl = "https://bpr.example/",
+            Id = "app",
+            SecretKey = "secret",
+            MaxOrderPdfBytes = 2000
+        });
+
+        var client2 = new BprLitigationClient(
+            new HttpClient(handler) { BaseAddress = new Uri("https://bpr.example/") },
+            options2,
+            NullLogger<BprLitigationClient>.Instance,
+            (host, ct) => Task.FromResult(new[] { IPAddress.Parse("93.184.216.34") }));
+
+        var adapter2 = new BprOrderSourceClient(client2, options2);
+
+        var result2 = await adapter2.DownloadAsync(
+            new OrderSourceLocator(Source: "Bpr", PdfUrl: "https://bpr.example/orders/o1.pdf"),
+            maxBytes: 50 * 1024 * 1024);
+
+        Assert.False(result2.Ok);
+        Assert.Contains("2,000-byte cap", result2.Error);
+    }
+
     private sealed class MockDrtClient : IDrtClient
     {
         public string CurrentExit => "127.0.0.1:8080";
@@ -247,6 +312,20 @@ public sealed class OrderSourceClientAdapterTests
 
         public Task<ConsumerOrderDownloadResult> GetDailyOrderPdfAsync(long filingReferenceNumber, DateOnly dateOfHearing, int orderTypeId = 1, CancellationToken ct = default) =>
             Task.FromResult(DownloadResult);
+    }
+
+    private sealed class StubHandler : HttpMessageHandler
+    {
+        private readonly List<(string PathSuffix, Func<HttpRequestMessage, HttpResponseMessage> Respond)> _routes = [];
+        public void OnPath(string pathSuffix, Func<HttpRequestMessage, HttpResponseMessage> respond) => _routes.Add((pathSuffix, respond));
+
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+        {
+            var route = _routes.FirstOrDefault(r => request.RequestUri!.AbsolutePath.Contains(r.PathSuffix, StringComparison.Ordinal));
+            return Task.FromResult(route.Respond is null
+                ? new HttpResponseMessage(HttpStatusCode.NotFound) { Content = new StringContent("no stub for " + request.RequestUri) }
+                : route.Respond(request));
+        }
     }
 }
 
