@@ -229,7 +229,9 @@ public sealed class LitigationCasePersistenceService(
         // it instead of failing the whole snapshot. Only entities THIS attempt itself added are detached on
         // retry — snapshot's own tracking is never touched here, so its RowVersion-based concurrency check
         // (a separate, unrelated mechanism from this per-case retry) stays exactly as EF set it up.
-        for (var attempt = 0; attempt < 2; attempt++)
+        // Up to 4 passes: one retry for a lost unique-key race, and re-resolution when a merge commits while this import waits for the case lock.
+        var uniqueRetried = false;
+        for (var attempt = 0; attempt < 4; attempt++)
         {
             var addedThisAttempt = new List<object>();
             Microsoft.EntityFrameworkCore.Storage.IDbContextTransaction? tx = null;
@@ -269,6 +271,13 @@ public sealed class LitigationCasePersistenceService(
                     tx = db.Database.CurrentTransaction is null ? await db.Database.BeginTransactionAsync(ct) : null;
                     await MCAROC_Analysis.Services.LitigationModule.Refresh.CaseLock.AcquireAsync(db, litigationCase.LitigationCaseId, ct);
                     await db.Entry(litigationCase).ReloadAsync(ct);
+                    // A merge may have committed between finding this case and getting its lock: the destination is resolved again under the lock. The pass is abandoned (its
+                    // transaction ends and the lock is released) and repeated, so the redirect to the survivor is followed with the survivor's own lock.
+                    if (litigationCase.MergedIntoCaseId is not null)
+                    {
+                        db.Entry(litigationCase).State = EntityState.Detached;   // only this case: the snapshot being processed keeps its tracking
+                        continue;
+                    }
                     portalOwned = await MCAROC_Analysis.Services.LitigationModule.Refresh.LivePortalOwnership.OwnedColumnsAsync(db, requestId, litigationCase.LitigationCaseId, ct);
                 }
                 // When the row was matched through a merged loser, the loser keeps the CNR, proceeding type and provider ids (they are unique per request and are how this case is found again); the survivor gets everything else.
@@ -302,8 +311,9 @@ public sealed class LitigationCasePersistenceService(
                     if (tx is not null) await tx.CommitAsync(ct);
                     return orderDocumentsToEnqueue;
                 }
-                catch (DbUpdateException ex) when (IsUniqueConstraintViolation(ex) && attempt == 0)
+                catch (DbUpdateException ex) when (IsUniqueConstraintViolation(ex) && !uniqueRetried)
                 {
+                    uniqueRetried = true;
                     foreach (var added in addedThisAttempt)
                         db.Entry(added).State = EntityState.Detached;
                     logger.LogInformation(

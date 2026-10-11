@@ -1354,4 +1354,58 @@ public class LitigationCasePersistenceServiceTests : IAsyncLifetime
         Assert.Equal("New Act", cases.Single(c => c.LitigationCaseId == survivor.LitigationCaseId).Act);  // applied to the survivor
         Assert.Equal("Code", cases.Single(c => c.LitigationCaseId == loser.LitigationCaseId).Act);        // the loser is left as it was
     }
+
+    [Fact]
+    public async Task A_merge_that_commits_while_a_vendor_import_waits_for_the_case_lock_sends_the_import_to_the_survivor()
+    {
+        await using var db = CreateContext();
+        var request = await SeedRequestAsync(db, "MV2");
+        var first = await SeedCompletedJobAsync(db, request.RequestId, ReportJson("TNKP070001332022", "OS"));
+        var service = NewService(db);
+        await PersistJobAsync(service, first, CancellationToken.None);
+        var loser = await db.LitigationCases.AsNoTracking().SingleAsync(c => c.RequestId == request.RequestId);
+
+        var survivor = new LitigationCase { RequestId = request.RequestId, CaseNumber = "22/2020", CaseType = "OS", CaseYear = "2020", Court = "Sub Judge", FirstSeenUtc = DateTime.UtcNow, LastSeenUtc = DateTime.UtcNow };
+        db.LitigationCases.Add(survivor);
+        await db.SaveChangesAsync();
+        db.LitigationCaseOrders.AddRange(
+            new LitigationCaseOrder { LitigationCaseId = survivor.LitigationCaseId, PdfUrl = "https://s/1.pdf", OrderDate = "01-01-2025", OrderType = "Order", CreatedUtc = DateTime.UtcNow },
+            new LitigationCaseOrder { LitigationCaseId = survivor.LitigationCaseId, PdfUrl = "https://s/2.pdf", OrderDate = "02-01-2025", OrderType = "Order", CreatedUtc = DateTime.UtcNow },
+            new LitigationCaseOrder { LitigationCaseId = survivor.LitigationCaseId, PdfUrl = "https://s/3.pdf", OrderDate = "03-01-2025", OrderType = "Order", CreatedUtc = DateTime.UtcNow });
+        await db.SaveChangesAsync();
+        var moduleStore = new MCAROC_Analysis.Services.LitigationModule.Store.LitigationModuleStore(db);
+        foreach (var legacyId in new[] { loser.LitigationCaseId, survivor.LitigationCaseId })
+        {
+            var mc = await moduleStore.EnsureCaseForLegacyAsync(legacyId, CancellationToken.None);
+            await db.Set<MCAROC_Analysis.Services.LitigationModule.Store.ModuleCase>().Where(m => m.CaseId == mc.CaseId).ExecuteUpdateAsync(x => x.SetProperty(m => m.CaseKey, "DRT|DRT-X|OS|22|2020"));
+            await new MCAROC_Analysis.Services.LitigationModule.Refresh.LiveProjectionStore(db).PublishAsync(new MCAROC_Analysis.Services.LitigationModule.Refresh.ObservationInput(
+                mc.CaseId, MCAROC_Analysis.Services.LitigationModule.Refresh.ObservationSource.DrtPortal, MCAROC_Analysis.Services.LitigationModule.Refresh.ObservationOutcome.Found, true, DateTime.UtcNow,
+                new MCAROC_Analysis.Services.LitigationModule.Refresh.ParsedCaseSnapshot("PENDING", null, "DRT X", "29-1-2020", null, "20-10-2026", null, null, null, 1)), CancellationToken.None);
+            await new MCAROC_Analysis.Services.LitigationModule.Refresh.RequestLinkStore(db).UpsertAsync(request.RequestId, mc.CaseId,
+                new MCAROC_Analysis.Services.LitigationModule.Refresh.PartyMatchResult(MCAROC_Analysis.Services.LitigationModule.Refresh.PartyMatchOutcome.Verified, "exact", "TEST COMPANY", null), "respondent", false, null, CancellationToken.None);
+        }
+
+        // The import starts and finds the (not yet merged) loser, then waits on its lock while a merge commits.
+        await using var holderDb = CreateContext();
+        await using var holder = await holderDb.Database.BeginTransactionAsync();
+        await MCAROC_Analysis.Services.LitigationModule.Refresh.CaseLock.AcquireAsync(holderDb, loser.LitigationCaseId, CancellationToken.None);
+
+        var changed = ReportJson("TNKP070001332022", "OS").Replace("2026-09-20", "2026-10-01").Replace("\"act\": \"Code\"", "\"act\": \"New Act\"");
+        var second = await SeedCompletedJobAsync(db, request.RequestId, changed);
+        await using var importDb = CreateContext();
+        var importing = Task.Run(async () => await PersistJobAsync(NewService(importDb), await importDb.LitigationSearchJobs.AsNoTracking().SingleAsync(j => j.LitigationSearchJobId == second.LitigationSearchJobId), CancellationToken.None));
+        await Task.Delay(1000);
+        Assert.False(importing.IsCompleted);
+
+        var merged = await new MCAROC_Analysis.Services.LitigationModule.Merging.CaseMergeService(holderDb).MergeAsync(request.RequestId, loser.LitigationCaseId, survivor.LitigationCaseId, CancellationToken.None);
+        Assert.True(merged.Performed);
+        await holder.CommitAsync();
+        await importing;
+
+        await using var verify = CreateContext();
+        var cases = await verify.LitigationCases.AsNoTracking().Where(c => c.RequestId == request.RequestId).ToListAsync();
+        Assert.Equal(2, cases.Count);
+        Assert.Equal("New Act", cases.Single(c => c.LitigationCaseId == survivor.LitigationCaseId).Act);   // the import ended on the survivor
+        Assert.Equal("Code", cases.Single(c => c.LitigationCaseId == loser.LitigationCaseId).Act);          // not on the hidden loser
+    }
 }

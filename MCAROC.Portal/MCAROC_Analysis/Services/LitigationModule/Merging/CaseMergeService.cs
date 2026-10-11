@@ -32,6 +32,7 @@ public sealed class CaseMergeService(AppDbContext db, TimeProvider? time = null)
         await using var tx = db.Database.CurrentTransaction is null ? await db.Database.BeginTransactionAsync(ct) : null;
         // Locks in id order, so two merges (or a merge and a publication) over the same cases can never deadlock.
         foreach (var id in new[] { caseA, caseB }.OrderBy(i => i)) await CaseLock.AcquireAsync(db, id, ct);
+        ForgetStaleTracking();
 
         var a = await LoadCandidateAsync(requestId, caseA, ct);
         var b = await LoadCandidateAsync(requestId, caseB, ct);
@@ -96,6 +97,7 @@ public sealed class CaseMergeService(AppDbContext db, TimeProvider? time = null)
         if (merge is null) return new ReversalReport(false, false, 0, [], []);
         await using var tx = db.Database.CurrentTransaction is null ? await db.Database.BeginTransactionAsync(ct) : null;
         foreach (var id in new[] { merge.SurvivorCaseId, merge.LoserCaseId }.OrderBy(i => i)) await CaseLock.AcquireAsync(db, id, ct);
+        ForgetStaleTracking();
 
         var current = await db.Set<ModuleCaseMerge>().FirstAsync(m => m.MergeId == mergeId, ct);
         if (current.ReversedUtc is not null) return new ReversalReport(false, true, 0, [], []);
@@ -121,6 +123,14 @@ public sealed class CaseMergeService(AppDbContext db, TimeProvider? time = null)
         await RequestLiveData.BumpAsync(db, merge.RequestId, ct);
         if (tx is not null) await tx.CommitAsync(ct);
         return new ReversalReport(true, false, restored, conflicts, post);
+    }
+
+    /// <summary>A context that already tracked these rows holds the values it read earlier, and something may have changed them since. Everything this service decides from is read after
+    /// the locks are taken, so the context is cleared first (and refuses to run with unsaved changes it would otherwise discard).</summary>
+    private void ForgetStaleTracking()
+    {
+        if (db.ChangeTracker.HasChanges()) throw new InvalidOperationException("The context has unsaved changes; save or discard them before merging or reversing.");
+        db.ChangeTracker.Clear();
     }
 
     private async Task<(bool Restored, string? Current, string Why)> TryRestoreAsync(ModuleCaseMergeChange change, CancellationToken ct)

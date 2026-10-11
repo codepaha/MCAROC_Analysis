@@ -229,4 +229,38 @@ public class CaseMergeServiceTests : IAsyncLifetime
         Assert.Null((await v.LitigationCases.AsNoTracking().SingleAsync(c => c.LitigationCaseId == w.B)).MergedIntoCaseId);                      // the loser is selectable again
         Assert.Equal(ordersBefore, await v.LitigationCaseOrders.CountAsync(o => o.LitigationCaseId == w.A || o.LitigationCaseId == w.B));          // no row lost
     }
+
+    [Fact]
+    public async Task A_context_that_merged_earlier_does_not_overwrite_a_value_changed_after_the_merge_when_it_reverses()
+    {
+        var w = await SeedAsync();
+        await using var db = Ctx();                                   // the same context merges and later reverses: it tracks the rows it touched
+        var service = new CaseMergeService(db);
+        var mergeId = (await service.MergeAsync(w.RequestId, w.A, w.B, default)).MergeId!.Value;
+
+        long collapsedOrderId, newTarget;
+        await using (var other = Ctx())
+        {
+            var collapsed = await other.LitigationCaseOrders.AsNoTracking().SingleAsync(o => o.LitigationCaseId == w.B);
+            collapsedOrderId = collapsed.LitigationCaseOrderId;
+            newTarget = collapsed.LitigationCaseOrderId;               // someone re-targets the collapse flag after the merge
+            await other.LitigationCaseOrders.Where(o => o.LitigationCaseOrderId == collapsedOrderId).ExecuteUpdateAsync(s => s.SetProperty(o => o.CollapsedIntoOrderId, newTarget));
+        }
+
+        var report = await service.ReverseAsync(mergeId, default);
+
+        Assert.Contains(report.Conflicts, c => c.Table == CaseMergeService.TOrders && c.RowId == collapsedOrderId && c.Column == CaseMergeService.CCollapsedInto);
+        await using var v = Ctx();
+        Assert.Equal(newTarget, (await v.LitigationCaseOrders.AsNoTracking().SingleAsync(o => o.LitigationCaseOrderId == collapsedOrderId)).CollapsedIntoOrderId);   // the later value survived
+    }
+
+    [Fact]
+    public async Task A_context_with_unsaved_changes_is_refused_rather_than_having_them_discarded()
+    {
+        var w = await SeedAsync();
+        await using var db = Ctx();
+        var row = await db.LitigationCases.FirstAsync(c => c.LitigationCaseId == w.A);
+        row.Court = "unsaved edit";
+        await Assert.ThrowsAsync<InvalidOperationException>(() => new CaseMergeService(db).MergeAsync(w.RequestId, w.A, w.B, default));
+    }
 }
