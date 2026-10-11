@@ -185,4 +185,91 @@ public class LiveCasePublisherTests : IAsyncLifetime
         Assert.Equal(1, await db.Set<ModuleRequestLink>().CountAsync(l => l.RequestId == f.RequestId && l.CaseId == f.ModuleCaseId));
         Assert.Equal(PartyMatchOutcome.Verified, await new RequestLinkStore(db).GetVerdictAsync(f.RequestId, f.ModuleCaseId, default));
     }
+
+    // ---- concurrency: the decision and the write happen under the per-case lock ----
+
+    [Fact]
+    public async Task A_publisher_that_waits_for_the_lock_publishes_the_projection_as_it_is_when_it_gets_the_lock_not_as_it_was_when_it_started()
+    {
+        var f = await SeedAsync();
+        await ObserveAsync(f, Snap(court: "Old Portal Court"));
+        await LinkAsync(f, PartyMatchOutcome.Verified);
+
+        await using var holderDb = Ctx();
+        await using var holder = await holderDb.Database.BeginTransactionAsync();
+        await CaseLock.AcquireAsync(holderDb, f.LegacyCaseId, default);
+
+        var waiting = Task.Run(async () => { await using var db = Ctx(); return await LiveCasePublisher.PublishAsync(db, f.RequestId, f.LegacyCaseId, default); });
+        await Task.Delay(500);
+        Assert.False(waiting.IsCompleted);                                        // blocked on the lock
+
+        await ObserveAsync(f, Snap(court: "Newer Portal Court"), minutes: 5);     // a newer observation arrives while it waits
+        await holder.CommitAsync();
+        var result = await waiting;
+
+        Assert.Equal(PublishToRequestOutcome.Published, result.Outcome);
+        Assert.Equal("Newer Portal Court", (await ReadLegacyAsync(f)).Court);     // never the older court it could have read first
+    }
+
+    [Fact]
+    public async Task A_link_rejected_while_a_publisher_waits_stops_the_publication()
+    {
+        var f = await SeedAsync();
+        await ObserveAsync(f, Snap(court: "DRT Mumbai 1"));
+        await LinkAsync(f, PartyMatchOutcome.Verified);
+
+        await using var holderDb = Ctx();
+        await using var holder = await holderDb.Database.BeginTransactionAsync();
+        await CaseLock.AcquireAsync(holderDb, f.LegacyCaseId, default);
+
+        var waiting = Task.Run(async () => { await using var db = Ctx(); return await LiveCasePublisher.PublishAsync(db, f.RequestId, f.LegacyCaseId, default); });
+        await Task.Delay(500);
+        Assert.False(waiting.IsCompleted);
+
+        await new RequestLinkStore(holderDb).UpsertAsync(f.RequestId, f.ModuleCaseId, new PartyMatchResult(PartyMatchOutcome.Rejected, "extra-words", "SOME OTHER SOCIETY", null), null, false, null, default);
+        await holder.CommitAsync();
+
+        Assert.Equal(PublishToRequestOutcome.LinkNotVerified, (await waiting).Outcome);
+        Assert.Equal("Vendor Court Name", (await ReadLegacyAsync(f)).Court);
+        Assert.Equal(0, await VersionAsync(f));
+    }
+
+    [Fact]
+    public async Task A_link_change_waits_for_a_publication_in_progress_instead_of_interleaving_with_it()
+    {
+        var f = await SeedAsync();
+        await ObserveAsync(f, Snap());
+        await LinkAsync(f, PartyMatchOutcome.Verified);
+
+        await using var holderDb = Ctx();
+        await using var holder = await holderDb.Database.BeginTransactionAsync();
+        await CaseLock.AcquireAsync(holderDb, f.LegacyCaseId, default);
+
+        var changing = Task.Run(async () => { await using var db = Ctx(); await new RequestLinkStore(db).UpsertAsync(f.RequestId, f.ModuleCaseId, new PartyMatchResult(PartyMatchOutcome.Rejected, "no-match", null, null), null, false, null, default); });
+        await Task.Delay(500);
+        Assert.False(changing.IsCompleted);
+        await holder.CommitAsync();
+        await changing;
+        await using var db2 = Ctx();
+        Assert.Equal(PartyMatchOutcome.Rejected, await new RequestLinkStore(db2).GetVerdictAsync(f.RequestId, f.ModuleCaseId, default));
+    }
+
+    [Fact]
+    public async Task A_projection_older_than_what_the_request_already_received_is_not_published_over_it()
+    {
+        var f = await SeedAsync();
+        await ObserveAsync(f, Snap(court: "Court Two"), minutes: 5);
+        await LinkAsync(f, PartyMatchOutcome.Verified);
+        await using (var db = Ctx()) await LiveCasePublisher.PublishAsync(db, f.RequestId, f.LegacyCaseId, default);
+
+        // Pretend the request had already received a later observation than the projection now holds.
+        await using (var db = Ctx())
+            await db.Set<ModuleRequestLink>().Where(l => l.RequestId == f.RequestId).ExecuteUpdateAsync(s => s.SetProperty(l => l.PublishedObservationId, long.MaxValue));
+        await using (var db = Ctx())
+        {
+            await db.LitigationCases.Where(c => c.LitigationCaseId == f.LegacyCaseId).ExecuteUpdateAsync(s => s.SetProperty(c => c.Court, "Hand Edited"));
+            Assert.Equal(PublishToRequestOutcome.NothingToChange, (await LiveCasePublisher.PublishAsync(db, f.RequestId, f.LegacyCaseId, default)).Outcome);
+        }
+        Assert.Equal("Hand Edited", (await ReadLegacyAsync(f)).Court);
+    }
 }

@@ -201,5 +201,9 @@ public sealed class ModuleRequestLink
     public bool RoleConflict { get; set; }
 
     public string? RoleNote { get; set; }
+
+    /// <summary>The newest projection observation already published into this request's case. A publication never goes backwards past it.</summary>
+    public long? PublishedObservationId { get; set; }
+
     public DateTime UpdatedUtc { get; set; }
 }

@@ -16,6 +16,11 @@ public sealed class RequestLinkStore(AppDbContext db, TimeProvider? time = null)
     public async Task UpsertAsync(long requestId, long caseId, PartyMatchResult party, string? matchedSide, bool roleConflict, string? roleNote, CancellationToken ct)
     {
         var now = _time.GetUtcNow().UtcDateTime;
+        // A change of link serialises with publication and vendor imports of the same case (CaseLock): a publisher either sees the new verdict or has already published before it.
+        var legacyId = await db.Set<ModuleCase>().AsNoTracking().Where(c => c.CaseId == caseId).Select(c => c.LegacyLitigationCaseId).FirstOrDefaultAsync(ct);
+        await using var tx = db.Database.CurrentTransaction is null ? await db.Database.BeginTransactionAsync(ct) : null;
+        if (legacyId is { } legacy) await CaseLock.AcquireAsync(db, legacy, ct);
+
         var link = await db.Set<ModuleRequestLink>().FirstOrDefaultAsync(l => l.RequestId == requestId && l.CaseId == caseId, ct);
         if (link is null)
         {
@@ -30,6 +35,7 @@ public sealed class RequestLinkStore(AppDbContext db, TimeProvider? time = null)
         link.RoleNote = roleNote;
         link.UpdatedUtc = now;
         await db.SaveChangesAsync(ct);
+        if (tx is not null) await tx.CommitAsync(ct);
     }
 
     public async Task<PartyMatchOutcome?> GetVerdictAsync(long requestId, long caseId, CancellationToken ct)
@@ -77,19 +83,28 @@ public static class LiveCasePublisher
 {
     public static async Task<PublishToRequestResult> PublishAsync(AppDbContext db, long requestId, long legacyCaseId, CancellationToken ct)
     {
-        var moduleCase = await db.Set<ModuleCase>().AsNoTracking().FirstOrDefaultAsync(c => c.LegacyLitigationCaseId == legacyCaseId, ct);
-        if (moduleCase is null) return new(PublishToRequestOutcome.NotLinked, []);
-        var verdict = await db.Set<ModuleRequestLink>().AsNoTracking().Where(l => l.RequestId == requestId && l.CaseId == moduleCase.CaseId).Select(l => (int?)l.Verdict).FirstOrDefaultAsync(ct);
-        if (verdict is null) return new(PublishToRequestOutcome.NotLinked, []);
-        if (verdict != (int)PartyMatchOutcome.Verified) return new(PublishToRequestOutcome.LinkNotVerified, []);
+        var moduleCaseId = await db.Set<ModuleCase>().AsNoTracking().Where(c => c.LegacyLitigationCaseId == legacyCaseId).Select(c => (long?)c.CaseId).FirstOrDefaultAsync(ct);
+        if (moduleCaseId is not { } caseId) return new(PublishToRequestOutcome.NotLinked, []);
 
-        var live = await db.Set<ModuleCaseLive>().AsNoTracking().FirstOrDefaultAsync(l => l.CaseId == moduleCase.CaseId, ct);
+        // Everything that decides the write is read AFTER taking the per-case lock, in the same transaction as the write: the link verdict, the projection and the row. A concurrent
+        // link change, vendor import or earlier publication has then either finished (and is seen) or waits for this one.
+        await using var tx = db.Database.CurrentTransaction is null ? await db.Database.BeginTransactionAsync(ct) : null;
+        await CaseLock.AcquireAsync(db, legacyCaseId, ct);
+
+        var link = await db.Set<ModuleRequestLink>().FirstOrDefaultAsync(l => l.RequestId == requestId && l.CaseId == caseId, ct);
+        if (link is null) return new(PublishToRequestOutcome.NotLinked, []);
+        if (link.Verdict != (int)PartyMatchOutcome.Verified) return new(PublishToRequestOutcome.LinkNotVerified, []);
+
+        var live = await db.Set<ModuleCaseLive>().AsNoTracking().FirstOrDefaultAsync(l => l.CaseId == caseId, ct);
         if (live is null) return new(PublishToRequestOutcome.NoProjection, []);
+        // A projection older than what this request already received is never published over it.
+        if (link.PublishedObservationId is { } published && live.LastObservationId is { } latest && latest < published)
+            return new(PublishToRequestOutcome.NothingToChange, []);
         var sources = LiveProjectionEngine.DeserializeSources(live.FieldSourcesJson);
 
-        await using var tx = db.Database.CurrentTransaction is null ? await db.Database.BeginTransactionAsync(ct) : null;
         var legacy = await db.LitigationCases.FirstOrDefaultAsync(c => c.LitigationCaseId == legacyCaseId && c.RequestId == requestId, ct);
         if (legacy is null) return new(PublishToRequestOutcome.NoLegacyCase, []);
+        await db.Entry(legacy).ReloadAsync(ct);
 
         var changed = new List<string>();
         void Set(string column, string field, string? projected, bool isDate, string? current, Action<string?> assign)
@@ -112,7 +127,13 @@ public static class LiveCasePublisher
         Set(LivePortalOwnership.NextHearingDate, LiveProjectionEngine.FNextHearing, live.NextHearingDate, true, legacy.NextHearingDate, v => legacy.NextHearingDate = v);
         Set(LivePortalOwnership.DecisionDate, LiveProjectionEngine.FDecisionDate, live.DecisionDate, true, legacy.DecisionDate, v => legacy.DecisionDate = v);
 
-        if (changed.Count == 0) return new(PublishToRequestOutcome.NothingToChange, []);
+        link.PublishedObservationId = live.LastObservationId;
+        if (changed.Count == 0)
+        {
+            await db.SaveChangesAsync(ct);   // only the link's published-observation marker
+            if (tx is not null) await tx.CommitAsync(ct);
+            return new(PublishToRequestOutcome.NothingToChange, []);
+        }
         await db.SaveChangesAsync(ct);
         await RequestLiveData.BumpAsync(db, requestId, ct);
         if (tx is not null) await tx.CommitAsync(ct);

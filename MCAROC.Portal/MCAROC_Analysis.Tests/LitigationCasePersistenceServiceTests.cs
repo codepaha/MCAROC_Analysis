@@ -1277,4 +1277,34 @@ public class LitigationCasePersistenceServiceTests : IAsyncLifetime
         var after = await verify.LitigationCases.AsNoTracking().SingleAsync(c => c.RequestId == requestId);
         Assert.Equal(("PENDING-VENDOR", "Vendor New Court", "New Act"), (after.CaseStatus, after.Court, after.Act));
     }
+
+    [Fact]
+    public async Task A_vendor_import_that_overlaps_a_live_publication_waits_for_it_and_then_keeps_the_published_columns()
+    {
+        // Verified link and a projection exist, but nothing has been published into the columns yet: the vendor row would normally win.
+        var (requestId, before, service, db) = await ImportOnceAndLinkAsync("VG3", MCAROC_Analysis.Services.LitigationModule.Refresh.PartyMatchOutcome.Verified);
+        await using var _ = db;
+
+        await using var holderDb = CreateContext();
+        await using var holder = await holderDb.Database.BeginTransactionAsync();
+        await MCAROC_Analysis.Services.LitigationModule.Refresh.CaseLock.AcquireAsync(holderDb, before.LitigationCaseId, CancellationToken.None);
+
+        var second = await SeedCompletedJobAsync(db, requestId, VendorReportWithChanges());
+        await using var importDb = CreateContext();
+        var importing = Task.Run(async () => await PersistJobAsync(NewService(importDb), await importDb.LitigationSearchJobs.AsNoTracking().SingleAsync(j => j.LitigationSearchJobId == second.LitigationSearchJobId), CancellationToken.None));
+        await Task.Delay(1000);
+        Assert.False(importing.IsCompleted);                       // blocked on the case lock, after finding its case
+
+        // The publication commits first.
+        var published = await MCAROC_Analysis.Services.LitigationModule.Refresh.LiveCasePublisher.PublishAsync(holderDb, requestId, before.LitigationCaseId, CancellationToken.None);
+        Assert.Equal(MCAROC_Analysis.Services.LitigationModule.Refresh.PublishToRequestOutcome.Published, published.Outcome);
+        await holder.CommitAsync();
+        await importing;
+
+        await using var verify = CreateContext();
+        var after = await verify.LitigationCases.AsNoTracking().SingleAsync(c => c.RequestId == requestId);
+        Assert.Equal("DRT Mumbai 1", after.Court);                 // the published portal court, not "Vendor New Court"
+        Assert.Equal("PENDING", after.CaseStatus);
+        Assert.Equal("New Act", after.Act);                        // vendor-only column still updated
+    }
 }

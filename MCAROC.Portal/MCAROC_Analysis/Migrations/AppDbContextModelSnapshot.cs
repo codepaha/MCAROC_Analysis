@@ -6816,6 +6816,9 @@ namespace MCAROC_Analysis.Migrations
                         .HasMaxLength(16)
                         .HasColumnType("nvarchar(16)");
 
+                    b.Property<long?>("PublishedObservationId")
+                        .HasColumnType("bigint");
+
                     b.Property<long>("RequestId")
                         .HasColumnType("bigint");
 

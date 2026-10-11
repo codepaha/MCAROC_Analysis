@@ -26,6 +26,7 @@ namespace MCAROC_Analysis.Migrations
                     MatchedSide = table.Column<string>(type: "nvarchar(16)", maxLength: 16, nullable: true),
                     RoleConflict = table.Column<bool>(type: "bit", nullable: false),
                     RoleNote = table.Column<string>(type: "nvarchar(500)", maxLength: 500, nullable: true),
+                    PublishedObservationId = table.Column<long>(type: "bigint", nullable: true),
                     UpdatedUtc = table.Column<DateTime>(type: "datetime2", nullable: false)
                 },
                 constraints: table =>
