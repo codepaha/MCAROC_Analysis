@@ -9,6 +9,7 @@ public sealed class DrtProxyRotator : IWebProxy
     private readonly int _rotateFrequency;
     private int _index;
     private int _requestCount;
+    private readonly AsyncLocal<string?> _lastQueriedProxy = new();
 
     public DrtProxyRotator(string[]? proxies, int rotateFrequency = 10)
     {
@@ -25,6 +26,13 @@ public sealed class DrtProxyRotator : IWebProxy
             var idx = Math.Abs(Volatile.Read(ref _index)) % _proxies.Length;
             return _proxies[idx];
         }
+    }
+
+    /// <summary>The exit address queried by the HTTP transport for the current asynchronous call flow.</summary>
+    public string? LastQueriedExit
+    {
+        get => _lastQueriedProxy.Value;
+        set => _lastQueriedProxy.Value = value;
     }
 
     /// <summary>Total configured proxies in the pool.</summary>
@@ -51,8 +59,13 @@ public sealed class DrtProxyRotator : IWebProxy
     /// <inheritdoc />
     public Uri? GetProxy(Uri destination)
     {
-        if (_proxies.Length == 0) return null;
+        if (_proxies.Length == 0)
+        {
+            _lastQueriedProxy.Value = "direct";
+            return null;
+        }
         var exit = CurrentExit;
+        _lastQueriedProxy.Value = exit;
         return Uri.TryCreate(exit, UriKind.Absolute, out var uri) ? uri : null;
     }
 
@@ -62,4 +75,3 @@ public sealed class DrtProxyRotator : IWebProxy
     /// <inheritdoc />
     public ICredentials? Credentials { get; set; }
 }
-

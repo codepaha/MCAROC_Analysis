@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Net;
 using System.Net.Http.Headers;
+using System.Reflection;
 using System.Text.Json;
 using MCAROC_Analysis.Services.LitigationModule.Normalisation;
 using Microsoft.Extensions.Logging;
@@ -21,6 +22,7 @@ public sealed class DrtClient : IDrtClient
     private readonly Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>>? _sendHook;
     private readonly SemaphoreSlim _throttleLock = new(1, 1);
     private readonly DrtProxyRotator _rotator;
+    private readonly IWebProxy? _transportProxy;
     private long _lastRequestTimestamp;
 
     public DrtClient(
@@ -35,9 +37,10 @@ public sealed class DrtClient : IDrtClient
         _options = options.Value;
         _logger = logger;
         _timeProvider = timeProvider ?? TimeProvider.System;
-        _breaker = breaker;
+        _breaker = breaker ?? ResolveSharedBreaker(_options, _timeProvider);
         _sendHook = sendHook;
         _rotator = new DrtProxyRotator(_options.ProxyPool, _options.ProxyRotationFrequency);
+        _transportProxy = TryGetTransportProxy(_http);
 
         if (_http.BaseAddress is null && !string.IsNullOrWhiteSpace(_options.BaseUrl))
         {
@@ -45,8 +48,48 @@ public sealed class DrtClient : IDrtClient
         }
     }
 
+    /// <summary>Exposes the configured proxy rotator instance.</summary>
+    public DrtProxyRotator Rotator => _rotator;
+
+    /// <summary>Creates a configured SocketsHttpHandler with proxy rotation wired into the transport.</summary>
+    public static SocketsHttpHandler CreateHandler(DrtClientOptions options, IWebProxy? proxy = null)
+    {
+        var rotator = proxy ?? (options.ProxyPool.Length > 0 ? new DrtProxyRotator(options.ProxyPool, options.ProxyRotationFrequency) : null);
+        return new SocketsHttpHandler
+        {
+            Proxy = rotator,
+            UseProxy = rotator is not null
+        };
+    }
+
+    /// <summary>Creates an HttpClient configured with proxy rotation and base address.</summary>
+    public static HttpClient CreateHttpClient(DrtClientOptions options, IWebProxy? proxy = null)
+    {
+        var handler = CreateHandler(options, proxy);
+        var client = new HttpClient(handler);
+        if (!string.IsNullOrWhiteSpace(options.BaseUrl))
+        {
+            client.BaseAddress = new Uri(options.BaseUrl);
+        }
+        return client;
+    }
+
     /// <inheritdoc />
-    public string CurrentExit => _rotator.CurrentExit;
+    public string CurrentExit
+    {
+        get
+        {
+            if (_transportProxy is DrtProxyRotator rotator)
+            {
+                return rotator.CurrentExit;
+            }
+            if (_transportProxy is WebProxy webProxy && webProxy.Address is not null)
+            {
+                return webProxy.Address.ToString();
+            }
+            return "direct";
+        }
+    }
 
     /// <inheritdoc />
     public async Task<IReadOnlyList<DrtTribunal>> GetTribunalsAsync(CancellationToken ct = default)
@@ -373,11 +416,12 @@ public sealed class DrtClient : IDrtClient
 
                 if ((int)response.StatusCode is 429 or 500 or 502 or 503 or 504)
                 {
-                    _breaker?.RecordFailure(response.StatusCode);
+                    var retryAfter = ParseRetryAfter(response);
+                    _breaker?.RecordFailure(response.StatusCode, retryAfter);
                     if (attempt == _options.MaxRetries)
                         return DrtOrderDownloadResult.Failure($"HTTP {(int)response.StatusCode} after {_options.MaxRetries} retries");
 
-                    await BackoffAsync(attempt, ct);
+                    await BackoffAsync(attempt, retryAfter, ct);
                     continue;
                 }
 
@@ -664,7 +708,12 @@ public sealed class DrtClient : IDrtClient
 
             _rotator.NotifyRequest();
             if (attempt > 1) _rotator.Rotate();
-            exitAddress = CurrentExit;
+
+            if (_transportProxy is DrtProxyRotator tr)
+            {
+                tr.NotifyRequest();
+                if (attempt > 1) tr.Rotate();
+            }
 
             try
             {
@@ -685,20 +734,25 @@ public sealed class DrtClient : IDrtClient
                     ? await _sendHook(request, timeoutCts.Token)
                     : await _http.SendAsync(request, timeoutCts.Token);
 
+                exitAddress = DetermineExitAddress(request);
                 var body = await response.Content.ReadAsStringAsync(timeoutCts.Token);
 
-                // Transient HTTP status codes: retry with backoff
+                // Transient HTTP status codes: retry with backoff and honour Retry-After
                 if ((int)response.StatusCode is 429 or 500 or 502 or 503 or 504)
                 {
-                    _breaker?.RecordFailure(response.StatusCode);
+                    var retryAfter = ParseRetryAfter(response);
+                    _breaker?.RecordFailure(response.StatusCode, retryAfter);
 
                     if (attempt == _options.MaxRetries)
                     {
+                        var msg = retryAfter.HasValue
+                            ? $"Exhausted {_options.MaxRetries} retries on HTTP {(int)response.StatusCode} (Retry-After: {retryAfter.Value.TotalSeconds:F0}s)"
+                            : $"Exhausted {_options.MaxRetries} retries on HTTP {(int)response.StatusCode}";
                         _logger.LogWarning("HTTP {StatusCode} for endpoint {Endpoint} exhausted {MaxRetries} retries", (int)response.StatusCode, endpoint, _options.MaxRetries);
-                        return new DrtApiResponse(response.StatusCode, body, false, $"Exhausted {_options.MaxRetries} retries on HTTP {(int)response.StatusCode}", exitAddress);
+                        return new DrtApiResponse(response.StatusCode, body, false, msg, exitAddress);
                     }
 
-                    await BackoffAsync(attempt, ct);
+                    await BackoffAsync(attempt, retryAfter, ct);
                     continue;
                 }
 
@@ -721,7 +775,7 @@ public sealed class DrtClient : IDrtClient
             {
                 _breaker?.RecordFailure(HttpStatusCode.ServiceUnavailable);
                 _logger.LogWarning(ex, "Transient error calling {Endpoint}, attempt {Attempt}", endpoint, attempt);
-                await BackoffAsync(attempt, ct);
+                await BackoffAsync(attempt, null, ct);
             }
             catch (Exception ex)
             {
@@ -731,6 +785,87 @@ public sealed class DrtClient : IDrtClient
         }
 
         return new DrtApiResponse(HttpStatusCode.ServiceUnavailable, null, false, "All retries exhausted", exitAddress);
+    }
+
+    private static IDrtCircuitBreaker? ResolveSharedBreaker(DrtClientOptions options, TimeProvider timeProvider)
+    {
+        if (string.IsNullOrWhiteSpace(options.BaseUrl)) return null;
+        if (Uri.TryCreate(options.BaseUrl, UriKind.Absolute, out var uri))
+        {
+            return DrtCircuitBreaker.GetShared(uri.Host, timeProvider: timeProvider);
+        }
+        return null;
+    }
+
+    private static IWebProxy? TryGetTransportProxy(HttpClient http)
+    {
+        try
+        {
+            var field = typeof(HttpMessageInvoker).GetField("_handler", BindingFlags.NonPublic | BindingFlags.Instance)
+                        ?? typeof(HttpClient).GetField("_handler", BindingFlags.NonPublic | BindingFlags.Instance);
+            var handler = field?.GetValue(http) as HttpMessageHandler;
+
+            while (handler is DelegatingHandler delegating)
+            {
+                handler = delegating.InnerHandler;
+            }
+
+            if (handler is SocketsHttpHandler socketsHandler)
+            {
+                return socketsHandler.Proxy;
+            }
+            if (handler is HttpClientHandler clientHandler)
+            {
+                return clientHandler.Proxy;
+            }
+        }
+        catch
+        {
+            // Ignore reflection issues
+        }
+        return null;
+    }
+
+    private string DetermineExitAddress(HttpRequestMessage request)
+    {
+        if (request.Headers.TryGetValues("X-Exit-Address", out var customExits))
+        {
+            return customExits.FirstOrDefault() ?? "direct";
+        }
+
+        if (_transportProxy is DrtProxyRotator rotator && rotator.LastQueriedExit is not null)
+        {
+            return rotator.LastQueriedExit;
+        }
+
+        if (_rotator.LastQueriedExit is not null && _transportProxy is not null)
+        {
+            return _rotator.LastQueriedExit;
+        }
+
+        if (_transportProxy is WebProxy webProxy && webProxy.Address is not null)
+        {
+            return webProxy.Address.ToString();
+        }
+
+        return "direct";
+    }
+
+    private TimeSpan? ParseRetryAfter(HttpResponseMessage response)
+    {
+        if (response.Headers.RetryAfter is { } ra)
+        {
+            if (ra.Delta.HasValue && ra.Delta.Value > TimeSpan.Zero)
+            {
+                return ra.Delta.Value;
+            }
+            if (ra.Date.HasValue)
+            {
+                var diff = ra.Date.Value - _timeProvider.GetUtcNow();
+                return diff > TimeSpan.Zero ? diff : TimeSpan.Zero;
+            }
+        }
+        return null;
     }
 
     private async Task RateLimitAsync(CancellationToken ct)
@@ -759,14 +894,30 @@ public sealed class DrtClient : IDrtClient
         }
     }
 
-    private async Task BackoffAsync(int attempt, CancellationToken ct)
+    private async Task BackoffAsync(int attempt, TimeSpan? retryAfter, CancellationToken ct)
     {
-        // Exponential backoff with jitter per plan section 4.9: ~2s, ~6s, ~18s
-        var baseSeconds = Math.Pow(3, attempt - 1) * 2.0;
-        var jitter = Random.Shared.NextDouble() * 1.5;
-        var delay = TimeSpan.FromSeconds(baseSeconds + jitter);
+        TimeSpan delay;
+        if (retryAfter.HasValue)
+        {
+            delay = retryAfter.Value;
+        }
+        else
+        {
+            // Exponential backoff with jitter per plan section 4.9: ~2s, ~6s, ~18s
+            var baseSeconds = Math.Pow(3, attempt - 1) * 2.0;
+            var jitter = Random.Shared.NextDouble() * 1.5;
+            delay = TimeSpan.FromSeconds(baseSeconds + jitter);
+        }
+
+        if (delay > TimeSpan.FromSeconds(60))
+        {
+            delay = TimeSpan.FromSeconds(60);
+        }
+
         await Task.Delay(delay, _timeProvider, ct);
     }
+
+    private Task BackoffAsync(int attempt, CancellationToken ct) => BackoffAsync(attempt, null, ct);
 
     private static bool IsTransient(Exception ex, CancellationToken ct)
     {

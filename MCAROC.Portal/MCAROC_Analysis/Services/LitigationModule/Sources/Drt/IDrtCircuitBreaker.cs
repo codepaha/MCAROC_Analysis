@@ -2,20 +2,21 @@ using System.Net;
 
 namespace MCAROC_Analysis.Services.LitigationModule.Sources.Drt;
 
-/// <summary>Circuit breaker contract for DRT portal operations per plan section 4.9.
-/// After N consecutive 5xx/429 failures across agents, it opens to defer further requests.</summary>
+/// <summary>Circuit breaker interface for DRT and portal requests (plan section 4.9).</summary>
 public interface IDrtCircuitBreaker
 {
-    /// <summary>True if the circuit breaker is currently open (tripped).</summary>
+    /// <summary>Consecutive transient failures currently counted.</summary>
+    int ConsecutiveFailures { get; }
+
+    /// <summary>When the circuit breaker is scheduled to transition to half-open, or null if closed.</summary>
+    DateTimeOffset? TrippedUntil { get; }
+
+    /// <summary>True if the circuit is currently open and requests should be deferred.</summary>
     bool IsOpen();
 
-    /// <summary>Records a successful response, resetting consecutive failure counts.</summary>
+    /// <summary>Records a successful request, resetting the failure counter and closing the breaker.</summary>
     void RecordSuccess();
 
-    /// <summary>Records an HTTP failure (increments failure counts on 5xx/429 and trips if threshold reached).</summary>
-    void RecordFailure(HttpStatusCode statusCode);
-
-    /// <summary>Number of consecutive 5xx/429 failures currently recorded.</summary>
-    int ConsecutiveFailures { get; }
+    /// <summary>Records a transient failure (5xx or 429), optionally honouring the server's Retry-After interval.</summary>
+    void RecordFailure(HttpStatusCode statusCode, TimeSpan? retryAfter = null);
 }
-

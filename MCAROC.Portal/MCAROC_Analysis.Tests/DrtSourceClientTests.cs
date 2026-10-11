@@ -30,7 +30,7 @@ public sealed class DrtSourceClientTests
     {
         var opts = options ?? DefaultOptions;
         var http = new HttpClient { BaseAddress = new Uri(opts.BaseUrl) };
-        return new DrtClient(http, Options.Create(opts), NullLogger<DrtClient>.Instance, timeProvider, breaker, hook);
+        return new DrtClient(http, Options.Create(opts), NullLogger<DrtClient>.Instance, timeProvider, breaker ?? new DrtCircuitBreaker(), hook);
     }
 
     // ── 1. Tribunals Endpoint (getDrtDratScheamName) ────────────────────────────────
@@ -630,6 +630,53 @@ public sealed class DrtSourceClientTests
         Assert.False(callMade);
         Assert.Equal(DrtLookupStatus.Unavailable, shortCircuited.Status);
         Assert.Contains("circuit breaker is open", shortCircuited.Message);
+    }
+
+    [Fact]
+    public async Task CircuitBreaker_is_shared_across_clients_for_same_host()
+    {
+        var sharedBreaker = DrtCircuitBreaker.GetShared("shared-test-host");
+
+        var options = new DrtClientOptions
+        {
+            BaseUrl = "https://shared-test-host/drtapi/",
+            MaxRetries = 1,
+            RequestsPerSecond = 1000
+        };
+
+        var client1 = CreateClient((req, ct) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.ServiceUnavailable)), options, breaker: sharedBreaker);
+        var client2 = CreateClient((req, ct) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)), options, breaker: sharedBreaker);
+
+        // 8 failures on client 1 trip the shared breaker
+        for (var i = 0; i < 8; i++)
+        {
+            await client1.GetCaseByNumberAsync(1, 1, "100", 2024);
+        }
+
+        // client 2 sharing the same breaker is now also deferred without making HTTP calls
+        var res = await client2.GetCaseByNumberAsync(1, 1, "100", 2024);
+        Assert.Equal(DrtLookupStatus.Unavailable, res.Status);
+        Assert.Contains("circuit breaker is open", res.Message);
+    }
+
+    [Fact]
+    public async Task RetryAfter_header_is_honoured_and_extends_circuit_breaker()
+    {
+        var breaker = new DrtCircuitBreaker(threshold: 1, coolDown: TimeSpan.FromMinutes(1));
+        var client = CreateClient((req, ct) =>
+        {
+            var msg = new HttpResponseMessage(HttpStatusCode.TooManyRequests);
+            msg.Headers.RetryAfter = new System.Net.Http.Headers.RetryConditionHeaderValue(TimeSpan.FromSeconds(300));
+            return Task.FromResult(msg);
+        }, options: new DrtClientOptions { MaxRetries = 1, RequestsPerSecond = 1000 }, breaker: breaker);
+
+        var res = await client.GetCaseByNumberAsync(1, 1, "100", 2024);
+
+        Assert.Equal(DrtLookupStatus.Unavailable, res.Status);
+        Assert.Contains("Retry-After: 300s", res.Message);
+        Assert.True(breaker.IsOpen());
+        Assert.NotNull(breaker.TrippedUntil);
+        Assert.True(breaker.TrippedUntil!.Value >= DateTimeOffset.UtcNow.AddSeconds(290));
     }
 
     [Fact]
