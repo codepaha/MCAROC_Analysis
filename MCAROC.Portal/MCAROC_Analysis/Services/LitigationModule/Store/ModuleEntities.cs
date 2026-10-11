@@ -202,8 +202,9 @@ public sealed class ModuleRequestLink
 
     public string? RoleNote { get; set; }
 
-    /// <summary>The newest projection observation already published into this request's case. A publication never goes backwards past it.</summary>
-    public long? PublishedObservationId { get; set; }
+    /// <summary>The newest projection version (<c>ModuleCaseLive.Version</c>) already published into this request's case. A publication never goes backwards past it. The projection
+    /// version is used, not an observation id: ids come from a sequence allocated before the projection is decided, so a newer projection can carry an earlier id.</summary>
+    public long? PublishedProjectionVersion { get; set; }
 
     public DateTime UpdatedUtc { get; set; }
 }

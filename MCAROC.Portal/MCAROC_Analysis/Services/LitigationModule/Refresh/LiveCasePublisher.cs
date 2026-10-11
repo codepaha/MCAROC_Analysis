@@ -93,12 +93,13 @@ public static class LiveCasePublisher
 
         var link = await db.Set<ModuleRequestLink>().FirstOrDefaultAsync(l => l.RequestId == requestId && l.CaseId == caseId, ct);
         if (link is null) return new(PublishToRequestOutcome.NotLinked, []);
+        await db.Entry(link).ReloadAsync(ct);   // a context that already tracked the link may hold a verdict that has since changed: decide from what is stored now, under the lock
         if (link.Verdict != (int)PartyMatchOutcome.Verified) return new(PublishToRequestOutcome.LinkNotVerified, []);
 
         var live = await db.Set<ModuleCaseLive>().AsNoTracking().FirstOrDefaultAsync(l => l.CaseId == caseId, ct);
         if (live is null) return new(PublishToRequestOutcome.NoProjection, []);
-        // A projection older than what this request already received is never published over it.
-        if (link.PublishedObservationId is { } published && live.LastObservationId is { } latest && latest < published)
+        // A projection older than what this request already received is never published over it (compared by projection version, which only ever grows).
+        if (link.PublishedProjectionVersion is { } published && live.Version < published)
             return new(PublishToRequestOutcome.NothingToChange, []);
         var sources = LiveProjectionEngine.DeserializeSources(live.FieldSourcesJson);
 
@@ -127,7 +128,7 @@ public static class LiveCasePublisher
         Set(LivePortalOwnership.NextHearingDate, LiveProjectionEngine.FNextHearing, live.NextHearingDate, true, legacy.NextHearingDate, v => legacy.NextHearingDate = v);
         Set(LivePortalOwnership.DecisionDate, LiveProjectionEngine.FDecisionDate, live.DecisionDate, true, legacy.DecisionDate, v => legacy.DecisionDate = v);
 
-        link.PublishedObservationId = live.LastObservationId;
+        link.PublishedProjectionVersion = live.Version;
         if (changed.Count == 0)
         {
             await db.SaveChangesAsync(ct);   // only the link's published-observation marker

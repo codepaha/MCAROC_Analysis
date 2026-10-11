@@ -264,12 +264,49 @@ public class LiveCasePublisherTests : IAsyncLifetime
 
         // Pretend the request had already received a later observation than the projection now holds.
         await using (var db = Ctx())
-            await db.Set<ModuleRequestLink>().Where(l => l.RequestId == f.RequestId).ExecuteUpdateAsync(s => s.SetProperty(l => l.PublishedObservationId, long.MaxValue));
+            await db.Set<ModuleRequestLink>().Where(l => l.RequestId == f.RequestId).ExecuteUpdateAsync(s => s.SetProperty(l => l.PublishedProjectionVersion, long.MaxValue));
         await using (var db = Ctx())
         {
             await db.LitigationCases.Where(c => c.LitigationCaseId == f.LegacyCaseId).ExecuteUpdateAsync(s => s.SetProperty(c => c.Court, "Hand Edited"));
             Assert.Equal(PublishToRequestOutcome.NothingToChange, (await LiveCasePublisher.PublishAsync(db, f.RequestId, f.LegacyCaseId, default)).Outcome);
         }
         Assert.Equal("Hand Edited", (await ReadLegacyAsync(f)).Court);
+    }
+
+    [Fact]
+    public async Task A_context_that_tracked_a_verified_link_does_not_publish_after_another_context_rejected_it()
+    {
+        var f = await SeedAsync();
+        await ObserveAsync(f, Snap());
+        await LinkAsync(f, PartyMatchOutcome.Verified);
+
+        await using var db = Ctx();
+        await db.Set<ModuleRequestLink>().FirstAsync(l => l.RequestId == f.RequestId);        // this context now tracks the link as Verified
+        await LinkAsync(f, PartyMatchOutcome.Rejected);                                        // another context commits Rejected
+
+        Assert.Equal(PublishToRequestOutcome.LinkNotVerified, (await LiveCasePublisher.PublishAsync(db, f.RequestId, f.LegacyCaseId, default)).Outcome);
+        Assert.Equal("Vendor Court Name", (await ReadLegacyAsync(f)).Court);
+    }
+
+    [Fact]
+    public async Task A_newer_projection_is_published_even_when_its_observation_id_is_lower_than_an_earlier_ones()
+    {
+        var f = await SeedAsync();
+        await LinkAsync(f, PartyMatchOutcome.Verified);
+        await ObserveAsync(f, Snap(court: "Court A"), minutes: 0);
+        await using (var db = Ctx()) await LiveCasePublisher.PublishAsync(db, f.RequestId, f.LegacyCaseId, default);
+
+        // The newer projection (version 2) was decided from an observation whose sequence id is LOWER than the one already published (ids are allocated before the projection is decided).
+        await ObserveAsync(f, Snap(court: "Court B"), minutes: 10);
+        await using (var db = Ctx())
+            await db.Set<ModuleCaseLive>().Where(l => l.CaseId == f.ModuleCaseId).ExecuteUpdateAsync(s => s.SetProperty(l => l.LastObservationId, 0L));
+
+        await using (var db = Ctx()) Assert.Equal(PublishToRequestOutcome.Published, (await LiveCasePublisher.PublishAsync(db, f.RequestId, f.LegacyCaseId, default)).Outcome);
+        Assert.Equal("Court B", (await ReadLegacyAsync(f)).Court);
+
+        await using var read = Ctx();
+        var link = await read.Set<ModuleRequestLink>().AsNoTracking().SingleAsync(l => l.RequestId == f.RequestId);
+        var live = await read.Set<ModuleCaseLive>().AsNoTracking().SingleAsync(l => l.CaseId == f.ModuleCaseId);
+        Assert.Equal(live.Version, link.PublishedProjectionVersion);   // the marker follows the projection version, not any observation id
     }
 }

@@ -13,7 +13,7 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace MCAROC_Analysis.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    [Migration("20261011083614_AddLitigationRequestLinks")]
+    [Migration("20261011085259_AddLitigationRequestLinks")]
     partial class AddLitigationRequestLinks
     {
         /// <inheritdoc />
@@ -6819,7 +6819,7 @@ namespace MCAROC_Analysis.Migrations
                         .HasMaxLength(16)
                         .HasColumnType("nvarchar(16)");
 
-                    b.Property<long?>("PublishedObservationId")
+                    b.Property<long?>("PublishedProjectionVersion")
                         .HasColumnType("bigint");
 
                     b.Property<long>("RequestId")
