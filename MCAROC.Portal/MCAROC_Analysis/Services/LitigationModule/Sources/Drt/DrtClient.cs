@@ -17,23 +17,27 @@ public sealed class DrtClient : IDrtClient
     private readonly DrtClientOptions _options;
     private readonly ILogger<DrtClient> _logger;
     private readonly TimeProvider _timeProvider;
+    private readonly IDrtCircuitBreaker? _breaker;
     private readonly Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>>? _sendHook;
     private readonly SemaphoreSlim _throttleLock = new(1, 1);
+    private readonly DrtProxyRotator _rotator;
     private long _lastRequestTimestamp;
-    private int _requestCount;
 
     public DrtClient(
         HttpClient http,
         IOptions<DrtClientOptions> options,
         ILogger<DrtClient> logger,
         TimeProvider? timeProvider = null,
+        IDrtCircuitBreaker? breaker = null,
         Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>>? sendHook = null)
     {
         _http = http;
         _options = options.Value;
         _logger = logger;
         _timeProvider = timeProvider ?? TimeProvider.System;
+        _breaker = breaker;
         _sendHook = sendHook;
+        _rotator = new DrtProxyRotator(_options.ProxyPool, _options.ProxyRotationFrequency);
 
         if (_http.BaseAddress is null && !string.IsNullOrWhiteSpace(_options.BaseUrl))
         {
@@ -42,19 +46,28 @@ public sealed class DrtClient : IDrtClient
     }
 
     /// <inheritdoc />
+    public string CurrentExit => _rotator.CurrentExit;
+
+    /// <inheritdoc />
     public async Task<IReadOnlyList<DrtTribunal>> GetTribunalsAsync(CancellationToken ct = default)
     {
-        var content = new FormUrlEncodedContent(new Dictionary<string, string>
+        if (_breaker?.IsOpen() == true)
+        {
+            _logger.LogWarning("DRT circuit breaker is open; skipping GetTribunalsAsync");
+            return [];
+        }
+
+        var formFields = new Dictionary<string, string>
         {
             ["schemeType"] = "1"
-        });
+        };
 
-        var json = await SendPostAsync("getDrtDratScheamName", content, ct);
-        if (string.IsNullOrWhiteSpace(json)) return [];
+        var response = await SendPostAsync("getDrtDratScheamName", formFields, ct);
+        if (!response.IsSuccess || string.IsNullOrWhiteSpace(response.Body)) return [];
 
         try
         {
-            using var doc = JsonDocument.Parse(json);
+            using var doc = JsonDocument.Parse(response.Body);
             if (doc.RootElement.ValueKind != JsonValueKind.Array) return [];
 
             var list = new List<DrtTribunal>();
@@ -87,17 +100,23 @@ public sealed class DrtClient : IDrtClient
     /// <inheritdoc />
     public async Task<IReadOnlyList<DrtCaseType>> GetCaseTypesAsync(int tribunalId, CancellationToken ct = default)
     {
-        var content = new FormUrlEncodedContent(new Dictionary<string, string>
+        if (_breaker?.IsOpen() == true)
+        {
+            _logger.LogWarning("DRT circuit breaker is open; skipping GetCaseTypesAsync for {TribunalId}", tribunalId);
+            return [];
+        }
+
+        var formFields = new Dictionary<string, string>
         {
             ["schemeNameDrtId"] = tribunalId.ToString(CultureInfo.InvariantCulture)
-        });
+        };
 
-        var json = await SendPostAsync("getDrtDratCaseTyepName", content, ct);
-        if (string.IsNullOrWhiteSpace(json)) return [];
+        var response = await SendPostAsync("getDrtDratCaseTyepName", formFields, ct);
+        if (!response.IsSuccess || string.IsNullOrWhiteSpace(response.Body)) return [];
 
         try
         {
-            using var doc = JsonDocument.Parse(json);
+            using var doc = JsonDocument.Parse(response.Body);
             if (doc.RootElement.ValueKind != JsonValueKind.Array) return [];
 
             var list = new List<DrtCaseType>();
@@ -124,21 +143,27 @@ public sealed class DrtClient : IDrtClient
     {
         if (string.IsNullOrWhiteSpace(partyName)) return [];
 
+        if (_breaker?.IsOpen() == true)
+        {
+            _logger.LogWarning("DRT circuit breaker is open; skipping SearchByPartyNameAsync for {TribunalId}", tribunalId);
+            return [];
+        }
+
         var isDrat = tribunalId >= 100;
         var endpoint = isDrat ? "drat_party_name_wise" : "casedetail_party_name_wise";
 
-        var content = new FormUrlEncodedContent(new Dictionary<string, string>
+        var formFields = new Dictionary<string, string>
         {
             ["schemeNameDratDrtId"] = tribunalId.ToString(CultureInfo.InvariantCulture),
             ["partyName"] = partyName.Trim()
-        });
+        };
 
-        var json = await SendPostAsync(endpoint, content, ct);
-        if (string.IsNullOrWhiteSpace(json)) return [];
+        var response = await SendPostAsync(endpoint, formFields, ct);
+        if (!response.IsSuccess || string.IsNullOrWhiteSpace(response.Body)) return [];
 
         try
         {
-            using var doc = JsonDocument.Parse(json);
+            using var doc = JsonDocument.Parse(response.Body);
             if (doc.RootElement.ValueKind != JsonValueKind.Array) return [];
 
             var list = new List<DrtPartySearchResult>();
@@ -186,88 +211,112 @@ public sealed class DrtClient : IDrtClient
     public async Task<DrtCaseLookupResult> GetCaseByNumberAsync(
         int tribunalId, int caseTypeId, string caseNo, int caseYear, CancellationToken ct = default)
     {
+        if (_breaker?.IsOpen() == true)
+        {
+            return DrtCaseLookupResult.Unavailable("DRT circuit breaker is open due to consecutive portal failures.");
+        }
+
         var isDrat = tribunalId >= 100;
         string endpoint;
-        FormUrlEncodedContent content;
+        Dictionary<string, string> formFields;
 
         if (isDrat)
         {
             // DRAT endpoint expects 'casetype' instead of 'casetypeId'
             endpoint = "getDratCaseDetailCaseNoWise";
-            content = new FormUrlEncodedContent(new Dictionary<string, string>
+            formFields = new Dictionary<string, string>
             {
                 ["schemeNameDrtId"] = tribunalId.ToString(CultureInfo.InvariantCulture),
                 ["casetype"] = caseTypeId.ToString(CultureInfo.InvariantCulture),
                 ["caseNo"] = caseNo.Trim(),
                 ["caseYear"] = caseYear.ToString(CultureInfo.InvariantCulture)
-            });
+            };
         }
         else
         {
             endpoint = "getCaseDetailCaseNoWise";
-            content = new FormUrlEncodedContent(new Dictionary<string, string>
+            formFields = new Dictionary<string, string>
             {
                 ["schemeNameDrtId"] = tribunalId.ToString(CultureInfo.InvariantCulture),
                 ["casetypeId"] = caseTypeId.ToString(CultureInfo.InvariantCulture),
                 ["caseNo"] = caseNo.Trim(),
                 ["caseYear"] = caseYear.ToString(CultureInfo.InvariantCulture)
-            });
+            };
         }
 
-        var json = await SendPostAsync(endpoint, content, ct);
-        return ParseCaseDetailResponse(json, tribunalId, caseTypeId, caseNo, caseYear);
+        var response = await SendPostAsync(endpoint, formFields, ct);
+        return ParseCaseDetailResponse(response, tribunalId, caseTypeId, caseNo, caseYear);
     }
 
     /// <inheritdoc />
     public async Task<DrtCaseLookupResult> GetCaseByDiaryAsync(int tribunalId, string diaryNo, int diaryYear, CancellationToken ct = default)
     {
-        var content = new FormUrlEncodedContent(new Dictionary<string, string>
+        if (_breaker?.IsOpen() == true)
+        {
+            return DrtCaseLookupResult.Unavailable("DRT circuit breaker is open due to consecutive portal failures.");
+        }
+
+        var formFields = new Dictionary<string, string>
         {
             ["schemeNameDrtId"] = tribunalId.ToString(CultureInfo.InvariantCulture),
             ["diaryNo"] = diaryNo.Trim(),
             ["diaryYear"] = diaryYear.ToString(CultureInfo.InvariantCulture)
-        });
+        };
 
-        var json = await SendPostAsync("getCaseDetailDiaryNoWise", content, ct);
-        return ParseCaseDetailResponse(json, tribunalId, null, null, null);
+        var response = await SendPostAsync("getCaseDetailDiaryNoWise", formFields, ct);
+        return ParseCaseDetailResponse(response, tribunalId, null, null, null);
     }
 
     /// <inheritdoc />
     public async Task<IReadOnlyList<DrtOrder>> GetDailyOrdersAsync(
         int tribunalId, int caseTypeId, string caseNo, int caseYear, CancellationToken ct = default)
     {
-        var content = new FormUrlEncodedContent(new Dictionary<string, string>
+        if (_breaker?.IsOpen() == true)
+        {
+            _logger.LogWarning("DRT circuit breaker is open; skipping GetDailyOrdersAsync");
+            return [];
+        }
+
+        var formFields = new Dictionary<string, string>
         {
             ["schemeNameDrtId"] = tribunalId.ToString(CultureInfo.InvariantCulture),
             ["caseType"] = caseTypeId.ToString(CultureInfo.InvariantCulture),
             ["caseNo"] = caseNo.Trim(),
             ["caseYear"] = caseYear.ToString(CultureInfo.InvariantCulture)
-        });
+        };
 
-        var json = await SendPostAsync("getDrtDailyOrderReportCaseNo", content, ct);
-        return ParseOrdersResponse(json, "daily", tribunalId, caseTypeId, caseNo, caseYear);
+        var response = await SendPostAsync("getDrtDailyOrderReportCaseNo", formFields, ct);
+        if (!response.IsSuccess || string.IsNullOrWhiteSpace(response.Body)) return [];
+
+        return ParseOrdersResponse(response.Body, "daily", tribunalId, caseTypeId, caseNo, caseYear);
     }
 
     /// <inheritdoc />
     public async Task<IReadOnlyList<DrtOrder>> GetFinalOrdersAsync(
         int tribunalId, int caseTypeId, string caseNo, int caseYear, CancellationToken ct = default)
     {
-        var content = new FormUrlEncodedContent(new Dictionary<string, string>
+        if (_breaker?.IsOpen() == true)
+        {
+            _logger.LogWarning("DRT circuit breaker is open; skipping GetFinalOrdersAsync");
+            return [];
+        }
+
+        var formFields = new Dictionary<string, string>
         {
             ["schemeNameDrtId"] = tribunalId.ToString(CultureInfo.InvariantCulture),
             ["caseType"] = caseTypeId.ToString(CultureInfo.InvariantCulture),
             ["caseNo"] = caseNo.Trim(),
             ["caseYear"] = caseYear.ToString(CultureInfo.InvariantCulture)
-        });
+        };
 
-        var json = await SendPostAsync("getDrtFinalOrderReportCaseNo", content, ct);
-        if (string.IsNullOrWhiteSpace(json)) return [];
+        var response = await SendPostAsync("getDrtFinalOrderReportCaseNo", formFields, ct);
+        if (!response.IsSuccess || string.IsNullOrWhiteSpace(response.Body)) return [];
 
         // Check for pinned misspelling "Record Not Fund"
-        if (json.Contains("Record Not Fund", StringComparison.OrdinalIgnoreCase))
+        if (response.Body.Contains("Record Not Fund", StringComparison.OrdinalIgnoreCase))
             return [];
 
-        return ParseOrdersResponse(json, "final", tribunalId, caseTypeId, caseNo, caseYear);
+        return ParseOrdersResponse(response.Body, "final", tribunalId, caseTypeId, caseNo, caseYear);
     }
 
     /// <inheritdoc />
@@ -275,37 +324,56 @@ public sealed class DrtClient : IDrtClient
     {
         // Per plan section 2.1 & section 4.9: RC/TRC endpoint on DRT portal is known broken (HTTP 500)
         // Treated permanently as unavailable so workers do not hammer it.
-        return Task.FromResult(DrtCaseLookupResult.Unavailable("The RC/TRC endpoint is permanently unavailable on the DRT portal."));
+        return Task.FromResult(DrtCaseLookupResult.Unavailable("The RC/TRC endpoint is permanently unavailable on the DRT portal.", null, HttpStatusCode.InternalServerError, CurrentExit));
     }
 
     /// <inheritdoc />
     public async Task<DrtOrderDownloadResult> DownloadOrderAsync(string orderUrl, long maxBytes = 20 * 1024 * 1024, CancellationToken ct = default)
     {
+        ct.ThrowIfCancellationRequested();
+
         if (string.IsNullOrWhiteSpace(orderUrl))
             return DrtOrderDownloadResult.Failure("Empty order URL");
+
+        if (_breaker?.IsOpen() == true)
+        {
+            return DrtOrderDownloadResult.Failure("DRT circuit breaker is open");
+        }
 
         var downloadUrl = DrtOrderKeyHelper.DirectPdfUrl(orderUrl, _options.OrderBaseUrl);
 
         for (var attempt = 1; attempt <= _options.MaxRetries; attempt++)
         {
+            ct.ThrowIfCancellationRequested();
             await RateLimitAsync(ct);
+
+            _rotator.NotifyRequest();
+            if (attempt > 1) _rotator.Rotate();
 
             try
             {
+                using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                if (_options.TimeoutSeconds > 0)
+                {
+                    timeoutCts.CancelAfter(TimeSpan.FromSeconds(_options.TimeoutSeconds));
+                }
+
                 using var request = new HttpRequestMessage(HttpMethod.Get, downloadUrl);
                 request.Headers.UserAgent.ParseAdd(_options.UserAgent);
 
                 using var response = _sendHook is not null
-                    ? await _sendHook(request, ct)
-                    : await _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
+                    ? await _sendHook(request, timeoutCts.Token)
+                    : await _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, timeoutCts.Token);
 
                 if (response.StatusCode is HttpStatusCode.NotFound or HttpStatusCode.BadRequest)
                 {
+                    _breaker?.RecordSuccess();
                     return DrtOrderDownloadResult.NotAvailable($"Order not found (HTTP {(int)response.StatusCode})");
                 }
 
-                if ((int)response.StatusCode is 429 or 502 or 503 or 504 || response.StatusCode == HttpStatusCode.InternalServerError)
+                if ((int)response.StatusCode is 429 or 500 or 502 or 503 or 504)
                 {
+                    _breaker?.RecordFailure(response.StatusCode);
                     if (attempt == _options.MaxRetries)
                         return DrtOrderDownloadResult.Failure($"HTTP {(int)response.StatusCode} after {_options.MaxRetries} retries");
 
@@ -318,13 +386,15 @@ public sealed class DrtClient : IDrtClient
                     return DrtOrderDownloadResult.Failure($"HTTP {(int)response.StatusCode}");
                 }
 
+                _breaker?.RecordSuccess();
+
                 var contentLength = response.Content.Headers.ContentLength;
                 if (contentLength > maxBytes)
                 {
                     return DrtOrderDownloadResult.Failure($"File exceeds maximum allowed size ({contentLength} > {maxBytes} bytes)");
                 }
 
-                var rawBytes = await response.Content.ReadAsByteArrayAsync(ct);
+                var rawBytes = await response.Content.ReadAsByteArrayAsync(timeoutCts.Token);
                 if (rawBytes.Length > maxBytes)
                 {
                     return DrtOrderDownloadResult.Failure($"File exceeds maximum allowed size ({rawBytes.Length} > {maxBytes} bytes)");
@@ -332,8 +402,13 @@ public sealed class DrtClient : IDrtClient
 
                 return DrtOrderCleaner.Clean(rawBytes, downloadUrl);
             }
-            catch (Exception ex) when (IsTransient(ex) && attempt < _options.MaxRetries)
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
+                throw; // propagate caller cancellation immediately
+            }
+            catch (Exception ex) when (IsTransient(ex, ct) && attempt < _options.MaxRetries)
+            {
+                _breaker?.RecordFailure(HttpStatusCode.ServiceUnavailable);
                 _logger.LogWarning(ex, "Transient error downloading order {Url}, attempt {Attempt}", downloadUrl, attempt);
                 await BackoffAsync(attempt, ct);
             }
@@ -348,12 +423,34 @@ public sealed class DrtClient : IDrtClient
     }
 
     private DrtCaseLookupResult ParseCaseDetailResponse(
-        string? json, int tribunalId, int? requestedTypeId, string? requestedNo, int? requestedYear)
+        DrtApiResponse apiResponse, int tribunalId, int? requestedTypeId, string? requestedNo, int? requestedYear)
     {
+        // Finding 1: Preserve HTTP failures and do not classify them as NotFoundCandidate!
+        if (!apiResponse.IsSuccess)
+        {
+            var code = (int)apiResponse.StatusCode;
+            if (code is 429 or 500 or 502 or 503 or 504)
+            {
+                return DrtCaseLookupResult.Unavailable(
+                    $"Service unavailable (HTTP {code}): {apiResponse.ErrorMessage}",
+                    apiResponse.Body,
+                    apiResponse.StatusCode,
+                    apiResponse.ExitAddress);
+            }
+
+            return DrtCaseLookupResult.Error(
+                $"HTTP {code}: {apiResponse.ErrorMessage}",
+                apiResponse.Body,
+                apiResponse.StatusCode,
+                apiResponse.ExitAddress);
+        }
+
+        var json = apiResponse.Body;
         if (string.IsNullOrWhiteSpace(json))
         {
             // Plan section 4.9: HTTP 200 with empty body is a candidate NotFound
-            return DrtCaseLookupResult.NotFoundCandidate("Empty response body from DRT portal", json);
+            return DrtCaseLookupResult.NotFoundCandidate(
+                "Empty response body from DRT portal", json, apiResponse.ExitAddress);
         }
 
         try
@@ -365,13 +462,13 @@ public sealed class DrtClient : IDrtClient
             if (root.ValueKind == JsonValueKind.Array)
             {
                 if (root.GetArrayLength() == 0)
-                    return DrtCaseLookupResult.NotFoundCandidate("Empty array returned", json);
+                    return DrtCaseLookupResult.NotFoundCandidate("Empty array returned", json, apiResponse.ExitAddress);
                 root = root[0];
             }
 
             if (root.ValueKind != JsonValueKind.Object)
             {
-                return DrtCaseLookupResult.NotFoundCandidate("Unexpected non-object response", json);
+                return DrtCaseLookupResult.NotFoundCandidate("Unexpected non-object response", json, apiResponse.ExitAddress);
             }
 
             // Check if portal returned validation error dictionary like {"casetype": "The casetype field is required."}
@@ -382,7 +479,7 @@ public sealed class DrtClient : IDrtClient
 
             if (!hasCaseNo && !hasDiaryNo && !hasPetitioner && !hasStatus)
             {
-                return DrtCaseLookupResult.NotFoundCandidate("Response missing identifying case fields", json);
+                return DrtCaseLookupResult.NotFoundCandidate("Response missing identifying case fields", json, apiResponse.ExitAddress);
             }
 
             var caseNo = TryGetString(root, "caseno") ?? requestedNo;
@@ -486,12 +583,12 @@ public sealed class DrtClient : IDrtClient
                 Hearings: hearings,
                 IaDetails: iaDetails);
 
-            return DrtCaseLookupResult.Found(details, json);
+            return DrtCaseLookupResult.Found(details, json, apiResponse.ExitAddress);
         }
         catch (JsonException ex)
         {
             _logger.LogWarning(ex, "Malformed JSON response from case lookup");
-            return DrtCaseLookupResult.Error("Contract failure: response was not valid JSON", json);
+            return DrtCaseLookupResult.Error("Contract failure: response was not valid JSON", json, apiResponse.StatusCode, apiResponse.ExitAddress);
         }
     }
 
@@ -516,7 +613,6 @@ public sealed class DrtClient : IDrtClient
             }
             else if (root.ValueKind == JsonValueKind.Object)
             {
-                // Single object response
                 var o = ParseOrderElement(root, orderType, tribunalId, caseTypeId, caseNo, caseYear);
                 if (o is not null) list.Add(o);
             }
@@ -554,59 +650,87 @@ public sealed class DrtClient : IDrtClient
         return new DrtOrder(diaryNo, dateOfFiling, pronouncedDate, applicant, respondent, pronouncedBy, url, orderType, itemNo, orderKey);
     }
 
-    private async Task<string> SendPostAsync(string endpoint, HttpContent content, CancellationToken ct)
+    private async Task<DrtApiResponse> SendPostAsync(
+        string endpoint, IReadOnlyDictionary<string, string> formFields, CancellationToken ct)
     {
+        ct.ThrowIfCancellationRequested();
+
+        var exitAddress = CurrentExit;
+
         for (var attempt = 1; attempt <= _options.MaxRetries; attempt++)
         {
+            ct.ThrowIfCancellationRequested();
             await RateLimitAsync(ct);
+
+            _rotator.NotifyRequest();
+            if (attempt > 1) _rotator.Rotate();
+            exitAddress = CurrentExit;
 
             try
             {
+                using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                if (_options.TimeoutSeconds > 0)
+                {
+                    timeoutCts.CancelAfter(TimeSpan.FromSeconds(_options.TimeoutSeconds));
+                }
+
+                // Finding 2: Create fresh content for EACH attempt so disposed content is never reused!
+                using var content = new FormUrlEncodedContent(formFields);
                 using var request = new HttpRequestMessage(HttpMethod.Post, endpoint);
                 request.Headers.UserAgent.ParseAdd(_options.UserAgent);
                 request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
                 request.Content = content;
 
                 using var response = _sendHook is not null
-                    ? await _sendHook(request, ct)
-                    : await _http.SendAsync(request, ct);
+                    ? await _sendHook(request, timeoutCts.Token)
+                    : await _http.SendAsync(request, timeoutCts.Token);
 
-                var body = await response.Content.ReadAsStringAsync(ct);
+                var body = await response.Content.ReadAsStringAsync(timeoutCts.Token);
 
-                // Transient HTTP status codes
-                if ((int)response.StatusCode is 429 or 502 or 503 or 504 || response.StatusCode == HttpStatusCode.InternalServerError)
+                // Transient HTTP status codes: retry with backoff
+                if ((int)response.StatusCode is 429 or 500 or 502 or 503 or 504)
                 {
+                    _breaker?.RecordFailure(response.StatusCode);
+
                     if (attempt == _options.MaxRetries)
                     {
                         _logger.LogWarning("HTTP {StatusCode} for endpoint {Endpoint} exhausted {MaxRetries} retries", (int)response.StatusCode, endpoint, _options.MaxRetries);
-                        return string.Empty;
+                        return new DrtApiResponse(response.StatusCode, body, false, $"Exhausted {_options.MaxRetries} retries on HTTP {(int)response.StatusCode}", exitAddress);
                     }
 
                     await BackoffAsync(attempt, ct);
                     continue;
                 }
 
+                // Permanent non-success (e.g. 400, 403, 404): do not retry!
                 if (!response.IsSuccessStatusCode)
                 {
                     _logger.LogWarning("HTTP {StatusCode} for endpoint {Endpoint}: {Body}", (int)response.StatusCode, endpoint, body);
-                    return string.Empty;
+                    return new DrtApiResponse(response.StatusCode, body, false, $"HTTP {(int)response.StatusCode}: {body}", exitAddress);
                 }
 
-                return body;
+                _breaker?.RecordSuccess();
+                return new DrtApiResponse(response.StatusCode, body, true, null, exitAddress);
             }
-            catch (Exception ex) when (IsTransient(ex) && attempt < _options.MaxRetries)
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
+                // Finding 3: Do NOT swallow caller cancellation!
+                throw;
+            }
+            catch (Exception ex) when (IsTransient(ex, ct) && attempt < _options.MaxRetries)
+            {
+                _breaker?.RecordFailure(HttpStatusCode.ServiceUnavailable);
                 _logger.LogWarning(ex, "Transient error calling {Endpoint}, attempt {Attempt}", endpoint, attempt);
                 await BackoffAsync(attempt, ct);
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Fatal error calling {Endpoint}", endpoint);
-                return string.Empty;
+                return new DrtApiResponse(HttpStatusCode.ServiceUnavailable, null, false, ex.Message, exitAddress);
             }
         }
 
-        return string.Empty;
+        return new DrtApiResponse(HttpStatusCode.ServiceUnavailable, null, false, "All retries exhausted", exitAddress);
     }
 
     private async Task RateLimitAsync(CancellationToken ct)
@@ -628,7 +752,6 @@ public sealed class DrtClient : IDrtClient
                 }
             }
             _lastRequestTimestamp = _timeProvider.GetTimestamp();
-            _requestCount++;
         }
         finally
         {
@@ -645,8 +768,11 @@ public sealed class DrtClient : IDrtClient
         await Task.Delay(delay, _timeProvider, ct);
     }
 
-    private static bool IsTransient(Exception ex) =>
-        ex is HttpRequestException or TimeoutException or TaskCanceledException;
+    private static bool IsTransient(Exception ex, CancellationToken ct)
+    {
+        if (ct.IsCancellationRequested) return false;
+        return ex is HttpRequestException or TimeoutException or TaskCanceledException;
+    }
 
     private static string? TryGetString(JsonElement el, string propertyName)
     {
@@ -669,5 +795,11 @@ public sealed class DrtClient : IDrtClient
         }
         return null;
     }
-}
 
+    private sealed record DrtApiResponse(
+        HttpStatusCode StatusCode,
+        string? Body,
+        bool IsSuccess,
+        string? ErrorMessage,
+        string? ExitAddress);
+}

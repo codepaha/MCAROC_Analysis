@@ -30,6 +30,9 @@ public interface IDrtClient
     /// <summary>RC/TRC endpoint (<c>getRcTrcCaseStatusReport</c>). Treated as permanently unavailable per plan section 2.1.</summary>
     Task<DrtCaseLookupResult> GetRcTrcCaseAsync(int tribunalId, int caseTypeId, string caseNo, int caseYear, CancellationToken ct = default);
 
+    /// <summary>Active proxy exit address or direct interface through which requests are sent (plan section 4.9).</summary>
+    string CurrentExit { get; }
+
     /// <summary>Downloads and cleans an order document from direct URL or viewer URL.</summary>
     Task<DrtOrderDownloadResult> DownloadOrderAsync(string orderUrl, long maxBytes = 20 * 1024 * 1024, CancellationToken ct = default);
 }

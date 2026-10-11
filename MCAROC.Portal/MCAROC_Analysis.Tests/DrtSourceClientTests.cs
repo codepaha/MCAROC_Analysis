@@ -25,11 +25,12 @@ public sealed class DrtSourceClientTests
     private static DrtClient CreateClient(
         Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> hook,
         DrtClientOptions? options = null,
-        TimeProvider? timeProvider = null)
+        TimeProvider? timeProvider = null,
+        IDrtCircuitBreaker? breaker = null)
     {
         var opts = options ?? DefaultOptions;
         var http = new HttpClient { BaseAddress = new Uri(opts.BaseUrl) };
-        return new DrtClient(http, Options.Create(opts), NullLogger<DrtClient>.Instance, timeProvider, hook);
+        return new DrtClient(http, Options.Create(opts), NullLogger<DrtClient>.Instance, timeProvider, breaker, hook);
     }
 
     // ── 1. Tribunals Endpoint (getDrtDratScheamName) ────────────────────────────────
@@ -501,6 +502,179 @@ public sealed class DrtSourceClientTests
 
         Assert.Equal(3, attempts);
         Assert.Single(types);
+    }
+
+    [Fact]
+    public async Task GetCaseByNumberAsync_preserves_403_and_400_as_Error_never_NotFoundCandidate()
+    {
+        var client403 = CreateClient((req, ct) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.Forbidden)
+        {
+            Content = new StringContent("Access Denied", Encoding.UTF8, "text/plain")
+        }));
+
+        var res403 = await client403.GetCaseByNumberAsync(1, 1, "123", 2024);
+
+        Assert.Equal(DrtLookupStatus.Error, res403.Status);
+        Assert.Equal(HttpStatusCode.Forbidden, res403.StatusCode);
+        Assert.Contains("403", res403.Message);
+
+        var client400 = CreateClient((req, ct) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.BadRequest)
+        {
+            Content = new StringContent("Bad Request", Encoding.UTF8, "text/plain")
+        }));
+
+        var res400 = await client400.GetCaseByNumberAsync(1, 1, "123", 2024);
+
+        Assert.Equal(DrtLookupStatus.Error, res400.Status);
+        Assert.Equal(HttpStatusCode.BadRequest, res400.StatusCode);
+    }
+
+    [Fact]
+    public async Task GetCaseByNumberAsync_preserves_exhausted_503_as_Unavailable_never_NotFoundCandidate()
+    {
+        var attempts = 0;
+        var client = CreateClient((req, ct) =>
+        {
+            attempts++;
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.ServiceUnavailable)
+            {
+                Content = new StringContent("Service Unavailable", Encoding.UTF8, "text/plain")
+            });
+        });
+
+        var res = await client.GetCaseByNumberAsync(1, 1, "123", 2024);
+
+        Assert.Equal(DefaultOptions.MaxRetries, attempts);
+        Assert.Equal(DrtLookupStatus.Unavailable, res.Status);
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, res.StatusCode);
+        Assert.Contains("Exhausted", res.Message);
+    }
+
+    [Fact]
+    public async Task Post_retries_create_fresh_content_and_resend_without_disposed_exception()
+    {
+        var attempts = 0;
+        var sentBodies = new List<string>();
+
+        var client = CreateClient(async (req, ct) =>
+        {
+            attempts++;
+            var body = await req.Content!.ReadAsStringAsync(ct);
+            sentBodies.Add(body);
+
+            if (attempts == 1)
+            {
+                return new HttpResponseMessage(HttpStatusCode.ServiceUnavailable);
+            }
+
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("""{"caseno":"123","casestatus":"PENDING"}""", Encoding.UTF8, "application/json")
+            };
+        });
+
+        var res = await client.GetCaseByNumberAsync(1, 1, "123", 2024);
+
+        Assert.Equal(2, attempts);
+        Assert.True(res.IsFound);
+        Assert.Equal(2, sentBodies.Count);
+        Assert.Contains("caseNo=123", sentBodies[0]);
+        Assert.Contains("caseNo=123", sentBodies[1]);
+    }
+
+    [Fact]
+    public async Task Caller_cancellation_propagates_immediately_and_is_not_swallowed()
+    {
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        var client = CreateClient((req, ct) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent("[]", Encoding.UTF8, "application/json")
+        }));
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(async () =>
+        {
+            await client.GetCaseByNumberAsync(1, 1, "123", 2024, cts.Token);
+        });
+    }
+
+    // ── 12. Circuit Breaker and Proxy Rotator ──────────────────────────────────────
+
+    [Fact]
+    public async Task CircuitBreaker_trips_after_8_failures_and_defers_calls()
+    {
+        var breaker = new DrtCircuitBreaker(threshold: 8, coolDown: TimeSpan.FromMinutes(1));
+        var client = CreateClient(
+            (req, ct) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.ServiceUnavailable)),
+            options: new DrtClientOptions { MaxRetries = 1, RequestsPerSecond = 1000 },
+            breaker: breaker);
+
+        // 8 failures trip the breaker
+        for (var i = 0; i < 8; i++)
+        {
+            var res = await client.GetCaseByNumberAsync(1, 1, "123", 2024);
+            Assert.Equal(DrtLookupStatus.Unavailable, res.Status);
+        }
+
+        Assert.True(breaker.IsOpen());
+
+        // Subsequent call is short-circuited by the client without sending HTTP request
+        var callMade = false;
+        var clientWithProbe = CreateClient(
+            (req, ct) => { callMade = true; return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)); },
+            breaker: breaker);
+
+        var shortCircuited = await clientWithProbe.GetCaseByNumberAsync(1, 1, "123", 2024);
+
+        Assert.False(callMade);
+        Assert.Equal(DrtLookupStatus.Unavailable, shortCircuited.Status);
+        Assert.Contains("circuit breaker is open", shortCircuited.Message);
+    }
+
+    [Fact]
+    public void ProxyRotator_rotates_on_frequency_and_Rotate_call()
+    {
+        var proxies = new[] { "http://proxy1:8080", "http://proxy2:8080", "http://proxy3:8080" };
+        var rotator = new DrtProxyRotator(proxies, rotateFrequency: 2);
+
+        Assert.Equal("http://proxy1:8080", rotator.CurrentExit);
+
+        rotator.NotifyRequest(); // 1
+        Assert.Equal("http://proxy1:8080", rotator.CurrentExit);
+
+        rotator.NotifyRequest(); // 2 -> triggers rotate
+        Assert.Equal("http://proxy2:8080", rotator.CurrentExit);
+
+        rotator.Rotate(); // manual rotate (e.g. on retry)
+        Assert.Equal("http://proxy3:8080", rotator.CurrentExit);
+
+        rotator.Rotate(); // wraps around
+        Assert.Equal("http://proxy1:8080", rotator.CurrentExit);
+    }
+
+    [Fact]
+    public void CanConfirmNotFound_requires_two_candidates_across_distinct_exits()
+    {
+        var firstExitA = DrtCaseLookupResult.NotFoundCandidate("Empty", "{}", exitAddress: "http://proxy1:8080");
+        var secondExitA = DrtCaseLookupResult.NotFoundCandidate("Empty", "{}", exitAddress: "http://proxy1:8080");
+        var secondExitB = DrtCaseLookupResult.NotFoundCandidate("Empty", "{}", exitAddress: "http://proxy2:8080");
+        var dummyDetails = new DrtCaseDetails(
+            1, 1, "OA", "OA", "1", 2024,
+            CaseNumberNormaliser.Parse(new CaseNumberInput("OA/1/2024")),
+            null, null, null, null, "PENDING",
+            CaseStatusVocabulary.Map("PENDING"),
+            "PENDING", null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, [], null);
+        var foundResult = DrtCaseLookupResult.Found(dummyDetails, "{}", "http://proxy2:8080");
+
+        // Same exit address: cannot confirm
+        Assert.False(DrtCaseLookupResult.CanConfirmNotFound(firstExitA, secondExitA));
+
+        // Different exit addresses: can confirm
+        Assert.True(DrtCaseLookupResult.CanConfirmNotFound(firstExitA, secondExitB));
+
+        // Found result cannot confirm not-found
+        Assert.False(DrtCaseLookupResult.CanConfirmNotFound(firstExitA, foundResult));
     }
 
     // ── 12. Corpus Parity Check (50 cases from progress.db) ────────────────────────
