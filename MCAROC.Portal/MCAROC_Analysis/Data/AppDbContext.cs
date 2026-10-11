@@ -141,6 +141,8 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
+        MCAROC_Analysis.Services.LitigationModule.Store.LitigationModuleModel.Configure(modelBuilder);
+
         modelBuilder.Entity<Client>(e =>
         {
             e.HasKey(x => x.ClientId);
