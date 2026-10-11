@@ -21,10 +21,10 @@ if (Directory.Exists(req4OrdersDir))
         var text = File.ReadAllText(file);
         coastalOrders.Add((Path.GetFileName(file), text, null));
     }
-    datasets.Add(("Coastal Projects Limited (Portal Orders)", coastalOrders));
+    datasets.Add(("Coastal Projects Limited (Full Fetched Portal Orders)", coastalOrders));
 }
 
-// 2. Cross-Forum Multi-Company Judicial Corpus (66 orders across NCLT, NCLAT, High Court, District Court, Supreme Court)
+// 2. Cross-Forum Multi-Company Judicial Corpus (66 curated excerpts across NCLT, NCLAT, High Court, District Court, Supreme Court)
 var fixturePath = Path.Combine(repoRoot, "MCAROC.Portal", "MCAROC_Analysis.Tests", "Fixtures", "litigation_order_outcomes_coastal_sample.json");
 if (File.Exists(fixturePath))
 {
@@ -38,7 +38,7 @@ if (File.Exists(fixturePath))
         var excerpt = item.TryGetProperty("OperativeExcerpt", out var oEl) ? oEl.GetString() ?? "" : "";
         fixtureOrders.Add(($"sample-{sampleId}", excerpt, forum));
     }
-    datasets.Add(("Cross-Forum Multi-Company Judicial Corpus", fixtureOrders));
+    datasets.Add(("Cross-Forum Sample Fixture (Curated Operative Excerpts)", fixtureOrders));
 }
 
 // 3. Custom path if provided
@@ -82,16 +82,25 @@ md.AppendLine();
 md.AppendLine("A central question in integrating court portal orders (DRT, Consumer, NCLT, High Court) with bank credit due diligence is:");
 md.AppendLine("**Do property details (collateral, mortgaged property, survey numbers, schedules) actually appear in fetched court orders, and how are they shown?**");
 md.AppendLine();
-md.AppendLine($"Based on empirical analysis across {totalAnalyzed} real-world court orders ({datasets.Count} datasets: {string.Join(", ", datasetReports.Select(d => $"{d.Report.TotalOrdersAnalyzed} from {d.CompanyName}"))}):");
-md.AppendLine($"1. **Routine Daily Orders almost never contain property particulars ({proceduralCount}/{totalAnalyzed}, {proceduralCount * 100.0 / Math.Max(1, totalAnalyzed):F1}% procedural):** DRT and Consumer daily orders (`pdf1.php`, `dailyOrderPdf`) are overwhelmingly 1–2 line procedural proceeding notes (adjournments, vakalat filings, next hearing listings, ex-parte notices).");
+md.AppendLine($"Based on empirical analysis across {totalAnalyzed} judicial entries ({datasets.Count} datasets: {string.Join(", ", datasetReports.Select(d => $"{d.Report.TotalOrdersAnalyzed} from {d.CompanyName}"))}):");
+md.AppendLine();
+md.AppendLine("> [!IMPORTANT]");
+md.AppendLine("> **Methodological Distinction & Full-Order Qualification:**");
+md.AppendLine("> The analyzed corpora comprise two fundamentally different types of judicial text:");
+md.AppendLine("> 1. **Full Fetched Portal Orders (116 files)**: Uncurated, complete raw daily order documents downloaded from court portals (DRT, Consumer, High Court, District Court) for Coastal Projects Limited. These measure true full-document prevalence in live operational pipelines.");
+md.AppendLine("> 2. **Curated Judicial Excerpts (66 entries)**: Benchmark operative decision excerpts (`OperativeExcerpt`) from a cross-forum sample fixture across NCLT, NCLAT, High Court, and District Courts. These illustrate how judges articulate property relief in operative holdings, but may omit separate cadastral schedules, property annexures, or recitals present in the underlying physical judgments.");
+md.AppendLine("> **Prevalence Caveat:** The aggregate statistics below reflect this combined test corpus. While daily portal orders demonstrate near-total absence of property schedules (~99% none), general prevalence across full physical judgments should not be asserted without this qualification.");
+md.AppendLine();
+md.AppendLine($"1. **Routine Daily Orders almost never contain property particulars ({proceduralCount}/{totalAnalyzed}, {proceduralCount * 100.0 / Math.Max(1, totalAnalyzed):F1}% procedural across combined corpus; 73.3% procedural in portal files):** DRT and Consumer daily orders (`pdf1.php`, `dailyOrderPdf`) are overwhelmingly 1–2 line procedural proceeding notes (adjournments, vakalat filings, next hearing listings, ex-parte notices). In full fetched portal files, 99.1% contain zero property details.");
 md.AppendLine("2. **Empirical Distribution Across Tiers (derived directly from analyzed corpora):**");
-md.AppendLine($"   - **Cadastral / Land Schedule ({cadastralCount}/{totalAnalyzed}, {cadastralCount * 100.0 / Math.Max(1, totalAnalyzed):F1}%)**: Specific survey/khasra/khewat/plot identifiers with boundaries. Found only in substantive civil court injunctions or final SARFAESI auction proclamations.");
+md.AppendLine($"   - **Cadastral / Land Schedule ({cadastralCount}/{totalAnalyzed}, {cadastralCount * 100.0 / Math.Max(1, totalAnalyzed):F1}%)**: Specific survey/khasra/khewat/plot identifiers with boundaries. Found in substantive civil court injunctions or final SARFAESI auction proclamations.");
 md.AppendLine($"   - **Identifiable Asset ({identifiableAssetCount}/{totalAnalyzed}, {identifiableAssetCount * 100.0 / Math.Max(1, totalAnalyzed):F1}%)**: Unit/flat number, project name, or plant & machinery.");
 md.AppendLine($"   - **Generic Corporate Restraint ({genericRestraintCount}/{totalAnalyzed}, {genericRestraintCount * 100.0 / Math.Max(1, totalAnalyzed):F1}%)**: Blanket injunctions restraining alienation of 'any moveable or immoveable property of the company/promoters' (e.g. High Court / NCLAT interim orders).");
 md.AppendLine($"   - **Zero Property Mention ({noPropertyCount}/{totalAnalyzed}, {noPropertyCount * 100.0 / Math.Max(1, totalAnalyzed):F1}%)**: Routine listings, monetary claims, cheque bounce, or corporate debt proceedings with no property particulars.");
-md.AppendLine($"3. **Feasibility for Automatic Charge Cross-Referencing:** Automatic linking against ROC charge particulars (`RocChargeEvent.PropertyParticulars`) is **only feasible** for the Cadastral/Land Schedule tier ({cadastralCount * 100.0 / Math.Max(1, totalAnalyzed):F1}%). Generic corporate restraints ({genericRestraintCount * 100.0 / Math.Max(1, totalAnalyzed):F1}%) cannot be mapped to individual charges and should instead be treated as global portfolio/company-level risk indicators.");
+md.AppendLine($"3. **Feasibility for Automatic Charge Cross-Referencing:** Automatic linking against ROC charge particulars (`RocChargeEvent.PropertyParticulars`) is **only feasible** for the rare Cadastral/Land Schedule tier ({cadastralCount * 100.0 / Math.Max(1, totalAnalyzed):F1}%). Generic corporate restraints ({genericRestraintCount * 100.0 / Math.Max(1, totalAnalyzed):F1}%) cannot be mapped to individual charges and should instead be treated as global portfolio/company-level risk indicators.");
 md.AppendLine();
 
+var sectionIndex = 2;
 foreach (var (name, report) in datasetReports)
 {
     Console.WriteLine($"\nAnalyzing: {name} ({report.TotalOrdersAnalyzed} orders)");
@@ -102,7 +111,20 @@ foreach (var (name, report) in datasetReports)
     Console.WriteLine($"  - Generic Restraint: {report.OrdersWithGenericRestraintCount}");
     Console.WriteLine($"  - No Property Mention: {report.OrdersWithNoPropertyMentionCount}");
 
-    md.AppendLine($"## 2. Dataset: {name}");
+    md.AppendLine($"## {sectionIndex++}. Dataset: {name}");
+    md.AppendLine();
+    if (name.Contains("Full Fetched Portal Orders", StringComparison.OrdinalIgnoreCase))
+    {
+        md.AppendLine("> **Corpus Nature:** Full, unredacted daily order text files as downloaded from court portals (DRT, Consumer, High Court, District Court). Directly measures complete document-level prevalence.");
+    }
+    else if (name.Contains("Curated Operative Excerpts", StringComparison.OrdinalIgnoreCase))
+    {
+        md.AppendLine("> **Corpus Nature:** Curated operative excerpts from multi-forum judicial decisions. Focuses on operative relief language; separate annexed property schedules in the full physical judgments may not be present in these excerpts.");
+    }
+    else
+    {
+        md.AppendLine("> **Corpus Nature:** User-supplied custom input files/directories.");
+    }
     md.AppendLine();
     md.AppendLine($"| Metric | Count | Percentage |");
     md.AppendLine($"| --- | --- | --- |");
@@ -150,7 +172,7 @@ foreach (var (name, report) in datasetReports)
     }
 }
 
-md.AppendLine("## 3. Detailed Forum-by-Forum Findings");
+md.AppendLine($"## {sectionIndex++}. Detailed Forum-by-Forum Findings");
 md.AppendLine();
 md.AppendLine("### 3.1 Debt Recovery Tribunals (DRT / DRAT)");
 md.AppendLine("- **Observed Pattern:** DRT orders fetched from the daily order portal (`pdf1.php` / `qrpdfview.php`) are handwritten or typed proceeding sheets usually 1–3 sentences long (e.g., *'Sri A.V.V Badari narayana filed no objection vakalat for D1, D2. For arguments posted to 21.6.19'*).");
@@ -172,7 +194,7 @@ md.AppendLine("- **Observed Pattern:** Where suit land is contested, the court o
 md.AppendLine("- **Property Appearance:** High density of exact cadastral tokens matching the regex patterns in `PropertyParticularsNormalizer`.");
 md.AppendLine("- **Recommendation:** Full cross-referencing with `RocChargeEvent.PropertyParticulars` is viable for this class.");
 md.AppendLine();
-md.AppendLine("## 4. Architectural Recommendations for Epic #432 / Issue #443");
+md.AppendLine($"## {sectionIndex}. Architectural Recommendations for Epic #432 / Issue #443");
 md.AppendLine();
 md.AppendLine("1. **Three-Tier Property Classification**: Integrate `PropertyInOrdersAnalyzer` into `LitigationOrderDocumentService` text extraction so each ingested order receives a structured `PropertyMentionLevel` and `ChargeMatchingFeasibility` flag.");
 md.AppendLine("2. **Separation of Global Restraints vs. Charge Links**: Only attempt charge-to-litigation property linking when `Level == SurveyOrLandSchedule`. Treat `GenericRestraint` as an entity-level risk flag on the litigation dashboard.");

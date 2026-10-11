@@ -1,23 +1,33 @@
 ﻿# Property Details in Court Orders: Empirical Analysis & Feasibility Report
 
 > **Deliverable for Issue #443 (Order source adapters) under Epic #432 / Plan §4.5.**
-> **Date:** 2026-10-11 14:56:46 UTC
+> **Date:** 2026-10-11 15:10:39 UTC
 
 ## 1. Executive Summary
 
 A central question in integrating court portal orders (DRT, Consumer, NCLT, High Court) with bank credit due diligence is:
 **Do property details (collateral, mortgaged property, survey numbers, schedules) actually appear in fetched court orders, and how are they shown?**
 
-Based on empirical analysis across 182 real-world court orders (2 datasets: 116 from Coastal Projects Limited (Portal Orders), 66 from Cross-Forum Multi-Company Judicial Corpus):
-1. **Routine Daily Orders almost never contain property particulars (90/182, 49.5% procedural):** DRT and Consumer daily orders (`pdf1.php`, `dailyOrderPdf`) are overwhelmingly 1–2 line procedural proceeding notes (adjournments, vakalat filings, next hearing listings, ex-parte notices).
+Based on empirical analysis across 182 judicial entries (2 datasets: 116 from Coastal Projects Limited (Full Fetched Portal Orders), 66 from Cross-Forum Sample Fixture (Curated Operative Excerpts)):
+
+> [!IMPORTANT]
+> **Methodological Distinction & Full-Order Qualification:**
+> The analyzed corpora comprise two fundamentally different types of judicial text:
+> 1. **Full Fetched Portal Orders (116 files)**: Uncurated, complete raw daily order documents downloaded from court portals (DRT, Consumer, High Court, District Court) for Coastal Projects Limited. These measure true full-document prevalence in live operational pipelines.
+> 2. **Curated Judicial Excerpts (66 entries)**: Benchmark operative decision excerpts (`OperativeExcerpt`) from a cross-forum sample fixture across NCLT, NCLAT, High Court, and District Courts. These illustrate how judges articulate property relief in operative holdings, but may omit separate cadastral schedules, property annexures, or recitals present in the underlying physical judgments.
+> **Prevalence Caveat:** The aggregate statistics below reflect this combined test corpus. While daily portal orders demonstrate near-total absence of property schedules (~99% none), general prevalence across full physical judgments should not be asserted without this qualification.
+
+1. **Routine Daily Orders almost never contain property particulars (90/182, 49.5% procedural across combined corpus; 73.3% procedural in portal files):** DRT and Consumer daily orders (`pdf1.php`, `dailyOrderPdf`) are overwhelmingly 1–2 line procedural proceeding notes (adjournments, vakalat filings, next hearing listings, ex-parte notices). In full fetched portal files, 99.1% contain zero property details.
 2. **Empirical Distribution Across Tiers (derived directly from analyzed corpora):**
-   - **Cadastral / Land Schedule (1/182, 0.5%)**: Specific survey/khasra/khewat/plot identifiers with boundaries. Found only in substantive civil court injunctions or final SARFAESI auction proclamations.
+   - **Cadastral / Land Schedule (1/182, 0.5%)**: Specific survey/khasra/khewat/plot identifiers with boundaries. Found in substantive civil court injunctions or final SARFAESI auction proclamations.
    - **Identifiable Asset (0/182, 0.0%)**: Unit/flat number, project name, or plant & machinery.
    - **Generic Corporate Restraint (2/182, 1.1%)**: Blanket injunctions restraining alienation of 'any moveable or immoveable property of the company/promoters' (e.g. High Court / NCLAT interim orders).
    - **Zero Property Mention (179/182, 98.4%)**: Routine listings, monetary claims, cheque bounce, or corporate debt proceedings with no property particulars.
-3. **Feasibility for Automatic Charge Cross-Referencing:** Automatic linking against ROC charge particulars (`RocChargeEvent.PropertyParticulars`) is **only feasible** for the Cadastral/Land Schedule tier (0.5%). Generic corporate restraints (1.1%) cannot be mapped to individual charges and should instead be treated as global portfolio/company-level risk indicators.
+3. **Feasibility for Automatic Charge Cross-Referencing:** Automatic linking against ROC charge particulars (`RocChargeEvent.PropertyParticulars`) is **only feasible** for the rare Cadastral/Land Schedule tier (0.5%). Generic corporate restraints (1.1%) cannot be mapped to individual charges and should instead be treated as global portfolio/company-level risk indicators.
 
-## 2. Dataset: Coastal Projects Limited (Portal Orders)
+## 2. Dataset: Coastal Projects Limited (Full Fetched Portal Orders)
+
+> **Corpus Nature:** Full, unredacted daily order text files as downloaded from court portals (DRT, Consumer, High Court, District Court). Directly measures complete document-level prevalence.
 
 | Metric | Count | Percentage |
 | --- | --- | --- |
@@ -49,7 +59,9 @@ Based on empirical analysis across 182 real-world court orders (2 datasets: 116 
 - **Operative Excerpt:**
   > No.1087/2012 to the following extent :- . a). the injunction obtaining qua the immovable properties / asset of the promoters of the petitioner no.1 company be lifted to enable the
 
-## 2. Dataset: Cross-Forum Multi-Company Judicial Corpus
+## 3. Dataset: Cross-Forum Sample Fixture (Curated Operative Excerpts)
+
+> **Corpus Nature:** Curated operative excerpts from multi-forum judicial decisions. Focuses on operative relief language; separate annexed property schedules in the full physical judgments may not be present in these excerpts.
 
 | Metric | Count | Percentage |
 | --- | --- | --- |
@@ -89,7 +101,7 @@ Based on empirical analysis across 182 real-world court orders (2 datasets: 116 
 - **Operative Excerpt:**
   > ing any kind of construction and putting debris over the suit land comprised in khewat No. 62/52 khatauni No. 25/243, khasra No. 1424/1, measuring 1
 
-## 3. Detailed Forum-by-Forum Findings
+## 4. Detailed Forum-by-Forum Findings
 
 ### 3.1 Debt Recovery Tribunals (DRT / DRAT)
 - **Observed Pattern:** DRT orders fetched from the daily order portal (`pdf1.php` / `qrpdfview.php`) are handwritten or typed proceeding sheets usually 1–3 sentences long (e.g., *'Sri A.V.V Badari narayana filed no objection vakalat for D1, D2. For arguments posted to 21.6.19'*).
@@ -111,7 +123,7 @@ Based on empirical analysis across 182 real-world court orders (2 datasets: 116 
 - **Property Appearance:** High density of exact cadastral tokens matching the regex patterns in `PropertyParticularsNormalizer`.
 - **Recommendation:** Full cross-referencing with `RocChargeEvent.PropertyParticulars` is viable for this class.
 
-## 4. Architectural Recommendations for Epic #432 / Issue #443
+## 5. Architectural Recommendations for Epic #432 / Issue #443
 
 1. **Three-Tier Property Classification**: Integrate `PropertyInOrdersAnalyzer` into `LitigationOrderDocumentService` text extraction so each ingested order receives a structured `PropertyMentionLevel` and `ChargeMatchingFeasibility` flag.
 2. **Separation of Global Restraints vs. Charge Links**: Only attempt charge-to-litigation property linking when `Level == SurveyOrLandSchedule`. Treat `GenericRestraint` as an entity-level risk flag on the litigation dashboard.
