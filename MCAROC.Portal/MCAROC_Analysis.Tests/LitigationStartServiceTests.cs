@@ -362,6 +362,7 @@ public sealed class LitigationStartServiceTests : IAsyncLifetime
         seed.LitigationPortfolioAiAnalyses.Add(new LitigationPortfolioAiAnalysis
         {
             LitigationAiAnalysisRunId = run.LitigationAiAnalysisRunId, Status = LitigationAiAnalysisItemStatus.Completed,
+            CaseSetHash = LitigationAiAnalysisOrchestrator.CaseSetHash([litCase.LitigationCaseId]),   // the summary was made over this request's one case
             AnalysisJson = "{\"summary\":\"ok\"}", CompletedUtc = DateTime.UtcNow
         });
         await seed.SaveChangesAsync();
