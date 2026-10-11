@@ -75,8 +75,10 @@ public static class LitigationCaseAnalysisInputBuilder
             ["cnr"] = c.Cnr, ["case_no"] = c.CaseNumber, ["court"] = c.Court,
             ["court_type"] = CourtType(c), ["party_direction"] = string.IsNullOrWhiteSpace(c.Direction) ? "unknown" : c.Direction!.ToLowerInvariant(),
             ["case_category"] = c.CourtCategory, ["case_status"] = status.ToString().ToUpperInvariant(), ["case_stage"] = c.CaseStage,
-            ["case_type"] = c.CaseType, ["act"] = c.Act, ["filing_date"] = c.FilingDate, ["last_hearing_date"] = c.LastHearingDate,
-            ["next_hearing_date"] = c.NextHearingDate, ["state"] = c.State, ["district"] = c.District,
+            ["case_type"] = c.CaseType, ["act"] = c.Act, ["filing_date"] = c.FilingDate,
+            // Hearing dates are deliberately NOT part of the input: they change with every refresh and say nothing the orders do not, so with them in the evidence a
+            // refreshed hearing date would change the hash and re-analyse an unchanged case. The case card and the chat facts take them from the stored columns.
+            ["state"] = c.State, ["district"] = c.District,
             ["petitioners"] = Array(LitigationPartyNames.Parse(c.PetitionersJson)), ["respondents"] = Array(LitigationPartyNames.Parse(c.RespondentsJson)),
             ["petitioner_advocates"] = Array(LitigationPartyNames.Parse(c.PetitionerAdvocatesJson)),
             ["respondent_advocates"] = Array(LitigationPartyNames.Parse(c.RespondentAdvocatesJson)),
@@ -416,6 +418,10 @@ public static class LitigationCaseAnalysisValidator
             amount = null;
         }
         var prose = string.Join(" ", new[] { summary, Str("risk_reason"), Str("consequence_note"), (root["outcome"] as JsonObject)?["final_order_summary"]?.ToString() }.Where(x => !string.IsNullOrWhiteSpace(x)));
+        // Hearing dates are not given to the model (they change with every refresh and are shown from the stored columns). A hearing date in the prose that no order text carries
+        // therefore came from nowhere the model was given: flagged for the reader, not trusted.
+        if (StatesHearingDateNotInOrders(string.Join(" ", new[] { prose }.Concat(Bullets(root["key_points"]).Select(b => b?.ToString() ?? ""))), input))
+            notes.Add("The analysis states a hearing date that is not in any order text; hearing dates were not given to the model, so it is not taken from the court record.");
         if (input.HasText && !FiguresPrinted(prose, printed, out var unmatched))
             unknownsOut.Add($"The figure(s) {string.Join(", ", unmatched)} in this analysis are not confirmed by the printed order text (the scan may be damaged); check the order.");
 
@@ -473,6 +479,28 @@ public static class LitigationCaseAnalysisValidator
 
     /// <summary>The numbers printed in the text sent for a case, each as digits only (thousands commas dropped, a decimal part kept), one set
     /// over all orders. A number is a whole token: "12345" is not found in "1234500" or "12345.50".</summary>
+    private static readonly System.Text.RegularExpressions.Regex DateText = new(
+        @"\b\d{1,2}[./-]\d{1,2}[./-]\d{2,4}\b|\b\d{1,2}(?:st|nd|rd|th)?\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.?,?\s+\d{4}\b",
+        System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+    private static readonly System.Text.RegularExpressions.Regex HearingContext = new(
+        @"hearing|listed|listing|adjourn|next date|fixed for|cause ?list",
+        System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+
+    /// <summary>True when the text puts a date next to a hearing word (within 80 characters before it) and that date appears in no order's text.</summary>
+    internal static bool StatesHearingDateNotInOrders(string text, CaseAnalysisInput input)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return false;
+        static string Compact(string v) => new(v.Where(char.IsLetterOrDigit).ToArray());
+        var orderText = Compact(string.Join(" ", input.Orders.Select(o => o.Text ?? "")));
+        foreach (System.Text.RegularExpressions.Match m in DateText.Matches(text))
+        {
+            var before = text[Math.Max(0, m.Index - 80)..m.Index];
+            if (!HearingContext.IsMatch(before)) continue;
+            if (!orderText.Contains(Compact(m.Value), StringComparison.OrdinalIgnoreCase)) return true;
+        }
+        return false;
+    }
+
     private static HashSet<string> PrintedNumbers(CaseAnalysisInput input)
     {
         var set = new HashSet<string>(StringComparer.Ordinal);
