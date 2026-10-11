@@ -41,6 +41,10 @@ public class McaRequest
     /// <summary>The most recent successfully-completed ingestion run. Details/current-state queries filter on this.</summary>
     public long? LatestCompletedIngestionRunId { get; set; }
 
+    /// <summary>Changes whenever live court data for this request changes (a publication to its cases, a discovery, a merge or un-merge, a hide or un-hide, a new order or hearing).
+    /// Incremented atomically by <see cref="MCAROC_Analysis.Services.LitigationModule.Refresh.RequestLiveData"/>; read by the page fence and every cache that is derived from litigation data.</summary>
+    public long LiveDataVersion { get; set; }
+
     /// <summary>Set when a failed analysis is waiting out its automatic-retry delay: the earliest time (UTC) it may be queued again.
     /// Survives a restart, so recovery honours the remaining wait instead of retrying at once.</summary>
     public DateTime? AnalysisRetryAfter { get; set; }

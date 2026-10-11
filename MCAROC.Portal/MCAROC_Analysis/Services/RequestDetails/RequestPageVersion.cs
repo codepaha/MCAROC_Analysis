@@ -9,11 +9,11 @@ namespace MCAROC_Analysis.Services.RequestDetails;
 /// No long-lived transaction, locks, or per-user cache. A concurrent publication asks the user to refresh.</summary>
 public sealed record RequestPageVersion(long? Ingestion, long? Analysis, AnalysisRunStatus? AnalysisStatus,
     long? FilingBatch, long? LitigationSnapshot, string? SearchHash, long? LitigationAnalysis,
-    LitigationAiAnalysisRunStatus? LitigationAnalysisStatus)
+    LitigationAiAnalysisRunStatus? LitigationAnalysisStatus, long LiveData = 0)
 {
     public string Key => Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
         System.Text.Encoding.UTF8.GetBytes(System.Text.Json.JsonSerializer.Serialize(new
-        { Ingestion, Analysis, AnalysisStatus, FilingBatch, LitigationSnapshot, SearchHash, LitigationAnalysis, LitigationAnalysisStatus }))));
+        { Ingestion, Analysis, AnalysisStatus, FilingBatch, LitigationSnapshot, SearchHash, LitigationAnalysis, LitigationAnalysisStatus, LiveData }))));
 
     public static Task<RequestPageVersion?> ReadAsync(AppDbContext db, long id, CancellationToken ct)
     {
@@ -33,7 +33,8 @@ public sealed record RequestPageVersion(long? Ingestion, long? Analysis, Analysi
             db.LitigationAiAnalysisRuns.Where(a => a.RequestId == id).OrderByDescending(a => a.RunNumber)
                 .Select(a => (long?)a.LitigationAiAnalysisRunId).FirstOrDefault(),
             db.LitigationAiAnalysisRuns.Where(a => a.RequestId == id).OrderByDescending(a => a.RunNumber)
-                .Select(a => (LitigationAiAnalysisRunStatus?)a.Status).FirstOrDefault()
+                .Select(a => (LitigationAiAnalysisRunStatus?)a.Status).FirstOrDefault(),
+            r.LiveDataVersion
         )).FirstOrDefaultAsync(ct);
     }
 }

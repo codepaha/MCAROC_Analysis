@@ -21,12 +21,15 @@ public sealed class ChargeLitigationService(AppDbContext db, IMemoryCache cache)
     public static async Task<string> VersionAsync(AppDbContext db, long requestId, CancellationToken ct = default)
     {
         var snapshotId = await AuthoritativeSnapshotIdAsync(db, requestId, ct);
-        return await SnapshotVersionAsync(db, snapshotId, ct);
+        return await SnapshotVersionAsync(db, requestId, snapshotId, ct);
     }
 
-    private static async Task<string> SnapshotVersionAsync(AppDbContext db, long? snapshotId, CancellationToken ct)
+    private static async Task<string> SnapshotVersionAsync(AppDbContext db, long requestId, long? snapshotId, CancellationToken ct)
     {
-        if (snapshotId is not { } sid) return "none";
+        // Live court data (portal refreshes, discovery, merges, hides) changes cases without a new snapshot: its version is part of the key.
+        var liveVersion = await db.Requests.AsNoTracking().Where(r => r.RequestId == requestId).Select(r => (long?)r.LiveDataVersion).FirstOrDefaultAsync(ct);
+        if (liveVersion is not { } live) return "none";   // no such request
+        if (snapshotId is not { } sid) return $"none-L{live}";
 
         var caseIds = db.LitigationCaseSourceReports.Where(sr => sr.LitigationReportSnapshotId == sid)
             .Select(sr => sr.LitigationCaseId).Distinct();
@@ -38,7 +41,7 @@ public sealed class ChargeLitigationService(AppDbContext db, IMemoryCache cache)
             .Select(g => new { Count = g.Count(), Last = g.Max(d => d.ExtractedUtc) })
             .FirstOrDefaultAsync(ct);
 
-        return $"{sid}-{extracted?.Count ?? 0}-{extracted?.Last?.Ticks ?? 0}";
+        return $"{sid}-{extracted?.Count ?? 0}-{extracted?.Last?.Ticks ?? 0}-L{live}";
     }
 
     private static Task<long?> AuthoritativeSnapshotIdAsync(AppDbContext db, long requestId, CancellationToken ct) =>
@@ -52,7 +55,7 @@ public sealed class ChargeLitigationService(AppDbContext db, IMemoryCache cache)
         var runId = await db.Requests.AsNoTracking().Where(r => r.RequestId == requestId)
             .Select(r => r.LatestCompletedIngestionRunId).FirstOrDefaultAsync(ct);
         var snapshotId = await AuthoritativeSnapshotIdAsync(db, requestId, ct);
-        var version = await SnapshotVersionAsync(db, snapshotId, ct);
+        var version = await SnapshotVersionAsync(db, requestId, snapshotId, ct);
         var openChargeCount = await db.RocCharges.AsNoTracking()
             .CountAsync(c => c.RequestId == requestId && c.SatisfactionDate == null && c.ChargeStatus != "Satisfied", ct);
         if (openChargeCount == 0) return ChargeLitigationSummary.Empty with { SnapshotId = snapshotId, Version = version };
@@ -69,7 +72,7 @@ public sealed class ChargeLitigationService(AppDbContext db, IMemoryCache cache)
 
         // Match the tab's current-report/fallback rule and key the cache on that exact evidence.
         var snapshotId = await AuthoritativeSnapshotIdAsync(db, requestId, ct);
-        var version = await SnapshotVersionAsync(db, snapshotId, ct);
+        var version = await SnapshotVersionAsync(db, requestId, snapshotId, ct);
 
         var openChargeCount = await db.RocCharges.AsNoTracking()
             .CountAsync(c => c.RequestId == requestId && c.SatisfactionDate == null && c.ChargeStatus != "Satisfied", ct);
