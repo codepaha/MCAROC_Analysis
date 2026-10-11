@@ -599,6 +599,8 @@ public sealed class ConsumerSourceClientTests
     [InlineData("CC/599/2017", "DC/497/CC/599/2017", true)]
     [InlineData("NC/RP/836/2005", "NC/RP/836/2005", true)]
     [InlineData("RP/836/2005", "NC/RP/836/2005", true)]
+    [InlineData("599/2017", "DC/497/CC/599/2017", false)] // Bare partial number missing case type must be rejected
+    [InlineData("DC/497/CC/599/2017", "599/2017", false)]
     [InlineData("DC/497/CC/599/2017", "DC/497/CC/600/2017", false)]
     [InlineData("DC/497/CC/599/2017", "DC/123/CC/599/2017", false)]
     [InlineData("DC/497/CC/599/2017", "DC/497/EA/599/2017", false)]
@@ -607,6 +609,37 @@ public sealed class ConsumerSourceClientTests
     public void IsCaseNumberMatch_accurately_validates_identity_and_rejects_mismatches(string req, string ret, bool expected)
     {
         Assert.Equal(expected, ConsumerClient.IsCaseNumberMatch(req, ret));
+    }
+
+    [Fact]
+    public async Task GetCaseStatusAsync_WhenLookupIsPartialNumberWithoutType_RejectsMatchAndReturnsError()
+    {
+        var responseJson = """
+        {
+          "status": 200,
+          "data": {
+            "caseNumber": "DC/497/CC/599/2017",
+            "fillingReferenceNumber": 100000651664,
+            "caseStage": "DISPOSED",
+            "complainant": "JOHN DOE",
+            "respondent": "ABC CORP"
+          }
+        }
+        """;
+
+        var client = CreateClient((req, ct) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(responseJson, Encoding.UTF8, "application/json")
+        }));
+
+        // Requested bare partial number "599/2017" without establishing case type CC
+        var result = await client.GetCaseStatusAsync("599/2017");
+
+        Assert.True(result.IsError);
+        Assert.Null(result.Case);
+        Assert.Contains("mismatch", result.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("599/2017", result.Message);
+        Assert.Contains("DC/497/CC/599/2017", result.Message);
     }
 
     private sealed class DelayCapturingTimeProvider : TimeProvider

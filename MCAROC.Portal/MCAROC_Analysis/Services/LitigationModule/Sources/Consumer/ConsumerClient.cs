@@ -371,8 +371,11 @@ public sealed class ConsumerClient : IConsumerClient
     }
 
     /// <summary>Validates that the returned case number matches the requested case number.
-    /// Supports exact matches and normalized display tail matching (e.g. "CC/599/2017" matching "DC/497/CC/599/2017").
-    /// Rejects mismatched sequence numbers, years, case types, or conflicting court prefixes.</summary>
+    /// Supports exact matches, matching complete normalized display (TYPE/NUMBER/YEAR),
+    /// and suffix matching only when the shorter side is a supported complete shape (TYPE/NUMBER/YEAR)
+    /// against a full portal number (e.g. "CC/599/2017" matching "DC/497/CC/599/2017").
+    /// Rejects partial numbers (e.g. bare "599/2017" missing case type), mismatched sequence numbers,
+    /// years, case types, or conflicting court prefixes.</summary>
     public static bool IsCaseNumberMatch(string requested, string returned)
     {
         if (string.IsNullOrWhiteSpace(requested) || string.IsNullOrWhiteSpace(returned))
@@ -391,40 +394,40 @@ public sealed class ConsumerClient : IConsumerClient
         var reqParts = CaseNumberNormaliser.Parse(new CaseNumberInput(CaseNumber: requested));
         var retParts = CaseNumberNormaliser.Parse(new CaseNumberInput(CaseNumber: returned));
 
+        // Both are complete case numbers (type, number, year)
         if (reqParts.Completeness == CaseNumberCompleteness.Complete &&
             retParts.Completeness == CaseNumberCompleteness.Complete)
         {
-            if (!string.Equals(reqParts.Display, retParts.Display, StringComparison.OrdinalIgnoreCase))
+            if (string.Equals(reqParts.Display, retParts.Display, StringComparison.OrdinalIgnoreCase))
             {
-                return false;
-            }
+                // Display matches (e.g. "CC/599/2017"). If both have portal numbers, verify they don't conflict.
+                if (!string.IsNullOrWhiteSpace(reqParts.PortalNumber) &&
+                    !string.IsNullOrWhiteSpace(retParts.PortalNumber) &&
+                    !string.Equals(reqParts.PortalNumber, retParts.PortalNumber, StringComparison.OrdinalIgnoreCase))
+                {
+                    return false;
+                }
 
-            if (!string.IsNullOrWhiteSpace(reqParts.PortalNumber) &&
-                !string.IsNullOrWhiteSpace(retParts.PortalNumber) &&
-                !string.Equals(reqParts.PortalNumber, retParts.PortalNumber, StringComparison.OrdinalIgnoreCase))
-            {
-                return false;
+                return true;
             }
         }
 
+        // If one side is a complete short form (TYPE/NUMBER/YEAR) and the other is a full portal number (DC/... or NC/... or SC/...)
+        // verify that the complete short form matches the 3-segment suffix of the full portal number.
+        // Partial numbers (e.g. "599/2017" without case type) are explicitly rejected.
         var reqSegs = reqClean.Split('/', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
         var retSegs = retClean.Split('/', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 
-        if (reqSegs.Length == retSegs.Length)
+        if (reqSegs.Length == 3 && retSegs.Length > 3 && reqParts.Completeness == CaseNumberCompleteness.Complete)
         {
-            return reqSegs.SequenceEqual(retSegs, StringComparer.OrdinalIgnoreCase);
+            var retSuffix = retSegs.Skip(retSegs.Length - 3).ToArray();
+            return reqSegs.SequenceEqual(retSuffix, StringComparer.OrdinalIgnoreCase);
         }
 
-        if (reqSegs.Length < retSegs.Length)
+        if (retSegs.Length == 3 && reqSegs.Length > 3 && retParts.Completeness == CaseNumberCompleteness.Complete)
         {
-            var tail = retSegs.Skip(retSegs.Length - reqSegs.Length).ToArray();
-            return tail.SequenceEqual(reqSegs, StringComparer.OrdinalIgnoreCase);
-        }
-
-        if (reqSegs.Length > retSegs.Length)
-        {
-            var tail = reqSegs.Skip(reqSegs.Length - retSegs.Length).ToArray();
-            return tail.SequenceEqual(retSegs, StringComparer.OrdinalIgnoreCase);
+            var reqSuffix = reqSegs.Skip(reqSegs.Length - 3).ToArray();
+            return retSegs.SequenceEqual(reqSuffix, StringComparer.OrdinalIgnoreCase);
         }
 
         return false;
