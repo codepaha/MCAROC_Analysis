@@ -31,6 +31,20 @@ public class WholeNamePartyMatcherTests
     public void A_party_that_only_contains_or_resembles_the_name_is_rejected(string? party) =>
         Assert.Equal(PartyMatchOutcome.Rejected, WholeNamePartyMatcher.Match(party, Subject).Outcome);
 
+    [Theory]
+    [InlineData("ALPHA LIMITED THROUGH INDUSTRIAL SERVICES PRIVATE LIMITED", "Alpha Limited")]
+    [InlineData("ALPHA LIMITED THRU LOGISTICS PRIVATE LIMITED", "Alpha Limited")]
+    [InlineData("ALPHA LIMITED REPRESENTED TRADING COMPANY", "Alpha Limited")]
+    public void A_distinct_name_that_merely_contains_a_representation_word_is_not_the_subject(string party, string subject) =>
+        Assert.NotEqual(PartyMatchOutcome.Verified, WholeNamePartyMatcher.Match(party, [subject]).Outcome);
+
+    [Theory]
+    [InlineData("Kotak Mahindra Bank Limited THR. ITS DIRECTOR")]
+    [InlineData("Kotak Mahindra Bank Limited represented by its Manager")]
+    [InlineData("Kotak Mahindra Bank Limited rep. by its Authorised Officer")]
+    public void Recognised_representation_phrases_are_still_stripped(string party) =>
+        Assert.Equal(PartyMatchOutcome.Verified, WholeNamePartyMatcher.Match(party, ["Kotak Mahindra Bank Limited"]).Outcome);
+
     [Fact]
     public void Extra_words_after_the_name_are_named_as_the_reason()
     {

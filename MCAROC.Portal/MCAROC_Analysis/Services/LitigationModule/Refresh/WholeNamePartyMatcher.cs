@@ -57,7 +57,9 @@ public static partial class WholeNamePartyMatcher
     private static string StripLegalForm(string canonical) =>
         string.Join(' ', canonical.Split(' ', StringSplitOptions.RemoveEmptyEntries).Where(w => !LegalFormWords.Contains(w)));
 
-    [GeneratedRegex(@"\b(?:THROUGH|THR\.?|THRU|REPRESENTED\s+BY|REP\.?\s+BY|REPD\.?\s+BY|AUTHORI[SZ]ED\s+SIGNATORY|ITS\s+(?:DIRECTOR|MANAGING|AUTHORI[SZ]ED|PROPRIETOR|PARTNER)).*$", RegexOptions.CultureInvariant)]
+    // Only recognised representation phrases are cut: "through its ...", "represented by ...", "rep. by ...", "its director/partner/...". A bare "through" is never
+    // enough, because a different party can contain the word ("ALPHA LIMITED THROUGH INDUSTRIAL SERVICES PRIVATE LIMITED" is not ALPHA LIMITED).
+    [GeneratedRegex(@"\b(?:(?:THROUGH|THR\.?|THRU)\s+ITS\b|REPRESENTED\s+BY\b|REP\.?\s+BY\b|REPD\.?\s+BY\b|ITS\s+(?:MANAGING\s+DIRECTOR|DIRECTOR|AUTHORI[SZ]ED|PROPRIETOR|PARTNER)\b).*$", RegexOptions.CultureInvariant)]
     private static partial Regex RepresentationTail();
 
     [GeneratedRegex(@"(?:&|\bAND\b)\s*(?:ANR|ANOTHER|ORS|OTHERS|ORS\.|ANR\.)\b\.?", RegexOptions.CultureInvariant)]
