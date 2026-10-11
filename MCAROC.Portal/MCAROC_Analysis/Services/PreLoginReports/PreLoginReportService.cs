@@ -171,7 +171,8 @@ public sealed class PreLoginReportService(InstaFinancialsClient client, IWebHost
 
         var legalCaseDetailsTable = FindTableAfterHeading(body, "Details of legal cases")
             ?? throw new PreLoginReportException("The selected report template is invalid.");
-        if (data.LegalCases?.Cases is { Count: > 0 } cases)
+        var activeCases = data.LegalCases?.Cases?.Where(c => !c.IsExcludedFromReport).ToList() ?? [];
+        if (activeCases.Count > 0)
         {
             var templateRows = legalCaseDetailsTable.Elements<TableRow>().ToList();
             if (templateRows.Count != 9) throw new PreLoginReportException("The selected report template is invalid.");
@@ -179,7 +180,7 @@ public sealed class PreLoginReportService(InstaFinancialsClient client, IWebHost
             if (prototypeCells.Count != 2) throw new PreLoginReportException("The selected report template is invalid.");
             foreach (var row in templateRows) row.Remove();
 
-            foreach (var (legalCase, index) in cases.Select((lc, i) => (lc, i)))
+            foreach (var (legalCase, index) in activeCases.Select((lc, i) => (lc, i)))
             {
                 var fields = new (string Label, string Value)[]
                 {

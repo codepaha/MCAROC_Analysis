@@ -1,17 +1,29 @@
+using System.Data;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using MCAROC_Analysis.Data;
 using MCAROC_Analysis.Data.Entities;
 using MCAROC_Analysis.Models;
 using MCAROC_Analysis.Services.CompanyMaster;
+using MCAROC_Analysis.Services.LitigationData;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 
 namespace MCAROC_Analysis.Services.PreLoginReports;
 
-public sealed class PreLoginReportJobService(AppDbContext db, PreLoginReportQueue queue, PreLoginReportService reports, IWebHostEnvironment environment,
-    BorrowerAssignmentIntake? intake = null, BorrowerAssignmentIdentityResolver? identityResolver = null)
+public sealed class PreLoginReportJobService(
+    AppDbContext db,
+    PreLoginReportQueue queue,
+    PreLoginReportService reports,
+    IWebHostEnvironment environment,
+    BorrowerAssignmentIntake? intake = null,
+    BorrowerAssignmentIdentityResolver? identityResolver = null,
+    PreLoginLitigationTargetQueue? targetQueue = null,
+    IOptions<BprLitigationOptions>? litigationOptions = null)
 {
+    private readonly PreLoginLitigationTargetQueue? targetQueue = targetQueue;
+
     public async Task<Guid> QueueRequestAsync(IFormFile? requestFile, string? requestText, CancellationToken ct)
     {
         if (requestFile is not { Length: > 0 } && string.IsNullOrWhiteSpace(requestText))
@@ -306,12 +318,39 @@ public sealed class PreLoginReportJobService(AppDbContext db, PreLoginReportQueu
         // off Company.IsPartnership, not LegalCases — Company/LLP jobs can carry LegalCases too now (#221).
         var identifier = data.Company.LitigationOnly ? data.Company.RegistrationNumber : job.Cin;
         var generated = await reports.GenerateFromDataAsync(identifier, format, data, cancellationToken);
-        if (!string.IsNullOrWhiteSpace(job.ReportStoragePath) && File.Exists(job.ReportStoragePath)) File.Delete(job.ReportStoragePath);
-        job.ReportStoragePath = await StoreReportAsync(job.PreLoginReportJobId, generated, cancellationToken);
+
+        var directory = Path.Combine(environment.ContentRootPath, "App_Data", "PreLoginReports");
+        Directory.CreateDirectory(directory);
+        var nextVersion = job.DataVersion + 1;
+        var attemptId = Guid.NewGuid().ToString("N");
+        var versionedFileName = $"{job.PreLoginReportJobId}-v{nextVersion}-{attemptId}-{generated.FileName}";
+        var newReportPath = Path.Combine(directory, versionedFileName);
+        await File.WriteAllBytesAsync(newReportPath, generated.Bytes, cancellationToken);
+
+        var oldReportPath = job.ReportStoragePath;
+        job.ReportStoragePath = newReportPath;
         job.DataJson = JsonSerializer.Serialize(data);
         job.Cin = identifier;
+        job.DataVersion++;
         job.Status = PreLoginReportJobStatus.Completed; job.ProgressPercent = 100; job.CompletedUtc = DateTime.UtcNow;
-        await db.SaveChangesAsync(cancellationToken);
+
+        try
+        {
+            await db.SaveChangesAsync(cancellationToken);
+        }
+        catch (DbUpdateConcurrencyException)
+        {
+            if (File.Exists(newReportPath))
+            {
+                try { File.Delete(newReportPath); } catch { }
+            }
+            throw;
+        }
+
+        if (!string.IsNullOrWhiteSpace(oldReportPath) && !string.Equals(oldReportPath, newReportPath, StringComparison.OrdinalIgnoreCase) && File.Exists(oldReportPath))
+        {
+            try { File.Delete(oldReportPath); } catch { }
+        }
     }
 
     private async Task<string> StoreReportAsync(long jobId, GeneratedReport generated, CancellationToken cancellationToken)
@@ -335,14 +374,19 @@ public sealed class PreLoginReportJobService(AppDbContext db, PreLoginReportQueu
     public async Task ProcessAsync(long id, CancellationToken cancellationToken)
     {
         var job = await FindAsync(id, cancellationToken);
-        if (job is null || job.Status != PreLoginReportJobStatus.Queued) return;
+        if (job is null || (job.Status != PreLoginReportJobStatus.Queued && job.Status != PreLoginReportJobStatus.AwaitingLitigation && job.Status != PreLoginReportJobStatus.Completed)) return;
         if (job.NextAttemptUtc is { } next && next > DateTime.UtcNow) { Schedule(id, next - DateTime.UtcNow); return; }
         var now = DateTime.UtcNow;
-        var claimed = await db.PreLoginReportJobs.Where(x => x.PreLoginReportJobId == id && x.Status == PreLoginReportJobStatus.Queued)
-            .ExecuteUpdateAsync(update => update.SetProperty(x => x.Status, PreLoginReportJobStatus.Fetching).SetProperty(x => x.ProgressPercent, 10)
-                .SetProperty(x => x.StartedUtc, x => x.StartedUtc ?? now).SetProperty(x => x.AttemptCount, x => x.AttemptCount + 1), cancellationToken);
-        if (claimed == 0) return;
-        await db.Entry(job).ReloadAsync(cancellationToken);
+
+        if (job.Status == PreLoginReportJobStatus.Queued)
+        {
+            var claimed = await db.PreLoginReportJobs.Where(x => x.PreLoginReportJobId == id && x.Status == PreLoginReportJobStatus.Queued)
+                .ExecuteUpdateAsync(update => update.SetProperty(x => x.Status, PreLoginReportJobStatus.Fetching).SetProperty(x => x.ProgressPercent, 10)
+                    .SetProperty(x => x.StartedUtc, x => x.StartedUtc ?? now).SetProperty(x => x.AttemptCount, x => x.AttemptCount + 1), cancellationToken);
+            if (claimed == 0) return;
+            await db.Entry(job).ReloadAsync(cancellationToken);
+        }
+
         try
         {
             var format = Enum.Parse<PreLoginReportFormat>(job.Format);
@@ -374,9 +418,8 @@ public sealed class PreLoginReportJobService(AppDbContext db, PreLoginReportQueu
                 job.SubmittedCompanyName = assignment.CompanyDetails.CompanyName;
                 job.Cin = intakeData.McaIdentifier ?? assignment.CompanyDetails.Cin ?? intakeData.Company.RegistrationNumber;
                 if (job.Cin == "-") job.Cin = "ASSIGN-" + job.BatchId.ToString("N")[..20];
-                // A company / LLP whose identity the MCA master confirmed goes straight on to the report; the
-                // entity type follows from that record. Everything else waits only for what is actually missing:
-                // an ambiguous identity, unreadable details, or a litigation-only borrower's case results.
+                job.DataVersion = job.DataVersion + 1;
+
                 if (!identityConfirmed)
                 {
                     reviewReason ??= intakeData.Company.LitigationOnly
@@ -389,17 +432,222 @@ public sealed class PreLoginReportJobService(AppDbContext db, PreLoginReportQueu
                 }
                 await db.SaveChangesAsync(cancellationToken);
             }
+
             var stored = DeserializeStoredData(job.DataJson);
-            var data = stored?.Company.LitigationOnly == true || stored?.LegalCases is not null ? stored! :
-                (await reports.FetchDataAsync(job.Cin, job.SubmittedCompanyName, cancellationToken)) with
-                { Assignment = stored?.Assignment, SourceFileName = stored?.SourceFileName, SourceStoragePath = stored?.SourceStoragePath,
-                    ExtractionModel = stored?.ExtractionModel, McaIdentifier = stored?.McaIdentifier, IdentityResolution = stored?.IdentityResolution };
-            job.DataJson = JsonSerializer.Serialize(data); job.Status = PreLoginReportJobStatus.Generating; job.ProgressPercent = 60;
+
+            // 1. PARTNERSHIP / LITIGATION-ONLY EARLY EXIT (§5: T5, T6)
+            if (stored?.Company.LitigationOnly == true)
+            {
+                job.Status = PreLoginReportJobStatus.Generating; job.ProgressPercent = 60;
+                await db.SaveChangesAsync(cancellationToken);
+                var generatedLit = await reports.GenerateFromDataAsync(job.Cin, format, stored, cancellationToken);
+                job.ReportStoragePath = await StoreReportAsync(job.PreLoginReportJobId, generatedLit, cancellationToken);
+                job.Status = PreLoginReportJobStatus.Completed; job.ProgressPercent = 100; job.CompletedUtc = DateTime.UtcNow; job.FailureReason = null;
+                await db.SaveChangesAsync(cancellationToken);
+                return;
+            }
+
+            // 3. MCA DATA FETCH (T7: double fetch prevented if McaDataFetchedUtc != null)
+            if (job.McaDataFetchedUtc is null)
+            {
+                var fetched = await reports.FetchDataAsync(job.Cin, job.SubmittedCompanyName, cancellationToken);
+                stored = fetched with
+                {
+                    Assignment = stored?.Assignment,
+                    SourceFileName = stored?.SourceFileName,
+                    SourceStoragePath = stored?.SourceStoragePath,
+                    ExtractionModel = stored?.ExtractionModel,
+                    McaIdentifier = stored?.McaIdentifier,
+                    IdentityResolution = stored?.IdentityResolution
+                };
+                job.DataJson = JsonSerializer.Serialize(stored);
+                job.McaDataFetchedUtc = DateTime.UtcNow;
+                job.DataVersion = job.DataVersion + 1;
+                job.ProgressPercent = 30;
+                await db.SaveChangesAsync(cancellationToken);
+            }
+
+            // 4. LITIGATION CHILD DISPATCH (only when litigation target queue is configured)
+            if (targetQueue is null)
+            {
+                job.Status = PreLoginReportJobStatus.Generating;
+                job.ProgressPercent = 60;
+                await db.SaveChangesAsync(cancellationToken);
+                var legacyGenerated = await reports.GenerateFromDataAsync(job.Cin, format, stored, cancellationToken);
+                job.ReportStoragePath = await StoreReportAsync(job.PreLoginReportJobId, legacyGenerated, cancellationToken);
+                job.Status = PreLoginReportJobStatus.Completed;
+                job.ProgressPercent = 100;
+                job.CompletedUtc = DateTime.UtcNow;
+                job.FailureReason = null;
+                await db.SaveChangesAsync(cancellationToken);
+                return;
+            }
+
+            var borrowerTarget = await db.PreLoginLitigationTargets
+                .FirstOrDefaultAsync(t => t.PreLoginReportJobId == job.PreLoginReportJobId && t.TargetKind == PreLoginTargetKind.Borrower && t.TargetIndex == 0, cancellationToken);
+
+            if (borrowerTarget is null)
+            {
+                var companyName = job.SubmittedCompanyName ?? stored?.Company.Name ?? job.Cin;
+                var keywords = new List<string> { companyName };
+                if (!string.IsNullOrWhiteSpace(stored?.Company.Name) && stored.Company.Name != companyName)
+                    keywords.Add(stored.Company.Name);
+
+                borrowerTarget = new PreLoginLitigationTarget
+                {
+                    PreLoginReportJobId = job.PreLoginReportJobId,
+                    TargetKind = PreLoginTargetKind.Borrower,
+                    TargetIndex = 0,
+                    TargetName = companyName,
+                    EntityType = "company",
+                    ExactMatch = litigationOptions?.Value.ExactMatchForCompanies ?? false,
+                    KeywordsJson = JsonSerializer.Serialize(keywords.Distinct().ToList()),
+                    Status = "Pending",
+                    CreatedUtc = DateTime.UtcNow,
+                    AttemptVersion = 1
+                };
+                db.PreLoginLitigationTargets.Add(borrowerTarget);
+                job.Status = PreLoginReportJobStatus.AwaitingLitigation;
+                job.ProgressPercent = 40;
+                await db.SaveChangesAsync(cancellationToken);
+
+                targetQueue.Enqueue(borrowerTarget.PreLoginLitigationTargetId);
+                return;
+            }
+
+            // 5. COMPLETION & GENERATION
+            var allTargets = await db.PreLoginLitigationTargets
+                .Where(t => t.PreLoginReportJobId == job.PreLoginReportJobId)
+                .OrderBy(t => t.TargetKind)
+                .ThenBy(t => t.TargetIndex)
+                .ToListAsync(cancellationToken);
+
+            var borrower = allTargets.FirstOrDefault(t => t.TargetKind == PreLoginTargetKind.Borrower);
+            if (borrower != null)
+            {
+                if (borrower.Status is "Pending" or "Authenticating" or "Registering" or "Polling")
+                {
+                    if (job.Status != PreLoginReportJobStatus.AwaitingLitigation)
+                    {
+                        job.Status = PreLoginReportJobStatus.AwaitingLitigation;
+                        job.ProgressPercent = 40;
+                        await db.SaveChangesAsync(cancellationToken);
+                    }
+                    return;
+                }
+
+                if (borrower.Status == "AmbiguousRegistration")
+                {
+                    job.Status = PreLoginReportJobStatus.AwaitingReview;
+                    job.ProgressPercent = 50;
+                    job.FailureReason = borrower.FailureReason ?? $"Litigation search for {borrower.TargetName} requires manual reconciliation (Ambiguous Registration).";
+                    await db.SaveChangesAsync(cancellationToken);
+                    return;
+                }
+
+                if (borrower.Status == "Failed")
+                {
+                    job.Status = PreLoginReportJobStatus.AwaitingReview;
+                    job.ProgressPercent = 50;
+                    job.FailureReason = borrower.FailureReason ?? $"Litigation search for {borrower.TargetName} failed.";
+                    await db.SaveChangesAsync(cancellationToken);
+                    return;
+                }
+            }
+
+            // Borrower is Completed (or absent). Collect incoming cases from all completed targets
+            var allIncomingCases = new List<LegalCaseRecord>();
+            foreach (var t in allTargets.Where(t => t.Status == "Completed"))
+            {
+                if (t.NoLitigationFound == true || t.RawReportBytes is null or { Length: 0 })
+                    continue;
+
+                IEnumerable<LegalCaseRecord> targetCases;
+                if (string.Equals(t.ReportFormat, "Json", StringComparison.OrdinalIgnoreCase))
+                {
+                    var json = System.Text.Encoding.UTF8.GetString(t.RawReportBytes);
+                    var bprReport = BprLitigationReportParser.Parse(json);
+                    targetCases = bprReport.ToLegalCaseRecords();
+                }
+                else
+                {
+                    using var ms = new MemoryStream(t.RawReportBytes);
+                    targetCases = LegalCaseFileParser.Parse(ms, "report.xlsx");
+                }
+
+                if (t.TargetKind == PreLoginTargetKind.Director)
+                {
+                    targetCases = targetCases.Select(c =>
+                    {
+                        if (c.CaseDetails.Contains("name-match only", StringComparison.OrdinalIgnoreCase))
+                            return c;
+
+                        var originDisclosure = $"Director: {t.TargetName} (name-match only)";
+                        var details = string.IsNullOrWhiteSpace(c.CaseDetails) || c.CaseDetails == "-"
+                            ? originDisclosure
+                            : $"{originDisclosure} | {c.CaseDetails}";
+                        return c with { CaseDetails = details };
+                    }).ToList();
+                }
+
+                allIncomingCases.AddRange(targetCases);
+            }
+
+            var reconciledLegalCases = LitigationCaseReconciliationService.ReconcileCases(stored?.LegalCases, allIncomingCases);
+
+            var updatedData = (stored ?? new InstaReportData(new InstaCompany(job.SubmittedCompanyName ?? job.Cin, "-", job.Cin, "Company", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-"), [], []))
+                with { LegalCases = reconciledLegalCases };
+
+            var updatedJson = JsonSerializer.Serialize(updatedData);
+
+            // Atomic write enforcing DataVersion increment on tracked entity (T29):
+            job.DataJson = updatedJson;
+            job.DataVersion++;
+            job.Status = PreLoginReportJobStatus.Generating;
+            job.ProgressPercent = 80;
             await db.SaveChangesAsync(cancellationToken);
-            var generated = await reports.GenerateFromDataAsync(job.Cin, format, data, cancellationToken);
-            job.ReportStoragePath = await StoreReportAsync(job.PreLoginReportJobId, generated, cancellationToken);
-            job.Status = PreLoginReportJobStatus.Completed; job.ProgressPercent = 100; job.CompletedUtc = DateTime.UtcNow; job.FailureReason = null;
-            await db.SaveChangesAsync(cancellationToken);
+
+            var generated = await reports.GenerateFromDataAsync(job.Cin, format, updatedData, cancellationToken);
+
+            var directory = Path.Combine(environment.ContentRootPath, "App_Data", "PreLoginReports");
+            Directory.CreateDirectory(directory);
+            var nextVersion = job.DataVersion + 1;
+            var attemptId = Guid.NewGuid().ToString("N");
+            var versionedFileName = $"{job.PreLoginReportJobId}-v{nextVersion}-{attemptId}-{generated.FileName}";
+            var newReportPath = Path.Combine(directory, versionedFileName);
+            await File.WriteAllBytesAsync(newReportPath, generated.Bytes, cancellationToken);
+
+            var oldReportPath = job.ReportStoragePath;
+            job.ReportStoragePath = newReportPath;
+            job.DataVersion++;
+            job.Status = PreLoginReportJobStatus.Completed;
+            job.ProgressPercent = 100;
+            job.CompletedUtc = DateTime.UtcNow;
+            job.FailureReason = null;
+
+            try
+            {
+                await db.SaveChangesAsync(cancellationToken);
+            }
+            catch (DbUpdateConcurrencyException)
+            {
+                if (File.Exists(newReportPath))
+                {
+                    try { File.Delete(newReportPath); } catch { }
+                }
+                throw;
+            }
+
+            if (!string.IsNullOrWhiteSpace(oldReportPath) && !string.Equals(oldReportPath, newReportPath, StringComparison.OrdinalIgnoreCase) && File.Exists(oldReportPath))
+            {
+                try { File.Delete(oldReportPath); } catch { }
+            }
+        }
+        catch (DbUpdateConcurrencyException)
+        {
+            try { await db.Entry(job).ReloadAsync(cancellationToken); } catch { }
+            queue.Enqueue(job.PreLoginReportJobId);
+            return;
         }
         catch (PreLoginReportException ex) { await FailOrRetryAsync(job, ex.Message, ex.Retryable, cancellationToken); }
         catch (Exception) { await FailOrRetryAsync(job, "Unexpected report processing failure.", retryable: true, cancellationToken); }
@@ -407,21 +655,24 @@ public sealed class PreLoginReportJobService(AppDbContext db, PreLoginReportQueu
 
     private async Task FailOrRetryAsync(PreLoginReportJob job, string reason, bool retryable, CancellationToken cancellationToken)
     {
+        try { await db.Entry(job).ReloadAsync(cancellationToken); } catch { }
         job.FailureReason = reason;
         if (retryable && job.AttemptCount < 3)
         {
             job.Status = PreLoginReportJobStatus.Queued; job.ProgressPercent = 0; job.NextAttemptUtc = DateTime.UtcNow.AddSeconds(20 * job.AttemptCount);
-            await db.SaveChangesAsync(cancellationToken);
+            job.DataVersion++;
+            try { await db.SaveChangesAsync(cancellationToken); } catch { }
             Schedule(job.PreLoginReportJobId, TimeSpan.FromSeconds(20 * job.AttemptCount));
             return;
         }
         job.Status = PreLoginReportJobStatus.Failed; job.ProgressPercent = 100; job.CompletedUtc = DateTime.UtcNow;
-        await db.SaveChangesAsync(cancellationToken);
+        job.DataVersion++;
+        try { await db.SaveChangesAsync(cancellationToken); } catch { }
     }
 
     private void Schedule(long jobId, TimeSpan delay) => _ = Task.Run(async () => { await Task.Delay(delay); queue.Enqueue(jobId); });
 
-    private static InstaReportData? DeserializeStoredData(string? dataJson)
+    public static InstaReportData? DeserializeStoredData(string? dataJson)
     {
         if (string.IsNullOrWhiteSpace(dataJson)) return null;
         var data = JsonSerializer.Deserialize<InstaReportData>(dataJson);
@@ -431,4 +682,635 @@ public sealed class PreLoginReportJobService(AppDbContext db, PreLoginReportQueu
     private static InstaLegalCases ToLegalCases(EditableLegalCasesViewModel cases) => new(
         cases.SupremeCourt, cases.HighCourt, cases.DistrictCourt, cases.ConsumerForum, cases.ItatTax,
         cases.NcltNclat, cases.DrtDrat, cases.Rera, cases.NgtOthers);
+
+    public async Task<PreLoginReportJob?> GetAssignmentWithTargetsAsync(Guid batch, long id, CancellationToken ct) =>
+        await db.PreLoginReportJobs
+            .Include(j => j.LitigationTargets)
+            .FirstOrDefaultAsync(j => j.PreLoginReportJobId == id && j.BatchId == batch, ct);
+
+    public async Task ProvideVendorJobIdAsync(Guid batch, long id, long targetId, string vendorJobId, string? evidenceNote, int submittedAttemptVersion, CancellationToken ct)
+    {
+        var job = await FindInBatchAsync(batch, id, ct) ?? throw new PreLoginReportNotFoundException();
+        if (string.IsNullOrWhiteSpace(vendorJobId) || vendorJobId.Trim().Length > 100 || !Regex.IsMatch(vendorJobId.Trim(), @"^[a-zA-Z0-9_\-]+$"))
+            throw new PreLoginReportException("Enter a valid alphanumeric vendor job ID up to 100 characters.");
+
+        var cleanJobId = vendorJobId.Trim();
+        var pollTimeout = litigationOptions?.Value.PollTimeoutMinutes > 0 ? litigationOptions.Value.PollTimeoutMinutes : 30;
+        var renewedDeadline = DateTime.UtcNow.AddMinutes(pollTimeout);
+
+        await using var tx = await db.Database.BeginTransactionAsync(IsolationLevel.ReadCommitted, ct);
+        var target = await db.PreLoginLitigationTargets.AsNoTracking()
+            .FirstOrDefaultAsync(t => t.PreLoginLitigationTargetId == targetId && t.PreLoginReportJobId == id, ct);
+
+        if (target is null || target.Status != "AmbiguousRegistration" || target.AttemptVersion != submittedAttemptVersion)
+        {
+            await tx.RollbackAsync(ct);
+            throw new PreLoginConcurrencyException("Target was modified by another operation. Please refresh the page.");
+        }
+
+        var affected = await db.PreLoginLitigationTargets
+            .Where(t => t.PreLoginLitigationTargetId == targetId
+                && t.Status == "AmbiguousRegistration"
+                && t.AttemptVersion == submittedAttemptVersion)
+            .ExecuteUpdateAsync(s => s
+                .SetProperty(t => t.VendorJobId, cleanJobId)
+                .SetProperty(t => t.IsUserSuppliedVendorJobId, true)
+                .SetProperty(t => t.Status, "Polling")
+                .SetProperty(t => t.PollingDeadlineUtc, renewedDeadline)
+                .SetProperty(t => t.NextAttemptUtc, (DateTime?)null)
+                .SetProperty(t => t.AttemptCount, 0)
+                .SetProperty(t => t.LeaseToken, (Guid?)null)
+                .SetProperty(t => t.LeaseExpiresUtc, (DateTime?)null)
+                .SetProperty(t => t.LeaseOwner, (string?)null)
+                .SetProperty(t => t.AttemptVersion, t => t.AttemptVersion + 1)
+                .SetProperty(t => t.StatusMessage, "User provided vendor job ID; polling with affirmative target corroboration.")
+                .SetProperty(t => t.ProgressPercent, 25), ct);
+
+        if (affected == 0)
+        {
+            await tx.RollbackAsync(ct);
+            throw new PreLoginConcurrencyException("Target was modified concurrently by another operation. Please refresh the page.");
+        }
+
+        var reconciliationEvent = new PreLoginLitigationReconciliationEvent
+        {
+            PreLoginLitigationTargetId = targetId,
+            Action = "ProvideVendorJobId",
+            Actor = "Analyst",
+            TimestampUtc = DateTime.UtcNow,
+            PreviousStatus = target.Status,
+            PreviousRegistrationAttemptedUtc = target.RegistrationAttemptedUtc,
+            PreviousVendorJobId = target.VendorJobId,
+            PreviousPollingDeadlineUtc = target.PollingDeadlineUtc,
+            SuppliedVendorJobId = cleanJobId,
+            EvidenceNote = evidenceNote,
+            AttemptVersion = submittedAttemptVersion + 1
+        };
+        db.PreLoginLitigationReconciliationEvents.Add(reconciliationEvent);
+        await db.SaveChangesAsync(ct);
+
+        // Reopen parent job from AwaitingReview to AwaitingLitigation
+        await db.PreLoginReportJobs.Where(j => j.PreLoginReportJobId == id)
+            .ExecuteUpdateAsync(s => s
+                .SetProperty(j => j.Status, PreLoginReportJobStatus.AwaitingLitigation)
+                .SetProperty(j => j.FailureReason, (string?)null)
+                .SetProperty(j => j.ProgressPercent, 40), ct);
+
+        await tx.CommitAsync(ct);
+
+        targetQueue?.Enqueue(targetId);
+        queue.Enqueue(id);
+    }
+
+    public async Task ConfirmNoSearchExistsAsync(Guid batch, long id, long targetId, string evidenceNote, int submittedAttemptVersion, CancellationToken ct)
+    {
+        var job = await FindInBatchAsync(batch, id, ct) ?? throw new PreLoginReportNotFoundException();
+        if (string.IsNullOrWhiteSpace(evidenceNote))
+            throw new PreLoginReportException("An evidence note is required when confirming that no search exists.");
+
+        await using var tx = await db.Database.BeginTransactionAsync(IsolationLevel.ReadCommitted, ct);
+        var target = await db.PreLoginLitigationTargets.AsNoTracking()
+            .FirstOrDefaultAsync(t => t.PreLoginLitigationTargetId == targetId && t.PreLoginReportJobId == id, ct);
+
+        if (target is null || target.Status != "AmbiguousRegistration" || target.AttemptVersion != submittedAttemptVersion)
+        {
+            await tx.RollbackAsync(ct);
+            throw new PreLoginConcurrencyException("Target was modified by another operation. Please refresh the page.");
+        }
+
+        var affected = await db.PreLoginLitigationTargets
+            .Where(t => t.PreLoginLitigationTargetId == targetId
+                && t.Status == "AmbiguousRegistration"
+                && t.AttemptVersion == submittedAttemptVersion)
+            .ExecuteUpdateAsync(s => s
+                .SetProperty(t => t.Status, "Pending")
+                .SetProperty(t => t.VendorJobId, (string?)null)
+                .SetProperty(t => t.IsUserSuppliedVendorJobId, false)
+                .SetProperty(t => t.RegistrationAttemptedUtc, (DateTime?)null)
+                .SetProperty(t => t.RegisteredUtc, (DateTime?)null)
+                .SetProperty(t => t.PollingDeadlineUtc, (DateTime?)null)
+                .SetProperty(t => t.AttemptCount, 0)
+                .SetProperty(t => t.NextAttemptUtc, (DateTime?)null)
+                .SetProperty(t => t.LeaseToken, (Guid?)null)
+                .SetProperty(t => t.LeaseExpiresUtc, (DateTime?)null)
+                .SetProperty(t => t.LeaseOwner, (string?)null)
+                .SetProperty(t => t.AttemptVersion, t => t.AttemptVersion + 1)
+                .SetProperty(t => t.ProgressPercent, 0)
+                .SetProperty(t => t.StatusMessage, "Reset by operator for fresh registration.")
+                .SetProperty(t => t.FailureReason, (string?)null)
+                .SetProperty(t => t.ReportFormat, (string?)null)
+                .SetProperty(t => t.RawReportBytes, (byte[]?)null)
+                .SetProperty(t => t.RawResponseHash, (string?)null)
+                .SetProperty(t => t.RawReportByteLength, (long?)null)
+                .SetProperty(t => t.NoLitigationFound, (bool?)null)
+                .SetProperty(t => t.StartedUtc, (DateTime?)null)
+                .SetProperty(t => t.CompletedUtc, (DateTime?)null), ct);
+
+        if (affected == 0)
+        {
+            await tx.RollbackAsync(ct);
+            throw new PreLoginConcurrencyException("Target was modified concurrently by another operation. Please refresh the page.");
+        }
+
+        var reconciliationEvent = new PreLoginLitigationReconciliationEvent
+        {
+            PreLoginLitigationTargetId = targetId,
+            Action = "ConfirmNoSearchExists",
+            Actor = "Analyst",
+            TimestampUtc = DateTime.UtcNow,
+            PreviousStatus = target.Status,
+            PreviousRegistrationAttemptedUtc = target.RegistrationAttemptedUtc,
+            PreviousVendorJobId = target.VendorJobId,
+            PreviousPollingDeadlineUtc = target.PollingDeadlineUtc,
+            SuppliedVendorJobId = null,
+            EvidenceNote = evidenceNote.Trim(),
+            AttemptVersion = submittedAttemptVersion + 1
+        };
+        db.PreLoginLitigationReconciliationEvents.Add(reconciliationEvent);
+        await db.SaveChangesAsync(ct);
+
+        // Reopen parent job from AwaitingReview to AwaitingLitigation
+        await db.PreLoginReportJobs.Where(j => j.PreLoginReportJobId == id)
+            .ExecuteUpdateAsync(s => s
+                .SetProperty(j => j.Status, PreLoginReportJobStatus.AwaitingLitigation)
+                .SetProperty(j => j.FailureReason, (string?)null)
+                .SetProperty(j => j.ProgressPercent, 40), ct);
+
+        await tx.CommitAsync(ct);
+
+        targetQueue?.Enqueue(targetId);
+        queue.Enqueue(id);
+    }
+
+    public async Task RepollAsync(Guid batch, long id, long targetId, int submittedAttemptVersion, CancellationToken ct)
+    {
+        var job = await FindInBatchAsync(batch, id, ct) ?? throw new PreLoginReportNotFoundException();
+        var pollTimeout = litigationOptions?.Value.PollTimeoutMinutes > 0 ? litigationOptions.Value.PollTimeoutMinutes : 30;
+        var renewedDeadline = DateTime.UtcNow.AddMinutes(pollTimeout);
+
+        await using var tx = await db.Database.BeginTransactionAsync(IsolationLevel.ReadCommitted, ct);
+        var target = await db.PreLoginLitigationTargets.AsNoTracking()
+            .FirstOrDefaultAsync(t => t.PreLoginLitigationTargetId == targetId && t.PreLoginReportJobId == id, ct);
+
+        if (target is null || target.Status != "Failed" || target.VendorJobId is null || target.AttemptVersion != submittedAttemptVersion)
+        {
+            await tx.RollbackAsync(ct);
+            throw new PreLoginConcurrencyException("Target was modified by another operation. Please refresh the page.");
+        }
+
+        var affected = await db.PreLoginLitigationTargets
+            .Where(t => t.PreLoginLitigationTargetId == targetId
+                && t.Status == "Failed"
+                && t.VendorJobId != null
+                && t.AttemptVersion == submittedAttemptVersion)
+            .ExecuteUpdateAsync(s => s
+                .SetProperty(t => t.Status, "Polling")
+                .SetProperty(t => t.PollingDeadlineUtc, renewedDeadline)
+                .SetProperty(t => t.NextAttemptUtc, (DateTime?)null)
+                .SetProperty(t => t.AttemptCount, 0)
+                .SetProperty(t => t.LeaseToken, (Guid?)null)
+                .SetProperty(t => t.LeaseExpiresUtc, (DateTime?)null)
+                .SetProperty(t => t.LeaseOwner, (string?)null)
+                .SetProperty(t => t.AttemptVersion, t => t.AttemptVersion + 1)
+                .SetProperty(t => t.StatusMessage, "User requested re-poll; polling with renewed deadline.")
+                .SetProperty(t => t.ProgressPercent, 30), ct);
+
+        if (affected == 0)
+        {
+            await tx.RollbackAsync(ct);
+            throw new PreLoginConcurrencyException("Target was modified concurrently by another operation. Please refresh the page.");
+        }
+
+        var reconciliationEvent = new PreLoginLitigationReconciliationEvent
+        {
+            PreLoginLitigationTargetId = targetId,
+            Action = "Repoll",
+            Actor = "Analyst",
+            TimestampUtc = DateTime.UtcNow,
+            PreviousStatus = target.Status,
+            PreviousRegistrationAttemptedUtc = target.RegistrationAttemptedUtc,
+            PreviousVendorJobId = target.VendorJobId,
+            PreviousPollingDeadlineUtc = target.PollingDeadlineUtc,
+            SuppliedVendorJobId = target.VendorJobId,
+            EvidenceNote = "User initiated re-poll with renewed timeout window.",
+            AttemptVersion = submittedAttemptVersion + 1
+        };
+        db.PreLoginLitigationReconciliationEvents.Add(reconciliationEvent);
+        await db.SaveChangesAsync(ct);
+
+        // Reopen parent job from AwaitingReview to AwaitingLitigation
+        await db.PreLoginReportJobs.Where(j => j.PreLoginReportJobId == id)
+            .ExecuteUpdateAsync(s => s
+                .SetProperty(j => j.Status, PreLoginReportJobStatus.AwaitingLitigation)
+                .SetProperty(j => j.FailureReason, (string?)null)
+                .SetProperty(j => j.ProgressPercent, 40), ct);
+
+        await tx.CommitAsync(ct);
+
+        targetQueue?.Enqueue(targetId);
+        queue.Enqueue(id);
+    }
+
+    public async Task RetryCleanFailureAsync(Guid batch, long id, long targetId, int submittedAttemptVersion, CancellationToken ct)
+    {
+        var job = await FindInBatchAsync(batch, id, ct) ?? throw new PreLoginReportNotFoundException();
+
+        await using var tx = await db.Database.BeginTransactionAsync(IsolationLevel.ReadCommitted, ct);
+        var target = await db.PreLoginLitigationTargets.AsNoTracking()
+            .FirstOrDefaultAsync(t => t.PreLoginLitigationTargetId == targetId && t.PreLoginReportJobId == id, ct);
+
+        if (target is null || target.Status != "Failed" || target.VendorJobId is not null || target.AttemptVersion != submittedAttemptVersion)
+        {
+            await tx.RollbackAsync(ct);
+            throw new PreLoginConcurrencyException("Target was modified by another operation. Please refresh the page.");
+        }
+
+        var affected = await db.PreLoginLitigationTargets
+            .Where(t => t.PreLoginLitigationTargetId == targetId
+                && t.Status == "Failed"
+                && t.VendorJobId == null
+                && t.AttemptVersion == submittedAttemptVersion)
+            .ExecuteUpdateAsync(s => s
+                .SetProperty(t => t.Status, "Pending")
+                .SetProperty(t => t.NextAttemptUtc, (DateTime?)null)
+                .SetProperty(t => t.AttemptCount, 0)
+                .SetProperty(t => t.LeaseToken, (Guid?)null)
+                .SetProperty(t => t.LeaseExpiresUtc, (DateTime?)null)
+                .SetProperty(t => t.LeaseOwner, (string?)null)
+                .SetProperty(t => t.AttemptVersion, t => t.AttemptVersion + 1)
+                .SetProperty(t => t.StatusMessage, "Retry clean failure initiated.")
+                .SetProperty(t => t.ProgressPercent, 0), ct);
+
+        if (affected == 0)
+        {
+            await tx.RollbackAsync(ct);
+            throw new PreLoginConcurrencyException("Target was modified concurrently by another operation. Please refresh the page.");
+        }
+
+        var reconciliationEvent = new PreLoginLitigationReconciliationEvent
+        {
+            PreLoginLitigationTargetId = targetId,
+            Action = "Retry",
+            Actor = "Analyst",
+            TimestampUtc = DateTime.UtcNow,
+            PreviousStatus = target.Status,
+            PreviousRegistrationAttemptedUtc = target.RegistrationAttemptedUtc,
+            PreviousVendorJobId = null,
+            PreviousPollingDeadlineUtc = null,
+            SuppliedVendorJobId = null,
+            EvidenceNote = "User initiated clean retry.",
+            AttemptVersion = submittedAttemptVersion + 1
+        };
+        db.PreLoginLitigationReconciliationEvents.Add(reconciliationEvent);
+        await db.SaveChangesAsync(ct);
+
+        // Reopen parent job from AwaitingReview to AwaitingLitigation
+        await db.PreLoginReportJobs.Where(j => j.PreLoginReportJobId == id)
+            .ExecuteUpdateAsync(s => s
+                .SetProperty(j => j.Status, PreLoginReportJobStatus.AwaitingLitigation)
+                .SetProperty(j => j.FailureReason, (string?)null)
+                .SetProperty(j => j.ProgressPercent, 40), ct);
+
+        await tx.CommitAsync(ct);
+
+        targetQueue?.Enqueue(targetId);
+        queue.Enqueue(id);
+    }
+
+    public async Task<long> SearchDirectorAsync(Guid batch, long id, string directorName, string? dinPan, int targetIndex, CancellationToken ct)
+    {
+        var job = await FindInBatchAsync(batch, id, ct) ?? throw new PreLoginReportNotFoundException();
+        if (string.IsNullOrWhiteSpace(directorName))
+            throw new PreLoginReportException("Director name is required.");
+
+        var existingTarget = await db.PreLoginLitigationTargets
+            .FirstOrDefaultAsync(t => t.PreLoginReportJobId == id && t.TargetKind == PreLoginTargetKind.Director && t.TargetIndex == targetIndex, ct);
+
+        long targetId;
+        if (existingTarget != null)
+        {
+            if (existingTarget.Status == "AmbiguousRegistration")
+                throw new InvalidOperationException("Director litigation search requires guarded reconciliation (Ambiguous Registration).");
+
+            if (existingTarget.Status is "Pending" or "Authenticating" or "Registering" or "Polling" or "Completed")
+                return existingTarget.PreLoginLitigationTargetId;
+
+            var pollTimeout = litigationOptions?.Value.PollTimeoutMinutes > 0 ? litigationOptions.Value.PollTimeoutMinutes : 30;
+
+            if (!string.IsNullOrWhiteSpace(existingTarget.VendorJobId))
+            {
+                // Re-poll the known job with a renewed deadline, preserving VendorJobId and registration intent
+                existingTarget.Status = "Polling";
+                existingTarget.PollingDeadlineUtc = DateTime.UtcNow.AddMinutes(pollTimeout);
+                existingTarget.LeaseToken = null;
+                existingTarget.LeaseExpiresUtc = null;
+                existingTarget.LeaseOwner = null;
+                existingTarget.AttemptCount = 0;
+                existingTarget.NextAttemptUtc = null;
+                existingTarget.ProgressPercent = 30;
+                existingTarget.FailureReason = null;
+                existingTarget.StatusMessage = "Director litigation search re-poll with renewed deadline.";
+                existingTarget.AttemptVersion++;
+            }
+            else
+            {
+                // Clean reset of Failed target without vendor job:
+                existingTarget.Status = "Pending";
+                existingTarget.VendorJobId = null;
+                existingTarget.IsUserSuppliedVendorJobId = false;
+                existingTarget.RegistrationAttemptedUtc = null;
+                existingTarget.RegisteredUtc = null;
+                existingTarget.PollingDeadlineUtc = null;
+                existingTarget.LeaseToken = null;
+                existingTarget.LeaseExpiresUtc = null;
+                existingTarget.LeaseOwner = null;
+                existingTarget.AttemptCount = 0;
+                existingTarget.NextAttemptUtc = null;
+                existingTarget.ProgressPercent = 0;
+                existingTarget.FailureReason = null;
+                existingTarget.StatusMessage = "Director litigation search re-initiated.";
+                existingTarget.AttemptVersion++;
+            }
+            await db.SaveChangesAsync(ct);
+            targetId = existingTarget.PreLoginLitigationTargetId;
+        }
+        else
+        {
+            // Name-only keywords per design requirement:
+            var keywords = new List<string> { directorName.Trim() };
+
+            var target = new PreLoginLitigationTarget
+            {
+                PreLoginReportJobId = id,
+                TargetKind = PreLoginTargetKind.Director,
+                TargetIndex = targetIndex,
+                TargetName = directorName.Trim(),
+                EntityType = "individual",
+                ExactMatch = litigationOptions?.Value.ExactMatch ?? true,
+                KeywordsJson = JsonSerializer.Serialize(keywords),
+                Status = "Pending",
+                CreatedUtc = DateTime.UtcNow,
+                AttemptVersion = 1,
+                StatusMessage = "Director litigation search initiated."
+            };
+
+            db.PreLoginLitigationTargets.Add(target);
+            await db.SaveChangesAsync(ct);
+            targetId = target.PreLoginLitigationTargetId;
+        }
+
+        // Only reopen parent job to AwaitingLitigation if the parent job is not already completed
+        if (job.Status != PreLoginReportJobStatus.Completed)
+        {
+            await db.PreLoginReportJobs.Where(j => j.PreLoginReportJobId == id && j.Status != PreLoginReportJobStatus.Completed)
+                .ExecuteUpdateAsync(s => s
+                    .SetProperty(j => j.Status, PreLoginReportJobStatus.AwaitingLitigation)
+                    .SetProperty(j => j.FailureReason, (string?)null)
+                    .SetProperty(j => j.ProgressPercent, 40), ct);
+        }
+
+        targetQueue?.Enqueue(targetId);
+        queue.Enqueue(id);
+        return targetId;
+    }
+
+    public async Task SingleCaseEditAsync(Guid batch, long id, string caseRowId, SingleCaseEditPayload payload, int submittedDataVersion, CancellationToken ct)
+    {
+        await using var tx = await db.Database.BeginTransactionAsync(IsolationLevel.ReadCommitted, ct);
+        var job = await db.PreLoginReportJobs.FirstOrDefaultAsync(j => j.PreLoginReportJobId == id && j.BatchId == batch, ct)
+            ?? throw new PreLoginReportNotFoundException();
+
+        if (job.DataVersion != submittedDataVersion)
+        {
+            await tx.RollbackAsync(ct);
+            throw new PreLoginConcurrencyException("Assignment cases were modified by another user. Please refresh.");
+        }
+
+        var reportData = DeserializeStoredData(job.DataJson) ?? throw new PreLoginReportException("Assignment data is unavailable.");
+        var existingCases = reportData.LegalCases?.Cases?.ToList() ?? throw new PreLoginReportException("No legal cases available to edit.");
+        var targetIndex = existingCases.FindIndex(c => c.CaseRowId == caseRowId);
+        if (targetIndex < 0)
+        {
+            await tx.RollbackAsync(ct);
+            throw new InvalidOperationException($"Case with ID {caseRowId} not found.");
+        }
+
+        var existingCase = existingCases[targetIndex];
+        var isConcluded = LitigationCaseStatusClassifier.IsConcluded(existingCase.Status, existingCase.CaseStage);
+        if (isConcluded)
+        {
+            if (payload.Status != null && !string.Equals(payload.Status, existingCase.Status, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException("Judicial status of concluded cases cannot be modified.");
+            if (payload.CaseStage != null && !string.Equals(payload.CaseStage, existingCase.CaseStage, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException("Judicial stage of concluded cases cannot be modified.");
+        }
+
+        var updatedCase = existingCase with
+        {
+            Status = (!isConcluded && payload.Status != null) ? payload.Status : existingCase.Status,
+            CaseStage = (!isConcluded && payload.CaseStage != null) ? payload.CaseStage : existingCase.CaseStage,
+            IsExcludedFromReport = payload.IsExcludedFromReport,
+            ExclusionReason = payload.IsExcludedFromReport ? payload.ExclusionReason : null,
+            AnalystNote = payload.AnalystNote
+        };
+        existingCases[targetIndex] = updatedCase;
+
+        var updatedLegalCases = LegalCaseFileParser.ToInstaLegalCases(existingCases) with { NextCaseRowIdIndex = reportData.LegalCases.NextCaseRowIdIndex };
+        var updatedData = reportData with { LegalCases = updatedLegalCases };
+        var updatedJson = JsonSerializer.Serialize(updatedData);
+
+        string? newReportPath = null;
+        string? oldReportPath = job.ReportStoragePath;
+
+        if (!string.IsNullOrWhiteSpace(job.ReportStoragePath) || job.Status == PreLoginReportJobStatus.Completed)
+        {
+            var format = Enum.Parse<PreLoginReportFormat>(job.Format);
+            var identifier = updatedData.Company.LitigationOnly ? updatedData.Company.RegistrationNumber : job.Cin;
+            var generated = await reports.GenerateFromDataAsync(identifier, format, updatedData, ct);
+
+            var directory = Path.Combine(environment.ContentRootPath, "App_Data", "PreLoginReports");
+            Directory.CreateDirectory(directory);
+            var nextVersion = submittedDataVersion + 1;
+            var attemptId = Guid.NewGuid().ToString("N");
+            var versionedFileName = $"{job.PreLoginReportJobId}-v{nextVersion}-{attemptId}-{generated.FileName}";
+            newReportPath = Path.Combine(directory, versionedFileName);
+            await File.WriteAllBytesAsync(newReportPath, generated.Bytes, ct);
+        }
+
+        var affected = await db.PreLoginReportJobs
+            .Where(j => j.PreLoginReportJobId == id && j.BatchId == batch && j.DataVersion == submittedDataVersion)
+            .ExecuteUpdateAsync(s => s
+                .SetProperty(x => x.DataJson, updatedJson)
+                .SetProperty(x => x.ReportStoragePath, x => newReportPath ?? x.ReportStoragePath)
+                .SetProperty(x => x.DataVersion, x => x.DataVersion + 1), ct);
+
+        if (affected == 0)
+        {
+            if (newReportPath != null && File.Exists(newReportPath))
+            {
+                try { File.Delete(newReportPath); } catch { }
+            }
+            await tx.RollbackAsync(ct);
+            throw new PreLoginConcurrencyException("Concurrent update detected at write time. Changes rolled back.");
+        }
+
+        await tx.CommitAsync(ct);
+
+        if (!string.IsNullOrWhiteSpace(oldReportPath) && !string.Equals(oldReportPath, newReportPath, StringComparison.OrdinalIgnoreCase) && File.Exists(oldReportPath))
+        {
+            try { File.Delete(oldReportPath); } catch { }
+        }
+    }
+
+    public async Task<BatchUpdateResult> BatchUpdateCasesAsync(Guid batch, long id, BatchUpdateCasesPayload payload, CancellationToken ct)
+    {
+        await using var tx = await db.Database.BeginTransactionAsync(IsolationLevel.ReadCommitted, ct);
+        var job = await db.PreLoginReportJobs.FirstOrDefaultAsync(j => j.PreLoginReportJobId == id && j.BatchId == batch, ct)
+            ?? throw new PreLoginReportNotFoundException();
+
+        if (job.DataVersion != payload.SubmittedDataVersion)
+        {
+            await tx.RollbackAsync(ct);
+            throw new PreLoginConcurrencyException("Assignment cases were modified by another user. Please refresh.");
+        }
+
+        var reportData = DeserializeStoredData(job.DataJson) ?? throw new PreLoginReportException("Assignment data is unavailable.");
+        var cases = reportData.LegalCases?.Cases?.ToList() ?? throw new PreLoginReportException("No legal cases available to update.");
+
+        var targetedCases = ResolveTargetedCases(cases, payload);
+        int updatedCount = 0;
+        int skippedConcludedCount = 0;
+
+        for (int i = 0; i < cases.Count; i++)
+        {
+            var c = cases[i];
+            if (!targetedCases.Contains(c.CaseRowId)) continue;
+
+            if (payload.Operation == "UpdateStatus")
+            {
+                if (LitigationCaseStatusClassifier.IsConcluded(c.Status, c.CaseStage))
+                {
+                    skippedConcludedCount++;
+                    continue;
+                }
+                cases[i] = c with { Status = payload.NewStatus ?? c.Status };
+                updatedCount++;
+            }
+            else if (payload.Operation == "Exclude")
+            {
+                cases[i] = c with
+                {
+                    IsExcludedFromReport = true,
+                    ExclusionReason = payload.ExclusionReason,
+                    AnalystNote = payload.AnalystNote
+                };
+                updatedCount++;
+            }
+            else if (payload.Operation == "Include")
+            {
+                cases[i] = c with
+                {
+                    IsExcludedFromReport = false,
+                    ExclusionReason = null
+                };
+                updatedCount++;
+            }
+        }
+
+        var updatedLegalCases = LegalCaseFileParser.ToInstaLegalCases(cases) with { NextCaseRowIdIndex = reportData.LegalCases.NextCaseRowIdIndex };
+        var updatedData = reportData with { LegalCases = updatedLegalCases };
+        var updatedJson = JsonSerializer.Serialize(updatedData);
+
+        string? newReportPath = null;
+        string? oldReportPath = job.ReportStoragePath;
+
+        if (!string.IsNullOrWhiteSpace(job.ReportStoragePath) || job.Status == PreLoginReportJobStatus.Completed)
+        {
+            var format = Enum.Parse<PreLoginReportFormat>(job.Format);
+            var identifier = updatedData.Company.LitigationOnly ? updatedData.Company.RegistrationNumber : job.Cin;
+            var generated = await reports.GenerateFromDataAsync(identifier, format, updatedData, ct);
+
+            var directory = Path.Combine(environment.ContentRootPath, "App_Data", "PreLoginReports");
+            Directory.CreateDirectory(directory);
+            var nextVersion = payload.SubmittedDataVersion + 1;
+            var attemptId = Guid.NewGuid().ToString("N");
+            var versionedFileName = $"{job.PreLoginReportJobId}-v{nextVersion}-{attemptId}-{generated.FileName}";
+            newReportPath = Path.Combine(directory, versionedFileName);
+            await File.WriteAllBytesAsync(newReportPath, generated.Bytes, ct);
+        }
+
+        var affected = await db.PreLoginReportJobs
+            .Where(j => j.PreLoginReportJobId == id && j.BatchId == batch && j.DataVersion == payload.SubmittedDataVersion)
+            .ExecuteUpdateAsync(s => s
+                .SetProperty(x => x.DataJson, updatedJson)
+                .SetProperty(x => x.ReportStoragePath, x => newReportPath ?? x.ReportStoragePath)
+                .SetProperty(x => x.DataVersion, x => x.DataVersion + 1), ct);
+
+        if (affected == 0)
+        {
+            if (newReportPath != null && File.Exists(newReportPath))
+            {
+                try { File.Delete(newReportPath); } catch { }
+            }
+            await tx.RollbackAsync(ct);
+            throw new PreLoginConcurrencyException("Concurrent update detected at write time. Changes rolled back.");
+        }
+
+        await tx.CommitAsync(ct);
+
+        if (!string.IsNullOrWhiteSpace(oldReportPath) && !string.Equals(oldReportPath, newReportPath, StringComparison.OrdinalIgnoreCase) && File.Exists(oldReportPath))
+        {
+            try { File.Delete(oldReportPath); } catch { }
+        }
+
+        return new BatchUpdateResult
+        {
+            UpdatedCount = updatedCount,
+            SkippedConcludedCount = skippedConcludedCount,
+            NewDataVersion = payload.SubmittedDataVersion + 1,
+            Message = $"Updated {updatedCount} cases; {skippedConcludedCount} concluded cases (disposed/dismissed/transferred/compromised) preserved without modification."
+        };
+    }
+
+    private static HashSet<string> ResolveTargetedCases(IReadOnlyList<LegalCaseRecord> cases, BatchUpdateCasesPayload payload)
+    {
+        if (!payload.SelectAllMatchingFilter)
+        {
+            return new HashSet<string>(payload.CaseRowIds);
+        }
+
+        var filter = payload.Filter;
+        var query = cases.AsEnumerable();
+
+        if (filter != null)
+        {
+            if (!string.IsNullOrWhiteSpace(filter.Category) && filter.Category != "all")
+                query = query.Where(c => string.Equals(c.Category, filter.Category, StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(c.Court, filter.Category, StringComparison.OrdinalIgnoreCase));
+
+            if (!string.IsNullOrWhiteSpace(filter.Direction) && filter.Direction != "all")
+                query = query.Where(c => c.CaseDetails.Contains(filter.Direction, StringComparison.OrdinalIgnoreCase));
+
+            if (!string.IsNullOrWhiteSpace(filter.StatusBucket) && filter.StatusBucket != "all")
+            {
+                if (filter.StatusBucket.Equals("disposed", StringComparison.OrdinalIgnoreCase))
+                    query = query.Where(c => LitigationCaseStatusClassifier.IsConcluded(c.Status, c.CaseStage));
+                else if (filter.StatusBucket.Equals("pending", StringComparison.OrdinalIgnoreCase))
+                    query = query.Where(c => !LitigationCaseStatusClassifier.IsConcluded(c.Status, c.CaseStage));
+            }
+
+            if (!string.IsNullOrWhiteSpace(filter.SearchText))
+            {
+                var text = filter.SearchText.Trim();
+                query = query.Where(c => c.CaseRowId.Contains(text, StringComparison.OrdinalIgnoreCase)
+                    || c.CnrNumber.Contains(text, StringComparison.OrdinalIgnoreCase)
+                    || c.CaseNo.Contains(text, StringComparison.OrdinalIgnoreCase)
+                    || c.Court.Contains(text, StringComparison.OrdinalIgnoreCase)
+                    || (c.Petitioner != null && c.Petitioner.Contains(text, StringComparison.OrdinalIgnoreCase))
+                    || (c.Respondent != null && c.Respondent.Contains(text, StringComparison.OrdinalIgnoreCase)));
+            }
+        }
+
+        return new HashSet<string>(query.Select(c => c.CaseRowId));
+    }
 }

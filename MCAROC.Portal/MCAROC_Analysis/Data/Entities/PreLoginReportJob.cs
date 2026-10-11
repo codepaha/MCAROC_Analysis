@@ -1,6 +1,6 @@
 namespace MCAROC_Analysis.Data.Entities;
 
-public enum PreLoginReportJobStatus { Queued, Fetching, AwaitingReview, Generating, Completed, Failed }
+public enum PreLoginReportJobStatus { Queued, Fetching, AwaitingLitigation, AwaitingReview, Generating, Completed, Failed }
 
 /// <summary>Durable, auditable report request. API payload and final DOCX stay on the server.</summary>
 public sealed class PreLoginReportJob
@@ -15,9 +15,13 @@ public sealed class PreLoginReportJob
     public int ProgressPercent { get; set; }
     public string? FailureReason { get; set; }
     public string? DataJson { get; set; }
+    public int DataVersion { get; set; } = 1;
+    public DateTime? McaDataFetchedUtc { get; set; }
     public string? ReportStoragePath { get; set; }
     public DateTime CreatedUtc { get; set; }
     public DateTime? StartedUtc { get; set; }
     public DateTime? CompletedUtc { get; set; }
     public DateTime? NextAttemptUtc { get; set; }
+
+    public ICollection<PreLoginLitigationTarget> LitigationTargets { get; set; } = [];
 }

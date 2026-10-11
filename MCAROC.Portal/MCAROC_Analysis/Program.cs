@@ -72,12 +72,15 @@ builder.Services.AddScoped<ChunkStreamingService>();
 builder.Services.AddScoped<FinalizationRecoveryService>();
 builder.Services.AddScoped<PreLoginReportService>();
 builder.Services.AddSingleton<PreLoginReportQueue>();
+builder.Services.AddSingleton<PreLoginLitigationTargetQueue>();
+builder.Services.AddScoped<PreLoginLitigationTargetService>();
 builder.Services.AddScoped<PreLoginReportJobService>();
 builder.Services.AddScoped<BorrowerRequestDocumentReader>();
 builder.Services.AddScoped<IBorrowerAssignmentAiExtractor, BorrowerAssignmentAiExtractor>();
 builder.Services.AddScoped<BorrowerAssignmentIntake>();
 builder.Services.AddScoped<BorrowerAssignmentIdentityResolver>();
 builder.Services.AddHostedService<PreLoginReportWorker>();
+builder.Services.AddHostedService<PreLoginLitigationTargetWorker>();
 
 // Auto-fetch (reference tool) — a request created from just a CIN/LLPIN: workbooks + every filing PDF
 // are pulled from the reference tool and pushed through the same ingestion / analysis / filings pipelines

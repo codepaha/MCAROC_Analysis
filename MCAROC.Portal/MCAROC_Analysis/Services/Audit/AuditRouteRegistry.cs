@@ -76,6 +76,15 @@ public static class AuditRouteRegistry
             { ("Pipeline", "RetryStage"), (AuditActionType.PipelineStageRetried, AuditRulePolicy.Always) },
             { ("Pipeline", "SkipStage"), (AuditActionType.PipelineStageSkipped, AuditRulePolicy.Always) },
             { ("Pipeline", "CancelRun"), (AuditActionType.PipelineRunCancelled, AuditRulePolicy.Always) },
+
+            // Assignments
+            { ("Assignments", "SearchDirector"), (AuditActionType.PreLoginReportEdited, AuditRulePolicy.Always) },
+            { ("Assignments", "ProvideVendorJobId"), (AuditActionType.PreLoginReportEdited, AuditRulePolicy.Always) },
+            { ("Assignments", "ConfirmNoSearch"), (AuditActionType.PreLoginReportEdited, AuditRulePolicy.Always) },
+            { ("Assignments", "Repoll"), (AuditActionType.PreLoginReportEdited, AuditRulePolicy.Always) },
+            { ("Assignments", "Retry"), (AuditActionType.PreLoginReportEdited, AuditRulePolicy.Always) },
+            { ("Assignments", "SingleCaseEdit"), (AuditActionType.PreLoginReportEdited, AuditRulePolicy.Always) },
+            { ("Assignments", "BatchUpdateCases"), (AuditActionType.PreLoginReportEdited, AuditRulePolicy.Always) },
         };
 
     public static (AuditActionType ActionType, AuditRulePolicy Policy) Resolve(string controller, string action)

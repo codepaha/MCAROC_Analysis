@@ -130,10 +130,17 @@ public class LitigationTabAndControllerTests : IAsyncLifetime
     [InlineData("Notice Issued", null, LitigationCaseStatusBucket.Pending)]
     [InlineData("Stay Granted", "Hearing", LitigationCaseStatusBucket.Pending)]
     [InlineData("Disposed", null, LitigationCaseStatusBucket.Disposed)]
+    [InlineData("Disposed off", null, LitigationCaseStatusBucket.Disposed)]
+    [InlineData("Disposed of", null, LitigationCaseStatusBucket.Disposed)]
     [InlineData("Dismissed", "Final Order", LitigationCaseStatusBucket.Disposed)]
     [InlineData("Settled", null, LitigationCaseStatusBucket.Disposed)]
     [InlineData("Decree Passed", null, LitigationCaseStatusBucket.Disposed)]
     [InlineData("Closed", null, LitigationCaseStatusBucket.Disposed)]
+    [InlineData("Transferred", null, LitigationCaseStatusBucket.Disposed)]
+    [InlineData("Transferred to HC", "Hearing", LitigationCaseStatusBucket.Disposed)]
+    [InlineData("Compromised", null, LitigationCaseStatusBucket.Disposed)]
+    [InlineData("Pending", "Matter Compromised", LitigationCaseStatusBucket.Disposed)]
+    [InlineData("Pending", "Transferred", LitigationCaseStatusBucket.Disposed)]
     [InlineData(null, null, LitigationCaseStatusBucket.Unknown)]
     [InlineData("", "", LitigationCaseStatusBucket.Unknown)]
     [InlineData("Arbitrary String 123", "Arbitrary 456", LitigationCaseStatusBucket.Unknown)]
@@ -141,6 +148,7 @@ public class LitigationTabAndControllerTests : IAsyncLifetime
     {
         var actual = LitigationCaseStatusClassifier.Classify(status, stage);
         Assert.Equal(expected, actual);
+        Assert.Equal(expected == LitigationCaseStatusBucket.Disposed, LitigationCaseStatusClassifier.IsConcluded(status, stage));
     }
 
     // ── 2. Court Summary Grid Reconciliation & Paging Tests ─────────────────
@@ -859,7 +867,9 @@ public class LitigationTabAndControllerTests : IAsyncLifetime
             new() { RequestId = request.RequestId, CaseNumber = "C2", CaseStatus = "pEnDiNg", Court = "Delhi HC", FirstSeenUtc = DateTime.UtcNow },
             new() { RequestId = request.RequestId, CaseNumber = "C3", CaseStatus = "Arbitrary Unmatched", Court = "Delhi HC", FirstSeenUtc = DateTime.UtcNow },
             new() { RequestId = request.RequestId, CaseNumber = "C4", CaseStatus = null, CaseStage = null, Court = "Delhi HC", FirstSeenUtc = DateTime.UtcNow },
-            new() { RequestId = request.RequestId, CaseNumber = "C5", CaseStatus = "Admitted", CaseStage = "Hearing", Court = "Delhi HC", FirstSeenUtc = DateTime.UtcNow }
+            new() { RequestId = request.RequestId, CaseNumber = "C5", CaseStatus = "Admitted", CaseStage = "Hearing", Court = "Delhi HC", FirstSeenUtc = DateTime.UtcNow },
+            new() { RequestId = request.RequestId, CaseNumber = "C6", CaseStatus = "Transferred", CaseStage = "Hearing", Court = "Delhi HC", FirstSeenUtc = DateTime.UtcNow },
+            new() { RequestId = request.RequestId, CaseNumber = "C7", CaseStatus = "Pending", CaseStage = "Matter Compromised", Court = "Delhi HC", FirstSeenUtc = DateTime.UtcNow }
         };
         db.LitigationCases.AddRange(cases);
         await db.SaveChangesAsync();
@@ -869,8 +879,10 @@ public class LitigationTabAndControllerTests : IAsyncLifetime
             .Where(c => c.RequestId == request.RequestId)
             .Where(LitigationCaseStatusClassifier.IsDisposedExpr)
             .ToListAsync();
-        Assert.Single(disposedInSql);
-        Assert.Equal("C1", disposedInSql[0].CaseNumber);
+        Assert.Equal(3, disposedInSql.Count);
+        Assert.Contains(disposedInSql, c => c.CaseNumber == "C1");
+        Assert.Contains(disposedInSql, c => c.CaseNumber == "C6");
+        Assert.Contains(disposedInSql, c => c.CaseNumber == "C7");
 
         // 2. Verify IsPendingExpr translates to SQL and executes
         var pendingInSql = await db.LitigationCases

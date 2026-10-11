@@ -1,0 +1,1045 @@
+@model MCAROC_Analysis.Models.AssignmentDetailViewModel
+@{
+    ViewData["Title"] = $"{Model.BorrowerName} - Assignment Workspace";
+}
+
+<div class="container-fluid px-0">
+    @if (TempData["SuccessMessage"] != null)
+    {
+        <div class="alert alert-success alert-dismissible fade show" role="alert">
+            <i class="bi bi-check-circle-fill me-2"></i> @TempData["SuccessMessage"]
+            <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+        </div>
+    }
+    @if (TempData["ErrorMessage"] != null)
+    {
+        <div class="alert alert-danger alert-dismissible fade show" role="alert">
+            <i class="bi bi-exclamation-triangle-fill me-2"></i> @TempData["ErrorMessage"]
+            <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+        </div>
+    }
+
+    <!-- Top Workspace Header -->
+    <div class="card shadow-sm border-0 mb-4">
+        <div class="card-body p-4">
+            <div class="d-flex flex-wrap justify-content-between align-items-center gap-3">
+                <div>
+                    <div class="d-flex align-items-center gap-2 mb-1">
+                        <span class="badge bg-primary">Pre-Login Assignment</span>
+                        <span class="badge bg-light text-dark border">Version: v@Model.DataVersion</span>
+                        <span class="text-muted small">ID: @Model.PreLoginReportJobId</span>
+                    </div>
+                    <h2 class="h4 fw-bold mb-1 text-dark">@Model.BorrowerName</h2>
+                    <div class="text-muted small font-monospace">CIN / Identifier: @Model.Cin &bull; Entity: @Model.EntityType</div>
+                </div>
+                <div class="d-flex align-items-center gap-2">
+                    <a asp-action="Index" class="btn btn-outline-secondary">
+                        <i class="bi bi-arrow-left me-1"></i> Back to Listing
+                    </a>
+                    @if (Model.Status == "Completed" && Model.ReportStoragePath != null)
+                    {
+                        <a asp-action="Download" asp-route-batch="@Model.BatchId" asp-route-id="@Model.PreLoginReportJobId" class="btn btn-success">
+                            <i class="bi bi-file-earmark-word me-1"></i> Download Report (.docx)
+                        </a>
+                    }
+                </div>
+            </div>
+
+            <!-- Progress tracker -->
+            <div class="mt-3">
+                <div class="d-flex justify-content-between align-items-center small text-muted mb-1">
+                    <span>Status: <strong>@Model.Status</strong> @(Model.BorrowerTarget?.StatusMessage != null ? $"— {Model.BorrowerTarget.StatusMessage}" : "")</span>
+                    <span>@Model.ProgressPercent%</span>
+                </div>
+                <div class="progress" style="height: 6px;">
+                    <div class="progress-bar progress-bar-striped @(Model.Status == "Completed" ? "bg-success" : Model.Status == "Failed" ? "bg-danger" : "bg-primary")"
+                         role="progressbar" style="width: @(Model.ProgressPercent)%;"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Navigation Tabs -->
+    <ul class="nav nav-pills mb-4" id="assignmentTabs" role="tablist">
+        <li class="nav-item" role="presentation">
+            <button class="nav-link active px-4 py-2 fw-semibold" id="tab-annexure-btn" data-bs-toggle="pill" data-bs-target="#tab-annexure" type="button" role="tab">
+                <i class="bi bi-file-text me-1"></i> Tab 1: Annexure & Borrower Details
+            </button>
+        </li>
+        <li class="nav-item" role="presentation">
+            <button class="nav-link px-4 py-2 fw-semibold position-relative" id="tab-cases-btn" data-bs-toggle="pill" data-bs-target="#tab-cases" type="button" role="tab">
+                <i class="bi bi-journals me-1"></i> Tab 2: Legal Cases & Litigation Lake
+                <span class="badge bg-secondary ms-2">@Model.TotalCases</span>
+            </button>
+        </li>
+    </ul>
+
+    <!-- Tab Contents -->
+    <div class="tab-content" id="assignmentTabContent">
+        <!-- TAB 1: Annexure & Borrower Details -->
+        <div class="tab-pane fade show active" id="tab-annexure" role="tabpanel">
+            <div class="row g-4">
+                <!-- Left: Branch & Corporate Profile -->
+                <div class="col-lg-7">
+                    <!-- Branch Details -->
+                    <div class="card shadow-sm border-0 mb-4">
+                        <div class="card-header bg-white py-3 border-bottom">
+                            <h5 class="card-title mb-0 fw-bold text-dark"><i class="bi bi-bank me-2 text-primary"></i>Requesting SBI Branch Details</h5>
+                        </div>
+                        <div class="card-body">
+                            <div class="row g-3">
+                                <div class="col-sm-6">
+                                    <label class="text-muted small">Branch Name</label>
+                                    <div class="fw-semibold">@(Model.Assignment?.RequestingBranchDetails?.BranchName ?? "SBI Commercial Branch")</div>
+                                </div>
+                                <div class="col-sm-6">
+                                    <label class="text-muted small">Branch Code</label>
+                                    <div class="fw-semibold">@(Model.Assignment?.RequestingBranchDetails?.BranchCode ?? "-")</div>
+                                </div>
+                                <div class="col-12">
+                                    <label class="text-muted small">Branch Address</label>
+                                    <div class="fw-semibold">@(Model.Assignment?.RequestingBranchDetails?.Address ?? "-")</div>
+                                </div>
+                                <div class="col-sm-6">
+                                    <label class="text-muted small">Contact Officer</label>
+                                    <div class="fw-semibold">@(Model.Assignment?.RequestingBranchDetails?.ContactPerson?.Name ?? "-")</div>
+                                </div>
+                                <div class="col-sm-6">
+                                    <label class="text-muted small">Contact Number / Email</label>
+                                    <div class="fw-semibold">@(Model.Assignment?.RequestingBranchDetails?.ContactPerson?.PhoneMobile ?? Model.Assignment?.RequestingBranchDetails?.ContactPerson?.Email ?? "-")</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Corporate Profile -->
+                    <div class="card shadow-sm border-0 mb-4">
+                        <div class="card-header bg-white py-3 border-bottom">
+                            <h5 class="card-title mb-0 fw-bold text-dark"><i class="bi bi-building me-2 text-primary"></i>Corporate Profile & Registration</h5>
+                        </div>
+                        <div class="card-body">
+                            <div class="row g-3">
+                                <div class="col-sm-6">
+                                    <label class="text-muted small">Registered Entity Name</label>
+                                    <div class="fw-semibold">@Model.BorrowerName</div>
+                                </div>
+                                <div class="col-sm-6">
+                                    <label class="text-muted small">Entity Classification</label>
+                                    <div class="fw-semibold">@Model.EntityType</div>
+                                </div>
+                                <div class="col-sm-6">
+                                    <label class="text-muted small">CIN / LLPIN</label>
+                                    <div class="fw-semibold font-monospace">@Model.Cin</div>
+                                </div>
+                                <div class="col-sm-6">
+                                    <label class="text-muted small">PAN Number</label>
+                                    <div class="fw-semibold font-monospace">@(Model.Assignment?.CompanyDetails?.Pan ?? "-")</div>
+                                </div>
+                                <div class="col-12">
+                                    <label class="text-muted small">Registered Office Address</label>
+                                    <div class="fw-semibold">@(Model.Assignment?.CompanyDetails?.RegisteredOfficeAddress ?? Model.StoredData?.Company?.Address ?? "-")</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Directors & Partners Inventory -->
+                    <div class="card shadow-sm border-0">
+                        <div class="card-header bg-white py-3 border-bottom d-flex justify-content-between align-items-center">
+                            <h5 class="card-title mb-0 fw-bold text-dark"><i class="bi bi-people me-2 text-primary"></i>Directors & Signatories</h5>
+                            <span class="badge bg-light text-dark border">Manual Search Opt-In Only</span>
+                        </div>
+                        <div class="card-body p-0">
+                            <div class="table-responsive">
+                                <table class="table table-hover align-middle mb-0">
+                                    <thead class="table-light">
+                                        <tr>
+                                            <th>Name</th>
+                                            <th>DIN / PAN</th>
+                                            <th>Designation</th>
+                                            <th style="text-align: right;">Litigation Search</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        @if (Model.Assignment?.CompanyDetails?.DirectorsOrPartners is { Count: > 0 } directors)
+                                        {
+                                            @for (int i = 0; i < directors.Count; i++)
+                                            {
+                                                var dir = directors[i];
+                                                var dirTarget = Model.DirectorTargets.FirstOrDefault(t => t.TargetIndex == i);
+                                                <tr>
+                                                    <td class="fw-semibold">@dir.Name</td>
+                                                    <td class="font-monospace small">@(dir.Din ?? dir.Pan ?? "-")</td>
+                                                    <td>Director / Partner</td>
+                                                    <td style="text-align: right;">
+                                                        @if (dirTarget is null)
+                                                        {
+                                                            <form method="post" asp-action="SearchDirector" asp-route-batch="@Model.BatchId" asp-route-id="@Model.PreLoginReportJobId" class="d-inline">
+                                                                @Html.AntiForgeryToken()
+                                                                <input type="hidden" name="directorName" value="@dir.Name" />
+                                                                <input type="hidden" name="dinPan" value="@(dir.Din ?? dir.Pan)" />
+                                                                <input type="hidden" name="targetIndex" value="@i" />
+                                                                <button type="submit" class="btn btn-sm btn-outline-primary">
+                                                                    <i class="bi bi-search me-1"></i> Search
+                                                                </button>
+                                                            </form>
+                                                        }
+                                                        else if (dirTarget.Status == "Completed")
+                                                        {
+                                                            <span class="badge bg-success-subtle text-success border border-success-subtle">
+                                                                <i class="bi bi-check-circle me-1"></i> Completed
+                                                            </span>
+                                                        }
+                                                        else if (dirTarget.Status == "Failed")
+                                                        {
+                                                            <form method="post" asp-action="SearchDirector" asp-route-batch="@Model.BatchId" asp-route-id="@Model.PreLoginReportJobId" class="d-inline">
+                                                                @Html.AntiForgeryToken()
+                                                                <input type="hidden" name="directorName" value="@dir.Name" />
+                                                                <input type="hidden" name="dinPan" value="@(dir.Din ?? dir.Pan)" />
+                                                                <input type="hidden" name="targetIndex" value="@i" />
+                                                                <button type="submit" class="btn btn-sm btn-outline-danger">
+                                                                    <i class="bi bi-arrow-repeat me-1"></i> Retry
+                                                                </button>
+                                                            </form>
+                                                        }
+                                                        else
+                                                        {
+                                                            <span class="badge bg-warning-subtle text-warning border border-warning-subtle">
+                                                                <i class="spinner-border spinner-border-sm me-1" style="width:0.75rem;height:0.75rem;"></i> @dirTarget.Status
+                                                            </span>
+                                                        }
+                                                    </td>
+                                                </tr>
+                                            }
+                                        }
+                                        else
+                                        {
+                                            <tr>
+                                                <td colspan="4" class="text-center py-4 text-muted">No associated directors discovered on intake.</td>
+                                            </tr>
+                                        }
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Right: Litigation Search Progress & Reconciliation Card -->
+                <div class="col-lg-5">
+                    <div class="card shadow-sm border-0 mb-4">
+                        <div class="card-header bg-white py-3 border-bottom">
+                            <h5 class="card-title mb-0 fw-bold text-dark"><i class="bi bi-shield-shaded me-2 text-primary"></i>Litigation Search & Worker State</h5>
+                        </div>
+                        <div class="card-body">
+                            @if (Model.BorrowerTarget is { } target)
+                            {
+                                <div class="mb-3">
+                                    <label class="text-muted small">Target Status</label>
+                                    <div>
+                                        <span class="badge @(target.Status == "Completed" ? "bg-success" : target.Status == "AmbiguousRegistration" ? "bg-warning text-dark" : target.Status == "Failed" ? "bg-danger" : "bg-primary") fs-6">
+                                            @target.Status
+                                        </span>
+                                    </div>
+                                </div>
+                                <div class="mb-3">
+                                    <label class="text-muted small">Status Message</label>
+                                    <div class="fw-semibold text-dark">@(target.StatusMessage ?? "Processing search request...")</div>
+                                </div>
+                                <div class="row g-2 mb-3">
+                                    <div class="col-6">
+                                        <label class="text-muted small">Vendor Job ID</label>
+                                        <div class="font-monospace">@(target.VendorJobId ?? "(None)")</div>
+                                    </div>
+                                    <div class="col-6">
+                                        <label class="text-muted small">Attempt Version</label>
+                                        <div class="fw-bold">v@target.AttemptVersion</div>
+                                    </div>
+                                    <div class="col-6">
+                                        <label class="text-muted small">Attempt Count</label>
+                                        <div>@target.AttemptCount</div>
+                                    </div>
+                                    <div class="col-6">
+                                        <label class="text-muted small">Polling Deadline</label>
+                                        <div class="small">@(target.PollingDeadlineUtc.HasValue ? Ist.Format(target.PollingDeadlineUtc.Value, "dd MMM HH:mm:ss") : "(Not active)")</div>
+                                    </div>
+                                </div>
+
+                                <!-- Action Panels for Reconciliation -->
+                                @if (target.Status == "AmbiguousRegistration")
+                                {
+                                    <div class="alert alert-warning border-warning">
+                                        <h6 class="alert-heading fw-bold"><i class="bi bi-exclamation-triangle-fill me-1"></i> Ambiguous Registration Detected</h6>
+                                        <p class="small mb-3">@(target.FailureReason ?? "Registration intent did not confirm a successful vendor job ID before worker crashed, or keywords could not be corroborated.")</p>
+                                        <div class="d-flex flex-column gap-2">
+                                            <button type="button" class="btn btn-warning btn-sm fw-bold text-dark" data-bs-toggle="modal" data-bs-target="#provideVendorJobModal">
+                                                <i class="bi bi-input-cursor-text me-1"></i> Provide Vendor Job ID
+                                            </button>
+                                            <button type="button" class="btn btn-outline-dark btn-sm" data-bs-toggle="modal" data-bs-target="#confirmNoSearchModal">
+                                                <i class="bi bi-arrow-clockwise me-1"></i> Confirm No Search Exists
+                                            </button>
+                                        </div>
+                                    </div>
+                                }
+                                else if (target.Status == "Failed")
+                                {
+                                    <div class="alert alert-danger border-danger">
+                                        <h6 class="alert-heading fw-bold"><i class="bi bi-x-octagon-fill me-1"></i> Search Polling Failed</h6>
+                                        <p class="small mb-3">@(target.FailureReason ?? "Vendor reported an unrecoverable failure or polling deadline expired.")</p>
+                                        <div class="d-flex gap-2">
+                                            @if (target.VendorJobId != null)
+                                            {
+                                                <form asp-action="Repoll" asp-route-batch="@Model.BatchId" asp-route-id="@Model.PreLoginReportJobId" method="post" class="flex-grow-1">
+                                                    @Html.AntiForgeryToken()
+                                                    <input type="hidden" name="targetId" value="@target.PreLoginLitigationTargetId" />
+                                                    <input type="hidden" name="submittedAttemptVersion" value="@target.AttemptVersion" />
+                                                    <button type="submit" class="btn btn-danger btn-sm w-100 fw-bold">
+                                                        <i class="bi bi-arrow-repeat me-1"></i> Re-poll (Renew Window)
+                                                    </button>
+                                                </form>
+                                            }
+                                            else
+                                            {
+                                                <form asp-action="Retry" asp-route-batch="@Model.BatchId" asp-route-id="@Model.PreLoginReportJobId" method="post" class="flex-grow-1">
+                                                    @Html.AntiForgeryToken()
+                                                    <input type="hidden" name="targetId" value="@target.PreLoginLitigationTargetId" />
+                                                    <input type="hidden" name="submittedAttemptVersion" value="@target.AttemptVersion" />
+                                                    <button type="submit" class="btn btn-outline-danger btn-sm w-100 fw-bold">
+                                                        <i class="bi bi-arrow-clockwise me-1"></i> Clean Retry
+                                                    </button>
+                                                </form>
+                                            }
+                                        </div>
+                                    </div>
+                                }
+                                else if (target.Status == "Completed")
+                                {
+                                    <div class="alert alert-success border-success">
+                                        <div class="d-flex align-items-center">
+                                            <i class="bi bi-check-circle-fill fs-4 me-2 text-success"></i>
+                                            <div>
+                                                <strong>Search Successfully Synchronized</strong>
+                                                <div class="small">@(target.NoLitigationFound == true ? "Confirmed 0 active matters in court databases." : $"{Model.TotalCases} matters retrieved and linked to assignment.")</div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                }
+                            }
+                            else
+                            {
+                                <div class="text-muted py-3 text-center">No litigation search dispatched for this assignment.</div>
+                            }
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- TAB 2: Legal Cases & Litigation Lake -->
+        <div class="tab-pane fade" id="tab-cases" role="tabpanel">
+            <!-- KPI Summary Cards -->
+            <div class="row g-3 mb-4">
+                <div class="col-md-2">
+                    <div class="card border-0 shadow-sm text-center p-3">
+                        <div class="text-muted small">Total Cases</div>
+                        <div class="h3 fw-bold text-dark mb-0">@Model.TotalCases</div>
+                    </div>
+                </div>
+                <div class="col-md-2">
+                    <div class="card border-0 shadow-sm text-center p-3">
+                        <div class="text-muted small">High Court</div>
+                        <div class="h3 fw-bold text-primary mb-0">@Model.HighCourtCases</div>
+                    </div>
+                </div>
+                <div class="col-md-2">
+                    <div class="card border-0 shadow-sm text-center p-3">
+                        <div class="text-muted small">District Court</div>
+                        <div class="h3 fw-bold text-info mb-0">@Model.DistrictCases</div>
+                    </div>
+                </div>
+                <div class="col-md-2">
+                    <div class="card border-0 shadow-sm text-center p-3">
+                        <div class="text-muted small">DRT & Tribunals</div>
+                        <div class="h3 fw-bold text-secondary mb-0">@Model.TribunalCases</div>
+                    </div>
+                </div>
+                <div class="col-md-2">
+                    <div class="card border-0 shadow-sm text-center p-3">
+                        <div class="text-muted small">Included in SBI Report</div>
+                        <div class="h3 fw-bold text-success mb-0" id="kpiIncluded">@Model.IncludedCases</div>
+                    </div>
+                </div>
+                <div class="col-md-2">
+                    <div class="card border-0 shadow-sm text-center p-3">
+                        <div class="text-muted small">Excluded from Report</div>
+                        <div class="h3 fw-bold text-muted mb-0" id="kpiExcluded">@Model.ExcludedCases</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Multi-faceted Filter Bar -->
+            <div class="card shadow-sm border-0 mb-3">
+                <div class="card-body p-3">
+                    <div class="row g-2 align-items-center">
+                        <div class="col-md-4">
+                            <div class="input-group">
+                                <span class="input-group-text bg-transparent border-end-0"><i class="bi bi-search text-muted"></i></span>
+                                <input type="text" id="caseSearchInput" class="form-control border-start-0" placeholder="Search Case ID, CNR, Court, Parties..." oninput="filterCases()" />
+                            </div>
+                        </div>
+                        <div class="col-md-2">
+                            <select id="caseCategoryFilter" class="form-select" onchange="filterCases()">
+                                <option value="all">All Forums</option>
+                                <option value="high">High Court</option>
+                                <option value="district">District Court</option>
+                                <option value="drt">DRT / DRAT</option>
+                                <option value="nclt">NCLT / NCLAT</option>
+                                <option value="consumer">Consumer Forum</option>
+                            </select>
+                        </div>
+                        <div class="col-md-2">
+                            <select id="caseDirectionFilter" class="form-select" onchange="filterCases()">
+                                <option value="all">All Directions</option>
+                                <option value="against">Against Borrower</option>
+                                <option value="by">By Borrower</option>
+                            </select>
+                        </div>
+                        <div class="col-md-2">
+                            <select id="caseStatusFilter" class="form-select" onchange="filterCases()">
+                                <option value="all">All Judicial Status</option>
+                                <option value="pending">Pending Only</option>
+                                <option value="disposed">Concluded / Disposed</option>
+                            </select>
+                        </div>
+                        <div class="col-md-2">
+                            <select id="caseInclusionFilter" class="form-select" onchange="filterCases()">
+                                <option value="all">All Inclusions</option>
+                                <option value="included">Included in Report</option>
+                                <option value="excluded">Excluded Only</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Selection Controls Bar -->
+            <div class="d-flex justify-content-between align-items-center mb-2 px-1">
+                <div class="d-flex align-items-center gap-2">
+                    <button type="button" class="btn btn-sm btn-outline-secondary" onclick="selectAllVisible(true)">Select Visible</button>
+                    <button type="button" class="btn btn-sm btn-outline-secondary" onclick="selectAllMatchingFilter()">Select All Matching Filter</button>
+                    <button type="button" class="btn btn-sm btn-link text-muted" onclick="deselectAll()">Deselect All</button>
+                </div>
+                <div class="text-muted small" id="matchingCasesCount">Showing @Model.Cases.Count cases</div>
+            </div>
+
+            <!-- Case Lake Table -->
+            <div class="card shadow-sm border-0">
+                <div class="card-body p-0">
+                    <div class="table-responsive">
+                        <table class="table table-hover align-middle mb-0" id="casesTable">
+                            <thead class="table-light">
+                                <tr>
+                                    <th style="width: 40px;"><input type="checkbox" id="masterCheckbox" onchange="toggleMasterCheckbox(this)" /></th>
+                                    <th style="width: 14%;">Case No & CNR</th>
+                                    <th style="width: 18%;">Court & Forum</th>
+                                    <th style="width: 8%;">Direction</th>
+                                    <th style="width: 25%;">Parties (Petitioner vs Respondent)</th>
+                                    <th style="width: 12%;">Stage / Status</th>
+                                    <th style="width: 11%;">Report Status</th>
+                                    <th style="width: 8%; text-align: right;">Action</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @if (Model.Cases.Count == 0)
+                                {
+                                    <tr>
+                                        <td colspan="8" class="text-center py-5 text-muted">
+                                            <i class="bi bi-inbox fs-1 d-block mb-2 text-secondary"></i>
+                                            No litigation records discovered for this borrower.
+                                        </td>
+                                    </tr>
+                                }
+                                else
+                                {
+                                    @foreach (var c in Model.Cases)
+                                    {
+                                        var isConcluded = MCAROC_Analysis.Models.LitigationCaseStatusClassifier.IsConcluded(c.Status, c.CaseStage);
+                                        <tr data-case-row-id="@c.CaseRowId"
+                                            data-cnr="@c.CnrNumber"
+                                            data-court="@c.Court"
+                                            data-category="@c.Category"
+                                            data-direction="@c.CaseDetails"
+                                            data-status="@c.Status"
+                                            data-stage="@c.CaseStage"
+                                            data-is-concluded="@isConcluded.ToString().ToLowerInvariant()"
+                                            data-excluded="@c.IsExcludedFromReport.ToString().ToLowerInvariant()"
+                                            data-exclusion-reason="@(c.ExclusionReason ?? "")"
+                                            data-analyst-note="@(c.AnalystNote ?? "")"
+                                            data-parties="@c.CaseDetails">
+                                            <td>
+                                                <input type="checkbox" class="case-select-checkbox" value="@c.CaseRowId" onchange="onCaseCheckboxChanged()" />
+                                            </td>
+                                            <td>
+                                                <span class="badge bg-dark font-monospace mb-1">@c.CaseRowId</span>
+                                                <div class="font-monospace small fw-semibold text-primary text-truncate" style="max-width: 160px;" title="@c.CnrNumber">@(c.CnrNumber != "-" ? c.CnrNumber : "(No CNR)")</div>
+                                                <div class="small text-muted text-truncate" style="max-width: 160px;" title="@c.CaseNo">@c.CaseNo (@c.CaseYear)</div>
+                                            </td>
+                                            <td>
+                                                <div class="fw-semibold text-dark text-truncate" style="max-width: 200px;" title="@c.Court">@c.Court</div>
+                                                <div class="small text-muted">Category: @c.Category</div>
+                                            </td>
+                                            <td>
+                                                @if (c.CaseDetails.Contains("against", StringComparison.OrdinalIgnoreCase))
+                                                {
+                                                    <span class="badge bg-danger-subtle text-danger border border-danger-subtle">Against</span>
+                                                }
+                                                else
+                                                {
+                                                    <span class="badge bg-primary-subtle text-primary border border-primary-subtle">By</span>
+                                                }
+                                            </td>
+                                            <td>
+                                                <div class="small text-dark text-truncate" style="max-width: 280px;" title="@c.CaseDetails">@c.CaseDetails</div>
+                                                <div class="small text-muted font-monospace">Act: @(c.Act != "-" ? c.Act : "N/A")</div>
+                                            </td>
+                                            <td>
+                                                @if (isConcluded)
+                                                {
+                                                    <span class="badge bg-secondary-subtle text-secondary border border-secondary" title="Judicial disposition concluded">
+                                                        <i class="bi bi-lock-fill me-1"></i>@(c.Status != "-" ? c.Status : c.CaseStage)
+                                                    </span>
+                                                }
+                                                else
+                                                {
+                                                    <span class="badge bg-info-subtle text-info-emphasis border border-info-subtle">
+                                                        @(c.Status != "-" ? c.Status : c.CaseStage)
+                                                    </span>
+                                                }
+                                                <div class="small text-muted mt-1">Stage: @c.CaseStage</div>
+                                            </td>
+                                            <td>
+                                                @if (c.IsExcludedFromReport)
+                                                {
+                                                    <span class="badge bg-secondary text-white"><i class="bi bi-eye-slash me-1"></i>Excluded</span>
+                                                    <div class="small text-muted text-truncate" style="max-width: 120px;" title="@c.ExclusionReason">@c.ExclusionReason</div>
+                                                }
+                                                else
+                                                {
+                                                    <span class="badge bg-success-subtle text-success border border-success"><i class="bi bi-check-circle me-1"></i>Included</span>
+                                                }
+                                            </td>
+                                            <td style="text-align: right;">
+                                                <button type="button" class="btn btn-sm btn-outline-primary" onclick="openSingleEditModal('@c.CaseRowId')">
+                                                    <i class="bi bi-pencil-square"></i> Edit
+                                                </button>
+                                            </td>
+                                        </tr>
+                                    }
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Floating Batch Action Toolbar -->
+<div id="batchActionToolbar" class="position-fixed bottom-0 start-50 translate-middle-x mb-4 p-3 bg-dark text-white rounded-4 shadow-lg d-none align-items-center gap-3" style="z-index: 1050; min-width: 580px;">
+    <div class="fw-bold"><span id="selectedCasesCount">0</span> cases selected</div>
+    <div class="vr bg-secondary"></div>
+    <button type="button" class="btn btn-sm btn-outline-light" onclick="openBatchExcludeModal()">
+        <i class="bi bi-eye-slash me-1"></i> Bulk Exclude
+    </button>
+    <button type="button" class="btn btn-sm btn-outline-success" onclick="executeBatchInclude()">
+        <i class="bi bi-check2-circle me-1"></i> Bulk Include
+    </button>
+    <button type="button" class="btn btn-sm btn-outline-info" onclick="openBatchStatusModal()">
+        <i class="bi bi-arrow-repeat me-1"></i> Bulk Update Status
+    </button>
+    <button type="button" class="btn btn-sm btn-link text-white-50 ms-auto text-decoration-none" onclick="deselectAll()">
+        <i class="bi bi-x-circle"></i> Clear
+    </button>
+</div>
+
+<!-- Modal 1: Provide Vendor Job ID -->
+<div class="modal fade" id="provideVendorJobModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog">
+        <form asp-action="ProvideVendorJobId" asp-route-batch="@Model.BatchId" asp-route-id="@Model.PreLoginReportJobId" method="post" class="modal-content">
+            @Html.AntiForgeryToken()
+            <input type="hidden" name="targetId" value="@(Model.BorrowerTarget?.PreLoginLitigationTargetId ?? 0)" />
+            <input type="hidden" name="submittedAttemptVersion" value="@(Model.BorrowerTarget?.AttemptVersion ?? 1)" />
+            <div class="modal-header">
+                <h5 class="modal-title fw-bold"><i class="bi bi-input-cursor-text me-2 text-warning"></i>Provide Vendor Job ID</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <p class="small text-muted">Input the BPR Job ID discovered in the vendor portal. The system will corroborate keywords and renew the polling timeout.</p>
+                <div class="mb-3">
+                    <label class="form-label fw-semibold">Confirmed Vendor Job ID <span class="text-danger">*</span></label>
+                    <input type="text" name="vendorJobId" class="form-control font-monospace" required maxlength="100" placeholder="e.g. BPR-JOB-98234" />
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">Operator Note / Evidence</label>
+                    <textarea name="evidenceNote" class="form-control" rows="3" placeholder="Confirmed with vendor portal history..."></textarea>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="submit" class="btn btn-primary fw-bold">Submit & Resume Polling</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Modal 2: Confirm No Search Exists -->
+<div class="modal fade" id="confirmNoSearchModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog">
+        <form asp-action="ConfirmNoSearch" asp-route-batch="@Model.BatchId" asp-route-id="@Model.PreLoginReportJobId" method="post" class="modal-content">
+            @Html.AntiForgeryToken()
+            <input type="hidden" name="targetId" value="@(Model.BorrowerTarget?.PreLoginLitigationTargetId ?? 0)" />
+            <input type="hidden" name="submittedAttemptVersion" value="@(Model.BorrowerTarget?.AttemptVersion ?? 1)" />
+            <div class="modal-header">
+                <h5 class="modal-title fw-bold"><i class="bi bi-arrow-clockwise me-2 text-dark"></i>Confirm No Search Exists</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div class="alert alert-warning small">
+                    This action resets all registration timestamps and dead-line counters back to <code>Pending</code> for a fresh, clean registration attempt.
+                </div>
+                <div class="mb-3">
+                    <label class="form-label fw-semibold">Operator Confirmation Note <span class="text-danger">*</span></label>
+                    <textarea name="evidenceNote" class="form-control" rows="3" required placeholder="Verified on BPR portal that no job exists under SBI account for this borrower..."></textarea>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="submit" class="btn btn-warning fw-bold text-dark">Reset for Fresh Registration</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Modal 3: Single Case Edit Modal -->
+<div class="modal fade" id="singleCaseEditModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title fw-bold"><i class="bi bi-pencil-square me-2 text-primary"></i>Edit Legal Case (<span id="modalCaseRowId"></span>)</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <!-- Concluded Banner -->
+                <div id="concludedWarningBanner" class="alert alert-secondary d-none">
+                    <i class="bi bi-lock-fill me-2 text-secondary"></i>
+                    <strong>Concluded Matter:</strong> Judicial status and stage are locked for this proceeding because it has reached a terminal disposition.
+                </div>
+
+                <div class="row g-3 mb-3">
+                    <div class="col-sm-6">
+                        <label class="text-muted small">CNR Number</label>
+                        <div class="font-monospace fw-bold" id="modalCnr"></div>
+                    </div>
+                    <div class="col-sm-6">
+                        <label class="text-muted small">Court / Forum</label>
+                        <div class="fw-semibold" id="modalCourt"></div>
+                    </div>
+                    <div class="col-12">
+                        <label class="text-muted small">Parties</label>
+                        <div class="small text-muted" id="modalParties"></div>
+                    </div>
+                </div>
+
+                <hr />
+
+                <div class="row g-3">
+                    <div class="col-sm-6">
+                        <label class="form-label fw-semibold">Judicial Status</label>
+                        <select id="modalStatusSelect" class="form-select">
+                            <option value="Pending">Pending</option>
+                            <option value="Stayed">Stayed</option>
+                            <option value="Disposed">Disposed</option>
+                            <option value="Dismissed">Dismissed</option>
+                            <option value="Transferred">Transferred</option>
+                            <option value="Compromised">Compromised</option>
+                        </select>
+                    </div>
+                    <div class="col-sm-6">
+                        <label class="form-label fw-semibold">Case Stage</label>
+                        <input type="text" id="modalStageInput" class="form-control" placeholder="Hearing / Arguments / Orders" />
+                    </div>
+                    <div class="col-12">
+                        <div class="form-check form-switch mt-2">
+                            <input class="form-check-input" type="checkbox" id="modalInclusionSwitch" onchange="onModalInclusionChanged()" />
+                            <label class="form-check-label fw-bold" for="modalInclusionSwitch">Include in Generated SBI Report</label>
+                        </div>
+                    </div>
+                    <div class="col-12" id="exclusionFieldsGroup">
+                        <label class="form-label fw-semibold">Exclusion Reason <span class="text-danger">*</span></label>
+                        <select id="modalExclusionReasonSelect" class="form-select">
+                            <option value="Matter Settled / Decreed / Disposed">Matter Settled / Decreed / Disposed</option>
+                            <option value="Case Dismissed / Withdrawn">Case Dismissed / Withdrawn</option>
+                            <option value="Transferred to Another Court / Tribunal">Transferred to Another Court / Tribunal</option>
+                            <option value="Matter Compromised Between Parties">Matter Compromised Between Parties</option>
+                            <option value="Claim Value Below Materiality Threshold (&lt; ₹5 Lakhs)">Claim Value Below Materiality Threshold (&lt; ₹5 Lakhs)</option>
+                            <option value="Interim / Procedural Matter Only">Interim / Procedural Matter Only</option>
+                            <option value="Duplicate Filing / Transferred CNR">Duplicate Filing / Transferred CNR</option>
+                            <option value="Name-Match Only (Unrelated Third Party)">Name-Match Only (Unrelated Third Party)</option>
+                            <option value="Other (Specify Note)">Other (Specify Note)</option>
+                        </select>
+                    </div>
+                    <div class="col-12">
+                        <label class="form-label">Analyst Audit Note</label>
+                        <textarea id="modalAnalystNote" class="form-control" rows="2" placeholder="Document reason for inclusion/exclusion or status update..."></textarea>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-primary fw-bold" onclick="saveSingleCaseEdit()">Save Changes</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Modal 4: Bulk Exclude Modal -->
+<div class="modal fade" id="bulkExcludeModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title fw-bold"><i class="bi bi-eye-slash me-2 text-warning"></i>Bulk Exclude Cases from Report</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <p>Exclude <strong id="bulkExcludeCount">0</strong> selected cases from the generated SBI Pre-Login credit report.</p>
+                <div class="mb-3">
+                    <label class="form-label fw-semibold">Exclusion Reason <span class="text-danger">*</span></label>
+                    <select id="bulkExclusionReason" class="form-select">
+                        <option value="Claim Value Below Materiality Threshold (&lt; ₹5 Lakhs)">Claim Value Below Materiality Threshold (&lt; ₹5 Lakhs)</option>
+                        <option value="Matter Settled / Decreed / Disposed">Matter Settled / Decreed / Disposed</option>
+                        <option value="Case Dismissed / Withdrawn">Case Dismissed / Withdrawn</option>
+                        <option value="Transferred to Another Court / Tribunal">Transferred to Another Court / Tribunal</option>
+                        <option value="Matter Compromised Between Parties">Matter Compromised Between Parties</option>
+                        <option value="Interim / Procedural Matter Only">Interim / Procedural Matter Only</option>
+                        <option value="Name-Match Only (Unrelated Third Party)">Name-Match Only (Unrelated Third Party)</option>
+                        <option value="Other (Specify Note)">Other (Specify Note)</option>
+                    </select>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">Analyst Note</label>
+                    <textarea id="bulkAnalystNote" class="form-control" rows="2" placeholder="Bulk reviewed against bank materiality guidelines..."></textarea>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-warning fw-bold text-dark" onclick="executeBatchExclude()">Exclude Selected Cases</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Modal 5: Bulk Status Update Modal -->
+<div class="modal fade" id="bulkStatusModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title fw-bold"><i class="bi bi-arrow-repeat me-2 text-info"></i>Bulk Update Judicial Status</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div class="alert alert-info small">
+                    <i class="bi bi-shield-check me-1"></i> <strong>Concluded Case Protection:</strong> Any case whose status or stage indicates it has been disposed, dismissed, transferred, or compromised will be <strong>strictly skipped and preserved</strong> without modification.
+                </div>
+                <div class="mb-3">
+                    <label class="form-label fw-semibold">New Status for Non-Concluded Cases <span class="text-danger">*</span></label>
+                    <select id="bulkNewStatus" class="form-select">
+                        <option value="Pending">Pending</option>
+                        <option value="Stayed">Stayed</option>
+                    </select>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-info fw-bold" onclick="executeBatchUpdateStatus()">Apply Status Update</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+@section Scripts {
+<script>
+    let currentBatchId = '@Model.BatchId';
+    let currentJobId = @Model.PreLoginReportJobId;
+    let submittedDataVersion = @Model.DataVersion;
+    let selectedCaseIds = new Set();
+    let isSelectAllMatchingFilterActive = false;
+
+    function filterCases() {
+        const searchText = document.getElementById('caseSearchInput').value.toLowerCase().trim();
+        const category = document.getElementById('caseCategoryFilter').value;
+        const direction = document.getElementById('caseDirectionFilter').value;
+        const status = document.getElementById('caseStatusFilter').value;
+        const inclusion = document.getElementById('caseInclusionFilter').value;
+
+        const rows = document.querySelectorAll('#casesTable tbody tr[data-case-row-id]');
+        let visibleCount = 0;
+
+        rows.forEach(row => {
+            const rowText = (row.getAttribute('data-case-row-id') + ' ' +
+                             row.getAttribute('data-cnr') + ' ' +
+                             row.getAttribute('data-court') + ' ' +
+                             row.getAttribute('data-parties')).toLowerCase();
+            const rowCategory = row.getAttribute('data-category').toLowerCase();
+            const rowDirection = row.getAttribute('data-direction').toLowerCase();
+            const rowIsConcluded = row.getAttribute('data-is-concluded') === 'true';
+            const rowIsExcluded = row.getAttribute('data-excluded') === 'true';
+
+            let matchesSearch = !searchText || rowText.includes(searchText);
+            let matchesCategory = category === 'all' || rowCategory.includes(category);
+            let matchesDirection = direction === 'all' || rowDirection.includes(direction);
+            let matchesStatus = status === 'all' || (status === 'disposed' ? rowIsConcluded : !rowIsConcluded);
+            let matchesInclusion = inclusion === 'all' || (inclusion === 'included' ? !rowIsExcluded : rowIsExcluded);
+
+            if (matchesSearch && matchesCategory && matchesDirection && matchesStatus && matchesInclusion) {
+                row.style.display = '';
+                visibleCount++;
+            } else {
+                row.style.display = 'none';
+            }
+        });
+
+        document.getElementById('matchingCasesCount').innerText = `Showing ${visibleCount} cases`;
+        onCaseCheckboxChanged();
+    }
+
+    function toggleMasterCheckbox(master) {
+        selectAllVisible(master.checked);
+    }
+
+    function selectAllVisible(select) {
+        isSelectAllMatchingFilterActive = false;
+        const rows = document.querySelectorAll('#casesTable tbody tr[data-case-row-id]');
+        rows.forEach(row => {
+            if (row.style.display !== 'none') {
+                const cb = row.querySelector('.case-select-checkbox');
+                if (cb) {
+                    cb.checked = select;
+                    if (select) selectedCaseIds.add(cb.value);
+                    else selectedCaseIds.delete(cb.value);
+                }
+            }
+        });
+        updateBatchToolbar();
+    }
+
+    function selectAllMatchingFilter() {
+        selectAllVisible(true);
+        isSelectAllMatchingFilterActive = true;
+        updateBatchToolbar();
+    }
+
+    function deselectAll() {
+        selectedCaseIds.clear();
+        isSelectAllMatchingFilterActive = false;
+        const checkboxes = document.querySelectorAll('.case-select-checkbox');
+        checkboxes.forEach(cb => cb.checked = false);
+        const master = document.getElementById('masterCheckbox');
+        if (master) master.checked = false;
+        updateBatchToolbar();
+    }
+
+    function onCaseCheckboxChanged() {
+        selectedCaseIds.clear();
+        isSelectAllMatchingFilterActive = false;
+        const checkboxes = document.querySelectorAll('.case-select-checkbox:checked');
+        checkboxes.forEach(cb => selectedCaseIds.add(cb.value));
+        updateBatchToolbar();
+    }
+
+    function updateBatchToolbar() {
+        const toolbar = document.getElementById('batchActionToolbar');
+        const countSpan = document.getElementById('selectedCasesCount');
+        const count = selectedCaseIds.size;
+        countSpan.innerText = isSelectAllMatchingFilterActive ? `${count} (All matching filter)` : count;
+
+        if (count > 0) {
+            toolbar.classList.remove('d-none');
+            toolbar.classList.add('d-flex');
+        } else {
+            toolbar.classList.remove('d-flex');
+            toolbar.classList.add('d-none');
+        }
+    }
+
+    function openSingleEditModal(caseRowId) {
+        const row = document.querySelector(`tr[data-case-row-id="${caseRowId}"]`);
+        if (!row) return;
+
+        document.getElementById('modalCaseRowId').innerText = caseRowId;
+        document.getElementById('modalCnr').innerText = row.getAttribute('data-cnr');
+        document.getElementById('modalCourt').innerText = row.getAttribute('data-court');
+        document.getElementById('modalParties').innerText = row.getAttribute('data-parties');
+
+        const isConcluded = row.getAttribute('data-is-concluded') === 'true';
+        const isExcluded = row.getAttribute('data-excluded') === 'true';
+        const currentStatus = row.getAttribute('data-status');
+        const currentStage = row.getAttribute('data-stage');
+        const exclusionReason = row.getAttribute('data-exclusion-reason');
+        const analystNote = row.getAttribute('data-analyst-note');
+
+        const statusSelect = document.getElementById('modalStatusSelect');
+        const stageInput = document.getElementById('modalStageInput');
+        const concludedBanner = document.getElementById('concludedWarningBanner');
+
+        if (isConcluded) {
+            statusSelect.disabled = true;
+            stageInput.disabled = true;
+            concludedBanner.classList.remove('d-none');
+        } else {
+            statusSelect.disabled = false;
+            stageInput.disabled = false;
+            concludedBanner.classList.add('d-none');
+        }
+
+        statusSelect.value = currentStatus;
+        stageInput.value = currentStage;
+        document.getElementById('modalInclusionSwitch').checked = !isExcluded;
+        document.getElementById('modalExclusionReasonSelect').value = exclusionReason || "Claim Value Below Materiality Threshold (< ₹5 Lakhs)";
+        document.getElementById('modalAnalystNote').value = analystNote || "";
+
+        onModalInclusionChanged();
+        new bootstrap.Modal(document.getElementById('singleCaseEditModal')).show();
+    }
+
+    function onModalInclusionChanged() {
+        const isIncluded = document.getElementById('modalInclusionSwitch').checked;
+        const exclusionGroup = document.getElementById('exclusionFieldsGroup');
+        if (isIncluded) {
+            exclusionGroup.style.display = 'none';
+        } else {
+            exclusionGroup.style.display = 'block';
+        }
+    }
+
+    async function saveSingleCaseEdit() {
+        const caseRowId = document.getElementById('modalCaseRowId').innerText;
+        const isIncluded = document.getElementById('modalInclusionSwitch').checked;
+        const payload = {
+            caseRowId: caseRowId,
+            status: document.getElementById('modalStatusSelect').disabled ? null : document.getElementById('modalStatusSelect').value,
+            caseStage: document.getElementById('modalStageInput').disabled ? null : document.getElementById('modalStageInput').value,
+            isExcludedFromReport: !isIncluded,
+            exclusionReason: !isIncluded ? document.getElementById('modalExclusionReasonSelect').value : null,
+            analystNote: document.getElementById('modalAnalystNote').value,
+            submittedDataVersion: submittedDataVersion
+        };
+
+        try {
+            const resp = await fetch(`/assignments/single-case-edit/${currentBatchId}/${currentJobId}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+
+            if (!resp.ok) {
+                const err = await resp.json();
+                alert(`Error: ${err.error || 'Update failed'}`);
+                return;
+            }
+
+            location.reload();
+        } catch (e) {
+            alert(`Network error: ${e.message}`);
+        }
+    }
+
+    function openBatchExcludeModal() {
+        document.getElementById('bulkExcludeCount').innerText = selectedCaseIds.size;
+        new bootstrap.Modal(document.getElementById('bulkExcludeModal')).show();
+    }
+
+    function openBatchStatusModal() {
+        new bootstrap.Modal(document.getElementById('bulkStatusModal')).show();
+    }
+
+    async function executeBatchExclude() {
+        const payload = {
+            caseRowIds: Array.from(selectedCaseIds),
+            selectAllMatchingFilter: isSelectAllMatchingFilterActive,
+            filter: {
+                category: document.getElementById('caseCategoryFilter').value,
+                direction: document.getElementById('caseDirectionFilter').value,
+                statusBucket: document.getElementById('caseStatusFilter').value,
+                searchText: document.getElementById('caseSearchInput').value
+            },
+            operation: "Exclude",
+            exclusionReason: document.getElementById('bulkExclusionReason').value,
+            analystNote: document.getElementById('bulkAnalystNote').value,
+            submittedDataVersion: submittedDataVersion
+        };
+
+        await sendBatchUpdate(payload);
+    }
+
+    async function executeBatchInclude() {
+        if (!confirm(`Restore report inclusion for ${selectedCaseIds.size} selected cases?`)) return;
+
+        const payload = {
+            caseRowIds: Array.from(selectedCaseIds),
+            selectAllMatchingFilter: isSelectAllMatchingFilterActive,
+            filter: {
+                category: document.getElementById('caseCategoryFilter').value,
+                direction: document.getElementById('caseDirectionFilter').value,
+                statusBucket: document.getElementById('caseStatusFilter').value,
+                searchText: document.getElementById('caseSearchInput').value
+            },
+            operation: "Include",
+            submittedDataVersion: submittedDataVersion
+        };
+
+        await sendBatchUpdate(payload);
+    }
+
+    async function executeBatchUpdateStatus() {
+        const payload = {
+            caseRowIds: Array.from(selectedCaseIds),
+            selectAllMatchingFilter: isSelectAllMatchingFilterActive,
+            filter: {
+                category: document.getElementById('caseCategoryFilter').value,
+                direction: document.getElementById('caseDirectionFilter').value,
+                statusBucket: document.getElementById('caseStatusFilter').value,
+                searchText: document.getElementById('caseSearchInput').value
+            },
+            operation: "UpdateStatus",
+            newStatus: document.getElementById('bulkNewStatus').value,
+            submittedDataVersion: submittedDataVersion
+        };
+
+        await sendBatchUpdate(payload);
+    }
+
+    async function sendBatchUpdate(payload) {
+        try {
+            const resp = await fetch(`/assignments/batch-update-cases/${currentBatchId}/${currentJobId}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+
+            if (!resp.ok) {
+                const err = await resp.json();
+                alert(`Error: ${err.error || 'Batch update failed'}`);
+                return;
+            }
+
+            const res = await resp.json();
+            alert(res.message);
+            location.reload();
+        } catch (e) {
+            alert(`Network error: ${e.message}`);
+        }
+    }
+</script>
+}
+

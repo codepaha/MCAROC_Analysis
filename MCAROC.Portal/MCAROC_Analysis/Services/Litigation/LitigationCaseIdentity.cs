@@ -84,7 +84,11 @@ public static partial class LitigationCaseIdentity
     private static bool AreCompatibleProceedingTypes(string? left, string? right) =>
         left is not null && right is not null && string.Equals(left, right, StringComparison.Ordinal);
 
-    private static bool IsPlaceholder(string value) => value is "" or "-" or "." or "NA" or "NIL" or "NULL" or "DUMMY" or "TEST";
+    public static bool IsMissing(string? value) =>
+        string.IsNullOrWhiteSpace(value) || IsPlaceholder(value.Trim());
+
+    public static bool IsPlaceholder(string value) =>
+        value is "" or "-" or "--" or "." or "NA" or "N/A" or "NIL" or "NULL" or "DUMMY" or "TEST" or "Not Found" or "0000-00-00";
 
     private static bool IsRepeated(string value) => value.Length > 1 && value.All(character => character == value[0]);
 

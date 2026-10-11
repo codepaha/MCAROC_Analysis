@@ -5117,6 +5117,182 @@ namespace MCAROC_Analysis.Migrations
                     b.ToTable("PipelineStageStates");
                 });
 
+            modelBuilder.Entity("MCAROC_Analysis.Data.Entities.PreLoginLitigationReconciliationEvent", b =>
+                {
+                    b.Property<long>("PreLoginLitigationReconciliationEventId")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("PreLoginLitigationReconciliationEventId"));
+
+                    b.Property<string>("Action")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("nvarchar(50)");
+
+                    b.Property<string>("Actor")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)");
+
+                    b.Property<int>("AttemptVersion")
+                        .HasColumnType("int");
+
+                    b.Property<string>("EvidenceNote")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<long>("PreLoginLitigationTargetId")
+                        .HasColumnType("bigint");
+
+                    b.Property<DateTime?>("PreviousPollingDeadlineUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<DateTime?>("PreviousRegistrationAttemptedUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("PreviousStatus")
+                        .IsRequired()
+                        .HasMaxLength(30)
+                        .HasColumnType("nvarchar(30)");
+
+                    b.Property<string>("PreviousVendorJobId")
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)");
+
+                    b.Property<string>("SuppliedVendorJobId")
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)");
+
+                    b.Property<DateTime>("TimestampUtc")
+                        .HasColumnType("datetime2");
+
+                    b.HasKey("PreLoginLitigationReconciliationEventId");
+
+                    b.HasIndex("PreLoginLitigationTargetId", "TimestampUtc");
+
+                    b.ToTable("PreLoginLitigationReconciliationEvents");
+                });
+
+            modelBuilder.Entity("MCAROC_Analysis.Data.Entities.PreLoginLitigationTarget", b =>
+                {
+                    b.Property<long>("PreLoginLitigationTargetId")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("PreLoginLitigationTargetId"));
+
+                    b.Property<int>("AttemptCount")
+                        .HasColumnType("int");
+
+                    b.Property<int>("AttemptVersion")
+                        .IsConcurrencyToken()
+                        .HasColumnType("int");
+
+                    b.Property<DateTime?>("CompletedUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<DateTime>("CreatedUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("EntityType")
+                        .IsRequired()
+                        .HasMaxLength(30)
+                        .HasColumnType("nvarchar(30)");
+
+                    b.Property<bool>("ExactMatch")
+                        .HasColumnType("bit");
+
+                    b.Property<string>("FailureReason")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<bool>("IsUserSuppliedVendorJobId")
+                        .HasColumnType("bit");
+
+                    b.Property<string>("KeywordsJson")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<DateTime?>("LeaseExpiresUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("LeaseOwner")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<Guid?>("LeaseToken")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTime?>("NextAttemptUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<bool?>("NoLitigationFound")
+                        .HasColumnType("bit");
+
+                    b.Property<DateTime?>("PollingDeadlineUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<long>("PreLoginReportJobId")
+                        .HasColumnType("bigint");
+
+                    b.Property<int>("ProgressPercent")
+                        .HasColumnType("int");
+
+                    b.Property<long?>("RawReportByteLength")
+                        .HasColumnType("bigint");
+
+                    b.Property<byte[]>("RawReportBytes")
+                        .HasColumnType("varbinary(max)");
+
+                    b.Property<string>("RawResponseHash")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<DateTime?>("RegisteredUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<DateTime?>("RegistrationAttemptedUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("ReportFormat")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<DateTime?>("StartedUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(30)
+                        .HasColumnType("nvarchar(30)");
+
+                    b.Property<string>("StatusMessage")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<int>("TargetIndex")
+                        .HasColumnType("int");
+
+                    b.Property<string>("TargetKind")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("nvarchar(20)");
+
+                    b.Property<string>("TargetName")
+                        .IsRequired()
+                        .HasMaxLength(300)
+                        .HasColumnType("nvarchar(300)");
+
+                    b.Property<string>("VendorJobId")
+                        .HasColumnType("nvarchar(450)");
+
+                    b.HasKey("PreLoginLitigationTargetId");
+
+                    b.HasIndex("VendorJobId");
+
+                    b.HasIndex("Status", "NextAttemptUtc");
+
+                    b.HasIndex("PreLoginReportJobId", "TargetKind", "TargetIndex")
+                        .IsUnique();
+
+                    b.ToTable("PreLoginLitigationTargets");
+                });
+
             modelBuilder.Entity("MCAROC_Analysis.Data.Entities.PreLoginReportJob", b =>
                 {
                     b.Property<long>("PreLoginReportJobId")
@@ -5145,6 +5321,10 @@ namespace MCAROC_Analysis.Migrations
                     b.Property<string>("DataJson")
                         .HasColumnType("nvarchar(max)");
 
+                    b.Property<int>("DataVersion")
+                        .IsConcurrencyToken()
+                        .HasColumnType("int");
+
                     b.Property<string>("FailureReason")
                         .HasColumnType("nvarchar(max)");
 
@@ -5152,6 +5332,9 @@ namespace MCAROC_Analysis.Migrations
                         .IsRequired()
                         .HasMaxLength(10)
                         .HasColumnType("nvarchar(10)");
+
+                    b.Property<DateTime?>("McaDataFetchedUtc")
+                        .HasColumnType("datetime2");
 
                     b.Property<DateTime?>("NextAttemptUtc")
                         .HasColumnType("datetime2");
@@ -6965,6 +7148,28 @@ namespace MCAROC_Analysis.Migrations
                     b.Navigation("Run");
                 });
 
+            modelBuilder.Entity("MCAROC_Analysis.Data.Entities.PreLoginLitigationReconciliationEvent", b =>
+                {
+                    b.HasOne("MCAROC_Analysis.Data.Entities.PreLoginLitigationTarget", "Target")
+                        .WithMany("ReconciliationEvents")
+                        .HasForeignKey("PreLoginLitigationTargetId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Target");
+                });
+
+            modelBuilder.Entity("MCAROC_Analysis.Data.Entities.PreLoginLitigationTarget", b =>
+                {
+                    b.HasOne("MCAROC_Analysis.Data.Entities.PreLoginReportJob", "PreLoginReportJob")
+                        .WithMany("LitigationTargets")
+                        .HasForeignKey("PreLoginReportJobId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("PreLoginReportJob");
+                });
+
             modelBuilder.Entity("MCAROC_Analysis.Data.Entities.RequestDocument", b =>
                 {
                     b.HasOne("MCAROC_Analysis.Data.Entities.McaRequest", "Request")
@@ -7069,6 +7274,16 @@ namespace MCAROC_Analysis.Migrations
             modelBuilder.Entity("MCAROC_Analysis.Data.Entities.PipelineRun", b =>
                 {
                     b.Navigation("StageStates");
+                });
+
+            modelBuilder.Entity("MCAROC_Analysis.Data.Entities.PreLoginLitigationTarget", b =>
+                {
+                    b.Navigation("ReconciliationEvents");
+                });
+
+            modelBuilder.Entity("MCAROC_Analysis.Data.Entities.PreLoginReportJob", b =>
+                {
+                    b.Navigation("LitigationTargets");
                 });
 
             modelBuilder.Entity("MCAROC_Analysis.Data.Entities.RequestDocument", b =>

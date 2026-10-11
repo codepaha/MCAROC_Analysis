@@ -42,7 +42,7 @@ public sealed record InstaDirector(string Name, string DinOrPan, string Designat
 /// <summary><see cref="Cases"/> is null for a manually-entered count-only summary (today's Partnership
 /// flow); once a litigation file is uploaded (#221), it holds every parsed case and the 9 counts become a
 /// rollup of <see cref="LegalCaseRecord.Category"/> — see <see cref="LegalCaseFileParser.ToInstaLegalCases"/>.</summary>
-public sealed record InstaLegalCases(int SupremeCourt, int HighCourt, int DistrictCourt, int ConsumerForum, int ItatTax, int NcltNclat, int DrtDrat, int Rera, int NgtOthers, IReadOnlyList<LegalCaseRecord>? Cases = null);
+public sealed record InstaLegalCases(int SupremeCourt, int HighCourt, int DistrictCourt, int ConsumerForum, int ItatTax, int NcltNclat, int DrtDrat, int Rera, int NgtOthers, IReadOnlyList<LegalCaseRecord>? Cases = null, int NextCaseRowIdIndex = 1);
 public sealed record InstaReportData(InstaCompany Company, IReadOnlyList<InstaCharge> Charges, IReadOnlyList<InstaDirector> Directors, InstaLegalCases? LegalCases = null,
     MCAROC_Analysis.Models.BorrowerAssignmentDetails? Assignment = null, string? SourceFileName = null,
     string? SourceStoragePath = null, string? ExtractionModel = null, string? McaIdentifier = null,
