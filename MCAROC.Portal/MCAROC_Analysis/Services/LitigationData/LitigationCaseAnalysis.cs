@@ -486,18 +486,25 @@ public static class LitigationCaseAnalysisValidator
         @"hearing|listed|listing|adjourn|next date|fixed for|cause ?list",
         System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.CultureInvariant);
 
-    /// <summary>True when the text puts a date next to a hearing word (within 80 characters before it) and that date appears in no order's text.</summary>
+    /// <summary>True when the text puts a date next to a hearing word (within 80 characters, before or after it) and no order text puts <b>that same date next to a hearing word</b>.
+    /// A date that merely appears somewhere in an order - its header date, a date of filing - does not support it as a hearing date.</summary>
     internal static bool StatesHearingDateNotInOrders(string text, CaseAnalysisInput input)
     {
         if (string.IsNullOrWhiteSpace(text)) return false;
         static string Compact(string v) => new(v.Where(char.IsLetterOrDigit).ToArray());
-        var orderText = Compact(string.Join(" ", input.Orders.Select(o => o.Text ?? "")));
-        foreach (System.Text.RegularExpressions.Match m in DateText.Matches(text))
+        static bool NearHearingWord(string source, System.Text.RegularExpressions.Match date)
         {
-            var before = text[Math.Max(0, m.Index - 80)..m.Index];
-            if (!HearingContext.IsMatch(before)) continue;
-            if (!orderText.Contains(Compact(m.Value), StringComparison.OrdinalIgnoreCase)) return true;
+            var before = source[Math.Max(0, date.Index - 80)..date.Index];
+            var afterStart = date.Index + date.Length;
+            var after = source[afterStart..Math.Min(source.Length, afterStart + 80)];
+            return HearingContext.IsMatch(before) || HearingContext.IsMatch(after);
         }
+        var supported = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var order in input.Orders.Where(o => !string.IsNullOrWhiteSpace(o.Text)))
+            foreach (System.Text.RegularExpressions.Match om in DateText.Matches(order.Text!))
+                if (NearHearingWord(order.Text!, om)) supported.Add(Compact(om.Value));
+        foreach (System.Text.RegularExpressions.Match m in DateText.Matches(text))
+            if (NearHearingWord(text, m) && !supported.Contains(Compact(m.Value))) return true;
         return false;
     }
 

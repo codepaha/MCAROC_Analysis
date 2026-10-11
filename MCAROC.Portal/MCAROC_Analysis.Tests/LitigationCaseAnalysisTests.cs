@@ -905,4 +905,27 @@ public class LitigationCaseAnalysisTests
         var unrelated = LitigationCaseAnalysisValidator.Validate(Answer(input, a => a["summary"] = "The loan was sanctioned on 05-11-2019."), input, LitigationRiskTier.R1, "t");
         Assert.DoesNotContain(unrelated.Notes, n => n.Contains("hearing date"));    // a date that is not near a hearing word is not a hearing date
     }
+
+    [Fact]
+    public void A_date_that_is_only_an_orders_header_date_does_not_support_it_as_a_hearing_date()
+    {
+        var c = NewCase((1, "09-01-2025", "Order"));
+        // The order mentions 05-11-2026 only as its own date line, not as a hearing.
+        var input = Input(c, Docs((1, 11, "Order dated 05-11-2026. " + OrderOneText)));
+        var r = LitigationCaseAnalysisValidator.Validate(Answer(input, a => a["summary"] = "The next hearing is on 05-11-2026."), input, LitigationRiskTier.R1, "t");
+        Assert.Contains(r.Notes, n => n.Contains("states a hearing date that is not in any order text"));
+    }
+
+    [Fact]
+    public void A_hearing_date_written_before_its_hearing_words_is_still_checked_and_a_supported_one_is_not_flagged()
+    {
+        var c = NewCase((1, "09-01-2025", "Order"));
+        var input = Input(c, Docs((1, 11, OrderOneText + " List the matter on 12.12.2025 for final hearing.")));
+
+        var invented = LitigationCaseAnalysisValidator.Validate(Answer(input, a => a["summary"] = "On 05-11-2026, the next hearing, the Tribunal will hear it."), input, LitigationRiskTier.R1, "t");
+        Assert.Contains(invented.Notes, n => n.Contains("hearing date"));
+
+        var supported = LitigationCaseAnalysisValidator.Validate(Answer(input, a => a["summary"] = "On 12.12.2025, the final hearing, the matter is to be heard."), input, LitigationRiskTier.R1, "t");
+        Assert.DoesNotContain(supported.Notes, n => n.Contains("hearing date"));
+    }
 }
