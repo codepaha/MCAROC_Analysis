@@ -60,6 +60,18 @@ public class RequestLiveDataVersionTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Overlapping_bumps_each_return_the_value_they_produced()
+    {
+        var id = await NewRequestAsync();
+        var returned = await Task.WhenAll(Enumerable.Range(0, 12).Select(async _ =>
+        {
+            await using var db = Ctx();
+            return await RequestLiveData.BumpAsync(db, id, default);
+        }));
+        Assert.Equal(Enumerable.Range(1, 12).Select(i => (long?)i).ToArray(), returned.OrderBy(v => v).ToArray());   // 12 callers, 12 distinct values, none repeated
+    }
+
+    [Fact]
     public async Task A_bump_changes_the_request_page_fence()
     {
         var id = await NewRequestAsync();
