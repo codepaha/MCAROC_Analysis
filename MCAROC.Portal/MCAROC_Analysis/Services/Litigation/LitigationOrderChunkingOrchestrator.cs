@@ -233,7 +233,24 @@ public sealed class LitigationOrderChunkingOrchestrator(
             // update matches 0 rows (this attempt was fenced out — superseded by a takeover, or its own lease
             // simply expired mid-embed), the whole transaction rolls back, so a stale attempt's chunk set
             // never lands even transiently. Only a successful, still-authoritative completion commits.
-            await using var transaction = await db.Database.BeginTransactionAsync(ct);
+            // The order may have been moved to another case (a duplicate merge) while this attempt embedded. Publication therefore takes the lock of the case that owns the order NOW,
+            // re-reads the owner under that lock (a merge holds the same lock while it moves the order and its chunks), and writes the chunks with that owner's id. If the owner changed
+            // between reading it and getting its lock, the pass is abandoned and repeated; the embeddings already made are reused.
+            Microsoft.EntityFrameworkCore.Storage.IDbContextTransaction transaction;
+            long ownerCaseId;
+            for (var pass = 0; ; pass++)
+            {
+                transaction = await db.Database.BeginTransactionAsync(ct);
+                var first = await db.LitigationCaseOrders.AsNoTracking().Where(o => o.LitigationCaseOrderId == order.LitigationCaseOrderId).Select(o => o.LitigationCaseId).SingleAsync(ct);
+                await MCAROC_Analysis.Services.LitigationModule.Refresh.CaseLock.AcquireAsync(db, first, ct);
+                var again = await db.LitigationCaseOrders.AsNoTracking().Where(o => o.LitigationCaseOrderId == order.LitigationCaseOrderId).Select(o => o.LitigationCaseId).SingleAsync(ct);
+                if (again == first) { ownerCaseId = first; break; }
+                await transaction.RollbackAsync(ct);
+                await transaction.DisposeAsync();
+                if (pass >= 3) throw new InvalidOperationException($"Litigation order {order.LitigationCaseOrderId} kept changing case while its chunks were being published.");
+            }
+            await using var publishTransaction = transaction;
+            foreach (var chunk in newChunks) chunk.LitigationCaseId = ownerCaseId;
             await db.LitigationOrderChunks.Where(c => c.LitigationOrderDocumentId == orderDocumentId).ExecuteDeleteAsync(ct);
             db.LitigationOrderChunks.AddRange(newChunks);
             await db.SaveChangesAsync(ct);

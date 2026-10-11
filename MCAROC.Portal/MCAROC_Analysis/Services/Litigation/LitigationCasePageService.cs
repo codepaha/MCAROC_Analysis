@@ -31,7 +31,7 @@ public sealed class LitigationCasePageService(AppDbContext db, ChargeLitigationS
         var snapshot = await AuthoritativeSnapshotAsync(requestId, ct);
         if (snapshot is null) return null;
         var inReport = db.LitigationCaseSourceReports.AsNoTracking()
-            .Where(sr => sr.LitigationReportSnapshotId == snapshot.LitigationReportSnapshotId).Select(sr => sr.LitigationCaseId);
+            .Where(sr => sr.LitigationReportSnapshotId == snapshot.LitigationReportSnapshotId && sr.Case!.MergedIntoCaseId == null).Select(sr => sr.LitigationCaseId);
         if (!await inReport.AnyAsync(id => id == caseId, ct)) return null;
 
         var theCase = await db.LitigationCases.AsNoTracking().Include(c => c.Orders).FirstOrDefaultAsync(c => c.LitigationCaseId == caseId, ct);

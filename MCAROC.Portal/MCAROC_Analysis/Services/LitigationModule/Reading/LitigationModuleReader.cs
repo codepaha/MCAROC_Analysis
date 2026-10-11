@@ -42,7 +42,7 @@ public sealed class LitigationModuleReader(AppDbContext db)
 {
     /// <summary>The scope's retained cases, before the overlay and filters: the single definition of "which cases belong to this request".</summary>
     private IQueryable<LitigationCase> RetainedSet(long requestId) =>
-        db.LitigationCases.AsNoTracking().Where(c => c.RequestId == requestId &&
+        db.LitigationCases.AsNoTracking().Where(c => c.RequestId == requestId && c.MergedIntoCaseId == null &&
             c.SourceReports.Any(sr => sr.ReportSnapshot!.Status == LitigationReportSnapshotStatus.Completed && sr.ReportSnapshot.RequestId == requestId));
 
     public async Task<ModuleCasePage> GetCasesAsync(ScopeRef scope, CaseFilter filter, PageRequest page, CancellationToken ct)

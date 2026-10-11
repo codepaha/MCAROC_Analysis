@@ -229,7 +229,9 @@ public sealed class LitigationCasePersistenceService(
         // it instead of failing the whole snapshot. Only entities THIS attempt itself added are detached on
         // retry — snapshot's own tracking is never touched here, so its RowVersion-based concurrency check
         // (a separate, unrelated mechanism from this per-case retry) stays exactly as EF set it up.
-        for (var attempt = 0; attempt < 2; attempt++)
+        // Up to 4 passes: one retry for a lost unique-key race, and re-resolution when a merge commits while this import waits for the case lock.
+        var uniqueRetried = false;
+        for (var attempt = 0; attempt < 4; attempt++)
         {
             var addedThisAttempt = new List<object>();
             Microsoft.EntityFrameworkCore.Storage.IDbContextTransaction? tx = null;
@@ -245,6 +247,13 @@ public sealed class LitigationCasePersistenceService(
                 // left as it was with its reports, orders and documents: assigning it to C would break the per-request unique id, and giving C's
                 // CNR to P would break the unique CNR. P is no longer listed by reports from here on, since this one lists C.
                 var providerIdHeldElsewhere = byCnr is not null && byProviderRecord is not null && byProviderRecord.LitigationCaseId != byCnr.LitigationCaseId;
+                // A case that was soft-merged into another (plan 4.6): the vendor row is applied to the survivor, never to the loser and never recreating it.
+                var followedMerge = false;
+                for (var hop = 0; hop < 5 && litigationCase?.MergedIntoCaseId is { } survivorId; hop++)
+                {
+                    litigationCase = await db.LitigationCases.FirstOrDefaultAsync(c => c.LitigationCaseId == survivorId && c.RequestId == requestId, ct) ?? litigationCase;
+                    followedMerge = true;
+                }
                 var isNewCase = litigationCase is null;
                 litigationCase ??= new LitigationCase { RequestId = requestId, FirstSeenUtc = now };
                 if (isNewCase)
@@ -262,9 +271,17 @@ public sealed class LitigationCasePersistenceService(
                     tx = db.Database.CurrentTransaction is null ? await db.Database.BeginTransactionAsync(ct) : null;
                     await MCAROC_Analysis.Services.LitigationModule.Refresh.CaseLock.AcquireAsync(db, litigationCase.LitigationCaseId, ct);
                     await db.Entry(litigationCase).ReloadAsync(ct);
+                    // A merge may have committed between finding this case and getting its lock: the destination is resolved again under the lock. The pass is abandoned (its
+                    // transaction ends and the lock is released) and repeated, so the redirect to the survivor is followed with the survivor's own lock.
+                    if (litigationCase.MergedIntoCaseId is not null)
+                    {
+                        db.Entry(litigationCase).State = EntityState.Detached;   // only this case: the snapshot being processed keeps its tracking
+                        continue;
+                    }
                     portalOwned = await MCAROC_Analysis.Services.LitigationModule.Refresh.LivePortalOwnership.OwnedColumnsAsync(db, requestId, litigationCase.LitigationCaseId, ct);
                 }
-                ApplyFields(litigationCase, identity, item, now, keepProviderCaseId: providerIdHeldElsewhere, portalOwned);
+                // When the row was matched through a merged loser, the loser keeps the CNR, proceeding type and provider ids (they are unique per request and are how this case is found again); the survivor gets everything else.
+                ApplyFields(litigationCase, identity, item, now, keepProviderCaseId: providerIdHeldElsewhere || followedMerge, portalOwned, keepIdentity: followedMerge);
                 // The bridge to the litigation module: the event is saved in the same transaction as this write (nothing is recorded while the bridge is off).
                 if (MCAROC_Analysis.Services.LitigationModule.Bridge.LitigationBridgeWriter.RecordCaseUpserted(db, litigationCase, bridgeOptions?.Value, now) is { } bridgeEvent)
                     addedThisAttempt.Add(bridgeEvent);
@@ -294,8 +311,9 @@ public sealed class LitigationCasePersistenceService(
                     if (tx is not null) await tx.CommitAsync(ct);
                     return orderDocumentsToEnqueue;
                 }
-                catch (DbUpdateException ex) when (IsUniqueConstraintViolation(ex) && attempt == 0)
+                catch (DbUpdateException ex) when (IsUniqueConstraintViolation(ex) && !uniqueRetried)
                 {
+                    uniqueRetried = true;
                     foreach (var added in addedThisAttempt)
                         db.Entry(added).State = EntityState.Detached;
                     logger.LogInformation(
@@ -365,14 +383,14 @@ public sealed class LitigationCasePersistenceService(
     /// leaves <b>missing</b> (null, empty, a placeholder such as NA, an empty list) never erases a value the case already holds - it may have
     /// been filled by an earlier report or another source (<see cref="CaseValue"/>).</summary>
     private static void ApplyFields(LitigationCase litigationCase, LitigationCaseIdentityEvidence identity, BprLitigationCase item, DateTime now, bool keepProviderCaseId,
-        IReadOnlySet<string>? portalOwned = null)
+        IReadOnlySet<string>? portalOwned = null, bool keepIdentity = false)
     {
         // A column the portal owns keeps its value; every other column merges from the vendor as always.
         string? Merge(string column, string? current, string? incoming) => portalOwned is not null && portalOwned.Contains(column) ? current : CaseValue.Merge(current, incoming);
         if (!keepProviderCaseId) litigationCase.ProviderCaseId = CaseValue.Merge(litigationCase.ProviderCaseId, item.ProviderCaseId);
         litigationCase.CspId = CaseValue.Merge(litigationCase.CspId, item.CspId);
-        litigationCase.Cnr = CaseValue.Merge(litigationCase.Cnr, identity.Cnr);
-        litigationCase.ProceedingType = CaseValue.Merge(litigationCase.ProceedingType, identity.ProceedingType);
+        if (!keepIdentity) litigationCase.Cnr = CaseValue.Merge(litigationCase.Cnr, identity.Cnr);
+        if (!keepIdentity) litigationCase.ProceedingType = CaseValue.Merge(litigationCase.ProceedingType, identity.ProceedingType);
         litigationCase.CourtCategory = CaseValue.Merge(litigationCase.CourtCategory, item.CourtCategory);
         litigationCase.Direction = CaseValue.Merge(litigationCase.Direction, item.Direction);
         litigationCase.CaseClassification = CaseValue.Merge(litigationCase.CaseClassification, item.CaseClassification);

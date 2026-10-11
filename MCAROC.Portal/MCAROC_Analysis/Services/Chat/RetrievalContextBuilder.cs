@@ -219,12 +219,12 @@ public class RetrievalContextBuilder
         if (snapshotId is null) return [];
 
         var cases = await _db.LitigationCaseSourceReports.AsNoTracking()
-            .Where(l => l.LitigationReportSnapshotId == snapshotId).Select(l => l.Case!).ToListAsync(ct);
+            .Where(l => l.LitigationReportSnapshotId == snapshotId && l.Case!.MergedIntoCaseId == null).Select(l => l.Case!).ToListAsync(ct);
         var names = await _structuredFacts.CompanyNamesAsync(requestId, request.CompanyName, request.LatestCompletedIngestionRunId, ct);
         var (listed, _) = LitigationCaseListSelector.Select(cases, filter, names);
         var ids = listed.Select(c => c.LitigationCaseId).ToList();
         var withOrders = (await _db.LitigationCases.AsNoTracking().Include(c => c.Orders)
-            .Where(c => ids.Contains(c.LitigationCaseId)).ToListAsync(ct)).ToDictionary(c => c.LitigationCaseId);
+            .Where(c => ids.Contains(c.LitigationCaseId) && c.MergedIntoCaseId == null).ToListAsync(ct)).ToDictionary(c => c.LitigationCaseId);
         return ids.Where(withOrders.ContainsKey).Select(id => withOrders[id]).ToList();
     }
 
@@ -232,7 +232,7 @@ public class RetrievalContextBuilder
     {
         if (LitigationCaseReference.Extract(question).Count == 0) return [];
         var cases = await _db.LitigationCases.AsNoTracking().Include(c => c.Orders)
-            .Where(c => c.RequestId == requestId).ToListAsync(ct);
+            .Where(c => c.RequestId == requestId && c.MergedIntoCaseId == null).ToListAsync(ct);
         return LitigationCaseReference.FindReferencedCases(question, cases).Take(MaxReferencedCases).ToList();
     }
 

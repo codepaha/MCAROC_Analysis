@@ -3535,6 +3535,9 @@ namespace MCAROC_Analysis.Migrations
                     b.Property<DateTime>("LastSeenUtc")
                         .HasColumnType("datetime2");
 
+                    b.Property<long?>("MergedIntoCaseId")
+                        .HasColumnType("bigint");
+
                     b.Property<string>("NextHearingDate")
                         .HasColumnType("nvarchar(max)");
 
@@ -3653,6 +3656,9 @@ namespace MCAROC_Analysis.Migrations
                         .HasColumnType("bigint");
 
                     SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("LitigationCaseOrderId"));
+
+                    b.Property<long?>("CollapsedIntoOrderId")
+                        .HasColumnType("bigint");
 
                     b.Property<DateTime>("CreatedUtc")
                         .HasColumnType("datetime2");
@@ -6745,6 +6751,79 @@ namespace MCAROC_Analysis.Migrations
                     b.HasKey("CaseId");
 
                     b.ToTable("CaseLive", "litigation");
+                });
+
+            modelBuilder.Entity("MCAROC_Analysis.Services.LitigationModule.Store.ModuleCaseMerge", b =>
+                {
+                    b.Property<long>("MergeId")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("MergeId"));
+
+                    b.Property<long>("LoserCaseId")
+                        .HasColumnType("bigint");
+
+                    b.Property<DateTime>("MergedUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("Reason")
+                        .HasMaxLength(500)
+                        .HasColumnType("nvarchar(500)");
+
+                    b.Property<long>("RequestId")
+                        .HasColumnType("bigint");
+
+                    b.Property<DateTime?>("ReversedUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<long>("SurvivorCaseId")
+                        .HasColumnType("bigint");
+
+                    b.HasKey("MergeId");
+
+                    b.HasIndex("RequestId", "LoserCaseId");
+
+                    b.ToTable("CaseMerges", "litigation");
+                });
+
+            modelBuilder.Entity("MCAROC_Analysis.Services.LitigationModule.Store.ModuleCaseMergeChange", b =>
+                {
+                    b.Property<long>("ChangeId")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("ChangeId"));
+
+                    b.Property<string>("AfterValue")
+                        .HasMaxLength(256)
+                        .HasColumnType("nvarchar(256)");
+
+                    b.Property<string>("BeforeValue")
+                        .HasMaxLength(256)
+                        .HasColumnType("nvarchar(256)");
+
+                    b.Property<string>("Column")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<long>("MergeId")
+                        .HasColumnType("bigint");
+
+                    b.Property<long>("RowId")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("Table")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.HasKey("ChangeId");
+
+                    b.HasIndex("MergeId");
+
+                    b.ToTable("CaseMergeChanges", "litigation");
                 });
 
             modelBuilder.Entity("MCAROC_Analysis.Services.LitigationModule.Store.ModuleCaseObservation", b =>
