@@ -60,6 +60,33 @@ public sealed class PropertyInOrdersAnalyzerTests
     }
 
     [Fact]
+    public void AnalyzeOrder_with_generic_schedule_reference_without_cadastral_markers_returns_None_and_impossible_feasibility()
+    {
+        const string text = "Applicant counsel filed schedule of property. Interim relief in terms of schedule 'A' prayed for. For arguments posted to 10.12.2026.";
+
+        var result = PropertyInOrdersAnalyzer.AnalyzeOrder(text, "order-sched-1", "DRT");
+
+        Assert.Equal(PropertyMentionLevel.None, result.PropertyObservation.Level);
+        Assert.Equal(ChargeMatchingFeasibility.Impossible, result.PropertyObservation.Feasibility);
+        Assert.Empty(result.PropertyObservation.SurveyMarkers);
+        Assert.True(result.IsProcedural);
+        Assert.Contains("without extractable cadastral numbers", result.PropertyObservation.Summary);
+    }
+
+    [Fact]
+    public void AnalyzeOrder_with_schedule_and_identifiable_asset_returns_IdentifiableAsset_with_low_feasibility()
+    {
+        const string text = "Description of mortgaged property: Flat No. 102 bounded on the north by road, on the south by lane.";
+
+        var result = PropertyInOrdersAnalyzer.AnalyzeOrder(text, "order-sched-2", "DRT");
+
+        Assert.Equal(PropertyMentionLevel.IdentifiableAsset, result.PropertyObservation.Level);
+        Assert.Equal(ChargeMatchingFeasibility.Low, result.PropertyObservation.Feasibility);
+        Assert.Empty(result.PropertyObservation.SurveyMarkers);
+        Assert.Contains(result.PropertyObservation.MatchedKeywords, kw => kw.Contains("Flat No", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
     public void GenerateReport_aggregates_corpus_statistics()
     {
         var orders = new (string Identifier, string Text, string? Forum)[]

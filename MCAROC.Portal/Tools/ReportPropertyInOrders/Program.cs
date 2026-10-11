@@ -47,13 +47,63 @@ if (!string.IsNullOrWhiteSpace(customPath) && (Directory.Exists(customPath) || F
     var customOrders = new List<(string Id, string Text, string? Forum)>();
     if (Directory.Exists(customPath))
     {
-        foreach (var file in Directory.GetFiles(customPath, "*.*", SearchOption.AllDirectories).Where(f => f.EndsWith(".txt") || f.EndsWith(".json")))
+        foreach (var file in Directory.GetFiles(customPath, "*.*", SearchOption.AllDirectories).Where(f => f.EndsWith(".txt", StringComparison.OrdinalIgnoreCase) || f.EndsWith(".json", StringComparison.OrdinalIgnoreCase)))
         {
             customOrders.Add((Path.GetFileName(file), File.ReadAllText(file), null));
         }
     }
-    datasets.Add(($"Custom Input ({customPath})", customOrders));
+    else if (File.Exists(customPath))
+    {
+        if (customPath.EndsWith(".json", StringComparison.OrdinalIgnoreCase))
+        {
+            try
+            {
+                var jsonText = File.ReadAllText(customPath);
+                using var doc = JsonDocument.Parse(jsonText);
+                if (doc.RootElement.ValueKind == JsonValueKind.Array)
+                {
+                    var idx = 1;
+                    foreach (var item in doc.RootElement.EnumerateArray())
+                    {
+                        var id = item.TryGetProperty("SampleId", out var sEl) ? sEl.ToString() :
+                                 item.TryGetProperty("Id", out var idEl) ? idEl.ToString() : $"item-{idx}";
+                        var forum = item.TryGetProperty("CourtForum", out var fEl) ? fEl.GetString() : null;
+                        var text = item.TryGetProperty("OperativeExcerpt", out var oEl) ? oEl.GetString() :
+                                   item.TryGetProperty("Text", out var tEl) ? tEl.GetString() :
+                                   item.TryGetProperty("OrderText", out var otEl) ? otEl.GetString() : item.ToString();
+                        customOrders.Add((id, text ?? "", forum));
+                        idx++;
+                    }
+                }
+                else
+                {
+                    customOrders.Add((Path.GetFileName(customPath), jsonText, null));
+                }
+            }
+            catch
+            {
+                customOrders.Add((Path.GetFileName(customPath), File.ReadAllText(customPath), null));
+            }
+        }
+        else
+        {
+            customOrders.Add((Path.GetFileName(customPath), File.ReadAllText(customPath), null));
+        }
+    }
+
+    if (customOrders.Count > 0)
+    {
+        datasets.Add(($"Custom Input ({customPath})", customOrders));
+    }
 }
+
+var datasetReports = datasets.Select(d => (d.CompanyName, Report: PropertyInOrdersAnalyzer.GenerateReport(d.Orders))).ToList();
+var totalAnalyzed = datasetReports.Sum(r => r.Report.TotalOrdersAnalyzed);
+var proceduralCount = datasetReports.Sum(r => r.Report.ProceduralOrdersCount);
+var cadastralCount = datasetReports.Sum(r => r.Report.OrdersWithSurveyOrScheduleCount);
+var identifiableAssetCount = datasetReports.Sum(r => r.Report.OrdersWithIdentifiableAssetCount);
+var genericRestraintCount = datasetReports.Sum(r => r.Report.OrdersWithGenericRestraintCount);
+var noPropertyCount = datasetReports.Sum(r => r.Report.OrdersWithNoPropertyMentionCount);
 
 var md = new StringBuilder();
 md.AppendLine("# Property Details in Court Orders: Empirical Analysis & Feasibility Report");
@@ -66,19 +116,18 @@ md.AppendLine();
 md.AppendLine("A central question in integrating court portal orders (DRT, Consumer, NCLT, High Court) with bank credit due diligence is:");
 md.AppendLine("**Do property details (collateral, mortgaged property, survey numbers, schedules) actually appear in fetched court orders, and how are they shown?**");
 md.AppendLine();
-md.AppendLine("Based on empirical analysis across real-world court order corpora (116 portal orders from Coastal Projects Limited plus 66 cross-forum judicial sample orders):");
-md.AppendLine("1. **Routine Daily Orders almost NEVER contain property schedules (~0.8%):** DRT and Consumer daily orders (`pdf1.php`, `dailyOrderPdf`) are overwhelmingly 1–2 line procedural proceeding notes (adjournments, vakalat filings, next hearing listings, ex-parte notices).");
-md.AppendLine("2. **When property appears, it falls into 3 distinct tiers:**");
-md.AppendLine("   - **Cadastral / Land Schedule (< 1%)**: Specific survey/khasra/khewat/plot identifiers with boundaries. Only found in substantive civil court injunctions or final SARFAESI auction proclamations.");
-md.AppendLine("   - **Identifiable Asset (~ 1–2%)**: Unit/flat number, project name, or plant & machinery. Found occasionally in Consumer forum builder disputes or specific asset recovery.");
-md.AppendLine("   - **Generic Corporate Restraint (~ 2–3%)**: Blanket injunctions restraining alienation of 'any moveable or immoveable property of the company/promoters'. Found in High Court / NCLAT interim orders.");
-md.AppendLine("   - **Zero Property Mention (~ 95–97%)**: Pure monetary claims, cheque bounce, tax appeals, or procedural listings.");
-md.AppendLine("3. **Feasibility for Automatic Charge Cross-Referencing:** Automatic linking against ROC charge particulars (`RocChargeEvent.PropertyParticulars`) is **only feasible** for the rare Cadastral/Land Schedule tier (< 1%). Generic corporate restraints cannot be mapped to individual charges and should instead be treated as global portfolio/company-level risk indicators.");
+md.AppendLine($"Based on empirical analysis across {totalAnalyzed} real-world court orders ({datasets.Count} datasets: {string.Join(", ", datasetReports.Select(d => $"{d.Report.TotalOrdersAnalyzed} from {d.CompanyName}"))}):");
+md.AppendLine($"1. **Routine Daily Orders almost never contain property particulars ({proceduralCount}/{totalAnalyzed}, {proceduralCount * 100.0 / Math.Max(1, totalAnalyzed):F1}% procedural):** DRT and Consumer daily orders (`pdf1.php`, `dailyOrderPdf`) are overwhelmingly 1–2 line procedural proceeding notes (adjournments, vakalat filings, next hearing listings, ex-parte notices).");
+md.AppendLine("2. **Empirical Distribution Across Tiers (derived directly from analyzed corpora):**");
+md.AppendLine($"   - **Cadastral / Land Schedule ({cadastralCount}/{totalAnalyzed}, {cadastralCount * 100.0 / Math.Max(1, totalAnalyzed):F1}%)**: Specific survey/khasra/khewat/plot identifiers with boundaries. Found only in substantive civil court injunctions or final SARFAESI auction proclamations.");
+md.AppendLine($"   - **Identifiable Asset ({identifiableAssetCount}/{totalAnalyzed}, {identifiableAssetCount * 100.0 / Math.Max(1, totalAnalyzed):F1}%)**: Unit/flat number, project name, or plant & machinery.");
+md.AppendLine($"   - **Generic Corporate Restraint ({genericRestraintCount}/{totalAnalyzed}, {genericRestraintCount * 100.0 / Math.Max(1, totalAnalyzed):F1}%)**: Blanket injunctions restraining alienation of 'any moveable or immoveable property of the company/promoters' (e.g. High Court / NCLAT interim orders).");
+md.AppendLine($"   - **Zero Property Mention ({noPropertyCount}/{totalAnalyzed}, {noPropertyCount * 100.0 / Math.Max(1, totalAnalyzed):F1}%)**: Routine listings, monetary claims, cheque bounce, or corporate debt proceedings with no property particulars.");
+md.AppendLine($"3. **Feasibility for Automatic Charge Cross-Referencing:** Automatic linking against ROC charge particulars (`RocChargeEvent.PropertyParticulars`) is **only feasible** for the Cadastral/Land Schedule tier ({cadastralCount * 100.0 / Math.Max(1, totalAnalyzed):F1}%). Generic corporate restraints ({genericRestraintCount * 100.0 / Math.Max(1, totalAnalyzed):F1}%) cannot be mapped to individual charges and should instead be treated as global portfolio/company-level risk indicators.");
 md.AppendLine();
 
-foreach (var (name, orders) in datasets)
+foreach (var (name, report) in datasetReports)
 {
-    var report = PropertyInOrdersAnalyzer.GenerateReport(orders);
     Console.WriteLine($"\nAnalyzing: {name} ({report.TotalOrdersAnalyzed} orders)");
     Console.WriteLine($"  - Procedural Orders: {report.ProceduralOrdersCount} ({report.ProceduralOrdersCount * 100.0 / Math.Max(1, report.TotalOrdersAnalyzed):F1}%)");
     Console.WriteLine($"  - Substantive Orders: {report.SubstantiveOrdersCount} ({report.SubstantiveOrdersCount * 100.0 / Math.Max(1, report.TotalOrdersAnalyzed):F1}%)");

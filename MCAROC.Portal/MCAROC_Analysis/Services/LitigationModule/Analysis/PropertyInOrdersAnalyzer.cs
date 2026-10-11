@@ -90,53 +90,58 @@ public static partial class PropertyInOrdersAnalyzer
 
         var clean = orderText.Trim();
         var length = clean.Length;
-        var isProcedural = length < 1000 && ProceduralMarkers().IsMatch(clean) && !ScheduleMarkers().IsMatch(clean) && !CadastralMarkers().IsMatch(clean);
-
         var scheduleMatches = ScheduleMarkers().Matches(clean);
         var cadastralMatches = CadastralMarkers().Matches(clean);
         var assetMatches = AssetMarkers().Matches(clean);
         var genericMatches = GenericRestraintMarkers().Matches(clean);
 
+        var isProcedural = length < 1000 && ProceduralMarkers().IsMatch(clean) && cadastralMatches.Count == 0 && assetMatches.Count == 0;
+
         var surveyMarkers = cadastralMatches.Select(m => m.Value.Trim()).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
         var keywords = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-
-        foreach (Match m in scheduleMatches) keywords.Add(m.Value.Trim());
-        foreach (Match m in cadastralMatches) keywords.Add(m.Value.Trim());
-        foreach (Match m in assetMatches) keywords.Add(m.Value.Trim());
-        foreach (Match m in genericMatches) keywords.Add(m.Value.Trim());
-
-        var excerpts = ExtractExcerpts(clean, keywords);
 
         PropertyMentionLevel level;
         ChargeMatchingFeasibility feasibility;
         string summary;
 
-        if (scheduleMatches.Count > 0 || cadastralMatches.Count > 0)
+        if (cadastralMatches.Count > 0)
         {
             level = PropertyMentionLevel.SurveyOrLandSchedule;
             feasibility = ChargeMatchingFeasibility.High;
             summary = $"Cadastral land or property schedule identified with {surveyMarkers.Count} cadastral markers ({string.Join(", ", surveyMarkers.Take(3))}). High feasibility for charge matching.";
+            foreach (Match m in cadastralMatches) keywords.Add(m.Value.Trim());
+            foreach (Match m in scheduleMatches) keywords.Add(m.Value.Trim());
+            foreach (Match m in assetMatches) keywords.Add(m.Value.Trim());
         }
         else if (assetMatches.Count > 0)
         {
             level = PropertyMentionLevel.IdentifiableAsset;
             feasibility = ChargeMatchingFeasibility.Low;
-            summary = $"Specific asset or premises identified ({string.Join(", ", assetMatches.Select(m => m.Value).Take(2))}). Low-to-medium feasibility for charge matching.";
+            summary = scheduleMatches.Count > 0
+                ? $"Property schedule references specific asset or premises ({string.Join(", ", assetMatches.Select(m => m.Value).Take(2))}) without cadastral survey numbers. Low feasibility for charge matching."
+                : $"Specific asset or premises identified ({string.Join(", ", assetMatches.Select(m => m.Value).Take(2))}). Low-to-medium feasibility for charge matching.";
+            foreach (Match m in assetMatches) keywords.Add(m.Value.Trim());
+            foreach (Match m in scheduleMatches) keywords.Add(m.Value.Trim());
         }
         else if (genericMatches.Count > 0)
         {
             level = PropertyMentionLevel.GenericRestraint;
             feasibility = ChargeMatchingFeasibility.Impossible;
             summary = "Generic immovable property or asset restraint without specific land/address markers. Cannot be matched to individual ROC charges.";
+            foreach (Match m in genericMatches) keywords.Add(m.Value.Trim());
         }
         else
         {
             level = PropertyMentionLevel.None;
             feasibility = ChargeMatchingFeasibility.Impossible;
-            summary = isProcedural
-                ? "Routine procedural order (adjournment, appearance, or hearing listing); no property mentioned."
-                : "Substantive order without property particulars (monetary award, contract dispute, or tax appeal).";
+            summary = scheduleMatches.Count > 0
+                ? "Procedural or textual reference to property schedule/boundaries without extractable cadastral numbers or identifiable asset particulars."
+                : (isProcedural
+                    ? "Routine procedural order (adjournment, appearance, or hearing listing); no property mentioned."
+                    : "Substantive order without property particulars (monetary award, contract dispute, or tax appeal).");
         }
+
+        var excerpts = keywords.Count > 0 ? ExtractExcerpts(clean, keywords) : [];
 
         return new OrderPropertyAnalysisResult(
             identifier,

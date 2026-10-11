@@ -1,21 +1,21 @@
 ﻿# Property Details in Court Orders: Empirical Analysis & Feasibility Report
 
 > **Deliverable for Issue #443 (Order source adapters) under Epic #432 / Plan §4.5.**
-> **Date:** 2026-10-11 14:21:07 UTC
+> **Date:** 2026-10-11 14:41:52 UTC
 
 ## 1. Executive Summary
 
 A central question in integrating court portal orders (DRT, Consumer, NCLT, High Court) with bank credit due diligence is:
 **Do property details (collateral, mortgaged property, survey numbers, schedules) actually appear in fetched court orders, and how are they shown?**
 
-Based on empirical analysis across real-world court order corpora (116 portal orders from Coastal Projects Limited plus 66 cross-forum judicial sample orders):
-1. **Routine Daily Orders almost NEVER contain property schedules (~0.8%):** DRT and Consumer daily orders (`pdf1.php`, `dailyOrderPdf`) are overwhelmingly 1–2 line procedural proceeding notes (adjournments, vakalat filings, next hearing listings, ex-parte notices).
-2. **When property appears, it falls into 3 distinct tiers:**
-   - **Cadastral / Land Schedule (< 1%)**: Specific survey/khasra/khewat/plot identifiers with boundaries. Only found in substantive civil court injunctions or final SARFAESI auction proclamations.
-   - **Identifiable Asset (~ 1–2%)**: Unit/flat number, project name, or plant & machinery. Found occasionally in Consumer forum builder disputes or specific asset recovery.
-   - **Generic Corporate Restraint (~ 2–3%)**: Blanket injunctions restraining alienation of 'any moveable or immoveable property of the company/promoters'. Found in High Court / NCLAT interim orders.
-   - **Zero Property Mention (~ 95–97%)**: Pure monetary claims, cheque bounce, tax appeals, or procedural listings.
-3. **Feasibility for Automatic Charge Cross-Referencing:** Automatic linking against ROC charge particulars (`RocChargeEvent.PropertyParticulars`) is **only feasible** for the rare Cadastral/Land Schedule tier (< 1%). Generic corporate restraints cannot be mapped to individual charges and should instead be treated as global portfolio/company-level risk indicators.
+Based on empirical analysis across 182 real-world court orders (2 datasets: 116 from Coastal Projects Limited (Portal Orders), 66 from Cross-Forum Multi-Company Judicial Corpus):
+1. **Routine Daily Orders almost never contain property particulars (90/182, 49.5% procedural):** DRT and Consumer daily orders (`pdf1.php`, `dailyOrderPdf`) are overwhelmingly 1–2 line procedural proceeding notes (adjournments, vakalat filings, next hearing listings, ex-parte notices).
+2. **Empirical Distribution Across Tiers (derived directly from analyzed corpora):**
+   - **Cadastral / Land Schedule (1/182, 0.5%)**: Specific survey/khasra/khewat/plot identifiers with boundaries. Found only in substantive civil court injunctions or final SARFAESI auction proclamations.
+   - **Identifiable Asset (0/182, 0.0%)**: Unit/flat number, project name, or plant & machinery.
+   - **Generic Corporate Restraint (2/182, 1.1%)**: Blanket injunctions restraining alienation of 'any moveable or immoveable property of the company/promoters' (e.g. High Court / NCLAT interim orders).
+   - **Zero Property Mention (179/182, 98.4%)**: Routine listings, monetary claims, cheque bounce, or corporate debt proceedings with no property particulars.
+3. **Feasibility for Automatic Charge Cross-Referencing:** Automatic linking against ROC charge particulars (`RocChargeEvent.PropertyParticulars`) is **only feasible** for the Cadastral/Land Schedule tier (0.5%). Generic corporate restraints (1.1%) cannot be mapped to individual charges and should instead be treated as global portfolio/company-level risk indicators.
 
 ## 2. Dataset: Coastal Projects Limited (Portal Orders)
 
