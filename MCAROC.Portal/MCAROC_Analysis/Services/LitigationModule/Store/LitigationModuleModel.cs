@@ -61,5 +61,25 @@ public static class LitigationModuleModel
             e.HasIndex(x => x.OutboxId).HasFilter("[ProcessedUtc] IS NULL AND [DeadLetteredUtc] IS NULL").HasDatabaseName("IX_BridgeOutbox_Pending");
             e.HasIndex(x => x.LegacyLitigationCaseId);
         });
+
+        modelBuilder.Entity<ModuleCaseObservation>(e =>
+        {
+            e.ToTable("CaseObservations", Schema);
+            e.HasKey(x => x.ObservationId);
+            // The id comes from a sequence the store reads BEFORE it decides what the projection does, so the observation is inserted once, complete, and never updated.
+            e.Property(x => x.ObservationId).UseSequence("CaseObservationIds", Schema);
+            e.Property(x => x.AppliedAs).HasMaxLength(64);
+            e.HasOne(x => x.Case).WithMany().HasForeignKey(x => x.CaseId).OnDelete(DeleteBehavior.NoAction);
+            e.HasIndex(x => new { x.CaseId, x.RetrievedUtc });
+        });
+
+        modelBuilder.Entity<ModuleCaseLive>(e =>
+        {
+            e.ToTable("CaseLive", Schema);
+            e.HasKey(x => x.CaseId);
+            e.Property(x => x.HeldChange).HasMaxLength(64);
+            e.Property(x => x.Version).IsConcurrencyToken();
+            e.HasOne(x => x.Case).WithMany().HasForeignKey(x => x.CaseId).OnDelete(DeleteBehavior.NoAction);
+        });
     }
 }
