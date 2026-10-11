@@ -227,6 +227,31 @@ public class LiveProjectionEngineTests
     }
 
     [Fact]
+    public void A_derived_decision_date_does_not_override_a_portal_confirmed_empty()
+    {
+        var emptied = Applied(Obs(1, Snap(status: "DISPOSAL", next: null, decision: "01-09-2026")), Obs(2, Snap(status: "DISPOSAL", next: null, decision: null), 5));
+        Assert.True(emptied.Sources[LiveProjectionEngine.FDecisionDate].ConfirmedEmpty);
+
+        var derived = Snap(status: "DISPOSAL", next: null, decision: "05-10-2026") with { DecisionDateDerived = true };
+        var r = LiveProjectionEngine.Apply(emptied, Obs(3, derived, 10, source: ObservationSource.ConsumerPortal));
+        Assert.Null(r.State.DecisionDate);
+        Assert.True(r.State.Sources[LiveProjectionEngine.FDecisionDate].ConfirmedEmpty);
+        Assert.Equal("Portal", r.State.Sources[LiveProjectionEngine.FDecisionDate].Source);
+    }
+
+    [Fact]
+    public void A_vendor_observation_never_changes_the_hearing_count()
+    {
+        var portal = Applied(Obs(1, Snap(hearings: 10)));
+        var larger = LiveProjectionEngine.Apply(portal, Obs(2, Snap(hearings: 25), 5, source: ObservationSource.Vendor));
+        Assert.Equal(10, larger.State.HearingCount);
+        var smaller = LiveProjectionEngine.Apply(portal, Obs(3, Snap(hearings: 2), 5, source: ObservationSource.Vendor));
+        Assert.Equal(ProjectionOutcome.Applied, smaller.Outcome);          // not a shrink: the vendor has no history to compare
+        Assert.Equal(10, smaller.State.HearingCount);
+        Assert.Null(smaller.State.HeldChange);
+    }
+
+    [Fact]
     public void The_same_observation_applied_twice_changes_nothing_the_second_time()
     {
         var o = Obs(1, Snap());

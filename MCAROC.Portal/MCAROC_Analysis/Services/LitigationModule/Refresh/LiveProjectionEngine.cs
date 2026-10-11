@@ -69,7 +69,7 @@ public static class LiveProjectionEngine
         }
 
         // Guard: the hearing history does not shrink on one response.
-        if (current.HearingCount > 0 && snap.HearingCount > 0 && snap.HearingCount < current.HearingCount)
+        if (o.Source != ObservationSource.Vendor && current.HearingCount > 0 && snap.HearingCount > 0 && snap.HearingCount < current.HearingCount)
         {
             var marker = "history:" + snap.HearingCount;
             if (heldBefore != marker) return new(current with { HeldChange = marker }, ProjectionOutcome.HeldShrinkingHistory, []);
@@ -95,7 +95,7 @@ public static class LiveProjectionEngine
                 var heldSource = sources.GetValueOrDefault(field);
                 // A derived decision date is weaker than one the portal returned explicitly: it never replaces it. Where the held value is itself derived (or absent),
                 // the new observation owns the entry - source, observation id and time move together.
-                if (derivedDecision && heldSource is { Source: "Portal", ConfirmedEmpty: false } && !CaseValue.IsMissing(held)) return held;
+                if (derivedDecision && heldSource is { Source: "Portal" }) return held;   // neither an explicit portal date nor a portal-confirmed empty is overridden
                 var provenance = derivedDecision ? "Derived" : src;
                 var sameValue = string.Equals(held, incoming, StringComparison.Ordinal);
                 if (!sameValue || heldSource is null || heldSource.ConfirmedEmpty || heldSource.Source != provenance)
@@ -125,7 +125,8 @@ public static class LiveProjectionEngine
             DecisionDate = Merge(FDecisionDate, current.DecisionDate, snap.DecisionDate),
             DisposalNature = Merge(FDisposalNature, current.DisposalNature, snap.DisposalNature),
             SuitAmount = Merge(FSuitAmount, current.SuitAmount, snap.SuitAmount),
-            HearingCount = snap.HearingCount > 0 ? snap.HearingCount : current.HearingCount,
+            // The hearing history comes from the portals only: a vendor observation carries none and never changes the count.
+            HearingCount = !vendor && snap.HearingCount > 0 ? snap.HearingCount : current.HearingCount,
             LastRetrievedUtc = o.RetrievedUtc, LastObservationId = o.ObservationId,
             Sources = sources, HeldChange = null
         };
