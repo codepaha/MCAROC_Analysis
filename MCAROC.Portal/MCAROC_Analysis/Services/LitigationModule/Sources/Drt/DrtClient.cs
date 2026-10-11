@@ -839,14 +839,14 @@ public sealed class DrtClient : IDrtClient
             return "direct";
         }
 
-        if (_transportProxy is DrtProxyRotator rotator && rotator.LastQueriedExit is not null)
-        {
-            return rotator.LastQueriedExit;
-        }
-
         if (request.Options.TryGetValue(ExitProvenanceKey, out var explicitExit) && !string.IsNullOrWhiteSpace(explicitExit))
         {
             return explicitExit;
+        }
+
+        if (_transportProxy is DrtProxyRotator rotator && rotator.LastQueriedExit is not null)
+        {
+            return rotator.LastQueriedExit;
         }
 
         if (_transportProxy is WebProxy webProxy && webProxy.Address is not null)
