@@ -2,6 +2,7 @@ using System.Text.Json;
 using MCAROC_Analysis.Data;
 using MCAROC_Analysis.Services.LitigationModule.Store;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
 
 namespace MCAROC_Analysis.Services.LitigationModule.Refresh;
 
@@ -13,8 +14,8 @@ public sealed record ObservationInput(
 
 public sealed record PublishResult(long ObservationId, ProjectionOutcome Outcome, IReadOnlyList<string> ChangedFields, LiveProjectionState State);
 
-/// <summary>Appends observations and publishes the verified projection of a case (plan section 4.1). Every call writes an observation, whatever its outcome, so what the
-/// portal said on a given day is on record. The projection row is changed through <see cref="LiveProjectionEngine"/> and a compare-and-set on <c>Version</c>: a writer
+/// <summary>Appends observations and publishes the verified projection of a case (plan section 4.1). Every call writes exactly one observation, whatever its outcome, so what the
+/// portal said on a given day is on record; the row is inserted once and never updated. The projection row is changed through <see cref="LiveProjectionEngine"/> and a compare-and-set on <c>Version</c>: a writer
 /// that lost a race re-reads the row and applies its observation again, so two agents cannot silently overwrite one another.</summary>
 public sealed class LiveProjectionStore(AppDbContext db, TimeProvider? time = null)
 {
@@ -24,17 +25,12 @@ public sealed class LiveProjectionStore(AppDbContext db, TimeProvider? time = nu
     public async Task<PublishResult> PublishAsync(ObservationInput input, CancellationToken ct)
     {
         var now = _time.GetUtcNow().UtcDateTime;
-        var observation = new ModuleCaseObservation
-        {
-            CaseId = input.CaseId, Source = (int)input.Source, Outcome = (int)input.Outcome, Verified = input.Verified, ParserVersion = input.ParserVersion,
-            RetrievedUtc = input.RetrievedUtc, EventWatermark = input.EventWatermark, SourceUpdatedUtc = input.SourceUpdatedUtc,
-            SnapshotJson = input.Snapshot is null ? null : JsonSerializer.Serialize(input.Snapshot), CreatedUtc = now
-        };
-        db.Set<ModuleCaseObservation>().Add(observation);
-        await db.SaveChangesAsync(ct);   // the observation is on record before anything is decided about it
-
-        var engineInput = new ProjectionObservation(observation.ObservationId, input.Source, input.Outcome, input.Verified, input.RetrievedUtc,
+        // The id is taken from a sequence first, so the engine can name the observation in the field provenance and the observation row can be written ONCE, with its
+        // outcome already known. Observations are append-only: nothing ever updates one after it is inserted.
+        var observationId = await NextObservationIdAsync(ct);
+        var engineInput = new ProjectionObservation(observationId, input.Source, input.Outcome, input.Verified, input.RetrievedUtc,
             input.Snapshot ?? new ParsedCaseSnapshot(null, null, null, null, null, null, null, null, null, 0));
+        var snapshotJson = input.Snapshot is null ? null : JsonSerializer.Serialize(input.Snapshot);
 
         for (var attempt = 0; attempt < Retries; attempt++)
         {
@@ -42,37 +38,55 @@ public sealed class LiveProjectionStore(AppDbContext db, TimeProvider? time = nu
             var current = live is null ? LiveProjectionState.Empty : ToState(live);
             var result = LiveProjectionEngine.Apply(current, engineInput);
 
-            if (result.Outcome == ProjectionOutcome.IgnoredNotVerified || result.Outcome == ProjectionOutcome.IgnoredLate)
+            var observation = new ModuleCaseObservation
             {
-                await Record(observation.ObservationId, result.Outcome, ct);
-                return new PublishResult(observation.ObservationId, result.Outcome, result.ChangedFields, result.State);
-            }
+                ObservationId = observationId, CaseId = input.CaseId, Source = (int)input.Source, Outcome = (int)input.Outcome, Verified = input.Verified,
+                ParserVersion = input.ParserVersion, RetrievedUtc = input.RetrievedUtc, EventWatermark = input.EventWatermark, SourceUpdatedUtc = input.SourceUpdatedUtc,
+                SnapshotJson = snapshotJson, AppliedAs = result.Outcome.ToString(), CreatedUtc = now
+            };
+            db.Set<ModuleCaseObservation>().Add(observation);
 
-            if (live is null)
+            var changesProjection = result.Outcome is not (ProjectionOutcome.IgnoredNotVerified or ProjectionOutcome.IgnoredLate);
+            if (changesProjection)
             {
-                live = new ModuleCaseLive { CaseId = input.CaseId, Version = 1 };
-                db.Set<ModuleCaseLive>().Add(live);
+                if (live is null)
+                {
+                    live = new ModuleCaseLive { CaseId = input.CaseId, Version = 1 };
+                    db.Set<ModuleCaseLive>().Add(live);
+                }
+                else live.Version++;
+                Copy(result.State, live, now);
             }
-            else live.Version++;
-            Copy(result.State, live, now);
-            observation.AppliedAs = result.Outcome.ToString();
-            db.Entry(observation).Property(o => o.AppliedAs).IsModified = true;
 
             try
             {
-                await db.SaveChangesAsync(ct);
-                return new PublishResult(observation.ObservationId, result.Outcome, result.ChangedFields, result.State);
+                await db.SaveChangesAsync(ct);   // the observation and the projection change commit together, or neither does
+                return new PublishResult(observationId, result.Outcome, result.ChangedFields, result.State);
             }
             catch (Exception ex) when (ex is DbUpdateConcurrencyException or DbUpdateException)
             {
-                // Another agent published first (a changed Version, or a second first-insert): forget our tracked rows, keep the observation, and apply again to what is stored now.
-                db.Entry(live).State = EntityState.Detached;
-                var tracked = db.Entry(observation);
-                tracked.Reload();
+                // Another agent published first (a changed Version, or a second first-insert): forget what this attempt tracked and apply again to what is stored now.
+                db.ChangeTracker.Clear();
                 if (attempt == Retries - 1) throw;
             }
         }
         throw new InvalidOperationException("unreachable");
+    }
+
+    /// <summary>The next id from the observation sequence. A raw command, because EF wraps a query in a sub-select and NEXT VALUE FOR is not allowed there.</summary>
+    private async Task<long> NextObservationIdAsync(CancellationToken ct)
+    {
+        var connection = db.Database.GetDbConnection();
+        var opened = connection.State != System.Data.ConnectionState.Open;
+        if (opened) await connection.OpenAsync(ct);
+        try
+        {
+            await using var command = connection.CreateCommand();
+            command.CommandText = "SELECT NEXT VALUE FOR [litigation].[CaseObservationIds]";
+            command.Transaction = db.Database.CurrentTransaction?.GetDbTransaction();
+            return Convert.ToInt64(await command.ExecuteScalarAsync(ct));
+        }
+        finally { if (opened) await connection.CloseAsync(); }
     }
 
     public async Task<LiveProjectionState?> GetStateAsync(long caseId, CancellationToken ct)
@@ -80,10 +94,6 @@ public sealed class LiveProjectionStore(AppDbContext db, TimeProvider? time = nu
         var live = await db.Set<ModuleCaseLive>().AsNoTracking().FirstOrDefaultAsync(l => l.CaseId == caseId, ct);
         return live is null ? null : ToState(live);
     }
-
-    private async Task Record(long observationId, ProjectionOutcome outcome, CancellationToken ct) =>
-        await db.Set<ModuleCaseObservation>().Where(o => o.ObservationId == observationId)
-            .ExecuteUpdateAsync(s => s.SetProperty(o => o.AppliedAs, outcome.ToString()), ct);
 
     private static LiveProjectionState ToState(ModuleCaseLive l) => new(
         l.Status, l.Stage, l.Court, l.FilingDate, l.LastHearingDate, l.NextHearingDate, l.DecisionDate, l.DisposalNature, l.SuitAmount, l.HearingCount,

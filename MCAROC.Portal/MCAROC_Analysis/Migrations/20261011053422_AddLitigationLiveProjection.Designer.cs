@@ -13,7 +13,7 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace MCAROC_Analysis.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    [Migration("20261011051606_AddLitigationLiveProjection")]
+    [Migration("20261011053422_AddLitigationLiveProjection")]
     partial class AddLitigationLiveProjection
     {
         /// <inheritdoc />
@@ -25,6 +25,8 @@ namespace MCAROC_Analysis.Migrations
                 .HasAnnotation("Relational:MaxIdentifierLength", 128);
 
             SqlServerModelBuilderExtensions.UseIdentityColumns(modelBuilder);
+
+            modelBuilder.HasSequence("CaseObservationIds", "litigation");
 
             modelBuilder.Entity("MCAROC_Analysis.Data.Entities.AiUsageRecord", b =>
                 {
@@ -6749,9 +6751,10 @@ namespace MCAROC_Analysis.Migrations
                 {
                     b.Property<long>("ObservationId")
                         .ValueGeneratedOnAdd()
-                        .HasColumnType("bigint");
+                        .HasColumnType("bigint")
+                        .HasDefaultValueSql("NEXT VALUE FOR [litigation].[CaseObservationIds]");
 
-                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("ObservationId"));
+                    SqlServerPropertyBuilderExtensions.UseSequence(b.Property<long>("ObservationId"), "CaseObservationIds", "litigation");
 
                     b.Property<string>("AppliedAs")
                         .HasMaxLength(64)

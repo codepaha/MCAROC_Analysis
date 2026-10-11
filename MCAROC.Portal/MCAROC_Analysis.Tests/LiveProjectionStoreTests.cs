@@ -148,4 +148,34 @@ public class LiveProjectionStoreTests : IAsyncLifetime
         var live = await verify.Set<ModuleCaseLive>().AsNoTracking().SingleAsync(l => l.CaseId == id);
         Assert.Equal(("DISPOSAL", "DRT Mumbai 1", null), (live.Status, live.Court, live.NextHearingDate));
     }
+
+    [Fact]
+    public async Task An_observation_is_written_once_complete_and_is_never_updated()
+    {
+        var id = await NewCaseAsync();
+        await using var db = Ctx();
+        var store = new LiveProjectionStore(db);
+        var r = await store.PublishAsync(Found(id, Snap()), default);
+        // A later publication for the same case must leave the earlier observation row byte-for-byte as it was.
+        await using var read1 = Ctx();
+        var before = await read1.Set<ModuleCaseObservation>().AsNoTracking().SingleAsync(o => o.ObservationId == r.ObservationId);
+        await store.PublishAsync(Found(id, Snap("DISPOSAL", null), 5), default);
+        await store.PublishAsync(Found(id, Snap(next: "01-12-2026"), 3), default);   // late: recorded, ignored
+        await using var read2 = Ctx();
+        var after = await read2.Set<ModuleCaseObservation>().AsNoTracking().SingleAsync(o => o.ObservationId == r.ObservationId);
+        Assert.Equal(JsonSerializer.Serialize(before), JsonSerializer.Serialize(after));
+        Assert.Equal("Applied", after.AppliedAs);          // the outcome was known when the row was inserted
+    }
+
+    [Fact]
+    public void The_store_never_issues_an_update_against_the_observation_table()
+    {
+        // Append-only is structural: the store's source has no update of an observation (guards against the pattern being reintroduced).
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir is not null && !File.Exists(Path.Combine(dir.FullName, "MCAROC_Analysis", "MCAROC_Analysis.csproj"))) dir = dir.Parent;
+        var source = File.ReadAllText(Path.Combine(dir!.FullName, "MCAROC_Analysis", "Services", "LitigationModule", "Refresh", "LiveProjectionStore.cs"));
+        Assert.DoesNotContain("ExecuteUpdateAsync", source);
+        Assert.DoesNotContain("IsModified", source);
+        Assert.DoesNotContain("Set<ModuleCaseObservation>().Where", source);
+    }
 }

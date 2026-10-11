@@ -23,6 +23,8 @@ namespace MCAROC_Analysis.Migrations
 
             SqlServerModelBuilderExtensions.UseIdentityColumns(modelBuilder);
 
+            modelBuilder.HasSequence("CaseObservationIds", "litigation");
+
             modelBuilder.Entity("MCAROC_Analysis.Data.Entities.AiUsageRecord", b =>
                 {
                     b.Property<long>("AiUsageRecordId")
@@ -6746,9 +6748,10 @@ namespace MCAROC_Analysis.Migrations
                 {
                     b.Property<long>("ObservationId")
                         .ValueGeneratedOnAdd()
-                        .HasColumnType("bigint");
+                        .HasColumnType("bigint")
+                        .HasDefaultValueSql("NEXT VALUE FOR [litigation].[CaseObservationIds]");
 
-                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("ObservationId"));
+                    SqlServerPropertyBuilderExtensions.UseSequence(b.Property<long>("ObservationId"), "CaseObservationIds", "litigation");
 
                     b.Property<string>("AppliedAs")
                         .HasMaxLength(64)

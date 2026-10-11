@@ -11,6 +11,10 @@ namespace MCAROC_Analysis.Migrations
         /// <inheritdoc />
         protected override void Up(MigrationBuilder migrationBuilder)
         {
+            migrationBuilder.CreateSequence(
+                name: "CaseObservationIds",
+                schema: "litigation");
+
             migrationBuilder.CreateTable(
                 name: "CaseLive",
                 schema: "litigation",
@@ -50,8 +54,7 @@ namespace MCAROC_Analysis.Migrations
                 schema: "litigation",
                 columns: table => new
                 {
-                    ObservationId = table.Column<long>(type: "bigint", nullable: false)
-                        .Annotation("SqlServer:Identity", "1, 1"),
+                    ObservationId = table.Column<long>(type: "bigint", nullable: false, defaultValueSql: "NEXT VALUE FOR [litigation].[CaseObservationIds]"),
                     CaseId = table.Column<long>(type: "bigint", nullable: false),
                     Source = table.Column<int>(type: "int", nullable: false),
                     Outcome = table.Column<int>(type: "int", nullable: false),
@@ -91,6 +94,10 @@ namespace MCAROC_Analysis.Migrations
 
             migrationBuilder.DropTable(
                 name: "CaseObservations",
+                schema: "litigation");
+
+            migrationBuilder.DropSequence(
+                name: "CaseObservationIds",
                 schema: "litigation");
         }
     }
