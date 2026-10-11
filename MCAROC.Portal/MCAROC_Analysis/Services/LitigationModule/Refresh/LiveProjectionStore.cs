@@ -24,6 +24,11 @@ public sealed class LiveProjectionStore(AppDbContext db, TimeProvider? time = nu
 
     public async Task<PublishResult> PublishAsync(ObservationInput input, CancellationToken ct)
     {
+        // A verified observation has to say something: a verified Found with no snapshot would advance the projection's retrieval time and observation id while
+        // carrying no case fields, and could make a later, valid response look late.
+        if (input.Verified && (input.Outcome != ObservationOutcome.Found || input.Snapshot is null))
+            throw new ArgumentException("A verified observation must be a Found outcome with a snapshot.", nameof(input));
+
         var now = _time.GetUtcNow().UtcDateTime;
         // The id is taken from a sequence first, so the engine can name the observation in the field provenance and the observation row can be written ONCE, with its
         // outcome already known. Observations are append-only: nothing ever updates one after it is inserted.

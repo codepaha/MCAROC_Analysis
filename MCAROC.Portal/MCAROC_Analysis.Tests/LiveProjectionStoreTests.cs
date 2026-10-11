@@ -178,4 +178,22 @@ public class LiveProjectionStoreTests : IAsyncLifetime
         Assert.DoesNotContain("IsModified", source);
         Assert.DoesNotContain("Set<ModuleCaseObservation>().Where", source);
     }
+
+    [Fact]
+    public async Task A_verified_found_observation_without_a_snapshot_is_rejected_and_nothing_is_written()
+    {
+        var id = await NewCaseAsync();
+        await using var db = Ctx();
+        var store = new LiveProjectionStore(db);
+        await Assert.ThrowsAsync<ArgumentException>(() => store.PublishAsync(new ObservationInput(id, ObservationSource.DrtPortal, ObservationOutcome.Found, true, T0, null), default));
+        await Assert.ThrowsAsync<ArgumentException>(() => store.PublishAsync(new ObservationInput(id, ObservationSource.DrtPortal, ObservationOutcome.NotFound, true, T0, Snap()), default));
+
+        await using var verify = Ctx();
+        Assert.Equal(0, await verify.Set<ModuleCaseObservation>().CountAsync(o => o.CaseId == id));
+        Assert.Null(await verify.Set<ModuleCaseLive>().AsNoTracking().FirstOrDefaultAsync(l => l.CaseId == id));
+
+        // A later valid response with an earlier retrieval time is not treated as late, because the bad call advanced nothing.
+        await store.PublishAsync(Found(id, Snap(), minutes: -30), default);
+        Assert.Equal("PENDING", (await new LiveProjectionStore(Ctx()).GetStateAsync(id, default))!.Status);
+    }
 }
