@@ -720,22 +720,30 @@ public sealed class DrtClient : IDrtClient
                     timeoutCts.CancelAfter(TimeSpan.FromSeconds(_options.TimeoutSeconds));
                 }
 
-                var requestExit = CurrentExit;
-
                 // Finding 2: Create fresh content for EACH attempt so disposed content is never reused!
                 using var content = new FormUrlEncodedContent(formFields);
                 using var request = new HttpRequestMessage(HttpMethod.Post, endpoint);
                 request.Headers.UserAgent.ParseAdd(_options.UserAgent);
                 request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
                 request.Content = content;
-                request.Options.Set(ExitProvenanceKey, requestExit);
 
-                using var response = _sendHook is not null
-                    ? await _sendHook(request, timeoutCts.Token)
-                    : await _http.SendAsync(request, timeoutCts.Token);
+                HttpResponseMessage response;
+                try
+                {
+                    DrtProxyRotator.CurrentRequest.Value = request;
+                    response = _sendHook is not null
+                        ? await _sendHook(request, timeoutCts.Token)
+                        : await _http.SendAsync(request, timeoutCts.Token);
+                }
+                finally
+                {
+                    DrtProxyRotator.CurrentRequest.Value = null;
+                }
 
-                exitAddress = DetermineExitAddress(request);
-                var body = await response.Content.ReadAsStringAsync(timeoutCts.Token);
+                using (response)
+                {
+                    exitAddress = DetermineExitAddress(request);
+                    var body = await response.Content.ReadAsStringAsync(timeoutCts.Token);
 
                 // Transient HTTP status codes: retry with backoff and honour Retry-After
                 if ((int)response.StatusCode is 429 or 500 or 502 or 503 or 504)
@@ -765,6 +773,7 @@ public sealed class DrtClient : IDrtClient
 
                 _breaker?.RecordSuccess();
                 return new DrtApiResponse(response.StatusCode, body, true, null, exitAddress);
+                }
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {

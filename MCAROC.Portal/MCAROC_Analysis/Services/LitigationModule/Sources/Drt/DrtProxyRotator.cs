@@ -56,16 +56,26 @@ public sealed class DrtProxyRotator : IWebProxy
         Interlocked.Increment(ref _index);
     }
 
+    internal static readonly AsyncLocal<HttpRequestMessage?> CurrentRequest = new();
+
     /// <inheritdoc />
     public Uri? GetProxy(Uri destination)
     {
         if (_proxies.Length == 0)
         {
             _lastQueriedProxy = "direct";
+            if (CurrentRequest.Value is { } req0)
+            {
+                req0.Options.Set(DrtClient.ExitProvenanceKey, "direct");
+            }
             return null;
         }
         var exit = CurrentExit;
         _lastQueriedProxy = exit;
+        if (CurrentRequest.Value is { } req)
+        {
+            req.Options.Set(DrtClient.ExitProvenanceKey, exit);
+        }
         return Uri.TryCreate(exit, UriKind.Absolute, out var uri) ? uri : null;
     }
 
