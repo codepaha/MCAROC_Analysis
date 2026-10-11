@@ -4660,6 +4660,9 @@ namespace MCAROC_Analysis.Migrations
                     b.Property<long?>("LatestCompletedIngestionRunId")
                         .HasColumnType("bigint");
 
+                    b.Property<long>("LiveDataVersion")
+                        .HasColumnType("bigint");
+
                     b.Property<string>("Llpin")
                         .HasColumnType("nvarchar(max)");
 
