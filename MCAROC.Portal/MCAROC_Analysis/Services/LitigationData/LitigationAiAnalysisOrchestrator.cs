@@ -75,7 +75,7 @@ public sealed class LitigationAiAnalysisOrchestrator(AppDbContext db, ILitigatio
             var requestId = await db.LitigationAiAnalysisRuns.Where(x => x.LitigationAiAnalysisRunId == runId && x.LeaseToken == token).Select(x => x.RequestId).SingleAsync(ct);
             using var usageScope = AiUsageContext.Begin(requestId);
             var cases = await db.LitigationCases.Include(x => x.Orders).Where(x => x.RequestId == requestId && x.MergedIntoCaseId == null).ToListAsync(ct);
-            var chunks = await db.LitigationOrderChunks.Where(x => x.RequestId == requestId).ToListAsync(ct);
+            var chunks = await LiveChunks(db, db.LitigationOrderChunks, requestId).ToListAsync(ct);
             var context = await LoadAnalysisContextAsync(requestId, ct);
             _breaker = new LitigationOutageBreaker(options.Value.OutageAfterConsecutiveFailures);
             // A retried run (after an outage, a restart or an error) tries again what failed; only finished work is skipped.
@@ -131,6 +131,13 @@ public sealed class LitigationAiAnalysisOrchestrator(AppDbContext db, ILitigatio
             .GroupBy(x => x.LitigationCaseId).ToDictionary(g => g.Key, g => g.OrderByDescending(x => x.LitigationCaseAiAnalysisId).ToList());
 
     /// <summary>True when the request has cases and every one is already analysed for its current evidence.</summary>
+    /// <summary>The request's chunks that count: those of a case that is not soft-merged and of an order that was not collapsed into another (plan 4.5, 4.6). A hidden loser's
+    /// order text is the same text as the survivor's, so classifying it would be duplicate work and duplicate cost.</summary>
+    public static IQueryable<LitigationOrderChunk> LiveChunks(AppDbContext db, IQueryable<LitigationOrderChunk> chunks, long requestId) =>
+        chunks.Where(x => x.RequestId == requestId
+            && db.LitigationCases.Any(c => c.LitigationCaseId == x.LitigationCaseId && c.MergedIntoCaseId == null)
+            && !db.LitigationCaseOrders.Any(o => o.LitigationCaseOrderId == x.LitigationCaseOrderId && o.CollapsedIntoOrderId != null));
+
     public async Task<bool> IsUpToDateAsync(long requestId, CancellationToken ct) =>
         await db.LitigationCases.AsNoTracking().AnyAsync(x => x.RequestId == requestId && x.MergedIntoCaseId == null, ct) && !await NeedsAnalysisAsync(requestId, ct);
 
@@ -146,7 +153,7 @@ public sealed class LitigationAiAnalysisOrchestrator(AppDbContext db, ILitigatio
             (p.Status == LitigationAiAnalysisItemStatus.Completed || p.Status == LitigationAiAnalysisItemStatus.InsufficientEvidence)
             && db.LitigationAiAnalysisRuns.Any(r => r.LitigationAiAnalysisRunId == p.LitigationAiAnalysisRunId && r.RequestId == requestId), ct);
         if (!hasPortfolio) return true;
-        var chunks = await db.LitigationOrderChunks.AsNoTracking().Where(x => x.RequestId == requestId).ToListAsync(ct);
+        var chunks = await LiveChunks(db, db.LitigationOrderChunks.AsNoTracking(), requestId).ToListAsync(ct);
         var prior = await LoadPriorAsync(requestId, 0, ct);
         var context = await LoadAnalysisContextAsync(requestId, ct);
         var casePromptHash = LitigationCaseAnalysisInputBuilder.Hash(LitigationCaseAnalysisPrompt.Instructions);

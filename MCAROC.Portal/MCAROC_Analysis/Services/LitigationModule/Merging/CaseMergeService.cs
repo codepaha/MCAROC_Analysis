@@ -23,7 +23,7 @@ public sealed class CaseMergeService(AppDbContext db, TimeProvider? time = null)
 {
     private readonly TimeProvider _time = time ?? TimeProvider.System;
 
-    public const string TCases = "LitigationCases", TOrders = "LitigationCaseOrders", TSourceReports = "LitigationCaseSourceReports";
+    public const string TCases = "LitigationCases", TOrders = "LitigationCaseOrders", TSourceReports = "LitigationCaseSourceReports", TChunks = "LitigationOrderChunks";
     public const string CMergedInto = "MergedIntoCaseId", CCaseId = "LitigationCaseId", CCollapsedInto = "CollapsedIntoOrderId";
 
     public async Task<CaseMergeResult> MergeAsync(long requestId, long caseA, long caseB, CancellationToken ct)
@@ -65,6 +65,7 @@ public sealed class CaseMergeService(AppDbContext db, TimeProvider? time = null)
         // both on one case: it stays on the loser (still on record, not lost) and is reported.
         var survivorOrders = await db.LitigationCaseOrders.Where(o => o.LitigationCaseId == survivorId).ToListAsync(ct);
         var unmoved = 0;
+        var movedOrderIds = new List<long>();
         foreach (var order in await db.LitigationCaseOrders.Where(o => o.LitigationCaseId == loserId).ToListAsync(ct))
         {
             var same = survivorOrders.FirstOrDefault(o => OrderKey(o) == OrderKey(order));
@@ -81,7 +82,18 @@ public sealed class CaseMergeService(AppDbContext db, TimeProvider? time = null)
             {
                 Record(TOrders, order.LitigationCaseOrderId, CCaseId, order.LitigationCaseId, survivorId);
                 order.LitigationCaseId = survivorId;
+                movedOrderIds.Add(order.LitigationCaseOrderId);
             }
+        }
+
+        // The text chunks of a re-pointed order move with it (only the case id; text, labels and embeddings are untouched). Ids only are read: chunks carry embeddings.
+        if (movedOrderIds.Count > 0)
+        {
+            var chunkIds = await db.LitigationOrderChunks.Where(c => movedOrderIds.Contains(c.LitigationCaseOrderId) && c.LitigationCaseId == loserId)
+                .Select(c => c.LitigationOrderChunkId).ToListAsync(ct);
+            foreach (var chunkId in chunkIds) Record(TChunks, chunkId, CCaseId, loserId, survivorId);
+            foreach (var batch in chunkIds.Chunk(1000))
+                await db.LitigationOrderChunks.Where(c => batch.Contains(c.LitigationOrderChunkId)).ExecuteUpdateAsync(s => s.SetProperty(c => c.LitigationCaseId, survivorId), ct);
         }
 
         // The loser row stays, flagged. Nothing is deleted.
@@ -182,6 +194,15 @@ public sealed class CaseMergeService(AppDbContext db, TimeProvider? time = null)
                     return (false, Text(row.LitigationCaseId), "the original case now holds the same snapshot link");
                 row.LitigationCaseId = before ?? row.LitigationCaseId;
                 return (true, null, "");
+            }
+            case (TChunks, CCaseId):
+            {
+                // Chunks are updated in place without loading them (they carry embeddings); the row is restored only if it still holds the survivor's id.
+                var restoredRows = before is null ? 0 : await db.LitigationOrderChunks.Where(c => c.LitigationOrderChunkId == change.RowId && c.LitigationCaseId == after)
+                    .ExecuteUpdateAsync(s => s.SetProperty(c => c.LitigationCaseId, before.Value), ct);
+                if (restoredRows == 1) return (true, null, "");
+                var currentOwner = await db.LitigationOrderChunks.AsNoTracking().Where(c => c.LitigationOrderChunkId == change.RowId).Select(c => (long?)c.LitigationCaseId).FirstOrDefaultAsync(ct);
+                return currentOwner is null ? (false, null, "the row no longer exists") : (false, Text(currentOwner), "changed after the merge");
             }
             default:
                 return (false, null, $"unsupported journal entry {change.Table}.{change.Column}");

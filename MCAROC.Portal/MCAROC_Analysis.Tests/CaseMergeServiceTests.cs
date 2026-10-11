@@ -336,4 +336,112 @@ public class CaseMergeServiceTests : IAsyncLifetime
         Assert.Null(await pages.GetAsync(w.RequestId, w.B, default));
         Assert.NotNull(await pages.GetAsync(w.RequestId, w.A, default));
     }
+
+    private static async Task<(long Moved, long Collapsed)> SeedChunksAsync(World w)
+    {
+        await using var db = Ctx();
+        var orderB3 = await db.LitigationCaseOrders.AsNoTracking().SingleAsync(o => o.LitigationCaseId == w.B && o.PdfUrl == "https://x/3.pdf");      // will be re-pointed
+        var orderB2 = await db.LitigationCaseOrders.AsNoTracking().SingleAsync(o => o.LitigationCaseId == w.B && o.PdfUrl == "https://x/2.pdf");      // will be collapsed
+        long doc = 0;
+        foreach (var order in new[] { orderB3, orderB2 })
+        {
+            var d = new LitigationOrderDocument { LitigationCaseOrderId = order.LitigationCaseOrderId };
+            db.LitigationOrderDocuments.Add(d);
+            await db.SaveChangesAsync();
+            doc = d.LitigationOrderDocumentId;
+            db.LitigationOrderChunks.Add(new LitigationOrderChunk
+            {
+                RequestId = w.RequestId, LitigationOrderDocumentId = doc, LitigationCaseOrderId = order.LitigationCaseOrderId, LitigationCaseId = w.B,
+                ChunkIndex = 0, PageNumber = 1, ChunkText = "text", Embedding = new Microsoft.Data.SqlTypes.SqlVector<float>(new float[768]),
+                EmbeddingModel = "m", EmbeddingDimensions = 768, ChunkingVersion = "v", CreatedDate = DateTime.UtcNow
+            });
+            await db.SaveChangesAsync();
+        }
+        return (orderB3.LitigationCaseOrderId, orderB2.LitigationCaseOrderId);
+    }
+
+    [Fact]
+    public async Task The_chunks_of_a_re_pointed_order_move_to_the_survivor_and_the_chunks_of_a_collapsed_order_do_not_count()
+    {
+        var w = await SeedAsync();
+        var (moved, collapsed) = await SeedChunksAsync(w);
+        long mergeId;
+        await using (var db = Ctx()) mergeId = (await new CaseMergeService(db).MergeAsync(w.RequestId, w.A, w.B, default)).MergeId!.Value;
+
+        await using (var v = Ctx())
+        {
+            Assert.Equal(w.A, (await v.LitigationOrderChunks.AsNoTracking().SingleAsync(c => c.LitigationCaseOrderId == moved)).LitigationCaseId);       // moved with its order
+            Assert.Equal(w.B, (await v.LitigationOrderChunks.AsNoTracking().SingleAsync(c => c.LitigationCaseOrderId == collapsed)).LitigationCaseId);     // collapsed: left, and flagged through its order
+            Assert.Contains(await v.Set<ModuleCaseMergeChange>().AsNoTracking().Where(c => c.MergeId == mergeId).Select(c => c.Table).ToListAsync(), t => t == CaseMergeService.TChunks);
+        }
+
+        // reversal puts the moved chunk back, byte for byte the same row
+        await using (var db = Ctx())
+        {
+            var report = await new CaseMergeService(db).ReverseAsync(mergeId, default);
+            Assert.Empty(report.Conflicts);
+        }
+        await using var after = Ctx();
+        Assert.Equal(w.B, (await after.LitigationOrderChunks.AsNoTracking().SingleAsync(c => c.LitigationCaseOrderId == moved)).LitigationCaseId);
+    }
+
+    [Fact]
+    public async Task The_analysis_reads_only_the_chunks_of_live_orders_of_live_cases()
+    {
+        var w = await SeedAsync();
+        var (moved, collapsed) = await SeedChunksAsync(w);
+        await using (var before = Ctx())
+            Assert.Equal(2, await LitigationAiAnalysisOrchestrator.LiveChunks(before, before.LitigationOrderChunks, w.RequestId).CountAsync());   // both are live before the merge
+
+        await using (var db = Ctx()) await new CaseMergeService(db).MergeAsync(w.RequestId, w.A, w.B, default);
+        await using var v = Ctx();
+        var live = await LitigationAiAnalysisOrchestrator.LiveChunks(v, v.LitigationOrderChunks.AsNoTracking(), w.RequestId).Select(c => new { c.LitigationCaseOrderId, c.LitigationCaseId }).ToListAsync();
+        var only = Assert.Single(live);
+        Assert.Equal((moved, w.A), (only.LitigationCaseOrderId, only.LitigationCaseId));     // the collapsed order's chunk (same text as the survivor's) is not classified again
+        Assert.DoesNotContain(live, c => c.LitigationCaseOrderId == collapsed);
+    }
+
+    [Fact]
+    public async Task A_moved_chunk_whose_case_id_was_changed_after_the_merge_is_kept_and_reported_on_reversal()
+    {
+        var w = await SeedAsync();
+        var (moved, _) = await SeedChunksAsync(w);
+        long mergeId;
+        await using (var db = Ctx()) mergeId = (await new CaseMergeService(db).MergeAsync(w.RequestId, w.A, w.B, default)).MergeId!.Value;
+        long chunkId;
+        await using (var db = Ctx())
+        {
+            chunkId = (await db.LitigationOrderChunks.AsNoTracking().SingleAsync(c => c.LitigationCaseOrderId == moved)).LitigationOrderChunkId;
+            await db.LitigationOrderChunks.Where(c => c.LitigationOrderChunkId == chunkId).ExecuteUpdateAsync(s => s.SetProperty(c => c.LitigationCaseId, 424242L));
+        }
+        await using (var db = Ctx())
+        {
+            var report = await new CaseMergeService(db).ReverseAsync(mergeId, default);
+            Assert.Contains(report.Conflicts, c => c.Table == CaseMergeService.TChunks && c.RowId == chunkId);
+        }
+        await using var v = Ctx();
+        Assert.Equal(424242L, (await v.LitigationOrderChunks.AsNoTracking().SingleAsync(c => c.LitigationOrderChunkId == chunkId)).LitigationCaseId);
+    }
+
+    [Fact]
+    public async Task The_chat_facts_do_not_count_a_merged_loser_even_when_its_link_to_the_latest_snapshot_stays()
+    {
+        var w = await SeedAsync();
+        // make the survivor also a member of the latest snapshot, so after the merge the loser's link to it stays
+        await using (var seed = Ctx())
+        {
+            seed.LitigationCaseSourceReports.Add(new LitigationCaseSourceReport { LitigationCaseId = w.A, LitigationReportSnapshotId = w.SnapshotNew, FirstSeenUtc = DateTime.UtcNow });
+            await seed.SaveChangesAsync();
+        }
+        string FactText(IEnumerable<MCAROC_Analysis.Services.Chat.StructuredFact> facts) => facts.First(f => f.Text.Contains("litigation case(s) fetched from the litigation data service")).Text;
+        await using (var before = Ctx())
+            Assert.StartsWith("2 litigation case(s)", FactText(await new MCAROC_Analysis.Services.Chat.StructuredFactsProvider(before).BuildDigestAsync(w.RequestId, new MCAROC_Analysis.Services.Chat.QuestionHints(null, null, null, null, null), default)));
+
+        await using (var db = Ctx()) Assert.True((await new CaseMergeService(db).MergeAsync(w.RequestId, w.A, w.B, default)).Performed);
+        await using (var v = Ctx())
+        {
+            Assert.Contains(w.SnapshotNew, await v.LitigationCaseSourceReports.AsNoTracking().Where(s => s.LitigationCaseId == w.B).Select(s => s.LitigationReportSnapshotId).ToListAsync());   // the loser's link stays
+            Assert.StartsWith("1 litigation case(s)", FactText(await new MCAROC_Analysis.Services.Chat.StructuredFactsProvider(v).BuildDigestAsync(w.RequestId, new MCAROC_Analysis.Services.Chat.QuestionHints(null, null, null, null, null), default)));
+        }
+    }
 }
