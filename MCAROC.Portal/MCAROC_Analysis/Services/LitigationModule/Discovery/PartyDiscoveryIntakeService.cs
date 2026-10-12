@@ -93,6 +93,7 @@ public sealed class PartyDiscoveryIntakeService : IPartyDiscoveryIntakeService
         var alreadyExistingCount = 0;
         var rejectedCount = 0;
         var possibleDuplicatesCount = 0;
+        var candidatesToOnboard = new List<CandidateToOnboard>();
 
         var todayIst = DateOnly.FromDateTime(Ist.Now(_timeProvider));
         var nowUtc = _timeProvider.GetUtcNow().UtcDateTime;
@@ -222,43 +223,6 @@ public sealed class PartyDiscoveryIntakeService : IPartyDiscoveryIntakeService
                 continue;
             }
 
-            // 4. Concurrency lock: take lock for the case key to prevent concurrent creation races
-            await using var tx = await _db.Database.BeginTransactionAsync(ct);
-            await CaseLock.AcquireAsync(_db, $"discovery:{requestId}:{caseKey}", ct);
-
-            // Re-check existence under the lock
-            var existingUnderLock = await (from lc in _db.LitigationCases
-                                           where lc.RequestId == requestId && lc.MergedIntoCaseId == null
-                                           join mc in _db.Set<ModuleCase>() on lc.LitigationCaseId equals mc.LegacyLitigationCaseId
-                                           where mc.CaseKey == caseKey
-                                           select new { lc.LitigationCaseId, mc.CaseId, lc.CaseStatus, lc.CaseStage }).FirstOrDefaultAsync(ct);
-
-            if (existingUnderLock is not null)
-            {
-                await tx.RollbackAsync(ct);
-                _logger.LogInformation(
-                    "Discovered candidate '{CaseNumber}' (key: {CaseKey}) was created concurrently as case {ExistingId}; skipping addition",
-                    candidate.CaseNumber, caseKey, existingUnderLock.LitigationCaseId);
-
-                var isExistingDisposed = LitigationCaseStatusClassifier.Classify(existingUnderLock.CaseStatus, existingUnderLock.CaseStage) == LitigationCaseStatusBucket.Disposed;
-                var existingRefreshAction = isExistingDisposed ? LiveRefreshAction.FetchOrdersOnly : LiveRefreshAction.Skip;
-
-                var existingItem = new DiscoveredCaseIntakeItemResult(
-                    candidate,
-                    IntakeCandidateStatus.AlreadyExists,
-                    caseKey,
-                    existingUnderLock.LitigationCaseId,
-                    existingUnderLock.CaseId,
-                    isExistingDisposed,
-                    existingRefreshAction,
-                    Note: "Already exists (created concurrently)");
-
-                items.Add(existingItem);
-                seenKeysInBatch[caseKey] = existingItem;
-                alreadyExistingCount++;
-                continue;
-            }
-
             // 5. Make one detail call per genuinely new case and map
             ParsedCaseSnapshot? snapshot = null;
             PartyMatchResult? detailMatch = null;
@@ -295,7 +259,6 @@ public sealed class PartyDiscoveryIntakeService : IPartyDiscoveryIntakeService
                     if (detailResult is null || !detailResult.IsFound || detailResult.Case is null)
                     {
                         _logger.LogWarning("Detail call for DRT candidate '{CaseNumber}' at tribunal {TribunalId} failed or returned not found: {Msg}", candidate.CaseNumber, tribId, detailResult?.Message);
-                        await tx.RollbackAsync(ct);
                         items.Add(new DiscoveredCaseIntakeItemResult(candidate, IntakeCandidateStatus.DetailFetchFailed, caseKey, null, null, false, LiveRefreshAction.Skip, detailResult?.Message ?? "Detail lookup failed"));
                         continue;
                     }
@@ -304,9 +267,26 @@ public sealed class PartyDiscoveryIntakeService : IPartyDiscoveryIntakeService
                     var mapped = DrtObservationMapper.Map(detailResult, lookup, drtTribunal, subjectNamesList, formerNamesList, storedDirection: null, todayIst);
                     if (!mapped.Verified || mapped.Outcome != ObservationOutcome.Found)
                     {
-                        _logger.LogWarning("DRT candidate '{CaseNumber}' identity or party verification failed: {Reason}", candidate.CaseNumber, mapped.Message ?? mapped.Verification?.IdentityReason);
-                        await tx.RollbackAsync(ct);
+                        _logger.LogWarning("DRT candidate '{CaseNumber}' identity verification failed: {Reason}", candidate.CaseNumber, mapped.Message ?? mapped.Verification?.IdentityReason);
                         items.Add(new DiscoveredCaseIntakeItemResult(candidate, IntakeCandidateStatus.IdentityMismatch, caseKey, null, null, false, LiveRefreshAction.Skip, mapped.Message ?? mapped.Verification?.IdentityReason));
+                        continue;
+                    }
+
+                    if (mapped.Verification?.Party?.Outcome != PartyMatchOutcome.Verified)
+                    {
+                        _logger.LogWarning(
+                            "DRT candidate '{CaseNumber}' detail party match is not verified (Outcome: {Outcome}, Rule: {Rule})",
+                            candidate.CaseNumber, mapped.Verification?.Party?.Outcome, mapped.Verification?.Party?.Rule);
+                        items.Add(new DiscoveredCaseIntakeItemResult(
+                            candidate,
+                            IntakeCandidateStatus.PartyRejected,
+                            caseKey,
+                            null,
+                            null,
+                            false,
+                            LiveRefreshAction.Skip,
+                            $"Detail party match not verified ({mapped.Verification?.Party?.Outcome}, rule: {mapped.Verification?.Party?.Rule})"));
+                        rejectedCount++;
                         continue;
                     }
 
@@ -324,7 +304,6 @@ public sealed class PartyDiscoveryIntakeService : IPartyDiscoveryIntakeService
                     if (!detailResult.IsFound || detailResult.Case is null)
                     {
                         _logger.LogWarning("Detail call for Consumer candidate '{CaseNumber}' failed or returned not found: {Msg}", candidate.CaseNumber, detailResult.Message);
-                        await tx.RollbackAsync(ct);
                         items.Add(new DiscoveredCaseIntakeItemResult(candidate, IntakeCandidateStatus.DetailFetchFailed, caseKey, null, null, false, LiveRefreshAction.Skip, detailResult.Message ?? "Detail lookup failed"));
                         continue;
                     }
@@ -333,9 +312,26 @@ public sealed class PartyDiscoveryIntakeService : IPartyDiscoveryIntakeService
                     var mapped = ConsumerObservationMapper.Map(detailResult, lookup, subjectNamesList, formerNamesList, storedDirection: null, todayIst);
                     if (!mapped.Verified || mapped.Outcome != ObservationOutcome.Found)
                     {
-                        _logger.LogWarning("Consumer candidate '{CaseNumber}' identity or party verification failed: {Reason}", candidate.CaseNumber, mapped.Message ?? mapped.Verification?.IdentityReason);
-                        await tx.RollbackAsync(ct);
+                        _logger.LogWarning("Consumer candidate '{CaseNumber}' identity verification failed: {Reason}", candidate.CaseNumber, mapped.Message ?? mapped.Verification?.IdentityReason);
                         items.Add(new DiscoveredCaseIntakeItemResult(candidate, IntakeCandidateStatus.IdentityMismatch, caseKey, null, null, false, LiveRefreshAction.Skip, mapped.Message ?? mapped.Verification?.IdentityReason));
+                        continue;
+                    }
+
+                    if (mapped.Verification?.Party?.Outcome != PartyMatchOutcome.Verified)
+                    {
+                        _logger.LogWarning(
+                            "Consumer candidate '{CaseNumber}' detail party match is not verified (Outcome: {Outcome}, Rule: {Rule})",
+                            candidate.CaseNumber, mapped.Verification?.Party?.Outcome, mapped.Verification?.Party?.Rule);
+                        items.Add(new DiscoveredCaseIntakeItemResult(
+                            candidate,
+                            IntakeCandidateStatus.PartyRejected,
+                            caseKey,
+                            null,
+                            null,
+                            false,
+                            LiveRefreshAction.Skip,
+                            $"Detail party match not verified ({mapped.Verification?.Party?.Outcome}, rule: {mapped.Verification?.Party?.Rule})"));
+                        rejectedCount++;
                         continue;
                     }
 
@@ -345,114 +341,164 @@ public sealed class PartyDiscoveryIntakeService : IPartyDiscoveryIntakeService
                 }
                 else
                 {
-                    await tx.RollbackAsync(ct);
                     items.Add(new DiscoveredCaseIntakeItemResult(candidate, IntakeCandidateStatus.DetailFetchFailed, caseKey, null, null, false, LiveRefreshAction.Skip, "Unsupported source"));
                     continue;
                 }
             }
             catch (OperationCanceledException)
             {
-                await tx.RollbackAsync(ct);
                 throw;
             }
             catch (Exception ex)
             {
                 _logger.LogWarning(ex, "Unexpected error fetching details for discovered candidate '{CaseNumber}'", candidate.CaseNumber);
-                await tx.RollbackAsync(ct);
                 items.Add(new DiscoveredCaseIntakeItemResult(candidate, IntakeCandidateStatus.DetailFetchFailed, caseKey, null, null, false, LiveRefreshAction.Skip, ex.Message));
                 continue;
             }
 
-            // 6. Create case row, module case, link, observation and publish
-            var statusBucket = LitigationCaseStatusClassifier.Classify(snapshot?.Status, snapshot?.Stage);
-            var isDisposed = statusBucket == LitigationCaseStatusBucket.Disposed;
-
-            var courtName = snapshot?.Court ?? candidate.SourceVenueName;
-            var state = drtTribunal?.State ?? consumerCommission?.StateName;
-            var district = drtTribunal?.District ?? consumerCommission?.DistrictName;
-            var bench = drtTribunal?.Bench;
-
-            var legacyCase = new LitigationCase
-            {
-                RequestId = requestId,
-                CaseNumber = candidate.CaseNumber,
-                CaseType = parts.TypeCode,
-                CaseYear = parts.Year?.ToString(CultureInfo.InvariantCulture),
-                Court = courtName,
-                CaseStatus = snapshot?.Status ?? (isDisposed ? "DISPOSED" : "PENDING"),
-                CaseStage = snapshot?.Stage,
-                FilingDate = snapshot?.FilingDate,
-                LastHearingDate = snapshot?.LastHearingDate,
-                NextHearingDate = snapshot?.NextHearingDate,
-                DecisionDate = snapshot?.DecisionDate,
-                FirstSeenUtc = nowUtc,
-                LastSeenUtc = nowUtc,
-                State = state,
-                District = district,
-                Bench = bench,
-                PetitionersJson = JsonSerializer.Serialize(new[] { candidate.ApplicantOrComplainant }.Where(p => !string.IsNullOrWhiteSpace(p))),
-                RespondentsJson = JsonSerializer.Serialize(new[] { candidate.Respondent }.Where(p => !string.IsNullOrWhiteSpace(p)))
-            };
-
-            _db.LitigationCases.Add(legacyCase);
-            await _db.SaveChangesAsync(ct);
-
-            // Take CaseLock for the newly created legacy case
-            await CaseLock.AcquireAsync(_db, legacyCase.LitigationCaseId, ct);
-
-            // Ensure ModuleCase
-            var moduleCase = await _moduleStore.EnsureCaseForLegacyAsync(legacyCase.LitigationCaseId, ct);
-            moduleCase.CaseKey = caseKey;
-            await _db.SaveChangesAsync(ct);
-
-            // Record RequestLinkStore verdict
-            var finalMatch = detailMatch ?? bestMatch;
-            var finalSide = detailMatchedSide ?? matchedSide;
-            await _requestLinkStore.UpsertAsync(requestId, moduleCase.CaseId, finalMatch, finalSide, roleConflict: false, roleNote: null, ct);
-
-            // Publish first observation into LiveProjectionStore
-            if (snapshot is not null)
-            {
-                await _liveProjectionStore.PublishAsync(
-                    new ObservationInput(moduleCase.CaseId, obsSource, ObservationOutcome.Found, true, nowUtc, snapshot), ct);
-            }
-
-            // Publish to request columns (bumpLiveDataVersion: false so batch bumps once at the end)
-            await LiveCasePublisher.PublishAsync(_db, requestId, legacyCase.LitigationCaseId, ct, bumpLiveDataVersion: false);
-
-            await tx.CommitAsync(ct);
-
-            createdCount++;
-
-            // Routing for disposed cases: orders path only, never scheduled for hearing refresh
-            var refreshAction = isDisposed
-                ? LiveRefreshAction.FetchOrdersOnly
-                : LiveRefreshEligibility.Decide(
-                    new LiveRefreshCaseState(
-                        legacyCase.CaseStatus, legacyCase.CaseStage, legacyCase.Court, legacyCase.State, legacyCase.District,
-                        legacyCase.FilingDate, legacyCase.LastHearingDate, legacyCase.NextHearingDate,
-                        parts.Completeness, EverLiveVerified: true, NewlyDiscovered: true),
-                    todayIst, nowUtc).Action;
-
-            var createdItem = new DiscoveredCaseIntakeItemResult(
+            candidatesToOnboard.Add(new CandidateToOnboard(
                 candidate,
-                IntakeCandidateStatus.Created,
                 caseKey,
-                legacyCase.LitigationCaseId,
-                moduleCase.CaseId,
-                isDisposed,
-                refreshAction,
-                Note: null);
-
-            items.Add(createdItem);
-            seenKeysInBatch[caseKey] = createdItem;
+                parts,
+                snapshot,
+                detailMatch ?? bestMatch,
+                detailMatchedSide ?? matchedSide,
+                obsSource,
+                drtTribunal,
+                consumerCommission));
         }
 
-        // 7. Bump LiveDataVersion once per batch of additions, not once per case
+        // 6. Onboard all verified candidates and bump LiveDataVersion in one atomic batch transaction
         long? newVersion = null;
-        if (createdCount > 0)
+        if (candidatesToOnboard.Count > 0)
         {
-            newVersion = await RequestLiveData.BumpAsync(_db, requestId, ct);
+            await using var tx = await _db.Database.BeginTransactionAsync(ct);
+
+            foreach (var ready in candidatesToOnboard)
+            {
+                // Take CaseLock for the case key to prevent concurrent creation races
+                await CaseLock.AcquireAsync(_db, $"discovery:{requestId}:{ready.CaseKey}", ct);
+
+                // Re-check existence under the lock
+                var existingUnderLock = await (from lc in _db.LitigationCases
+                                               where lc.RequestId == requestId && lc.MergedIntoCaseId == null
+                                               join mc in _db.Set<ModuleCase>() on lc.LitigationCaseId equals mc.LegacyLitigationCaseId
+                                               where mc.CaseKey == ready.CaseKey
+                                               select new { lc.LitigationCaseId, mc.CaseId, lc.CaseStatus, lc.CaseStage }).FirstOrDefaultAsync(ct);
+
+                if (existingUnderLock is not null)
+                {
+                    _logger.LogInformation(
+                        "Discovered candidate '{CaseNumber}' (key: {CaseKey}) was created concurrently as case {ExistingId}; skipping addition",
+                        ready.Candidate.CaseNumber, ready.CaseKey, existingUnderLock.LitigationCaseId);
+
+                    var isExistingDisposed = LitigationCaseStatusClassifier.Classify(existingUnderLock.CaseStatus, existingUnderLock.CaseStage) == LitigationCaseStatusBucket.Disposed;
+                    var existingRefreshAction = isExistingDisposed ? LiveRefreshAction.FetchOrdersOnly : LiveRefreshAction.Skip;
+
+                    var existingItem = new DiscoveredCaseIntakeItemResult(
+                        ready.Candidate,
+                        IntakeCandidateStatus.AlreadyExists,
+                        ready.CaseKey,
+                        existingUnderLock.LitigationCaseId,
+                        existingUnderLock.CaseId,
+                        isExistingDisposed,
+                        existingRefreshAction,
+                        Note: "Already exists (created concurrently)");
+
+                    items.Add(existingItem);
+                    seenKeysInBatch[ready.CaseKey] = existingItem;
+                    alreadyExistingCount++;
+                    continue;
+                }
+
+                var snapshot = ready.Snapshot;
+                var statusBucket = LitigationCaseStatusClassifier.Classify(snapshot?.Status, snapshot?.Stage);
+                var isDisposed = statusBucket == LitigationCaseStatusBucket.Disposed;
+
+                var courtName = snapshot?.Court ?? ready.Candidate.SourceVenueName;
+                var state = ready.DrtTribunal?.State ?? ready.ConsumerCommission?.StateName;
+                var district = ready.DrtTribunal?.District ?? ready.ConsumerCommission?.DistrictName;
+                var bench = ready.DrtTribunal?.Bench;
+
+                var legacyCase = new LitigationCase
+                {
+                    RequestId = requestId,
+                    CaseNumber = ready.Candidate.CaseNumber,
+                    CaseType = ready.Parts.TypeCode,
+                    CaseYear = ready.Parts.Year?.ToString(CultureInfo.InvariantCulture),
+                    Court = courtName,
+                    CaseStatus = snapshot?.Status ?? (isDisposed ? "DISPOSED" : "PENDING"),
+                    CaseStage = snapshot?.Stage,
+                    FilingDate = snapshot?.FilingDate,
+                    LastHearingDate = snapshot?.LastHearingDate,
+                    NextHearingDate = snapshot?.NextHearingDate,
+                    DecisionDate = snapshot?.DecisionDate,
+                    FirstSeenUtc = nowUtc,
+                    LastSeenUtc = nowUtc,
+                    State = state,
+                    District = district,
+                    Bench = bench,
+                    PetitionersJson = JsonSerializer.Serialize(new[] { ready.Candidate.ApplicantOrComplainant }.Where(p => !string.IsNullOrWhiteSpace(p))),
+                    RespondentsJson = JsonSerializer.Serialize(new[] { ready.Candidate.Respondent }.Where(p => !string.IsNullOrWhiteSpace(p)))
+                };
+
+                _db.LitigationCases.Add(legacyCase);
+                await _db.SaveChangesAsync(ct);
+
+                // Take CaseLock for the newly created legacy case
+                await CaseLock.AcquireAsync(_db, legacyCase.LitigationCaseId, ct);
+
+                // Ensure ModuleCase
+                var moduleCase = await _moduleStore.EnsureCaseForLegacyAsync(legacyCase.LitigationCaseId, ct);
+                moduleCase.CaseKey = ready.CaseKey;
+                await _db.SaveChangesAsync(ct);
+
+                // Record RequestLinkStore verdict
+                await _requestLinkStore.UpsertAsync(requestId, moduleCase.CaseId, ready.DetailMatch, ready.DetailMatchedSide, roleConflict: false, roleNote: null, ct);
+
+                // Publish first observation into LiveProjectionStore
+                if (snapshot is not null)
+                {
+                    await _liveProjectionStore.PublishAsync(
+                        new ObservationInput(moduleCase.CaseId, ready.ObsSource, ObservationOutcome.Found, true, nowUtc, snapshot), ct);
+                }
+
+                // Publish to request columns (bumpLiveDataVersion: false so batch bumps in this same transaction)
+                await LiveCasePublisher.PublishAsync(_db, requestId, legacyCase.LitigationCaseId, ct, bumpLiveDataVersion: false);
+
+                createdCount++;
+
+                // Routing for disposed cases: orders path only, never scheduled for hearing refresh
+                var refreshAction = isDisposed
+                    ? LiveRefreshAction.FetchOrdersOnly
+                    : LiveRefreshEligibility.Decide(
+                        new LiveRefreshCaseState(
+                            legacyCase.CaseStatus, legacyCase.CaseStage, legacyCase.Court, legacyCase.State, legacyCase.District,
+                            legacyCase.FilingDate, legacyCase.LastHearingDate, legacyCase.NextHearingDate,
+                            ready.Parts.Completeness, EverLiveVerified: true, NewlyDiscovered: true),
+                        todayIst, nowUtc).Action;
+
+                var createdItem = new DiscoveredCaseIntakeItemResult(
+                    ready.Candidate,
+                    IntakeCandidateStatus.Created,
+                    ready.CaseKey,
+                    legacyCase.LitigationCaseId,
+                    moduleCase.CaseId,
+                    isDisposed,
+                    refreshAction,
+                    Note: null);
+
+                items.Add(createdItem);
+                seenKeysInBatch[ready.CaseKey] = createdItem;
+            }
+
+            // 7. Bump LiveDataVersion once per batch of additions inside the same transaction
+            if (createdCount > 0)
+            {
+                newVersion = await RequestLiveData.BumpAsync(_db, requestId, ct);
+            }
+
+            await tx.CommitAsync(ct);
         }
 
         return new PartyDiscoveryIntakeBatchResult(
@@ -476,5 +522,16 @@ public sealed class PartyDiscoveryIntakeService : IPartyDiscoveryIntakeService
         if (second.Rule != "no-match") return second;
         return first;
     }
+
+    private sealed record CandidateToOnboard(
+        DiscoveredCaseCandidate Candidate,
+        string CaseKey,
+        CaseNumberParts Parts,
+        ParsedCaseSnapshot? Snapshot,
+        PartyMatchResult DetailMatch,
+        string? DetailMatchedSide,
+        ObservationSource ObsSource,
+        DrtTribunal? DrtTribunal,
+        ConsumerCommission? ConsumerCommission);
 }
 

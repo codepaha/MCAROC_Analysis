@@ -442,6 +442,55 @@ public class PartyDiscoveryIntakeTests : IAsyncLifetime
         Assert.Equal(1, versionAfter);
     }
 
+    [Fact]
+    public async Task Matching_case_identity_with_mismatched_parties_on_detail_is_rejected_and_not_onboarded()
+    {
+        var req = await CreateRequestAsync("Acme Technologies Limited");
+
+        // The candidate search row matched "Acme Technologies Limited"
+        var candidate = CreateCandidate(
+            "OA/601/2022", "1",
+            applicant: "Acme Technologies Limited",
+            respondent: "Defaulting Borrower Ltd");
+
+        // But detail lookup for OA/601/2022 returns matching case identity (tribunal 1, OA, 601, 2022)
+        // with completely unrelated third-party names (mismatched parties)
+        var drtMock = new MockDrtIntakeClient();
+        drtMock.SetupCase(1, 1, "601", 2022, CreateDrtCaseDetails(
+            1, "OA/601/2022",
+            applicant: "Unrelated Third Party Transporters Pvt Ltd",
+            respondent: "State Road Corporation",
+            status: "PENDING"));
+
+        await using var db = Ctx();
+        var consumerMock = new MockConsumerIntakeClient();
+        var service = new PartyDiscoveryIntakeService(db, drtMock, consumerMock, NullLogger<PartyDiscoveryIntakeService>.Instance);
+
+        var result = await service.IntakeCandidatesAsync(
+            req.RequestId,
+            companyNames: ["Acme Technologies Limited"],
+            formerNames: null,
+            candidates: [candidate]);
+
+        Assert.Equal(1, result.TotalCandidatesProcessed);
+        Assert.Equal(0, result.CreatedCount);
+        Assert.Equal(1, result.RejectedCount);
+        Assert.Null(result.NewLiveDataVersion);
+
+        var item = Assert.Single(result.Items);
+        Assert.Equal(IntakeCandidateStatus.PartyRejected, item.Status);
+        Assert.Null(item.LegacyLitigationCaseId);
+        Assert.Null(item.ModuleCaseId);
+
+        // Ensure database did NOT create any case row for the request
+        var count = await db.LitigationCases.CountAsync(c => c.RequestId == req.RequestId);
+        Assert.Equal(0, count);
+
+        // LiveDataVersion was not bumped
+        var version = await RequestLiveData.ReadAsync(db, req.RequestId, default);
+        Assert.Equal(0, version);
+    }
+
     private sealed class MockDrtIntakeClient : IDrtClient
     {
         private readonly Dictionary<(int TribunalId, int CaseTypeId, string CaseNo, int CaseYear), DrtCaseDetails> _cases = [];
