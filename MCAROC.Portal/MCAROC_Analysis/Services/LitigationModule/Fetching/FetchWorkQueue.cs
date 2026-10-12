@@ -101,7 +101,7 @@ public sealed class FetchWorkQueue(AppDbContext db, FetchQueueOptions? options =
     {
         await RecoverExpiredLeasesAsync(host, ct);
         // READPAST skips rows another claimer is locking at that instant, so a claim can come back empty while due items remain (they are being claimed by the others). Null must
-        // mean "nothing is due", so an empty result is double-checked and retried a few times with a short random pause before it is believed.
+        // mean "nothing is due", so an empty result is double-checked and retried, with a short growing random pause, for as long as due work remains.
         for (var attempt = 0; ; attempt++)
         {
             var work = await TryClaimOnceAsync(host, agentId, ct);
@@ -109,8 +109,8 @@ public sealed class FetchWorkQueue(AppDbContext db, FetchQueueOptions? options =
             var now = Now;
             var anyDue = await db.Set<ModuleFetchWorkItem>().AsNoTracking().AnyAsync(w => w.Host == (int)host && w.Status == (int)FetchWorkStatus.Queued
                 && (w.NextAttemptUtc == null || w.NextAttemptUtc <= now), ct);
-            if (!anyDue || attempt >= 8) return null;
-            await Task.Delay(Random.Shared.Next(5, 30), ct);
+            if (!anyDue) return null;   // due work remains (others are claiming it right now): keep trying, so null always means nothing is due
+            await Task.Delay(Random.Shared.Next(5, 30 + Math.Min(attempt, 10) * 20), ct);
         }
     }
 
