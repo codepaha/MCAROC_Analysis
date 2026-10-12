@@ -488,5 +488,31 @@ public class OrderIdentityEquivalenceTests
             PdfUrl: null);
         Assert.Throws<ArgumentException>(() => OrderKeyBuilder.ForLocator(missingUrlLocator));
     }
+
+    [Fact]
+    public void When_both_OrderDate_and_DateOfHearing_are_supplied_with_different_values_ForLocator_prefers_OrderDate_for_DRT()
+    {
+        const string validUrl = "https://cis.drt.gov.in/order/pdf1.php?file=ZHJ0Y291cnQvZGVsaGkvMjAyNi9vcmRlcl81NTUucGRm";
+        var hearingDate = new DateOnly(2026, 3, 20);
+        const string explicitOrderDate = "2026-03-25";
+
+        var locator = new OrderSourceLocator(
+            Source: "Drt",
+            TribunalId: 1,
+            CaseTypeId: 10,
+            CaseNo: "555",
+            CaseYear: 2026,
+            OrderKind: "daily",
+            DateOfHearing: hearingDate,
+            OrderDate: explicitOrderDate,
+            OrderUrl: validUrl);
+
+        var key = OrderKeyBuilder.ForLocator(locator);
+
+        // Key must use explicit OrderDate (2026-03-25), not DateOfHearing (2026-03-20)
+        Assert.Contains("2026-03-25", key);
+        Assert.DoesNotContain("2026-03-20", key);
+        Assert.Equal("1|10|555|2026|daily|2026-03-25|delhi/2026/order_555.pdf", key);
+    }
 }
 

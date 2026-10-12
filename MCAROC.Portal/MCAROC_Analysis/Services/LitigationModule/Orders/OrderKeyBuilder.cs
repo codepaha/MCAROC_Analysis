@@ -134,7 +134,21 @@ public static class OrderKeyBuilder
         {
             var url = locator.OrderUrl ?? locator.PdfUrl;
             var kind = locator.OrderKind ?? locator.OrderType;
-            var date = locator.DateOfHearing ?? (DateOnly.TryParse(locator.OrderDate, out var d) ? d : (DateOnly?)null);
+
+            // Prefer explicit OrderDate for DRT, falling back to DateOfHearing if OrderDate is omitted
+            DateOnly? date = null;
+            if (!string.IsNullOrWhiteSpace(locator.OrderDate))
+            {
+                if (!DateOnly.TryParse(locator.OrderDate, out var parsedDate))
+                {
+                    throw new ArgumentException($"DRT order locator OrderDate '{locator.OrderDate}' is not a valid date.", nameof(locator));
+                }
+                date = parsedDate;
+            }
+            else
+            {
+                date = locator.DateOfHearing;
+            }
 
             if (!locator.TribunalId.HasValue)
             {

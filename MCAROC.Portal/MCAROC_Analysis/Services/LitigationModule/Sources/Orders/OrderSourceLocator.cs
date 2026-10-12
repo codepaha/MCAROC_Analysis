@@ -10,7 +10,7 @@ namespace MCAROC_Analysis.Services.LitigationModule.Sources.Orders;
 /// <param name="CourtRoomHearingId">Hearing room ID string if available.</param>
 /// <param name="SourceLocatorJson">Serialized source locator JSON if available.</param>
 /// <param name="OrderType">Order type string if available (e.g. for BPR orders: "Order", "Interim Order").</param>
-/// <param name="OrderDate">Order date string if available.</param>
+/// <param name="OrderDate">Explicit order date string if available (preferred for DRT and BPR orders).</param>
 /// <param name="TribunalId">DRT tribunal ID for DRT orders.</param>
 /// <param name="CaseTypeId">DRT case type ID for DRT orders.</param>
 /// <param name="CaseNo">DRT case number for DRT orders.</param>
