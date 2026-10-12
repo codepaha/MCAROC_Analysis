@@ -81,7 +81,12 @@ public static class LivePortalOwnership
 /// Only when the request's link to the case is Verified. The columns and the request's live-data version change in one transaction.</summary>
 public static class LiveCasePublisher
 {
-    public static async Task<PublishToRequestResult> PublishAsync(AppDbContext db, long requestId, long legacyCaseId, CancellationToken ct)
+    public static async Task<PublishToRequestResult> PublishAsync(
+        AppDbContext db,
+        long requestId,
+        long legacyCaseId,
+        CancellationToken ct = default,
+        bool bumpLiveDataVersion = true)
     {
         var moduleCaseId = await db.Set<ModuleCase>().AsNoTracking().Where(c => c.LegacyLitigationCaseId == legacyCaseId).Select(c => (long?)c.CaseId).FirstOrDefaultAsync(ct);
         if (moduleCaseId is not { } caseId) return new(PublishToRequestOutcome.NotLinked, []);
@@ -136,7 +141,10 @@ public static class LiveCasePublisher
             return new(PublishToRequestOutcome.NothingToChange, []);
         }
         await db.SaveChangesAsync(ct);
-        await RequestLiveData.BumpAsync(db, requestId, ct);
+        if (bumpLiveDataVersion)
+        {
+            await RequestLiveData.BumpAsync(db, requestId, ct);
+        }
         if (tx is not null) await tx.CommitAsync(ct);
         return new(PublishToRequestOutcome.Published, changed);
     }

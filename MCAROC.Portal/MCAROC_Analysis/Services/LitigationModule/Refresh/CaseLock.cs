@@ -13,8 +13,17 @@ public static class CaseLock
 
     public static string Resource(long legacyCaseId) => $"litigation-case:{legacyCaseId}";
 
+    public static string Resource(string key) => key.StartsWith("litigation-case", StringComparison.Ordinal) ? key : $"litigation-case:{key}";
+
     /// <summary>Takes the lock for the case. Requires an open transaction on <paramref name="db"/>; waits up to 30 s and throws if it cannot get it.</summary>
-    public static async Task AcquireAsync(AppDbContext db, long legacyCaseId, CancellationToken ct)
+    public static Task AcquireAsync(AppDbContext db, long legacyCaseId, CancellationToken ct) =>
+        AcquireResourceAsync(db, Resource(legacyCaseId), ct);
+
+    /// <summary>Takes the lock for an arbitrary resource key. Requires an open transaction on <paramref name="db"/>; waits up to 30 s and throws if it cannot get it.</summary>
+    public static Task AcquireAsync(AppDbContext db, string resourceKey, CancellationToken ct) =>
+        AcquireResourceAsync(db, Resource(resourceKey), ct);
+
+    private static async Task AcquireResourceAsync(AppDbContext db, string resourceName, CancellationToken ct)
     {
         var transaction = db.Database.CurrentTransaction?.GetDbTransaction()
             ?? throw new InvalidOperationException("A case lock is owned by a transaction; open one first.");
@@ -22,9 +31,9 @@ public static class CaseLock
         await using var command = connection.CreateCommand();
         command.Transaction = transaction;
         command.CommandText = "DECLARE @r int; EXEC @r = sp_getapplock @Resource = @resource, @LockMode = 'Exclusive', @LockOwner = 'Transaction', @LockTimeout = @timeout; SELECT @r;";
-        var resource = command.CreateParameter(); resource.ParameterName = "@resource"; resource.Value = Resource(legacyCaseId); command.Parameters.Add(resource);
+        var resource = command.CreateParameter(); resource.ParameterName = "@resource"; resource.Value = resourceName; command.Parameters.Add(resource);
         var timeout = command.CreateParameter(); timeout.ParameterName = "@timeout"; timeout.Value = TimeoutMs; command.Parameters.Add(timeout);
         var code = Convert.ToInt32(await command.ExecuteScalarAsync(ct));
-        if (code < 0) throw new TimeoutException($"Could not take the lock for litigation case {legacyCaseId} (code {code}).");
+        if (code < 0) throw new TimeoutException($"Could not take the lock for resource '{resourceName}' (code {code}).");
     }
 }
