@@ -410,7 +410,7 @@ public class OrderIdentityEquivalenceTests
         Assert.Throws<ArgumentException>(() => OrderKeyBuilder.ForDrt(1, 10, "555", 2026, "daily", date, null));
         Assert.Throws<ArgumentException>(() => OrderKeyBuilder.ForDrt(1, 10, "555", 2026, "daily", date, "   "));
 
-        // Locator builds full composite DRT OrderKey
+        // Locator builds full composite DRT OrderKey using explicit OrderDate
         var validLocator = new OrderSourceLocator(
             Source: "Drt",
             TribunalId: 1,
@@ -418,7 +418,7 @@ public class OrderIdentityEquivalenceTests
             CaseNo: "555",
             CaseYear: 2026,
             OrderKind: "daily",
-            DateOfHearing: date,
+            OrderDate: "2026-03-20",
             OrderUrl: validUrl);
 
         var compositeKey = OrderKeyBuilder.ForLocator(validLocator);
@@ -435,12 +435,26 @@ public class OrderIdentityEquivalenceTests
             CaseNo: "777",
             CaseYear: 2026,
             OrderKind: "daily",
-            DateOfHearing: date,
+            OrderDate: "2026-03-20",
             OrderUrl: validUrl);
 
         var otherCompositeKey = OrderKeyBuilder.ForLocator(otherCaseLocator);
         Assert.NotEqual(compositeKey, otherCompositeKey);
         Assert.Contains("777", otherCompositeKey);
+
+        // Locator with only DateOfHearing but missing explicit OrderDate MUST be rejected (no fallback to Consumer hearing date)
+        var onlyHearingDateLocator = new OrderSourceLocator(
+            Source: "Drt",
+            TribunalId: 1,
+            CaseTypeId: 10,
+            CaseNo: "555",
+            CaseYear: 2026,
+            OrderKind: "daily",
+            DateOfHearing: date,
+            OrderDate: null,
+            OrderUrl: validUrl);
+        var ex = Assert.Throws<ArgumentException>(() => OrderKeyBuilder.ForLocator(onlyHearingDateLocator));
+        Assert.Contains("explicit OrderDate", ex.Message);
 
         // Missing required DRT identity fields on locator rejects
         var missingTribunalLocator = new OrderSourceLocator(
@@ -450,7 +464,7 @@ public class OrderIdentityEquivalenceTests
             CaseNo: "555",
             CaseYear: 2026,
             OrderKind: "daily",
-            DateOfHearing: date,
+            OrderDate: "2026-03-20",
             OrderUrl: validUrl);
         Assert.Throws<ArgumentException>(() => OrderKeyBuilder.ForLocator(missingTribunalLocator));
 
@@ -461,7 +475,7 @@ public class OrderIdentityEquivalenceTests
             CaseNo: null,
             CaseYear: 2026,
             OrderKind: "daily",
-            DateOfHearing: date,
+            OrderDate: "2026-03-20",
             OrderUrl: validUrl);
         Assert.Throws<ArgumentException>(() => OrderKeyBuilder.ForLocator(missingCaseNoLocator));
 
@@ -473,8 +487,20 @@ public class OrderIdentityEquivalenceTests
             CaseYear: 2026,
             OrderKind: "daily",
             DateOfHearing: null,
+            OrderDate: null,
             OrderUrl: validUrl);
         Assert.Throws<ArgumentException>(() => OrderKeyBuilder.ForLocator(missingDateLocator));
+
+        var invalidDateLocator = new OrderSourceLocator(
+            Source: "Drt",
+            TribunalId: 1,
+            CaseTypeId: 10,
+            CaseNo: "555",
+            CaseYear: 2026,
+            OrderKind: "daily",
+            OrderDate: "not-a-date",
+            OrderUrl: validUrl);
+        Assert.Throws<ArgumentException>(() => OrderKeyBuilder.ForLocator(invalidDateLocator));
 
         var missingUrlLocator = new OrderSourceLocator(
             Source: "Drt",
@@ -483,7 +509,7 @@ public class OrderIdentityEquivalenceTests
             CaseNo: "555",
             CaseYear: 2026,
             OrderKind: "daily",
-            DateOfHearing: date,
+            OrderDate: "2026-03-20",
             OrderUrl: null,
             PdfUrl: null);
         Assert.Throws<ArgumentException>(() => OrderKeyBuilder.ForLocator(missingUrlLocator));

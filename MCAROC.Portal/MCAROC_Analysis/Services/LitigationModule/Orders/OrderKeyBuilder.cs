@@ -135,19 +135,15 @@ public static class OrderKeyBuilder
             var url = locator.OrderUrl ?? locator.PdfUrl;
             var kind = locator.OrderKind ?? locator.OrderType;
 
-            // Prefer explicit OrderDate for DRT, falling back to DateOfHearing if OrderDate is omitted
-            DateOnly? date = null;
-            if (!string.IsNullOrWhiteSpace(locator.OrderDate))
+            // Explicit OrderDate is strictly required for DRT order identity; DateOfHearing is not accepted as fallback
+            if (string.IsNullOrWhiteSpace(locator.OrderDate))
             {
-                if (!DateOnly.TryParse(locator.OrderDate, out var parsedDate))
-                {
-                    throw new ArgumentException($"DRT order locator OrderDate '{locator.OrderDate}' is not a valid date.", nameof(locator));
-                }
-                date = parsedDate;
+                throw new ArgumentException("DRT order locator requires an explicit OrderDate to build composite order key.", nameof(locator));
             }
-            else
+
+            if (!DateOnly.TryParse(locator.OrderDate, out var orderDate))
             {
-                date = locator.DateOfHearing;
+                throw new ArgumentException($"DRT order locator OrderDate '{locator.OrderDate}' is not a valid date.", nameof(locator));
             }
 
             if (!locator.TribunalId.HasValue)
@@ -175,11 +171,6 @@ public static class OrderKeyBuilder
                 throw new ArgumentException("DRT order locator requires OrderKind or OrderType to build composite order key.", nameof(locator));
             }
 
-            if (!date.HasValue)
-            {
-                throw new ArgumentException("DRT order locator requires DateOfHearing or OrderDate to build composite order key.", nameof(locator));
-            }
-
             if (string.IsNullOrWhiteSpace(url))
             {
                 throw new ArgumentException("DRT order locator requires OrderUrl or PdfUrl.", nameof(locator));
@@ -191,7 +182,7 @@ public static class OrderKeyBuilder
                 locator.CaseNo,
                 locator.CaseYear.Value,
                 kind,
-                date.Value,
+                orderDate,
                 url);
         }
 
