@@ -190,7 +190,7 @@ public sealed class FetchWorkQueue(AppDbContext db, FetchQueueOptions? options =
             var expiries = item.LeaseExpiryCount + 1;
             var attempts = expiries >= 2 ? item.AttemptCount + 1 : item.AttemptCount;
             var terminal = attempts >= _opts.MaxAttempts;
-            recovered += await db.Set<ModuleFetchWorkItem>().Where(w => w.WorkItemId == item.WorkItemId && w.LeaseToken == item.LeaseToken && w.Status == (int)FetchWorkStatus.Claimed)
+            recovered += await db.Set<ModuleFetchWorkItem>().Where(w => w.WorkItemId == item.WorkItemId && w.LeaseToken == item.LeaseToken && w.Status == (int)FetchWorkStatus.Claimed && w.LeaseExpiresUtc < now)   // a renewal after the read keeps the claim
                 .ExecuteUpdateAsync(s => s
                     .SetProperty(w => w.LeaseExpiryCount, expiries).SetProperty(w => w.AttemptCount, attempts)
                     .SetProperty(w => w.Status, terminal ? (int)FetchWorkStatus.Failed : (int)FetchWorkStatus.Queued)
