@@ -1,6 +1,7 @@
 using MCAROC_Analysis.Data;
 using MCAROC_Analysis.Data.Entities;
 using Microsoft.EntityFrameworkCore;
+using MCAROC_Analysis.Services.LitigationModule.Reading;
 using Microsoft.Extensions.Caching.Memory;
 
 namespace MCAROC_Analysis.Services.LitigationData;
@@ -8,7 +9,7 @@ namespace MCAROC_Analysis.Services.LitigationData;
 /// <summary>Loads a request's open charges and litigation and returns the charge-to-case links
 /// (<see cref="ChargeLitigationLinker"/>). The scan reads every case and order text of the request, so the
 /// result is cached, but only for as long as the compared evidence is unchanged: see <see cref="VersionAsync"/>.</summary>
-public sealed class ChargeLitigationService(AppDbContext db, IMemoryCache cache)
+public sealed class ChargeLitigationService(AppDbContext db, IMemoryCache cache, LitigationReaderGate? readerGate = null)
 {
     private static readonly TimeSpan CacheFor = TimeSpan.FromMinutes(30);
 
@@ -59,11 +60,15 @@ public sealed class ChargeLitigationService(AppDbContext db, IMemoryCache cache)
         var openChargeCount = await db.RocCharges.AsNoTracking()
             .CountAsync(c => c.RequestId == requestId && c.SatisfactionDate == null && c.ChargeStatus != "Satisfied", ct);
         if (openChargeCount == 0) return ChargeLitigationSummary.Empty with { SnapshotId = snapshotId, Version = version };
-        return cache.TryGetValue(CacheKey(requestId, version, runId, openChargeCount), out ChargeLitigationSummary? cached) ? cached : null;
+        var source = await SourceAsync(requestId, ct);
+        return cache.TryGetValue(CacheKey(requestId, version, runId, openChargeCount, source), out ChargeLitigationSummary? cached) ? cached : null;
     }
 
-    private static string CacheKey(long requestId, string version, long? runId, int openChargeCount)
-        => $"ChargeLitigation:{requestId}:{version}:{runId}:{openChargeCount}";
+    private static string CacheKey(long requestId, string version, long? runId, int openChargeCount, CaseSetSource source)
+        => $"ChargeLitigation:{requestId}:{version}:{runId}:{openChargeCount}:{(source == CaseSetSource.Module ? "M" : "L")}";
+
+    private async Task<CaseSetSource> SourceAsync(long requestId, CancellationToken ct) =>
+        readerGate is null ? CaseSetSource.Legacy : await readerGate.ResolveChargeLinksAsync(requestId, ct);
 
     public async Task<ChargeLitigationSummary> GetAsync(long requestId, CancellationToken ct = default)
     {
@@ -78,7 +83,8 @@ public sealed class ChargeLitigationService(AppDbContext db, IMemoryCache cache)
             .CountAsync(c => c.RequestId == requestId && c.SatisfactionDate == null && c.ChargeStatus != "Satisfied", ct);
         if (openChargeCount == 0) return ChargeLitigationSummary.Empty with { SnapshotId = snapshotId, Version = version };
 
-        var key = CacheKey(requestId, version, runId, openChargeCount);
+        var source = await SourceAsync(requestId, ct);
+        var key = CacheKey(requestId, version, runId, openChargeCount, source);
         if (cache.TryGetValue(key, out ChargeLitigationSummary? cached) && cached is not null) return cached;
 
         var charges = await db.RocCharges.AsNoTracking()
@@ -90,8 +96,9 @@ public sealed class ChargeLitigationService(AppDbContext db, IMemoryCache cache)
         var docs = new Dictionary<long, LitigationOrderDocument>();
         if (snapshotId is { } sid)
         {
-            var caseIds = db.LitigationCaseSourceReports.Where(sr => sr.LitigationReportSnapshotId == sid && sr.Case!.MergedIntoCaseId == null)
-                .Select(sr => sr.LitigationCaseId).Distinct();
+            // The same definition of "the request's cases" as the register and the case page (plan section 12.6). The Version above stays on the legacy set on
+            // purpose: it is the key the dossier caches on, and every live change (refresh, merge, hide, text extraction) bumps the request's live-data version it carries.
+            var caseIds = await LitigationCaseSets.ForAsync(db, source, requestId, sid, ct);
             cases = await db.LitigationCases.AsNoTracking()
                 .Where(c => caseIds.Contains(c.LitigationCaseId)).Include(c => c.Orders).ToListAsync(ct);
 

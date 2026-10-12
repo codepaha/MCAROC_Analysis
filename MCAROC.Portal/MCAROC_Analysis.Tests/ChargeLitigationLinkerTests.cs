@@ -53,7 +53,7 @@ public class ChargeLitigationLinkerTests : IAsyncLifetime
         IReadOnlyDictionary<long, LitigationOrderDocument>? docs = null, IReadOnlyList<Litigation>? workbook = null) =>
         ChargeLitigationLinker.Build(charges, cases, docs ?? new Dictionary<long, LitigationOrderDocument>(), workbook ?? []);
 
-    // ── signal: charged immovable property named in an order ─────────────────────────────────────────────
+    // Ã¢â€â‚¬Ã¢â€â‚¬ signal: charged immovable property named in an order Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
     [Fact]
     public void Order_naming_the_charged_property_links_its_case_with_page_and_excerpt()
     {
@@ -132,7 +132,7 @@ public class ChargeLitigationLinkerTests : IAsyncLifetime
         Assert.True(summary.NcltOrdersSkipped);
     }
 
-    // ── signal: the lender is litigating a recovery-type case ────────────────────────────────────────────
+    // Ã¢â€â‚¬Ã¢â€â‚¬ signal: the lender is litigating a recovery-type case Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
     [Fact]
     public void Lender_as_petitioner_in_a_sarfaesi_case_links_every_charge_it_holds()
     {
@@ -204,7 +204,7 @@ public class ChargeLitigationLinkerTests : IAsyncLifetime
         Assert.False(summary.HasAny);
     }
 
-    // ── fast path ────────────────────────────────────────────────────────────────────────────────────────
+    // Ã¢â€â‚¬Ã¢â€â‚¬ fast path Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
     private const string MortgageA36 = "Equitable mortgage on the land and building at Plot No. A-36, Nilakantha Nagar, Nayapalli, Bhubaneswar, 751012";
 
     [Fact]
@@ -270,7 +270,7 @@ public class ChargeLitigationLinkerTests : IAsyncLifetime
         Assert.True(sw.Elapsed < TimeSpan.FromSeconds(10), $"took {sw.Elapsed.TotalSeconds:F1}s");
     }
 
-    // ── loader (DB) ──────────────────────────────────────────────────────────────────────────────────────
+    // Ã¢â€â‚¬Ã¢â€â‚¬ loader (DB) Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
     private static AppDbContext CreateContext() =>
         new(new DbContextOptionsBuilder<AppDbContext>().UseSqlServer(TestDatabase.ConnectionString).Options);
 
@@ -372,6 +372,40 @@ public class ChargeLitigationLinkerTests : IAsyncLifetime
         var link = Assert.Single(after.Links);                         // visible at once, not after the cache expires
         Assert.Equal("CHG-900", link.ChargeNumber);
         Assert.Equal(after.Version, await ChargeLitigationService.VersionAsync(db, requestId));
+    }
+
+    private static ChargeLitigationService ServiceFor(AppDbContext db, IMemoryCache cache, MCAROC_Analysis.Services.LitigationModule.Reading.LitigationReaderMode mode) =>
+        new(db, cache, new MCAROC_Analysis.Services.LitigationModule.Reading.LitigationReaderGate(db,
+            Microsoft.Extensions.Options.Options.Create(new MCAROC_Analysis.Services.LitigationModule.Reading.LitigationReaderOptions { ChargeLinks = mode }),
+            Microsoft.Extensions.Options.Options.Create(new MCAROC_Analysis.Services.LitigationModule.Bridge.LitigationBridgeOptions { Enabled = true })));
+
+    [Fact]
+    public async Task Charge_links_follow_the_reader_mode_and_a_hidden_case_is_not_compared_in_module_mode()
+    {
+        await using var db = CreateContext();
+        var requestId = await SeedRequestWithLitigationAsync(db);
+        var caseId = await db.LitigationCases.Where(c => c.RequestId == requestId).Select(c => c.LitigationCaseId).SingleAsync();
+        await new MCAROC_Analysis.Services.LitigationModule.Bridge.LitigationBridgeProcessor(db, new MCAROC_Analysis.Services.LitigationModule.Bridge.LitigationBridgeOptions { Enabled = true })
+            .ApplyAsync(caseId, DateTime.MinValue, default);
+        var cache = new MemoryCache(new MemoryCacheOptions { SizeLimit = 256 });
+        var legacy = MCAROC_Analysis.Services.LitigationModule.Reading.LitigationReaderMode.Legacy;
+        var module = MCAROC_Analysis.Services.LitigationModule.Reading.LitigationReaderMode.Module;
+
+        // Not hidden: both sources compare the same case and find the same link.
+        Assert.Single((await ServiceFor(db, cache, legacy).GetAsync(requestId)).Links);
+        Assert.Single((await ServiceFor(db, cache, module).GetAsync(requestId)).Links);
+
+        // The scope hides the case, and (as the hide action does) the request's live-data version moves, so each source recomputes. Legacy still has the link, module has none.
+        await db.Set<MCAROC_Analysis.Services.LitigationModule.Store.ModuleScopeCase>().Where(sc => sc.Case!.LegacyLitigationCaseId == caseId)
+            .ExecuteUpdateAsync(s => s.SetProperty(x => x.IsHidden, true));
+        await MCAROC_Analysis.Services.LitigationModule.Refresh.RequestLiveData.BumpAsync(db, requestId, default);
+        var legacyAfter = await ServiceFor(db, cache, legacy).GetAsync(requestId);
+        var moduleAfter = await ServiceFor(db, cache, module).GetAsync(requestId);
+        Assert.Single(legacyAfter.Links);
+        Assert.Empty(moduleAfter.Links);
+        Assert.Equal(legacyAfter.Version, moduleAfter.Version);
+        Assert.Empty((await ServiceFor(db, cache, module).GetCachedAsync(requestId))!.Links);
+        Assert.Single((await ServiceFor(db, cache, legacy).GetCachedAsync(requestId))!.Links);
     }
 
     [Fact]
