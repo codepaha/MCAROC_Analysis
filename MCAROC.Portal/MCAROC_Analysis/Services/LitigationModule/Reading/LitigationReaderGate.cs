@@ -17,6 +17,9 @@ public sealed class LitigationReaderOptions
 
     /// <summary>The request's case register: the set of cases listed, counted and summarised on the litigation tab and its case-list endpoint.</summary>
     public LitigationReaderMode CaseList { get; set; } = LitigationReaderMode.Legacy;
+
+    /// <summary>The standalone page of one case: whether the case belongs to the request, and the "related cases" drawn from the same set.</summary>
+    public LitigationReaderMode CasePage { get; set; } = LitigationReaderMode.Legacy;
 }
 
 /// <summary>Which definition of "the request's cases" a read uses once the gate has decided.</summary>
@@ -41,15 +44,18 @@ public static class LitigationCaseSets
 /// dead-lettered event), and in shadow mode logs how the module's set differs from the legacy one.</summary>
 public sealed class LitigationReaderGate(AppDbContext db, IOptions<LitigationReaderOptions> options, IOptions<LitigationBridgeOptions> bridge, ILogger<LitigationReaderGate>? logger = null)
 {
-    public async Task<CaseSetSource> ResolveCaseListAsync(long requestId, CancellationToken ct)
+    public Task<CaseSetSource> ResolveCaseListAsync(long requestId, CancellationToken ct) => ResolveAsync("case list", options.Value.CaseList, requestId, ct);
+
+    public Task<CaseSetSource> ResolveCasePageAsync(long requestId, CancellationToken ct) => ResolveAsync("case page", options.Value.CasePage, requestId, ct);
+
+    private async Task<CaseSetSource> ResolveAsync(string consumer, LitigationReaderMode mode, long requestId, CancellationToken ct)
     {
-        var mode = options.Value.CaseList;
         if (mode == LitigationReaderMode.Legacy) return CaseSetSource.Legacy;
 
         var readiness = await new LitigationBridgeProcessor(db, bridge.Value).GetReadinessAsync(requestId, ct);
         if (readiness != BridgeReadiness.Ready)
         {
-            logger?.LogWarning("Litigation case list for request {RequestId} is served from legacy: the module is {Readiness}.", requestId, readiness);
+            logger?.LogWarning("Litigation {Consumer} for request {RequestId} is served from legacy: the module is {Readiness}.", consumer, requestId, readiness);
             return CaseSetSource.Legacy;
         }
         if (mode == LitigationReaderMode.Module) return CaseSetSource.Module;
