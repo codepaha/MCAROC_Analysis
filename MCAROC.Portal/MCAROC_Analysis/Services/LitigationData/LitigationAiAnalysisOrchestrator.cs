@@ -105,16 +105,20 @@ public sealed class LitigationAiAnalysisOrchestrator(AppDbContext db, ILitigatio
                 await PublishCasesAsync(runId, token, [item.Row], token2);
             });
             await ClassifyOrdersAsync(runId, token, requestId, ClassifiableChunks(cases, chunks), ct);
-            var persisted = await db.LitigationCaseAiAnalyses.Where(x => x.LitigationAiAnalysisRunId == runId).OrderBy(x => x.LitigationCaseAiAnalysisId).ToListAsync(ct);
+            // A retried run may hold analyses of a case that has since left the live set (merged away): the summary is made over, and stamped with, the cases that are in the set now.
+            var liveCaseIds = cases.Select(c => c.LitigationCaseId).ToHashSet();
+            var persisted = (await db.LitigationCaseAiAnalyses.Where(x => x.LitigationAiAnalysisRunId == runId).OrderBy(x => x.LitigationCaseAiAnalysisId).ToListAsync(ct))
+                .Where(x => liveCaseIds.Contains(x.LitigationCaseId)).ToList();
             if (!await db.LitigationPortfolioAiAnalyses.AnyAsync(x => x.LitigationAiAnalysisRunId == runId, ct))
             {
                 LitigationPortfolioAiAnalysis? priorPortfolio = null;
+                var caseSetHash = CaseSetHash(cases.Select(c => c.LitigationCaseId));
                 if (reused == todo.Count && todo.Count > 0)
                     priorPortfolio = await db.LitigationPortfolioAiAnalyses.AsNoTracking()
-                        .Where(p => p.LitigationAiAnalysisRunId != runId && p.Status == LitigationAiAnalysisItemStatus.Completed
+                        .Where(p => p.LitigationAiAnalysisRunId != runId && p.Status == LitigationAiAnalysisItemStatus.Completed && p.CaseSetHash == caseSetHash
                             && db.LitigationAiAnalysisRuns.Any(r => r.LitigationAiAnalysisRunId == p.LitigationAiAnalysisRunId && r.RequestId == requestId))
                         .OrderByDescending(p => p.LitigationPortfolioAiAnalysisId).FirstOrDefaultAsync(ct);
-                await PublishPortfolioAsync(runId, token, persisted, priorPortfolio, cases.Count, ct);
+                await PublishPortfolioAsync(runId, token, persisted, priorPortfolio, cases.Count, caseSetHash, ct);
             }
             await CompleteAsync(runId, token, ct);
         }
@@ -133,6 +137,10 @@ public sealed class LitigationAiAnalysisOrchestrator(AppDbContext db, ILitigatio
     /// <summary>True when the request has cases and every one is already analysed for its current evidence.</summary>
     /// <summary>The request's chunks that count: those of a case that is not soft-merged and of an order that was not collapsed into another (plan 4.5, 4.6). A hidden loser's
     /// order text is the same text as the survivor's, so classifying it would be duplicate work and duplicate cost.</summary>
+    /// <summary>The hash of a set of case ids, order-independent. A summary is current only for the set it was made over.</summary>
+    public static string CaseSetHash(IEnumerable<long> caseIds) =>
+        LitigationAnalysisPromptBuilder.ComputeHash(string.Join(",", caseIds.Distinct().OrderBy(i => i)));
+
     public static IQueryable<LitigationOrderChunk> LiveChunks(AppDbContext db, IQueryable<LitigationOrderChunk> chunks, long requestId) =>
         chunks.Where(x => x.RequestId == requestId
             && db.LitigationCases.Any(c => c.LitigationCaseId == x.LitigationCaseId && c.MergedIntoCaseId == null)
@@ -149,8 +157,10 @@ public sealed class LitigationAiAnalysisOrchestrator(AppDbContext db, ILitigatio
         if (cases.Count == 0) return false;
         // InsufficientEvidence is a finished, deterministic portfolio outcome (no case had usable order text), so it
         // counts as "done" too; only a Pending/Failed or missing portfolio calls for another run.
+        var currentSetHash = CaseSetHash(cases.Select(c => c.LitigationCaseId));
         var hasPortfolio = await db.LitigationPortfolioAiAnalyses.AsNoTracking().AnyAsync(p =>
-            (p.Status == LitigationAiAnalysisItemStatus.Completed || p.Status == LitigationAiAnalysisItemStatus.InsufficientEvidence)
+            p.CaseSetHash == currentSetHash   // a summary over a different set of cases is not current, whatever each remaining case's hash says
+            && (p.Status == LitigationAiAnalysisItemStatus.Completed || p.Status == LitigationAiAnalysisItemStatus.InsufficientEvidence)
             && db.LitigationAiAnalysisRuns.Any(r => r.LitigationAiAnalysisRunId == p.LitigationAiAnalysisRunId && r.RequestId == requestId), ct);
         if (!hasPortfolio) return true;
         var chunks = await LiveChunks(db, db.LitigationOrderChunks.AsNoTracking(), requestId).ToListAsync(ct);
@@ -483,7 +493,7 @@ public sealed class LitigationAiAnalysisOrchestrator(AppDbContext db, ILitigatio
             .Select(x => x.Case).ToList();
     }
 
-    private async Task PublishPortfolioAsync(long id, Guid token, List<LitigationCaseAiAnalysis> rows, LitigationPortfolioAiAnalysis? reusable, int totalCases, CancellationToken ct)
+    private async Task PublishPortfolioAsync(long id, Guid token, List<LitigationCaseAiAnalysis> rows, LitigationPortfolioAiAnalysis? reusable, int totalCases, string caseSetHash, CancellationToken ct)
     {
         // Up to one batch of analysed cases, with every case read, the synthesis is the single prompt it always was. More than that is summarised
         // in small batches (LitigationPortfolioSynthesizer) that each read the cases together with their order quotes, then combined; and when
@@ -502,7 +512,7 @@ public sealed class LitigationAiAnalysisOrchestrator(AppDbContext db, ILitigatio
             evidence = JsonSerializer.Serialize(new { coverage, analyses = rows.Select(x => new { x.LitigationCaseAiAnalysisId, x.LitigationCaseId, x.Status, AnalysisJson = LitigationCaseAnalysisProjection.ForPortfolio(x.AnalysisJson), x.EvidenceHash }) });
             prompt = LitigationAnalysisPromptBuilder.BuildPortfolioPrompt(evidence, withCoverage: true);
         }
-        var item = new LitigationPortfolioAiAnalysis { LitigationAiAnalysisRunId = id, EvidenceJson = evidence, EvidenceHash = LitigationAnalysisPromptBuilder.ComputeHash(evidence), PromptHash = LitigationAnalysisPromptBuilder.ComputeHash(prompt) };
+        var item = new LitigationPortfolioAiAnalysis { LitigationAiAnalysisRunId = id, CaseSetHash = caseSetHash, EvidenceJson = evidence, EvidenceHash = LitigationAnalysisPromptBuilder.ComputeHash(evidence), PromptHash = LitigationAnalysisPromptBuilder.ComputeHash(prompt) };
         var usable = rows.Where(x => x.Status == LitigationAiAnalysisItemStatus.Completed).Select(x => x.LitigationCaseAiAnalysisId).ToHashSet();
         if (reusable is not null)
         {
