@@ -1,6 +1,7 @@
 @using MCAROC_Analysis.Models
 @using MCAROC_Analysis.Data.Entities
 @using MCAROC_Analysis.Services.LitigationData
+@using MCAROC_Analysis.Services.LitigationModule.Freshness
 @model RequestDetailsViewModel
 @{
     var lake = Model.LitigationDataLake;
@@ -173,6 +174,386 @@
     }
     <form id="litigation-analysis-token" class="d-none">@Html.AntiForgeryToken()</form>
     <div id="litigation-action-message" class="alert alert-secondary py-2 px-3 small d-none" role="status"></div>
+
+    var courtRefreshService = Context?.RequestServices?.GetService(typeof(ICourtRefreshStatusService)) as ICourtRefreshStatusService;
+    var courtStatus = courtRefreshService != null && reqId > 0
+        ? await courtRefreshService.GetRefreshStatusAsync(reqId)
+        : null;
+    if (courtStatus == null)
+    {
+        courtStatus = new CourtRefreshStatusDto(
+            State: "Idle",
+            Percent: 0,
+            Handled: 0,
+            Total: 0,
+            EstimatedRemainingSeconds: null,
+            EstimatedRemainingDisplay: null,
+            Phase: "RefreshingCases",
+            PhaseLabel: "Refreshing cases",
+            StartedUtc: null,
+            StartedIstDisplay: null,
+            LastAgentHeartbeatUtc: null,
+            Message: null,
+            Finished: false,
+            FinishedUtc: null,
+            NotUpdated: null);
+    }
+    <!-- Court Refresh Progress Banner (plan section 4.8) -->
+    <div id="court-refresh-banner-container" class="mb-4 @(courtStatus.State == "Idle" && (courtStatus.NotUpdated == null || courtStatus.NotUpdated.NotUpdatedCount == 0) ? "d-none" : "")" data-state="@courtStatus.State">
+        @if (courtStatus.State == "Running" || courtStatus.State == "Paused" || courtStatus.State == "Failed")
+        {
+            <div class="card border-primary-subtle shadow-sm mb-3" id="court-refresh-active-card">
+                <div class="card-body p-3">
+                    <div class="d-flex flex-wrap justify-content-between align-items-center mb-2 gap-2">
+                        <div class="d-flex flex-wrap align-items-center gap-2">
+                            <span id="court-refresh-state-indicator" class="d-inline-flex align-items-center gap-2">
+                                @if (courtStatus.State == "Running")
+                                {
+                                    <span class="spinner-border spinner-border-sm text-primary" role="status"></span>
+                                    <strong class="text-primary">Court update in progress:</strong>
+                                }
+                                else if (courtStatus.State == "Paused")
+                                {
+                                    <i class="bi bi-pause-circle-fill text-warning fs-5"></i>
+                                    <strong class="text-warning-emphasis">Court update paused:</strong>
+                                }
+                                else
+                                {
+                                    <i class="bi bi-exclamation-triangle-fill text-danger fs-5"></i>
+                                    <strong class="text-danger">Court update stopped:</strong>
+                                }
+                            </span>
+                            <span id="court-refresh-counts">
+                                <strong><span id="court-refresh-handled">@courtStatus.Handled.ToString("N0")</span></strong> of <strong><span id="court-refresh-total">@courtStatus.Total.ToString("N0")</span></strong> cases checked
+                            </span>
+                            @if (!string.IsNullOrWhiteSpace(courtStatus.StartedIstDisplay))
+                            {
+                                <span class="text-muted small">&middot; started <span id="court-refresh-started">@courtStatus.StartedIstDisplay</span></span>
+                            }
+                            <span id="court-refresh-eta-wrap" class="text-muted small @(string.IsNullOrWhiteSpace(courtStatus.EstimatedRemainingDisplay) ? "d-none" : "")">&middot; <span id="court-refresh-eta">@courtStatus.EstimatedRemainingDisplay</span></span>
+                        </div>
+                        <span class="badge @(courtStatus.State == "Paused" ? "bg-warning text-dark" : courtStatus.State == "Failed" ? "bg-danger" : "bg-primary") fs-6" id="court-refresh-percent-badge">@courtStatus.Percent%</span>
+                    </div>
+
+                    <div class="progress mb-2" style="height: 10px;">
+                        <div class="progress-bar progress-bar-striped @(courtStatus.State == "Running" ? "progress-bar-animated bg-primary" : courtStatus.State == "Paused" ? "bg-warning" : "bg-danger")"
+                             id="court-refresh-progress-bar"
+                             role="progressbar"
+                             style="width: @(courtStatus.Percent)%;"
+                             aria-valuenow="@courtStatus.Percent"
+                             aria-valuemin="0"
+                             aria-valuemax="100"></div>
+                    </div>
+
+                    <div class="d-flex flex-wrap justify-content-between align-items-center small text-muted gap-2">
+                        <div id="court-refresh-phase-line">
+                            <span>Phase:</span>
+                            <span class="fw-semibold text-dark" id="court-refresh-phase-label">@courtStatus.PhaseLabel</span>
+                            <span class="ms-2 text-secondary">(refreshing cases &rarr; finding missing cases &rarr; fetching orders &rarr; re-analysing changed cases)</span>
+                        </div>
+                        <a href="#court-not-updated-details" data-bs-toggle="collapse" class="text-decoration-none" role="button" aria-expanded="false" aria-controls="court-not-updated-details">
+                            <i class="bi bi-info-circle me-1"></i>Show details
+                        </a>
+                    </div>
+
+                    <div id="court-refresh-heartbeat-msg" class="mt-2 @(string.IsNullOrWhiteSpace(courtStatus.Message) ? "d-none" : "")">
+                        <div id="court-refresh-message-alert" class="alert @(courtStatus.State == "Failed" ? "alert-danger" : "alert-warning") py-1 px-2 small mb-0">
+                            <i id="court-refresh-message-icon" class="bi @(courtStatus.State == "Failed" ? "bi-exclamation-triangle" : "bi-pause-circle") me-1"></i>
+                            <span id="court-refresh-message-text">@courtStatus.Message</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        }
+        else if (courtStatus.State == "Completed")
+        {
+            <div class="alert alert-success d-flex justify-content-between align-items-center p-3 mb-3 shadow-sm" id="court-refresh-completed-card">
+                <div>
+                    <i class="bi bi-check-circle-fill me-2 fs-5"></i>
+                    <strong>Court records verified up to @(courtStatus.FinishedUtc.HasValue ? Ist.Date(courtStatus.FinishedUtc.Value, "dd-MMM-yyyy") : "latest")</strong>
+                    @if (courtStatus.NotUpdated is { } nu && nu.NotUpdatedCount > 0)
+                    {
+                        <span class="ms-2 small text-secondary">(@nu.NotUpdatedCount case(s) stayed unverified)</span>
+                    }
+                </div>
+                <a href="#court-not-updated-details" data-bs-toggle="collapse" class="btn btn-sm btn-outline-success" role="button" aria-expanded="false" aria-controls="court-not-updated-details">
+                    Not updated details
+                </a>
+            </div>
+        }
+
+        <!-- "What is not updated" panel (plan section 4.8) -->
+        @if (courtStatus.NotUpdated is { } notUp)
+        {
+            <div class="collapse @(courtStatus.State == "Idle" && notUp.NotUpdatedCount > 0 ? "show" : "") mb-3" id="court-not-updated-details">
+                <div class="card border-secondary-subtle bg-light shadow-sm">
+                    <div class="card-header bg-white py-2 px-3 d-flex justify-content-between align-items-center">
+                        <h6 class="mb-0 fw-bold"><i class="bi bi-list-check me-2 text-primary"></i>What is still not updated (<span id="nu-notupdated-count">@notUp.NotUpdatedCount</span> of <span id="nu-total-count">@notUp.TotalCases</span> cases)</h6>
+                        <small class="text-muted">Click any count to filter the case register</small>
+                    </div>
+                    <div class="card-body p-3 small">
+                        <div class="row g-3">
+                            <div class="col-md-6">
+                                <div class="fw-semibold text-muted text-uppercase mb-1">Not yet checked</div>
+                                <ul class="list-unstyled mb-2 ps-2 border-start border-2">
+                                    <li>
+                                        <a href="/Requests/@reqIdJs?freshness=not-yet-updated#tab-litigation" class="text-decoration-none" data-litigation-page>
+                                            Queued &middot; <span id="nu-queued-count" class="badge bg-secondary">@notUp.QueuedCount</span>
+                                        </a>
+                                    </li>
+                                    <li class="mt-1">
+                                        <a href="/Requests/@reqIdJs?freshness=not-yet-updated#tab-litigation" class="text-decoration-none" data-litigation-page>
+                                            In progress &middot; <span id="nu-inprogress-count" class="badge bg-info text-dark">@notUp.InProgressCount</span>
+                                        </a>
+                                    </li>
+                                </ul>
+
+                                <div class="fw-semibold text-muted text-uppercase mb-1 mt-3">Not due, by design</div>
+                                <ul class="list-unstyled mb-2 ps-2 border-start border-2">
+                                    <li>
+                                        <a href="/Requests/@reqIdJs?freshness=not-due#tab-litigation" class="text-decoration-none" data-litigation-page>
+                                            Next hearing today or later &middot; <span id="nu-notdue-count" class="badge bg-light text-secondary border">@notUp.NextHearingFutureCount</span>
+                                        </a>
+                                    </li>
+                                    <li class="mt-1">
+                                        <a href="/Requests/@reqIdJs?status=Disposed#tab-litigation" class="text-decoration-none" data-litigation-page>
+                                            Disposed cases (not refreshed) &middot; <span id="nu-disposed-count" class="badge bg-light text-secondary border">@notUp.DisposedCount</span>
+                                        </a>
+                                    </li>
+                                </ul>
+
+                                <div class="fw-semibold text-muted text-uppercase mb-1 mt-3">Could not verify</div>
+                                <ul class="list-unstyled mb-2 ps-2 border-start border-2">
+                                    <li>
+                                        <a href="/Requests/@reqIdJs?freshness=could-not-verify#tab-litigation" class="text-decoration-none" data-litigation-page>
+                                            Not found on portal &middot; <span id="nu-notfound-count" class="badge bg-warning-subtle text-warning-emphasis">@notUp.NotFoundCount</span>
+                                        </a>
+                                    </li>
+                                    <li class="mt-1">
+                                        <a href="/Requests/@reqIdJs?freshness=could-not-verify#tab-litigation" class="text-decoration-none" data-litigation-page>
+                                            Identity mismatch &middot; <span id="nu-mismatch-count" class="badge bg-warning-subtle text-warning-emphasis">@notUp.IdentityMismatchCount</span>
+                                        </a>
+                                    </li>
+                                    <li class="mt-1">
+                                        <a href="/Requests/@reqIdJs?freshness=could-not-verify#tab-litigation" class="text-decoration-none" data-litigation-page>
+                                            Failed after retries &middot; <span id="nu-failed-count" class="badge bg-danger-subtle text-danger-emphasis">@notUp.FailedAttemptsCount</span>
+                                        </a>
+                                        <ul id="nu-common-reasons" class="list-unstyled ps-3 mt-1 mb-0 small text-muted @(notUp.FailedAttemptsCount > 0 && notUp.CommonFailureReasons.Count > 0 ? "" : "d-none")">
+                                            @foreach (var r in notUp.CommonFailureReasons)
+                                            {
+                                                <li>@r.Reason &middot; <strong>@r.Count</strong></li>
+                                            }
+                                        </ul>
+                                    </li>
+                                </ul>
+                            </div>
+
+                            <div class="col-md-6">
+                                <div class="fw-semibold text-muted text-uppercase mb-1">Fields still missing, by field</div>
+                                <div id="nu-missing-fields" class="d-flex flex-wrap gap-1 mb-2">
+                                    @foreach (var (fName, count) in notUp.MissingFieldsCount)
+                                    {
+                                        <a href="/Requests/@reqIdJs?missingField=@Uri.EscapeDataString(fName)#tab-litigation" class="badge bg-light text-dark border text-decoration-none py-1 px-2" data-litigation-page data-missing-field="@fName">
+                                            @fName: <strong data-missing-field-count="@fName">@count</strong>
+                                        </a>
+                                    }
+                                </div>
+
+                                <div class="fw-semibold text-muted text-uppercase mb-1 mt-3">Orders & documents</div>
+                                <ul class="list-unstyled mb-2 ps-2 border-start border-2">
+                                    <li>Orders not yet downloaded &middot; <span id="nu-orders-not-downloaded" class="badge bg-secondary">@notUp.OrdersNotDownloadedCount</span></li>
+                                    <li class="mt-1">Text extraction pending &middot; <span id="nu-orders-extraction-pending" class="badge bg-secondary">@notUp.OrdersExtractionPendingCount</span></li>
+                                    <li id="nu-orders-unsupported-row" class="mt-1 text-muted @(notUp.OrdersUnsupportedFormatCount > 0 ? "" : "d-none")">Unsupported formats (Word/images) &middot; <span id="nu-orders-unsupported" class="badge bg-secondary">@notUp.OrdersUnsupportedFormatCount</span></li>
+                                    <li id="nu-orders-drat-row" class="mt-1 text-muted @(notUp.OrdersDratCount > 0 ? "" : "d-none")">DRAT (no public orders) &middot; <span id="nu-orders-drat" class="badge bg-secondary">@notUp.OrdersDratCount</span></li>
+                                </ul>
+
+                                <div class="fw-semibold text-muted text-uppercase mb-1 mt-3">Analysis</div>
+                                <ul class="list-unstyled mb-0 ps-2 border-start border-2">
+                                    <li>Cases queued for re-analysis &middot; <span id="nu-analysis-queued" class="badge bg-secondary">@notUp.CasesQueuedForAnalysisCount</span></li>
+                                    <li class="mt-1 text-muted">Portfolio summary &middot; <span id="nu-portfolio-summary" class="badge @(notUp.PortfolioSummaryPending ? "bg-warning text-dark" : "bg-light text-secondary border")">@(notUp.PortfolioSummaryPending ? "Pending" : "Current")</span></li>
+                                </ul>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        }
+    </div>
+
+    <script>
+        (function() {
+            var reqId = '@reqIdJs';
+            var state = '@courtStatus.State';
+            if (state !== 'Running' && state !== 'Paused') return;
+
+            function setText(id, val) {
+                var el = document.getElementById(id);
+                if (el && val !== undefined && val !== null) el.innerText = String(val);
+            }
+
+            function escapeHtml(str) {
+                return String(str)
+                    .replace(/&/g, '&amp;')
+                    .replace(/</g, '&lt;')
+                    .replace(/>/g, '&gt;')
+                    .replace(/"/g, '&quot;')
+                    .replace(/'/g, '&#39;');
+            }
+
+            function updateNotUpdatedPanel(nu) {
+                if (!nu) return;
+                setText('nu-notupdated-count', nu.notUpdatedCount);
+                setText('nu-total-count', nu.totalCases);
+                setText('nu-queued-count', nu.queuedCount);
+                setText('nu-inprogress-count', nu.inProgressCount);
+                setText('nu-notdue-count', nu.nextHearingFutureCount);
+                setText('nu-disposed-count', nu.disposedCount);
+                setText('nu-notfound-count', nu.notFoundCount);
+                setText('nu-mismatch-count', nu.identityMismatchCount);
+                setText('nu-failed-count', nu.failedAttemptsCount);
+                setText('nu-orders-not-downloaded', nu.ordersNotDownloadedCount);
+                setText('nu-orders-extraction-pending', nu.ordersExtractionPendingCount);
+                setText('nu-orders-unsupported', nu.ordersUnsupportedFormatCount);
+                setText('nu-orders-drat', nu.ordersDratCount);
+                setText('nu-analysis-queued', nu.casesQueuedForAnalysisCount);
+
+                var unsupRow = document.getElementById('nu-orders-unsupported-row');
+                if (unsupRow) unsupRow.classList.toggle('d-none', !(nu.ordersUnsupportedFormatCount > 0));
+
+                var dratRow = document.getElementById('nu-orders-drat-row');
+                if (dratRow) dratRow.classList.toggle('d-none', !(nu.ordersDratCount > 0));
+
+                var portEl = document.getElementById('nu-portfolio-summary');
+                if (portEl) {
+                    portEl.innerText = nu.portfolioSummaryPending ? 'Pending' : 'Current';
+                    portEl.className = 'badge ' + (nu.portfolioSummaryPending ? 'bg-warning text-dark' : 'bg-light text-secondary border');
+                }
+
+                if (nu.missingFieldsCount && typeof nu.missingFieldsCount === 'object') {
+                    Object.keys(nu.missingFieldsCount).forEach(function(key) {
+                        var fieldEl = document.querySelector('[data-missing-field-count="' + key + '"]');
+                        if (fieldEl) fieldEl.innerText = String(nu.missingFieldsCount[key]);
+                    });
+                }
+
+                var reasonsEl = document.getElementById('nu-common-reasons');
+                if (reasonsEl) {
+                    if (nu.failedAttemptsCount > 0 && Array.isArray(nu.commonFailureReasons) && nu.commonFailureReasons.length > 0) {
+                        reasonsEl.innerHTML = nu.commonFailureReasons.map(function(r) {
+                            return '<li>' + escapeHtml(r.reason) + ' &middot; <strong>' + Number(r.count).toLocaleString() + '</strong></li>';
+                        }).join('');
+                        reasonsEl.classList.remove('d-none');
+                    } else {
+                        reasonsEl.innerHTML = '';
+                        reasonsEl.classList.add('d-none');
+                    }
+                }
+            }
+
+            var interval = setInterval(function() {
+                fetch('/Requests/' + reqId + '/court-update/status')
+                    .then(function(r) { return r.json(); })
+                    .then(function(data) {
+                        if (!data) return;
+
+                        var container = document.getElementById('court-refresh-banner-container');
+                        if (container && data.state) {
+                            container.setAttribute('data-state', data.state);
+                        }
+
+                        var stateIndicator = document.getElementById('court-refresh-state-indicator');
+                        var pBar = document.getElementById('court-refresh-progress-bar');
+                        var pBadge = document.getElementById('court-refresh-percent-badge');
+                        var hCount = document.getElementById('court-refresh-handled');
+                        var tCount = document.getElementById('court-refresh-total');
+                        var etaWrap = document.getElementById('court-refresh-eta-wrap');
+                        var etaEl = document.getElementById('court-refresh-eta');
+                        var phaseEl = document.getElementById('court-refresh-phase-label');
+                        var msgEl = document.getElementById('court-refresh-message-text');
+                        var msgAlert = document.getElementById('court-refresh-message-alert');
+                        var msgIcon = document.getElementById('court-refresh-message-icon');
+                        var hbWrap = document.getElementById('court-refresh-heartbeat-msg');
+
+                        if (stateIndicator) {
+                            if (data.state === 'Failed') {
+                                stateIndicator.innerHTML = '<i class="bi bi-exclamation-triangle-fill text-danger fs-5"></i><strong class="text-danger">Court update stopped:</strong>';
+                            } else if (data.state === 'Paused') {
+                                stateIndicator.innerHTML = '<i class="bi bi-pause-circle-fill text-warning fs-5"></i><strong class="text-warning-emphasis">Court update paused:</strong>';
+                            } else if (data.state === 'Running') {
+                                stateIndicator.innerHTML = '<span class="spinner-border spinner-border-sm text-primary" role="status"></span><strong class="text-primary">Court update in progress:</strong>';
+                            }
+                        }
+
+                        if (pBar) {
+                            pBar.style.width = data.percent + '%';
+                            pBar.setAttribute('aria-valuenow', data.percent);
+                            if (data.state === 'Failed') {
+                                pBar.className = 'progress-bar progress-bar-striped bg-danger';
+                            } else if (data.state === 'Paused') {
+                                pBar.className = 'progress-bar progress-bar-striped bg-warning';
+                            } else if (data.state === 'Running') {
+                                pBar.className = 'progress-bar progress-bar-striped progress-bar-animated bg-primary';
+                            }
+                        }
+                        if (pBadge) {
+                            pBadge.innerText = data.percent + '%';
+                            if (data.state === 'Failed') {
+                                pBadge.className = 'badge bg-danger fs-6';
+                            } else if (data.state === 'Paused') {
+                                pBadge.className = 'badge bg-warning text-dark fs-6';
+                            } else if (data.state === 'Running') {
+                                pBadge.className = 'badge bg-primary fs-6';
+                            }
+                        }
+                        if (hCount) hCount.innerText = Number(data.handled).toLocaleString();
+                        if (tCount) tCount.innerText = Number(data.total).toLocaleString();
+                        if (etaEl && data.estimatedRemainingDisplay && data.state !== 'Failed') {
+                            etaEl.innerText = data.estimatedRemainingDisplay;
+                            if (etaWrap) etaWrap.classList.remove('d-none');
+                        } else if (etaWrap) {
+                            etaWrap.classList.add('d-none');
+                        }
+                        if (phaseEl && data.phaseLabel) phaseEl.innerText = data.phaseLabel;
+
+                        if (msgAlert) {
+                            msgAlert.className = 'alert ' + (data.state === 'Failed' ? 'alert-danger' : 'alert-warning') + ' py-1 px-2 small mb-0';
+                        }
+                        if (msgIcon) {
+                            msgIcon.className = 'bi ' + (data.state === 'Failed' ? 'bi-exclamation-triangle' : 'bi-pause-circle') + ' me-1';
+                        }
+                        if (data.message && data.message.length > 0) {
+                            if (msgEl) msgEl.innerText = data.message;
+                            if (hbWrap) hbWrap.classList.remove('d-none');
+                        } else if (hbWrap) {
+                            hbWrap.classList.add('d-none');
+                        }
+
+                        updateNotUpdatedPanel(data.notUpdated);
+
+                        if (data.state === 'Completed' || data.state === 'Failed' || data.finished) {
+                            clearInterval(interval);
+                            if (data.state === 'Completed') {
+                                var actCard = document.getElementById('court-refresh-active-card');
+                                if (actCard) {
+                                    var verifiedDate = data.finishedIstDateDisplay || (data.finishedUtc && window.mcaIst && window.mcaIst.date ? window.mcaIst.date(data.finishedUtc) : 'latest');
+                                    var unverifiedCount = (data.notUpdated && typeof data.notUpdated.notUpdatedCount === 'number') ? data.notUpdated.notUpdatedCount : 0;
+                                    var unverifiedNote = unverifiedCount > 0
+                                        ? '<span class="ms-2 small text-secondary">(' + Number(unverifiedCount).toLocaleString() + ' case(s) stayed unverified)</span>'
+                                        : '';
+                                    actCard.innerHTML = '<div class="alert alert-success d-flex justify-content-between align-items-center p-3 mb-0">' +
+                                        '<div><i class="bi bi-check-circle-fill me-2 fs-5"></i><strong>Court records verified up to ' + escapeHtml(verifiedDate) + '</strong>' + unverifiedNote + '</div>' +
+                                        '<a href="#court-not-updated-details" data-bs-toggle="collapse" class="btn btn-sm btn-outline-success">Not updated details</a>' +
+                                        '</div>';
+                                }
+                            }
+                        }
+                    })
+                    .catch(function(err) {
+                        console.warn('Court update polling error:', err);
+                    });
+            }, 10000);
+        })();
+    </script>
 
     @* Charged property vs cases. Only Strong links are shown; silence is explained, never presented as "clean". *@
     @if (Model.ChargeLitigation is { } chl)

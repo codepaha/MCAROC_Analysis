@@ -5,6 +5,8 @@ using System.Text.Json;
 using MCAROC_Analysis.Data.Entities;
 using MCAROC_Analysis.Services.Analysis;
 using MCAROC_Analysis.Services.LitigationData;
+using MCAROC_Analysis.Services.LitigationModule.Freshness;
+using MCAROC_Analysis.Services;
 
 namespace MCAROC_Analysis.Models;
 
@@ -302,6 +304,28 @@ public sealed class LitigationCaseCardViewModel
     public List<LitigationPropertyMatchViewModel> PropertyMatches { get; set; } = [];
     public LitigationCaseAiAnalysisViewModel? Analysis { get; set; }
     public bool IsAnalysisStaleComparedToCase { get; set; }
+
+    public CaseFreshnessResult? Freshness { get; set; }
+    public string? FreshnessText => Freshness is null ? null : CaseFreshness.Text(Freshness, d => Ist.Date(d, "dd-MMM-yyyy"));
+    public string FreshnessBadgeCss => Freshness?.Label switch
+    {
+        FreshnessLabel.Updated => "mca-badge sev-positive",
+        FreshnessLabel.NotYetUpdated => "mca-badge sev-watch",
+        FreshnessLabel.CouldNotVerify => "mca-badge sev-critical",
+        _ => "mca-badge"
+    };
+
+    public string StatusProvenance => Freshness?.Label == FreshnessLabel.Updated && Freshness.AsOfUtc.HasValue
+        ? $"as of {Ist.Date(Freshness.AsOfUtc.Value, "dd-MMM-yyyy")} · Court portal"
+        : (LastSeenUtc > DateTime.MinValue ? $"as of {Ist.Date(LastSeenUtc, "dd-MMM-yyyy")} · Court records" : "not updated yet");
+
+    public string LastHearingProvenance => Freshness?.Label == FreshnessLabel.Updated && Freshness.AsOfUtc.HasValue
+        ? $"as of {Ist.Date(Freshness.AsOfUtc.Value, "dd-MMM-yyyy")} · Court portal"
+        : (LastSeenUtc > DateTime.MinValue ? $"as of {Ist.Date(LastSeenUtc, "dd-MMM-yyyy")} · Court records" : "not updated yet");
+
+    public string NextHearingProvenance => Freshness?.Label == FreshnessLabel.Updated && Freshness.AsOfUtc.HasValue
+        ? $"as of {Ist.Date(Freshness.AsOfUtc.Value, "dd-MMM-yyyy")} · Court portal"
+        : (LastSeenUtc > DateTime.MinValue ? $"as of {Ist.Date(LastSeenUtc, "dd-MMM-yyyy")} · Court records" : "not updated yet");
 
     public DateTime FirstSeenUtc { get; set; }
     public DateTime LastSeenUtc { get; set; }

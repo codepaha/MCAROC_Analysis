@@ -1,6 +1,7 @@
-﻿using MCAROC_Analysis.Data.Entities;
+using MCAROC_Analysis.Data.Entities;
 using MCAROC_Analysis.Services.Analysis;
 using MCAROC_Analysis.Services.Dossier;
+using MCAROC_Analysis.Services.LitigationModule.Freshness;
 
 namespace MCAROC_Analysis.Models.Dossier;
 
@@ -118,7 +119,8 @@ public sealed record DossierLitigation(
     // Appended after every existing field, nullable with a normalizing list property, so the ~17
     // existing positional `new DossierLitigation(...)` test call sites keep compiling unchanged (#215).
     // A separate register from Litigation/All — see FinancialDisputeCase's own doc comment.
-    IReadOnlyList<FinancialDisputeCase>? FinancialDisputeCases = null)
+    IReadOnlyList<FinancialDisputeCase>? FinancialDisputeCases = null,
+    LitigationDataCurrencySummary? DataCurrency = null)
 {
     public LitigationRole RoleFor(Litigation l) => RoleById.GetValueOrDefault(l.LitigationId, LitigationRole.NotDetermined);
     public int FiledAgainstCount => RoleById.Values.Count(v => v == LitigationRole.FiledAgainst);
