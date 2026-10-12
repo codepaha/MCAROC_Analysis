@@ -291,3 +291,11 @@ public sealed class ModuleRefreshRun
     public string? FailedReason { get; set; }
     public int Phase { get; set; }
 }
+
+/// <summary>Links a work item to a run that depends on it. One item can serve several runs (a second run that needs work already queued for the first shares it), so a run's counts come
+/// from these links, not from the item's own run id.</summary>
+public sealed class ModuleFetchWorkItemRun
+{
+    public long WorkItemId { get; set; }
+    public long RunId { get; set; }
+}

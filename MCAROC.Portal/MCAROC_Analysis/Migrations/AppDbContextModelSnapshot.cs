@@ -6956,6 +6956,21 @@ namespace MCAROC_Analysis.Migrations
                     b.ToTable("FetchWorkItems", "litigation");
                 });
 
+            modelBuilder.Entity("MCAROC_Analysis.Services.LitigationModule.Store.ModuleFetchWorkItemRun", b =>
+                {
+                    b.Property<long>("WorkItemId")
+                        .HasColumnType("bigint");
+
+                    b.Property<long>("RunId")
+                        .HasColumnType("bigint");
+
+                    b.HasKey("WorkItemId", "RunId");
+
+                    b.HasIndex("RunId");
+
+                    b.ToTable("FetchWorkItemRuns", "litigation");
+                });
+
             modelBuilder.Entity("MCAROC_Analysis.Services.LitigationModule.Store.ModuleRefreshRun", b =>
                 {
                     b.Property<long>("RunId")
@@ -7819,6 +7834,21 @@ namespace MCAROC_Analysis.Migrations
                         .IsRequired();
 
                     b.Navigation("Case");
+                });
+
+            modelBuilder.Entity("MCAROC_Analysis.Services.LitigationModule.Store.ModuleFetchWorkItemRun", b =>
+                {
+                    b.HasOne("MCAROC_Analysis.Services.LitigationModule.Store.ModuleRefreshRun", null)
+                        .WithMany()
+                        .HasForeignKey("RunId")
+                        .OnDelete(DeleteBehavior.NoAction)
+                        .IsRequired();
+
+                    b.HasOne("MCAROC_Analysis.Services.LitigationModule.Store.ModuleFetchWorkItem", null)
+                        .WithMany()
+                        .HasForeignKey("WorkItemId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("MCAROC_Analysis.Services.LitigationModule.Store.ModuleRequestLink", b =>

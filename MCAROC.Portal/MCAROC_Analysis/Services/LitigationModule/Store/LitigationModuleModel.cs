@@ -135,5 +135,14 @@ public static class LitigationModuleModel
             e.Property(x => x.FailedReason).HasMaxLength(1000);
             e.HasIndex(x => new { x.RequestId, x.StartedUtc });
         });
+
+        modelBuilder.Entity<ModuleFetchWorkItemRun>(e =>
+        {
+            e.ToTable("FetchWorkItemRuns", Schema);
+            e.HasKey(x => new { x.WorkItemId, x.RunId });
+            e.HasOne<ModuleFetchWorkItem>().WithMany().HasForeignKey(x => x.WorkItemId).OnDelete(DeleteBehavior.Cascade);
+            e.HasOne<ModuleRefreshRun>().WithMany().HasForeignKey(x => x.RunId).OnDelete(DeleteBehavior.NoAction);
+            e.HasIndex(x => x.RunId);
+        });
     }
 }

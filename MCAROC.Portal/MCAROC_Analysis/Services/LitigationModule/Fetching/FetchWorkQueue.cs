@@ -34,27 +34,66 @@ public sealed class FetchWorkQueue(AppDbContext db, FetchQueueOptions? options =
 
     private DateTime Now => _time.GetUtcNow().UtcDateTime;
 
-    /// <summary>Adds an item unless an active (queued or claimed) one already exists for the same kind, host and case. Returns the new item's id, or null when it already existed.
+    /// <summary>Adds an item unless an active (queued or claimed) one already exists for the same kind, host and case; either way the item is linked to <paramref name="runId"/>, so a
+    /// second run that needs work already queued for the first counts it too. Only a confirmed uniqueness conflict means "already queued"; any other failure is raised.
     /// Party searches (no case) are not de-duplicated here: the caller decides what a search is.</summary>
-    public async Task<long?> EnqueueAsync(FetchWorkKind kind, FetchHost host, long? caseId, long? runId, string? payloadJson, int priority, CancellationToken ct)
+    public async Task<EnqueueResult> EnqueueAsync(FetchWorkKind kind, FetchHost host, long? caseId, long? runId, string? payloadJson, int priority, CancellationToken ct)
     {
-        if (caseId is { } id && await db.Set<ModuleFetchWorkItem>().AnyAsync(w => w.Kind == (int)kind && w.Host == (int)host && w.CaseId == id
-                && (w.Status == (int)FetchWorkStatus.Queued || w.Status == (int)FetchWorkStatus.Claimed), ct))
-            return null;
+        if (caseId is not null && await FindActiveAsync(kind, host, caseId.Value, ct) is { } existing)
+        {
+            await LinkRunAsync(existing, runId, ct);
+            return new EnqueueResult(existing, false);
+        }
+        await using var tx = db.Database.CurrentTransaction is null ? await db.Database.BeginTransactionAsync(ct) : null;
         var item = new ModuleFetchWorkItem
         {
             Kind = (int)kind, Host = (int)host, CaseId = caseId, RunId = runId, PayloadJson = payloadJson, Priority = priority,
             Status = (int)FetchWorkStatus.Queued, CreatedUtc = Now
         };
         db.Set<ModuleFetchWorkItem>().Add(item);
-        try { await db.SaveChangesAsync(ct); return item.WorkItemId; }
-        catch (DbUpdateException)
+        try
         {
-            // Two enqueuers raced: the unique index let one win.
-            db.Entry(item).State = EntityState.Detached;
-            return null;
+            await db.SaveChangesAsync(ct);
+            if (runId is { } rid)
+            {
+                db.Set<ModuleFetchWorkItemRun>().Add(new ModuleFetchWorkItemRun { WorkItemId = item.WorkItemId, RunId = rid });
+                await db.SaveChangesAsync(ct);
+            }
+            if (tx is not null) await tx.CommitAsync(ct);
+            return new EnqueueResult(item.WorkItemId, true);
+        }
+        catch (DbUpdateException ex) when (IsUniqueViolation(ex) && caseId is not null)
+        {
+            // Two enqueuers raced: the unique index let one win. Join the winner's item.
+            db.ChangeTracker.Clear();
+            if (tx is not null) await tx.RollbackAsync(ct);
+            var winner = await FindActiveAsync(kind, host, caseId.Value, ct)
+                ?? throw new InvalidOperationException("A uniqueness conflict was reported but no active item was found.", ex);
+            await LinkRunAsync(winner, runId, ct);
+            return new EnqueueResult(winner, false);
         }
     }
+
+    private async Task<long?> FindActiveAsync(FetchWorkKind kind, FetchHost host, long caseId, CancellationToken ct) =>
+        await db.Set<ModuleFetchWorkItem>().AsNoTracking().Where(w => w.Kind == (int)kind && w.Host == (int)host && w.CaseId == caseId
+                && (w.Status == (int)FetchWorkStatus.Queued || w.Status == (int)FetchWorkStatus.Claimed))
+            .Select(w => (long?)w.WorkItemId).FirstOrDefaultAsync(ct);
+
+    private async Task LinkRunAsync(long workItemId, long? runId, CancellationToken ct)
+    {
+        if (runId is not { } rid) return;
+        if (await db.Set<ModuleFetchWorkItemRun>().AsNoTracking().AnyAsync(l => l.WorkItemId == workItemId && l.RunId == rid, ct)) return;
+        db.Set<ModuleFetchWorkItemRun>().Add(new ModuleFetchWorkItemRun { WorkItemId = workItemId, RunId = rid });
+        try { await db.SaveChangesAsync(ct); }
+        catch (DbUpdateException ex) when (IsUniqueViolation(ex))
+        {
+            db.ChangeTracker.Clear();   // another caller linked the same run first: that is the intended outcome
+        }
+    }
+
+    /// <summary>SQL Server error 2601 / 2627: a unique index or primary key was violated. Nothing else is a duplicate.</summary>
+    private static bool IsUniqueViolation(DbUpdateException ex) =>
+        ex.InnerException is Microsoft.Data.SqlClient.SqlException { Number: 2601 or 2627 };
 
     /// <summary>Takes the best due item of a host for this agent, or null when there is none. First hands back any claim whose lease has run out, then claims atomically
     /// (<c>UPDLOCK, READPAST</c>), so any number of agents can call this at once and each item goes to exactly one of them.</summary>
@@ -181,9 +220,13 @@ public sealed class FetchWorkQueue(AppDbContext db, FetchQueueOptions? options =
         return requeued;
     }
 
-    /// <summary>The counts of a run's items by status, for the banner and the "not updated" panel.</summary>
+    /// <summary>The counts of the items a run depends on, by status, for the banner and the "not updated" panel. An item shared with another run counts for both.</summary>
     public async Task<IReadOnlyDictionary<FetchWorkStatus, int>> CountsForRunAsync(long runId, CancellationToken ct) =>
-        (await db.Set<ModuleFetchWorkItem>().AsNoTracking().Where(w => w.RunId == runId).GroupBy(w => w.Status).Select(g => new { g.Key, N = g.Count() }).ToListAsync(ct))
+        (await (from link in db.Set<ModuleFetchWorkItemRun>().AsNoTracking()
+                where link.RunId == runId
+                join w in db.Set<ModuleFetchWorkItem>().AsNoTracking() on link.WorkItemId equals w.WorkItemId
+                group w by w.Status into g
+                select new { g.Key, N = g.Count() }).ToListAsync(ct))
             .ToDictionary(x => (FetchWorkStatus)x.Key, x => x.N);
 
     private static string? Truncate(string? text) => text is { Length: > 1900 } t ? t[..1900] : text;
@@ -195,5 +238,9 @@ public sealed class FetchWorkQueue(AppDbContext db, FetchQueueOptions? options =
         command.Parameters.Add(p);
     }
 }
+
+/// <param name="WorkItemId">The item the work is in: the new one, or the active one that already existed.</param>
+/// <param name="Created">False when an active item for the same work already existed.</param>
+public sealed record EnqueueResult(long WorkItemId, bool Created);
 
 public sealed record FetchFailureResult(bool Recorded, bool Terminal, int AttemptCount, DateTime? NextAttemptUtc);

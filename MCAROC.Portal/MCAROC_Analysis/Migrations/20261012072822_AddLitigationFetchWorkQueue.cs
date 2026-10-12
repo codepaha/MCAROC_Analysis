@@ -61,6 +61,38 @@ namespace MCAROC_Analysis.Migrations
                     table.PrimaryKey("PK_RefreshRuns", x => x.RunId);
                 });
 
+            migrationBuilder.CreateTable(
+                name: "FetchWorkItemRuns",
+                schema: "litigation",
+                columns: table => new
+                {
+                    WorkItemId = table.Column<long>(type: "bigint", nullable: false),
+                    RunId = table.Column<long>(type: "bigint", nullable: false)
+                },
+                constraints: table =>
+                {
+                    table.PrimaryKey("PK_FetchWorkItemRuns", x => new { x.WorkItemId, x.RunId });
+                    table.ForeignKey(
+                        name: "FK_FetchWorkItemRuns_FetchWorkItems_WorkItemId",
+                        column: x => x.WorkItemId,
+                        principalSchema: "litigation",
+                        principalTable: "FetchWorkItems",
+                        principalColumn: "WorkItemId",
+                        onDelete: ReferentialAction.Cascade);
+                    table.ForeignKey(
+                        name: "FK_FetchWorkItemRuns_RefreshRuns_RunId",
+                        column: x => x.RunId,
+                        principalSchema: "litigation",
+                        principalTable: "RefreshRuns",
+                        principalColumn: "RunId");
+                });
+
+            migrationBuilder.CreateIndex(
+                name: "IX_FetchWorkItemRuns_RunId",
+                schema: "litigation",
+                table: "FetchWorkItemRuns",
+                column: "RunId");
+
             migrationBuilder.CreateIndex(
                 name: "IX_FetchWorkItems_Claim",
                 schema: "litigation",
@@ -91,6 +123,10 @@ namespace MCAROC_Analysis.Migrations
         /// <inheritdoc />
         protected override void Down(MigrationBuilder migrationBuilder)
         {
+            migrationBuilder.DropTable(
+                name: "FetchWorkItemRuns",
+                schema: "litigation");
+
             migrationBuilder.DropTable(
                 name: "FetchWorkItems",
                 schema: "litigation");

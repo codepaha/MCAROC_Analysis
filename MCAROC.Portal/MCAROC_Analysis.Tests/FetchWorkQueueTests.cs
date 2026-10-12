@@ -41,10 +41,11 @@ public class FetchWorkQueueTests : IAsyncLifetime
         var q = Queue(db);
         var first = await q.EnqueueAsync(FetchWorkKind.StatusFetch, FetchHost.Drt, caseId, null, null, 0, default);
         var again = await q.EnqueueAsync(FetchWorkKind.StatusFetch, FetchHost.Drt, caseId, null, null, 0, default);
-        Assert.NotNull(first);
-        Assert.Null(again);
-        Assert.NotNull(await q.EnqueueAsync(FetchWorkKind.OrdersFetch, FetchHost.Drt, caseId, null, null, 0, default));      // another kind is other work
-        Assert.NotNull(await q.EnqueueAsync(FetchWorkKind.StatusFetch, FetchHost.Consumer, caseId, null, null, 0, default)); // another host too
+        Assert.True(first.Created);
+        Assert.False(again.Created);
+        Assert.Equal(first.WorkItemId, again.WorkItemId);                                                                       // the existing item is returned
+        Assert.True((await q.EnqueueAsync(FetchWorkKind.OrdersFetch, FetchHost.Drt, caseId, null, null, 0, default)).Created);      // another kind is other work
+        Assert.True((await q.EnqueueAsync(FetchWorkKind.StatusFetch, FetchHost.Consumer, caseId, null, null, 0, default)).Created); // another host too
     }
 
     [Fact]
@@ -56,7 +57,8 @@ public class FetchWorkQueueTests : IAsyncLifetime
             await using var db = Ctx();
             return await Queue(db).EnqueueAsync(FetchWorkKind.StatusFetch, FetchHost.Drt, caseId, null, null, 0, default);
         }));
-        Assert.Equal(1, results.Count(r => r is not null));
+        Assert.Equal(1, results.Count(r => r.Created));
+        Assert.Single(results.Select(r => r.WorkItemId).Distinct());
         await using var v = Ctx();
         Assert.Equal(1, await v.Set<ModuleFetchWorkItem>().CountAsync(w => w.CaseId == caseId));
     }
@@ -66,7 +68,7 @@ public class FetchWorkQueueTests : IAsyncLifetime
     {
         var ids = new List<long>();
         await using (var seed = Ctx())
-            for (var i = 0; i < 20; i++) ids.Add((await Queue(seed).EnqueueAsync(FetchWorkKind.StatusFetch, FetchHost.Drt, NewCaseId(), null, null, 0, default))!.Value);
+            for (var i = 0; i < 20; i++) ids.Add((await Queue(seed).EnqueueAsync(FetchWorkKind.StatusFetch, FetchHost.Drt, NewCaseId(), null, null, 0, default)).WorkItemId);
 
         var claimed = (await Task.WhenAll(Enumerable.Range(0, 30).Select(async agent =>
         {
@@ -84,9 +86,9 @@ public class FetchWorkQueueTests : IAsyncLifetime
     {
         await using var db = Ctx();
         var q = Queue(db);
-        var low = (await q.EnqueueAsync(FetchWorkKind.StatusFetch, FetchHost.Consumer, NewCaseId(), null, null, 1, default))!.Value;
-        var highOld = (await q.EnqueueAsync(FetchWorkKind.StatusFetch, FetchHost.Consumer, NewCaseId(), null, null, 5, default))!.Value;
-        var highNew = (await q.EnqueueAsync(FetchWorkKind.StatusFetch, FetchHost.Consumer, NewCaseId(), null, null, 5, default))!.Value;
+        var low = (await q.EnqueueAsync(FetchWorkKind.StatusFetch, FetchHost.Consumer, NewCaseId(), null, null, 1, default)).WorkItemId;
+        var highOld = (await q.EnqueueAsync(FetchWorkKind.StatusFetch, FetchHost.Consumer, NewCaseId(), null, null, 5, default)).WorkItemId;
+        var highNew = (await q.EnqueueAsync(FetchWorkKind.StatusFetch, FetchHost.Consumer, NewCaseId(), null, null, 5, default)).WorkItemId;
         await q.EnqueueAsync(FetchWorkKind.StatusFetch, FetchHost.Drt, NewCaseId(), null, null, 9, default);
 
         Assert.Equal(highOld, (await q.ClaimNextAsync(FetchHost.Consumer, "a", default))!.WorkItemId);
@@ -101,7 +103,7 @@ public class FetchWorkQueueTests : IAsyncLifetime
         var clock = new TestClock(DateTime.UtcNow);
         await using var db = Ctx();
         var q = Queue(db, clock);
-        var id = (await q.EnqueueAsync(FetchWorkKind.StatusFetch, FetchHost.Drt, NewCaseId(), null, null, 0, default))!.Value;
+        var id = (await q.EnqueueAsync(FetchWorkKind.StatusFetch, FetchHost.Drt, NewCaseId(), null, null, 0, default)).WorkItemId;
         var slow = (await q.ClaimNextAsync(FetchHost.Drt, "slow", default))!;
 
         clock.Utc = clock.Utc.AddMinutes(10);                                             // slow's lease (5 min) has run out
@@ -122,7 +124,7 @@ public class FetchWorkQueueTests : IAsyncLifetime
         var clock = new TestClock(DateTime.UtcNow);
         await using var db = Ctx();
         var q = Queue(db, clock);
-        var id = (await q.EnqueueAsync(FetchWorkKind.StatusFetch, FetchHost.Drt, NewCaseId(), null, null, 0, default))!.Value;
+        var id = (await q.EnqueueAsync(FetchWorkKind.StatusFetch, FetchHost.Drt, NewCaseId(), null, null, 0, default)).WorkItemId;
 
         await q.ClaimNextAsync(FetchHost.Drt, "a", default);
         clock.Utc = clock.Utc.AddMinutes(6);
@@ -144,7 +146,7 @@ public class FetchWorkQueueTests : IAsyncLifetime
         var clock = new TestClock(DateTime.UtcNow);
         await using var db = Ctx();
         var q = Queue(db, clock);
-        var id = (await q.EnqueueAsync(FetchWorkKind.StatusFetch, FetchHost.Drt, NewCaseId(), null, null, 0, default))!.Value;
+        var id = (await q.EnqueueAsync(FetchWorkKind.StatusFetch, FetchHost.Drt, NewCaseId(), null, null, 0, default)).WorkItemId;
         var expected = new[] { TimeSpan.FromMinutes(30), TimeSpan.FromHours(2), TimeSpan.FromHours(8), TimeSpan.FromHours(24) };
 
         for (var attempt = 1; attempt <= 4; attempt++)
@@ -173,7 +175,7 @@ public class FetchWorkQueueTests : IAsyncLifetime
         var clock = new TestClock(DateTime.UtcNow);
         await using var db = Ctx();
         var q = Queue(db, clock);
-        var id = (await q.EnqueueAsync(FetchWorkKind.StatusFetch, FetchHost.Drt, NewCaseId(), null, null, 0, default))!.Value;
+        var id = (await q.EnqueueAsync(FetchWorkKind.StatusFetch, FetchHost.Drt, NewCaseId(), null, null, 0, default)).WorkItemId;
         var work = (await q.ClaimNextAsync(FetchHost.Drt, "a", default))!;
 
         Assert.True(await q.DeferAsync(work, clock.Utc.AddMinutes(10), "portal not responding", default));
@@ -192,7 +194,7 @@ public class FetchWorkQueueTests : IAsyncLifetime
         await using var db = Ctx();
         var q = Queue(db, clock, opts);
         var caseId = NewCaseId();
-        var id = (await q.EnqueueAsync(FetchWorkKind.StatusFetch, FetchHost.Drt, caseId, null, null, 0, default))!.Value;
+        var id = (await q.EnqueueAsync(FetchWorkKind.StatusFetch, FetchHost.Drt, caseId, null, null, 0, default)).WorkItemId;
         await q.FailAttemptAsync((await q.ClaimNextAsync(FetchHost.Drt, "a", default))!, "Failed", "down", default);
         Assert.Equal((int)FetchWorkStatus.Failed, (await ReadAsync(id)).Status);
 
@@ -200,7 +202,7 @@ public class FetchWorkQueueTests : IAsyncLifetime
         Assert.Equal(0, await q.RequeueFailedAsync(default));                              // too early
         clock.Utc = clock.Utc.AddHours(2);
         var other = await q.EnqueueAsync(FetchWorkKind.StatusFetch, FetchHost.Drt, caseId, null, null, 0, default);   // fresh work for the same case is queued meanwhile
-        Assert.NotNull(other);
+        Assert.True(other.Created);
         Assert.Equal(0, await q.RequeueFailedAsync(default));                              // so the old failure does not duplicate it
         await q.CompleteAsync((await q.ClaimNextAsync(FetchHost.Drt, "a", default))!, "Found", default);
 
@@ -227,5 +229,45 @@ public class FetchWorkQueueTests : IAsyncLifetime
 
         var counts = await q.CountsForRunAsync(runId, default);
         Assert.Equal((2, 1), (counts[FetchWorkStatus.Queued], counts[FetchWorkStatus.Succeeded]));
+    }
+
+    [Fact]
+    public async Task Work_already_queued_for_one_run_counts_for_a_second_run_that_needs_it()
+    {
+        long run1, run2;
+        await using (var db = Ctx())
+        {
+            var r1 = new ModuleRefreshRun { RequestId = NewCaseId(), StartedUtc = DateTime.UtcNow, EligibleAtStart = 2 };
+            var r2 = new ModuleRefreshRun { RequestId = NewCaseId(), StartedUtc = DateTime.UtcNow, EligibleAtStart = 2 };
+            db.Set<ModuleRefreshRun>().AddRange(r1, r2);
+            await db.SaveChangesAsync();
+            run1 = r1.RunId; run2 = r2.RunId;
+        }
+        await using var db2 = Ctx();
+        var q = Queue(db2);
+        var shared = NewCaseId();
+        var first = await q.EnqueueAsync(FetchWorkKind.StatusFetch, FetchHost.Drt, shared, run1, null, 0, default);
+        var second = await q.EnqueueAsync(FetchWorkKind.StatusFetch, FetchHost.Drt, shared, run2, null, 0, default);          // same work, other run
+        await q.EnqueueAsync(FetchWorkKind.StatusFetch, FetchHost.Drt, NewCaseId(), run2, null, 0, default);                   // run 2's own item
+
+        Assert.False(second.Created);
+        Assert.Equal(first.WorkItemId, second.WorkItemId);
+        Assert.Equal(1, (await q.CountsForRunAsync(run1, default))[FetchWorkStatus.Queued]);
+        Assert.Equal(2, (await q.CountsForRunAsync(run2, default))[FetchWorkStatus.Queued]);                                   // the shared item counts for both runs
+
+        // and when the shared item finishes, it finishes for both
+        await q.CompleteAsync((await q.ClaimNextAsync(FetchHost.Drt, "a", default))!, "Found", default);
+        var claimedShared = (await q.CountsForRunAsync(run1, default)).GetValueOrDefault(FetchWorkStatus.Succeeded) + (await q.CountsForRunAsync(run2, default)).GetValueOrDefault(FetchWorkStatus.Succeeded);
+        Assert.True(claimedShared >= 1);
+    }
+
+    [Fact]
+    public async Task A_database_failure_that_is_not_a_duplicate_is_raised_not_reported_as_already_queued()
+    {
+        await using var db = Ctx();
+        // A run id that does not exist breaks the foreign key of the run link: a real failure, not a uniqueness conflict.
+        await Assert.ThrowsAsync<DbUpdateException>(() => Queue(db).EnqueueAsync(FetchWorkKind.StatusFetch, FetchHost.Drt, NewCaseId(), long.MaxValue - 9, null, 0, default));
+        await using var v = Ctx();
+        Assert.Equal(0, await v.Set<ModuleFetchWorkItem>().CountAsync(w => w.RunId == long.MaxValue - 9));        // and nothing half-stored
     }
 }
