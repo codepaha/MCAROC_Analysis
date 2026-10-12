@@ -1,5 +1,6 @@
 using System.Text;
 using MCAROC_Analysis.Services.LitigationModule.Orders;
+using MCAROC_Analysis.Services.LitigationModule.Sources.Orders;
 using Xunit;
 
 namespace MCAROC_Analysis.Tests;
@@ -281,6 +282,95 @@ public class OrderIdentityEquivalenceTests
         Assert.Equal(OrderEquivalenceOutcome.Distinct, result.Outcome);
         Assert.False(result.IsEquivalent);
         Assert.Contains("unverified", result.Reason);
+    }
+
+    [Fact]
+    public void When_Consumer_identity_fields_are_missing_builder_and_locator_reject_incomplete_identity()
+    {
+        // Missing hearing ID
+        Assert.Throws<ArgumentException>(() => OrderKeyBuilder.ForConsumer(12345, null, 1));
+        Assert.Throws<ArgumentException>(() => OrderKeyBuilder.ForConsumer(12345, "   ", 1));
+
+        // Missing orderTypeId
+        Assert.Throws<ArgumentException>(() => OrderKeyBuilder.ForConsumer(12345, "hearing-1", null));
+
+        // Non-positive filing reference
+        Assert.Throws<ArgumentException>(() => OrderKeyBuilder.ForConsumer(0, "hearing-1", 1));
+        Assert.Throws<ArgumentException>(() => OrderKeyBuilder.ForConsumer(-5, "hearing-1", 1));
+
+        // Valid fields succeed
+        var key = OrderKeyBuilder.ForConsumer(12345, "hearing-1", 1);
+        Assert.Equal("12345|hearing-1|1", key);
+
+        // Locator validations
+        var validLocator = new OrderSourceLocator(
+            Source: "Consumer",
+            FilingReferenceNumber: 12345,
+            CourtRoomHearingId: "hearing-1",
+            OrderTypeId: 2);
+        Assert.Equal("12345|hearing-1|2", OrderKeyBuilder.ForLocator(validLocator));
+
+        var missingHearingLoc = new OrderSourceLocator(
+            Source: "Consumer",
+            FilingReferenceNumber: 12345,
+            CourtRoomHearingId: null,
+            OrderTypeId: 2);
+        Assert.Throws<ArgumentException>(() => OrderKeyBuilder.ForLocator(missingHearingLoc));
+
+        var missingTypeLoc = new OrderSourceLocator(
+            Source: "Consumer",
+            FilingReferenceNumber: 12345,
+            CourtRoomHearingId: "hearing-1",
+            OrderTypeId: null);
+        Assert.Throws<ArgumentException>(() => OrderKeyBuilder.ForLocator(missingTypeLoc));
+
+        var missingRefLoc = new OrderSourceLocator(
+            Source: "Consumer",
+            FilingReferenceNumber: null,
+            CourtRoomHearingId: "hearing-1",
+            OrderTypeId: 1);
+        Assert.Throws<ArgumentException>(() => OrderKeyBuilder.ForLocator(missingRefLoc));
+    }
+
+    [Fact]
+    public void When_Bpr_locator_has_order_type_it_is_retained_in_key_preventing_cross_type_collisions()
+    {
+        const string pdfUrl = "https://vendor.example/orders/doc1.pdf";
+        var date = new DateOnly(2025, 4, 15);
+
+        // Two distinct orders from BPR on the same day for the same document URL but differing order types
+        var dailyOrderLocator = new OrderSourceLocator(
+            Source: "Bpr",
+            PdfUrl: pdfUrl,
+            DateOfHearing: date,
+            OrderType: "Daily Order");
+
+        var finalOrderLocator = new OrderSourceLocator(
+            Source: "Bpr",
+            PdfUrl: pdfUrl,
+            DateOfHearing: date,
+            OrderType: "Final Judgment");
+
+        var dailyKey = OrderKeyBuilder.ForLocator(dailyOrderLocator);
+        var finalKey = OrderKeyBuilder.ForLocator(finalOrderLocator);
+
+        // Keys do NOT collide; order type is retained
+        Assert.NotEqual(dailyKey, finalKey);
+        Assert.Equal($"{pdfUrl}|2025-04-15|Daily Order", dailyKey);
+        Assert.Equal($"{pdfUrl}|2025-04-15|Final Judgment", finalKey);
+
+        // Missing OrderType or OrderDate or PdfUrl rejects to avoid colliding keys
+        var missingTypeLocator = new OrderSourceLocator(
+            Source: "Bpr",
+            PdfUrl: pdfUrl,
+            DateOfHearing: date,
+            OrderType: null);
+        Assert.Throws<ArgumentException>(() => OrderKeyBuilder.ForLocator(missingTypeLocator));
+
+        Assert.Throws<ArgumentException>(() => OrderKeyBuilder.ForBpr(null, "2025-04-15", "Daily Order"));
+        Assert.Throws<ArgumentException>(() => OrderKeyBuilder.ForBpr(pdfUrl, (string?)null, "Daily Order"));
+        Assert.Throws<ArgumentException>(() => OrderKeyBuilder.ForBpr(pdfUrl, "2025-04-15", null));
+        Assert.Throws<ArgumentException>(() => OrderKeyBuilder.ForBpr(pdfUrl, "2025-04-15", "   "));
     }
 }
 

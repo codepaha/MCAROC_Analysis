@@ -9,6 +9,8 @@ namespace MCAROC_Analysis.Services.LitigationModule.Sources.Orders;
 /// <param name="OrderTypeId">Order type ID (e.g. 1 for daily order, 2 for judgment).</param>
 /// <param name="CourtRoomHearingId">Hearing room ID string if available.</param>
 /// <param name="SourceLocatorJson">Serialized source locator JSON if available.</param>
+/// <param name="OrderType">Order type string if available (e.g. for BPR orders: "Order", "Interim Order").</param>
+/// <param name="OrderDate">Order date string if available.</param>
 public sealed record OrderSourceLocator(
     string Source,
     string? PdfUrl = null,
@@ -17,5 +19,7 @@ public sealed record OrderSourceLocator(
     DateOnly? DateOfHearing = null,
     int? OrderTypeId = null,
     string? CourtRoomHearingId = null,
-    string? SourceLocatorJson = null);
+    string? SourceLocatorJson = null,
+    string? OrderType = null,
+    string? OrderDate = null);
 
