@@ -112,5 +112,37 @@ public static class LitigationModuleModel
             e.Property(x => x.AfterValue).HasMaxLength(256);
             e.HasIndex(x => x.MergeId);
         });
+
+        modelBuilder.Entity<ModuleFetchWorkItem>(e =>
+        {
+            e.ToTable("FetchWorkItems", Schema);
+            e.HasKey(x => x.WorkItemId);
+            e.Property(x => x.LastOutcome).HasMaxLength(64);
+            e.Property(x => x.LastError).HasMaxLength(2000);
+            e.Property(x => x.LeaseOwner).HasMaxLength(128);
+            // The claim scans queued items of one host that are due, best priority first.
+            e.HasIndex(x => new { x.Host, x.Status, x.NextAttemptUtc, x.Priority }).HasDatabaseName("IX_FetchWorkItems_Claim");
+            e.HasIndex(x => x.RunId);
+            // One active (queued or claimed) item per kind, host and case: enqueueing the same work twice is a no-op.
+            e.HasIndex(x => new { x.Kind, x.Host, x.CaseId }).IsUnique().HasDatabaseName("UX_FetchWorkItems_Active")
+                .HasFilter("[CaseId] IS NOT NULL AND [Status] IN (1, 2)");
+        });
+
+        modelBuilder.Entity<ModuleRefreshRun>(e =>
+        {
+            e.ToTable("RefreshRuns", Schema);
+            e.HasKey(x => x.RunId);
+            e.Property(x => x.FailedReason).HasMaxLength(1000);
+            e.HasIndex(x => new { x.RequestId, x.StartedUtc });
+        });
+
+        modelBuilder.Entity<ModuleFetchWorkItemRun>(e =>
+        {
+            e.ToTable("FetchWorkItemRuns", Schema);
+            e.HasKey(x => new { x.WorkItemId, x.RunId });
+            e.HasOne<ModuleFetchWorkItem>().WithMany().HasForeignKey(x => x.WorkItemId).OnDelete(DeleteBehavior.Cascade);
+            e.HasOne<ModuleRefreshRun>().WithMany().HasForeignKey(x => x.RunId).OnDelete(DeleteBehavior.NoAction);
+            e.HasIndex(x => x.RunId);
+        });
     }
 }

@@ -233,3 +233,69 @@ public sealed class ModuleCaseMergeChange
     public string? BeforeValue { get; set; }
     public string? AfterValue { get; set; }
 }
+
+/// <summary>One unit of portal work for the fetch agents (plan section 4.4, 4.9): a status fetch of one case, an orders fetch, or a party search. Claimed under a lease token, so two
+/// agents never fetch the same item and a crashed agent's item returns to the queue when its lease expires. <see cref="AttemptCount"/> counts consumed attempts only.</summary>
+public sealed class ModuleFetchWorkItem
+{
+    public long WorkItemId { get; set; }
+
+    /// <summary>1 status fetch, 2 orders fetch, 3 party search (see <c>FetchWorkKind</c>).</summary>
+    public int Kind { get; set; }
+
+    /// <summary>1 DRT/DRAT portal, 2 consumer commissions (see <c>FetchHost</c>). The global per-host cap and the shared breaker are keyed on it.</summary>
+    public int Host { get; set; }
+
+    /// <summary>The registry case for a case-level item; null for a party search.</summary>
+    public long? CaseId { get; set; }
+
+    /// <summary>The refresh run this item belongs to (for the banner's counts); null for work outside a run.</summary>
+    public long? RunId { get; set; }
+
+    /// <summary>What the call needs (lookup number, tribunal, subject names ...) as JSON.</summary>
+    public string? PayloadJson { get; set; }
+
+    /// <summary>1 queued, 2 claimed, 3 succeeded, 4 failed (after the last attempt; eligible again after 24 hours), 5 cancelled.</summary>
+    public int Status { get; set; }
+
+    public int Priority { get; set; }
+    public int AttemptCount { get; set; }
+
+    /// <summary>How many times a claim ran out its lease. The first expiry is free; from the second one each counts as an attempt (plan 4.9).</summary>
+    public int LeaseExpiryCount { get; set; }
+
+    public DateTime CreatedUtc { get; set; }
+
+    /// <summary>The earliest time the item may be claimed (cool-down after a failed attempt, or a deferral while the breaker is open). Null = now.</summary>
+    public DateTime? NextAttemptUtc { get; set; }
+
+    public Guid? LeaseToken { get; set; }
+    public string? LeaseOwner { get; set; }
+    public DateTime? LeaseExpiresUtc { get; set; }
+    public DateTime? CompletedUtc { get; set; }
+
+    /// <summary>The newest attempt's outcome and error, kept for the "not updated" panel (grouped by reason).</summary>
+    public string? LastOutcome { get; set; }
+    public string? LastError { get; set; }
+}
+
+/// <summary>One run of the court update for a request: what was due when it started, who last reported, and how it ended. The banner reads this and the run's items.</summary>
+public sealed class ModuleRefreshRun
+{
+    public long RunId { get; set; }
+    public long RequestId { get; set; }
+    public DateTime StartedUtc { get; set; }
+    public int EligibleAtStart { get; set; }
+    public DateTime? LastAgentHeartbeatUtc { get; set; }
+    public DateTime? FinishedUtc { get; set; }
+    public string? FailedReason { get; set; }
+    public int Phase { get; set; }
+}
+
+/// <summary>Links a work item to a run that depends on it. One item can serve several runs (a second run that needs work already queued for the first shares it), so a run's counts come
+/// from these links, not from the item's own run id.</summary>
+public sealed class ModuleFetchWorkItemRun
+{
+    public long WorkItemId { get; set; }
+    public long RunId { get; set; }
+}

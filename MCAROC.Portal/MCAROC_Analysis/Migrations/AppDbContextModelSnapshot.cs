@@ -6879,6 +6879,135 @@ namespace MCAROC_Analysis.Migrations
                     b.ToTable("CaseObservations", "litigation");
                 });
 
+            modelBuilder.Entity("MCAROC_Analysis.Services.LitigationModule.Store.ModuleFetchWorkItem", b =>
+                {
+                    b.Property<long>("WorkItemId")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("WorkItemId"));
+
+                    b.Property<int>("AttemptCount")
+                        .HasColumnType("int");
+
+                    b.Property<long?>("CaseId")
+                        .HasColumnType("bigint");
+
+                    b.Property<DateTime?>("CompletedUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<DateTime>("CreatedUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<int>("Host")
+                        .HasColumnType("int");
+
+                    b.Property<int>("Kind")
+                        .HasColumnType("int");
+
+                    b.Property<string>("LastError")
+                        .HasMaxLength(2000)
+                        .HasColumnType("nvarchar(2000)");
+
+                    b.Property<string>("LastOutcome")
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<DateTime?>("LeaseExpiresUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<int>("LeaseExpiryCount")
+                        .HasColumnType("int");
+
+                    b.Property<string>("LeaseOwner")
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)");
+
+                    b.Property<Guid?>("LeaseToken")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTime?>("NextAttemptUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("PayloadJson")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<int>("Priority")
+                        .HasColumnType("int");
+
+                    b.Property<long?>("RunId")
+                        .HasColumnType("bigint");
+
+                    b.Property<int>("Status")
+                        .HasColumnType("int");
+
+                    b.HasKey("WorkItemId");
+
+                    b.HasIndex("RunId");
+
+                    b.HasIndex("Kind", "Host", "CaseId")
+                        .IsUnique()
+                        .HasDatabaseName("UX_FetchWorkItems_Active")
+                        .HasFilter("[CaseId] IS NOT NULL AND [Status] IN (1, 2)");
+
+                    b.HasIndex("Host", "Status", "NextAttemptUtc", "Priority")
+                        .HasDatabaseName("IX_FetchWorkItems_Claim");
+
+                    b.ToTable("FetchWorkItems", "litigation");
+                });
+
+            modelBuilder.Entity("MCAROC_Analysis.Services.LitigationModule.Store.ModuleFetchWorkItemRun", b =>
+                {
+                    b.Property<long>("WorkItemId")
+                        .HasColumnType("bigint");
+
+                    b.Property<long>("RunId")
+                        .HasColumnType("bigint");
+
+                    b.HasKey("WorkItemId", "RunId");
+
+                    b.HasIndex("RunId");
+
+                    b.ToTable("FetchWorkItemRuns", "litigation");
+                });
+
+            modelBuilder.Entity("MCAROC_Analysis.Services.LitigationModule.Store.ModuleRefreshRun", b =>
+                {
+                    b.Property<long>("RunId")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("RunId"));
+
+                    b.Property<int>("EligibleAtStart")
+                        .HasColumnType("int");
+
+                    b.Property<string>("FailedReason")
+                        .HasMaxLength(1000)
+                        .HasColumnType("nvarchar(1000)");
+
+                    b.Property<DateTime?>("FinishedUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<DateTime?>("LastAgentHeartbeatUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<int>("Phase")
+                        .HasColumnType("int");
+
+                    b.Property<long>("RequestId")
+                        .HasColumnType("bigint");
+
+                    b.Property<DateTime>("StartedUtc")
+                        .HasColumnType("datetime2");
+
+                    b.HasKey("RunId");
+
+                    b.HasIndex("RequestId", "StartedUtc");
+
+                    b.ToTable("RefreshRuns", "litigation");
+                });
+
             modelBuilder.Entity("MCAROC_Analysis.Services.LitigationModule.Store.ModuleRequestLink", b =>
                 {
                     b.Property<long>("LinkId")
@@ -7705,6 +7834,21 @@ namespace MCAROC_Analysis.Migrations
                         .IsRequired();
 
                     b.Navigation("Case");
+                });
+
+            modelBuilder.Entity("MCAROC_Analysis.Services.LitigationModule.Store.ModuleFetchWorkItemRun", b =>
+                {
+                    b.HasOne("MCAROC_Analysis.Services.LitigationModule.Store.ModuleRefreshRun", null)
+                        .WithMany()
+                        .HasForeignKey("RunId")
+                        .OnDelete(DeleteBehavior.NoAction)
+                        .IsRequired();
+
+                    b.HasOne("MCAROC_Analysis.Services.LitigationModule.Store.ModuleFetchWorkItem", null)
+                        .WithMany()
+                        .HasForeignKey("WorkItemId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("MCAROC_Analysis.Services.LitigationModule.Store.ModuleRequestLink", b =>
