@@ -321,6 +321,56 @@ public sealed class DrtSourceClientTests
         Assert.Empty(orders);
     }
 
+    [Fact]
+    public async Task GetDailyOrdersAsync_builds_order_key_only_when_pronouncedDate_is_provided()
+    {
+        var jsonWithPronouncedDate = """
+        [
+            {
+                "diaryno": "100/2026",
+                "dateoffiling": "15/01/2026",
+                "pronouncedDate": "20/03/2026",
+                "dailyOrderPdf": "https://cis.drt.gov.in/order/pdf1.php?file=ZHJ0Y291cnQvZGVsaGkvMjAyNi9vcmRlcl81NTUucGRm"
+            }
+        ]
+        """;
+
+        var clientWithPronouncedDate = CreateClient((req, ct) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(jsonWithPronouncedDate, Encoding.UTF8, "application/json")
+        }));
+
+        var ordersWithPronouncedDate = await clientWithPronouncedDate.GetDailyOrdersAsync(1, 10, "555", 2026);
+        var order1 = Assert.Single(ordersWithPronouncedDate);
+        Assert.Equal(new DateOnly(2026, 3, 20), order1.PronouncedDate);
+        Assert.NotNull(order1.OrderKey);
+        Assert.Contains("2026-03-20", order1.OrderKey);
+        Assert.DoesNotContain("2026-01-15", order1.OrderKey);
+
+        // When pronouncedDate is missing but dateoffiling is present: orderKey must be left unset (null)
+        // because dateoffiling identifies case filing, not order issuance
+        var jsonWithoutPronouncedDate = """
+        [
+            {
+                "diaryno": "100/2026",
+                "dateoffiling": "15/01/2026",
+                "dailyOrderPdf": "https://cis.drt.gov.in/order/pdf1.php?file=ZHJ0Y291cnQvZGVsaGkvMjAyNi9vcmRlcl81NTUucGRm"
+            }
+        ]
+        """;
+
+        var clientWithoutPronouncedDate = CreateClient((req, ct) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(jsonWithoutPronouncedDate, Encoding.UTF8, "application/json")
+        }));
+
+        var ordersWithoutPronouncedDate = await clientWithoutPronouncedDate.GetDailyOrdersAsync(1, 10, "555", 2026);
+        var order2 = Assert.Single(ordersWithoutPronouncedDate);
+        Assert.Null(order2.PronouncedDate);
+        Assert.Equal(new DateOnly(2026, 1, 15), order2.DateOfFiling);
+        Assert.Null(order2.OrderKey);
+    }
+
     // ── 6. Candidate NotFound (Plan §4.9) ──────────────────────────────────────────
 
     [Theory]

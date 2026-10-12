@@ -691,15 +691,16 @@ public sealed class DrtClient : IDrtClient
         if (string.IsNullOrWhiteSpace(url) && dateOfFiling is null && pronouncedDate is null)
             return null;
 
-        var orderDate = pronouncedDate ?? dateOfFiling;
+        // Build the composite DRT order key only when the portal provides an explicit order date (pronouncedDate).
+        // dateoffiling identifies when the case was filed, not when the order was issued, and must not be used as order date.
         var orderKey = !string.IsNullOrWhiteSpace(url)
                        && tribunalId > 0
                        && caseTypeId > 0
                        && !string.IsNullOrWhiteSpace(caseNo)
                        && caseYear > 0
                        && !string.IsNullOrWhiteSpace(orderType)
-                       && orderDate.HasValue
-            ? DrtOrderKeyHelper.BuildCompositeOrderKey(tribunalId, caseTypeId, caseNo, caseYear, orderType, orderDate, url)
+                       && pronouncedDate.HasValue
+            ? DrtOrderKeyHelper.BuildCompositeOrderKey(tribunalId, caseTypeId, caseNo, caseYear, orderType, pronouncedDate.Value, url)
             : null;
 
         return new DrtOrder(diaryNo, dateOfFiling, pronouncedDate, applicant, respondent, pronouncedBy, url, orderType, itemNo, orderKey);
