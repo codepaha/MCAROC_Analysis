@@ -62,6 +62,24 @@ public static class LivePortalOwnership
         (LastHearingDate, LiveProjectionEngine.FLastHearing), (NextHearingDate, LiveProjectionEngine.FNextHearing), (DecisionDate, LiveProjectionEngine.FDecisionDate)
     ];
 
+    /// <summary>What the publisher writes into a legacy column for one projected field, or false when it writes nothing (a missing value never erases one we hold). A
+    /// portal-confirmed empty replaces a stale value with null. One definition, shared with the ownership check of the parity checker.</summary>
+    public static bool TryGetTarget(string? projected, FieldSource? source, bool isDate, out string? target)
+    {
+        if (!CaseValue.IsMissing(projected)) { target = isDate ? LiveCasePublisher.DateText(projected) : projected; return true; }
+        if (source is { ConfirmedEmpty: true, Source: "Portal" }) { target = null; return true; }   // the portal said there is nothing: a stale value is replaced, not kept
+        target = null;
+        return false;
+    }
+
+    /// <summary>Every portal-owned column with the projection field that feeds it and whether it is a date, for the publisher and the ownership check.</summary>
+    public static IReadOnlyList<(string Column, string Field, bool IsDate)> Columns { get; } =
+    [
+        (CaseStatus, LiveProjectionEngine.FStatus, false), (CaseStage, LiveProjectionEngine.FStage, false), (Court, LiveProjectionEngine.FCourt, false),
+        (FilingDate, LiveProjectionEngine.FFilingDate, true), (LastHearingDate, LiveProjectionEngine.FLastHearing, true),
+        (NextHearingDate, LiveProjectionEngine.FNextHearing, true), (DecisionDate, LiveProjectionEngine.FDecisionDate, true)
+    ];
+
     /// <summary>The columns of this request's case that the portal owns: the link is Verified and the projection's source for the field is the portal (a value or a confirmed empty).
     /// Empty when the case has no live data or no verified link, so a vendor re-import behaves exactly as before.</summary>
     public static async Task<IReadOnlySet<string>> OwnedColumnsAsync(AppDbContext db, long requestId, long legacyCaseId, CancellationToken ct)
@@ -116,10 +134,7 @@ public static class LiveCasePublisher
         void Set(string column, string field, string? projected, bool isDate, string? current, Action<string?> assign)
         {
             sources.TryGetValue(field, out var source);
-            string? target;
-            if (!CaseValue.IsMissing(projected)) target = isDate ? DateText(projected) : projected;
-            else if (source is { ConfirmedEmpty: true, Source: "Portal" }) target = null;   // the portal said there is nothing: a stale value is replaced, not kept
-            else return;                                                                     // missing never erases
+            if (!LivePortalOwnership.TryGetTarget(projected, source, isDate, out var target)) return;   // missing never erases
             if (string.Equals(current, target, StringComparison.Ordinal)) return;
             assign(target);
             changed.Add(column);
@@ -150,6 +165,6 @@ public static class LiveCasePublisher
     }
 
     /// <summary>The vendor's date convention in the stored columns: dd-MM-yyyy. The projection holds day-first d-M-yyyy.</summary>
-    private static string? DateText(string? value) =>
+    internal static string? DateText(string? value) =>
         CaseDates.ParseDate(value) is { } d ? d.ToString("dd-MM-yyyy", CultureInfo.InvariantCulture) : value;
 }
