@@ -4025,6 +4025,9 @@ namespace MCAROC_Analysis.Migrations
                     b.Property<string>("AnalysisJson")
                         .HasColumnType("nvarchar(max)");
 
+                    b.Property<string>("CaseSetHash")
+                        .HasColumnType("nvarchar(max)");
+
                     b.Property<DateTime?>("CompletedUtc")
                         .HasColumnType("datetime2");
 

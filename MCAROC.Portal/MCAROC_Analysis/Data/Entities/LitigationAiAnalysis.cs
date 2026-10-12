@@ -75,6 +75,12 @@ public sealed class LitigationPortfolioAiAnalysis
     public long LitigationPortfolioAiAnalysisId { get; set; }
     public long LitigationAiAnalysisRunId { get; set; }
     public LitigationAiAnalysisItemStatus Status { get; set; } = LitigationAiAnalysisItemStatus.Pending;
+
+    /// <summary>A hash of the sorted ids of the cases this summary was made over (plan section 4.7b). The summary is current only if the request's present case set gives the same hash AND every
+    /// case's evidence hash agrees: a case hidden, merged away, discovered or returned changes the set without changing any other case's hash. Null on summaries made before this existed, which
+    /// therefore read as not current once.</summary>
+    public string? CaseSetHash { get; set; }
+
     public string EvidenceJson { get; set; } = string.Empty;
     public string EvidenceHash { get; set; } = string.Empty;
     public string PromptHash { get; set; } = string.Empty;
