@@ -467,8 +467,9 @@ public sealed class PreLoginReportJobService(
                 await db.SaveChangesAsync(cancellationToken);
             }
 
-            // 4. LITIGATION CHILD DISPATCH (only when litigation target queue is configured)
-            if (targetQueue is null)
+            // 4. LITIGATION CHILD DISPATCH. Litigation belongs to the SBI report and to the post-login report only (owner, 2026-10-12): a PRR has no litigation search and never waits for one,
+            // so it is generated straight after the MCA fetch. The SBI format dispatches only when the litigation target queue is configured.
+            if (targetQueue is null || format != PreLoginReportFormat.Sbi)
             {
                 job.Status = PreLoginReportJobStatus.Generating;
                 job.ProgressPercent = 60;
