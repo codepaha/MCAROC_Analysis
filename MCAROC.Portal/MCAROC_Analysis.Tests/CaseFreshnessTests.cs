@@ -112,6 +112,21 @@ public class CaseFreshnessTests
         Assert.Equal("Could not verify - the portal has no such case", CaseFreshness.Text(CaseFreshness.Of(Case(Due(), attempt: LastAttemptKind.NotFound, attemptAt: Now)), Ist));
         Assert.Equal(string.Empty, CaseFreshness.Text(CaseFreshness.Of(Case(Skip(), merged: true)), Ist));
     }
+
+    [Fact]
+    public void A_verified_case_queued_for_a_new_status_fetch_is_not_updated_until_that_fetch_lands()
+    {
+        var r = CaseFreshness.Of(Case(Skip(), verified: Now.AddHours(-2), attempt: LastAttemptKind.Verified, attemptAt: Now.AddHours(-2), queued: true));
+        Assert.Equal((FreshnessLabel.NotYetUpdated, "queued"), (r.Label, r.Reason));
+        Assert.Null(r.AsOfUtc);
+    }
+
+    [Fact]
+    public void A_failed_case_still_reads_as_could_not_verify_even_while_a_retry_is_queued()
+    {
+        var r = CaseFreshness.Of(Case(Due(), attempt: LastAttemptKind.Failed, attemptAt: Now.AddHours(-1), failure: "failed after 5 attempts", queued: true));
+        Assert.Equal(FreshnessLabel.CouldNotVerify, r.Label);
+    }
 }
 
 public class RefreshBannerTests

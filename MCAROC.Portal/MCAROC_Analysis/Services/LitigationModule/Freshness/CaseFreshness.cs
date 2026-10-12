@@ -31,7 +31,7 @@ public enum LastAttemptKind { None, Verified, NotFound, IdentityRejected, Failed
 /// <param name="LastVerifiedUtc">When the portal last verified this case (a verified found observation); null if never.</param>
 /// <param name="LastAttempt">The outcome of the newest attempt, and when. A later verified observation supersedes an earlier failure.</param>
 /// <param name="FailureReason">Why the newest attempt failed or could not verify, in words the reader can use.</param>
-/// <param name="QueuedOrInProgress">A work item for this case is waiting or being worked on.</param>
+/// <param name="QueuedOrInProgress">A work item for a <b>status</b> fetch of this case is waiting or being worked on (a disposed case queued only for its orders is not this).</param>
 /// <param name="AnalysisOnEarlierData">The case's AI analysis was made on evidence that has since changed (stored hash differs from the current hash).</param>
 public sealed record CaseFreshnessInput(
     bool MergedAway, LitigationCaseStatusBucket StatusBucket, bool FinalOrderOnFile, LiveRefreshDecision Eligibility,
@@ -54,10 +54,11 @@ public static class CaseFreshness
         if (!verifiedAfterAttempt && c.LastAttempt is LastAttemptKind.NotFound or LastAttemptKind.IdentityRejected or LastAttemptKind.Failed)
             return new(FreshnessLabel.CouldNotVerify, null, c.FailureReason ?? ReasonFor(c.LastAttempt), c.AnalysisOnEarlierData);
 
+        // Work waiting for this case comes first: a case that was verified earlier but is queued for a new status fetch is not "Updated" until that fetch lands.
+        if (c.QueuedOrInProgress) return new(FreshnessLabel.NotYetUpdated, null, "queued", c.AnalysisOnEarlierData);
         var dueForStatus = c.Eligibility.Action == LiveRefreshAction.FetchStatus;
         if (verified && !dueForStatus) return new(FreshnessLabel.Updated, c.LastVerifiedUtc, null, c.AnalysisOnEarlierData);
-        if (dueForStatus || c.QueuedOrInProgress)
-            return new(FreshnessLabel.NotYetUpdated, null, c.QueuedOrInProgress ? "queued" : c.Eligibility.Reason, c.AnalysisOnEarlierData);
+        if (dueForStatus) return new(FreshnessLabel.NotYetUpdated, null, c.Eligibility.Reason, c.AnalysisOnEarlierData);
 
         return c.StatusBucket == LitigationCaseStatusBucket.Disposed
             ? new(c.FinalOrderOnFile ? FreshnessLabel.DisposedFinalOrderOnFile : FreshnessLabel.DisposedNotRefreshed, null, c.Eligibility.Reason, c.AnalysisOnEarlierData)
