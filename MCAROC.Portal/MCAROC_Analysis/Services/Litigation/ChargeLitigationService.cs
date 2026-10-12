@@ -32,7 +32,11 @@ public sealed class ChargeLitigationService(AppDbContext db, IMemoryCache cache,
         if (liveVersion is not { } live) return "none";   // no such request
         if (snapshotId is not { } sid) return $"none-L{live}";
 
-        var caseIds = db.LitigationCaseSourceReports.Where(sr => sr.LitigationReportSnapshotId == sid && sr.Case!.MergedIntoCaseId == null)
+        // Order text is counted over every case either source can compare: the current snapshot's cases and the request's retained set (any completed snapshot). The module reads
+        // the retained set, so text extracted for a case only an older snapshot lists must move the version too; one definition for both modes keeps the dossier's key identical.
+        var caseIds = db.LitigationCaseSourceReports
+            .Where(sr => sr.Case!.MergedIntoCaseId == null && (sr.LitigationReportSnapshotId == sid
+                || (sr.ReportSnapshot!.RequestId == requestId && sr.ReportSnapshot.Status == LitigationReportSnapshotStatus.Completed)))
             .Select(sr => sr.LitigationCaseId).Distinct();
         var orderIds = db.LitigationCaseOrders.Where(o => caseIds.Contains(o.LitigationCaseId))
             .Select(o => o.LitigationCaseOrderId);

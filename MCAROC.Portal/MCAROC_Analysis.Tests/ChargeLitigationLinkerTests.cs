@@ -408,6 +408,37 @@ public class ChargeLitigationLinkerTests : IAsyncLifetime
         Assert.Single((await ServiceFor(db, cache, legacy).GetCachedAsync(requestId))!.Links);
     }
 
+    /// <summary>Review of #483: in module mode the comparison also reads cases only an older completed snapshot lists, so extracting their order text must move the
+    /// evidence version, or a cached comparison would keep omitting the link.</summary>
+    [Fact]
+    public async Task Text_extracted_for_a_case_only_an_older_snapshot_lists_moves_the_evidence_version()
+    {
+        await using var db = CreateContext();
+        var requestId = await SeedRequestWithLitigationAsync(db);
+        var jobId = await db.LitigationSearchJobs.Where(j => j.RequestId == requestId).Select(j => j.LitigationSearchJobId).SingleAsync();
+        var older = new LitigationReportSnapshot { LitigationSearchJobId = jobId, RequestId = requestId, ReportHash = "old" + requestId, Status = LitigationReportSnapshotStatus.Completed,
+            RetrievedUtc = DateTime.UtcNow.AddDays(-30), CreatedUtc = DateTime.UtcNow.AddDays(-30) };
+        db.LitigationReportSnapshots.Add(older);
+        var dropped = new LitigationCase { RequestId = requestId, Court = "DRT Cuttack", CaseNumber = "OA 7/2018", CaseStatus = "Pending", FirstSeenUtc = DateTime.UtcNow, LastSeenUtc = DateTime.UtcNow };
+        db.LitigationCases.Add(dropped);
+        await db.SaveChangesAsync();
+        db.LitigationCaseSourceReports.Add(new LitigationCaseSourceReport { LitigationCaseId = dropped.LitigationCaseId, LitigationReportSnapshotId = older.LitigationReportSnapshotId, FirstSeenUtc = DateTime.UtcNow });
+        var order = new LitigationCaseOrder { LitigationCaseId = dropped.LitigationCaseId, OrderDate = "01-02-2018", OrderType = "Order", CreatedUtc = DateTime.UtcNow };
+        db.LitigationCaseOrders.Add(order);
+        await db.SaveChangesAsync();
+        var document = new LitigationOrderDocument { LitigationCaseOrderId = order.LitigationCaseOrderId, Status = LitigationOrderDocumentStatus.Downloaded, RetainedUntilUtc = DateTime.UtcNow.AddDays(7) };
+        db.LitigationOrderDocuments.Add(document);
+        await db.SaveChangesAsync();
+        var before = await ChargeLitigationService.VersionAsync(db, requestId);
+
+        await db.LitigationOrderDocuments.Where(d => d.LitigationOrderDocumentId == document.LitigationOrderDocumentId)
+            .ExecuteUpdateAsync(u => u.SetProperty(d => d.ExtractedText, OrderNamingProperty)
+                .SetProperty(d => d.TextExtractionStatus, (FilingDocumentProcessingStatus?)FilingDocumentProcessingStatus.TextExtracted)
+                .SetProperty(d => d.ExtractedUtc, (DateTime?)DateTime.UtcNow));
+
+        Assert.NotEqual(before, await ChargeLitigationService.VersionAsync(db, requestId));
+    }
+
     [Fact]
     public async Task Re_extraction_of_an_order_with_different_text_changes_the_evidence_version()
     {
