@@ -20,6 +20,9 @@ public sealed class LitigationReaderOptions
 
     /// <summary>The standalone page of one case: whether the case belongs to the request, and the "related cases" drawn from the same set.</summary>
     public LitigationReaderMode CasePage { get; set; } = LitigationReaderMode.Legacy;
+
+    /// <summary>The charge-to-case comparison: which cases the charges are compared against.</summary>
+    public LitigationReaderMode ChargeLinks { get; set; } = LitigationReaderMode.Legacy;
 }
 
 /// <summary>Which definition of "the request's cases" a read uses once the gate has decided.</summary>
@@ -45,6 +48,8 @@ public static class LitigationCaseSets
 public sealed class LitigationReaderGate(AppDbContext db, IOptions<LitigationReaderOptions> options, IOptions<LitigationBridgeOptions> bridge, ILogger<LitigationReaderGate>? logger = null)
 {
     public Task<CaseSetSource> ResolveCaseListAsync(long requestId, CancellationToken ct) => ResolveAsync("case list", options.Value.CaseList, requestId, ct);
+
+    public Task<CaseSetSource> ResolveChargeLinksAsync(long requestId, CancellationToken ct) => ResolveAsync("charge links", options.Value.ChargeLinks, requestId, ct);
 
     public Task<CaseSetSource> ResolveCasePageAsync(long requestId, CancellationToken ct) => ResolveAsync("case page", options.Value.CasePage, requestId, ct);
 
