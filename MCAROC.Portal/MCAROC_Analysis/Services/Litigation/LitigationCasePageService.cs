@@ -1,6 +1,7 @@
 using MCAROC_Analysis.Data;
 using MCAROC_Analysis.Data.Entities;
 using MCAROC_Analysis.Models;
+using MCAROC_Analysis.Services.LitigationModule.Reading;
 using Microsoft.EntityFrameworkCore;
 
 namespace MCAROC_Analysis.Services.LitigationData;
@@ -21,7 +22,8 @@ public sealed record LitigationCasePage(
 /// <summary>Loads one case of a request's current litigation report for its own page: the same card the Litigation tab builds
 /// (identity, age, baseline risk tier, parties, orders with outcomes and property matches, any stored analysis), plus the charge it
 /// bears on and the other cases it shares a party with. A case outside the request's current report is not found.</summary>
-public sealed class LitigationCasePageService(AppDbContext db, ChargeLitigationService? chargeLitigation = null, LitigationOrderOutcomeQuery? outcomeQuery = null)
+public sealed class LitigationCasePageService(AppDbContext db, ChargeLitigationService? chargeLitigation = null, LitigationOrderOutcomeQuery? outcomeQuery = null,
+    LitigationReaderGate? readerGate = null)
 {
     public async Task<LitigationCasePage?> GetAsync(long requestId, long caseId, CancellationToken ct)
     {
@@ -30,8 +32,9 @@ public sealed class LitigationCasePageService(AppDbContext db, ChargeLitigationS
 
         var snapshot = await AuthoritativeSnapshotAsync(requestId, ct);
         if (snapshot is null) return null;
-        var inReport = db.LitigationCaseSourceReports.AsNoTracking()
-            .Where(sr => sr.LitigationReportSnapshotId == snapshot.LitigationReportSnapshotId && sr.Case!.MergedIntoCaseId == null).Select(sr => sr.LitigationCaseId);
+        // The same definition of "the request's cases" as the register (plan section 12.6): the gate picks legacy or the module.
+        var caseSource = readerGate is null ? CaseSetSource.Legacy : await readerGate.ResolveCasePageAsync(requestId, ct);
+        var inReport = await LitigationCaseSets.ForAsync(db, caseSource, requestId, snapshot.LitigationReportSnapshotId, ct);
         if (!await inReport.AnyAsync(id => id == caseId, ct)) return null;
 
         var theCase = await db.LitigationCases.AsNoTracking().Include(c => c.Orders).FirstOrDefaultAsync(c => c.LitigationCaseId == caseId, ct);
@@ -70,6 +73,22 @@ public sealed class LitigationCasePageService(AppDbContext db, ChargeLitigationS
 
         var identity = await IdentityEvidenceAsync(request, companyProfile, theCase, orderDocs, companyNames, ct);
         return new LitigationCasePage(request, card, snapshot.RetrievedUtc, links, await RelatedAsync(inReport, card, companyNames, ct), identity);
+    }
+
+    /// <summary>Where an old link to a merged duplicate goes: the surviving case of the same request. Only when the case page is served from the module (plan section 12.6,
+    /// "old URLs keep resolving"); on legacy a merged loser is simply not found, as before. Follows a chain of merges and never loops.</summary>
+    public async Task<long?> GetSurvivorIdAsync(long requestId, long caseId, CancellationToken ct)
+    {
+        if (readerGate is null || await readerGate.ResolveCasePageAsync(requestId, ct) != CaseSetSource.Module) return null;
+        var current = caseId;
+        for (var hop = 0; hop < 8; hop++)
+        {
+            var next = await db.LitigationCases.AsNoTracking().Where(c => c.LitigationCaseId == current && c.RequestId == requestId)
+                .Select(c => c.MergedIntoCaseId).FirstOrDefaultAsync(ct);
+            if (next is not { } survivor) return current == caseId ? null : current;
+            current = survivor;
+        }
+        return null;
     }
 
     /// <summary>Reads the identifiers printed in the case's own order texts and ties them to the company: its CIN/LLPIN, PAN, GSTINs and its

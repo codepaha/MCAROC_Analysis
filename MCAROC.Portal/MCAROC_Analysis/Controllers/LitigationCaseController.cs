@@ -11,6 +11,10 @@ public class LitigationCaseController(LitigationCasePageService pages) : Control
     public async Task<IActionResult> Detail(long id, long caseId, CancellationToken ct)
     {
         var page = await pages.GetAsync(id, caseId, ct);
-        return page is null ? NotFound() : View(page);
+        if (page is not null) return View(page);
+        // A link to a case that was merged into another keeps working: it goes to the survivor (a temporary redirect, because a merge can be reversed).
+        return await pages.GetSurvivorIdAsync(id, caseId, ct) is { } survivor
+            ? RedirectToAction(nameof(Detail), new { id, caseId = survivor })
+            : NotFound();
     }
 }

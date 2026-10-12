@@ -80,7 +80,9 @@ public class LitigationReaderGateTests : IAsyncLifetime
     }
 
     private static LitigationReaderGate Gate(AppDbContext db, LitigationReaderMode mode) =>
-        new(db, Options.Create(new LitigationReaderOptions { CaseList = mode }), Options.Create(Bridge));
+        new(db, Options.Create(new LitigationReaderOptions { CaseList = mode, CasePage = mode }), Options.Create(Bridge));
+
+    private static LitigationCasePageService Pages(AppDbContext db, LitigationReaderMode mode) => new(db, null, null, Gate(db, mode));
 
     private static async Task<long[]> ListedAsync(long requestId, CaseSetSource source)
     {
@@ -161,6 +163,50 @@ public class LitigationReaderGateTests : IAsyncLifetime
         Assert.NotNull(comparison);
         Assert.Empty(comparison!.OnlyInLegacy);
         Assert.Equal(w.CaseIds[..2].OrderBy(x => x), comparison.OnlyInModule);
+    }
+
+    [Fact]
+    public async Task The_case_page_serves_a_retained_case_only_in_module_mode()
+    {
+        var w = await SeedAsync();
+        await BridgeAsync(w);
+        await using var legacy = Ctx();
+        await using var module = Ctx();
+
+        Assert.Null(await Pages(legacy, LitigationReaderMode.Legacy).GetAsync(w.RequestId, w.CaseIds[0], default));   // only an older snapshot lists it
+        Assert.NotNull(await Pages(legacy, LitigationReaderMode.Legacy).GetAsync(w.RequestId, w.CaseIds[3], default));
+        Assert.NotNull(await Pages(module, LitigationReaderMode.Module).GetAsync(w.RequestId, w.CaseIds[0], default));
+    }
+
+    [Fact]
+    public async Task The_case_page_of_a_hidden_case_is_not_found_in_module_mode()
+    {
+        var w = await SeedAsync();
+        await BridgeAsync(w);
+        await using (var db = Ctx())
+        {
+            var hidden = await db.Set<ModuleScopeCase>().FirstAsync(sc => sc.Case!.LegacyLitigationCaseId == w.CaseIds[3]);
+            hidden.IsHidden = true;
+            await db.SaveChangesAsync();
+        }
+        await using var v = Ctx();
+
+        Assert.Null(await Pages(v, LitigationReaderMode.Module).GetAsync(w.RequestId, w.CaseIds[3], default));
+        Assert.NotNull(await Pages(v, LitigationReaderMode.Module).GetAsync(w.RequestId, w.CaseIds[2], default));
+    }
+
+    [Fact]
+    public async Task An_old_link_to_a_merged_duplicate_resolves_to_the_survivor_only_in_module_mode()
+    {
+        var w = await SeedAsync();
+        await BridgeAsync(w);
+        await using (var db = Ctx())
+            await db.LitigationCases.Where(c => c.LitigationCaseId == w.CaseIds[2]).ExecuteUpdateAsync(s => s.SetProperty(c => c.MergedIntoCaseId, w.CaseIds[3]));
+        await using var v = Ctx();
+
+        Assert.Equal(w.CaseIds[3], await Pages(v, LitigationReaderMode.Module).GetSurvivorIdAsync(w.RequestId, w.CaseIds[2], default));
+        Assert.Null(await Pages(v, LitigationReaderMode.Legacy).GetSurvivorIdAsync(w.RequestId, w.CaseIds[2], default));
+        Assert.Null(await Pages(v, LitigationReaderMode.Module).GetSurvivorIdAsync(w.RequestId, w.CaseIds[3], default));   // not merged: nothing to resolve
     }
 
     [Fact]
