@@ -2,21 +2,21 @@ using MCAROC_Analysis.Data;
 using MCAROC_Analysis.Data.Entities;
 using MCAROC_Analysis.Models;
 using MCAROC_Analysis.Services.LitigationData;
+using MCAROC_Analysis.Services.LitigationModule.Reading;
 using Microsoft.EntityFrameworkCore;
 
 namespace MCAROC_Analysis.Services.RequestDetails;
 
 /// <summary>A bounded case register. No orders, document bodies, PDF URLs or extracted text are materialized.
 /// The standalone case page owns that evidence. All filtering happens before SQL pagination.</summary>
-public sealed class LitigationCaseListQuery(AppDbContext db, LitigationOrderOutcomeQuery? outcomes = null)
+public sealed class LitigationCaseListQuery(AppDbContext db, LitigationOrderOutcomeQuery? outcomes = null, CaseSetSource source = CaseSetSource.Legacy)
 {
     public static int NormalizePageSize(int size) => size is 25 or 50 or 100 ? size : 25;
 
     public async Task<IQueryable<LitigationCase>> FilterAsync(long snapshotId, string? court, string? status,
         string? search, string? outcome, long requestId, CancellationToken ct)
     {
-        var ids = db.LitigationCaseSourceReports.Where(s => s.LitigationReportSnapshotId == snapshotId)
-            .Select(s => s.LitigationCaseId);
+        var ids = await LitigationCaseSets.ForAsync(db, source, requestId, snapshotId, ct);
         var query = db.LitigationCases.AsNoTracking().Where(c => ids.Contains(c.LitigationCaseId) && c.MergedIntoCaseId == null);   // a soft-merged duplicate is not listed
         if (!string.IsNullOrWhiteSpace(court))
         {

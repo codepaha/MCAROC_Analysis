@@ -113,6 +113,18 @@ public sealed class LitigationModuleReader(AppDbContext db)
             .OrderBy(o => o.LitigationCaseOrderId).Select(o => new ModuleOrderSummary(o.LitigationCaseOrderId, o.OrderDate, o.OrderType)).ToListAsync(ct);
     }
 
+    /// <summary>The ids of the scope's retained cases as one query (hidden ones left out unless asked for), for consumers that build their own projections over the set.</summary>
+    public async Task<IQueryable<long>> ScopeCaseIdsAsync(ScopeRef scope, bool includeHidden, CancellationToken ct)
+    {
+        var requestId = RequireRequest(scope);
+        var scopeId = await db.Set<ModuleScope>().AsNoTracking().Where(s => s.Kind == scope.Kind && s.ExternalId == scope.ExternalId)
+            .Select(s => (long?)s.ScopeId).FirstOrDefaultAsync(ct);
+        var all = RetainedSet(requestId);
+        if (includeHidden) return all.Select(c => c.LitigationCaseId);
+        var hidden = HiddenLegacyIds(scopeId);
+        return all.Where(c => !hidden.Contains(c.LitigationCaseId)).Select(c => c.LitigationCaseId);
+    }
+
     /// <summary>The ids of the cases listed by the request's authoritative (latest) vendor snapshot.</summary>
     private IQueryable<long> LatestFeedCaseIds(long requestId)
     {

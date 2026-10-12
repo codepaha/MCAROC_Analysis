@@ -6,6 +6,7 @@ using MCAROC_Analysis.Services.Dossier;
 using MCAROC_Analysis.Services.McaFilings;
 using MCAROC_Analysis.Services.Chat;
 using MCAROC_Analysis.Services.LitigationData;
+using MCAROC_Analysis.Services.LitigationModule.Reading;
 using MCAROC_Analysis.Services.PropertyParticulars;
 using Microsoft.EntityFrameworkCore;
 using System.Text.Json;
@@ -14,7 +15,8 @@ namespace MCAROC_Analysis.Services.RequestDetails;
 
 public sealed class LitigationDetailsQuery(AppDbContext db,
     Microsoft.Extensions.Options.IOptions<BprLitigationOptions>? bprOptions = null,
-    LitigationAiAnalysisOrchestrator? litigationAnalysis = null, LitigationOrderOutcomeQuery? orderOutcomes = null)
+    LitigationAiAnalysisOrchestrator? litigationAnalysis = null, LitigationOrderOutcomeQuery? orderOutcomes = null,
+    LitigationReaderGate? readerGate = null)
 {
     public async Task LoadAsync(RequestDetailsViewModel vm, string? court, string? status, int page, string? outcome, long? focusCase, CancellationToken ct, string? search = null, int pageSize = 25, bool compact = false)
     {
@@ -129,10 +131,9 @@ public sealed class LitigationDetailsQuery(AppDbContext db,
                 if (authoritativeSnapshot is not null)
                 {
                     var authoritativeSnapshotId = authoritativeSnapshot.LitigationReportSnapshotId;
-                    var caseIdsQuery = db.LitigationCaseSourceReports.AsNoTracking()
-                        .Where(sr => sr.LitigationReportSnapshotId == authoritativeSnapshotId && sr.Case!.MergedIntoCaseId == null)
-                        .Select(sr => sr.LitigationCaseId)
-                        .Distinct();
+                    // One definition of "the request's cases" for every read below; the gate picks legacy or the module (plan section 12.6).
+                    var caseSource = readerGate is null ? CaseSetSource.Legacy : await readerGate.ResolveCaseListAsync(id, ct);
+                    var caseIdsQuery = await LitigationCaseSets.ForAsync(db, caseSource, id, authoritativeSnapshotId, ct);
 
                     var casesQuery = db.LitigationCases.AsNoTracking()
                         .AsNoTracking()
@@ -187,7 +188,7 @@ public sealed class LitigationDetailsQuery(AppDbContext db,
                     }
 
                     if (compact)
-                        casesQuery = await new LitigationCaseListQuery(db, orderOutcomes)
+                        casesQuery = await new LitigationCaseListQuery(db, orderOutcomes, caseSource)
                             .FilterAsync(authoritativeSnapshotId, court, status, search, outcome, id, ct);
                     litVm.TotalCaseCount = await casesQuery.CountAsync(ct);
                     litVm.CurrentPage = Math.Clamp(litVm.CurrentPage, 1, Math.Max(1, litVm.TotalPages));
@@ -384,7 +385,7 @@ public sealed class LitigationDetailsQuery(AppDbContext db,
                                 }
                                 catch (JsonException) { }
                         }
-                        litVm.CaseList = await new LitigationCaseListQuery(db, orderOutcomes)
+                        litVm.CaseList = await new LitigationCaseListQuery(db, orderOutcomes, caseSource)
                             .BuildAsync(id, court, status, page, litVm.PageSize, search, outcome, focusCase, ct);
                         litVm.Cases = litVm.CaseList!.Cases;
                         litVm.CurrentPage = litVm.CaseList.Page;
