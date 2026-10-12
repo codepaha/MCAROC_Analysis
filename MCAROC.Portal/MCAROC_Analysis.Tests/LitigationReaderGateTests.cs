@@ -209,6 +209,32 @@ public class LitigationReaderGateTests : IAsyncLifetime
         Assert.Null(await Pages(v, LitigationReaderMode.Module).GetSurvivorIdAsync(w.RequestId, w.CaseIds[3], default));   // not merged: nothing to resolve
     }
 
+    [Theory]
+    [InlineData(1, true)]
+    [InlineData(8, true)]    // exactly the limit still resolves to the terminal survivor
+    [InlineData(9, false)]   // beyond it the link is not followed
+    public async Task A_merge_chain_resolves_up_to_the_hop_limit(int hops, bool resolves)
+    {
+        var w = await SeedAsync();
+        long[] chain;
+        await using (var db = Ctx())
+        {
+            var extra = Enumerable.Range(0, hops + 1).Select(i => new LitigationCase
+            {
+                RequestId = w.RequestId, CaseNumber = (900 + i).ToString(), CaseType = "OA", CaseYear = "2022", Court = "DRT Mumbai 1", CaseStatus = "PENDING",
+                FirstSeenUtc = DateTime.UtcNow, LastSeenUtc = DateTime.UtcNow
+            }).ToList();
+            db.LitigationCases.AddRange(extra);
+            await db.SaveChangesAsync();
+            chain = extra.Select(c => c.LitigationCaseId).ToArray();
+            for (var i = 0; i < hops; i++) extra[i].MergedIntoCaseId = chain[i + 1];
+            await db.SaveChangesAsync();
+        }
+        await using var v = Ctx();
+
+        var survivor = await Pages(v, LitigationReaderMode.Module).GetSurvivorIdAsync(w.RequestId, chain[0], default);
+        Assert.Equal(resolves ? chain[^1] : null, survivor);
+    }
     [Fact]
     public void Comparison_of_equal_sets_is_identical_and_otherwise_lists_each_side()
     {

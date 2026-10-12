@@ -76,12 +76,15 @@ public sealed class LitigationCasePageService(AppDbContext db, ChargeLitigationS
     }
 
     /// <summary>Where an old link to a merged duplicate goes: the surviving case of the same request. Only when the case page is served from the module (plan section 12.6,
-    /// "old URLs keep resolving"); on legacy a merged loser is simply not found, as before. Follows a chain of merges and never loops.</summary>
+    /// "old URLs keep resolving"); on legacy a merged loser is simply not found, as before. Follows a chain of up to <see cref="MaxMergeHops"/> merges and never loops.</summary>
+    public const int MaxMergeHops = 8;
+
     public async Task<long?> GetSurvivorIdAsync(long requestId, long caseId, CancellationToken ct)
     {
         if (readerGate is null || await readerGate.ResolveCasePageAsync(requestId, ct) != CaseSetSource.Module) return null;
         var current = caseId;
-        for (var hop = 0; hop < 8; hop++)
+        // MaxMergeHops links are MaxMergeHops + 1 cases, so the terminal case is looked up once more after the last allowed hop.
+        for (var hop = 0; hop <= MaxMergeHops; hop++)
         {
             var next = await db.LitigationCases.AsNoTracking().Where(c => c.LitigationCaseId == current && c.RequestId == requestId)
                 .Select(c => c.MergedIntoCaseId).FirstOrDefaultAsync(ct);
