@@ -133,21 +133,59 @@ public static class OrderKeyBuilder
         if (locator.Source.Equals("Drt", StringComparison.OrdinalIgnoreCase))
         {
             var url = locator.OrderUrl ?? locator.PdfUrl;
+            var kind = locator.OrderKind ?? locator.OrderType;
+            var date = locator.DateOfHearing ?? (DateOnly.TryParse(locator.OrderDate, out var d) ? d : (DateOnly?)null);
+
+            if (!locator.TribunalId.HasValue)
+            {
+                throw new ArgumentException("DRT order locator requires TribunalId to build composite order key.", nameof(locator));
+            }
+
+            if (!locator.CaseTypeId.HasValue)
+            {
+                throw new ArgumentException("DRT order locator requires CaseTypeId to build composite order key.", nameof(locator));
+            }
+
+            if (string.IsNullOrWhiteSpace(locator.CaseNo))
+            {
+                throw new ArgumentException("DRT order locator requires CaseNo to build composite order key.", nameof(locator));
+            }
+
+            if (!locator.CaseYear.HasValue)
+            {
+                throw new ArgumentException("DRT order locator requires CaseYear to build composite order key.", nameof(locator));
+            }
+
+            if (string.IsNullOrWhiteSpace(kind))
+            {
+                throw new ArgumentException("DRT order locator requires OrderKind or OrderType to build composite order key.", nameof(locator));
+            }
+
+            if (!date.HasValue)
+            {
+                throw new ArgumentException("DRT order locator requires DateOfHearing or OrderDate to build composite order key.", nameof(locator));
+            }
+
             if (string.IsNullOrWhiteSpace(url))
             {
                 throw new ArgumentException("DRT order locator requires OrderUrl or PdfUrl.", nameof(locator));
             }
 
-            var key = DrtOrderKeyHelper.ExtractOrderKey(url);
-            if (string.IsNullOrWhiteSpace(key))
-            {
-                throw new ArgumentException("DRT order locator requires a resolvable file path from url.", nameof(locator));
-            }
-
-            return key;
+            return ForDrt(
+                locator.TribunalId.Value,
+                locator.CaseTypeId.Value,
+                locator.CaseNo,
+                locator.CaseYear.Value,
+                kind,
+                date.Value,
+                url);
         }
 
         return (locator.OrderUrl ?? locator.PdfUrl ?? string.Empty).Trim();
     }
+
+    /// <summary>Extracts only the normalised DRT order file path key from a URL (e.g. from <c>file=</c> param).
+    /// Kept separate from the planned composite order identity key.</summary>
+    public static string ForDrtFilePath(string? url) => DrtOrderKeyHelper.ExtractOrderKey(url);
 }
 

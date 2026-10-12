@@ -410,11 +410,82 @@ public class OrderIdentityEquivalenceTests
         Assert.Throws<ArgumentException>(() => OrderKeyBuilder.ForDrt(1, 10, "555", 2026, "daily", date, null));
         Assert.Throws<ArgumentException>(() => OrderKeyBuilder.ForDrt(1, 10, "555", 2026, "daily", date, "   "));
 
-        // Locator validation for DRT
-        var validLocator = new OrderSourceLocator(Source: "Drt", OrderUrl: validUrl);
-        Assert.Equal("delhi/2026/order_555.pdf", OrderKeyBuilder.ForLocator(validLocator));
+        // Locator builds full composite DRT OrderKey
+        var validLocator = new OrderSourceLocator(
+            Source: "Drt",
+            TribunalId: 1,
+            CaseTypeId: 10,
+            CaseNo: "555",
+            CaseYear: 2026,
+            OrderKind: "daily",
+            DateOfHearing: date,
+            OrderUrl: validUrl);
 
-        var missingUrlLocator = new OrderSourceLocator(Source: "Drt", OrderUrl: null, PdfUrl: null);
+        var compositeKey = OrderKeyBuilder.ForLocator(validLocator);
+        Assert.Equal("1|10|555|2026|daily|2026-03-20|delhi/2026/order_555.pdf", compositeKey);
+
+        // Path-only helper remains separate from composite identity
+        Assert.Equal("delhi/2026/order_555.pdf", OrderKeyBuilder.ForDrtFilePath(validUrl));
+
+        // Two distinct orders sharing a file path across different cases do NOT collide
+        var otherCaseLocator = new OrderSourceLocator(
+            Source: "Drt",
+            TribunalId: 1,
+            CaseTypeId: 10,
+            CaseNo: "777",
+            CaseYear: 2026,
+            OrderKind: "daily",
+            DateOfHearing: date,
+            OrderUrl: validUrl);
+
+        var otherCompositeKey = OrderKeyBuilder.ForLocator(otherCaseLocator);
+        Assert.NotEqual(compositeKey, otherCompositeKey);
+        Assert.Contains("777", otherCompositeKey);
+
+        // Missing required DRT identity fields on locator rejects
+        var missingTribunalLocator = new OrderSourceLocator(
+            Source: "Drt",
+            TribunalId: null,
+            CaseTypeId: 10,
+            CaseNo: "555",
+            CaseYear: 2026,
+            OrderKind: "daily",
+            DateOfHearing: date,
+            OrderUrl: validUrl);
+        Assert.Throws<ArgumentException>(() => OrderKeyBuilder.ForLocator(missingTribunalLocator));
+
+        var missingCaseNoLocator = new OrderSourceLocator(
+            Source: "Drt",
+            TribunalId: 1,
+            CaseTypeId: 10,
+            CaseNo: null,
+            CaseYear: 2026,
+            OrderKind: "daily",
+            DateOfHearing: date,
+            OrderUrl: validUrl);
+        Assert.Throws<ArgumentException>(() => OrderKeyBuilder.ForLocator(missingCaseNoLocator));
+
+        var missingDateLocator = new OrderSourceLocator(
+            Source: "Drt",
+            TribunalId: 1,
+            CaseTypeId: 10,
+            CaseNo: "555",
+            CaseYear: 2026,
+            OrderKind: "daily",
+            DateOfHearing: null,
+            OrderUrl: validUrl);
+        Assert.Throws<ArgumentException>(() => OrderKeyBuilder.ForLocator(missingDateLocator));
+
+        var missingUrlLocator = new OrderSourceLocator(
+            Source: "Drt",
+            TribunalId: 1,
+            CaseTypeId: 10,
+            CaseNo: "555",
+            CaseYear: 2026,
+            OrderKind: "daily",
+            DateOfHearing: date,
+            OrderUrl: null,
+            PdfUrl: null);
         Assert.Throws<ArgumentException>(() => OrderKeyBuilder.ForLocator(missingUrlLocator));
     }
 }
