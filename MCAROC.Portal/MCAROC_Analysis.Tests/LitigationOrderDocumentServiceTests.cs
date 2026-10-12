@@ -606,4 +606,39 @@ public class LitigationOrderDocumentServiceTests : IAsyncLifetime
         await using var verify = CreateContext();
         Assert.Equal(before + 1, await MCAROC_Analysis.Services.LitigationModule.Refresh.RequestLiveData.ReadAsync(verify, requestId, CancellationToken.None));
     }
+
+    [Fact]
+    public async Task DownloadAndExtractAsync_stores_the_text_and_bumps_the_version_together_or_neither()
+    {
+        await using var db = CreateContext();
+        var (_, _, order) = await SeedOrderAsync(db, "AT1", "https://bpr.example/orders/at1.pdf");
+        var document = await SeedDocumentAsync(db, order.LitigationCaseOrderId, DateTime.UtcNow.AddDays(5));
+        var requestId = await db.LitigationCaseOrders.AsNoTracking().Where(o => o.LitigationCaseOrderId == order.LitigationCaseOrderId).Select(o => o.Case!.RequestId).FirstAsync();
+        var before = await MCAROC_Analysis.Services.LitigationModule.Refresh.RequestLiveData.ReadAsync(db, requestId, CancellationToken.None);
+
+        // Another connection holds the request row, so the bump (the last step of the publication) cannot complete: the publication must roll back, text included.
+        await using var blocker = CreateContext();
+        await using var held = await blocker.Database.BeginTransactionAsync();
+        await blocker.Database.ExecuteSqlRawAsync("UPDATE Requests SET LiveDataVersion = LiveDataVersion WHERE RequestId = {0}", requestId);
+
+        var pdfBytes = ExtractablePdfBytes("This is the genuine order text for the atomic test, retained well past the eighty character native-text threshold so OCR never runs.");
+        var handler = new StubHandler();
+        StubAuthenticate(handler);
+        handler.OnPath("orders/at1.pdf", _ => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new ByteArrayContent(pdfBytes) { Headers = { ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/pdf") } }
+        });
+        await using var work = CreateContext();
+        work.Database.SetCommandTimeout(3);
+        var attempt = NewService(work, handler).DownloadAndExtractAsync(document.LitigationOrderDocumentId, CancellationToken.None);
+        await Task.WhenAny(attempt, Task.Delay(8000));          // it blocks on the held row, then times out
+        await held.RollbackAsync();
+        try { await attempt; } catch { /* the service records a failure or throws; either way the point is what was stored */ }
+
+        await using var verify = CreateContext();
+        var stored = await verify.LitigationOrderDocuments.AsNoTracking().SingleAsync(d => d.LitigationOrderDocumentId == document.LitigationOrderDocumentId);
+        var version = await MCAROC_Analysis.Services.LitigationModule.Refresh.RequestLiveData.ReadAsync(verify, requestId, CancellationToken.None);
+        // Either the text and the bump are both there, or neither is: never the text without the bump.
+        Assert.Equal(stored.TextExtractionStatus == FilingDocumentProcessingStatus.TextExtracted, version == before + 1);
+    }
 }

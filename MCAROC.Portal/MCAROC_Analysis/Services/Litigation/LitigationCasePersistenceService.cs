@@ -147,11 +147,17 @@ public sealed class LitigationCasePersistenceService(
                 orderDocumentsToEnqueue.AddRange(
                     await PersistOneCaseAsync(requestId, snapshot, report.Cases[i], orderRetainedUntilUtc, ct));
 
-            snapshot.Status = LitigationReportSnapshotStatus.Completed;
-            snapshot.CompletedUtc = DateTime.UtcNow;
-            await db.SaveChangesAsync(ct);
-            // The import changed the request's cases (new, updated, newly listed): a publication, so the request's live-data version moves.
-            await MCAROC_Analysis.Services.LitigationModule.Refresh.RequestLiveData.BumpAsync(db, requestId, ct);
+            // Completing the snapshot and moving the request's live-data version are ONE transaction: the snapshot is terminal once Completed and is never retried, so a stop between the two
+            // would leave the caches on the old version for good. Either both are stored or neither (the snapshot then stays InProgress and the next attempt completes it).
+            await using (var completion = db.Database.CurrentTransaction is null ? await db.Database.BeginTransactionAsync(ct) : null)
+            {
+                snapshot.Status = LitigationReportSnapshotStatus.Completed;
+                snapshot.CompletedUtc = DateTime.UtcNow;
+                await db.SaveChangesAsync(ct);
+                // The import changed the request's cases (new, updated, newly listed): a publication, so the request's live-data version moves.
+                await MCAROC_Analysis.Services.LitigationModule.Refresh.RequestLiveData.BumpAsync(db, requestId, ct);
+                if (completion is not null) await completion.CommitAsync(ct);
+            }
 
             // Enqueued only after this snapshot's own commit succeeds — each order document was already
             // durably committed as part of its own case's SaveChangesAsync (see PersistOneCaseAsync), so this
