@@ -245,4 +245,33 @@ public class LitigationModuleStoreTests : IAsyncLifetime
         Assert.Equal(OverlayWriteResult.Applied, await store.SetOverlayAsync(scope.ScopeId, mc.CaseId, new ScopeOverlayChange(IsHidden: false), ScopeVersion(), default));
         Assert.Equal(2, Version());                                                                    // un-hiding is a publication too
     }
+
+    [Fact]
+    public async Task Forty_concurrent_additions_to_one_scope_get_forty_distinct_consecutive_aliases()
+    {
+        var (a, _, cases) = await TwoScopesOneSubjectAsync(40);
+        var aliases = await Task.WhenAll(cases.Select(async id =>
+        {
+            await using var db = Ctx();
+            return (await new LitigationModuleStore(db).AddCaseToScopeAsync(a.ScopeId, id, null, default)).Alias;
+        }));
+        Assert.Equal(40, aliases.Distinct().Count());
+        Assert.Equal(Enumerable.Range(1, 40).Select(i => "C-" + i).OrderBy(x => x), aliases.OrderBy(x => x));
+        await using var v = Ctx();
+        Assert.Equal(41, (await v.Set<ModuleScope>().AsNoTracking().FirstAsync(s => s.ScopeId == a.ScopeId)).NextAliasIndex);   // the counter is exactly one past the last alias
+    }
+
+    [Fact]
+    public async Task The_same_case_added_by_several_callers_at_once_gets_one_alias_and_one_row()
+    {
+        var (a, _, cases) = await TwoScopesOneSubjectAsync(1);
+        var results = await Task.WhenAll(Enumerable.Range(0, 10).Select(async _ =>
+        {
+            await using var db = Ctx();
+            return (await new LitigationModuleStore(db).AddCaseToScopeAsync(a.ScopeId, cases[0], null, default)).Alias;
+        }));
+        Assert.Single(results.Distinct());
+        await using var v = Ctx();
+        Assert.Equal(1, await v.Set<ModuleScopeCase>().CountAsync(x => x.ScopeId == a.ScopeId && x.CaseId == cases[0]));
+    }
 }
