@@ -103,6 +103,9 @@ builder.Services.AddHostedService<AutoFetchWorker>();
 builder.Services.Configure<MCAROC_Analysis.Services.LitigationModule.Bridge.LitigationBridgeOptions>(
     builder.Configuration.GetSection(MCAROC_Analysis.Services.LitigationModule.Bridge.LitigationBridgeOptions.SectionName));
 builder.Services.AddHostedService<MCAROC_Analysis.Services.LitigationModule.Bridge.LitigationBridgeWorker>();
+builder.Services.Configure<MCAROC_Analysis.Services.LitigationModule.Reading.LitigationReaderOptions>(
+    builder.Configuration.GetSection(MCAROC_Analysis.Services.LitigationModule.Reading.LitigationReaderOptions.SectionName));
+builder.Services.AddScoped<MCAROC_Analysis.Services.LitigationModule.Reading.LitigationReaderGate>();
 // Company unlock/refresh lifecycle (#229) — the "never store pre-refresh data" gate before any export.
 builder.Services.AddScoped<CompanyRefreshService>();
 // Approval-gated paid unlock (#266) — the only code that spends a reference-tool credit.

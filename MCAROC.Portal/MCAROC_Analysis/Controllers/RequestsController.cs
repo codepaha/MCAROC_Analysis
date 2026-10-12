@@ -44,7 +44,8 @@ public partial class RequestsController(
     ChargeLitigationService? chargeLitigation = null,
     LitigationOrderOutcomeQuery? orderOutcomes = null,
     FullTextSearchStatus? fullTextStatus = null,
-    MCAROC_Analysis.Services.AutoFetch.McaDocumentRestoreService? documentRestore = null) : Controller
+    MCAROC_Analysis.Services.AutoFetch.McaDocumentRestoreService? documentRestore = null,
+    MCAROC_Analysis.Services.LitigationModule.Reading.LitigationReaderGate? readerGate = null) : Controller
 {
     [HttpGet("/Requests")]
     public async Task<IActionResult> Index([FromQuery] RequestListFilterCriteria filters)
@@ -475,7 +476,7 @@ public partial class RequestsController(
     {
         var timer = System.Diagnostics.Stopwatch.StartNew();
         var query = new Services.RequestDetails.RequestDetailsQuery(db, dossierCache, logger,
-            bprOptions, litigationAnalysis, chargeLitigation, orderOutcomes, fullTextStatus);
+            bprOptions, litigationAnalysis, chargeLitigation, orderOutcomes, fullTextStatus, readerGate);
         try
         {
             var vm = await query.BuildAsync(id, charge, court, status, page, outcome, focusCase,
@@ -505,7 +506,8 @@ public partial class RequestsController(
         var ct = HttpContext?.RequestAborted ?? CancellationToken.None;
         var timer = System.Diagnostics.Stopwatch.StartNew();
         var before = await Services.RequestDetails.RequestPageVersion.ReadAsync(db, id, ct);
-        var model = await new Services.RequestDetails.LitigationCaseListQuery(db, orderOutcomes)
+        var caseSource = readerGate is null ? MCAROC_Analysis.Services.LitigationModule.Reading.CaseSetSource.Legacy : await readerGate.ResolveCaseListAsync(id, ct);
+        var model = await new Services.RequestDetails.LitigationCaseListQuery(db, orderOutcomes, caseSource)
             .BuildAsync(id, court, status, page, pageSize, q, outcome, null, ct);
         if (model is null) return NotFound();
         if (chargeLitigation is not null)
