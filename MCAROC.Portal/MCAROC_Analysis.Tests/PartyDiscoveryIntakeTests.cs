@@ -491,6 +491,69 @@ public class PartyDiscoveryIntakeTests : IAsyncLifetime
         Assert.Equal(0, version);
     }
 
+    [Fact]
+    public async Task Consumer_candidate_where_detail_has_missing_commission_is_rejected_and_not_onboarded()
+    {
+        var req = await CreateRequestAsync("Acme Technologies Limited");
+
+        var candidate = CreateCandidate(
+            "CC/599/2017", "12270497",
+            applicant: "Consumer Complainant",
+            respondent: "Acme Technologies Limited",
+            source: DiscoveredCaseSource.Consumer);
+
+        // Consumer detail response has CommissionId = null (missing commission)
+        var consumerMock = new MockConsumerIntakeClient();
+        consumerMock.SetupCase("CC/599/2017", new ConsumerCaseDetails(
+            CaseNumber: "CC/599/2017",
+            NormalizedCaseNumber: CaseNumberNormaliser.Parse(new CaseNumberInput("CC/599/2017")),
+            FilingReferenceNumber: 12345,
+            CaseFilingDate: new DateOnly(2017, 1, 1),
+            FiledInCommissionName: null,
+            Complainant: "Consumer Complainant",
+            Respondent: "Acme Technologies Limited",
+            CaseStage: "PENDING",
+            DateOfNextHearing: new DateOnly(2026, 12, 1),
+            ComplainantAdvocate: null,
+            RespondentAdvocate: null,
+            ApplicationsFiled: [],
+            AttachedLowerCourt: [],
+            Hearings: [],
+            CommissionTypeId: null,
+            CommissionId: null, // MISSING COMMISSION
+            CommissionName: null,
+            StateName: null,
+            DistrictName: null,
+            IsBench: false,
+            StatusParts: null,
+            DerivedDecisionDate: null,
+            IsDecisionDateDerived: false,
+            IsTerminal: false));
+
+        await using var db = Ctx();
+        var drtMock = new MockDrtIntakeClient();
+        var service = new PartyDiscoveryIntakeService(db, drtMock, consumerMock, NullLogger<PartyDiscoveryIntakeService>.Instance);
+
+        var result = await service.IntakeCandidatesAsync(
+            req.RequestId,
+            companyNames: ["Acme Technologies Limited"],
+            formerNames: null,
+            candidates: [candidate]);
+
+        Assert.Equal(1, result.TotalCandidatesProcessed);
+        Assert.Equal(0, result.CreatedCount);
+        Assert.Null(result.NewLiveDataVersion);
+
+        var item = Assert.Single(result.Items);
+        // Fails closed as IdentityMismatch because commission could not be verified
+        Assert.Equal(IntakeCandidateStatus.IdentityMismatch, item.Status);
+        Assert.Null(item.LegacyLitigationCaseId);
+        Assert.Null(item.ModuleCaseId);
+
+        var count = await db.LitigationCases.CountAsync(c => c.RequestId == req.RequestId);
+        Assert.Equal(0, count);
+    }
+
     private sealed class MockDrtIntakeClient : IDrtClient
     {
         private readonly Dictionary<(int TribunalId, int CaseTypeId, string CaseNo, int CaseYear), DrtCaseDetails> _cases = [];
@@ -538,11 +601,24 @@ public class PartyDiscoveryIntakeTests : IAsyncLifetime
 
     private sealed class MockConsumerIntakeClient : IConsumerClient
     {
+        private readonly Dictionary<string, ConsumerCaseDetails> _cases = [];
+
         public string CurrentExit => "127.0.0.1:8080";
         public ConsumerProxyRotator Rotator => new([]);
 
-        public Task<ConsumerCaseLookupResult> GetCaseStatusAsync(string caseNumber, CancellationToken ct = default) =>
-            Task.FromResult(ConsumerCaseLookupResult.Error("Not found in mock", null, HttpStatusCode.NotFound));
+        public void SetupCase(string caseNumber, ConsumerCaseDetails details)
+        {
+            _cases[caseNumber] = details;
+        }
+
+        public Task<ConsumerCaseLookupResult> GetCaseStatusAsync(string caseNumber, CancellationToken ct = default)
+        {
+            if (_cases.TryGetValue(caseNumber, out var details))
+            {
+                return Task.FromResult(ConsumerCaseLookupResult.Found(details));
+            }
+            return Task.FromResult(ConsumerCaseLookupResult.Error("Not found in mock", null, HttpStatusCode.NotFound));
+        }
 
         public Task<ConsumerCompanySearchResult> SearchByCompanyAsync(int commissionTypeId, int commissionId, string keyword, DateOnly fromDate, DateOnly toDate, CancellationToken ct = default) =>
             Task.FromResult(new ConsumerCompanySearchResult([], true));

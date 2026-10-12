@@ -72,8 +72,10 @@ public static class ConsumerObservationMapper
         var got = d.NormalizedCaseNumber;
 
         string? identityProblem =
-            d.CommissionId.HasValue && d.CommissionId.Value != lookup.CommissionId
-                ? $"the portal returned a case of commission {d.CommissionId}, not {lookup.CommissionId}"
+            !d.CommissionId.HasValue
+                ? "the portal did not return a verified commission ID; commission identity cannot be verified"
+                : d.CommissionId.Value != lookup.CommissionId
+                    ? $"the portal returned a case of commission {d.CommissionId.Value}, not {lookup.CommissionId}"
                 : expected.TypeCode is null || got.TypeCode is null
                     ? "the case type could not be compared"
                     : !string.Equals(expected.TypeCode, got.TypeCode, StringComparison.OrdinalIgnoreCase)
