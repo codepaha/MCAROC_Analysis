@@ -1,4 +1,5 @@
 using MCAROC_Analysis.Data;
+using MCAROC_Analysis.Data.Entities;
 using MCAROC_Analysis.Services.LitigationModule.Store;
 using Microsoft.EntityFrameworkCore;
 using Xunit;
@@ -212,5 +213,36 @@ public class LitigationModuleStoreTests : IAsyncLifetime
         var link = await verify.Set<ModuleScopeCase>().AsNoTracking().FirstAsync(x => x.ScopeId == a.ScopeId);
         Assert.True(link.IsHidden);
         Assert.Equal("from the other writer", link.AnalystNote);
+    }
+
+    [Fact]
+    public async Task Hiding_a_case_in_a_request_scope_bumps_that_requests_live_data_version_but_a_note_does_not()
+    {
+        await using var seedDb = Ctx();
+        var client = new Client { ClientCode = "BW" + Guid.NewGuid().ToString("N")[..8], ClientName = "Bump Test Co", CreatedDate = DateTime.UtcNow };
+        seedDb.Clients.Add(client);
+        var request = new McaRequest
+        {
+            Client = client, EntityType = EntityType.Company, CompanyName = "Bump Test Company", Cin = "U45203OR1995PLC003982",
+            RequestNumber = $"BW-{Guid.NewGuid():N}", RequestStatus = RequestStatus.DataExtracted, CreatedDate = DateTime.UtcNow
+        };
+        seedDb.Requests.Add(request);
+        await seedDb.SaveChangesAsync();
+
+        var store = new LitigationModuleStore(seedDb);
+        var subject = await store.CreateSubjectAsync(ModuleSubjectKind.Company, "Bump Test Company", null, default);
+        var scope = await store.EnsureScopeAsync(ModuleScopeKind.Request, request.RequestId, subject.SubjectId, default);
+        var mc = await store.EnsureCaseForLegacyAsync(NewExternalId(), default);
+        await store.AddCaseToScopeAsync(scope.ScopeId, mc.CaseId, null, default);
+        long Version() => seedDb.Requests.AsNoTracking().Where(r => r.RequestId == request.RequestId).Select(r => r.LiveDataVersion).First();
+        long ScopeVersion() => seedDb.Set<ModuleScope>().AsNoTracking().Where(s => s.ScopeId == scope.ScopeId).Select(s => s.Version).First();
+
+        Assert.Equal(0, Version());
+        Assert.Equal(OverlayWriteResult.Applied, await store.SetOverlayAsync(scope.ScopeId, mc.CaseId, new ScopeOverlayChange(AnalystNote: "just a note"), ScopeVersion(), default));
+        Assert.Equal(0, Version());                                                                    // a note changes nothing the pages include
+        Assert.Equal(OverlayWriteResult.Applied, await store.SetOverlayAsync(scope.ScopeId, mc.CaseId, new ScopeOverlayChange(IsHidden: true), ScopeVersion(), default));
+        Assert.Equal(1, Version());
+        Assert.Equal(OverlayWriteResult.Applied, await store.SetOverlayAsync(scope.ScopeId, mc.CaseId, new ScopeOverlayChange(IsHidden: false), ScopeVersion(), default));
+        Assert.Equal(2, Version());                                                                    // un-hiding is a publication too
     }
 }

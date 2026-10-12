@@ -180,6 +180,9 @@ public sealed class LitigationOrderDocumentService(
             // unexpired — never a plain SaveChangesAsync on the tracked entity. 0 rows means a takeover (or
             // simple lease timeout) has already superseded this attempt; its file must never become the
             // recorded one.
+            // The publish and the request's live-data version move in ONE transaction: the text is stored only together with the bump, so a stop between them cannot leave the
+            // caches on the old version (a retry would find the text already stored and not bump again).
+            await using var publication = db.Database.CurrentTransaction is null ? await db.Database.BeginTransactionAsync(ct) : null;
             var claimed = await LeaseGuarded(orderDocumentId, myLeaseToken).ExecuteUpdateAsync(s => s
                 .SetProperty(d => d.Status, LitigationOrderDocumentStatus.Downloaded)
                 .SetProperty(d => d.StoragePath, myPath)
@@ -198,9 +201,17 @@ public sealed class LitigationOrderDocumentService(
                 logger.LogWarning(
                     "Litigation order document {Id} lost its lease before its download could be published — discarding this attempt's own file.",
                     orderDocumentId);
-                return;
+                return;   // the transaction is rolled back on dispose; nothing was stored
             }
 
+            // Order text arriving changes what the request's litigation views and analyses read: it is a publication, so the request's live-data version moves in the same transaction.
+            if (textStatus == FilingDocumentProcessingStatus.TextExtracted)
+            {
+                var bumpRequestId = await db.LitigationOrderDocuments.AsNoTracking().Where(d => d.LitigationOrderDocumentId == orderDocumentId)
+                    .Select(d => (long?)d.Order!.Case!.RequestId).FirstOrDefaultAsync(ct);
+                if (bumpRequestId is { } rid) await MCAROC_Analysis.Services.LitigationModule.Refresh.RequestLiveData.BumpAsync(db, rid, ct);
+            }
+            if (publication is not null) await publication.CommitAsync(ct);
             published = true;
             logger.LogInformation(
                 "Litigation order document {Id} downloaded and extracted ({Bytes} bytes, {Method}).",

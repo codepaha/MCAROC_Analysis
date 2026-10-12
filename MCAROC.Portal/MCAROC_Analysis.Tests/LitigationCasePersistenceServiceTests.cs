@@ -1408,4 +1408,52 @@ public class LitigationCasePersistenceServiceTests : IAsyncLifetime
         Assert.Equal("New Act", cases.Single(c => c.LitigationCaseId == survivor.LitigationCaseId).Act);   // the import ended on the survivor
         Assert.Equal("Code", cases.Single(c => c.LitigationCaseId == loser.LitigationCaseId).Act);          // not on the hidden loser
     }
+
+    [Fact]
+    public async Task A_completed_snapshot_import_bumps_the_requests_live_data_version_once()
+    {
+        await using var db = CreateContext();
+        var request = await SeedRequestAsync(db, "LVB");
+        var before = await MCAROC_Analysis.Services.LitigationModule.Refresh.RequestLiveData.ReadAsync(db, request.RequestId, CancellationToken.None);
+        var job = await SeedCompletedJobAsync(db, request.RequestId, ReportJson("TNKP070001332022", "OS"));
+        await PersistJobAsync(NewService(db), job, CancellationToken.None);
+
+        await using var verify = CreateContext();
+        Assert.Equal(before + 1, await MCAROC_Analysis.Services.LitigationModule.Refresh.RequestLiveData.ReadAsync(verify, request.RequestId, CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task A_snapshot_is_completed_together_with_the_version_bump_or_not_at_all()
+    {
+        await using var db = CreateContext();
+        var request = await SeedRequestAsync(db, "ATOM");
+        var job = await SeedCompletedJobAsync(db, request.RequestId, ReportJson("TNKP070001332022", "OS"));
+        var snapshotId = await NewService(db).EnsureSnapshotAsync(job.LitigationSearchJobId, job.RawResponseHash!, job.ReportFormat, job.RawReportBytes!, DateTime.UtcNow, CancellationToken.None);
+        var before = await MCAROC_Analysis.Services.LitigationModule.Refresh.RequestLiveData.ReadAsync(db, request.RequestId, CancellationToken.None);
+
+        // Another connection holds the request row, so the bump (the last step of completion) cannot finish: completion must roll back with it.
+        await using var blocker = CreateContext();
+        await using var held = await blocker.Database.BeginTransactionAsync();
+        await blocker.Database.ExecuteSqlRawAsync("UPDATE Requests SET LiveDataVersion = LiveDataVersion WHERE RequestId = {0}", request.RequestId);
+
+        await using var work = CreateContext();
+        work.Database.SetCommandTimeout(3);
+        try { await NewService(work).PersistSnapshotAsync(snapshotId, CancellationToken.None); } catch { /* the timed-out bump surfaces here or is logged; what matters is what was stored */ }
+        await held.RollbackAsync();
+
+        await using var verify = CreateContext();
+        var snapshot = await verify.LitigationReportSnapshots.AsNoTracking().SingleAsync(s => s.LitigationReportSnapshotId == snapshotId);
+        var version = await MCAROC_Analysis.Services.LitigationModule.Refresh.RequestLiveData.ReadAsync(verify, request.RequestId, CancellationToken.None);
+        Assert.Equal(snapshot.Status == LitigationReportSnapshotStatus.Completed, version == before + 1);   // both or neither: never Completed without the bump
+        Assert.NotEqual(LitigationReportSnapshotStatus.Completed, snapshot.Status);                          // and here the bump could not run, so the snapshot is not terminal
+
+        // The next attempt (no blocker) completes it and bumps - once the first attempt's lease has run out, as it does in production (recovery sweeps pick it up then).
+        await using (var expire = CreateContext())
+            await expire.LitigationReportSnapshots.Where(x => x.LitigationReportSnapshotId == snapshotId).ExecuteUpdateAsync(u => u.SetProperty(x => x.LeaseExpiresUtc, DateTime.UtcNow.AddMinutes(-1)));
+        await using var retry = CreateContext();
+        await NewService(retry).PersistSnapshotAsync(snapshotId, CancellationToken.None);
+        await using var after = CreateContext();
+        Assert.Equal(LitigationReportSnapshotStatus.Completed, (await after.LitigationReportSnapshots.AsNoTracking().SingleAsync(s => s.LitigationReportSnapshotId == snapshotId)).Status);
+        Assert.Equal(before + 1, await MCAROC_Analysis.Services.LitigationModule.Refresh.RequestLiveData.ReadAsync(after, request.RequestId, CancellationToken.None));
+    }
 }

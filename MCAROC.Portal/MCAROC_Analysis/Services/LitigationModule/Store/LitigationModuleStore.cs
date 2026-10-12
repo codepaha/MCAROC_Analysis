@@ -124,6 +124,13 @@ public sealed class LitigationModuleStore(AppDbContext db, TimeProvider? time = 
         if (change.PinnedFieldsJson is not null) link.PinnedFieldsJson = change.PinnedFieldsJson;
         link.UpdatedUtc = _time.GetUtcNow().UtcDateTime;
         await db.SaveChangesAsync(ct);
+        // What a request's pages, counts, report and analysis include depends on these flags: a change to one is a publication for that request (same transaction).
+        if (change.IsHidden is not null || change.IsExcluded is not null || change.IncludedInReport is not null)
+        {
+            var scope = await db.Set<ModuleScope>().AsNoTracking().Where(s => s.ScopeId == scopeId).Select(s => new { s.Kind, s.ExternalId }).FirstAsync(ct);
+            if (scope.Kind == ModuleScopeKind.Request)
+                await MCAROC_Analysis.Services.LitigationModule.Refresh.RequestLiveData.BumpAsync(db, scope.ExternalId, ct);
+        }
         await tx.CommitAsync(ct);
         return OverlayWriteResult.Applied;
     }
