@@ -105,7 +105,10 @@ public sealed class LitigationAiAnalysisOrchestrator(AppDbContext db, ILitigatio
                 await PublishCasesAsync(runId, token, [item.Row], token2);
             });
             await ClassifyOrdersAsync(runId, token, requestId, ClassifiableChunks(cases, chunks), ct);
-            var persisted = await db.LitigationCaseAiAnalyses.Where(x => x.LitigationAiAnalysisRunId == runId).OrderBy(x => x.LitigationCaseAiAnalysisId).ToListAsync(ct);
+            // A retried run may hold analyses of a case that has since left the live set (merged away): the summary is made over, and stamped with, the cases that are in the set now.
+            var liveCaseIds = cases.Select(c => c.LitigationCaseId).ToHashSet();
+            var persisted = (await db.LitigationCaseAiAnalyses.Where(x => x.LitigationAiAnalysisRunId == runId).OrderBy(x => x.LitigationCaseAiAnalysisId).ToListAsync(ct))
+                .Where(x => liveCaseIds.Contains(x.LitigationCaseId)).ToList();
             if (!await db.LitigationPortfolioAiAnalyses.AnyAsync(x => x.LitigationAiAnalysisRunId == runId, ct))
             {
                 LitigationPortfolioAiAnalysis? priorPortfolio = null;

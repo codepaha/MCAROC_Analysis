@@ -824,4 +824,31 @@ public sealed class LitigationOrderClassificationTests : IAsyncLifetime
         await RunAnalysisAsync(requestId, client);
         await using (var db = CreateContext()) Assert.False(await Orchestrator(db, client).NeedsAnalysisAsync(requestId, CancellationToken.None));
     }
+
+    [Fact]
+    public async Task A_retried_run_does_not_put_a_case_that_has_since_been_merged_away_into_the_summary()
+    {
+        var (requestId, _, caseA) = await SeedRequestWithOrdersAsync();
+        var caseB = await SeedSecondCaseAsync(requestId, "CP 15/2020");
+        var client = new ScriptedClient(ClassifyByText);
+        var first = await RunAnalysisAsync(requestId, client);
+        Assert.Equal(LitigationAiAnalysisRunStatus.Completed, first.Status);
+
+        // Make it look like a run that was interrupted after analysing both cases but before publishing its summary, then B is merged away and the run is retried.
+        await using (var db = CreateContext())
+        {
+            await db.LitigationPortfolioAiAnalyses.Where(p => p.LitigationAiAnalysisRunId == first.LitigationAiAnalysisRunId).ExecuteDeleteAsync();
+            await db.LitigationAiAnalysisRuns.Where(r => r.LitigationAiAnalysisRunId == first.LitigationAiAnalysisRunId)
+                .ExecuteUpdateAsync(s => s.SetProperty(r => r.Status, LitigationAiAnalysisRunStatus.Pending).SetProperty(r => r.LeaseToken, (Guid?)null).SetProperty(r => r.NextAttemptUtc, (DateTime?)null));
+            await db.LitigationCases.Where(c => c.LitigationCaseId == caseB).ExecuteUpdateAsync(s => s.SetProperty(c => c.MergedIntoCaseId, caseA));
+        }
+        await using (var db = CreateContext()) await Orchestrator(db, client).RunAsync(first.LitigationAiAnalysisRunId, CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var portfolio = await verify.LitigationPortfolioAiAnalyses.AsNoTracking().SingleAsync(p => p.LitigationAiAnalysisRunId == first.LitigationAiAnalysisRunId);
+        Assert.Equal(LitigationAiAnalysisOrchestrator.CaseSetHash([caseA]), portfolio.CaseSetHash);
+        Assert.DoesNotContain($"\"LitigationCaseId\":{caseB},", portfolio.EvidenceJson);         // the merged-away case is not in what the summary read
+        Assert.Contains($"\"LitigationCaseId\":{caseA},", portfolio.EvidenceJson);
+        Assert.False(await Orchestrator(verify, client).NeedsAnalysisAsync(requestId, CancellationToken.None));
+    }
 }
