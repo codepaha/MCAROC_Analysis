@@ -1,5 +1,6 @@
 using MCAROC_Analysis.Data;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
 
 namespace MCAROC_Analysis.Services.LitigationModule.Store;
 
@@ -69,6 +70,7 @@ public sealed class LitigationModuleStore(AppDbContext db, TimeProvider? time = 
     /// A case already in the scope keeps its alias. <paramref name="existingAlias"/> imports a legacy alias verbatim (a pre-login <c>CaseRowId</c>) and moves the counter past it.</summary>
     public async Task<ModuleScopeCase> AddCaseToScopeAsync(long scopeId, long caseId, string? existingAlias, CancellationToken ct)
     {
+        if (existingAlias is null) return await AddWithNextAliasAsync(scopeId, caseId, ct);
         for (var attempt = 0; attempt < AliasRetries; attempt++)
         {
             var already = await db.Set<ModuleScopeCase>().FirstOrDefaultAsync(x => x.ScopeId == scopeId && x.CaseId == caseId, ct);
@@ -97,6 +99,51 @@ public sealed class LitigationModuleStore(AppDbContext db, TimeProvider? time = 
             }
         }
         throw new InvalidOperationException("unreachable");
+    }
+
+    /// <summary>The generated-alias path. The counter is advanced by ONE atomic statement (<c>UPDATE ... OUTPUT</c>) inside the same transaction as the insert of the link, so concurrent callers
+    /// queue on the scope row and each gets its own number: there is no retry race to lose, however many callers there are. If the transaction fails, the counter moves back with it.</summary>
+    private async Task<ModuleScopeCase> AddWithNextAliasAsync(long scopeId, long caseId, CancellationToken ct)
+    {
+        await using var tx = db.Database.CurrentTransaction is null ? await db.Database.BeginTransactionAsync(ct) : null;
+        var already = await db.Set<ModuleScopeCase>().FirstOrDefaultAsync(x => x.ScopeId == scopeId && x.CaseId == caseId, ct);
+        if (already is not null) return already;
+
+        var index = await AllocateAliasIndexAsync(scopeId, ct);
+        var link = new ModuleScopeCase { ScopeId = scopeId, CaseId = caseId, Alias = "C-" + index, AliasIndex = index, CreatedUtc = _time.GetUtcNow().UtcDateTime };
+        db.Set<ModuleScopeCase>().Add(link);
+        try
+        {
+            await db.SaveChangesAsync(ct);
+            if (tx is not null) await tx.CommitAsync(ct);
+            return link;
+        }
+        catch (DbUpdateException)
+        {
+            // Either the same case was added by a concurrent caller between our check and our insert (the unique index let one win), or something else failed.
+            db.ChangeTracker.Clear();
+            if (tx is not null) await tx.RollbackAsync(ct);
+            var winner = await db.Set<ModuleScopeCase>().AsNoTracking().FirstOrDefaultAsync(x => x.ScopeId == scopeId && x.CaseId == caseId, ct);
+            if (winner is not null) return winner;   // the winner's link
+            throw;                                   // not a duplicate: a real failure is not hidden
+        }
+    }
+
+    private async Task<int> AllocateAliasIndexAsync(long scopeId, CancellationToken ct)
+    {
+        var connection = db.Database.GetDbConnection();
+        var opened = connection.State != System.Data.ConnectionState.Open;
+        if (opened) await connection.OpenAsync(ct);
+        try
+        {
+            await using var command = connection.CreateCommand();
+            command.Transaction = db.Database.CurrentTransaction?.GetDbTransaction();
+            command.CommandText = "UPDATE [litigation].[Scopes] SET [NextAliasIndex] = [NextAliasIndex] + 1, [Version] = [Version] + 1 OUTPUT deleted.[NextAliasIndex] WHERE [ScopeId] = @id";
+            var parameter = command.CreateParameter(); parameter.ParameterName = "@id"; parameter.Value = scopeId; command.Parameters.Add(parameter);
+            var value = await command.ExecuteScalarAsync(ct);
+            return value is null or DBNull ? throw new InvalidOperationException($"Scope {scopeId} does not exist.") : Convert.ToInt32(value);
+        }
+        finally { if (opened) await connection.CloseAsync(); }
     }
 
     /// <summary>The only write a consumer makes: change its own association with a case, checked against the scope's version the caller last saw.
