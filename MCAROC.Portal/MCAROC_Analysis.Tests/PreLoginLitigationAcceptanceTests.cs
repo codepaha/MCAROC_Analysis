@@ -996,5 +996,38 @@ public partial class PreLoginLitigationAcceptanceTests : IAsyncLifetime
         Assert.Equal("Settled", c2.ExclusionReason);
         Assert.Contains("(not in latest feed)", c2.AnalystNote);
     }
-}
 
+    [Fact]
+    public async Task A_PRR_job_never_waits_for_litigation_and_creates_no_litigation_target()
+    {
+        var company = new InstaCompany("TECH CORP", "-", "U12345", "Company", "-", "-", "-", "-", "-", "-",
+            "ADDR", "-", "-", "-", "-", "-");
+        var data = new InstaReportData(company, [], []);
+        var (jobId, _) = await SeedJobAsync(PreLoginReportJobStatus.Queued, JsonSerializer.Serialize(data), mcaFetched: DateTime.UtcNow.AddHours(-1));
+        await using (var setup = CreateContext())
+            await setup.PreLoginReportJobs.Where(j => j.PreLoginReportJobId == jobId).ExecuteUpdateAsync(s => s.SetProperty(j => j.Format, nameof(PreLoginReportFormat.Prr)));
+
+        await using var db = CreateContext();
+        var targetQueue = new PreLoginLitigationTargetQueue();
+        await CreateJobService(db, new PreLoginReportQueue(), targetQueue).ProcessAsync(jobId, CancellationToken.None);
+
+        var job = await db.PreLoginReportJobs.AsNoTracking().SingleAsync(j => j.PreLoginReportJobId == jobId);
+        Assert.NotEqual(PreLoginReportJobStatus.AwaitingLitigation, job.Status);                                      // never parked on a litigation search
+        Assert.False(await db.PreLoginLitigationTargets.AnyAsync(t => t.PreLoginReportJobId == jobId));              // and no search was queued for it
+    }
+
+    [Fact]
+    public async Task An_SBI_job_still_dispatches_the_borrower_litigation_search()
+    {
+        var company = new InstaCompany("TECH CORP", "-", "U12345", "Company", "-", "-", "-", "-", "-", "-",
+            "ADDR", "-", "-", "-", "-", "-");
+        var data = new InstaReportData(company, [], []);
+        var (jobId, _) = await SeedJobAsync(PreLoginReportJobStatus.Queued, JsonSerializer.Serialize(data), mcaFetched: DateTime.UtcNow.AddHours(-1));   // SeedJobAsync makes an Sbi job
+
+        await using var db = CreateContext();
+        await CreateJobService(db, new PreLoginReportQueue(), new PreLoginLitigationTargetQueue()).ProcessAsync(jobId, CancellationToken.None);
+
+        Assert.Equal(PreLoginReportJobStatus.AwaitingLitigation, (await db.PreLoginReportJobs.AsNoTracking().SingleAsync(j => j.PreLoginReportJobId == jobId)).Status);
+        Assert.True(await db.PreLoginLitigationTargets.AnyAsync(t => t.PreLoginReportJobId == jobId));
+    }
+}
