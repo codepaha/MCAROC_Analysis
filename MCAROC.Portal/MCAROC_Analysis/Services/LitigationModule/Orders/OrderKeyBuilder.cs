@@ -39,16 +39,54 @@ public static class OrderKeyBuilder
     }
 
     /// <summary>Builds the DRT composite order key from (tribunalId, caseTypeId, caseNo, caseYear, kind, orderDate, url)
-    /// using normalized file path (collapsing pdf1.php and qrpdfview.php) or SHA-256 of embedded HTML.</summary>
+    /// using normalized file path (collapsing pdf1.php and qrpdfview.php) or SHA-256 of embedded HTML.
+    /// Rejects incomplete identity fields before building the key to prevent key collisions across incomplete records.</summary>
     public static string ForDrt(
         int tribunalId,
         int? caseTypeId,
         string? caseNo,
         int? caseYear,
-        string kind,
+        string? kind,
         DateOnly? orderDate,
-        string? url) =>
-        DrtOrderKeyHelper.BuildCompositeOrderKey(tribunalId, caseTypeId, caseNo, caseYear, kind, orderDate, url);
+        string? url)
+    {
+        if (tribunalId <= 0)
+        {
+            throw new ArgumentException("DRT order key requires a positive tribunalId.", nameof(tribunalId));
+        }
+
+        if (!caseTypeId.HasValue || caseTypeId.Value <= 0)
+        {
+            throw new ArgumentException("DRT order key requires a valid caseTypeId.", nameof(caseTypeId));
+        }
+
+        if (string.IsNullOrWhiteSpace(caseNo))
+        {
+            throw new ArgumentException("DRT order key requires a non-empty caseNo.", nameof(caseNo));
+        }
+
+        if (!caseYear.HasValue || caseYear.Value <= 0)
+        {
+            throw new ArgumentException("DRT order key requires a valid caseYear.", nameof(caseYear));
+        }
+
+        if (string.IsNullOrWhiteSpace(kind))
+        {
+            throw new ArgumentException("DRT order key requires a non-empty kind (e.g. daily/final).", nameof(kind));
+        }
+
+        if (!orderDate.HasValue)
+        {
+            throw new ArgumentException("DRT order key requires a valid orderDate.", nameof(orderDate));
+        }
+
+        if (string.IsNullOrWhiteSpace(url))
+        {
+            throw new ArgumentException("DRT order key requires a non-empty url.", nameof(url));
+        }
+
+        return DrtOrderKeyHelper.BuildCompositeOrderKey(tribunalId, caseTypeId.Value, caseNo, caseYear.Value, kind, orderDate.Value, url);
+    }
 
     /// <summary>Builds the consumer portal order key from (filingReferenceNumber, courtRoomHearingId, orderTypeId).
     /// Both hearing ID and order type are required by the plan to identify an order and separate daily orders
@@ -94,7 +132,19 @@ public static class OrderKeyBuilder
 
         if (locator.Source.Equals("Drt", StringComparison.OrdinalIgnoreCase))
         {
-            return DrtOrderKeyHelper.ExtractOrderKey(locator.OrderUrl ?? locator.PdfUrl);
+            var url = locator.OrderUrl ?? locator.PdfUrl;
+            if (string.IsNullOrWhiteSpace(url))
+            {
+                throw new ArgumentException("DRT order locator requires OrderUrl or PdfUrl.", nameof(locator));
+            }
+
+            var key = DrtOrderKeyHelper.ExtractOrderKey(url);
+            if (string.IsNullOrWhiteSpace(key))
+            {
+                throw new ArgumentException("DRT order locator requires a resolvable file path from url.", nameof(locator));
+            }
+
+            return key;
         }
 
         return (locator.OrderUrl ?? locator.PdfUrl ?? string.Empty).Trim();

@@ -58,16 +58,57 @@ public static partial class DrtOrderKeyHelper
     }
 
     /// <summary>Builds the full composite OrderKey per plan section 4.5:
-    /// <c>(tribunalId, caseTypeId, caseNo, caseYear, kind, orderDate, normalisedFilePath)</c>.</summary>
+    /// <c>(tribunalId, caseTypeId, caseNo, caseYear, kind, orderDate, normalisedFilePath)</c>.
+    /// Rejects incomplete identity fields rather than manufacturing placeholders to avoid key collisions.</summary>
     public static string BuildCompositeOrderKey(
         int tribunalId, int? caseTypeId, string? caseNo, int? caseYear, string kind, DateOnly? orderDate, string? url)
     {
+        if (tribunalId <= 0)
+        {
+            throw new ArgumentException("DRT order key requires a positive tribunalId.", nameof(tribunalId));
+        }
+
+        if (!caseTypeId.HasValue || caseTypeId.Value <= 0)
+        {
+            throw new ArgumentException("DRT order key requires a valid caseTypeId.", nameof(caseTypeId));
+        }
+
+        if (string.IsNullOrWhiteSpace(caseNo))
+        {
+            throw new ArgumentException("DRT order key requires a non-empty caseNo.", nameof(caseNo));
+        }
+
+        if (!caseYear.HasValue || caseYear.Value <= 0)
+        {
+            throw new ArgumentException("DRT order key requires a valid caseYear.", nameof(caseYear));
+        }
+
+        if (string.IsNullOrWhiteSpace(kind))
+        {
+            throw new ArgumentException("DRT order key requires a non-empty kind.", nameof(kind));
+        }
+
+        if (!orderDate.HasValue)
+        {
+            throw new ArgumentException("DRT order key requires a valid orderDate.", nameof(orderDate));
+        }
+
+        if (string.IsNullOrWhiteSpace(url))
+        {
+            throw new ArgumentException("DRT order key requires a non-empty url.", nameof(url));
+        }
+
         var filePathKey = ExtractOrderKey(url);
-        var ct = caseTypeId?.ToString() ?? "0";
-        var cn = caseNo?.Trim() ?? "";
-        var cy = caseYear?.ToString() ?? "0";
+        if (string.IsNullOrWhiteSpace(filePathKey))
+        {
+            throw new ArgumentException("DRT order key requires a valid order file URL.", nameof(url));
+        }
+
+        var ct = caseTypeId.Value;
+        var cn = caseNo.Trim();
+        var cy = caseYear.Value;
         var k = kind.Trim().ToLowerInvariant();
-        var d = orderDate?.ToString("yyyy-MM-dd") ?? "nodate";
+        var d = orderDate.Value.ToString("yyyy-MM-dd");
         return $"{tribunalId}|{ct}|{cn}|{cy}|{k}|{d}|{filePathKey}";
     }
 

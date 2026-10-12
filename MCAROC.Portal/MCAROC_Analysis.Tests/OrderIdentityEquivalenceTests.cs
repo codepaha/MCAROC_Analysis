@@ -372,5 +372,50 @@ public class OrderIdentityEquivalenceTests
         Assert.Throws<ArgumentException>(() => OrderKeyBuilder.ForBpr(pdfUrl, "2025-04-15", null));
         Assert.Throws<ArgumentException>(() => OrderKeyBuilder.ForBpr(pdfUrl, "2025-04-15", "   "));
     }
+
+    [Fact]
+    public void When_Drt_identity_fields_are_missing_builder_and_locator_reject_incomplete_identity()
+    {
+        const string validUrl = "https://cis.drt.gov.in/order/pdf1.php?file=ZHJ0Y291cnQvZGVsaGkvMjAyNi9vcmRlcl81NTUucGRm";
+        var date = new DateOnly(2026, 3, 20);
+
+        // Valid fields succeed
+        var validKey = OrderKeyBuilder.ForDrt(1, 10, "555", 2026, "daily", date, validUrl);
+        Assert.Contains("delhi/2026/order_555.pdf", validKey);
+
+        // Missing or non-positive tribunalId
+        Assert.Throws<ArgumentException>(() => OrderKeyBuilder.ForDrt(0, 10, "555", 2026, "daily", date, validUrl));
+        Assert.Throws<ArgumentException>(() => OrderKeyBuilder.ForDrt(-1, 10, "555", 2026, "daily", date, validUrl));
+
+        // Missing or non-positive caseTypeId
+        Assert.Throws<ArgumentException>(() => OrderKeyBuilder.ForDrt(1, null, "555", 2026, "daily", date, validUrl));
+        Assert.Throws<ArgumentException>(() => OrderKeyBuilder.ForDrt(1, 0, "555", 2026, "daily", date, validUrl));
+
+        // Missing or whitespace caseNo
+        Assert.Throws<ArgumentException>(() => OrderKeyBuilder.ForDrt(1, 10, null, 2026, "daily", date, validUrl));
+        Assert.Throws<ArgumentException>(() => OrderKeyBuilder.ForDrt(1, 10, "   ", 2026, "daily", date, validUrl));
+
+        // Missing or non-positive caseYear
+        Assert.Throws<ArgumentException>(() => OrderKeyBuilder.ForDrt(1, 10, "555", null, "daily", date, validUrl));
+        Assert.Throws<ArgumentException>(() => OrderKeyBuilder.ForDrt(1, 10, "555", 0, "daily", date, validUrl));
+
+        // Missing or whitespace kind
+        Assert.Throws<ArgumentException>(() => OrderKeyBuilder.ForDrt(1, 10, "555", 2026, null, date, validUrl));
+        Assert.Throws<ArgumentException>(() => OrderKeyBuilder.ForDrt(1, 10, "555", 2026, "   ", date, validUrl));
+
+        // Missing orderDate
+        Assert.Throws<ArgumentException>(() => OrderKeyBuilder.ForDrt(1, 10, "555", 2026, "daily", null, validUrl));
+
+        // Missing or whitespace url
+        Assert.Throws<ArgumentException>(() => OrderKeyBuilder.ForDrt(1, 10, "555", 2026, "daily", date, null));
+        Assert.Throws<ArgumentException>(() => OrderKeyBuilder.ForDrt(1, 10, "555", 2026, "daily", date, "   "));
+
+        // Locator validation for DRT
+        var validLocator = new OrderSourceLocator(Source: "Drt", OrderUrl: validUrl);
+        Assert.Equal("delhi/2026/order_555.pdf", OrderKeyBuilder.ForLocator(validLocator));
+
+        var missingUrlLocator = new OrderSourceLocator(Source: "Drt", OrderUrl: null, PdfUrl: null);
+        Assert.Throws<ArgumentException>(() => OrderKeyBuilder.ForLocator(missingUrlLocator));
+    }
 }
 

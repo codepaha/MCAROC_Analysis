@@ -693,6 +693,12 @@ public sealed class DrtClient : IDrtClient
 
         var orderDate = pronouncedDate ?? dateOfFiling;
         var orderKey = !string.IsNullOrWhiteSpace(url)
+                       && tribunalId > 0
+                       && caseTypeId > 0
+                       && !string.IsNullOrWhiteSpace(caseNo)
+                       && caseYear > 0
+                       && !string.IsNullOrWhiteSpace(orderType)
+                       && orderDate.HasValue
             ? DrtOrderKeyHelper.BuildCompositeOrderKey(tribunalId, caseTypeId, caseNo, caseYear, orderType, orderDate, url)
             : null;
 
