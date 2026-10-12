@@ -2,6 +2,7 @@ using MCAROC_Analysis.Data;
 using MCAROC_Analysis.Models;
 using MCAROC_Analysis.Services.LitigationData;
 using MCAROC_Analysis.Services.LitigationModule.Normalisation;
+using MCAROC_Analysis.Services.LitigationModule.Refresh;
 using MCAROC_Analysis.Services.LitigationModule.Store;
 using MCAROC_Analysis.Services.RequestDetails;
 using Microsoft.EntityFrameworkCore;
@@ -66,6 +67,11 @@ public sealed class LitigationModuleParity(AppDbContext db)
         var stored = await StoredOverlaysAsync(requestId, ct);
         unexplained.AddRange(OverlayDifferences(stored, allById));
 
+        // 5. Field ownership (plan section 12.7): a portal-owned column must hold exactly what the projector would write; anything else means a second writer.
+        var (ownershipUnexplained, ownershipExplained) = await OwnershipDifferencesAsync(requestId, ct);
+        unexplained.AddRange(ownershipUnexplained);
+        explained.AddRange(ownershipExplained);
+
         return new ParityReport(requestId, legacy.Count, all.Count, unexplained, explained);
     }
 
@@ -115,6 +121,63 @@ public sealed class LitigationModuleParity(AppDbContext db)
         foreach (var dup in reader.Values.Where(i => i.Alias is not null).GroupBy(i => i.Alias).Where(g => g.Count() > 1))
             differences.Add($"alias {dup.Key} is shown for {dup.Count()} different cases");
         return differences;
+    }
+
+    /// <summary>One verified-link case as the ownership check sees it: the legacy columns and the verified projection that owns some of them.</summary>
+    public sealed record OwnedCase(long LegacyCaseId, IReadOnlyDictionary<string, string?> LegacyColumns, IReadOnlyDictionary<string, string?> ProjectedFields,
+        IReadOnlyDictionary<string, FieldSource> Sources, long ProjectionVersion, long? PublishedProjectionVersion);
+
+    /// <summary>The ownership table of plan section 12.7 for the request side: for every case whose link is Verified, each column the portal owns (its source is the portal or a
+    /// derivation of it) must hold what the publisher would write. A column that differs while a newer projection waits to be published is explained (publication pending);
+    /// one that differs with nothing pending was changed by a second writer, which is exactly what the table forbids. Public so the comparison is tested with differing data.</summary>
+    public static (List<string> Unexplained, List<string> Explained) OwnershipDifferences(IEnumerable<OwnedCase> cases)
+    {
+        var unexplained = new List<string>();
+        var explained = new List<string>();
+        foreach (var c in cases.OrderBy(c => c.LegacyCaseId))
+        {
+            var pending = c.PublishedProjectionVersion is not { } published || published < c.ProjectionVersion;
+            foreach (var (column, field, isDate) in LivePortalOwnership.Columns)
+            {
+                if (!c.Sources.TryGetValue(field, out var source) || source.Source is not ("Portal" or "Derived")) continue;   // not portal-owned: vendor-owned, nothing to check
+                c.ProjectedFields.TryGetValue(field, out var projected);
+                if (!LivePortalOwnership.TryGetTarget(projected, source, isDate, out var target)) continue;                    // the portal holds no value to enforce
+                c.LegacyColumns.TryGetValue(column, out var current);
+                if (string.Equals(current, target, StringComparison.Ordinal)) continue;
+                var message = $"case {c.LegacyCaseId}: {column} is portal-owned and should be \"{target}\" but legacy holds \"{current}\"";
+                if (pending) explained.Add(message + " (a newer projection is waiting to be published)");
+                else unexplained.Add(message + " (nothing is pending, so another writer changed it)");
+            }
+        }
+        return (unexplained, explained);
+    }
+
+    public async Task<(List<string> Unexplained, List<string> Explained)> OwnershipDifferencesAsync(long requestId, CancellationToken ct)
+    {
+        var rows = await (from l in db.Set<ModuleRequestLink>().AsNoTracking()
+            where l.RequestId == requestId && l.Verdict == (int)PartyMatchOutcome.Verified
+            join mc in db.Set<ModuleCase>().AsNoTracking() on l.CaseId equals mc.CaseId
+            join live in db.Set<ModuleCaseLive>().AsNoTracking() on l.CaseId equals live.CaseId
+            join lc in db.LitigationCases.AsNoTracking() on mc.LegacyLitigationCaseId equals (long?)lc.LitigationCaseId
+            where lc.RequestId == requestId
+            select new { lc.LitigationCaseId, lc.CaseStatus, lc.CaseStage, lc.Court, lc.FilingDate, lc.LastHearingDate, lc.NextHearingDate, lc.DecisionDate,
+                LiveStatus = live.Status, LiveStage = live.Stage, LiveCourt = live.Court, LiveFiling = live.FilingDate, LiveLast = live.LastHearingDate, LiveNext = live.NextHearingDate, LiveDecision = live.DecisionDate,
+                live.FieldSourcesJson, live.Version, l.PublishedProjectionVersion }).ToListAsync(ct);
+        var cases = rows.Select(r => new OwnedCase(r.LitigationCaseId,
+            new Dictionary<string, string?>
+            {
+                [LivePortalOwnership.CaseStatus] = r.CaseStatus, [LivePortalOwnership.CaseStage] = r.CaseStage, [LivePortalOwnership.Court] = r.Court,
+                [LivePortalOwnership.FilingDate] = r.FilingDate, [LivePortalOwnership.LastHearingDate] = r.LastHearingDate,
+                [LivePortalOwnership.NextHearingDate] = r.NextHearingDate, [LivePortalOwnership.DecisionDate] = r.DecisionDate
+            },
+            new Dictionary<string, string?>
+            {
+                [LiveProjectionEngine.FStatus] = r.LiveStatus, [LiveProjectionEngine.FStage] = r.LiveStage, [LiveProjectionEngine.FCourt] = r.LiveCourt,
+                [LiveProjectionEngine.FFilingDate] = r.LiveFiling, [LiveProjectionEngine.FLastHearing] = r.LiveLast,
+                [LiveProjectionEngine.FNextHearing] = r.LiveNext, [LiveProjectionEngine.FDecisionDate] = r.LiveDecision
+            },
+            LiveProjectionEngine.DeserializeSources(r.FieldSourcesJson), r.Version, r.PublishedProjectionVersion));
+        return OwnershipDifferences(cases);
     }
 
     private static void Diff<T>(List<string> unexplained, long id, string field, T expected, T actual)
