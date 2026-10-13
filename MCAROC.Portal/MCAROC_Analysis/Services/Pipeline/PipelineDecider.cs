@@ -75,6 +75,9 @@ public static class PipelineDecider
         v[PipelineStage.LitigationAnalysis] = identityPending && s.LitigationAnalysis is null
             ? Waiting(AwaitingResolve)
             : LitigationAnalysis(s, policy, v[PipelineStage.Litigation], clock);
+        v[PipelineStage.CourtUpdate] = identityPending && s.CourtUpdate is null
+            ? Waiting(AwaitingResolve)
+            : CourtUpdate(s, policy, v[PipelineStage.Litigation], clock);
 
         var states = v.ToDictionary(kv => kv.Key, kv => kv.Value.State);
         var skipKinds = v.ToDictionary(kv => kv.Key, kv => kv.Value.SkipKind);
@@ -308,6 +311,38 @@ public static class PipelineDecider
                 ReasonDetail: $"{trust.Detail} A reviewer can start the search by hand.");
         return new StageVerdict(PipelineStageStateKind.NotStarted, ReasonCode: ReadyToStart,
             ReasonDetail: "Ready to start. The coordinator starts it itself only in Enforce mode with Enforce:Litigation on.");
+    }
+
+    /// <summary>How long without an agent report, with work still to do, before the court update reads as paused (plan 4.8).</summary>
+    public static readonly TimeSpan CourtUpdateHeartbeatWindow = TimeSpan.FromMinutes(10);
+
+    /// <summary>A finished run with more than this share of its cases unverified finishes with a warning (plan 4.9 §7: a high failure rate is surfaced).</summary>
+    public const double CourtUpdateFailureWarnShare = 0.2;
+
+    /// <summary>The court update (#444). Not a core stage: the dossier and the analysis never wait for it (plan 4.7). It starts itself once the litigation search is done;
+    /// it is free (public portals), so there is no spend-trust gate, only the shared host traffic gate on the portals.</summary>
+    private static StageVerdict CourtUpdate(PipelineSnapshot s, PipelinePolicy policy, StageVerdict litigation, DateTime now)
+    {
+        if (s.CourtUpdate is { } run)
+        {
+            if (run.FinishedUtc is not null)
+            {
+                var total = Math.Max(run.EligibleAtStart, run.Handled);
+                return total > 0 && run.Failed > total * CourtUpdateFailureWarnShare
+                    ? Warn("COURT_UPDATE_PARTIAL", $"{run.Failed} of {total} cases could not be verified on the court portals; they keep their last known values.", run.RunId)
+                    : Ok(run.RunId);
+            }
+            var lastSign = run.LastAgentHeartbeatUtc ?? run.StartedUtc;
+            return now - lastSign > CourtUpdateHeartbeatWindow
+                ? Running(run.RunId, "COURT_UPDATE_PAUSED")
+                : Running(run.RunId);
+        }
+        if (!policy.CourtUpdate) return Skip(PipelineStageSkipKind.Neutral, "POLICY_OFF");
+        if (!s.CourtAgentsEnabled) return Skip(PipelineStageSkipKind.Neutral, "COURT_AGENTS_OFF");
+        if (litigation.State == PipelineStageStateKind.Skipped) return Skip(PipelineStageSkipKind.Neutral, "UPSTREAM_SKIPPED");
+        if (!litigation.IsDone) return Waiting("AWAITING_LITIGATION");
+        return new StageVerdict(PipelineStageStateKind.NotStarted, ReasonCode: ReadyToStart,
+            ReasonDetail: "Ready to start. The coordinator starts it itself in Enforce mode with Enforce:CourtUpdate on.");
     }
 
     private static StageVerdict LitigationAnalysis(PipelineSnapshot s, PipelinePolicy policy, StageVerdict litigation, DateTime now)

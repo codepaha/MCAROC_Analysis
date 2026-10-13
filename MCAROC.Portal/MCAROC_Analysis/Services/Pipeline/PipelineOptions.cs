@@ -78,6 +78,7 @@ public sealed class PipelineOptions
     public bool EnforcesLitigationSearch() => Enabled && Mode == PipelineMode.Enforce && Enforce.Litigation;
     public bool EnforcesLitigationAnalysis() => Enabled && Mode == PipelineMode.Enforce && Enforce.LitigationAnalysis;
     public bool EnforcesDossierPreRender() => Enabled && Mode == PipelineMode.Enforce && Enforce.Dossier;
+    public bool EnforcesCourtUpdate() => Enabled && Mode == PipelineMode.Enforce && Enforce.CourtUpdate;
     public bool EnforcesRetries() => Enabled && Mode == PipelineMode.Enforce && Enforce.Retries;
 }
 
@@ -98,6 +99,10 @@ public sealed class PipelineEnforceOptions
     /// Off by default — owner decision 2026-09-24 (plan §16) keeps litigation analysis off with cap 0 even
     /// with the rest of Enforce mode on.</summary>
     public bool LitigationAnalysis { get; set; }
+
+    /// <summary>Start the court update automatically once the litigation search is done (#444). The portals are public and free, so no spend cap
+    /// or identity-trust ladder applies; the shared host traffic gate bounds the load.</summary>
+    public bool CourtUpdate { get; set; }
 
     /// <summary>Pre-render the dossier PDF once <c>CalcAssurance</c> succeeds (plan §4.3), through the same
     /// cache path <c>DossierController.Download</c> uses — purely a latency optimisation for the first
@@ -123,6 +128,8 @@ public sealed class PipelinePolicy
 {
     public bool LitigationSearch { get; set; }
     public bool LitigationAnalysis { get; set; }
+    /// <summary>Refresh the request's court cases on the DRT and consumer-commission portals after the litigation search (#444).</summary>
+    public bool CourtUpdate { get; set; }
 }
 
 /// <summary>Daily caps on <c>Auto</c> admissions per kind. Manual admissions are counted against the same

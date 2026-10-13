@@ -111,6 +111,13 @@ public sealed class RefreshRunService(AppDbContext db, FetchWorkQueue queue, Tim
             counts.GetValueOrDefault(FetchWorkStatus.Failed) + counts.GetValueOrDefault(FetchWorkStatus.Cancelled), run.LastAgentHeartbeatUtc);
     }
 
+    /// <summary>The request's newest run's progress, for readers outside the module (the pipeline snapshot), which may not touch the module's tables themselves.</summary>
+    public static async Task<RefreshRunProgress?> LatestProgressAsync(AppDbContext db, long requestId, CancellationToken ct)
+    {
+        var service = new RefreshRunService(db, new FetchWorkQueue(db));
+        return await service.LatestRunIdAsync(requestId, ct) is { } runId ? await service.ProgressAsync(runId, ct) : null;
+    }
+
     /// <summary>The request's newest run, finished or not.</summary>
     public Task<long?> LatestRunIdAsync(long requestId, CancellationToken ct) =>
         db.Set<ModuleRefreshRun>().AsNoTracking().Where(r => r.RequestId == requestId).OrderByDescending(r => r.RunId).Select(r => (long?)r.RunId).FirstOrDefaultAsync(ct);

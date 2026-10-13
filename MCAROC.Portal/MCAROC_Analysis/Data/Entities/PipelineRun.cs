@@ -15,7 +15,9 @@ public enum PipelineStage
     Dossier,
     Filings,
     Litigation,
-    LitigationAnalysis
+    LitigationAnalysis,
+    /// <summary>The court update (live DRT and consumer-commission refresh, #444): starts itself once the litigation search is done; nothing waits for it.</summary>
+    CourtUpdate
 }
 
 /// <summary>One stage's state at the last reconcile tick. <see cref="Succeeded"/>/<see

@@ -152,7 +152,9 @@ public class PipelineSnapshotReader(AppDbContext db, IConfiguration config, IOpt
             Filings = filings,
             LitigationConfigured = bprOptions.Value.IsConfigured,
             LitigationSearch = searchFacts,
-            LitigationAnalysis = litigationAnalysis
+            LitigationAnalysis = litigationAnalysis,
+            CourtUpdate = await MCAROC_Analysis.Services.LitigationModule.Fetching.RefreshRunService.LatestProgressAsync(db, requestId, ct),
+            CourtAgentsEnabled = config.GetValue<bool>("LitigationPortals:Agents:Enabled")
         };
     }
 }

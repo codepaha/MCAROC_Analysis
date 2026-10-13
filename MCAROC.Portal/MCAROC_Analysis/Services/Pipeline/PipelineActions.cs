@@ -25,10 +25,24 @@ public interface IPipelineActions
     /// <summary>Plan §6.2: requeue a Failed auto-fetch job — the one coordinator-retryable stage this PR
     /// wires (Analysis/Filings/Dossier retry are a documented fast-follow, not this action's job).</summary>
     Task<PipelineActionResult> RetryFetchAsync(long requestId, string correlationId, CancellationToken ct);
+
+    /// <summary>#444: start the request's court update (or observe the one already open).</summary>
+    Task<PipelineActionResult> StartCourtUpdateAsync(long requestId, string correlationId, CancellationToken ct) =>
+        Task.FromResult(PipelineActionResult.Deferred("COURT_UPDATE_NOT_AVAILABLE", "This coordinator cannot start a court update."));
 }
 
-public sealed class PipelineActions(LitigationStartService litigation, DossierArtifactService dossier, AutoFetchJobService autoFetch, AutoFetchQueue autoFetchQueue) : IPipelineActions
+public sealed class PipelineActions(LitigationStartService litigation, DossierArtifactService dossier, AutoFetchJobService autoFetch, AutoFetchQueue autoFetchQueue,
+    MCAROC_Analysis.Services.LitigationModule.Fetching.RefreshRunService? courtUpdate = null) : IPipelineActions
 {
+    public async Task<PipelineActionResult> StartCourtUpdateAsync(long requestId, string correlationId, CancellationToken ct)
+    {
+        if (courtUpdate is null) return PipelineActionResult.Deferred("COURT_UPDATE_NOT_AVAILABLE", "The court update service is not registered.");
+        var start = await courtUpdate.StartAsync(requestId, ct);
+        return start.AlreadyRunning
+            ? new PipelineActionResult(false, true, start.RunId, null, null)
+            : new PipelineActionResult(true, false, start.RunId, null, null);
+    }
+
     public async Task<PipelineActionResult> StartLitigationSearchAsync(long requestId, string correlationId, CancellationToken ct)
     {
         var result = await litigation.StartAutoSearchAsync(requestId, correlationId, ct);

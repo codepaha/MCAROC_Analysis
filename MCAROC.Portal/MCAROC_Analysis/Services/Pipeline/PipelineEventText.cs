@@ -50,7 +50,8 @@ public static class PipelineEventText
         [PipelineStage.Dossier] = "Dossier",
         [PipelineStage.Filings] = "Filings",
         [PipelineStage.Litigation] = "Litigation search",
-        [PipelineStage.LitigationAnalysis] = "Litigation analysis"
+        [PipelineStage.LitigationAnalysis] = "Litigation analysis",
+        [PipelineStage.CourtUpdate] = "Court update"
     };
 
     private static readonly Dictionary<PipelineStageStateKind, string> StateLabels = new()
