@@ -39,6 +39,9 @@ public sealed class FetchWorkQueue(AppDbContext db, FetchQueueOptions? options =
 
     private DateTime Now => _time.GetUtcNow().UtcDateTime;
 
+    /// <summary>How long a claim lasts without renewal. An agent renews well within it while a call runs.</summary>
+    public TimeSpan LeaseDuration => _opts.LeaseDuration;
+
     /// <summary>Adds an item unless an active (queued or claimed) one already exists for the same kind, host and case; either way the item is linked to <paramref name="runId"/>, so a
     /// second run that needs work already queued for the first counts it too. Only a confirmed uniqueness conflict means "already queued"; any other failure is raised.
     /// Party searches (no case) are not de-duplicated here: the caller decides what a search is.</summary>
@@ -155,6 +158,17 @@ public sealed class FetchWorkQueue(AppDbContext db, FetchQueueOptions? options =
     public async Task<bool> RenewAsync(ClaimedWork work, CancellationToken ct) =>
         await db.Set<ModuleFetchWorkItem>().Where(w => w.WorkItemId == work.WorkItemId && w.LeaseToken == work.LeaseToken && w.Status == (int)FetchWorkStatus.Claimed)
             .ExecuteUpdateAsync(s => s.SetProperty(w => w.LeaseExpiresUtc, Now + _opts.LeaseDuration), ct) == 1;
+
+    /// <summary>The fence for writing a result. Inside the caller's transaction, takes the item's row lock and confirms this agent still holds the lease (renewing it). Until the caller
+    /// commits, no other agent can claim, recover or settle the item, so whatever the caller writes next (an observation, the projection, the item's outcome) is either all from the
+    /// lease holder or not written at all. False = the lease was lost: write nothing.</summary>
+    public async Task<bool> FenceAsync(ClaimedWork work, CancellationToken ct)
+    {
+        if (db.Database.CurrentTransaction is null) throw new InvalidOperationException("The fence only means something inside a transaction that also writes the result.");
+        var expires = Now + _opts.LeaseDuration;
+        return await db.Set<ModuleFetchWorkItem>().Where(w => w.WorkItemId == work.WorkItemId && w.LeaseToken == work.LeaseToken && w.Status == (int)FetchWorkStatus.Claimed)
+            .ExecuteUpdateAsync(s => s.SetProperty(w => w.LeaseExpiresUtc, expires), ct) == 1;
+    }
 
     /// <summary>Records success. False when this agent no longer holds the lease (its result is discarded; the item belongs to whoever has it now).</summary>
     public async Task<bool> CompleteAsync(ClaimedWork work, string outcome, CancellationToken ct) =>

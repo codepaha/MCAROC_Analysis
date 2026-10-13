@@ -40,12 +40,15 @@ public class FetchAgentTests : IAsyncLifetime
     {
         public Queue<DrtCaseLookupResult> Script { get; } = new();
         public int Calls { get; private set; }
+        /// <summary>Runs during the call, before the scripted answer comes back: what other agents do meanwhile.</summary>
+        public Func<CancellationToken, Task>? During { get; set; }
         public string CurrentExit => "direct";
 
-        public Task<DrtCaseLookupResult> GetCaseByNumberAsync(int tribunalId, int caseTypeId, string caseNo, int caseYear, CancellationToken ct = default)
+        public async Task<DrtCaseLookupResult> GetCaseByNumberAsync(int tribunalId, int caseTypeId, string caseNo, int caseYear, CancellationToken ct = default)
         {
             Calls++;
-            return Task.FromResult(Script.Dequeue());
+            if (During is not null) await During(ct);
+            return Script.Dequeue();
         }
         public Task<DrtCaseLookupResult> GetRcTrcCaseAsync(int tribunalId, int caseTypeId, string caseNo, int caseYear, CancellationToken ct = default) =>
             GetCaseByNumberAsync(tribunalId, caseTypeId, caseNo, caseYear, ct);
@@ -69,8 +72,8 @@ public class FetchAgentTests : IAsyncLifetime
 
     private static readonly HostTrafficOptions Traffic = new() { DrtMaxConcurrency = 2, FailureThreshold = 3 };
 
-    private static FetchAgent Agent(AppDbContext db, ScriptedDrt drt, TestClock clock) =>
-        new(db, new FetchWorkQueue(db, null, clock), Gate(db, clock), drt, new NoConsumer(), NullLogger<FetchAgent>.Instance, clock);
+    private static FetchAgent Agent(AppDbContext db, ScriptedDrt drt, TestClock clock, FetchQueueOptions? queueOptions = null) =>
+        new(db, new FetchWorkQueue(db, queueOptions, clock), Gate(db, clock), drt, new NoConsumer(), NullLogger<FetchAgent>.Instance, clock);
 
     private static HostTrafficGate Gate(AppDbContext db, TestClock clock) =>
         new(db, new OperationalSlotLeaseService(db, NullLogger<OperationalSlotLeaseService>.Instance), Traffic, clock);
@@ -292,5 +295,72 @@ public class FetchAgentTests : IAsyncLifetime
         Assert.Null(FetchAgent.ExitHash(null));
         Assert.Equal(FetchAgent.ExitHash("Proxy-A "), FetchAgent.ExitHash("proxy-a"));
         Assert.NotEqual(FetchAgent.ExitHash("proxy-a"), FetchAgent.ExitHash("proxy-b"));
+    }
+
+    [Fact]
+    public async Task A_result_is_not_written_when_another_agent_took_the_item_over_during_the_call()
+    {
+        var clock = new TestClock(DateTime.UtcNow);
+        var (caseId, itemId, no) = await QueuedCaseAsync(clock);
+        var drt = new ScriptedDrt();
+        drt.Script.Enqueue(DrtCaseLookupResult.Found(Details($"OA/{no}/2022"), exitAddress: "exit-a"));
+        drt.During = async _ =>
+        {
+            // The call outlived the lease: recovery returned the item and another agent claimed it.
+            clock.Utc += TimeSpan.FromMinutes(6);
+            await using var other = Ctx();
+            var q = new FetchWorkQueue(other, null, clock);
+            Assert.NotNull(await q.ClaimNextAsync(FetchHost.Drt, "agent-2", default));
+        };
+
+        Assert.Equal(AgentTurn.LeaseLost, await TurnAsync(drt, clock));
+
+        Assert.Empty(await ObservationsAsync(caseId));                                           // nothing stale on record
+        await using var db = Ctx();
+        Assert.False(await db.Set<ModuleCaseLive>().AnyAsync(l => l.CaseId == caseId));
+        var item = await ItemAsync(itemId);
+        Assert.Equal((int)FetchWorkStatus.Claimed, item.Status);                                 // still agent-2's
+        Assert.Equal("agent-2", item.LeaseOwner);
+    }
+
+    [Fact]
+    public async Task A_long_call_keeps_its_lease_alive()
+    {
+        var clock = new TestClock(DateTime.UtcNow);
+        var (caseId, itemId, no) = await QueuedCaseAsync(clock);
+        var shortLease = new FetchQueueOptions { LeaseDuration = TimeSpan.FromMilliseconds(300) };   // renewed every 100 ms of real time
+        var drt = new ScriptedDrt();
+        drt.Script.Enqueue(DrtCaseLookupResult.Found(Details($"OA/{no}/2022"), exitAddress: "exit-a"));
+        var recovered = -1;
+        drt.During = async _ =>
+        {
+            clock.Utc += TimeSpan.FromSeconds(1);                                                  // the original lease has run out...
+            await Task.Delay(TimeSpan.FromMilliseconds(400));                                       // ...but the heartbeat renews it meanwhile
+            await using var other = Ctx();
+            recovered = await new FetchWorkQueue(other, shortLease, clock).RecoverExpiredLeasesAsync(FetchHost.Drt, default);
+        };
+
+        await using (var db = Ctx())
+            Assert.Equal(AgentTurn.Done, await Agent(db, drt, clock, shortLease).RunOnceAsync(FetchHost.Drt, "agent-1", default));
+
+        Assert.Equal(0, recovered);
+        Assert.Equal("Updated", (await ItemAsync(itemId)).LastOutcome);
+        Assert.True(Assert.Single(await ObservationsAsync(caseId)).Verified);
+    }
+
+    [Fact]
+    public async Task Retry_After_from_the_portal_keeps_every_agent_away()
+    {
+        var clock = new TestClock(DateTime.UtcNow);
+        await QueuedCaseAsync(clock);
+        var drt = new ScriptedDrt();
+        drt.Script.Enqueue(DrtCaseLookupResult.Unavailable("429 after retries", statusCode: HttpStatusCode.TooManyRequests) with { RetryAfter = TimeSpan.FromMinutes(30) });
+
+        Assert.Equal(AgentTurn.Retrying, await TurnAsync(drt, clock));
+
+        await using var db = Ctx();
+        var snap = await Gate(db, clock).SnapshotAsync(FetchHost.Drt, default);
+        Assert.True(snap.BreakerOpen);                                                           // one 429, below the threshold, but the portal said when to come back
+        Assert.Equal(clock.Utc + TimeSpan.FromMinutes(30), snap.OpenUntilUtc);
     }
 }

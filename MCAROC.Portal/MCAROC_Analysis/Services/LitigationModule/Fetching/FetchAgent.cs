@@ -86,42 +86,101 @@ public sealed class FetchAgent(
             return Settle(await queue.DeferAsync(work, entry.RetryAtUtc ?? Now + TimeSpan.FromSeconds(30), reason, ct), AgentTurn.Deferred);
         }
 
-        PortalAnswer answer;
+        PortalAnswer? answer;
         try
         {
-            answer = await CallAsync(lookup, ct);
-            await gate.ReportAsync(entry.Permit!, answer.HostOutcome, answer.Message, null, ct);
+            answer = await CallWithHeartbeatAsync(work, entry.Permit!, lookup, ct);
+            if (answer is not null) await gate.ReportAsync(entry.Permit!, answer.HostOutcome, answer.Message, answer.RetryAfter, ct);
         }
         finally
         {
             await gate.ReleaseAsync(entry.Permit!, CancellationToken.None);
         }
+        if (answer is null) return AgentTurn.LeaseLost;   // the item was taken over while the call ran: its result belongs to the new holder
 
         var now = Now;
-        switch (answer.Mapped.Outcome)
+        return await FencedAsync(work, async () =>
         {
-            case ObservationOutcome.Found when answer.Mapped.Verified:
+            switch (answer.Mapped.Outcome)
             {
-                var published = await _projection.PublishAsync(new ObservationInput(caseId, answer.Source, ObservationOutcome.Found, true, now, answer.Mapped.Snapshot), ct);
-                var outcome = published.ChangedFields.Count > 0 ? "Updated" : "Unchanged";
-                return Settle(await queue.CompleteAsync(work, outcome, ct), AgentTurn.Done);
+                case ObservationOutcome.Found when answer.Mapped.Verified:
+                {
+                    var published = await _projection.PublishAsync(new ObservationInput(caseId, answer.Source, ObservationOutcome.Found, true, now, answer.Mapped.Snapshot), ct);
+                    var outcome = published.ChangedFields.Count > 0 ? "Updated" : "Unchanged";
+                    return Settle(await queue.CompleteAsync(work, outcome, ct), AgentTurn.Done);
+                }
+                case ObservationOutcome.IdentityRejected:
+                {
+                    // The portal returned some other case for this number: on record, never applied, never retried (plan 4.3, 4.9).
+                    await _projection.PublishAsync(new ObservationInput(caseId, answer.Source, ObservationOutcome.IdentityRejected, false, now, answer.Mapped.Snapshot), ct);
+                    return Settle(await queue.CompleteAsync(work, "IdentityRejected", ct), AgentTurn.Done);
+                }
+                case ObservationOutcome.NotFound:
+                    return await NotFoundAsync(work, caseId, answer, now, ct);
+                default:
+                {
+                    await _projection.PublishAsync(new ObservationInput(caseId, answer.Source, ObservationOutcome.Error, false, now, null), ct);
+                    if (!answer.Retryable)
+                        return Settle(await queue.FailPermanentlyAsync(work, "PortalError", answer.Message ?? "the portal refused the lookup", ct), AgentTurn.Failed);
+                    var r = await queue.FailAttemptAsync(work, "PortalUnavailable", answer.Message ?? "the portal did not answer", ct);
+                    return !r.Recorded ? AgentTurn.LeaseLost : r.Terminal ? AgentTurn.Failed : AgentTurn.Retrying;
+                }
             }
-            case ObservationOutcome.IdentityRejected:
+        }, ct);
+    }
+
+    /// <summary>Writes a result only while this agent still holds the item: one transaction that first fences on the lease (row lock + token check), then writes the observation,
+    /// the projection and the item's outcome. Another agent that took the item over cannot interleave, and a stale result is never written (plan 4.9 §7: retries are idempotent).</summary>
+    private async Task<AgentTurn> FencedAsync(ClaimedWork work, Func<Task<AgentTurn>> write, CancellationToken ct)
+    {
+        await using var tx = await db.Database.BeginTransactionAsync(ct);
+        if (!await queue.FenceAsync(work, ct))
+        {
+            await tx.RollbackAsync(ct);
+            return AgentTurn.LeaseLost;
+        }
+        var turn = await write();
+        if (turn == AgentTurn.LeaseLost) { await tx.RollbackAsync(ct); return turn; }
+        await tx.CommitAsync(ct);
+        return turn;
+    }
+
+    /// <summary>Calls the portal while renewing the item's lease and the host permit at a third of the lease. If the lease cannot be renewed (another agent took the item over), the
+    /// call is cancelled and null is returned: nothing the call learnt may be written.</summary>
+    private async Task<PortalAnswer?> CallWithHeartbeatAsync(ClaimedWork work, HostPermit permit, PortalLookup lookup, CancellationToken ct)
+    {
+        using var callCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        var leaseLost = false;
+        var every = queue.LeaseDuration / 3;
+        async Task HeartbeatAsync()
+        {
+            while (true)
             {
-                // The portal returned some other case for this number: on record, never applied, never retried (plan 4.3, 4.9).
-                await _projection.PublishAsync(new ObservationInput(caseId, answer.Source, ObservationOutcome.IdentityRejected, false, now, answer.Mapped.Snapshot), ct);
-                return Settle(await queue.CompleteAsync(work, "IdentityRejected", ct), AgentTurn.Done);
+                try { await Task.Delay(every, _time, callCts.Token); }
+                catch (OperationCanceledException) { return; }
+                if (!await queue.RenewAsync(work, CancellationToken.None))
+                {
+                    leaseLost = true;
+                    callCts.Cancel();
+                    return;
+                }
+                await gate.RenewAsync(permit, CancellationToken.None);
             }
-            case ObservationOutcome.NotFound:
-                return await NotFoundAsync(work, caseId, answer, now, ct);
-            default:
-            {
-                await _projection.PublishAsync(new ObservationInput(caseId, answer.Source, ObservationOutcome.Error, false, now, null), ct);
-                if (!answer.Retryable)
-                    return Settle(await queue.FailPermanentlyAsync(work, "PortalError", answer.Message ?? "the portal refused the lookup", ct), AgentTurn.Failed);
-                var r = await queue.FailAttemptAsync(work, "PortalUnavailable", answer.Message ?? "the portal did not answer", ct);
-                return !r.Recorded ? AgentTurn.LeaseLost : r.Terminal ? AgentTurn.Failed : AgentTurn.Retrying;
-            }
+        }
+        var heartbeat = HeartbeatAsync();
+        try
+        {
+            return await CallAsync(lookup, callCts.Token);
+        }
+        catch (OperationCanceledException) when (leaseLost && !ct.IsCancellationRequested)
+        {
+            return null;
+        }
+        finally
+        {
+            // Stop the heartbeat and wait for it, so nothing else uses the database context once the call is over.
+            callCts.Cancel();
+            await heartbeat;
         }
     }
 
@@ -143,7 +202,7 @@ public sealed class FetchAgent(
         return !r.Recorded ? AgentTurn.LeaseLost : r.Terminal ? AgentTurn.Failed : AgentTurn.Retrying;
     }
 
-    private sealed record PortalAnswer(ObservationSource Source, ObservationOutcomeView Mapped, HostCallOutcome HostOutcome, bool Retryable, string? Message, string? ExitAddress);
+    private sealed record PortalAnswer(ObservationSource Source, ObservationOutcomeView Mapped, HostCallOutcome HostOutcome, bool Retryable, string? Message, string? ExitAddress, TimeSpan? RetryAfter = null);
 
     /// <summary>The part of an adapter's mapped observation the agent needs, the same for both portals.</summary>
     private sealed record ObservationOutcomeView(ObservationOutcome Outcome, bool Verified, ParsedCaseSnapshot? Snapshot);
@@ -163,7 +222,7 @@ public sealed class FetchAgent(
                 : await drt.GetCaseByNumberAsync(lookup.VenueId, caseTypeId.Value, lookup.Parts.No!, lookup.Parts.Year!.Value, ct);
             var mapped = DrtObservationMapper.Map(result, new DrtLookup(lookup.VenueId, lookup.Parts), DrtTribunalRegistry.TryGetById(lookup.VenueId), noNames, null, null, todayIst);
             return new(ObservationSource.DrtPortal, new(mapped.Outcome, mapped.Verified, mapped.Snapshot), Classify(result.Status == DrtLookupStatus.Unavailable, result.StatusCode),
-                Retryable(result.Status == DrtLookupStatus.Unavailable, result.StatusCode), mapped.Message ?? result.Message, result.ExitAddress);
+                Retryable(result.Status == DrtLookupStatus.Unavailable, result.StatusCode), mapped.Message ?? result.Message, result.ExitAddress, result.RetryAfter);
         }
         else
         {
@@ -171,7 +230,7 @@ public sealed class FetchAgent(
             var result = await consumer.GetCaseStatusAsync(number, ct);
             var mapped = ConsumerObservationMapper.Map(result, new ConsumerLookup(lookup.VenueId, lookup.Parts), noNames, null, null, todayIst);
             return new(ObservationSource.ConsumerPortal, new(mapped.Outcome, mapped.Verified, mapped.Snapshot), Classify(result.Status == ConsumerLookupStatus.Unavailable, result.StatusCode),
-                Retryable(result.Status == ConsumerLookupStatus.Unavailable, result.StatusCode), mapped.Message ?? result.Message, result.ExitAddress);
+                Retryable(result.Status == ConsumerLookupStatus.Unavailable, result.StatusCode), mapped.Message ?? result.Message, result.ExitAddress, result.RetryAfter);
         }
     }
 
