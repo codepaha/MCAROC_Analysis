@@ -239,4 +239,69 @@ public class HostTrafficGateTests : IAsyncLifetime
         Assert.False(snap.BreakerOpen);
         Assert.Null(snap.LastSuccessUtc);
     }
+
+    [Fact]
+    public async Task An_answer_from_a_call_already_in_flight_does_not_close_an_open_breaker()
+    {
+        var clock = new TestClock(DateTime.UtcNow);
+        await using var db = Ctx();
+        var inFlight = await Gate(db, clock).TryEnterAsync(FetchHost.Drt, "slow-agent", default);    // admitted while the host was healthy
+        Assert.True(inFlight.Admitted);
+        await ReportAsync(clock, HostCallOutcome.Unavailable, times: 3);                                // meanwhile the breaker opens
+        await Gate(db, clock).ReportAsync(inFlight.Permit!, HostCallOutcome.Answered, null, null, default);   // then the old call comes back fine
+        var snap = await SnapshotAsync(clock);
+        Assert.True(snap.BreakerOpen);
+        Assert.Equal(3, snap.ConsecutiveFailures);
+
+        // nor in half-open: only the probe closes it
+        clock.Utc += TimeSpan.FromMinutes(6);
+        var probe = await Gate(db, clock).TryEnterAsync(FetchHost.Drt, "prober", default);
+        Assert.True(probe.Permit!.IsProbe);
+        await Gate(db, clock).ReportAsync(inFlight.Permit!, HostCallOutcome.Answered, null, null, default);
+        Assert.NotNull((await SnapshotAsync(clock)).OpenUntilUtc);
+        await Gate(db, clock).ReportAsync(probe.Permit, HostCallOutcome.Answered, null, null, default);
+        Assert.Null((await SnapshotAsync(clock)).OpenUntilUtc);
+    }
+
+    /// <summary>A lease service that lets something happen between the gate's state read and the lease, like a report by another agent at that moment.</summary>
+    private sealed class InterleavingSlots(IOperationalSlotLeaseService inner, Func<Task> before) : IOperationalSlotLeaseService
+    {
+        public async Task<SlotLeaseResult> TryAcquireSlotAsync(string slotType, string holderId, TimeSpan duration, int capacity = 1, CancellationToken ct = default)
+        {
+            await before();
+            return await inner.TryAcquireSlotAsync(slotType, holderId, duration, capacity, ct);
+        }
+        public Task<bool> TryRenewSlotAsync(string slotType, string holderId, TimeSpan extension, CancellationToken ct = default) => inner.TryRenewSlotAsync(slotType, holderId, extension, ct);
+        public Task ReleaseSlotAsync(string slotType, string holderId, CancellationToken ct = default) => inner.ReleaseSlotAsync(slotType, holderId, ct);
+    }
+
+    [Fact]
+    public async Task A_429_between_the_state_read_and_the_lease_is_honoured()
+    {
+        var clock = new TestClock(DateTime.UtcNow);
+        await using var db = Ctx();
+        var gate = Gate(db, clock);
+        for (var i = 0; i < 2; i++) Assert.True((await gate.TryEnterAsync(FetchHost.Drt, "agent-" + i, default)).Admitted);   // 2 of 4 held
+
+        var inner = new OperationalSlotLeaseService(db, NullLogger<OperationalSlotLeaseService>.Instance);
+        var racing = new HostTrafficGate(db, new InterleavingSlots(inner, () => ReportAsync(clock, HostCallOutcome.Throttled)), Options, clock);
+        var entry = await racing.TryEnterAsync(FetchHost.Drt, "late-agent", default);   // the read said 4; a 429 halves it to 2 before the lease
+
+        Assert.False(entry.Admitted);
+        Assert.Equal(HostEntryRefusal.AtCapacity, entry.Refusal);
+        Assert.Equal(2, await db.OperationalSlotLeases.CountAsync(l => l.SlotType == "LitigationHost_Drt"));   // the late permit was given back
+    }
+
+    [Fact]
+    public async Task A_breaker_opening_between_the_state_read_and_the_lease_is_honoured()
+    {
+        var clock = new TestClock(DateTime.UtcNow);
+        await using var db = Ctx();
+        var inner = new OperationalSlotLeaseService(db, NullLogger<OperationalSlotLeaseService>.Instance);
+        var racing = new HostTrafficGate(db, new InterleavingSlots(inner, () => ReportAsync(clock, HostCallOutcome.Unavailable, times: 3)), Options, clock);
+        var entry = await racing.TryEnterAsync(FetchHost.Drt, "late-agent", default);
+        Assert.False(entry.Admitted);
+        Assert.Equal(HostEntryRefusal.BreakerOpen, entry.Refusal);
+        Assert.Equal(0, await db.OperationalSlotLeases.CountAsync(l => l.SlotType == "LitigationHost_Drt"));
+    }
 }

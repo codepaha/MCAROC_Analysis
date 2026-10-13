@@ -108,7 +108,27 @@ public sealed class HostTrafficGate(AppDbContext db, IOperationalSlotLeaseServic
         // A probe goes alone; otherwise the host's current concurrency is the lease capacity.
         var capacity = isProbe ? int.MaxValue : CurrentConcurrency(state, host);
         var lease = await slots.TryAcquireSlotAsync(SlotType(host), holder, _opts.PermitDuration, capacity, ct);
-        if (lease.Success) return new HostEntry(new HostPermit(host, holder, isProbe), HostEntryRefusal.None, null);
+        if (lease.Success)
+        {
+            if (isProbe) return new HostEntry(new HostPermit(host, holder, true), HostEntryRefusal.None, null);
+            // The capacity above came from a read made before the lease was taken: a 429 or an opening breaker reported in between would not be in it. Check again now that the permit
+            // is held and before any call is sent; if the host has since been slowed down or broken, give the permit back. Nothing was sent, so the cap is never exceeded on the wire.
+            var fresh = await ReadAsync(host, ct);
+            if (fresh.OpenUntilUtc is not null)
+            {
+                await slots.ReleaseSlotAsync(SlotType(host), holder, CancellationToken.None);
+                return new HostEntry(null, HostEntryRefusal.BreakerOpen, fresh.OpenUntilUtc > now ? fresh.OpenUntilUtc : now + _opts.BusyRetryDelay);
+            }
+            var leaseNow = DateTime.UtcNow;   // the operational lease keeps wall-clock times
+            var slotType = SlotType(host);
+            var holders = await db.OperationalSlotLeases.AsNoTracking().CountAsync(l => l.SlotType == slotType && l.ExpiresUtc > leaseNow, ct);
+            if (holders > CurrentConcurrency(fresh, host))
+            {
+                await slots.ReleaseSlotAsync(slotType, holder, CancellationToken.None);
+                return new HostEntry(null, HostEntryRefusal.AtCapacity, now + _opts.BusyRetryDelay);
+            }
+            return new HostEntry(new HostPermit(host, holder, false), HostEntryRefusal.None, null);
+        }
 
         if (isProbe) await ReleaseProbeAsync(host, holder, ct);
         return new HostEntry(null, HostEntryRefusal.AtCapacity, now + _opts.BusyRetryDelay);
@@ -132,12 +152,16 @@ public sealed class HostTrafficGate(AppDbContext db, IOperationalSlotLeaseServic
             case HostCallOutcome.Answered:
             {
                 var inc = _opts.AdditiveIncrease;
+                // Only the half-open probe closes an open breaker. A call that was already in flight when the breaker opened may still come back answered; that says nothing about
+                // the host now, so while the breaker is open (or half-open) a non-probe answer changes neither the breaker, the failure count nor the concurrency.
+                var probe = permit.IsProbe ? permit.HolderId : null;
                 await states.ExecuteUpdateAsync(u => u
-                    .SetProperty(s => s.ConsecutiveFailures, 0)
-                    .SetProperty(s => s.OpenUntilUtc, (DateTime?)null)
-                    .SetProperty(s => s.ProbeHolder, (string?)null)
-                    .SetProperty(s => s.ProbeUntilUtc, (DateTime?)null)
-                    .SetProperty(s => s.Concurrency, s => s.Concurrency + inc >= max ? max : s.Concurrency + inc)
+                    .SetProperty(s => s.ConsecutiveFailures, s => s.OpenUntilUtc == null || (probe != null && s.ProbeHolder == probe) ? 0 : s.ConsecutiveFailures)
+                    .SetProperty(s => s.OpenUntilUtc, s => probe != null && s.ProbeHolder == probe ? null : s.OpenUntilUtc)
+                    .SetProperty(s => s.ProbeUntilUtc, s => probe != null && s.ProbeHolder == probe ? null : s.ProbeUntilUtc)
+                    .SetProperty(s => s.Concurrency, s => s.OpenUntilUtc == null || (probe != null && s.ProbeHolder == probe)
+                        ? (s.Concurrency + inc >= max ? max : s.Concurrency + inc) : s.Concurrency)
+                    .SetProperty(s => s.ProbeHolder, s => probe != null && s.ProbeHolder == probe ? null : s.ProbeHolder)
                     .SetProperty(s => s.LastSuccessUtc, now), ct);
                 break;
             }
