@@ -83,4 +83,12 @@ public sealed class IdentityTrustAndMetricsTests
         Assert.Null(m.HumanOverrideRate);
         Assert.Contains("n/a", IdentityResolutionMetrics.Format(m));
     }
+
+    [Fact]
+    public void A_unique_exact_legal_name_selection_is_trusted_for_spend_whatever_its_score()
+    {
+        var facts = new IdentityFacts(1, ResolutionStatus.Resolved, ResolutionMethod.AutoSelected, ResolutionReasonCodes.UniqueExact, true, "U74999MH2020PTC338576", "U74999MH2020PTC338576", 0.90, null);
+        Assert.True(IdentityTrust.Evaluate(facts, 0.99).Trusted);
+        Assert.False(IdentityTrust.Evaluate(facts with { ReasonCode = ResolutionReasonCodes.AutoSelected }, 0.99).Trusted);   // an ordinary auto-selection at 0.90 is not
+    }
 }

@@ -64,6 +64,9 @@ public sealed class ResolverOptions
     /// unattended spend (auto-unlock, auto litigation search) only at or above this score — stricter than
     /// <see cref="AutoSelectThreshold"/>. A lower-confidence auto-selection still proceeds through the free steps.</summary>
     public double SpendThreshold { get; set; } = 0.99;
+    /// <summary><c>Resolve:AutoSelectUniqueExact</c>: select an exact, unique, Active legal-name match whatever its score (with auto-select on).
+    /// The score weighs hints a name-only intake never has, so an exact unique match could otherwise never be selected unattended.</summary>
+    public bool AutoSelectUniqueExact { get; set; } = true;
 }
 
 public sealed record ResolutionDecision(
@@ -84,6 +87,9 @@ public static class ResolutionReasonCodes
     public const string UserProvidedIdentifier = "RESOLVED_USER_PROVIDED_CIN";
     public const string AutoSelected = "RESOLVED_AUTO_SELECTED";
     public const string SoleActive = "RESOLVED_SOLE_ACTIVE";
+    /// <summary>The legal name matched exactly (after normalisation), no other company in the master has that name, and the company is
+    /// Active (owner rule, 2026-10-13: a target arrives by name and nothing waits for a person). Trusted for spend.</summary>
+    public const string UniqueExact = "RESOLVED_UNIQUE_EXACT";
     public const string HumanSelected = "RESOLVED_HUMAN_SELECTED";
     public const string AutoSelectDisabled = "AUTO_SELECT_DISABLED";
     public const string NeedsConfirmation = "IDENTITY_NEEDS_CONFIRMATION";
@@ -184,6 +190,14 @@ public static partial class CompanyNameResolver
             if (!soleActive)
                 return new(ResolutionStatus.Ambiguous, null, null, null, false, top.Score, margin, ResolutionReasonCodes.Ambiguous, input, shown);
         }
+
+        // Owner rule (2026-10-13): an exact legal-name match that no other company in the master shares, and that is Active, is the company.
+        // Hints that disagree still stop it (a requester who said "Karnataka" for a Maharashtra company gets a person to look).
+        var uniqueExact = options.AutoSelectUniqueExact && topIsExact && exactGroup.Count == 1 && IsActive(top.Candidate.Status)
+            && !top.Candidate.IsToolOnly && top.Features.GetValueOrDefault("HintsDisagreed") == 0;
+        if (uniqueExact && options.AutoSelectEnabled)
+            return new(ResolutionStatus.Resolved, ResolutionMethod.AutoSelected, top.Candidate.Identifier, top.Candidate.Identifier, true,
+                top.Score, margin, ResolutionReasonCodes.UniqueExact, input, shown);
 
         var hintConfirmed = top.Features.GetValueOrDefault("HintsAgreed") >= 1 && top.Features.GetValueOrDefault("HintsDisagreed") == 0;
         var clearsBar = top.Score >= options.AutoSelectThreshold && (margin >= options.MinimumMargin || soleActive);

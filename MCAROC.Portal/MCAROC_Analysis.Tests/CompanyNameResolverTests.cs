@@ -256,4 +256,31 @@ public class CompanyNameResolverTests
         // "SONS"/"SOND" is one edit, but 4-letter words are too short to trust a fuzzy match.
         Assert.Equal(0.5, CompanyNameResolver.CoreSimilarity("SONS ALPHA", "SOND ALPHA"), 3);
     }
+
+    // ── Owner rule 2026-10-13: an exact, unique, active legal name is the company, whatever its score ──
+
+    /// <summary>A score threshold no exact match can clear (hints a name-only intake never has), as TruBoard's 0.90 was below 0.95.</summary>
+    private static readonly ResolverOptions HighBar = new() { AutoSelectEnabled = true, AutoSelectThreshold = 1.01 };
+
+    [Fact]
+    public void A_unique_exact_active_match_is_selected_even_below_the_score_threshold()
+    {
+        var d = Resolve("Sharma & Sons Trading Pvt. Ltd.", HighBar, null, Sharma, Kanpur);
+        Assert.Equal(ResolutionStatus.Resolved, d.Status);
+        Assert.Equal(ResolutionMethod.AutoSelected, d.Method);
+        Assert.Equal(ResolutionReasonCodes.UniqueExact, d.ReasonCode);
+        Assert.Equal(Sharma.Identifier, d.ChosenIdentifier);
+    }
+
+    [Fact]
+    public void The_unique_exact_rule_never_selects_twins_a_struck_off_company_a_near_match_or_with_auto_select_off()
+    {
+        Assert.NotEqual(ResolutionStatus.Resolved, Resolve("Twin Traders Pvt Ltd", HighBar, null, TwinMh, TwinKa).Status);                 // two exact matches
+        var struck = Row("U50000MH2012PTC000009", "LONE STRUCK PRIVATE LIMITED", status: "Strike Off");
+        Assert.NotEqual(ResolutionStatus.Resolved, Resolve("Lone Struck Pvt Ltd", HighBar, null, struck, Unrelated).Status);           // not active
+        Assert.NotEqual(ResolutionStatus.Resolved, Resolve("Sharma and Sons Tradng Private Limited", HighBar, null, Sharma, Unrelated).Status);   // typo: not exact
+        Assert.NotEqual(ResolutionStatus.Resolved, Resolve("Sharma & Sons Trading Pvt. Ltd.", new ResolverOptions { AutoSelectThreshold = 1.01 }, null, Sharma, Kanpur).Status);
+        var ruleOff = new ResolverOptions { AutoSelectEnabled = true, AutoSelectThreshold = 1.01, AutoSelectUniqueExact = false };
+        Assert.NotEqual(ResolutionStatus.Resolved, Resolve("Sharma & Sons Trading Pvt. Ltd.", ruleOff, null, Sharma, Kanpur).Status);   // the rule can be switched off
+    }
 }

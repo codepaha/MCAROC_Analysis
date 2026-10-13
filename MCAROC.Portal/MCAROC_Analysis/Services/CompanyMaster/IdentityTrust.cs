@@ -53,6 +53,8 @@ public static class IdentityTrust
         {
             ResolutionMethod.UserProvidedCin => new SpendTrust(true, applied.ReasonCode, "The CIN/LLPIN was supplied by the requester."),
             ResolutionMethod.HumanSelected => new SpendTrust(true, applied.ReasonCode, "A person selected the company."),
+            ResolutionMethod.AutoSelected when applied.ReasonCode == ResolutionReasonCodes.UniqueExact =>
+                new SpendTrust(true, applied.ReasonCode, "The legal name matched exactly and no other active company has it."),
             ResolutionMethod.AutoSelected when applied.TopScore is { } score && score >= spendThreshold =>
                 new SpendTrust(true, applied.ReasonCode, $"Auto-selected with score {score:0.000}, at or above the spend threshold {spendThreshold:0.000}."),
             ResolutionMethod.AutoSelected => new SpendTrust(false, BelowSpendThreshold,
