@@ -107,6 +107,12 @@ public sealed class ReferenceToolOptions
     /// immediately, as before.</summary>
     public bool RefreshBeforeFetch { get; init; } = true;
 
+    /// <summary>Owner rule (2026-10-13): never wait for the tool's refresh. When the data is over 24 hours old the refresh is still requested
+    /// (the tool's Refresh button), but the job exports the tool's current data straight away, with a warning naming its date. When the
+    /// refresh lands, <see cref="CompanyRefreshWorker"/> re-checks every request that exported before it, so the portal and the report update
+    /// themselves. False restores waiting for the refresh before exporting.</summary>
+    public bool ExportWhileRefreshing { get; init; } = true;
+
     /// <summary>How often <see cref="CompanyRefreshWorker"/> polls pending refreshes and re-queues parked jobs.</summary>
     public int RefreshPollMinutes { get; init; } = 10;
 
