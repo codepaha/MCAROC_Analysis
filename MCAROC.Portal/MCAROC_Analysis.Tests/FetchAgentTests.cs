@@ -1,5 +1,6 @@
 using System.Net;
 using MCAROC_Analysis.Data;
+using MCAROC_Analysis.Data.Entities;
 using MCAROC_Analysis.Services.LitigationModule.Fetching;
 using MCAROC_Analysis.Services.LitigationModule.Normalisation;
 using MCAROC_Analysis.Services.LitigationModule.Refresh;
@@ -78,7 +79,7 @@ public class FetchAgentTests : IAsyncLifetime
     private static HostTrafficGate Gate(AppDbContext db, TestClock clock) =>
         new(db, new OperationalSlotLeaseService(db, NullLogger<OperationalSlotLeaseService>.Instance), Traffic, clock);
 
-    private static int _no = 500;
+    private static int _no = Random.Shared.Next(100_000, 900_000);   // keys persist in the shared test database: never reuse a number across runs
 
     /// <summary>A registry case with a gate-minted key at DRT Delhi 1, queued for a status refresh.</summary>
     private static async Task<(long CaseId, long ItemId, string No)> QueuedCaseAsync(TestClock clock, string? key = "")
@@ -411,5 +412,101 @@ public class FetchAgentTests : IAsyncLifetime
 
         Assert.Empty(await ObservationsAsync(caseId));                                           // the answer was not used
         Assert.Equal(0, (await ItemAsync(itemId)).AttemptCount);
+    }
+
+    /// <summary>A vendor row with no shared key, in a request for <paramref name="company"/>, queued the way a refresh run queues it: with its lookup and request in the payload.</summary>
+    private static async Task<(long CaseId, long RequestId, string No)> KeylessVendorCaseAsync(TestClock clock, string company)
+    {
+        var no = Interlocked.Increment(ref _no).ToString();
+        await using var db = Ctx();
+        var client = new Client { ClientCode = "FA" + Guid.NewGuid().ToString("N")[..8], ClientName = "Agent Test Co", CreatedDate = DateTime.UtcNow };
+        var request = new McaRequest
+        {
+            Client = client, EntityType = EntityType.Company, CompanyName = company, Cin = "U45203OR1995PLC003982",
+            RequestNumber = $"FA-{Guid.NewGuid():N}", RequestStatus = RequestStatus.DataExtracted, CreatedDate = DateTime.UtcNow
+        };
+        db.Requests.Add(request);
+        await db.SaveChangesAsync();
+        var legacy = new LitigationCase
+        {
+            RequestId = request.RequestId, CaseNumber = $"OA/{no}/2022", Court = "Debts Recovery Tribunal Delhi (DRT 1)", CaseStatus = "PENDING",
+            FirstSeenUtc = DateTime.UtcNow, LastSeenUtc = DateTime.UtcNow
+        };
+        db.LitigationCases.Add(legacy);
+        await db.SaveChangesAsync();
+        var mc = await new LitigationModuleStore(db).EnsureCaseForLegacyAsync(legacy.LitigationCaseId, default);
+        Assert.Null(mc.CaseKey);
+        var payload = new RefreshPayload(request.RequestId, "DRT", 1, "OA", no, 2022).ToJson();
+        await new FetchWorkQueue(db, null, clock).EnqueueAsync(FetchWorkKind.StatusFetch, FetchHost.Drt, mc.CaseId, null, payload, 0, default);
+        return (mc.CaseId, request.RequestId, no);
+    }
+
+    [Fact]
+    public async Task A_keyless_vendor_case_is_looked_up_from_its_payload_links_the_request_and_gets_its_key_from_the_portal()
+    {
+        var clock = new TestClock(DateTime.UtcNow);
+        var (caseId, requestId, no) = await KeylessVendorCaseAsync(clock, "Acme Limited");      // the portal lists "Acme Limited" as respondent
+        var drt = new ScriptedDrt();
+        drt.Script.Enqueue(DrtCaseLookupResult.Found(Details($"OA/{no}/2022"), exitAddress: "exit-a"));
+
+        Assert.Equal(AgentTurn.Done, await TurnAsync(drt, clock));
+
+        await using var db = Ctx();
+        var link = await db.Set<ModuleRequestLink>().AsNoTracking().SingleAsync(l => l.RequestId == requestId && l.CaseId == caseId);
+        Assert.Equal((int)PartyMatchOutcome.Verified, link.Verdict);
+        Assert.Equal("respondent", link.MatchedSide);
+        Assert.Equal($"DRT|1|OA|{no}|2022", (await db.Set<ModuleCase>().AsNoTracking().SingleAsync(c => c.CaseId == caseId)).CaseKey);   // minted from what the portal returned
+        Assert.True(Assert.Single(await ObservationsAsync(caseId)).Verified);
+    }
+
+    [Fact]
+    public async Task A_company_that_is_not_a_party_gets_a_rejected_link_but_the_case_itself_is_verified()
+    {
+        var clock = new TestClock(DateTime.UtcNow);
+        var (caseId, requestId, no) = await KeylessVendorCaseAsync(clock, "Acme Limited Employees Cooperative Society");   // extra words: not the same company
+        var drt = new ScriptedDrt();
+        drt.Script.Enqueue(DrtCaseLookupResult.Found(Details($"OA/{no}/2022"), exitAddress: "exit-a"));
+
+        Assert.Equal(AgentTurn.Done, await TurnAsync(drt, clock));
+
+        await using var db = Ctx();
+        var link = await db.Set<ModuleRequestLink>().AsNoTracking().SingleAsync(l => l.RequestId == requestId && l.CaseId == caseId);
+        Assert.NotEqual((int)PartyMatchOutcome.Verified, link.Verdict);                          // never published into this request
+        Assert.True(Assert.Single(await ObservationsAsync(caseId)).Verified);                     // the case's own identity is independent of any company
+    }
+
+    [Fact]
+    public async Task A_portal_answer_for_another_number_neither_links_nor_keys_the_case()
+    {
+        var clock = new TestClock(DateTime.UtcNow);
+        var (caseId, requestId, _) = await KeylessVendorCaseAsync(clock, "Acme Limited");
+        var drt = new ScriptedDrt();
+        drt.Script.Enqueue(DrtCaseLookupResult.Found(Details("OA/9998/2019"), exitAddress: "exit-a"));
+
+        Assert.Equal(AgentTurn.Done, await TurnAsync(drt, clock));
+
+        await using var db = Ctx();
+        Assert.False(await db.Set<ModuleRequestLink>().AnyAsync(l => l.RequestId == requestId && l.CaseId == caseId));
+        Assert.Null((await db.Set<ModuleCase>().AsNoTracking().SingleAsync(c => c.CaseId == caseId)).CaseKey);
+    }
+
+    [Fact]
+    public async Task A_key_another_case_already_holds_is_not_minted_twice()
+    {
+        var clock = new TestClock(DateTime.UtcNow);
+        var (caseId, _, no) = await KeylessVendorCaseAsync(clock, "Acme Limited");
+        await using (var seed = Ctx())
+        {
+            seed.Set<ModuleCase>().Add(new ModuleCase { CaseKey = $"DRT|1|OA|{no}|2022", CreatedUtc = clock.Utc });   // the same case, already keyed elsewhere
+            await seed.SaveChangesAsync();
+        }
+        var drt = new ScriptedDrt();
+        drt.Script.Enqueue(DrtCaseLookupResult.Found(Details($"OA/{no}/2022"), exitAddress: "exit-a"));
+
+        Assert.Equal(AgentTurn.Done, await TurnAsync(drt, clock));
+
+        await using var db = Ctx();
+        Assert.Null((await db.Set<ModuleCase>().AsNoTracking().SingleAsync(c => c.CaseId == caseId)).CaseKey);   // a duplicate: left for the merge rules
+        Assert.Equal(1, await db.Set<ModuleCase>().CountAsync(c => c.CaseKey == $"DRT|1|OA|{no}|2022"));
     }
 }

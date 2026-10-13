@@ -33,6 +33,7 @@ public sealed class LitigationFetchAgentWorker(
             for (var i = 1; i <= Math.Max(1, opts.AgentsPerHost); i++)
                 agents.Add(RunAgentAsync(host, $"{Environment.MachineName}:{host}:{i}", opts, stoppingToken));
         agents.Add(RequeueFailedAsync(opts, stoppingToken));
+        agents.Add(CloseFinishedRunsAsync(opts, stoppingToken));
         await Task.WhenAll(agents);
     }
 
@@ -54,6 +55,26 @@ public sealed class LitigationFetchAgentWorker(
                 try { await Task.Delay(TimeSpan.FromSeconds(Math.Max(1, opts.IdleSeconds)), ct); }
                 catch (OperationCanceledException) { return; }
             }
+        }
+    }
+
+    /// <summary>Marks runs finished once none of their items is left to do, so the banner ends and end-of-run work can follow.</summary>
+    private async Task CloseFinishedRunsAsync(FetchAgentOptions opts, CancellationToken ct)
+    {
+        while (!ct.IsCancellationRequested)
+        {
+            try
+            {
+                using var scope = scopes.CreateScope();
+                var runs = scope.ServiceProvider.GetRequiredService<RefreshRunService>();
+                foreach (var (runId, requestId) in await runs.OpenRunsAsync(ct))
+                    if (await runs.FinishIfDoneAsync(runId, ct))
+                        logger.LogInformation("Court update run {RunId} for request {RequestId} finished.", runId, requestId);
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested) { return; }
+            catch (Exception ex) { logger.LogError(ex, "Closing finished court update runs failed."); }
+            try { await Task.Delay(TimeSpan.FromSeconds(Math.Max(5, opts.IdleSeconds * 2)), ct); }
+            catch (OperationCanceledException) { return; }
         }
     }
 
@@ -103,6 +124,7 @@ public static class LitigationFetchServiceCollectionExtensions
             sp.GetRequiredService<HostTrafficOptions>(), sp.GetService<TimeProvider>()));
         services.AddScoped(sp => new FetchAgent(sp.GetRequiredService<Data.AppDbContext>(), sp.GetRequiredService<FetchWorkQueue>(), sp.GetRequiredService<HostTrafficGate>(),
             sp.GetRequiredService<IDrtClient>(), sp.GetRequiredService<IConsumerClient>(), sp.GetRequiredService<ILogger<FetchAgent>>(), sp.GetService<TimeProvider>()));
+        services.AddScoped(sp => new RefreshRunService(sp.GetRequiredService<Data.AppDbContext>(), sp.GetRequiredService<FetchWorkQueue>(), sp.GetService<TimeProvider>()));
         services.AddHostedService<LitigationFetchAgentWorker>();
         return services;
     }
