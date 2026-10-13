@@ -97,6 +97,13 @@ public sealed class ConsumerClient : IConsumerClient
     /// <inheritdoc />
     public async Task<ConsumerCaseLookupResult> GetCaseStatusAsync(string caseNumber, CancellationToken ct = default)
     {
+        var retryAfter = new System.Runtime.CompilerServices.StrongBox<TimeSpan?>();
+        var result = await GetCaseStatusCoreAsync(caseNumber, retryAfter, ct);
+        return retryAfter.Value is null ? result : result with { RetryAfter = retryAfter.Value };
+    }
+
+    private async Task<ConsumerCaseLookupResult> GetCaseStatusCoreAsync(string caseNumber, System.Runtime.CompilerServices.StrongBox<TimeSpan?> retryAfter, CancellationToken ct)
+    {
         if (string.IsNullOrWhiteSpace(caseNumber))
         {
             return ConsumerCaseLookupResult.Error("Case number cannot be empty");
@@ -112,6 +119,7 @@ public sealed class ConsumerClient : IConsumerClient
         var endpoint = $"services/case/caseFilingService/v2/getCaseStatus?caseNumber={Uri.EscapeDataString(trimmed)}";
 
         var response = await SendGetAsync(endpoint, ct);
+        retryAfter.Value = response.RetryAfter;
         if (response.StatusCode == HttpStatusCode.BadRequest)
         {
             // Confirmed portal behavior: HTTP 400 is a genuine "Case Details are not available"
@@ -647,7 +655,7 @@ public sealed class ConsumerClient : IConsumerClient
                                 ? $"Exhausted {_options.MaxRetries} retries on HTTP {(int)response.StatusCode} (Retry-After: {retryAfter.Value.TotalSeconds:F0}s)"
                                 : $"Exhausted {_options.MaxRetries} retries on HTTP {(int)response.StatusCode}";
                             _logger.LogWarning("HTTP {StatusCode} for endpoint {Endpoint} exhausted {MaxRetries} retries", (int)response.StatusCode, endpoint, _options.MaxRetries);
-                            return new ApiResponse(response.StatusCode, body, false, msg, exitAddress);
+                            return new ApiResponse(response.StatusCode, body, false, msg, exitAddress, retryAfter);
                         }
 
                         await BackoffAsync(attempt, retryAfter, ct);
@@ -886,6 +894,7 @@ public sealed class ConsumerClient : IConsumerClient
         string? Body,
         bool IsSuccess,
         string? ErrorMessage,
-        string? ExitAddress);
+        string? ExitAddress,
+        TimeSpan? RetryAfter = null);
 }
 

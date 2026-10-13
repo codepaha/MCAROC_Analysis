@@ -5,6 +5,7 @@ using MCAROC_Analysis.Services.Analysis;
 using MCAROC_Analysis.Services.Analysis.Rules;
 using MCAROC_Analysis.Services.Excel;
 using MCAROC_Analysis.Services.PropertyParticulars;
+using MCAROC_Analysis.Services.LitigationModule.Freshness;
 using QuestPDF.Fluent;
 using QuestPDF.Infrastructure;
 
@@ -813,11 +814,46 @@ public partial class DossierPdfComposer
             $"{lit.All.Count} filing(s) on record — grouped by case thread, then the complete flat register.");
 
         if (lit.All.Count > 0)
+        {
             AtAGlance(col, $"{lit.PendingCount} pending, {lit.DisposedCount} disposed. " + (lit.NotDeterminedCount > 0
                 ? $"Company role could not be reliably determined in {lit.NotDeterminedCount} of {lit.All.Count} " +
                   "case(s) from the available records — case counts should not be read as direct adverse exposure " +
                   "until role is verified."
                 : "Company role is determined for every matched case."));
+
+            var fallbackAsOfUtc = Cover.SourceSnapshotDate ?? Cover.McaDataAsOf;
+            var currency = lit.DataCurrency is { AsOfUtc: null } dcNull && fallbackAsOfUtc.HasValue
+                ? dcNull with
+                {
+                    AsOfUtc = fallbackAsOfUtc,
+                    AsOfIst = Ist.Format(fallbackAsOfUtc.Value, "dd-MMM-yyyy, HH:mm")
+                }
+                : lit.DataCurrency ?? new LitigationDataCurrencySummary(
+                    fallbackAsOfUtc,
+                    fallbackAsOfUtc.HasValue ? Ist.Format(fallbackAsOfUtc.Value, "dd-MMM-yyyy, HH:mm") : "Not yet retrieved",
+                    lit.All.Count,
+                    0,
+                    lit.All.Count);
+
+            var asOfHeader = currency.AsOfUtc.HasValue ? $"As of {currency.AsOfIst}" : currency.AsOfIst;
+            col.Item().PaddingTop(6).Background("#F8FAFC").Border(0.75f).BorderColor(DossierTheme.Line).Padding(8).Column(cc =>
+            {
+                cc.Item().Row(r =>
+                {
+                    r.AutoItem().Text("DATA CURRENCY").FontFamily(DossierTheme.Display).FontSize(DossierTheme.Kicker).FontColor(DossierTheme.MaroonDeep);
+                    r.RelativeItem().AlignRight().Text(asOfHeader).FontSize(DossierTheme.Kicker).FontColor(DossierTheme.Ink);
+                });
+                cc.Item().PaddingTop(2).Text(text =>
+                {
+                    text.Span($"{currency.RefreshedCasesCount} of {currency.TotalCases} case(s) refreshed from court portals · {currency.UnrefreshedCasesCount} not updated. ").FontSize(DossierTheme.Small).FontColor(DossierTheme.Ink);
+                    if (!string.IsNullOrWhiteSpace(currency.InProgressNote))
+                    {
+                        text.Span(currency.InProgressNote + " ").FontSize(DossierTheme.Small).FontColor(DossierTheme.Amber);
+                    }
+                    text.Span(currency.CurrencyNote).Italic().FontSize(DossierTheme.Small).FontColor(DossierTheme.InkSoft);
+                });
+            });
+        }
 
         var grouped = lit.Threads.Where(t => t.Cases.Count > 1).ToList();
         if (grouped.Count > 0)

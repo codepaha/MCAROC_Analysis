@@ -103,6 +103,8 @@ builder.Services.AddHostedService<AutoFetchWorker>();
 builder.Services.Configure<MCAROC_Analysis.Services.LitigationModule.Bridge.LitigationBridgeOptions>(
     builder.Configuration.GetSection(MCAROC_Analysis.Services.LitigationModule.Bridge.LitigationBridgeOptions.SectionName));
 builder.Services.AddHostedService<MCAROC_Analysis.Services.LitigationModule.Bridge.LitigationBridgeWorker>();
+// Court portal fetch agents, queue and traffic gate (#444). The agents stay idle unless LitigationPortals:Agents:Enabled is true.
+MCAROC_Analysis.Services.LitigationModule.Fetching.LitigationFetchServiceCollectionExtensions.AddLitigationFetching(builder.Services, builder.Configuration);
 // Refreshed cases are published into their requests in batches (#444); off unless LitigationModule:LivePublisher:Enabled is true.
 builder.Services.Configure<MCAROC_Analysis.Services.LitigationModule.Refresh.LiveBatchOptions>(builder.Configuration.GetSection(MCAROC_Analysis.Services.LitigationModule.Refresh.LiveBatchOptions.SectionName));
 builder.Services.AddHostedService<MCAROC_Analysis.Services.LitigationModule.Refresh.LiveBatchPublisherWorker>();
@@ -137,6 +139,8 @@ builder.Services.AddScoped<IPaidCallAdmission, PaidCallAdmissionService>();
 builder.Services.AddScoped<LitigationReuseService>();
 builder.Services.AddScoped<LitigationStartService>();
 builder.Services.AddScoped<ChargeLitigationService>();
+builder.Services.AddScoped<MCAROC_Analysis.Services.LitigationModule.Freshness.ICourtRefreshStatusService, MCAROC_Analysis.Services.LitigationModule.Freshness.CourtRefreshStatusService>();
+builder.Services.AddScoped<MCAROC_Analysis.Services.LitigationModule.Freshness.CourtRefreshStatusService>();
 builder.Services.AddHostedService<PaidCallAdmissionSweepWorker>();
 // Pipeline coordinator (docs/pipeline-automation-plan.md §3): records every request's stage states and outcome.
 // Pipeline:Mode=Enforce lets it take the actions its Pipeline:Enforce families allow (today only the litigation

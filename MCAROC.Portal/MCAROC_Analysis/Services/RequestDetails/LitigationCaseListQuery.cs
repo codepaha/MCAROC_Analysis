@@ -2,6 +2,7 @@ using MCAROC_Analysis.Data;
 using MCAROC_Analysis.Data.Entities;
 using MCAROC_Analysis.Models;
 using MCAROC_Analysis.Services.LitigationData;
+using MCAROC_Analysis.Services.LitigationModule.Freshness;
 using MCAROC_Analysis.Services.LitigationModule.Reading;
 using Microsoft.EntityFrameworkCore;
 
@@ -9,12 +10,30 @@ namespace MCAROC_Analysis.Services.RequestDetails;
 
 /// <summary>A bounded case register. No orders, document bodies, PDF URLs or extracted text are materialized.
 /// The standalone case page owns that evidence. All filtering happens before SQL pagination.</summary>
-public sealed class LitigationCaseListQuery(AppDbContext db, LitigationOrderOutcomeQuery? outcomes = null, CaseSetSource source = CaseSetSource.Legacy)
+public sealed class LitigationCaseListQuery(
+    AppDbContext db,
+    LitigationOrderOutcomeQuery? outcomes = null,
+    CaseSetSource source = CaseSetSource.Legacy,
+    ICourtRefreshStatusService? courtRefreshStatus = null)
 {
+    public LitigationCaseListQuery(
+        AppDbContext db,
+        LitigationOrderOutcomeQuery? outcomes,
+        ICourtRefreshStatusService? courtRefreshStatus)
+        : this(db, outcomes, CaseSetSource.Legacy, courtRefreshStatus)
+    {
+    }
+
+    private static readonly string[] MissingPlaceholders =
+    [
+        "-", "--", "---", ".", "..", "NA", "N/A", "N.A.", "NIL", "NULL", "NONE", "DUMMY", "TEST", "NOT FOUND",
+        "0000-00-00", "00-00-0000", "00/00/0000", "[]", "{}", "\"\"", "\"NA\"", "\"-\"", "\"NULL\"", "\"NIL\"", "\"NONE\""
+    ];
+
     public static int NormalizePageSize(int size) => size is 25 or 50 or 100 ? size : 25;
 
     public async Task<IQueryable<LitigationCase>> FilterAsync(long snapshotId, string? court, string? status,
-        string? search, string? outcome, long requestId, CancellationToken ct)
+        string? search, string? outcome, long requestId, CancellationToken ct = default, string? missingField = null)
     {
         var ids = await LitigationCaseSets.ForAsync(db, source, requestId, snapshotId, ct);
         var query = db.LitigationCases.AsNoTracking().Where(c => ids.Contains(c.LitigationCaseId) && c.MergedIntoCaseId == null);   // a soft-merged duplicate is not listed
@@ -41,6 +60,23 @@ public sealed class LitigationCaseListQuery(AppDbContext db, LitigationOrderOutc
                 || (c.PetitionersJson != null && c.PetitionersJson.ToLower().Contains(term))
                 || (c.RespondentsJson != null && c.RespondentsJson.ToLower().Contains(term)));
         }
+
+        if (!string.IsNullOrWhiteSpace(missingField))
+        {
+            var mf = missingField.Trim().ToLowerInvariant();
+            query = mf switch
+            {
+                "status" => query.Where(c => c.CaseStatus == null || c.CaseStatus.Trim() == "" || MissingPlaceholders.Contains(c.CaseStatus.Trim())),
+                "court" => query.Where(c => c.Court == null || c.Court.Trim() == "" || MissingPlaceholders.Contains(c.Court.Trim())),
+                "state" => query.Where(c => c.State == null || c.State.Trim() == "" || MissingPlaceholders.Contains(c.State.Trim())),
+                "district" => query.Where(c => c.District == null || c.District.Trim() == "" || MissingPlaceholders.Contains(c.District.Trim())),
+                "filing-date" or "filing date" or "filingdate" => query.Where(c => c.FilingDate == null || c.FilingDate.Trim() == "" || MissingPlaceholders.Contains(c.FilingDate.Trim())),
+                "last-hearing" or "last hearing" or "lasthearing" => query.Where(c => c.LastHearingDate == null || c.LastHearingDate.Trim() == "" || MissingPlaceholders.Contains(c.LastHearingDate.Trim())),
+                "next-hearing" or "next hearing" or "nexthearing" => query.Where(LitigationCaseStatusClassifier.IsPendingExpr).Where(c => c.NextHearingDate == null || c.NextHearingDate.Trim() == "" || MissingPlaceholders.Contains(c.NextHearingDate.Trim())),
+                "decision-date" or "decision date" or "decisiondate" => query.Where(LitigationCaseStatusClassifier.IsDisposedExpr).Where(c => c.DecisionDate == null || c.DecisionDate.Trim() == "" || MissingPlaceholders.Contains(c.DecisionDate.Trim())),
+                _ => query
+            };
+        }
         // Retain evidence-hash validation for an explicitly selected outcome; never show stale classifications.
         if (Enum.TryParse<LitigationOrderOutcome>(outcome, true, out var selected))
         {
@@ -52,7 +88,8 @@ public sealed class LitigationCaseListQuery(AppDbContext db, LitigationOrderOutc
     }
 
     public async Task<LitigationCaseListViewModel?> BuildAsync(long requestId, string? court, string? status,
-        int page, int pageSize, string? search, string? outcome, long? focusCase, CancellationToken ct)
+        int page, int pageSize, string? search, string? outcome, long? focusCase, CancellationToken ct = default,
+        string? freshness = null, string? missingField = null)
     {
         var request = await db.Requests.AsNoTracking().Where(r => r.RequestId == requestId)
             .Select(r => new { r.CompanyName, r.LatestCompletedIngestionRunId }).FirstOrDefaultAsync(ct);
@@ -61,15 +98,16 @@ public sealed class LitigationCaseListQuery(AppDbContext db, LitigationOrderOutc
             .Select(s => new { s.LitigationReportSnapshotId, s.RetrievedUtc }).FirstOrDefaultAsync(ct);
         long? snapshotId = snapshot?.LitigationReportSnapshotId;
         var model = new LitigationCaseListViewModel { RequestId = requestId, SnapshotId = snapshotId,
-            Court = court?.Trim(), Status = status, Search = search?.Trim(), Outcome = outcome, PageSize = NormalizePageSize(pageSize) };
+            Court = court?.Trim(), Status = status, Search = search?.Trim(), Outcome = outcome, Freshness = freshness?.Trim(),
+            MissingField = missingField?.Trim(), PageSize = NormalizePageSize(pageSize) };
         if (Enum.TryParse<LitigationCaseStatusBucket>(status, true, out var normalizedStatus) && Enum.IsDefined(normalizedStatus))
             model.Status = normalizedStatus.ToString();
         if (Enum.TryParse<LitigationOrderOutcome>(outcome, true, out var normalizedOutcome) && Enum.IsDefined(normalizedOutcome))
             model.Outcome = normalizedOutcome.ToString();
         if (snapshotId is not { } sid) return model;
-        var query = await FilterAsync(sid, court, status, search, outcome, requestId, ct);
+        var query = await FilterAsync(sid, court, status, search, outcome, requestId, ct, missingField);
         // The segment counts follow every filter except the status itself, so each tab shows what choosing it would list.
-        var unsegmented = string.IsNullOrWhiteSpace(status) ? query : await FilterAsync(sid, court, null, search, outcome, requestId, ct);
+        var unsegmented = string.IsNullOrWhiteSpace(status) ? query : await FilterAsync(sid, court, null, search, outcome, requestId, ct, missingField);
         model.StatusCounts = new LitigationStatusCounts(
             await unsegmented.CountAsync(LitigationCaseStatusClassifier.IsPendingExpr, ct),
             await unsegmented.CountAsync(LitigationCaseStatusClassifier.IsDisposedExpr, ct),
@@ -95,6 +133,31 @@ public sealed class LitigationCaseListQuery(AppDbContext db, LitigationOrderOutc
                     LitigationCaseCardMapper.ParseNames(k.RespondentsJson), names, k.Direction),
                 k.FilingDate, k.LitigationCaseId))
             .Select(k => k.LitigationCaseId).ToList();
+
+        var statusSvc = courtRefreshStatus ?? new CourtRefreshStatusService(db);
+        IReadOnlyDictionary<long, CaseFreshnessResult> freshnessMap;
+
+        if (!string.IsNullOrWhiteSpace(freshness))
+        {
+            freshnessMap = await statusSvc.GetCaseFreshnessBatchAsync(requestId, orderedIds, ct);
+            var f = freshness.Trim().ToLowerInvariant();
+            orderedIds = f switch
+            {
+                "not-updated" => orderedIds.Where(id => freshnessMap.TryGetValue(id, out var res) && res.Label != FreshnessLabel.Updated).ToList(),
+                "not-yet-updated" => orderedIds.Where(id => freshnessMap.TryGetValue(id, out var res) && res.Label == FreshnessLabel.NotYetUpdated).ToList(),
+                "not-due" => orderedIds.Where(id => freshnessMap.TryGetValue(id, out var res) && res.Label is FreshnessLabel.NotDue or FreshnessLabel.DisposedFinalOrderOnFile or FreshnessLabel.DisposedNotRefreshed).ToList(),
+                "could-not-verify" => orderedIds.Where(id => freshnessMap.TryGetValue(id, out var res) && res.Label == FreshnessLabel.CouldNotVerify).ToList(),
+                "updated" => orderedIds.Where(id => freshnessMap.TryGetValue(id, out var res) && res.Label == FreshnessLabel.Updated).ToList(),
+                _ => orderedIds
+            };
+        }
+        else
+        {
+            freshnessMap = new Dictionary<long, CaseFreshnessResult>();
+        }
+
+        var notUpdatedSummary = await statusSvc.GetWhatIsNotUpdatedSummaryAsync(requestId, ct);
+        model.NotUpdatedCount = notUpdatedSummary.NotUpdatedCount;
         model.Total = orderedIds.Count;
         model.Page = Math.Clamp(page, 1, model.TotalPages);
         if (focusCase is { } focused && orderedIds.IndexOf(focused) is var position and >= 0)
@@ -133,6 +196,10 @@ public sealed class LitigationCaseListQuery(AppDbContext db, LitigationOrderOutc
                 JSON_VALUE(CASE WHEN ISJSON([AnalysisJson]) = 1 THEN [AnalysisJson] ELSE N'{}' END, '$.lis_pendens') AS [LisPendens]
             FROM [LitigationCaseAiAnalyses] WHERE [LitigationAiAnalysisRunId] = {{run.LitigationAiAnalysisRunId}}
             """).Where(a => pageIds.Contains(a.LitigationCaseId)).ToListAsync(ct);
+        var pageFreshnessMap = freshnessMap.Count > 0 && pageIds.All(freshnessMap.ContainsKey)
+            ? freshnessMap
+            : await statusSvc.GetCaseFreshnessBatchAsync(requestId, pageIds, ct);
+
         foreach (var row in rows)
         {
             var petitioners = LitigationCaseCardMapper.ParseNames(row.PetitionersJson);
@@ -158,7 +225,8 @@ public sealed class LitigationCaseListQuery(AppDbContext db, LitigationOrderOutc
                     Status = Enum.Parse<LitigationAiAnalysisItemStatus>(analysis.Status), CompletedUtc = analysis.CompletedUtc,
                     RunNumber = run!.RunNumber, ActiveRestraint = analysis.ActiveRestraint == "true", LisPendens = analysis.LisPendens == "true"
                 },
-                IsAnalysisStaleComparedToCase = analysis?.CompletedUtc is { } completed && row.LastSeenUtc > completed
+                IsAnalysisStaleComparedToCase = analysis?.CompletedUtc is { } completed && row.LastSeenUtc > completed,
+                Freshness = pageFreshnessMap.GetValueOrDefault(row.LitigationCaseId)
             });
         }
         return model;

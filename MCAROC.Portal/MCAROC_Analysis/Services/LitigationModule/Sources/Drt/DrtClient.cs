@@ -291,7 +291,7 @@ public sealed class DrtClient : IDrtClient
         }
 
         var response = await SendPostAsync(endpoint, formFields, ct);
-        return ParseCaseDetailResponse(response, tribunalId, caseTypeId, caseNo, caseYear);
+        return ParseCaseDetailResponse(response, tribunalId, caseTypeId, caseNo, caseYear) with { RetryAfter = response.RetryAfter };
     }
 
     /// <inheritdoc />
@@ -310,7 +310,7 @@ public sealed class DrtClient : IDrtClient
         };
 
         var response = await SendPostAsync("getCaseDetailDiaryNoWise", formFields, ct);
-        return ParseCaseDetailResponse(response, tribunalId, null, null, null);
+        return ParseCaseDetailResponse(response, tribunalId, null, null, null) with { RetryAfter = response.RetryAfter };
     }
 
     /// <inheritdoc />
@@ -766,7 +766,7 @@ public sealed class DrtClient : IDrtClient
                             ? $"Exhausted {_options.MaxRetries} retries on HTTP {(int)response.StatusCode} (Retry-After: {retryAfter.Value.TotalSeconds:F0}s)"
                             : $"Exhausted {_options.MaxRetries} retries on HTTP {(int)response.StatusCode}";
                         _logger.LogWarning("HTTP {StatusCode} for endpoint {Endpoint} exhausted {MaxRetries} retries", (int)response.StatusCode, endpoint, _options.MaxRetries);
-                        return new DrtApiResponse(response.StatusCode, body, false, msg, exitAddress);
+                        return new DrtApiResponse(response.StatusCode, body, false, msg, exitAddress, retryAfter);
                     }
 
                     await BackoffAsync(attempt, retryAfter, ct);
@@ -975,5 +975,6 @@ public sealed class DrtClient : IDrtClient
         string? Body,
         bool IsSuccess,
         string? ErrorMessage,
-        string? ExitAddress);
+        string? ExitAddress,
+        TimeSpan? RetryAfter = null);
 }

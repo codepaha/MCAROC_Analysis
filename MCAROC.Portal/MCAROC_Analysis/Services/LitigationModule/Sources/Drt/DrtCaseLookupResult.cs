@@ -34,6 +34,9 @@ public sealed record DrtCaseLookupResult(
     HttpStatusCode? StatusCode = null,
     string? ExitAddress = null)
 {
+    /// <summary>The wait the portal asked for with its last 429/503 (<c>Retry-After</c>), when it sent one. The shared host gate keeps every agent away for at least this long.</summary>
+    public TimeSpan? RetryAfter { get; init; }
+
     public bool IsFound => Status == DrtLookupStatus.Found && Case is not null;
     public bool IsNotFoundCandidate => Status == DrtLookupStatus.NotFoundCandidate;
     public bool IsUnavailable => Status == DrtLookupStatus.Unavailable;
