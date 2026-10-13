@@ -111,6 +111,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<CalculationArtifactHold> CalculationArtifactHolds => Set<CalculationArtifactHold>();
     public DbSet<CalculationAiAuditRun> CalculationAiAuditRuns => Set<CalculationAiAuditRun>();
     public DbSet<AiUsageRecord> AiUsageRecords => Set<AiUsageRecord>();
+    public DbSet<LitigationNameSpelling> LitigationNameSpellings => Set<LitigationNameSpelling>();
     public DbSet<CalculationAssuranceOverrideAudit> CalculationAssuranceOverrideAudits => Set<CalculationAssuranceOverrideAudit>();
 
     // Large Archive Upload & Storage Admission
@@ -1098,6 +1099,16 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
                 .OnDelete(DeleteBehavior.Restrict);
             e.HasIndex(x => x.CalculationCheckResultId);
             e.HasIndex(x => x.CalculationLedgerEntryId);
+        });
+
+        modelBuilder.Entity<LitigationNameSpelling>(e =>
+        {
+            e.HasKey(x => x.LitigationNameSpellingId);
+            e.Property(x => x.NameKey).HasMaxLength(400);
+            e.Property(x => x.Language).HasMaxLength(8);
+            e.Property(x => x.PromptVersion).HasMaxLength(40);
+            e.Property(x => x.Model).HasMaxLength(100);
+            e.HasIndex(x => new { x.NameKey, x.Language, x.PromptVersion }).IsUnique();
         });
 
         modelBuilder.Entity<AiUsageRecord>(e =>

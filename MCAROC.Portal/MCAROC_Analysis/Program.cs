@@ -137,6 +137,8 @@ builder.Services.AddScoped<MCAROC_Analysis.Services.CompanyMaster.IdentityResolu
 builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddScoped<IPaidCallAdmission, PaidCallAdmissionService>();
 builder.Services.AddScoped<LitigationReuseService>();
+builder.Services.AddScoped<CompanyNameSuggestionService>();
+builder.Services.AddScoped<LitigationKeywordSuggester>();
 builder.Services.AddScoped<LitigationStartService>();
 builder.Services.AddScoped<ChargeLitigationService>();
 builder.Services.AddScoped<MCAROC_Analysis.Services.LitigationModule.Freshness.ICourtRefreshStatusService, MCAROC_Analysis.Services.LitigationModule.Freshness.CourtRefreshStatusService>();

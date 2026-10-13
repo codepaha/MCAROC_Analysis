@@ -85,7 +85,8 @@ public sealed class LitigationSearchJobService(
         job.EntityType = entityType;
         job.ApplicationCustomerId = applicationCustomerId;
         job.ExactMatch = exactMatch;
-        job.KeywordsJson = JsonSerializer.Serialize(keywords.Select(k => new { value = k.Value, source = k.Source.ToString() }));
+        job.KeywordsJson = JsonSerializer.Serialize(keywords.Select(k => new { value = k.Value, source = k.Source.ToString(), reason = k.Reason }),
+            new JsonSerializerOptions { DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull, Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping });
         job.Status = LitigationSearchJobStatus.Pending;
         job.ProgressPercent = 0;
         job.StatusMessage = "Queued.";

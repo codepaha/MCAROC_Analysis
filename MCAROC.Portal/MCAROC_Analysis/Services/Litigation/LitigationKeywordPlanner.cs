@@ -6,9 +6,9 @@ namespace MCAROC_Analysis.Services.LitigationData;
 /// <summary>
 /// Builds the auditable keyword set submitted for one company litigation search.
 ///
-/// Generated English variants are deliberately conservative. Abbreviations, phonetic spellings and
-/// non-Latin spellings must be supplied as approved aliases: guessing them would turn a search term into
-/// an unreviewed identity assertion (for example, "HFCL" does not uniquely identify Hero FinCorp).
+/// The variants made here are conservative: the registered and former names and their legal-suffix forms. Other forms (initials,
+/// phonetic and Hindi spellings) are added by <see cref="LitigationKeywordSuggester"/> as <b>search terms only</b>: "HFCL" does not
+/// uniquely identify Hero FinCorp, so a case found through such a keyword is the company's only once its party is attributed (#489).
 /// </summary>
 public static partial class LitigationKeywordPlanner
 {
@@ -46,6 +46,8 @@ public static partial class LitigationKeywordPlanner
         if (withoutSuffix.Length == normalized.Length || withoutSuffix.Length == 0) yield break;
 
         yield return withoutSuffix;
+        if (PrivateLimited().IsMatch(normalized))
+            yield return withoutSuffix + " Pvt Ltd";
         if (normalized.EndsWith("LIMITED", StringComparison.OrdinalIgnoreCase))
             yield return withoutSuffix + " Ltd";
         else if (normalized.EndsWith("LTD", StringComparison.OrdinalIgnoreCase) || normalized.EndsWith("LTD.", StringComparison.OrdinalIgnoreCase))
@@ -63,9 +65,14 @@ public static partial class LitigationKeywordPlanner
 
     [GeneratedRegex(@"\s+", RegexOptions.CultureInvariant)]
     private static partial Regex Whitespace();
+
+    [GeneratedRegex(@"\sPRIVATE\s+LIMITED$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex PrivateLimited();
 }
 
-public sealed record LitigationKeyword(string Value, LitigationKeywordSource Source)
+/// <param name="Reason">Why a generated keyword was suggested ("\"LAKSHMI\" written as \"LAXMI\"", "Hindi spelling, reads as ..."): the provenance shown with a case
+/// found through it. Null for the registered and former names.</param>
+public sealed record LitigationKeyword(string Value, LitigationKeywordSource Source, string? Reason = null)
 {
     private static readonly System.Text.Json.JsonSerializerOptions ReadOptions = new()
     {
@@ -104,5 +111,15 @@ public enum LitigationKeywordSource
     GeneratedLegalSuffixVariant,
     ApprovedAlias,
     ApprovedPhoneticAlias,
-    ApprovedHindiAlias
+    ApprovedHindiAlias,
+    /// <summary>A spelling from <see cref="PhoneticVariantGenerator"/> (#489).</summary>
+    GeneratedPhoneticVariant,
+    /// <summary>A Devanagari spelling from <see cref="HindiSpellingService"/> that passed the back-check (#489).</summary>
+    GeneratedHindiSpelling,
+    /// <summary>Another written form of the name from <see cref="NameFormVariants"/>: Corp for Corporation, a joined word split, an acronym spaced (#489).</summary>
+    GeneratedNameForm,
+    /// <summary>The initials of the name (BPCL). Not unique, so a search term only (#489).</summary>
+    GeneratedAcronym,
+    /// <summary>An acronym in the name written out, accepted only when its initials spell the acronym (#489).</summary>
+    GeneratedAcronymExpansion
 }

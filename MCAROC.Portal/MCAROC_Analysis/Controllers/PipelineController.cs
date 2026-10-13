@@ -420,7 +420,8 @@ public class PipelineController(
                         var request = run.Request ?? await db.Requests.FirstOrDefaultAsync(r => r.RequestId == requestId, ct);
                         if (request is not null)
                         {
-                            var (plan, problem) = await LitigationStartService.PlanSearchAsync(db, request, bprOptions?.Value ?? new(), ct);
+                            var (plan, problem) = await LitigationStartService.PlanSearchAsync(db, request, bprOptions?.Value ?? new(), ct,
+                                HttpContext?.RequestServices?.GetService<LitigationKeywordSuggester>());
                             if (plan is not null)
                             {
                                 await litigation.StartSearchAsync(request, plan.Keywords, plan.EntityType, plan.ApplicationCustomerId, PaidCallTrigger.Manual, ct);

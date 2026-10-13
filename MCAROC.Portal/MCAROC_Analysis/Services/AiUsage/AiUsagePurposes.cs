@@ -17,4 +17,5 @@ public static class AiUsagePurposes
     public const string CalculationAudit = "CalculationAudit";
     public const string BorrowerExtraction = "BorrowerExtraction";
     public const string GroundedSearch = "GroundedSearch";
+    public const string KeywordSuggestion = "LitigationKeywordSuggestion";
 }
