@@ -2,6 +2,7 @@ using System.Text.Json;
 using MCAROC_Analysis.Data;
 using MCAROC_Analysis.Data.Entities;
 using MCAROC_Analysis.Services.AiUsage;
+using MCAROC_Analysis.Services.Pipeline;
 using Microsoft.EntityFrameworkCore;
 
 namespace MCAROC_Analysis.Services.LitigationData;
@@ -42,10 +43,7 @@ public sealed class CompanyNameSuggestionService(AppDbContext db, IServiceProvid
         var nameKey = NameKey(legalName);
         if (nameKey.Length == 0) return CompanyNameSuggestions.None;
 
-        var cached = await db.LitigationNameSpellings.AsNoTracking()
-            .Where(s => s.NameKey == nameKey && s.Language == Language && s.PromptVersion == PromptVersion)
-            .Select(s => new { s.SpellingsJson, s.ExpansionsJson }).FirstOrDefaultAsync(ct);
-        if (cached is not null) return new(ParseSpellings(cached.SpellingsJson), ParseExpansions(cached.ExpansionsJson));
+        if (await CachedAsync(nameKey, ct) is { } cached) return cached;
 
         ILitigationAiAnalysisClient client;
         try { client = services.GetRequiredService<ILitigationAiAnalysisClient>(); }
@@ -54,6 +52,16 @@ public sealed class CompanyNameSuggestionService(AppDbContext db, IServiceProvid
             logger.LogInformation("No name suggestions for {Name}: the AI client is not configured ({Error})", nameKey, ex.Message);
             return CompanyNameSuggestions.None;
         }
+
+        // One paid call per name: concurrent searches for the same uncached name queue on a lock for it, and whoever gets it second finds the first one's
+        // stored answer. A search that cannot get the lock in time goes ahead without suggestions rather than paying for a second call.
+        await using var nameLock = await SqlSessionLock.TryAcquireAsync(db, LockResource(nameKey), ct, LockWait);
+        if (nameLock is null)
+        {
+            logger.LogInformation("Name suggestions for {Name}: another search is generating them; this search goes ahead without them", nameKey);
+            return await CachedAsync(nameKey, ct) ?? CompanyNameSuggestions.None;
+        }
+        if (await CachedAsync(nameKey, ct) is { } storedMeanwhile) return storedMeanwhile;
 
         LitigationAiCallResult result;
         using (AiUsageContext.Begin(requestId, AiUsagePurposes.KeywordSuggestion))
@@ -81,13 +89,28 @@ public sealed class CompanyNameSuggestionService(AppDbContext db, IServiceProvid
         try { await db.SaveChangesAsync(ct); }
         catch (DbUpdateException)
         {
-            // Another search for the same name stored its result first: either answer is fine, keep ours for this search.
+            // Only reachable if a lock holder's connection dropped mid-call and another search stored first: either answer is fine.
             db.ChangeTracker.Clear();
         }
         if (rejected.Count > 0)
             logger.LogInformation("Name suggestions for {Name}: {Accepted} spellings and {Expansions} expansions kept, {Rejected} refused by the checks ({Reasons})",
                 nameKey, accepted.Count, expansions.Count, rejected.Count, string.Join("; ", rejected.Select(r => $"{r.Spelling}: {r.Reason}")));
         return new(accepted, expansions);
+    }
+
+    /// <summary>Longer than one call can take, so a waiting search normally gets the first one's answer.</summary>
+    private static readonly TimeSpan LockWait = TimeSpan.FromSeconds(TimeoutSeconds + 30);
+
+    /// <summary>An application-lock name (at most 255 characters) for one name key.</summary>
+    internal static string LockResource(string nameKey) =>
+        "MCAROC:NameSuggestions:" + Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(nameKey + "|" + PromptVersion)));
+
+    private async Task<CompanyNameSuggestions?> CachedAsync(string nameKey, CancellationToken ct)
+    {
+        var cached = await db.LitigationNameSpellings.AsNoTracking()
+            .Where(s => s.NameKey == nameKey && s.Language == Language && s.PromptVersion == PromptVersion)
+            .Select(s => new { s.SpellingsJson, s.ExpansionsJson }).FirstOrDefaultAsync(ct);
+        return cached is null ? null : new(ParseSpellings(cached.SpellingsJson), ParseExpansions(cached.ExpansionsJson));
     }
 
     /// <summary>The spelling back-check: Devanagari, and sounding like the registered name or one of its written forms. At most <see cref="MaxSpellings"/>.</summary>

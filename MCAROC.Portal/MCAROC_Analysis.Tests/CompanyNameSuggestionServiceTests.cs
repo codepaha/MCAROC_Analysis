@@ -31,6 +31,42 @@ public class CompanyNameSuggestionServiceTests : IAsyncLifetime
         }
     }
 
+    /// <summary>Holds its answer until released, counting the calls that reached it.</summary>
+    private sealed class GatedClient(string answer) : ILitigationAiAnalysisClient
+    {
+        private int _calls;
+        public int Calls => _calls;
+        public TaskCompletionSource FirstCallStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public async Task<LitigationAiCallResult> CallAsync(string prompt, int timeoutSeconds, CancellationToken ct, string? modelId = null)
+        {
+            Interlocked.Increment(ref _calls);
+            FirstCallStarted.TrySetResult();
+            await Release.Task.WaitAsync(ct);
+            return new LitigationAiCallResult(true, answer, null);
+        }
+    }
+
+    [Fact]
+    public async Task Two_searches_for_the_same_new_name_at_once_pay_for_one_call_and_both_get_its_answer()
+    {
+        var name = "Bharat Petroleum Corporation " + Guid.NewGuid().ToString("N")[..6] + " Limited";
+        var client = new GatedClient("""{"spellings": ["भारत पेट्रोलियम"], "expansions": []}""");
+        await using var db1 = CreateContext();
+        await using var db2 = CreateContext();
+
+        var first = Service(db1, client).GetAsync(name, ["Bharat Petroleum"], null, default);
+        await client.FirstCallStarted.Task.WaitAsync(TimeSpan.FromSeconds(30));       // the first holds the name's lock, mid-call
+        var second = Service(db2, client).GetAsync(name, ["Bharat Petroleum"], null, default);
+        await Task.Delay(500);
+        Assert.False(second.IsCompleted);                                              // waiting for the first, not calling
+        client.Release.SetResult();
+
+        var results = await Task.WhenAll(first, second);
+        Assert.Equal(1, client.Calls);
+        Assert.All(results, r => Assert.Equal("भारत पेट्रोलियम", Assert.Single(r.HindiSpellings).Value));
+    }
+
     private static CompanyNameSuggestionService Service(AppDbContext db, ILitigationAiAnalysisClient? client)
     {
         var services = new ServiceCollection();
