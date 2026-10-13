@@ -28,6 +28,9 @@ public sealed record ConsumerCaseLookupResult(
     HttpStatusCode? StatusCode = null,
     string? ExitAddress = null)
 {
+    /// <summary>The wait the portal asked for with its last 429/503 (<c>Retry-After</c>), when it sent one. The shared host gate keeps every agent away for at least this long.</summary>
+    public TimeSpan? RetryAfter { get; init; }
+
     public bool IsFound => Status == ConsumerLookupStatus.Found && Case is not null;
     public bool IsNotFoundCandidate => Status == ConsumerLookupStatus.NotFoundCandidate;
     public bool IsUnavailable => Status == ConsumerLookupStatus.Unavailable;
