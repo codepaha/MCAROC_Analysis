@@ -390,4 +390,26 @@ public class FetchAgentTests : IAsyncLifetime
         Assert.Equal(0, item.AttemptCount);
         Assert.Empty(await ObservationsAsync(caseId));
     }
+
+    [Fact]
+    public async Task An_answer_that_arrives_after_the_permit_was_lost_is_discarded()
+    {
+        var clock = new TestClock(DateTime.UtcNow);
+        var (caseId, itemId, no) = await QueuedCaseAsync(clock);
+        var shortLease = new FetchQueueOptions { LeaseDuration = TimeSpan.FromMilliseconds(300) };
+        var drt = new ScriptedDrt();
+        drt.Script.Enqueue(DrtCaseLookupResult.Found(Details($"OA/{no}/2022"), exitAddress: "exit-a"));
+        drt.During = async _ =>
+        {
+            await using (var other = Ctx())
+                await other.OperationalSlotLeases.Where(l => l.SlotType == "LitigationHost_Drt").ExecuteDeleteAsync();
+            await Task.Delay(TimeSpan.FromMilliseconds(400));                                        // a call that ignores cancellation and answers anyway
+        };
+
+        await using (var db = Ctx())
+            Assert.Equal(AgentTurn.Deferred, await Agent(db, drt, clock, shortLease).RunOnceAsync(FetchHost.Drt, "agent-1", default));
+
+        Assert.Empty(await ObservationsAsync(caseId));                                           // the answer was not used
+        Assert.Equal(0, (await ItemAsync(itemId)).AttemptCount);
+    }
 }

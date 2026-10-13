@@ -176,20 +176,23 @@ public sealed class FetchAgent(
             }
         }
         var heartbeat = HeartbeatAsync();
+        PortalAnswer? answer = null;
         try
         {
-            return (await CallAsync(lookup, callCts.Token), CallStop.None);
+            answer = await CallAsync(lookup, callCts.Token);
         }
         catch (OperationCanceledException) when (stop != CallStop.None && !ct.IsCancellationRequested)
         {
-            return (null, stop);
+            // stopped by the heartbeat: decided below
         }
         finally
         {
-            // Stop the heartbeat and wait for it, so nothing else uses the database context once the call is over.
+            // Stop the heartbeat and wait for it (including a renewal in flight), so nothing else uses the database context once the call is over.
             callCts.Cancel();
             await heartbeat;
         }
+        // Decided only now, after the heartbeat has finished: a lease or permit lost while the answer was arriving discards the answer just the same.
+        return stop != CallStop.None ? (null, stop) : (answer, CallStop.None);
     }
 
     /// <summary>An empty answer is final only after a second empty answer through a <b>different</b> exit (plan 4.9 §3): a bad proxy must never mark a real case "not found" and so take
