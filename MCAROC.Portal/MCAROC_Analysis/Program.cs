@@ -105,6 +105,9 @@ builder.Services.Configure<MCAROC_Analysis.Services.LitigationModule.Bridge.Liti
 builder.Services.AddHostedService<MCAROC_Analysis.Services.LitigationModule.Bridge.LitigationBridgeWorker>();
 // Court portal fetch agents, queue and traffic gate (#444). The agents stay idle unless LitigationPortals:Agents:Enabled is true.
 MCAROC_Analysis.Services.LitigationModule.Fetching.LitigationFetchServiceCollectionExtensions.AddLitigationFetching(builder.Services, builder.Configuration);
+// Refreshed cases are published into their requests in batches (#444); off unless LitigationModule:LivePublisher:Enabled is true.
+builder.Services.Configure<MCAROC_Analysis.Services.LitigationModule.Refresh.LiveBatchOptions>(builder.Configuration.GetSection(MCAROC_Analysis.Services.LitigationModule.Refresh.LiveBatchOptions.SectionName));
+builder.Services.AddHostedService<MCAROC_Analysis.Services.LitigationModule.Refresh.LiveBatchPublisherWorker>();
 builder.Services.Configure<MCAROC_Analysis.Services.LitigationModule.Reading.LitigationReaderOptions>(
     builder.Configuration.GetSection(MCAROC_Analysis.Services.LitigationModule.Reading.LitigationReaderOptions.SectionName));
 builder.Services.AddScoped<MCAROC_Analysis.Services.LitigationModule.Reading.LitigationReaderGate>();
