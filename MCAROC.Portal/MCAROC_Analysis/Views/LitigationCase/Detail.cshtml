@@ -1,6 +1,7 @@
 @using MCAROC_Analysis.Models
 @using MCAROC_Analysis.Data.Entities
 @using MCAROC_Analysis.Services.LitigationData
+@using MCAROC_Analysis.Services.LitigationModule.Freshness
 @model LitigationCasePage
 @{
     var returnUrl = Context.Request.Query["returnUrl"].ToString();
@@ -49,6 +50,10 @@
                 </div>
                 <div class="d-flex flex-wrap align-items-center gap-2">
                     <span class="badge @statusBadge fs-6">@card.StatusBucket</span>
+                    @if (card.Freshness is { } fresh && fresh.Label != FreshnessLabel.Excluded)
+                    {
+                        <span class="@card.FreshnessBadgeCss fs-6" title="@fresh.Reason" data-freshness-label="@fresh.Label">@card.FreshnessText</span>
+                    }
                     <span class="badge @LitigationBaselineRisk.BadgeCss(risk.Tier) fs-6" title="@risk.Reason" data-risk-tier="@risk.Tier">@risk.Tier · @LitigationBaselineRisk.Label(risk.Tier)</span>
                 </div>
             </div>
@@ -148,6 +153,7 @@
                 <div class="col-md-4">
                     <div class="text-muted">Status</div>
                     <div><strong>@card.StatusBucket</strong>@(string.IsNullOrWhiteSpace(card.CaseStatus) || string.Equals(card.CaseStatus.Trim(), card.StatusBucket.ToString(), StringComparison.OrdinalIgnoreCase) ? "" : " — " + card.CaseStatus)</div>
+                    <small class="d-block text-muted">@card.StatusProvenance</small>
                     @if (!string.IsNullOrWhiteSpace(card.CaseStage)) { <div class="text-muted">Stage: @card.CaseStage</div> }
                 </div>
                 <div class="col-md-4" data-case-age>
@@ -176,8 +182,38 @@
                     }
                 </div>
                 <div class="col-md-3"><div class="text-muted">Filing date</div><div>@Or(card.FilingDate)</div></div>
-                <div class="col-md-3"><div class="text-muted">Last hearing</div><div>@Or(card.LastHearingDate)</div></div>
-                <div class="col-md-3"><div class="text-muted">Next hearing</div><div>@Or(card.NextHearingDate)</div></div>
+                <div class="col-md-3">
+                    <div class="text-muted">Last hearing</div>
+                    @if (string.IsNullOrWhiteSpace(card.LastHearingDate))
+                    {
+                        <div class="text-muted fst-italic">not updated yet</div>
+                    }
+                    else
+                    {
+                        <div>@card.LastHearingDate</div>
+                        <small class="d-block text-muted">@card.LastHearingProvenance</small>
+                    }
+                </div>
+                <div class="col-md-3">
+                    <div class="text-muted">Next hearing</div>
+                    @if (string.IsNullOrWhiteSpace(card.NextHearingDate))
+                    {
+                        if (card.Freshness?.Label == FreshnessLabel.NotDue && card.Freshness?.Reason?.Contains("confirmed empty", StringComparison.OrdinalIgnoreCase) == true)
+                        {
+                            <div>—</div>
+                            <small class="d-block text-muted">confirmed empty at portal</small>
+                        }
+                        else
+                        {
+                            <div class="text-muted fst-italic">not updated yet</div>
+                        }
+                    }
+                    else
+                    {
+                        <div>@card.NextHearingDate</div>
+                        <small class="d-block text-muted">@card.NextHearingProvenance</small>
+                    }
+                </div>
                 <div class="col-md-3"><div class="text-muted">Decision date</div><div>@Or(card.DecisionDate)</div></div>
             </div>
         </div>

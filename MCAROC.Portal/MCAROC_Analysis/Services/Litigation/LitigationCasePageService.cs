@@ -4,6 +4,8 @@ using MCAROC_Analysis.Models;
 using MCAROC_Analysis.Services.LitigationModule.Reading;
 using Microsoft.EntityFrameworkCore;
 
+using MCAROC_Analysis.Services.LitigationModule.Freshness;
+
 namespace MCAROC_Analysis.Services.LitigationData;
 
 /// <summary>Another case in the same report that shares a party (other than the company) with this one.</summary>
@@ -22,8 +24,12 @@ public sealed record LitigationCasePage(
 /// <summary>Loads one case of a request's current litigation report for its own page: the same card the Litigation tab builds
 /// (identity, age, baseline risk tier, parties, orders with outcomes and property matches, any stored analysis), plus the charge it
 /// bears on and the other cases it shares a party with. A case outside the request's current report is not found.</summary>
-public sealed class LitigationCasePageService(AppDbContext db, ChargeLitigationService? chargeLitigation = null, LitigationOrderOutcomeQuery? outcomeQuery = null,
-    LitigationReaderGate? readerGate = null)
+public sealed class LitigationCasePageService(
+    AppDbContext db,
+    ChargeLitigationService? chargeLitigation = null,
+    LitigationOrderOutcomeQuery? outcomeQuery = null,
+    LitigationReaderGate? readerGate = null,
+    ICourtRefreshStatusService? courtRefreshStatus = null)
 {
     public async Task<LitigationCasePage?> GetAsync(long requestId, long caseId, CancellationToken ct)
     {
@@ -63,6 +69,9 @@ public sealed class LitigationCasePageService(AppDbContext db, ChargeLitigationS
         var asOf = DateOnly.FromDateTime(Ist.FromUtc(snapshot.RetrievedUtc));
         var card = LitigationCaseCardMapper.Map(theCase, new LitigationCaseMapContext(
             orderDocs, propertyMatches, outcomeByOrder, outcomes, caseAi, run?.RunNumber ?? 0, asOf, companyNames));
+
+        var statusSvc = courtRefreshStatus ?? new CourtRefreshStatusService(db);
+        card.Freshness = await statusSvc.GetCaseFreshnessAsync(requestId, caseId, ct);
 
         IReadOnlyList<ChargeLitigationLink> links = [];
         if (chargeLitigation is not null)

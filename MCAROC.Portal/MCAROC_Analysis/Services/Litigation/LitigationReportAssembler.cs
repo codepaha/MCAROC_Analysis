@@ -3,6 +3,7 @@ using System.Text.Json;
 using MCAROC_Analysis.Data;
 using MCAROC_Analysis.Data.Entities;
 using MCAROC_Analysis.Models;
+using MCAROC_Analysis.Services.LitigationModule.Freshness;
 using Microsoft.EntityFrameworkCore;
 
 namespace MCAROC_Analysis.Services.LitigationData;
@@ -17,6 +18,7 @@ namespace MCAROC_Analysis.Services.LitigationData;
 /// </summary>
 public class LitigationReportAssembler(
     AppDbContext db,
+    ICourtRefreshStatusService? courtRefreshStatus = null,
     ILogger<LitigationReportAssembler>? logger = null)
 {
     /// <param name="includeAnalysis">False produces the pre-analysis report: case data only, no AI output.</param>
@@ -345,6 +347,20 @@ public class LitigationReportAssembler(
             });
         }
 
+        LitigationDataCurrencySummary? dataCurrency = null;
+        if (courtRefreshStatus != null)
+        {
+            try
+            {
+                var reportCaseIds = cases.Select(c => c.LitigationCaseId).ToList();
+                dataCurrency = await courtRefreshStatus.GetDataCurrencySummaryAsync(requestId, reportCaseIds, ct);
+            }
+            catch (Exception ex)
+            {
+                logger?.LogWarning(ex, "Failed to load data currency summary for request {RequestId}", requestId);
+            }
+        }
+
         return new StandaloneLitigationReport(
             request.RequestNumber ?? $"REQ-{request.RequestId}",
             request.CompanyName ?? "Unspecified Company",
@@ -360,7 +376,8 @@ public class LitigationReportAssembler(
             authoritativeSnapshot.ReusedFromSnapshotId,
             authoritativeSnapshot.ReusedFromRequestId,
             authoritativeSnapshot.OriginSnapshotId,
-            chargeLinks);
+            chargeLinks,
+            dataCurrency);
     }
 
     /// <summary>The stored analysis's <c>analysis_basis</c> ("Order-Confirmed" / "Metadata-Led"), or null when absent.</summary>

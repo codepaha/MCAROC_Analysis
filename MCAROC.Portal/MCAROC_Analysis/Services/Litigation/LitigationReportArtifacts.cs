@@ -11,6 +11,7 @@ using QuestPDF.Fluent;
 using QuestPDF.Helpers;
 using QuestPDF.Infrastructure;
 using MCAROC_Analysis.Services;
+using MCAROC_Analysis.Services.LitigationModule.Freshness;
 
 namespace MCAROC_Analysis.Services.LitigationData;
 
@@ -158,7 +159,8 @@ public sealed record StandaloneLitigationReport(
     long? ReusedFromSnapshotId = null,
     long? ReusedFromRequestId = null,
     long? OriginSnapshotId = null,
-    ChargeLitigationSummary? ChargeLinks = null)
+    ChargeLitigationSummary? ChargeLinks = null,
+    LitigationDataCurrencySummary? DataCurrency = null)
 {
     public bool IsReused => ReusedFromSnapshotId.HasValue;
 
@@ -264,7 +266,8 @@ public static class LitigationReportArtifacts
         "Contested Property Match Count", "Contested Property Details", "Charge Link Count", "Charge Links",
         "Analysis Status", "Analysis Risk", "Analysis Summary", "Analysis Key Issues", "Analysis Recommended Action",
         "Report Reused", "Reused From Request ID", "Reused From Snapshot ID", "Report Retrieved Date", "Reuse Disclosure",
-        "Analysis Trigger", "Analysis Baseline Risk", "Analysis Restraint", "Analysis Outcome", "Analysis Passages", "Analysis Key Points"
+        "Analysis Trigger", "Analysis Baseline Risk", "Analysis Restraint", "Analysis Outcome", "Analysis Passages", "Analysis Key Points",
+        "Data Currency As Of", "Refreshed Cases Count", "Unrefreshed Cases Count", "Data Currency Note"
     ];
 
     private static void WriteRow(CsvWriter csv, int serial, StandaloneLitigationReport report, CaseView view)
@@ -322,7 +325,11 @@ public static class LitigationReportArtifacts
             }.Where(x => x is not null)) is { Length: > 0 } flags ? flags : null,
             analysis?.Outcome,
             analysis?.Passages is { Count: > 0 } ps ? string.Join(" | ", ps.Select(q => $"{q.Claim}: \"{q.Quote}\" (order #{q.OrderId}, p. {q.Page})")) : null,
-            analysis?.KeyPoints is { Count: > 0 } kp ? string.Join("; ", kp) : null
+            analysis?.KeyPoints is { Count: > 0 } kp ? string.Join("; ", kp) : null,
+            report.DataCurrency is { AsOfUtc: not null } dcAsOf ? dcAsOf.AsOfIst : Ist.Format(report.AuthoritativeSnapshotRetrievedUtc, "dd-MMM-yyyy, HH:mm"),
+            report.DataCurrency?.RefreshedCasesCount.ToString(CultureInfo.InvariantCulture) ?? "0",
+            report.DataCurrency?.UnrefreshedCasesCount.ToString(CultureInfo.InvariantCulture) ?? report.Cases.Count.ToString(CultureInfo.InvariantCulture),
+            report.DataCurrency is { InProgressNote.Length: > 0 } dcProg ? $"{dcProg.InProgressNote} {dcProg.CurrencyNote}" : (report.DataCurrency?.CurrencyNote ?? "Unrefreshed cases show the last known values.")
         }) csv.WriteField(SafeCsv(value));
         csv.NextRecord();
     }
@@ -459,9 +466,41 @@ internal sealed class LitigationReportPdfDocument(StandaloneLitigationReport rep
             });
         }
 
+        var dataCurrency = report.DataCurrency is { AsOfUtc: null } dcNull
+            ? dcNull with
+            {
+                AsOfUtc = report.AuthoritativeSnapshotRetrievedUtc,
+                AsOfIst = Ist.Format(report.AuthoritativeSnapshotRetrievedUtc, "dd-MMM-yyyy, HH:mm")
+            }
+            : report.DataCurrency ?? new LitigationDataCurrencySummary(
+                report.AuthoritativeSnapshotRetrievedUtc,
+                Ist.Format(report.AuthoritativeSnapshotRetrievedUtc, "dd-MMM-yyyy, HH:mm"),
+                report.Cases.Count,
+                0,
+                report.Cases.Count);
+
+        column.Item().PaddingTop(6).Background("#F8FAFC").Border(0.8f).BorderColor("#CBD5E1").Padding(8).Column(c =>
+        {
+            c.Item().Row(r =>
+            {
+                r.AutoItem().Text("DATA CURRENCY").Bold().FontSize(8.5f).FontColor(Navy);
+                r.RelativeItem().AlignRight().Text($"As of {dataCurrency.AsOfIst}").SemiBold().FontSize(8f).FontColor(Ink);
+            });
+            c.Item().PaddingTop(3).Text(text =>
+            {
+                text.Span($"{dataCurrency.RefreshedCasesCount} of {dataCurrency.TotalCases} case(s) refreshed from court portals · {dataCurrency.UnrefreshedCasesCount} not updated. ").SemiBold().FontSize(8f).FontColor(Ink);
+                if (!string.IsNullOrWhiteSpace(dataCurrency.InProgressNote))
+                {
+                    text.Span(dataCurrency.InProgressNote + " ").SemiBold().FontSize(7.8f).FontColor(Amber);
+                }
+                text.Span(dataCurrency.CurrencyNote).Italic().FontSize(7.8f).FontColor(Colors.Grey.Darken2);
+            });
+        });
+
         var infoRows = new List<(string Label, string Value)>
         {
             ("SOURCE", "BPR Litigation Data Lake"),
+            ("DATA CURRENCY", $"{dataCurrency.RefreshedCasesCount} of {dataCurrency.TotalCases} case(s) refreshed · {dataCurrency.UnrefreshedCasesCount} not updated as of {dataCurrency.AsOfIst}{(string.IsNullOrWhiteSpace(dataCurrency.InProgressNote) ? string.Empty : $" · {dataCurrency.InProgressNote}")}"),
             ("AUTHORITATIVE SNAPSHOT", $"{Ist.Format(report.AuthoritativeSnapshotRetrievedUtc, "dd MMM yyyy, HH:mm")} (ID: {report.AuthoritativeSnapshotId}){(report.IsPriorRunDataShown ? " [Prior Run Snapshot]" : string.Empty)}"),
         };
         if (report.IsReused)

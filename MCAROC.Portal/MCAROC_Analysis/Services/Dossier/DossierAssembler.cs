@@ -5,6 +5,7 @@ using MCAROC_Analysis.Models;
 using MCAROC_Analysis.Models.Dossier;
 using MCAROC_Analysis.Services.Analysis;
 using MCAROC_Analysis.Services.Analysis.Rules;
+using MCAROC_Analysis.Services.LitigationModule.Freshness;
 using Microsoft.EntityFrameworkCore;
 
 namespace MCAROC_Analysis.Services.Dossier;
@@ -13,7 +14,10 @@ namespace MCAROC_Analysis.Services.Dossier;
 /// and computes the shared derived values (<see cref="DossierComputations"/>) into a <see cref="DossierModel"/>.
 /// The same instance backs both the client PDF and the restyled company page — go through
 /// <see cref="DossierCache"/> so a page view and a PDF download for one run assemble only once.</summary>
-public class DossierAssembler(AppDbContext db, Services.LitigationData.ChargeLitigationService? chargeLitigation = null)
+public class DossierAssembler(
+    AppDbContext db,
+    Services.LitigationData.ChargeLitigationService? chargeLitigation = null,
+    ICourtRefreshStatusService? courtRefreshStatus = null)
 {
     public async Task<DossierModel?> BuildAsync(long requestId, CancellationToken ct = default)
     {
@@ -159,6 +163,16 @@ public class DossierAssembler(AppDbContext db, Services.LitigationData.ChargeLit
 
         var notAssessed = DeserializeSufficiencyNotes(analysis.DataSufficiencyNotesJson);
 
+        LitigationDataCurrencySummary? litigationCurrency = null;
+        if (courtRefreshStatus is not null)
+        {
+            litigationCurrency = await courtRefreshStatus.GetDossierDataCurrencySummaryAsync(
+                request.RequestId,
+                litigations,
+                run?.SourceSnapshotDate ?? run?.CompletedDate,
+                ct);
+        }
+
         var roles = DossierComputations.LitigationRoles(litigations, findings);
 
         var model = new DossierModel(
@@ -176,7 +190,7 @@ public class DossierAssembler(AppDbContext db, Services.LitigationData.ChargeLit
                 DossierComputations.LenderConcentration(charges),
                 findings.Count(f => f.Code == ChargeRules.MaterialEnhancementCode)),
             new DossierCompliance(compliance, msme, gst, epfo, epfoEstablishments, DossierDeduplicator.SummariseSuitFiled(compliance), creditRatings),
-            new DossierLitigation(litigations, DossierDeduplicator.ThreadLitigation(litigations), roles, financialDisputeCases),
+            new DossierLitigation(litigations, DossierDeduplicator.ThreadLitigation(litigations), roles, financialDisputeCases, litigationCurrency),
             new DossierExecSummary(
                 analysis.OverallReviewPriority,
                 analysis.CriticalFindingsCount, analysis.ReviewFindingsCount,

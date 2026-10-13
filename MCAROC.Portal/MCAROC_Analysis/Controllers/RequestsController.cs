@@ -45,7 +45,8 @@ public partial class RequestsController(
     LitigationOrderOutcomeQuery? orderOutcomes = null,
     FullTextSearchStatus? fullTextStatus = null,
     MCAROC_Analysis.Services.AutoFetch.McaDocumentRestoreService? documentRestore = null,
-    MCAROC_Analysis.Services.LitigationModule.Reading.LitigationReaderGate? readerGate = null) : Controller
+    MCAROC_Analysis.Services.LitigationModule.Reading.LitigationReaderGate? readerGate = null,
+    MCAROC_Analysis.Services.LitigationModule.Freshness.ICourtRefreshStatusService? courtRefreshStatus = null) : Controller
 {
     [HttpGet("/Requests")]
     public async Task<IActionResult> Index([FromQuery] RequestListFilterCriteria filters)
@@ -501,14 +502,15 @@ public partial class RequestsController(
     [HttpGet("/Requests/{id:long}/Litigation/CaseList")]
     public async Task<IActionResult> LitigationCases(long id, [FromQuery] string? court = null, [FromQuery] string? status = null,
         [FromQuery] int page = 1, [FromQuery] int pageSize = 25, [FromQuery] string? q = null,
-        [FromQuery] string? outcome = null, [FromQuery] long? snapshot = null, [FromQuery] string? generation = null)
+        [FromQuery] string? outcome = null, [FromQuery] long? snapshot = null, [FromQuery] string? generation = null,
+        [FromQuery] string? freshness = null, [FromQuery] string? missingField = null)
     {
         var ct = HttpContext?.RequestAborted ?? CancellationToken.None;
         var timer = System.Diagnostics.Stopwatch.StartNew();
         var before = await Services.RequestDetails.RequestPageVersion.ReadAsync(db, id, ct);
         var caseSource = readerGate is null ? MCAROC_Analysis.Services.LitigationModule.Reading.CaseSetSource.Legacy : await readerGate.ResolveCaseListAsync(id, ct);
-        var model = await new Services.RequestDetails.LitigationCaseListQuery(db, orderOutcomes, caseSource)
-            .BuildAsync(id, court, status, page, pageSize, q, outcome, null, ct);
+        var model = await new Services.RequestDetails.LitigationCaseListQuery(db, orderOutcomes, caseSource, courtRefreshStatus)
+            .BuildAsync(id, court, status, page, pageSize, q, outcome, null, ct, freshness, missingField);
         if (model is null) return NotFound();
         if (chargeLitigation is not null)
         {
@@ -532,6 +534,22 @@ public partial class RequestsController(
             Response.Headers["Server-Timing"] = $"litigation-list;dur={timer.Elapsed.TotalMilliseconds.ToString("F1", System.Globalization.CultureInfo.InvariantCulture)}";
         }
         return PartialView("Details/_LitigationCaseList", model);
+    }
+
+    /// <summary>Court refresh live progress status and "what is not updated" counts (plan section 4.8). Polled without page reload.</summary>
+    [HttpGet("/Requests/{id:long}/court-update/status")]
+    public async Task<IActionResult> CourtUpdateStatus(long id, CancellationToken ct)
+    {
+        var exists = await db.Requests.AsNoTracking().AnyAsync(r => r.RequestId == id, ct);
+        if (!exists) return NotFound();
+
+        var service = courtRefreshStatus ?? HttpContext.RequestServices.GetService<MCAROC_Analysis.Services.LitigationModule.Freshness.ICourtRefreshStatusService>();
+        if (service is null) return StatusCode(StatusCodes.Status503ServiceUnavailable);
+
+        var status = await service.GetRefreshStatusAsync(id, ct);
+        if (Response != null)
+            Response.Headers.CacheControl = "no-store";
+        return Json(status);
     }
 
     [HttpGet("/Requests/{id:long}/Litigation/AnalysisAvailability")]

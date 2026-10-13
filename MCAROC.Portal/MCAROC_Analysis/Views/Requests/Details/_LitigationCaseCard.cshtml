@@ -2,6 +2,7 @@
 @using MCAROC_Analysis.Data.Entities
 @using MCAROC_Analysis.Services.Analysis
 @using MCAROC_Analysis.Services.LitigationData
+@using MCAROC_Analysis.Services.LitigationModule.Freshness
 @model LitigationCaseCardViewModel
 @{
     var statusBadgeClass = Model.StatusBucket switch
@@ -17,6 +18,10 @@
     <div class="card-header d-flex flex-wrap justify-content-between align-items-center bg-light py-2 px-3">
         <div class="d-flex align-items-center gap-2">
             <span class="badge @statusBadgeClass">@Model.StatusBucket</span>
+            @if (Model.Freshness is { } cardFresh && cardFresh.Label != FreshnessLabel.Excluded)
+            {
+                <span class="@Model.FreshnessBadgeCss" title="@cardFresh.Reason" data-freshness-label="@cardFresh.Label">@Model.FreshnessText</span>
+            }
             @if (Model.Risk is { } cardRisk)
             {
                 <span class="badge @LitigationBaselineRisk.BadgeCss(cardRisk.Tier)" title="@cardRisk.Trigger — @cardRisk.Reason" data-risk-tier="@cardRisk.Tier">@cardRisk.Tier</span>
