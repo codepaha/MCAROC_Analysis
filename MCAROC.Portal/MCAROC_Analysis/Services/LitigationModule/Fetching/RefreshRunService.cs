@@ -122,6 +122,16 @@ public sealed class RefreshRunService(AppDbContext db, FetchWorkQueue queue, Tim
     public Task<long?> LatestRunIdAsync(long requestId, CancellationToken ct) =>
         db.Set<ModuleRefreshRun>().AsNoTracking().Where(r => r.RequestId == requestId).OrderByDescending(r => r.RunId).Select(r => (long?)r.RunId).FirstOrDefaultAsync(ct);
 
+    /// <summary>Completes a run whose work is all done: <b>first</b> publishes every result still waiting for the request, <b>then</b> marks the run finished. In that order,
+    /// whatever reacts to the finish (the pipeline re-rendering the dossier) always sees the final data, never a half-published request. True only for the call that finished it.</summary>
+    public async Task<bool> CompleteIfDoneAsync(long runId, long requestId, CancellationToken ct)
+    {
+        var counts = await queue.CountsForRunAsync(runId, ct);
+        if (counts.GetValueOrDefault(FetchWorkStatus.Queued) + counts.GetValueOrDefault(FetchWorkStatus.Claimed) > 0) return false;
+        await new LiveBatchPublisher(db, time: _time).PublishAllAsync(requestId, ct);
+        return await FinishIfDoneAsync(runId, ct);
+    }
+
     /// <summary>Marks the run finished when nothing of it is queued or in progress. True only for the call that finished it (a conditional update), so the end-of-run work
     /// (the final publication, the debounced summaries) runs once.</summary>
     public async Task<bool> FinishIfDoneAsync(long runId, CancellationToken ct)

@@ -95,6 +95,20 @@ public sealed class LiveBatchPublisher(AppDbContext db, LiveBatchOptions? option
         return new LiveBatchResult(requestId, batch.Count, published, unchanged, notPublished, version);
     }
 
+    /// <summary>Publishes everything still waiting for the request, batch after batch (the end of a court update, plan 4.7: "or the end of the live stage").</summary>
+    public async Task<int> PublishAllAsync(long requestId, CancellationToken ct)
+    {
+        var published = 0;
+        for (var guard = 0; guard < 10_000; guard++)
+        {
+            var batch = await PublishBatchAsync(requestId, ct);
+            if (batch.Considered == 0) break;
+            published += batch.Published;
+            if (batch.Published + batch.Unchanged == 0) break;   // nothing in the batch was ours to publish any more: stop rather than spin
+        }
+        return published;
+    }
+
     /// <summary>One pass: every request whose batch is due gets one batch.</summary>
     public async Task<IReadOnlyList<LiveBatchResult>> PublishDueAsync(CancellationToken ct)
     {
