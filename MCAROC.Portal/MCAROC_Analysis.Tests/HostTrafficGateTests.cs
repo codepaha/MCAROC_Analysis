@@ -304,4 +304,28 @@ public class HostTrafficGateTests : IAsyncLifetime
         Assert.Equal(HostEntryRefusal.BreakerOpen, entry.Refusal);
         Assert.Equal(0, await db.OperationalSlotLeases.CountAsync(l => l.SlotType == "LitigationHost_Drt"));
     }
+
+    [Fact]
+    public async Task A_slow_probe_that_renews_keeps_the_breaker_to_itself()
+    {
+        var clock = new TestClock(DateTime.UtcNow);
+        await ReportAsync(clock, HostCallOutcome.Unavailable, times: 3);
+        clock.Utc += TimeSpan.FromMinutes(6);
+        await using var db = Ctx();
+        var probe = await Gate(db, clock).TryEnterAsync(FetchHost.Drt, "slow-prober", default);
+        Assert.True(probe.Permit!.IsProbe);
+
+        for (var i = 0; i < 3; i++)                                                              // 4.5 minutes in all, well past the 2-minute probe timeout
+        {
+            clock.Utc += TimeSpan.FromSeconds(90);
+            Assert.True(await Gate(db, clock).RenewAsync(probe.Permit, default));
+            Assert.False((await Gate(db, clock).TryEnterAsync(FetchHost.Drt, "agent-2", default)).Admitted);
+        }
+
+        // once it stops renewing, the claim lapses and another agent may probe; the old prober learns it lost the claim
+        clock.Utc += TimeSpan.FromMinutes(3);
+        var next = await Gate(db, clock).TryEnterAsync(FetchHost.Drt, "agent-2", default);
+        Assert.True(next.Permit!.IsProbe);
+        Assert.False(await Gate(db, clock).RenewAsync(probe.Permit, default));
+    }
 }

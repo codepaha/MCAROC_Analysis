@@ -134,8 +134,17 @@ public sealed class HostTrafficGate(AppDbContext db, IOperationalSlotLeaseServic
         return new HostEntry(null, HostEntryRefusal.AtCapacity, now + _opts.BusyRetryDelay);
     }
 
-    /// <summary>Keeps a permit alive across a long item (a big download).</summary>
-    public Task<bool> RenewAsync(HostPermit permit, CancellationToken ct) => slots.TryRenewSlotAsync(SlotType(permit.Host), permit.HolderId, _opts.PermitDuration, ct);
+    /// <summary>Keeps a permit alive across a long item (a big download). A probe's permit also extends its claim on the half-open breaker, so a slow probe is never joined by a
+    /// second one while it still runs. False when the permit (or, for a probe, the probe claim) was already lost: the caller should stop.</summary>
+    public async Task<bool> RenewAsync(HostPermit permit, CancellationToken ct)
+    {
+        var renewed = await slots.TryRenewSlotAsync(SlotType(permit.Host), permit.HolderId, _opts.PermitDuration, ct);
+        if (!permit.IsProbe) return renewed;
+        var until = Now + _opts.ProbeTimeout;
+        var stillProbe = await db.Set<ModuleHostTrafficState>().Where(s => s.Host == (int)permit.Host && s.ProbeHolder == permit.HolderId)
+            .ExecuteUpdateAsync(u => u.SetProperty(s => s.ProbeUntilUtc, until), ct) == 1;
+        return renewed && stillProbe;
+    }
 
     /// <summary>Records how one call went. Call it once per portal call (an item may make several), before the permit is released.</summary>
     public async Task ReportAsync(HostPermit permit, HostCallOutcome outcome, string? detail, TimeSpan? retryAfter, CancellationToken ct)
