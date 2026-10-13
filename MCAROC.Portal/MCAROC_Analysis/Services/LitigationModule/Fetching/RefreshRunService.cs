@@ -1,5 +1,6 @@
 using MCAROC_Analysis.Data;
 using MCAROC_Analysis.Models;
+using MCAROC_Analysis.Services.LitigationModule.Freshness;
 using MCAROC_Analysis.Services.LitigationModule.Normalisation;
 using MCAROC_Analysis.Services.LitigationModule.Refresh;
 using MCAROC_Analysis.Services.LitigationModule.Store;
@@ -7,14 +8,11 @@ using Microsoft.EntityFrameworkCore;
 
 namespace MCAROC_Analysis.Services.LitigationModule.Fetching;
 
-/// <summary>Where a run is (plan 4.8: the phase line under the banner).</summary>
-public enum RefreshRunPhase { RefreshingCases = 1, FindingMissingCases = 2, FetchingOrders = 3, ReanalysingChangedCases = 4, Done = 9 }
-
 /// <param name="Enqueued">Cases queued for a status fetch: the run's total for the progress bar (plan 4.8: disposed and not-due cases are not in it).</param>
 /// <param name="NoLookup">Cases due for a refresh that no portal can be asked about, with the reasons and their counts.</param>
 public sealed record RefreshRunStart(long RunId, bool AlreadyRunning, int Enqueued, int NotDue, int Disposed, int OrdersOnly, int NoLookup, IReadOnlyDictionary<string, int> NoLookupReasons);
 
-public sealed record RefreshRunProgress(long RunId, long RequestId, DateTime StartedUtc, DateTime? FinishedUtc, RefreshRunPhase Phase, int EligibleAtStart,
+public sealed record RefreshRunProgress(long RunId, long RequestId, DateTime StartedUtc, DateTime? FinishedUtc, RefreshPhase Phase, int EligibleAtStart,
     int Queued, int InProgress, int Succeeded, int Failed, DateTime? LastAgentHeartbeatUtc)
 {
     public int Handled => Succeeded + Failed;
@@ -29,8 +27,15 @@ public sealed class RefreshRunService(AppDbContext db, FetchWorkQueue queue, Tim
 
     private DateTime Now => _time.GetUtcNow().UtcDateTime;
 
+    /// <summary>Test seam: runs just before the start commits, to prove a failure there leaves nothing behind.</summary>
+    internal Func<CancellationToken, Task>? BeforeCommit { get; init; }
+
+    /// <summary>Starts a run, or returns the one already open. The whole start (the run row, the module cases it needs and every queued item) is <b>one transaction</b> under a
+    /// per-request lock: a failure or cancellation part-way leaves no open run behind, so the next start simply starts again; and two starts at once cannot both create a run.</summary>
     public async Task<RefreshRunStart> StartAsync(long requestId, CancellationToken ct)
     {
+        await using var tx = await db.Database.BeginTransactionAsync(ct);
+        await CaseLock.AcquireAsync(db, $"refresh-run:{requestId}", ct);
         var active = await db.Set<ModuleRefreshRun>().AsNoTracking().Where(r => r.RequestId == requestId && r.FinishedUtc == null)
             .OrderByDescending(r => r.RunId).FirstOrDefaultAsync(ct);
         if (active is not null)
@@ -38,7 +43,8 @@ public sealed class RefreshRunService(AppDbContext db, FetchWorkQueue queue, Tim
 
         var now = Now;
         var todayIst = DateOnly.FromDateTime(Ist.Now(_time));
-        var run = new ModuleRefreshRun { RequestId = requestId, StartedUtc = now, Phase = (int)RefreshRunPhase.RefreshingCases };
+        // The phase uses the banner's own enum (RefreshPhase), so the stored value and the label can never disagree; a run is finished by FinishedUtc, not by a phase.
+        var run = new ModuleRefreshRun { RequestId = requestId, StartedUtc = now, Phase = (int)RefreshPhase.RefreshingCases };
         db.Set<ModuleRefreshRun>().Add(run);
         await db.SaveChangesAsync(ct);
 
@@ -84,7 +90,9 @@ public sealed class RefreshRunService(AppDbContext db, FetchWorkQueue queue, Tim
 
         await db.Set<ModuleRefreshRun>().Where(r => r.RunId == run.RunId).ExecuteUpdateAsync(u => u.SetProperty(r => r.EligibleAtStart, enqueued), ct);
         // A run with nothing to fetch is finished the moment it starts.
-        if (enqueued == 0) await FinishIfDoneAsync(run.RunId, ct);
+        if (enqueued == 0) await db.Set<ModuleRefreshRun>().Where(r => r.RunId == run.RunId).ExecuteUpdateAsync(u => u.SetProperty(r => r.FinishedUtc, now), ct);
+        if (BeforeCommit is not null) await BeforeCommit(ct);
+        await tx.CommitAsync(ct);
         return new RefreshRunStart(run.RunId, false, enqueued, notDue, disposed, ordersOnly, noLookup, reasons);
     }
 
@@ -98,7 +106,7 @@ public sealed class RefreshRunService(AppDbContext db, FetchWorkQueue queue, Tim
         var run = await db.Set<ModuleRefreshRun>().AsNoTracking().FirstOrDefaultAsync(r => r.RunId == runId, ct);
         if (run is null) return null;
         var counts = await queue.CountsForRunAsync(runId, ct);
-        return new RefreshRunProgress(run.RunId, run.RequestId, run.StartedUtc, run.FinishedUtc, (RefreshRunPhase)run.Phase, run.EligibleAtStart,
+        return new RefreshRunProgress(run.RunId, run.RequestId, run.StartedUtc, run.FinishedUtc, (RefreshPhase)run.Phase, run.EligibleAtStart,
             counts.GetValueOrDefault(FetchWorkStatus.Queued), counts.GetValueOrDefault(FetchWorkStatus.Claimed), counts.GetValueOrDefault(FetchWorkStatus.Succeeded),
             counts.GetValueOrDefault(FetchWorkStatus.Failed) + counts.GetValueOrDefault(FetchWorkStatus.Cancelled), run.LastAgentHeartbeatUtc);
     }
@@ -115,7 +123,7 @@ public sealed class RefreshRunService(AppDbContext db, FetchWorkQueue queue, Tim
         if (counts.GetValueOrDefault(FetchWorkStatus.Queued) + counts.GetValueOrDefault(FetchWorkStatus.Claimed) > 0) return false;
         var now = Now;
         return await db.Set<ModuleRefreshRun>().Where(r => r.RunId == runId && r.FinishedUtc == null)
-            .ExecuteUpdateAsync(u => u.SetProperty(r => r.FinishedUtc, now).SetProperty(r => r.Phase, (int)RefreshRunPhase.Done), ct) == 1;
+            .ExecuteUpdateAsync(u => u.SetProperty(r => r.FinishedUtc, now), ct) == 1;
     }
 
     /// <summary>Unfinished runs, for the worker that closes them.</summary>

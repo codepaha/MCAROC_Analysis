@@ -150,8 +150,8 @@ public class RefreshRunServiceTests : IAsyncLifetime
         Assert.True(await runs.FinishIfDoneAsync(first.RunId, default));
         Assert.False(await runs.FinishIfDoneAsync(first.RunId, default));                          // once only
         var progress = await runs.ProgressAsync(first.RunId, default);
-        Assert.Equal(RefreshRunPhase.Done, progress!.Phase);
-        Assert.NotNull(progress.FinishedUtc);
+        Assert.NotNull(progress!.FinishedUtc);
+        Assert.Equal(MCAROC_Analysis.Services.LitigationModule.Freshness.RefreshPhase.RefreshingCases, progress.Phase);   // the banner's own phase values
 
         Assert.False((await runs.StartAsync(requestId, default)).AlreadyRunning);                  // and a new run may start
     }
@@ -167,5 +167,48 @@ public class RefreshRunServiceTests : IAsyncLifetime
         var start = await runs.StartAsync(requestId, default);
         Assert.Equal(0, start.Enqueued);
         Assert.NotNull((await runs.ProgressAsync(start.RunId, default))!.FinishedUtc);
+    }
+
+    [Fact]
+    public async Task A_start_that_fails_part_way_leaves_no_open_run_and_the_next_start_works()
+    {
+        await using var db = Ctx();
+        var requestId = await RequestAsync(db);
+        db.LitigationCases.Add(Case(requestId, "OA/" + Random.Shared.Next(10_000, 99_999) + "/2022", "Debts Recovery Tribunal Delhi (DRT 3)", "PENDING", nextHearing: "01-10-2026"));
+        await db.SaveChangesAsync();
+
+        var failing = new RefreshRunService(db, new FetchWorkQueue(db)) { BeforeCommit = _ => throw new InvalidOperationException("simulated failure after queueing") };
+        await Assert.ThrowsAsync<InvalidOperationException>(() => failing.StartAsync(requestId, default));
+
+        await using (var check = Ctx())
+        {
+            Assert.False(await check.Set<ModuleRefreshRun>().AnyAsync(r => r.RequestId == requestId));             // nothing half-started
+            var caseIds = check.Set<ModuleCase>().Where(c => check.LitigationCases.Any(l => l.RequestId == requestId && l.LitigationCaseId == c.LegacyLitigationCaseId)).Select(c => c.CaseId);
+            Assert.False(await check.Set<ModuleFetchWorkItem>().AnyAsync(w => w.CaseId != null && caseIds.Contains(w.CaseId.Value)));
+        }
+
+        await using var retry = Ctx();
+        var start = await new RefreshRunService(retry, new FetchWorkQueue(retry)).StartAsync(requestId, default);
+        Assert.False(start.AlreadyRunning);
+        Assert.Equal(1, start.Enqueued);
+    }
+
+    [Fact]
+    public async Task Two_starts_at_once_make_one_run()
+    {
+        long requestId;
+        await using (var db = Ctx())
+        {
+            requestId = await RequestAsync(db);
+            db.LitigationCases.Add(Case(requestId, "OA/" + Random.Shared.Next(10_000, 99_999) + "/2022", "Debts Recovery Tribunal Delhi (DRT 1)", "PENDING", nextHearing: "01-10-2026"));
+            await db.SaveChangesAsync();
+        }
+        var starts = await Task.WhenAll(Enumerable.Range(0, 4).Select(async _ =>
+        {
+            await using var db = Ctx();
+            return await new RefreshRunService(db, new FetchWorkQueue(db)).StartAsync(requestId, default);
+        }));
+        Assert.Single(starts.Select(s => s.RunId).Distinct());
+        Assert.Equal(1, starts.Count(s => !s.AlreadyRunning));
     }
 }
