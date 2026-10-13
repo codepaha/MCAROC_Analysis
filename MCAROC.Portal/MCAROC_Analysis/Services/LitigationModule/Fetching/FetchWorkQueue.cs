@@ -12,7 +12,12 @@ public enum FetchHost { Drt = 1, Consumer = 2 }
 public enum FetchWorkStatus { Queued = 1, Claimed = 2, Succeeded = 3, Failed = 4, Cancelled = 5 }
 
 /// <summary>A claimed item, with the token that fences every later write to it.</summary>
-public sealed record ClaimedWork(long WorkItemId, FetchWorkKind Kind, FetchHost Host, long? CaseId, long? RunId, string? PayloadJson, int AttemptCount, Guid LeaseToken);
+public sealed record ClaimedWork(long WorkItemId, FetchWorkKind Kind, FetchHost Host, long? CaseId, long? RunId, string? PayloadJson, int AttemptCount, Guid LeaseToken)
+{
+    /// <summary>The outcome and note the previous attempt left on the item (for example an unconfirmed not-found and the exit it came through).</summary>
+    public string? PreviousOutcome { get; init; }
+    public string? PreviousNote { get; init; }
+}
 
 public sealed record FetchQueueOptions
 {
@@ -131,13 +136,17 @@ public sealed class FetchWorkQueue(AppDbContext db, FetchQueueOptions? options =
                     WHERE [Host] = @host AND [Status] = 1 AND ([NextAttemptUtc] IS NULL OR [NextAttemptUtc] <= @now)
                     ORDER BY [Priority] DESC, [WorkItemId])
                 UPDATE next SET [Status] = 2, [LeaseToken] = @token, [LeaseOwner] = @agent, [LeaseExpiresUtc] = @expires
-                OUTPUT inserted.[WorkItemId], inserted.[Kind], inserted.[Host], inserted.[CaseId], inserted.[RunId], inserted.[PayloadJson], inserted.[AttemptCount];
+                OUTPUT inserted.[WorkItemId], inserted.[Kind], inserted.[Host], inserted.[CaseId], inserted.[RunId], inserted.[PayloadJson], inserted.[AttemptCount], inserted.[LastOutcome], inserted.[LastError];
                 """;
             Add(command, "@host", (int)host); Add(command, "@now", now); Add(command, "@token", token); Add(command, "@agent", agentId); Add(command, "@expires", now + _opts.LeaseDuration);
             await using var reader = await command.ExecuteReaderAsync(ct);
             if (!await reader.ReadAsync(ct)) return null;
             return new ClaimedWork(reader.GetInt64(0), (FetchWorkKind)reader.GetInt32(1), (FetchHost)reader.GetInt32(2),
-                reader.IsDBNull(3) ? null : reader.GetInt64(3), reader.IsDBNull(4) ? null : reader.GetInt64(4), reader.IsDBNull(5) ? null : reader.GetString(5), reader.GetInt32(6), token);
+                reader.IsDBNull(3) ? null : reader.GetInt64(3), reader.IsDBNull(4) ? null : reader.GetInt64(4), reader.IsDBNull(5) ? null : reader.GetString(5), reader.GetInt32(6), token)
+            {
+                PreviousOutcome = reader.IsDBNull(7) ? null : reader.GetString(7),
+                PreviousNote = reader.IsDBNull(8) ? null : reader.GetString(8)
+            };
         }
         finally { if (opened) await connection.CloseAsync(); }
     }
@@ -170,6 +179,24 @@ public sealed class FetchWorkQueue(AppDbContext db, FetchQueueOptions? options =
                 .SetProperty(w => w.LeaseToken, (Guid?)null).SetProperty(w => w.LeaseExpiresUtc, (DateTime?)null), ct);
         return new FetchFailureResult(changed == 1, terminal, attempts, cooldown is null ? null : now + cooldown.Value);
     }
+
+    /// <summary>A final failure that no retry can change (a permanent 4xx, a case that cannot be looked up). The item is Failed now, with the reason; like any Failed item it becomes
+    /// eligible again at the next scheduled refresh after the cool-down.</summary>
+    public async Task<bool> FailPermanentlyAsync(ClaimedWork work, string outcome, string error, CancellationToken ct)
+    {
+        var now = Now;
+        return await db.Set<ModuleFetchWorkItem>().Where(w => w.WorkItemId == work.WorkItemId && w.LeaseToken == work.LeaseToken && w.Status == (int)FetchWorkStatus.Claimed)
+            .ExecuteUpdateAsync(s => s.SetProperty(w => w.Status, (int)FetchWorkStatus.Failed).SetProperty(w => w.CompletedUtc, now).SetProperty(w => w.AttemptCount, work.AttemptCount + 1)
+                .SetProperty(w => w.LastOutcome, outcome).SetProperty(w => w.LastError, Truncate(error))
+                .SetProperty(w => w.LeaseToken, (Guid?)null).SetProperty(w => w.LeaseExpiresUtc, (DateTime?)null), ct) == 1;
+    }
+
+    /// <summary>Puts a claimed item back without using an attempt, leaving a note for the next attempt (plan 4.9 §3: a not-found is final only after a second answer through another exit,
+    /// so the first one's exit is kept here). The note must not contain a proxy address or credentials: callers store a hash.</summary>
+    public async Task<bool> RequeueWithNoteAsync(ClaimedWork work, DateTime retryAtUtc, string outcome, string note, CancellationToken ct) =>
+        await db.Set<ModuleFetchWorkItem>().Where(w => w.WorkItemId == work.WorkItemId && w.LeaseToken == work.LeaseToken && w.Status == (int)FetchWorkStatus.Claimed)
+            .ExecuteUpdateAsync(s => s.SetProperty(w => w.Status, (int)FetchWorkStatus.Queued).SetProperty(w => w.NextAttemptUtc, retryAtUtc).SetProperty(w => w.LastOutcome, outcome)
+                .SetProperty(w => w.LastError, Truncate(note)).SetProperty(w => w.LeaseToken, (Guid?)null).SetProperty(w => w.LeaseExpiresUtc, (DateTime?)null), ct) == 1;
 
     /// <summary>Puts a claimed item back without using an attempt: the shared breaker is open or the host is rate limiting. It is retried at <paramref name="retryAtUtc"/>.</summary>
     public async Task<bool> DeferAsync(ClaimedWork work, DateTime retryAtUtc, string reason, CancellationToken ct) =>
