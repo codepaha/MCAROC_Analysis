@@ -156,6 +156,25 @@ public sealed class ReferenceToolClient(HttpClient http, IOptions<ReferenceToolO
         }
     }
 
+    /// <summary>The app version sent with every call: the one the tool last named as current, else the configured one.</summary>
+    private string AppVersion => session.AppVersionOverride ?? _opts.AppVersion;
+
+    /// <summary>The tool answers a call from an outdated app version with HTTP 426 and a body such as
+    /// <c>{"version":"8.1.26","current_version":"8.1.28","app":"core"}</c>. Returns the current version when the reply is exactly that, else null.</summary>
+    internal static string? CurrentVersionFrom(HttpStatusCode status, string? body)
+    {
+        if (status != HttpStatusCode.UpgradeRequired || string.IsNullOrWhiteSpace(body)) return null;
+        try
+        {
+            using var doc = JsonDocument.Parse(body);
+            if (doc.RootElement.ValueKind == JsonValueKind.Object && doc.RootElement.TryGetProperty("current_version", out var v) && v.ValueKind == JsonValueKind.String
+                && v.GetString() is { } version && System.Text.RegularExpressions.Regex.IsMatch(version, @"^\d{1,4}(\.\d{1,4}){1,3}$"))
+                return version;
+        }
+        catch (JsonException) { }
+        return null;
+    }
+
     public async Task<ReferenceSessionInfo> LoginAsync(CancellationToken ct)
     {
         if (!_opts.CanAutoLogin)
@@ -186,23 +205,36 @@ public sealed class ReferenceToolClient(HttpClient http, IOptions<ReferenceToolO
             };
             var jwt = SignJwt(loginPayload, key);
 
-            var url = BuildUrl("server/user/login.php", new Dictionary<string, string>
+            async Task<(HttpResponseMessage Response, string Body)> SendLoginAsync()
             {
-                ["v"] = _opts.ClientVersion,
-                ["cv"] = _opts.AppVersion
-            });
+                var url = BuildUrl("server/user/login.php", new Dictionary<string, string>
+                {
+                    ["v"] = _opts.ClientVersion,
+                    ["cv"] = AppVersion
+                });
+                using var request = new HttpRequestMessage(HttpMethod.Post, url);
+                request.Headers.TryAddWithoutValidation("User-Agent", _opts.UserAgent);
+                request.Headers.TryAddWithoutValidation("Referer", BaseUri.ToString());
+                request.Headers.TryAddWithoutValidation("Origin", BaseUri.GetLeftPart(UriPartial.Authority));
+                request.Content = new FormUrlEncodedContent(
+                [
+                    new KeyValuePair<string, string>("pp", jwt)
+                ]);
+                var sent = await http.SendAsync(request, ct);
+                return (sent, await sent.Content.ReadAsStringAsync(ct));
+            }
 
-            using var request = new HttpRequestMessage(HttpMethod.Post, url);
-            request.Headers.TryAddWithoutValidation("User-Agent", _opts.UserAgent);
-            request.Headers.TryAddWithoutValidation("Referer", BaseUri.ToString());
-            request.Headers.TryAddWithoutValidation("Origin", BaseUri.GetLeftPart(UriPartial.Authority));
-            request.Content = new FormUrlEncodedContent(
-            [
-                new KeyValuePair<string, string>("pp", jwt)
-            ]);
-
-            using var response = await http.SendAsync(request, ct);
-            var body = await response.Content.ReadAsStringAsync(ct);
+            var (response, body) = await SendLoginAsync();
+            // A tool release makes the configured app version outdated (HTTP 426 naming the current one). Adopt what the tool names and log in once
+            // more, rather than stopping every fetch until the configuration is edited (end-to-end automation). Only ever once per login.
+            if (CurrentVersionFrom(response.StatusCode, body) is { } current && session.AdoptAppVersion(current))
+            {
+                logger.LogWarning("The reference tool requires app version {Current} (configured {Configured}); using it from now on. Update ReferenceTool:AppVersion to match.",
+                    current, _opts.AppVersion);
+                response.Dispose();
+                (response, body) = await SendLoginAsync();
+            }
+            using var _response = response;
             if (!response.IsSuccessStatusCode)
             {
                 // A rejected login carried over HTTP status (401/403) is a credentials signal, not a
@@ -336,7 +368,7 @@ public sealed class ReferenceToolClient(HttpClient http, IOptions<ReferenceToolO
             ["action"] = "publishProbedData",
             ["bid"] = bid,
             ["v"] = _opts.ClientVersion,
-            ["cv"] = _opts.AppVersion,
+            ["cv"] = AppVersion,
             ["printParams"] = printParams,
         });
 
@@ -529,7 +561,7 @@ public sealed class ReferenceToolClient(HttpClient http, IOptions<ReferenceToolO
             ["did"] = did,
             ["platform"] = "b2c",
             ["v"] = _opts.ClientVersion,
-            ["cv"] = _opts.AppVersion,
+            ["cv"] = AppVersion,
         });
 
         var tempPath = destinationPath + ".download";
@@ -666,7 +698,7 @@ public sealed class ReferenceToolClient(HttpClient http, IOptions<ReferenceToolO
     {
         EnsureConfigured();
         var token = await SignAsync(new { action = "addAsset", teamId, bid, legalName }, ct);
-        var url = BuildUrl("server/user/service.php", new Dictionary<string, string> { ["v"] = _opts.ClientVersion, ["cv"] = _opts.AppVersion });
+        var url = BuildUrl("server/user/service.php", new Dictionary<string, string> { ["v"] = _opts.ClientVersion, ["cv"] = AppVersion });
         using var request = NewRequest(url);
         request.Method = HttpMethod.Post;
         request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
@@ -676,8 +708,13 @@ public sealed class ReferenceToolClient(HttpClient http, IOptions<ReferenceToolO
         if (!response.IsSuccessStatusCode)
             throw new ReferenceToolException($"The reference tool's unlock call returned HTTP {(int)response.StatusCode}.", ClassifyHttpFailure(response.StatusCode));
         using var doc = ParseJsonOrThrow(body, "unlock");
+        // An explicit error is a refusal. Anything else is not taken as proof either way: the tool's reply to addAsset has changed shape between
+        // releases (a boolean statusCode, later a number), and a credit spent on an unlock that we then report as failed is the worst outcome.
+        // The caller confirms the unlock by reading the company's asset status straight after this call; that, not this reply, decides.
+        if (doc.RootElement.ValueKind == JsonValueKind.Object && doc.RootElement.TryGetProperty("error", out var error) && error.ValueKind is not (JsonValueKind.Null or JsonValueKind.False))
+            throw new ReferenceToolException($"The reference tool refused the unlock: {(body.Length > 200 ? body[..200] : body)}", ReferenceToolFailureKind.ContractChanged);
         if (!(doc.RootElement.ValueKind == JsonValueKind.Object && doc.RootElement.TryGetProperty("statusCode", out var ok) && ok.ValueKind == JsonValueKind.True))
-            throw new ReferenceToolException($"The reference tool did not confirm the unlock: {(body.Length > 200 ? body[..200] : body)}", ReferenceToolFailureKind.ContractChanged);
+            logger.LogWarning("The reference tool's unlock reply was not the expected confirmation ({Body}); the asset status read next decides.", body.Length > 200 ? body[..200] : body);
     }
 
     private async Task<JsonDocument> GetJsonAsync(string path, object payload, string what, CancellationToken ct)
@@ -795,7 +832,7 @@ public sealed class ReferenceToolClient(HttpClient http, IOptions<ReferenceToolO
     private async Task<HttpResponseMessage> SendSignedAsync(string path, object payload, CancellationToken ct)
     {
         var token = await SignAsync(payload, ct);
-        var url = BuildUrl(path, new Dictionary<string, string> { ["qp"] = token, ["v"] = _opts.ClientVersion, ["cv"] = _opts.AppVersion });
+        var url = BuildUrl(path, new Dictionary<string, string> { ["qp"] = token, ["v"] = _opts.ClientVersion, ["cv"] = AppVersion });
         using var request = NewRequest(url);
         request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
         return await http.SendAsync(request, HttpCompletionOption.ResponseContentRead, ct);
@@ -912,7 +949,7 @@ public sealed class ReferenceToolClient(HttpClient http, IOptions<ReferenceToolO
             {
                 ["action"] = "getJwtToken",
                 ["v"] = _opts.ClientVersion,
-                ["cv"] = _opts.AppVersion
+                ["cv"] = AppVersion
             });
             using var request = NewRequest(url);
             using var response = await http.SendAsync(request, ct);

@@ -23,7 +23,7 @@ public sealed class ReferenceToolOptions
 
     /// <summary>Client/app version query parameters the tool's front end sends on every call.</summary>
     public string ClientVersion { get; init; } = "3.1.6";
-    public string AppVersion { get; init; } = "8.1.26";
+    public string AppVersion { get; init; } = "8.1.28";
 
     /// <summary>Parallel PDF downloads per job. The tool serves each PDF individually, so this is the
     /// only thing that bounds how hard one job hits it.</summary>

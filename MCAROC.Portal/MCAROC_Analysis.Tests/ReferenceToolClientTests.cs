@@ -363,6 +363,76 @@ public class ReferenceToolClientTests : IDisposable
 
     // ── Helpers ─────────────────────────────────────────────────────────────────────────────────────
 
+    [Fact]
+    public async Task A_login_refused_as_an_outdated_app_version_adopts_the_version_the_tool_names_and_succeeds()
+    {
+        var handler = new StubHandler();
+        handler.OnPath("server/common/jwt/service.php", _ => Json($"{{\"jwtToken\":\"{KeyHex}\"}}"));
+        handler.OnPath("server/user/login.php", req =>
+        {
+            if (req.RequestUri!.Query.Contains("cv=8.1.26"))
+                return new HttpResponseMessage((HttpStatusCode)426) { Content = new StringContent("{\"version\":\"8.1.26\",\"current_version\":\"8.1.28\",\"app\":\"core\"}") };
+            var resp = Json("{\"id\":265271}");
+            resp.Headers.Add("Set-Cookie", "PHPSESSID=after-upgrade; path=/");
+            return resp;
+        });
+
+        var client = NewClient(handler, username: "dharmendra@test.com", password: "SecretPassword123");
+        var login = await client.LoginAsync(CancellationToken.None);
+
+        Assert.True(login.IsValid);
+        var logins = handler.Requests.Where(r => r.RequestUri!.AbsolutePath.EndsWith("login.php")).ToList();
+        Assert.Equal(2, logins.Count);                                                           // the refused one, then exactly one retry
+        Assert.Contains("cv=8.1.28", logins[1].RequestUri!.Query);
+    }
+
+    [Fact]
+    public async Task A_426_without_a_usable_version_is_not_retried()
+    {
+        var handler = new StubHandler();
+        handler.OnPath("server/common/jwt/service.php", _ => Json($"{{\"jwtToken\":\"{KeyHex}\"}}"));
+        handler.OnPath("server/user/login.php", _ => new HttpResponseMessage((HttpStatusCode)426) { Content = new StringContent("upgrade required") });
+
+        var client = NewClient(handler, username: "dharmendra@test.com", password: "SecretPassword123");
+        var login = await client.LoginAsync(CancellationToken.None);
+
+        Assert.False(login.IsValid);
+        Assert.Single(handler.Requests, r => r.RequestUri!.AbsolutePath.EndsWith("login.php"));
+    }
+
+    [Theory]
+    [InlineData(426, "{\"version\":\"8.1.26\",\"current_version\":\"8.1.28\",\"app\":\"core\"}", "8.1.28")]
+    [InlineData(426, "{\"current_version\":\"8.1.28; drop table\"}", null)]                 // not a version: never sent back
+    [InlineData(426, "not json", null)]
+    [InlineData(403, "{\"current_version\":\"8.1.28\"}", null)]                             // only an Upgrade Required carries it
+    public void The_current_version_is_read_only_from_an_upgrade_required_reply(int status, string body, string? expected) =>
+        Assert.Equal(expected, ReferenceToolClient.CurrentVersionFrom((HttpStatusCode)status, body));
+
+    [Theory]
+    [InlineData("{\"statusCode\":true}")]
+    [InlineData("{\"statusCode\":2070578}")]                                                   // the shape a later tool release answers with
+    public async Task An_unlock_reply_that_is_not_an_explicit_error_does_not_fail_the_call(string reply)
+    {
+        var handler = new StubHandler();
+        handler.OnPath("server/common/jwt/service.php", _ => Json($"{{\"jwtToken\":\"{KeyHex}\"}}"));
+        handler.OnPath("server/user/service.php", _ => Json(reply));
+        var client = NewClient(handler);
+
+        await client.AddAssetAsync(1, "bid-1", "TEST COMPANY PRIVATE LIMITED", CancellationToken.None);   // the caller's asset-status read decides
+    }
+
+    [Fact]
+    public async Task An_unlock_reply_with_an_explicit_error_is_a_refusal()
+    {
+        var handler = new StubHandler();
+        handler.OnPath("server/common/jwt/service.php", _ => Json($"{{\"jwtToken\":\"{KeyHex}\"}}"));
+        handler.OnPath("server/user/service.php", _ => Json("{\"error\":\"insufficient credits\"}"));
+        var client = NewClient(handler);
+
+        var ex = await Assert.ThrowsAsync<ReferenceToolException>(() => client.AddAssetAsync(1, "bid-1", "TEST COMPANY PRIVATE LIMITED", CancellationToken.None));
+        Assert.Contains("refused", ex.Message);
+    }
+
     private static ReferenceToolClient NewClient(StubHandler handler, bool configured = true, long? maxResponseBytes = null, string username = "", string password = "")
     {
         var options = Options.Create(new ReferenceToolOptions

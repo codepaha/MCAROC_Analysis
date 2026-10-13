@@ -43,6 +43,21 @@ public sealed class ReferenceToolSession
         lock (_sync) { UserName = userName.Trim(); }
     }
 
+    /// <summary>The app version the tool itself last named as current (HTTP 426 "Upgrade Required" carries it). Used instead of the configured
+    /// <c>ReferenceTool:AppVersion</c> once known, so a tool release does not stop every fetch until someone edits configuration.</summary>
+    public string? AppVersionOverride { get; private set; }
+
+    /// <summary>Records the version the tool requires. True when it changed (the caller then retries once).</summary>
+    public bool AdoptAppVersion(string version)
+    {
+        lock (_sync)
+        {
+            if (string.Equals(AppVersionOverride, version, StringComparison.Ordinal)) return false;
+            AppVersionOverride = version;
+            return true;
+        }
+    }
+
     public void SetSigningKey(byte[] key)
     {
         lock (_sync) { SigningKey = key; }
