@@ -967,7 +967,8 @@ public sealed class PipelineEnforceTests : IAsyncLifetime
         // the same data version is not paid for twice: once that run is done, another automatic start on unchanged data is refused
         await db.LitigationAiAnalysisRuns.Where(r => r.LitigationAiAnalysisRunId == update.LitigationAiAnalysisRunId)
             .ExecuteUpdateAsync(s => s.SetProperty(r => r.Status, LitigationAiAnalysisRunStatus.Completed).SetProperty(r => r.CompletedUtc, DateTime.UtcNow));
-        var admission = await db.PaidCallAdmissions.Where(a => a.ReferenceId == update.LitigationAiAnalysisRunId).Select(a => a.PaidCallAdmissionId).SingleAsync();
+        var admission = await db.PaidCallAdmissions.Where(a => a.RequestId == requestId && a.Kind == PaidCallKind.LitigationAnalysis
+                && a.ReferenceId == update.LitigationAiAnalysisRunId).Select(a => a.PaidCallAdmissionId).SingleAsync();
         await new PaidCallAdmissionService(db, new StaticOptionsMonitor(EnforcingAnalysis), TimeProvider.System, NullLogger<PaidCallAdmissionService>.Instance)
             .CommitAsync(admission, DateTime.UtcNow, CancellationToken.None);
         var again = await RealActionsStarterWith(db, EnforcingAnalysis).StartAutoAnalysisAsync(requestId, "c2", CancellationToken.None);
