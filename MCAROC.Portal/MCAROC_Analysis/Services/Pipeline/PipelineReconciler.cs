@@ -116,6 +116,7 @@ public sealed class PipelineReconciler(AppDbContext db, PipelineSnapshotReader r
         var enforceLitigation = actions is not null && opts is not null && opts.EnforcesLitigationSearch();
         var enforceAnalysis = actions is not null && opts is not null && opts.EnforcesLitigationAnalysis();
         var enforceDossier = actions is not null && opts is not null && opts.EnforcesDossierPreRender();
+        var enforceCourtUpdate = actions is not null && opts is not null && opts.EnforcesCourtUpdate();
         var enforceRetries = actions is not null && opts is not null && opts.EnforcesRetries();
         var toStart = new List<PipelineStage>();
         var toRetry = new List<PipelineStage>();
@@ -192,9 +193,14 @@ public sealed class PipelineReconciler(AppDbContext db, PipelineSnapshotReader r
                 }
             }
 
-            if (stage is PipelineStage.Litigation or PipelineStage.LitigationAnalysis && IsReadyToStart(verdict))
+            if (stage is PipelineStage.Litigation or PipelineStage.LitigationAnalysis or PipelineStage.CourtUpdate && IsReadyToStart(verdict))
             {
-                var enforce = stage == PipelineStage.Litigation ? enforceLitigation : enforceAnalysis;
+                var enforce = stage switch
+                {
+                    PipelineStage.Litigation => enforceLitigation,
+                    PipelineStage.LitigationAnalysis => enforceAnalysis,
+                    _ => enforceCourtUpdate
+                };
                 // A refused automatic start keeps its reason on the row until it is due again, and while it is
                 // retried — so a repeat of the same refusal isn't logged as a new step.
                 if (existing.TryGetValue(stage, out var deferred) && deferred.NextAttemptUtc is { } due)
@@ -317,7 +323,8 @@ public sealed class PipelineReconciler(AppDbContext db, PipelineSnapshotReader r
         PipelineActionResult result;
         var holderId = EnrichmentSlotHolderId(runId, stage);
         var slotAcquired = false;
-        if (opts.MaxConcurrentRuns > 0)
+        // The court update is not a paid enrichment: the host traffic gate bounds its load, so it takes no enrichment slot.
+        if (opts.MaxConcurrentRuns > 0 && stage != PipelineStage.CourtUpdate)
         {
             // Reserve BEFORE calling the real action, and only release again immediately below if the start
             // didn't actually happen — the reservation must exist for the whole time real work might be
@@ -412,9 +419,12 @@ public sealed class PipelineReconciler(AppDbContext db, PipelineSnapshotReader r
     {
         try
         {
-            return stage == PipelineStage.Litigation
-                ? await actions!.StartLitigationSearchAsync(requestId, correlationId, ct)
-                : await actions!.StartLitigationAnalysisAsync(requestId, correlationId, ct);
+            return stage switch
+            {
+                PipelineStage.Litigation => await actions!.StartLitigationSearchAsync(requestId, correlationId, ct),
+                PipelineStage.LitigationAnalysis => await actions!.StartLitigationAnalysisAsync(requestId, correlationId, ct),
+                _ => await actions!.StartCourtUpdateAsync(requestId, correlationId, ct)
+            };
         }
         catch (Exception ex) when (!ct.IsCancellationRequested)
         {
