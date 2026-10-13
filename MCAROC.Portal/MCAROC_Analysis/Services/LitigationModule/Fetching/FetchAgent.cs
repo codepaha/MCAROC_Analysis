@@ -87,25 +87,31 @@ public sealed class FetchAgent(
         }
 
         PortalAnswer? answer;
+        CallStop stop;
         try
         {
-            answer = await CallWithHeartbeatAsync(work, entry.Permit!, lookup, ct);
+            (answer, stop) = await CallWithHeartbeatAsync(work, entry.Permit!, lookup, ct);
             if (answer is not null) await gate.ReportAsync(entry.Permit!, answer.HostOutcome, answer.Message, answer.RetryAfter, ct);
         }
         finally
         {
             await gate.ReleaseAsync(entry.Permit!, CancellationToken.None);
         }
-        if (answer is null) return AgentTurn.LeaseLost;   // the item was taken over while the call ran: its result belongs to the new holder
+        if (stop == CallStop.LeaseLost) return AgentTurn.LeaseLost;   // the item was taken over while the call ran: its result belongs to the new holder
+        if (stop == CallStop.PermitLost)
+        {
+            // The host permit lapsed mid-call, so this call no longer counted toward the host's cap: it was stopped. The item is still ours; put it back without using an attempt.
+            return Settle(await queue.DeferAsync(work, Now + TimeSpan.FromSeconds(15), "the host permit lapsed during the call", ct), AgentTurn.Deferred);
+        }
 
         var now = Now;
         return await FencedAsync(work, async () =>
         {
-            switch (answer.Mapped.Outcome)
+            switch (answer!.Mapped.Outcome)
             {
                 case ObservationOutcome.Found when answer.Mapped.Verified:
                 {
-                    var published = await _projection.PublishAsync(new ObservationInput(caseId, answer.Source, ObservationOutcome.Found, true, now, answer.Mapped.Snapshot), ct);
+                    var published = await _projection.PublishAsync(new ObservationInput(caseId, answer!.Source, ObservationOutcome.Found, true, now, answer.Mapped.Snapshot), ct);
                     var outcome = published.ChangedFields.Count > 0 ? "Updated" : "Unchanged";
                     return Settle(await queue.CompleteAsync(work, outcome, ct), AgentTurn.Done);
                 }
@@ -145,12 +151,14 @@ public sealed class FetchAgent(
         return turn;
     }
 
-    /// <summary>Calls the portal while renewing the item's lease and the host permit at a third of the lease. If the lease cannot be renewed (another agent took the item over), the
-    /// call is cancelled and null is returned: nothing the call learnt may be written.</summary>
-    private async Task<PortalAnswer?> CallWithHeartbeatAsync(ClaimedWork work, HostPermit permit, PortalLookup lookup, CancellationToken ct)
+    private enum CallStop { None, LeaseLost, PermitLost }
+
+    /// <summary>Calls the portal while renewing the item's lease and the host permit at a third of the lease. If either cannot be renewed the call is cancelled and nothing it learnt
+    /// is used: a lost lease means another agent has the item; a lost permit means the call no longer counts toward the host's cap and must not go on outside it.</summary>
+    private async Task<(PortalAnswer? Answer, CallStop Stop)> CallWithHeartbeatAsync(ClaimedWork work, HostPermit permit, PortalLookup lookup, CancellationToken ct)
     {
         using var callCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        var leaseLost = false;
+        var stop = CallStop.None;
         var every = queue.LeaseDuration / 3;
         async Task HeartbeatAsync()
         {
@@ -158,23 +166,23 @@ public sealed class FetchAgent(
             {
                 try { await Task.Delay(every, _time, callCts.Token); }
                 catch (OperationCanceledException) { return; }
-                if (!await queue.RenewAsync(work, CancellationToken.None))
+                if (!await queue.RenewAsync(work, CancellationToken.None)) stop = CallStop.LeaseLost;
+                else if (!await gate.RenewAsync(permit, CancellationToken.None)) stop = CallStop.PermitLost;
+                if (stop != CallStop.None)
                 {
-                    leaseLost = true;
                     callCts.Cancel();
                     return;
                 }
-                await gate.RenewAsync(permit, CancellationToken.None);
             }
         }
         var heartbeat = HeartbeatAsync();
         try
         {
-            return await CallAsync(lookup, callCts.Token);
+            return (await CallAsync(lookup, callCts.Token), CallStop.None);
         }
-        catch (OperationCanceledException) when (leaseLost && !ct.IsCancellationRequested)
+        catch (OperationCanceledException) when (stop != CallStop.None && !ct.IsCancellationRequested)
         {
-            return null;
+            return (null, stop);
         }
         finally
         {

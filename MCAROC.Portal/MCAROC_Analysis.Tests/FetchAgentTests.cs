@@ -363,4 +363,31 @@ public class FetchAgentTests : IAsyncLifetime
         Assert.True(snap.BreakerOpen);                                                           // one 429, below the threshold, but the portal said when to come back
         Assert.Equal(clock.Utc + TimeSpan.FromMinutes(30), snap.OpenUntilUtc);
     }
+
+    [Fact]
+    public async Task A_call_whose_host_permit_lapses_is_stopped_and_the_item_put_back_without_an_attempt()
+    {
+        var clock = new TestClock(DateTime.UtcNow);
+        var (caseId, itemId, no) = await QueuedCaseAsync(clock);
+        var shortLease = new FetchQueueOptions { LeaseDuration = TimeSpan.FromMilliseconds(300) };   // heartbeat every 100 ms of real time
+        var drt = new ScriptedDrt();
+        drt.Script.Enqueue(DrtCaseLookupResult.Found(Details($"OA/{no}/2022"), exitAddress: "exit-a"));
+        var cancelled = false;
+        drt.During = async ct =>
+        {
+            await using (var other = Ctx())
+                await other.OperationalSlotLeases.Where(l => l.SlotType == "LitigationHost_Drt").ExecuteDeleteAsync();   // the permit is gone
+            try { await Task.Delay(TimeSpan.FromSeconds(5), ct); }
+            catch (OperationCanceledException) { cancelled = true; throw; }
+        };
+
+        await using (var db = Ctx())
+            Assert.Equal(AgentTurn.Deferred, await Agent(db, drt, clock, shortLease).RunOnceAsync(FetchHost.Drt, "agent-1", default));
+
+        Assert.True(cancelled);                                                                  // the call did not go on outside the cap
+        var item = await ItemAsync(itemId);
+        Assert.Equal((int)FetchWorkStatus.Queued, item.Status);
+        Assert.Equal(0, item.AttemptCount);
+        Assert.Empty(await ObservationsAsync(caseId));
+    }
 }
