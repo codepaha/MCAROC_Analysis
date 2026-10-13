@@ -105,16 +105,17 @@ public sealed class HostTrafficGate(AppDbContext db, IOperationalSlotLeaseServic
             else isProbe = true;
         }
 
-        // A probe goes alone; otherwise the host's current concurrency is the lease capacity.
-        var capacity = isProbe ? int.MaxValue : CurrentConcurrency(state, host);
+        // The host's current concurrency is the lease capacity, for a probe too: calls admitted before the breaker opened may still be running, and the probe waits for them to drain
+        // rather than go over the cap.
+        var capacity = CurrentConcurrency(state, host);
         var lease = await slots.TryAcquireSlotAsync(SlotType(host), holder, _opts.PermitDuration, capacity, ct);
         if (lease.Success)
         {
-            if (isProbe) return new HostEntry(new HostPermit(host, holder, true), HostEntryRefusal.None, null);
             // The capacity above came from a read made before the lease was taken: a 429 or an opening breaker reported in between would not be in it. Check again now that the permit
             // is held and before any call is sent; if the host has since been slowed down or broken, give the permit back. Nothing was sent, so the cap is never exceeded on the wire.
+            // (A probe is admitted to a half-open breaker by design, so only the cap is checked again for it.)
             var fresh = await ReadAsync(host, ct);
-            if (fresh.OpenUntilUtc is not null)
+            if (!isProbe && fresh.OpenUntilUtc is not null)
             {
                 await slots.ReleaseSlotAsync(SlotType(host), holder, CancellationToken.None);
                 return new HostEntry(null, HostEntryRefusal.BreakerOpen, fresh.OpenUntilUtc > now ? fresh.OpenUntilUtc : now + _opts.BusyRetryDelay);
@@ -125,9 +126,10 @@ public sealed class HostTrafficGate(AppDbContext db, IOperationalSlotLeaseServic
             if (holders > CurrentConcurrency(fresh, host))
             {
                 await slots.ReleaseSlotAsync(slotType, holder, CancellationToken.None);
+                if (isProbe) await ReleaseProbeAsync(host, holder, CancellationToken.None);
                 return new HostEntry(null, HostEntryRefusal.AtCapacity, now + _opts.BusyRetryDelay);
             }
-            return new HostEntry(new HostPermit(host, holder, false), HostEntryRefusal.None, null);
+            return new HostEntry(new HostPermit(host, holder, isProbe), HostEntryRefusal.None, null);
         }
 
         if (isProbe) await ReleaseProbeAsync(host, holder, ct);
@@ -139,7 +141,7 @@ public sealed class HostTrafficGate(AppDbContext db, IOperationalSlotLeaseServic
     public async Task<bool> RenewAsync(HostPermit permit, CancellationToken ct)
     {
         var renewed = await slots.TryRenewSlotAsync(SlotType(permit.Host), permit.HolderId, _opts.PermitDuration, ct);
-        if (!permit.IsProbe) return renewed;
+        if (!renewed || !permit.IsProbe) return renewed;   // a lost permit never keeps the probe claim alive
         var until = Now + _opts.ProbeTimeout;
         var stillProbe = await db.Set<ModuleHostTrafficState>().Where(s => s.Host == (int)permit.Host && s.ProbeHolder == permit.HolderId)
             .ExecuteUpdateAsync(u => u.SetProperty(s => s.ProbeUntilUtc, until), ct) == 1;
