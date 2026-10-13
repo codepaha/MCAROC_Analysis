@@ -64,10 +64,14 @@ public sealed class LitigationOrderDocumentService(
             return;
         }
 
-        // Nothing an attempt could change: a Failed order with no PdfUrl stays that way until a litigation refresh
-        // re-admits it with one, and an unconfigured client fails every attempt. Claiming anyway only bumps
-        // AttemptCount and rewrites the row — thousands of writes on every startup sweep.
-        if (document.Status == LitigationOrderDocumentStatus.Failed && string.IsNullOrWhiteSpace(document.Order.PdfUrl)) return;
+        // An order the source lists without a link has nothing to download: it is Not Published (terminal) until a litigation refresh
+        // re-admits it with a link. It used to be left Failed — "retry later" — yet never retried, so the litigation analysis, which waits
+        // for every order to be terminal, waited out the whole 7-day retention window (Lifex test, 2026-10-13).
+        if (document.Status == LitigationOrderDocumentStatus.Failed && string.IsNullOrWhiteSpace(document.Order.PdfUrl))
+        {
+            await MarkFailedWithoutLinkNotPublishedAsync(document.LitigationOrderDocumentId, ct);
+            return;
+        }
         if (!_opts.IsConfigured) return;
 
         if (!await TryClaimAsync(document, ct)) return; // already owned by a still-live attempt
@@ -85,7 +89,7 @@ public sealed class LitigationOrderDocumentService(
         {
             if (string.IsNullOrWhiteSpace(document.Order.PdfUrl))
             {
-                await MarkFailedOrExpiredAsync(orderDocumentId, myLeaseToken, retainedUntilUtc, attemptCount, "This order has no PdfUrl in the source report.", ct);
+                await MarkNotPublishedAsync(orderDocumentId, myLeaseToken, NoLinkReason, ct);
                 return;
             }
 
@@ -287,6 +291,16 @@ public sealed class LitigationOrderDocumentService(
     /// idle until the next app restart's recovery sweep.</summary>
     /// <summary>Terminal: the source has no order document behind this link. Never retried — only a refresh that
     /// brings a new link (see <c>LitigationCasePersistenceService</c>) puts it back to Pending.</summary>
+    internal const string NoLinkReason = "The source report lists this order without a document link; nothing can be downloaded until a refresh brings one.";
+
+    /// <summary>A row left Failed for want of a link (the old behaviour) becomes Not Published. Unleased, so conditional on still being a linkless
+    /// failure: a refresh that meanwhile brought a link has already moved it back to Pending.</summary>
+    private Task<int> MarkFailedWithoutLinkNotPublishedAsync(long documentId, CancellationToken ct) =>
+        db.LitigationOrderDocuments.Where(d => d.LitigationOrderDocumentId == documentId && d.Status == LitigationOrderDocumentStatus.Failed
+                && (d.Order!.PdfUrl == null || d.Order.PdfUrl == ""))
+            .ExecuteUpdateAsync(s => s.SetProperty(d => d.Status, LitigationOrderDocumentStatus.NotPublished)
+                .SetProperty(d => d.FailureReason, NoLinkReason).SetProperty(d => d.NextAttemptUtc, (DateTime?)null), ct);
+
     private async Task MarkNotPublishedAsync(long documentId, Guid leaseToken, string reason, CancellationToken ct)
     {
         var claimed = await LeaseGuarded(documentId, leaseToken).ExecuteUpdateAsync(s => s
@@ -389,6 +403,11 @@ public sealed class LitigationOrderDocumentService(
         if (!_opts.IsConfigured) return 0; // every attempt would fail; rows stay as-is until the client is configured
 
         var now = DateTime.UtcNow;
+        // Rows left Failed for want of a link (before that became Not Published) would hold every litigation analysis back for up to 7 days.
+        await db.LitigationOrderDocuments
+            .Where(d => d.Status == LitigationOrderDocumentStatus.Failed && (d.Order!.PdfUrl == null || d.Order.PdfUrl == ""))
+            .ExecuteUpdateAsync(s => s.SetProperty(d => d.Status, LitigationOrderDocumentStatus.NotPublished)
+                .SetProperty(d => d.FailureReason, NoLinkReason).SetProperty(d => d.NextAttemptUtc, (DateTime?)null), ct);
         var nonTerminal = await db.LitigationOrderDocuments
             .Where(d => d.Status == LitigationOrderDocumentStatus.Pending || d.Status == LitigationOrderDocumentStatus.InProgress ||
                 (d.Status == LitigationOrderDocumentStatus.Failed && d.Order != null && d.Order.PdfUrl != null && d.Order.PdfUrl != ""))

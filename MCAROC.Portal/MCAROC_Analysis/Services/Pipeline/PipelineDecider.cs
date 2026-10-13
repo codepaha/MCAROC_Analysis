@@ -167,7 +167,10 @@ public static class PipelineDecider
         if (!s.RefreshGateEnabled || (job.RocDocumentId is not null && l is null))
             return Skip(PipelineStageSkipKind.Neutral, "REFRESH_NOT_TRACKED",
                 "This export ran without the refresh gate (ReferenceTool:RefreshBeforeFetch off, or before it existed).");
-        // The export only runs once the gate confirmed data under 24 hours old.
+        // Fetch now, update later: an export made while the tool's refresh is still running is done, with a warning; the request is
+        // re-checked automatically when the refresh lands.
+        if (job.RocDocumentId is not null && l is { RefreshActive: true })
+            return Warn("EXPORTED_BEFORE_REFRESH", "Exported the reference tool's current data; its refresh is still running and the request will update when it lands.", job.JobId);
         if (job.RocDocumentId is not null) return Ok(job.JobId, "DATA_CURRENT");
         if (l is null) return Waiting("AWAITING_REFRESH_CHECK", job.JobId);
         if (l.State == CompanyReportLifecycleState.RefreshFailed)

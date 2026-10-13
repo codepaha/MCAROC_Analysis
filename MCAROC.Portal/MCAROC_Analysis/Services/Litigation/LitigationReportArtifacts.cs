@@ -499,7 +499,7 @@ internal sealed class LitigationReportPdfDocument(StandaloneLitigationReport rep
 
         var infoRows = new List<(string Label, string Value)>
         {
-            ("SOURCE", "BPR Litigation Data Lake"),
+            ("SOURCE", "Litigation data service"),
             ("DATA CURRENCY", $"{dataCurrency.RefreshedCasesCount} of {dataCurrency.TotalCases} case(s) refreshed · {dataCurrency.UnrefreshedCasesCount} not updated as of {dataCurrency.AsOfIst}{(string.IsNullOrWhiteSpace(dataCurrency.InProgressNote) ? string.Empty : $" · {dataCurrency.InProgressNote}")}"),
             ("AUTHORITATIVE SNAPSHOT", $"{Ist.Format(report.AuthoritativeSnapshotRetrievedUtc, "dd MMM yyyy, HH:mm")} (ID: {report.AuthoritativeSnapshotId}){(report.IsPriorRunDataShown ? " [Prior Run Snapshot]" : string.Empty)}"),
         };
@@ -538,7 +538,7 @@ internal sealed class LitigationReportPdfDocument(StandaloneLitigationReport rep
             column.Item().PaddingTop(4).Element(ComposeForumSummary);
         }
 
-        column.Item().PaddingTop(12).Element(container => PortfolioPanel(container, report.PortfolioAnalysis));
+        column.Item().PaddingTop(12).Element(container => PortfolioPanel(container, report.PortfolioAnalysis, views.Count));
         column.Item().PaddingTop(10).Background("#FAFCFF").Border(0.8f).BorderColor(Border).Padding(9).Column(note =>
         {
             note.Item().Text("REPORT USE AND EVIDENCE").Bold().FontSize(8).FontColor(Navy);
@@ -623,10 +623,14 @@ internal sealed class LitigationReportPdfDocument(StandaloneLitigationReport rep
         card.Item().PaddingTop(3).Text(value).Bold().FontSize(18).FontColor(Ink);
     });
 
-    private static void PortfolioPanel(IContainer container, LitigationPortfolioAnalysis? analysis) => container.Background("#F7FAFE").BorderLeft(4).BorderColor(analysis is null ? Navy : RiskColor(analysis.RiskLevel)).Border(0.8f).BorderColor(Border).Padding(10).Column(panel =>
+    /// <param name="caseCount">With no cases there is nothing to analyse: the panel says so rather than "pending", which would read as unfinished work.</param>
+    private static void PortfolioPanel(IContainer container, LitigationPortfolioAnalysis? analysis, int caseCount) => container.Background("#F7FAFE").BorderLeft(4).BorderColor(analysis is null ? Navy : RiskColor(analysis.RiskLevel)).Border(0.8f).BorderColor(Border).Padding(10).Column(panel =>
     {
-        panel.Item().Row(row => { row.RelativeItem().Text("PORTFOLIO ANALYSIS").Bold().FontSize(8.5f).FontColor(Navy); row.AutoItem().Element(c => Pill(c, analysis?.RiskLevel ?? "ANALYSIS PENDING", analysis is null ? Navy : RiskColor(analysis.RiskLevel))); });
-        panel.Item().PaddingTop(5).Text(analysis?.Summary ?? "Portfolio analysis will be generated after the relevant case metadata and retained order text have been assessed.").FontSize(8.5f);
+        var noCases = analysis is null && caseCount == 0;
+        panel.Item().Row(row => { row.RelativeItem().Text("PORTFOLIO ANALYSIS").Bold().FontSize(8.5f).FontColor(Navy); row.AutoItem().Element(c => Pill(c, analysis?.RiskLevel ?? (noCases ? "NOT APPLICABLE" : "ANALYSIS PENDING"), analysis is null ? Navy : RiskColor(analysis.RiskLevel))); });
+        panel.Item().PaddingTop(5).Text(analysis?.Summary ?? (noCases
+            ? "No court proceedings were found for the keywords searched, so there are no cases to analyse."
+            : "Portfolio analysis will be generated after the relevant case metadata and retained order text have been assessed.")).FontSize(8.5f);
         if (analysis?.KeyFindings is { Count: > 0 }) foreach (var finding in analysis.KeyFindings) panel.Item().PaddingTop(2).Text(text => { text.Span("• ").FontColor(Navy); text.Span(finding); });
     });
 

@@ -46,6 +46,10 @@ public static class StandaloneFinancialDataParser
     /// <paramref name="basis"/> = Consolidated. Every produced row is stamped with that basis.
     /// <paramref name="facts"/> receives every value-bearing label × year on the sheet that is NOT
     /// mapped to a typed <see cref="FinancialYearData"/> column, so nothing is silently dropped.</summary>
+    /// <summary>Total debt = long-term + short-term borrowings; null only when neither is reported.</summary>
+    internal static decimal? TotalDebtOf(decimal? longTerm, decimal? shortTerm) =>
+        longTerm is null && shortTerm is null ? null : (longTerm ?? 0m) + (shortTerm ?? 0m);
+
     public static ParseResult<FinancialYearData> Parse(
         SheetData sheet, long requestId, long ingestionRunId, long? sourceDocumentId,
         out List<FinancialFact> facts, FinancialBasis basis = FinancialBasis.Standalone)
@@ -244,6 +248,11 @@ public static class StandaloneFinancialDataParser
                 CaptureFacts(sheet.Rows[r], label, years, FinancialStatementSection.Ratios, r, columnOffset: 2, yearInferred: false);
             }
         }
+
+        // The sheet lists long- and short-term borrowings but no total line, so Total Debt was never filled: every dossier showed "—" and the
+        // High Leverage rule (debt / net worth) could never run (TruBoard test, 2026-10-13). It is the sum of the two, when either is reported.
+        foreach (var e in byYear.Values)
+            e.TotalDebt ??= TotalDebtOf(e.LongTermBorrowings, e.ShortTermBorrowings);
 
         result.Items.AddRange(byYear.Values.OrderBy(f => f.FinancialYear));
         return result;

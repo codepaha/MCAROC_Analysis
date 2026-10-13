@@ -230,7 +230,19 @@ public sealed class AutoFetchJobService(
             {
                 await SetStageAsync(job, correlationId, AutoFetchJobStatus.CheckingSession, 4, "Checking the company is unlocked and its data is current…", ct);
                 var gate = await refresh.EvaluateAsync(job.Cin, job.Bid, ct);
-                switch (gate.Kind)
+                // Fetch now, update later (owner rule 2026-10-13): a refresh that is running, deferred by MCA maintenance, or that timed out
+                // never holds the export back. The refresh carries on; when it lands the request is re-checked and the report updates.
+                if (_opts.ExportWhileRefreshing && gate.Kind is RefreshGateKind.Waiting or RefreshGateKind.Deferred or RefreshGateKind.TimedOut)
+                {
+                    var asOf = await db.CompanyReportLifecycles.AsNoTracking().Where(l => l.Identifier == job.Cin.Trim().ToUpper())
+                        .Select(l => l.LastRefreshCompletedUtc).FirstOrDefaultAsync(ct);
+                    var note = $"Exported the reference tool's current data{(asOf is { } d ? $" (as of {Ist.Format(d)})" : "")} without waiting for its refresh"
+                        + (gate.Kind == RefreshGateKind.Waiting ? "; the refresh is running and this request will be updated when it lands." : $" ({gate.Message}).");
+                    if (!warnings.Contains(note)) warnings.Add(note);
+                    await SaveWarningsAsync(job, correlationId, warnings, ct);
+                    logger.LogInformation("Auto-fetch job {JobId} (request {RequestId}): {Note}", job.AutoFetchJobId, job.RequestId, note);
+                }
+                else switch (gate.Kind)
                 {
                     case RefreshGateKind.Waiting:
                         // Park without holding a worker slot; CompanyRefreshWorker re-queues it once the refresh lands.

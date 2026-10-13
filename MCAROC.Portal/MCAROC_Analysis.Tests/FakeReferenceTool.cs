@@ -132,7 +132,7 @@ public sealed class FakeReferenceTool(string bid) : HttpMessageHandler
 
     /// <summary>The gate's real services (refresh, unlock, admission ledger, coordinator) against the test
     /// database, talking to this fake — what the worker and the approve action resolve in production.</summary>
-    public ServiceProvider BuildServices(TimeProvider time, AutoFetchQueue queue, PipelineOptions? pipeline = null)
+    public ServiceProvider BuildServices(TimeProvider time, AutoFetchQueue queue, PipelineOptions? pipeline = null, Action<IServiceCollection>? extra = null)
     {
         var services = new ServiceCollection();
         services.AddLogging();
@@ -147,6 +147,7 @@ public sealed class FakeReferenceTool(string bid) : HttpMessageHandler
         services.AddScoped<CompanyRefreshService>();
         services.AddScoped<CompanyUnlockService>();
         services.AddScoped<CompanyGateCoordinator>();
+        extra?.Invoke(services);
         return services.BuildServiceProvider();
     }
 
@@ -157,6 +158,9 @@ public sealed class FakeReferenceTool(string bid) : HttpMessageHandler
         public IDisposable? OnChange(Action<PipelineOptions, string?> listener) => null;
     }
 
+    /// <summary>Tests that check waiting for a refresh before exporting set this false; the default is the owner's "fetch now, update later".</summary>
+    public static bool ExportWhileRefreshingDefault { get; set; } = true;
+
     public static IOptions<ReferenceToolOptions> Options(bool refreshBeforeFetch = true) =>
         Microsoft.Extensions.Options.Options.Create(new ReferenceToolOptions
         {
@@ -164,7 +168,8 @@ public sealed class FakeReferenceTool(string bid) : HttpMessageHandler
             SessionCookie = "PHPSESSID=abc",
             UserId = "265271",
             ToolUserName = "tester",
-            RefreshBeforeFetch = refreshBeforeFetch
+            RefreshBeforeFetch = refreshBeforeFetch,
+            ExportWhileRefreshing = ExportWhileRefreshingDefault
         });
 
     private static HttpResponseMessage Json(object body) =>

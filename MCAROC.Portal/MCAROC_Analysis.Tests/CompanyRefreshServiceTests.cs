@@ -29,6 +29,7 @@ public sealed class CompanyRefreshServiceTests : IAsyncLifetime
 
     public async Task InitializeAsync()
     {
+        FakeReferenceTool.ExportWhileRefreshingDefault = true;
         await using var db = CreateContext();
         await TestDatabase.MigrateAsync(db);
     }
@@ -36,6 +37,7 @@ public sealed class CompanyRefreshServiceTests : IAsyncLifetime
     /// <summary>Parked jobs left behind would be polled by every later worker test sharing this database.</summary>
     public async Task DisposeAsync()
     {
+        FakeReferenceTool.ExportWhileRefreshingDefault = true;
         await using var db = CreateContext();
         await db.AutoFetchJobs.Where(j => j.Cin == _cin).ExecuteDeleteAsync();
         await db.Requests.Where(r => r.Cin == _cin).ExecuteDeleteAsync();
@@ -162,6 +164,7 @@ public sealed class CompanyRefreshServiceTests : IAsyncLifetime
     [Fact]
     public async Task A_parked_job_whose_refresh_lands_with_stale_data_does_not_export()
     {
+        FakeReferenceTool.ExportWhileRefreshingDefault = false;   // checks the wait-for-the-refresh mode
         var tool = new FakeReferenceTool(Bid) { AddedAt = Now.AddMonths(-2), DataAsOf = Now.AddDays(-3) };
         var requested = Now;
         var jobId = await SeedJobAsync();
@@ -288,6 +291,7 @@ public sealed class CompanyRefreshServiceTests : IAsyncLifetime
     [Fact]
     public async Task A_stale_company_parks_the_job_and_exports_only_after_the_refresh_completes()
     {
+        FakeReferenceTool.ExportWhileRefreshingDefault = false;   // checks the wait-for-the-refresh mode
         var tool = new FakeReferenceTool(Bid) { AddedAt = Now.AddMonths(-2), DataAsOf = Now.AddDays(-3) };
         var jobId = await SeedJobAsync();
 
@@ -325,6 +329,7 @@ public sealed class CompanyRefreshServiceTests : IAsyncLifetime
     [Fact]
     public async Task Recheck_two_workers_and_restart_rejoin_one_refresh_without_old_checkpoints()
     {
+        FakeReferenceTool.ExportWhileRefreshingDefault = false;   // checks the wait-for-the-refresh mode
         var tool = new FakeReferenceTool(Bid) { AddedAt = Now.AddMonths(-2), DataAsOf = Now.AddDays(-3) };
         var jobId = await SeedJobAsync();
         long requestId;
@@ -474,6 +479,47 @@ public sealed class CompanyRefreshServiceTests : IAsyncLifetime
         Assert.Equal(IngestionRunStatus.CompletedClean, (await final.IngestionRuns.AsNoTracking().SingleAsync(r => r.IngestionRunId == oldRunId)).Status);
     }
 
+    [Fact]
+    public async Task A_stale_company_exports_at_once_and_its_request_is_re_checked_when_the_refresh_lands()
+    {
+        var tool = new FakeReferenceTool(Bid) { AddedAt = Now.AddMonths(-2), DataAsOf = Now.AddDays(-3) };
+        var jobId = await SeedJobAsync();
+
+        await ProcessAsync(tool, jobId);
+
+        var job = await JobAsync(jobId);
+        Assert.NotEqual(AutoFetchJobStatus.WaitingForRefresh, job.Status);                     // not parked: fetch now
+        Assert.Equal(1, tool.Count("requestProbeDataUpdate"));                                  // ...and the refresh (the Refresh button) is still requested
+        Assert.Equal(1, tool.Count("publishProbedData"));
+        Assert.Contains("without waiting for its refresh", job.WarningsJson);
+
+        // The rest of the pipeline runs on that export (ingestion, analysis): the job completes and the request finishes.
+        await using (var db = CreateContext())
+        {
+            var run = new IngestionRun { RequestId = job.RequestId, RunNumber = 1, StartedDate = DateTime.UtcNow, CompletedDate = DateTime.UtcNow, Status = IngestionRunStatus.CompletedClean };
+            db.IngestionRuns.Add(run);
+            await db.SaveChangesAsync();
+            await db.Requests.Where(r => r.RequestId == job.RequestId).ExecuteUpdateAsync(u => u
+                .SetProperty(r => r.RequestStatus, RequestStatus.AnalysisCompleted).SetProperty(r => r.LatestCompletedIngestionRunId, run.IngestionRunId));
+            await db.AutoFetchJobs.Where(j => j.AutoFetchJobId == jobId).ExecuteUpdateAsync(u => u
+                .SetProperty(j => j.Status, AutoFetchJobStatus.Completed).SetProperty(j => j.CompletedUtc, DateTime.UtcNow));
+        }
+
+        // While the tool is still refreshing, nothing is re-checked.
+        var queue = new AutoFetchQueue();
+        await NewWorker(tool, queue, withJobs: true).PollOnceAsync(CancellationToken.None);
+        Assert.False(queue.TryRead(out _));
+
+        // The refresh lands: the worker follows it to its end (no job is waiting on it) and re-checks the request, so the report updates.
+        tool.RefreshPending = false;
+        tool.DataAsOf = Now.AddMinutes(1);
+        await NewWorker(tool, queue, withJobs: true).PollOnceAsync(CancellationToken.None);
+        Assert.True(queue.TryRead(out var rechecked));
+        Assert.Equal(jobId, rechecked);
+        Assert.Equal(AutoFetchJobStatus.Queued, (await JobAsync(jobId)).Status);
+        Assert.False(queue.TryRead(out _));                                                     // once
+    }
+
     private async Task ProcessAsync(FakeReferenceTool tool, long jobId, AnalysisQueue? analysisQueue = null)
     {
         await using var db = CreateContext();
@@ -485,9 +531,12 @@ public sealed class CompanyRefreshServiceTests : IAsyncLifetime
         await jobs.ProcessAsync(jobId, CancellationToken.None);
     }
 
-    private CompanyRefreshWorker NewWorker(FakeReferenceTool tool, AutoFetchQueue queue)
+    private CompanyRefreshWorker NewWorker(FakeReferenceTool tool, AutoFetchQueue queue, bool withJobs = false)
     {
-        var provider = tool.BuildServices(_time, queue);
+        var provider = tool.BuildServices(_time, queue, extra: withJobs ? services => services.AddScoped(sp => new AutoFetchJobService(
+            sp.GetRequiredService<AppDbContext>(), tool.NewClient(), FakeReferenceTool.Options(), new FileValidationService(new ExcelSheetReader()),
+            null!, new AnalysisQueue(), new FilingProcessingQueue(), null!, new FakeEnv(Path.GetTempPath()), NullLogger<AutoFetchJobService>.Instance,
+            refresh: sp.GetRequiredService<CompanyRefreshService>())) : null);
         return new CompanyRefreshWorker(provider.GetRequiredService<IServiceScopeFactory>(), FakeReferenceTool.Options(), NullLogger<CompanyRefreshWorker>.Instance);
     }
 

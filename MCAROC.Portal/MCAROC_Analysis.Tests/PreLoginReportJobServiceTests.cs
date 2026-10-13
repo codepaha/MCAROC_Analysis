@@ -494,7 +494,8 @@ public class PreLoginReportJobServiceTests : IAsyncLifetime
             Assert.Contains(cin, handler.LastUrl);
             var data = service.AssignmentData(job)!;
             Assert.Equal(cin, data.Assignment!.CompanyDetails.Cin);
-            Assert.Equal(ResolutionReasonCodes.AutoSelected, data.IdentityResolution!.ReasonCode);
+            // An automatic selection; an exact, unique, active legal name gives the more specific reason (owner rule 2026-10-13).
+            Assert.Contains(data.IdentityResolution!.ReasonCode, new[] { ResolutionReasonCodes.AutoSelected, ResolutionReasonCodes.UniqueExact });
             Assert.True(File.Exists(job.ReportStoragePath));
         }
         finally
