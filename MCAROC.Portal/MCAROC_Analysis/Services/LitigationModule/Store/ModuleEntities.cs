@@ -299,3 +299,20 @@ public sealed class ModuleFetchWorkItemRun
     public long WorkItemId { get; set; }
     public long RunId { get; set; }
 }
+
+/// <summary>The shared traffic state of one court portal (plan 4.9 §5): the current concurrency (lowered by 429s, recovering slowly) and the circuit breaker. One row per host, changed
+/// only by single conditional updates, so every agent in every process sees and moves the same state.</summary>
+public sealed class ModuleHostTrafficState
+{
+    public int Host { get; set; }
+    /// <summary>Current concurrency, fractional so it can recover by small steps; the gate rounds it down.</summary>
+    public double Concurrency { get; set; }
+    public int ConsecutiveFailures { get; set; }
+    /// <summary>Null = closed. In the future = open. In the past = half-open: one probe may go.</summary>
+    public DateTime? OpenUntilUtc { get; set; }
+    public string? ProbeHolder { get; set; }
+    public DateTime? ProbeUntilUtc { get; set; }
+    public DateTime? LastSuccessUtc { get; set; }
+    public DateTime? LastFailureUtc { get; set; }
+    public string? LastFailure { get; set; }
+}
