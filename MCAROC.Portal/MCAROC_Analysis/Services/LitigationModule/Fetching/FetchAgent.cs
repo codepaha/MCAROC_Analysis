@@ -2,6 +2,7 @@ using System.Net;
 using System.Security.Cryptography;
 using System.Text;
 using MCAROC_Analysis.Data;
+using MCAROC_Analysis.Services.LitigationModule.Normalisation;
 using MCAROC_Analysis.Services.LitigationModule.Refresh;
 using MCAROC_Analysis.Services.LitigationModule.Sources.Consumer;
 using MCAROC_Analysis.Services.LitigationModule.Sources.Drt;
@@ -38,6 +39,7 @@ public sealed class FetchAgent(
     {
         var work = await queue.ClaimNextAsync(host, agentId, ct);
         if (work is null) return AgentTurn.Idle;
+        await queue.TouchRunsAsync(work.WorkItemId, ct);   // the banner's heartbeat: an agent is working on these runs
         try
         {
             if (work.Kind != FetchWorkKind.StatusFetch)
@@ -69,9 +71,11 @@ public sealed class FetchAgent(
             && await db.LitigationCases.AsNoTracking().AnyAsync(c => c.LitigationCaseId == legacyId && c.MergedIntoCaseId != null, ct))
             return Settle(await queue.CompleteAsync(work, "Merged", ct), AgentTurn.Done);   // merged away: its survivor is the case to refresh
 
-        var lookup = PortalLookup.FromCaseKey(moduleCase.CaseKey, out var why);
+        var payload = RefreshPayload.FromJson(work.PayloadJson);
+        var lookup = PortalLookup.FromCaseKey(moduleCase.CaseKey, out var why) ?? (moduleCase.CaseKey is null ? payload?.ToLookup() : null);
         if (lookup is null)
             return Settle(await queue.FailPermanentlyAsync(work, "NoLookup", why, ct), AgentTurn.Failed);
+        var party = await PartyContextAsync(payload?.RequestId, moduleCase.LegacyLitigationCaseId, ct);
         if (lookup.Host != work.Host)
             return Settle(await queue.FailPermanentlyAsync(work, "WrongHost", $"the case is looked up on {lookup.Host}, not {work.Host}", ct), AgentTurn.Failed);
 
@@ -90,7 +94,7 @@ public sealed class FetchAgent(
         CallStop stop;
         try
         {
-            (answer, stop) = await CallWithHeartbeatAsync(work, entry.Permit!, lookup, ct);
+            (answer, stop) = await CallWithHeartbeatAsync(work, entry.Permit!, lookup, party, ct);
             if (answer is not null) await gate.ReportAsync(entry.Permit!, answer.HostOutcome, answer.Message, answer.RetryAfter, ct);
         }
         finally
@@ -112,6 +116,10 @@ public sealed class FetchAgent(
                 case ObservationOutcome.Found when answer.Mapped.Verified:
                 {
                     var published = await _projection.PublishAsync(new ObservationInput(caseId, answer!.Source, ObservationOutcome.Found, true, now, answer.Mapped.Snapshot), ct);
+                    // The request's own question (plan 4.3): is its company really a party? Answered from this same response, recorded on the link; only a Verified link publishes.
+                    if (party.RequestId is { } requestId && answer.Party is { } match)
+                        await new RequestLinkStore(db, _time).UpsertAsync(requestId, caseId, match, answer.MatchedSide, answer.RoleConflict, answer.RoleNote, ct);
+                    if (moduleCase.CaseKey is null) await MintKeyAsync(caseId, lookup, answer.ReturnedParts, ct);
                     var outcome = published.ChangedFields.Count > 0 ? "Updated" : "Unchanged";
                     return Settle(await queue.CompleteAsync(work, outcome, ct), AgentTurn.Done);
                 }
@@ -155,7 +163,7 @@ public sealed class FetchAgent(
 
     /// <summary>Calls the portal while renewing the item's lease and the host permit at a third of the lease. If either cannot be renewed the call is cancelled and nothing it learnt
     /// is used: a lost lease means another agent has the item; a lost permit means the call no longer counts toward the host's cap and must not go on outside it.</summary>
-    private async Task<(PortalAnswer? Answer, CallStop Stop)> CallWithHeartbeatAsync(ClaimedWork work, HostPermit permit, PortalLookup lookup, CancellationToken ct)
+    private async Task<(PortalAnswer? Answer, CallStop Stop)> CallWithHeartbeatAsync(ClaimedWork work, HostPermit permit, PortalLookup lookup, PartyContext party, CancellationToken ct)
     {
         using var callCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         var stop = CallStop.None;
@@ -179,7 +187,7 @@ public sealed class FetchAgent(
         PortalAnswer? answer = null;
         try
         {
-            answer = await CallAsync(lookup, callCts.Token);
+            answer = await CallAsync(lookup, party, callCts.Token);
         }
         catch (OperationCanceledException) when (stop != CallStop.None && !ct.IsCancellationRequested)
         {
@@ -213,16 +221,54 @@ public sealed class FetchAgent(
         return !r.Recorded ? AgentTurn.LeaseLost : r.Terminal ? AgentTurn.Failed : AgentTurn.Retrying;
     }
 
-    private sealed record PortalAnswer(ObservationSource Source, ObservationOutcomeView Mapped, HostCallOutcome HostOutcome, bool Retryable, string? Message, string? ExitAddress, TimeSpan? RetryAfter = null);
+    private sealed record PortalAnswer(ObservationSource Source, ObservationOutcomeView Mapped, HostCallOutcome HostOutcome, bool Retryable, string? Message, string? ExitAddress, TimeSpan? RetryAfter = null)
+    {
+        public PartyMatchResult? Party { get; init; }
+        public string? MatchedSide { get; init; }
+        public bool RoleConflict { get; init; }
+        public string? RoleNote { get; init; }
+        /// <summary>The case number as the portal itself returned it; a key is minted only from this (plan 3.3 (e)).</summary>
+        public CaseNumberParts? ReturnedParts { get; init; }
+    }
+
+    /// <summary>The request the answer is checked for: its company's current and former names, and the direction the vendor stated.</summary>
+    private sealed record PartyContext(long? RequestId, IReadOnlyList<string> Names, IReadOnlyList<string> FormerNames, string? Direction)
+    {
+        public static readonly PartyContext None = new(null, [], [], null);
+    }
+
+    private async Task<PartyContext> PartyContextAsync(long? requestId, long? legacyCaseId, CancellationToken ct)
+    {
+        if (requestId is not { } id) return PartyContext.None;
+        var request = await db.Requests.AsNoTracking().Where(r => r.RequestId == id).Select(r => new { r.CompanyName, r.LatestCompletedIngestionRunId }).FirstOrDefaultAsync(ct);
+        if (request is null || string.IsNullOrWhiteSpace(request.CompanyName)) return PartyContext.None;
+        var former = request.LatestCompletedIngestionRunId is { } runId
+            ? await db.CompanyNameHistories.AsNoTracking().Where(x => x.IngestionRunId == runId && x.PreviousName != "").Select(x => x.PreviousName).ToListAsync(ct)
+            : [];
+        var direction = legacyCaseId is { } legacy
+            ? await db.LitigationCases.AsNoTracking().Where(c => c.LitigationCaseId == legacy).Select(c => c.Direction).FirstOrDefaultAsync(ct)
+            : null;
+        return new PartyContext(id, [request.CompanyName], former, direction);
+    }
+
+    /// <summary>A keyless case gets its shared key once the portal has verified it, minted by the gate from the identity the portal returned (plan 3.3 (e)). If another case
+    /// already holds that key the two are duplicates: nothing is keyed here, and the merge rules decide (plan 4.6).</summary>
+    private async Task MintKeyAsync(long caseId, PortalLookup lookup, CaseNumberParts? returned, CancellationToken ct)
+    {
+        if (returned is null) return;
+        var key = CaseKeyGate.Evaluate(new CaseKeyInput(lookup.Forum, lookup.VenueId.ToString(System.Globalization.CultureInfo.InvariantCulture), lookup.Parts, returned, FromPortal: true)).Key;
+        if (key is null) return;
+        if (await db.Set<ModuleCase>().AsNoTracking().AnyAsync(c => c.CaseKey == key && c.CaseId != caseId, ct)) return;
+        await db.Set<ModuleCase>().Where(c => c.CaseId == caseId && c.CaseKey == null).ExecuteUpdateAsync(u => u.SetProperty(c => c.CaseKey, key), ct);
+    }
 
     /// <summary>The part of an adapter's mapped observation the agent needs, the same for both portals.</summary>
     private sealed record ObservationOutcomeView(ObservationOutcome Outcome, bool Verified, ParsedCaseSnapshot? Snapshot);
 
-    private async Task<PortalAnswer> CallAsync(PortalLookup lookup, CancellationToken ct)
+    private async Task<PortalAnswer> CallAsync(PortalLookup lookup, PartyContext party, CancellationToken ct)
     {
         var todayIst = DateOnly.FromDateTime(Ist.Now(_time));
-        // Identity only: the party check belongs to each request's link, not to the case, so no subject names are passed here (plan 4.3).
-        string[] noNames = [];
+        // Identity is decided from the lookup alone; the party check (names) is for the request's link and never decides whether the observation is verified (plan 4.3).
         if (lookup.Host == FetchHost.Drt)
         {
             var caseTypeId = DrtCaseTypeRegistry.GetCaseTypeId(lookup.Parts.TypeCode, lookup.IsDrat);
@@ -231,17 +277,25 @@ public sealed class FetchAgent(
             var result = DrtCaseTypeRegistry.IsRcTrc(lookup.Parts.TypeCode)
                 ? await drt.GetRcTrcCaseAsync(lookup.VenueId, caseTypeId.Value, lookup.Parts.No!, lookup.Parts.Year!.Value, ct)
                 : await drt.GetCaseByNumberAsync(lookup.VenueId, caseTypeId.Value, lookup.Parts.No!, lookup.Parts.Year!.Value, ct);
-            var mapped = DrtObservationMapper.Map(result, new DrtLookup(lookup.VenueId, lookup.Parts), DrtTribunalRegistry.TryGetById(lookup.VenueId), noNames, null, null, todayIst);
+            var mapped = DrtObservationMapper.Map(result, new DrtLookup(lookup.VenueId, lookup.Parts), DrtTribunalRegistry.TryGetById(lookup.VenueId), party.Names, party.FormerNames, party.Direction, todayIst);
             return new(ObservationSource.DrtPortal, new(mapped.Outcome, mapped.Verified, mapped.Snapshot), Classify(result.Status == DrtLookupStatus.Unavailable, result.StatusCode),
-                Retryable(result.Status == DrtLookupStatus.Unavailable, result.StatusCode), mapped.Message ?? result.Message, result.ExitAddress, result.RetryAfter);
+                Retryable(result.Status == DrtLookupStatus.Unavailable, result.StatusCode), mapped.Message ?? result.Message, result.ExitAddress, result.RetryAfter)
+            {
+                Party = party.Names.Count > 0 ? mapped.Verification?.Party : null, MatchedSide = mapped.Verification?.MatchedSide,
+                RoleConflict = mapped.Verification?.RoleConflict ?? false, RoleNote = mapped.Verification?.RoleNote, ReturnedParts = result.Case?.CaseNumber
+            };
         }
         else
         {
             var number = ConsumerCommissionRegistry.ToFullCaseNumber(lookup.Parts.Display, lookup.VenueId) ?? lookup.Parts.Display;
             var result = await consumer.GetCaseStatusAsync(number, ct);
-            var mapped = ConsumerObservationMapper.Map(result, new ConsumerLookup(lookup.VenueId, lookup.Parts), noNames, null, null, todayIst);
+            var mapped = ConsumerObservationMapper.Map(result, new ConsumerLookup(lookup.VenueId, lookup.Parts), party.Names, party.FormerNames, party.Direction, todayIst);
             return new(ObservationSource.ConsumerPortal, new(mapped.Outcome, mapped.Verified, mapped.Snapshot), Classify(result.Status == ConsumerLookupStatus.Unavailable, result.StatusCode),
-                Retryable(result.Status == ConsumerLookupStatus.Unavailable, result.StatusCode), mapped.Message ?? result.Message, result.ExitAddress, result.RetryAfter);
+                Retryable(result.Status == ConsumerLookupStatus.Unavailable, result.StatusCode), mapped.Message ?? result.Message, result.ExitAddress, result.RetryAfter)
+            {
+                Party = party.Names.Count > 0 ? mapped.Verification?.Party : null, MatchedSide = mapped.Verification?.MatchedSide,
+                RoleConflict = mapped.Verification?.RoleConflict ?? false, RoleNote = mapped.Verification?.RoleNote, ReturnedParts = result.Case?.NormalizedCaseNumber
+            };
         }
     }
 

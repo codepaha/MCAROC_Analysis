@@ -261,6 +261,15 @@ public sealed class FetchWorkQueue(AppDbContext db, FetchQueueOptions? options =
         return requeued;
     }
 
+    /// <summary>Records that an agent is working for every run this item serves (the banner's heartbeat, plan 4.8: no report for a while means "paused").</summary>
+    public async Task TouchRunsAsync(long workItemId, CancellationToken ct)
+    {
+        var now = Now;
+        var runIds = db.Set<ModuleFetchWorkItemRun>().Where(l => l.WorkItemId == workItemId).Select(l => l.RunId);
+        await db.Set<ModuleRefreshRun>().Where(r => runIds.Contains(r.RunId) && r.FinishedUtc == null)
+            .ExecuteUpdateAsync(u => u.SetProperty(r => r.LastAgentHeartbeatUtc, now), ct);
+    }
+
     /// <summary>The counts of the items a run depends on, by status, for the banner and the "not updated" panel. An item shared with another run counts for both.</summary>
     public async Task<IReadOnlyDictionary<FetchWorkStatus, int>> CountsForRunAsync(long runId, CancellationToken ct) =>
         (await (from link in db.Set<ModuleFetchWorkItemRun>().AsNoTracking()
