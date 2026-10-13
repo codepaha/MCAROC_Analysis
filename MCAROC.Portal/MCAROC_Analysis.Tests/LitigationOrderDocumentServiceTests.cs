@@ -527,10 +527,13 @@ public class LitigationOrderDocumentServiceTests : IAsyncLifetime
         Assert.DoesNotContain(notYetDue.LitigationOrderDocumentId, immediate);
         Assert.DoesNotContain(legacy.LitigationOrderDocumentId, immediate);
         Assert.DoesNotContain(noUrlFailure.LitigationOrderDocumentId, immediate);
+        await using var verifyDb = CreateContext();
+        Assert.Equal(LitigationOrderDocumentStatus.NotPublished,
+            (await verifyDb.LitigationOrderDocuments.AsNoTracking().SingleAsync(d => d.LitigationOrderDocumentId == noUrlFailure.LitigationOrderDocumentId)).Status);   // converted on recovery
     }
 
     [Fact]
-    public async Task DownloadAndExtractAsync_does_not_reclaim_a_failed_order_with_no_PdfUrl()
+    public async Task DownloadAndExtractAsync_turns_a_failed_order_with_no_PdfUrl_into_not_published_without_an_attempt()
     {
         await using var db = CreateContext();
         var (_, _, order) = await SeedOrderAsync(db, "B4", "");
@@ -542,8 +545,26 @@ public class LitigationOrderDocumentServiceTests : IAsyncLifetime
 
         await using var verifyDb = CreateContext();
         var reloaded = await verifyDb.LitigationOrderDocuments.FirstAsync(d => d.LitigationOrderDocumentId == document.LitigationOrderDocumentId);
-        Assert.Equal(LitigationOrderDocumentStatus.Failed, reloaded.Status);
-        Assert.Equal(2, reloaded.AttemptCount);
+        Assert.Equal(LitigationOrderDocumentStatus.NotPublished, reloaded.Status);   // terminal: the litigation analysis no longer waits on it
+        Assert.Equal(2, reloaded.AttemptCount);                                        // no attempt was spent
+        Assert.Null(reloaded.NextAttemptUtc);
+    }
+
+    [Fact]
+    public async Task A_pending_order_with_no_PdfUrl_is_not_published_not_failed()
+    {
+        await using var db = CreateContext();
+        var (_, _, order) = await SeedOrderAsync(db, "B6", "");
+        var document = await SeedDocumentAsync(db, order.LitigationCaseOrderId, DateTime.UtcNow.AddDays(5));
+
+        var handler = new StubHandler();
+        StubAuthenticate(handler);
+        await NewService(db, handler).DownloadAndExtractAsync(document.LitigationOrderDocumentId, CancellationToken.None);
+
+        await using var verifyDb = CreateContext();
+        var reloaded = await verifyDb.LitigationOrderDocuments.FirstAsync(d => d.LitigationOrderDocumentId == document.LitigationOrderDocumentId);
+        Assert.Equal(LitigationOrderDocumentStatus.NotPublished, reloaded.Status);
+        Assert.Equal(LitigationOrderDocumentService.NoLinkReason, reloaded.FailureReason);
     }
 
     private static async Task<List<long>> DrainAvailableAsync(LitigationOrderDocumentQueue queue, TimeSpan window)
