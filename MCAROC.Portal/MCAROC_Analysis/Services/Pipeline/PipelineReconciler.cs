@@ -264,6 +264,9 @@ public sealed class PipelineReconciler(AppDbContext db, PipelineSnapshotReader r
             // this produces a new file rather than serving the old one.
             if (stage == PipelineStage.CourtUpdate && enforceDossier && verdict.IsDone && stateChanged)
                 preRenderDossier = true;
+            // ...and again when a litigation analysis (first or re-analysis) completes, so the final PDF carries the analysis of the current data.
+            if (stage == PipelineStage.LitigationAnalysis && enforceDossier && verdict.IsDone && stateChanged)
+                preRenderDossier = true;
         }
         await db.SaveChangesAsync(ct);
 

@@ -85,4 +85,29 @@ public sealed class PipelineCourtUpdateTests
         Assert.False(new PipelineOptions { Enabled = true, Mode = PipelineMode.Observe, Enforce = new PipelineEnforceOptions { CourtUpdate = true } }.EnforcesCourtUpdate());
         Assert.False(new PipelineOptions { Enabled = true, Mode = PipelineMode.Enforce }.EnforcesCourtUpdate());
     }
+
+    private static PipelineSnapshot Analysed(bool reanalysisDue) => SearchDone() with
+    {
+        CourtUpdate = Run(finished: Now, succeeded: 10, queued: 0),
+        LitigationAnalysis = new RunFacts<LitigationAiAnalysisRunStatus>(55, LitigationAiAnalysisRunStatus.Completed, null),
+        LitigationReanalysisDue = reanalysisDue
+    };
+
+    private static readonly PipelinePolicy WithAnalysis = new() { LitigationSearch = true, LitigationAnalysis = true, CourtUpdate = true };
+
+    [Fact]
+    public void Post_login_a_court_update_that_changed_the_evidence_makes_the_analysis_due_again()
+    {
+        var v = PipelineDecider.Decide(Analysed(reanalysisDue: true), WithAnalysis, Now).Stages[PipelineStage.LitigationAnalysis];
+        Assert.Equal(PipelineStageStateKind.NotStarted, v.State);
+        Assert.Equal(PipelineDecider.ReadyToStart, v.ReasonCode);
+        Assert.Contains("Re-analysis due", v.ReasonDetail);
+    }
+
+    [Fact]
+    public void Without_changed_evidence_or_with_the_policy_off_a_completed_analysis_stays_done()
+    {
+        Assert.Equal(PipelineStageStateKind.Succeeded, PipelineDecider.Decide(Analysed(reanalysisDue: false), WithAnalysis, Now).Stages[PipelineStage.LitigationAnalysis].State);
+        Assert.Equal(PipelineStageStateKind.Succeeded, PipelineDecider.Decide(Analysed(reanalysisDue: true), Policy, Now).Stages[PipelineStage.LitigationAnalysis].State);
+    }
 }

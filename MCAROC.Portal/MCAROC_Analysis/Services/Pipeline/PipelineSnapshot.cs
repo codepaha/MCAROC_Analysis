@@ -56,6 +56,9 @@ public sealed record PipelineSnapshot
     public MCAROC_Analysis.Services.LitigationModule.Fetching.RefreshRunProgress? CourtUpdate { get; init; }
     /// <summary>The fetch agents are switched on in this environment: without them a court update would queue work nobody does.</summary>
     public bool CourtAgentsEnabled { get; init; }
+    /// <summary>A court update finished after the latest litigation analysis completed, and some case's evidence has changed since: a re-analysis is due (post-login,
+    /// every new case and order is analysed).</summary>
+    public bool LitigationReanalysisDue { get; init; }
 }
 
 /// <param name="HeartbeatUtc">The worker's last progress signal while the job is claimed — updated

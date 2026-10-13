@@ -935,4 +935,52 @@ public sealed class PipelineEnforceTests : IAsyncLifetime
         await ReconcileAsync(runId, EnforcingCourtUpdate, actions, courtAgents: true);            // the run is complete now: nothing more happens
         Assert.Equal(afterFirstTick + 1, actions.DossierCalls);                                   // and only once
     }
+
+    [Fact]
+    public async Task After_an_analysed_snapshot_an_automatic_start_is_a_re_analysis_admitted_once_per_data_version()
+    {
+        var (requestId, _) = await SeedIngestedRequestWithRunAsync(adoptOptions: EnforcingAnalysis);
+        await SeedCompletedSearchAsync(requestId);
+        await using (var seed = CreateContext())
+        {
+            var snapshotId = await seed.LitigationReportSnapshots.Where(s => s.RequestId == requestId).Select(s => s.LitigationReportSnapshotId).SingleAsync();
+            seed.LitigationAiAnalysisRuns.Add(new LitigationAiAnalysisRun
+            {
+                RequestId = requestId, RunNumber = 1, Trigger = LitigationAiAnalysisTrigger.Auto, Status = LitigationAiAnalysisRunStatus.Completed,
+                TriggerSnapshotId = snapshotId, OriginSnapshotId = snapshotId, CreatedUtc = DateTime.UtcNow.AddHours(-2), CompletedUtc = DateTime.UtcNow.AddHours(-1)
+            });
+            // A case that has no analysis on its current evidence: what a court update leaves behind.
+            seed.LitigationCases.Add(new LitigationCase { RequestId = requestId, CaseNumber = "OA/77/2022", Court = "DRT 1", CaseStatus = "PENDING", FirstSeenUtc = DateTime.UtcNow, LastSeenUtc = DateTime.UtcNow });
+            await seed.SaveChangesAsync();
+        }
+
+        await using var db = CreateContext();
+        var starter = RealActionsStarterWith(db, EnforcingAnalysis);
+        var first = await starter.StartAutoAnalysisAsync(requestId, "c1", CancellationToken.None);
+        Assert.True(first.Started);
+        var update = await db.LitigationAiAnalysisRuns.AsNoTracking().SingleAsync(r => r.LitigationAiAnalysisRunId == first.ReferenceId);
+        Assert.Equal(LitigationAiAnalysisTrigger.Update, update.Trigger);                         // not refused by the one-Auto-run-per-snapshot rule
+        var scope = await db.PaidCallAdmissions.AsNoTracking().Where(a => a.RequestId == requestId && a.Kind == PaidCallKind.LitigationAnalysis)
+            .OrderByDescending(a => a.PaidCallAdmissionId).Select(a => a.ScopeKey).FirstAsync();
+        Assert.StartsWith($"analysis-update|request:{requestId}|v", scope);
+
+        // the same data version is not paid for twice: once that run is done, another automatic start on unchanged data is refused
+        await db.LitigationAiAnalysisRuns.Where(r => r.LitigationAiAnalysisRunId == update.LitigationAiAnalysisRunId)
+            .ExecuteUpdateAsync(s => s.SetProperty(r => r.Status, LitigationAiAnalysisRunStatus.Completed).SetProperty(r => r.CompletedUtc, DateTime.UtcNow));
+        var admission = await db.PaidCallAdmissions.Where(a => a.ReferenceId == update.LitigationAiAnalysisRunId).Select(a => a.PaidCallAdmissionId).SingleAsync();
+        await new PaidCallAdmissionService(db, new StaticOptionsMonitor(EnforcingAnalysis), TimeProvider.System, NullLogger<PaidCallAdmissionService>.Instance)
+            .CommitAsync(admission, DateTime.UtcNow, CancellationToken.None);
+        var again = await RealActionsStarterWith(db, EnforcingAnalysis).StartAutoAnalysisAsync(requestId, "c2", CancellationToken.None);
+        Assert.False(again.Started);
+    }
+
+    private static LitigationStartService RealActionsStarterWith(AppDbContext db, PipelineOptions options)
+    {
+        var admission = new PaidCallAdmissionService(db, new StaticOptionsMonitor(options), TimeProvider.System, NullLogger<PaidCallAdmissionService>.Instance);
+        var search = new LitigationSearchJobService(db, null!, new LitigationSearchQueue(), null!, null!,
+            Options.Create(Bpr), NullLogger<LitigationSearchJobService>.Instance);
+        var analysis = new LitigationAiAnalysisOrchestrator(db, null!, new LitigationAiAnalysisQueue(),
+            Options.Create(new LitigationAiAnalysisOptions()), NullLogger<LitigationAiAnalysisOrchestrator>.Instance);
+        return new LitigationStartService(db, admission, search, new LitigationSearchQueue(), analysis, Options.Create(Bpr));
+    }
 }
