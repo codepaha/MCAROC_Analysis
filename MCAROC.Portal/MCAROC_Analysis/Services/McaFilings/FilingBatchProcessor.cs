@@ -584,9 +584,20 @@ public class FilingBatchProcessor(
         var earlierExtraction = await FindEarlierExtractionAsync(filing, documents,
             VertexAiExtractionService.SchemaNameFor(dominantCategory, dominantFormType), ct);
         using var usageScope = AiUsageContext.Begin(filing.RequestId);
-        var outcome = earlierExtraction is { } e
-            ? new ExtractionOutcome(e.SchemaName, e.ExtractedJson, e.RawModelResponse, e.ValidationStatus, e.ValidationErrors, e.Status, e.FailureReason)
-            : await vertexAiService.ExtractAsync(filing.Srn, dominantCategory, dominantFormType, contexts, ct);
+        ExtractionOutcome outcome;
+        try
+        {
+            outcome = earlierExtraction is { } e
+                ? new ExtractionOutcome(e.SchemaName, e.ExtractedJson, e.RawModelResponse, e.ValidationStatus, e.ValidationErrors, e.Status, e.FailureReason)
+                : await vertexAiService.ExtractAsync(filing.Srn, dominantCategory, dominantFormType, contexts, ct);
+        }
+        catch (Exception ex) when (!ct.IsCancellationRequested)
+        {
+            // The documents are claimed (InProgress): an exception escaping here would strand them, and the batch with them, until a restart.
+            logger.LogWarning(ex, "AI extraction for filing {FilingId} threw; recording it as a failed extraction", filingId);
+            outcome = new ExtractionOutcome(VertexAiExtractionService.SchemaNameFor(dominantCategory, dominantFormType), null, null,
+                ExtractionValidationStatus.Invalid, ex.Message, ExtractionStatus.Failed, "Extraction error.");
+        }
 
         db.McaFilingExtractions.Add(new McaFilingExtraction
         {
@@ -808,11 +819,17 @@ public class FilingBatchProcessor(
         // re-enqueues its still-Discovered documents at the end, so including them here too would just be
         // a second, redundant enqueue of the same FilingDocumentIds (harmless now that ProcessDocumentAsync
         // claims atomically, but wasteful).
-        var staleDocuments = await db.McaFilingDocuments
+        // A document claimed (TextExtracting/Classified) by the previous process goes back to Discovered first: ProcessDocumentAsync claims
+        // only Discovered rows, so re-enqueuing it as it was did nothing and the batch never finished (a restart during OCR, 2026-10-13).
+        await db.McaFilingDocuments
             .Where(d => d.DuplicateOfDocumentId == null && !stuckBatches.Contains(d.BatchId) &&
-                (d.ProcessingStatus == FilingDocumentProcessingStatus.Discovered
-                    || d.ProcessingStatus == FilingDocumentProcessingStatus.Classified
+                (d.ProcessingStatus == FilingDocumentProcessingStatus.Classified
                     || d.ProcessingStatus == FilingDocumentProcessingStatus.TextExtracting))
+            .ExecuteUpdateAsync(s => s.SetProperty(d => d.ProcessingStatus, FilingDocumentProcessingStatus.Discovered)
+                .SetProperty(d => d.UpdatedAt, DateTime.UtcNow), ct);
+        var staleDocuments = await db.McaFilingDocuments
+            .Where(d => d.DuplicateOfDocumentId == null && !stuckBatches.Contains(d.BatchId)
+                && d.ProcessingStatus == FilingDocumentProcessingStatus.Discovered)
             .Select(d => new { d.FilingDocumentId, d.BatchId })
             .ToListAsync(ct);
         foreach (var d in staleDocuments)
