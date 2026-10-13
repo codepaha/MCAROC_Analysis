@@ -117,18 +117,21 @@ public class CompanyNameSuggestionServiceTests : IAsyncLifetime
         Assert.Equal(2, client.Calls);   // the failure was tried again
     }
 
-    [Fact]
-    public async Task By_default_searches_use_no_generated_keywords_and_make_no_call()
+    [Theory]
+    [InlineData("Bharat Petroleum Corporation Limited", "Bharat Petroleum Corp Old Limited",
+        new[] { "Bharat Petroleum Corporation Limited", "Bharat Petroleum Corp Old Limited", "Bharat Petroleum Corporation", "Bharat Petroleum Corporation Ltd" })]
+    [InlineData("Altigreen Propulsion Labs Private Limited", null,
+        new[] { "Altigreen Propulsion Labs Private Limited", "Altigreen Propulsion Labs", "Altigreen Propulsion Labs Ltd" })]
+    public async Task By_default_searches_use_exactly_the_keywords_they_used_before_and_make_no_call(string name, string? former, string[] before)
     {
-        // Review of #498: generated terms (initials, phonetic spellings) must not reach live results before attribution (#489 PR B) exists.
+        // Review of #498: with generated keywords off, a search must send exactly what it sent before this PR (written out here, not taken from the
+        // planner, so a change to the planner is caught) and make no AI call. "Pvt Ltd" is a generated form and is not among them.
         var client = new ScriptedClient(new LitigationAiCallResult(true, """{"spellings": ["भारत पेट्रोलियम"], "expansions": []}""", null));
         await using var db = CreateContext();
         var suggester = new LitigationKeywordSuggester(Service(db, client));
-        var keywords = await suggester.SuggestAsync("Bharat Petroleum Corporation Limited", ["Bharat Petroleum Corp Old Limited"], null, default);
+        var keywords = await suggester.SuggestAsync(name, former is null ? [] : [former], null, default);
 
-        Assert.Equal(LitigationKeywordPlanner.Build("Bharat Petroleum Corporation Limited", ["Bharat Petroleum Corp Old Limited"]), keywords);
-        Assert.All(keywords, k => Assert.Contains(k.Source, new[]
-            { LitigationKeywordSource.LegalName, LitigationKeywordSource.HistoricalLegalName, LitigationKeywordSource.GeneratedLegalSuffixVariant }));
+        Assert.Equal(before, keywords.Select(k => k.Value).ToArray());
         Assert.Equal(0, client.Calls);
     }
 
@@ -144,6 +147,9 @@ public class CompanyNameSuggestionServiceTests : IAsyncLifetime
 
         Assert.Contains(keywords, k => k.Source == LitigationKeywordSource.GeneratedNameForm);
         Assert.Equal(1, client.Calls);
+
+        var privateCo = await suggester.SuggestAsync("Altigreen Propulsion Labs " + Guid.NewGuid().ToString("N")[..6] + " Private Limited", [], null, default);
+        Assert.Contains(privateCo, k => k.Value.EndsWith(" Pvt Ltd") && k.Source == LitigationKeywordSource.GeneratedNameForm);
     }
 
     [Fact]

@@ -45,6 +45,10 @@ public static partial class NameFormVariants
             if (value.Length > 0 && seen.Add(value)) results.Add(new GeneratedKeyword(value, source, reason));
         }
 
+        // Private Limited written short (a generated form, so it follows the generated-keywords switch).
+        if (suffix.Equals("PRIVATE LIMITED", StringComparison.OrdinalIgnoreCase))
+            Add($"{core} Pvt Ltd", LitigationKeywordSource.GeneratedNameForm, "\"Private Limited\" written as \"Pvt Ltd\"");
+
         // Corporate-form words: shortened, with the short legal suffix; and dropped when the rest still names something.
         for (var i = 0; i < words.Length; i++)
         {

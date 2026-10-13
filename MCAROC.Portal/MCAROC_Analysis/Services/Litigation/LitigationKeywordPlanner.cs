@@ -46,8 +46,6 @@ public static partial class LitigationKeywordPlanner
         if (withoutSuffix.Length == normalized.Length || withoutSuffix.Length == 0) yield break;
 
         yield return withoutSuffix;
-        if (PrivateLimited().IsMatch(normalized))
-            yield return withoutSuffix + " Pvt Ltd";
         if (normalized.EndsWith("LIMITED", StringComparison.OrdinalIgnoreCase))
             yield return withoutSuffix + " Ltd";
         else if (normalized.EndsWith("LTD", StringComparison.OrdinalIgnoreCase) || normalized.EndsWith("LTD.", StringComparison.OrdinalIgnoreCase))
@@ -65,9 +63,6 @@ public static partial class LitigationKeywordPlanner
 
     [GeneratedRegex(@"\s+", RegexOptions.CultureInvariant)]
     private static partial Regex Whitespace();
-
-    [GeneratedRegex(@"\sPRIVATE\s+LIMITED$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
-    private static partial Regex PrivateLimited();
 }
 
 /// <param name="Reason">Why a generated keyword was suggested ("\"LAKSHMI\" written as \"LAXMI\"", "Hindi spelling, reads as ..."): the provenance shown with a case
@@ -114,7 +109,7 @@ public enum LitigationKeywordSource
     ApprovedHindiAlias,
     /// <summary>A spelling from <see cref="PhoneticVariantGenerator"/> (#489).</summary>
     GeneratedPhoneticVariant,
-    /// <summary>A Devanagari spelling from <see cref="HindiSpellingService"/> that passed the back-check (#489).</summary>
+    /// <summary>A Devanagari spelling from <see cref="CompanyNameSuggestionService"/> that passed the back-check (#489).</summary>
     GeneratedHindiSpelling,
     /// <summary>Another written form of the name from <see cref="NameFormVariants"/>: Corp for Corporation, a joined word split, an acronym spaced (#489).</summary>
     GeneratedNameForm,
